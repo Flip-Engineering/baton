@@ -3,6 +3,7 @@ import ./text.bend as T
 import ./files.bend as F
 import ./compile-queue-identity.bend as Identity
 import ./compile-queue-artifact.bend as Artifact
+import ./storage.bend as Storage
 
 # Compile queue result schema version 2.
 #
@@ -50,6 +51,15 @@ def CompileQueueResult.field_lines(lines: List<&2,String>, +prefix: String) -> S
 def CompileQueueResult.field(result: String, name: String) -> String:
   CompileQueueResult.field_lines(String.lines(result), name ++ "=")
 
+def CompileQueueResult.read_field(path: String, name: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    read : Result<&1,&1,U32 & String,String> <- T.Text.read(path)
+    match read:
+      case Fail{error}:
+        IO.pure(Result<&1,&1,U32 & String,String>, Fail{error})
+      case Done{result}:
+        IO.pure(Result<&1,&1,U32 & String,String>, Done{CompileQueueResult.field(result, name)})
+
 def CompileQueueResult.artifact_lines(lines: List<&2,String>, +acc: String) -> String:
   match lines:
     case Nil{}:
@@ -59,6 +69,15 @@ def CompileQueueResult.artifact_lines(lines: List<&2,String>, +acc: String) -> S
 
 def CompileQueueResult.artifact_rows(result: String) -> String:
   CompileQueueResult.artifact_lines(String.lines(result), "")
+
+def CompileQueueResult.read_rows(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    read : Result<&1,&1,U32 & String,String> <- T.Text.read(path)
+    match read:
+      case Fail{error}:
+        IO.pure(Result<&1,&1,U32 & String,String>, Fail{error})
+      case Done{result}:
+        IO.pure(Result<&1,&1,U32 & String,String>, Done{CompileQueueResult.artifact_rows(result)})
 
 def CompileQueueResult.completed(result: String) -> Bool:
   Bool.and(String.eq(CompileQueueResult.field(result, "status"), "completed"), Bool.not(String.is_empty(CompileQueueResult.artifact_rows(result))))
@@ -157,7 +176,13 @@ def CompileQueueResult.verify(keydir: String, key: String) -> IO(Bool):
           CompileQueueResult.verify_rows(String.lines(rows), keydir),
           IO.pure(Bool, False{}))
 
-def CompileQueueResult.write(path: String, text: String, temporary: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+# Missing, altered, schema-mismatched and unverified results all answer False.
+def CompileQueueResult.verify_state_completed(state_root: String, key: String) -> IO(Result<&1,&1,U32 & String,Bool>):
+  do IO<Result<&1,&1,U32 & String,Bool>>:
+    ok : Bool <- CompileQueueResult.verify(state_root ++ "/keys/" ++ key, key)
+    IO.pure(Result<&1,&1,U32 & String,Bool>, Done{ok})
+
+def CompileQueueResult.write_text(path: String, text: String, temporary: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     written : Result<&1,&1,U32 & String,Unit> <- F.Files.write_private(temporary, text)
     match written:
@@ -168,3 +193,283 @@ def CompileQueueResult.write(path: String, text: String, temporary: String) -> I
 
 def CompileQueueResult.install(source: String, destination: String, staging: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   Artifact.CompileQueueArtifact.install(source, destination, staging)
+
+# -------------------------------------------------------------------------
+# Policy adapters
+#
+# names: one artifact name per line.
+# rows:  one `name<TAB>destination` per line for copy/receipt calls.
+# adoption: newline-separated external-command, external-process,
+#           external-inputs, external-output and external-artifacts values.
+#
+# I/O failures propagate through the IO channel; result misses and altered
+# results answer Done{False} or Done{""}. write marks verified=1 only for a
+# completed result whose named artifacts all hash. write_adoption must be
+# called only after the adoption record matched, so it writes external=1,
+# external-verified=1 and verified=1.
+
+type CompileQueueRow is Data:
+  CompileQueueRow{rows: String, ok: String}
+
+type CompileQueueLatest is Data:
+  CompileQueueLatest{path: String, status: String, finished: String}
+
+def CompileQueueResult.drop_last(parts: List<&2,String>) -> List<&2,String>:
+  match parts:
+    case Nil{}:
+      Nil{}
+    case part <> Nil{}:
+      Nil{}
+    case part <> rest:
+      part <> CompileQueueResult.drop_last(rest)
+
+def CompileQueueResult.last_part(parts: List<&2,String>, current: String) -> String:
+  match parts:
+    case Nil{}:
+      current
+    case part <> rest:
+      Bool.pick(String, String.is_empty(part), CompileQueueResult.last_part(rest, current), CompileQueueResult.last_part(rest, part))
+
+def CompileQueueResult.basename(path: String) -> String:
+  CompileQueueResult.last_part(String.split(path, Char.from_u32(47)), "")
+
+def CompileQueueResult.dirname(path: String) -> String:
+  parts = CompileQueueResult.drop_last(String.split(path, Char.from_u32(47)))
+  joined = String.join(parts, "/")
+  Bool.pick(String, String.is_empty(joined), Bool.pick(String, String.starts_with(path, "/"), "/", "."), joined)
+
+def CompileQueueResult.decimal_lt(a: String, b: String) -> Bool:
+  Bool.pick(Bool, Nat.is_lt(String.length(a), String.length(b)), True{},
+    Bool.pick(Bool, Nat.is_gt(String.length(a), String.length(b)), False{}, String.is_lt(a, b)))
+
+def CompileQueueResult.decimal_ge(a: String, b: String) -> Bool:
+  Bool.not(CompileQueueResult.decimal_lt(a, b))
+
+def CompileQueueResult.log_text(label: String, path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  Bool.pick(IO(Result<&1,&1,U32 & String,String>), String.is_empty(path),
+    IO.pure(Result<&1,&1,U32 & String,String>, Done{""}),
+    do IO<Result<&1,&1,U32 & String,String>>:
+      sha : String <- IO.try(String, Identity.CompileQueueIdentity.file_digest(path))
+      size : String <- IO.try(String, Identity.CompileQueueIdentity.file_size(path))
+      IO.pure(Result<&1,&1,U32 & String,String>, Done{"log-" ++ label ++ "-sha=" ++ sha ++ "\nlog-" ++ label ++ "-bytes=" ++ size ++ "\n"}))
+
+def CompileQueueResult.work_row(work: String, name: String) -> IO(Result<&1,&1,U32 & String,CompileQueueRow>):
+  do IO<Result<&1,&1,U32 & String,CompileQueueRow>>:
+    kind : String <- IO.try(String, Artifact.CompileQueueArtifact.kind(work ++ "/" ++ name))
+    Bool.pick(IO(Result<&1,&1,U32 & String,CompileQueueRow>), String.eq(kind, "missing"),
+      IO.pure(Result<&1,&1,U32 & String,CompileQueueRow>, Done{CompileQueueRow{"", "0"}}),
+      do IO<Result<&1,&1,U32 & String,CompileQueueRow>>:
+        digest : String <- IO.try(String, Artifact.CompileQueueArtifact.digest(work ++ "/" ++ name))
+        IO.pure(Result<&1,&1,U32 & String,CompileQueueRow>, Done{CompileQueueRow{"artifact=" ++ name ++ "\t" ++ kind ++ "\t" ++ digest ++ "\n", "1"}}))
+
+def CompileQueueResult.combine_rows(left: CompileQueueRow, right: CompileQueueRow) -> CompileQueueRow:
+  match left:
+    case CompileQueueRow{left_rows, left_ok}:
+      match right:
+        case CompileQueueRow{right_rows, right_ok}:
+          CompileQueueRow{left_rows ++ right_rows, Bool.pick(String, Bool.and(String.eq(left_ok, "1"), String.eq(right_ok, "1")), "1", "0")}
+
+def CompileQueueResult.work_rows(work: String, names: List<&2,String>, acc: CompileQueueRow) -> IO(Result<&1,&1,U32 & String,CompileQueueRow>):
+  match names:
+    case Nil{}:
+      IO.pure(Result<&1,&1,U32 & String,CompileQueueRow>, Done{acc})
+    case name <> rest:
+      Bool.pick(IO(Result<&1,&1,U32 & String,CompileQueueRow>), String.is_empty(name),
+        CompileQueueResult.work_rows(work, rest, acc),
+        do IO<Result<&1,&1,U32 & String,CompileQueueRow>>:
+          one : CompileQueueRow <- IO.try(CompileQueueRow, CompileQueueResult.work_row(work, name))
+          CompileQueueResult.work_rows(work, rest, CompileQueueResult.combine_rows(acc, one)))
+
+def CompileQueueResult.write(path: String, status: String, code: String, kind: String, key: String, started: String, finished: String, attempt: String, work: String, stdout: String, stderr: String, detail: String, names: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    stdout_row : String <- IO.try(String, CompileQueueResult.log_text("stdout", stdout))
+    stderr_row : String <- IO.try(String, CompileQueueResult.log_text("stderr", stderr))
+    row_result : CompileQueueRow <- IO.try(CompileQueueRow, CompileQueueResult.work_rows(work, String.lines(names), CompileQueueRow{"", "1"}))
+    match row_result:
+      case CompileQueueRow{artifact_text, artifact_ok}:
+        verified = Bool.pick(String, Bool.and(String.eq(status, "completed"), String.eq(artifact_ok, "1")), "1", "0")
+        text = CompileQueueResult.header(kind, key, verified, "0")
+          ++ "status=" ++ status ++ "\n"
+          ++ "exit=" ++ code ++ "\n"
+          ++ "started_ns=" ++ started ++ "\n"
+          ++ "finished_ns=" ++ finished ++ "\n"
+          ++ "attempt=" ++ attempt ++ "\n"
+          ++ "work=" ++ work ++ "\n"
+          ++ "detail=" ++ detail ++ "\n"
+          ++ stdout_row ++ stderr_row ++ artifact_text
+        CompileQueueResult.write_text(path, text, path ++ ".tmp")
+
+def CompileQueueResult.retain_rows(work: String, destination: String, names: List<&2,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match names:
+    case Nil{}:
+      IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}})
+    case name <> rest:
+      Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.is_empty(name),
+        CompileQueueResult.retain_rows(work, destination, rest),
+        do IO<Result<&1,&1,U32 & String,Unit>>:
+          target = destination ++ "/" ++ name
+          staging = target ++ ".queue-tmp"
+          removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
+          installed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.install(work ++ "/" ++ name, target, staging))
+          CompileQueueResult.retain_rows(work, destination, rest))
+
+def CompileQueueResult.retain_artifacts(work: String, destination: String, names: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  CompileQueueResult.retain_rows(work, destination, String.lines(names))
+
+def CompileQueueResult.retain_external(path: String, destination: String, name: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    target = destination ++ "/" ++ name
+    staging = target ++ ".queue-tmp"
+    removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
+    installed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.install(path, target, staging))
+    IO.pure(Result<&1,&1,U32 & String,Unit>, Done{installed})
+
+def CompileQueueResult.write_adoption(path: String, key: String, started: String, finished: String, adoption: String, name: String, artifact_path: String, artifacts_dir: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    kind : String <- IO.try(String, Artifact.CompileQueueArtifact.kind(artifact_path))
+    digest : String <- IO.try(String, Artifact.CompileQueueArtifact.digest(artifact_path))
+    text = CompileQueueResult.header("cgen", key, "1", "1")
+      ++ "status=completed\nexit=0\n"
+      ++ "started_ns=" ++ started ++ "\n"
+      ++ "finished_ns=" ++ finished ++ "\n"
+      ++ "attempt=external\nwork=" ++ artifacts_dir ++ "\n"
+      ++ "detail=external execution observed\n"
+      ++ "external-verified=1\n"
+      ++ adoption
+      ++ "external-name=" ++ name ++ "\n"
+      ++ "artifact=" ++ name ++ "\t" ++ kind ++ "\t" ++ digest ++ "\n"
+    CompileQueueResult.write_text(path, text, path ++ ".tmp")
+
+def CompileQueueResult.verify_adoption(keydir: String, adoption: String) -> IO(Result<&1,&1,U32 & String,Bool>):
+  do IO<Result<&1,&1,U32 & String,Bool>>:
+    read : Result<&1,&1,U32 & String,String> <- T.Text.read(keydir ++ "/completed/result")
+    match read:
+      case Fail{error}:
+        IO.pure(Result<&1,&1,U32 & String,Bool>, Done{False{}})
+      case Done{result}:
+        key = CompileQueueResult.basename(keydir)
+        adopted = Bool.and(CompileQueueResult.base_verified(result, key),
+          CompileQueueResult.external_verified(result,
+            CompileQueueResult.field(adoption, "external-command"),
+            CompileQueueResult.field(adoption, "external-process"),
+            CompileQueueResult.field(adoption, "external-inputs"),
+            CompileQueueResult.field(adoption, "external-output"),
+            CompileQueueResult.field(adoption, "external-artifacts")))
+        artifacts_ok : Bool <- CompileQueueResult.verify(keydir, key)
+        IO.pure(Result<&1,&1,U32 & String,Bool>, Done{Bool.and(adopted, artifacts_ok)})
+
+def CompileQueueResult.verify_completed(keydir: String) -> IO(Result<&1,&1,U32 & String,Bool>):
+  do IO<Result<&1,&1,U32 & String,Bool>>:
+    ok : Bool <- CompileQueueResult.verify(keydir, CompileQueueResult.basename(keydir))
+    IO.pure(Result<&1,&1,U32 & String,Bool>, Done{ok})
+
+def CompileQueueResult.copy_rows(keydir: String, rows: List<&2,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match rows:
+    case Nil{}:
+      IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}})
+    case row <> rest:
+      Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.is_empty(row),
+        CompileQueueResult.copy_rows(keydir, rest),
+        do IO<Result<&1,&1,U32 & String,Unit>>:
+          match String.split(row, Char.from_u32(9)):
+            case name <> destination <> tail:
+              staging = destination ++ ".queue-tmp"
+              removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
+              installed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.install(keydir ++ "/completed/artifacts/" ++ name, destination, staging))
+              CompileQueueResult.copy_rows(keydir, rest)
+            case other:
+              CompileQueueResult.copy_rows(keydir, rest))
+
+def CompileQueueResult.copy_artifacts(keydir: String, rows: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  CompileQueueResult.copy_rows(keydir, String.lines(rows))
+
+def CompileQueueResult.receipt_rows(rows: List<&2,String>) -> String:
+  match rows:
+    case Nil{}:
+      ""
+    case row <> rest:
+      Bool.pick(String, String.is_empty(row), CompileQueueResult.receipt_rows(rest),
+        match String.split(row, Char.from_u32(9)):
+          case name <> destination <> tail:
+            "artifact-" ++ name ++ "=" ++ destination ++ "\n" ++ CompileQueueResult.receipt_rows(rest)
+          case other:
+            CompileQueueResult.receipt_rows(rest))
+
+def CompileQueueResult.receipt_write(receipt: String, status: String, key: String, reused: String, owner: String, rows: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  text = "status=" ++ status ++ "\n"
+    ++ "key=" ++ key ++ "\n"
+    ++ "reused=" ++ reused ++ "\n"
+    ++ "owner=" ++ owner ++ "\n"
+    ++ CompileQueueResult.receipt_rows(String.lines(rows))
+  CompileQueueResult.write_text(receipt, text, receipt ++ ".tmp")
+
+def CompileQueueResult.run_names(records: List<&2,String>) -> List<&2,String>:
+  match records:
+    case Nil{}:
+      Nil{}
+    case record <> rest:
+      Bool.pick(List<&2,String>, String.is_empty(record), CompileQueueResult.run_names(rest),
+        match String.split(record, Char.from_u32(9)):
+          case kind <> name <> tail:
+            Bool.pick(List<&2,String>, String.eq(kind, "dir"), name <> CompileQueueResult.run_names(rest), CompileQueueResult.run_names(rest))
+          case other:
+            CompileQueueResult.run_names(rest))
+
+def CompileQueueResult.latest_scan(names: List<&2,String>, keydir: String, best: CompileQueueLatest) -> IO(CompileQueueLatest):
+  match names:
+    case Nil{}:
+      IO.pure(CompileQueueLatest, best)
+    case name <> rest:
+      Bool.pick(IO(CompileQueueLatest), String.is_empty(name), CompileQueueResult.latest_scan(rest, keydir, best),
+        do IO<CompileQueueLatest>:
+          read : Result<&1,&1,U32 & String,String> <- T.Text.read(keydir ++ "/runs/" ++ name ++ "/result")
+          match read:
+            case Fail{error}:
+              CompileQueueResult.latest_scan(rest, keydir, best)
+            case Done{result}:
+              status = CompileQueueResult.field(result, "status")
+              finished_text = CompileQueueResult.field(result, "finished_ns")
+              finished = Bool.pick(String, String.is_empty(finished_text), "0", finished_text)
+              match best:
+                case CompileQueueLatest{best_path, best_status, best_finished}:
+                  Bool.pick(IO(CompileQueueLatest), String.is_empty(best_path),
+                    CompileQueueResult.latest_scan(rest, keydir, CompileQueueLatest{keydir ++ "/runs/" ++ name ++ "/result", status, finished}),
+                    Bool.pick(IO(CompileQueueLatest), CompileQueueResult.decimal_lt(best_finished, finished),
+                      CompileQueueResult.latest_scan(rest, keydir, CompileQueueLatest{keydir ++ "/runs/" ++ name ++ "/result", status, finished}),
+                      CompileQueueResult.latest_scan(rest, keydir, best))))
+
+def CompileQueueResult.latest_result(keydir: String, wait_start: String, present: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    entries : Result<&1,&1,U32 & String,String> <- Storage.StorageHost.entries(keydir ++ "/runs")
+    match entries:
+      case Fail{error}:
+        IO.pure(Result<&1,&1,U32 & String,String>, Done{""})
+      case Done{records}:
+        names = CompileQueueResult.run_names(String.split(records, Char.from_u32(0)))
+        best : CompileQueueLatest <- CompileQueueResult.latest_scan(names, keydir, CompileQueueLatest{"", "", "0"})
+        match best:
+          case CompileQueueLatest{best_path, best_status, best_finished}:
+            wait = Bool.pick(String, String.is_empty(wait_start), "0", wait_start)
+            selected = Bool.and(Bool.not(String.is_empty(best_path)),
+              Bool.and(Bool.not(String.eq(best_status, "completed")),
+                Bool.or(String.eq(present, "1"), CompileQueueResult.decimal_ge(best_finished, wait))))
+            IO.pure(Result<&1,&1,U32 & String,String>, Done{Bool.pick(String, selected, best_path, "")})
+
+def CompileQueueResult.read_or_empty(path: String) -> IO(String):
+  do IO<String>:
+    read : Result<&1,&1,U32 & String,String> <- T.Text.read(path)
+    match read:
+      case Fail{error}:
+        IO.pure(String, "")
+      case Done{text}:
+        IO.pure(String, text)
+
+def CompileQueueResult.report_failure(path: String) -> IO(Unit):
+  do IO<Unit>:
+    read : Result<&1,&1,U32 & String,String> <- T.Text.read(path)
+    match read:
+      case Fail{error}:
+        IO.print_err("compile-queue: unreadable result " ++ path ++ "\n")
+      case Done{result}:
+        tail : String <- CompileQueueResult.read_or_empty(CompileQueueResult.dirname(path) ++ "/stderr")
+        IO.print_err("compile-queue: " ++ CompileQueueResult.field(result, "kind") ++ " execution " ++ CompileQueueResult.field(result, "status") ++ " key=" ++ CompileQueueResult.field(result, "key") ++ " exit=" ++ CompileQueueResult.field(result, "exit") ++ "\ncompile-queue: " ++ CompileQueueResult.field(result, "detail") ++ "\n" ++ tail)
