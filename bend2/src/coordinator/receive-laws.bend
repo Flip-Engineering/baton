@@ -586,10 +586,9 @@ def retained_observation_uses_the_reconciled_input_cursor(db,session,id,log,curs
 
 def guarded_attempt_observation(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    +normalized_harness : String <- IO.pure(String,Receive.recovered_harness(harness))
     reconciled : Unit <- Stop.observing(db,session,id,directory)
-    observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,normalized_harness,directory,directory,handle,"unknown")
-    Receive.completed_observation(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted,cmd)
+    gone : Bool <- Receive.orphan_native_gone(db,handle)
+    Receive.observe_guarded_state(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,lock,again,adopted,gone)
 
 law guarded_observation_preserves_its_adopted_origin:
   for +db: String
