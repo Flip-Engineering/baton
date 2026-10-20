@@ -228,7 +228,7 @@ sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --
   --option 'gpu-sidecar=once' --token gpu-sidecar \
   -- "$FAKE" --tag gpu --log "$LOG" --gpu-build \
   >"$T/gpu.out" 2>"$T/gpu.err" \
-  && pass 'nested GPU sidecar request completed' || bad 'nested GPU sidecar request failed'
+  && pass 'nested GPU sidecar request completed without a receipt' || bad 'nested GPU sidecar request failed without a receipt'
 [ "$(cat "$T/fake-compiler.gpu" 2>/dev/null)" = 'gpu-artifact-gpu' ] \
   && pass 'nested GPU sidecar copied to ordinary output path' || bad 'nested GPU sidecar missing'
 [ "$(count_starts)" = 1 ] && pass 'GPU sidecar fake command ran once' || bad 'GPU sidecar fake command count differs'
@@ -248,6 +248,8 @@ sh "$QUEUE" run --kind cgen --state-root "$STATE" --cwd "$T/src" --root "$T/src"
   --token tok-suffixless -- "$FAKE" --tag suffix-sensitive --log "$LOG" --suffix-sensitive -o "$T/suffixless.c" \
   >"$T/suffixless.out" 2>"$T/suffixless.err" || wrong_c_rc=$?
 [ "$wrong_c_rc" != 0 ] && pass 'binary cgen output rejected' || bad 'binary cgen output was accepted'
+grep -Fq 'compile-queue: cgen artifact c must be nonempty text C with a .c suffix' "$T/suffixless.err" \
+  && pass 'binary cgen failure kept its diagnostic' || bad 'binary cgen failure diagnostic missing'
 [ ! -f "$STATE/keys/$wrong_c_key/completed/result" ] && pass 'binary cgen output not cached as completed' || bad 'binary cgen output entered completed cache'
 : > "$LOG"
 run_cgen suffix-sensitive "$T/suffix-good.c" --suffix-sensitive || bad 'suffix-preserving cgen request failed'

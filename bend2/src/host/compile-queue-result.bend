@@ -508,13 +508,20 @@ def CompileQueueResult.receipt_rows(rows: List<&2,String>) -> String:
         CompileQueueResult.receipt_row_parts(String.split(row, Char.from_u32(9))))
       current ++ CompileQueueResult.receipt_rows(rest)
 
+def CompileQueueResult.receipt_write_missing(missing: Bool, +receipt: String, +status: String, +key: String, +reused: String, +owner: String, +rows: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match missing:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}})
+    case False{}:
+      text = "status=" ++ status ++ "\n"
+        ++ "key=" ++ key ++ "\n"
+        ++ "reused=" ++ reused ++ "\n"
+        ++ "owner=" ++ owner ++ "\n"
+        ++ CompileQueueResult.receipt_rows(String.lines(rows))
+      CompileQueueResult.write_text(receipt, text, receipt ++ ".tmp")
+
 def CompileQueueResult.receipt_write(+receipt: String, +status: String, +key: String, +reused: String, +owner: String, +rows: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  text = "status=" ++ status ++ "\n"
-    ++ "key=" ++ key ++ "\n"
-    ++ "reused=" ++ reused ++ "\n"
-    ++ "owner=" ++ owner ++ "\n"
-    ++ CompileQueueResult.receipt_rows(String.lines(rows))
-  CompileQueueResult.write_text(receipt, text, receipt ++ ".tmp")
+  +missing = String.is_empty(receipt)
+  CompileQueueResult.receipt_write_missing(missing, receipt, status, key, reused, owner, rows)
 
 def CompileQueueResult.run_name_parts(parts: List<&2,String>) -> String:
   match parts:

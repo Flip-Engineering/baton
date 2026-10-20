@@ -744,7 +744,7 @@ static Term cq_art_call_pack(Env env, IoWork *work) {
   Term result;
   if (call->error) {
     result = io_fail(env, call->error, NULL);
-  } else if (call->mode == CQ_ART_KIND) {
+  } else if (call->mode == CQ_ART_KIND || call->mode == CQ_ART_C_SOURCE_KIND) {
     result = io_done(env, io_str(env, call->answer, strlen(call->answer)));
   } else if (call->mode == CQ_ART_DIGEST) {
     result = io_done(env, io_str(env, call->text, strlen(call->text)));
