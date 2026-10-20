@@ -517,7 +517,7 @@ class CodexRootAdapter(unittest.TestCase):
                            if line.startswith(prefix))
         self.assertEqual(json.loads(coordinator), [str(EXE), str(self.db)])
         self.assertIn('Read complete owed input with inbox.', observed['prompt'])
-        self.assertIn('Use acknowledge after handling', observed['prompt'])
+        self.assertNotIn('Use acknowledge', observed['prompt'])
         self.assertEqual(json.loads(self.coord('role', associate))['role'], 'associate-conductor')
         reports = json.loads(self.coord('inbox', ''))
         self.assertEqual([(r['sender'], r['recipient'], r['body']) for r in reports],
