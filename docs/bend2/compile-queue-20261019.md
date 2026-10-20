@@ -151,10 +151,10 @@ Admission verifies a completed result before reuse. When `completed/result`
 exists but artifact verification fails, or the `completed` directory is
 populated without a usable result, a `run` for that key removes the internal
 `completed` tree while it holds the key lock and starts a fresh attempt. A
-result marked external is preserved only when `verify_adoption` matches its
-adoption fields and artifact hashes; otherwise the internal cache entry is
-removed and the next run recompiles. `wait` and `status` report an unusable
-entry without mutating it.
+result marked external is preserved only when `keydir/adoption` exists and
+`verify_adoption` matches that record against the completed result; a missing
+or differing record removes the internal cache entry and the next run
+recompiles. `wait` and `status` report an unusable entry without mutating it.
 
 ## State root
 

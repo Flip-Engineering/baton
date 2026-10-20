@@ -808,7 +808,11 @@ def run_command(args: List<String>) -> IO(Unit):
                           do IO<Bool>:
                             result <- IO.try(String, L.read_text(completed_path))
                             Bool.pick(Bool, Tx.str_eq(field(result, "external"), "1"),
-                              IO.try(Bool, Result.verify_adoption(keydir, result)),
+                              do IO<Bool>:
+                                adoption : String <- IO.try(String, L.read_text(keydir ++ "/adoption"))
+                                Bool.pick(Bool, non_empty(adoption),
+                                  IO.try(Bool, Result.verify_adoption(keydir, adoption)),
+                                  IO.pure(Bool, False{})),
                               IO.pure(Bool, False{})),
                           IO.pure(Bool, False{}))
                         Bool.pick(IO(Unit), external_keep,
