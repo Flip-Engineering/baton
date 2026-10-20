@@ -265,13 +265,24 @@ def CompileQueueResult.decimal_lt(+a: String, +b: String) -> Bool:
 def CompileQueueResult.decimal_ge(+a: String, +b: String) -> Bool:
   Bool.not(CompileQueueResult.decimal_lt(a, b))
 
+def CompileQueueResult.log_rows(+label: String, +path: String,
+                                 present: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match present:
+    case Done{value}:
+      Bool.pick(IO(Result<&1,&1,U32 & String,String>), String.eq(value, "1"),
+        do IO<Result<&1,&1,U32 & String,String>>:
+          sha : String <- IO.try(String, Identity.CompileQueueIdentity.file_digest(path))
+          size : String <- IO.try(String, Identity.CompileQueueIdentity.file_size(path))
+          IO.pure(Result<&1,&1,U32 & String,String>, Done{"log-" ++ label ++ "-sha=" ++ sha ++ "\nlog-" ++ label ++ "-bytes=" ++ size ++ "\n"}),
+        IO.pure(Result<&1,&1,U32 & String,String>, Done{""}))
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>, Fail{error})
+
 def CompileQueueResult.log_text(+label: String, +path: String) -> IO(Result<&1,&1,U32 & String,String>):
   Bool.pick(IO(Result<&1,&1,U32 & String,String>), String.is_empty(path),
     IO.pure(Result<&1,&1,U32 & String,String>, Done{""}),
     do IO<Result<&1,&1,U32 & String,String>>:
-      sha : String <- IO.try(String, Identity.CompileQueueIdentity.file_digest(path))
-      size : String <- IO.try(String, Identity.CompileQueueIdentity.file_size(path))
-      IO.pure(Result<&1,&1,U32 & String,String>, Done{"log-" ++ label ++ "-sha=" ++ sha ++ "\nlog-" ++ label ++ "-bytes=" ++ size ++ "\n"}))
+      present : Result<&1,&1,U32 & String,String> <- F.Files.regular(path)
+      CompileQueueResult.log_rows(label, path, present))
 
 def CompileQueueResult.work_row(+work: String, +name: String) -> IO(Result<&1,&1,U32 & String,CompileQueueRow>):
   do IO<Result<&1,&1,U32 & String,CompileQueueRow>>:
