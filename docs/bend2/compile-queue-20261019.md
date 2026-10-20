@@ -247,6 +247,43 @@ diff does not modify `normal_cli`, and the compiler completed its term check
 before C generation. The exact native cause remains unverified; #970 owns the
 queue mitigation and #722 retains the compiler diagnosis.
 
+## Integration sites
+
+Every compiler entry point that the queue scope covers now invokes the queue.
+The command path below is the validation path for each site.
+
+- `bend2/compiler/upstream/main.ts:384` `cli_build` resolves
+  `BATON2_COMPILE_QUEUE_BIN`, then `BATON2_COMPILE_QUEUE`, and runs
+  `"$queue" run --kind cc --state-root <state> --cwd <file dir>
+  --compiler <cc> --input <c> --artifact binary=<bin> ... -- <cc args>`.
+  It throws on queue failure; no direct compiler path remains.
+- `bend2/compiler/upstream/main.ts:304` and `bend2/compiler/repl.ts:181`
+  call `cli_build`.
+- `bend2/scripts/stage-repl-compiler.py` exports
+  `BATON2_COMPILE_QUEUE_BIN` for the staged launcher, resolving
+  `$prefix/bin/baton-compile-queue`.
+- `bend2/scripts/build-native.sh:143` admits cgen and `:171` admits the
+  final link through `"$queue" run`.
+- `bend2/test/compile_queue.py:compile_cc` runs
+  `"$queue" run --kind cc --state-root <state> --cwd <cwd>
+  --compiler <cc> --input <file> --artifact binary=<output> ... -- <args>`.
+- Direct fixtures use that helper: `native-cli.py` (three calls),
+  `compiler-arm-sharing.py` (its own `run_queue`), `custody-adopt.py`,
+  `start-gate.py`, `spool-watch-overflow.py`, `retained-control.py`
+  (three calls), `shared-instance.py` (two calls),
+  `sqlite-projection.py`, and `native-dispatch-runtime.py`.
+- `bend2/scripts/check-install.py` `compile_with_queue` admits the fixed
+  SQLite C probe through the same executable.
+- `bend2/test/compile-queue.sh` exercises the queue contract with a fake
+  compiler and covers explicit configuration, concurrency, serialized
+  cgen, failure, cancellation, adoption and requester loss.
+
+`bend2/scripts/compile-queue.sh` builds the queue C helper with a direct cc
+call before the queue exists. That bootstrap is the only pre-queue
+compilation and it creates the executable every other site uses. The
+installed prefix must package the resulting `bin/baton-compile-queue`; it is
+a build artifact, so the installer is the packaging step that produces it.
+
 ## Open items
 
 - The Bend2 implementation has passed static review only; it has not been

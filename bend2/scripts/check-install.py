@@ -17,6 +17,38 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
+def queue_executable():
+    prefix = os.environ.get('BATON2_PREFIX')
+    candidates = [
+        os.environ.get('BATON2_COMPILE_QUEUE_BIN'),
+        os.environ.get('BATON2_COMPILE_QUEUE'),
+        str(Path(__file__).resolve().parents[2] / 'bin' / 'baton-compile-queue'),
+        shutil.which('baton-compile-queue'),
+    ]
+    if prefix:
+        candidates.insert(0, str(Path(prefix) / 'bin' / 'baton-compile-queue'))
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return candidate
+    raise RuntimeError('The shared host compilation queue executable is not installed; '
+                       'set BATON2_COMPILE_QUEUE_BIN or install bin/baton-compile-queue')
+
+
+def compile_with_queue(args, input_file, options, cwd):
+    output = args[args.index('-o') + 1]
+    state = os.environ.get('BATON2_COMPILE_QUEUE_STATE') or str(Path.home() / '.cache' / 'baton' / 'compile-queue')
+    command = [queue_executable(), 'run', '--kind', 'cc', '--compiler', args[0],
+               '--cwd', cwd, '--state-root', state, '--input', input_file,
+               '--artifact', 'binary=' + output]
+    for option in options:
+        command += ['--option', option]
+    command += ['--', *args]
+    result = subprocess.run(command, text=True, capture_output=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or '').strip()
+        raise RuntimeError(f'The shared host compilation queue rejected the SQLite probe: {detail}')
+
+
 def archive_digest(path):
     digest = hashlib.sha256()
     with path.open('rb') as stream:
@@ -369,7 +401,9 @@ def check(prefix, output):
                       'if (sqlite3_exec(db, "SELECT 1", 0, 0, 0) != SQLITE_OK) return 2; '
                       'if (sqlite3_close(db) != SQLITE_OK) return 3; '
                       'puts(sqlite3_libversion()); return 0; }\n')
-    run([compiler, '-std=c11', *flags, source, '-lsqlite3', '-o', program])
+    compile_with_queue(
+        [compiler, '-std=c11', *flags, str(source), '-lsqlite3', '-o', str(program)],
+        str(source), ['-std=c11', *flags], str(output))
     sqlite_version = run([program])
     return {'status': 'ready', 'prefix': str(prefix), 'manifest_sha256': archive_digest(manifest_path),
             'install_receipt_sha256': archive_digest(prefix / 'install-receipt.json'),
