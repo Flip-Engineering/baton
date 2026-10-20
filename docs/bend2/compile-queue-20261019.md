@@ -227,9 +227,14 @@ artifact is bootstrap evidence for that source identity and is not reused by the
 
 - The Bend2 implementation has passed static review only; it has not been
   built or run. Root owns the first build, qualification and deployment.
-- Direct fixture compiler sites and Bend internal `cli_build` are inventoried;
-  the normal build launcher and the public queue operation are wired. Root
-  decides the remaining caller edits after the queue executable exists.
+- Direct fixture compiler sites and Bend internal `cli_build` are wired in
+  source. `cli_build` (bend2/compiler/upstream/main.ts) admits its C
+  compilation through the queue when `BATON2_COMPILE_QUEUE_BIN` or
+  `BATON2_COMPILE_QUEUE` selects one and compiles directly otherwise; the
+  staged REPL launcher exports the installed `bin/baton-compile-queue`.
+  `bend2/test/compiler-arm-sharing.py` admits its fixture compiles when a
+  queue executable is installed and compiles directly otherwise. Root owns
+  the first build and qualification of these paths.
 - The reference shell `cancel --key` interface is bootstrap-only. The permanent
   queue binds each requester to an owner token and cancels a shared execution
   only when no owners remain.

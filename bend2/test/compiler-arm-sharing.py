@@ -43,6 +43,23 @@ def find_cc():
     return None
 
 
+QUEUE = ROOT / 'bend2/scripts/compile-queue.sh'
+SCRATCH_QUEUES = (ROOT / '.scratch/bend2/compile-queue',
+                  ROOT / '.scratch/bend2/baton-compile-queue')
+
+
+def find_queue():
+    # The shared compile queue executable or launcher, when one is installed.
+    # Without it the tests compile directly, as they did before the queue.
+    for value in (os.environ.get('BATON2_COMPILE_QUEUE_BIN'),
+                  os.environ.get('BATON2_COMPILE_QUEUE')):
+        if value and pathlib.Path(value).exists():
+            return value
+    if QUEUE.exists() and any(path.exists() for path in SCRATCH_QUEUES):
+        return str(QUEUE)
+    return None
+
+
 class CompilerArmSharing(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -53,6 +70,9 @@ class CompilerArmSharing(unittest.TestCase):
         if cls.cc is None:
             raise unittest.SkipTest('a C compiler is unavailable')
         cls.temp = tempfile.TemporaryDirectory(prefix='compiler-arm-sharing-')
+        cls.queue = find_queue()
+        cls.state = pathlib.Path(cls.temp.name) / 'queue-state'
+        cls.state.mkdir()
         cls.compiler = pathlib.Path(cls.temp.name) / 'compiler'
         bend2 = cls.compiler / 'bend2'
         bend2.mkdir(parents=True)
@@ -75,12 +95,46 @@ class CompilerArmSharing(unittest.TestCase):
                          % (' '.join(map(str, argv)), result.stdout, result.stderr))
         return result
 
+    def run_queue(self, args):
+        result = subprocess.run(
+            [self.queue, *map(str, args)],
+            capture_output=True, text=True, timeout=600)
+        self.assertEqual(result.returncode, 0,
+                         msg='queue failed: %s\nstdout:\n%s\nstderr:\n%s'
+                         % (' '.join(map(str, args)), result.stdout, result.stderr))
+        return result
+
+    def run_cgen(self, tag, fixture, source):
+        # A fresh per-run state root keeps these digest-pinned tests free of
+        # stale queue cache entries; the queue still admits and runs the
+        # compile that build-native.sh would otherwise run directly.
+        self.run_queue([
+            'run', '--kind', 'cgen', '--state-root', self.state, '--cwd', ROOT,
+            '--root', ROOT, '--source-root', ROOT,
+            '--entry', fixture.relative_to(ROOT).as_posix(),
+            '--compiler', self.bun, '--artifact', 'c=%s' % source,
+            '--option', 'test=%s' % tag,
+            '--', self.bun, '--smol', UPSTREAM / 'main.ts', fixture, '-o', source])
+
+    def compile_fixture(self, tag, fixture, source):
+        if self.queue is not None:
+            self.run_cgen(tag, fixture, source)
+        else:
+            self.run_bun(UPSTREAM / 'main.ts', fixture, '-o', source)
+
     def build_and_run(self, source, argv_results):
         binary = source.with_suffix('.bin')
-        build = subprocess.run(
-            [self.cc, '-O1', '-w', str(source), '-lm', '-lpthread', '-o', str(binary)],
-            capture_output=True, text=True, timeout=180)
-        self.assertEqual(build.returncode, 0, msg=build.stderr)
+        if self.queue is not None:
+            self.run_queue([
+                'run', '--kind', 'cc', '--state-root', self.state, '--cwd', ROOT,
+                '--compiler', self.cc, '--input', source,
+                '--artifact', 'binary=%s' % binary, '--option', 'test=%s' % source.stem,
+                '--', self.cc, '-O1', '-w', source, '-lm', '-lpthread', '-o', binary])
+        else:
+            build = subprocess.run(
+                [self.cc, '-O1', '-w', str(source), '-lm', '-lpthread', '-o', str(binary)],
+                capture_output=True, text=True, timeout=180)
+            self.assertEqual(build.returncode, 0, msg=build.stderr)
         for argv, expected in argv_results:
             run = subprocess.run([str(binary), *argv], capture_output=True,
                                  text=True, timeout=30)
@@ -103,7 +157,7 @@ class CompilerArmSharing(unittest.TestCase):
     def test_native_arm_collision(self):
         fixture = FIXTURES / 'native_arm_collision.bend'
         source = pathlib.Path(self.temp.name) / 'native_arm_collision.c'
-        self.run_bun(UPSTREAM / 'main.ts', fixture, '-o', source)
+        self.compile_fixture('native_arm_collision', fixture, source)
         text = source.read_text()
         names = re.findall(r'^(?:INLINE|FAR) Term (arm_\d+)\(', text, re.M)
         self.assertTrue(names, msg='the fixture emitted no shared arms')
@@ -117,7 +171,7 @@ class CompilerArmSharing(unittest.TestCase):
     def test_nonflat_call_in_arm_keeps_segment_context(self):
         fixture = FIXTURES / 'arm_nonflat_call.bend'
         source = pathlib.Path(self.temp.name) / 'arm_nonflat_call.c'
-        self.run_bun(UPSTREAM / 'main.ts', fixture, '-o', source)
+        self.compile_fixture('arm_nonflat_call', fixture, source)
         self.build_and_run(source, [
             (['a'], 'one'),
             (['z'], 'xy'),
@@ -148,7 +202,7 @@ class CompilerArmSharing(unittest.TestCase):
         for name, (digest, output) in expected.items():
             with self.subTest(fixture=name):
                 c = pathlib.Path(self.temp.name) / (name + '.c')
-                self.run_bun(UPSTREAM / 'main.ts', FIXTURES / (name + '.bend'), '-o', c)
+                self.compile_fixture(name, FIXTURES / (name + '.bend'), c)
                 self.assertEqual(sha256(c), digest)
                 self.build_and_run(c, [([], output)])
 
@@ -166,7 +220,7 @@ class CompilerArmSharing(unittest.TestCase):
                 check = self.run_bun(UPSTREAM / 'main.ts', fixture, '--check-only')
                 self.assertEqual(check.stdout.strip(), 'All terms check.')
                 c = pathlib.Path(self.temp.name) / (name + '.c')
-                self.run_bun(UPSTREAM / 'main.ts', fixture, '-o', c)
+                self.compile_fixture(name, fixture, c)
                 self.assertEqual(sha256(c), digest)
                 self.build_and_run(c, [([], output)])
 
