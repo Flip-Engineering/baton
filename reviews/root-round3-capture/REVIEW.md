@@ -424,3 +424,171 @@ resident set with and without per-definition clearing, dry-vs-real fact
 counts with `BEND_FACTS_ONLY_FIRST=1`, and a capture-accounting assertion
 (sum of caller bind counts before/after a shared call equals the inspected
 expectation).
+
+## 11. Design reconciliation: `!def` narrowing and the dry gate
+
+Source-only analysis for the main-integration candidate. No build, no
+benchmark, no measured-regression claim. Baseline is `comp.ts` sha256
+`dc33f3a0…` (7,310 lines, present at `e8d5ac89`); candidate is `comp.ts`
+sha256 `1fa4be27…` (7,384 lines, e8d5 tip `cd80b1a6`, also f38 tip
+`5ddcd98a`). The e8d5 branch is the merge candidate; the 55fb production
+lineage is not analysed.
+
+### Verified-fact corrections
+
+- The baseline does not gate only on `term_uses`. Baseline `emit_arm_shared`
+  starts at :3290; the closed-arm test is :3291-3293; the
+  `has_segment_jump` guard is :3294-3303. The candidate keeps the same guard
+  at :3348-3354. The guard is present in both trees; nothing here regresses
+  it.
+- `arm_eq` differs only in the `ADT` case: baseline :3249-3257 ignores
+  `x.r`; candidate :3252-3260 requires equal `r` length and set membership.
+  The `Ref` case is identical in both (:3196-3199 baseline, :3199-3202
+  candidate), so there is no `Ref.b` difference between these two files.
+- The candidate's dry passes return before the hint lookup
+  (candidate :3344); baseline dry passes execute the hint, `arm_eq`, busy
+  test and `emit_arm_call`, while retaining only the spin source behind
+  `if (!fl.dry)` (baseline :3339-3348; candidate :3406-3415).
+
+### Q1: Is `!def` required for capture-aware correctness?
+
+No. For a closed arm, `term_uses(fl, h)` is empty, so `u = []` (:3355) and
+`capture_order` returns `caps = []` (:3356). The capture path then reduces
+to the baseline path:
+
+- `capKs` is empty; `base` is built from `avKs`, `lay.ks` and `lay.arms`
+  (:3358-3362). The joined hint gains a leading empty component, so it is a
+  different bucket key from baseline, but every widened closed arm uses the
+  same construction, so the bucket partitions closed arms consistently.
+- The rep check requires `rep.ks.length === avKs.length`,
+  `rep.caps.length === 0` and `arm_eq` (:3367-3377). With the candidate's
+  stricter `ADT.r` equality this is a subset of baseline matches, so it can
+  only split reps, never mis-share.
+- The busy check (:3370) returns inline before any capture consumption; the
+  coverage test `(u.length >> 1) > caps.length` (:3357) is false for a
+  closed arm.
+- `capWs` is empty, so `emit_arm_call` (:3427-3436) passes
+  `["e", o, ...av words]`, the same argument list and `ent.lay`/`ent.ks` as
+  baseline (baseline :3355-3363). The new-spin path binds no captures,
+  builds `ks` as `avKs`, uses the same segment layout and emits the same
+  body (:3380-3424; baseline :3319-3352).
+
+The `!def` test is therefore scoping: it targets default and literal arms.
+Closed non-default sharing can be preserved through the capture path with
+no new semantics.
+
+### Q2: Recommended gate structure and C-size effect
+
+| Option | Behaviour | Assessment |
+| --- | --- | --- |
+| (a) drop `!def` | every arm reaches the capture path | restores closed sharing and adds sharing for open non-default arms, which baseline inlined; larger blast radius and possible wrapper overhead for single-use open arms |
+| (b) two scopes | baseline closed path plus capture path | two hint formats and, if the baseline equality is reused, the weaker `ADT.r` equality that the fix removed; not recommended |
+| (c) keep narrowing | closed non-default arms inline | loses the baseline size reduction; no new sharing |
+| (d) closed-only widening | run one capture path; return inline when `!def` and `u.length !== 0` | restores exactly the baseline closed sharing (`caps = []`), keeps open non-default arms inline as baseline, and keeps one equality and one hint builder |
+
+Recommendation: (d). Compute `u = term_uses(fl, h)` before the scope test
+and use `if (!def && u.length !== 0) return false`, keeping the existing
+guard order (segment jump, coverage, hint, rep/equality, busy, consume,
+call). This is the narrowest change that recovers the five-overlap
+reduction without exercising capture ownership on arm classes the baseline
+never shared. Option (a) is acceptable only if the qualification includes
+open non-default arms and confirms size; option (b) reintroduces a
+correctness-relevant equality split; option (c) is safe but forfeits the
+size fix.
+
+Fixture estimate (source, not measured):
+
+- `round2/fixtures/five-overlap.bend`: the retained 7658 -> 25 `WL_CASE`
+  measurement came from sharing closed non-default arms. Under (c) those
+  arms inline again, so `WL_CASE` and bytes rise toward the pre-sharing
+  level. This is the fixture that must be measured for (d) and (c).
+- `minimal.bend`, `pr890-shaped.bend`, `control-two-long.bend`,
+  `control-literal-two.bend`: their top-level non-default cases bind
+  captures, so baseline inlined them; (c) does not change them, while the
+  candidate shares their open defaults. Flattened literal-prefix rows can
+  still be closed; only measurement can size that contribution.
+- `focused_literal.bend`, `string_match_sparse`, `word_match_cover_key`,
+  `u32_table_bitvar`, `nat_pattern_deep`: literal arms use the `lit|` bucket
+  and still share; U32/Nat matches use the `emit_lits`/`emit_nats`/
+  `lits_rows` table path and do not reach `arms2` sharing. Expected
+  unchanged under (c), except any closed non-default structural arms.
+- The measured headroom at round 3 was minimal 513,186 B, pr890-shaped
+  528,767 B, control-two-long 103,698 B, control-literal-two 150,092 B
+  against gates 1,000,000 / 2,000,000 / 300,000 B. Controls have the least
+  headroom, so a five-overlap-scale regression is the case to watch.
+
+### Q3: Dry-gate reconciliation
+
+`file_new` spreads the carb object (`...cb`, candidate :1917-1919), so
+`fl.own`, `fl.hot`, `fl.stat` and `fl.sites` are the same objects as the
+carb sets; every pass, dry or real, mutates the surviving facts.
+`emission_defs` is computed before the dry loop from `done_defs(cb)`
+(candidate :3693-3694), and `done_defs` filters only on `done_live`
+(:1902-1905), not on own/hot/stat. Consequences:
+
+- `sites` cannot change: it is built in `carb_book` (:1649) and read at
+  :2920; no pass writes it.
+- Which definitions are emitted cannot change: the list is every live
+  definition, fixed before the dry loop; the dry `File` is discarded, and
+  the reachability pass runs on the final real `File`.
+- `INLINE`/`FAR` cannot change through dry: spins are pushed only when
+  `!fl.dry` (candidate :3406; baseline :3339), so the `SPIN_FAR` test is
+  decided only in real passes.
+- `own`, `hot` and `stat` can differ: inline versus shared emission changes
+  the segment context, and these sets feed `brw_of` (:1335-1340, cleared
+  each pass at :3703), `facts_hot` (:2080-2135), static-constructor
+  selection (:1257-1272), `CID_HOT_T` (:3642) and `BLK_SHR` (:3829). The
+  real fixed point still converges, and the final pass is internally
+  consistent because it emits definitions and calls from the same fact
+  state, but the monotone union includes the dry contributions, so
+  baseline and candidate can settle on different fact sets and therefore
+  different static/hot/borrow choices when `BEND_FACTS_ONLY_FIRST=1`.
+
+With `BEND_FACTS_ONLY_FIRST` off (the default), the dry loop never runs, so
+the candidate's early-out cannot affect emitted C. The divergence matters
+only for the env-gated path, and the comment at :3753-3755 ("These passes
+compute the same monotone facts as emission") is then inaccurate.
+
+Recommendation: restore baseline dry behaviour in the shared path
+(execute hint/equality/busy/`emit_arm_call`, retain only the spin source
+behind `if (!fl.dry)`) so the dry facts model the real sharing strategy and
+the comment holds. If the team keeps the early-out, correct the comment and
+carry the dry-versus-real measurement below; the default path is
+unaffected either way.
+
+### Q4: Interaction of widened sharing with the existing guards
+
+Required order: segment-jump, coverage, hint, rep/`arm_eq`, busy, capture
+consumption, call. The current candidate already has this order except for
+the scope/dry return at :3344; (d) moves only the scope test after
+`term_uses`.
+
+- `ADT.r` strictness can only reduce matches; it cannot mis-share.
+- Busy returns inline before any capture is consumed, so a nested reuse of
+  the same arm leaves the caller's binds intact.
+- `has_segment_jump` stays before hint lookup and rep creation, so no spin
+  is created for a jumping arm.
+- The `lit|` prefix separates literal buckets from structural buckets. A
+  term used at both a literal and a structural site gets two reps and two
+  spins; that is duplicate code, not incorrect sharing.
+- With (a), open non-default arms would newly exercise capture ownership;
+  with (d) they stay inline, so the only newly shared class is the closed
+  one, which is baseline-equivalent. No new ordering hazard was found.
+
+### Queue-held measurement additions
+
+Qualification must include captured open/default arms and closed non-default
+controls, with dry-versus-real fact comparison:
+
+1. `round2/fixtures/five-overlap.bend` under (c) and (d): C bytes,
+   `WL_CASE`, spin count, sha256; the retained 7658 -> 25 count is the
+   comparison point.
+2. The repro gates (`minimal`, `pr890-shaped`, `control-two-long`,
+   `control-literal-two`) under (c) and (d) to confirm the source estimate
+   that their open non-default arms are unchanged.
+3. One fixture with a captured open default arm and one with a closed
+   non-default arm, each emitted with and without `BEND_FACTS_ONLY_FIRST=1`;
+   record dry and real `own/hot/stat` sizes per pass, `CID_HOT_T`/`BLK_SHR`,
+   and final C bytes/sha256.
+4. A capture-accounting assertion across a widened shared call (sum of
+   caller bind counts before/after equals the inspected expectation).
