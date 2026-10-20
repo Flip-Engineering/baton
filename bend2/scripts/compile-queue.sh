@@ -147,11 +147,11 @@ cq_source_digest() {
   (
     cd "$source_root" || exit 1
     {
-      find bend2/src -type f -name '*.bend' -print 2>/dev/null
+      find bend2/src -type f \( -name '*.bend' -o -name '*.c' -o -name '*.h' \) -print 2>/dev/null
       printf '%s\n' "$entry_rel"
       case $entry_rel in
         bend2/src/*) ;;
-        *) directory=$(dirname "$entry_rel"); find "$directory" -type f -name '*.bend' -print 2>/dev/null ;;
+        *) directory=$(dirname "$entry_rel"); find "$directory" -type f \( -name '*.bend' -o -name '*.c' -o -name '*.h' \) -print 2>/dev/null ;;
       esac
     } | sort -u | while IFS= read -r file; do
       [ -f "$file" ] || continue
@@ -714,16 +714,7 @@ cq_cmd_run() {
   cq_validate_artifacts
   cq_prepare_inputs
   cq_validate_source
-  if ! cq_ensure_flock; then
-    cq_warn 'flock is unavailable; running the command without shared execution'
-    cd "$cq_cwd" || cq_die 2 "cwd is unavailable: $cq_cwd"
-    set --
-    while IFS= read -r line; do
-      set -- "$@" "$line"
-    done < "$cq_tmp/command-args"
-    "$@"
-    exit $?
-  fi
+  cq_ensure_flock || cq_die 2 'queue coordination requires flock'
   key=$(cq_compute_key)
   keydir="$cq_state_root/keys/$key"
   mkdir -p "$keydir/runs"

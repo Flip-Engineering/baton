@@ -49,6 +49,10 @@ if [ ! -x "$compiler" ]; then
   compiler="$root/node_modules/.bend/bin/bend"
 fi
 queue=${BATON2_COMPILE_QUEUE:-"$root/bend2/scripts/compile-queue.sh"}
+[ -f "$queue" ] || {
+  echo "The host compile queue entry is unavailable: $queue" >&2
+  exit 1
+}
 queue_state=${BATON_COMPILE_QUEUE_ROOT:-}
 if [ -z "$queue_state" ]; then
   if [ -n "${XDG_CACHE_HOME:-}" ]; then
@@ -110,14 +114,10 @@ else
     echo 'This native binding requires Bend 2.0.25.' >&2
     exit 1
   fi
-  if [ -f "$queue" ]; then
-    mkdir -p "$queue_state"
-    sh "$queue" run --kind cgen --state-root "$queue_state" --cwd "$root" --root "$root" \
-      --source-root "$root" --entry "$entry" --compiler "$compiler" \
-      --artifact "c=$output.c" -- "$compiler" "$entry" -o "$output.c"
-  else
-    "$compiler" "$entry" -o "$output.c"
-  fi
+  mkdir -p "$queue_state"
+  sh "$queue" run --kind cgen --state-root "$queue_state" --cwd "$root" --root "$root" \
+    --source-root "$root" --entry "$entry" --compiler "$compiler" \
+    --artifact "c=$output.c" -- "$compiler" "$entry" -o "$output.c"
 fi
 build_native_shards() {
   native_link_flags="-O1 -pthread -lsqlite3 -lm"
@@ -139,22 +139,18 @@ build_native_shards() {
   if [ -n "${BATON2_CCACHE:-}" ]; then
     set -- "$@" --ccache "$BATON2_CCACHE"
   fi
-  if [ -f "$queue" ]; then
-    mkdir -p "$queue_state"
-    set -- sh "$queue" run --kind cc --state-root "$queue_state" --cwd "$root" --root "$root" \
-      --compiler "${CC:-clang}" \
-      --input "$output.c" \
-      --input "$root/bend2/src/host/native-entry.c" \
-      --aux "$root/tools/cgen-clang-parallel/build_and_measure.py" \
-      --aux "$root/tools/cgen-clang-parallel/shard_emitted_c.py" \
-      --artifact "binary=$native_binary" \
-      --artifact "outdir=$native_binary.parallel" \
-      --option "mode=$mode" \
-      -- python3 "$root/tools/cgen-clang-parallel/build_and_measure.py" "$@"
-    "$@"
-  else
-    python3 "$root/tools/cgen-clang-parallel/build_and_measure.py" "$@"
-  fi
+  mkdir -p "$queue_state"
+  set -- sh "$queue" run --kind cc --state-root "$queue_state" --cwd "$root" --root "$root" \
+    --compiler "${CC:-clang}" \
+    --input "$output.c" \
+    --input "$root/bend2/src/host/native-entry.c" \
+    --aux "$root/tools/cgen-clang-parallel/build_and_measure.py" \
+    --aux "$root/tools/cgen-clang-parallel/shard_emitted_c.py" \
+    --artifact "binary=$native_binary" \
+    --artifact "outdir=$native_binary.parallel" \
+    --option "mode=$mode" \
+    -- python3 "$root/tools/cgen-clang-parallel/build_and_measure.py" "$@"
+  "$@"
 }
 if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
   if [ "$router" = 1 ]; then
@@ -171,14 +167,10 @@ else
   case "$entry_path" in
     */bend2/harness/claude-credit-observe.bend) extra_libs=-lcurl ;;
   esac
-  if [ -f "$queue" ]; then
-    mkdir -p "$queue_state"
-    sh "$queue" run --kind cc --state-root "$queue_state" --cwd "$root" --root "$root" \
-      --compiler "${CC:-clang}" --input "$output.c" \
-      --artifact "binary=$output" -- \
-      "${CC:-clang}" -O1 -pthread "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
-  else
+  mkdir -p "$queue_state"
+  sh "$queue" run --kind cc --state-root "$queue_state" --cwd "$root" --root "$root" \
+    --compiler "${CC:-clang}" --input "$output.c" \
+    --artifact "binary=$output" -- \
     "${CC:-clang}" -O1 -pthread "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
-  fi
 fi
 printf '%s\n' "$output"
