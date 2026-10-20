@@ -220,7 +220,7 @@ def restore_checked(db: String, +handle: U32) -> IO(Restored):
     +present : Bool <- IO.pure(Bool,Bool.not(String.is_empty(value)))
     valid : String <- Bool.pick(IO(String),present,IO.try(String,DB.Sql.query(db,valid_sql(value))),IO.pure(String,"0"))
     +accepted : Bool <- IO.pure(Bool,Bool.and(present,String.eq(Tx.trim_nl(valid),"1")))
-    state : State <- Bool.pick(IO(State),accepted,decode_valid(db,value),IO.pure(State,empty()))
+    state : State <- Bool.pick(IO(State),accepted,decode_valid(db,value),Bool.pick(IO(State),present,reset_empty(db,handle),IO.pure(State,empty())))
     IO.pure(Restored,Restored{state,usable:accepted})
 
 def after_observation(db: String, handle: U32, +state: State, enabled: Bool, observed: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):

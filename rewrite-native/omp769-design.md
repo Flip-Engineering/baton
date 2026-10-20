@@ -223,7 +223,8 @@ An unusable checkpoint has no verified offset. The host positions the reader at
 the spool start and the ordinary replay runs; the store rebuilds the projection
 but cannot set a reader position the host does not expose. A valid checkpoint,
 including the one written per batch before an owner death, takes the bounded
-path.
+path. A rejected nonempty state rewinds through the compat path before the
+empty reducer state is returned.
 
 ### Retained spool measurement (read-only)
 
