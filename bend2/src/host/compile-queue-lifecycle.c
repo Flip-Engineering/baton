@@ -600,6 +600,8 @@ static int cq_run_command(const char *argv_text, size_t argv_length, const char 
   return 0;
 }
 
+/* Adoption reads the live command through Linux /proc. The portable queue
+   operations (run, key, wait, cancel, status) do not use this path. */
 static int cq_read_proc_file(u32 pid, const char *name, char **out, size_t *length) {
   char path[64];
   snprintf(path, sizeof(path), "/proc/%u/%s", pid, name);
