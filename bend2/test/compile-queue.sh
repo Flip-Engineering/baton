@@ -19,7 +19,18 @@ esac
 T=$(mktemp -d "${TMPDIR:-/tmp}/compile-queue-test.XXXXXX") || exit 2
 trap 'rm -rf -- "$T"' EXIT
 STATE=$BATON_COMPILE_QUEUE_ROOT
-mkdir -p "$STATE" || exit 2
+if [ ! -e "$STATE" ]; then
+  (umask 0007; mkdir -p -m 2770 "$STATE") || exit 2
+fi
+python3 - "$STATE" <<'PY_STATE' || exit 2
+import os, stat, sys
+path = sys.argv[1]
+info = os.stat(path)
+mode = info.st_mode
+if not stat.S_ISDIR(mode) or (mode & 0o2770) != 0o2770 or (mode & 0o002):
+    print("compile-queue test: state root must be a group-writable setgid directory (mode 2770)", file=sys.stderr)
+    sys.exit(2)
+PY_STATE
 LOG=$T/compiler.log
 FAKE=$T/fake-compiler
 : > "$LOG"
@@ -677,6 +688,26 @@ if [ -f "$STATE/keys/$adopt_key/completed/result" ]; then
     && pass 'guard recorded the preserved command argv' || bad 'guard command argv was not preserved'
   cmp -s "$STATE/keys/$adopt_key/completed/artifacts/binary" "$adopt_artifact" \
     && pass 'guard published the adopted artifact bytes' || bad 'guard artifact differs'
+  grep -Eq '^external-inputs-sha256=[0-9a-f]{64}$' "$STATE/keys/$adopt_key/completed/result" \
+    && pass 'guard bound every adopted input in one result field' || bad 'guard input binding digest missing'
+  python3 - "$STATE/keys/$adopt_key/adoption" <<'PY_TAMPER'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+lines = path.read_text().splitlines()
+indices = [i for i, line in enumerate(lines) if line.startswith("input=")]
+if len(indices) < 2:
+    raise SystemExit("adoption fixture did not record multiple inputs")
+fields = lines[indices[1]].split("\t")
+if len(fields) != 3:
+    raise SystemExit("second adoption input row is malformed")
+fields[2] = "0" * 64
+lines[indices[1]] = "\t".join(fields)
+path.write_text("\n".join(lines) + "\n")
+PY_TAMPER
+  sh "$QUEUE" status --state-root "$STATE" --key "$adopt_key" >"$T/adopt-tampered-status" 2>&1
+  grep -q "^completed-unusable key=$adopt_key$" "$T/adopt-tampered-status" \
+    && pass 'tampering with a non-first adopted input invalidates the result' \
+    || bad 'non-first adopted input tampering was not detected'
 else
   bad 'guard did not publish the adopted result'
 fi

@@ -97,21 +97,21 @@ def CompileQueueResult.base_verified(+result: String, +key: String) -> Bool:
       Bool.and(String.eq(CompileQueueResult.field(result, "key"), key),
         String.eq(CompileQueueResult.field(result, "verified"), "1"))))
 
-def CompileQueueResult.external_verified(+result: String, +command: String, +process: String, +inputs: String, +output: String, +artifacts: String) -> Bool:
+def CompileQueueResult.external_verified(+result: String, +command: String, +process: String, +inputs_sha256: String, +output: String, +artifacts: String) -> Bool:
   Bool.and(String.eq(CompileQueueResult.field(result, "external"), "1"),
     Bool.and(String.eq(CompileQueueResult.field(result, "external-verified"), "1"),
       Bool.and(String.eq(CompileQueueResult.field(result, "external-command"), command),
         Bool.and(String.eq(CompileQueueResult.field(result, "external-process"), process),
-          Bool.and(String.eq(CompileQueueResult.field(result, "external-inputs"), inputs),
+          Bool.and(String.eq(CompileQueueResult.field(result, "external-inputs-sha256"), inputs_sha256),
             Bool.and(String.eq(CompileQueueResult.field(result, "external-output"), output),
               String.eq(CompileQueueResult.field(result, "external-artifacts"), artifacts)))))))
 
 # A normal result is reusable after base_verified; an external result also
 # needs every adoption field to match. Callers verify the cached artifact
 # bytes separately with `verify`.
-def CompileQueueResult.reusable(+result: String, +key: String, +command: String, +process: String, +inputs: String, +output: String, +artifacts: String) -> Bool:
+def CompileQueueResult.reusable(+result: String, +key: String, +command: String, +process: String, +inputs_sha256: String, +output: String, +artifacts: String) -> Bool:
   Bool.and(CompileQueueResult.base_verified(result, key),
-    Bool.pick(Bool, String.eq(CompileQueueResult.field(result, "external"), "1"), CompileQueueResult.external_verified(result, command, process, inputs, output, artifacts), True{}))
+    Bool.pick(Bool, String.eq(CompileQueueResult.field(result, "external"), "1"), CompileQueueResult.external_verified(result, command, process, inputs_sha256, output, artifacts), True{}))
 
 def CompileQueueResult.header(+kind: String, +key: String, +verified: String, +external: String) -> String:
   "schema=" ++ CompileQueueResult.schema() ++ "\n"
@@ -121,11 +121,11 @@ def CompileQueueResult.header(+kind: String, +key: String, +verified: String, +e
   ++ "verified=" ++ verified ++ "\n"
   ++ "external=" ++ external ++ "\n"
 
-def CompileQueueResult.external_fields(+verified: String, +command: String, +process: String, +inputs: String, +output: String, +artifacts: String) -> String:
+def CompileQueueResult.external_fields(+verified: String, +command: String, +process: String, +inputs_sha256: String, +output: String, +artifacts: String) -> String:
   "external-verified=" ++ verified ++ "\n"
   ++ "external-command=" ++ command ++ "\n"
   ++ "external-process=" ++ process ++ "\n"
-  ++ "external-inputs=" ++ inputs ++ "\n"
+  ++ "external-inputs-sha256=" ++ inputs_sha256 ++ "\n"
   ++ "external-output=" ++ output ++ "\n"
   ++ "external-artifacts=" ++ artifacts ++ "\n"
 
@@ -221,7 +221,7 @@ def CompileQueueResult.install(+source: String, +destination: String, +staging: 
 # names: one artifact name per line.
 # rows:  one `name<TAB>destination` per line for copy/receipt calls.
 # adoption: newline-separated external-command, external-process,
-#           external-inputs, external-output and external-artifacts values.
+#           external-inputs-sha256, external-output and external-artifacts values.
 #
 # I/O failures propagate through the IO channel; result misses and altered
 # results answer Done{False} or Done{""}. write marks verified=1 only for a
@@ -405,6 +405,7 @@ def CompileQueueResult.write_adoption(+path: String, +key: String, +started: Str
     +command : String <- IO.pure(String, CompileQueueResult.adoption_field(adoption, "argv"))
     +process : String <- IO.pure(String, CompileQueueResult.external_process(adoption))
     inputs : String <- IO.pure(String, CompileQueueResult.adoption_field(adoption, "input"))
+    +inputs_sha256 : String <- IO.try(String, Identity.CompileQueueIdentity.text_digest(inputs))
     +output : String <- IO.pure(String, CompileQueueResult.field(adoption, "output"))
     artifacts_value : String <- IO.pure(String, CompileQueueResult.external_artifacts(name, digest))
     ready : Bool <- IO.pure(Bool, CompileQueueResult.adoption_ready(kind, digest, command, process, output, name, adoption))
@@ -418,7 +419,7 @@ def CompileQueueResult.write_adoption(+path: String, +key: String, +started: Str
       ++ "external-verified=" ++ verified ++ "\n"
       ++ "external-command=" ++ command ++ "\n"
       ++ "external-process=" ++ process ++ "\n"
-      ++ "external-inputs=" ++ inputs ++ "\n"
+      ++ "external-inputs-sha256=" ++ inputs_sha256 ++ "\n"
       ++ "external-output=" ++ output ++ "\n"
       ++ "external-artifacts=" ++ artifacts_value ++ "\n"
       ++ "artifact-name=" ++ name ++ "\n"
@@ -433,30 +434,32 @@ def CompileQueueResult.verify_adoption_read(read: Result<&1,&1,U32 & String,Stri
     case Fail{error}:
       IO.pure(Result<&1,&1,U32 & String,Bool>, Done{False{}})
     case Done{+result}:
-      +key = CompileQueueResult.basename(keydir)
-      +rows = CompileQueueResult.artifact_rows(result)
-      +artifact_name = CompileQueueResult.field(result, "artifact-name")
-      +artifact_digest = CompileQueueResult.field(result, "artifact-digest")
-      +recorded_name = CompileQueueResult.adoption_field(adoption, "artifact-name")
-      +recorded_digest = CompileQueueResult.adoption_field(adoption, "artifact-digest")
-      +consistent = CompileQueueResult.adoption_rows_match(recorded_name, recorded_digest, artifact_name, artifact_digest)
-      +expected_artifacts = CompileQueueResult.external_artifacts(recorded_name, recorded_digest)
-      +adopted = Bool.and(Bool.and(Bool.not(String.is_empty(recorded_name)),
-        Bool.and(Bool.not(String.is_empty(recorded_digest)),
-          Bool.and(consistent, CompileQueueResult.base_verified(result, key)))),
-        Bool.and(String.eq(CompileQueueResult.field(result, "external"), "1"),
-          Bool.and(String.eq(CompileQueueResult.field(result, "external-verified"), "1"),
-            Bool.and(CompileQueueResult.completed(result),
-              Bool.and(Bool.not(String.is_empty(rows)),
-                Bool.and(Bool.not(String.is_empty(artifact_name)),
-                  Bool.and(Bool.not(String.is_empty(artifact_digest)),
-                    CompileQueueResult.external_verified(result,
-                      CompileQueueResult.adoption_field(adoption, "argv"),
-                      CompileQueueResult.external_process(adoption),
-                      CompileQueueResult.adoption_field(adoption, "input"),
-                      CompileQueueResult.field(adoption, "output"),
-                      expected_artifacts))))))))
       do IO<Result<&1,&1,U32 & String,Bool>>:
+        +key : String <- IO.pure(String, CompileQueueResult.basename(keydir))
+        +rows : String <- IO.pure(String, CompileQueueResult.artifact_rows(result))
+        +artifact_name : String <- IO.pure(String, CompileQueueResult.field(result, "artifact-name"))
+        +artifact_digest : String <- IO.pure(String, CompileQueueResult.field(result, "artifact-digest"))
+        +recorded_name : String <- IO.pure(String, CompileQueueResult.adoption_field(adoption, "artifact-name"))
+        +recorded_digest : String <- IO.pure(String, CompileQueueResult.adoption_field(adoption, "artifact-digest"))
+        +consistent : Bool <- IO.pure(Bool, CompileQueueResult.adoption_rows_match(recorded_name, recorded_digest, artifact_name, artifact_digest))
+        +inputs : String <- IO.pure(String, CompileQueueResult.adoption_field(adoption, "input"))
+        +inputs_sha256 : String <- IO.try(String, Identity.CompileQueueIdentity.text_digest(inputs))
+        +expected_artifacts : String <- IO.pure(String, CompileQueueResult.external_artifacts(recorded_name, recorded_digest))
+        adopted : Bool <- IO.pure(Bool, Bool.and(Bool.and(Bool.not(String.is_empty(recorded_name)),
+          Bool.and(Bool.not(String.is_empty(recorded_digest)),
+            Bool.and(consistent, CompileQueueResult.base_verified(result, key)))),
+          Bool.and(String.eq(CompileQueueResult.field(result, "external"), "1"),
+            Bool.and(String.eq(CompileQueueResult.field(result, "external-verified"), "1"),
+              Bool.and(CompileQueueResult.completed(result),
+                Bool.and(Bool.not(String.is_empty(rows)),
+                  Bool.and(Bool.not(String.is_empty(artifact_name)),
+                    Bool.and(Bool.not(String.is_empty(artifact_digest)),
+                      CompileQueueResult.external_verified(result,
+                        CompileQueueResult.adoption_field(adoption, "argv"),
+                        CompileQueueResult.external_process(adoption),
+                        inputs_sha256,
+                        CompileQueueResult.field(adoption, "output"),
+                        expected_artifacts)))))))))
         artifacts_ok : Bool <- CompileQueueResult.verify_rows(String.lines(rows), keydir)
         IO.pure(Result<&1,&1,U32 & String,Bool>, Done{Bool.and(adopted, artifacts_ok)})
 
