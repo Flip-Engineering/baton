@@ -510,4 +510,50 @@ sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --
 [ -f "$T/cwd-probe" ] && pass 'explicit cwd reaches execution' || bad 'cwd ignored in execution'
 [ -d "$STATE/keys" ] && pass 'explicit state root used' || bad 'state root ignored'
 
+# The native runtime consumes its own -- delimiter. The public launcher adds
+# that boundary so the queue still receives its command delimiter and argv.
+# This command records argv without treating runtime-reserved options as flags.
+capture="$T/runtime-argv.capture"
+expected="$T/runtime-argv.expected"
+recorder="$T/argv-recorder"
+cat > "$recorder" <<'EOF'
+#!/bin/sh
+: > "$BATON2_TEST_CAPTURE_ARGV"
+out=''
+prev=''
+for arg in "$@"; do
+  printf '%s\n' "$arg" >> "$BATON2_TEST_CAPTURE_ARGV"
+  [ "$prev" = -o ] && out=$arg
+  prev=$arg
+done
+[ -n "$out" ] && printf 'argv-recorder-artifact' > "$out"
+EOF
+chmod +x "$recorder"
+export BATON2_TEST_CAPTURE_ARGV="$capture"
+sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" \
+  --compiler "$recorder" --linker "$recorder" --version fake-version \
+  --input "$T/input.c" --artifact "binary=$T/runtime-argv-output" \
+  --token tok-runtime-argv --option test=runtime-argv -- \
+  "$recorder" --tag runtime-argv --log "$LOG" -o "$T/runtime-argv-output" \
+  "$T/input.c" --help --gpu-build --threads 9 --gpu off -- \
+  >"$T/runtime-argv.out" 2>"$T/runtime-argv.err" \
+  && pass 'runtime reserved arguments reached the command' || bad 'runtime argv command failed'
+unset BATON2_TEST_CAPTURE_ARGV
+# command is the queue's immutable execution receipt. It records staged
+# input/output paths and every argument in execution order.
+receipt=$(find "$STATE/keys" -type f -path '*/attempts/*/command' \
+  -exec grep -lF -- "$recorder" {} + | head -n 1)
+if [ -n "$receipt" ] && cmp -s "$receipt" "$capture"; then
+  pass 'recorded argv matches the staged command receipt in order'
+else
+  bad 'recorded argv differs from the staged command receipt'
+fi
+printf '%s\n' --help --gpu-build --threads 9 --gpu off -- > "$expected"
+tail -n 7 "$capture" > "$T/runtime-argv.tail"
+cmp -s "$expected" "$T/runtime-argv.tail" \
+  && pass 'runtime reserved options and literal -- preserved in order' \
+  || bad 'runtime reserved options or literal -- changed'
+[ -s "$T/runtime-argv-output" ] \
+  && pass 'argv recorder published its declared binary' || bad 'argv recorder output missing'
+
 exit "$fail"

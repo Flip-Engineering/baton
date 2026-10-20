@@ -493,7 +493,7 @@ def config_state(config: Config) -> String:
 
 def regular_result(result: Result<&1,&1,U32 & String,String>) -> IO(Bool):
   match result:
-    case Done{value}: IO.pure(Bool, True{})
+    case Done{value}: IO.pure(Bool, Tx.str_eq(value, "1"))
     case Fail{error}: IO.pure(Bool, False{})
 
 def regular(path: String) -> IO(Bool):
