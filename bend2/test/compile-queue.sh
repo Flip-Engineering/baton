@@ -121,6 +121,18 @@ cgen_key() { # tag output extra...
     -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$@"
 }
 
+# A quoted include that names a directory fails during closure reads before execution.
+mkdir "$T/local.h"
+printf '#include "local.h"\nint main(void){return 0;}\n' > "$T/input.c"
+: > "$LOG"
+if run_cc closure-directory "$T/closure-directory-output"; then
+  bad 'directory include passed closure validation'
+else
+  pass 'directory include failed source closure'
+fi
+[ "$(count_starts)" = 0 ] && pass 'failed source closure did not start the fake compiler' || bad 'failed source closure started the fake compiler'
+printf 'int main(void){return 0;}\n' > "$T/input.c"
+
 # Identical concurrent cc requests.
 : > "$LOG"
 run_cc ident "$T/ident1" & p1=$!

@@ -284,6 +284,18 @@ def CompileQueueIdentity.enqueue_targets(+importer: String, targets: List<&2,Str
         CompileQueueIdentity.path_join(CompileQueueIdentity.path_dirname(importer), target))
       CompileQueueIdentity.enqueue_targets(importer, rest, next <> queue)
 
+def CompileQueueIdentity.walk_queue_state_queue(state: CompileQueueWalk) -> List<&2,String>:
+  match state:
+    case CompileQueueWalk{queue, visited, records}: queue
+
+def CompileQueueIdentity.walk_queue_state_visited(state: CompileQueueWalk) -> List<&2,String>:
+  match state:
+    case CompileQueueWalk{queue, visited, records}: visited
+
+def CompileQueueIdentity.walk_queue_state_records(state: CompileQueueWalk) -> List<&2,String>:
+  match state:
+    case CompileQueueWalk{queue, visited, records}: records
+
 # Import traversal expands a dynamic work queue; visited realpaths bound it to the finite source closure.
 @unsafe
 def CompileQueueIdentity.walk_queue(queue: List<&2,String>, +visited: List<&2,String>,
@@ -299,19 +311,17 @@ def CompileQueueIdentity.walk_queue(queue: List<&2,String>, +visited: List<&2,St
           Bool.pick(IO(Result<&1,&1,U32 & String,CompileQueueWalk>), CompileQueueIdentity.path_inside(root, resolved),
             do IO<Result<&1,&1,U32 & String,CompileQueueWalk>>:
               +seen : Bool <- IO.pure(Bool, CompileQueueIdentity.list_contains(visited, resolved))
-              +next : CompileQueueWalk <- Bool.pick(IO(CompileQueueWalk), seen,
-                IO.pure(CompileQueueWalk, CompileQueueWalk{rest, visited, records}),
-                do IO<CompileQueueWalk>:
+              +next : CompileQueueWalk <- IO.try(CompileQueueWalk, Bool.pick(IO(Result<&1,&1,U32 & String,CompileQueueWalk>), seen,
+                IO.pure(Result<&1,&1,U32 & String,CompileQueueWalk>, Done{CompileQueueWalk{rest, visited, records}}),
+                do IO<Result<&1,&1,U32 & String,CompileQueueWalk>>:
                   +text : String <- IO.try(String, T.Text.read(resolved))
                   digest : String <- IO.try(String, CompileQueueIdentity.file_digest(resolved))
                   size : String <- IO.try(String, CompileQueueIdentity.file_size(resolved))
                   record : String <- IO.pure(String, CompileQueueIdentity.path_relative(root, resolved) ++ "\t" ++ digest ++ "\t" ++ size)
                   targets : List<&2,String> <- IO.pure(List<&2,String>, CompileQueueIdentity.closure_targets(resolved, text))
                   next_queue : List<&2,String> <- IO.pure(List<&2,String>, CompileQueueIdentity.enqueue_targets(resolved, targets, rest))
-                  IO.pure(CompileQueueWalk, CompileQueueWalk{next_queue, resolved <> visited, record <> records}))
-              match next:
-                case CompileQueueWalk{q, v, r}:
-                  CompileQueueIdentity.walk_queue(q, v, r, root),
+                  IO.pure(Result<&1,&1,U32 & String,CompileQueueWalk>, Done{CompileQueueWalk{next_queue, resolved <> visited, record <> records}})))
+              CompileQueueIdentity.walk_queue(CompileQueueIdentity.walk_queue_state_queue(next), CompileQueueIdentity.walk_queue_state_visited(next), CompileQueueIdentity.walk_queue_state_records(next), root),
             IO.pure(Result<&1,&1,U32 & String,CompileQueueWalk>, Fail{(1, "source path outside root")})))
 
 def CompileQueueIdentity.walk(state: CompileQueueWalk, root: String) -> IO(Result<&1,&1,U32 & String,CompileQueueWalk>):
@@ -462,6 +472,14 @@ def CompileQueueIdentity.release_items(names: List<&2,String>, +directory: Strin
     case +name <> +rest:
       CompileQueueReleaseItem{directory ++ "/" ++ name, prefix ++ "/" ++ name} <> CompileQueueIdentity.release_items(rest, directory, prefix)
 
+def CompileQueueIdentity.release_step_items(step: CompileQueueReleaseStep) -> List<&2,CompileQueueReleaseItem>:
+  match step:
+    case CompileQueueReleaseStep{items, acc}: items
+
+def CompileQueueIdentity.release_step_acc(step: CompileQueueReleaseStep) -> List<&2,String>:
+  match step:
+    case CompileQueueReleaseStep{items, acc}: acc
+
 # This queue expands child directories dynamically. The host walk is finite because
 # the Bend release tree contains a finite number of directory entries.
 @unsafe
@@ -481,9 +499,7 @@ def CompileQueueIdentity.release_walk(+items: List<&2,CompileQueueReleaseItem>, 
                   children : List<&2,CompileQueueReleaseItem> <- IO.pure(List<&2,CompileQueueReleaseItem>, CompileQueueIdentity.release_items(String.lines(names), path, entry))
                   IO.pure(CompileQueueReleaseStep, CompileQueueReleaseStep{List.append(&2,CompileQueueReleaseItem,children,rest), acc}),
                 IO.pure(CompileQueueReleaseStep, CompileQueueReleaseStep{rest, acc})))
-            match step:
-              case CompileQueueReleaseStep{next_items, next_acc}:
-                CompileQueueIdentity.release_walk(next_items, next_acc))
+            CompileQueueIdentity.release_walk(CompileQueueIdentity.release_step_items(step), CompileQueueIdentity.release_step_acc(step))
 
 def CompileQueueIdentity.release_entries(+root: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
   do IO<Result<&1,&1,U32 & String,List<&2,String>>>:
@@ -613,7 +629,7 @@ def CompileQueueIdentity.input_source_fields(fields: List<&2,String>) -> String:
 def CompileQueueIdentity.input_source(line: String) -> String:
   CompileQueueIdentity.input_source_fields(String.split(line, Char.from_u32(9)))
 
-def CompileQueueIdentity.input_sources_go(lines: List<&2,String>, +acc: String, first: Bool) -> String:
+def CompileQueueIdentity.input_sources_go(lines: List<&2,String>, +acc: String, +first: Bool) -> String:
   match lines:
     case Nil{}: acc
     case +line <> +rest:
@@ -661,17 +677,15 @@ def CompileQueueIdentity.input_rows(lines: List<&2,String>) -> IO(Result<&1,&1,U
     case Nil{}:
       IO.pure(Result<&1,&1,U32 & String,String>, Done{""})
     case +line <> +rest:
-      +more : String <- IO.try(String, CompileQueueIdentity.input_rows(rest))
-      Bool.pick(IO(Result<&1,&1,U32 & String,String>), String.is_empty(line),
-        IO.pure(Result<&1,&1,U32 & String,String>, Done{more}),
-        do IO<Result<&1,&1,U32 & String,String>>:
-          +row : String <- IO.try(String, CompileQueueIdentity.input_row(line))
-          IO.pure(Result<&1,&1,U32 & String,String>, Done{Bool.pick(String, String.is_empty(row), "", row ++ "\n") ++ more}))
+      do IO<Result<&1,&1,U32 & String,String>>:
+        +row : String <- IO.try(String, CompileQueueIdentity.input_row(line))
+        +more : String <- IO.try(String, CompileQueueIdentity.input_rows(rest))
+        IO.pure(Result<&1,&1,U32 & String,String>, Done{Bool.pick(String, String.is_empty(row), "", row ++ "\n") ++ more})
 
 # Inputs and aux are separate newline-separated lists. Join them with one
 # newline only when both sides carry entries, so a path is never concatenated
 # with the first aux entry.
-def CompileQueueIdentity.closure_files(sources: String, aux: String) -> String:
+def CompileQueueIdentity.closure_files(+sources: String, +aux: String) -> String:
   Bool.pick(String, String.is_empty(sources), aux,
     Bool.pick(String, String.is_empty(aux), sources, sources ++ "\n" ++ aux))
 
