@@ -109,7 +109,9 @@ it receives the shared result. When the only requester is lost, the execution
 still completes and its artifacts remain available for the next request. A
 supervisor that dies without a result releases the lock, and the next waiter
 starts a new attempt. Liveness requires both a matching process start identity
-and a non-zombie process state; a zombie child is treated as ended.
+and a non-zombie process state; a zombie child is treated as ended. A fresh run
+refuses a live or uncertain active record after the key lock; a dead owner is
+removed and a completed result remains reusable.
 
 Each requester is bound to an owner token. `cancel --token` withdraws that
 owner; the shared execution is canceled only when no owners remain. The active
