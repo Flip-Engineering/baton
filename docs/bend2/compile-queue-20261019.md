@@ -14,6 +14,20 @@ queue serializes the expensive C-generation step so independent callers cannot
 repeat that overlap with identical inputs, and so distinct generation requests
 run one at a time.
 
+## Host resource sharing
+
+The host queue has two lanes. The `cgen` lane admits one execution at a time:
+distinct C-generation requests wait on `$state/cgen.lock`, while identical
+requests attach to the one active key and its result. The `cc` lane admits
+independent compilations concurrently; each `build_and_measure.py` invocation
+keeps its four shards and four jobs, and `build-native.sh` passes
+`--max-aggregate-rss-mb 0`, so the queue adds no process memory ceiling. A
+requester that disconnects leaves its supervisor running under the key lock;
+other requesters continue and receive the shared result. Owner tokens count
+live requesters, and cancellation stops the execution only when no live owner
+remains. The fake-command suite covers distinct cgen serialization, concurrent
+cc overlap, identical coalescing, requester loss, and one-owner withdrawal.
+
 ## Identity
 
 The material for one request is a line-oriented text record. The identity schema is versioned independently of the bootstrap shell; a shell key is never reused as a permanent cache key because it omits imported C and header inputs.
