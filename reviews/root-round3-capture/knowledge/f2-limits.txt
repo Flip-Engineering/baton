@@ -1,0 +1,1 @@
+Source-only; no compilation/check/build/Cgen/clang/test/CI. The dry/real fact divergence and the armHints resident-set cost are source-level concerns, not measurements; the queued plan lists the dry-vs-real facts and RSS comparisons. Cross-definition reuse is semantically gated by arm_eq and layouts but retains terms for the pass.

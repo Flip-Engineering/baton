@@ -1,0 +1,1 @@
+Source-only; no compiling or execution. Recommendation: compare (x.b ?? false) === (y.b ?? false) in the Ref case; add a source fixture with a duplicated arm containing f!() versus f() if the maintainers want a regression.

@@ -1,0 +1,1 @@
+arm_eq does not compare Ref.b, the bang marker; Ref.b changes emission (term_spine bang, cb.bangs, flat decisions, emit_fuse fork), so a hint collision can share a bang arm with a non-bang arm.

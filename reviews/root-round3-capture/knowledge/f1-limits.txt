@@ -1,0 +1,1 @@
+Source-only; no compiler, check, build, Cgen, clang, test, CI or queue request. No triggering fixture produced; the literal-default sites may have equal r, so runtime impact is unmeasured. The fix may require either restoring r equality (possibly reducing sharing) or proving the shared spin body is r-independent.

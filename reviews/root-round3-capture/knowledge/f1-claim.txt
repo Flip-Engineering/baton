@@ -1,0 +1,1 @@
+Production candidate 6c3d8a643e drops the arm_eq ADT refinement (r) comparison present in the capture-aware base 5eadd57c; arm_eq is not total over ADT terms and the emitted default/total can depend on r.

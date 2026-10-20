@@ -1,0 +1,1 @@
+Capture-aware source review: term_kids/term_uses/capture_order runtime coverage is consistent; cross-definition armHints reuse is enabled and memory-retaining; the dry pass disables arm sharing while the real pass shares, an unmeasured fixed-point asymmetry.

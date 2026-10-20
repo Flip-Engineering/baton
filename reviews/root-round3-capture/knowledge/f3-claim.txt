@@ -1,0 +1,1 @@
+Production commit 6c3d8a643e commits the capture-aware source 375fdc3b while repl-upstream.provenance.json and repl-upstream.lock.json still pin the canonical comp.ts b68bfe1a (199273 B); the canonical source and pin disagree.

@@ -1,0 +1,1 @@
+Source-only; no build or package restage attempted; the stale pin files are not modified by this review. Root owns merge/deployment and the final pin/package.

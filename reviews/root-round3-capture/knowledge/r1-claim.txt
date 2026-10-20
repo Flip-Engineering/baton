@@ -1,0 +1,1 @@
+ADT.r in arm_eq is emission-relevant: comp.ts emit_match calls Bend.book_adt, which filters constructors by tm.r, so the da753a093e ADT.r hunk is required and the claim that r is not read by comp.ts is inaccurate.

@@ -1,0 +1,1 @@
+Source-only; no package restage or build. Root owns merge/deployment and the final pin; this record flags the mismatch for the acceptance step.

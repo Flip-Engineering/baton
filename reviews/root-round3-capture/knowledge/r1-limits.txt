@@ -1,0 +1,1 @@
+Source-only; no compiler check, build, Cgen, clang, test or CI; the fixture arm_eq_adt_r.ts was not run. No fixture with a shared arm whose only difference is ADT.r was produced; the dependency is source-level.
