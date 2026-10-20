@@ -7,15 +7,13 @@ database and native conversation ID.
 ```sh
 baton inbox
 baton read message-one message-two
-baton acknowledge
 ```
 
 `read` returns complete stored deliveries in argument order, including messages
-that already have receipts. Each ID has its own result. `acknowledge` selects the
-current actor's completely read inputs and derives receipts from native handling
-evidence. Optional message selectors and `--receipt` retain explicit compatibility.
-Each owned message returns its retained receipt. The first receipt
-remains stored. Reading preserves pending receipts.
+that were already read. Each ID has its own result. Baton records a real read
+event internally when the recipient reads the input; the read persists even if
+the turn later fails or is interrupted. Pending input means delivered but not
+yet read. Reading settles the pending state without a separate command.
 
 Send several independent messages with `and` or `--and` between complete clauses:
 
@@ -99,7 +97,7 @@ baton attempt --and attempts --and outbox
 ```
 
 Inspections, completion decisions, guidance and the native operations below
-can share one batch, including bare `acknowledge`. Session, Player and assignment clauses use `--session` or
+can share one batch. Session, Player and assignment clauses use `--session` or
 `--id` to select a recorded target; omission selects the current actor. Each
 item retains complete `stdout`, `stderr`, actual `waitStatus` and command
 arguments. Its process status reports `completed`, `failed` or `refused`.

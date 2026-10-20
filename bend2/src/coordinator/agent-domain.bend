@@ -40,7 +40,7 @@ def member(+value: String, values: List<String>) -> Bool:
     case +head <> rest: Bool.or(String.eq(value,head),member(value,rest))
 
 def known(verb: String) -> Bool:
-  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide acknowledge status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure account resume stop force-stop recover-observer continue-task turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs harness-inventory"))
+  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure account resume stop force-stop recover-observer continue-task turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs harness-inventory"))
 
 def names_lookup(entries: List<NameSet>, +verb: String) -> List<String>:
   match entries:
@@ -57,7 +57,6 @@ def names(verb: String) -> List<String>:
     Names{"completion-request","--id --text --file"},
     Names{"completion-confirmed","--id --request --to"},
     Names{"guide","--id --to --text --file"},
-    Names{"acknowledge","--message --receipt"},
     Names{"status","--pretty"},
     Names{"pending","--index --pretty --sender --recipient --kind --state --after-seq --through-seq"},
     Names{"orchestra","--pretty"},
@@ -263,10 +262,9 @@ def help(action: String) -> String:
     case "assignment": "assignment [--session SESSION | --id SESSION] [--pretty]\nRead the selected session and its retained assignment and task-completion state in a mixed batch. Omitted target selects the current actor.\n"
     case "completion-request": "completion-request (--text TEXT | --file PATH) [--id ID]\nSend the complete request to the current actor's recorded parent through the existing contextual completion handler. Supports mixed and or --and batches.\n"
     case "completion-confirmed": "completion-confirmed [--to PLAYER] [--request REQUEST_ID] [--id ID]\nConfirm the selected Player's current request through the retained-request handler. Baton selects the owned request when omitted; an explicit request must belong to its author and current recipient. Supports mixed batches.\n"
-    case "acknowledge": "acknowledge [--message ID] [--receipt TEXT]\nAcknowledge the current actor's complete inputs through native read and handling evidence. Baton selects the owned input and receipt when omitted.\n"
     case "guide": "guide --to PLAYER (--text TEXT | --file PATH) [--id ID]\nAdmit complete guidance as the current actor through the existing contextual handler. Supports mixed batches.\n"
     case "status": "status [--pretty]\nRead the existing database status projection.\n"
-    case "pending": "pending [--index] [--pretty] [--sender SESSION] [--recipient SESSION] [--kind KIND] [--state pending|acknowledged|all] [--after-seq INTEGER] [--through-seq INTEGER]\nRead complete pending input; --index enables the native metadata filters.\n"
+    case "pending": "pending [--index] [--pretty] [--sender SESSION] [--recipient SESSION] [--kind KIND] [--state pending|read|all] [--after-seq INTEGER] [--through-seq INTEGER]\nRead complete pending input; --index enables the native metadata filters.\n"
     case "orchestra": "orchestra [--pretty]\nRead the existing Orchestra projection, including Players, operators, Ensembles and Sections.\n"
     case "role": "role [--session SESSION] [--role player|principal-conductor|associate-conductor|operator]\nRead the selected role. --role invokes the existing role assignment operation. Omitted session selects the current actor.\n"
     case "ensemble": "ensemble --id ID [--owner SESSION] [--coupling loose|tight]\nRead the Ensemble. --owner ensures it for that owner; --coupling creates or configures it through the existing ownership operation. Omitted owner for configuration selects the current actor.\n"

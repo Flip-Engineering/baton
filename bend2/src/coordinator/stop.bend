@@ -51,7 +51,7 @@ def admitted(allowed: Bool) -> IO(Unit):
   require_open(Bool.not(allowed))
 
 def result_sql(+session: String) -> String:
-  "SELECT json_object('session',session,'stopId',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''),'stoppedInputs',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND receipt IS NULL AND kind IN ('task','guidance','recovery')),'pendingReports',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND receipt IS NULL AND kind IN ('report','question'))) FROM session_stops WHERE session=" ++ C.q(session) ++ ";"
+  "SELECT json_object('session',session,'stopId',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''),'stoppedInputs',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND " ++ C.owed_sql("messages") ++ " AND kind IN ('task','guidance','recovery')),'pendingReports',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND " ++ C.owed_sql("messages") ++ " AND kind IN ('report','question'))) FROM session_stops WHERE session=" ++ C.q(session) ++ ";"
 
 # Legacy direct attempts have no keeper directory. Refusal preserves their rows.
 def supported_sql(+session: String) -> String:

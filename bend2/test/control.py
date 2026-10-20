@@ -112,19 +112,15 @@ def fixture_completion(body):
         assert sent['code']==0,sent
     read=command('delivery',request)
     assert read['code']==0,read
-    reviewed=command('ack',request,parent,'Fixture coordinator reviewed the result.')
-    assert reviewed['code']==0,reviewed
     confirmation=request+':confirmed'
     sent=command('message',confirmation,parent,session,'completion-confirmed',request)
     assert sent['code']==0,sent
     read=command('delivery',confirmation)
     assert read['code']==0,read
-    handled=command('ack',confirmation,session,'Fixture worker handled confirmation.')
-    assert handled['code']==0,handled
 def acknowledge():
     for ident in re.findall(r'^Message \([^\n]*\) from [^\n]* \[id: (.*?)\]:$',prompt,re.M):
-        accepted=command('ack',ident,session,'fixture-native-reviewed')
-        assert accepted['code']==0,accepted
+        read=command('read',ident)
+        assert read['code']==0,read
 reply({'pid':os.getpid(),'ppid':os.getppid(),'pgid':os.getpgrp(),'session':session,
        'native':native,'resume':resume,'args':args,'prompt':prompt,'cwd':os.getcwd(),
        'apiKeyVariablesPresent':[key for key in ('OPENAI_API_KEY','CODEX_API_KEY') if key in os.environ]})
@@ -139,8 +135,8 @@ while True:
         continue
     if action.get('ack_message'):
         ident=action['ack_message']
-        accepted=command('ack',ident,session,'fixture-native-reviewed')
-        assert accepted['code']==0,accepted
+        read=command('read',ident)
+        assert read['code']==0,read
         reply({'acknowledged':ident})
         continue
     if action.get('public_report'):

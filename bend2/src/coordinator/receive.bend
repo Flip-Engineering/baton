@@ -55,7 +55,8 @@ def orientation_text(db: String, session: String) -> IO(String):
 
 def instructions(executable: String, database: String, +session: String, orientation: String) -> String:
   "You are session " ++ session ++ " in a Baton Orchestra.\nRecorded orientation: " ++ orientation ++ "\nCoordinator executable/database argv: [" ++ J.string_literal(executable) ++ "," ++ J.string_literal(database) ++ "]\n"
-  ++ "Read complete owed input with inbox. Baton resolves the database, current actor, assignment and coordinator from the launch context. Use acknowledge after handling the current native turn's complete owned reads. Baton generates action identities and handling receipts. Read your inbox again as work continues. Explicit stops and direct operator instructions remain effective.\nUse report --text TEXT and ask --text TEXT to reach your recorded coordinator. Use completion-request --text SUMMARY when your assignment is ready. A parentless session follows its operator task. A coordinator uses completion-confirmed --to PLAYER to confirm that Player's current request. Pending delivery reports state their retained byte count; read each complete body with baton read MESSAGE_ID before acting on it. Use guide --to PLAYER --text TEXT for further instructions and native-reply --to PLAYER --text JSON for a pending native question.\nUse dispatch --to PLAYER --text TEXT to deliver a task to a recorded Player. An open assignment receives continuation input. Dispatch stores the complete text, request and setup outcome in the database. Use dispatch --stdin for standard input and dispatch --help for route selection. Independent Players can run concurrently. Their retained reports reach the recorded coordinator when their native turns end.\nUse join --session PLAYER --harness HARNESS --model MODEL --effort EFFORT --path WORKSPACE for a shared checkout. Use recruit --session PLAYER --harness HARNESS --model MODEL --effort EFFORT --repo REPO --branch BRANCH --path PATH --base COMMIT for a separate worktree. Baton records the current actor as parent. Register a receiver with receiver --session PLAYER --command EXECUTABLE --output-log PATH.\nFor source work, name the checkout, target branch and remote in the assignment. Commit completed contributions and report remaining work. The coordinating Conductor integrates and publishes contributions. Use land --session PLAYER --repo REPO --target BRANCH for a fast-forward contribution, or reconcile divergent contributions with ordinary Git operations. After the Player's owned turn finishes, receiver --session PLAYER --command EXECUTABLE --output-log PATH --cwd SHARED_CWD preserves its conversation and moves its recorded workspace. Remove a clean inactive temporary worktree and fully integrated branch with ordinary Git commands. Preserve active checkouts, unfinished changes, later unintegrated commits and explicit stops.\nUse players, orchestra, assignment, attempts and status to inspect recorded work. Use knowledge read for complete scoped findings and knowledge promote --to DESTINATION --finding FINDING to share reviewed evidence. Existing finding and message references select evidence; Baton generates identities for new records and relations. Use help ACTION for named arguments and as SESSION for an explicit actor override.\n"
+  ++ "Read complete owed input with inbox. Baton resolves the database, current actor, assignment and coordinator from the launch context and records complete reads internally. Read your inbox again as work continues. Explicit stops and direct operator instructions remain effective.\nUse report --text TEXT and ask --text TEXT to reach your recorded coordinator. Use completion-request --text SUMMARY when your assignment is ready. A parentless session follows its operator task. A coordinator uses completion-confirmed --to PLAYER to confirm that Player's current request. Pending delivery reports state their retained byte count; read each complete body with baton read MESSAGE_ID before acting on it. Use guide --to PLAYER --text TEXT for further instructions and native-reply --to PLAYER --text JSON for a pending native question.\nUse dispatch --to PLAYER --text TEXT to deliver a task to a recorded Player. An open assignment receives continuation input. Dispatch stores the complete text, request and setup outcome in the database. Use dispatch --stdin for standard input and dispatch --help for route selection. Independent Players can run concurrently. Their retained reports reach the recorded coordinator when their native turns end.\n"
+  ++ "Use join --session PLAYER --harness HARNESS --model MODEL --effort EFFORT --path WORKSPACE for a shared checkout. Use recruit --session PLAYER --harness HARNESS --model MODEL --effort EFFORT --repo REPO --branch BRANCH --path PATH --base COMMIT for a separate worktree. Baton records the current actor as parent. Register a receiver with receiver --session PLAYER --command EXECUTABLE --output-log PATH.\nFor source work, name the checkout, target branch and remote in the assignment. Commit completed contributions and report remaining work. The coordinating Conductor integrates and publishes contributions. Use land --session PLAYER --repo REPO --target BRANCH for a fast-forward contribution, or reconcile divergent contributions with ordinary Git operations. After the Player's owned turn finishes, receiver --session PLAYER --command EXECUTABLE --output-log PATH --cwd SHARED_CWD preserves its conversation and moves its recorded workspace. Remove a clean inactive temporary worktree and fully integrated branch with ordinary Git commands. Preserve active checkouts, unfinished changes, later unintegrated commits and explicit stops.\nUse players, orchestra, assignment, attempts and status to inspect recorded work. Use knowledge read for complete scoped findings and knowledge promote --to DESTINATION --finding FINDING to share reviewed evidence. Existing finding and message references select evidence; Baton generates identities for new records and relations. Use help ACTION for named arguments and as SESSION for an explicit actor override.\n"
   ++ Turn.task_instructions()
   ++ Turn.knowledge_instructions()
 
@@ -110,9 +111,9 @@ def continue_if(again: String -> IO(Result<&1,&1,U32 & String,Unit>), present: B
 # How much input is still owed after the cursor. Busy writers have committed
 # before trying the lock, so the owner reads this again after releasing it.
 def pending_count_sql(+session: String, cursor: String) -> String:
-  "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"
+  "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"
 
-# The message the wake hands to the invocation. It is the first unacknowledged
+# The message the wake hands to the invocation. It is the first unread
 # message after the cursor, so the wake never re-delivers input the attempt
 # already carried. Claim writers record it as the obligation owner.
 def wake_found(db: String, session: String, cursor: String) -> IO(String):
@@ -145,7 +146,7 @@ def continue_pending(+db: String, +session: String, +cursor: String, again: Stri
     continue_locked(db,session,cursor,again,Bool.not(String.eq(pending,"0\n")))
 
 # The lock holder deletes the claim row only once nothing is owed and no
-# retained attempt is recorded live. A finished turn with unacknowledged input
+# retained attempt is recorded live. A finished turn with unread input
 # still owes the wake, so the row survives for the next driver.
 # The settler releases only the exact admission ticket it read under its own
 # held lock: the owner and generation the claim carried when this hold began.
@@ -198,14 +199,14 @@ def custody_dead(+db: String, +directory: String, empty: Bool) -> IO(Bool):
 
 # Only the lock holder settles a claim. A queued invocation that finds the lock
 # held returns without touching the row, so it can never clear a live driver's
-# claim. The holder deletes the row only when no unacknowledged input remains
+# claim. The holder deletes the row only when no unread input remains
 # and host custody observes the recorded attempt dead, so a finished turn that
 # still owes input keeps the obligation for the next driver. The delete names
 # the exact ticket read under this same hold, so it removes nothing a newer
 # admission wrote. Takeover never reads the row for custody: any driver that
 # takes the lock may claim again once custody is observed dead, so a dead
-# owner never suppresses the wake. Acknowledging the owed input deletes the row
-# on the acknowledgement path; an admitted stop deletes it on the stop path.
+# owner never suppresses the wake. A recorded read of the owed input deletes the
+# row on the read path; an admitted stop deletes it on the stop path.
 def settle_owned(+db: String, +session: String, lock: Maybe<U32>) -> IO(Unit):
   match lock:
     case None{}: IO.pure(Unit,Unit{})
@@ -802,7 +803,7 @@ def selected(+db: String, +session: String, +cmd: String, +model: String, +effor
       storage : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
       ident : String <- IO.try(String,DB.Sql.query(db,"SELECT 'receive:' || " ++ C.q(session) ++ " || ':' || CAST(" ++ C.q(cursor) ++ " AS INTEGER) || ':' || lower(hex(randomblob(16)));"))
       +id : String <- IO.pure(String,Tx.trim_nl(ident))
-      +selection : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('ids',json_group_array(id),'text',coalesce(group_concat(input,char(10)||char(10)),'')) FROM (SELECT id,CASE WHEN kind='task' OR kind='task-assignment' THEN 'Message (' || kind || ') from ' || sender || ' [id: ' || id || ']:' || char(10) || body ELSE 'Message (' || kind || ') from ' || sender || ' [id: ' || id || '] retained ' || CAST(length(CAST(body AS BLOB)) AS TEXT) || ' bytes; read the complete body with baton read ' || id || '.' END AS input FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq<=CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq);"))
+      +selection : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('ids',json_group_array(id),'text',coalesce(group_concat(input,char(10)||char(10)),'')) FROM (SELECT id,CASE WHEN kind='task' OR kind='task-assignment' THEN 'Message (' || kind || ') from ' || sender || ' [id: ' || id || ']:' || char(10) || body ELSE 'Message (' || kind || ') from ' || sender || ' [id: ' || id || '] retained ' || CAST(length(CAST(body AS BLOB)) AS TEXT) || ' bytes; read the complete body with baton read ' || id || '.' END AS input FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ " AND seq<=CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq);"))
       body_hex : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(json_extract(" ++ C.q(selection) ++ ",'$.text'));"))
       body : String <- input_text(Req.decode_scalar_utf8(Tx.hex_decode(Tx.trim_nl(body_hex))))
       +inputs : String <- IO.try(String,DB.Sql.read(db,"SELECT json_extract(" ++ C.q(selection) ++ ",'$.ids');"))
@@ -821,7 +822,7 @@ def selected(+db: String, +session: String, +cmd: String, +model: String, +effor
 
 def acquired_pending(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, lock: U32, again: String -> IO(Result<&1,&1,U32 & String,Unit>), predecessor: String, +updates: Chan(String)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    +cursor : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(max(seq),0) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL;"))
+    +cursor : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(max(seq),0) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ ";"))
     selected(db,session,cmd,model,effort,cwd,log,lock,cursor,Bool.not(String.eq(cursor,"0\n")),again,predecessor,updates)
 
 # Recovery arguments store harness names as raw argv fields. Recovery consumers use the newline-terminated form returned by SQLite.
@@ -1050,8 +1051,7 @@ def recover(+db: String, +session: String, id: String, cursor: String, +cmd: Str
 def result_sql(+db: String, +session: String, +message: String, +admitted: String, +error: String) -> String:
   +attempt = C.q(Tx.trim_nl(admitted))
   +phase = "(SELECT phase FROM executions WHERE session=" ++ C.q(session) ++ " AND id=" ++ attempt ++ ")"
-  +attempt_receipt = "(SELECT handled FROM message_reads WHERE attempt=" ++ attempt ++ " AND handled IS NOT NULL LIMIT 1)"
-  "SELECT json_object('receive',CASE WHEN " ++ attempt ++ "='' THEN CASE WHEN " ++ C.q(error) ++ "<>'' THEN 'refused' ELSE 'none' END WHEN coalesce(" ++ phase ++ ",'') IN ('running','exited') THEN 'accepted' WHEN coalesce(" ++ phase ++ ",'')='' THEN 'accepted' ELSE CASE WHEN " ++ C.q(error) ++ "<>'' THEN 'refused' ELSE 'none' END END,'session'," ++ C.q(session) ++ ",'attempt',CASE WHEN " ++ attempt ++ "='' THEN '' ELSE " ++ attempt ++ " END,'state',coalesce(" ++ phase ++ ",''),'receipt',CASE WHEN " ++ attempt ++ "='' THEN '' ELSE coalesce((SELECT receipt FROM messages WHERE recipient=" ++ C.q(session) ++ " AND id=" ++ C.q(message) ++ " AND id IN (SELECT message FROM message_reads WHERE attempt=" ++ attempt ++ "))," ++ attempt_receipt ++ ",'') END,'pending',(SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL),'error'," ++ C.q(error) ++ ");"
+  "SELECT json_object('receive',CASE WHEN " ++ attempt ++ "='' THEN CASE WHEN " ++ C.q(error) ++ "<>'' THEN 'refused' ELSE 'none' END WHEN coalesce(" ++ phase ++ ",'') IN ('running','exited') THEN 'accepted' WHEN coalesce(" ++ phase ++ ",'')='' THEN 'accepted' ELSE CASE WHEN " ++ C.q(error) ++ "<>'' THEN 'refused' ELSE 'none' END END,'session'," ++ C.q(session) ++ ",'attempt',CASE WHEN " ++ attempt ++ "='' THEN '' ELSE " ++ attempt ++ " END,'state',coalesce(" ++ phase ++ ",''),'read',CASE WHEN " ++ attempt ++ "='' THEN '' ELSE coalesce((SELECT CASE WHEN " ++ C.read_sql("m") ++ " THEN 'recorded' ELSE 'unrecorded' END FROM messages m WHERE m.recipient=" ++ C.q(session) ++ " AND m.id=" ++ C.q(message) ++ "),'') END,'pending',(SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ "),'error'," ++ C.q(error) ++ ");"
 
 def answer_result(+db: String, +session: String, +message: String, +admitted: String, +error: String) -> IO(String):
   IO.try(String,DB.Sql.read(db,result_sql(db,session,message,admitted,error)))

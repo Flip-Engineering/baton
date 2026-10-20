@@ -76,11 +76,11 @@ def profile_predecessor_sql(+inputs: String) -> String:
   +cursor : String = "CAST(substr(e.id,length(" ++ prefix ++ ")+1) AS INTEGER)"
   "e.mode='retained' AND substr(e.id,1,length(" ++ prefix ++ "))=" ++ prefix
   ++ " AND EXISTS(SELECT 1 FROM messages h WHERE h.sender=e.session AND h.recipient=" ++ C.report_recipient("e.session") ++ " AND h.kind='report' AND substr(h.id,1,length(e.id||':profile-handoff-'))=e.id||':profile-handoff-')"
-  ++ " AND EXISTS(SELECT 1 FROM messages m WHERE m.recipient=e.session AND m.receipt IS NULL AND m.id IN(SELECT value FROM json_each(" ++ C.q(inputs) ++ ")) AND m.seq<=" ++ cursor ++ ")"
-  ++ " AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.recipient=e.session AND m.receipt IS NULL AND m.id IN(SELECT value FROM json_each(" ++ C.q(inputs) ++ ")) AND m.kind IN('task','task-assignment') AND m.seq>" ++ cursor ++ ")"
+  ++ " AND EXISTS(SELECT 1 FROM messages m WHERE m.recipient=e.session AND " ++ C.owed_sql("m") ++ " AND m.id IN(SELECT value FROM json_each(" ++ C.q(inputs) ++ ")) AND m.seq<=" ++ cursor ++ ")"
+  ++ " AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.recipient=e.session AND " ++ C.owed_sql("m") ++ " AND m.id IN(SELECT value FROM json_each(" ++ C.q(inputs) ++ ")) AND m.kind IN('task','task-assignment') AND m.seq>" ++ cursor ++ ")"
 
 def predecessor_sql(+session: String, +inputs: String) -> String:
-  "SELECT hex(coalesce((SELECT e.directory FROM executions e JOIN native_initial_inputs n ON n.session=e.session AND n.turn=e.id AND n.attempt=e.directory WHERE e.session=" ++ C.q(session) ++ " AND e.phase='exited' AND (EXISTS(SELECT 1 FROM messages m WHERE m.sender=e.session AND m.recipient=e.session AND m.receipt IS NULL AND m.id IN(SELECT value FROM json_each(" ++ C.q(inputs) ++ ")) AND ((m.kind='recovery' AND m.id=e.id||':recovery-input') OR (m.kind='guidance' AND m.id IN(e.id||':handoff-guidance',e.id||':transient-guidance',e.id||':route-guidance')))) OR (" ++ profile_predecessor_sql(inputs) ++ "))),''));"
+  "SELECT hex(coalesce((SELECT e.directory FROM executions e JOIN native_initial_inputs n ON n.session=e.session AND n.turn=e.id AND n.attempt=e.directory WHERE e.session=" ++ C.q(session) ++ " AND e.phase='exited' AND (EXISTS(SELECT 1 FROM messages m WHERE m.sender=e.session AND m.recipient=e.session AND " ++ C.owed_sql("m") ++ " AND m.id IN(SELECT value FROM json_each(" ++ C.q(inputs) ++ ")) AND ((m.kind='recovery' AND m.id=e.id||':recovery-input') OR (m.kind='guidance' AND m.id IN(e.id||':handoff-guidance',e.id||':transient-guidance',e.id||':route-guidance')))) OR (" ++ profile_predecessor_sql(inputs) ++ "))),''));"
 
 def predecessor(+db: String, session: String, inputs: String, explicit: String) -> IO(String):
   match explicit:

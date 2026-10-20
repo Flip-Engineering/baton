@@ -9,7 +9,7 @@ recorded database state.
 
 | Field | Source |
 |---|---|
-| pending count | `messages` rows with `recipient = session` and `receipt IS NULL` |
+| pending count | `messages` rows with `recipient = session`, no recipient-owned row in `message_reads`, and no legacy `receipt` |
 | attempt | `executions.id` and `executions.phase` for the session; both empty when no execution row is recorded |
 | endpoint present | `sessions.endpoint`, using the coordinator's `json_valid` / `json_type` / `json_array_length` check |
 | stop | a `session_stops` row for the session |
