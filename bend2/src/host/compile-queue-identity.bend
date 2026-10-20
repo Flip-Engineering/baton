@@ -1,5 +1,7 @@
 import Base
 import ./text.bend as T
+import ./files.bend as F
+import ./storage.bend as Storage
 
 # Shared compile queue identity, schema version 2.
 #
@@ -77,15 +79,6 @@ def CompileQueueIdentity.text_digest(text: String) -> IO(Result<&1,&1,U32 & Stri
 def CompileQueueIdentity.key(material: String) -> IO(Result<&1,&1,U32 & String,String>):
   CompileQueueIdentity.text_digest(material)
 
-
-# `version` is the captured compiler --version text, or empty when the caller
-# could not collect it. The closure records its SHA-256 and therefore changes
-# whenever the visible compiler version text changes.
-def CompileQueueIdentity.compiler_closure(compiler: String, linker: String, version: String) -> IO(Result<&1,&1,U32 & String,String>):
-  import "./compile-queue-digest.c"
-
-def CompileQueueIdentity.compiler_closure_digest(compiler: String, linker: String, version: String) -> IO(Result<&1,&1,U32 & String,String>):
-  import "./compile-queue-digest.c"
 
 def CompileQueueIdentity.file_digest(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./compile-queue-digest.c"
@@ -369,6 +362,162 @@ def CompileQueueIdentity.file_closure(source_root: String, files: String) -> IO(
 def CompileQueueIdentity.file_closure_digest(source_root: String, files: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     text : String <- IO.try(String, CompileQueueIdentity.file_closure(source_root, files))
+    CompileQueueIdentity.text_digest(text)
+
+# -------------------------------------------------------------------------
+# Compiler and linker closure policy. Host primitives supply resolution,
+# digests, script checks and directory listing; this module owns the wrapper
+# chain, release layout and toolchain record composition.
+
+type CompileQueueChain is Data:
+  CompileQueueChain{lines: String, final: String}
+
+def CompileQueueIdentity.absolute_target(value: String) -> String:
+  Bool.pick(String, String.starts_with(value, "/"), value, "")
+
+def CompileQueueIdentity.exec_target_lines(lines: List<&2,String>) -> String:
+  match lines:
+    case Nil{}:
+      ""
+    case line <> rest:
+      Bool.pick(String, String.starts_with(line, "exec \""),
+        CompileQueueIdentity.absolute_target(CompileQueueIdentity.second(String.split(line, Char.from_u32(34)))),
+        CompileQueueIdentity.exec_target_lines(rest))
+
+def CompileQueueIdentity.exec_target(text: String) -> String:
+  CompileQueueIdentity.exec_target_lines(String.lines(text))
+
+def CompileQueueIdentity.chain_done(final: String, lines: String) -> IO(Result<&1,&1,U32 & String,CompileQueueChain>):
+  IO.pure(Result<&1,&1,U32 & String,CompileQueueChain>, Done{CompileQueueChain{lines, final}})
+
+def CompileQueueIdentity.chain_step(resolved: String, label: String, steps: U32, lines: String) -> IO(Result<&1,&1,U32 & String,CompileQueueChain>):
+  do IO<Result<&1,&1,U32 & String,CompileQueueChain>>:
+    script : String <- IO.try(String, CompileQueueIdentity.is_script(resolved))
+    Bool.pick(IO<Result<&1,&1,U32 & String,CompileQueueChain>>,
+      Bool.and(String.eq(script, "1"), U32.is_lt(steps, 5)),
+      do IO<Result<&1,&1,U32 & String,CompileQueueChain>>:
+        text : String <- IO.try(String, T.Text.read(resolved))
+        target = CompileQueueIdentity.exec_target(text)
+        Bool.pick(IO<Result<&1,&1,U32 & String,CompileQueueChain>>, String.is_empty(target),
+          CompileQueueIdentity.chain_done(resolved, lines),
+          do IO<Result<&1,&1,U32 & String,CompileQueueChain>>:
+            next : String <- IO.try(String, CompileQueueIdentity.realpath(target))
+            regular : String <- IO.try(String, F.Files.regular(next))
+            Bool.pick(IO<Result<&1,&1,U32 & String,CompileQueueChain>>, String.eq(regular, "1"),
+              do IO<Result<&1,&1,U32 & String,CompileQueueChain>>:
+                next_digest : String <- IO.try(String, CompileQueueIdentity.file_digest(next))
+                CompileQueueIdentity.chain_step(next, label, U32.inc(steps), lines ++ label ++ "-wrapper=" ++ next_digest ++ "\n"),
+              CompileQueueIdentity.chain_done(resolved, lines))),
+      CompileQueueIdentity.chain_done(resolved, lines))
+
+def CompileQueueIdentity.chain(path: String, label: String) -> IO(Result<&1,&1,U32 & String,CompileQueueChain>):
+  do IO<Result<&1,&1,U32 & String,CompileQueueChain>>:
+    resolved : String <- IO.try(String, CompileQueueIdentity.resolve_command(path))
+    digest : String <- IO.try(String, CompileQueueIdentity.file_digest(resolved))
+    CompileQueueIdentity.chain_step(resolved, label, 0, label ++ "-entry=" ++ digest ++ "\n")
+
+def CompileQueueIdentity.observe_kind(path: String) -> IO(String):
+  do IO<String>:
+    observed : Result<&1,&1,U32 & String,String> <- Storage.StorageHost.observe(path)
+    match observed:
+      case Fail{error}:
+        IO.pure(String, "")
+      case Done{record}:
+        match String.split(record, Char.from_u32(9)):
+          case kind <> rest:
+            IO.pure(String, kind)
+          case other:
+            IO.pure(String, "")
+
+def CompileQueueIdentity.release_walk(names: List<&2,String>, directory: String, prefix: String, acc: List<&2,String>) -> IO(List<&2,String>):
+  match names:
+    case Nil{}:
+      IO.pure(List<&2,String>, acc)
+    case name <> rest:
+      Bool.pick(IO(List<&2,String>), String.is_empty(name), CompileQueueIdentity.release_walk(rest, directory, prefix, acc),
+        do IO(List<&2,String>):
+          child = directory ++ "/" ++ name
+          entry = prefix ++ "/" ++ name
+          kind : String <- CompileQueueIdentity.observe_kind(child)
+          Bool.pick(IO(List<&2,String>), String.eq(kind, "file"),
+            CompileQueueIdentity.release_walk(rest, directory, prefix, entry <> acc),
+            Bool.pick(IO(List<&2,String>), String.eq(kind, "dir"),
+              do IO(List<&2,String>):
+                listed : Result<&1,&1,U32 & String,String> <- CompileQueueIdentity.list_dir(child)
+                match listed:
+                  case Fail{error}:
+                    CompileQueueIdentity.release_walk(rest, directory, prefix, acc)
+                  case Done{names}:
+                    deeper <- CompileQueueIdentity.release_walk(String.lines(names), child, entry, acc)
+                    CompileQueueIdentity.release_walk(rest, directory, prefix, deeper),
+              CompileQueueIdentity.release_walk(rest, directory, prefix, acc))))
+
+def CompileQueueIdentity.release_entries(root: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
+  do IO<Result<&1,&1,U32 & String,List<&2,String>>>:
+    bent : String <- IO.try(String, CompileQueueIdentity.list_dir(root ++ "/bend2"))
+    walked : List<&2,String> <- CompileQueueIdentity.release_walk(String.lines(bent), root ++ "/bend2", "bend2", Nil{})
+    kind : String <- CompileQueueIdentity.observe_kind(root ++ "/bin/bun")
+    with_bun = Bool.pick(List<&2,String>, String.eq(kind, "file"), "bin/bun" <> walked, walked)
+    IO.pure(Result<&1,&1,U32 & String,List<&2,String>>, Done{CompileQueueIdentity.sort(with_bun)})
+
+def CompileQueueIdentity.toolchain_files(root: String, entries: List<&2,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match entries:
+    case Nil{}:
+      IO.pure(Result<&1,&1,U32 & String,String>, Done{""})
+    case entry <> rest:
+      do IO<Result<&1,&1,U32 & String,String>>:
+        digest : String <- IO.try(String, CompileQueueIdentity.file_digest(root ++ "/" ++ entry))
+        size : String <- IO.try(String, CompileQueueIdentity.file_size(root ++ "/" ++ entry))
+        more : String <- IO.try(String, CompileQueueIdentity.toolchain_files(root, rest))
+        IO.pure(Result<&1,&1,U32 & String,String>, Done{"toolchain-file=" ++ entry ++ " " ++ digest ++ " " ++ size ++ "\n" ++ more})
+
+def CompileQueueIdentity.linker_lines(linker: String) -> IO(Result<&1,&1,U32 & String,String>):
+  Bool.pick(IO(Result<&1,&1,U32 & String,String>), String.is_empty(linker),
+    IO.pure(Result<&1,&1,U32 & String,String>, Done{"linker=none\n"}),
+    do IO<Result<&1,&1,U32 & String,String>>:
+      chain : CompileQueueChain <- IO.try(CompileQueueChain, CompileQueueIdentity.chain(linker, "linker"))
+      match chain:
+        case CompileQueueChain{lines, final}:
+          IO.pure(Result<&1,&1,U32 & String,String>, Done{lines}))
+
+def CompileQueueIdentity.toolchain_text(compiler: String, linker: String, version: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    version_sha : String <- IO.try(String, CompileQueueIdentity.text_digest(version))
+    Bool.pick(IO<Result<&1,&1,U32 & String,String>>, String.is_empty(compiler),
+      do IO<Result<&1,&1,U32 & String,String>>:
+        linker_text : String <- IO.try(String, CompileQueueIdentity.linker_lines(linker))
+        text = "schema=baton-compile-queue-toolchain-v2\ncompiler=none\n" ++ linker_text ++ "compiler-version-sha=" ++ version_sha ++ "\n"
+        IO.pure(Result<&1,&1,U32 & String,String>, Done{text}),
+      do IO<Result<&1,&1,U32 & String,String>>:
+        chain : CompileQueueChain <- IO.try(CompileQueueChain, CompileQueueIdentity.chain(compiler, "compiler"))
+        match chain:
+          case CompileQueueChain{lines, final}:
+            parent = CompileQueueIdentity.path_dirname(final)
+            root = CompileQueueIdentity.path_dirname(parent)
+            main_kind : String <- CompileQueueIdentity.observe_kind(root ++ "/bend2/main.ts")
+            bun_kind : String <- CompileQueueIdentity.observe_kind(root ++ "/bin/bun")
+            Bool.pick(IO<Result<&1,&1,U32 & String,String>>,
+              Bool.and(String.eq(main_kind, "file"), String.eq(bun_kind, "file")),
+              do IO<Result<&1,&1,U32 & String,String>>:
+                entries : List<&2,String> <- IO.try(List<&2,String>, CompileQueueIdentity.release_entries(root))
+                files : String <- IO.try(String, CompileQueueIdentity.toolchain_files(root, entries))
+                linker_text : String <- IO.try(String, CompileQueueIdentity.linker_lines(linker))
+                text = "schema=baton-compile-queue-toolchain-v2\n" ++ lines ++ "toolchain-release=release\n" ++ files ++ linker_text ++ "compiler-version-sha=" ++ version_sha ++ "\n"
+                IO.pure(Result<&1,&1,U32 & String,String>, Done{text}),
+              do IO<Result<&1,&1,U32 & String,String>>:
+                linker_text : String <- IO.try(String, CompileQueueIdentity.linker_lines(linker))
+                text = "schema=baton-compile-queue-toolchain-v2\n" ++ lines ++ "toolchain-release=executable\n" ++ linker_text ++ "compiler-version-sha=" ++ version_sha ++ "\n"
+                IO.pure(Result<&1,&1,U32 & String,String>, Done{text}))))
+
+# `version` is the captured compiler --version text, or empty when the caller
+# could not collect it. The closure records its SHA-256 and therefore changes
+# whenever the visible compiler version text changes.
+def CompileQueueIdentity.compiler_closure(compiler: String, linker: String, version: String) -> IO(Result<&1,&1,U32 & String,String>):
+  CompileQueueIdentity.toolchain_text(compiler, linker, version)
+
+def CompileQueueIdentity.compiler_closure_digest(compiler: String, linker: String, version: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    text : String <- IO.try(String, CompileQueueIdentity.compiler_closure(compiler, linker, version))
     CompileQueueIdentity.text_digest(text)
 
 def CompileQueueIdentity.material(kind: String, entry: String, options: String, source_digest: String, file_closure_digest: String, compiler_digest: String, input_rows: String, artifact_names: String, normalized_argv: String) -> String:
