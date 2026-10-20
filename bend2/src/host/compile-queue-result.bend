@@ -417,7 +417,8 @@ def CompileQueueResult.copy_rows(keydir: String, rows: List<&2,String>) -> IO(Re
       Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.is_empty(row),
         CompileQueueResult.copy_rows(keydir, rest),
         do IO<Result<&1,&1,U32 & String,Unit>>:
-          match String.split(row, Char.from_u32(9)):
+          +queue_scrutinee_420 = String.split(row, Char.from_u32(9))
+          match queue_scrutinee_420:
             case name <> destination <> tail:
               staging = destination ++ ".queue-tmp"
               removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
@@ -429,17 +430,21 @@ def CompileQueueResult.copy_rows(keydir: String, rows: List<&2,String>) -> IO(Re
 def CompileQueueResult.copy_artifacts(keydir: String, rows: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   CompileQueueResult.copy_rows(keydir, String.lines(rows))
 
+def CompileQueueResult.receipt_row(row: String, rest: List<&2,String>) -> String:
+  +parts = String.split(row, Char.from_u32(9))
+  match parts:
+    case name <> destination <> tail:
+      "artifact-" ++ name ++ "=" ++ destination ++ "\n" ++ CompileQueueResult.receipt_rows(rest)
+    case other:
+      CompileQueueResult.receipt_rows(rest)
+
 def CompileQueueResult.receipt_rows(rows: List<&2,String>) -> String:
   match rows:
     case Nil{}:
       ""
     case row <> rest:
       Bool.pick(String, String.is_empty(row), CompileQueueResult.receipt_rows(rest),
-        match String.split(row, Char.from_u32(9)):
-          case name <> destination <> tail:
-            "artifact-" ++ name ++ "=" ++ destination ++ "\n" ++ CompileQueueResult.receipt_rows(rest)
-          case other:
-            CompileQueueResult.receipt_rows(rest))
+        CompileQueueResult.receipt_row(row, rest))
 
 def CompileQueueResult.receipt_write(receipt: String, status: String, key: String, reused: String, owner: String, rows: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   text = "status=" ++ status ++ "\n"
@@ -449,17 +454,21 @@ def CompileQueueResult.receipt_write(receipt: String, status: String, key: Strin
     ++ CompileQueueResult.receipt_rows(String.lines(rows))
   CompileQueueResult.write_text(receipt, text, receipt ++ ".tmp")
 
+def CompileQueueResult.run_name(record: String, rest: List<&2,String>) -> List<&2,String>:
+  +parts = String.split(record, Char.from_u32(9))
+  match parts:
+    case kind <> name <> tail:
+      Bool.pick(List<&2,String>, String.eq(kind, "dir"), name <> CompileQueueResult.run_names(rest), CompileQueueResult.run_names(rest))
+    case other:
+      CompileQueueResult.run_names(rest)
+
 def CompileQueueResult.run_names(records: List<&2,String>) -> List<&2,String>:
   match records:
     case Nil{}:
       Nil{}
     case record <> rest:
       Bool.pick(List<&2,String>, String.is_empty(record), CompileQueueResult.run_names(rest),
-        match String.split(record, Char.from_u32(9)):
-          case kind <> name <> tail:
-            Bool.pick(List<&2,String>, String.eq(kind, "dir"), name <> CompileQueueResult.run_names(rest), CompileQueueResult.run_names(rest))
-          case other:
-            CompileQueueResult.run_names(rest))
+        CompileQueueResult.run_name(record, rest))
 
 def CompileQueueResult.latest_scan(names: List<&2,String>, keydir: String, best: CompileQueueLatest) -> IO(CompileQueueLatest):
   match names:

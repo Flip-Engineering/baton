@@ -227,9 +227,11 @@ def CompileQueueIdentity.second(values: List<&2,String>) -> String:
       ""
 
 def CompileQueueIdentity.first_token(value: String) -> String:
-  match String.split(value, Char.from_u32(32)):
+  +queue_scrutinee_230 = String.split(value, Char.from_u32(32))
+  match queue_scrutinee_230:
     case first <> rest:
-      match String.split(first, Char.from_u32(9)):
+      +queue_scrutinee_232 = String.split(first, Char.from_u32(9))
+      match queue_scrutinee_232:
         case token <> tail:
           token
         case other:
@@ -423,7 +425,8 @@ def CompileQueueIdentity.observe_kind(path: String) -> IO(String):
       case Fail{error}:
         IO.pure(String, "")
       case Done{record}:
-        match String.split(record, Char.from_u32(9)):
+        +queue_scrutinee_426 = String.split(record, Char.from_u32(9))
+        match queue_scrutinee_426:
           case kind <> rest:
             IO.pure(String, kind)
           case other:
@@ -535,7 +538,8 @@ def CompileQueueIdentity.material_key(kind: String, entry: String, options: Stri
   CompileQueueIdentity.key(CompileQueueIdentity.material(kind, entry, options, source_digest, file_closure_digest, compiler_digest, input_rows, artifact_names, normalized_argv))
 
 def CompileQueueIdentity.input_source(line: String) -> String:
-  match String.split(line, Char.from_u32(9)):
+  +queue_scrutinee_538 = String.split(line, Char.from_u32(9))
+  match queue_scrutinee_538:
     case source <> destination <> tail:
       source
     case other:
@@ -550,7 +554,8 @@ def CompileQueueIdentity.input_sources(lines: List<&2,String>) -> String:
       Bool.pick(String, String.is_empty(source), CompileQueueIdentity.input_sources(rest), source ++ "\n" ++ CompileQueueIdentity.input_sources(rest))
 
 def CompileQueueIdentity.artifact_name(line: String) -> String:
-  match String.split(line, Char.from_u32(9)):
+  +queue_scrutinee_553 = String.split(line, Char.from_u32(9))
+  match queue_scrutinee_553:
     case name <> path <> tail:
       name
     case other:
@@ -565,7 +570,8 @@ def CompileQueueIdentity.artifact_names(lines: List<&2,String>) -> String:
       Bool.pick(String, String.is_empty(name), CompileQueueIdentity.artifact_names(rest), name ++ "\n" ++ CompileQueueIdentity.artifact_names(rest))
 
 def CompileQueueIdentity.input_row(line: String) -> IO(Result<&1,&1,U32 & String,String>):
-  match String.split(line, Char.from_u32(9)):
+  +queue_scrutinee_568 = String.split(line, Char.from_u32(9))
+  match queue_scrutinee_568:
     case source <> destination <> tail:
       do IO<Result<&1,&1,U32 & String,String>>:
         digest : String <- IO.try(String, CompileQueueIdentity.file_digest(source))
