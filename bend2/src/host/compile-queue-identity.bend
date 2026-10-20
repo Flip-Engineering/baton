@@ -136,13 +136,15 @@ def CompileQueueIdentity.input_lines(rows: List<&2,String>) -> String:
   match rows:
     case Nil{}: ""
     case +row <> +rest:
-      Bool.pick(String, String.is_empty(row), CompileQueueIdentity.input_lines(rest), "input=" ++ row ++ "\n" ++ CompileQueueIdentity.input_lines(rest))
+      +tail = CompileQueueIdentity.input_lines(rest)
+      Bool.pick(String, String.is_empty(row), tail, "input=" ++ row ++ "\n" ++ tail)
 
 def CompileQueueIdentity.artifact_lines(names: List<&2,String>) -> String:
   match names:
     case Nil{}: ""
     case +name <> +rest:
-      Bool.pick(String, String.is_empty(name), CompileQueueIdentity.artifact_lines(rest), "artifact-name=" ++ name ++ "\n" ++ CompileQueueIdentity.artifact_lines(rest))
+      +tail = CompileQueueIdentity.artifact_lines(rest)
+      Bool.pick(String, String.is_empty(name), tail, "artifact-name=" ++ name ++ "\n" ++ tail)
 
 def CompileQueueIdentity.argv_terminated(tokens: List<&2,String>) -> String:
   match tokens:
@@ -245,9 +247,9 @@ def CompileQueueIdentity.bend_targets(lines: List<&2,String>) -> List<&2,String>
       Nil{}
     case line <> +rest:
       +target = CompileQueueIdentity.bend_import_target(line)
-      Bool.pick(List<&2,String>, String.is_empty(target), CompileQueueIdentity.bend_targets(rest),
-        Bool.pick(List<&2,String>, String.eq(target, "Base"), CompileQueueIdentity.bend_targets(rest),
-          target <> CompileQueueIdentity.bend_targets(rest)))
+      +tail = CompileQueueIdentity.bend_targets(rest)
+      Bool.pick(List<&2,String>, String.is_empty(target), tail,
+        Bool.pick(List<&2,String>, String.eq(target, "Base"), tail, target <> tail))
 
 def CompileQueueIdentity.c_include_target(line: String) -> String:
   +trimmed = String.trim_start(line)
@@ -261,8 +263,8 @@ def CompileQueueIdentity.c_targets(lines: List<&2,String>) -> List<&2,String>:
       Nil{}
     case line <> +rest:
       +target = CompileQueueIdentity.c_include_target(line)
-      Bool.pick(List<&2,String>, String.is_empty(target), CompileQueueIdentity.c_targets(rest),
-        target <> CompileQueueIdentity.c_targets(rest))
+      +tail = CompileQueueIdentity.c_targets(rest)
+      Bool.pick(List<&2,String>, String.is_empty(target), tail, target <> tail)
 
 def CompileQueueIdentity.closure_targets(path: String, +text: String) -> List<&2,String>:
   +name = String.to_lower(CompileQueueIdentity.path_basename(path))
@@ -295,16 +297,21 @@ def CompileQueueIdentity.walk_queue(queue: List<&2,String>, +visited: List<&2,St
         do IO<Result<&1,&1,U32 & String,CompileQueueWalk>>:
           +resolved : String <- IO.try(String, CompileQueueIdentity.realpath(head))
           Bool.pick(IO(Result<&1,&1,U32 & String,CompileQueueWalk>), CompileQueueIdentity.path_inside(root, resolved),
-            Bool.pick(IO(Result<&1,&1,U32 & String,CompileQueueWalk>), CompileQueueIdentity.list_contains(visited, resolved),
-              CompileQueueIdentity.walk_queue(rest, visited, records, root),
-              do IO<Result<&1,&1,U32 & String,CompileQueueWalk>>:
-                +text : String <- IO.try(String, T.Text.read(resolved))
-                digest : String <- IO.try(String, CompileQueueIdentity.file_digest(resolved))
-                size : String <- IO.try(String, CompileQueueIdentity.file_size(resolved))
-                record : String <- IO.pure(String, CompileQueueIdentity.path_relative(root, resolved) ++ "\t" ++ digest ++ "\t" ++ size)
-                targets : List<&2,String> <- IO.pure(List<&2,String>, CompileQueueIdentity.closure_targets(resolved, text))
-                next_queue : List<&2,String> <- IO.pure(List<&2,String>, CompileQueueIdentity.enqueue_targets(resolved, targets, rest))
-                CompileQueueIdentity.walk_queue(next_queue, resolved <> visited, record <> records, root)),
+            do IO<Result<&1,&1,U32 & String,CompileQueueWalk>>:
+              +seen : Bool <- IO.pure(Bool, CompileQueueIdentity.list_contains(visited, resolved))
+              +next : CompileQueueWalk <- Bool.pick(IO(CompileQueueWalk), seen,
+                IO.pure(CompileQueueWalk, CompileQueueWalk{rest, visited, records}),
+                do IO<CompileQueueWalk>:
+                  +text : String <- IO.try(String, T.Text.read(resolved))
+                  digest : String <- IO.try(String, CompileQueueIdentity.file_digest(resolved))
+                  size : String <- IO.try(String, CompileQueueIdentity.file_size(resolved))
+                  record : String <- IO.pure(String, CompileQueueIdentity.path_relative(root, resolved) ++ "\t" ++ digest ++ "\t" ++ size)
+                  targets : List<&2,String> <- IO.pure(List<&2,String>, CompileQueueIdentity.closure_targets(resolved, text))
+                  next_queue : List<&2,String> <- IO.pure(List<&2,String>, CompileQueueIdentity.enqueue_targets(resolved, targets, rest))
+                  IO.pure(CompileQueueWalk, CompileQueueWalk{next_queue, resolved <> visited, record <> records}))
+              match next:
+                case CompileQueueWalk{q, v, r}:
+                  CompileQueueIdentity.walk_queue(q, v, r, root),
             IO.pure(Result<&1,&1,U32 & String,CompileQueueWalk>, Fail{(1, "source path outside root")})))
 
 def CompileQueueIdentity.walk(state: CompileQueueWalk, root: String) -> IO(Result<&1,&1,U32 & String,CompileQueueWalk>):
@@ -446,6 +453,9 @@ def CompileQueueIdentity.observe_kind(path: String) -> IO(String):
 type CompileQueueReleaseItem is Data:
   CompileQueueReleaseItem{path: String, entry: String}
 
+type CompileQueueReleaseStep is Data:
+  CompileQueueReleaseStep{items: List<&2,CompileQueueReleaseItem>, acc: List<&2,String>}
+
 def CompileQueueIdentity.release_items(names: List<&2,String>, +directory: String, +prefix: String) -> List<&2,CompileQueueReleaseItem>:
   match names:
     case Nil{}: Nil{}
@@ -463,14 +473,17 @@ def CompileQueueIdentity.release_walk(+items: List<&2,CompileQueueReleaseItem>, 
         case CompileQueueReleaseItem{path, entry}:
           do IO<List<&2,String>>:
             +kind : String <- CompileQueueIdentity.observe_kind(path)
-            Bool.pick(IO(List<&2,String>), String.eq(kind, "file"),
-              CompileQueueIdentity.release_walk(rest, entry <> acc),
-              Bool.pick(IO(List<&2,String>), String.eq(kind, "dir"),
-                do IO<List<&2,String>>:
+            +step : CompileQueueReleaseStep <- Bool.pick(IO(CompileQueueReleaseStep), String.eq(kind, "file"),
+              IO.pure(CompileQueueReleaseStep, CompileQueueReleaseStep{rest, entry <> acc}),
+              Bool.pick(IO(CompileQueueReleaseStep), String.eq(kind, "dir"),
+                do IO<CompileQueueReleaseStep>:
                   names : String <- IO.try(String, CompileQueueIdentity.list_dir(path))
                   children : List<&2,CompileQueueReleaseItem> <- IO.pure(List<&2,CompileQueueReleaseItem>, CompileQueueIdentity.release_items(String.lines(names), path, entry))
-                  CompileQueueIdentity.release_walk(List.append(&2,CompileQueueReleaseItem,children,rest), acc),
-                CompileQueueIdentity.release_walk(rest, acc)))
+                  IO.pure(CompileQueueReleaseStep, CompileQueueReleaseStep{List.append(&2,CompileQueueReleaseItem,children,rest), acc}),
+                IO.pure(CompileQueueReleaseStep, CompileQueueReleaseStep{rest, acc})))
+            match step:
+              case CompileQueueReleaseStep{next_items, next_acc}:
+                CompileQueueIdentity.release_walk(next_items, next_acc))
 
 def CompileQueueIdentity.release_entries(+root: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
   do IO<Result<&1,&1,U32 & String,List<&2,String>>>:
