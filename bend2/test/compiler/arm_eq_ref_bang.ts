@@ -6,10 +6,13 @@
 // call.bang (comp.ts:823), cb.bangs (comp.ts:1536), and emit_jump/once
 // (comp.ts:2140), so arm_eq must reject the pair; otherwise a hint collision
 // can share a spin and change bang semantics.
+// This fixture covers arm_eq equality only, NOT end-to-end capture emission;
+// capture emission remains queue-held qualification.
 //
 // Source-only fixture. Do not run as part of the source commit; the root queue
 // owns compiler checks.
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as Bend from "../../compiler/upstream/bend.ts";
@@ -32,13 +35,16 @@ if (source === undefined) {
   console.error("no comp.ts under " + dir);
   process.exit(2);
 }
-const testModule = path.join(path.dirname(source), "comp.arm_eq_test.ts");
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bend-arm-eq-ref-bang-"));
+const testModule = path.join(tmp, "comp.arm_eq_ref_bang_test.ts");
+fs.copyFileSync(path.join(path.dirname(source), "bend.ts"),
+  path.join(tmp, "bend.ts"));
 fs.writeFileSync(testModule, fs.readFileSync(source, "utf8") + "\nexport { arm_eq };\n");
 let mod: TestModule;
 try {
   mod = (await import(pathToFileURL(testModule).href)) as unknown as TestModule;
 } finally {
-  fs.rmSync(testModule, { force: true });
+  fs.rmSync(tmp, { recursive: true, force: true });
 }
 
 const body = (bang: boolean): Bend.HTerm =>

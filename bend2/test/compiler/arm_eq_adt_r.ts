@@ -6,10 +6,13 @@
 // `r`. arm_eq must reject them: emit_arm_shared keys on arm_eq, and sharing
 // these bodies would merge arms whose constructor coverage differs from the
 // consumer term_compare EQ at bend.ts:3267-3275.
+// This fixture covers arm_eq equality only, NOT end-to-end capture emission;
+// capture emission remains queue-held qualification.
 //
 // Source-only fixture. Do not run as part of the source commit; the root queue
 // owns compiler checks.
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as Bend from "../../compiler/upstream/bend.ts";
@@ -32,13 +35,16 @@ if (source === undefined) {
   console.error("no comp.ts under " + dir);
   process.exit(2);
 }
-const testModule = path.join(path.dirname(source), "comp.arm_eq_test.ts");
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bend-arm-eq-adt-r-"));
+const testModule = path.join(tmp, "comp.arm_eq_adt_r_test.ts");
+fs.copyFileSync(path.join(path.dirname(source), "bend.ts"),
+  path.join(tmp, "bend.ts"));
 fs.writeFileSync(testModule, fs.readFileSync(source, "utf8") + "\nexport { arm_eq };\n");
 let mod: TestModule;
 try {
   mod = (await import(pathToFileURL(testModule).href)) as unknown as TestModule;
 } finally {
-  fs.rmSync(testModule, { force: true });
+  fs.rmSync(tmp, { recursive: true, force: true });
 }
 
 const U32 = Bend.ADT("U32", [], undefined);
