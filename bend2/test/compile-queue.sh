@@ -170,6 +170,25 @@ after=$(count_starts)
 [ "$before" = "$after" ] && pass 'completed result reused' || bad "reuse starts $before -> $after"
 [ "$(cat "$T/reuse")" = "artifact-ident" ] && pass 'reused artifact bytes match' || bad 'reused artifact differs'
 
+# A corrupt internal completed result is removed and rebuilt.
+reuse_key=$(cc_key ident "$T/reuse")
+cached="$STATE/keys/$reuse_key/completed/artifacts/binary"
+python3 - "$cached" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+data = path.read_bytes()
+path.write_bytes(bytes(byte ^ 0xff for byte in data))
+PY
+corrupt_before=$(count_starts)
+run_cc ident "$T/reuse" || bad 'corrupt cache recovery request failed'
+corrupt_after=$(count_starts)
+[ "$corrupt_after" -gt "$corrupt_before" ] && pass 'corrupt internal result recompiled' || bad "corrupt cache starts $corrupt_before -> $corrupt_after"
+[ "$(cat "$T/reuse")" = "artifact-ident" ] && pass 'recovered artifact bytes match' || bad 'recovered artifact differs'
+[ "$(cat "$cached")" = "artifact-ident" ] && pass 'recovered cache artifact restored' || bad 'recovered cache artifact differs'
+reuse_before=$(count_starts)
+run_cc ident "$T/reuse" || bad 'post-recovery reuse request failed'
+[ "$(count_starts)" = "$reuse_before" ] && pass 'recovered result reused' || bad "post-recovery starts $(count_starts)"
+
 # Copying an artifact must work under an ordinary pre-existing output parent.
 mkdir -p "$T/ordinary-output"
 chmod 755 "$T/ordinary-output"

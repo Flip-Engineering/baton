@@ -804,12 +804,20 @@ def run_command(args: List<String>) -> IO(Unit):
                       do IO<Unit>:
                         +completed_path = keydir ++ "/completed/result"
                         existing <- regular(completed_path)
-                        Bool.pick(IO(Unit), existing,
+                        external_keep : Bool <- Bool.pick(Bool, existing,
+                          do IO<Bool>:
+                            result <- IO.try(String, L.read_text(completed_path))
+                            Bool.pick(Bool, Tx.str_eq(field(result, "external"), "1"),
+                              IO.try(Bool, Result.verify_adoption(keydir, result)),
+                              IO.pure(Bool, False{})),
+                          IO.pure(Bool, False{}))
+                        Bool.pick(IO(Unit), external_keep,
                           do IO<Unit>:
                             removed : Unit <- remove_token(keydir, owner)
                             released : Unit <- IO.try(Unit, L.lock_release(lock))
-                            IO.die(Unit, 1, "compile-queue: completed result exists but is not reusable; only adopt may reuse an external result"),
+                            IO.die(Unit, 1, "compile-queue: completed result is a verified external adoption; only adopt may reuse it"),
                           do IO<Unit>:
+                            cleaned : Unit <- IO.try(Unit, L.remove_tree(keydir ++ "/completed"))
                             latest <- IO.try(String, Result.latest_result(keydir, wait_start, Bool.pick(String, present, "1", "0")))
                             match latest:
                               case SNil{}: start_attempt(parsed, key, keydir, lock, owner)
