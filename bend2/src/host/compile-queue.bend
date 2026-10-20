@@ -363,8 +363,13 @@ def copy_inputs(work: String, inputs: List<Input>) -> IO(Unit):
     case Nil{}: IO.pure(Unit, Unit{})
     case Con{Input{source, destination}, rest}:
       do IO<Unit>:
-        copied : Unit <- IO.try(Unit, L.copy_file(source, work ++ "/" ++ destination))
-        copy_inputs(work, rest)
+        +target = work ++ "/" ++ destination
+        copied : Unit <- IO.try(Unit, L.copy_file(source, target))
+        source_digest : String <- IO.try(String, Identity.file_digest(source))
+        target_digest : String <- IO.try(String, Identity.file_digest(target))
+        Bool.pick(IO(Unit), Tx.str_eq(source_digest, target_digest),
+          copy_inputs(work, rest),
+          IO.die(Unit, 1, "compile-queue: input changed while staging"))
 
 def replace_token(token: String, work: String, inputs: List<Input>, artifacts: List<Artifact>) -> String:
   match artifact_match(token, work, artifacts):
@@ -417,6 +422,9 @@ def write_attempt_files(config: Config, key: String, keydir: String, attempt: St
         +artifacts = artifact_rows(text)
         made : Unit <- IO.try(Unit, L.mkdir_p(work ++ "/inputs"))
         staged : Unit <- copy_inputs(work, inputs)
+        rechecked : String <- identity_key(config)
+        checked : Unit <- Bool.pick(IO(Unit), Tx.str_eq(rechecked, key), IO.pure(Unit, Unit{}),
+          IO.die(Unit, 1, "compile-queue: inputs changed before execution"))
         wrote_command : Unit <- IO.try(Unit, L.write_text(attempt ++ "/command", command_text(command, work, inputs, artifacts)))
         wrote_meta : Unit <- IO.try(Unit, L.write_text(attempt ++ "/meta", meta_text(config, key, keydir, attempt, artifacts)))
         digest_written : Unit <- Bool.pick(IO(Unit), Tx.str_eq(field(text, "kind"), "cgen"),
