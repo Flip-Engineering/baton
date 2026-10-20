@@ -484,7 +484,7 @@ wait "$l2" || lrc=$?
 # A live or uncertain active record refuses a fresh admission.
 : > "$LOG"
 livekey=$(cc_key live "$T/live")
-mkdir -p "$STATE/keys/$livekey"
+(umask 0007; mkdir -m 2770 -p "$STATE/keys/$livekey")
 live_start=$(awk '{print $22}' "/proc/$$/stat")
 printf 'pid=%s\nstarttime=%s\nkind=cc\nsetsid=1\nstarted_ns=0\n' "$$" "$live_start" > "$STATE/keys/$livekey/active"
 if run_cc live "$T/live"; then bad 'live active admitted'; else pass 'live active refused'; fi
@@ -494,7 +494,7 @@ rm -f "$STATE/keys/$livekey/active"
 
 : > "$LOG"
 unckey=$(cc_key uncertain "$T/uncertain")
-mkdir -p "$STATE/keys/$unckey"
+(umask 0007; mkdir -m 2770 -p "$STATE/keys/$unckey")
 printf 'pid=%s\n' "$$" > "$STATE/keys/$unckey/active"
 if run_cc uncertain "$T/uncertain"; then bad 'uncertain active admitted'; else pass 'uncertain active refused'; fi
 grep -q 'uncertain' "$T/uncertain.err" && pass 'uncertain active diagnostic reported' || bad 'uncertain active diagnostic missing'
@@ -690,7 +690,19 @@ if [ -f "$STATE/keys/$adopt_key/completed/result" ]; then
     && pass 'guard published the adopted artifact bytes' || bad 'guard artifact differs'
   grep -Eq '^external-inputs-sha256=[0-9a-f]{64}$' "$STATE/keys/$adopt_key/completed/result" \
     && pass 'guard bound every adopted input in one result field' || bad 'guard input binding digest missing'
-  python3 - "$STATE/keys/$adopt_key/adoption" <<'PY_TAMPER'
+  adopt_keydir="$STATE/keys/$adopt_key"
+  guard_pid=$(sed -n 's/^pid=//p' "$adopt_keydir/adoption")
+  guard_start=$(sed -n 's/^starttime=//p' "$adopt_keydir/adoption")
+  if (
+    exec 9>"$adopt_keydir/lock"
+    exec 8>"$STATE/heavy.lock"
+    sh "$QUEUE" __guard "$adopt_keydir" "$guard_pid" "$guard_start" binary "$adopt_artifact"
+  ) >"$T/adopt-guard-valid" 2>&1; then
+    pass 'guard accepted the unchanged multi-input adoption record'
+  else
+    bad 'guard rejected the unchanged multi-input adoption record'
+  fi
+  python3 - "$adopt_keydir/adoption" <<'PY_TAMPER'
 import pathlib, sys
 path = pathlib.Path(sys.argv[1])
 lines = path.read_text().splitlines()
@@ -704,10 +716,22 @@ fields[2] = "0" * 64
 lines[indices[1]] = "\t".join(fields)
 path.write_text("\n".join(lines) + "\n")
 PY_TAMPER
-  sh "$QUEUE" status --state-root "$STATE" --key "$adopt_key" >"$T/adopt-tampered-status" 2>&1
-  grep -q "^completed-unusable key=$adopt_key$" "$T/adopt-tampered-status" \
-    && pass 'tampering with a non-first adopted input invalidates the result' \
-    || bad 'non-first adopted input tampering was not detected'
+  guard_status=0
+  if (
+    exec 9>"$adopt_keydir/lock"
+    exec 8>"$STATE/heavy.lock"
+    sh "$QUEUE" __guard "$adopt_keydir" "$guard_pid" "$guard_start" binary "$adopt_artifact"
+  ) >"$T/adopt-guard-tampered" 2>&1; then
+    guard_status=0
+  else
+    guard_status=$?
+  fi
+  if [ "$guard_status" -eq 1 ] \
+    && grep -Fxq 'compile-queue: completed result is not a verified adoption record' "$T/adopt-guard-tampered"; then
+    pass 'guard rejected tampering with a non-first adopted input'
+  else
+    bad 'guard did not reject tampered non-first adopted input'
+  fi
 else
   bad 'guard did not publish the adopted result'
 fi
