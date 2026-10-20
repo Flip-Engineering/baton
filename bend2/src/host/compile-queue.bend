@@ -895,10 +895,13 @@ def guard_loop(keydir: String, pid: U32, start: String, name: String, path: Stri
         size <- IO.try(U32, F.Files.size(path))
         Bool.pick(IO(Unit), U32.is_lt(0, size),
           do IO<Unit>:
+            published : Unit <- finish_adoption(keydir, adoption, name, path)
             verified <- IO.try(Bool, Result.verify_adoption(keydir, adoption))
             Bool.pick(IO(Unit), verified,
-              finish_adoption(keydir, adoption, name, path),
-              write_adoption_failure(keydir, started, "adoption identity differs from the live process")),
+              IO.pure(Unit, Unit{}),
+              do IO<Unit>:
+                removed : Unit <- IO.try(Unit, L.remove_tree(keydir ++ "/completed"))
+                write_adoption_failure(keydir, started, "adoption identity differs from the live process")),
           write_adoption_failure(keydir, started, "external compiler exited without a complete artifact")))
 
 def guard(keydir: String, pid_text: String, start: String, name: String, path: String) -> IO(Unit):
@@ -909,9 +912,14 @@ def guard(keydir: String, pid_text: String, start: String, name: String, path: S
         do IO<Unit>:
           locked_key : Unit <- IO.try(Unit, L.lock_fd_acquire(9))
           locked_cgen : Unit <- IO.try(Unit, L.lock_fd_acquire(8))
-          completed <- IO.try(Bool, Result.verify_completed(keydir))
-          match completed:
-            case True{}: IO.pure(Unit, Unit{})
+          present <- regular(keydir ++ "/completed/result")
+          match present:
+            case True{}:
+              do IO<Unit>:
+                adoption <- IO.try(String, L.read_text(keydir ++ "/adoption"))
+                verified <- IO.try(Bool, Result.verify_adoption(keydir, adoption))
+                Bool.pick(IO(Unit), verified, IO.pure(Unit, Unit{}),
+                  IO.die(Unit, 1, "compile-queue: completed result is not a verified adoption record"))
             case False{}:
               started <- IO.try(String, L.now_ns())
               active : Unit <- IO.try(Unit, L.write_text(keydir ++ "/active", "pid=" ++ pid_text
@@ -954,8 +962,8 @@ def adopt_live(pid: U32, pid_text: String, start: String, cwd: String,
     +keydir = keydir_of(state, key)
     made : Unit <- IO.try(Unit, L.mkdir_p(keydir ++ "/runs"))
     lock <- IO.try(U32, L.lock_acquire(keydir ++ "/lock"))
-    completed <- IO.try(Bool, Result.verify_completed(keydir))
-    match completed:
+    present <- regular(keydir ++ "/completed/result")
+    match present:
       case True{}:
         do IO<Unit>:
           adoption <- IO.try(String, L.read_text(keydir ++ "/adoption"))
