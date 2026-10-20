@@ -2939,6 +2939,8 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
       case "ADT": {
         const yd = y as Of<"ADT">;
         return x.k === yd.k && x.x.length === yd.x.length
+          && x.r.length === yd.r.length
+          && yd.r.every((c) => x.r.includes(c))
           && x.x.every((z, i) => go(z, yd.x[i], d));
       }
       case "Min": { const ym = y as Of<"Min">; return go(x.a, ym.a, d) && go(x.b, ym.b, d); }
