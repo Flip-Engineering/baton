@@ -342,12 +342,45 @@ function cc_find(gpu: boolean): string {
     + " --install";
 }
 
+// compile_queue_entry resolves the shared host compile queue entry.
+// BATON2_COMPILE_QUEUE_BIN names the built queue executable and
+// BATON2_COMPILE_QUEUE names the thin launcher, which resolves the executable
+// itself. Native compilation requires one of these entries.
+function compile_queue_entry(): string {
+  const direct = process.env.BATON2_COMPILE_QUEUE_BIN;
+  if (direct && fs.existsSync(direct)) return direct;
+  const launcher = process.env.BATON2_COMPILE_QUEUE;
+  if (launcher && fs.existsSync(launcher)) return launcher;
+  throw "Error: native compilation requires the shared host compile queue; "
+    + "set BATON2_COMPILE_QUEUE_BIN or BATON2_COMPILE_QUEUE";
+}
+
+// queue_cc runs one C compilation through the shared host compile queue. A
+// queue execution that fails throws with the retained stderr.
+function queue_cc(queue: string, cc: string, file: string, bin: string,
+                  mac: boolean, bangs: boolean, cuda: string, args: string[]): void {
+  const argv = ["run", "--kind", "cc", "--compiler", cc,
+    "--input", file, "--artifact", "binary=" + path.resolve(bin),
+    "--option", "platform=" + (mac ? "darwin" : "linux"),
+    "--option", "backend=" + (bangs ? (mac ? "gpu-metal" : "gpu-cuda") : "cpu")];
+  if (bangs && !mac) argv.push("--option", "cuda-root=" + cuda);
+  argv.push("--", cc, ...args);
+  const result = child.spawnSync(queue, argv, { encoding: "utf8" });
+  const stderr = result.stderr || "";
+  if (result.error || result.status !== 0) {
+    throw "Error: the compile queue failed to build " + bin
+      + (stderr ? "\n" + stderr.trim() : "");
+  }
+}
+
 // cli_build builds the C file at `file` into the binary `bin`. A `!` program
 // builds with the GPU lane and writes its GPU program too (on Linux only with
-// CUDA at $CUDA_HOME, else at /usr/local/cuda, its libraries in lib64 or, as
+// CUDA at $CUDA_HOME, else /usr/local/cuda, its libraries in lib64 or, as
 // nix lays them, lib; else the ! runs on the cores). On macOS a program with
 // a framework (#import: a window, audio) builds as Objective-C; on Linux it
-// links the X11 and ALSA libraries it includes.
+// links the X11 and ALSA libraries it includes. The C compilation uses the
+// shared host compile queue selected by BATON2_COMPILE_QUEUE_BIN or
+// BATON2_COMPILE_QUEUE.
 function cli_build(bin: string, file: string): void {
   const c     = fs.readFileSync(file, "utf8");
   const mac   = process.platform === "darwin";
@@ -366,7 +399,12 @@ function cli_build(bin: string, file: string): void {
       "-L" + cuda + "/lib", ...cpu, "-lcuda", "-lnvrtc"];
   const steps: [string, string[]][] = bangs
     ? [[cc, gpu], [path.resolve(bin), ["--gpu-build"]]] : [[cc, cpu]];
+  const queue = compile_queue_entry();
   for (const [cmd, args] of steps) {
+    if (cmd === cc) {
+      queue_cc(queue, cc, file, bin, mac, bangs, cuda, args);
+      continue;
+    }
     if (child.spawnSync(cmd, args, { stdio: "inherit" }).status !== 0) {
       throw "Error: " + path.basename(cmd) + " failed to build " + bin;
     }
