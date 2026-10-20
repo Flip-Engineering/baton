@@ -34,7 +34,7 @@ def pick(s: String, base: U32) -> U32:
     case _:
       base
 
-def report(s: String) -> IO(Unit):
+def report(+s: String) -> IO(Unit):
   IO.print(U32.show(pick(s, U32.from_nat(String.length(s)))))
 
 def main() -> IO(Unit):
