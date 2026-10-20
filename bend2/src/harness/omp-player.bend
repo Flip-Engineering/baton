@@ -30,6 +30,19 @@ def argv(cmd: String, model: String, effort: String, sessions: String, session: 
     case True{}: P.argv(arguments(cmd,model,effort,sessions))
     case False{}: P.argv(List.append(&1,String,arguments(cmd,model,effort,sessions),["--resume",session]))
 
+def append_session_args(args: List<String>, session: String, fresh: Bool) -> List<String>:
+  match fresh:
+    case True{}: args
+    case False{}: List.append(&1,String,args,["--resume",session])
+
+def profile_arguments(binding: List<String>, cmd: String, model: String, effort: String, sessions: String, session: String, fresh: Bool) -> List<String>:
+  match binding:
+    case Nil{}: append_session_args(arguments(cmd,model,effort,sessions),session,fresh)
+    case other: List.append(&1,String,["/usr/bin/env"],List.append(&1,String,binding,append_session_args(arguments(cmd,model,effort,sessions),session,fresh)))
+
+def argv_profile(binding: List<String>, cmd: String, model: String, effort: String, sessions: String, session: String, fresh: Bool) -> String:
+  P.argv(profile_arguments(binding,cmd,model,effort,sessions,session,fresh))
+
 def preflight_failure(home: String, detail: String) -> Result<&1,&1,U32 & String,Unit>:
   Fail{(2, "native-environment-unwritable: HOME=" ++ home ++ " is not writable: " ++ detail ++ "; run the mutable Baton command as the recorded service account with its writable HOME")}
 

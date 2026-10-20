@@ -89,7 +89,10 @@ def first_profile(profiles: List<&2,Profile>, harness: String) -> Maybe<&2,Profi
 # The credential-store variable each harness reads. A harness without one gets no
 # binding, so an unknown harness adds nothing to the spawn environment.
 def store_variable(+harness: String) -> Maybe<String>:
-  Bool.pick(Maybe<String>,String.eq(harness,"codex"),Some{"CODEX_HOME"},Bool.pick(Maybe<String>,Bool.or(String.eq(harness,"claude-code"),String.eq(harness,"claude")),Some{"CLAUDE_CONFIG_DIR"},None{}))
+  Bool.pick(Maybe<String>,String.eq(harness,"codex"),Some{"CODEX_HOME"},
+  Bool.pick(Maybe<String>,Bool.or(String.eq(harness,"claude-code"),String.eq(harness,"claude")),Some{"CLAUDE_CONFIG_DIR"},
+  Bool.pick(Maybe<String>,String.eq(harness,"omp"),Some{"PI_CODING_AGENT_DIR"},
+  Bool.pick(Maybe<String>,String.eq(harness,"muse"),Some{"XDG_CONFIG_HOME"},None{}))))
 
 def binding_for(variable: Maybe<String>, store: String) -> List<String>:
   match variable:
@@ -496,9 +499,8 @@ def refusal_report_id(db: String, session: String, id: String, kind: String) -> 
     +base : String <- refusal_base_id(db,session,id)
     IO.pure(String,base ++ ":" ++ kind)
 
-# The exit identity comes from the session and the provider cause, so the first
-# failed attempt has the same identity before its usage row is recorded. The
-# request id in the provider text is not part of the identity.
+# The exit identity includes the session route, account, detected window and
+# reset value. The provider request id is not part of the identity.
 def exit_report_id(db: String, session: String, id: String, event: String) -> IO(String):
   do IO<String>:
     +cause : String <- exhaustion_cause(db,event)
@@ -510,7 +512,11 @@ def exit_report_id(db: String, session: String, id: String, event: String) -> IO
         +harness_text : String <- IO.pure(String,result_text(harness))
         +model_text : String <- IO.pure(String,result_text(model))
         +reset : String <- IO.pure(String,UW.reset_text_of(other))
-        identity : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT " ++ C.q(session) ++ " || char(31) || " ++ C.q(harness_text) ++ " || char(31) || " ++ C.q(UW.provider_of(model_text)) ++ " || char(31) || " ++ C.q(reset) ++ ";")
+        +window : String <- IO.pure(String,UW.window_label_of(UW.lower_ascii(cause)))
+        account_result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT account FROM account_attempts WHERE session=" ++ C.q(session) ++ " AND turn=" ++ C.q(id) ++ " ORDER BY recorded DESC,rowid DESC LIMIT 1;")
+        +account_row : String <- IO.pure(String,result_text(account_result))
+        +account : String <- Bool.pick(IO(String),String.is_empty(account_row),profile_label_io(db,session),IO.pure(String,account_row))
+        identity : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT " ++ C.q(session) ++ " || char(31) || " ++ C.q(harness_text) ++ " || char(31) || " ++ C.q(UW.provider_of(model_text)) ++ " || char(31) || " ++ C.q(account) ++ " || char(31) || " ++ C.q(window) ++ " || char(31) || " ++ C.q(reset) ++ ";")
         +trimmed : String <- IO.pure(String,result_text(identity))
         match trimmed:
           case SNil{}: IO.pure(String,id ++ ":exit")

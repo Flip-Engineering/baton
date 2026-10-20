@@ -1092,6 +1092,9 @@ def retained_output(+db: String, +player: String, +id: String, +log: String, +ha
 def muse_retained_arguments(cmd: String, model: String, effort: String, prompt_file: String, +session: String) -> List<String>:
   Muse.resume_arguments(cmd,model,effort,prompt_file,session)
 
+def muse_retained_profile_arguments(prefix: String, binding: List<String>, cmd: String, model: String, effort: String, prompt_file: String, session: String) -> String:
+  prefix ++ Muse.argv_profile(binding,cmd,model,effort,prompt_file,session)
+
 def retained_arguments(omp: Bool, claude: Bool, +cmd: String, +model: String, +effort: String, sessions: String, +native: String) -> String:
   Bool.pick(String,claude,
     Claude.argv(cmd,model,effort,native,String.is_empty(native)),
@@ -1141,7 +1144,7 @@ def current_history(+db: String, player: String) -> IO(String):
 # spawns exactly as before.
 def retained_profile_other(omp: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, +native: String) -> String:
   match omp:
-    case True{}: Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native))
+    case True{}: Omp.argv_profile(binding,cmd,model,effort,sessions,native,String.is_empty(native))
     case False{}: Codex.argv_profile(binding,override,cmd,model,effort,native,String.is_empty(native))
 
 def retained_profile_arguments(omp: Bool, claude: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, +native: String) -> String:
@@ -1263,7 +1266,6 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
       +absolute_db : String <- IO.try(String,Lock.SessionLock.canonical(db))
       +parts : IdentityParts <- IO.pure(IdentityParts,identity_products(model,identity))
       +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory]) ++ identity_prefix(parts))
-      muse_args : String <- IO.pure(String,prefix ++ P.argv(muse_retained_arguments(cmd,model,effort,prompt_file,session)))
       +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
       +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
       +dsh : Bool <- IO.pure(Bool,String.eq(harness,"dsh\n"))
@@ -1274,7 +1276,11 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
       store : String <- current_store(db,player,harness)
       history : String <- current_history(db,player)
       credit_refusal : String <- Accounts.credit_launch_refusal_for(db,account)
-      binding : Maybe<List<String>> <- Accounts.credit_launch_binding(db,player,directory,Tx.trim_nl(harness),account,identity_resolver(parts),store)
+      +binding : Maybe<List<String>> <- Accounts.credit_launch_binding(db,player,directory,Tx.trim_nl(harness),account,identity_resolver(parts),store)
+      muse_binding : List<String> <- match binding:
+        case Some{bound}: IO.pure(List<String>,bound)
+        case None{}: IO.pure(List<String>,Nil{})
+      muse_args : String <- IO.pure(String,muse_retained_profile_arguments(prefix,muse_binding,cmd,model,effort,prompt_file,session))
       recorded : Unit <- Accounts.record_current_attempt(db,player,directory,predecessor,account)
       +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,cmd,model,effort,sessions,native,prefix,history,Tx.trim_nl(harness),account,binding,credit_refusal)))
       launch : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_launch_checked(prepared,dsh,prefix,home,cmd,model,effort,native,muse,muse_args,args,initial,omp,claude,level,seal_prompt)

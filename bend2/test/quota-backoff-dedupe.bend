@@ -15,7 +15,10 @@ import ../src/coordinator/stop.bend as Stop
 import ../src/coordinator/subscription-fallback.bend as Subs
 import ../src/coordinator/turn.bend as Turn
 import ../src/coordinator/usage-windows.bend as UW
+import ../src/harness/omp-player.bend as Omp
+import ../src/harness/muse-player.bend as Muse
 import ../src/host/sqlite.bend as DB
+import ../src/host/process.bend as P
 import ../src/host/text.bend as Text
 import ../src/git/text.bend as Tx
 
@@ -57,11 +60,16 @@ def cause(ident: String) -> String:
 def quota_event(ident: String) -> String:
   "{\"payload_type\":\"run.terminal.failed\",\"payload\":{\"kind\":\"run_terminal\",\"terminal\":\"failed\",\"reason\":\"" ++ cause(ident) ++ "\"}}"
 
+def quota_event_window(ident: String, window: String) -> String:
+  "{\"payload_type\":\"run.terminal.failed\",\"payload\":{\"kind\":\"run_terminal\",\"terminal\":\"failed\",\"reason\":\"" ++ cause(ident) ++ " " ++ window ++ "\"}}"
+
 def setup(+db: String) -> IO(Unit):
   do IO<Unit>:
-    made : String <- IO.try(String,DB.Sql.query(db,C.schema()))
+    made : String <- IO.try(String,DB.Sql.query(db,C.schema() ++ Accounts.schema()))
+    account_rows : Unit <- query(db,"INSERT INTO accounts(id,provider,harness,funding,secret_ref) VALUES('acct-a','muse','muse','subscription','/profiles/a'),('acct-b','muse','muse','subscription','/profiles/b');")
     operator : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('operator',NULL,'operator','','','','');")
     wonder : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint,workspace,branch,base) VALUES('wonder',NULL,'muse','muse-wonder-1.0','high','01a1549a-4b05-78c1-982a-ebda86e8b067','','/wonder','wonder-branch','base-sha');")
+    attempt_accounts : Unit <- query(db,"INSERT INTO account_attempts(attempt,session,turn,account,funding,secret_ref) VALUES('attempt-one','wonder','attempt-one','acct-a','subscription','/profiles/a'),('attempt-two','wonder','attempt-two','acct-a','subscription','/profiles/a'),('attempt-account','wonder','attempt-account','acct-b','subscription','/profiles/b');")
     wonder2 : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint,workspace,branch,base) VALUES('wonder2',NULL,'muse','muse-wonder-1.0','high','01a1549a-4b05-78c1-982a-ebda86e8b068','','/wonder2','wonder2-branch','base-sha');")
     wonder_first : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint,workspace,branch,base) VALUES('wonder-first',NULL,'muse-first','muse-wonder-1.0','high','01a1549a-4b05-78c1-982a-ebda86e8b069','','/wonder-first','wonder-first-branch','base-sha');")
     wonder_gate : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint,workspace,branch,base) VALUES('wonder-gate',NULL,'muse','muse-wonder-1.0','high','01a1549a-4b05-78c1-982a-ebda86e8b070','','/wonder-gate','wonder-gate-branch','base-sha');")
@@ -105,10 +113,14 @@ def dedupe_cases(+db: String) -> IO(Unit):
     route_count : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id LIKE '%:route-unavailable';","1\n","route-unavailable-deduped")
     +route_body : String <- read(db,"SELECT body FROM messages WHERE id LIKE '%:route-unavailable';")
     expect("route-first-evidence",Bool.and(String.contains(route_body,first_cause),Bool.not(String.contains(route_body,second_cause))))
-    +exit_one : String <- Subs.exit_report_id(db,"wonder","attempt-one",quota_event("first-request"))
-    +exit_two : String <- Subs.exit_report_id(db,"wonder","attempt-two",quota_event("second-request"))
+    +exit_one : String <- Subs.exit_report_id(db,"wonder","attempt-one",quota_event_window("first-request","5-hour"))
+    +exit_two : String <- Subs.exit_report_id(db,"wonder","attempt-two",quota_event_window("second-request","5-hour"))
     expect("exit-id-shared",String.eq(exit_one,exit_two))
     expect("exit-id-kind",String.ends_with(exit_one,":exit"))
+    +exit_week : String <- Subs.exit_report_id(db,"wonder","attempt-one",quota_event_window("same-request","7-day"))
+    expect("exit-window-scope",Bool.not(String.eq(exit_one,exit_week)))
+    +exit_other_account : String <- Subs.exit_report_id(db,"wonder","attempt-account",quota_event("same-request"))
+    expect("exit-account-scope",Bool.not(String.eq(exit_one,exit_other_account)))
     first_exit : Unit <- Subs.report_message(db,"wonder",exit_one,"Player process ended with exit 1")
     second_exit : Unit <- Subs.report_message(db,"wonder",exit_two,"Player process ended with exit 1")
     exit_count : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id LIKE '%:exit' AND sender='wonder';","1\n","exit-report-deduped")
@@ -119,6 +131,20 @@ def dedupe_cases(+db: String) -> IO(Unit):
     cross_distinct : Unit <- expect_read(db,"SELECT count(DISTINCT id) FROM messages WHERE id LIKE '%:profile-exhausted';","2\n","cross-session-profile-ids-distinct")
     +exit_w2 : String <- Subs.exit_report_id(db,"wonder2","attempt-w2",quota_event("second-request"))
     expect("cross-session-exit-id",Bool.not(String.eq(exit_one,exit_w2)))
+    IO.pure(Unit,Unit{})
+
+def profile_launch_cases() -> IO(Unit):
+  do IO<Unit>:
+    omp_binding : List<String> <- IO.pure(List<String>,Subs.store_binding("omp","/profiles/omp selected"))
+    muse_binding : List<String> <- IO.pure(List<String>,Subs.store_binding("muse","/profiles/muse selected"))
+    omp_args : String <- IO.pure(String,Turn.retained_profile_arguments(True{},False{},omp_binding,Nil{},"omp","kimi-code/kimi-for-coding","high","/sessions","native-omp"))
+    muse_args : String <- IO.pure(String,Turn.muse_retained_profile_arguments("prefix:",muse_binding,"muse","muse-wonder-1.0","high","/work/prompt.txt","native-muse"))
+    expect("omp-profile-store-reaches-launch",String.contains(omp_args,"PI_CODING_AGENT_DIR=/profiles/omp selected"))
+    expect("omp-session-resume-preserved",String.contains(omp_args,"--resume"))
+    expect("muse-profile-store-reaches-launch",String.contains(muse_args,"XDG_CONFIG_HOME=/profiles/muse selected"))
+    expect("muse-session-resume-preserved",String.contains(muse_args,"--session-id"))
+    expect("omp-unbound-argv-preserved",String.eq(Omp.argv_profile(Nil{},"omp","kimi-code/kimi-for-coding","high","/sessions","native-omp",False{}),Omp.argv("omp","kimi-code/kimi-for-coding","high","/sessions","native-omp",False{})))
+    expect("muse-unbound-argv-preserved",String.eq(Muse.argv_profile(Nil{},"muse","muse-wonder-1.0","high","/work/prompt.txt","native-muse"),P.argv(Muse.resume_arguments("muse","muse-wonder-1.0","high","/work/prompt.txt","native-muse"))))
     IO.pure(Unit,Unit{})
 
 def clear_cases(+db: String) -> IO<Unit>:
@@ -188,6 +214,7 @@ def main_args(args: List<String>) -> IO<Unit>:
   match args:
     case +path <> Nil{}: do IO<Unit>:
       setup(path)
+      profile_launch_cases()
       gate_cases(path)
       clear_cases(path)
       dedupe_cases(path)
