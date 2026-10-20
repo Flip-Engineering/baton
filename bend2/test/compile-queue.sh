@@ -336,6 +336,60 @@ wait "$f2" || r2=$?
 grep -q 'synthetic compiler failure' "$T/failure1.err" && grep -q 'synthetic compiler failure' "$T/failure2.err" \
   && pass 'failure diagnostics shared' || bad 'failure diagnostics missing'
 [ "$(count_starts)" = 1 ] && pass 'failure shared one execution' || bad "failure starts=$(count_starts)"
+# A failed result with exit=0 is still an error; malformed result exit codes fail closed.
+zero_key=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+  --input "$T/input.c" --artifact "binary=$T/zero-exit" --option 'test=zero-exit' -- \
+  "$FAKE" --tag zero-exit --log "$LOG" -o "$T/zero-exit" "$T/input.c")
+mkdir -p "$STATE/keys/$zero_key/runs/zero-exit"
+cat > "$STATE/keys/$zero_key/runs/zero-exit/result" <<EOF
+status=failed
+exit=0
+kind=cc
+key=$zero_key
+finished_ns=1
+detail=zero exit must fail
+EOF
+zero_rc=0
+sh "$QUEUE" wait --state-root "$STATE" --key "$zero_key" >"$T/zero-exit.out" 2>"$T/zero-exit.err" || zero_rc=$?
+[ "$zero_rc" = 1 ] && pass 'zero exit in failed result maps to one' || bad "zero exit fallback $zero_rc"
+grep -Fq "execution failed key=$zero_key exit=0" "$T/zero-exit.err" \
+  && pass 'zero exit diagnostic retains persisted fields' || bad 'zero exit diagnostic missing persisted fields'
+
+malformed_key=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+  --input "$T/input.c" --artifact "binary=$T/malformed-exit" --option 'test=malformed-exit' -- \
+  "$FAKE" --tag malformed-exit --log "$LOG" -o "$T/malformed-exit" "$T/input.c")
+mkdir -p "$STATE/keys/$malformed_key/runs/malformed-exit"
+cat > "$STATE/keys/$malformed_key/runs/malformed-exit/result" <<EOF
+status=failed
+exit=invalid
+kind=cc
+key=$malformed_key
+finished_ns=1
+detail=malformed exit must fail
+EOF
+malformed_rc=0
+sh "$QUEUE" wait --state-root "$STATE" --key "$malformed_key" >"$T/malformed-exit.out" 2>"$T/malformed-exit.err" || malformed_rc=$?
+[ "$malformed_rc" = 1 ] && pass 'malformed result exit maps to one' || bad "malformed exit fallback $malformed_rc"
+grep -Fq "execution failed key=$malformed_key exit=invalid" "$T/malformed-exit.err" \
+  && pass 'malformed result diagnostic retains persisted fields' || bad 'malformed result diagnostic missing persisted fields'
+
+wrapped_key=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+  --input "$T/input.c" --artifact "binary=$T/wrapped-exit" --option 'test=wrapped-exit' -- \
+  "$FAKE" --tag wrapped-exit --log "$LOG" -o "$T/wrapped-exit" "$T/input.c")
+mkdir -p "$STATE/keys/$wrapped_key/runs/wrapped-exit"
+cat > "$STATE/keys/$wrapped_key/runs/wrapped-exit/result" <<EOF
+status=failed
+exit=256
+kind=cc
+key=$wrapped_key
+finished_ns=1
+detail=wrapped exit must fail
+EOF
+wrapped_rc=0
+sh "$QUEUE" wait --state-root "$STATE" --key "$wrapped_key" >"$T/wrapped-exit.out" 2>"$T/wrapped-exit.err" || wrapped_rc=$?
+[ "$wrapped_rc" = 1 ] && pass 'out-of-range result exit maps to one' || bad "out-of-range exit fallback $wrapped_rc"
+grep -Fq "execution failed key=$wrapped_key exit=256" "$T/wrapped-exit.err" \
+  && pass 'out-of-range diagnostic retains persisted fields' || bad 'out-of-range diagnostic missing persisted fields'
 before=$(count_starts)
 run_cc failure "$T/retry" --fail || true
 [ "$(count_starts)" -gt "$before" ] && pass 'failed attempt retried' || bad 'failed attempt not retried'
