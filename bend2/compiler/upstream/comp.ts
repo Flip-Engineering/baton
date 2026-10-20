@@ -3341,7 +3341,9 @@ function arm_body_hint(h: HTerm): string {
 
 function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
   def: boolean, lit = false): boolean {
-  if (!def || fl.dry) return false;
+  const u = term_uses(fl, h);
+  const closed = u.length === 0;
+  if (fl.dry || (!def && !closed)) return false;
   // A shared arm is emitted as an ordinary C helper with only its explicit
   // parameters. WL_JMP uses the register bank declared for its segment, so
   // an arm that can transfer segments must stay in its owning segment.
@@ -3352,7 +3354,6 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
   if (has_segment_jump) {
     return false;
   }
-  const u = term_uses(fl, h);
   const caps = capture_order(fl, h, u);
   if ((u.length >> 1) > caps.length) return false;
   const capKs = caps.flatMap(([, b]) => b.val.lay.ks);
