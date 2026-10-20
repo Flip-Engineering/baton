@@ -164,6 +164,7 @@ class CompilerArmSharing(unittest.TestCase):
             args.extend(['--input', path])
         args.extend(['--', wrapper, source, self.bun, '--smol',
                      fixture, self.compiler])
+        self.run_queue(args)
         self.assertTrue(source.is_file(), msg='the test did not write ' + str(source))
         return source
 

@@ -208,7 +208,8 @@ def CompileQueueIdentity.path_inside(root: String, path: String) -> Bool:
     Bool.or(String.eq(root, "/"), String.starts_with(path, root ++ "/")))
 
 def CompileQueueIdentity.path_relative(root: String, path: String) -> String:
-  String.drop(path, Nat.add(String.length(root), 1n))
+  Bool.pick(String, String.eq(root, "/"), String.drop(path, 1n),
+    String.drop(path, Nat.add(String.length(root), 1n)))
 
 def CompileQueueIdentity.path_absolute(path: String) -> Bool:
   String.starts_with(path, "/")
