@@ -1,0 +1,184 @@
+{
+  "schema": "baton-compiler-root-source-facts-v1",
+  "session": "compiler-root-runtime-ds-continuation-20261020",
+  "authority": {
+    "operator_assignment": "message:operator:1f7e7764966eed763ae3b1a1808deed3",
+    "original_conductor": "compiler-root",
+    "original_native": "01a14bf6-80fc-7000-81a7-858def42d517",
+    "original_native_state": "stop-fenced; not woken, not changed",
+    "continuation_scope": "source-only analysis; not a replacement owner of compiler-research or compiler-wonder-review",
+    "compilation_hold": "issue970 shared compilation queue not operational; no compile, C generation, build, test, check, benchmark, CI, or signal"
+  },
+  "checkout": {
+    "path": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/home/worktrees/compiler-root-runtime-ds-continuation-20261020",
+    "branch": "compiler-root-runtime-ds-continuation-20261020",
+    "base": "07989efe12ec4257641a10a40d9748dc866cbb3c"
+  },
+  "source_states": {
+    "canonical_main11_installed_2_0_25": {
+      "comp_ts_sha256": "1956f2e238e4d0cda91cd694c82d05ea06d5edd6b4eed12604c730012a69610a",
+      "bend_ts_sha256": "93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85",
+      "main_ts_sha256": "92dcdb49e82fd59443e3aea10784f7dcf03a93f5a21920666543098b657b6b1e",
+      "base_bend_sha256": "e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798",
+      "compiler_archive_sha256": "2df30208da307f7922fefc5517563ad1ee484bc60227f60d88994aad57e4779e"
+    },
+    "forkflush_baseline_a2e0818": {
+      "comp_ts_sha256": "499ea5f1b8c0d9d13b1346821d5460e38dc56ae3f852e304a5e47ac4dd7c1b9e",
+      "main_ts_sha256": "3eae91c5b0381fd4d2d2a98b4b0257f76014633112aafbbbae06b097cbd65f93",
+      "content": [
+        "dry facts-only prepasses",
+        "stable_defs reuse",
+        "reachability refs_by_fid index plus iterator stack",
+        "foreign request deferral"
+      ]
+    },
+    "branch_round_winner_b46e498": {
+      "comp_ts_sha256": "102124423cccde324a31ab7d0a2142ced612cfa34d760e5c0baa97dc3200dac6",
+      "main_ts_sha256": "3eae91c5b0381fd4d2d2a98b4b0257f76014633112aafbbbae06b097cbd65f93",
+      "delta": "+8/-1 in compiler/comp.ts: memo_gc clears TELES per definition and sets PROBES.length = 1"
+    },
+    "warning": "later release lineages cited by other lanes use different comp.ts hashes (b68bfe1a, 37b29f3, ca02f3cd) and are not identical to the canonical state"
+  },
+  "retained_runs": {
+    "run9": {
+      "label": "postrelease-751-761-20261015-9",
+      "app_source_commit": "b1f006a6308bbb00e29a24322e4f7d5164774470",
+      "elapsed_seconds": 2101.1190640139976,
+      "max_rss_kib": 142651376,
+      "natural_exit": 0,
+      "stderr_bytes": 46952404,
+      "stderr_sha256": "7483dea4edf74ef9809fd241736621f3e07abb865586d86a216d5d8e1981fbe8",
+      "book_begin_seconds": 225.478494974,
+      "carb_end_seconds": 345.607651252,
+      "pass_seconds_sum": 1627.0392907839998,
+      "reach_seconds": 88.30759529200008,
+      "tables_seconds": 6.161483409999989,
+      "lines_emitted_total": 13965544,
+      "lines_kept": 1762795,
+      "lines_discarded": 12202749,
+      "lines_discarded_share": 0.8738,
+      "probes_end": 12523177,
+      "teles_end": 3380690,
+      "probe_growth_per_pass": 1322744,
+      "heap_used_book_begin_bytes": 11581006740,
+      "heap_used_carb_end_bytes": 18852948706,
+      "heap_used_pass8_bytes": 65941962263,
+      "heap_total_pass8_bytes": 108899750912,
+      "rss_pass8_bytes": 145523834880,
+      "max_sample_rss_bytes": 145894653952,
+      "max_sample_event": "join.end at final template assembly"
+    },
+    "main11": {
+      "label": "postrelease-751-761-20261015-11",
+      "app_source_commit": "9bdc172e9d44bc6e85c6a1f1d7c15017cde31bdb",
+      "elapsed_seconds": 3556.883461463,
+      "max_rss_kib": 82061032,
+      "natural_exit": 0,
+      "stderr_bytes": 46747788,
+      "stderr_sha256": "c237700408c3b35c587f62c368f760e569eb5d72f8f33be42391dade09332275",
+      "book_begin_seconds": 1268.126244458,
+      "carb_end_seconds": 1385.973732282,
+      "pass_seconds_sum": 2085.794461903,
+      "reach_seconds": 59.684374754999966,
+      "tables_seconds": 3.822693576000008,
+      "lines_emitted_total": 13966744,
+      "lines_kept": 1762946,
+      "lines_discarded": 12203798,
+      "lines_discarded_share": 0.8738,
+      "probes_end": 12523253,
+      "teles_end": 3380707,
+      "probe_growth_per_pass": 1322752,
+      "heap_used_book_begin_bytes": 11581523270,
+      "heap_used_carb_end_bytes": 17637728125,
+      "heap_used_pass8_bytes": 46870117369,
+      "heap_total_pass8_bytes": 68381483008,
+      "rss_pass8_bytes": 81060818944,
+      "max_sample_rss_bytes": 82806669312,
+      "max_sample_event": "definition.end in pass 5"
+    },
+    "pass_table": [
+      {"pass": 1, "run9_seconds": 180.7905327419999, "main11_seconds": 148.2047894890001, "new_own": 7936},
+      {"pass": 2, "run9_seconds": 186.22558189999998, "main11_seconds": 158.16656886500004, "new_own": 1714},
+      {"pass": 3, "run9_seconds": 200.42153315699997, "main11_seconds": 345.875865548, "new_own": 333},
+      {"pass": 4, "run9_seconds": 210.90581818700022, "main11_seconds": 352.27625647299993, "new_own": 86},
+      {"pass": 5, "run9_seconds": 215.8054241539999, "main11_seconds": 301.87656245099987, "new_own": 31},
+      {"pass": 6, "run9_seconds": 222.3659687639999, "main11_seconds": 301.9303334230003, "new_own": 9},
+      {"pass": 7, "run9_seconds": 223.59169954299998, "main11_seconds": 268.8133314729999, "new_own": 4},
+      {"pass": 8, "run9_seconds": 186.9327323370001, "main11_seconds": 208.65075418099994, "new_own": 0}
+    ],
+    "final_facts": {"own": 10113, "hot": 832, "stat": 56},
+    "definitions": 3655,
+    "definition_emissions": 29240
+  },
+  "derived": {
+    "observed_elapsed_delta_seconds": 1455.7643974490024,
+    "elapsed_delta_pre_book_begin_seconds": 1042.647749484,
+    "elapsed_delta_pre_book_begin_share": 0.7162201186614234,
+    "elapsed_delta_passes_seconds": 458.7551711190001,
+    "elapsed_delta_passes_share": 0.3151300938001343,
+    "elapsed_delta_reach_seconds": -28.62322053700011,
+    "elapsed_delta_tables_seconds": -2.3387898339999813,
+    "passes_3_to_8_seconds_run9": 1260.023176142,
+    "passes_3_to_8_share_run9": 0.5996914680955014,
+    "passes_3_to_8_seconds_main11": 1779.423103549,
+    "passes_3_to_8_share_main11": 0.5002759080605628,
+    "own_facts_added_passes_3_to_8": 463,
+    "own_facts_added_share": 0.04578,
+    "emission_heap_used_growth_run9_bytes": 47089013557,
+    "emission_heap_used_growth_main11_bytes": 29232389244,
+    "emission_heap_used_growth_delta_bytes": 17856624313,
+    "final_heap_used_delta_bytes": 19071844894,
+    "heap_used_delta_attributable_to_emission_share": 0.9363,
+    "rss_minus_heap_total_pass8_run9_bytes": 36624083968,
+    "rss_minus_heap_total_pass8_main11_bytes": 12679335936,
+    "rss_minus_heap_total_delta_bytes": 23944748032,
+    "book_begin_heap_used_delta_bytes": 516530,
+    "book_begin_rss_delta_bytes": 1126379520
+  },
+  "verdict": {
+    "inefficiency_hypothesis": "correct in kind; unquantified in magnitude; not a retained-byte or speedup claim",
+    "repeated_work": "supported by measured 8 full passes, 87.38% discarded lines, and 50-60% of elapsed in passes 3-8 adding 4.58% of own facts",
+    "emitter_caused_whole_process_ratio": "not established; 71.6% of observed elapsed delta is pre-book.begin",
+    "memory_cause": "not established; dry-pass Main attempt grew 57->115 GiB without retaining C text; cache counts nearly identical while heapUsed differs 19.07 GB at pass 8; probe/teles slots bound at <=~0.3 GB/pass vs +3-18 GiB/pass measured",
+    "proven_optimization": "only fixture-scale memory direction (-13.83% peak on fp_list@4000) for b46e498; paired elapsed null-to-slight; no Main-scale effect",
+    "lineage_qualification": "forkflush a2e0818 already implements dry prepass, stable_defs, reach index, foreign deferral; canonical installed 1956f2e2 does not; winner b46e498 adds per-def probe/TELES lifetime"
+  },
+  "gates": [
+    "issue970 compilation queue not operational; source-only hold",
+    "retained-heap graph at carb.end and after first agent-native.run emission not collected",
+    "pre-book.begin split into load/parse/validate/owned not measured",
+    "B8 Main full-pass SIGTRAP cause unknown; Main admission closed",
+    "Main-scale qualification of b46e498, File lifetime, dry prepass, reach index not done",
+    "Def.e lifetime candidate not implemented; later lineage h-on-demand work is separate",
+    "TU-split header thinning and full-scale equivalence not done",
+    "release 48 GiB b559 front-end OOM has source trace but no forced-GC measurement"
+  ],
+  "disagreements": [
+    "compiler-kimi: term analysis dominates dry-vs-full cost (~4.9% fixture delta); deepseek/muse: Main-scale text share unmeasured in either direction",
+    "reach index ranked first by deepseek but controlled Process pair showed no speed/RSS benefit; output-identical only",
+    "winner memory vs throughput: -13.83% fixture RSS with null-to-slight paired elapsed; unpaired +13.6% point estimate superseded by paired sets",
+    "parallel emission needs symbolic per-definition identities plus canonical-order merge; full preassignment impossible without a dry pass",
+    "a2e0818 dry ordering adds one full pass on an 8-pass book; fixture evidence does not establish a Main-scale saving"
+  ],
+  "artifacts_read": {
+    "tasks/COMMON.md": "87301d3cb8d0cee2a1699747f0d771ac20797481ae97b0ce3b89c051183b64b3",
+    "task-context.json": "ae915b996d1e48b65889b3ac0320dfe7223a53297885770465f8d7199f4b1a7d",
+    "evidence/review.md": "93db15dd32dce437d7153172badf895bd271333a7444c279d9146c5317adecaa",
+    "evidence/retained-phase-analysis.jsonl": "a7ee71912ea1e4bd21a8f6e5d1b8d4d40e87e3b3312e32b25fd9516b27194580",
+    "evidence/fixed-point-analysis.jsonl": "1cb3e63b19a58f351c7c8d5989896f1ef5900d2369a35cc515e0e6bbb55d35ef",
+    "evidence/cache-analysis.jsonl": "f43df7193c784bc3002a9f976b108c996b2db0642dce91827eaca761d7c5230f",
+    "evidence/run-identities.jsonl": "aba3e3d69b3c233100958bac14626b94dcf0861f0346a471130438f3ad5ffa94",
+    "evidence/evidence-custody.jsonl": "73e5ab0ec30520c2bf164de908334a7455f33e723802a21bbb1feb06d4865e6b",
+    "compiler/comp.ts": "1956f2e238e4d0cda91cd694c82d05ea06d5edd6b4eed12604c730012a69610a",
+    "compiler/bend.ts": "93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85",
+    "compiler/main.ts": "92dcdb49e82fd59443e3aea10784f7dcf03a93f5a21920666543098b657b6b1e",
+    "compiler/base.bend": "e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798"
+  },
+  "limits": [
+    "no execution: no compile, build, test, benchmark, or signal",
+    "two retained runs differ in application source tree and host load; no causal ratio claimed",
+    "addendum-23 is one failed process on a different book; re-read, not reproduced",
+    "bounded fixture results do not transfer to Main scale without the listed gates",
+    "no numerical performance score is assigned"
+  ]
+}
