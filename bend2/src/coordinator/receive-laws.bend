@@ -393,6 +393,40 @@ law acquired_native_owner_resolves_recorded_attempt:
 def acquired_native_owner_resolves_recorded_attempt(db,session,cmd,model,effort,cwd,log,lock,predecessor,again,updates):
   {==}
 
+# M-8: the canonical guard owner reads its current durable attempt and only then
+# runs the pending admission continuation. The acquired attempt retains the
+# supplied lock while its recorded recovery arguments are used.
+def recorded_attempt_before_pending(+db: String, +session: String, +lock: U32, again: String -> IO(Result<&1,&1,U32 & String,Unit>), pending: (String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    +directory : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='retained'),'');"))
+    +attempt : String <- IO.pure(String,Tx.trim_nl(directory))
+    recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(attempt))
+    Receive.acquired_attempt(db,session,lock,attempt,recovery,again,pending)
+
+law native_admission_reads_current_attempt_before_pending_input:
+  for +db: String
+  for +session: String
+  for +lock: U32
+  for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  for -pending: (String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.acquired_recorded(db,session,lock,again,pending) == recorded_attempt_before_pending(db,session,lock,again,pending) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def native_admission_reads_current_attempt_before_pending_input(db,session,lock,again,pending):
+  {==}
+
+law surviving_attempt_recovery_preserves_its_guard:
+  for +db: String
+  for +session: String
+  for +lock: U32
+  for +directory: String
+  for args: String
+  for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  for -pending: (String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.acquired_attempt(db,session,lock,directory,Some{args},again,pending) == Receive.recover_owned(db,session,directory,lock,String.split(args,Char.from_u32(0)),again) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def surviving_attempt_recovery_preserves_its_guard(db,session,lock,directory,args,again,pending):
+  {==}
+
 def completion_prepares_before_owner_release(+db: String, +session: String, +id: String, +log: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
@@ -554,10 +588,9 @@ def guarded_attempt_observation(+db: String, +session: String, +id: String, curs
   Storage.with_writer_leases(Result<&1,&1,U32 & String,Unit>, log, directory,
     error => IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error}),
     unit => do IO<Result<&1,&1,U32 & String,Unit>>:
-      +normalized_harness : String <- IO.pure(String,recovered_harness(harness))
       reconciled : Unit <- Stop.observing(db,session,id,directory)
-      observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,normalized_harness,directory,directory,handle,"unknown")
-      Receive.completed_observation(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted,cmd))
+      gone : Bool <- Receive.orphan_native_gone(db,handle)
+      Receive.observe_guarded_state(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,lock,again,adopted,gone))
 
 law guarded_observation_preserves_its_adopted_origin:
   for +db: String
@@ -595,7 +628,7 @@ law keeper_recovery_preserves_the_original_input_cursor:
   for directory: String
   for native: String
   for +handle: U32
-  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+  for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
   {Receive.observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,again) == Receive.observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,None{},again,False{}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def keeper_recovery_preserves_the_original_input_cursor(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,again):
