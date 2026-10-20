@@ -388,19 +388,19 @@ env BATON_COMPILE_QUEUE_ROOT="$STATE" sh "$QUEUE" key --kind cc --source-root "$
 # The ccache executable bytes enter the cc toolchain identity.
 printf '#!/bin/sh\nexit 0\n' > "$T/ccache-one"; chmod +x "$T/ccache-one"
 printf '#!/bin/sh\nexit 1\n' > "$T/ccache-two"; chmod +x "$T/ccache-two"
-key_none=$(sh "$QUEUE" key --kind cc --source-root "$T/src" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
+key_none=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
   --linker "$FAKE" --version fake-version --input "$T/input.c" \
   --artifact "binary=$T/ccache-out" -- \
   "$FAKE" -o "$T/ccache-out" "$T/input.c")
-key_ccache_one=$(sh "$QUEUE" key --kind cc --source-root "$T/src" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
+key_ccache_one=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
   --linker "$FAKE" --version fake-version --input "$T/input.c" \
   --artifact "binary=$T/ccache-out" -- \
   "$FAKE" --ccache "$T/ccache-one" -o "$T/ccache-out" "$T/input.c")
-key_ccache_two=$(sh "$QUEUE" key --kind cc --source-root "$T/src" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
+key_ccache_two=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
   --linker "$FAKE" --version fake-version --input "$T/input.c" \
   --artifact "binary=$T/ccache-out" -- \
   "$FAKE" --ccache "$T/ccache-two" -o "$T/ccache-out" "$T/input.c")
-key_ccache_equal=$(sh "$QUEUE" key --kind cc --source-root "$T/src" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
+key_ccache_equal=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
   --linker "$FAKE" --version fake-version --input "$T/input.c" \
   --artifact "binary=$T/ccache-out" -- \
   "$FAKE" --ccache="$T/ccache-one" -o "$T/ccache-out" "$T/input.c")
@@ -409,16 +409,18 @@ key_ccache_equal=$(sh "$QUEUE" key --kind cc --source-root "$T/src" --state-root
 [ "$key_none" != "$key_ccache_equal" ] && pass 'ccache= form changes the key' || bad 'ccache= form kept the key'
 
 ccache_extra_key() {
-  sh "$QUEUE" key --kind cc --source-root "$T/src" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
+  sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
     --linker "$FAKE" --version fake-version --input "$T/input.c" \
     --artifact "binary=$T/ccache-out" "$@" -- \
     "$FAKE" --ccache "$T/ccache-one" -o "$T/ccache-out" "$T/input.c"
 }
 printf 'compiler_check = content\n' > "$T/ccache-config-one"
 printf 'compiler_check = mtime\n' > "$T/ccache-config-two"
-key_config_one=$(ccache_extra_key --aux "$T/ccache-config-one")
-key_config_two=$(ccache_extra_key --aux "$T/ccache-config-two")
-[ "$key_config_one" != "$key_config_two" ] && pass 'ccache config aux changes the key' || bad 'ccache config aux kept the key'
+config_one_sha=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$T/ccache-config-one")
+config_two_sha=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$T/ccache-config-two")
+key_config_one=$(ccache_extra_key --option "ccache-config-sha=$config_one_sha")
+key_config_two=$(ccache_extra_key --option "ccache-config-sha=$config_two_sha")
+[ "$key_config_one" != "$key_config_two" ] && pass 'ccache config digest changes the key' || bad 'ccache config digest kept the key'
 key_env_one=$(ccache_extra_key --option 'ccache-env=CCACHE_COMPILERCHECK=content')
 key_env_two=$(ccache_extra_key --option 'ccache-env=CCACHE_COMPILERCHECK=mtime')
 [ "$key_env_one" != "$key_env_two" ] && pass 'ccache environment option changes the key' || bad 'ccache environment option kept the key'
@@ -433,8 +435,9 @@ printf 'import Base\ndef main() -> IO(Unit): IO.die(Unit,0,"fixture")\n' > "$T/s
 # Explicit scalar options override defaults and reach execution and key.
 echo '=== explicit configuration ===' | tee -a "$T/results.txt"
 explicit_key() { # compiler root
-  sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --root "$2" \
-    --compiler "$1" --input "$T/input.c" --artifact "binary=$T/explicit" \
+  sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --root "$2" \
+    --compiler "$1" --linker "$1" --version fake-version \
+    --input "$T/input.c" --artifact "binary=$T/explicit" \
     --option 'test=explicit' \
     -- "$1" --tag explicit --log "$LOG" -o "$T/explicit" "$T/input.c"
 }
@@ -448,7 +451,8 @@ k2=$(explicit_key "$T/fake-compiler-2" "$T")
 [ "$k1" != "$k2" ] && pass 'explicit compiler reaches key' || bad 'compiler ignored in key'
 k3=$(explicit_key "$FAKE" "$T/other-root")
 [ "$k1" != "$k3" ] && pass 'explicit root reaches key' || bad 'root ignored in key'
-sh "$QUEUE" run --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  --linker "$FAKE" --version fake-version \
   --input "$T/input.c" --artifact "probe=$T/probe" \
   -- sh -c 'pwd > cwd-probe; printf x > "$1"' sh "$T/probe" >/dev/null 2>&1 \
   && pass 'explicit run options accepted' || bad 'explicit run failed'

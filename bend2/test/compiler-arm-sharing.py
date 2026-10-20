@@ -130,7 +130,7 @@ class CompilerArmSharing(unittest.TestCase):
         self.run_queue([
             'run', '--kind', 'cc', '--state-root', self.state, '--cwd', ROOT,
             '--compiler', self.cc, '--linker', linker, '--version', version,
-            '--source-root', ROOT,
+            '--source-root', str(source.parent.resolve()),
             '--input', source,
             '--artifact', 'binary=%s' % binary, '--option', 'test=%s' % source.stem,
             '--', self.cc, '-O1', '-w', source, '-lm', '-lpthread', '-o', binary])
@@ -143,27 +143,27 @@ class CompilerArmSharing(unittest.TestCase):
     def mutated_c(self, test_name):
         source = pathlib.Path(self.temp.name) / (test_name + '.c')
         fixture = TEST_DIR / (test_name + '.ts')
-        args = [
-            'run', '--kind', 'cgen', '--state-root', self.state, '--cwd', ROOT,
-            '--root', ROOT, '--source-root', ROOT,
-            '--entry', fixture.relative_to(ROOT).as_posix(),
-            '--compiler', self.bun, '--input', fixture,
-            '--artifact', 'c=%s' % source, '--option', 'test=%s' % test_name,
-        ]
         compiler_sources = [path for path in sorted((self.compiler / 'bend2').rglob('*'))
                             if path.is_file()]
-        for path in compiler_sources:
-            args.extend(['--input', path])
         # The queue rewrites exact path arguments to staged inputs/artifacts.
         # Pass the output as a positional argument so it can stage the path,
         # then set ARM_EQ_C inside this wrapper.
         wrapper = pathlib.Path(self.temp.name) / (test_name + '-cgen.sh')
         wrapper.write_text('#!/bin/sh\nout=$1\nshift\nARM_EQ_C=$out exec "$@"\n')
         wrapper.chmod(0o755)
-        args.extend(['--input', wrapper])
+        inputs = [fixture, *compiler_sources, wrapper]
+        source_root = compile_queue.common_source_root(inputs, ROOT)
+        args = [
+            'run', '--kind', 'cgen', '--state-root', self.state, '--cwd', ROOT,
+            '--root', ROOT, '--source-root', str(source_root),
+            '--entry', str(fixture),
+            '--compiler', self.bun, '--artifact', 'c=%s' % source,
+            '--option', 'test=%s' % test_name,
+        ]
+        for path in inputs:
+            args.extend(['--input', path])
         args.extend(['--', wrapper, source, self.bun, '--smol',
                      fixture, self.compiler])
-        self.run_queue(args)
         self.assertTrue(source.is_file(), msg='the test did not write ' + str(source))
         return source
 

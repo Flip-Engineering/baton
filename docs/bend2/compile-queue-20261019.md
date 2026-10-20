@@ -206,9 +206,11 @@ unwritable or unable to hold `$state/heavy.lock`.
 
 Every cc request also supplies an absolute `--source-root`, the resolved
 linker path and the captured compiler `--version` text. The queue rejects a cc
-request without any of the four fields. When `BATON2_CCACHE` is set,
-build-native passes the ccache config file as an `--aux` input and a sorted
-`CCACHE_*` environment snapshot as an `--option`; both enter the identity.
+request without any of the four fields. Source inputs and aux files must
+resolve inside the declared source root. When `BATON2_CCACHE` is set,
+build-native hashes the ccache config file and passes the digest as
+`--option ccache-config-sha=<sha256>`, and passes the sorted `CCACHE_*`
+environment snapshot as `--option ccache-env=<text>`; both enter the identity.
 
 After the executable exists, validate it with:
 

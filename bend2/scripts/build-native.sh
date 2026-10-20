@@ -203,6 +203,13 @@ build_native_shards() {
     ccache_env=$(env | LC_ALL=C sort | grep '^CCACHE_' | grep -v '^CCACHE_DIR=' | grep -v '^CCACHE_LOGFILE=' | grep -v '^CCACHE_CONFIGPATH=' | tr '\n' ' ')
     [ -n "$ccache_env" ] || ccache_env=none
   fi
+  ccache_config_sha=none
+  if [ -n "$ccache_config" ]; then
+    ccache_config_sha=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$ccache_config") || {
+      echo "The ccache config could not be hashed: $ccache_config" >&2
+      exit 1
+    }
+  fi
   cc_identity
   set -- sh "$queue" run --kind cc --state-root "$queue_state" --cwd "$root" --root "$root" \
     --source-root "$root" \
@@ -211,11 +218,11 @@ build_native_shards() {
     --input "$root/bend2/src/host/native-entry.c" \
     --aux "$root/tools/cgen-clang-parallel/build_and_measure.py" \
     --aux "$root/tools/cgen-clang-parallel/shard_emitted_c.py" \
-    --aux "$ccache_config" \
     --artifact "binary=$native_binary" \
     --artifact "outdir=$native_binary.parallel" \
     --option "mode=$mode" \
     --option "ccache-env=$ccache_env" \
+    --option "ccache-config-sha=$ccache_config_sha" \
     -- python3 "$root/tools/cgen-clang-parallel/build_and_measure.py" "$@"
   "$@"
 }

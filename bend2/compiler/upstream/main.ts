@@ -479,7 +479,8 @@ function cli_build(bin: string, file: string): void {
     const invocation = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
     const builder = path.resolve(bin);
     const sidecar = path.basename(builder) + ".gpu";
-    queue_cc(queue, stateRoot, builder, linker, version, file, [builder], "inputs/" + sidecar,
+    // The sidecar runs the built binary, so the binary is the request input.
+    queue_cc(queue, stateRoot, builder, linker, version, builder, [], "inputs/" + sidecar,
       builder + ".gpu", ["gpu-build-invocation=" + invocation], mac, bangs, cuda,
       ["--gpu-build"]);
   }

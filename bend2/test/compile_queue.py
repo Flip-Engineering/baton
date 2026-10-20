@@ -50,6 +50,21 @@ def compiler_identity(compiler):
     return IDENTITIES[compiler]
 
 
+def common_source_root(inputs, cwd):
+    """The narrowest directory containing every declared input."""
+    roots = []
+    for item in inputs:
+        entry = pathlib.Path(item).resolve()
+        roots.append(entry if entry.is_dir() else entry.parent)
+    if not roots:
+        roots = [pathlib.Path(cwd).resolve()]
+    root = roots[0]
+    for entry in roots[1:]:
+        while root != pathlib.Path('/') and not (entry == root or root in entry.parents):
+            root = root.parent
+    return root
+
+
 def compile_cc(argv, inputs, output, cwd, compiler=None, options=()):
     """Run one cc request through the queue and return the completed result."""
     queue = queue_entry()
@@ -60,7 +75,7 @@ def compile_cc(argv, inputs, output, cwd, compiler=None, options=()):
     request = [queue, 'run', '--kind', 'cc',
                '--state-root', str(state_root()),
                '--cwd', str(cwd),
-               '--source-root', str(pathlib.Path(cwd).resolve()),
+               '--source-root', str(common_source_root(inputs, cwd)),
                '--compiler', compiler,
                '--linker', linker,
                '--version', version]
