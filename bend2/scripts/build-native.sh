@@ -91,6 +91,7 @@ else
     echo 'This native binding requires Bend 2.0.25.' >&2
     exit 1
   fi
+  sh "$root/bend2/scripts/bend-lineage-guard.sh" "$compiler"
   "$compiler" "$entry" -o "$output.c"
 fi
 build_native_shards() {
