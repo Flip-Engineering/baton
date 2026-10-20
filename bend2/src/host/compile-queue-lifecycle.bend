@@ -59,6 +59,11 @@ def CompileQueueLifecycle.lock_fd_acquire(fd: U32) -> IO(Result<&1,&1,U32 & Stri
 def CompileQueueLifecycle.lock_release(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./compile-queue-lifecycle.c"
 
+# Closes one descriptor without changing the shared lock state. A parent uses
+# this after a detached supervisor inherits the lock open file description.
+def CompileQueueLifecycle.close_fd(fd: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./compile-queue-lifecycle.c"
+
 def CompileQueueLifecycle.mkdir_p(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./compile-queue-lifecycle.c"
 

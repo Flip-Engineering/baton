@@ -290,14 +290,61 @@ def artifact_pairs_text(artifacts: List<Artifact>) -> String:
 def identity_key(config: Config) -> IO(String):
   match config:
     case Config{text, command}:
+      +inputs = input_rows(text)
+      +artifacts = artifact_rows(text)
+      +cwd = field(text, "cwd")
+      +root = field(text, "root")
+      +compiler = field(text, "compiler")
       IO.try(String, Identity.request_key(
-        field(text, "kind"), field(text, "cwd"), field(text, "root"),
-        field(text, "source_root"), field(text, "entry"), field(text, "compiler"),
-        "", "", input_pairs_text(input_rows(text)),
+        field(text, "kind"), cwd, root,
+        field(text, "source_root"), field(text, "entry"), compiler,
+        "", "", input_pairs_text(inputs),
         Tx.join("\n", fields_all(text, "aux")),
-        artifact_pairs_text(artifact_rows(text)),
+        artifact_pairs_text(artifacts),
         Tx.join("\n", fields_all(text, "option")),
-        Tx.join("\n", command)))
+        normalize_command(command, cwd, root, compiler, inputs, artifacts)))
+
+def artifact_name_match(token: String, artifacts: List<Artifact>) -> Maybe<String>:
+  match artifacts:
+    case Nil{}: None{}
+    case Con{Artifact{name, path}, rest}:
+      Bool.pick(Maybe<String>, Tx.str_eq(token, path), Some{name},
+        artifact_name_match(token, rest))
+
+def input_destination_match(token: String, inputs: List<Input>) -> Maybe<String>:
+  match inputs:
+    case Nil{}: None{}
+    case Con{Input{source, destination}, rest}:
+      Bool.pick(Maybe<String>, Tx.str_eq(token, source), Some{destination},
+        input_destination_match(token, rest))
+
+def prefix_token(token: String, prefix: String, marker: String) -> Maybe<String>:
+  Bool.pick(Maybe<String>, Bool.and(non_empty(prefix), Tx.starts_with(token, prefix ++ "/")),
+    Some{marker ++ "/" ++ String.drop(token, Nat.add(String.length(prefix), 1))}, None{})
+
+def normalize_token(token: String, cwd: String, root: String, compiler: String,
+                    inputs: List<Input>, artifacts: List<Artifact>) -> String:
+  match artifact_name_match(token, artifacts):
+    case Some{name}: "{out:" ++ name ++ "}"
+    case None{}:
+      match input_destination_match(token, inputs):
+        case Some{destination}: "{in:" ++ destination ++ "}"
+        case None{}:
+          Bool.pick(String, Tx.str_eq(token, compiler), "{compiler}",
+            match prefix_token(token, root, "@root"):
+              case Some{value}: value
+              case None{}:
+                match prefix_token(token, cwd, "@cwd"):
+                  case Some{value}: value
+                  case None{}: token)
+
+def normalize_command(args: List<String>, cwd: String, root: String, compiler: String,
+                      inputs: List<Input>, artifacts: List<Artifact>) -> String:
+  match args:
+    case Nil{}: ""
+    case Con{token, rest}:
+      normalize_token(token, cwd, root, compiler, inputs, artifacts)
+      ++ "\n" ++ normalize_command(rest, cwd, root, compiler, inputs, artifacts)
 
 def keydir_of(state_root: String, key: String) -> String:
   state_root ++ "/keys/" ++ key
@@ -542,8 +589,8 @@ def start_attempt(config: Config, key: String, keydir: String, lock: U32, owner:
             IO.try(Unit, L.lock_fd_acquire(cgen)), IO.pure(Unit, Unit{}))
           +args = P.argv(Con{"__supervise", Con{attempt, Nil{}}})
           supervisor <- IO.try(U32, L.spawn_detached(args, lock, cgen))
-          released_lock : Unit <- IO.try(Unit, L.lock_release(lock))
-          released_cgen : Unit <- IO.try(Unit, L.lock_release(cgen))
+          released_lock : Unit <- IO.try(Unit, L.close_fd(lock))
+          released_cgen : Unit <- IO.try(Unit, L.close_fd(cgen))
           waited <- IO.try(U32, L.wait_pid(supervisor))
           completed <- IO.try(Bool, Result.verify_completed(keydir))
           match completed:
@@ -896,11 +943,13 @@ def adopt_live(pid: U32, pid_text: String, start: String, cwd: String,
     +entry = Bool.pick(String, non_empty(entry_override), entry_override, entry_of_argv(argv))
     inputs <- live_inputs(cwd, argv, output, compiler)
     +state = field(text, "state_root")
+    +logical_argv = Con{compiler, Con{entry, Con{"-o", Con{output, Nil{}}}}}
     +material_text = "kind=cgen\nstate_root=" ++ state ++ "\ncwd=" ++ cwd
       ++ "\nroot=" ++ cwd ++ "\nsource_root=" ++ cwd ++ "\nentry=" ++ entry
       ++ "\ncompiler=" ++ compiler ++ "\nreceipt=\ntoken=\n"
-      ++ input_material_text(inputs) ++ artifact_material_text(name, path)
-    +material_config = Config{material_text, argv}
+      ++ Tx.join("\n", fields_all(text, "option")) ++ "\n"
+      ++ artifact_material_text(name, output)
+    +material_config = Config{material_text, logical_argv}
     key <- identity_key(material_config)
     +keydir = keydir_of(state, key)
     made : Unit <- IO.try(Unit, L.mkdir_p(keydir ++ "/runs"))
@@ -928,8 +977,8 @@ def adopt_live(pid: U32, pid_text: String, start: String, cwd: String,
           +guard_args = P.argv(Con{"__guard", Con{keydir, Con{pid_text, Con{start,
             Con{name, Con{path, Nil{}}}}}}}})
           guard_pid <- IO.try(U32, L.spawn_detached(guard_args, lock, cgen))
-          released_lock : Unit <- IO.try(Unit, L.lock_release(lock))
-          released_cgen : Unit <- IO.try(Unit, L.lock_release(cgen))
+          released_lock : Unit <- IO.try(Unit, L.close_fd(lock))
+          released_cgen : Unit <- IO.try(Unit, L.close_fd(cgen))
           IO.write("adopted=1\nkey=" ++ key ++ "\npid=" ++ pid_text
             ++ "\nguard=" ++ U32.show(guard_pid) ++ "\nartifact=" ++ path ++ "\n")
 

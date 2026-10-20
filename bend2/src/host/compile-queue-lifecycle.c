@@ -425,21 +425,56 @@ static int cq_parse_argv(const char *text, size_t length, char ***out, int *coun
   return 0;
 }
 
-static int cq_setup_child_fds(int key_lock, int cgen_lock, int status_write) {
-  int devnull = open("/dev/null", O_RDWR);
-  if (devnull < 0) return errno;
-  if (dup2(devnull, STDIN_FILENO) < 0 || dup2(devnull, STDOUT_FILENO) < 0 ||
-      dup2(devnull, STDERR_FILENO) < 0) {
-    int error = errno; close(devnull); return error;
+static int cq_dup_inherit(int fd, int minimum, int cloexec) {
+  int copy = fcntl(fd, F_DUPFD, minimum);
+  if (copy < 0) return -1;
+  if (cloexec) {
+    int flags = fcntl(copy, F_GETFD);
+    if (flags < 0 || fcntl(copy, F_SETFD, flags | FD_CLOEXEC) < 0) {
+      close(copy);
+      return -1;
+    }
   }
-  if (devnull > STDERR_FILENO) close(devnull);
-  if (dup2(key_lock, 9) < 0 || dup2(cgen_lock, 8) < 0) return errno;
-  long limit = sysconf(_SC_OPEN_MAX);
-  if (limit < 1024 || limit > 1048576) limit = 65536;
-  for (int fd = 3; fd < (int)limit; fd++) {
-    if (fd == 8 || fd == 9 || fd == status_write) continue;
-    close(fd);
+  return copy;
+}
+
+static int cq_setup_child_fds(int key_lock, int cgen_lock, int status_write,
+                              int *status_out) {
+  int key_copy = cq_dup_inherit(key_lock, 10, 0);
+  int cgen_copy = cq_dup_inherit(cgen_lock, 10, 0);
+  int status_copy = cq_dup_inherit(status_write, 10, 1);
+  int error = 0;
+  if (key_copy < 0 || cgen_copy < 0 || status_copy < 0) error = errno;
+  if (!error) {
+    int devnull = open("/dev/null", O_RDWR);
+    if (devnull < 0) error = errno;
+    else {
+      if (dup2(devnull, STDIN_FILENO) < 0 || dup2(devnull, STDOUT_FILENO) < 0 ||
+          dup2(devnull, STDERR_FILENO) < 0) error = errno;
+      if (devnull > STDERR_FILENO) close(devnull);
+    }
   }
+  if (!error) {
+    long limit = sysconf(_SC_OPEN_MAX);
+    if (limit < 1024 || limit > 1048576) limit = 65536;
+    for (int fd = 3; fd < (int)limit; fd++) {
+      if (fd == key_copy || fd == cgen_copy || fd == status_copy) continue;
+      close(fd);
+    }
+    if (dup2(key_copy, 9) < 0 || dup2(cgen_copy, 8) < 0) error = errno;
+    int flags;
+    if (!error && ((flags = fcntl(9, F_GETFD)) < 0 ||
+                   fcntl(9, F_SETFD, flags & ~FD_CLOEXEC) < 0)) error = errno;
+    if (!error && ((flags = fcntl(8, F_GETFD)) < 0 ||
+                   fcntl(8, F_SETFD, flags & ~FD_CLOEXEC) < 0)) error = errno;
+  }
+  if (key_copy >= 0) close(key_copy);
+  if (cgen_copy >= 0) close(cgen_copy);
+  if (error) {
+    if (status_copy >= 0) close(status_copy);
+    return error;
+  }
+  *status_out = status_copy;
   return 0;
 }
 
@@ -477,14 +512,16 @@ static int cq_spawn_detached(const char *argv_text, size_t argv_length,
       write(status[1], &child_error, sizeof(child_error));
       _exit(127);
     }
-    int child_error = cq_setup_child_fds((int)key_lock, (int)cgen_lock, status[1]);
+    int child_error = 0;
+    int status_fd = -1;
+    child_error = cq_setup_child_fds((int)key_lock, (int)cgen_lock, status[1], &status_fd);
     if (child_error) {
-      write(status[1], &child_error, sizeof(child_error));
+      write(status_fd >= 0 ? status_fd : status[1], &child_error, sizeof(child_error));
       _exit(127);
     }
     execve(exec, argv, environ);
     child_error = errno;
-    write(status[1], &child_error, sizeof(child_error));
+    write(status_fd >= 0 ? status_fd : status[1], &child_error, sizeof(child_error));
     _exit(127);
   }
   close(status[1]);
@@ -1002,6 +1039,16 @@ static Term cq_lock_release_run(Env env, Term *fields, IoWork *work) {
   return io_work(work, cq_lock_release_call, cq_lock_release_pack);
 }
 static void __attribute__((constructor)) cq_lock_release_use(void) { io_eff(CID_COMPILEQUEUELIFECYCLE_LOCK_RELEASE, cq_lock_release_run, 0); }
+#endif
+
+#ifdef CID_COMPILEQUEUELIFECYCLE_CLOSE_FD
+static Term cq_close_fd_run(Env env, Term *fields, IoWork *work) {
+  (void)work;
+  int fd = (int)fields[0];
+  if (fd >= 0 && close(fd)) return io_fail(env, errno, NULL);
+  return io_done(env, term_pak(CID_UNIT, 0));
+}
+static void __attribute__((constructor)) cq_close_fd_use(void) { io_eff(CID_COMPILEQUEUELIFECYCLE_CLOSE_FD, cq_close_fd_run, 0); }
 #endif
 
 #ifdef CID_COMPILEQUEUELIFECYCLE_MKDIR_P
