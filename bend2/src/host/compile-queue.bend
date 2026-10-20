@@ -90,14 +90,22 @@ def token_ok_go(s: String) -> Bool:
 def token_ok(s: String) -> Bool:
   Bool.and(non_empty(s), token_ok_go(s))
 
-def field_lines(lines: List<String>, name: String) -> String:
+# default_config emits one empty line per singleton field and config_line
+# appends supplied values, so the supplied value for a singleton is the last
+# matching line. Repeated fields (input, option, artifact, aux) are read with
+# fields_all and keep every line.
+def field_lines_go(lines: List<String>, name: String, acc: String) -> String:
   match lines:
-    case Nil{}: ""
+    case Nil{}: acc
     case +line <> rest:
       match split_eq(line, ""):
         case Some{Split{left, right}}:
-          Bool.pick(String, Tx.str_eq(left, name), right, field_lines(rest, name))
-        case None{}: field_lines(rest, name)
+          +next = Bool.pick(String, Tx.str_eq(left, name), right, acc)
+          field_lines_go(rest, name, next)
+        case None{}: field_lines_go(rest, name, acc)
+
+def field_lines(lines: List<String>, name: String) -> String:
+  field_lines_go(lines, name, "")
 
 def field(text: String, name: String) -> String:
   field_lines(Tx.split_lines(text), name)
