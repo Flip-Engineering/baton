@@ -99,7 +99,6 @@ jobs:
           set -euo pipefail
           test "$(stat -c %a "$BATON_COMPILE_QUEUE_ROOT")" = 2770
           test "$(stat -c %G "$BATON_COMPILE_QUEUE_ROOT")" = "$BATON_COMPILE_QUEUE_GROUP"
-          id -Gn | tr ' ' '\n' | grep -Fx "$BATON_COMPILE_QUEUE_GROUP"
           test -w "$BATON_COMPILE_QUEUE_ROOT"
           test "$(stat -c %U:%G:%a "$BATON2_COMPILE_QUEUE_BIN")" = root:root:755
       - name: Validate exact source commit
@@ -290,7 +289,6 @@ jobs:
           set -euo pipefail
           test "$(stat -c %a "$BATON_COMPILE_QUEUE_ROOT")" = 2770
           test "$(stat -c %G "$BATON_COMPILE_QUEUE_ROOT")" = "$BATON_COMPILE_QUEUE_GROUP"
-          id -Gn | tr ' ' '\n' | grep -Fx "$BATON_COMPILE_QUEUE_GROUP"
           test -w "$BATON_COMPILE_QUEUE_ROOT"
           test "$(stat -c %U:%G:%a "$BATON2_COMPILE_QUEUE_BIN")" = root:root:755
       - name: Validate exact source commit

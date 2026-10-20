@@ -420,7 +420,6 @@ def CompileQueueResult.copy_rows(keydir: String, rows: List<&2,String>) -> IO(Re
           match String.split(row, Char.from_u32(9)):
             case name <> destination <> tail:
               staging = destination ++ ".queue-tmp"
-              made : Unit <- IO.try(Unit, L.mkdir_p(CompileQueueResult.dirname(destination)))
               removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
               installed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.install(keydir ++ "/completed/artifacts/" ++ name, destination, staging))
               CompileQueueResult.copy_rows(keydir, rest)

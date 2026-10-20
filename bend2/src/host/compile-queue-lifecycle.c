@@ -241,7 +241,7 @@ static int cq_set_inheritable(int fd) {
 
 static int cq_lock_open(const char *path, u32 *handle) {
   mode_t previous = umask(0007);
-  int fd = open(path, O_RDWR | O_CREAT, 0660);
+  int fd = open(path, O_RDWR | O_CREAT | O_NOFOLLOW, 0660);
   int saved = errno;
   umask(previous);
   errno = saved;
@@ -299,13 +299,19 @@ static int cq_mkdir_p(const char *path) {
     if (mkdir(copy, 02770) && errno != EEXIST) {
       int error = errno; umask(previous); free(copy); return error;
     }
+    struct stat parent_info;
+    int parent_status = lstat(copy, &parent_info);
+    if (parent_status || !S_ISDIR(parent_info.st_mode)) {
+      int error = parent_status ? errno : ENOTDIR;
+      umask(previous); free(copy); return error;
+    }
     *at = '/';
   }
   int error = 0;
   if (mkdir(copy, 02770) && errno != EEXIST) error = errno;
   umask(previous);
   struct stat info;
-  if (!error && (stat(copy, &info) || !S_ISDIR(info.st_mode))) error = ENOTDIR;
+  if (!error && (lstat(copy, &info) || !S_ISDIR(info.st_mode))) error = ENOTDIR;
   if (!error && (!(info.st_mode & S_ISGID) || !(info.st_mode & S_IWGRP)
       || (info.st_mode & S_IWOTH))) error = EACCES;
   free(copy);
@@ -346,7 +352,7 @@ static int cq_copy_file(const char *source, const char *destination) {
   int input = open(source, O_RDONLY);
   if (input < 0) return errno;
   mode_t previous = umask(0007);
-  int output = open(destination, O_WRONLY | O_CREAT | O_TRUNC, 0660);
+  int output = open(destination, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0660);
   int saved = errno;
   umask(previous);
   errno = saved;

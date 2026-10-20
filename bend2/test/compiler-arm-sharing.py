@@ -150,7 +150,14 @@ class CompilerArmSharing(unittest.TestCase):
                             if path.is_file()]
         for path in compiler_sources:
             args.extend(['--input', path])
-        args.extend(['--', 'env', 'ARM_EQ_C=%s' % source, self.bun, '--smol',
+        # The queue rewrites exact path arguments to staged inputs/artifacts.
+        # Pass the output as a positional argument so it can stage the path,
+        # then set ARM_EQ_C inside this wrapper.
+        wrapper = pathlib.Path(self.temp.name) / (test_name + '-cgen.sh')
+        wrapper.write_text('#!/bin/sh\nout=$1\nshift\nARM_EQ_C=$out exec "$@"\n')
+        wrapper.chmod(0o755)
+        args.extend(['--input', wrapper])
+        args.extend(['--', wrapper, source, self.bun, '--smol',
                      fixture, self.compiler])
         self.run_queue(args)
         self.assertTrue(source.is_file(), msg='the test did not write ' + str(source))

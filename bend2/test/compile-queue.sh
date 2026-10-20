@@ -39,6 +39,7 @@ for arg in "$@"; do
   esac
   case $arg in
     --fail) fail=1 ;;
+    --gpu-build) gpu=1 ;;
   esac
   [ "$prev" = -o ] && out=$arg
   prev=$arg
@@ -51,7 +52,9 @@ if [ "$fail" = 1 ]; then
   exit 3
 fi
 [ "$sleep_s" = 0 ] || sleep "$sleep_s"
-if [ -n "$out" ]; then
+if [ "$gpu" = 1 ]; then
+  printf 'gpu-artifact-%s' "$tag" > "$0.gpu"
+elif [ -n "$out" ]; then
   printf 'artifact-%s' "$tag" > "$out"
 fi
 [ -n "$log" ] && printf 'end %s %s %s 0\n' "$(now)" "$$" "$tag" >> "$log"
@@ -122,6 +125,26 @@ run_cc ident "$T/reuse" || bad 'reuse request failed'
 after=$(count_starts)
 [ "$before" = "$after" ] && pass 'completed result reused' || bad "reuse starts $before -> $after"
 [ "$(cat "$T/reuse")" = "artifact-ident" ] && pass 'reused artifact bytes match' || bad 'reused artifact differs'
+
+# Copying an artifact must work under an ordinary pre-existing output parent.
+mkdir -p "$T/ordinary-output"
+chmod 755 "$T/ordinary-output"
+run_cc ordinary "$T/ordinary-output/program" || bad 'ordinary output directory request failed'
+[ "$(cat "$T/ordinary-output/program")" = "artifact-ordinary" ] \
+  && pass 'ordinary caller output directory accepted' || bad 'ordinary output directory copy failed'
+
+# The staged executable writes its GPU sidecar beside argv[0]. The queue must
+# capture the nested artifact path and copy it back to the requested location.
+: > "$LOG"
+sh "$QUEUE" run --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  --input "$FAKE" --artifact "inputs/fake-compiler.gpu=$T/fake-compiler.gpu" \
+  --option 'gpu-sidecar=once' --token gpu-sidecar \
+  -- "$FAKE" --tag gpu --log "$LOG" --gpu-build \
+  >"$T/gpu.out" 2>"$T/gpu.err" \
+  && pass 'nested GPU sidecar request completed' || bad 'nested GPU sidecar request failed'
+[ "$(cat "$T/fake-compiler.gpu" 2>/dev/null)" = 'gpu-artifact-gpu' ] \
+  && pass 'nested GPU sidecar copied to ordinary output path' || bad 'nested GPU sidecar missing'
+[ "$(count_starts)" = 1 ] && pass 'GPU sidecar fake command ran once' || bad 'GPU sidecar fake command count differs'
 
 # Identical concurrent cgen requests.
 : > "$LOG"
