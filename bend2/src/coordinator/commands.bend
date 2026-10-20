@@ -72,6 +72,10 @@ type Command is Data:
   Logs{session: String, level: String}
   LogsStorage{}
   LogsClean{session: String}
+  LogsCleanAll{}
+  StoragePolicy{}
+  StoragePreview{session: String}
+  StorageApply{session: String}
   Status{}
   Players{}
   LegacySubordinates{}
@@ -106,6 +110,8 @@ type Command is Data:
   ContextQueryFile{owner: String, query: String, path: String}
   ContextResult{query: String}
   Serve{}
+  Stall{}
+  StallWake{}
   OwnerStatus{}
   Help{}
   Invalid{}
@@ -167,6 +173,7 @@ def schema() -> String:
   ++ usage_windows_schema()
   ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);"
+  ++ "CREATE INDEX IF NOT EXISTS messages_pending ON messages(recipient,seq) WHERE receipt IS NULL;"
   ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);"
   ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
   ++ MessageStatus.schema()
@@ -378,7 +385,7 @@ def omp_terminal_error_sql(+event: String) -> String:
 # The report carries the observed provider status and diagnostic. The native
 # log retains the complete terminal frame.
 def omp_terminal_error_text_sql_expr(+event: String) -> String:
-  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN (SELECT 'OMP provider failure: stopReason=error, errorStatus=' || coalesce(CAST(json_extract(m.value,'$.errorStatus') AS TEXT),'unknown') || '; ' || coalesce(json_extract(m.value,'$.errorMessage'),'the retained frame carries no provider diagnostic') FROM (SELECT " ++ last_assistant_sql_expr(event) ++ " AS value) m WHERE json_extract(m.value,'$.stopReason')='error') END"
+  "CASE WHEN json_valid(" ++ event ++ ") THEN CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN (SELECT 'OMP provider failure: stopReason=error, errorStatus=' || coalesce(CAST(json_extract(m.value,'$.errorStatus') AS TEXT),'unknown') || '; ' || coalesce(json_extract(m.value,'$.errorMessage'),'the retained frame carries no provider diagnostic') FROM (SELECT " ++ last_assistant_sql_expr(event) ++ " AS value) m WHERE json_extract(m.value,'$.stopReason')='error') END END"
 
 def omp_terminal_error_text_sql(+event: String) -> String:
   "(SELECT " ++ omp_terminal_error_text_sql_expr("native_frame.value") ++ " FROM (SELECT " ++ q(event) ++ " AS value) native_frame)"
@@ -650,7 +657,11 @@ def sql(command: Command) -> String:
     case UsageWindowRefresh{session}: ""
     case Logs{session,level}: ""
     case LogsStorage{}: ""
+    case StoragePolicy{}: ""
+    case StoragePreview{session}: ""
+    case StorageApply{session}: ""
     case LogsClean{session}: ""
+    case LogsCleanAll{}: ""
     case Recruit{id,parent,harness,model,effort,repo,branch,path,base}: ""
     case Join{id,parent,harness,model,effort,path}: ""
     case Worktree{id}: ""
@@ -675,6 +686,8 @@ def sql(command: Command) -> String:
     case ContextInstall{module_id,source}: ""
     case ContextQueryFile{owner,query,path}: ""
     case ContextResult{query}: ""
+    case Stall{}: ""
+    case StallWake{}: ""
     case Serve{}: ""
     case OwnerStatus{}: ""
     case Help{}: ""
@@ -684,6 +697,8 @@ def parse_verb_only(+verb: String) -> Command:
   match verb:
     case "context-engines": ContextEngines{""}
     case "logs-storage": LogsStorage{}
+    case "logs-clean-all": LogsCleanAll{}
+    case "storage-policy": StoragePolicy{}
     case "help": Help{}
     case "--help": Help{}
     case "status": Status{}
@@ -691,6 +706,8 @@ def parse_verb_only(+verb: String) -> Command:
     case "workers": LegacySubordinates{}
     case "players": Players{}
     case "orchestra": Orchestra{}
+    case "stall": Stall{}
+    case "stall-wake": StallWake{}
     case "pending": Pending{}
     case "serve": Serve{}
     case "owner-status": OwnerStatus{}
@@ -702,6 +719,8 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
     case "context-result": ContextResult{id}
     case "logs": Logs{id,""}
     case "logs-clean": LogsClean{id}
+    case "storage-preview": StoragePreview{id}
+    case "storage-apply": StorageApply{id}
     case "players": match id:
       case "--pretty": Pretty{Players{}}
       case _: Invalid{}
@@ -1162,4 +1181,16 @@ law owner_status_parser_rejects_extra_arguments:
   {parse(["owner-status",extra]) == Invalid{} : Command}
 
 def owner_status_parser_rejects_extra_arguments(extra):
+  {==}
+
+law stall_parser_selects_the_candidate_report:
+  {parse(["stall"]) == Stall{} : Command}
+
+def stall_parser_selects_the_candidate_report():
+  {==}
+
+law stall_wake_parser_selects_the_wake:
+  {parse(["stall-wake"]) == StallWake{} : Command}
+
+def stall_wake_parser_selects_the_wake():
   {==}

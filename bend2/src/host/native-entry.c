@@ -75,6 +75,41 @@ static int contextual_dispatch_args(int argc,char **argv,int first) {
   return 0;
 }
 
+static int executable_at(const char *path) {
+  return path && path[0] && access(path,X_OK)==0;
+}
+
+/* The installed package can carry a Node executable beside the router or the
+   bundled Bun runtime below libexec. BATON2_NODE selects an absolute runtime
+   explicitly. The PATH lookup remains the final fallback. */
+static char *dispatch_runtime(void) {
+  const char *configured=getenv("BATON2_NODE");
+  if(configured && configured[0]=='/' && executable_at(configured))
+    return strdup(configured);
+  char *executable=application_executable();
+  char *directory=executable?strdup(executable):NULL;
+  char *slash=directory?strrchr(directory,'/'):NULL;
+  if(slash) {
+    *slash=0;
+    const char *suffixes[]={"/node","/../libexec/baton2/repl/bun",NULL};
+    for(size_t i=0;suffixes[i];i++) {
+      size_t size=strlen(directory)+strlen(suffixes[i])+1;
+      char *candidate=malloc(size);
+      if(!candidate) break;
+      snprintf(candidate,size,"%s%s",directory,suffixes[i]);
+      char *resolved=realpath(candidate,NULL);
+      free(candidate);
+      if(resolved && executable_at(resolved)) {
+        free(directory);free(executable);
+        return resolved;
+      }
+      free(resolved);
+    }
+  }
+  free(directory);free(executable);
+  return strdup("node");
+}
+
 /* The dispatch frontend reads complete input and calls the native setup and
    admission operations. exec preserves its stdin, stdout and exit status. */
 static int dispatch_entry(int argc,char **argv) {
@@ -113,15 +148,17 @@ static int dispatch_entry(int argc,char **argv) {
   }
   char **args=calloc((size_t)argc+9,sizeof(*args));
   if(!args) {free(helper);free(executable);perror("baton dispatch arguments");return 1;}
+  char *runtime=dispatch_runtime();
+  if(!runtime) {free(args);free(helper);free(executable);perror("baton dispatch runtime");return 1;}
   int count=0;
-  args[count++]="node";args[count++]=helper;
+  args[count++]=runtime;args[count++]=helper;
   args[count++]="--baton2";args[count++]=executable;
   args[count++]="--database";args[count++]=(char *)database;
   if(project) {args[count++]="--project";args[count++]=(char *)project;}
   for(int i=first;i<argc;i++) args[count++]=argv[i];
   execvp(args[0],args);
-  perror("baton dispatch: Node could not execute the installed dispatch operation");
-  free(args);free(helper);free(executable);return 1;
+  perror("baton dispatch: dispatch runtime could not execute the installed dispatch operation");
+  free(args);free(helper);free(executable);free(runtime);return 1;
 }
 
 #if defined(BATON2_RECEIVE_FOCUSED) || defined(BATON2_NATIVE_RECEIVER_ROUTER) || defined(BATON2_RECOVERY_HELPER)
@@ -139,7 +176,9 @@ static int focused_receiver_verb(int argc,char **argv) {
   if(!strcmp(first,"--dispatch-message") || !strcmp(first,"--host-process-keeper") ||
      !strcmp(first,"--instance-owner") || !strcmp(first,"--instance-shutdown")) return 1;
   if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
-                !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"agent-native-input"))) return 1;
+                !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"agent-native-input") ||
+                !strcmp(argv[2],"register-receiver") || !strcmp(argv[2],"storage-policy") ||
+                !strcmp(argv[2],"storage-preview") || !strcmp(argv[2],"storage-apply"))) return 1;
   return 0;
 }
 
@@ -156,7 +195,9 @@ static int native_receiver_route(int argc, char **argv) {
     !strcmp(argv[1],"--host-process-keeper") || !strcmp(argv[1],"--instance-owner") ||
     !strcmp(argv[1],"--instance-shutdown") || recovery);
   if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
-      !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"recover-observer"))) focused_verb=1;
+      !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"recover-observer") ||
+      !strcmp(argv[2],"register-receiver") || !strcmp(argv[2],"storage-policy") ||
+      !strcmp(argv[2],"storage-preview") || !strcmp(argv[2],"storage-apply"))) focused_verb=1;
   if(!native_input && !focused_verb) return -1;
   char *full=application_executable();
   char *directory=full?strdup(full):NULL;
@@ -194,7 +235,7 @@ static int native_receiver_route(int argc, char **argv) {
 #endif
 
 #if defined(BATON2_RECEIVE_FOCUSED) || defined(BATON2_RECOVERY_HELPER)
-static int delegate_full_cli(char **argv) {
+static int delegate_sibling_cli(char **argv,const char *name,const char *role) {
   char *executable=application_executable();
   char *directory=executable?strdup(executable):NULL;
   char *slash=directory?strrchr(directory,'/'):NULL;
@@ -204,31 +245,51 @@ static int delegate_full_cli(char **argv) {
     return 78;
   }
   *slash=0;
-  size_t size=strlen(directory)+sizeof("/baton-full");
+  size_t size=strlen(directory)+strlen(name)+2;
   char *candidate=malloc(size);
   if(!candidate) {
     free(directory);free(executable);
     perror("baton: full CLI path");
     return 1;
   }
-  snprintf(candidate,size,"%s/baton-full",directory);
+  snprintf(candidate,size,"%s/%s",directory,name);
   char *full=realpath(candidate,NULL);
   free(candidate);free(directory);free(executable);
   if(!full || access(full,X_OK)) {
-    fputs("baton: sibling baton-full is missing or not executable. Install the complete Baton package.\n",stderr);
+    if(!strcmp(role,"full CLI"))
+      fputs("baton: sibling baton-full is missing or not executable. Install the complete Baton package.\n",stderr);
+    else
+      fputs("baton: sibling baton-recovery is missing or not executable. Install the complete Baton package.\n",stderr);
     free(full);return 78;
   }
   argv[0]=full;
   execv(full,argv);
-  perror("baton: full CLI could not execute");
+  if(!strcmp(role,"full CLI"))perror("baton: full CLI could not execute");
+  else perror("baton: recovery helper could not execute");
   free(full);return 1;
+}
+
+static int delegate_full_cli(char **argv) {
+  return delegate_sibling_cli(argv,"baton-full","full CLI");
+}
+#endif
+
+#ifdef BATON2_RECEIVE_FOCUSED
+static int focused_recovery_route(int argc,char **argv) {
+  int recovery=(argc>1 && (!strcmp(argv[1],"--recover-observer") ||
+                           !strcmp(argv[1],"--recover-receive"))) ||
+               (argc>2 && !strcmp(argv[2],"recover-observer"));
+  if(!recovery) return -1;
+  return delegate_sibling_cli(argv,"baton-recovery","recovery helper");
 }
 #endif
 
 #ifdef BATON2_RECOVERY_HELPER
 static int recovery_helper_verb(int argc,char **argv) {
   if(argc<2 || native_help_request(argc,argv)) return 0;
-  if(!strcmp(argv[1],"--recover-observer") || !strcmp(argv[1],"--recover-receive")) return 1;
+  if(!strcmp(argv[1],"--recover-observer") || !strcmp(argv[1],"--recover-receive") ||
+     !strcmp(argv[1],"--host-process-keeper") || !strcmp(argv[1],"--instance-owner") ||
+     !strcmp(argv[1],"--instance-shutdown")) return 1;
   return argc>2 && !strcmp(argv[2],"recover-observer");
 }
 #endif
@@ -246,6 +307,10 @@ int main(int argc, char **argv) {
 #endif
   int settings=settings_entry(argc,argv);
   if(settings>=0) return settings;
+#ifdef BATON2_RECEIVE_FOCUSED
+  int recovery_route=focused_recovery_route(argc,argv);
+  if(recovery_route>=0) return recovery_route;
+#endif
   int dispatch=dispatch_entry(argc,argv);
   if(dispatch>=0) return dispatch;
 #ifdef BATON2_NATIVE_RECEIVER_ROUTER

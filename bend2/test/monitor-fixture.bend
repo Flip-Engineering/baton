@@ -99,7 +99,7 @@ def dispatch_mode(mode: String, rest: List<String>) -> IO(Unit):
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
     case +mode <> rest: dispatch_mode(mode,rest)
-    case other: IO.die(Unit,2,"monitor-fixture init DB | start ... | shutdown DB")
+    case other: IO.die(Unit,2,"monitor-fixture init DB HARNESS | start ... | shutdown DB")
 
 def main() -> IO(Unit):
   do IO<Unit>:
