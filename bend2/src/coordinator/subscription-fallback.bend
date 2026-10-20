@@ -504,6 +504,20 @@ def report_body(db: String, session: String, id: String, kind: String, body: Str
     noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":" ++ kind) ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q(body) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
     IO.pure(Unit,Unit{})
 
+# Provider refusal reports share an identity while the recorded account, window,
+# and reset remain the same. The attempt ID is the fallback when no provider
+# exhaustion row is available, so unrelated unclassified failures remain distinct.
+def refusal_report_base(db: String, session: String, id: String) -> IO(String):
+  do IO<String>:
+    +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +identity : String <- IO.try(String,DB.Sql.read(db,UW.refusal_identity_sql(session,Tx.trim_nl(harness),UW.provider_of(Tx.trim_nl(model)),id)))
+    match Tx.trim_nl(identity):
+      case SNil{}: IO.pure(String,id)
+      case value: do IO<String>:
+        +encoded : String <- IO.try(String,DB.Sql.read(db,"SELECT lower(hex(" ++ C.q(value) ++ "));"))
+        IO.pure(String,"refusal:" ++ Tx.trim_nl(encoded))
+
 # The verdict of the sidecar write, at the head of the definition so the caller's do block
 # ends on a term. A failed write reports its cause and returns false, so no profile is
 # advanced and the original input stays owed.
@@ -599,8 +613,25 @@ def record_and_report(+db: String, +session: String, +id: String, +record_path: 
 
 def report_all_refused(db: String, session: String, id: String, harness: String, from_label: String, cause: String) -> IO(Bool):
   do IO<Bool>:
-    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":profile-exhausted") ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q(all_refused_body(harness,from_label,cause)) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
+    +base : String <- refusal_report_base(db,session,id)
+    noted : Unit <- report_body(db,session,base,"profile-exhausted",all_refused_body(harness,from_label,cause))
     IO.pure(Bool,False{})
+
+def account_refusal_report_base(db: String, session: String, id: String, account: String) -> IO(String):
+  do IO<String>:
+    +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +identity : String <- IO.try(String,DB.Sql.read(db,UW.refusal_account_identity_sql(session,Tx.trim_nl(harness),UW.provider_of(Tx.trim_nl(model)),account,id)))
+    match Tx.trim_nl(identity):
+      case SNil{}: IO.pure(String,id)
+      case value: do IO<String>:
+        +encoded : String <- IO.try(String,DB.Sql.read(db,"SELECT lower(hex(" ++ C.q(value) ++ "));"))
+        IO.pure(String,"refusal:" ++ Tx.trim_nl(encoded))
+
+def report_account_exhausted(db: String, session: String, id: String, account: String, body: String) -> IO(Unit):
+  do IO<Unit>:
+    +base : String <- account_refusal_report_base(db,session,id,account)
+    report_body(db,session,base,"account-exhausted",body)
 
 def choose_profile(db: String, session: String, id: String, record_path: String, harness: String, from_label: String, cause: String, decided: Maybe<&2,Profile>) -> IO(Bool):
   match decided:
@@ -909,15 +940,16 @@ def select_route(+db: String, +session: String, id: String) -> IO(Maybe<&2,Route
 # a bound account that was the last recorded account for its harness. History
 # and lineage append IO failures write different reports, so they return false
 # here and never cause a cross-route switch.
-def exhausted_reported(+db: String, +id: String) -> IO(Bool):
+def exhausted_reported(db: String, session: String, id: String) -> IO(Bool):
   do IO<Bool>:
-    found : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":profile-exhausted") ++ " OR id=" ++ C.q(id ++ ":account-exhausted") ++ ");"))
+    +base : String <- refusal_report_base(db,session,id)
+    found : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(base ++ ":profile-exhausted") ++ " OR id=" ++ C.q(base ++ ":account-exhausted") ++ ");"))
     IO.pure(Bool,String.eq(found,"1\n"))
 
-def route_trigger(+db: String, id: String, +event: String) -> IO(Bool):
+def route_trigger(+db: String, +session: String, id: String, +event: String) -> IO(Bool):
   do IO<Bool>:
     +cause : String <- exhaustion_cause(db,event)
-    reported : Bool <- Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),exhausted_reported(db,id))
+    reported : Bool <- Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),exhausted_reported(db,session,id))
     IO.pure(Bool,reported)
 
 # The applying seam reports the chosen route with the original provider cause, or the

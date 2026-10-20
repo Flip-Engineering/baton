@@ -330,6 +330,7 @@ def legacy_args_selected(+session: String, verb: String, +options: List<&2,D.Opt
     case "resume": Bool.pick(List<String>,D.present(options,"--clear-stop"),["clear-stop",target],
       Bool.pick(List<String>,D.present(options,"--lift-stop"),["resume",target,"--lift-stop"],["resume",target]))
     case "stop": Bool.pick(List<String>,D.present(options,"--clear"),["clear-stop",target],["stop",target,D.value(options,"--id",""),D.value(options,"--reason","")])
+    case "force-stop": ["force-stop",target,D.value(options,"--id","")]
     case "clear-stop": ["clear-stop",target]
     case "recover-observer": ["recover-observer",target,D.value(options,"--observer","")]
     case "continue-task": ["continue-task",target,D.value(options,"--id","")]

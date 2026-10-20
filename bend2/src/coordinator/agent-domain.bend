@@ -73,6 +73,7 @@ def names(verb: String) -> List<String>:
     Names{"configure","--session --harness --model --effort --command --output-log --expected-harness --expected-model --expected-effort"},
     Names{"resume","--session --lift-stop --clear-stop"},
     Names{"stop","--session --id --reason --reason-file --clear"},
+    Names{"force-stop","--session --id"},
     Names{"clear-stop","--session"},
     Names{"recover-observer","--session --observer"},
     Names{"continue-task","--session --id"},
@@ -282,6 +283,7 @@ def help(action: String) -> String:
     case "configure": "configure [--session SESSION] [--harness NAME] [--model MODEL] [--effort EFFORT] [--command EXECUTABLE] [--output-log PATH] [--expected-harness NAME] [--expected-model MODEL] [--expected-effort EFFORT]\nOmitted route and expected fields use the selected recorded session. Recorded receiver command and log supply omitted executable arguments. Native configure preserves its expected-route and current-attempt rules.\n"
     case "resume": "resume [--session SESSION] [--lift-stop | --clear-stop]\nResume the same recorded conversation. --lift-stop explicitly lifts its current stop and continues it. --clear-stop removes the terminal stop without delivering input, waking the session or starting a native.\n"
     case "stop": "stop [--id STOP_ID] (--reason TEXT | --reason-file PATH) [--session SESSION]\nRetain an explicit stop and complete reason. Baton generates its identity or selects the existing stop for the session; native reason validation applies. stop SESSION --clear removes a terminal stop without continuing the conversation.\n"
+    case "force-stop": "force-stop [--id STOP_ID] [--session SESSION]\nBaton selects the session's existing stop when --id is omitted and invokes the native force operation.\n"
     case "clear-stop": "clear-stop [--session SESSION]\nRemove the session's terminal stop only. Native identity, conversation history, workspace and retained input stay unchanged; no input is delivered, no wake runs and no native starts.\n"
     case "recover-observer": "recover-observer --observer PID [--session SESSION]\nUse the existing attempt recovery and observer ownership operation.\n"
     case "continue-task": "continue-task [--id TURN_ID] [--session SESSION]\nExplicitly request continuation of the selected open assignment. Baton generates the continuation identity when omitted.\n"

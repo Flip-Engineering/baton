@@ -1603,7 +1603,7 @@ def route_reported(+db: String, +player: String, +id: String, event: String, err
   match error_clear:
     case True{}: do IO<Bool>:
       closed : Bool <- Stop.stopped(db,player)
-      triggered : Bool <- Subs.route_trigger(db,id,event)
+      triggered : Bool <- Subs.route_trigger(db,player,id,event)
       IO.pure(Bool,Bool.and(Bool.not(closed),triggered))
     case False{}: IO.pure(Bool,False{})
 

@@ -540,10 +540,16 @@ def window_gate(+db: String, +session: String, +account: String) -> IO(Gate):
 # A stable identity for the latest exhausted provider row of one route, across
 # accounts. Reports for the same refusal share it so the first complete
 # evidence is durable and later attempts add no duplicate report.
-def refusal_identity_sql(+session: String, +harness: String, +provider: String) -> String:
-  +providers = "SELECT p.* FROM usage_windows p WHERE p.harness=" ++ C.q(harness) ++ " AND p.provider=" ++ C.q(provider) ++ " AND p.reset_source IN ('provider-message','provider-report') AND p.id=(SELECT p2.id FROM usage_windows p2 WHERE p2.harness=" ++ C.q(harness) ++ " AND p2.provider=" ++ C.q(provider) ++ " AND p2.reset_source IN ('provider-message','provider-report') AND p2.window=p.window ORDER BY p2.recorded_at DESC,p2.id DESC LIMIT 1)"
-  +exhausted = "SELECT p.window FROM (" ++ providers ++ ") p WHERE " ++ exhausted_sql("p")
-  "SELECT coalesce((SELECT " ++ C.q(session) ++ " || char(31) || p.harness || char(31) || p.provider || char(31) || p.account || char(31) || p.window || char(31) || coalesce(CAST(p.resets_at AS TEXT),'-') || char(31) || p.reset_source FROM (" ++ providers ++ ") p WHERE p.window IN (" ++ exhausted ++ ") ORDER BY p.recorded_at DESC,p.id DESC LIMIT 1),'')"
+# The report identity is derived from the refusal observation recorded for this
+# attempt. This keeps an intervening account or window observation from changing
+# the report key while an exhaustion handoff is being recorded.
+def refusal_identity_sql(+session: String, +harness: String, +provider: String, +attempt: String) -> String:
+  "SELECT coalesce((SELECT " ++ C.q(session) ++ " || char(31) || p.harness || char(31) || p.provider || char(31) || p.account || char(31) || p.window || char(31) || coalesce(CAST(p.resets_at AS TEXT),'-') || char(31) || p.reset_source FROM usage_windows p WHERE p.harness=" ++ C.q(harness) ++ " AND p.provider=" ++ C.q(provider) ++ " AND p.message=" ++ C.q(attempt) ++ " AND p.reset_source IN ('provider-message','provider-report') AND " ++ exhausted_sql("p") ++ " ORDER BY p.recorded_at DESC,p.id DESC LIMIT 1),'')"
+
+# Account exhaustion uses the refusal observation for this attempt and confirms
+# its account label before deriving the stable account-scoped report identity.
+def refusal_account_identity_sql(+session: String, +harness: String, +provider: String, +account: String, +attempt: String) -> String:
+  "SELECT coalesce((SELECT " ++ C.q(session) ++ " || char(31) || p.harness || char(31) || p.provider || char(31) || p.account || char(31) || p.window || char(31) || coalesce(CAST(p.resets_at AS TEXT),'-') || char(31) || p.reset_source FROM usage_windows p WHERE p.harness=" ++ C.q(harness) ++ " AND p.provider=" ++ C.q(provider) ++ " AND p.account=" ++ C.q(account) ++ " AND p.message=" ++ C.q(attempt) ++ " AND p.reset_source IN ('provider-message','provider-report') AND " ++ exhausted_sql("p") ++ " ORDER BY p.recorded_at DESC,p.id DESC LIMIT 1),'')"
 
 # An operator-observed reset covers every exhausted window in the session's
 # route and account scope, including the empty label a Muse quota message
