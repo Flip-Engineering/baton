@@ -49,11 +49,10 @@ import Base
 #   input_rows          one `destination<TAB>sha256<TAB>bytes` per line; the
 #                       destination is the work-relative staged name
 #   artifact_names      one artifact name per line
-#   normalized_argv     newline-terminated tokens, already normalized to
-#                       {in:<destination>}, {out:<name>} and {compiler};
-#                       an empty string means no tokens, and the final empty
-#                       line is the terminator (so an empty token is a blank
-#                       line before it)
+#   normalized_argv     tokens already normalized to {in:<destination>},
+#                       {out:<name>} and {compiler}, one per line; a trailing
+#                       newline is optional, an empty string means no tokens,
+#                       and an empty token is a blank line
 #
 # Material record:
 #   schema=baton-compile-queue-identity-v2
@@ -149,17 +148,27 @@ def CompileQueueIdentity.artifact_lines(names: List<&2,String>) -> String:
     case name <> rest:
       Bool.pick(String, String.is_empty(name), CompileQueueIdentity.artifact_lines(rest), "artifact-name=" ++ name ++ "\n" ++ CompileQueueIdentity.artifact_lines(rest))
 
-def CompileQueueIdentity.argv_tokens(tokens: List<&2,String>) -> String:
+def CompileQueueIdentity.argv_terminated(tokens: List<&2,String>) -> String:
   match tokens:
     case Nil{}:
       ""
     case token <> Nil{}:
       ""
     case token <> rest:
-      "argv=" ++ token ++ "\n" ++ CompileQueueIdentity.argv_tokens(rest)
+      "argv=" ++ token ++ "\n" ++ CompileQueueIdentity.argv_terminated(rest)
+
+def CompileQueueIdentity.argv_plain(tokens: List<&2,String>) -> String:
+  match tokens:
+    case Nil{}:
+      ""
+    case token <> rest:
+      "argv=" ++ token ++ "\n" ++ CompileQueueIdentity.argv_plain(rest)
 
 def CompileQueueIdentity.argv_lines(tokens: String) -> String:
-  Bool.pick(String, String.is_empty(tokens), "", CompileQueueIdentity.argv_tokens(String.lines(tokens)))
+  Bool.pick(String, String.is_empty(tokens), "",
+    Bool.pick(String, String.ends_with(tokens, "\n"),
+      CompileQueueIdentity.argv_terminated(String.lines(tokens)),
+      CompileQueueIdentity.argv_plain(String.lines(tokens))))
 
 def CompileQueueIdentity.digest_lines(kind: String, source_digest: String, file_closure_digest: String) -> String:
   Bool.pick(String, String.eq(kind, "cgen"), "source-digest=" ++ source_digest ++ "\n", "file-digest=" ++ file_closure_digest ++ "\n")
