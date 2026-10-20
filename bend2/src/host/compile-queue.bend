@@ -327,6 +327,8 @@ def parse_common(args: List<&2,String>, config: Config) -> IO(Config):
     case "--source-root" <> value <> rest: parse_common(rest, config_line(config, "source_root", value))
     case "--entry" <> value <> rest: parse_common(rest, config_line(config, "entry", value))
     case "--compiler" <> value <> rest: parse_common(rest, config_line(config, "compiler", value))
+    case "--linker" <> value <> rest: parse_common(rest, config_line(config, "linker", value))
+    case "--version" <> value <> rest: parse_common(rest, config_line(config, "version", value))
     case "--receipt" <> value <> rest: parse_common(rest, config_line(config, "receipt", value))
     case "--token" <> value <> rest: parse_common(rest, config_line(config, "token", value))
     case "--input" <> value <> rest: parse_common(rest, config_input(config, value))
@@ -354,6 +356,11 @@ def validate_config(config: Config, need_command: Bool) -> String:
       +artifact_ok = artifact_set_valid(artifacts)
       +source_ok = Bool.pick(Bool, Tx.str_eq(kind, "cgen"),
         Bool.and(non_empty(source), non_empty(entry)), True{})
+      +cc_source_ok = Bool.pick(Bool, Tx.str_eq(kind, "cc"), valid_state_root(source), True{})
+      +linker = field(text, "linker")
+      +version = field(text, "version")
+      +toolchain_ok = Bool.pick(Bool, Tx.str_eq(kind, "cc"),
+        Bool.and(non_empty(linker), non_empty(version)), True{})
       +token_okay = Bool.pick(Bool, non_empty(token), token_ok(token), True{})
       +state_ok = valid_state_root(state)
       +cwd_ok = non_empty(cwd)
@@ -456,7 +463,7 @@ def normalize_command(args: List<&2,String>, +cwd: String, +root: String, +compi
 def keydir_of(state_root: String, key: String) -> String:
   state_root ++ "/keys/" ++ key
 
-def identity_key(config: Config) -> IO(String):
+def identity_key(+config: Config) -> IO(String):
   match config:
     case Config{+text, command}:
       +inputs = input_rows(text)
@@ -464,12 +471,12 @@ def identity_key(config: Config) -> IO(String):
       +cwd = field(text, "cwd")
       +root = field(text, "root")
       +compiler = field(text, "compiler")
-      +linker = Bool.pick(String, String.eq(field(text, "kind"), "cc"),
-        Bool.pick(String, non_empty(field(text, "linker")), field(text, "linker"), "ld"), "")
+      +linker = Bool.pick(String, String.eq(field(text, "kind"), "cc"), field(text, "linker"), "")
+      +version = Bool.pick(String, String.eq(field(text, "kind"), "cc"), field(text, "version"), "")
       IO.try(String, Identity.CompileQueueIdentity.request_key(
         field(text, "kind"), cwd, root,
         field(text, "source_root"), field(text, "entry"), compiler,
-        linker, "", input_pairs_text(inputs),
+        linker, version, input_pairs_text(inputs),
         fields_join("\n", fields_all(text, "aux")),
         artifact_pairs_text(artifacts),
         fields_join("\n", fields_all(text, "option")),
@@ -871,7 +878,56 @@ def run_latest_result(latest: String, parsed: Config, key: String, keydir: Strin
         released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
         Result.CompileQueueResult.report_failure(path)
 
-def run_completed_result(completed: Bool, +text: String, +parsed: Config, +key: String,
+def active_state_pid(parsed: Maybe<&2,U32>, +start: String) -> IO(U32):
+  match parsed:
+    case None{}: IO.pure(U32, 2)
+    case Some{+pid}:
+      Bool.pick(IO(U32), String.is_empty(start), IO.pure(U32, 2),
+        do IO<U32>:
+          alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(pid, start))
+          IO.pure(U32, Bool.pick(U32, U32.is_eq(alive, 1), 1, 0)))
+
+def active_state_text(+text: String) -> IO(U32):
+  Bool.pick(IO(U32), String.is_empty(text), IO.pure(U32, 0),
+    do IO<U32>:
+      +pid_text : String <- IO.pure(String, field(text, "pid"))
+      +start : String <- IO.pure(String, field(text, "starttime"))
+      active_state_pid(U32.read(pid_text), start))
+
+def active_state(+keydir: String) -> IO(U32):
+  do IO<U32>:
+    present : Bool <- regular(keydir ++ "/active")
+    Bool.pick(IO(U32), present,
+      do IO<U32>:
+        +text : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/active"))
+        active_state_text(text),
+      IO.pure(U32, 0))
+
+def run_completed_fresh(+state: U32, +keydir: String, +text: String, +parsed: Config,
+                        +key: String, +owner: String, +wait_start: String,
+                        present: Bool, +lock: U32) -> IO(Unit):
+  Bool.pick(IO(Unit), U32.is_eq(state, 0),
+    do IO<Unit>:
+      +completed_path : String <- IO.pure(String, keydir ++ "/completed/result")
+      existing : Bool <- regular(completed_path)
+      Bool.pick(IO(Unit), existing,
+        do IO<Unit>:
+          removed : Unit <- remove_token(keydir, owner)
+          released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
+          IO.die(Unit, 1, "compile-queue: completed result exists but is not reusable; only adopt may reuse an external result"),
+        do IO<Unit>:
+          latest : String <- IO.try(String, Result.CompileQueueResult.latest_result(keydir, wait_start, Bool.pick(String, present, "1", "0")))
+          run_latest_result(latest, parsed, key, keydir, lock, owner)),
+    do IO<Unit>:
+      removed : Unit <- remove_token(keydir, owner)
+      released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
+      IO.die(Unit, 1, "compile-queue: active execution is live or has uncertain ownership; refusing a fresh admission"))
+
+def run_completed_unverified(state: U32, +keydir: String, +text: String, +parsed: Config, +key: String,
+                             +owner: String, +wait_start: String, present: Bool, lock: U32) -> IO(Unit):
+  run_completed_fresh(state, keydir, text, parsed, key, owner, wait_start, present, lock)
+
+def run_completed_result(completed: Bool, state: U32, +text: String, +parsed: Config, +key: String,
                          +keydir: String, +owner: String, wait_start: String,
                          present: Bool, lock: U32) -> IO(Unit):
   match completed:
@@ -882,10 +938,7 @@ def run_completed_result(completed: Bool, +text: String, +parsed: Config, +key: 
         removed : Unit <- remove_token(keydir, owner)
         released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
         IO.pure(Unit, Unit{})
-    case False{}:
-      do IO<Unit>:
-        latest : String <- IO.try(String, Result.CompileQueueResult.latest_result(keydir, wait_start, Bool.pick(String, present, "1", "0")))
-        run_latest_result(latest, parsed, key, keydir, lock, owner)
+    case False{}: run_completed_unverified(state, keydir, text, parsed, key, owner, wait_start, present, lock)
 
 def run_config_locked(parsed: Config, +text: String, +key: String) -> IO(Unit):
   do IO<Unit>:
@@ -897,9 +950,10 @@ def run_config_locked(parsed: Config, +text: String, +key: String) -> IO(Unit):
     present : Bool <- regular(keydir ++ "/active")
     made : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(keydir ++ "/runs"))
     lock : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(keydir ++ "/lock"))
+    active : U32 <- active_state(keydir)
     cleaned : Unit <- clean_stale_active(keydir)
     completed : Bool <- IO.try(Bool, Result.CompileQueueResult.verify_completed(keydir))
-    run_completed_result(completed, text, parsed, key, keydir, owner, wait_start, present, lock)
+    run_completed_result(completed, active, text, parsed, key, keydir, owner, wait_start, present, lock)
 
 def run_parsed_config(+parsed: Config, key: String) -> IO(Unit):
   match parsed:
@@ -955,7 +1009,18 @@ def wait_result_path(latest: String, key: String, lock: U32) -> IO(Unit):
         released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
         Result.CompileQueueResult.report_failure(path)
 
-def wait_completed(completed: Bool, key: String, keydir: String, lock: U32) -> IO(Unit):
+def wait_unverified_cache(present: Bool, +key: String, +keydir: String, +lock: U32) -> IO(Unit):
+  Bool.pick(IO(Unit), present,
+    do IO<Unit>:
+      +text : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/completed/result"))
+      +label : String <- IO.pure(String, Bool.pick(String, Tx.str_eq(field(text, "external"), "1"), "completed-external", "completed-unusable"))
+      released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
+      IO.write("status=" ++ label ++ "\nkey=" ++ key ++ "\n"),
+    do IO<Unit>:
+      latest : String <- IO.try(String, Result.CompileQueueResult.latest_result(keydir, "0", "0"))
+      wait_result_path(latest, key, lock))
+
+def wait_completed(completed: Bool, +key: String, +keydir: String, +lock: U32) -> IO(Unit):
   match completed:
     case True{}:
       do IO<Unit>:
@@ -963,8 +1028,8 @@ def wait_completed(completed: Bool, key: String, keydir: String, lock: U32) -> I
         IO.write("status=completed\nkey=" ++ key ++ "\n")
     case False{}:
       do IO<Unit>:
-        latest : String <- IO.try(String, Result.CompileQueueResult.latest_result(keydir, "0", "0"))
-        wait_result_path(latest, key, lock)
+        present : Bool <- regular(keydir ++ "/completed/result")
+        wait_unverified_cache(present, key, keydir, lock)
 
 def wait_state_key(state: String, +key: String) -> IO(Unit):
   Bool.pick(IO(Unit), non_empty(key),
@@ -1073,6 +1138,16 @@ def cancel_command(args: List<&2,String>) -> IO(Unit):
     parsed : CancelArgs <- parse_cancel(args, state, "", "")
     cancel_parsed(parsed)
 
+def status_cache_row(present: Bool, completed: Bool, +keydir: String, +key: String) -> IO(Unit):
+  Bool.pick(IO(Unit), completed,
+    IO.write("completed key=" ++ key ++ "\n"),
+    Bool.pick(IO(Unit), present,
+      do IO<Unit>:
+        +result : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/completed/result"))
+        +label : String <- IO.pure(String, Bool.pick(String, Tx.str_eq(field(result, "external"), "1"), "completed-external", "completed-unusable"))
+        IO.write(label ++ " key=" ++ key ++ "\n"),
+      IO.pure(Unit, Unit{})))
+
 def status_row_selected(selected: Bool, state_root: String, +key: String) -> IO(Unit):
   Bool.pick(IO(Unit), selected,
     do IO<Unit>:
@@ -1084,9 +1159,8 @@ def status_row_selected(selected: Bool, state_root: String, +key: String) -> IO(
           ++ " started_ns=" ++ field(text, "started_ns") ++ "\n"),
         IO.pure(Unit, Unit{}))
       completed : Bool <- IO.try(Bool, Result.CompileQueueResult.verify_completed(keydir))
-      done : Unit <- Bool.pick(IO(Unit), completed,
-        IO.write("completed key=" ++ key ++ "\n"), IO.pure(Unit, Unit{}))
-      IO.pure(Unit, Unit{}),
+      present : Bool <- regular(keydir ++ "/completed/result")
+      status_cache_row(present, completed, keydir, key),
     IO.pure(Unit, Unit{}))
 
 def status_rows(+state_root: String, +filter: String, names: List<&1,String>) -> IO(Unit):
@@ -1209,14 +1283,17 @@ def finish_adoption(+keydir: String, +adoption: String, +name: String, +path: St
     removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(keydir ++ "/active"))
     IO.pure(Unit, Unit{})
 
-def guard_after_exit(+keydir: String, name: String, +path: String, +started: String) -> IO(Unit):
+def guard_after_exit(+keydir: String, +name: String, +path: String, +started: String) -> IO(Unit):
   do IO<Unit>:
     +adoption : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/adoption"))
     size : U32 <- IO.try(U32, F.Files.size(path))
     Bool.pick(IO(Unit), U32.is_lt(0, size),
       do IO<Unit>:
-        published : Unit <- finish_adoption(keydir, adoption, name, path)
-        verified : Bool <- IO.try(Bool, Result.CompileQueueResult.verify_adoption(keydir, adoption))
+        digest : String <- IO.try(String, Identity.CompileQueueIdentity.file_digest(path))
+        +record : String <- IO.pure(String, adoption ++ "artifact-name=" ++ name ++ "\nartifact-digest=" ++ digest ++ "\n")
+        recorded : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(keydir ++ "/adoption", record))
+        published : Unit <- finish_adoption(keydir, record, name, path)
+        verified : Bool <- IO.try(Bool, Result.CompileQueueResult.verify_adoption(keydir, record))
         Bool.pick(IO(Unit), verified,
           IO.pure(Unit, Unit{}),
           do IO<Unit>:

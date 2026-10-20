@@ -498,7 +498,9 @@ static int cq_setup_child_fds(int key_lock, int cgen_lock, int status_write,
   if (key_copy >= 0) close(key_copy);
   if (cgen_copy >= 0) close(cgen_copy);
   if (error) {
-    if (status_copy >= 0) close(status_copy);
+    /* Keep the duplicate status descriptor open so the child can report the
+       late setup failure after the close-all loop. */
+    *status_out = status_copy;
     return error;
   }
   *status_out = status_copy;

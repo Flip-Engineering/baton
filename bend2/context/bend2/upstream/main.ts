@@ -396,15 +396,40 @@ function compile_queue_state_root(): string {
   return stateRoot;
 }
 
+// cc_version captures the compiler's visible version text without newlines.
+function cc_version(cc: string): string {
+  const result = child.spawnSync(cc, ["--version"], { encoding: "utf8" });
+  const text = (result.stdout || "").trim().split(/\s+/).join(" ");
+  if (result.error || result.status !== 0 || !text) {
+    throw "Error: " + cc + " --version did not report compiler identity"
+      + (result.error ? "\n" + result.error.message : "");
+  }
+  return text;
+}
+
+// cc_linker resolves the actual link editor the compiler driver selects.
+function cc_linker(cc: string): string {
+  const result = child.spawnSync(cc, ["-print-prog-name=ld"], { encoding: "utf8" });
+  const value = (result.stdout || "").trim();
+  if (result.error || result.status !== 0 || !value) {
+    throw "Error: " + cc + " did not report its linker identity"
+      + (result.error ? "\n" + result.error.message : "");
+  }
+  return value;
+}
+
 // queue_cc runs one native compilation through the shared host compile queue.
-function queue_cc(queue: string, stateRoot: string, compiler: string, file: string,
+function queue_cc(queue: string, stateRoot: string, compiler: string, linker: string,
+                  version: string, file: string,
                   extraInputs: string[], artifact: string, artifactPath: string,
                   extraOptions: string[], mac: boolean, bangs: boolean, cuda: string,
                   args: string[]): void {
   const absoluteFile = path.resolve(file);
   const argv = ["run", "--kind", "cc", "--state-root", stateRoot,
     "--cwd", process.cwd(), "--root", path.dirname(absoluteFile),
-    "--compiler", compiler, "--input", absoluteFile,
+    "--source-root", path.dirname(absoluteFile),
+    "--compiler", compiler, "--linker", linker, "--version", version,
+    "--input", absoluteFile,
     "--artifact", artifact + "=" + path.resolve(artifactPath),
     "--option", "platform=" + (mac ? "darwin" : "linux"),
     "--option", "backend=" + (bangs ? (mac ? "gpu-metal" : "gpu-cuda") : "cpu")];
@@ -446,13 +471,16 @@ function cli_build(bin: string, file: string): void {
       "-L" + cuda + "/lib", ...cpu, "-lcuda", "-lnvrtc"];
   const queue = compile_queue_entry();
   const stateRoot = compile_queue_state_root();
-  queue_cc(queue, stateRoot, cc, file, [], "binary", bin, [], mac, bangs, cuda,
+  const linker = cc_linker(cc);
+  const version = cc_version(cc);
+  queue_cc(queue, stateRoot, cc, linker, version, file, [], "binary", bin, [], mac, bangs, cuda,
     bangs ? gpu : cpu);
   if (bangs) {
     const invocation = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
     const builder = path.resolve(bin);
     const sidecar = path.basename(builder) + ".gpu";
-    queue_cc(queue, stateRoot, builder, file, [builder], "inputs/" + sidecar,
+    // The sidecar runs the built binary, so the binary is the request input.
+    queue_cc(queue, stateRoot, builder, linker, version, builder, [], "inputs/" + sidecar,
       builder + ".gpu", ["gpu-build-invocation=" + invocation], mac, bangs, cuda,
       ["--gpu-build"]);
   }

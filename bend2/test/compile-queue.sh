@@ -77,10 +77,19 @@ run_cc() { # tag output extra...
   tag=$1
   out=$2
   shift 2
-  sh "$QUEUE" run --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
     --input "$T/input.c" --artifact "binary=$out" --option "test=$tag" \
     --token "tok-$(basename "$out")" \
     -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$T/input.c" "$@" >"$T/$(basename "$out").out" 2>"$T/$(basename "$out").err"
+}
+
+cc_key() { # tag output extra...
+  tag=$1
+  out=$2
+  shift 2
+  sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+    --input "$T/input.c" --artifact "binary=$out" --option "test=$tag" \
+    -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$T/input.c" "$@"
 }
 
 run_cgen() { # tag output extra...
@@ -125,28 +134,28 @@ grep -F "$(cat "$T/artifact-row-prefix")" "$STATE/keys/$ident_key/completed/resu
 
 # Artifact names are relative paths used under the attempt and cache roots.
 invalid_artifact=0
-sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
   --input "$T/input.c" --artifact "../escape=$T/escape" --token invalid-artifact \
   -- "$FAKE" -o "$T/escape" "$T/input.c" >/dev/null 2>&1 || invalid_artifact=$?
 [ "$invalid_artifact" = 2 ] && pass 'artifact traversal rejected' || bad "artifact traversal exit $invalid_artifact"
 
 # A request must use the configured host state root.
 mismatch_rc=0
-sh "$QUEUE" run --kind cc --state-root "$T/other-root" --cwd "$T" --compiler "$FAKE" \
+sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$T/other-root" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
   --input "$T/input.c" --artifact "binary=$T/mismatch" --token mismatch-root \
   -- "$FAKE" -o "$T/mismatch" "$T/input.c" >/dev/null 2>&1 || mismatch_rc=$?
 [ "$mismatch_rc" = 2 ] && pass 'state root mismatch rejected' || bad "state root mismatch exit $mismatch_rc"
 
 # Missing and unusable host roots fail before a request is published.
 missing_root_rc=0
-env -u BATON_COMPILE_QUEUE_ROOT sh "$QUEUE" run --kind cc --cwd "$T" --compiler "$FAKE" \
+env -u BATON_COMPILE_QUEUE_ROOT sh "$QUEUE" run --kind cc --source-root "$T" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
   --input "$T/input.c" --artifact "binary=$T/missing-root" --token missing-root \
   -- "$FAKE" -o "$T/missing-root" "$T/input.c" >/dev/null 2>&1 || missing_root_rc=$?
 [ "$missing_root_rc" = 2 ] && pass 'missing state root rejected' || bad "missing state root exit $missing_root_rc"
 printf 'not a directory\n' > "$T/not-a-root"
 unusable_root_rc=0
-env -u BATON_COMPILE_QUEUE_ROOT sh "$QUEUE" run --kind cc --state-root "$T/not-a-root" \
-  --cwd "$T" --compiler "$FAKE" --input "$T/input.c" --artifact "binary=$T/unusable-root" \
+env -u BATON_COMPILE_QUEUE_ROOT sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$T/not-a-root" \
+  --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version --input "$T/input.c" --artifact "binary=$T/unusable-root" \
   --token unusable-root -- "$FAKE" -o "$T/unusable-root" "$T/input.c" >/dev/null 2>&1 || unusable_root_rc=$?
 [ "$unusable_root_rc" = 2 ] && pass 'unusable state root rejected' || bad "unusable state root exit $unusable_root_rc"
 
@@ -155,6 +164,13 @@ missing_queue_rc=0
 BATON2_COMPILE_QUEUE_BIN="$T/absent-queue" sh "$QUEUE" status --state-root "$STATE" \
   >/dev/null 2>&1 || missing_queue_rc=$?
 [ "$missing_queue_rc" = 2 ] && pass 'missing queue executable rejected' || bad "missing queue executable exit $missing_queue_rc"
+
+# cc requests require compiler, linker and version.
+missing_cc=0
+sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  --input "$T/input.c" --artifact "binary=$T/missing-cc" -- \
+  "$FAKE" -o "$T/missing-cc" "$T/input.c" >/dev/null 2>&1 || missing_cc=$?
+[ "$missing_cc" = 2 ] && pass 'cc request without linker/version rejected' || bad "missing cc identity exit $missing_cc"
 
 # Reuse.
 before=$(count_starts)
@@ -173,7 +189,7 @@ run_cc ordinary "$T/ordinary-output/program" || bad 'ordinary output directory r
 # The staged executable writes its GPU sidecar beside argv[0]. The queue must
 # capture the nested artifact path and copy it back to the requested location.
 : > "$LOG"
-sh "$QUEUE" run --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
   --input "$FAKE" --artifact "inputs/fake-compiler.gpu=$T/fake-compiler.gpu" \
   --option 'gpu-sidecar=once' --token gpu-sidecar \
   -- "$FAKE" --tag gpu --log "$LOG" --gpu-build \
@@ -270,7 +286,7 @@ run_cc failure "$T/retry" --fail || true
 # Cancellation.
 : > "$LOG"
 run_cc cancelcase "$T/cancelcase" --sleep 30 & k=$!
-key=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+key=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
   --input "$T/input.c" --artifact "binary=$T/cancelcase" --option 'test=cancelcase' \
   -- "$FAKE" --tag cancelcase --log "$LOG" -o "$T/cancelcase" "$T/input.c" --sleep 30)
 i=0
@@ -295,7 +311,7 @@ while [ "$i" -lt 200 ]; do
   i=$((i + 1))
   sleep 0.05
 done
-qkey=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+qkey=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
   --input "$T/input.c" --artifact "binary=$T/queued-cancel" --option 'test=queued-cancel' \
   -- "$FAKE" --tag queued-cancel --log "$LOG" -o "$T/queued-cancel" "$T/input.c")
 run_cc queued-cancel "$T/queued-cancel" & queued=$!
@@ -319,7 +335,7 @@ run_cc owner "$T/ownerA" --sleep 2 & o1=$!
 sleep 0.3
 run_cc owner "$T/ownerB" --sleep 2 & o2=$!
 sleep 0.5
-ownkey=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+ownkey=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
   --input "$T/input.c" --artifact "binary=$T/ownerA" --option 'test=owner' \
   -- "$FAKE" --tag owner --log "$LOG" -o "$T/ownerA" "$T/input.c" --sleep 2)
 sh "$QUEUE" cancel --state-root "$STATE" --key "$ownkey" --token tok-ownerA >/dev/null 2>&1
@@ -341,11 +357,115 @@ wait "$l2" || lrc=$?
 [ "$lrc" = 0 ] && pass 'surviving requester completed' || bad "survivor exit $lrc"
 [ "$(count_starts)" = 1 ] && pass 'requester loss shared one execution' || bad "loss starts=$(count_starts)"
 
+# A live or uncertain active record refuses a fresh admission.
+: > "$LOG"
+livekey=$(cc_key live "$T/live")
+mkdir -p "$STATE/keys/$livekey"
+live_start=$(awk '{print $22}' "/proc/$$/stat")
+printf 'pid=%s\nstarttime=%s\nkind=cc\nsetsid=1\nstarted_ns=0\n' "$$" "$live_start" > "$STATE/keys/$livekey/active"
+if run_cc live "$T/live"; then bad 'live active admitted'; else pass 'live active refused'; fi
+grep -q 'refusing a fresh admission' "$T/live.err" && pass 'live active diagnostic reported' || bad 'live active diagnostic missing'
+[ "$(count_starts)" = 0 ] && pass 'live active did not start a compiler' || bad "live active starts=$(count_starts)"
+rm -f "$STATE/keys/$livekey/active"
+
+: > "$LOG"
+unckey=$(cc_key uncertain "$T/uncertain")
+mkdir -p "$STATE/keys/$unckey"
+printf 'pid=%s\n' "$$" > "$STATE/keys/$unckey/active"
+if run_cc uncertain "$T/uncertain"; then bad 'uncertain active admitted'; else pass 'uncertain active refused'; fi
+grep -q 'uncertain' "$T/uncertain.err" && pass 'uncertain active diagnostic reported' || bad 'uncertain active diagnostic missing'
+[ "$(count_starts)" = 0 ] && pass 'uncertain active did not start a compiler' || bad "uncertain active starts=$(count_starts)"
+rm -f "$STATE/keys/$unckey/active"
+
+# One configured host state root: a relative configured root is refused and
+# an absolute one is used without --state-root.
+if env BATON_COMPILE_QUEUE_ROOT=relative/path sh "$QUEUE" key --kind cc --source-root "$T" --cwd "$T" \
+    --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+    --input "$T/input.c" --artifact "binary=$T/rootref" \
+    -- "$FAKE" -o "$T/rootref" "$T/input.c" >"$T/rootref.out" 2>"$T/rootref.err"; then
+  bad 'relative BATON_COMPILE_QUEUE_ROOT accepted'
+else
+  pass 'relative BATON_COMPILE_QUEUE_ROOT refused'
+fi
+env BATON_COMPILE_QUEUE_ROOT="$STATE" sh "$QUEUE" key --kind cc --source-root "$T" --cwd "$T" \
+  --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+  --input "$T/input.c" --artifact "binary=$T/rooted" \
+  --option 'test=rooted' -- "$FAKE" -o "$T/rooted" "$T/input.c" >"$T/rooted.out" 2>"$T/rooted.err" \
+  && pass 'absolute BATON_COMPILE_QUEUE_ROOT used without --state-root' \
+  || bad 'absolute BATON_COMPILE_QUEUE_ROOT refused'
+
+# The ccache executable bytes enter the cc toolchain identity.
+printf '#!/bin/sh\nexit 0\n' > "$T/ccache-one"; chmod +x "$T/ccache-one"
+printf '#!/bin/sh\nexit 1\n' > "$T/ccache-two"; chmod +x "$T/ccache-two"
+key_none=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
+  --linker "$FAKE" --version fake-version --input "$T/input.c" \
+  --artifact "binary=$T/ccache-out" -- \
+  "$FAKE" -o "$T/ccache-out" "$T/input.c")
+key_ccache_one=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
+  --linker "$FAKE" --version fake-version --input "$T/input.c" \
+  --artifact "binary=$T/ccache-out" -- \
+  "$FAKE" --ccache "$T/ccache-one" -o "$T/ccache-out" "$T/input.c")
+key_ccache_two=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
+  --linker "$FAKE" --version fake-version --input "$T/input.c" \
+  --artifact "binary=$T/ccache-out" -- \
+  "$FAKE" --ccache "$T/ccache-two" -o "$T/ccache-out" "$T/input.c")
+key_ccache_equal=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
+  --linker "$FAKE" --version fake-version --input "$T/input.c" \
+  --artifact "binary=$T/ccache-out" -- \
+  "$FAKE" --ccache="$T/ccache-one" -o "$T/ccache-out" "$T/input.c")
+[ "$key_none" != "$key_ccache_one" ] && pass 'ccache executable changes the key' || bad 'ccache executable kept the key'
+[ "$key_ccache_one" != "$key_ccache_two" ] && pass 'ccache bytes change the key' || bad 'ccache bytes kept the key'
+[ "$key_none" != "$key_ccache_equal" ] && pass 'ccache= form changes the key' || bad 'ccache= form kept the key'
+
+ccache_extra_key() {
+  sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
+    --linker "$FAKE" --version fake-version --input "$T/input.c" \
+    --artifact "binary=$T/ccache-out" "$@" -- \
+    "$FAKE" --ccache "$T/ccache-one" -o "$T/ccache-out" "$T/input.c"
+}
+printf 'compiler_check = content\n' > "$T/ccache-config-one"
+printf 'compiler_check = mtime\n' > "$T/ccache-config-two"
+config_one_sha=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$T/ccache-config-one")
+config_two_sha=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$T/ccache-config-two")
+key_config_one=$(ccache_extra_key --option "ccache-config-sha=$config_one_sha")
+key_config_two=$(ccache_extra_key --option "ccache-config-sha=$config_two_sha")
+[ "$key_config_one" != "$key_config_two" ] && pass 'ccache config digest changes the key' || bad 'ccache config digest kept the key'
+key_env_one=$(ccache_extra_key --option 'ccache-env=CCACHE_COMPILERCHECK=content')
+key_env_two=$(ccache_extra_key --option 'ccache-env=CCACHE_COMPILERCHECK=mtime')
+[ "$key_env_one" != "$key_env_two" ] && pass 'ccache environment option changes the key' || bad 'ccache environment option kept the key'
+
 # Source identity changes the key.
 key1=$(cgen_key keyfile "$T/keyfile")
 printf 'def extra() -> Unit: Unit{}\n' >> "$T/src/bend2/src/fixture.bend"
 key2=$(cgen_key keyfile "$T/keyfile")
 [ "$key1" != "$key2" ] && pass 'source change changes the key' || bad 'source change kept the key'
 printf 'import Base\ndef main() -> IO(Unit): IO.die(Unit,0,"fixture")\n' > "$T/src/bend2/src/fixture.bend"
+
+# Explicit scalar options override defaults and reach execution and key.
+echo '=== explicit configuration ===' | tee -a "$T/results.txt"
+explicit_key() { # compiler root
+  sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --root "$2" \
+    --compiler "$1" --linker "$1" --version fake-version \
+    --input "$T/input.c" --artifact "binary=$T/explicit" \
+    --option 'test=explicit' \
+    -- "$1" --tag explicit --log "$LOG" -o "$T/explicit" "$T/input.c"
+}
+k1=$(explicit_key "$FAKE" "$T")
+k1b=$(explicit_key "$FAKE" "$T")
+[ -n "$k1" ] && [ "$k1" = "$k1b" ] && pass 'explicit key is stable' || bad 'explicit key unstable'
+cp "$FAKE" "$T/fake-compiler-2"
+printf '\n# variant\n' >> "$T/fake-compiler-2"
+chmod +x "$T/fake-compiler-2"
+k2=$(explicit_key "$T/fake-compiler-2" "$T")
+[ "$k1" != "$k2" ] && pass 'explicit compiler reaches key' || bad 'compiler ignored in key'
+k3=$(explicit_key "$FAKE" "$T/other-root")
+[ "$k1" != "$k3" ] && pass 'explicit root reaches key' || bad 'root ignored in key'
+sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  --linker "$FAKE" --version fake-version \
+  --input "$T/input.c" --artifact "probe=$T/probe" \
+  -- sh -c 'pwd > cwd-probe; printf x > "$1"' sh "$T/probe" >/dev/null 2>&1 \
+  && pass 'explicit run options accepted' || bad 'explicit run failed'
+[ -f "$T/cwd-probe" ] && pass 'explicit cwd reaches execution' || bad 'cwd ignored in execution'
+[ -d "$STATE/keys" ] && pass 'explicit state root used' || bad 'state root ignored'
 
 exit "$fail"

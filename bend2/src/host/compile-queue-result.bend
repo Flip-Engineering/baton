@@ -369,17 +369,33 @@ def CompileQueueResult.external_process(+adoption: String) -> String:
 def CompileQueueResult.external_artifacts(+name: String, +digest: String) -> String:
   name ++ ":" ++ digest
 
+def CompileQueueResult.adoption_rows_match(+recorded_name: String, +recorded_digest: String,
+                                           +result_name: String, +result_digest: String) -> Bool:
+  Bool.and(String.eq(recorded_name, result_name), String.eq(recorded_digest, result_digest))
+
+def CompileQueueResult.adoption_ready(+kind: String, +digest: String, +command: String, +process: String,
+                                      +output: String, +name: String, +adoption: String) -> Bool:
+  Bool.and(Bool.not(String.is_empty(command)),
+    Bool.and(Bool.not(String.is_empty(process)),
+      Bool.and(Bool.not(String.is_empty(output)),
+        Bool.and(Bool.not(String.is_empty(name)),
+          Bool.and(Bool.not(String.is_empty(digest)),
+            Bool.and(Bool.not(String.eq(kind, "missing")),
+              Bool.and(Bool.not(String.is_empty(CompileQueueResult.adoption_field(adoption, "pid"))),
+                Bool.not(String.is_empty(CompileQueueResult.adoption_field(adoption, "starttime"))))))))))
+
 
 def CompileQueueResult.write_adoption(+path: String, +key: String, +started: String, +finished: String, +adoption: String, +name: String, +artifact_path: String, +artifacts_dir: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +kind : String <- IO.try(String, Artifact.CompileQueueArtifact.kind(artifact_path))
     +digest : String <- IO.try(String, Artifact.CompileQueueArtifact.digest(artifact_path))
-    command : String <- IO.pure(String, CompileQueueResult.adoption_field(adoption, "argv"))
-    process : String <- IO.pure(String, CompileQueueResult.external_process(adoption))
+    +command : String <- IO.pure(String, CompileQueueResult.adoption_field(adoption, "argv"))
+    +process : String <- IO.pure(String, CompileQueueResult.external_process(adoption))
     inputs : String <- IO.pure(String, CompileQueueResult.adoption_field(adoption, "input"))
-    output : String <- IO.pure(String, CompileQueueResult.field(adoption, "output"))
+    +output : String <- IO.pure(String, CompileQueueResult.field(adoption, "output"))
     artifacts_value : String <- IO.pure(String, CompileQueueResult.external_artifacts(name, digest))
-    +verified : String <- IO.pure(String, Bool.pick(String, Bool.and(Bool.not(String.eq(kind, "missing")), Bool.not(String.is_empty(digest))), "1", "0"))
+    ready : Bool <- IO.pure(Bool, CompileQueueResult.adoption_ready(kind, digest, command, process, output, name, adoption))
+    +verified : String <- IO.pure(String, Bool.pick(String, ready, "1", "0"))
     text : String <- IO.pure(String, CompileQueueResult.header("cgen", key, verified, "1")
       ++ "status=completed\nexit=0\n"
       ++ "started_ns=" ++ started ++ "\n"
@@ -408,8 +424,13 @@ def CompileQueueResult.verify_adoption_read(read: Result<&1,&1,U32 & String,Stri
       +rows = CompileQueueResult.artifact_rows(result)
       +artifact_name = CompileQueueResult.field(result, "artifact-name")
       +artifact_digest = CompileQueueResult.field(result, "artifact-digest")
-      +expected_artifacts = CompileQueueResult.external_artifacts(artifact_name, artifact_digest)
-      +adopted = Bool.and(CompileQueueResult.base_verified(result, key),
+      +recorded_name = CompileQueueResult.adoption_field(adoption, "artifact-name")
+      +recorded_digest = CompileQueueResult.adoption_field(adoption, "artifact-digest")
+      +consistent = CompileQueueResult.adoption_rows_match(recorded_name, recorded_digest, artifact_name, artifact_digest)
+      +expected_artifacts = CompileQueueResult.external_artifacts(recorded_name, recorded_digest)
+      +adopted = Bool.and(Bool.and(Bool.not(String.is_empty(recorded_name)),
+        Bool.and(Bool.not(String.is_empty(recorded_digest)),
+          Bool.and(consistent, CompileQueueResult.base_verified(result, key)))),
         Bool.and(String.eq(CompileQueueResult.field(result, "external"), "1"),
           Bool.and(String.eq(CompileQueueResult.field(result, "external-verified"), "1"),
             Bool.and(CompileQueueResult.completed(result),

@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import compile_queue
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 UPSTREAM = ROOT / 'bend2/compiler/upstream'
@@ -43,16 +44,9 @@ def find_cc():
     return None
 
 
-QUEUE = ROOT / 'bend2/scripts/compile-queue.sh'
-
-
 def find_queue():
     # All native compiler work uses the shared host queue.
-    for value in (os.environ.get('BATON2_COMPILE_QUEUE_BIN'),
-                  os.environ.get('BATON2_COMPILE_QUEUE')):
-        if value and pathlib.Path(value).exists():
-            return value
-    return str(QUEUE)
+    return compile_queue.queue_entry()
 
 
 def shared_queue_root():
@@ -60,6 +54,11 @@ def shared_queue_root():
     if not value or not pathlib.Path(value).is_absolute():
         raise RuntimeError('set BATON_COMPILE_QUEUE_ROOT to the shared absolute queue state directory')
     return pathlib.Path(value)
+
+
+def upstream_sources():
+    return [path for path in UPSTREAM.rglob('*')
+            if path.is_file() and path.suffix in ('.ts', '.c', '.js')]
 
 
 class CompilerArmSharing(unittest.TestCase):
@@ -73,6 +72,8 @@ class CompilerArmSharing(unittest.TestCase):
             raise unittest.SkipTest('a C compiler is unavailable')
         cls.temp = tempfile.TemporaryDirectory(prefix='compiler-arm-sharing-')
         cls.queue = find_queue()
+        if cls.queue is None:
+            raise unittest.SkipTest('the shared compile queue executable is unavailable')
         cls.state = shared_queue_root()
         cls.compiler = pathlib.Path(cls.temp.name) / 'compiler'
         bend2 = cls.compiler / 'bend2'
@@ -125,9 +126,12 @@ class CompilerArmSharing(unittest.TestCase):
 
     def build_and_run(self, source, argv_results):
         binary = source.with_suffix('.bin')
+        linker, version = compile_queue.compiler_identity(self.cc)
         self.run_queue([
             'run', '--kind', 'cc', '--state-root', self.state, '--cwd', ROOT,
-            '--compiler', self.cc, '--input', source,
+            '--compiler', self.cc, '--linker', linker, '--version', version,
+            '--source-root', str(source.parent.resolve()),
+            '--input', source,
             '--artifact', 'binary=%s' % binary, '--option', 'test=%s' % source.stem,
             '--', self.cc, '-O1', '-w', source, '-lm', '-lpthread', '-o', binary])
         for argv, expected in argv_results:
@@ -139,24 +143,25 @@ class CompilerArmSharing(unittest.TestCase):
     def mutated_c(self, test_name):
         source = pathlib.Path(self.temp.name) / (test_name + '.c')
         fixture = TEST_DIR / (test_name + '.ts')
-        args = [
-            'run', '--kind', 'cgen', '--state-root', self.state, '--cwd', ROOT,
-            '--root', ROOT, '--source-root', ROOT,
-            '--entry', fixture.relative_to(ROOT).as_posix(),
-            '--compiler', self.bun, '--input', fixture,
-            '--artifact', 'c=%s' % source, '--option', 'test=%s' % test_name,
-        ]
         compiler_sources = [path for path in sorted((self.compiler / 'bend2').rglob('*'))
                             if path.is_file()]
-        for path in compiler_sources:
-            args.extend(['--input', path])
         # The queue rewrites exact path arguments to staged inputs/artifacts.
         # Pass the output as a positional argument so it can stage the path,
         # then set ARM_EQ_C inside this wrapper.
         wrapper = pathlib.Path(self.temp.name) / (test_name + '-cgen.sh')
         wrapper.write_text('#!/bin/sh\nout=$1\nshift\nARM_EQ_C=$out exec "$@"\n')
         wrapper.chmod(0o755)
-        args.extend(['--input', wrapper])
+        inputs = [fixture, *compiler_sources, wrapper]
+        source_root = compile_queue.common_source_root(inputs, ROOT)
+        args = [
+            'run', '--kind', 'cgen', '--state-root', self.state, '--cwd', ROOT,
+            '--root', ROOT, '--source-root', str(source_root),
+            '--entry', str(fixture),
+            '--compiler', self.bun, '--artifact', 'c=%s' % source,
+            '--option', 'test=%s' % test_name,
+        ]
+        for path in inputs:
+            args.extend(['--input', path])
         args.extend(['--', wrapper, source, self.bun, '--smol',
                      fixture, self.compiler])
         self.run_queue(args)

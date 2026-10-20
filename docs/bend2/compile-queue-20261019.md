@@ -14,6 +14,20 @@ queue serializes the expensive C-generation step so independent callers cannot
 repeat that overlap with identical inputs, and so distinct generation requests
 run one at a time.
 
+## Host resource sharing
+
+The host queue has two lanes. The `cgen` lane admits one execution at a time:
+distinct C-generation requests wait on `$state/cgen.lock`, while identical
+requests attach to the one active key and its result. The `cc` lane admits
+independent compilations concurrently; each `build_and_measure.py` invocation
+keeps its four shards and four jobs, and `build-native.sh` passes
+`--max-aggregate-rss-mb 0`, so the queue adds no process memory ceiling. A
+requester that disconnects leaves its supervisor running under the key lock;
+other requesters continue and receive the shared result. Owner tokens count
+live requesters, and cancellation stops the execution only when no live owner
+remains. The fake-command suite covers distinct cgen serialization, concurrent
+cc overlap, identical coalescing, requester loss, and one-owner withdrawal.
+
 ## Identity
 
 The material for one request is a line-oriented text record. The identity schema is versioned independently of the bootstrap shell; a shell key is never reused as a permanent cache key because it omits imported C and header inputs.
@@ -95,7 +109,9 @@ it receives the shared result. When the only requester is lost, the execution
 still completes and its artifacts remain available for the next request. A
 supervisor that dies without a result releases the lock, and the next waiter
 starts a new attempt. Liveness requires both a matching process start identity
-and a non-zombie process state; a zombie child is treated as ended.
+and a non-zombie process state; a zombie child is treated as ended. A fresh run
+refuses a live or uncertain active record after the key lock; a dead owner is
+removed and a completed result remains reusable.
 
 Each requester is bound to an owner token. `cancel --token` withdraws that
 owner; the shared execution is canceled only when no owners remain. The active
@@ -128,6 +144,17 @@ files through a temporary name followed by rename.
 
 Status is derived by enumerating the key directories, reading `active` and
 verifying `completed/result`. The queue keeps no separate status ledger.
+
+## State root
+
+The one host state root is `BATON_COMPILE_QUEUE_ROOT` when set, else the fixed
+host path `/var/tmp/baton/compile-queue`. The queue, `build-native.sh` and the
+compiler-internal `cli_build` resolve the root by this one rule, so every host
+build shares one lock domain. A set-but-relative `BATON_COMPILE_QUEUE_ROOT` is
+a configuration error: the queue, the launcher and `cli_build` fail closed.
+The per-user XDG/HOME/UID fallbacks are gone. On a multi-user host the operator
+creates the shared root with write access for every build user; an unusable
+root fails at use instead of falling back.
 
 ## Compiler adoption
 
@@ -164,15 +191,26 @@ BEND=/path/to/bend CC=clang \
   sh bend2/scripts/bootstrap-compile-queue.sh .scratch/bend2/compile-queue
 ```
 
-`bend2/scripts/compile-queue.sh` resolves the queue executable from
-`BATON2_COMPILE_QUEUE_BIN`, the installation prefix, or `.scratch/bend2`, and
-executes the public operation with the original arguments. It exits 2 when no
-executable is available. `bend2/scripts/build-native.sh` and the Bend internal
+`bend2/scripts/compile-queue.sh` resolves the queue executable only from
+`BATON2_COMPILE_QUEUE_BIN`, `BATON2_COMPILE_QUEUE`, or
+`$BATON2_PREFIX/bin/baton-compile-queue`, and executes the public operation
+with the original arguments. It exits 2 when no executable is available.
+After the one-time bootstrap, set `BATON2_COMPILE_QUEUE_BIN` to its output or
+install that output under the prefix; the launcher does not resolve
+`.scratch` paths. `bend2/scripts/build-native.sh` and the Bend internal
 `cli_build` require `BATON_COMPILE_QUEUE_ROOT` to be one absolute shared
 directory; `cli_build` also requires the queue entry. A `run` or `adopt`
 request rejects a `--state-root` that differs from
 `BATON_COMPILE_QUEUE_ROOT`, and it rejects a root that is missing, unreadable,
 unwritable or unable to hold `$state/heavy.lock`.
+
+Every cc request also supplies an absolute `--source-root`, the resolved
+linker path and the captured compiler `--version` text. The queue rejects a cc
+request without any of the four fields. Source inputs and aux files must
+resolve inside the declared source root. When `BATON2_CCACHE` is set,
+build-native hashes the ccache config file and passes the digest as
+`--option ccache-config-sha=<sha256>`, and passes the sorted `CCACHE_*`
+environment snapshot as `--option ccache-env=<text>`; both enter the identity.
 
 After the executable exists, validate it with:
 
@@ -228,14 +266,64 @@ The adopted `#959` compiler ran as PID 42767 in
 differs from current main by the two-line PR #959 `ContextEval` change, so the
 artifact is bootstrap evidence for that source identity and is not reused by the permanent identity.
 
+## Related failure evidence
+
+The adopted `#959` failure matches the retained compiler failure family: SIGTRAP
+exit 133 with roughly 140-150 GiB peak RSS, no kernel OOM entry and no core,
+with retained diagnostics ending in `normal_cli`/`term_higher` lowering. The
+`dev/backlog-959-20261019` tree at `452fa6db` is clean and pushed. The #959
+diff does not modify `normal_cli`, and the compiler completed its term check
+before C generation. The exact native cause remains unverified; #970 owns the
+queue mitigation and #722 retains the compiler diagnosis.
+
+## Integration sites
+
+Every compiler entry point that the queue scope covers now invokes the queue.
+The command path below is the validation path for each site.
+
+- `bend2/compiler/upstream/main.ts` `cli_build` resolves
+  `BATON2_COMPILE_QUEUE_BIN`, then `BATON2_COMPILE_QUEUE`, and runs
+  `"$queue" run --kind cc --state-root <state> --cwd <file dir>
+  --compiler <cc> --input <c> --artifact binary=<bin> ... -- <cc args>`.
+  It throws on queue failure; no direct compiler path remains.
+- `bend2/compiler/upstream/main.ts` and `bend2/compiler/repl.ts` call
+  `cli_build`.
+- `bend2/scripts/stage-repl-compiler.py` exports
+  `BATON2_COMPILE_QUEUE_BIN` for the staged launcher, resolving
+  `$prefix/bin/baton-compile-queue`.
+- `bend2/scripts/build-native.sh` admits cgen and the final link through
+  `"$queue" run`.
+- `bend2/test/compile_queue.py:compile_cc` runs
+  `"$queue" run --kind cc --state-root <state> --cwd <cwd>
+  --compiler <cc> --input <file> --artifact binary=<output> ... -- <args>`.
+- Direct fixtures use that helper: `native-cli.py` (three calls),
+  `compiler-arm-sharing.py` (its own `run_queue`), `custody-adopt.py`,
+  `start-gate.py`, `spool-watch-overflow.py`, `retained-control.py`
+  (three calls), `shared-instance.py` (two calls),
+  `sqlite-projection.py`, and `native-dispatch-runtime.py`.
+- `bend2/scripts/check-install.py` `compile_with_queue` admits the fixed
+  SQLite C probe through the same executable.
+- `bend2/test/compile-queue.sh` exercises the queue contract with a fake
+  compiler and covers explicit configuration, concurrency, serialized
+  cgen, failure, cancellation, adoption and requester loss.
+
+`bend2/scripts/bootstrap-compile-queue.sh` is the only pre-queue build. It
+builds only `bend2/src/host/compile-queue.bend` to one output path; every
+other site uses the resulting executable. The installed prefix packages it as
+`bin/baton-compile-queue`.
+
 ## Open items
 
 - The Bend2 implementation has passed static review only; it has not been
   built or run. Root owns the first build, qualification and deployment.
-- `cli_build` in `bend2/compiler/upstream/main.ts` requires the shared queue
-  executable and the explicit state root. A missing entry, missing root or
-  failed queue execution is an error, and no direct compiler path remains.
+- Direct fixture compiler sites and Bend internal `cli_build` are wired in
+  source. `cli_build` in `bend2/compiler/upstream/main.ts` requires the shared
+  queue executable and the explicit state root; a missing entry, missing root
+  or failed queue execution is an error, and no direct compiler path remains.
+  The staged REPL launcher exports the installed `bin/baton-compile-queue`.
   `bend2/test/compiler-arm-sharing.py` requires the same queue and root.
+  Distinct `cgen` and `cc` requests serialize on the shared heavy-build lock
+  while each request keeps its internal C-shard parallelism.
 - `BEND_GENERATED_C` is rejected by `build-native.sh` and `package-native.py`.
   Only the verified Main-C reuse inputs (`BATON2_MAIN_GENERATED_C*`) are
   accepted.
@@ -250,3 +338,12 @@ artifact is bootstrap evidence for that source identity and is not reused by the
   after the operator hold permits compilation.
 - macOS provides BSD `flock(2)` and `setsid(2)` through its POSIX host boundary.
   The Bend2 lifecycle uses those primitives, so macOS jobs use the queue.
+- The cc identity covers the compiler and linker executables, wrapper chains,
+  the captured `--version` text, the Bend release tree when present, all
+  declared inputs and their quoted includes, and the requested options. It
+  does not hash the sysroot, system headers or system libraries; a toolchain
+  change that preserves the compiler, linker and version text but changes
+  those files can reuse an artifact. This is a known limit for root review.
+- `bend2/scripts/check-install.py` admits its fixed SQLite C probe through the
+  queue; it requires the configured queue entry and the shared absolute state
+  root.
