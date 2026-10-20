@@ -229,6 +229,60 @@ wait "$l2" || lrc=$?
 [ "$lrc" = 0 ] && pass 'surviving requester completed' || bad "survivor exit $lrc"
 [ "$(count_starts)" = 1 ] && pass 'requester loss shared one execution' || bad "loss starts=$(count_starts)"
 
+# Explicit scalar options override seeded defaults; repeated lists accumulate.
+: > "$LOG"
+printf 'int extra(void){return 0;}\n' > "$T/extra.c"
+base=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --root "$T" \
+  --compiler "$FAKE" --input "$T/input.c" \
+  --artifact "binary=$T/config-base" --option first=1 \
+  -- "$FAKE" --tag base --flag "$T/root-token" -o "$T/config-base" "$T/input.c")
+overridden=$(sh "$QUEUE" key --kind bad --kind cc --state-root /nonexistent --state-root "$STATE" \
+  --cwd /nonexistent --cwd "$T" --root /nonexistent --root "$T" \
+  --compiler "$T/missing" --compiler "$FAKE" --input "$T/input.c" \
+  --artifact "binary=$T/config-base" --option first=1 \
+  -- "$FAKE" --tag base --flag "$T/root-token" -o "$T/config-base" "$T/input.c")
+[ "$base" = "$overridden" ] && pass 'explicit scalar options override defaults' \
+  || bad 'scalar options did not override seeded defaults'
+one_input=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  --input "$T/input.c" --artifact "binary=$T/config-base" --option first=1 \
+  -- "$FAKE" --tag base -o "$T/config-base" "$T/input.c")
+two_inputs=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  --input "$T/input.c" --input "$T/extra.c" --artifact "binary=$T/config-base" --option first=1 \
+  -- "$FAKE" --tag base -o "$T/config-base" "$T/input.c")
+[ "$one_input" != "$two_inputs" ] && pass 'repeated inputs accumulate' \
+  || bad 'repeated inputs were ignored'
+one_option=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  --input "$T/input.c" --artifact "binary=$T/config-base" --option first=1 \
+  -- "$FAKE" --tag base -o "$T/config-base" "$T/input.c")
+two_options=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  --input "$T/input.c" --artifact "binary=$T/config-base" --option first=1 --option second=2 \
+  -- "$FAKE" --tag base -o "$T/config-base" "$T/input.c")
+[ "$one_option" != "$two_options" ] && pass 'repeated options accumulate' \
+  || bad 'repeated options were ignored'
+one_artifact=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  --input "$T/input.c" --artifact "binary=$T/config-base" --option first=1 \
+  -- "$FAKE" --tag base -o "$T/config-base" "$T/input.c")
+two_artifacts=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  --input "$T/input.c" --artifact "binary=$T/config-base" --artifact "extra=$T/extra.out" \
+  --option first=1 -- "$FAKE" --tag base -o "$T/config-base" "$T/input.c")
+[ "$one_artifact" != "$two_artifacts" ] && pass 'repeated artifacts accumulate' \
+  || bad 'repeated artifacts were ignored'
+rc=0
+sh "$QUEUE" run --kind bad --kind cc --state-root /nonexistent --state-root "$STATE" \
+  --cwd /nonexistent --cwd "$T" --root /nonexistent --root "$T" \
+  --compiler "$T/missing" --compiler "$FAKE" \
+  --input "$T/input.c" --input "$T/extra.c" \
+  --artifact "binary=$T/config-run" --option first=1 --option second=2 \
+  --token tok-config \
+  -- "$FAKE" --tag config --log "$LOG" --flag "$T/root-token" \
+  -o "$T/config-run" "$T/input.c" "$T/extra.c" || rc=$?
+[ "$rc" = 0 ] && pass 'fake command ran with explicit overrides and repeated inputs/options' \
+  || bad "config fake command exit $rc"
+[ "$(cat "$T/config-run" 2>/dev/null)" = "artifact-config" ] \
+  && pass 'config fake artifact written' || bad 'config fake artifact missing'
+[ "$(count_starts)" = 1 ] && pass 'config fake command ran once' \
+  || bad "config fake starts=$(count_starts)"
+
 # Source identity changes the key.
 key1=$(cgen_key keyfile "$T/keyfile")
 printf 'def extra() -> Unit: Unit{}\n' >> "$T/src/bend2/src/fixture.bend"

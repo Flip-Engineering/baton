@@ -90,17 +90,18 @@ def token_ok_go(s: String) -> Bool:
 def token_ok(s: String) -> Bool:
   Bool.and(non_empty(s), token_ok_go(s))
 
-def field_lines(lines: List<String>, name: String) -> String:
+def field_lines(lines: List<String>, name: String, found: String) -> String:
   match lines:
-    case Nil{}: ""
+    case Nil{}: found
     case +line <> rest:
       match split_eq(line, ""):
         case Some{Split{left, right}}:
-          Bool.pick(String, Tx.str_eq(left, name), right, field_lines(rest, name))
-        case None{}: field_lines(rest, name)
+          Bool.pick(String, Tx.str_eq(left, name), field_lines(rest, name, right),
+            field_lines(rest, name, found))
+        case None{}: field_lines(rest, name, found)
 
 def field(text: String, name: String) -> String:
-  field_lines(Tx.split_lines(text), name)
+  field_lines(Tx.split_lines(text), name, "")
 
 def collect_lines(lines: List<String>, name: String, acc: List<String>) -> List<String>:
   match lines:
