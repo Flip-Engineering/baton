@@ -162,11 +162,11 @@ type HLet = Of<"Let">;
 // index; the maps are only ever read, so the pairs are all that is kept.
 type UMap = number[];
 
-type Level = [string, HTerm, () => Val[]];
+type Level = [string, HTerm, () => Val[], boolean?];
 
 type Chain = [HTerm, number | null][];
 
-type Leaf = [HTerm, number, number, number];
+type Leaf = [HTerm, number, number, number, boolean];
 
 type Call = {
   k: Bend.Name;
@@ -3075,9 +3075,10 @@ function emit_nats(x: HTerm): Chain {
 }
 
 // A word match's leaves: the bits each knows (32: a hit), their value, its
-// arm, and the words it binds (none; the tail; a bit and its tail). A
-// default covers the deeper defaults and tail arms that are its instance
-// (the flattener's substitution replayed): a literal compares whole.
+// arm, and the words it binds (none; the tail; a bit and its tail), and
+// whether the leaf is the match's default (a hit is not). A default covers
+// the deeper defaults and tail arms that are its instance (the flattener's
+// substitution replayed): a literal compares whole.
 function emit_lits(x: HTerm): Leaf[] {
   const ws: Leaf[] = [];
   const key = (t: HTerm): string => JSON.stringify(Bend.term_lower(t),
@@ -3086,7 +3087,7 @@ function emit_lits(x: HTerm): Leaf[] {
     cov: ((w: Of<"Ctr">) => HTerm) | null): void => {
     const h = mat_arms(t).arms[0]?.[1];
     if (h !== undefined && j === 32) {
-      ws.push([h, j, n, 0]);
+      ws.push([h, j, n, 0, false]);
       return;
     }
     const { arms, end } = mat_arms(h ?? t);
@@ -3102,7 +3103,7 @@ function emit_lits(x: HTerm): Leaf[] {
         sub(Bend.Ctr("WCon", [Bend.Ctr(k, []), v]) as Of<"Ctr">)));
     }
     if (own) {
-      ws.push([end, j, n, e]);
+      ws.push([end, j, n, e, true]);
     }
   };
   walk(mat_arms(x).arms[0][1], 0, 0, null);
@@ -3278,7 +3279,30 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
   return go(a, b, 0);
 }
 
-function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst): boolean {
+// A literal word match's default continuation is the same source body at
+// every character column. The outer nodes carry the character pattern spans,
+// so arm_hint puts the copies in different buckets; the innermost body span
+// is stable and only narrows the candidates, as arm_eq still decides reuse.
+function arm_body_hint(h: HTerm): string {
+  let t = term_force(h);
+  for (let i = 0; i < 100000; i++) {
+    if (t.$ === "Ann") {
+      t = term_force(t.x);
+    } else if (t.$ === "Lam") {
+      t = term_force(term_open(t).b);
+    } else if (t.$ === "Mat") {
+      t = term_force(t.m);
+    } else {
+      break;
+    }
+  }
+  const sp = t.s;
+  return (sp !== undefined && sp.beg !== undefined
+    ? sp.beg + ":" + sp.end : "?") + ":" + t.$;
+}
+
+function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
+  lit = false): boolean {
   if (term_uses(fl, h).length !== 0) {
     return false;
   }
@@ -3286,7 +3310,9 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst): boolean {
   const ks = av.flatMap((v) => v.lay.ks);
   const base = [ks.join("."), lay.ks.join("."),
     lay.arms === null ? "" : lay.arms.map((a) => a.k).join(",")].join("|");
-  const hint = arm_hint(h) + "|" + base;
+  const hint = lit
+    ? "lit|" + arm_body_hint(h) + "|" + base
+    : arm_hint(h) + "|" + base;
   const reps = fl.armHints.get(hint) ?? [];
   for (const rep of reps) {
     if (arm_eq(rep.term, h)) {
@@ -3373,7 +3399,7 @@ function emit_match(fl: File, x: Of<"Mat"> | Of<"Efq">,
     ? ls.map(([h, n], i): Level => [`${sw} == ${i}`, h, () =>
       n === null ? [] : [val_new([`(${sw} - ${n})`], lay)]])
     : ws !== null
-    ? ws.map(([h, j, n, e]): Level => [lits_cond(sw, j, n), h, () => {
+    ? ws.map(([h, j, n, e, d]): Level => [lits_cond(sw, j, n), h, () => {
       let v = val_new(lay.ks.map((_, i) => `((${sw} >> ${i}) & 1)`),
         lay.arms![0].fs[0].lay);
       for (let i = 0; i < j; i++) {
@@ -3381,7 +3407,7 @@ function emit_match(fl: File, x: Of<"Mat"> | Of<"Efq">,
       }
       return e === 1 ? [v]
         : v.lay.arms![0].fs.slice(0, e).map((f) => val_field(v, f));
-    }])
+    }, d])
     : arms.map(([k, h]): Level => {
       if (adt.k === "Array") {
         const el = lay_el(fl.book, adt.x[0]);
@@ -3405,12 +3431,12 @@ function emit_match(fl: File, x: Of<"Mat"> | Of<"Efq">,
     lv.push(["", end, () => [u]]);
   }
   const spares = fl.spares;
-  const arms2 = lv.map(([, h, fs]) => () => {
+  const arms2 = lv.map(([, h, fs, lit]) => () => {
     fl.spares = spares.slice();
     const outer = { seg: fl.seg, tab: fl.tab, uses: new Map(fl.uses) };
     bind_dead(fl, [h]);
     const av = [...fs(), ...rest];
-    if (!emit_arm_shared(fl, h, av, dst)) {
+    if (!emit_arm_shared(fl, h, av, dst, lit === true)) {
       emit_body(fl, h, null, ers, av, dst);
     }
     if (dst !== null) {
