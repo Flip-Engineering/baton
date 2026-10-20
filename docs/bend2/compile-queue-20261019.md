@@ -76,7 +76,8 @@ A lost requester does not stop the supervisor. When another requester remains,
 it receives the shared result. When the only requester is lost, the execution
 still completes and its artifacts remain available for the next request. A
 supervisor that dies without a result releases the lock, and the next waiter
-starts a new attempt.
+starts a new attempt. Liveness requires both a matching process start identity
+and a non-zombie process state; a zombie child is treated as ended.
 
 Each requester is bound to an owner token. `cancel --token` withdraws that
 owner; the shared execution is canceled only when no owners remain. The active
