@@ -237,6 +237,16 @@ The adopted `#959` compiler ran as PID 42767 in
 differs from current main by the two-line PR #959 `ContextEval` change, so the
 artifact is bootstrap evidence for that source identity and is not reused by the permanent identity.
 
+## Related failure evidence
+
+The adopted `#959` failure matches the retained compiler failure family: SIGTRAP
+exit 133 with roughly 140-150 GiB peak RSS, no kernel OOM entry and no core,
+with retained diagnostics ending in `normal_cli`/`term_higher` lowering. The
+`dev/backlog-959-20261019` tree at `452fa6db` is clean and pushed. The #959
+diff does not modify `normal_cli`, and the compiler completed its term check
+before C generation. The exact native cause remains unverified; #970 owns the
+queue mitigation and #722 retains the compiler diagnosis.
+
 ## Open items
 
 - The Bend2 implementation has passed static review only; it has not been
@@ -257,3 +267,12 @@ artifact is bootstrap evidence for that source identity and is not reused by the
   after the operator hold permits compilation.
 - macOS provides BSD `flock(2)` and `setsid(2)` through its POSIX host boundary.
   The Bend2 lifecycle uses those primitives, so macOS jobs use the queue.
+- The cc identity covers the compiler and linker executables, wrapper chains,
+  the Bend release tree when present, all declared inputs and their quoted
+  includes, and the requested options. It does not hash clang `--version` text,
+  the sysroot, system headers or system libraries; a toolchain change that
+  preserves the compiler and linker bytes but changes those files can reuse an
+  artifact. This is a known limit for root review.
+- `bend2/scripts/check-install.py` still compiles its small fixed sqlite probe
+  directly. It is an install check rather than a heavy build caller and is not
+  wired to the queue.
