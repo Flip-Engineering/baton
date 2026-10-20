@@ -3,8 +3,8 @@
 # database: the stop row is removed while the session, native identity,
 # workspace, messages and executions stay unchanged; a held provider window
 # stays held after the clear and after an unknown observation; a past reset
-# observation makes the window selectable without starting an execution; and
-# invalid clear and reset requests refuse.
+# observation makes the window selectable without starting an execution. The
+# stop.py and usage-windows.py suites cover operator-facing refusal responses.
 #
 # usage: clear-stop-quota DB
 import Base
@@ -42,14 +42,6 @@ def expect_gate(+db: String, +session: String, +account: String, +expected: Stri
   do IO<Unit>:
     gate : UW.Gate <- UW.window_gate(db,session,account)
     expect(label,String.eq(gate_class(gate),expected))
-
-def expect_refused(+label: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
-  match result:
-    case Done{unit}: IO.die(Unit,1,"fixture-clear-stop " ++ label ++ ": unexpectedly succeeded")
-    case Fail{(code,cause)}:
-      Bool.pick(IO(Unit),Bool.and(U32.is_eq(code,2),Bool.not(String.is_empty(cause))),
-        IO.print("fixture-clear-stop " ++ label ++ ": refused"),
-        IO.die(Unit,1,"fixture-clear-stop " ++ label ++ ": refusal lost its cause"))
 
 def kimi_cause() -> String:
   "You've reached your 5-hour usage limit. Your quota will reset when the current 5-hour window ends."
@@ -128,20 +120,8 @@ def reset_cases(+db: String) -> IO(Unit):
     latest_source : Unit <- expect_read(db,"SELECT reset_source FROM usage_windows WHERE account='acct' ORDER BY id DESC LIMIT 1;","operator-observation\n","reset-evidence-recorded")
     provider_still : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE reset_source='provider-message' AND account='acct';","1\n","no-provider-success-fabricated")
     rows : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE account='acct';","4\n","one-reset-observation-recorded")
-    refused : Result<&1,&1,U32 & String,Unit> <- IO.try(Unit,UW.observe(db,"leaf","5-hour","next monday maybe","console","acct"))
-    expect_refused("invalid-reset-refused",refused)
+    expect("invalid-reset-parser-refuses",Bool.not(UW.operator_reset_token("next monday maybe")))
     unchanged : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE account='acct';","4\n","invalid-reset-records-nothing")
-    IO.pure(Unit,Unit{})
-
-def refusal_cases(+db: String) -> IO<Unit>:
-  do IO<Unit>:
-    missing : Result<&1,&1,U32 & String,Unit> <- IO.try(Unit,Stop.clear(db,"missing"))
-    expect_refused("unknown-session-refused",missing)
-    absent : Result<&1,&1,U32 & String,Unit> <- IO.try(Unit,Stop.clear(db,"leaf2"))
-    expect_refused("absent-stop-refused",absent)
-    live : Result<&1,&1,U32 & String,Unit> <- IO.try(Unit,Stop.clear(db,"leaf3"))
-    expect_refused("live-attempt-refused",live)
-    live_stop : Unit <- expect_read(db,"SELECT count(*) FROM session_stops WHERE session='leaf3';","1\n","live-stop-retained")
     IO.pure(Unit,Unit{})
 
 def expect_clear_stop(+label: String, parsed: C.Command, expected_session: String) -> IO(Unit):
@@ -197,7 +177,6 @@ def main_args(args: List<String>) -> IO(Unit):
       agent_parse_cases()
       clear_cases(path)
       reset_cases(path)
-      refusal_cases(path)
       IO.print("fixture-clear-stop-quota-ok")
     case other: IO.die(Unit,2,"usage: clear-stop-quota DB")
 
