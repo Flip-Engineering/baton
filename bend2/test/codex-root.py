@@ -512,14 +512,13 @@ class CodexRootAdapter(unittest.TestCase):
                          ['model_reasoning_effort="low"'])
         self.assertEqual(observed['api_keys'], [])
         self.assertEqual(observed['cwd'], str(self.checkouts / associate))
-        self.assertIn('You are Baton Player ' + associate + '.', observed['prompt'])
-        prefix = 'Recorded coordination: '
-        coordination = json.loads(next(line[len(prefix):] for line in observed['prompt'].splitlines()
-                                       if line.startswith(prefix)))
-        self.assertEqual(coordination['parent'], 'none recorded')
-        self.assertIn('child', [row['id'] for row in coordination['recipients']])
-        self.assertIn('Use baton inbox to read complete input', observed['prompt'])
-        self.assertIn('records handling of complete owned reads after a successful native turn', observed['prompt'])
+        self.assertIn('You are session ' + associate + ' in a Baton Orchestra.', observed['prompt'])
+        prefix = 'Coordinator executable/database argv: '
+        coordinator = next(line[len(prefix):] for line in observed['prompt'].splitlines()
+                           if line.startswith(prefix))
+        self.assertEqual(json.loads(coordinator), [str(EXE), str(self.db)])
+        self.assertIn('Read complete owed input with inbox.', observed['prompt'])
+        self.assertNotIn('Use acknowledge', observed['prompt'])
         self.assertEqual(json.loads(self.coord('role', associate))['role'], 'associate-conductor')
         reports = json.loads(self.coord('inbox', ''))
         self.assertEqual([(r['sender'], r['recipient'], r['body']) for r in reports],
@@ -725,7 +724,7 @@ class CodexRootAdapter(unittest.TestCase):
                        'baton send PLAYER "text"', 'baton guide PLAYER "text"',
                        'baton finish "summary"', 'baton confirm PLAYER', 'Use baton knowledge']:
             self.assertIn(action, stdin_content)
-        self.assertIn('records handling of complete owned reads after a successful native turn', stdin_content)
+        self.assertIn('Baton records delivery and complete reads internally.', stdin_content)
         self.assertNotIn('acknowledge', stdin_content)
         self.assertNotIn('ack ID', stdin_content)
 
