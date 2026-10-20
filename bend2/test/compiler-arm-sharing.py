@@ -99,7 +99,7 @@ class CompilerArmSharing(unittest.TestCase):
 
     def run_queue(self, args):
         result = subprocess.run(
-            [self.queue, *map(str, args)],
+            compile_queue.queue_command(self.queue, args),
             capture_output=True, text=True, timeout=600)
         self.assertEqual(result.returncode, 0,
                          msg='queue failed: %s\nstdout:\n%s\nstderr:\n%s'

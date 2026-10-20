@@ -61,11 +61,34 @@ def extend_frontend(source):
         '  const cpu = [...objc, ...sdkFlags, "-std=c11", "-O3", file, "-lpthread", "-lm",')
     source = replace_once(source, '    ...libs, "-o", path.resolve(bin)];',
                           '    ...libs, ...extraLibs, "-o", path.resolve(bin)];')
-    return replace_once(source,
-        '    if (child.spawnSync(cmd, args, { stdio: "inherit" }).status !== 0) {',
-        '    const result = child.spawnSync(cmd, args, { stdio: diagnosticsToStderr ? ["inherit", 2, 2] : "inherit" });\n'
-        '    if (diagnosticsToStderr) process.stderr.write(JSON.stringify({ compilerStep: { command: cmd, arguments: args, status: result.status, signal: result.signal, error: result.error?.message } }) + "\\n");\n'
-        '    if (result.status !== 0) {')
+    direct_spawn = '    if (child.spawnSync(cmd, args, { stdio: "inherit" }).status !== 0) {'
+    if source.count(direct_spawn) == 1:
+        return replace_once(source, direct_spawn,
+            '    const result = child.spawnSync(cmd, args, { stdio: diagnosticsToStderr ? ["inherit", 2, 2] : "inherit" });\n'
+            '    if (diagnosticsToStderr) process.stderr.write(JSON.stringify({ compilerStep: { command: cmd, arguments: args, status: result.status, signal: result.signal, error: result.error?.message } }) + "\\n");\n'
+            '    if (result.status !== 0) {')
+    if direct_spawn in source:
+        raise RuntimeError('The pinned compiler source contains an ambiguous direct build path')
+
+    # The checked-in Baton fork sends builds through queue_cc. Preserve the
+    # same diagnostics contract by routing captured queue output to stderr.
+    queue_signature = ('function queue_cc(queue: string, stateRoot: string, compiler: string, linker: string,\n'
+        '                  version: string, file: string,\n'
+        '                  extraInputs: string[], artifact: string, artifactPath: string,\n'
+        '                  extraOptions: string[], mac: boolean, bangs: boolean, cuda: string,\n'
+        '                  args: string[]): void {')
+    if source.count(queue_signature) != 1:
+        raise RuntimeError('The pinned compiler source has no recognized direct or queued build path')
+    source = replace_once(source, queue_signature, queue_signature.replace(
+        'args: string[]): void {', 'args: string[], diagnosticsToStderr = false): void {'))
+    spawn = '  const result = child.spawnSync(queue, invocation, { encoding: "utf8" });'
+    source = replace_once(source, spawn,
+        spawn + '\n  if (diagnosticsToStderr) {\n'
+        '    if (result.stdout) process.stderr.write(result.stdout);\n'
+        '    if (result.stderr) process.stderr.write(result.stderr);\n'
+        '  }')
+    return replace_once(source, 'bangs ? gpu : cpu);',
+                          'bangs ? gpu : cpu, diagnosticsToStderr);')
 
 
 def stage(source, runtime, runtime_sha256, runtime_notices, destination):
