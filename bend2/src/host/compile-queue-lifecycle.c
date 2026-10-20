@@ -706,6 +706,7 @@ static int cq_environ_value(u32 pid, const char *name, char **out) {
 static void cq_call_starttime(IoWork *work) {
   CqCall *call = (CqCall *)work->data;
   call->error = cq_starttime_text(call->pid, &call->out);
+  if (!call->error) call->out_length = strlen(call->out);
 }
 
 static void cq_call_alive(IoWork *work) {
