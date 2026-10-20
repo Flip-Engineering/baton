@@ -113,6 +113,15 @@ wait "$p1" || bad 'identical cc first requester failed'
 wait "$p2" || bad 'identical cc second requester failed'
 [ "$(count_starts)" = 1 ] && pass 'identical cc shared one execution' || bad "identical cc starts=$(count_starts)"
 [ "$(cat "$T/ident1")" = "$(cat "$T/ident2")" ] && pass 'identical cc artifacts match' || bad 'identical cc artifacts differ'
+# Successful results store bare artifact names and retain the declared bytes.
+ident_key=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  --input "$T/input.c" --artifact "binary=$T/ident1" --option 'test=ident' \
+  --token tok-ident1 -- "$FAKE" --tag ident --log "$LOG" -o "$T/ident1" "$T/input.c")
+printf 'artifact=binary\tfile\t' > "$T/artifact-row-prefix"
+grep -F "$(cat "$T/artifact-row-prefix")" "$STATE/keys/$ident_key/completed/result" \
+  && pass 'completed result records bare artifact name' || bad 'completed result artifact row missing'
+[ "$(cat "$STATE/keys/$ident_key/completed/artifacts/binary")" = 'artifact-ident' ] \
+  && pass 'completed result retains named artifact bytes' || bad 'completed artifact bytes missing'
 
 # Artifact names are relative paths used under the attempt and cache roots.
 invalid_artifact=0

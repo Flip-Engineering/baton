@@ -31,6 +31,9 @@ def CompileQueueLifecycle.starttime(pid: U32) -> IO(Result<&1,&1,U32 & String,St
 def CompileQueueLifecycle.alive(pid: U32, start: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./compile-queue-lifecycle.c"
 
+def CompileQueueLifecycle.wait_external(pid: U32, start: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./compile-queue-lifecycle.c"
+
 def CompileQueueLifecycle.signal_group(pid: U32, sig: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./compile-queue-lifecycle.c"
 

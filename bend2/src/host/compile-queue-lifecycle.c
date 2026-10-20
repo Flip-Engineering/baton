@@ -711,6 +711,21 @@ static void cq_call_alive(IoWork *work) {
   call->error = cq_alive_value(call->pid, call->text, &call->code);
 }
 
+static void cq_call_wait_external(IoWork *work) {
+  CqCall *call = (CqCall *)work->data;
+  for (;;) {
+    u32 alive = 0;
+    call->error = cq_alive_value(call->pid, call->text, &alive);
+    if (call->error || !alive) return;
+    struct timespec delay = {5, 0}, remaining = delay;
+    while (nanosleep(&remaining, &remaining) < 0) {
+      if (errno == EINTR) continue;
+      call->error = errno;
+      return;
+    }
+  }
+}
+
 static void cq_call_signal_group(IoWork *work) {
   CqCall *call = (CqCall *)work->data;
   if (kill(-(pid_t)call->pid, (int)call->sig) && errno != ESRCH) call->error = errno;
@@ -972,6 +987,21 @@ static Term cq_alive_run(Env env, Term *fields, IoWork *work) {
   return io_work(work, cq_alive_call, cq_alive_pack);
 }
 static void __attribute__((constructor)) cq_alive_use(void) { io_eff(CID_COMPILEQUEUELIFECYCLE_ALIVE, cq_alive_run, 0); }
+#endif
+
+#ifdef CID_COMPILEQUEUELIFECYCLE_WAIT_EXTERNAL
+static void cq_wait_external_call(IoWork *work) { cq_call_wait_external(work); }
+static Term cq_wait_external_pack(Env env, IoWork *work) { return cq_unit_pack(env, work); }
+static Term cq_wait_external_run(Env env, Term *fields, IoWork *work) {
+  CqCall *call = calloc(1, sizeof(*call));
+  if (!call) return io_fail(env, ENOMEM, NULL);
+  call->pid = (u32)fields[0];
+  call->error = cq_text_arg(env, fields[1], &call->text);
+  work->data = (char *)call;
+  if (call->error) return cq_wait_external_pack(env, work);
+  return io_work(work, cq_wait_external_call, cq_wait_external_pack);
+}
+static void __attribute__((constructor)) cq_wait_external_use(void) { io_eff(CID_COMPILEQUEUELIFECYCLE_WAIT_EXTERNAL, cq_wait_external_run, 0); }
 #endif
 
 #ifdef CID_COMPILEQUEUELIFECYCLE_SIGNAL_GROUP
