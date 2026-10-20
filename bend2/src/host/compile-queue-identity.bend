@@ -349,8 +349,9 @@ def CompileQueueIdentity.file_queue(names: List<&2,String>, +root: String) -> Li
     case Nil{}:
       Nil{}
     case +name <> +rest:
-      Bool.pick(List<&2,String>, String.is_empty(name), CompileQueueIdentity.file_queue(rest, root),
-        Bool.pick(String, CompileQueueIdentity.path_absolute(name), name, root ++ "/" ++ name) <> CompileQueueIdentity.file_queue(rest, root))
+      +tail = CompileQueueIdentity.file_queue(rest, root)
+      Bool.pick(List<&2,String>, String.is_empty(name), tail,
+        Bool.pick(String, CompileQueueIdentity.path_absolute(name), name, root ++ "/" ++ name) <> tail)
 
 def CompileQueueIdentity.file_closure_record(final: CompileQueueWalk) -> IO(Result<&1,&1,U32 & String,String>):
   match final:
@@ -627,7 +628,8 @@ def CompileQueueIdentity.artifact_names(lines: List<&2,String>) -> String:
       ""
     case +line <> +rest:
       +name = CompileQueueIdentity.artifact_name(line)
-      Bool.pick(String, String.is_empty(name), CompileQueueIdentity.artifact_names(rest), name ++ "\n" ++ CompileQueueIdentity.artifact_names(rest))
+      +tail = CompileQueueIdentity.artifact_names(rest)
+      Bool.pick(String, String.is_empty(name), tail, name ++ "\n" ++ tail)
 
 def CompileQueueIdentity.input_row_fields(fields: List<&2,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match fields:
@@ -646,10 +648,11 @@ def CompileQueueIdentity.input_rows(lines: List<&2,String>) -> IO(Result<&1,&1,U
     case Nil{}:
       IO.pure(Result<&1,&1,U32 & String,String>, Done{""})
     case +line <> +rest:
-      Bool.pick(IO(Result<&1,&1,U32 & String,String>), String.is_empty(line), CompileQueueIdentity.input_rows(rest),
+      +more : String <- IO.try(String, CompileQueueIdentity.input_rows(rest))
+      Bool.pick(IO(Result<&1,&1,U32 & String,String>), String.is_empty(line),
+        IO.pure(Result<&1,&1,U32 & String,String>, Done{more}),
         do IO<Result<&1,&1,U32 & String,String>>:
           +row : String <- IO.try(String, CompileQueueIdentity.input_row(line))
-          more : String <- IO.try(String, CompileQueueIdentity.input_rows(rest))
           IO.pure(Result<&1,&1,U32 & String,String>, Done{Bool.pick(String, String.is_empty(row), "", row ++ "\n") ++ more}))
 
 # Inputs and aux are separate newline-separated lists. Join them with one
