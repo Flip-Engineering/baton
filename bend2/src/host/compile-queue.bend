@@ -897,11 +897,15 @@ def guard_loop(keydir: String, pid: U32, start: String, name: String, path: Stri
         size <- IO.try(U32, F.Files.size(path))
         Bool.pick(IO(Unit), U32.is_lt(0, size),
           do IO<Unit>:
-            verified <- IO.try(Bool, Result.verify_adoption(keydir, adoption))
-            Bool.pick(IO(Unit), verified,
-              finish_adoption(keydir, adoption, name, path),
-              write_adoption_failure(keydir, started, "adoption identity differs from the live process")),
+            digest <- IO.try(String, Identity.file_digest(path))
+            +record = adoption ++ "artifact-name=" ++ name ++ "\nartifact-digest=" ++ digest ++ "\n"
+            wrote : Unit <- IO.try(Unit, L.write_text(keydir ++ "/adoption", record))
+            finish_adoption(keydir, record, name, path)
+            verified <- IO.try(Bool, Result.verify_adoption(keydir, record))
+            Bool.pick(IO(Unit), verified, IO.pure(Unit, Unit{}),
+              write_adoption_failure(keydir, started, "published adoption failed verification")),
           write_adoption_failure(keydir, started, "external compiler exited without a complete artifact")))
+
 
 def guard(keydir: String, pid_text: String, start: String, name: String, path: String) -> IO(Unit):
   do IO<Unit>:
@@ -911,7 +915,7 @@ def guard(keydir: String, pid_text: String, start: String, name: String, path: S
         do IO<Unit>:
           locked_key : Unit <- IO.try(Unit, L.lock_fd_acquire(9))
           locked_cgen : Unit <- IO.try(Unit, L.lock_fd_acquire(8))
-          completed <- IO.try(Bool, Result.verify_completed(keydir))
+          completed <- IO.try(Bool, regular(keydir ++ "/completed/result"))
           match completed:
             case True{}: IO.pure(Unit, Unit{})
             case False{}:
@@ -956,20 +960,25 @@ def adopt_live(pid: U32, pid_text: String, start: String, cwd: String,
     +keydir = keydir_of(state, key)
     made : Unit <- IO.try(Unit, L.mkdir_p(keydir ++ "/runs"))
     lock <- IO.try(U32, L.lock_acquire(keydir ++ "/lock"))
-    completed <- IO.try(Bool, Result.verify_completed(keydir))
-    match completed:
-      case True{}:
+    +adoption_path = keydir ++ "/adoption"
+    +completed_path = keydir ++ "/completed/result"
+    adoption_exists <- IO.try(Bool, regular(adoption_path))
+    completed_exists <- IO.try(Bool, regular(completed_path))
+    Bool.pick(IO(Unit), Bool.and(adoption_exists, completed_exists),
+      do IO<Unit>:
+        adoption <- IO.try(String, L.read_text(adoption_path))
+        verified <- IO.try(Bool, Result.verify_adoption(keydir, adoption))
+        Bool.pick(IO(Unit), verified,
+          do IO<Unit>:
+            released : Unit <- IO.try(Unit, L.lock_release(lock))
+            IO.write("adopted=0\nkey=" ++ key ++ "\nreason=completed-result-exists\n"),
+          do IO<Unit>:
+            released : Unit <- IO.try(Unit, L.lock_release(lock))
+            IO.die(Unit, 2, "compile-queue: completed result is not a verified adoption record")),
+      Bool.pick(IO(Unit), completed_exists,
         do IO<Unit>:
-          adoption <- IO.try(String, L.read_text(keydir ++ "/adoption"))
-          verified <- IO.try(Bool, Result.verify_adoption(keydir, adoption))
-          Bool.pick(IO(Unit), verified,
-            do IO<Unit>:
-              released : Unit <- IO.try(Unit, L.lock_release(lock))
-              IO.write("adopted=0\nkey=" ++ key ++ "\nreason=completed-result-exists\n"),
-            do IO<Unit>:
-              released : Unit <- IO.try(Unit, L.lock_release(lock))
-              IO.die(Unit, 2, "compile-queue: completed result is not a verified adoption record"))
-      case False{}:
+          released : Unit <- IO.try(Unit, L.lock_release(lock))
+          IO.die(Unit, 2, "compile-queue: completed result is not a verified adoption record"),
         do IO<Unit>:
           started <- IO.try(String, L.now_ns())
           adoption <- adoption_text(pid_text, start, cwd, output, compiler, entry, argv, inputs, key, started)
@@ -982,7 +991,7 @@ def adopt_live(pid: U32, pid_text: String, start: String, cwd: String,
           released_lock : Unit <- IO.try(Unit, L.close_fd(lock))
           released_cgen : Unit <- IO.try(Unit, L.close_fd(cgen))
           IO.write("adopted=1\nkey=" ++ key ++ "\npid=" ++ pid_text
-            ++ "\nguard=" ++ U32.show(guard_pid) ++ "\nartifact=" ++ path ++ "\n")
+            ++ "\nguard=" ++ U32.show(guard_pid) ++ "\nartifact=" ++ path ++ "\n")))
 
 def adopt_command(args: List<String>) -> IO(Unit):
   do IO<Unit>:
