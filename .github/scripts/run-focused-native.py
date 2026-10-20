@@ -338,6 +338,62 @@ def inside(args):
             raise SystemExit('focused cgroup recorded oom_kill')
 
 
+def scope_state(unit):
+    result = subprocess.run(['systemctl', '--user', 'is-active', unit + '.scope'],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return result.stdout.strip()
+
+
+def cleanup_scope(unit, poll_seconds=0.1, attempts=50):
+    scope = unit + '.scope'
+    record = {'scope': scope, 'term_exit': None, 'kill_exit': None,
+              'escalated': False, 'active': None, 'error': None}
+    try:
+        term = subprocess.run(['systemctl', '--user', 'kill', '--kill-who=all', scope],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        record['term_exit'] = term.returncode
+        for _ in range(attempts):
+            if scope_state(unit) != 'active':
+                break
+            time.sleep(poll_seconds)
+        else:
+            record['escalated'] = True
+            kill = subprocess.run(['systemctl', '--user', 'kill', '--signal=KILL',
+                                   '--kill-who=all', scope],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            record['kill_exit'] = kill.returncode
+            for _ in range(attempts):
+                if scope_state(unit) != 'active':
+                    break
+                time.sleep(poll_seconds)
+        record['active'] = scope_state(unit) == 'active'
+    except Exception as error:
+        record['error'] = repr(error)
+    return record
+
+
+def terminate_scope(unit, process, evidence, reason):
+    cleanup = cleanup_scope(unit)
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    write_json(pathlib.Path(evidence) / (reason + '.json'),
+               {'unit': unit, 'scope': unit + '.scope', 'cleanup': cleanup})
+    return cleanup
+
+
 def launch(args):
     run = pathlib.Path(args.run).resolve()
     run.mkdir(parents=True, exist_ok=True)
@@ -395,16 +451,11 @@ def launch(args):
     try:
         code = process.wait(timeout=runtime + 60)
     except subprocess.TimeoutExpired:
-        subprocess.run(['systemctl', '--user', 'kill', '--kill-who=all', unit],
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        os.killpg(process.pid, signal.SIGTERM)
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
-        write_json(run / 'evidence' / 'launcher-timeout.json', {'unit': unit, 'argv': argv})
+        terminate_scope(unit, process, run / 'evidence', 'launcher-timeout')
         raise SystemExit('focused systemd scope exceeded configured runtime')
+    except BaseException:
+        terminate_scope(unit, process, run / 'evidence', 'launcher-cancel')
+        raise
     finally:
         stdout.close()
         stderr.close()
