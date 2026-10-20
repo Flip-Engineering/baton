@@ -219,6 +219,12 @@ A diagnostic-level generation keeps the raw spool replay: that level retains
 every frame, while the store keeps only the newest cumulative prefix per
 identity. The raw spool remains untouched and append-only.
 
+An unusable checkpoint has no verified offset. The host positions the reader at
+the spool start and the ordinary replay runs; the store rebuilds the projection
+but cannot set a reader position the host does not expose. A valid checkpoint,
+including the one written per batch before an owner death, takes the bounded
+path.
+
 ### Retained spool measurement (read-only)
 
 The retained spool of attempt `receive:rewrite-native:46` was read without
@@ -248,6 +254,12 @@ run.
   acceptance scenarios in `docs/pure-bend2/acceptance-769-omp-logging.md`
   remain admission-gated through rewrite-root.
 - The trio decision on spool compaction or rotation (design item 3) remains
+  open. This implementation preserves the raw spool and removes it as the
+  replay input.
+- The rebuild assumes the attempt's store rows cover it from the first frame.
+  An attempt that starts under a build without the store and resumes under this
+  one would have partial coverage. The preserved pre-build attempts keep their
+  existing generation files.
 - A frame stored after the last committed checkpoint is replayed from that
   checkpoint. The append guard keeps one row, and the projection write compares
   the replayed bytes with the existing bytes at the same position. Rows written
