@@ -1,23 +1,56 @@
 #!/bin/sh
-# One-time pinned bootstrap of the Bend2 compile queue executable. It builds
-# only bend2/src/host/compile-queue.bend, using the reference shell queue at
-# commit 97a95949 as the queue for this build. Normal builds keep using
-# bend2/scripts/compile-queue.sh with the installed executable; this route
-# never builds anything else.
+# One-time bootstrap for the shared compile queue executable.
+#
+# This is the only supported pre-queue compilation. It builds exactly
+# bend2/src/host/compile-queue.bend to the requested output and accepts no
+# entry or command arguments. Normal builds use build-native.sh through the
+# installed queue. Run this once per host or installation prefix.
 set -eu
-here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
-root=$(CDPATH= cd -- "$here/../.." && pwd -P)
-ref=97a95949
-blob=42764862d6dcc07d36fc0f50709f236de7ba8ccb
-output=${1:-"$root/.scratch/bend2/compile-queue"}
-actual=$(git -C "$root" rev-parse "$ref:bend2/scripts/compile-queue.sh")
-if [ "$actual" != "$blob" ]; then
-  printf 'compile-queue bootstrap: reference blob is %s, expected pinned blob %s\n' "$actual" "$blob" >&2
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
+if [ "$#" -gt 1 ]; then
+  echo 'usage: bootstrap-compile-queue.sh [OUTPUT]' >&2
+  exit 2
+fi
+output=${1:-.scratch/bend2/compile-queue}
+case "$output" in
+  /*) ;;
+  *) output="$root/$output" ;;
+esac
+entry="$root/bend2/src/host/compile-queue.bend"
+[ -f "$entry" ] || {
+  echo "The queue source is unavailable: $entry" >&2
+  exit 1
+}
+compiler=${BEND:-"$root/.bend/bin/bend"}
+if [ ! -x "$compiler" ]; then
+  compiler="$root/node_modules/.bend/bin/bend"
+fi
+if [ ! -x "$compiler" ]; then
+  echo 'Bend is unavailable. Set BEND to an installed Bend 2.0.25 executable.' >&2
   exit 1
 fi
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/compile-queue-bootstrap.XXXXXX")
-trap 'rm -rf -- "$tmp"' EXIT HUP INT TERM
-git -C "$root" show "$ref:bend2/scripts/compile-queue.sh" > "$tmp/compile-queue.sh"
-chmod +x "$tmp/compile-queue.sh"
-BATON2_COMPILE_QUEUE_BIN="$tmp/compile-queue.sh" \
-  sh "$root/bend2/scripts/build-native.sh" "$root/bend2/src/host/compile-queue.bend" "$output"
+export BEND_NO_TELEMETRY=1
+if [ "$("$compiler" version)" != 'bend 2.0.25' ]; then
+  echo 'This queue bootstrap requires Bend 2.0.25.' >&2
+  exit 1
+fi
+cc=${CC:-clang}
+command -v "$cc" >/dev/null 2>&1 || {
+  echo "The C compiler is unavailable: $cc" >&2
+  exit 1
+}
+mkdir -p "$(dirname -- "$output")"
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/baton2-queue-bootstrap.XXXXXXXX")
+cleanup_bootstrap() {
+  status=$?
+  trap - EXIT
+  rm -rf -- "$scratch"
+  exit "$status"
+}
+trap cleanup_bootstrap EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+"$compiler" "$entry" -o "$scratch/compile-queue.c"
+"$cc" -O1 -pthread "$scratch/compile-queue.c" -lsqlite3 -lm -o "$output"
+printf '%s\n' "$output"

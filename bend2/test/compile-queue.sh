@@ -7,14 +7,19 @@ set -u
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
 QUEUE=${BATON2_COMPILE_QUEUE:-$ROOT/bend2/scripts/compile-queue.sh}
 [ -f "$QUEUE" ] || { printf 'missing queue launcher: %s\n' "$QUEUE" >&2; exit 2; }
-if [ -z "${BATON2_COMPILE_QUEUE_BIN:-}" ]; then
-  printf 'SKIP: set BATON2_COMPILE_QUEUE_BIN to the built Bend2 queue executable\n'
-  exit 0
+if [ -z "${BATON2_COMPILE_QUEUE_BIN:-}" ] || [ ! -x "$BATON2_COMPILE_QUEUE_BIN" ]; then
+  printf 'Set BATON2_COMPILE_QUEUE_BIN to the built Bend2 queue executable\n' >&2
+  exit 2
 fi
+case "${BATON_COMPILE_QUEUE_ROOT:-}" in
+  /*) ;;
+  *) printf 'Set BATON_COMPILE_QUEUE_ROOT to the shared absolute queue state directory\n' >&2; exit 2 ;;
+esac
 
 T=$(mktemp -d "${TMPDIR:-/tmp}/compile-queue-test.XXXXXX") || exit 2
 trap 'rm -rf -- "$T"' EXIT
-STATE=$T/state
+STATE=$BATON_COMPILE_QUEUE_ROOT
+mkdir -p "$STATE" || exit 2
 LOG=$T/compiler.log
 FAKE=$T/fake-compiler
 : > "$LOG"
@@ -26,6 +31,7 @@ log=''
 out=''
 sleep_s=0
 fail=0
+gpu=0
 prev=''
 for arg in "$@"; do
   case $prev in
@@ -35,6 +41,7 @@ for arg in "$@"; do
   esac
   case $arg in
     --fail) fail=1 ;;
+    --gpu-build) gpu=1 ;;
   esac
   [ "$prev" = -o ] && out=$arg
   prev=$arg
@@ -47,7 +54,9 @@ if [ "$fail" = 1 ]; then
   exit 3
 fi
 [ "$sleep_s" = 0 ] || sleep "$sleep_s"
-if [ -n "$out" ]; then
+if [ "$gpu" = 1 ]; then
+  printf 'gpu-artifact-%s' "$tag" > "$0.gpu"
+elif [ -n "$out" ]; then
   printf 'artifact-%s' "$tag" > "$out"
 fi
 [ -n "$log" ] && printf 'end %s %s %s 0\n' "$(now)" "$$" "$tag" >> "$log"
@@ -68,7 +77,7 @@ run_cc() { # tag output extra...
   tag=$1
   out=$2
   shift 2
-  sh "$QUEUE" run --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
     --input "$T/input.c" --artifact "binary=$out" --option "test=$tag" \
     --token "tok-$(basename "$out")" \
     -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$T/input.c" "$@" >"$T/$(basename "$out").out" 2>"$T/$(basename "$out").err"
@@ -78,7 +87,7 @@ cc_key() { # tag output extra...
   tag=$1
   out=$2
   shift 2
-  sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
     --input "$T/input.c" --artifact "binary=$out" --option "test=$tag" \
     -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$T/input.c" "$@"
 }
@@ -114,12 +123,72 @@ wait "$p2" || bad 'identical cc second requester failed'
 [ "$(count_starts)" = 1 ] && pass 'identical cc shared one execution' || bad "identical cc starts=$(count_starts)"
 [ "$(cat "$T/ident1")" = "$(cat "$T/ident2")" ] && pass 'identical cc artifacts match' || bad 'identical cc artifacts differ'
 
+# Artifact names are relative paths used under the attempt and cache roots.
+invalid_artifact=0
+sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+  --input "$T/input.c" --artifact "../escape=$T/escape" --token invalid-artifact \
+  -- "$FAKE" -o "$T/escape" "$T/input.c" >/dev/null 2>&1 || invalid_artifact=$?
+[ "$invalid_artifact" = 2 ] && pass 'artifact traversal rejected' || bad "artifact traversal exit $invalid_artifact"
+
+# A request must use the configured host state root.
+mismatch_rc=0
+sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$T/other-root" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+  --input "$T/input.c" --artifact "binary=$T/mismatch" --token mismatch-root \
+  -- "$FAKE" -o "$T/mismatch" "$T/input.c" >/dev/null 2>&1 || mismatch_rc=$?
+[ "$mismatch_rc" = 2 ] && pass 'state root mismatch rejected' || bad "state root mismatch exit $mismatch_rc"
+
+# Missing and unusable host roots fail before a request is published.
+missing_root_rc=0
+env -u BATON_COMPILE_QUEUE_ROOT sh "$QUEUE" run --kind cc --source-root "$T" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+  --input "$T/input.c" --artifact "binary=$T/missing-root" --token missing-root \
+  -- "$FAKE" -o "$T/missing-root" "$T/input.c" >/dev/null 2>&1 || missing_root_rc=$?
+[ "$missing_root_rc" = 2 ] && pass 'missing state root rejected' || bad "missing state root exit $missing_root_rc"
+printf 'not a directory\n' > "$T/not-a-root"
+unusable_root_rc=0
+env -u BATON_COMPILE_QUEUE_ROOT sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$T/not-a-root" \
+  --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version --input "$T/input.c" --artifact "binary=$T/unusable-root" \
+  --token unusable-root -- "$FAKE" -o "$T/unusable-root" "$T/input.c" >/dev/null 2>&1 || unusable_root_rc=$?
+[ "$unusable_root_rc" = 2 ] && pass 'unusable state root rejected' || bad "unusable state root exit $unusable_root_rc"
+
+# A declared but missing queue executable fails closed in the launcher.
+missing_queue_rc=0
+BATON2_COMPILE_QUEUE_BIN="$T/absent-queue" sh "$QUEUE" status --state-root "$STATE" \
+  >/dev/null 2>&1 || missing_queue_rc=$?
+[ "$missing_queue_rc" = 2 ] && pass 'missing queue executable rejected' || bad "missing queue executable exit $missing_queue_rc"
+
+# cc requests require compiler, linker and version.
+missing_cc=0
+sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  --input "$T/input.c" --artifact "binary=$T/missing-cc" -- \
+  "$FAKE" -o "$T/missing-cc" "$T/input.c" >/dev/null 2>&1 || missing_cc=$?
+[ "$missing_cc" = 2 ] && pass 'cc request without linker/version rejected' || bad "missing cc identity exit $missing_cc"
+
 # Reuse.
 before=$(count_starts)
 run_cc ident "$T/reuse" || bad 'reuse request failed'
 after=$(count_starts)
 [ "$before" = "$after" ] && pass 'completed result reused' || bad "reuse starts $before -> $after"
 [ "$(cat "$T/reuse")" = "artifact-ident" ] && pass 'reused artifact bytes match' || bad 'reused artifact differs'
+
+# Copying an artifact must work under an ordinary pre-existing output parent.
+mkdir -p "$T/ordinary-output"
+chmod 755 "$T/ordinary-output"
+run_cc ordinary "$T/ordinary-output/program" || bad 'ordinary output directory request failed'
+[ "$(cat "$T/ordinary-output/program")" = "artifact-ordinary" ] \
+  && pass 'ordinary caller output directory accepted' || bad 'ordinary output directory copy failed'
+
+# The staged executable writes its GPU sidecar beside argv[0]. The queue must
+# capture the nested artifact path and copy it back to the requested location.
+: > "$LOG"
+sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+  --input "$FAKE" --artifact "inputs/fake-compiler.gpu=$T/fake-compiler.gpu" \
+  --option 'gpu-sidecar=once' --token gpu-sidecar \
+  -- "$FAKE" --tag gpu --log "$LOG" --gpu-build \
+  >"$T/gpu.out" 2>"$T/gpu.err" \
+  && pass 'nested GPU sidecar request completed' || bad 'nested GPU sidecar request failed'
+[ "$(cat "$T/fake-compiler.gpu" 2>/dev/null)" = 'gpu-artifact-gpu' ] \
+  && pass 'nested GPU sidecar copied to ordinary output path' || bad 'nested GPU sidecar missing'
+[ "$(count_starts)" = 1 ] && pass 'GPU sidecar fake command ran once' || bad 'GPU sidecar fake command count differs'
 
 # Identical concurrent cgen requests.
 : > "$LOG"
@@ -153,13 +222,8 @@ for i in range(len(values)):
             sys.exit(1)
 PY
 
-# Distinct cc requests serialize on the shared heavy lock.
-: > "$LOG"
-run_cc serialcc1 "$T/serialcc1" --sleep 1 & q1=$!
-run_cc serialcc2 "$T/serialcc2" --sleep 1 & q2=$!
-wait "$q1" || bad 'serial cc first requester failed'
-wait "$q2" || bad 'serial cc second requester failed'
-python3 - "$LOG" <<'PY' && pass 'distinct cc serialized' || bad 'distinct cc intervals overlap'
+assert_serialized() {
+  python3 - "$LOG" <<'PY'
 import sys
 rows=[]
 for line in open(sys.argv[1]):
@@ -170,11 +234,30 @@ intervals={}
 for tag,kind,ts in rows:
     intervals.setdefault(tag,{})[kind]=ts
 values=[(v['start'],v['end']) for v in intervals.values() if 'start' in v and 'end' in v]
+if len(values) < 2:
+    sys.exit(2)
 for i in range(len(values)):
     for j in range(i+1,len(values)):
         if values[i][0] < values[j][1] and values[j][0] < values[i][1]:
             sys.exit(1)
 PY
+}
+
+# Distinct cc requests serialize under the host lock.
+: > "$LOG"
+run_cc cc1 "$T/cc1" --sleep 1 & q1=$!
+run_cc cc2 "$T/cc2" --sleep 1 & q2=$!
+wait "$q1" || bad 'first cc requester failed'
+wait "$q2" || bad 'second cc requester failed'
+assert_serialized && pass 'distinct cc serialized' || bad 'distinct cc intervals overlap'
+
+# C generation and native C compilation share the same host lock.
+: > "$LOG"
+run_cgen mixed-cgen "$T/mixed.c" --sleep 1 & m1=$!
+run_cc mixed-cc "$T/mixed-bin" --sleep 1 & m2=$!
+wait "$m1" || bad 'mixed cgen requester failed'
+wait "$m2" || bad 'mixed cc requester failed'
+assert_serialized && pass 'cgen and cc serialized together' || bad 'cgen and cc intervals overlap'
 
 # Shared failure and retry.
 : > "$LOG"
@@ -194,7 +277,7 @@ run_cc failure "$T/retry" --fail || true
 # Cancellation.
 : > "$LOG"
 run_cc cancelcase "$T/cancelcase" --sleep 30 & k=$!
-key=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+key=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
   --input "$T/input.c" --artifact "binary=$T/cancelcase" --option 'test=cancelcase' \
   -- "$FAKE" --tag cancelcase --log "$LOG" -o "$T/cancelcase" "$T/input.c" --sleep 30)
 i=0
@@ -209,13 +292,41 @@ wait "$k" || krc=$?
 [ "$krc" = 130 ] && pass 'cancellation returned 130' || bad "cancellation exit $krc"
 [ "$(count_starts)" = 1 ] && pass 'cancellation stopped after one execution' || bad "cancel starts=$(count_starts)"
 
+# Cancel the final requester while its supervisor waits behind another key.
+# The supervisor must publish a terminal result without starting the command.
+: > "$LOG"
+run_cc occupies-queue "$T/occupies-queue" --sleep 3 & blocker=$!
+i=0
+while [ "$i" -lt 200 ]; do
+  (grep -q '^start' "$LOG" 2>/dev/null) && break
+  i=$((i + 1))
+  sleep 0.05
+done
+qkey=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+  --input "$T/input.c" --artifact "binary=$T/queued-cancel" --option 'test=queued-cancel' \
+  -- "$FAKE" --tag queued-cancel --log "$LOG" -o "$T/queued-cancel" "$T/input.c")
+run_cc queued-cancel "$T/queued-cancel" & queued=$!
+i=0
+while [ "$i" -lt 200 ]; do
+  [ -f "$STATE/keys/$qkey/active" ] && break
+  i=$((i + 1))
+  sleep 0.05
+done
+[ -f "$STATE/keys/$qkey/active" ] && pass 'queued supervisor published cancellable ownership' || bad 'queued supervisor never became visible'
+sh "$QUEUE" cancel --state-root "$STATE" --key "$qkey" --token tok-queued-cancel >"$T/queued-cancel.cancel" 2>&1 || bad 'queued cancellation command failed'
+wait "$blocker" || bad 'queue blocker failed'
+qrc=0
+wait "$queued" || qrc=$?
+[ "$qrc" != 0 ] && pass 'queued canceled requester received terminal failure' || bad 'queued canceled requester succeeded'
+[ "$(grep -c '^start' "$LOG" 2>/dev/null || true)" = 1 ] && pass 'canceled queued command never started' || bad 'canceled queued command started'
+
 # One owner withdraws; another owner keeps the shared execution.
 : > "$LOG"
 run_cc owner "$T/ownerA" --sleep 2 & o1=$!
 sleep 0.3
 run_cc owner "$T/ownerB" --sleep 2 & o2=$!
 sleep 0.5
-ownkey=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+ownkey=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
   --input "$T/input.c" --artifact "binary=$T/ownerA" --option 'test=owner' \
   -- "$FAKE" --tag owner --log "$LOG" -o "$T/ownerA" "$T/input.c" --sleep 2)
 sh "$QUEUE" cancel --state-root "$STATE" --key "$ownkey" --token tok-ownerA >/dev/null 2>&1
@@ -259,18 +370,58 @@ rm -f "$STATE/keys/$unckey/active"
 
 # One configured host state root: a relative configured root is refused and
 # an absolute one is used without --state-root.
-if env BATON_COMPILE_QUEUE_ROOT=relative/path sh "$QUEUE" key --kind cc --cwd "$T" \
-    --compiler "$FAKE" --input "$T/input.c" --artifact "binary=$T/rootref" \
+if env BATON_COMPILE_QUEUE_ROOT=relative/path sh "$QUEUE" key --kind cc --source-root "$T" --cwd "$T" \
+    --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+    --input "$T/input.c" --artifact "binary=$T/rootref" \
     -- "$FAKE" -o "$T/rootref" "$T/input.c" >"$T/rootref.out" 2>"$T/rootref.err"; then
   bad 'relative BATON_COMPILE_QUEUE_ROOT accepted'
 else
   pass 'relative BATON_COMPILE_QUEUE_ROOT refused'
 fi
-env BATON_COMPILE_QUEUE_ROOT="$STATE" sh "$QUEUE" key --kind cc --cwd "$T" \
-  --compiler "$FAKE" --input "$T/input.c" --artifact "binary=$T/rooted" \
+env BATON_COMPILE_QUEUE_ROOT="$STATE" sh "$QUEUE" key --kind cc --source-root "$T" --cwd "$T" \
+  --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+  --input "$T/input.c" --artifact "binary=$T/rooted" \
   --option 'test=rooted' -- "$FAKE" -o "$T/rooted" "$T/input.c" >"$T/rooted.out" 2>"$T/rooted.err" \
   && pass 'absolute BATON_COMPILE_QUEUE_ROOT used without --state-root' \
   || bad 'absolute BATON_COMPILE_QUEUE_ROOT refused'
+
+# The ccache executable bytes enter the cc toolchain identity.
+printf '#!/bin/sh\nexit 0\n' > "$T/ccache-one"; chmod +x "$T/ccache-one"
+printf '#!/bin/sh\nexit 1\n' > "$T/ccache-two"; chmod +x "$T/ccache-two"
+key_none=$(sh "$QUEUE" key --kind cc --source-root "$T/src" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
+  --linker "$FAKE" --version fake-version --input "$T/input.c" \
+  --artifact "binary=$T/ccache-out" -- \
+  "$FAKE" -o "$T/ccache-out" "$T/input.c")
+key_ccache_one=$(sh "$QUEUE" key --kind cc --source-root "$T/src" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
+  --linker "$FAKE" --version fake-version --input "$T/input.c" \
+  --artifact "binary=$T/ccache-out" -- \
+  "$FAKE" --ccache "$T/ccache-one" -o "$T/ccache-out" "$T/input.c")
+key_ccache_two=$(sh "$QUEUE" key --kind cc --source-root "$T/src" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
+  --linker "$FAKE" --version fake-version --input "$T/input.c" \
+  --artifact "binary=$T/ccache-out" -- \
+  "$FAKE" --ccache "$T/ccache-two" -o "$T/ccache-out" "$T/input.c")
+key_ccache_equal=$(sh "$QUEUE" key --kind cc --source-root "$T/src" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
+  --linker "$FAKE" --version fake-version --input "$T/input.c" \
+  --artifact "binary=$T/ccache-out" -- \
+  "$FAKE" --ccache="$T/ccache-one" -o "$T/ccache-out" "$T/input.c")
+[ "$key_none" != "$key_ccache_one" ] && pass 'ccache executable changes the key' || bad 'ccache executable kept the key'
+[ "$key_ccache_one" != "$key_ccache_two" ] && pass 'ccache bytes change the key' || bad 'ccache bytes kept the key'
+[ "$key_none" != "$key_ccache_equal" ] && pass 'ccache= form changes the key' || bad 'ccache= form kept the key'
+
+ccache_extra_key() {
+  sh "$QUEUE" key --kind cc --source-root "$T/src" --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
+    --linker "$FAKE" --version fake-version --input "$T/input.c" \
+    --artifact "binary=$T/ccache-out" "$@" -- \
+    "$FAKE" --ccache "$T/ccache-one" -o "$T/ccache-out" "$T/input.c"
+}
+printf 'compiler_check = content\n' > "$T/ccache-config-one"
+printf 'compiler_check = mtime\n' > "$T/ccache-config-two"
+key_config_one=$(ccache_extra_key --aux "$T/ccache-config-one")
+key_config_two=$(ccache_extra_key --aux "$T/ccache-config-two")
+[ "$key_config_one" != "$key_config_two" ] && pass 'ccache config aux changes the key' || bad 'ccache config aux kept the key'
+key_env_one=$(ccache_extra_key --option 'ccache-env=CCACHE_COMPILERCHECK=content')
+key_env_two=$(ccache_extra_key --option 'ccache-env=CCACHE_COMPILERCHECK=mtime')
+[ "$key_env_one" != "$key_env_two" ] && pass 'ccache environment option changes the key' || bad 'ccache environment option kept the key'
 
 # Source identity changes the key.
 key1=$(cgen_key keyfile "$T/keyfile")

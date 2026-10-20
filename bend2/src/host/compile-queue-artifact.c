@@ -387,7 +387,7 @@ static void cq_art_collect(CqArtList *list, const char *directory,
 
 static int cq_art_is_dir(const char *path) {
   struct stat info;
-  return !stat(path, &info) && S_ISDIR(info.st_mode);
+  return !lstat(path, &info) && S_ISDIR(info.st_mode);
 }
 
 static int cq_art_remove(const char *path) {
@@ -421,7 +421,7 @@ static int cq_art_copy_path(const char *source, const char *destination,
   if (S_ISREG(info->st_mode)) {
     int input = open(source, O_RDONLY);
     if (input < 0) return errno;
-    int output = open(destination, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    int output = open(destination, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0600);
     if (output < 0) {
       int error = errno;
       close(input);
@@ -454,14 +454,14 @@ static int cq_art_copy_path(const char *source, const char *destination,
     }
     if (!error && close(output)) error = errno;
     else if (error) close(output);
-    if (!error && chmod(destination, info->st_mode & 07777)) {
+    if (!error && chmod(destination, info->st_mode & 0777)) {
       error = errno;
     }
     close(input);
     return error;
   }
   if (S_ISDIR(info->st_mode)) {
-    if (mkdir(destination, info->st_mode & 07777)) {
+    if (mkdir(destination, info->st_mode & 0777)) {
       if (errno != EEXIST || !cq_art_is_dir(destination)) return errno;
     }
     DIR *dir = opendir(source);
@@ -489,7 +489,7 @@ static int cq_art_copy_path(const char *source, const char *destination,
       if (error) break;
     }
     closedir(dir);
-    if (!error && chmod(destination, info->st_mode & 07777)) error = errno;
+    if (!error && chmod(destination, info->st_mode & 0777)) error = errno;
     return error;
   }
 #ifdef S_ISLNK

@@ -1,7 +1,7 @@
 import Base
-import ./text.bend as T
-import ./files.bend as F
-import ./storage.bend as Storage
+import ../host/text.bend as T
+import ../host/files.bend as F
+import ../host/storage.bend as Storage
 
 # Shared compile queue identity, schema version 2.
 #
@@ -226,16 +226,19 @@ def CompileQueueIdentity.second(values: List<&2,String>) -> String:
     case other:
       ""
 
-def CompileQueueIdentity.first_token(value: String) -> String:
-  match String.split(value, Char.from_u32(32)):
+def CompileQueueIdentity.first_token_tab(parts: List<&2,String>) -> String:
+  match parts:
+    case token <> tail: token
+    case other: ""
+
+def CompileQueueIdentity.first_token_space(parts: List<&2,String>) -> String:
+  match parts:
     case first <> rest:
-      match String.split(first, Char.from_u32(9)):
-        case token <> tail:
-          token
-        case other:
-          ""
-    case other:
-      ""
+      CompileQueueIdentity.first_token_tab(String.split(first, Char.from_u32(9)))
+    case other: ""
+
+def CompileQueueIdentity.first_token(value: String) -> String:
+  CompileQueueIdentity.first_token_space(String.split(value, Char.from_u32(32)))
 
 def CompileQueueIdentity.bend_import_value(trimmed: String, original: String) -> String:
   rest = String.drop(trimmed, 7)
@@ -416,18 +419,17 @@ def CompileQueueIdentity.chain(path: String, label: String) -> IO(Result<&1,&1,U
     digest : String <- IO.try(String, CompileQueueIdentity.file_digest(resolved))
     CompileQueueIdentity.chain_step(resolved, label, 0, label ++ "-entry=" ++ digest ++ "\n")
 
+def CompileQueueIdentity.kind_from_fields(fields: List<&2,String>) -> String:
+  match fields:
+    case kind <> rest: kind
+    case other: ""
+
 def CompileQueueIdentity.observe_kind(path: String) -> IO(String):
   do IO<String>:
     observed : Result<&1,&1,U32 & String,String> <- Storage.StorageHost.observe(path)
     match observed:
-      case Fail{error}:
-        IO.pure(String, "")
-      case Done{record}:
-        match String.split(record, Char.from_u32(9)):
-          case kind <> rest:
-            IO.pure(String, kind)
-          case other:
-            IO.pure(String, "")
+      case Fail{error}: IO.pure(String, "")
+      case Done{record}: IO.pure(String, CompileQueueIdentity.kind_from_fields(String.split(record, Char.from_u32(9))))
 
 def CompileQueueIdentity.release_walk(names: List<&2,String>, directory: String, prefix: String, acc: List<&2,String>) -> IO(List<&2,String>):
   match names:
@@ -480,13 +482,55 @@ def CompileQueueIdentity.linker_lines(linker: String) -> IO(Result<&1,&1,U32 & S
         case CompileQueueChain{lines, final}:
           IO.pure(Result<&1,&1,U32 & String,String>, Done{lines}))
 
-def CompileQueueIdentity.toolchain_text(compiler: String, linker: String, version: String) -> IO(Result<&1,&1,U32 & String,String>):
+# A cc command may name a ccache executable as `--ccache <path>` or
+# `--ccache=<path>`. The command is normalized before identity reads it, so a
+# path under the root or cwd arrives as `@root/...` or `@cwd/...`; `{compiler}`
+# names the compiler. Identity restores the caller path, follows the wrapper
+# exec chain, and records the entry and each exec target digest. The absolute
+# path is transient input and never enters the key.
+def CompileQueueIdentity.ccache_value(tokens: List<&2,String>) -> String:
+  match tokens:
+    case value <> tail:
+      value
+    case Nil{}:
+      ""
+
+def CompileQueueIdentity.ccache_path(tokens: List<&2,String>) -> String:
+  match tokens:
+    case token <> rest:
+      Bool.pick(String, String.starts_with(token, "--ccache="),
+        String.drop(token, String.length("--ccache=")),
+        Bool.pick(String, String.eq(token, "--ccache"),
+          CompileQueueIdentity.ccache_value(rest),
+          CompileQueueIdentity.ccache_path(rest)))
+    case Nil{}:
+      ""
+
+def CompileQueueIdentity.ccache_expand(value: String, cwd: String, root: String, compiler: String) -> String:
+  Bool.pick(String, String.eq(value, "{compiler}"), compiler,
+    Bool.pick(String, String.starts_with(value, "@root/"),
+      root ++ "/" ++ String.drop(value, String.length("@root/")),
+      Bool.pick(String, String.starts_with(value, "@cwd/"),
+        cwd ++ "/" ++ String.drop(value, String.length("@cwd/")),
+        value)))
+
+def CompileQueueIdentity.ccache_lines(ccache: String) -> IO(Result<&1,&1,U32 & String,String>):
+  Bool.pick(IO(Result<&1,&1,U32 & String,String>), String.is_empty(ccache),
+    IO.pure(Result<&1,&1,U32 & String,String>, Done{"ccache=none\n"}),
+    do IO<Result<&1,&1,U32 & String,String>>:
+      chain : CompileQueueChain <- IO.try(CompileQueueChain, CompileQueueIdentity.chain(ccache, "ccache"))
+      match chain:
+        case CompileQueueChain{lines, final}:
+          IO.pure(Result<&1,&1,U32 & String,String>, Done{lines}))
+
+def CompileQueueIdentity.toolchain_text(compiler: String, linker: String, version: String, ccache: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     version_sha : String <- IO.try(String, CompileQueueIdentity.text_digest(version))
+    ccache_text : String <- IO.try(String, CompileQueueIdentity.ccache_lines(ccache))
     Bool.pick(IO<Result<&1,&1,U32 & String,String>>, String.is_empty(compiler),
       do IO<Result<&1,&1,U32 & String,String>>:
         linker_text : String <- IO.try(String, CompileQueueIdentity.linker_lines(linker))
-        text = "schema=baton-compile-queue-toolchain-v2\ncompiler=none\n" ++ linker_text ++ "compiler-version-sha=" ++ version_sha ++ "\n"
+        text = "schema=baton-compile-queue-toolchain-v2\ncompiler=none\n" ++ linker_text ++ ccache_text ++ "compiler-version-sha=" ++ version_sha ++ "\n"
         IO.pure(Result<&1,&1,U32 & String,String>, Done{text}),
       do IO<Result<&1,&1,U32 & String,String>>:
         chain : CompileQueueChain <- IO.try(CompileQueueChain, CompileQueueIdentity.chain(compiler, "compiler"))
@@ -502,22 +546,22 @@ def CompileQueueIdentity.toolchain_text(compiler: String, linker: String, versio
                 entries : List<&2,String> <- IO.try(List<&2,String>, CompileQueueIdentity.release_entries(root))
                 files : String <- IO.try(String, CompileQueueIdentity.toolchain_files(root, entries))
                 linker_text : String <- IO.try(String, CompileQueueIdentity.linker_lines(linker))
-                text = "schema=baton-compile-queue-toolchain-v2\n" ++ lines ++ "toolchain-release=release\n" ++ files ++ linker_text ++ "compiler-version-sha=" ++ version_sha ++ "\n"
+                text = "schema=baton-compile-queue-toolchain-v2\n" ++ lines ++ "toolchain-release=release\n" ++ files ++ linker_text ++ ccache_text ++ "compiler-version-sha=" ++ version_sha ++ "\n"
                 IO.pure(Result<&1,&1,U32 & String,String>, Done{text}),
               do IO<Result<&1,&1,U32 & String,String>>:
                 linker_text : String <- IO.try(String, CompileQueueIdentity.linker_lines(linker))
-                text = "schema=baton-compile-queue-toolchain-v2\n" ++ lines ++ "toolchain-release=executable\n" ++ linker_text ++ "compiler-version-sha=" ++ version_sha ++ "\n"
+                text = "schema=baton-compile-queue-toolchain-v2\n" ++ lines ++ "toolchain-release=executable\n" ++ linker_text ++ ccache_text ++ "compiler-version-sha=" ++ version_sha ++ "\n"
                 IO.pure(Result<&1,&1,U32 & String,String>, Done{text}))))
 
 # `version` is the captured compiler --version text, or empty when the caller
 # could not collect it. The closure records its SHA-256 and therefore changes
 # whenever the visible compiler version text changes.
-def CompileQueueIdentity.compiler_closure(compiler: String, linker: String, version: String) -> IO(Result<&1,&1,U32 & String,String>):
-  CompileQueueIdentity.toolchain_text(compiler, linker, version)
+def CompileQueueIdentity.compiler_closure(compiler: String, linker: String, version: String, ccache: String) -> IO(Result<&1,&1,U32 & String,String>):
+  CompileQueueIdentity.toolchain_text(compiler, linker, version, ccache)
 
-def CompileQueueIdentity.compiler_closure_digest(compiler: String, linker: String, version: String) -> IO(Result<&1,&1,U32 & String,String>):
+def CompileQueueIdentity.compiler_closure_digest(compiler: String, linker: String, version: String, ccache: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    text : String <- IO.try(String, CompileQueueIdentity.compiler_closure(compiler, linker, version))
+    text : String <- IO.try(String, CompileQueueIdentity.compiler_closure(compiler, linker, version, ccache))
     CompileQueueIdentity.text_digest(text)
 
 def CompileQueueIdentity.material(kind: String, entry: String, options: String, source_digest: String, file_closure_digest: String, compiler_digest: String, input_rows: String, artifact_names: String, normalized_argv: String) -> String:
@@ -534,12 +578,13 @@ def CompileQueueIdentity.material(kind: String, entry: String, options: String, 
 def CompileQueueIdentity.material_key(kind: String, entry: String, options: String, source_digest: String, file_closure_digest: String, compiler_digest: String, input_rows: String, artifact_names: String, normalized_argv: String) -> IO(Result<&1,&1,U32 & String,String>):
   CompileQueueIdentity.key(CompileQueueIdentity.material(kind, entry, options, source_digest, file_closure_digest, compiler_digest, input_rows, artifact_names, normalized_argv))
 
+def CompileQueueIdentity.input_source_fields(fields: List<&2,String>) -> String:
+  match fields:
+    case source <> destination <> tail: source
+    case other: ""
+
 def CompileQueueIdentity.input_source(line: String) -> String:
-  match String.split(line, Char.from_u32(9)):
-    case source <> destination <> tail:
-      source
-    case other:
-      ""
+  CompileQueueIdentity.input_source_fields(String.split(line, Char.from_u32(9)))
 
 def CompileQueueIdentity.input_sources(lines: List<&2,String>) -> String:
   match lines:
@@ -549,12 +594,13 @@ def CompileQueueIdentity.input_sources(lines: List<&2,String>) -> String:
       source = CompileQueueIdentity.input_source(line)
       Bool.pick(String, String.is_empty(source), CompileQueueIdentity.input_sources(rest), source ++ "\n" ++ CompileQueueIdentity.input_sources(rest))
 
+def CompileQueueIdentity.artifact_name_fields(fields: List<&2,String>) -> String:
+  match fields:
+    case name <> path <> tail: name
+    case other: ""
+
 def CompileQueueIdentity.artifact_name(line: String) -> String:
-  match String.split(line, Char.from_u32(9)):
-    case name <> path <> tail:
-      name
-    case other:
-      ""
+  CompileQueueIdentity.artifact_name_fields(String.split(line, Char.from_u32(9)))
 
 def CompileQueueIdentity.artifact_names(lines: List<&2,String>) -> String:
   match lines:
@@ -564,15 +610,17 @@ def CompileQueueIdentity.artifact_names(lines: List<&2,String>) -> String:
       name = CompileQueueIdentity.artifact_name(line)
       Bool.pick(String, String.is_empty(name), CompileQueueIdentity.artifact_names(rest), name ++ "\n" ++ CompileQueueIdentity.artifact_names(rest))
 
-def CompileQueueIdentity.input_row(line: String) -> IO(Result<&1,&1,U32 & String,String>):
-  match String.split(line, Char.from_u32(9)):
+def CompileQueueIdentity.input_row_fields(fields: List<&2,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match fields:
     case source <> destination <> tail:
       do IO<Result<&1,&1,U32 & String,String>>:
         digest : String <- IO.try(String, CompileQueueIdentity.file_digest(source))
         size : String <- IO.try(String, CompileQueueIdentity.file_size(source))
         IO.pure(Result<&1,&1,U32 & String,String>, Done{destination ++ "\t" ++ digest ++ "\t" ++ size})
-    case other:
-      IO.pure(Result<&1,&1,U32 & String,String>, Done{""})
+    case other: IO.pure(Result<&1,&1,U32 & String,String>, Done{""})
+
+def CompileQueueIdentity.input_row(line: String) -> IO(Result<&1,&1,U32 & String,String>):
+  CompileQueueIdentity.input_row_fields(String.split(line, Char.from_u32(9)))
 
 def CompileQueueIdentity.input_rows(lines: List<&2,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match lines:
@@ -593,7 +641,8 @@ def CompileQueueIdentity.request_key(kind: String, cwd: String, root: String, so
     closure : String <- Bool.pick(IO(String), String.eq(kind, "cgen"),
       IO.try(String, CompileQueueIdentity.source_digest(source_root, entry)),
       IO.try(String, CompileQueueIdentity.file_closure_digest(source_root, CompileQueueIdentity.input_sources(String.lines(inputs)) ++ aux)))
-    toolchain : String <- IO.try(String, CompileQueueIdentity.compiler_closure_digest(compiler, linker, version))
+    +ccache = CompileQueueIdentity.ccache_expand(CompileQueueIdentity.ccache_path(String.lines(command)), cwd, root, compiler)
+    toolchain : String <- IO.try(String, CompileQueueIdentity.compiler_closure_digest(compiler, linker, version, ccache))
     rows : String <- IO.try(String, CompileQueueIdentity.input_rows(String.lines(inputs)))
     CompileQueueIdentity.material_key(kind, entry, options,
       Bool.pick(String, String.eq(kind, "cgen"), closure, ""),

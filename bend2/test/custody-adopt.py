@@ -5,7 +5,6 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-
 import compile_queue
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -25,12 +24,13 @@ class CustodyAdopt(unittest.TestCase):
                                     cwd=ROOT, capture_output=True, text=True)
             if result.returncode:
                 raise AssertionError(result.stdout + result.stderr)
-        compiler = os.environ.get('CC', 'clang')
-        compile_queue.compile_cc([
-            compiler, '-O1', '-pthread',
-            '-DBATON2_PROCESS_SOURCE=' + repr(str(PROCESS_C)).replace("'", '"'),
-            str(SOURCE), '-lsqlite3', '-lm', '-o', str(FIXTURE),
-        ], inputs=[SOURCE, PROCESS_C], output=FIXTURE, cwd=ROOT, compiler=compiler)
+        result = compile_queue.compile_cc(
+            [os.environ.get('CC', 'clang'), '-O1', '-pthread',
+             '-DBATON2_PROCESS_SOURCE=' + repr(str(PROCESS_C)).replace("'", '"'),
+             str(SOURCE), '-lsqlite3', '-lm', '-o', str(FIXTURE)],
+            [PROCESS_C, SOURCE], FIXTURE, ROOT)
+        if result.returncode:
+            raise AssertionError(result.stdout + result.stderr)
 
     def run_fixture(self, keeper=None):
         with tempfile.TemporaryDirectory(prefix='custody-adopt-', dir=ROOT / '.scratch/bend2') as name:

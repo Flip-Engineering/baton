@@ -71,8 +71,6 @@ def build_binary(env, directory, label, entry=None, focused=False, router=False,
     stdout = build_dir / 'build.stdout'
     stderr = build_dir / 'build.stderr'
     role_env = dict(env)
-    if focused or label != 'baton-full':
-        role_env.pop('BEND_GENERATED_C', None)
     if focused:
         role_env['BATON2_RECEIVE_FOCUSED'] = '1'
     if router:
@@ -87,8 +85,6 @@ def build_binary(env, directory, label, entry=None, focused=False, router=False,
               'elapsed_seconds': time.monotonic() - started,
               'stdout': {'path': output_path(stdout, build_dir)},
               'stderr': {'path': output_path(stderr, build_dir)}}
-    if role_env.get('BEND_GENERATED_C'):
-        record['generated_c_input'] = role_env['BEND_GENERATED_C']
     write_json(build_dir / 'build.json', record)
     require(result.returncode == 0, 'Native ' + label + ' build failed; full output is retained in ' + str(build_dir))
     return output, record
@@ -670,14 +666,14 @@ def package(args):
     result = {'status': 'running', 'source_directory': str(ROOT), 'output': str(output)}
     write_json(output / 'result.json', result)
     try:
+        require(not os.environ.get('BEND_GENERATED_C'),
+                'BEND_GENERATED_C is unsupported; use the verified Main-C reuse inputs')
         repl_inputs(args)
         require(platform.system() == 'Darwin' and platform.machine() == 'arm64',
                 'This native artifact requires a Darwin arm64 build host')
         identity = artifact_identity(args.release_version)
         compiler = args.bend.resolve()
         env = dict(os.environ, BEND=str(compiler))
-        if args.generated_c is not None:
-            env['BEND_GENERATED_C'] = str(args.generated_c.resolve())
         specs = receiver_binaries(args)
         built = {}
         builds = {}
@@ -795,8 +791,6 @@ def main():
     parser.add_argument('--bend', required=True, type=Path, help='installed Bend compiler')
     parser.add_argument('--compiler-archive', required=True, type=Path,
                         help='verified official Bend 2.0.25 archive used for license notices')
-    parser.add_argument('--generated-c', type=Path,
-                        help='compile a generated production C file on the package host')
     for role in ('focused', 'full', 'recovery'):
         parser.add_argument('--' + role + '-binary', type=Path,
                             help='prebuilt ' + role + ' binary; otherwise build from source')

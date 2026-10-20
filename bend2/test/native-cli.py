@@ -7,7 +7,6 @@ import subprocess
 import tempfile
 import unittest
 from contextlib import closing
-
 import compile_queue
 
 
@@ -160,13 +159,12 @@ int baton2_runtime_main(int argc, char **argv) {
 }
 ''')
         binary = self.directory / 'native entry'
-        compiler = os.environ.get('CC', 'clang')
         compiled = compile_queue.compile_cc(
-            [compiler, '-std=gnu11', '-Wall', '-Wextra', '-Werror',
-             str(ROOT / 'bend2/src/host/native-entry.c'), str(runtime),
-             '-o', str(binary)],
-            inputs=[ROOT / 'bend2/src/host/native-entry.c', runtime],
-            output=binary, cwd=self.directory, compiler=compiler)
+            [os.environ.get('CC', 'clang'), '-std=gnu11',
+             '-Wall', '-Wextra', '-Werror',
+             str(ROOT / 'bend2/src/host/native-entry.c'),
+             str(runtime), '-o', str(binary)],
+            [ROOT / 'bend2/src/host/native-entry.c', runtime], binary, self.directory)
         self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
         arguments = ['--help', '--threads', '--gpu', '--gpu-build', '--',
                      '', "λ🙂 ' spaces\nsecond line", '']
@@ -181,14 +179,13 @@ int baton2_runtime_main(int argc, char **argv) {
         runtime = self.directory / 'runtime.c'
         runtime.write_text('int baton2_runtime_main(int argc, char **argv) { (void)argc; (void)argv; return 41; }\n')
         binary = self.directory / 'baton'
-        compiler = os.environ.get('CC', 'clang')
         compiled = compile_queue.compile_cc(
-            [compiler, '-std=gnu11', '-Wall', '-Wextra', '-Werror',
+            [os.environ.get('CC', 'clang'), '-std=gnu11',
+             '-Wall', '-Wextra', '-Werror',
              '-DBATON2_RECEIVE_FOCUSED',
-             str(ROOT / 'bend2/src/host/native-entry.c'), str(runtime),
-             '-o', str(binary)],
-            inputs=[ROOT / 'bend2/src/host/native-entry.c', runtime],
-            output=binary, cwd=self.directory, compiler=compiler)
+             str(ROOT / 'bend2/src/host/native-entry.c'),
+             str(runtime), '-o', str(binary)],
+            [ROOT / 'bend2/src/host/native-entry.c', runtime], binary, self.directory)
         self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
         helper = self.directory / 'baton-recovery'
         full = self.directory / 'baton-full'
@@ -234,13 +231,12 @@ int baton2_runtime_main(int argc, char **argv) {
 }
 ''')
         binary = self.directory / 'baton-entry'
-        compiler = os.environ.get('CC', 'clang')
         compiled = compile_queue.compile_cc(
-            [compiler, '-std=gnu11', '-Wall', '-Wextra', '-Werror',
-             str(ROOT / 'bend2/src/host/native-entry.c'), str(runtime),
-             '-o', str(binary)],
-            inputs=[ROOT / 'bend2/src/host/native-entry.c', runtime],
-            output=binary, cwd=self.directory, compiler=compiler)
+            [os.environ.get('CC', 'clang'), '-std=gnu11',
+             '-Wall', '-Wextra', '-Werror',
+             str(ROOT / 'bend2/src/host/native-entry.c'),
+             str(runtime), '-o', str(binary)],
+            [ROOT / 'bend2/src/host/native-entry.c', runtime], binary, self.directory)
         self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
         for arguments in (['help', 'dispatch'], ['help', 'task'],
                           ['--help', 'dispatch'], ['-h', 'dispatch']):

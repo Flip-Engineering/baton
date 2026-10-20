@@ -1,9 +1,10 @@
 import Base
-import ./text.bend as T
-import ./files.bend as F
+import ../host/text.bend as T
+import ../host/files.bend as F
 import ./compile-queue-identity.bend as Identity
 import ./compile-queue-artifact.bend as Artifact
-import ./storage.bend as Storage
+import ../host/storage.bend as Storage
+import ./compile-queue-lifecycle.bend as L
 
 # Compile queue result schema version 2.
 #
@@ -120,8 +121,7 @@ def CompileQueueResult.external_fields(verified: String, command: String, proces
   ++ "external-output=" ++ output ++ "\n"
   ++ "external-artifacts=" ++ artifacts ++ "\n"
 
-def CompileQueueResult.verify_row(row: String, keydir: String) -> IO(Bool):
-  fields = String.split(row, Char.from_u32(9))
+def CompileQueueResult.verify_row_fields(fields: List<&2,String>, keydir: String) -> IO(Bool):
   match fields:
     case name_field <> kind <> expected <> tail:
       Bool.pick(IO(Bool), String.is_empty(String.concat(tail)),
@@ -145,6 +145,9 @@ def CompileQueueResult.verify_row(row: String, keydir: String) -> IO(Bool):
         IO.pure(Bool, False{}))
     case other:
       IO.pure(Bool, False{})
+
+def CompileQueueResult.verify_row(row: String, keydir: String) -> IO(Bool):
+  CompileQueueResult.verify_row_fields(String.split(row, Char.from_u32(9)), keydir)
 
 def CompileQueueResult.verify_rows(rows: List<&2,String>, keydir: String) -> IO(Bool):
   match rows:
@@ -308,6 +311,7 @@ def CompileQueueResult.retain_rows(work: String, destination: String, names: Lis
         do IO<Result<&1,&1,U32 & String,Unit>>:
           target = destination ++ "/" ++ name
           staging = target ++ ".queue-tmp"
+          made : Unit <- IO.try(Unit, L.mkdir_p(CompileQueueResult.dirname(target)))
           removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
           installed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.install(work ++ "/" ++ name, target, staging))
           CompileQueueResult.retain_rows(work, destination, rest))
@@ -420,25 +424,35 @@ def CompileQueueResult.verify_completed(keydir: String) -> IO(Result<&1,&1,U32 &
     ok : Bool <- CompileQueueResult.verify(keydir, CompileQueueResult.basename(keydir))
     IO.pure(Result<&1,&1,U32 & String,Bool>, Done{ok})
 
+def CompileQueueResult.copy_row_fields(fields: List<&2,String>, keydir: String, rest: List<&2,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match fields:
+    case name <> destination <> tail:
+      do IO<Result<&1,&1,U32 & String,Unit>>:
+        staging = destination ++ ".queue-tmp"
+        removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
+        installed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.install(keydir ++ "/completed/artifacts/" ++ name, destination, staging))
+        CompileQueueResult.copy_rows(keydir, rest)
+    case other: CompileQueueResult.copy_rows(keydir, rest)
+
 def CompileQueueResult.copy_rows(keydir: String, rows: List<&2,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match rows:
-    case Nil{}:
-      IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}})
+    case Nil{}: IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}})
     case row <> rest:
       Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.is_empty(row),
         CompileQueueResult.copy_rows(keydir, rest),
-        do IO<Result<&1,&1,U32 & String,Unit>>:
-          match String.split(row, Char.from_u32(9)):
-            case name <> destination <> tail:
-              staging = destination ++ ".queue-tmp"
-              removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
-              installed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.install(keydir ++ "/completed/artifacts/" ++ name, destination, staging))
-              CompileQueueResult.copy_rows(keydir, rest)
-            case other:
-              CompileQueueResult.copy_rows(keydir, rest))
+        CompileQueueResult.copy_row_fields(String.split(row, Char.from_u32(9)), keydir, rest))
 
 def CompileQueueResult.copy_artifacts(keydir: String, rows: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   CompileQueueResult.copy_rows(keydir, String.lines(rows))
+
+def CompileQueueResult.receipt_row_parts(parts: List<&2,String>, rest: List<&2,String>) -> String:
+  match parts:
+    case name <> destination <> tail:
+      "artifact-" ++ name ++ "=" ++ destination ++ "\n" ++ CompileQueueResult.receipt_rows(rest)
+    case other: CompileQueueResult.receipt_rows(rest)
+
+def CompileQueueResult.receipt_row(row: String, rest: List<&2,String>) -> String:
+  CompileQueueResult.receipt_row_parts(String.split(row, Char.from_u32(9)), rest)
 
 def CompileQueueResult.receipt_rows(rows: List<&2,String>) -> String:
   match rows:
@@ -446,11 +460,7 @@ def CompileQueueResult.receipt_rows(rows: List<&2,String>) -> String:
       ""
     case row <> rest:
       Bool.pick(String, String.is_empty(row), CompileQueueResult.receipt_rows(rest),
-        match String.split(row, Char.from_u32(9)):
-          case name <> destination <> tail:
-            "artifact-" ++ name ++ "=" ++ destination ++ "\n" ++ CompileQueueResult.receipt_rows(rest)
-          case other:
-            CompileQueueResult.receipt_rows(rest))
+        CompileQueueResult.receipt_row(row, rest))
 
 def CompileQueueResult.receipt_write(receipt: String, status: String, key: String, reused: String, owner: String, rows: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   text = "status=" ++ status ++ "\n"
@@ -460,17 +470,22 @@ def CompileQueueResult.receipt_write(receipt: String, status: String, key: Strin
     ++ CompileQueueResult.receipt_rows(String.lines(rows))
   CompileQueueResult.write_text(receipt, text, receipt ++ ".tmp")
 
+def CompileQueueResult.run_name_parts(parts: List<&2,String>, rest: List<&2,String>) -> List<&2,String>:
+  match parts:
+    case kind <> name <> tail:
+      Bool.pick(List<&2,String>, String.eq(kind, "dir"), name <> CompileQueueResult.run_names(rest), CompileQueueResult.run_names(rest))
+    case other: CompileQueueResult.run_names(rest)
+
+def CompileQueueResult.run_name(record: String, rest: List<&2,String>) -> List<&2,String>:
+  CompileQueueResult.run_name_parts(String.split(record, Char.from_u32(9)), rest)
+
 def CompileQueueResult.run_names(records: List<&2,String>) -> List<&2,String>:
   match records:
     case Nil{}:
       Nil{}
     case record <> rest:
       Bool.pick(List<&2,String>, String.is_empty(record), CompileQueueResult.run_names(rest),
-        match String.split(record, Char.from_u32(9)):
-          case kind <> name <> tail:
-            Bool.pick(List<&2,String>, String.eq(kind, "dir"), name <> CompileQueueResult.run_names(rest), CompileQueueResult.run_names(rest))
-          case other:
-            CompileQueueResult.run_names(rest))
+        CompileQueueResult.run_name(record, rest))
 
 def CompileQueueResult.latest_scan(names: List<&2,String>, keydir: String, best: CompileQueueLatest) -> IO(CompileQueueLatest):
   match names:

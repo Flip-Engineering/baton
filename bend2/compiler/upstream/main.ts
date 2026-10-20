@@ -342,46 +342,106 @@ function cc_find(gpu: boolean): string {
     + " --install";
 }
 
-// compile_queue_entry resolves the shared host compile queue entry.
-// BATON2_COMPILE_QUEUE_BIN names the built queue executable and
-// BATON2_COMPILE_QUEUE names the thin launcher, which resolves the executable
-// itself. Native compilation requires one of these entries.
+// host_file requires one executable host path selected by the environment.
+function host_file(label: string, value: string): string {
+  let info: fs.Stats;
+  try {
+    info = fs.statSync(value);
+  } catch {
+    throw "Error: " + label + " is missing: " + value;
+  }
+  if (!info.isFile()) {
+    throw "Error: " + label + " is not a file: " + value;
+  }
+  try {
+    fs.accessSync(value, fs.constants.X_OK);
+  } catch {
+    throw "Error: " + label + " is not executable: " + value;
+  }
+  return value;
+}
+
+// compile_queue_entry requires the shared host compile queue entry.
+// BATON2_COMPILE_QUEUE_BIN names the built executable; BATON2_COMPILE_QUEUE
+// names its launcher. An explicitly selected entry is never replaced.
 function compile_queue_entry(): string {
   const direct = process.env.BATON2_COMPILE_QUEUE_BIN;
-  if (direct && fs.existsSync(direct)) return direct;
+  if (direct) return host_file("BATON2_COMPILE_QUEUE_BIN", direct);
   const launcher = process.env.BATON2_COMPILE_QUEUE;
-  if (launcher && fs.existsSync(launcher)) return launcher;
-  throw "Error: native compilation requires the shared host compile queue; "
-    + "set BATON2_COMPILE_QUEUE_BIN or BATON2_COMPILE_QUEUE";
+  if (launcher) return host_file("BATON2_COMPILE_QUEUE", launcher);
+  throw "Error: set BATON2_COMPILE_QUEUE_BIN or BATON2_COMPILE_QUEUE to the shared host compile queue";
 }
 
-// compile_queue_state_root resolves the one host state root shared with the
-// queue and build-native.sh: BATON_COMPILE_QUEUE_ROOT when set, else the
-// fixed host default. A set-but-relative root is a configuration error.
+// compile_queue_state_root requires one explicit writable host directory
+// shared by every queued build.
 function compile_queue_state_root(): string {
-  const root = process.env.BATON_COMPILE_QUEUE_ROOT || "";
-  if (root === "") return "/var/tmp/baton/compile-queue";
-  if (!path.isAbsolute(root)) {
-    throw "Error: BATON_COMPILE_QUEUE_ROOT must be an absolute path: " + root;
+  const stateRoot = process.env.BATON_COMPILE_QUEUE_ROOT;
+  if (!stateRoot || !path.isAbsolute(stateRoot)) {
+    throw "Error: set BATON_COMPILE_QUEUE_ROOT to the shared absolute compile-queue state directory";
   }
-  return root;
+  let info: fs.Stats;
+  try {
+    info = fs.statSync(stateRoot);
+  } catch {
+    throw "Error: the compile-queue state root is missing: " + stateRoot;
+  }
+  if (!info.isDirectory()) {
+    throw "Error: the compile-queue state root is not a directory: " + stateRoot;
+  }
+  try {
+    fs.accessSync(stateRoot, fs.constants.W_OK | fs.constants.X_OK);
+  } catch {
+    throw "Error: the compile-queue state root is not writable: " + stateRoot;
+  }
+  return stateRoot;
 }
 
-// queue_cc runs one C compilation through the shared host compile queue. A
-// queue execution that fails throws with the retained stderr.
-function queue_cc(queue: string, cc: string, file: string, bin: string,
-                  mac: boolean, bangs: boolean, cuda: string, args: string[]): void {
-  const argv = ["run", "--kind", "cc", "--state-root", compile_queue_state_root(),
-    "--compiler", cc,
-    "--input", file, "--artifact", "binary=" + path.resolve(bin),
+// cc_version captures the compiler's visible version text without newlines.
+function cc_version(cc: string): string {
+  const result = child.spawnSync(cc, ["--version"], { encoding: "utf8" });
+  const text = (result.stdout || "").trim().split(/\s+/).join(" ");
+  if (result.error || result.status !== 0 || !text) {
+    throw "Error: " + cc + " --version did not report compiler identity"
+      + (result.error ? "\n" + result.error.message : "");
+  }
+  return text;
+}
+
+// cc_linker resolves the actual link editor the compiler driver selects.
+function cc_linker(cc: string): string {
+  const result = child.spawnSync(cc, ["-print-prog-name=ld"], { encoding: "utf8" });
+  const value = (result.stdout || "").trim();
+  if (result.error || result.status !== 0 || !value) {
+    throw "Error: " + cc + " did not report its linker identity"
+      + (result.error ? "\n" + result.error.message : "");
+  }
+  return value;
+}
+
+// queue_cc runs one native compilation through the shared host compile queue.
+function queue_cc(queue: string, stateRoot: string, compiler: string, linker: string,
+                  version: string, file: string,
+                  extraInputs: string[], artifact: string, artifactPath: string,
+                  extraOptions: string[], mac: boolean, bangs: boolean, cuda: string,
+                  args: string[]): void {
+  const absoluteFile = path.resolve(file);
+  const argv = ["run", "--kind", "cc", "--state-root", stateRoot,
+    "--cwd", process.cwd(), "--root", path.dirname(absoluteFile),
+    "--source-root", path.dirname(absoluteFile),
+    "--compiler", compiler, "--linker", linker, "--version", version,
+    "--input", absoluteFile,
+    "--artifact", artifact + "=" + path.resolve(artifactPath),
     "--option", "platform=" + (mac ? "darwin" : "linux"),
     "--option", "backend=" + (bangs ? (mac ? "gpu-metal" : "gpu-cuda") : "cpu")];
+  for (const input of extraInputs) argv.push("--input", path.resolve(input));
   if (bangs && !mac) argv.push("--option", "cuda-root=" + cuda);
-  argv.push("--", cc, ...args);
+  for (const option of extraOptions) argv.push("--option", option);
+  argv.push("--", compiler, ...args);
   const result = child.spawnSync(queue, argv, { encoding: "utf8" });
   const stderr = result.stderr || "";
   if (result.error || result.status !== 0) {
-    throw "Error: the compile queue failed to build " + bin
+    throw "Error: the compile queue failed to build " + artifactPath
+      + (result.error ? "\n" + result.error.message : "")
       + (stderr ? "\n" + stderr.trim() : "");
   }
 }
@@ -391,10 +451,8 @@ function queue_cc(queue: string, cc: string, file: string, bin: string,
 // CUDA at $CUDA_HOME, else /usr/local/cuda, its libraries in lib64 or, as
 // nix lays them, lib; else the ! runs on the cores). On macOS a program with
 // a framework (#import: a window, audio) builds as Objective-C; on Linux it
-// links the X11 and ALSA libraries it includes. The C compilation is
-// admitted by the shared host compile queue selected by
-// BATON2_COMPILE_QUEUE_BIN or BATON2_COMPILE_QUEUE; cli_build fails when no
-// queue entry is configured.
+// links the X11 and ALSA libraries it includes. Native build commands use the
+// shared host compile queue and its configured state root.
 function cli_build(bin: string, file: string): void {
   const c     = fs.readFileSync(file, "utf8");
   const mac   = process.platform === "darwin";
@@ -411,20 +469,19 @@ function cli_build(bin: string, file: string): void {
   const gpu = mac ? ["-DBEND_METAL=1", ...cpu]
     : ["-DBEND_CUDA=1", "-I" + cuda + "/include", "-L" + cuda + "/lib64",
       "-L" + cuda + "/lib", ...cpu, "-lcuda", "-lnvrtc"];
-  const steps: [string, string[]][] = bangs
-    ? [[cc, gpu], [path.resolve(bin), ["--gpu-build"]]] : [[cc, cpu]];
   const queue = compile_queue_entry();
-  if (queue === null) {
-    throw "Error: the shared host compile queue is required for C builds; set BATON2_COMPILE_QUEUE_BIN";
-  }
-  for (const [cmd, args] of steps) {
-    if (cmd === cc) {
-      queue_cc(queue, cc, file, bin, mac, bangs, cuda, args);
-      continue;
-    }
-    if (child.spawnSync(cmd, args, { stdio: "inherit" }).status !== 0) {
-      throw "Error: " + path.basename(cmd) + " failed to build " + bin;
-    }
+  const stateRoot = compile_queue_state_root();
+  const linker = cc_linker(cc);
+  const version = cc_version(cc);
+  queue_cc(queue, stateRoot, cc, linker, version, file, [], "binary", bin, [], mac, bangs, cuda,
+    bangs ? gpu : cpu);
+  if (bangs) {
+    const invocation = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+    const builder = path.resolve(bin);
+    const sidecar = path.basename(builder) + ".gpu";
+    queue_cc(queue, stateRoot, builder, linker, version, file, [builder], "inputs/" + sidecar,
+      builder + ".gpu", ["gpu-build-invocation=" + invocation], mac, bangs, cuda,
+      ["--gpu-build"]);
   }
 }
 

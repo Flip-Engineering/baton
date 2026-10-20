@@ -2,7 +2,7 @@
 
    Locking is BSD flock(2) directly in this file. The lock belongs to the open
    file description and survives fork and exec, so a detached supervisor or
-   guard inherits the key and cgen locks through descriptors 9 and 8. The
+   guard inherits the key and heavy locks through descriptors 9 and 8. The
    process start identity follows process-spawn.c: Linux /proc/<pid>/stat
    starttime and macOS PROC_PIDTBSDINFO start time. Detachment follows the
    fork/exec shape of br_spawn_gated, with setsid(2) in the child. No shell
@@ -240,7 +240,11 @@ static int cq_set_inheritable(int fd) {
 }
 
 static int cq_lock_open(const char *path, u32 *handle) {
-  int fd = open(path, O_RDWR | O_CREAT, 0600);
+  mode_t previous = umask(0007);
+  int fd = open(path, O_RDWR | O_CREAT | O_NOFOLLOW, 0660);
+  int saved = errno;
+  umask(previous);
+  errno = saved;
   if (fd < 0) return errno;
   int error = cq_set_inheritable(fd);
   if (error) { close(fd); return error; }
@@ -288,16 +292,28 @@ static int cq_mkdir_p(const char *path) {
   if (!copy) return ENOMEM;
   size_t length = strlen(copy);
   if (length > 1 && copy[length - 1] == '/') copy[length - 1] = 0;
+  mode_t previous = umask(0007);
   for (char *at = copy + 1; *at; at++) {
     if (*at != '/') continue;
     *at = 0;
-    if (mkdir(copy, 0700) && errno != EEXIST) { int error = errno; free(copy); return error; }
+    if (mkdir(copy, 02770) && errno != EEXIST) {
+      int error = errno; umask(previous); free(copy); return error;
+    }
+    struct stat parent_info;
+    int parent_status = lstat(copy, &parent_info);
+    if (parent_status || !S_ISDIR(parent_info.st_mode)) {
+      int error = parent_status ? errno : ENOTDIR;
+      umask(previous); free(copy); return error;
+    }
     *at = '/';
   }
   int error = 0;
-  if (mkdir(copy, 0700) && errno != EEXIST) error = errno;
+  if (mkdir(copy, 02770) && errno != EEXIST) error = errno;
+  umask(previous);
   struct stat info;
-  if (!error && (stat(copy, &info) || !S_ISDIR(info.st_mode))) error = ENOTDIR;
+  if (!error && (lstat(copy, &info) || !S_ISDIR(info.st_mode))) error = ENOTDIR;
+  if (!error && (!(info.st_mode & S_ISGID) || !(info.st_mode & S_IWGRP)
+      || (info.st_mode & S_IWOTH))) error = EACCES;
   free(copy);
   return error;
 }
@@ -318,7 +334,11 @@ static int cq_write_text(const char *path, const char *text, size_t length) {
   int written = snprintf(temporary, sizeof(temporary), "%s.tmp.%d", path, (int)getpid());
   if (written < 0 || (size_t)written >= sizeof(temporary)) return ENAMETOOLONG;
   unlink(temporary);
-  int fd = open(temporary, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  mode_t previous = umask(0007);
+  int fd = open(temporary, O_WRONLY | O_CREAT | O_EXCL, 0660);
+  int saved = errno;
+  umask(previous);
+  errno = saved;
   if (fd < 0) return errno;
   int error = cq_write_all_fd(fd, text, length);
   if (!error && fsync(fd)) error = errno;
@@ -331,7 +351,11 @@ static int cq_write_text(const char *path, const char *text, size_t length) {
 static int cq_copy_file(const char *source, const char *destination) {
   int input = open(source, O_RDONLY);
   if (input < 0) return errno;
-  int output = open(destination, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  mode_t previous = umask(0007);
+  int output = open(destination, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0660);
+  int saved = errno;
+  umask(previous);
+  errno = saved;
   if (output < 0) { int error = errno; close(input); return error; }
   char buffer[65536];
   int error = 0;
@@ -344,6 +368,9 @@ static int cq_copy_file(const char *source, const char *destination) {
   }
   if (!error && fsync(output)) error = errno;
   if (close(output) && !error) error = errno;
+  struct stat source_mode;
+  if (!error && stat(source, &source_mode)) error = errno;
+  if (!error && chmod(destination, source_mode.st_mode & 0777)) error = errno;
   close(input);
   return error;
 }
@@ -554,9 +581,9 @@ static int cq_run_command(const char *argv_text, size_t argv_length, const char 
   char **parsed = NULL; int count = 0;
   int error = cq_parse_argv(argv_text, argv_length, &parsed, &count);
   if (error) return error;
-  int out = open(stdout_path, O_WRONLY | O_CREAT | O_APPEND, 0600);
+  int out = open(stdout_path, O_WRONLY | O_CREAT | O_APPEND, 0660);
   if (out < 0) { error = errno; free(parsed); return error; }
-  int err = open(stderr_path, O_WRONLY | O_CREAT | O_APPEND, 0600);
+  int err = open(stderr_path, O_WRONLY | O_CREAT | O_APPEND, 0660);
   if (err < 0) { error = errno; close(out); free(parsed); return error; }
   int status[2];
   if (pipe(status)) {

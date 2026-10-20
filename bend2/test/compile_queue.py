@@ -1,52 +1,69 @@
 """Test support: admit fixture C compilations through the shared host queue.
 
 The queue is the product compilation boundary. Fixture tests use this helper
-instead of spawning a compiler directly. A missing queue executable is a
-skipped prerequisite, consistent with the other optional compiler fixtures.
+instead of spawning a compiler directly. A missing queue executable or an
+unconfigured state root is a skipped prerequisite.
 """
 import os
 import pathlib
 import subprocess
-import tempfile
 import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 LAUNCHER = ROOT / 'bend2/scripts/compile-queue.sh'
-SCRATCH = (ROOT / '.scratch/bend2/compile-queue',
-           ROOT / '.scratch/bend2/baton-compile-queue')
+IDENTITIES = {}
 
 
 def queue_entry():
-    for value in (os.environ.get('BATON2_COMPILE_QUEUE_BIN'),
-                  os.environ.get('BATON2_COMPILE_QUEUE')):
-        if value and pathlib.Path(value).exists():
-            return value
+    for name in ('BATON2_COMPILE_QUEUE_BIN', 'BATON2_COMPILE_QUEUE'):
+        value = os.environ.get(name)
+        if value:
+            path = pathlib.Path(value)
+            if path.is_file() and os.access(path, os.X_OK):
+                return str(path)
+            raise AssertionError('the configured compile queue entry is unavailable: ' + value)
     prefix = os.environ.get('BATON2_PREFIX')
-    if prefix and pathlib.Path(prefix, 'bin/baton-compile-queue').exists():
-        return str(LAUNCHER) if LAUNCHER.exists() else str(pathlib.Path(prefix, 'bin/baton-compile-queue'))
-    if LAUNCHER.exists() and any(path.exists() for path in SCRATCH):
-        return str(LAUNCHER)
+    if prefix:
+        candidate = pathlib.Path(prefix) / 'bin' / 'baton-compile-queue'
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(LAUNCHER)
     return None
 
 
-def state_root(explicit=None):
-    if explicit is not None:
-        return pathlib.Path(explicit)
-    path = ROOT / '.scratch/bend2/compile-queue-test-state'
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+def state_root():
+    value = os.environ.get('BATON_COMPILE_QUEUE_ROOT')
+    if not value or not pathlib.Path(value).is_absolute():
+        raise unittest.SkipTest('BATON_COMPILE_QUEUE_ROOT is not configured')
+    return pathlib.Path(value)
 
 
-def compile_cc(argv, inputs, output, cwd, compiler=None, state=None, options=()):
+def compiler_identity(compiler):
+    if compiler not in IDENTITIES:
+        version = subprocess.run([compiler, '--version'], capture_output=True, text=True)
+        if version.returncode != 0 or not version.stdout.strip():
+            raise AssertionError('compiler --version failed: ' + compiler + '\n' + version.stderr)
+        linker = subprocess.run([compiler, '-print-prog-name=ld'], capture_output=True, text=True)
+        if linker.returncode != 0 or not linker.stdout.strip():
+            raise AssertionError('compiler linker identity failed: ' + compiler + '\n' + linker.stderr)
+        IDENTITIES[compiler] = (linker.stdout.strip(), ' '.join(version.stdout.split()))
+    return IDENTITIES[compiler]
+
+
+def compile_cc(argv, inputs, output, cwd, compiler=None, options=()):
     """Run one cc request through the queue and return the completed result."""
     queue = queue_entry()
     if queue is None:
         raise unittest.SkipTest('the shared compile queue executable is unavailable')
+    compiler = str(compiler if compiler is not None else argv[0])
+    linker, version = compiler_identity(compiler)
     request = [queue, 'run', '--kind', 'cc',
-               '--state-root', str(state_root(state)),
+               '--state-root', str(state_root()),
                '--cwd', str(cwd),
-               '--compiler', str(compiler if compiler is not None else argv[0])]
+               '--source-root', str(pathlib.Path(cwd).resolve()),
+               '--compiler', compiler,
+               '--linker', linker,
+               '--version', version]
     for item in inputs:
         request += ['--input', str(item)]
     request += ['--artifact', 'binary=' + str(output)]
