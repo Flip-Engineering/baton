@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import select
 import shutil
@@ -417,9 +418,59 @@ assert sys.stdin.read()==''
             capture_output=True, text=True, timeout=60)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('confirmed prior native exit', result.stdout + result.stderr)
+
         self.assertEqual(self.execution('parent'),
                          ('running', '', str(attempt)))
         self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['fresh-guard-task'])
+
+RETAINED_ROOT = pathlib.Path(
+    '/mnt/nvme4tb/ci-runners/baton2-native-homelab/retained')
+RETAINED_EVIDENCE = [
+    ('compiler',
+     RETAINED_ROOT / 'baton-compiler-forkflush-20261016T195048Z' /
+     'orchestra.db.attempt-726563656976653a6367656e2d656d657267656e63792d776f6e6465723a343135333a3966643437303163666137356332363462366639343764623961366163323633',
+     4362240, 'fc72ec1e8f5535d81660c7fe376a83358e5769883302153a8581d68c49444328',
+     4362012, 2108, '71bde5df1d59b44de007bf7fb8da97608513c4f4b0e23bd22db4a6eecad6623f'),
+    ('logging-deepseek',
+     RETAINED_ROOT / 'baton-account-credits-793-702-20261017T0106Z' /
+     'orchestra.db.attempt-726563656976653a6c6f6767696e672d646565707365656b3a31363a3134313466333431326261326362636163623262353965346662653836343539',
+     16977920, '2cf39b662218c91b83b73a8cf88cfbaf33d2b4b80af03c14d2cdf24e81c82ce1',
+     16977583, 4254, '917fe3f911f892d21b5c3eeec233312708c9e04bb00002975c40a7bb02058e59'),
+    ('logging-glm',
+     RETAINED_ROOT / 'baton-account-credits-793-702-20261017T0106Z' /
+     'orchestra.db.attempt-726563656976653a6c6f6767696e672d676c6d3a31373a6131333563616162343732393630313637333565326134663539636235623237',
+     9109504, '088d8970de852eb3b413fd6cf2b105805299aa5aec0375a1544021da3fc4e48d',
+     9106482, 1828, '57f41889d52723d63e75abb759417566eb864178ed80be6b8860255241374d46'),
+]
+
+
+class RetainedEvidenceTests(unittest.TestCase):
+    def test_retained_nul_evidence_is_preserved(self):
+        for name, directory, size, digest, first_nul, checkpoint_size, checkpoint_digest in RETAINED_EVIDENCE:
+            spool = directory / 'stdout'
+            checkpoint = directory / 'checkpoint'
+            if not spool.is_file() or not checkpoint.is_file():
+                self.skipTest(f'Retained evidence for {name} is absent on this host.')
+            data = spool.read_bytes()
+            self.assertEqual(len(data), size, name)
+            self.assertEqual(hashlib.sha256(data).hexdigest(), digest, name)
+            self.assertEqual(data.find(b'\x00'), first_nul, name)
+            self.assertTrue(all(byte == 0 for byte in data[first_nul:]), name)
+            self.assertTrue(data[:first_nul].endswith(b'\n'), name)
+            record = checkpoint.read_bytes()
+            self.assertEqual(len(record), checkpoint_size, name)
+            self.assertEqual(hashlib.sha256(record).hexdigest(), checkpoint_digest, name)
+            self.assertEqual(_checkpoint_offset(record), first_nul, name)
+            stat = spool.stat()
+            self.assertEqual(stat.st_blocks * 512, size, name)
+            descriptor = os.open(spool, os.O_RDONLY)
+            try:
+                self.assertEqual(os.lseek(descriptor, 0, os.SEEK_HOLE), size, name)
+                self.assertEqual(os.lseek(descriptor, first_nul, os.SEEK_DATA), first_nul, name)
+            finally:
+                os.close(descriptor)
+            self.assertEqual(hashlib.sha256(spool.read_bytes()).hexdigest(), digest, name)
+            self.assertEqual(hashlib.sha256(checkpoint.read_bytes()).hexdigest(), checkpoint_digest, name)
 
 def _suite():
     suite = unittest.TestSuite()
@@ -430,6 +481,7 @@ def _suite():
     suite.addTest(MemoryGateTests('test_nul_span_refusal_preserves_checkpoint_spool_and_input'))
     suite.addTest(MemoryGateTests('test_fresh_receive_refuses_a_live_prior_native'))
     suite.addTest(MemoryGateTests('test_fresh_receive_admits_a_new_attempt_after_nul_refusal'))
+    suite.addTest(RetainedEvidenceTests('test_retained_nul_evidence_is_preserved'))
     return suite
 
 
