@@ -387,7 +387,7 @@ static void cq_art_collect(CqArtList *list, const char *directory,
 
 static int cq_art_is_dir(const char *path) {
   struct stat info;
-  return !stat(path, &info) && S_ISDIR(info.st_mode);
+  return !lstat(path, &info) && S_ISDIR(info.st_mode);
 }
 
 static int cq_art_remove(const char *path) {

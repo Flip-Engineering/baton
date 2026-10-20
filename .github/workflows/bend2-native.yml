@@ -401,7 +401,7 @@ jobs:
     needs: [linux-candidate, linux-target]
     runs-on: [self-hosted, macOS, ARM64, baton2-native-darwin-arm64]
     env:
-      BATON_COMPILE_QUEUE_ROOT: /var/tmp/baton2-compile-queue
+      BATON_COMPILE_QUEUE_ROOT: /private/var/tmp/baton2-compile-queue
       BATON_COMPILE_QUEUE_GROUP: staff
       BATON2_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || '' }}
     steps:

@@ -1,7 +1,7 @@
 import Base
-import ./text.bend as T
-import ./files.bend as F
-import ./storage.bend as Storage
+import ../host/text.bend as T
+import ../host/files.bend as F
+import ../host/storage.bend as Storage
 
 # Shared compile queue identity, schema version 2.
 #

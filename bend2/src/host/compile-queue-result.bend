@@ -1,9 +1,9 @@
 import Base
-import ./text.bend as T
-import ./files.bend as F
+import ../host/text.bend as T
+import ../host/files.bend as F
 import ./compile-queue-identity.bend as Identity
 import ./compile-queue-artifact.bend as Artifact
-import ./storage.bend as Storage
+import ../host/storage.bend as Storage
 import ./compile-queue-lifecycle.bend as L
 
 # Compile queue result schema version 2.

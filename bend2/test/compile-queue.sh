@@ -30,6 +30,7 @@ log=''
 out=''
 sleep_s=0
 fail=0
+gpu=0
 prev=''
 for arg in "$@"; do
   case $prev in
