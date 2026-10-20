@@ -142,6 +142,28 @@ is installed, the wrapper exits 2 with the missing path and build entry. The
 reference shell implementation is retained at commit 97a95949 for the current
 operator hold.
 
+The first queue executable is built through the reference shell at commit
+97a95949, which is already operational on the Linux homelab:
+
+```
+git show 97a95949:bend2/scripts/compile-queue.sh > /tmp/ref-compile-queue.sh
+chmod +x /tmp/ref-compile-queue.sh
+BATON2_COMPILE_QUEUE_BIN=/tmp/ref-compile-queue.sh \
+  sh bend2/scripts/build-native.sh bend2/src/host/compile-queue.bend \
+  .scratch/bend2/compile-queue
+```
+
+The thin launcher then resolves `.scratch/bend2/compile-queue`. Installation
+places it under the prefix as `bin/baton-compile-queue`, or the caller sets
+`BATON2_COMPILE_QUEUE_BIN`. The reference shell is Linux-only; the first macOS
+build of this change needs a packaged queue executable from a previous install
+or another supported bootstrap. After the executable exists, validate it with:
+
+```
+BATON2_COMPILE_QUEUE_BIN=.scratch/bend2/compile-queue \
+  sh bend2/test/compile-queue.sh
+```
+
 The lifecycle boundary uses portable host primitives: BSD `flock(2)` for inherited key and cgen locks,
 `setsid(2)` for detachment, and SHA-256 in the digest binding. Every supported
 host requires queue coordination; `bend2/scripts/build-native.sh` has no
