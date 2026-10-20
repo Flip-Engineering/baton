@@ -342,19 +342,19 @@ wait "$l2" || lrc=$?
 # The ccache executable bytes enter the cc toolchain identity.
 printf '#!/bin/sh\nexit 0\n' > "$T/ccache-one"; chmod +x "$T/ccache-one"
 printf '#!/bin/sh\nexit 1\n' > "$T/ccache-two"; chmod +x "$T/ccache-two"
-key_none=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+key_none=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
   --linker "$FAKE" --version fake-version --input "$T/input.c" \
   --artifact "binary=$T/ccache-out" -- \
   "$FAKE" -o "$T/ccache-out" "$T/input.c")
-key_ccache_one=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+key_ccache_one=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
   --linker "$FAKE" --version fake-version --input "$T/input.c" \
   --artifact "binary=$T/ccache-out" -- \
   "$FAKE" --ccache "$T/ccache-one" -o "$T/ccache-out" "$T/input.c")
-key_ccache_two=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+key_ccache_two=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
   --linker "$FAKE" --version fake-version --input "$T/input.c" \
   --artifact "binary=$T/ccache-out" -- \
   "$FAKE" --ccache "$T/ccache-two" -o "$T/ccache-out" "$T/input.c")
-key_ccache_equal=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+key_ccache_equal=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T/src" --compiler "$FAKE" \
   --linker "$FAKE" --version fake-version --input "$T/input.c" \
   --artifact "binary=$T/ccache-out" -- \
   "$FAKE" --ccache="$T/ccache-one" -o "$T/ccache-out" "$T/input.c")
