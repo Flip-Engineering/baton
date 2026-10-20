@@ -319,12 +319,13 @@ def m13_omp_terminal_event_is_a_guidance_boundary():
 # and answers at once, so one message is never sent twice.
 law m12_a_named_cursor_sends_nothing:
   for +db: String
+  for +player: String
   for +handle: U32
   for +cursor: String
   for +next: String
-  {Guidance.send(db, player, handle, cursor, next, True{}) == IO.pure(String, cursor) : IO(String)}
+  {Guidance.send(db, player, handle, "", cursor, next, True{}) == IO.pure(String, cursor) : IO(String)}
 
-def m12_a_named_cursor_sends_nothing(db, handle, cursor, next):
+def m12_a_named_cursor_sends_nothing(db, player, handle, cursor, next):
   {==}
 
 # M-14: a session that is not registered is refused with the rule that refused
