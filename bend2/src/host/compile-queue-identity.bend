@@ -27,7 +27,7 @@ import ./storage.bend as Storage
 # wrapper exec chains, the captured --version text, and the Bend release tree
 # when the compiler resolves into one.
 #
-# cli_build coverage (bend2/compiler/upstream/main.ts:384-415):
+# cli_build coverage (bend2/compiler/upstream/main.ts cli_build):
 #   kind=cc, input=the generated C file, artifact binary=<path.resolve(bin)>,
 #   compiler=cc_find(bangs). The argv carries -std=c11 -O3, the macOS
 #   -x objective-c -fobjc-arc -fmodules flags, -DBEND_METAL=1, the X11/ALSA
