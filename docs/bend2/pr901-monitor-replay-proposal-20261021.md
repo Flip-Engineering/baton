@@ -79,8 +79,9 @@ When monitor is true it calls `Observer.restore(db,handle,True)`.
 
 The rejected outcome becomes
 `Ended{"checkpoint rejected","",reason,True{}}` in `retained_output_restored`.
-It opens no subscription, writes no state, moves no cursor, and does not
-acknowledge or retire. The existing checkpoint and custody remain.
+It opens no subscription, writes no state, moves no cursor, and the rejected
+branch itself does not acknowledge or retire. Downstream monitor completion
+retains the no-ACK guard. The existing checkpoint and custody remain.
 
 The earlier `reset_empty_case` monitor branch committed an empty reducer at the
 existing cursor. At a nonzero cursor that discarded held or terminal projection
@@ -134,6 +135,28 @@ renamed the empty outcome helper. No new check-only was run under the custody
 hold. All Bend2 compiler invocations now require the maintained shared-build
 custody launchers.
 
+## Acceptance coverage
+
+Neither path has run on a build. When the custody hold lifts and 997 is
+available, the acceptance run covers both:
+
+1. Valid nonzero checkpoint through EOF. Build `monitor-fixture` and
+   `observer-recovery` from this head through the maintained custody launcher.
+   Run the required 46,123,112-byte test with an attempt that starts at a
+   nonzero checkpoint. Assert final checkpoint and custody offsets 46123112,
+   `output_done` true, the terminal projection retained, execution status
+   exactly `unavailable: native exit status was not retained`, and no
+   acknowledged or released marker.
+2. Rejected state. Use a test-owned attempt whose host checkpoint record is
+   valid at a nonzero offset and whose reducer value fails the observer
+   validity check. Run the same recovery. Assert the `Ended` checkpoint
+   rejected outcome, unchanged checkpoint and custody offsets, unchanged
+   output projection, no acknowledged or released marker, and no successful
+   `BP_INSTANCE_REPLAY`, `BP_ACK` or `BP_INSTANCE_RETIRE` effect.
+
+The rejected fixture construction is part of acceptance; it is not in this
+commit.
+
 ## Limits
 
 The proposal is not behaviorally verified. The canonical `observer-recovery`
@@ -144,7 +167,9 @@ transient and restart paths were not exercised.
 Acceptance must exercise a valid nonzero checkpoint through EOF and the
 rejected-state path. Neither ran on a build. The prior empty-at-cursor risk is
 named above; the successor rejects empty or invalid monitor state before any
-write. The non-monitor reset remains and uses replay outside the monitor guard.
+write. `Logs.prepare_retained_output` runs before restore, so its effect on the
+retained output projection in the rejected path is not verified. The
+non-monitor reset remains and uses replay outside the monitor guard.
 
 `893355f04` and the failed 46,123,112-byte evidence remain unchanged. No
 independent ACK was sent.
