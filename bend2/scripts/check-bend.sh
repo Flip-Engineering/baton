@@ -8,6 +8,7 @@
 set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 root=$(CDPATH= cd -- "$here/../.." && pwd -P)
+cd "$root"
 
 if [ "${1:-}" = --check-only ]; then
   shift
