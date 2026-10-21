@@ -59,16 +59,35 @@ def admit(+db: String, +directory: String, +cmd: String, +model: String, +effort
     start : P.RetainedStart <- IO.try(P.RetainedStart,Turn.retained_admit(canonical,directory,".","fixture task",0,P.argv(["/bin/true"]),launch))
     admission_value(start)
 
-def run(args: List<String>) -> IO(Unit):
-  match args:
-    case "storage" <> +directory <> +path <> phase <> Nil{}: do IO<Unit>:
+def storage_mode(selected: Bool, +directory: String, +path: String, phase: String) -> IO(Unit):
+  match selected:
+    case True{}: do IO<Unit>:
       +rows : List<&2,Storage.ExecutionRow> <- IO.pure(List<&2,Storage.ExecutionRow>,[Storage.ExecutionRow{"dsh-fixture","turn",directory,phase,""}])
       IO.print("owners\t" ++ Tx.join(",",Storage.execution_owners(rows,path,Nil{})))
       IO.print("active\t" ++ Storage.active_execution(rows,path))
-    case "--instance-owner" <> db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
-    case "shutdown" <> db <> Nil{}: IO.try(Unit,Custody.Instance.shutdown(db))
-    case "admit" <> db <> directory <> cmd <> model <> effort <> native <> Nil{}:
-      admit(db,directory,cmd,model,effort,native)
+    case False{}: IO.die(Unit,2,"expected storage mode")
+
+def instance_mode(owner: Bool, shutdown: Bool, db: String) -> IO(Unit):
+  match owner:
+    case True{}: IO.try(Unit,Custody.Instance.owner(db))
+    case False{}:
+      match shutdown:
+        case True{}: IO.try(Unit,Custody.Instance.shutdown(db))
+        case False{}: IO.die(Unit,2,"expected instance mode")
+
+def admission_mode(selected: Bool, db: String, directory: String, cmd: String, model: String, effort: String, native: String) -> IO(Unit):
+  match selected:
+    case True{}: admit(db,directory,cmd,model,effort,native)
+    case False{}: IO.die(Unit,2,"expected admission mode")
+
+def run(args: List<String>) -> IO(Unit):
+  match args:
+    case +mode <> +db <> Nil{}:
+      instance_mode(String.eq(mode,"--instance-owner"),String.eq(mode,"shutdown"),db)
+    case +mode <> +directory <> +path <> +phase <> Nil{}:
+      storage_mode(String.eq(mode,"storage"),directory,path,phase)
+    case +mode <> +db <> +directory <> +cmd <> +model <> +effort <> +native <> Nil{}:
+      admission_mode(String.eq(mode,"admit"),db,directory,cmd,model,effort,native)
     case +db <> +directory <> +cmd <> +model <> +effort <> +native <> Nil{}: do IO<Unit>:
       canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
       home : String <- Turn.dsh_home(db,canonical,"dsh-fixture")
