@@ -42,13 +42,19 @@ A bare `bend FILE` run performs the frontend phase and then calls
 request. An outer queue request around the run holds the heavy lock while the
 compiler waits for the nested `cc` request.
 
-Frontend checks run directly through the compiler. The maintained callers
-`bend2/scripts/run-checks.mjs` and `bend2/test/compiler-arm-sharing.py` do not
-declare queue artifacts for the check. A first-class frontend kind is
-deferred. It would take the heavy lock, compute the source closure, and accept
-a text result without a C artifact. A queued request that uses a helper file
-declares that file with `--input`; `--aux` records the path and not the file
-bytes, so the request key does not change when the helper bytes change.
+The check kind is prepared as a queue-core patch against
+`05ab70e2c5d8d3cb7bf504d34b245960968e954a` and is pending adoption by the
+#1001/#1002 owner. It takes the heavy lock, computes the source closure for the
+entry, and accepts stdout and stderr as check artifacts, including empty
+stderr. `bend2/scripts/check-bend.sh` submits `kind=check` and declares the
+child helper as an input, so the helper bytes enter the request key. The
+caller requires the check kind; a tree without the core patch rejects the
+request.
+
+`bend2/scripts/run-checks.mjs` uses the launcher for `--check-only` and
+`build-native.sh` for `-o` builds. `bend2/test/compiler-arm-sharing.py` runs
+its fixture check directly. Bare `bend FILE` runs stay direct; their frontend
+phase has no queue entry point, as described above.
 
 ## Identity
 
