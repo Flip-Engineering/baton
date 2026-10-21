@@ -2757,10 +2757,21 @@ def query_binding_text(+db: String, +owner: String, +query: String, +text: Strin
         request : NativeRequest.RequestDecode <- NativeRequest.read_text(db, binding, text)
         query_request_result(db, binding, owner, query, request)
 
+# Direct native context commands can omit the query identity. Generate a real
+# distinct identity before artifact preparation and retained-result lookup; the
+# context action uses the same nonempty identity for evaluation and query.
+def query_identity(+db: String, +query: String) -> IO(String):
+  match query:
+    case "": do IO<String>:
+      generated : String <- IO.try(String,DB.Sql.read(db,"SELECT 'context-eval:' || lower(hex(randomblob(16)));"))
+      IO.pure(String,Tx.trim_nl(generated))
+    case other: IO.pure(String,other)
+
 def query_text(+db: String, +owner: String, +query: String, +text: String) -> IO(Unit):
   do IO<Unit>:
+    +query_id : String <- query_identity(db,query)
     binding : Result<&1,&1,U32 & String,String> <- DB.Sql.binding(db)
-    query_binding_text(db, owner, query, text, binding)
+    query_binding_text(db, owner, query_id, text, binding)
 
 # The public evaluation action composes the existing runtime evaluate request.
 # It selects the recorded owner workspace when no cwd is supplied and reuses the
