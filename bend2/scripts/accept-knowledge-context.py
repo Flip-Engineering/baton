@@ -4,7 +4,7 @@
 Preparation copies a selected source revision, supplied coordinator, build log
 and this driver into a new output directory. It starts no native sessions.
 The parent endpoint records notifications; the operator reviews evidence,
-acknowledges messages and promotes findings with the coordinator CLI.
+reads messages and promotes findings with the coordinator CLI.
 Native capture retains every stdout byte, including cumulative message updates.
 """
 import argparse
@@ -210,7 +210,7 @@ Read AGENTS.md. Do not recruit, push, promote findings, change credentials or
 global configuration, stop processes, or run model sessions yourself. Preserve
 the existing source. Use the scoped knowledge command for retrieval; do not read
 the coordinator SQLite file or another Player's workspace. Acknowledge this
-task after reading and handling it with `{cli} acknowledge`.
+task after reading it completely with `{cli} inbox`; Baton records the read internally.
 End your native turn after completing the task so the parent receives its report.
 '''
     if phase == 'produce':
@@ -377,7 +377,7 @@ def run_phase(out, phase):
             if not (out / f'{predecessor}-result.json').exists():
                 raise RuntimeError(f'Complete {predecessor} before {phase}')
             if call(out, 'inbox', 'root'):
-                raise RuntimeError('Root must review and acknowledge its pending messages before the next phase')
+                raise RuntimeError('Root must review and read its pending messages before the next phase')
             if phase == 'consume':
                 recruit(out, run, 'consumer')
             else:
