@@ -274,16 +274,19 @@ def CompileQueueIdentity.closure_targets(path: String, +text: String) -> List<&2
       CompileQueueIdentity.c_targets(String.lines(text)),
       Nil{}))
 
-def CompileQueueIdentity.file_targets(+path: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
-  +name = String.to_lower(CompileQueueIdentity.path_basename(path))
-  match Bool.or(String.ends_with(name, ".bend"),
-                Bool.or(String.ends_with(name, ".c"), String.ends_with(name, ".h"))):
+def CompileQueueIdentity.file_targets_go(+path: String, +relevant: Bool) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
+  match relevant:
     case True{}:
       do IO<Result<&1,&1,U32 & String,List<&2,String>>>:
         text : String <- IO.try(String, T.Text.read(path))
         IO.pure(Result<&1,&1,U32 & String,List<&2,String>>, Done{CompileQueueIdentity.closure_targets(path, text)})
     case False{}:
       IO.pure(Result<&1,&1,U32 & String,List<&2,String>>, Done{Nil{}})
+
+def CompileQueueIdentity.file_targets(+path: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
+  +name = String.to_lower(CompileQueueIdentity.path_basename(path))
+  CompileQueueIdentity.file_targets_go(path, Bool.or(String.ends_with(name, ".bend"),
+    Bool.or(String.ends_with(name, ".c"), String.ends_with(name, ".h"))))
 
 def CompileQueueIdentity.enqueue_targets(+importer: String, targets: List<&2,String>, queue: List<&2,String>) -> List<&2,String>:
   match targets:
