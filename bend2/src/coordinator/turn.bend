@@ -764,15 +764,25 @@ def omp_frame_kind(+db: String, decoded: Frame.FrameDecoded, omp: Bool) -> IO(St
 def codex_frame_kind_sql(+value: String) -> String:
   "WITH frame(value) AS (VALUES(" ++ value ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.item.type')='command_execution' AND json_type(value,'$.item.id')='text' AND json_extract(value,'$.item.id')<>'' THEN CASE json_extract(value,'$.type') WHEN 'item.started' THEN 'codex_command_start' WHEN 'item.completed' THEN 'codex_command_end' ELSE '' END ELSE '' END ELSE '' END FROM frame;"
 
+# A large frame is classified from a bounded prefix. The prefix either parses
+# already or is closed at the end of the string and object; this avoids parsing
+# the retained body while keeping the type checks exact for the generated frames.
+def codex_span_prefix_sql(+value: String) -> String:
+  "CASE WHEN json_valid(substr(" ++ value ++ ",1,4096)) THEN substr(" ++ value ++ ",1,4096) ELSE substr(" ++ value ++ ",1,4096) || char(34) || '}}' END"
+
+def codex_frame_kind_span_sql(+value: String) -> String:
+  "WITH frame(value) AS (SELECT " ++ codex_span_prefix_sql(value) ++ ") SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.item.type')='command_execution' AND json_type(value,'$.item.id')='text' AND json_extract(value,'$.item.id')<>'' THEN CASE json_extract(value,'$.type') WHEN 'item.started' THEN 'codex_command_start' WHEN 'item.completed' THEN 'codex_command_end' ELSE '' END ELSE '' END ELSE '' END FROM frame;"
+
 def codex_frame_kind_decoded(db: String, decoded: Frame.FrameDecoded, +line: String) -> IO(String):
   match decoded:
     case Frame.TextFrame{line}: IO.try(String,DB.Sql.query(db,codex_frame_kind_sql(C.q(line))))
-    case Frame.SpanFrame{spool,offset,length}: IO.try(String,DB.Sql.query_span(db,spool,offset,length,codex_frame_kind_sql("?1")))
+    case Frame.SpanFrame{spool,offset,length}: IO.try(String,DB.Sql.query_span(db,spool,offset,length,codex_frame_kind_span_sql("?1")))
     case Frame.InvalidFrame{line}: IO.pure(String,"")
+
+
 
 def codex_frame_kind(db: String, decoded: Frame.FrameDecoded, +line: String) -> IO(String):
   codex_frame_kind_decoded(db,decoded,line)
-
 
 # The requested selection is active only when the server answered the
 # set_event_filter request successfully with that exact selection: the echoed
@@ -829,7 +839,15 @@ def terminal_event(event: String, previous: String, selected: Bool) -> IO(String
     case True{}: IO.pure(String,event)
 
 def codex_frame_role_sql(+value: String) -> String:
-  "WITH frame(value) AS (VALUES(" ++ value ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.type')='item.completed' AND json_extract(value,'$.item.type')='agent_message' THEN 'assistant' WHEN json_extract(value,'$.type')='turn.failed' THEN 'terminal-error' WHEN json_extract(value,'$.type')='turn.completed' THEN 'terminal' ELSE '' END ELSE '' END FROM frame;"
+  "WITH frame(value) AS (SELECT " ++ codex_span_prefix_sql(value) ++ ") SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.type')='item.completed' AND json_extract(value,'$.item.type')='agent_message' THEN 'assistant' WHEN json_extract(value,'$.type')='turn.failed' THEN 'terminal-error' WHEN json_extract(value,'$.type')='turn.completed' THEN 'terminal' ELSE '' END ELSE '' END FROM frame;"
+
+def codex_span_small_parsed(parsed: Maybe<&2,U32>) -> Bool:
+  match parsed:
+    case Some{+value}: U32.is_lt(value,4097)
+    case None{}: False{}
+
+def codex_span_small(+length: String) -> Bool:
+  codex_span_small_parsed(U32.read(length))
 
 def codex_frames_span_role(previous: String, decoded: Frame.FrameDecoded, spool: String, offset: String, length: String, role: String) -> IO(String):
   match role:
@@ -840,18 +858,26 @@ def codex_frames_span_role(previous: String, decoded: Frame.FrameDecoded, spool:
       IO.pure(String,codex_state_replace_terminal(codex_state_parts(previous),frame_text))
     case other: IO.pure(String,previous)
 
-def codex_frames_span(db: String, previous: String, +decoded: Frame.FrameDecoded) -> IO(String):
-  match decoded:
-    case Frame.SpanFrame{spool,offset,length}: do IO<String>:
-      role : String <- IO.try(String,DB.Sql.query_span(db,spool,offset,length,codex_frame_role_sql("?1")))
-      +normalized_role : String <- IO.pure(String,Tx.trim_nl(role))
-      codex_frames_span_role(previous,decoded,spool,offset,length,normalized_role)
-    case other: IO.pure(String,previous)
-
 def codex_frames_text(db: String, +previous: String, +line: String) -> IO(String):
   do IO<String>:
     value : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")), prior(value) AS (VALUES(" ++ C.q(previous) ++ ")) SELECT CASE WHEN json_valid(frame.value) THEN CASE WHEN json_extract(frame.value,'$.type')='item.completed' AND json_extract(frame.value,'$.item.type')='agent_message' THEN frame.value WHEN json_extract(frame.value,'$.type') IN ('turn.completed','turn.failed') THEN CASE WHEN prior.value='' THEN frame.value ELSE prior.value || char(10) || frame.value END ELSE prior.value END ELSE prior.value END FROM frame,prior;"))
     IO.pure(String,Tx.trim_nl(value))
+
+def codex_frames_span_branch(+db: String, +previous: String, +decoded: Frame.FrameDecoded, +spool: String, +offset: String, +length: String, small: Bool) -> IO(String):
+  match small:
+    case True{}: do IO<String>:
+      frame_text : String <- IO.try(String,Frame.text_result_decoded(decoded))
+      codex_frames_text(db,previous,frame_text)
+    case False{}: do IO<String>:
+      role : String <- IO.try(String,DB.Sql.query_span(db,spool,offset,length,codex_frame_role_sql("?1")))
+      +normalized_role : String <- IO.pure(String,Tx.trim_nl(role))
+      codex_frames_span_role(previous,decoded,spool,offset,length,normalized_role)
+
+def codex_frames_span(db: String, previous: String, +decoded: Frame.FrameDecoded) -> IO(String):
+  match decoded:
+    case Frame.SpanFrame{spool,offset,length}: codex_frames_span_branch(db,previous,decoded,spool,offset,length,codex_span_small(length))
+    case other: IO.pure(String,previous)
+
 
 def codex_frames_selected(db: String, +previous: String, +decoded: Frame.FrameDecoded, +line: String) -> IO(String):
   match decoded:
@@ -864,18 +890,35 @@ def codex_frames(db: String, +previous: String, decoded: Frame.FrameDecoded, +li
     case False{}: IO.pure(String,previous)
     case True{}: codex_frames_selected(db,previous,decoded,line)
 
-# Omit only large Codex body fields from generic observations. The retained
-# stdout spool remains the source for the exact Codex result.
-def codex_observation_sql(+value: String) -> String:
-  "WITH frame(value) AS (VALUES(" ++ value ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.type')='item.completed' AND json_extract(value,'$.item.type')='agent_message' THEN json_remove(value,'$.item.text') WHEN json_extract(value,'$.type')='turn.failed' THEN json_remove(value,'$.error.message') ELSE value END ELSE '' END FROM frame;"
+# Generic Codex observation. Small spans are materialized and keep the exact
+# text. Large spans are classified from a bounded prefix and represented
+# without their body; the exact result remains readable from the full span.
+def codex_observation_span_sql(+value: String) -> String:
+  "WITH frame(value) AS (SELECT " ++ codex_span_prefix_sql(value) ++ ") SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.type')='item.completed' AND json_extract(value,'$.item.type')='agent_message' THEN json_object('type','item.completed','item',json_object('type','agent_message')) WHEN json_extract(value,'$.type')='turn.failed' THEN json_object('type','turn.failed') WHEN json_extract(value,'$.type')='turn.completed' THEN json_object('type','turn.completed') ELSE '' END ELSE '' END FROM frame;"
+
+def codex_observation_span_parsed(+db: String, +decoded: Frame.FrameDecoded, +spool: String, +offset: String, +length: String, small: Bool) -> IO(String):
+  match small:
+    case True{}: do IO<String>:
+      value : String <- IO.try(String,Frame.text_result_decoded(decoded))
+      IO.pure(String,value)
+    case False{}: do IO<String>:
+      value : String <- IO.try(String,DB.Sql.query_span(db,spool,offset,length,codex_observation_span_sql("?1")))
+      IO.pure(String,Tx.trim_nl(value))
+
+def codex_observation_span_branch(+db: String, +decoded: Frame.FrameDecoded) -> IO(String):
+  match decoded:
+    case Frame.SpanFrame{spool,offset,length}: codex_observation_span_parsed(db,decoded,spool,offset,length,codex_span_small(length))
+    case other: IO.pure(String,"")
 
 def codex_observation_decoded(+db: String, decoded: Frame.FrameDecoded, +line: String) -> IO(String):
   match decoded:
     case Frame.TextFrame{line}: IO.pure(String,line)
-    case Frame.SpanFrame{spool,offset,length}: do IO<String>:
-      value : String <- IO.try(String,DB.Sql.query_span(db,spool,offset,length,codex_observation_sql("?1")))
-      IO.pure(String,Tx.trim_nl(value))
-    case Frame.InvalidFrame{line}: IO.pure(String,"")
+    case other: codex_observation_span_branch(db,other)
+
+def frame_is_span(+decoded: Frame.FrameDecoded) -> Bool:
+  match decoded:
+    case Frame.SpanFrame{spool,offset,length}: True{}
+    case other: False{}
 
 def observed_frame_event(db: String, decoded: Frame.FrameDecoded, +line: String, +message: String, +activity: String, codex: Bool, omp: Bool, relevant: Bool) -> IO(String):
   match codex:
@@ -1123,7 +1166,7 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
       NativeRequests.with_observation(WakeRead,questions,wakes => question_error => question_incomplete => do IO<WakeRead>:
         +question_text : String <- IO.pure(String,question_error)
         +request_incomplete : Bool <- IO.pure(Bool,question_incomplete)
-        +checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(incomplete_observation),Bool.and(Bool.not(failed),Bool.and(Bool.not(request_incomplete),Bool.and(Bool.not(invalid),Bool.and(Bool.not(observation_store_failed(unshared_result(String,observed))),Bool.and(Bool.not(String.is_empty(attempt)),Observer.checkpoint_due_fields(checkpoint_state,next_checkpoint,message_frame,terminal_selected,codex_frame))))))))
+        +checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(incomplete_observation),Bool.and(Bool.not(failed),Bool.and(Bool.not(request_incomplete),Bool.and(Bool.not(invalid),Bool.and(Bool.not(observation_store_failed(unshared_result(String,observed))),Bool.and(Bool.not(String.is_empty(attempt)),Bool.or(Observer.checkpoint_due_fields(checkpoint_state,next_checkpoint,message_frame,terminal_selected,codex_frame),frame_is_span(decoded)))))))))
         +next_checkpoint_state : Observer.State <- Observer.checkpoint_state(spool,next_checkpoint,checkpoint_enabled)
         +checkpointed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,Observer.after_materialized_observation(db,handle,next_checkpoint_state,checkpoint_enabled,monitor,unshared_result(String,observed)))
         checkpoint_notice : Unit <- checkpoint_failure_notice(db,player,id,attempt,checkpoint_enabled,unshared_result(Unit,checkpointed))
