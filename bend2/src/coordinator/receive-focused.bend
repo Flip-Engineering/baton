@@ -1,6 +1,8 @@
 import Base
 import ./clear-stop-focused.bend as ClearStop
 import ./stop.bend as Stop
+import ./store.bend as Store
+import ../host/session-lock.bend as Lock
 import ./receive.bend as Receive
 import ../host/instance.bend as Custody
 import ../host/process.bend as P
@@ -26,6 +28,15 @@ def dispatch_instance(owner: Bool, shutdown: Bool, +db: String) -> IO(Unit):
       match shutdown:
         case True{}: IO.try(Unit,Custody.Instance.shutdown(db))
         case False{}: IO.die(Unit,2,"expected instance lifecycle command")
+
+# Package maintenance installs the same schema preflight used by coordinator writes.
+def dispatch_schema(selected: Bool, +flag: String, +db: String) -> IO(Unit):
+  match selected:
+    case True{}: do IO<Unit>:
+      canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+      ensured : Unit <- Store.ensure_before_begin(canonical)
+      IO.write("{\"schema\":\"baton2-schema-ensure-v1\",\"status\":\"ready\"}\n")
+    case False{}: dispatch_instance(String.eq(flag,"--instance-owner"),String.eq(flag,"--instance-shutdown"),db)
 
 def dispatch_observer(selected: Bool, +db: String, +session: String, +observer: String) -> IO(Unit):
   match selected:
@@ -150,7 +161,7 @@ def dispatch(args: List<String>) -> IO(Unit):
   match args:
     case +db <> +verb <> Nil{}:
       Bool.pick(IO(Unit), String.eq(verb,"storage-policy"), StoragePolicy.run_policy(db),
-        dispatch_instance(String.eq(db,"--instance-owner"),String.eq(db,"--instance-shutdown"),verb))
+        dispatch_schema(String.eq(db,"--ensure-schema"),db,verb))
     case +db <> +verb <> +third <> Nil{}:
       Bool.pick(IO(Unit), String.eq(verb,"storage-preview"), StoragePolicy.run_preview(db,third),
         Bool.pick(IO(Unit), String.eq(verb,"storage-apply"), StoragePolicy.run_apply(db,third),

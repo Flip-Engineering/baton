@@ -16,6 +16,7 @@ def main():
     parser.add_argument('--fixture', required=True)
     parser.add_argument('--cli', required=True)
     parser.add_argument('--directory', required=True)
+    parser.add_argument('--migration-cli')
     args = parser.parse_args()
     directory = Path(args.directory).resolve()
     directory.mkdir(parents=True, exist_ok=False)
@@ -74,8 +75,11 @@ def main():
         commands.append({'name': 'instance-owner-start', 'argv': owner_argv, 'pid': owner.pid})
         before = run('public-before', [cli, str(database), 'as', 'index-operator', 'inbox'])
         original = snapshot()
-        run('native-migrate', [fixture, 'migrate', str(database)])
-        run('native-migrate-repeat', [fixture, 'migrate', str(database)])
+        migrate = [str(Path(args.migration_cli).resolve()), '--ensure-schema', str(database)] if args.migration_cli else [fixture, 'migrate', str(database)]
+        migrated = run('native-migrate', migrate)
+        if args.migration_cli:
+            require(json.loads(migrated) == {'schema': 'baton2-schema-ensure-v1', 'status': 'ready'}, 'production canonical migration reports completion')
+        run('native-migrate-repeat', migrate)
         require(original == snapshot(), 'canonical repeated migration preserves messages, sessions, attempts and stops')
         with closing(sqlite3.connect(database)) as db:
             require([row[2] for row in db.execute('PRAGMA index_info(message_reads_by_message)')] == ['message'],
