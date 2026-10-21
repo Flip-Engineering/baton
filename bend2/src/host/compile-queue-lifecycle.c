@@ -706,6 +706,7 @@ static int cq_environ_value(u32 pid, const char *name, char **out) {
 static void cq_call_starttime(IoWork *work) {
   CqCall *call = (CqCall *)work->data;
   call->error = cq_starttime_text(call->pid, &call->out);
+  if (!call->error) call->out_length = strlen(call->out);
 }
 
 static void cq_call_alive(IoWork *work) {
@@ -778,6 +779,10 @@ static void cq_call_write_text(IoWork *work) {
 static void cq_call_write_stderr(IoWork *work) {
   CqCall *call = (CqCall *)work->data;
   call->error = cq_write_all_fd(2, call->text, strlen(call->text));
+}
+static void cq_call_set_env(IoWork *work) {
+  CqCall *call = (CqCall *)work->data;
+  if (setenv(call->path, call->text, 1)) call->error = errno;
 }
 
 static void cq_call_read_text(IoWork *work) {
@@ -1152,6 +1157,21 @@ static Term cq_write_stderr_run(Env env, Term *fields, IoWork *work) {
 }
 static void __attribute__((constructor)) cq_write_stderr_use(void) { io_eff(CID_COMPILEQUEUELIFECYCLE_WRITE_STDERR, cq_write_stderr_run, 0); }
 #endif
+#ifdef CID_COMPILEQUEUELIFECYCLE_SET_ENV
+static void cq_set_env_call(IoWork *work) { cq_call_set_env(work); }
+static Term cq_set_env_pack(Env env, IoWork *work) { return cq_unit_pack(env, work); }
+static Term cq_set_env_run(Env env, Term *fields, IoWork *work) {
+  CqCall *call = calloc(1, sizeof(*call));
+  if (!call) return io_fail(env, ENOMEM, NULL);
+  call->error = cq_text_arg(env, fields[0], &call->path);
+  if (!call->error) call->error = cq_text_arg(env, fields[1], &call->text);
+  work->data = (char *)call;
+  if (call->error) return cq_set_env_pack(env, work);
+  return io_work(work, cq_set_env_call, cq_set_env_pack);
+}
+static void __attribute__((constructor)) cq_set_env_use(void) { io_eff(CID_COMPILEQUEUELIFECYCLE_SET_ENV, cq_set_env_run, 0); }
+#endif
+
 
 #ifdef CID_COMPILEQUEUELIFECYCLE_READ_TEXT
 static void cq_read_text_call(IoWork *work) { cq_call_read_text(work); }

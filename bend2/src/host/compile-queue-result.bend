@@ -495,12 +495,15 @@ def CompileQueueResult.receipt_rows(rows: List<&2,String>) -> String:
         CompileQueueResult.receipt_row_parts(String.split(row, Char.from_u32(9))) ++ CompileQueueResult.receipt_rows(rest))
 
 def CompileQueueResult.receipt_write(+receipt: String, +status: String, +key: String, +reused: String, +owner: String, +rows: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  text = "status=" ++ status ++ "\n"
-    ++ "key=" ++ key ++ "\n"
-    ++ "reused=" ++ reused ++ "\n"
-    ++ "owner=" ++ owner ++ "\n"
-    ++ CompileQueueResult.receipt_rows(String.lines(rows))
-  CompileQueueResult.write_text(receipt, text, receipt ++ ".tmp")
+  Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.is_empty(receipt),
+    IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}}),
+    do IO<Result<&1,&1,U32 & String,Unit>>:
+      text : String = "status=" ++ status ++ "\n"
+        ++ "key=" ++ key ++ "\n"
+        ++ "reused=" ++ reused ++ "\n"
+        ++ "owner=" ++ owner ++ "\n"
+        ++ CompileQueueResult.receipt_rows(String.lines(rows))
+      CompileQueueResult.write_text(receipt, text, receipt ++ ".tmp"))
 
 def CompileQueueResult.run_name_parts(parts: List<&2,String>) -> String:
   match parts:
