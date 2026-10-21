@@ -202,8 +202,8 @@ def custody_dead(+db: String, +directory: String, empty: Bool) -> IO(Bool):
 def ticket_match(+expected_owner: String, +expected_generation: String, +owner: String, +generation: String) -> Bool:
   +current_owner : String = Tx.trim_nl(owner)
   +current_generation : String = Tx.trim_nl(generation)
-  Bool.and(Bool.or(String.is_empty(expected_owner),String.eq(expected_owner,current_owner)),
-    Bool.or(String.is_empty(expected_generation),String.eq(expected_generation,current_generation)))
+  Bool.or(String.is_empty(expected_owner),
+    Bool.and(String.eq(expected_owner,current_owner),String.eq(expected_generation,current_generation)))
 
 def settle_owned(+db: String, +session: String, +expected_owner: String, +expected_generation: String, +ticket_directory: String, lock: Maybe<U32>) -> IO(Unit):
   match lock:
@@ -1136,25 +1136,25 @@ def recover_unlocked(+db: String, +session: String, id: String, cursor: String, 
   attach_recorded(db,directory,log,handle => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,None{},again))
 
 # The blocked attempt recorded its admission ticket durably. Recovery reads that
-# row after the drain and settles it under the session guard. An older attempt
-# with no row falls back to the attempt id and an empty generation; the empty
-# generation skips the generation comparison, and the owner comparison still
-# preserves a different owner's claim.
-def settle_recovery_list(+db: String, +session: String, +id: String, +directory: String, parts: List<String>) -> IO(Unit):
+# row after the drain and settles it under the session guard. An attempt with no
+# row is a legacy attempt: its admission generation cannot be proved, so the
+# current claim is preserved. A different owner or a later generation is
+# preserved for the same reason.
+def settle_recovery_list(+db: String, +session: String, +directory: String, parts: List<String>) -> IO(Unit):
   match parts:
     case owner <> generation <> Nil{}: claim_left_ticket(db,session,owner,generation,directory)
-    case other: claim_left_ticket(db,session,id,"",directory)
+    case other: IO.pure(Unit,Unit{})
 
-def settle_recovery_ticket(+db: String, +session: String, +id: String, +directory: String) -> IO(Unit):
+def settle_recovery_ticket(+db: String, +session: String, +directory: String) -> IO(Unit):
   do IO<Unit>:
     ticket : String <- Store.ticket(db,session,directory)
-    settle_recovery_list(db,session,id,directory,Tx.split_tabs(ticket))
+    settle_recovery_list(db,session,directory,Tx.split_tabs(ticket))
 
 # SQLITE_BUSY is a transient contention result, not a dead attempt: retain the
 # attempt, record its cause and settle its retained admission ticket under the
 # session guard instead of exiting with the database code and letting the keeper
 # relaunch the same work. A newer claim is preserved.
-def recover_tail(+db: String, +session: String, +id: String, +directory: String, native: String, +updates: Chan(String), +drainer: Chan(Unit), result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def recover_tail(+db: String, +session: String, +directory: String, native: String, +updates: Chan(String), +drainer: Chan(Unit), result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match result:
     case Fail{(+code,+text)}:
       Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),U32.is_eq(code,5),
@@ -1162,7 +1162,7 @@ def recover_tail(+db: String, +session: String, +id: String, +directory: String,
           noted : Unit <- record_recovery_blocked(directory,db,session,native,(code,text))
           ended : Unit <- Chan.close(String,updates)
           drained : Unit <- IO.join(Unit,drainer)
-          settled : Unit <- settle_recovery_ticket(db,session,id,directory)
+          settled : Unit <- settle_recovery_ticket(db,session,directory)
           IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
         do IO<Result<&1,&1,U32 & String,Unit>>:
           ended : Unit <- Chan.close(String,updates)
@@ -1181,14 +1181,14 @@ def recover_tail(+db: String, +session: String, +id: String, +directory: String,
 # call observes without taking it and settles the wake claim when it returns.
 # A SQLITE_BUSY completion is retained as a typed blocked cause instead of
 # exiting with the database code and letting the keeper relaunch the same work.
-def recover(+db: String, +session: String, +id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, +directory: String, +native: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def recover(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, +directory: String, +native: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     cleared : Unit <- clear_blocked(directory)
     +updates : Chan(String) <- Chan.new(String,1)
     +drainer : Chan(Unit) <- IO.fork(Unit,discard_admitted_start(updates))
     +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
     raw : Result<&1,&1,U32 & String,Unit> <- recover_unlocked(canonical,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,previous => continue_receiver(canonical,session,cmd,model,effort,cwd,log,"explicit",previous,updates))
-    recover_tail(canonical,session,id,directory,native,updates,drainer,raw)
+    recover_tail(canonical,session,directory,native,updates,drainer,raw)
 # The supported receive command answers one JSON object. The invocation carries
 # the attempt its own admission recorded, so a concurrent receiver that replaces
 # the session's execution row cannot answer for this invocation.

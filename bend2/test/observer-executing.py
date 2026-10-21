@@ -617,6 +617,57 @@ class Lifecycle(Executing):
         print('EVIDENCE ' + json.dumps(evidence, sort_keys=True), flush=True)
         self.assert_newer_claim_preserved(evidence, 'task', 3)
 
+    def settle_case(self, name, claim, ticket):
+        db = self.directory / ('settle-%s.db' % name)
+        focused = self.directory / ('settle-%s' % name)
+        focused.mkdir()
+        (focused / 'status').write_text('0\n')
+        self.fixture('init', db, 'omp')
+        with sqlite3.connect(db) as database:
+            database.execute('DELETE FROM messages')
+            database.execute(
+                "INSERT INTO executions(session,id,mode,directory,phase,status) "
+                "VALUES('parent','turn1','retained',?,'exited','exit 0')",
+                (str(focused),))
+            database.execute(
+                "INSERT INTO wake_claims(session,state,owner,generation) "
+                "VALUES('parent','claimed',?,?)", claim)
+            if ticket is not None:
+                database.execute(
+                    "INSERT INTO wake_claim_tickets"
+                    "(session,directory,owner,generation) VALUES('parent',?,?,?)",
+                    (str(focused),) + ticket)
+        self.fixture('settle', db, 'parent', focused)
+        with sqlite3.connect(db) as database:
+            current = database.execute(
+                "SELECT state,owner,generation FROM wake_claims "
+                "WHERE session='parent'").fetchone()
+            rows = database.execute(
+                "SELECT owner,generation FROM wake_claim_tickets "
+                "WHERE session='parent'").fetchall()
+        return current, rows
+
+    def test_exact_retained_ticket_settles_and_mismatches_preserve(self):
+        current, rows = self.settle_case('matching', ('task', 1), ('task', 1))
+        self.assertIsNone(current,
+                          'the matching retained ticket must release the claim')
+        self.assertEqual(rows, [],
+                         'the matching retained ticket must be deleted')
+        current, rows = self.settle_case('legacy', ('task', 2), None)
+        self.assertEqual(current, ('claimed', 'task', 2),
+                         'a legacy attempt with no ticket must preserve the claim')
+        self.assertEqual(rows, [])
+        current, rows = self.settle_case('later', ('task', 2), ('task', 1))
+        self.assertEqual(current, ('claimed', 'task', 2),
+                         'a later generation must be preserved')
+        self.assertEqual(rows, [('task', 1)],
+                         'the retained ticket stays for its own settlement')
+        current, rows = self.settle_case('owner', ('other', 1), ('task', 1))
+        self.assertEqual(current, ('claimed', 'other', 1),
+                         'a different owner must be preserved')
+        self.assertEqual(rows, [('task', 1)],
+                         'the retained ticket stays for its own settlement')
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

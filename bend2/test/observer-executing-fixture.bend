@@ -9,6 +9,7 @@
 # before the observer leaves and the keeper starts recovery.
 import Base
 import ../src/coordinator/commands.bend as C
+import ../src/coordinator/receive.bend as Receive
 import ../src/coordinator/store.bend as Store
 import ../src/coordinator/stop.bend as Stop
 import ../src/coordinator/turn.bend as Turn
@@ -78,7 +79,9 @@ def run(args: List<String>) -> IO(Unit):
     case "init" <> +db <> +harness <> Nil{}: init_db(db,harness)
     case "start" <> +db <> +id <> +directory <> +workspace <> +log <> +observed <> +helper <> +harness <> +model <> +effort <> +python <> +native <> +marker <> +cursor <> +gate <> Nil{}:
       start_attempt(db,id,directory,workspace,log,observed,helper,harness,model,effort,python,native,marker,cursor,gate)
-    case other: IO.die(Unit,2,"usage: observer-executing-fixture init DB HARNESS | start DB ID DIRECTORY WORKSPACE LOG OBSERVED HELPER HARNESS MODEL EFFORT PYTHON SCRIPT MARKER CURSOR GATE")
+    case "settle" <> +db <> +session <> +directory <> Nil{}:
+      Receive.settle_recovery_ticket(db,session,directory)
+    case other: IO.die(Unit,2,"usage: observer-executing-fixture init DB HARNESS | start DB ID DIRECTORY WORKSPACE LOG OBSERVED HELPER HARNESS MODEL EFFORT PYTHON SCRIPT MARKER CURSOR GATE | settle DB SESSION DIRECTORY")
 
 def main() -> IO(Unit):
   do IO<Unit>:
