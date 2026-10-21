@@ -72,6 +72,21 @@ receipt. `install-receipt.json` binds the manifest hash and binary pins.
 sibling and all three role binaries, and the required REPL payload. It refuses a missing, non-executable, altered or
 unrecorded binary and reports the verified binary pins in its result.
 
+## Upgrade an existing coordination schema
+
+After the complete package check passes, apply its canonical schema to an
+existing coordination database:
+
+```sh
+"$BATON2_PREFIX/bin/baton" --ensure-schema "$BATON2_DATABASE"
+```
+
+This operation resolves the existing database path and runs the schema preflight
+used by coordinator writes, including the native change projection. It reports
+`{"schema":"baton2-schema-ensure-v1","status":"ready"}` after completion.
+The operation preserves session, message, native observation and stop records.
+Existing owners and receivers retain their admitted executable paths.
+
 ## Install or update a published release
 
 Select the published version and download its complete Darwin arm64 payload.

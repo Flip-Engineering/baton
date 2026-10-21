@@ -16,10 +16,13 @@ def main():
     parser.add_argument('--fixture', required=True)
     parser.add_argument('--cli', required=True)
     parser.add_argument('--directory', required=True)
+    parser.add_argument('--migration-cli')
+    parser.add_argument('--message-status-source', type=Path,
+                        default=Path(__file__).resolve().parents[2] / 'bend2/src/coordinator/message-status.bend')
     args = parser.parse_args()
     directory = Path(args.directory).resolve()
     directory.mkdir(parents=True, exist_ok=False)
-    fixture, cli = str(Path(args.fixture).resolve()), str(Path(args.cli).resolve())
+    fixture, cli = str(Path(args.fixture).resolve()), str(Path(args.cli).absolute())
     database = directory / 'existing.db'
     commands, checks = [], []
 
@@ -74,8 +77,11 @@ def main():
         commands.append({'name': 'instance-owner-start', 'argv': owner_argv, 'pid': owner.pid})
         before = run('public-before', [cli, str(database), 'as', 'index-operator', 'inbox'])
         original = snapshot()
-        run('native-migrate', [fixture, 'migrate', str(database)])
-        run('native-migrate-repeat', [fixture, 'migrate', str(database)])
+        migrate = [str(Path(args.migration_cli).absolute()), '--ensure-schema', str(database)] if args.migration_cli else [fixture, 'migrate', str(database)]
+        migrated = run('native-migrate', migrate)
+        if args.migration_cli:
+            require(json.loads(migrated) == {'schema': 'baton2-schema-ensure-v1', 'status': 'ready'}, 'production canonical migration reports completion')
+        run('native-migrate-repeat', migrate)
         require(original == snapshot(), 'canonical repeated migration preserves messages, sessions, attempts and stops')
         with closing(sqlite3.connect(database)) as db:
             require([row[2] for row in db.execute('PRAGMA index_info(message_reads_by_message)')] == ['message'],
@@ -96,6 +102,7 @@ def main():
         spec = importlib.util.spec_from_file_location('index_checks', Path(__file__).with_name('message-read-index.py'))
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
+        module.SOURCE = args.message_status_source.absolute()
         with closing(sqlite3.connect(database)) as db:
             plan = [row[3] for row in db.execute('EXPLAIN QUERY PLAN ' + module.projection_sql(), (module.payload(),))]
         (directory / 'query-plan.json').write_text(json.dumps(plan, indent=2))
@@ -117,7 +124,12 @@ def main():
         finally:
             (directory / 'result.json').write_text(json.dumps({'passed': passed, 'checks': checks, 'commands': commands,
                 'fixture_sha256': hashlib.sha256(Path(fixture).read_bytes()).hexdigest(),
-                'cli_sha256': hashlib.sha256(Path(cli).read_bytes()).hexdigest()}, indent=2))
+                'cli_sha256': hashlib.sha256(Path(cli).read_bytes()).hexdigest(),
+                'cli_invocation': cli, 'cli_resolved_payload': str(Path(cli).resolve()),
+                'migration_invocation': str(Path(args.migration_cli).absolute()) if args.migration_cli else None,
+                'message_status_source': str(args.message_status_source.absolute()),
+                'message_status_source_sha256': hashlib.sha256(args.message_status_source.read_bytes()).hexdigest(),
+                'migration_payload_sha256': hashlib.sha256(Path(args.migration_cli).read_bytes()).hexdigest() if args.migration_cli else None}, indent=2))
     print(json.dumps({'passed': passed, 'assertions': len(checks), 'directory': str(directory)}))
 
 if __name__ == '__main__':
