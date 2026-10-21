@@ -133,12 +133,25 @@ returned 1 and printed `Operation not permitted` in 0.2 seconds. No spool
 immediately before the `EPERM` exit. `gdb` stopped at `io_fail` with code 1
 from `baton_process_pack`; `baton_process_acknowledge_run` was reached.
 
-The host refuses `BR_ACK` for a monitor-only keeper in
-`bend2/src/host/process-spawn.c::br_command`. The recovery completion path
-reaches `ack_then_retire`, which acknowledges and retires the handle. The
-observed facts establish the failing operation. They do not yet establish
-whether the earlier session-lock contention or the completion acknowledge is
-the primary defect.
+The direct cause is the monitor-only guard in
+`bend2/src/host/process-spawn.c::baton_process_call`:
+
+```c
+if(retained->observer_only &&
+   (call->kind==BP_WRITE || call->kind==BP_CLOSE || call->kind==BP_SIGNAL ||
+    call->kind==BP_RELEASE || call->kind==BP_ACK ||
+    call->kind==BP_INSTANCE_START || call->kind==BP_INSTANCE_CANCEL ||
+    call->kind==BP_INSTANCE_COMMIT || call->kind==BP_INSTANCE_REPLAY)) {
+  call->error=EPERM;return;
+}
+```
+
+The recovery restores the 13,598-byte checkpoint, rejects its reducer state,
+and calls `Instance.replay` to rewind to offset 0. The host refuses
+`BP_INSTANCE_REPLAY` on the monitor-only handle with `EPERM`, so the recovery
+never reads the spool. The completion path then reaches `ack_then_retire`;
+`br_command` refuses `BR_ACK` for the same monitor-only keeper. Both refusals
+carry `EPERM`; the replay refusal occurs first.
 
 ## Historic and auxiliary evidence
 
@@ -159,5 +172,7 @@ scaling to 46,123,112 bytes is an estimate.
 
 The required 46,123,112-byte replay did not reach normal EOF on the combined
 build. No source fix was applied. The failure occurs before the large terminal
-frame is reached. The historic f65 timeout and the current early failure have
-different observable causes.
+frame is reached. The host's `BP_INSTANCE_REPLAY` refusal for monitor-only
+handles is the direct cause. The session-lock `EAGAIN` observation is recorded
+and is not isolated as a second defect. The historic f65 timeout and the
+current early failure have different observable causes.
