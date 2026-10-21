@@ -144,10 +144,14 @@ native receiver. Explicit fields take precedence. The native configuration
 operation enforces the expected route, current attempt and explicit stop rules.
 
 `resume --lift-stop` explicitly lifts an existing stop and resumes its recorded
-conversation. `force-stop` selects the session's existing stop operation.
+conversation. `resume --clear-stop` (also `clear-stop`) removes a terminal stop
+only: it preserves the native identity, conversation history, workspace and
+retained input, and it delivers no input, drives no wake and starts no native.
+`force-stop` selects the session's existing stop operation.
 `stop` generates an identity for a new stop and reuses a recorded stop when
-present; the native operation checks its complete reason. Explicit `--id` remains
-available for exact compatibility.
+present; the native operation checks its complete reason. `stop SESSION --clear`
+is the administrative clear-only form. Explicit `--id` remains available for
+exact compatibility.
 `recover-observer --observer PID` uses the existing observer recovery path.
 `continue-task` sends an explicit continuation through the existing assignment
 operation. Each action accepts `--session SESSION`.

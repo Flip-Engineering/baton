@@ -147,13 +147,17 @@ class UsageWindows(unittest.TestCase):
         answer = self.windows()
         self.assertEqual(answer['windows'], 'none recorded')
 
-    def test_unqualified_model_reports_no_provider(self):
+    def test_unqualified_model_reads_harness_scope(self):
         self.root()
         self.call('recruit', 'bare', 'root', 'omp', 'gpt-6-astra', 'high',
                   self.repo, 'bare-branch', self.checkouts / 'bare', self.base)
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) "
+                       "VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','gpt-6-astra','','','',32472144000000,'provider-message',NULL,'limit message','')")
         answer = self.call('usage-windows', 'bare')
-        self.assertEqual(answer['windows'], 'none recorded')
-        self.assertEqual(answer['condition'], 'noProviderQualifiedModel')
+        rows = {row['window']: row for row in answer['windows']}
+        self.assertEqual(rows['']['state'], 'held')
+        self.assertEqual(rows['']['exhaustionSource'], 'provider-message')
 
     def test_refused_observation_validates_window_and_source(self):
         self.recruit()

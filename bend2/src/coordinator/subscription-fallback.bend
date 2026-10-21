@@ -111,8 +111,7 @@ def history_store_variable(+harness: String) -> Maybe<String>:
   Bool.pick(Maybe<String>,Bool.or(String.eq(harness,"omp"),String.eq(harness,"muse")),None{},store_variable(harness))
 
 # The profile after the one that refused, in operator order, or none when the
-# operator listed no further profile for that harness. Order is the file's own order;
-# no history and no observation reorders or suppresses a listed profile.
+# operator listed no further profile for that harness. Order is the file's own order.
 def next_after(profiles: List<&2,Profile>, +harness: String, +current: String, seen: Bool) -> Maybe<&2,Profile>:
   match profiles:
     case Nil{}: None{}
@@ -127,6 +126,30 @@ def next_profile(profiles: List<&2,Profile>, harness: String, current: String) -
 # A handoff with no profile record yet selects the head of the operator's list.
 def started_or_next(+profiles: List<&2,Profile>, +harness: String, +current: String) -> Maybe<&2,Profile>:
   Bool.pick(Maybe<&2,Profile>,String.is_empty(current),first_profile(profiles,harness),next_profile(profiles,harness,current))
+
+# A recorded current provider hold makes a profile unavailable until its reset.
+# Unknown and elapsed observations leave the operator's next profile selectable.
+def profile_gate_held(gate: UW.Gate) -> Bool:
+  match gate:
+    case UW.GateHeld{window,resets_at,source,receipt}: True{}
+    case other: False{}
+
+def first_profile_available(+db: String, +session: String, profiles: List<&2,Profile>) -> IO(Maybe<&2,Profile>):
+  match profiles:
+    case Nil{}: IO.pure(Maybe<&2,Profile>,None{})
+    case +profile <> +rest: do IO<Maybe<&2,Profile>>:
+      gate : UW.Gate <- UW.window_gate(db,session,profile_label(profile))
+      Bool.pick(IO(Maybe<&2,Profile>),profile_gate_held(gate),first_profile_available(db,session,rest),IO.pure(Maybe<&2,Profile>,Some{profile}))
+
+# Keep the suffix after the current profile. Each held candidate consumes one
+# element of that suffix, including repeated labels in the operator's file.
+def profiles_after(profiles: List<&2,Profile>, +harness: String, +current: String) -> List<&2,Profile>:
+  match profiles:
+    case Nil{}: Nil{}
+    case +profile <> +rest: Bool.pick(List<&2,Profile>,Bool.and(String.eq(profile_harness(profile),harness),String.eq(profile_label(profile),current)),rest,profiles_after(rest,harness,current))
+
+def next_profile_available(db: String, session: String, +profiles: List<&2,Profile>, +harness: String, +current: String) -> IO(Maybe<&2,Profile>):
+  first_profile_available(db,session,profiles_for(Bool.pick(List<&2,Profile>,String.is_empty(current),profiles,profiles_after(profiles,harness,current)),harness))
 
 def record_fields(+label: String, +store: String) -> Maybe<&2,Profile>:
   Bool.pick(Maybe<&2,Profile>,Bool.and(Bool.not(String.is_empty(label)),Bool.not(String.is_empty(store))),Some{Pr{"",label,store}},None{})
@@ -236,7 +259,7 @@ def handoff_body(harness: String, refused: String, bound: String, store: String,
   "subscription profile handoff: harness=" ++ harness ++ "; refused profile=" ++ refused ++ "; bound profile=" ++ bound ++ "; credential store=" ++ store ++ "; original cause: " ++ cause
 
 def all_refused_body(harness: String, refused: String, cause: String) -> String:
-  "subscription profiles exhausted: harness=" ++ harness ++ "; profile=" ++ refused ++ " was the last operator-listed profile and the provider reported usage exhaustion; cause: " ++ cause
+  "subscription profiles exhausted: harness=" ++ harness ++ "; profile=" ++ refused ++ " reported usage exhaustion and no later selectable operator-listed profile remains for this harness; cause: " ++ cause
 
 # The provider's own diagnostic text for a terminal error frame, per the shapes this
 # tree already handles plus the Claude SDK result message and the Muse run terminal:
@@ -469,10 +492,62 @@ def run_status(result: T.RunRes) -> String:
     case T.RRun{T.SSignal{num}, out}: "signal " ++ U32.show(num)
     case T.RSpawn{detail}: detail
 
+def exit_result_text(result: Result<&1,&1,U32 & String,String>) -> String:
+  match result:
+    case Fail{(code,cause)}: ""
+    case Done{value}: Tx.trim_nl(value)
+
+# Exhaustion reports share an identity only for the same session route, account,
+# usage window and reset. Provider request IDs do not affect that identity.
+def exit_report_encoded(db: String, id: String, identity: String) -> IO(String):
+  match identity:
+    case SNil{}: IO.pure(String,id ++ ":exit")
+    case tail: do IO<String>:
+      encoded : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT lower(hex(" ++ C.q(tail) ++ "));" )
+      IO.pure(String,"refusal:" ++ exit_result_text(encoded) ++ ":exit")
+
+def exit_report_cause(+db: String, +session: String, +id: String, cause: String) -> IO(String):
+  match cause:
+    case SNil{}: IO.pure(String,id ++ ":exit")
+    case +other: do IO<String>:
+      harness : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";")
+      model : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";")
+      +harness_text : String <- IO.pure(String,exit_result_text(harness))
+      +model_text : String <- IO.pure(String,exit_result_text(model))
+      +reset : String <- IO.pure(String,UW.reset_text_of(other))
+      +window : String <- IO.pure(String,UW.window_label_of(UW.lower_ascii(other)))
+      account_result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT account FROM account_attempts WHERE session=" ++ C.q(session) ++ " AND turn=" ++ C.q(id) ++ " ORDER BY recorded DESC,rowid DESC LIMIT 1;")
+      +account_row : String <- IO.pure(String,exit_result_text(account_result))
+      +account : String <- Bool.pick(IO(String),String.is_empty(account_row),profile_label_io(db,session),IO.pure(String,account_row))
+      identity : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT " ++ C.q(session) ++ " || char(31) || " ++ C.q(harness_text) ++ " || char(31) || " ++ C.q(UW.provider_of(model_text)) ++ " || char(31) || " ++ C.q(account) ++ " || char(31) || " ++ C.q(window) ++ " || char(31) || " ++ C.q(reset) ++ ";")
+      exit_report_encoded(db,id,exit_result_text(identity))
+
+def exit_report_id(+db: String, session: String, id: String, event: String) -> IO(String):
+  do IO<String>:
+    +cause : String <- exhaustion_cause(db,event)
+    exit_report_cause(db,session,id,cause)
+
 def report_body(db: String, session: String, id: String, kind: String, body: String) -> IO(Unit):
   do IO<Unit>:
     noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":" ++ kind) ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q(body) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
     IO.pure(Unit,Unit{})
+
+# Provider refusal reports share an identity while the recorded account, window,
+# and reset remain the same. The attempt ID is the fallback when no provider
+# exhaustion row is available, so unrelated unclassified failures remain distinct.
+def refusal_identity_base(db: String, id: String, identity: String) -> IO(String):
+  match identity:
+    case SNil{}: IO.pure(String,id)
+    case value: do IO<String>:
+      +encoded : String <- IO.try(String,DB.Sql.read(db,"SELECT lower(hex(" ++ C.q(value) ++ "));"))
+      IO.pure(String,"refusal:" ++ Tx.trim_nl(encoded))
+
+def refusal_report_base(+db: String, +session: String, +id: String) -> IO(String):
+  do IO<String>:
+    +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +identity : String <- IO.try(String,DB.Sql.read(db,UW.refusal_identity_sql(session,Tx.trim_nl(harness),UW.provider_of(Tx.trim_nl(model)),id)))
+    refusal_identity_base(db,id,Tx.trim_nl(identity))
 
 # The verdict of the sidecar write, at the head of the definition so the caller's do block
 # ends on a term. A failed write reports its cause and returns false, so no profile is
@@ -567,10 +642,23 @@ def record_and_report(+db: String, +session: String, +id: String, +record_path: 
     appended : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(record_path,record_line(profile) ++ "\n")
     record_append_observed(db,session,id,record_path,harness,from_label,profile,cause,appended)
 
-def report_all_refused(db: String, session: String, id: String, harness: String, from_label: String, cause: String) -> IO(Bool):
+def report_all_refused(+db: String, +session: String, id: String, harness: String, from_label: String, cause: String) -> IO(Bool):
   do IO<Bool>:
-    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":profile-exhausted") ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q(all_refused_body(harness,from_label,cause)) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
+    +base : String <- refusal_report_base(db,session,id)
+    noted : Unit <- report_body(db,session,base,"profile-exhausted",all_refused_body(harness,from_label,cause))
     IO.pure(Bool,False{})
+
+def account_refusal_report_base(+db: String, +session: String, +id: String, account: String) -> IO(String):
+  do IO<String>:
+    +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +identity : String <- IO.try(String,DB.Sql.read(db,UW.refusal_account_identity_sql(session,Tx.trim_nl(harness),UW.provider_of(Tx.trim_nl(model)),account,id)))
+    refusal_identity_base(db,id,Tx.trim_nl(identity))
+
+def report_account_exhausted(+db: String, +session: String, id: String, account: String, body: String) -> IO(Unit):
+  do IO<Unit>:
+    +base : String <- account_refusal_report_base(db,session,id,account)
+    report_body(db,session,base,"account-exhausted",body)
 
 def choose_profile(db: String, session: String, id: String, record_path: String, harness: String, from_label: String, cause: String, decided: Maybe<&2,Profile>) -> IO(Bool):
   match decided:
@@ -588,8 +676,9 @@ def advance_profile(+db: String, +session: String, +id: String, cause: String, n
     +last_record : String <- IO.pure(String,last_line(Tx.split_lines(current)))
     +from_label : String <- IO.pure(String,record_current(Tx.trim_nl(harness),last_record))
     from_store : String <- IO.pure(String,record_source(Tx.trim_nl(harness),last_record))
-    prepared : Bool <- prepare_history(db,session,id,Tx.trim_nl(harness),from_store,cmd,cwd,native,started_or_next(profiles,Tx.trim_nl(harness),from_label))
-    taken : Bool <- Bool.pick(IO(Bool),prepared,choose_profile(db,session,id,record_path,Tx.trim_nl(harness),from_label,cause,started_or_next(profiles,Tx.trim_nl(harness),from_label)),IO.pure(Bool,False{}))
+    +decided : Maybe<&2,Profile> <- next_profile_available(db,session,profiles,Tx.trim_nl(harness),from_label)
+    prepared : Bool <- prepare_history(db,session,id,Tx.trim_nl(harness),from_store,cmd,cwd,native,decided)
+    taken : Bool <- Bool.pick(IO(Bool),prepared,choose_profile(db,session,id,record_path,Tx.trim_nl(harness),from_label,cause,decided),IO.pure(Bool,False{}))
     IO.pure(Bool,taken)
 
 # True only when a next operator-listed profile was recorded, so the caller continues the
@@ -873,21 +962,21 @@ def select_route(+db: String, +session: String, id: String) -> IO(Maybe<&2,Route
     recorded : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(refused_path,Tx.trim_nl(marker) ++ " " ++ Tx.trim_nl(assignment) ++ " " ++ Tx.trim_nl(harness) ++ " " ++ Tx.trim_nl(model) ++ "\n")
     select_recorded(db,session,id,refused_path,chosen,recorded)
 
-# True on the actual all-accounts-refused outcome: the terminal states
-# provider-reported usage exhaustion and this attempt recorded the exhausted
-# report - the profile form for operator-listed profiles, the account form for
-# a bound account that was the last recorded account for its harness. History
+# True when provider-reported usage exhaustion leaves no later selectable
+# account and this attempt recorded the exhausted report: the profile form for
+# operator-listed profiles, or the account form for registered accounts. History
 # and lineage append IO failures write different reports, so they return false
 # here and never cause a cross-route switch.
-def exhausted_reported(+db: String, +id: String) -> IO(Bool):
+def exhausted_reported(+db: String, session: String, id: String) -> IO(Bool):
   do IO<Bool>:
-    found : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":profile-exhausted") ++ " OR id=" ++ C.q(id ++ ":account-exhausted") ++ ");"))
+    +base : String <- refusal_report_base(db,session,id)
+    found : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(base ++ ":profile-exhausted") ++ " OR id=" ++ C.q(base ++ ":account-exhausted") ++ ");"))
     IO.pure(Bool,String.eq(found,"1\n"))
 
-def route_trigger(+db: String, id: String, +event: String) -> IO(Bool):
+def route_trigger(+db: String, +session: String, id: String, +event: String) -> IO(Bool):
   do IO<Bool>:
     +cause : String <- exhaustion_cause(db,event)
-    reported : Bool <- Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),exhausted_reported(db,id))
+    reported : Bool <- Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),exhausted_reported(db,session,id))
     IO.pure(Bool,reported)
 
 # The applying seam reports the chosen route with the original provider cause, or the
@@ -902,8 +991,10 @@ def route_unavailable_body(harness: String, cause: String) -> String:
 def report_route_chosen(db: String, session: String, id: String, +route: Route, cause: String) -> IO(Unit):
   report_body(db,session,id,"route-chosen",route_chosen_body(route_harness(route),route_model(route),route_cmd(route),cause))
 
-def report_route_unavailable(db: String, session: String, id: String, harness: String, cause: String) -> IO(Unit):
-  report_body(db,session,id,"route-unavailable",route_unavailable_body(harness,cause))
+def report_route_unavailable(+db: String, +session: String, id: String, harness: String, cause: String) -> IO(Unit):
+  do IO<Unit>:
+    +base : String <- refusal_report_base(db,session,id)
+    report_body(db,session,base,"route-unavailable",route_unavailable_body(harness,cause))
 
 # A cross-harness route change drops only the incompatible native binding; the same
 # harness keeps its conversation. Old attempt, event, request and history rows stay.
