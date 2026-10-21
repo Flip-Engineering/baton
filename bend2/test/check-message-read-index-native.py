@@ -98,6 +98,9 @@ def main():
         try:
             if database.exists():
                 run('normal-shutdown', [cli, str(database), '--instance-shutdown'])
+        except BaseException:
+            passed = False
+            raise
         finally:
             (directory / 'result.json').write_text(json.dumps({'passed': passed, 'checks': checks, 'commands': commands,
                 'fixture_sha256': hashlib.sha256(Path(fixture).read_bytes()).hexdigest(),

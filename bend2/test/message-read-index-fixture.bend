@@ -40,9 +40,12 @@ def read_selected(selected: Bool, +mode: String, +db: String, +rest: List<String
 def arguments(+mode: String, +db: String, +rest: List<String>) -> IO(Unit):
   read_selected(String.eq(mode,"read"),mode,db,rest)
 
+def run(args: List<String>) -> IO(Unit):
+  match args:
+    case +mode <> +db <> +rest: arguments(mode,db,rest)
+    case other: IO.die(Unit,2,"fixture mode and database required")
+
 def main() -> IO(Unit):
   do IO<Unit>:
     args : List<String> <- IO.args()
-    match args:
-      case +mode <> +db <> +rest: arguments(mode,db,rest)
-      case other: IO.die(Unit,2,"fixture mode and database required")
+    run(args)
