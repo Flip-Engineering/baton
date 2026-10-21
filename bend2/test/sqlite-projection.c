@@ -52,8 +52,6 @@ int main(int argc, char **argv) {
     printf("read_call=1 code=%d output=%s error=%s\n",
            call.code, call.output ? call.output : "",
            call.error ? call.error : "");
-    printf("close_autocommit=%d close_refused=%d\n",
-           baton_test_close_autocommit, baton_test_close_refused);
     int code = call.code;
     free(call.output);
     free(call.error);

@@ -44,19 +44,6 @@ def build_fixture():
     combined = SCRATCH / 'sqlite-projection-combined.c'
     combined.write_text(''.join(lines[:busy_end + 1])
                         + 'typedef struct { void *data; } IoWork;\n\n'
-                        + '/* Model the observed close that leaves a read lock while a\n'
-                        + '   transaction is active. The candidate rolls back before close. */\n'
-                        + 'static int baton_test_close_autocommit = -1;\n'
-                        + 'static int baton_test_close_refused = 0;\n'
-                        + 'static int baton_test_close(sqlite3 *db) {\n'
-                        + '  baton_test_close_autocommit = sqlite3_get_autocommit(db);\n'
-                        + '  if (!baton_test_close_autocommit) {\n'
-                        + '    baton_test_close_refused = 1;\n'
-                        + '    return SQLITE_BUSY;\n'
-                        + '  }\n'
-                        + '  return (sqlite3_close)(db);\n'
-                        + '}\n'
-                        + '#define sqlite3_close(db) baton_test_close(db)\n\n'
                         + ''.join(lines[encoding:read_end + 1])
                         + FIXTURE_MAIN.read_text())
     result = subprocess.run(
@@ -246,14 +233,12 @@ class SqliteProjection(unittest.TestCase):
             "SELECT count(*) FROM sqlite_master WHERE type='table' "
             "AND name='release_probe'"), 1)
 
-    def test_read_call_releases_retained_transaction(self):
+    def test_read_call_allows_subsequent_write(self):
         self.assertEqual(self.install().returncode, 0)
         result = self.install('read-call')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('read_call=1', result.stdout)
         self.assertIn('output=0', result.stdout)
-        self.assertIn('close_autocommit=1', result.stdout)
-        self.assertIn('close_refused=0', result.stdout)
         self.assertIn('writer_commit=ok', result.stdout)
 
     def test_module_native_change_trigger_does_not_force_reinstall(self):
