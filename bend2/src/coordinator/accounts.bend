@@ -706,14 +706,28 @@ def next_account_after(accounts: List<&2,AccountRecord>, +harness: String, +curr
 
 # Continue past an account whose provider has already reported a current quota
 # hold. Unknown and elapsed observations leave the configured account selectable.
-def next_account_available(db: String, session: String, accounts: List<&2,AccountRecord>, harness: String, current: String) -> IO(Maybe<&2,AccountRecord>):
-  match next_account_after(accounts,harness,current,False{}):
-    case None{}: IO.pure(Maybe<&2,AccountRecord>,None{})
-    case Some{+account}: do IO<Maybe<&2,AccountRecord>>:
+def gate_held(gate: UW.Gate) -> Bool:
+  match gate:
+    case UW.GateHeld{window,resets_at,source,receipt}: True{}
+    case other: False{}
+
+def account_candidates_after(accounts: List<&2,AccountRecord>, +harness: String, +current: String, seen: Bool) -> List<&2,AccountRecord>:
+  match accounts:
+    case Nil{}: Nil{}
+    case +account <> +rest:
+      match seen:
+        case True{}: Bool.pick(List<&2,AccountRecord>,account_matches(harness,"",account),Con{account,account_candidates_after(rest,harness,current,True{})},account_candidates_after(rest,harness,current,True{}))
+        case False{}: account_candidates_after(rest,harness,current,String.eq(account_id(account),current))
+
+def first_account_available(+db: String, +session: String, accounts: List<&2,AccountRecord>) -> IO(Maybe<&2,AccountRecord>):
+  match accounts:
+    case Nil{}: IO.pure(Maybe<&2,AccountRecord>,None{})
+    case +account <> +rest: do IO<Maybe<&2,AccountRecord>>:
       gate : UW.Gate <- UW.window_gate(db,session,account_id(account))
-      match gate:
-        case UW.GateHeld{window,resets_at,source,receipt}: next_account_available(db,session,accounts,harness,account_id(account))
-        case other: IO.pure(Maybe<&2,AccountRecord>,Some{account})
+      Bool.pick(IO(Maybe<&2,AccountRecord>),gate_held(gate),first_account_available(db,session,rest),IO.pure(Maybe<&2,AccountRecord>,Some{account}))
+
+def next_account_available(db: String, session: String, accounts: List<&2,AccountRecord>, harness: String, current: String) -> IO(Maybe<&2,AccountRecord>):
+  first_account_available(db,session,account_candidates_after(accounts,harness,current,False{}))
 
 def account_handoff_body(+harness: String, +refused: String, +bound: String, +cause: String) -> String:
   "account handoff: harness=" ++ harness ++ "; refused account=" ++ refused ++ "; bound account=" ++ bound ++ "; original cause: " ++ cause
@@ -776,11 +790,6 @@ def handoff_label_io(+db: String, +session: String) -> IO(String):
 # so the provider reset survives even when the advance fails; the advance is
 # recorded before the caller relaunches, so the next attempt records the next
 # account beside its own attempt identity. An empty cause records nothing.
-def gate_held(gate: UW.Gate) -> Bool:
-  match gate:
-    case UW.GateHeld{window,resets_at,source,receipt}: True{}
-    case other: False{}
-
 def handoff(+db: String, +session: String, +id: String, +event: String, native: String, cmd: String, cwd: String) -> IO(Bool):
   do IO<Bool>:
     +cause : String <- Subs.exhaustion_cause(db,event)

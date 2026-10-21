@@ -48,6 +48,16 @@ def expect_gate(+db: String, +session: String, +account: String, +expected: Stri
     gate : UW.Gate <- UW.window_gate(db,session,account)
     expect(label,String.eq(gate_class(gate),expected))
 
+def expect_route_harness(selected: Maybe<&2,Subs.Route>, expected: String, label: String) -> IO(Unit):
+  match selected:
+    case None{}: IO.die(Unit,1,"fixture-quota-backoff " ++ label ++ ": no route selected")
+    case Some{route}: expect(label,String.eq(Subs.route_harness(route),expected))
+
+def expect_route_model(selected: Maybe<&2,Subs.Route>, expected: String, label: String) -> IO(Unit):
+  match selected:
+    case None{}: IO.die(Unit,1,"fixture-quota-backoff " ++ label ++ ": no route selected")
+    case Some{route}: expect(label,String.eq(Subs.route_model(route),expected))
+
 def messages_state_sql(session: String) -> String:
   "SELECT group_concat(id || ':' || kind || ':' || body || ':' || coalesce(receipt,'-'),'|') FROM (SELECT id,kind,body,receipt FROM messages WHERE recipient="
   ++ C.q(session) ++ " ORDER BY seq);"
@@ -112,9 +122,7 @@ def account_fallback_cases(+db: String) -> IO(Unit):
     +routes_path : String <- Subs.route_list_path(db)
     configured : Unit <- IO.try(Unit,Text.Text.append(routes_path,"omp kimi-code/kimi-for-coding /not-executed/current\ncodex gpt-6 /not-executed/codex\n"))
     selected : Maybe<&2,Subs.Route> <- Subs.select_route(db,"route-all-held","all-held-a-refusal")
-    match selected:
-      case None{}: IO.die(Unit,1,"fixture-quota-backoff alternate route was not selected")
-      case Some{route}: expect("all-held-selects-configured-alternate-route",String.eq(Subs.route_harness(route),"codex"))
+    expect_route_harness(selected,"codex","all-held-selects-configured-alternate-route")
     expect_read(db,"SELECT count(*) FROM executions WHERE session IN ('route-forward','route-all-held');","0\n","account-selection-starts-no-execution")
 
 # The legacy profile path uses the same recorded provider holds. Only the
@@ -148,9 +156,7 @@ def profile_fallback_cases(+db: String) -> IO(Unit):
     triggered : Bool <- Subs.route_trigger(db,"legacy-all-held","legacy-all-held-refusal",quota_event("legacy-all-held-request"))
     expect("legacy-all-held-retains-alternate-route-trigger",triggered)
     selected : Maybe<&2,Subs.Route> <- Subs.select_route(db,"legacy-all-held","legacy-all-held-refusal")
-    match selected:
-      case None{}: IO.die(Unit,1,"fixture-quota-backoff legacy alternate route was not selected")
-      case Some{route}: expect("legacy-all-held-selects-configured-alternate-route",String.eq(Subs.route_model(route),"kimi-code/kimi-for-coding"))
+    expect_route_model(selected,"kimi-code/kimi-for-coding","legacy-all-held-selects-configured-alternate-route")
     elapsed_b : Unit <- UW.reset_exhausted(db,"legacy-forward","2020-01-01T00:00:00Z","provider reset observed by fixture","legacy-b")
     elapsed_gate : Unit <- expect_gate(db,"legacy-forward","legacy-b","elapsed","legacy-elapsed-profile-remains-selectable")
     bound_elapsed : Unit <- Subs.bind_profile(db,"legacy-elapsed","omp","legacy-a","/profiles/legacy-a")
@@ -204,10 +210,10 @@ def dedupe_cases(+db: String) -> IO(Unit):
     exit_count : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id LIKE '%:exit' AND sender='wonder';","1\n","exit-report-deduped")
     reported : Bool <- Subs.exhausted_reported(db,"wonder","attempt-one")
     expect("exhausted-report-detected",reported)
-    account_cause : String <- cause("account-first-request")
+    account_cause : String = cause("account-first-request")
     account_usage : Unit <- UW.record_cause(db,"wonder","attempt-account","acct-b",account_cause)
     first_account : Unit <- Subs.report_account_exhausted(db,"wonder","attempt-account","acct-b","accounts exhausted: first provider evidence")
-    retry_account_cause : String <- cause("account-retry-request")
+    retry_account_cause : String = cause("account-retry-request")
     retry_account_usage : Unit <- UW.record_cause(db,"wonder","attempt-account-retry","acct-b",retry_account_cause)
     repeated_account : Unit <- Subs.report_account_exhausted(db,"wonder","attempt-account-retry","acct-b","accounts exhausted: duplicate provider evidence")
     account_count : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id LIKE '%:account-exhausted';","1\n","account-exhaustion-deduped-for-same-window")
@@ -215,11 +221,11 @@ def dedupe_cases(+db: String) -> IO(Unit):
     expect("account-first-evidence",Bool.and(String.contains(account_body,"first provider evidence"),Bool.not(String.contains(account_body,"duplicate provider evidence"))))
     reported_account : Bool <- Subs.exhausted_reported(db,"wonder","attempt-account")
     expect("account-exhaustion-detected",reported_account)
-    other_account_cause : String <- cause("other-account-request")
+    other_account_cause : String = cause("other-account-request")
     other_account_usage : Unit <- UW.record_cause(db,"wonder","attempt-one","acct-a",other_account_cause)
     other_account : Unit <- Subs.report_account_exhausted(db,"wonder","attempt-one","acct-a","accounts exhausted: other account")
     account_scoped : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id LIKE '%:account-exhausted';","2\n","account-exhaustion-identity-includes-account")
-    account_b_later_cause : String <- cause("account-later-request")
+    account_b_later_cause : String = cause("account-later-request")
     account_b_later_usage : Unit <- UW.record_cause(db,"wonder","attempt-account-later","acct-b",account_b_later_cause)
     account_b_after_a : Unit <- Subs.report_account_exhausted(db,"wonder","attempt-account-later","acct-b","accounts exhausted: duplicate evidence after another account")
     account_distinct_preserved : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id LIKE '%:account-exhausted';","2\n","account-b-report-survives-later-account-observation")
@@ -246,7 +252,7 @@ def handoff_cases(+db: String) -> IO(Unit):
   do IO<Unit>:
     advanced : Bool <- Accounts.handoff(db,"wonder-gate","held-handoff",quota_event("held-request"),"native-gate","","/wonder-gate")
     expect("held-handoff-does-not-continue",Bool.not(advanced))
-    gate : UW.Gate <- Turn.direct_window_gate(db,"wonder-gate")
+    +gate : UW.Gate <- Turn.direct_window_gate(db,"wonder-gate")
     expect("direct-start-observes-held-window",Turn.direct_gate_held(gate))
     expect("direct-start-retains-provider-cause",String.contains(Turn.direct_gate_refusal(gate),"Provider usage window held"))
     expect_read(db,"SELECT count(*) FROM executions WHERE session='wonder-gate';","0\n","handoff-and-gate-create-no-execution")

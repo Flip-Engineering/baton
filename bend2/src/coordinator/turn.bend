@@ -110,7 +110,7 @@ def result_missing(db: String, player: String, id: String, log: String, stderr: 
     case True{}: IO.pure(Unit,Unit{})
     case False{}: report(db,player,id,"Player process ended without a native result (" ++ status ++ "). Output: " ++ log ++ ". Stderr: " ++ stderr)
 
-def exit_failure(db: String, player: String, id: String, status: String, success: Bool, event: String) -> IO(Unit):
+def exit_failure(+db: String, +player: String, id: String, status: String, success: Bool, event: String) -> IO(Unit):
   match success:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
@@ -248,7 +248,7 @@ def record_exit(db: String, player: String, +id: String, log: String, outcome: O
   match outcome:
     case Ended{status,event,error,incomplete}: Stop.exited(db,player,id,status,event,error,generation_log(log,id))
 
-def player_finished(+db: String, player: String, +id: String, quiet: Bool, failed: Bool, event: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def player_finished(+db: String, +player: String, +id: String, quiet: Bool, failed: Bool, event: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
     exit_id : String <- Bool.pick(IO(String),failed,Subs.exit_report_id(db,player,id,event),IO.pure(String,id ++ ":exit"))
@@ -1323,7 +1323,7 @@ def direct_retained_prepared(+db: String, +player: String, +directory: String, +
   match prepared:
     case Done{launch}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
       +gate : UW.Gate <- direct_window_gate(db,player)
-      Bool.pick(IO<Result<&1,&1,U32 & String,P.RetainedStart>>,direct_gate_held(gate),
+      Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),direct_gate_held(gate),
         IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Done{P.Unstarted{direct_gate_refusal(gate)}}),
         retained_admit(db,directory,cwd,prompt,lock,recovery,launch))
     case Fail{error}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
