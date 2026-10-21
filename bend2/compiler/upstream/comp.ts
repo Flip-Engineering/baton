@@ -2158,16 +2158,18 @@ function facts_lend(cb: Carb): void {
     b && !cb.lend.has(k + "~" + i) && cb.own.add(k + "~" + i)));
 }
 
-// BRWS memoizes against cb.own, so one recompute per outer pass advances
-// the borrow/own loop by one step. Recompute it here until own stops
-// growing, then the next emission pass sees the converged facts. Own is a
-// monotone set, so this loop is finite; the limit only turns a broken
-// derivation into a report instead of an endless pass.
+// facts_lend only reads the BRWS memo; brw_of fills it during emission.
+// Snapshot the keys, clear the memo, and recompute those defs against the
+// current own before closing lend again. Each round can only add own keys,
+// so the loop is finite; the round limit is an invariant guard for a broken
+// derivation, not a work budget.
 function facts_converge(cb: Carb): void {
   const limit = 1 << 16;
   for (let round = 0; ; round++) {
     const before = new Set(cb.own);
+    const ks = [...BRWS.keys()];
     BRWS.clear();
+    for (const k of ks) brw_of(cb, k);
     facts_lend(cb);
     const added = [...cb.own].filter((k) => !before.has(k));
     diagnostic("facts.round", { round, own: cb.own.size,
