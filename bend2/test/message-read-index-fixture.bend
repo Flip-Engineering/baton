@@ -34,17 +34,17 @@ def read_arguments(+db: String, args: List<String>) -> IO(Unit):
     case +saved <> Nil{}: read(db,saved)
     case other: IO.die(Unit,2,"read requires complete JSON")
 
-def read_selected(selected: Bool, +mode: String, +db: String, +rest: List<String>) -> IO(Unit):
+def read_selected(selected: Bool, +mode: String, +db: String, rest: List<String>) -> IO(Unit):
   match selected:
     case True{}: read_arguments(db,rest)
     case False{}: no_arguments(mode,db,rest)
 
-def arguments(+mode: String, +db: String, +rest: List<String>) -> IO(Unit):
+def arguments(+mode: String, +db: String, rest: List<String>) -> IO(Unit):
   read_selected(String.eq(mode,"read"),mode,db,rest)
 
 def run(args: List<String>) -> IO(Unit):
   match args:
-    case +mode <> +db <> +rest: arguments(mode,db,rest)
+    case +mode <> +db <> rest: arguments(mode,db,rest)
     case other: IO.die(Unit,2,"fixture mode and database required")
 
 def main() -> IO(Unit):
