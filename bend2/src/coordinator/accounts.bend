@@ -1360,3 +1360,68 @@ def credit_launch_binding(+db: String, +session: String, +attempt: String, +harn
   match chosen:
     case None{}: IO.pure(Maybe<List<String>>,account_binding(harness,None{},helper,profile_store))
     case Some{+account}: credit_launch_binding_account(db,session,attempt,harness,account,helper,profile_store)
+
+# --- the qualified launch gate ------------------------------------------------
+# The launch gate is the production caller before send. It records the durable
+# reservation first, then the one-use authorization, and returns the packaged
+# resolver binding. The source keeps the gate held until the release
+# qualification records the request-level guard as proven; a held gate creates
+# no reservation, writes no authorization and starts no launch.
+def credit_guard_qualified() -> Bool:
+  False{}
+
+def credit_guard_route_account(+account: AccountRecord) -> Bool:
+  Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key")))
+
+def credit_current_period_io(db: String) -> IO(String):
+  do IO<String>:
+    text : String <- IO.try(String,DB.Sql.read(db,"SELECT strftime('%Y-%m','now');"))
+    IO.pure(String,Tx.trim_nl(text))
+
+def credit_reserved_sql(+attempt: String) -> String:
+  "SELECT EXISTS(SELECT 1 FROM credit_reservations WHERE request=" ++ C.q(attempt) ++ " AND state='reserved');"
+
+def credit_reserved_for(+db: String, +attempt: String) -> IO(Bool):
+  do IO<Bool>:
+    found : String <- IO.try(String,DB.Sql.read(db,credit_reserved_sql(attempt)))
+    IO.pure(Bool,String.eq(Tx.trim_nl(found),"1"))
+
+# The launch gate returns (binding, refusal). A binding that is Some with an
+# empty refusal is usable; a nonempty refusal is the full sentence the caller
+# reports and no launch starts.
+def credit_guard_refusal_status(+reason: String) -> String:
+  "Anthropic API-key launch refused by the request-level promotional-credit guard (" ++ reason ++ "); the attempt was not started and its input stays owed."
+
+def credit_launch_helper_text(helper: Maybe<String>) -> String:
+  match helper:
+    case None{}: ""
+    case Some{path}: path
+
+def credit_launch_authorized(+db: String, +session: String, +attempt: String, +account: AccountRecord, +helper: String) -> IO(Maybe<List<String>> & String):
+  do IO<Maybe<List<String>> & String>:
+    authorized : Bool <- credit_record_authorization(db,session,attempt,account)
+    Bool.pick(IO(Maybe<List<String>> & String),authorized,
+      IO.pure(Maybe<List<String>> & String,(api_key_binding(account_secret_ref(account),api_key_resolver_value(helper)),"")),
+      IO.pure(Maybe<List<String>> & String,(None{},"The promotional-credit authorization for this attempt could not be recorded; the attempt was not started and its input stays owed.")))
+
+def credit_launch_reserved(+db: String, +session: String, +attempt: String, +account: AccountRecord, +helper: String) -> IO(Maybe<List<String>> & String):
+  do IO<Maybe<List<String>> & String>:
+    +period : String <- credit_current_period_io(db)
+    +decision : CreditAdmission <- credit_reserve_for(db,session,attempt,account,period,period)
+    Bool.pick(IO(Maybe<List<String>> & String),credit_admission_admitted(decision),
+      credit_launch_authorized(db,session,attempt,account,helper),
+      IO.pure(Maybe<List<String>> & String,(None{},credit_guard_refusal_status(credit_admission_reason(decision)))))
+
+def credit_launch_gate_account(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, +helper: String, +profile_store: String, qualified: Bool) -> IO(Maybe<List<String>> & String):
+  Bool.pick(IO(Maybe<List<String>> & String),credit_guard_route_account(account),
+    Bool.pick(IO(Maybe<List<String>> & String),qualified,
+      credit_launch_reserved(db,session,attempt,account,helper),
+      IO.pure(Maybe<List<String>> & String,(None{},credit_api_key_refusal(account)))),
+    IO.pure(Maybe<List<String>> & String,(account_binding(harness,Some{account},api_key_resolver_value(helper),profile_store),"")))
+
+def credit_launch_gate(+db: String, +session: String, +attempt: String, +harness: String, +chosen: Maybe<&2,AccountRecord>, helper: Maybe<String>, +profile_store: String, qualified: Bool) -> IO(Maybe<List<String>> & String):
+  match chosen:
+    case None{}: IO.pure(Maybe<List<String>> & String,(account_binding(harness,None{},helper,profile_store),""))
+    case Some{+account}: do IO<Maybe<List<String>> & String>:
+      +helper_path : String = credit_launch_helper_text(helper)
+      credit_launch_gate_account(db,session,attempt,harness,account,helper_path,profile_store,qualified)

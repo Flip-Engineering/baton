@@ -1201,7 +1201,8 @@ def retained_launch_plain(omp: Bool, claude: Bool, cmd: String, model: String, e
     case None{}: Done{prefix ++ retained_arguments(omp,claude,cmd,model,effort,sessions,native)}
     case Some{+refused}: Fail{(2,Bool.pick(String,String.is_empty(credit_refusal),Accounts.credit_api_key_refusal(refused),credit_refusal))}
 
-def retained_launch_arguments(omp: Bool, claude: Bool, cmd: String, model: String, effort: String, sessions: String, +native: String, +prefix: String, +history: String, harness: String, account: Maybe<&2,Accounts.AccountRecord>, binding: Maybe<List<String>>, +credit_refusal: String) -> Result<&1,&1,U32 & String,String>:
+def retained_launch_arguments(omp: Bool, claude: Bool, cmd: String, model: String, effort: String, sessions: String, +native: String, +prefix: String, +history: String, harness: String, account: Maybe<&2,Accounts.AccountRecord>, launch_credit: Maybe<List<String>> & String) -> Result<&1,&1,U32 & String,String>:
+  (binding,credit_refusal)=launch_credit
   match binding:
     case Some{bound}: Done{prefix ++ retained_profile_arguments(omp,claude,bound,Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,native)}
     case None{}: retained_launch_plain(omp,claude,cmd,model,effort,sessions,native,prefix,account,credit_refusal)
@@ -1228,10 +1229,9 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
       +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
       store : String <- current_store(db,player,harness)
       history : String <- current_history(db,player)
-      credit_refusal : String <- Accounts.credit_launch_refusal_for(db,account)
-      binding : Maybe<List<String>> <- Accounts.credit_launch_binding(db,player,directory,Tx.trim_nl(harness),account,identity_resolver(parts),store)
+      launch_credit : Maybe<List<String>> & String <- Accounts.credit_launch_gate(db,player,directory,Tx.trim_nl(harness),account,identity_resolver(parts),store,Accounts.credit_guard_qualified())
       recorded : Unit <- Accounts.record_current_attempt(db,player,directory,predecessor,account)
-      +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,cmd,model,effort,sessions,native,prefix,history,Tx.trim_nl(harness),account,binding,credit_refusal)))
+      +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,cmd,model,effort,sessions,native,prefix,history,Tx.trim_nl(harness),account,launch_credit)))
       launch : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_launch_checked(prepared,dsh,prefix,home,cmd,model,effort,native,muse,muse_args,args,initial,omp,claude,level,seal_prompt)
       IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,launch)
 
