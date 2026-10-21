@@ -118,18 +118,19 @@ def account_fallback_cases(+db: String) -> IO(Unit):
     expect_read(db,"SELECT count(*) FROM executions WHERE session IN ('route-forward','route-all-held');","0\n","account-selection-starts-no-execution")
 
 # The legacy profile path uses the same recorded provider holds. Only the
-# selected profile receives a binding and handoff report; the original refusal
-# remains the cause when a later profile is selected or the list is exhausted.
+# selected profile receives a binding and handoff report. Repeated held labels
+# preserve traversal progress. The original refusal remains the cause when a
+# later profile is selected or the list is exhausted.
 def profile_fallback_cases(+db: String) -> IO(Unit):
   do IO<Unit>:
     +listed_path : String <- Subs.profile_list_path(db)
-    listed : Unit <- IO.try(Unit,Text.Text.append(listed_path,"omp legacy-a /profiles/legacy-a\nomp legacy-b /profiles/legacy-b\nomp legacy-c /profiles/legacy-c\n"))
+    listed : Unit <- IO.try(Unit,Text.Text.append(listed_path,"omp legacy-a /profiles/legacy-a\nomp legacy-b /profiles/legacy-b\nomp legacy-b /profiles/legacy-b-duplicate\nomp legacy-c /profiles/legacy-c\n"))
     bound : Unit <- Subs.bind_profile(db,"legacy-forward","omp","legacy-a","/profiles/legacy-a")
     held_b : Unit <- UW.record_cause(db,"legacy-forward","legacy-b-refusal","legacy-b",cause("legacy-b-request"))
     unknown_c : Unit <- UW.record_cause(db,"legacy-forward","legacy-c-unknown","legacy-c","provider-reported usage exhaustion: API error 429: Subscription quota exhausted. (rate_limit_error)")
     unknown_gate : Unit <- expect_gate(db,"legacy-forward","legacy-c","unknown","legacy-unknown-profile-remains-selectable")
     advanced : Bool <- Accounts.handoff(db,"legacy-forward","legacy-a-refusal",quota_event("legacy-a-request"),"native-legacy-forward","","/legacy-forward")
-    expect("legacy-handoff-skips-held-profile",advanced)
+    expect("legacy-handoff-skips-repeated-held-profile",advanced)
     +chosen : String <- Subs.profile_label_io(db,"legacy-forward")
     expect("legacy-handoff-reaches-unknown-profile",String.eq(chosen,"legacy-c"))
     +record_path : String <- Subs.profile_record_path(db,"legacy-forward")
