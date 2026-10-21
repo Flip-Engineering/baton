@@ -730,8 +730,10 @@ def credit_reserve_arithmetic(+account: AccountRecord, +observation: CreditObs, 
       Bool.pick(CreditAdmission,decimal_is_gt(grant_spend,credit_cycle_ceiling()),CRefused{"creditGrantExhausted"},
       Bool.pick(CreditAdmission,decimal_is_gt(monthly_spend,credit_cycle_ceiling()),CRefused{"monthlyCapExhausted"},
       Bool.pick(CreditAdmission,decimal_is_zero(balance),CRefused{"promotionalCreditExhausted"},
+      Bool.pick(CreditAdmission,decimal_is_zero(decimal_sub(credit_cycle_ceiling(),monthly_spend)),CRefused{"monthlyCapExhausted"},
+      Bool.pick(CreditAdmission,decimal_is_zero(decimal_sub(credit_cycle_ceiling(),grant_spend)),CRefused{"creditGrantExhausted"},
       Bool.pick(CreditAdmission,decimal_is_zero(decimal_min(decimal_sub(credit_cycle_ceiling(),grant_spend),decimal_sub(credit_cycle_ceiling(),monthly_spend))),CRefused{"requestChargeUnbounded"},
-      credit_request_admission(account,CMeter{account_organization(account),state,cycle,balance,unit,credit_cycle_ceiling(),current_cap_period,decimal_max(grant_spend,monthly_spend),"0"},cycle,current_cap_period,decimal_min(balance,decimal_min(decimal_sub(credit_cycle_ceiling(),grant_spend),decimal_sub(credit_cycle_ceiling(),monthly_spend)))))))))))))))))
+      credit_request_admission(account,CMeter{account_organization(account),state,cycle,balance,unit,credit_cycle_ceiling(),current_cap_period,decimal_max(grant_spend,monthly_spend),"0"},cycle,current_cap_period,decimal_min(balance,decimal_min(decimal_sub(credit_cycle_ceiling(),grant_spend),decimal_sub(credit_cycle_ceiling(),monthly_spend)))))))))))))))))))
 
 def credit_reserve_decided(+account: AccountRecord, +observation: CreditObs, +conflict: String, +rows: List<&2,ReservationRow>, +spend_state: String, +spend_balance: String, +spend_unit: String, +current_cap_period: String, +expiry_deadline: String, +now_text: String) -> CreditAdmission:
   Bool.pick(CreditAdmission,Bool.not(reservation_rows_valid(rows)),CRefused{"creditReservationLedgerMalformed"},
@@ -1093,6 +1095,29 @@ def attempt_completed(+db: String, +attempt: String, +outcome: String, +error_te
     saved : String <- IO.try(String,commit_read(db,attempt_completed_sql(attempt,outcome,error_text)))
     settled : String <- credit_settle_for(db,attempt,outcome,"",False{})
     IO.print(Tx.trim_nl(saved))
+
+# The Claude result frame's cumulative total_cost_usd is the actual cost source.
+# The raw JSON text is read so no binary float intervenes; the leading decimal
+# token is extracted by SQL text scanning and validated before settlement. A
+# missing or malformed token settles as unknown cost and keeps the reserved
+# bound counted.
+def credit_result_cost_sql(+event: String) -> String:
+  "WITH RECURSIVE t(s) AS (VALUES(CASE WHEN instr(" ++ C.q(event) ++ ",'\"total_cost_usd\":')>0 THEN ltrim(substr(" ++ C.q(event) ++ ",instr(" ++ C.q(event) ++ ",'\"total_cost_usd\":')+length('\"total_cost_usd\":'))) ELSE '' END)), scan(s,n) AS (SELECT s,0 FROM t UNION ALL SELECT s,n+1 FROM scan WHERE n<length(s) AND substr(s,n+1,1) GLOB '[0-9.]') SELECT substr(s,1,n) FROM scan ORDER BY n DESC LIMIT 1;"
+
+def credit_result_cost_io(+db: String, +event: String) -> IO(String):
+  do IO<String>:
+    cost : String <- IO.try(String,DB.Sql.read(db,credit_result_cost_sql(event)))
+    +text : String <- IO.pure(String,Tx.trim_nl(cost))
+    IO.pure(String,Bool.pick(String,decimal_text(text),text,""))
+
+
+def attempt_completed_event(+db: String, +attempt: String, +outcome: String, +error_text: String, +event: String) -> IO(Unit):
+  do IO<Unit>:
+    cost : String <- credit_result_cost_io(db,event)
+    saved : String <- IO.try(String,commit_read(db,attempt_completed_sql(attempt,outcome,error_text)))
+    settled : String <- credit_settle_for(db,attempt,outcome,cost,False{})
+    IO.print(Tx.trim_nl(saved))
+
 
 # The launch records the selected account beside the attempt. A failed record
 # reports its own cause to the session's coordinator and leaves the launch to

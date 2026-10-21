@@ -77,6 +77,10 @@ def dispatch(arguments: List<String>) -> IO(Unit):
       do IO<Unit>:
         completed : Unit <- A.attempt_completed(db,attempt,outcome,detail)
         IO.print("attempt-completed")
+    case +db <> "complete-event" <> +attempt <> +outcome <> +detail <> +event <> Nil{}:
+      do IO<Unit>:
+        completed : Unit <- A.attempt_completed_event(db,attempt,outcome,detail,event)
+        IO.print("attempt-completed")
     case +db <> "current" <> +session <> +harness <> Nil{}:
       do IO<Unit>:
         +account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
@@ -108,7 +112,7 @@ def dispatch(arguments: List<String>) -> IO(Unit):
         +account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
         pair : Maybe<List<String>> & String <- A.credit_launch_gate(db,session,attempt,harness,account,Some{"/fixture/api-key-exec"},"",False{})
         IO.print(gate_line(pair))
-    case other: IO.die(Unit,2,"account-credits-entry: account|handoff|current|attempt|gate|complete|reserve|settle|reconcile|gate-qualified|gate-held")
+    case other: IO.die(Unit,2,"account-credits-entry: account|handoff|current|attempt|gate|complete|complete-event|reserve|settle|reconcile|gate-qualified|gate-held")
 
 def main() -> IO(Unit):
   do IO<Unit>:

@@ -397,6 +397,33 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout.strip(), 'settled')
 
+    def complete_event(self, attempt, event, outcome='completed'):
+        completed = self.entry('complete-event', attempt, outcome, '', event)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip()
+
+    def test_attempt_completion_settles_the_result_cost_once(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        event = json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False,
+                            'total_cost_usd': 0.4875489})
+        self.assertEqual(self.complete_event('attempt-1', event), 'attempt-completed')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '0.4875489')])
+        self.assertEqual(self.complete_event('attempt-1', event), 'attempt-completed')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '0.4875489')])
+        self.assertEqual(self.reserve('attempt-2')[3], '199.5124511')
+
+    def test_attempt_completion_without_result_cost_keeps_the_bound(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.assertEqual(self.complete_event('attempt-1', '{"type":"result","is_error":true}', 'failed'),
+                         'attempt-completed')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('failed', '')])
+        self.assertEqual(self.reserve('attempt-2'), ['refused', 'monthlyCapExhausted'])
+
     def authorize(self, attempt, session='leaf'):
         completed = self.entry('authorize', session, 'claude-code', attempt)
         self.assertEqual(completed.returncode, 0, completed.stderr)
