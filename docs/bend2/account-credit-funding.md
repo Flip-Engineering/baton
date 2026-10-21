@@ -8,7 +8,7 @@ accounts, #711 owns numeric fidelity and #792 owns model discovery.
 
 ## What is recorded
 
-Three tables, created by `bend2/src/coordinator/accounts.bend`.
+Five tables, created by `bend2/src/coordinator/accounts.bend`.
 
 `accounts` names one provider identity:
 
@@ -55,70 +55,70 @@ An account stores a reference. The launch resolves it.
 A subscription account binds the credential directory the harness reads, through
 the existing `CODEX_HOME` or `CLAUDE_CONFIG_DIR` binding.
 
-An Anthropic API-key launch passes through `credit_launch_binding` in
-`bend2/src/coordinator/accounts.bend`. That function reads the route status
-from the recorded observations and returns no binding for the API-key route.
-The status is one of the eligibility results below. The packaged
-`api-key-exec` helper runs only when a `BATON2_CREDIT_RESERVATION` environment
-marker naming the attempt is present and matches `BATON_ATTEMPT_DIRECTORY`;
-no current binding sets that marker, and the helper also requires a
-`credit_authorizations` row for the attempt in `BATON_DATABASE`, so the helper
-returns `creditAdmissionUnavailable` before resolving a secret or starting a
-child. A marker by itself is not authorization. `credit_record_authorization`
-writes that row only for an eligible route status, in one transaction that
-selects the newest reported promotional observation, and the row records the
-actual reported balance, unit, cycle and the account secret reference. The
-helper check binds the row to the reference the account names. The host
-write query spins in the helper binary, so the helper performs this check on
-the read connection; consumption of the row after a successful launch is a
-remaining step for the proven route. The SQLite busy
-handler in `bend2/src/host/sqlite.c` waits at most 3000 retries of 10ms for
-one lock and then returns `SQLITE_BUSY` to the caller.
+An Anthropic API-key launch passes through `credit_launch_gate` in
+`bend2/src/coordinator/accounts.bend`. When the route qualification is enabled,
+the gate records the request reservation and a `credit_authorizations` row,
+then returns the packaged `api-key-exec` helper with the account secret
+reference. The helper requires the `BATON2_CREDIT_RESERVATION` environment
+marker naming the attempt to match `BATON_ATTEMPT_DIRECTORY`, then consumes the
+authorization with one guarded `UPDATE`: only `changes()=1` admits the launch.
+A consumed row refuses `creditAuthorizationConsumed`, a row naming another
+reference refuses `creditAuthorizationMismatch`, and a failed or zero-change
+consume refuses `creditAdmissionUnavailable` before any secret is resolved or
+child started. A marker by itself is not authorization. The SQLite busy handler
+in `bend2/src/host/sqlite.c` waits at most 3000 retries of 10ms for one lock and
+then returns `SQLITE_BUSY` to the caller.
+
+`credit_guard_qualified` returns false in this source. The gate therefore
+returns the hold sentence, writes no reservation and writes no authorization.
 The attempt is not started and its input stays owed. Subscription routes and
 other harnesses keep their existing bindings.
 
-## Request-level metering and admission
+## Request-level reservation
 
-`credit_request_admission` in `bend2/src/coordinator/accounts.bend` decides one
-provider request from a `CreditMeter` reading and a stated maximum charge for
-that request. Amounts are decimal text. The decision reserves the maximum
-charge against the reported promotional balance and against the monthly
-organization cap before a request can be started by a future caller.
+`credit_reservations` records one reservation per retained launch. The request
+identity is the attempt directory. A row carries the session, attempt, account,
+organization, balance cycle, cap period, observed balance, unit, reserved
+maximum, balance after the reserve, cap after the reserve, state, actual cost
+and outcome.
 
-The decision refuses with a named reason when any required fact is absent or
-does not match: the account is not the Anthropic `claude-code` `api_key` route,
-the account organization is unverified or differs from the meter organization,
-the newest promotional observation is not `reported`, the meter cycle differs
-from the current billing cycle, the cap period differs from the current
-calendar-month period, any amount is not a canonical decimal or the unit is
-empty, the stated maximum charge is zero, the reserved total plus the maximum
-charge exceeds the reported balance, or the cycle spend plus the reserved total
-plus the maximum charge exceeds the monthly cap. An admitted decision carries
-the organization, cycle, new reserved total, balance after the reserve and cap
-room after the reserve. The stated maximum charge is an input to this
-decision. Current source has no per-request caller for it, and a retained
-launch is not one provider request.
+`credit_reserve_for` reads the newest reported promotional-credit observation
+and the recorded reservations for the verified organization and cap period. It
+refuses with a named reason when the route is not the Anthropic `claude-code`
+`api_key` route, the organization is unverified, the observation is absent or
+unavailable, the balance cycle differs from the current month, the cap period
+is empty, a present expiry is not a future 13-digit epoch millisecond value,
+reported balances conflict for the cycle, the unit is not `USD`, an amount is
+not a canonical decimal, an active reservation exists, the ledger exceeds the
+`$200` cycle ceiling, the balance is zero, the ceiling is spent, or the lower
+bound is zero.
 
-Route eligibility reads actual recorded facts: the Anthropic `claude-code`
-`api_key` route, a verified organization, and the newest `promotional_credit`
-observation for that organization with its reported balance and unit. A
-reported zero balance reads `promotionalCreditExhausted`. Subscription quota
-and promotional credit are separate facts; a subscription account reads
-`notPromotionalCreditRoute` from this check and keeps its own route.
+The reserved maximum is the lower of the observed balance and the unspent
+ceiling: `min(balance, 200 - (recorded reservation spend + reconciled provider
+spend))`. The guard reserves the whole bound, so a second launch cannot start
+until the first settles. `credit_reservations_active` is a unique index on the
+organization, balance cycle and cap period for rows in state `reserved`. A
+repeated request returns its recorded row and does not reserve again.
+
+`credit_settle_for` replaces the bound with the actual cost when one is
+reported. A completed or failed attempt without a cost keeps the reserved
+maximum counted and records state `failed`; `account reconcile` settles that row
+with the provider's actual cost later. `account import-spend` records the Admin
+cost report's numeric USD amount for the organization and cap period, and the
+guard uses the larger of the local ledger and that reported spend.
+
+`credit_launch_gate` is the production caller before send. For an Anthropic
+`claude-code` `api_key` account it records the reservation, then the one-use
+authorization, and returns the packaged resolver binding.
+`credit_guard_qualified` returns false in this source, so the gate starts no
+paid launch and #884 remains in force. The release sets that qualification
+source true only after the installed qualification passes.
 
 The provider enforces the promotional balance on each API request. A retained
-launch contains an unbounded number of provider requests, and Baton has no
-point that sees each request the Claude CLI makes. Current source records no
-per-request charge and no launch charge. Actual provider cost enters the
-record as `external_spend` observations from the Admin cost report, at
-organization scope. The Claude result frame cost field is not parsed by
-current source. These are the missing data points for per-request accounting:
-a per-request interception point, per-request or per-launch actual cost
-parsing, and a live verified organization with a placed credential.
-
-Credit-only routing stays held until those data points exist and a route
-using them is qualified. Deployment requires a package built from this source
-and the coordinator qualification the release process runs.
+launch can contain more than one provider request, and Baton has no point that
+sees each request the Claude CLI makes. The reservation bounds the whole launch
+by the lower of the observed balance and the unspent ceiling. Per-request
+interception and per-request actual cost parsing remain absent.
 
 ## Funded credit observations
 
@@ -163,10 +163,11 @@ no observation that reported no value for the current cycle. When no such
 account exists it returns the operator-ordered first matching account and says
 so, with `preferredByObservation` false.
 
-The rule is a preference over recorded facts. A reported balance, including a
-reported zero, never refuses work; an observation never gates admission,
-continuation or input acceptance. The automatic route change stays driven by the
-provider's own refusal, which is the rule #702 established.
+The rule is a preference over recorded facts. Selection never refuses work.
+The API-key launch reservation guard is the admission control for that route;
+subscription routes and continuation keep the provider-driven rule. The
+automatic route change stays driven by the provider's own refusal, which is the
+rule #702 established.
 
 ## Continuation after a refusal
 
@@ -184,7 +185,7 @@ the failed attempt and its provider error are retained.
 ## Command surface
 
 ```
-account --action record|read|bind|attempts|select|observe|import-credit
+account --action record|read|bind|attempts|select|observe|import-credit|import-spend|reconcile
         [--session SESSION] [--id LABEL] [--provider NAME] [--harness NAME]
         [--funding subscription|api_key] [--secret-ref REFERENCE]
         [--organization ID] [--detail JSON]
@@ -201,9 +202,9 @@ configuration.
 
 - No balance is synthesized from model output, and subscription quota is never
   read as API credit.
-- Promotional-credit admission for one API-key request uses the meter decision
-  above. Subscription launches keep the selection and fallback rules in the
-  sections above.
+- Promotional-credit admission for one API-key launch uses the reservation
+  guard above. Subscription launches keep the selection and fallback rules in
+  the sections above.
 - Linking a plan to a Console organization, accepting program terms, purchasing
   credits and changing billing settings remain operator setup actions.
 - The observed Muse wording `Subscription quota exhausted` is not a marker of
@@ -222,16 +223,19 @@ checked for the absence of the secret value in stdout and stderr.
 
 `bend2/test/account-credits.bend` drives the pure funding vocabulary, the
 decimal and reference legality rules, exact decimal addition, subtraction and
-comparison, the request-level admission decision and its named refusals, the
-launch binding for both funding routes, the account-binding fallback and the
-selection rule. One fixture case holds the launch binding refused for an
-account whose meter decision admits a request, which records that this slice
-does not enable a launch.
-`bend2/test/account-credits.py` drives the compiled coordinator through the
-account actions, the organization verification, the unavailable observation,
-the pool deduplication and the launch's attempt record. Both are wired into
-`bend2/scripts/check-native.sh` and the selected-check recorder.
+comparison, the request-admission decision and its named refusals, the launch
+binding for both funding routes, the account-binding fallback and the selection
+rule.
 
-The coordinator-level test and the fixture require a Bend 2.0.25 compiler and
-clang, which the operator host does not have, so their result is recorded from
-the remote run rather than claimed here.
+`bend2/test/account-credits-focused.py` drives the compiled focused entry
+through the reservation guard: the lower-bound reserve, one-active
+serialization, provider-spend reconciliation, conflicting readings, non-USD and
+expiry refusal, missing-cost settlement, duplicate request idempotence, the
+qualified binding and the held launch, missing and stale observations, and
+process-failure settlement. `bend2/test/api-key-exec.test.mjs` covers the
+helper's credential boundary and one-use authorization. The focused and helper
+fixtures are wired into `bend2/scripts/check-native.sh`.
+
+The native fixtures require Bend 2.0.25 and clang. Source checks run with the
+installed compiler; native build and execution go through the shared compile
+queue and the installed qualification.
