@@ -6200,7 +6200,7 @@ static int baton_observer_recover(BatonSessionLock *call) {
   call->attempt.database=call->database;
   call->attempt.directory=call->directory;
   call->attempt.lock=(u32)call->handle;
-  if(call->live_transfer && !call->keeper) {
+  if(call->live_transfer && !call->observer_ended && !call->keeper) {
     call->detail="Live observer transfer requires the keeper connection.";
     return EBUSY;
   }
