@@ -208,7 +208,7 @@ def m2_unresumable_session_is_never_a_refusal(event, text):
 
 law m2_refusal_needs_the_harness_own_line:
   for +text: String
-  {Turn.refusal_body(True{}, SNil{}, text) == Tx.starts_with(Tx.trim_nl(text), "Error: Session") : Bool}
+  {Turn.refusal_body(True{}, SNil{}, text) == Bool.or(Tx.starts_with(Tx.trim_nl(text), "dsh: session "), Tx.starts_with(Tx.trim_nl(text), "Error: Session")) : Bool}
 
 def m2_refusal_needs_the_harness_own_line(text):
   {==}
