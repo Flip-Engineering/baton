@@ -138,11 +138,14 @@ paid launch and #884 remains in force. The release sets that qualification
 source true only after the installed qualification passes.
 
 The provider enforces the promotional balance on each API request. A retained
-launch can contain more than one provider request, and Baton has no point that
-sees each request the Claude CLI makes. The current reservation bounds the whole
-launch. Per-request interception remains the next required implementation. The
-policy and persistent state stay in Bend2; host code may provide the transport
-I/O, and a Node policy/proxy is not an approved boundary.
+launch can contain more than one provider request. `credit_request_facts_for`
+reads the actual Messages request body the host supplies, and
+`credit_launch_gate_priced` reserves the priced charge before the host may
+forward it. The installed host transport that sees each request and calls this
+gate is not present in this source; the guard remains false until that native
+transport and the compiled qualification pass. Policy and persistent state stay
+in Bend2; host code provides the transport I/O, and a Node policy/proxy is not
+an approved boundary.
 
 ## Funded credit observations
 

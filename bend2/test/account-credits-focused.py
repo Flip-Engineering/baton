@@ -309,6 +309,16 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return completed.stdout.strip().split('|')
 
+    def facts(self, body):
+        completed = self.entry('facts', body)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip().split('|')
+
+    def gate_body(self, attempt, body, qualified='1', session='leaf'):
+        completed = self.entry('gate-body', session, 'claude-code', attempt, body, qualified)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip().split('|')
+
     def settle(self, request, outcome='completed', cost=''):
         completed = self.entry('settle', request, outcome, cost)
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -379,6 +389,35 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(refused[0], 'refused')
         self.assertIn('creditModelUnpriced', refused[1])
         self.assertEqual(self.query("SELECT count(*) FROM credit_reservations"), [(0,)])
+
+    def test_request_facts_read_the_actual_body(self):
+        body = '{"model":"claude-opus-5-5","max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}'
+        facts = self.facts(body)
+        self.assertEqual(facts[0], 'claude-opus-5-5')
+        self.assertEqual(facts[1], str(len(body.encode())))
+        self.assertEqual(facts[2], '1024')
+        self.assertEqual(facts[3:6], ['0', '0', '0'])
+        self.assertEqual(facts[6:], ['global', '0', '0', '0'])
+
+    def test_request_facts_mark_cache_fast_and_server_tools(self):
+        body = '{"model":"claude-opus-5-5","max_tokens":100,"speed":"fast","system":[{"type":"text","text":"x","cache_control":{"type":"ephemeral","ttl":"1h"}}],"tools":[{"type":"web_search_20250305","name":"web_search"}],"messages":[]}'
+        facts = self.facts(body)
+        self.assertEqual(facts[0], 'claude-opus-5-5')
+        self.assertEqual(facts[1], str(len(body.encode())))
+        self.assertEqual(facts[2], '100')
+        self.assertEqual(facts[3], str(len(body.encode())))
+        self.assertEqual(facts[4], str(len(body.encode())))
+        self.assertEqual(facts[5:], ['0', 'global', '1', '1', '1'])
+
+    def test_the_gate_prices_the_actual_request_body(self):
+        self.credit_account('200.00')
+        body = '{"model":"claude-opus-5-5","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}'
+        result = self.gate_body('attempt-1', body)
+        self.assertEqual(result[0], 'binding')
+        nanos = len(body.encode()) * 4000 + 20000
+        whole, frac = divmod(nanos, 10 ** 9)
+        self.assertEqual(self.query("SELECT request,state,max_charge FROM credit_reservations"),
+                         [('attempt-1', 'reserved', f'{whole}.{frac:09d}')])
 
     def test_reservation_uses_provider_spend_reconciliation(self):
         self.credit_account('200.00')

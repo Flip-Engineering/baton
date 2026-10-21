@@ -992,6 +992,29 @@ def credit_request_price(+facts: CreditRequestFacts) -> CreditRequestPrice:
     case CRF{model,input_tokens,output_tokens,cache_5m,cache_1h,cache_hit,geo,fast_mode,server_actions,tools}:
       credit_request_price_server(Nat.read(server_actions),model,input_tokens,output_tokens,cache_5m,cache_1h,cache_hit,geo,fast_mode,tools)
 
+# The actual Anthropic Messages request body supplies the price facts. The host
+# transport passes the body unchanged; this reader takes the model, the output
+# bound, a byte upper bound for input, cache-control presence, geography, fast
+# mode and tool flags. The byte length is an upper bound on the request's token
+# count; the policy prices it conservatively.
+def credit_request_facts_sql(+body: String) -> String:
+  +b = C.q(body)
+  "WITH frame(value) AS (VALUES(" ++ b ++ ")), facts(model,input,output,cache5,cache1,cachehit,geo,fast,server,tools) AS (SELECT coalesce(json_extract(value,'$.model'),''),coalesce(CAST(json_extract(value,'$.max_tokens') AS TEXT),''),CAST(length(CAST(value AS BLOB)) AS TEXT),CASE WHEN EXISTS(SELECT 1 FROM json_tree(frame.value) WHERE key='cache_control') THEN CAST(length(CAST(value AS BLOB)) AS TEXT) ELSE '0' END,CASE WHEN EXISTS(SELECT 1 FROM json_tree(frame.value) WHERE key='ttl' AND value='1h') THEN CAST(length(CAST(value AS BLOB)) AS TEXT) ELSE '0' END,'0',coalesce(json_extract(value,'$.inference_geo'),'global'),CASE WHEN json_extract(value,'$.speed')='fast' OR json_extract(value,'$.fast')=1 THEN '1' ELSE '0' END,CASE WHEN EXISTS(SELECT 1 FROM json_tree(frame.value) WHERE key='type' AND (value LIKE 'web_search%' OR value LIKE 'web_fetch%' OR value LIKE 'code_execution%' OR value LIKE 'computer%' OR value LIKE 'bash%')) THEN '1' ELSE '0' END,CASE WHEN json_type(value,'$.tools')='array' AND json_array_length(value,'$.tools')>0 THEN '1' ELSE '0' END FROM frame WHERE json_valid(value)) SELECT model||char(31)||input||char(31)||output||char(31)||cache5||char(31)||cache1||char(31)||cachehit||char(31)||geo||char(31)||fast||char(31)||server||char(31)||tools FROM facts;"
+
+def credit_request_facts_fields(fields: List<&2,String>) -> CreditRequestFacts:
+  match fields:
+    case model <> input <> output <> cache5 <> cache1 <> cachehit <> geo <> fast <> server <> tools <> rest:
+      CRF{model,input,output,cache5,cache1,cachehit,geo,String.eq(fast,"1"),server,String.eq(tools,"1")}
+    case other:
+      CRF{"","","","","","","global",False{},"0",False{}}
+
+def credit_request_facts_for(+db: String, +body: String) -> IO(CreditRequestFacts):
+  do IO<CreditRequestFacts>:
+    ready : Unit <- ensure(db)
+    text : String <- IO.try(String,DB.Sql.read(db,credit_request_facts_sql(body)))
+    +fields : List<&2,String> <- IO.pure(List<&2,String>,String.split(Tx.trim_nl(text),Char.from_u32(31)))
+    IO.pure(CreditRequestFacts,credit_request_facts_fields(fields))
+
 # One row per account, fields separated by the ASCII unit separator, in operator
 # recording order.
 def account_row_sql() -> String:
