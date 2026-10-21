@@ -78,9 +78,6 @@ permissions:
   contents: read
 
 env:
-  BATON2_COMPILE_QUEUE_BIN: /usr/local/libexec/baton2/compile-queue/bin/baton-compile-queue
-  BATON_COMPILE_QUEUE_ROOT: /var/tmp/baton2-compile-queue
-  BATON_COMPILE_QUEUE_GROUP: baton-compile
   BATON2_SOURCE_SHA: ${{ inputs.source_commit || (github.event_name == 'pull_request' && github.event.pull_request.head.sha) || github.sha }}
 
 jobs:
@@ -93,14 +90,6 @@ jobs:
       BEND_NO_TELEMETRY: '1'
       BUN_JSC_maxPerThreadStackUsage: '67108864'
     steps:
-      - name: Prepare shared compiler queue root
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(stat -c %a "$BATON_COMPILE_QUEUE_ROOT")" = 2770
-          test "$(stat -c %G "$BATON_COMPILE_QUEUE_ROOT")" = "$BATON_COMPILE_QUEUE_GROUP"
-          test -w "$BATON_COMPILE_QUEUE_ROOT"
-          test "$(stat -c %U:%G:%a "$BATON2_COMPILE_QUEUE_BIN")" = root:root:755
       - name: Validate exact source commit
         shell: bash
         run: '[[ "$BATON2_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]'
@@ -283,14 +272,6 @@ jobs:
       BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.target_commit }}
       BATON2_TARGET_BUILD_RUN: ${{ inputs.target_build_run }}
     steps:
-      - name: Prepare shared compiler queue root
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(stat -c %a "$BATON_COMPILE_QUEUE_ROOT")" = 2770
-          test "$(stat -c %G "$BATON_COMPILE_QUEUE_ROOT")" = "$BATON_COMPILE_QUEUE_GROUP"
-          test -w "$BATON_COMPILE_QUEUE_ROOT"
-          test "$(stat -c %U:%G:%a "$BATON2_COMPILE_QUEUE_BIN")" = root:root:755
       - name: Validate exact source commit
         shell: bash
         run: '[[ "$BATON2_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]'
@@ -401,19 +382,8 @@ jobs:
     needs: [linux-candidate, linux-target]
     runs-on: [self-hosted, macOS, ARM64, baton2-native-darwin-arm64]
     env:
-      BATON_COMPILE_QUEUE_ROOT: /private/var/tmp/baton2-compile-queue
-      BATON_COMPILE_QUEUE_GROUP: staff
       BATON2_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || '' }}
     steps:
-      - name: Prepare shared compiler queue root
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(stat -f %Lp "$BATON_COMPILE_QUEUE_ROOT")" = 2770
-          test "$(stat -f %Sg "$BATON_COMPILE_QUEUE_ROOT")" = "$BATON_COMPILE_QUEUE_GROUP"
-          id -Gn | tr ' ' '\n' | grep -Fx "$BATON_COMPILE_QUEUE_GROUP"
-          test -w "$BATON_COMPILE_QUEUE_ROOT"
-          test "$(stat -f %Su:%Sg:%Lp "$BATON2_COMPILE_QUEUE_BIN")" = root:wheel:755
       - name: Checkout exact source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -584,6 +554,7 @@ jobs:
             --output "$BATON2_NATIVE_RUN/package"
             --bend "$BATON2_NATIVE_RUN/toolchain-home/bin/bend"
             --compiler-archive "$BATON2_NATIVE_RUN/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
+            --generated-c "$RUNNER_TEMP/baton2-generated-c-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/generated/baton2.c"
             --context-typescript-package "$BATON2_NATIVE_RUN/typescript-runtime/node_modules/typescript"
           )
           runtime_sha=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["binary"]["sha256"])' "$BATON2_NATIVE_RUN/repl-runtime/runtime.json")
