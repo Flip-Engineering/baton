@@ -286,10 +286,14 @@ def reset_cases(+db: String) -> IO(Unit):
     +executions_after : String <- read(db,"SELECT count(*) FROM executions;")
     expect("reset-creates-no-execution",String.eq(executions_before,executions_after))
 
+def instance_mode(+mode: String, +db: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(mode,"--instance-owner"),IO.try(Unit,Custody.Instance.owner(db)),
+    Bool.pick(IO(Unit),String.eq(mode,"--instance-shutdown"),IO.try(Unit,Custody.Instance.shutdown(db)),
+      IO.die(Unit,2,"usage: quota-backoff-dedupe DB")))
+
 def main_args(args: List<String>) -> IO(Unit):
   match args:
-    case "--instance-owner" <> db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
-    case "--instance-shutdown" <> db <> Nil{}: IO.try(Unit,Custody.Instance.shutdown(db))
+    case mode <> db <> Nil{}: instance_mode(mode,db)
     case +path <> Nil{}: do IO<Unit>:
       setup(path)
       gate_cases(path)
