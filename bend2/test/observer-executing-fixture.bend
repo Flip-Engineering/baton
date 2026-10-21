@@ -22,9 +22,10 @@ import ../src/host/process.bend as P
 def session_name() -> String:
   "parent"
 
-def init_db(db: String, harness: String) -> IO(Unit):
+def init_db(+db: String, harness: String) -> IO(Unit):
   do IO<Unit>:
-    saved : Result<&1,&1,U32 & String,String> <- Store.transact_sql(db,"BEGIN IMMEDIATE;" ++ C.schema() ++ "INSERT OR IGNORE INTO sessions(id,parent,harness,model) VALUES(" ++ C.q(session_name()) ++ ",NULL," ++ C.q(harness) ++ ",'');COMMIT;")
+    ensured : Unit <- Store.ensure_before_begin(db)
+    saved : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.schema() ++ "INSERT OR IGNORE INTO sessions(id,parent,harness,model) VALUES(" ++ C.q(session_name()) ++ ",NULL," ++ C.q(harness) ++ ",'');COMMIT;")
     IO.pure(Unit,Unit{})
 
 def wait_gate_for(+path: String, remaining: Nat) -> IO(Unit):

@@ -887,13 +887,20 @@ def observe_guarded_state(+db: String, +session: String, +id: String, cursor: St
       observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,normalized_harness,directory,directory,handle,"unknown")
       completed_observation(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted,cmd)
 
+
+def observe_guarded_reconciled(+db: String, +session: String, +id: String, +cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +harness: String, +directory: String, +native: String, +handle: U32, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, reconciled: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match reconciled:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+    case Done{unit}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      gone : Bool <- orphan_native_gone(db,handle)
+      observe_guarded_state(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,lock,again,adopted,gone)
+
 def observe_guarded(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   Storage.with_writer_leases(Result<&1,&1,U32 & String,Unit>, log, directory,
     error => IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error}),
     unit => do IO<Result<&1,&1,U32 & String,Unit>>:
-      reconciled : Unit <- Stop.observing(db,session,id,directory)
-      gone : Bool <- orphan_native_gone(db,handle)
-      observe_guarded_state(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,lock,again,adopted,gone))
+      reconciled : Result<&1,&1,U32 & String,Unit> <- Stop.observing_result(db,session,id,directory)
+      observe_guarded_reconciled(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,lock,again,adopted,reconciled))
 
 def recovery_arguments(args: List<&2,String>) -> List<&2,String>:
   match args:
