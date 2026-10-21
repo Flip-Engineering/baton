@@ -259,6 +259,26 @@ wait "$m1" || bad 'mixed cgen requester failed'
 wait "$m2" || bad 'mixed cc requester failed'
 assert_serialized && pass 'cgen and cc serialized together' || bad 'cgen and cc intervals overlap'
 
+# The retained reference launcher and the installed native queue share the
+# heavy execution custody. Run their distinct cgen requests concurrently and
+# assert the compiler intervals do not overlap.
+REFERENCE=${BATON_COMPILE_QUEUE_REFERENCE:-}
+if [ -n "$REFERENCE" ] && [ -x "$REFERENCE" ]; then
+  : > "$LOG"
+  run_cgen cross-native "$T/cross-native.c" --sleep 1 & n1=$!
+  "$REFERENCE" run --kind cgen --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
+    --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$FAKE" \
+    --artifact "c=$T/cross-reference.c" --option test=cross-reference \
+    -- "$FAKE" --tag cross-reference --log "$LOG" -o "$T/cross-reference.c" --sleep 1 \
+    >"$T/cross-reference.out" 2>"$T/cross-reference.err" & n2=$!
+  wait "$n1" || bad 'native cross-launcher requester failed'
+  wait "$n2" || bad 'reference cross-launcher requester failed'
+  assert_serialized && pass 'native and reference heavy custody serialized' \
+    || bad 'native and reference compiler intervals overlap'
+else
+  printf 'SKIP reference launcher not configured: set BATON_COMPILE_QUEUE_REFERENCE\n'
+fi
+
 # Shared failure and retry.
 : > "$LOG"
 run_cc failure "$T/failure1" --fail & f1=$!

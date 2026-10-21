@@ -40,10 +40,28 @@ command -v "$cc" >/dev/null 2>&1 || {
   exit 1
 }
 mkdir -p "$(dirname -- "$output")"
+state=${BATON_COMPILE_QUEUE_ROOT:-}
+if [ -z "$state" ]; then
+  if [ -n "${XDG_CACHE_HOME:-}" ]; then
+    state="$XDG_CACHE_HOME/baton/compile-queue"
+  elif [ -n "${HOME:-}" ]; then
+    state="$HOME/.cache/baton/compile-queue"
+  else
+    state="/tmp/baton-compile-queue-$(id -u)"
+  fi
+fi
+mkdir -p "$state"
+exec 8>"$state/heavy.lock"
+flock -x 8
+lock_inode=$(stat -c '%d:%i' "$state/heavy.lock")
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/baton2-queue-bootstrap.XXXXXXXX")
+telemetry="$scratch/telemetry"
 cleanup_bootstrap() {
   status=$?
   trap - EXIT
+  [ -n "${telemetry:-}" ] && [ -d "$scratch" ] && {
+    printf 'terminal_status=%s\n' "$status" >> "$telemetry"
+  }
   rm -rf -- "$scratch"
   exit "$status"
 }
@@ -51,6 +69,18 @@ trap cleanup_bootstrap EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+printf 'schema=baton-compile-queue-custody-v1\n' > "$telemetry"
+printf 'kind=bootstrap\nlock_path=%s\nlock_identity=%s\nlock_descriptor=8\n' \
+  "$state/heavy.lock" "$lock_inode" >> "$telemetry"
+printf 'entry=%s\ncompiler=%s\ncc=%s\nstarted_ns=%s\n' \
+  "$entry" "$compiler" "$cc" "$(date +%s%N)" >> "$telemetry"
+printf 'phase=compile\n' >> "$telemetry"
 "$compiler" "$entry" -o "$scratch/compile-queue.c"
+printf 'phase=link\n' >> "$telemetry"
 "$cc" -O1 -pthread "$scratch/compile-queue.c" -lsqlite3 -lm -o "$output"
+printf 'phase=done\nterminal_status=0\n' >> "$telemetry"
+if [ -n "${BATON_COMPILE_QUEUE_TELEMETRY:-}" ]; then
+  cp "$telemetry" "$BATON_COMPILE_QUEUE_TELEMETRY" 2>/dev/null || true
+fi
+flock -u 8
 printf '%s\n' "$output"
