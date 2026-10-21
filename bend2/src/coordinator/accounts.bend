@@ -1626,6 +1626,33 @@ def credit_launch_reserved(+db: String, +session: String, +attempt: String, +acc
       credit_launch_authorized(db,session,attempt,account,helper),
       IO.pure(Maybe<List<String>> & String,(None{},credit_guard_refusal_status(credit_admission_reason(decision)))))
 
+def credit_launch_price_reserved(+db: String, +session: String, +attempt: String, +account: AccountRecord, +helper: String, +max_charge: String) -> IO(Maybe<List<String>> & String):
+  do IO<Maybe<List<String>> & String>:
+    +period : String <- credit_current_period_io(db)
+    +decision : CreditAdmission <- credit_reserve_bounded_for(db,session,attempt,account,period,max_charge)
+    Bool.pick(IO(Maybe<List<String>> & String),credit_admission_admitted(decision),
+      credit_launch_authorized(db,session,attempt,account,helper),
+      IO.pure(Maybe<List<String>> & String,(None{},credit_guard_refusal_status(credit_admission_reason(decision)))))
+
+def credit_launch_price_decided(+db: String, +session: String, +attempt: String, +account: AccountRecord, +helper: String, +decision: CreditRequestPrice) -> IO(Maybe<List<String>> & String):
+  match decision:
+    case Priced{max_charge}: credit_launch_price_reserved(db,session,attempt,account,helper,max_charge)
+    case PriceRefused{reason}: IO.pure(Maybe<List<String>> & String,(None{},credit_guard_refusal_status(reason)))
+
+def credit_launch_gate_priced_account(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, +helper: String, +profile_store: String, +facts: CreditRequestFacts, qualified: Bool) -> IO(Maybe<List<String>> & String):
+  Bool.pick(IO(Maybe<List<String>> & String),credit_guard_route_account(account),
+    Bool.pick(IO(Maybe<List<String>> & String),qualified,
+      credit_launch_price_decided(db,session,attempt,account,helper,credit_request_price(facts)),
+      IO.pure(Maybe<List<String>> & String,(None{},credit_api_key_refusal(account)))),
+    IO.pure(Maybe<List<String>> & String,(account_binding(harness,Some{account},api_key_resolver_value(helper),profile_store),"")))
+
+def credit_launch_gate_priced(+db: String, +session: String, +attempt: String, +harness: String, +chosen: Maybe<&2,AccountRecord>, helper: Maybe<String>, +profile_store: String, +facts: CreditRequestFacts, qualified: Bool) -> IO(Maybe<List<String>> & String):
+  match chosen:
+    case None{}: IO.pure(Maybe<List<String>> & String,(account_binding(harness,None{},helper,profile_store),""))
+    case Some{+account}: do IO<Maybe<List<String>> & String>:
+      +helper_path : String = credit_launch_helper_text(helper)
+      credit_launch_gate_priced_account(db,session,attempt,harness,account,helper_path,profile_store,facts,qualified)
+
 def credit_launch_gate_account(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, +helper: String, +profile_store: String, qualified: Bool) -> IO(Maybe<List<String>> & String):
   Bool.pick(IO(Maybe<List<String>> & String),credit_guard_route_account(account),
     Bool.pick(IO(Maybe<List<String>> & String),qualified,

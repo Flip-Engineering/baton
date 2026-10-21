@@ -67,6 +67,12 @@ def reserve_bound_decided(+db: String, +session: String, +attempt: String, +peri
       decision : A.CreditAdmission <- A.credit_reserve_bounded_for(db,session,attempt,chosen,period,bound)
       IO.print(admission_line(decision))
 
+def gate_priced_pair(+db: String, +session: String, +harness: String, +attempt: String, +model: String, +input: String, +output: String, +cache5: String, +cache1: String, +cachehit: String, +geo: String, +fast: String, +server: String, +tools: String, +qualified: String) -> IO(Unit):
+  do IO<Unit>:
+    +account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
+    pair : Maybe<List<String>> & String <- A.credit_launch_gate_priced(db,session,attempt,harness,account,Some{"/fixture/api-key-exec"},"",A.CRF{model,input,output,cache5,cache1,cachehit,geo,String.eq(fast,"1"),server,String.eq(tools,"1")},String.eq(qualified,"1"))
+    IO.print(gate_line(pair))
+
 def reserve_decided(+db: String, +session: String, +attempt: String, +cap: String, account: Maybe<&2,A.AccountRecord>) -> IO(Unit):
   match account:
     case None{}: IO.print("refused|accountAbsent")
@@ -143,7 +149,9 @@ def dispatch(arguments: List<String>) -> IO(Unit):
       do IO<Unit>:
         +account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
         reserve_bound_decided(db,session,attempt,period,bound,account)
-    case other: IO.die(Unit,2,"account-credits-entry: account|handoff|current|attempt|gate|complete|complete-event|reserve|reserve-bound|settle|reconcile|gate-qualified|gate-held|price|history-needed")
+    case +db <> "gate-priced" <> +session <> +harness <> +attempt <> +model <> +input <> +output <> +cache5 <> +cache1 <> +cachehit <> +geo <> +fast <> +server <> +tools <> +qualified <> Nil{}:
+      gate_priced_pair(db,session,harness,attempt,model,input,output,cache5,cache1,cachehit,geo,fast,server,tools,qualified)
+    case other: IO.die(Unit,2,"account-credits-entry: account|handoff|current|attempt|gate|complete|complete-event|reserve|reserve-bound|settle|reconcile|gate-qualified|gate-held|gate-priced|price|history-needed")
 
 def main() -> IO(Unit):
   do IO<Unit>:

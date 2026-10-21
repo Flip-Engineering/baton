@@ -304,6 +304,11 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return completed.stdout.strip().split('|')
 
+    def gate_priced(self, attempt, model='claude-opus-5-5', input='1', output='1', cache5='0', cache1='0', cachehit='0', geo='global', fast='0', server='0', tools='0', qualified='1', session='leaf'):
+        completed = self.entry('gate-priced', session, 'claude-code', attempt, model, input, output, cache5, cache1, cachehit, geo, fast, server, tools, qualified)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip().split('|')
+
     def settle(self, request, outcome='completed', cost=''):
         completed = self.entry('settle', request, outcome, cost)
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -357,6 +362,23 @@ class FocusedAccountCredits(unittest.TestCase):
         second = self.reserve_bound('attempt-2', '198.75')
         self.assertEqual(second[:3], ['admitted', 'org-fixture', 'grant:2026-10-11'])
         self.assertEqual(second[3:], ['198.75', '1.25', '0'])
+
+    def test_the_priced_gate_reserves_the_request_bound_before_binding(self):
+        self.credit_account('200.00')
+        bound = self.gate_priced('attempt-1')
+        self.assertEqual(bound[0], 'binding')
+        self.assertEqual(self.query("SELECT request,state,max_charge FROM credit_reservations"),
+                         [('attempt-1', 'reserved', '0.000024000')])
+        again = self.gate_priced('attempt-2')
+        self.assertEqual(again[0], 'refused')
+        self.assertIn('creditReservationInFlight', again[1])
+
+    def test_the_priced_gate_refuses_an_unpriced_request(self):
+        self.credit_account('200.00')
+        refused = self.gate_priced('attempt-1', model='claude-unknown')
+        self.assertEqual(refused[0], 'refused')
+        self.assertIn('creditModelUnpriced', refused[1])
+        self.assertEqual(self.query("SELECT count(*) FROM credit_reservations"), [(0,)])
 
     def test_reservation_uses_provider_spend_reconciliation(self):
         self.credit_account('200.00')
