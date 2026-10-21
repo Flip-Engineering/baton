@@ -33,6 +33,7 @@ function resolveBend() {
 }
 
 const BEND = resolveBend();
+const CUSTODY_ENV = { ...ENV, BEND };
 
 const version = execFileSync(BEND, ['version'], { env: ENV, cwd: ROOT, encoding: 'utf8', maxBuffer: Infinity }).trim();
 if (version !== 'bend 2.0.25') {
@@ -57,8 +58,14 @@ function moduleName(path) {
   return relative(SRC, path).replace(/\.bend$/, '');
 }
 
-function run(args, opts = {}) {
-  return execFileSync(BEND, args, { env: ENV, cwd: ROOT, encoding: 'utf8', maxBuffer: Infinity, ...opts });
+function runCustody(args) {
+  return execFileSync('sh', [join(ROOT, 'bend2', 'scripts', 'check-bend.sh'), ...args],
+    { env: CUSTODY_ENV, cwd: ROOT, encoding: 'utf8', maxBuffer: Infinity });
+}
+
+function buildNative(mod, output) {
+  return execFileSync('sh', [join(ROOT, 'bend2', 'scripts', 'build-native.sh'), mod, output],
+    { env: CUSTODY_ENV, cwd: ROOT, encoding: 'utf8', maxBuffer: Infinity });
 }
 
 const modules = discoverModules(SRC);
@@ -83,7 +90,7 @@ for (const mod of modules) {
   const expected = readFileSync(expectedPath, 'utf8');
 
   try {
-    run(['--check-only', mod]);
+    runCustody(['--check-only', mod]);
     result.checkOnly = 'pass';
   } catch (err) {
     result.checkOnly = 'fail';
@@ -96,7 +103,9 @@ for (const mod of modules) {
 
   let interpretedOut;
   try {
-    interpretedOut = run([mod]);
+    // A bare run submits its own cc request from cli_build; the frontend phase
+    // runs before that request and has no separate queue entry point.
+    interpretedOut = execFileSync(BEND, [mod], { env: ENV, cwd: ROOT, encoding: 'utf8', maxBuffer: Infinity });
     totalRuns++;
     if (interpretedOut === expected) {
       result.interpreted = 'pass';
@@ -121,7 +130,7 @@ for (const mod of modules) {
   const binaryPath = join(SCRATCH, name.replace(/\//g, '-'));
   let nativeOut;
   try {
-    run([mod, '-o', binaryPath]);
+    buildNative(mod, binaryPath);
     nativeOut = execFileSync(binaryPath, [], { env: ENV, cwd: ROOT, encoding: 'utf8', maxBuffer: Infinity });
     totalRuns++;
     if (nativeOut === expected) {
