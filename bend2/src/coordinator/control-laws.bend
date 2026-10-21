@@ -72,7 +72,6 @@ law detached_delivery_commits_before_launch_and_checks_refusals:
   {Control.dispatch_body(db,id,sender,recipient,kind,body) == (do IO<String>:
   +saved : String <- IO.try(String,Store.commit(db,C.Message{id,sender,recipient,kind,body}))
   launched : String <- Control.dispatch_admitted(db,id,saved,Bool.or(Store.refused(saved),Tx.starts_with(saved,"{\"error\":\"session-stopped\"")))
-  woken : Result<&1,&1,U32 & String,Unit> <- Wake.drive_id(db,id)
   IO.pure(String,launched)) : IO(String)}
 
 def detached_delivery_commits_before_launch_and_checks_refusals(db,id,sender,recipient,kind,body):
@@ -96,6 +95,7 @@ law principal_startup_validates_before_assignment_and_dispatch:
   endpoint : String <- Control.configured_endpoint(db,session,cmd,log,model)
   configured : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ Control.start_sql(session,harness,model,effort,workspace,endpoint) ++ "COMMIT;"))
   allowed : Unit <- Control.startup_refused(Tx.trim_nl(configured))
+  session_read : String <- IO.try(String,Store.read(db,C.Session{session}))
   Control.dispatch_body(db,id,"operator",session,"task",body)) : IO(String)}
 
 def principal_startup_validates_before_assignment_and_dispatch(db,session,harness,cmd,model,effort,cwd,log,id,task):
@@ -118,7 +118,7 @@ law detached_turn_uses_the_recorded_assignment_and_native_identity:
   {Control.dispatch_turn(db,player,id,cmd,log,task) == (do IO<String>:
   found : String <- IO.try(String,Store.commit(db,C.Session{player}))
   present : String <- Control.registered(found)
-  allowed : String <- IO.try(String,DB.Sql.query(db,Control.turn_admission_sql(player)))
+  allowed : String <- IO.try(String,DB.Sql.read(db,Control.turn_admission_sql(player)))
   admitted : Unit <- Control.turn_admitted(String.eq(allowed,"1\n"))
   command : Unit <- Control.command_present(String.is_empty(cmd))
   harness_cmd : String <- IO.try(String,Host.Control.command(cmd))
