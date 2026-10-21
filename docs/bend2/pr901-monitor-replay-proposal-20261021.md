@@ -49,9 +49,9 @@ recovery with an exited native never replays the retained spool.
 
 - `observe_guarded_state` with `gone=True` now reads
   `Observer.monitor_handle`. A monitor handle goes to `gone_monitor`, which
-  records the unknown exit status, runs `Turn.retained_output`, and completes
-  through `completed_observation`. A non-monitor handle keeps the existing
-  `gone_orphan` path.
+  records `unavailable: native exit status was not retained`, runs
+  `Turn.retained_output`, and completes through `completed_observation`. A
+  non-monitor handle keeps the existing `gone_orphan` path.
 - `ack_then_retire` now takes the database, checks
   `Observer.monitor_handle`, and skips acknowledgment and retirement for a
   monitor handle. The non-monitor acknowledgment and retirement remain in
@@ -59,35 +59,92 @@ recovery with an exited native never replays the retained spool.
 
 Expected behavior for the required test: the recovery replays the retained
 spool from the stored cursor to EOF, commits monitor checkpoints, records
-`unknown after keeper loss`, leaves the attempt unacknowledged and unreleased,
-and exits nonzero because the native status is unknown. The final checkpoint
-and custody offsets should equal 46,123,112.
+`unavailable: native exit status was not retained`, leaves the attempt
+unacknowledged and unreleased, and exits nonzero because the native status is
+unavailable. The final checkpoint and custody offsets should equal 46,123,112.
+
+## Restore-invalid monitor path
+
+`Turn.retained_output` computes `monitor = Observer.monitor_handle(db,handle)`.
+When monitor is true it calls `Observer.restore(db,handle,True)`.
+`Observer.restore` and `decode` now return `RestoreOutcome`.
+
+- A valid stored state returns `Restored{state}`.
+- An empty or invalid state with `monitor=true` returns
+  `Rejected{"Native observer checkpoint state is empty or invalid at its
+  retained cursor."}`.
+- `monitor=false` keeps the existing non-monitor reset in
+  `reset_nonmonitor`, which calls `Custody.Instance.replay` and commits an
+  empty non-monitor state. That helper is not reachable with monitor true.
+
+The rejected outcome becomes
+`Ended{"checkpoint rejected","",reason,True{}}` in `retained_output_restored`.
+It opens no subscription, writes no state, moves no cursor, and does not
+acknowledge or retire. The existing checkpoint and custody remain.
+
+The earlier `reset_empty_case` monitor branch committed an empty reducer at the
+existing cursor. At a nonzero cursor that discarded held or terminal projection
+while retaining consumed offsets. The monitor branch is removed. A
+`monitor_reset...` law that enshrined the empty commit was removed; no law
+asserts that empty commit is safe.
+
+`monitor_handle` reads `observation` from `Custody.Instance.state`;
+`br_instance_state_call` reports `monitor` when `retained->observer_only` is
+set. If that predicate returns false for a monitor-only handle, the
+non-monitor reset path becomes reachable; a future change to the field or guard
+requires re-evaluation.
+
+## 398d73b9 applicability
+
+`398d73b9` is not present in this checkout or its fetched refs. It was not
+applied or reviewed here. The 398d candidate `ef699465` and run
+`1792614554404765428-469924` are pending under the root build custody hold.
+This proposal keeps parent `942b6075c`. The analysis and host-guard limits
+apply to `942b6075c`; if the pending candidate or a later change alters the
+observer-only guard, the `Custody.Instance.state` observation field, or the
+monitor checkpoint validation, the proposal must be re-evaluated.
+
+## Host-guard limits
+
+- `baton_process_call` rejects `BP_INSTANCE_REPLAY` when
+  `retained->observer_only` is set.
+- `br_command` rejects `BR_ACK`, `BR_RELEASE`, `BR_CLOSE`, `BR_WRITE` and
+  `BR_SIGNAL` for a monitor-only keeper.
+- `br_monitor_checkpoint` accepts only `observer_only`, and for an
+  orphan-adopted monitor it requires `offset >= custody.offset` and rewrites
+  the custody record.
+
+The monitor invalid path rejects without replay or commit. Valid monitor state
+proceeds to `monitor_commit` through the existing consume path. The proposal
+does not change these host guards.
 
 ## Focused checks
 
-Both commands use the released compiler
-`2.0.25-f5185e38-pr967-pr968-e5c4efd-20261019`:
+Earlier direct check-only receipts, before the current custody hold, used the
+released compiler `2.0.25-f5185e38-pr967-pr968-e5c4efd-20261019`:
 
-```sh
-bend --check-only bend2/src/coordinator/receive.bend
-bend --check-only bend2/test/observer-recovery-entry.bend
-```
+- `bend2/src/coordinator/observer-checkpoint.bend`: status 0
+- `bend2/src/coordinator/turn.bend`: status 0
+- `bend2/src/coordinator/receive.bend`: status 0
+- `bend2/src/coordinator/observer-checkpoint-laws.bend`: status 0
+- `bend2/test/observer-recovery-entry.bend`: status 0
 
-Both returned status 0. `receive.bend` reported only the usual unsafe or
-foreign definitions. No build, replay, or full-suite run was performed.
+The final source edit changed the monitor status string in `receive.bend` and
+renamed the empty outcome helper. No new check-only was run under the custody
+hold. All Bend2 compiler invocations now require the maintained shared-build
+custody launchers.
 
 ## Limits
 
 The proposal is not behaviorally verified. The canonical `observer-recovery`
-binary was not rebuilt and no installed runtime was changed.
+binary was not rebuilt and no installed runtime was changed. The gone-native
+monitor path, monitor completion, and `completed_observation` profile,
+transient and restart paths were not exercised.
 
-If `Observer.restore` rejects the stored reducer state, the recovery calls
-`Instance.replay`. The host still refuses `BP_INSTANCE_REPLAY` on a
-monitor-only handle. A monitor replay would also have to reconcile the
-non-decreasing custody cursor enforced by `br_monitor_checkpoint`. This
-proposal does not change that host guard; it addresses the observed path where
-the stored state is used and the gone branch skips the spool entirely.
+Acceptance must exercise a valid nonzero checkpoint through EOF and the
+rejected-state path. Neither ran on a build. The prior empty-at-cursor risk is
+named above; the successor rejects empty or invalid monitor state before any
+write. The non-monitor reset remains and uses replay outside the monitor guard.
 
-`completed_observation` has profile, transient and restart paths that were not
-exercised. Root decides whether this proposal is the correct fix or whether
-the monitor replay guard and cursor reset belong in the same change.
+`893355f04` and the failed 46,123,112-byte evidence remain unchanged. No
+independent ACK was sent.

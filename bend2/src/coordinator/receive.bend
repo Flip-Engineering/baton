@@ -862,7 +862,7 @@ def orphan_native_gone(db: String, handle: U32) -> IO(Bool):
 
 def gone_monitor(+db: String, +session: String, +id: String, cursor: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    +outcome : Turn.Outcome <- IO.pure(Turn.Outcome,Turn.Ended{"unknown after keeper loss","","The recorded native process has ended without a durable exit status. The original stdout and checkpoint remain in " ++ directory ++ ". Pending input remains available for the next native turn.",True{}})
+    +outcome : Turn.Outcome <- IO.pure(Turn.Outcome,Turn.Ended{"unavailable: native exit status was not retained","","The recorded native process has ended without a durable exit status. The original stdout and checkpoint remain in " ++ directory ++ ". Pending input remains available for the next native turn.",True{}})
     exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
     +normalized_harness : String <- IO.pure(String,recovered_harness(harness))
     observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,normalized_harness,directory,directory,handle,"unknown")
