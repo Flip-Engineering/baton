@@ -217,7 +217,7 @@ law m2_refusal_needs_an_absent_event:
   for +h: Char
   for +t: String
   for +text: String
-  {Turn.refusal_body(True{}, SCon{h, t}, text) == False{} : Bool}
+  {Turn.refusal_body(True{}, SCon{h, t}, text) == Turn.refusal_kind_decision(Turn.refusal_kind(text), SCon{h, t}) : Bool}
 
 def m2_refusal_needs_an_absent_event(h, t, text):
   {==}
