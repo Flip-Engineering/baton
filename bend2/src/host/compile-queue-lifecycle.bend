@@ -75,6 +75,9 @@ def CompileQueueLifecycle.write_text(path: String, text: String) -> IO(Result<&1
 def CompileQueueLifecycle.write_stderr(text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./compile-queue-lifecycle.c"
 
+def CompileQueueLifecycle.set_env(name: String, value: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./compile-queue-lifecycle.c"
+
 
 def CompileQueueLifecycle.read_text(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./compile-queue-lifecycle.c"

@@ -818,6 +818,35 @@ def supervise_kind(+kind: String, source_root: String, entry: String, +attempt: 
           "source changed before execution", names)),
     run_supervised(attempt, keydir, kind, key, started, names, cwd))
 
+@unsafe
+def watch_heavy(+attempt: String, +pid: U32, +start: String) -> IO(Unit):
+  do IO<Unit>:
+    alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(pid, start))
+    compiled : Bool <- regular(attempt ++ "/compiled")
+    Bool.pick(IO(Unit), U32.is_eq(alive, 0), IO.pure(Unit, Unit{}),
+      Bool.pick(IO(Unit), compiled,
+        do IO<Unit>:
+          released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(8))
+          IO.pure(Unit, Unit{}),
+        do IO<Unit>:
+          slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(100))
+          watch_heavy(attempt, pid, start)))
+
+def watch_heavy_pid(parsed: Maybe<&2,U32>, attempt: String, start: String) -> IO(Unit):
+  match parsed:
+    case None{}: IO.die(Unit, 2, "compile-queue: watch pid is malformed")
+    case Some{pid}: watch_heavy(attempt, pid, start)
+
+def supervise_marker_result(signaled: Result<&1,&1,U32 & String,Unit>, +attempt: String,
+                            +keydir: String, +kind: String, source_root: String, entry: String,
+                            +key: String, +started: String, +names: List<&2,String>, cwd: String) -> IO(Unit):
+  match signaled:
+    case Fail{(code, message)}:
+      write_failure(attempt, keydir, "failed", code, kind, key, started,
+        "compile marker environment could not be set: " ++ message, names)
+    case Done{value}:
+      supervise_kind(kind, source_root, entry, attempt, keydir, key, started, names, cwd)
+
 def supervise_owned(+attempt: String, +keydir: String, +kind: String, source_root: String,
                     entry: String, key: String, +started: String, names: List<&2,String>,
                     cwd: String, pid: U32, start: String, +gate: U32) -> IO(Unit):
@@ -827,7 +856,9 @@ def supervise_owned(+attempt: String, +keydir: String, +kind: String, source_roo
     active : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(keydir ++ "/active", active_text))
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
     locked : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_fd_acquire(8))
-    supervise_kind(kind, source_root, entry, attempt, keydir, key, started, names, cwd)
+    signaled : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.set_env(
+      "BATON_COMPILE_QUEUE_COMPILED", attempt ++ "/compiled")
+    supervise_marker_result(signaled, attempt, keydir, kind, source_root, entry, key, started, names, cwd)
 
 def supervise_owner_count(owners: U32, +attempt: String, +keydir: String, +kind: String,
                           source_root: String, entry: String, +key: String, +started: String,
@@ -1557,6 +1588,8 @@ def main_args(args: List<&2,String>) -> IO(Unit):
     case "status" <> rest: status_command(rest)
     case "adopt" <> rest: adopt_command(rest)
     case "__supervise" <> attempt <> Nil{}: supervise(attempt)
+    case "__watch-heavy" <> attempt <> pid_text <> start <> Nil{}:
+      watch_heavy_pid(U32.read(pid_text), attempt, start)
     case "__guard" <> keydir <> pid <> start <> name <> path <> Nil{}:
       guard(keydir, pid, start, name, path)
     case other: IO.die(Unit, 2, usage())
