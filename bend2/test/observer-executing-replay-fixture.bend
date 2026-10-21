@@ -67,6 +67,20 @@ def probe(+db: String, +directory: String) -> IO(Unit):
     handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
     IO.pure(Unit,Unit{})
 
+# The completed native's durable status is reflected in the execution row so
+# the supported stop request records the empty attempt and stopped outcome.
+def stop_failed(error: U32 & String) -> IO(Unit):
+  match error:
+    case (code,text): IO.die(Unit,2,"fixture stop failed: " ++ U32.show(code) ++ ": " ++ text)
+
+def stop_session(+db: String, +session: String, +id: String, +reason: String) -> IO(Unit):
+  do IO<Unit>:
+    recorded : String <- IO.try(String,DB.Sql.query(db,"UPDATE executions SET phase='exited',status='exit 0' WHERE session=" ++ C.q(session) ++ ";"))
+    result : Result<&1,&1,U32 & String,String> <- Stop.request(db,session,id,reason,False{})
+    match result:
+      case Fail{error}: stop_failed(error)
+      case Done{+saved}: Stop.validate(saved)
+
 def run(args: List<String>) -> IO(Unit):
   match args:
     case "init" <> +db <> +harness <> Nil{}: init_db(db,harness)
@@ -74,7 +88,9 @@ def run(args: List<String>) -> IO(Unit):
       start_obsolete(db,id,directory,workspace,log,observed,recovery_executable,harness,model,effort,python,native,marker,cursor,gate)
     case "probe" <> +db <> +directory <> Nil{}:
       probe(db,directory)
-    case other: IO.die(Unit,2,"usage: observer-executing-fixture init DB HARNESS | start-obsolete DB ID DIRECTORY WORKSPACE LOG OBSERVED RECOVERY HARNESS MODEL EFFORT PYTHON SCRIPT MARKER CURSOR GATE | probe DB DIRECTORY")
+    case "stop" <> +db <> +session <> +id <> +reason <> Nil{}:
+      stop_session(db,session,id,reason)
+    case other: IO.die(Unit,2,"usage: observer-executing-fixture init DB HARNESS | start-obsolete DB ID DIRECTORY WORKSPACE LOG OBSERVED RECOVERY HARNESS MODEL EFFORT PYTHON SCRIPT MARKER CURSOR GATE | probe DB DIRECTORY | stop DB SESSION ID REASON")
 
 def main() -> IO(Unit):
   do IO<Unit>:

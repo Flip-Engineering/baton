@@ -255,6 +255,75 @@ class ReplayGuard(unittest.TestCase):
                          'the observer transfer must leave the owed row '
                          'unacknowledged and unmodified')
 
+    def stop_row(self, stop_id):
+        with sqlite3.connect(self.db) as database:
+            return database.execute(
+                "SELECT attempt,directory,outcome FROM session_stops "
+                "WHERE session='parent' AND id=?", (stop_id,)).fetchone()
+
+    def execution_row(self):
+        with sqlite3.connect(self.db) as database:
+            return database.execute(
+                "SELECT phase,status FROM executions WHERE session='parent'"
+            ).fetchone()
+
+    def test_stopped_completed_native_keeps_owed_input(self):
+        initial = self.owed_input()
+        self.assertIsNotNone(initial, 'the fixture must seed the owed task row')
+        self.assertIsNone(initial[4], 'the owed task must start unacknowledged')
+        process, gate, first = self.launch(self.native, 0)
+        self.assertTrue(self.wait_path(self.attempt / 'native.pid'),
+                        'native.pid was not written')
+        self.assertTrue(self.wait_path(self.attempt / 'status'),
+                        'the native exit status was not recorded')
+        self.assertTrue(self.wait_path(self.native_marker),
+                        'the native did not run')
+        self.assertTrue(self.wait_path(self.attempt / 'stdout'),
+                        'native stdout was not spooled')
+        spool = (self.attempt / 'stdout').stat().st_size
+        observer_pid = process.pid
+        self.release(process, gate, first)
+        time.sleep(1.5)
+        self.assertFalse(self.recovery_marker.exists(),
+                         'a completed native must not replay the captured recovery argv')
+        self.assertEqual(self.recovery_children(), [],
+                         'no recovery child may run for a completed native')
+        for _ in range(3):
+            self.fixture('probe', self.db, self.attempt)
+            time.sleep(0.2)
+            self.assertFalse(self.recovery_marker.exists(),
+                             'an attach and ready cycle must not replay the recovery')
+            self.assertEqual(self.recovery_children(), [])
+        self.assertEqual(self.owed_input(), initial,
+                         'the completed-native probes must leave the owed row '
+                         'unacknowledged and unmodified')
+        self.fixture('stop', self.db, SESSION, 'operator-stop',
+                     'Preserve owed input')
+        self.assertEqual(self.stop_row('operator-stop'), ('', '', 'stopped'),
+                         'the completed stop records an empty attempt and '
+                         'stopped outcome')
+        self.assertEqual(self.execution_row(), ('exited', 'exit 0'),
+                         'the completed execution stays exited under the stop')
+        self.assertEqual(self.owed_input(), initial,
+                         'the supported stop must leave the owed row '
+                         'unacknowledged and unmodified')
+        subprocess.run(
+            [str(HELPER), '--recover-observer', str(self.db), SESSION,
+             str(observer_pid)],
+            text=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, env=self.environment, timeout=120)
+        # Adoption semantics for a stopped session may differ. The owed-input
+        # invariant is asserted here; the unstopped test proves adoption.
+        self.assertEqual(self.owed_input(), initial,
+                         'the adoption attempt must leave the owed row '
+                         'unacknowledged and unmodified')
+        self.assertEqual((self.attempt / 'status').read_text().strip(), '0',
+                         'the durable native status must stay preserved')
+        self.assertEqual((self.attempt / 'stdout').stat().st_size, spool,
+                         'the retained stdout must stay preserved')
+        self.assertFalse(self.recovery_marker.exists(),
+                         'the stopped path must not replay the captured recovery')
+
     def test_active_attempt_still_recovers(self):
         process, gate, first = self.launch(self.native, 2)
         self.assertTrue(self.wait_path(self.attempt / 'native.pid'),
