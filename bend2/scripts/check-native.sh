@@ -44,8 +44,27 @@ sh bend2/scripts/build-native.sh bend2/test/usage-windows-store.bend .scratch/be
 rm -f .scratch/bend2/usage-windows-store.db
 .scratch/bend2/usage-windows-store-test .scratch/bend2/usage-windows-store.db bend2/test/fake-omp-usage
 sh bend2/scripts/build-native.sh bend2/test/clear-stop-quota.bend .scratch/bend2/clear-stop-quota-test
-rm -f .scratch/bend2/clear-stop-quota.db
-.scratch/bend2/clear-stop-quota-test .scratch/bend2/clear-stop-quota.db
+clear_stop_quota_db=$(mktemp "$root/.scratch/bend2/clear-stop-quota.XXXXXXXX")
+rm -f "$clear_stop_quota_db"
+(
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap '
+    clear_stop_quota_test_status=$?
+    trap - EXIT
+    clear_stop_quota_shutdown_status=0
+    .scratch/bend2/clear-stop-quota-test --instance-shutdown "$clear_stop_quota_db" || clear_stop_quota_shutdown_status=$?
+    if [ "$clear_stop_quota_shutdown_status" -ne 0 ]; then
+      printf "clear-stop-quota owner shutdown failed (exit %s) for %s\n" "$clear_stop_quota_shutdown_status" "$clear_stop_quota_db" >&2
+    fi
+    if [ "$clear_stop_quota_test_status" -ne 0 ]; then
+      exit "$clear_stop_quota_test_status"
+    fi
+    exit "$clear_stop_quota_shutdown_status"
+  ' EXIT
+  .scratch/bend2/clear-stop-quota-test "$clear_stop_quota_db"
+)
 sh bend2/scripts/build-native.sh bend2/test/quota-backoff-dedupe.bend .scratch/bend2/quota-backoff-dedupe-test
 rm -f .scratch/bend2/quota-backoff-dedupe.db .scratch/bend2/quota-backoff-dedupe.db.profiles .scratch/bend2/quota-backoff-dedupe.db.profile-*
 .scratch/bend2/quota-backoff-dedupe-test .scratch/bend2/quota-backoff-dedupe.db
