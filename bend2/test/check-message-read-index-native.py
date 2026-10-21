@@ -42,6 +42,7 @@ def main():
         with closing(sqlite3.connect(database)) as db:
             return {name: db.execute('SELECT * FROM ' + name + ' ORDER BY rowid').fetchall() for name in TABLES}
 
+    owner = None
     passed = False
     try:
         schema = run('native-schema', [fixture, 'schema', str(database)]).decode()
@@ -53,16 +54,24 @@ def main():
             db.executemany('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)', [
                 ('pending-' + str(i), 'recorded-actor', 'index-operator', 'guidance',
                  'complete body ' + str(i) + '\nUnicode: λ') for i in range(20)])
+            db.executemany('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)', [
+                ('history-' + str(i), 'recorded-actor', 'recorded-actor', 'report', 'historical body ' + str(i))
+                for i in range(20000)])
             db.executemany('INSERT INTO message_reads VALUES(?,?,?,?,?,?)', [
                 ('history-attempt-' + str(i), 'history-' + str(i), 'recorded-actor', 'history-native', 'history-identity', None)
                 for i in range(20000)])
             db.executemany('INSERT INTO message_reads VALUES(?,?,?,?,?,?)', [
-                ('a', 'pending-0', 'recorded-actor', 'native-a', 'identity-a', None),
-                ('b', 'pending-1', 'recorded-actor', 'native-b', 'identity-b', 'settled-b'),
-                ('c', 'pending-1', 'recorded-actor', 'native-c', 'identity-c', None)])
+                ('a', 'pending-0', 'index-operator', 'native-a', 'identity-a', None),
+                ('b', 'pending-1', 'index-operator', 'native-b', 'identity-b', 'settled-b'),
+                ('c', 'pending-1', 'index-operator', 'native-c', 'identity-c', None)])
             db.commit()
+            require(not db.execute('PRAGMA foreign_key_check').fetchall(), 'seeded historical and current observations have valid references')
             require([row[1] for row in db.execute('PRAGMA index_list(message_reads)')] ==
                     ['sqlite_autoindex_message_reads_1'], 'existing history starts with only primary-key index')
+        owner_argv = [cli, '--instance-owner', str(database)]
+        with (directory / 'instance-owner.stdout').open('wb') as out, (directory / 'instance-owner.stderr').open('wb') as err:
+            owner = subprocess.Popen(owner_argv, stdin=subprocess.DEVNULL, stdout=out, stderr=err, start_new_session=True)
+        commands.append({'name': 'instance-owner-start', 'argv': owner_argv, 'pid': owner.pid})
         before = run('public-before', [cli, str(database), 'as', 'index-operator', 'inbox'])
         original = snapshot()
         run('native-migrate', [fixture, 'migrate', str(database)])
@@ -97,7 +106,11 @@ def main():
     finally:
         try:
             if database.exists():
-                run('normal-shutdown', [cli, str(database), '--instance-shutdown'])
+                run('normal-shutdown', [cli, '--instance-shutdown', str(database)])
+            if owner is not None:
+                owner_exit = owner.wait()
+                commands.append({'name': 'instance-owner-exit', 'pid': owner.pid, 'exit': owner_exit})
+                require(owner_exit == 0, 'instance owner exits through normal shutdown')
         except BaseException:
             passed = False
             raise
