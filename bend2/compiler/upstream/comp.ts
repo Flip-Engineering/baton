@@ -2158,6 +2158,31 @@ function facts_lend(cb: Carb): void {
     b && !cb.lend.has(k + "~" + i) && cb.own.add(k + "~" + i)));
 }
 
+// BRWS memoizes against cb.own, so one recompute per outer pass advances
+// the borrow/own loop by one step. Recompute it here until own stops
+// growing, then the next emission pass sees the converged facts. Own is a
+// monotone set, so this loop is finite; the limit only turns a broken
+// derivation into a report instead of an endless pass.
+function facts_converge(cb: Carb): void {
+  const limit = 1 << 16;
+  for (let round = 0; ; round++) {
+    const before = new Set(cb.own);
+    BRWS.clear();
+    facts_lend(cb);
+    const added = [...cb.own].filter((k) => !before.has(k));
+    diagnostic("facts.round", { round, own: cb.own.size,
+      hot: cb.hot.size, stat: cb.stat.size, added: added.length,
+      keys: added.slice(0, 32) });
+    if (added.length === 0) {
+      return;
+    }
+    if (round >= limit) {
+      die("facts do not converge; new own keys: "
+        + added.slice(0, 32).join(", "));
+    }
+  }
+}
+
 // A value with no heap: a constructor packed into its word.
 function facts_packed(cb: Carb, t: HTerm): boolean {
   const s = term_strip(t);
@@ -3726,7 +3751,7 @@ export function compile_book(book: Bend.Book): string {
     for (const [k, tld] of defs) {
       compile_def(fl, k, tld);
     }
-    facts_lend(cb);
+    facts_converge(cb);
     let constant_entries = 0;
     for (const values of fl.consts.values()) constant_entries += values.size;
     let lines = 0, line_code_units = 0, spin_code_units = 0;
