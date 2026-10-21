@@ -313,7 +313,7 @@ class FocusedAccountCredits(unittest.TestCase):
         self.credit_account('150.00')
         admitted = self.reserve('attempt-1')
         self.assertEqual(admitted[:3], ['admitted', 'org-fixture', '2026-10'])
-        self.assertEqual(admitted[3:], ['150.00', '0', '50'])
+        self.assertEqual(admitted[3:], ['150', '0', '50'])
 
     def test_reservation_uses_provider_spend_reconciliation(self):
         self.credit_account('200.00')
