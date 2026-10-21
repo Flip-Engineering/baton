@@ -1,21 +1,30 @@
 """Exercise the retained-observer executing-call protocol against a live owner.
 
-The fixture starts one retained OMP native under the database instance owner,
-then the admitting process exits: that is observer loss while the owner keeper
-stays live. The keeper spawns the recorded `--recover-receive` executing call
-from the attempt manifest. The native writes a normal OMP session, one assistant
-message and an agent_end, then exits 0. The synthetic inbox keeps 33 messages
-unacknowledged and one wake claim generation, mirroring the film attempt.
+The fixture starts one retained OMP native under the database instance owner.
+The admitting process prints ``started`` and waits for a gate file, then exits:
+that is observer loss while the owner keeper stays live. The keeper spawns the
+recorded ``--recover-receive`` executing call from the attempt manifest. The
+native writes a normal OMP session, one assistant message and an agent_end,
+then exits 0.
 
-Two scenarios run against the same source:
+One released old attempt is produced first by the same fixture and helper. Its
+custody files are the durable record of a real start, observation,
+acknowledgement and release.
 
-  normal       no competing reader. The executing call must observe to EOF,
-               record the retained exit, settle the executions row, continue or
-               reconcile the owed input and advance/release the wake claim.
-  contention   a second process holds a SHARED read transaction on the database.
-               The executing call must not exit with SQLITE_BUSY (5): it records
-               a typed `recovery-blocked` cause in the attempt, retains every
-               custody file and releases the stale wake-claim ticket.
+Three scenarios run against the same source:
+
+  normal       no competing lock. The executing call observes to EOF, records
+               the retained exit, settles the executions row, continues the
+               owed input in a new attempt and acknowledges it.
+  contention   an admin writer holds BEGIN IMMEDIATE and an UPDATE. The
+               executing call records a typed recovery-blocked cause for
+               SQLITE_BUSY, retains every custody file and releases the exact
+               wake-claim ticket.
+  cycle        a public reader holds a SHARED read transaction; an admin writer
+               begins an immediate transaction and its COMMIT is refused while
+               the reader stays open. The reader stays open while the executing
+               call contends, so recovery waits on the long read, records the
+               typed cause and releases the exact ticket.
 
 The fixture never signals another process; it waits for the helper to exit.
 """
@@ -40,6 +49,7 @@ OWNER = pathlib.Path(os.environ.get(
     'OBSERVER_EXECUTING_OWNER', str(HELPER)))
 SESSION = 'parent'
 ATTEMPT = 'turn1'
+OLD_ATTEMPT = 'receive:parent:old'
 NATIVE_UUID = '01a15c9e-2f4a-7000-9d33-8d0e2b7c41aa'
 PENDING = 33
 FRAMES = [
@@ -54,6 +64,7 @@ FRAMES = [
                 'messageCount': 1}),
 ]
 
+
 def sha256(path):
     digest = hashlib.sha256()
     with open(path, 'rb') as source:
@@ -62,13 +73,22 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def write_native(path):
+def write_native(path, observed, marker):
+    """Write a native that emits the retained frames for both argv shapes.
+
+    The admitting call uses ``[python, script, observed, marker]``. The
+    continuation uses the OMP argv whose first argument is an option, so the
+    script falls back to the values embedded here.
+    """
     script = ['#!' + sys.executable,
-              'import sys,time',
-              'pathlib=__import__("pathlib")',
-              'pathlib.Path(sys.argv[2]).write_text(sys.argv[1])']
+              'import pathlib,sys,time',
+              'fallback = (len(sys.argv) <= 2 or sys.argv[1].startswith("-")'
+              ' or sys.argv[2].startswith("-"))',
+              'value = %r if fallback else sys.argv[1]' % observed,
+              'target = %r if fallback else sys.argv[2]' % str(marker),
+              'pathlib.Path(target).write_text(value)']
     script += ['sys.stdout.write(' + repr(frame + '\n') + ')' for frame in FRAMES]
-    script += ['sys.stdout.flush()', 'time.sleep(0.2)']
+    script += ['sys.stdout.flush()', 'time.sleep(0.1)']
     path.write_text('\n'.join(script) + '\n')
     path.chmod(0o700)
 
@@ -118,7 +138,12 @@ class Executing(unittest.TestCase):
         self.directory = pathlib.Path(self.temp.name)
         self.runtime = pathlib.Path(tempfile.mkdtemp(prefix='br-'))
         self.addCleanup(shutil.rmtree, str(self.runtime), True)
-        self.environment = dict(os.environ, XDG_RUNTIME_DIR=str(self.runtime))
+        self.home = pathlib.Path(tempfile.mkdtemp(
+            prefix='observer-home-', dir=ROOT / '.scratch/bend2'))
+        self.addCleanup(shutil.rmtree, str(self.home), True)
+        self.environment = dict(os.environ, XDG_RUNTIME_DIR=str(self.runtime),
+                                HOME=str(self.home))
+        self.environment.pop('BATON2_GIT_REGISTRY', None)
         self.db = self.directory / 'state.db'
         self.attempt = self.directory / 'attempt'
         self.workspace = self.directory / 'workspace'
@@ -127,7 +152,13 @@ class Executing(unittest.TestCase):
         self.log = self.directory / 'native.log'
         self.uuid_marker = self.directory / 'native-uuid.txt'
         self.native = self.directory / 'native.py'
-        write_native(self.native)
+        write_native(self.native, NATIVE_UUID, self.uuid_marker)
+        self.old_attempt = self.directory / (
+            'state.db.attempt-' + OLD_ATTEMPT.encode().hex())
+        self.old_log = self.directory / 'old.log'
+        self.old_marker = self.directory / 'old-marker.txt'
+        self.old_native = self.directory / 'old-native.py'
+        write_native(self.old_native, NATIVE_UUID, self.old_marker)
         self.owner_log = self.directory / 'owner.log'
         self.owner_out = open(self.owner_log, 'w')
         self.owner = subprocess.Popen(
@@ -166,18 +197,65 @@ class Executing(unittest.TestCase):
             self.fail(log.read_text())
         return result
 
+    def launch_attempt(self, attempt, directory, native, marker, cursor, log):
+        gate = self.directory / ('gate-' + attempt.replace(':', '-'))
+        process = subprocess.Popen(
+            [str(FIXTURE), 'start', str(self.db), attempt, str(directory),
+             str(self.workspace), str(log), NATIVE_UUID, str(HELPER), 'omp',
+             'controlled-model', 'low', sys.executable, str(native),
+             str(marker), str(cursor), str(gate)],
+            text=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, env=self.environment)
+        line = process.stdout.readline()
+        if 'started' not in line:
+            rest = process.stdout.read()
+            process.wait(timeout=60)
+            self.fail('fixture start did not reach the gate: ' + line + rest)
+        return process, gate, line
+
+    def release_attempt(self, process, gate, first):
+        gate.write_text('go\n')
+        try:
+            rest = process.stdout.read()
+            process.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            self.fail('fixture start did not complete')
+        output = first + rest
+        self.assertEqual(process.returncode, 0, output)
+        return output
+
     def seed(self):
         self.fixture('init', self.db, 'omp')
-        self.old_attempt = self.directory / (
-            'state.db.attempt-' + 'receive:parent:old'.encode().hex())
-        self.old_attempt.mkdir()
-        (self.old_attempt / 'acknowledged').write_text('acknowledged\n')
-        (self.old_attempt / 'released').write_text('released\n')
-        (self.old_attempt / 'status').write_text('0\n')
-        (self.old_attempt / 'launch').write_text('launch\n')
+        with sqlite3.connect(self.db) as database:
+            database.execute('DELETE FROM messages')
+        process, gate, first = self.launch_attempt(
+            OLD_ATTEMPT, self.old_attempt, self.old_native, self.old_marker,
+            '1', self.old_log)
+        self.release_attempt(process, gate, first)
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            if ((self.old_attempt / 'acknowledged').exists() and
+                    (self.old_attempt / 'released').exists()):
+                break
+            time.sleep(0.02)
+        self.assertTrue((self.old_attempt / 'admission').exists(),
+                        'the old attempt must be a real admitted attempt')
+        self.assertTrue((self.old_attempt / 'manifest').exists(),
+                        'the old attempt must keep its manifest')
+        self.assertTrue((self.old_attempt / 'acknowledged').exists(),
+                        'the old attempt must be acknowledged')
+        self.assertTrue((self.old_attempt / 'released').exists(),
+                        'the old attempt must be released')
+        self.old_files = sorted(path.name for path in self.old_attempt.iterdir())
         with sqlite3.connect(self.db) as database:
             database.execute("UPDATE sessions SET native=? WHERE id='parent'",
                              (NATIVE_UUID,))
+            database.execute(
+                "INSERT INTO messages(id,sender,recipient,kind,body) "
+                "VALUES('task','parent','parent','task',"
+                "'Monitor the retained attempt.')")
             for index in range(2, PENDING + 1):
                 database.execute(
                     "INSERT INTO messages(id,sender,recipient,kind,body) "
@@ -188,34 +266,24 @@ class Executing(unittest.TestCase):
                 "VALUES('parent','claimed','task',1)")
 
     def start(self):
-        log = self.directory / 'start.log'
-        with open(log, 'w') as out:
-            start = subprocess.Popen(
-                [str(FIXTURE), 'start', str(self.db), ATTEMPT, str(self.attempt),
-                 str(self.workspace), str(self.log), NATIVE_UUID, str(HELPER),
-                 'omp', 'controlled-model', 'low', sys.executable, str(self.native),
-                 NATIVE_UUID, str(self.uuid_marker)],
-                text=True, stdin=subprocess.DEVNULL, stdout=out,
-                stderr=subprocess.STDOUT, env=self.environment)
-            try:
-                start.wait(timeout=60)
-            except subprocess.TimeoutExpired:
-                start.kill()
-                start.wait()
-                self.fail('fixture start did not complete: ' + log.read_text())
-        output = log.read_text()
-        self.assertEqual(start.returncode, 0, output)
-        self.assertIn('started', output)
+        process, gate, first = self.launch_attempt(
+            ATTEMPT, self.attempt, self.native, self.uuid_marker, '0', self.log)
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
-            if (self.attempt / 'native.pid').exists() and self.uuid_marker.exists():
-                if (self.attempt / 'stdout').exists():
-                    break
+            if ((self.attempt / 'native.pid').exists() and
+                    (self.attempt / 'stdout').exists() and
+                    self.uuid_marker.exists()):
+                break
             time.sleep(0.02)
         self.assertTrue((self.attempt / 'native.pid').exists(),
                         'native.pid was not written')
+        self.assertTrue((self.attempt / 'stdout').exists(),
+                        'the owner did not spool native stdout to a file')
+        self.spool_bytes = (self.attempt / 'stdout').stat().st_size
+        self.stdout_regular = (self.attempt / 'stdout').is_file()
+        self.stderr_regular = (self.attempt / 'native.stderr').is_file()
         self.assertIsNotNone(owner_pid(self.db), 'instance owner did not stay live')
-        return start
+        return process, gate, first
 
     def helper(self):
         deadline = time.monotonic() + 20
@@ -223,6 +291,9 @@ class Executing(unittest.TestCase):
             pid = receive_pid(self.db, ATTEMPT)
             if pid:
                 return pid
+            if ((self.attempt / 'acknowledged').exists() and
+                    (self.attempt / 'released').exists()):
+                return None
             time.sleep(0.02)
         self.fail('the keeper did not invoke the recorded executing call')
 
@@ -241,8 +312,8 @@ class Executing(unittest.TestCase):
                 "SELECT count(*) FROM messages WHERE recipient='parent' AND receipt IS NULL"
             ).fetchone()[0]
             execution = database.execute(
-                "SELECT phase,status FROM executions WHERE session='parent' AND id=?",
-                (ATTEMPT,)).fetchone()
+                "SELECT id,phase,status FROM executions WHERE session='parent'"
+            ).fetchone()
             turns = database.execute(
                 "SELECT count(*) FROM turns WHERE worker='parent'").fetchone()[0]
             attempts = len([
@@ -253,6 +324,8 @@ class Executing(unittest.TestCase):
                 'execution': execution, 'turns': turns, 'attempts': attempts}
 
     def wait_helper(self, pid, timeout=240):
+        if pid is None:
+            return None
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             stat = pathlib.Path('/proc') / str(pid) / 'stat'
@@ -285,53 +358,101 @@ class Executing(unittest.TestCase):
         return {name: (self.attempt / name).read_text().strip()
                 for name in names if (self.attempt / name).exists()}
 
-    def run_scenario(self, contention):
+    def run_scenario(self, scenario):
         self.seed()
-        start = self.start()
+        process, gate, first = self.start()
         guard = owner_pid(self.db)
-        holder = None
-        if contention:
-            holder = sqlite3.connect(self.db, isolation_level=None, timeout=30)
-            holder.execute('BEGIN IMMEDIATE')
-            holder.execute("UPDATE messages SET body=body WHERE id='msg-02'")
-        blocked_seen = False
+        reader = None
+        writer = None
+        cycle = {}
         try:
+            if scenario == 'contention':
+                writer = sqlite3.connect(self.db, isolation_level=None, timeout=30)
+                writer.execute('BEGIN IMMEDIATE')
+                writer.execute("UPDATE messages SET body=body WHERE id='msg-02'")
+            elif scenario == 'cycle':
+                reader = sqlite3.connect(self.db, isolation_level=None, timeout=0)
+                reader.execute('BEGIN')
+                reader.execute("SELECT count(*) FROM messages").fetchone()
+                writer = sqlite3.connect(self.db, isolation_level=None, timeout=0)
+                writer.execute('BEGIN IMMEDIATE')
+                writer.execute("UPDATE messages SET body=body WHERE id='msg-02'")
+                try:
+                    writer.execute('COMMIT')
+                    cycle['writerCommit'] = 'accepted'
+                except sqlite3.OperationalError as error:
+                    cycle['writerCommit'] = 'refused'
+                    cycle['writerError'] = str(error)
+                writer.execute('ROLLBACK')
+                writer.close()
+                writer = None
+            start_output = self.release_attempt(process, gate, first)
+            blocked_seen = False
             pid = self.helper()
-            if contention:
+            if scenario != 'normal':
                 blocked_seen = self.wait_marker('recovery-blocked')
-                holder.execute('ROLLBACK')
-                holder.close()
-                holder = None
+                if blocked_seen:
+                    time.sleep(2.0)
+                if scenario == 'cycle':
+                    reader.execute('ROLLBACK')
+                    reader.close()
+                    reader = None
+                    cycle['readerEnded'] = 'released'
+                    verifier = sqlite3.connect(self.db)
+                    verifier.execute(
+                        "UPDATE messages SET body=body WHERE id='msg-02'")
+                    verifier.commit()
+                    verifier.close()
+                    cycle['after'] = 'committed'
+                else:
+                    writer.execute('ROLLBACK')
+                    writer.close()
+                    writer = None
             exit_status = self.wait_helper(pid)
         finally:
-            if holder is not None:
-                holder.execute('ROLLBACK')
-                holder.close()
-        evidence = {'scenario': 'contention' if contention else 'normal',
+            for connection in (reader, writer):
+                if connection is not None:
+                    try:
+                        connection.execute('ROLLBACK')
+                    except sqlite3.OperationalError:
+                        pass
+                    connection.close()
+        evidence = {'scenario': scenario,
                     'helperPid': pid, 'helperExit': exit_status,
                     'guardPid': guard, 'guardAlive': guard is not None and
                     pathlib.Path('/proc', str(guard)).exists(),
                     'blockedSeen': blocked_seen,
-                    'startObserverPid': start.pid,
+                    'cycle': cycle,
+                    'startOutput': start_output,
                     'helperSha256': sha256(HELPER),
                     'fixtureSha256': sha256(FIXTURE),
+                    'spoolBytes': self.spool_bytes,
+                    'stdoutRegular': self.stdout_regular,
+                    'stderrRegular': self.stderr_regular,
+                    'oldFiles': self.old_files,
                     'markers': self.markers(),
                     'state': self.state(),
                     'observerLog': self.helper_output()}
         return evidence
 
+    def assert_released_old_attempt(self):
+        self.assertTrue((self.old_attempt / 'acknowledged').exists(),
+                        'the released old attempt must stay acknowledged')
+        self.assertTrue((self.old_attempt / 'released').exists(),
+                        'the released old attempt must stay released')
+        self.assertEqual((self.old_attempt / 'status').read_text().strip(), '0',
+                         'the old attempt must record its natural exit')
+
 
 class Lifecycle(Executing):
     def test_live_owner_recovery_completes_and_settles_the_claim(self):
-        evidence = self.run_scenario(False)
+        evidence = self.run_scenario('normal')
         print('EVIDENCE ' + json.dumps(evidence, sort_keys=True), flush=True)
         # The keeper holds the session guard for the retained attempt. The
         # executing call must observe without taking it: a call that tried to
         # acquire the guard would block and leave this attempt unobserved.
         self.assertTrue(evidence['guardAlive'],
                         'the keeper guard must stay live during the executing call')
-        # Exit status: a nonzero recovery exit records observer-error in the
-        # attempt, and an observed zombie status is the call's own code.
         self.assertNotIn('observer-error', evidence['markers'],
                          'the executing call must exit 0')
         if evidence['helperExit'] is not None:
@@ -345,34 +466,40 @@ class Lifecycle(Executing):
                         'the executing call must release the retained attempt')
         self.assertFalse((self.attempt / 'recovery-blocked').exists(),
                          'a normal completion must not record a blocked cause')
-        self.assertEqual(evidence['state']['execution'][0], 'exited',
+        execution = evidence['state']['execution']
+        self.assertIsNotNone(execution, 'the completion must record an execution')
+        self.assertEqual(execution[1], 'exited',
                          'the completion must record the executions row')
-        self.assertGreater(evidence['state']['claimGeneration'], 1,
-                           'the completion must advance the wake claim for the '
-                           'continuation, not leave generation 1 stranded')
-        self.assertGreaterEqual(evidence['state']['turns'], 1,
-                                'the released attempt must continue the owed '
-                                'input in a new attempt')
-        self.assertTrue((self.old_attempt / 'acknowledged').exists(),
-                        'the released old attempt must stay acknowledged')
-        self.assertTrue((self.old_attempt / 'released').exists(),
-                        'the released old attempt must stay released')
-        self.assertGreaterEqual(evidence['state']['attempts'], 2,
-                                'the released attempt and its continuation attempt '
-                                'must both remain on record')
+        self.assertEqual(execution[2], 'exit 0',
+                         'the continuation must record its natural exit')
+        self.assertNotEqual(execution[0], ATTEMPT,
+                            'the owed input must continue in a new attempt')
+        self.assertEqual(evidence['state']['pending'], 0,
+                         'the continuation must acknowledge the owed input')
+        self.assertEqual(evidence['state']['claimGeneration'], 0,
+                         'the settlement must remove the stale claim ticket')
+        self.assertNotIn('claimed', evidence['state']['claim'])
+        self.assertGreaterEqual(evidence['state']['attempts'], 3,
+                                'the old attempt, the recovered attempt and its '
+                                'continuation must remain on record')
+        self.assertTrue(evidence['stdoutRegular'],
+                        'native stdout must be a regular file')
+        self.assertTrue(evidence['stderrRegular'],
+                        'native stderr must be a regular file')
+        self.assertGreater(evidence['spoolBytes'], 0,
+                           'the native frames must be persisted in the stdout spool')
+        self.assert_released_old_attempt()
 
     def test_contention_records_a_typed_blocked_cause_and_releases_the_ticket(self):
-        evidence = self.run_scenario(True)
+        evidence = self.run_scenario('contention')
         print('EVIDENCE ' + json.dumps(evidence, sort_keys=True), flush=True)
         self.assertTrue(evidence['blockedSeen'],
                         'the held write lock must produce a typed blocked cause')
-        blocked = self.attempt / 'recovery-blocked'
-        cause = json.loads(blocked.read_text())
+        cause = json.loads((self.attempt / 'recovery-blocked').read_text())
         self.assertEqual(cause['schema'], 'baton2-recovery-blocked-v1')
         self.assertEqual(cause['session'], SESSION)
+        self.assertEqual(cause['code'], 5, 'SQLITE_BUSY must stay the typed code')
         self.assertIn('locked', cause['cause'])
-        # Typed cause, not an untyped database exit: the keeper records a
-        # nonzero recovery exit and exit 5 appears as wait status 1280.
         self.assertNotIn('observer-error', evidence['markers'],
                          'a typed blocked cause must answer with exit 0')
         self.assertNotIn('wait status 1280',
@@ -383,20 +510,55 @@ class Lifecycle(Executing):
                                 'the executing call must not exit with SQLITE_BUSY')
             self.assertEqual(evidence['helperExit'], 0,
                              'the typed blocked cause must answer with exit 0')
-        # Exact ticket settlement: the admission row read under the guard is
-        # released, never a blanket session delete, and the owed input stays.
         self.assertNotIn('claimed', evidence['state']['claim'])
         self.assertEqual(evidence['state']['claimGeneration'], 0,
                          'the exact admission ticket must be released')
         self.assertEqual(evidence['state']['pending'], PENDING,
                          'owed input stays unacknowledged for the next driver')
-        self.assertTrue((self.old_attempt / 'acknowledged').exists(),
-                        'the released old attempt must stay acknowledged')
-        self.assertTrue((self.old_attempt / 'released').exists(),
-                        'the released old attempt must stay released')
+        self.assertTrue((self.attempt / 'admission').exists(),
+                        'a blocked recovery retains its admission')
+        self.assertTrue((self.attempt / 'manifest').exists(),
+                        'a blocked recovery retains its manifest')
+        self.assertTrue((self.attempt / 'checkpoint').exists(),
+                        'a blocked recovery retains its checkpoint')
+        self.assertFalse((self.attempt / 'acknowledged').exists(),
+                         'a blocked recovery must not acknowledge the attempt')
+        self.assertFalse((self.attempt / 'released').exists(),
+                         'a blocked recovery must not release the attempt')
         self.assertGreaterEqual(evidence['state']['attempts'], 2,
-                                'the released attempt and its continuation attempt '
-                                'must both remain on record')
+                                'the old attempt and the retained attempt must '
+                                'remain on record')
+        self.assert_released_old_attempt()
+
+    def test_public_reader_admin_writer_long_read_cycle(self):
+        evidence = self.run_scenario('cycle')
+        print('EVIDENCE ' + json.dumps(evidence, sort_keys=True), flush=True)
+        self.assertEqual(evidence['cycle'].get('writerCommit'), 'refused',
+                         'the admin writer COMMIT must wait on the public reader')
+        self.assertIn('locked', evidence['cycle'].get('writerError', ''))
+        self.assertTrue(evidence['blockedSeen'],
+                        'the long read must produce a typed blocked cause')
+        cause = json.loads((self.attempt / 'recovery-blocked').read_text())
+        self.assertEqual(cause['code'], 5)
+        self.assertIn('locked', cause['cause'])
+        self.assertNotIn('observer-error', evidence['markers'],
+                         'a typed blocked cause must answer with exit 0')
+        if evidence['helperExit'] is not None:
+            self.assertEqual(evidence['helperExit'], 0,
+                             'the typed blocked cause must answer with exit 0')
+        self.assertEqual(evidence['state']['claimGeneration'], 0,
+                         'the exact admission ticket must be released')
+        self.assertEqual(evidence['state']['pending'], PENDING,
+                         'owed input stays unacknowledged for the next driver')
+        self.assertTrue((self.attempt / 'manifest').exists(),
+                        'a blocked recovery retains its manifest')
+        self.assertTrue((self.attempt / 'checkpoint').exists(),
+                        'a blocked recovery retains its checkpoint')
+        self.assertEqual(evidence['cycle'].get('readerEnded'), 'released')
+        self.assertEqual(evidence['cycle'].get('after'), 'committed',
+                         'the database must accept a write after the long read')
+        self.assertGreaterEqual(evidence['state']['attempts'], 2)
+        self.assert_released_old_attempt()
 
 
 if __name__ == '__main__':

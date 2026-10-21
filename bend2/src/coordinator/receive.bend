@@ -1106,25 +1106,14 @@ def record_recovery_blocked(directory: String, db: String, session: String, nati
 # A blocked owner must not keep a claim generation that no live driver owns.
 # The release reads the recorded owner and generation and deletes that exact
 # ticket through Store.release_ticket, so a newer admission is untouched. The
-# keeper holds the session guard for the retained attempt, so an acquisition
-# here answers None; the exact delete stays safe without it. Owed input stays
-# unacknowledged for the next driver.
-def release_held_lock(lock: Maybe<U32>) -> IO(Unit):
-  match lock:
-    case None{}: IO.pure(Unit,Unit{})
-    case Some{handle}: IO.try(Unit,Lock.SessionLock.release(handle))
-
-def release_ticket_held(+db: String, +session: String, lock: Maybe<U32>) -> IO(Unit):
+# keeper holds the session guard for the retained attempt, so this path takes no
+# guard and releases only the ticket it observed.
+def release_blocked_ticket(+db: String, +session: String) -> IO(Unit):
   do IO<Unit>:
     +owner : String <- Store.claim_owner(db,session)
     +generation : String <- Store.claim_generation(db,session)
     released : Unit <- Store.release_ticket(db,session,Tx.trim_nl(owner),generation)
-    unlocked : Unit <- release_held_lock(lock)
     IO.pure(Unit,Unit{})
-
-def release_blocked_ticket(+db: String, +session: String) -> IO(Unit):
-  Lock.SessionLock.acquire_session(Unit,db,session,
-    +canonical => lock => release_ticket_held(canonical,session,lock))
 
 def clear_blocked(directory: String) -> IO(Unit):
   do IO<Unit>:
