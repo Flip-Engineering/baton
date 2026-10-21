@@ -11,7 +11,7 @@ One released old attempt is produced first by the same fixture and helper. Its
 custody files are the durable record of a real start, observation,
 acknowledgement and release.
 
-Three scenarios run against the same source:
+Four scenarios run against the same source:
 
   normal       no competing lock. The executing call observes to EOF, records
                the retained exit, settles the executions row, continues the
@@ -25,14 +25,18 @@ Three scenarios run against the same source:
                the reader stays open. The reader stays open while the executing
                call contends, so recovery waits on the long read, records the
                typed cause and releases the exact ticket.
-
-The fixture never signals another process; it waits for the helper to exit.
+  live-transfer
+               the admitting observer stays alive with a live native that holds
+               its turn open. Observer recovery transfers the keeper connection
+               while the native remains alive; only the fixture's own processes
+               are terminated during cleanup.
 """
 import hashlib
 import json
 import os
 import pathlib
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -73,7 +77,7 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def write_native(path, observed, marker):
+def write_native(path, observed, marker, hold=0.1):
     """Write a native that emits the retained frames for both argv shapes.
 
     The admitting call uses ``[python, script, observed, marker]``. The
@@ -88,7 +92,7 @@ def write_native(path, observed, marker):
               'target = %r if fallback else sys.argv[2]' % str(marker),
               'pathlib.Path(target).write_text(value)']
     script += ['sys.stdout.write(' + repr(frame + '\n') + ')' for frame in FRAMES]
-    script += ['sys.stdout.flush()', 'time.sleep(0.1)']
+    script += ['sys.stdout.flush()', 'time.sleep(%r)' % hold]
     path.write_text('\n'.join(script) + '\n')
     path.chmod(0o700)
 
@@ -673,6 +677,39 @@ class Lifecycle(Executing):
                       evidence['state']['tickets'],
                       'the retained ticket must stay at the admission generation')
         self.assertEqual(evidence['state']['pending'], 0)
+
+    def test_live_observer_transfer_preserves_the_native(self):
+        self.seed()
+        write_native(self.native, NATIVE_UUID, self.uuid_marker, hold=120)
+        process, gate, first = self.start()
+        native_pid = int((self.attempt / 'native.pid').read_text())
+        helper = subprocess.Popen(
+            [str(HELPER), '--recover-observer', str(self.db), ATTEMPT,
+             str(process.pid)],
+            text=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, env=self.environment)
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if helper.poll() is not None or process.poll() is not None:
+                    break
+                time.sleep(0.05)
+            self.assertTrue(pathlib.Path('/proc', str(native_pid)).exists(),
+                            'the live native must survive observer transfer')
+            self.assertTrue(process.poll() is not None or helper.poll() == 0,
+                            'the live observer must be transferred or retired')
+            self.assertNotIn('observer-error', self.markers())
+        finally:
+            if helper.poll() is None:
+                helper.terminate()
+                helper.wait(timeout=10)
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=10)
+            try:
+                os.kill(native_pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
 
 
 if __name__ == '__main__':
