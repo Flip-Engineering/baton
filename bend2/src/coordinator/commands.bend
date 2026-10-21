@@ -155,6 +155,7 @@ def log_schema() -> String:
 # self-creates on first commit after upgrade, and readers tolerate absence.
 def wake_claim_schema() -> String:
   "CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);"
+  ++ "CREATE TABLE IF NOT EXISTS wake_claim_tickets (session TEXT NOT NULL REFERENCES sessions(id), directory TEXT NOT NULL, owner TEXT NOT NULL, generation INTEGER NOT NULL, PRIMARY KEY(session,directory));"
 
 def task_input_schema() -> String:
   "CREATE TABLE IF NOT EXISTS task_input_requests (id TEXT PRIMARY KEY NOT NULL,request TEXT NOT NULL CHECK(json_valid(request) AND json_type(request)='object'),result TEXT CHECK(result IS NULL OR (json_valid(result) AND json_type(result)='object')));"

@@ -13,7 +13,9 @@ import ../src/coordinator/store.bend as Store
 import ../src/coordinator/stop.bend as Stop
 import ../src/coordinator/turn.bend as Turn
 import ../src/host/files.bend as F
+import ../src/host/sqlite.bend as DB
 import ../src/host/session-lock.bend as Lock
+import ../src/git/text.bend as Tx
 import ../src/host/process.bend as P
 
 def session_name() -> String:
@@ -38,6 +40,19 @@ def wait_gate_for(+path: String, remaining: Nat) -> IO(Unit):
 def wait_gate(path: String) -> IO(Unit):
   wait_gate_for(path,3000n)
 
+def first_pending(db: String) -> IO(String):
+  do IO<String>:
+    saved : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session_name()) ++ " AND receipt IS NULL ORDER BY seq LIMIT 1),'');"))
+    IO.pure(String,Tx.trim_nl(saved))
+
+def retain_claim(+db: String, +session: String, +directory: String, claimed: String) -> IO(Unit):
+  do IO<Unit>:
+    claimed_unit : Unit <- Store.claim(db,session,claimed)
+    +owner : String <- Store.claim_owner(db,session)
+    +generation : String <- Store.claim_generation(db,session)
+    retained : Unit <- Store.retain_ticket(db,session,directory,Tx.trim_nl(owner),Tx.trim_nl(generation))
+    IO.pure(Unit,Unit{})
+
 def start_attempt(+db: String, +id: String, +directory: String, +workspace: String,
                   +log: String, +observed: String, +helper: String, +harness: String,
                   +model: String, +effort: String, +python: String, +native: String,
@@ -48,6 +63,8 @@ def start_attempt(+db: String, +id: String, +directory: String, +workspace: Stri
     admitted : Unit <- Stop.admitted(allowed)
     lock : U32 <- IO.try(U32,Lock.SessionLock.wait_acquire(canonical,session_name()))
     started : Unit <- Stop.started(canonical,session_name(),id,directory)
+    +head : String <- first_pending(canonical)
+    claimed : Unit <- Bool.pick(IO(Unit),String.is_empty(head),IO.pure(Unit,Unit{}),retain_claim(canonical,session_name(),directory,head))
     +arguments : String = P.argv([python,native,observed,marker])
     +recovery : String = P.argv([helper,"--recover-receive",canonical,session_name(),id,cursor,native,model,effort,workspace,log,harness,directory,observed])
     launch : Turn.RetainedLaunch = Turn.Prepared{arguments,"","fixture task",0,False{}}

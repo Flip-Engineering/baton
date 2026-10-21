@@ -316,12 +316,16 @@ class Executing(unittest.TestCase):
             ).fetchone()
             turns = database.execute(
                 "SELECT count(*) FROM turns WHERE worker='parent'").fetchone()[0]
+            tickets = database.execute(
+                "SELECT directory,owner,generation FROM wake_claim_tickets "
+                "WHERE session='parent' ORDER BY directory").fetchall()
             attempts = len([
                 path for path in self.directory.iterdir()
                 if path.name == 'attempt' or path.name.startswith('state.db.attempt-')])
         return {'claim': claim, 'claimOwner': claim_owner,
                 'claimGeneration': claim_generation, 'pending': pending,
-                'execution': execution, 'turns': turns, 'attempts': attempts}
+                'execution': execution, 'turns': turns, 'attempts': attempts,
+                'tickets': tickets}
 
     def wait_helper(self, pid, timeout=240):
         if pid is None:
@@ -358,15 +362,20 @@ class Executing(unittest.TestCase):
         return {name: (self.attempt / name).read_text().strip()
                 for name in names if (self.attempt / name).exists()}
 
-    def run_scenario(self, scenario):
+    def run_scenario(self, scenario, newer_claim=None):
         self.seed()
         process, gate, first = self.start()
+        if newer_claim is not None:
+            with sqlite3.connect(self.db) as database:
+                database.execute(
+                    "UPDATE wake_claims SET state='claimed',owner=?,generation=? "
+                    "WHERE session='parent'", newer_claim)
         guard = owner_pid(self.db)
         reader = None
         writer = None
         cycle = {}
         try:
-            if scenario == 'contention':
+            if scenario in ('contention','newer-claim'):
                 writer = sqlite3.connect(self.db, isolation_level=None, timeout=30)
                 writer.execute('BEGIN IMMEDIATE')
                 writer.execute("UPDATE messages SET body=body WHERE id='msg-02'")
@@ -423,6 +432,7 @@ class Executing(unittest.TestCase):
                     pathlib.Path('/proc', str(guard)).exists(),
                     'blockedSeen': blocked_seen,
                     'cycle': cycle,
+                    'newerClaim': newer_claim,
                     'startOutput': start_output,
                     'helperSha256': sha256(HELPER),
                     'fixtureSha256': sha256(FIXTURE),
@@ -479,6 +489,8 @@ class Lifecycle(Executing):
         self.assertEqual(evidence['state']['claimGeneration'], 0,
                          'the settlement must remove the stale claim ticket')
         self.assertNotIn('claimed', evidence['state']['claim'])
+        self.assertEqual(evidence['state']['tickets'], [],
+                         'the acknowledged attempt must leave no ticket row')
         self.assertGreaterEqual(evidence['state']['attempts'], 3,
                                 'the old attempt, the recovered attempt and its '
                                 'continuation must remain on record')
@@ -510,9 +522,14 @@ class Lifecycle(Executing):
                                 'the executing call must not exit with SQLITE_BUSY')
             self.assertEqual(evidence['helperExit'], 0,
                              'the typed blocked cause must answer with exit 0')
-        self.assertNotIn('claimed', evidence['state']['claim'])
-        self.assertEqual(evidence['state']['claimGeneration'], 0,
-                         'the exact admission ticket must be released')
+        self.assertEqual(evidence['state']['claim'], 'claimed',
+                         'the held guard keeps the current claim')
+        self.assertEqual(evidence['state']['claimOwner'], 'task')
+        self.assertEqual(evidence['state']['claimGeneration'], 2,
+                         'the admitted claim generation stays current')
+        self.assertIn((str(self.attempt), 'task', 2),
+                      evidence['state']['tickets'],
+                      'the blocked attempt keeps its durable admission ticket')
         self.assertEqual(evidence['state']['pending'], PENDING,
                          'owed input stays unacknowledged for the next driver')
         self.assertTrue((self.attempt / 'admission').exists(),
@@ -546,8 +563,13 @@ class Lifecycle(Executing):
         if evidence['helperExit'] is not None:
             self.assertEqual(evidence['helperExit'], 0,
                              'the typed blocked cause must answer with exit 0')
-        self.assertEqual(evidence['state']['claimGeneration'], 0,
-                         'the exact admission ticket must be released')
+        self.assertEqual(evidence['state']['claim'], 'claimed',
+                         'the held guard keeps the current claim')
+        self.assertEqual(evidence['state']['claimOwner'], 'task')
+        self.assertEqual(evidence['state']['claimGeneration'], 2)
+        self.assertIn((str(self.attempt), 'task', 2),
+                      evidence['state']['tickets'],
+                      'the blocked attempt keeps its durable admission ticket')
         self.assertEqual(evidence['state']['pending'], PENDING,
                          'owed input stays unacknowledged for the next driver')
         self.assertTrue((self.attempt / 'manifest').exists(),
@@ -559,6 +581,41 @@ class Lifecycle(Executing):
                          'the database must accept a write after the long read')
         self.assertGreaterEqual(evidence['state']['attempts'], 2)
         self.assert_released_old_attempt()
+
+    def assert_newer_claim_preserved(self, evidence, owner, generation):
+        self.assertTrue(evidence['blockedSeen'],
+                        'the held write lock must produce a typed blocked cause')
+        cause = json.loads((self.attempt / 'recovery-blocked').read_text())
+        self.assertEqual(cause['code'], 5)
+        self.assertIn('locked', cause['cause'])
+        self.assertNotIn('observer-error', evidence['markers'],
+                         'a typed blocked cause must answer with exit 0')
+        if evidence['helperExit'] is not None:
+            self.assertEqual(evidence['helperExit'], 0,
+                             'the typed blocked cause must answer with exit 0')
+        self.assertEqual(evidence['state']['claim'], 'claimed',
+                         'a newer claim must stay claimed')
+        self.assertEqual(evidence['state']['claimOwner'], owner,
+                         'a newer claim owner must be preserved')
+        self.assertEqual(evidence['state']['claimGeneration'], generation,
+                         'a newer claim generation must be preserved')
+        self.assertIn((str(self.attempt), 'task', 2),
+                      evidence['state']['tickets'],
+                      'the blocked attempt keeps its durable admission ticket')
+        self.assertEqual(evidence['state']['pending'], PENDING,
+                         'owed input stays unacknowledged for the next driver')
+        self.assert_released_old_attempt()
+
+    def test_blocked_recovery_preserves_a_different_owner_claim(self):
+        evidence = self.run_scenario(
+            'newer-claim', newer_claim=('newer-driver', 3))
+        print('EVIDENCE ' + json.dumps(evidence, sort_keys=True), flush=True)
+        self.assert_newer_claim_preserved(evidence, 'newer-driver', 3)
+
+    def test_blocked_recovery_preserves_a_later_generation_for_the_same_owner(self):
+        evidence = self.run_scenario('newer-claim', newer_claim=('task', 3))
+        print('EVIDENCE ' + json.dumps(evidence, sort_keys=True), flush=True)
+        self.assert_newer_claim_preserved(evidence, 'task', 3)
 
 
 if __name__ == '__main__':

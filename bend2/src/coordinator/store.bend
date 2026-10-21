@@ -171,6 +171,7 @@ def apply(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, Str
 # when an admitted stop resolves the obligation.
 def claim_schema_sql() -> String:
   "CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);"
+  ++ "CREATE TABLE IF NOT EXISTS wake_claim_tickets (session TEXT NOT NULL REFERENCES sessions(id), directory TEXT NOT NULL, owner TEXT NOT NULL, generation INTEGER NOT NULL, PRIMARY KEY(session,directory));"
 
 def claim_sql(+session: String, +owner: String) -> String:
   "INSERT OR REPLACE INTO wake_claims(session,state,owner,generation) VALUES(" ++ C.q(session) ++ ",'claimed'," ++ C.q(owner) ++ ",coalesce((SELECT generation FROM wake_claims WHERE session=" ++ C.q(session) ++ "),0)+1);"
@@ -181,6 +182,22 @@ def claim_sql(+session: String, +owner: String) -> String:
 # owner's row that an acknowledgement, a stop, or a takeover left behind.
 def release_ticket_sql(+session: String, +owner: String, +generation: String) -> String:
   "DELETE FROM wake_claims WHERE session=" ++ C.q(session) ++ " AND owner=" ++ C.q(owner) ++ " AND generation=CAST(" ++ C.q(generation) ++ " AS INTEGER);"
+
+# The durable ticket names the admission one attempt recorded: the session,
+# the attempt directory and the owner and generation the claim carried when
+# that attempt was admitted. A later recovery settles that exact ticket under
+# the session guard; a newer claim has another owner or generation and is
+# preserved.
+def retain_ticket_sql(+session: String, +directory: String, +owner: String, +generation: String) -> String:
+  "INSERT OR REPLACE INTO wake_claim_tickets(session,directory,owner,generation) VALUES(" ++ C.q(session) ++ "," ++ C.q(directory) ++ "," ++ C.q(owner) ++ ",CAST(" ++ C.q(generation) ++ " AS INTEGER));"
+
+def ticket_sql(+session: String, +directory: String) -> String:
+  "SELECT coalesce((SELECT owner || char(9) || generation FROM wake_claim_tickets WHERE session=" ++ C.q(session) ++ " AND directory=" ++ C.q(directory) ++ "),'');"
+
+# The ticket row is removed when the exact claim is released or the attempt is
+# acknowledged, so a settled attempt leaves no row behind.
+def delete_ticket_sql(+session: String, +directory: String) -> String:
+  "DELETE FROM wake_claim_tickets WHERE session=" ++ C.q(session) ++ " AND directory=" ++ C.q(directory) ++ ";"
 
 # Stale execution metadata recovery. When host custody observes the recorded
 # attempt dead, the takeover marks its row exited with a fixed owner-death
@@ -255,6 +272,24 @@ def release_ticket(+db: String, session: String, owner: String, generation: Stri
     released : String <- IO.try(String,DB.Sql.query(db,release_ticket_sql(session,owner,Tx.trim_nl(generation))))
     IO.pure(Unit,Unit{})
 
+def retain_ticket(+db: String, +session: String, +directory: String, +owner: String, +generation: String) -> IO(Unit):
+  do IO<Unit>:
+    ensured : String <- IO.try(String,DB.Sql.query(db,claim_schema_sql()))
+    saved : String <- IO.try(String,DB.Sql.query(db,retain_ticket_sql(session,directory,owner,Tx.trim_nl(generation))))
+    IO.pure(Unit,Unit{})
+
+def ticket(+db: String, +session: String, +directory: String) -> IO(String):
+  do IO<String>:
+    ensured : String <- IO.try(String,DB.Sql.query(db,claim_schema_sql()))
+    saved : String <- IO.try(String,DB.Sql.query(db,ticket_sql(session,directory)))
+    IO.pure(String,Tx.trim_nl(saved))
+
+def delete_ticket(+db: String, +session: String, +directory: String) -> IO(Unit):
+  do IO<Unit>:
+    ensured : String <- IO.try(String,DB.Sql.query(db,claim_schema_sql()))
+    removed : String <- IO.try(String,DB.Sql.query(db,delete_ticket_sql(session,directory)))
+    IO.pure(Unit,Unit{})
+
 def record_owner_death(db: String, session: String) -> IO(Unit):
   do IO<Unit>:
     recorded : String <- IO.try(String,DB.Sql.query(db,record_owner_death_sql(session)))
@@ -269,7 +304,7 @@ def claim_sql_writes_a_claimed_row(session,owner):
   {==}
 
 law claim_schema_creates_the_claim_table:
-  {claim_schema_sql() == "CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);" : String}
+  {claim_schema_sql() == "CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);" ++ "CREATE TABLE IF NOT EXISTS wake_claim_tickets (session TEXT NOT NULL REFERENCES sessions(id), directory TEXT NOT NULL, owner TEXT NOT NULL, generation INTEGER NOT NULL, PRIMARY KEY(session,directory));" : String}
 
 def claim_schema_creates_the_claim_table():
   {==}
