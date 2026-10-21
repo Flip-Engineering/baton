@@ -992,7 +992,9 @@ def report_route_chosen(db: String, session: String, id: String, +route: Route, 
   report_body(db,session,id,"route-chosen",route_chosen_body(route_harness(route),route_model(route),route_cmd(route),cause))
 
 def report_route_unavailable(db: String, session: String, id: String, harness: String, cause: String) -> IO(Unit):
-  report_body(db,session,id,"route-unavailable",route_unavailable_body(harness,cause))
+  do IO<Unit>:
+    +base : String <- refusal_report_base(db,session,id)
+    report_body(db,session,base,"route-unavailable",route_unavailable_body(harness,cause))
 
 # A cross-harness route change drops only the incompatible native binding; the same
 # harness keeps its conversation. Old attempt, event, request and history rows stay.
