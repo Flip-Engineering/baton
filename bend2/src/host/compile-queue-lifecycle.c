@@ -714,6 +714,33 @@ static void cq_call_alive(IoWork *work) {
   call->error = cq_alive_value(call->pid, call->text, &call->code);
 }
 
+static int cq_watch_heavy(const char *attempt, u32 pid, const char *start, u32 fd) {
+  char compiled[PATH_MAX], result[PATH_MAX];
+  if (snprintf(compiled, sizeof(compiled), "%s/compiled", attempt) >= (int)sizeof(compiled)) return ENAMETOOLONG;
+  if (snprintf(result, sizeof(result), "%s/result", attempt) >= (int)sizeof(result)) return ENAMETOOLONG;
+  for (;;) {
+    u32 alive = 0;
+    int error = cq_alive_value(pid, start, &alive);
+    if (error) return error;
+    if (!alive) return 0;
+    if (access(compiled, F_OK) == 0) {
+      if (flock((int)fd, LOCK_UN)) return errno;
+      if (close((int)fd)) return errno;
+      return 0;
+    }
+    if (access(result, F_OK) == 0) return 0;
+    struct timespec delay;
+    delay.tv_sec = 0;
+    delay.tv_nsec = 100000000L;
+    while (nanosleep(&delay, &delay) < 0 && errno == EINTR) {}
+  }
+}
+
+static void cq_call_watch_heavy(IoWork *work) {
+  CqCall *call = (CqCall *)work->data;
+  call->error = cq_watch_heavy(call->path, call->pid, call->text, (u32)call->code);
+}
+
 static void cq_call_wait_external(IoWork *work) {
   CqCall *call = (CqCall *)work->data;
   for (;;) {
@@ -779,6 +806,11 @@ static void cq_call_write_text(IoWork *work) {
 static void cq_call_write_stderr(IoWork *work) {
   CqCall *call = (CqCall *)work->data;
   call->error = cq_write_all_fd(2, call->text, strlen(call->text));
+}
+
+static void cq_call_set_env(IoWork *work) {
+  CqCall *call = (CqCall *)work->data;
+  if (setenv(call->path, call->text, 1)) call->error = errno;
 }
 
 static void cq_call_read_text(IoWork *work) {
@@ -992,6 +1024,23 @@ static Term cq_alive_run(Env env, Term *fields, IoWork *work) {
 static void __attribute__((constructor)) cq_alive_use(void) { io_eff(CID_COMPILEQUEUELIFECYCLE_ALIVE, cq_alive_run, 0); }
 #endif
 
+#ifdef CID_COMPILEQUEUELIFECYCLE_WATCH_HEAVY
+static void cq_watch_heavy_effect_call(IoWork *work) { cq_call_watch_heavy(work); }
+static Term cq_watch_heavy_pack(Env env, IoWork *work) { return cq_unit_pack(env, work); }
+static Term cq_watch_heavy_run(Env env, Term *fields, IoWork *work) {
+  CqCall *call = calloc(1, sizeof(*call));
+  if (!call) return io_fail(env, ENOMEM, NULL);
+  call->error = cq_text_arg(env, fields[0], &call->path);
+  call->pid = (u32)fields[1];
+  if (!call->error) call->error = cq_text_arg(env, fields[2], &call->text);
+  call->code = (int)(u32)fields[3];
+  work->data = (char *)call;
+  if (call->error) return cq_watch_heavy_pack(env, work);
+  return io_work(work, cq_watch_heavy_effect_call, cq_watch_heavy_pack);
+}
+static void __attribute__((constructor)) cq_watch_heavy_use(void) { io_eff(CID_COMPILEQUEUELIFECYCLE_WATCH_HEAVY, cq_watch_heavy_run, 0); }
+#endif
+
 #ifdef CID_COMPILEQUEUELIFECYCLE_WAIT_EXTERNAL
 static void cq_wait_external_call(IoWork *work) { cq_call_wait_external(work); }
 static Term cq_wait_external_pack(Env env, IoWork *work) { return cq_unit_pack(env, work); }
@@ -1152,6 +1201,21 @@ static Term cq_write_stderr_run(Env env, Term *fields, IoWork *work) {
   return io_work(work, cq_write_stderr_call, cq_write_stderr_pack);
 }
 static void __attribute__((constructor)) cq_write_stderr_use(void) { io_eff(CID_COMPILEQUEUELIFECYCLE_WRITE_STDERR, cq_write_stderr_run, 0); }
+#endif
+
+#ifdef CID_COMPILEQUEUELIFECYCLE_SET_ENV
+static void cq_set_env_call(IoWork *work) { cq_call_set_env(work); }
+static Term cq_set_env_pack(Env env, IoWork *work) { return cq_unit_pack(env, work); }
+static Term cq_set_env_run(Env env, Term *fields, IoWork *work) {
+  CqCall *call = calloc(1, sizeof(*call));
+  if (!call) return io_fail(env, ENOMEM, NULL);
+  call->error = cq_text_arg(env, fields[0], &call->path);
+  if (!call->error) call->error = cq_text_arg(env, fields[1], &call->text);
+  work->data = (char *)call;
+  if (call->error) return cq_set_env_pack(env, work);
+  return io_work(work, cq_set_env_call, cq_set_env_pack);
+}
+static void __attribute__((constructor)) cq_set_env_use(void) { io_eff(CID_COMPILEQUEUELIFECYCLE_SET_ENV, cq_set_env_run, 0); }
 #endif
 
 #ifdef CID_COMPILEQUEUELIFECYCLE_READ_TEXT

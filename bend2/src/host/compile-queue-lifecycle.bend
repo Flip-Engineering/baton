@@ -31,6 +31,9 @@ def CompileQueueLifecycle.starttime(pid: U32) -> IO(Result<&1,&1,U32 & String,St
 def CompileQueueLifecycle.alive(pid: U32, start: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./compile-queue-lifecycle.c"
 
+def CompileQueueLifecycle.watch_heavy(attempt: String, pid: U32, start: String, fd: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./compile-queue-lifecycle.c"
+
 def CompileQueueLifecycle.wait_external(pid: U32, start: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./compile-queue-lifecycle.c"
 
@@ -73,6 +76,9 @@ def CompileQueueLifecycle.mkdir_p(path: String) -> IO(Result<&1,&1,U32 & String,
 def CompileQueueLifecycle.write_text(path: String, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./compile-queue-lifecycle.c"
 def CompileQueueLifecycle.write_stderr(text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./compile-queue-lifecycle.c"
+
+def CompileQueueLifecycle.set_env(name: String, value: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./compile-queue-lifecycle.c"
 
 

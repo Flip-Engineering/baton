@@ -92,8 +92,12 @@ attempt work directory, and starts a supervisor.
 
 The supervisor is detached from the requester and holds the key lock through
 inherited descriptors. It takes the shared `$state/heavy.lock` before it runs
-the command, for both `cgen` and `cc`, and it holds that lock until the command
-and artifact publication finish. It runs the command with the recorded cwd and
+the command, for both `cgen` and `cc`. When the command writes the per-attempt
+compile marker named by `BATON_COMPILE_QUEUE_COMPILED` (`<attempt>/compiled`),
+the supervisor releases the heavy lock and keeps the key lock, attempt
+ownership and command wait. A command that does not write the marker keeps the
+heavy lock until the command and artifact publication finish.
+It runs the command with the recorded cwd and
 captures stdout and stderr. On success it copies the declared artifacts into
 `completed/artifacts/` and publishes `completed/result`. On failure it writes
 `runs/<attempt>/result` with the exit status and retained logs. A later request
