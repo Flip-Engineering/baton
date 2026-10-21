@@ -274,6 +274,17 @@ def CompileQueueIdentity.closure_targets(path: String, +text: String) -> List<&2
       CompileQueueIdentity.c_targets(String.lines(text)),
       Nil{}))
 
+def CompileQueueIdentity.file_targets(path: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
+  +name = String.to_lower(CompileQueueIdentity.path_basename(path))
+  match Bool.or(String.ends_with(name, ".bend"),
+                Bool.or(String.ends_with(name, ".c"), String.ends_with(name, ".h"))):
+    case True{}:
+      do IO<Result<&1,&1,U32 & String,List<&2,String>>>:
+        text : String <- IO.try(String, T.Text.read(path))
+        IO.pure(Result<&1,&1,U32 & String,List<&2,String>>, Done{CompileQueueIdentity.closure_targets(path, text)})
+    case False{}:
+      IO.pure(Result<&1,&1,U32 & String,List<&2,String>>, Done{Nil{}})
+
 def CompileQueueIdentity.enqueue_targets(+importer: String, targets: List<&2,String>, queue: List<&2,String>) -> List<&2,String>:
   match targets:
     case Nil{}:
@@ -314,11 +325,10 @@ def CompileQueueIdentity.walk_queue(queue: List<&2,String>, +visited: List<&2,St
               +next : CompileQueueWalk <- IO.try(CompileQueueWalk, Bool.pick(IO(Result<&1,&1,U32 & String,CompileQueueWalk>), seen,
                 IO.pure(Result<&1,&1,U32 & String,CompileQueueWalk>, Done{CompileQueueWalk{rest, visited, records}}),
                 do IO<Result<&1,&1,U32 & String,CompileQueueWalk>>:
-                  +text : String <- IO.try(String, T.Text.read(resolved))
                   digest : String <- IO.try(String, CompileQueueIdentity.file_digest(resolved))
                   size : String <- IO.try(String, CompileQueueIdentity.file_size(resolved))
                   record : String <- IO.pure(String, CompileQueueIdentity.path_relative(root, resolved) ++ "\t" ++ digest ++ "\t" ++ size)
-                  targets : List<&2,String> <- IO.pure(List<&2,String>, CompileQueueIdentity.closure_targets(resolved, text))
+                  targets : List<&2,String> <- IO.try(List<&2,String>, CompileQueueIdentity.file_targets(resolved))
                   next_queue : List<&2,String> <- IO.pure(List<&2,String>, CompileQueueIdentity.enqueue_targets(resolved, targets, rest))
                   IO.pure(Result<&1,&1,U32 & String,CompileQueueWalk>, Done{CompileQueueWalk{next_queue, resolved <> visited, record <> records}})))
               CompileQueueIdentity.walk_queue(CompileQueueIdentity.walk_queue_state_queue(next), CompileQueueIdentity.walk_queue_state_visited(next), CompileQueueIdentity.walk_queue_state_records(next), root),
