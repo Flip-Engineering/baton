@@ -70,6 +70,12 @@ def identity_actor_model(+db: String, +actor: String) -> IO(String):
       result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(actor) ++ ";")
       identity_model_value(result)))
 
+def identity_actor_workspace(+db: String, +actor: String) -> IO(String):
+  Bool.pick(IO(String),String.is_empty(actor),IO.pure(String,""),
+    (do IO<String>:
+      result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT workspace FROM sessions WHERE id=" ++ C.q(actor) ++ ";")
+      identity_model_value(result)))
+
 def identity_write(+out: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.is_empty(out),IO.pure(Unit,Unit{}),IO.write(out))
 
@@ -99,11 +105,13 @@ def identity_wrapped(+db: String, verb: String, args: List<String>) -> IO(Bool):
     (do IO<Bool>:
       +actor : String <- identity_environment("BATON_SESSION")
       +model : String <- identity_actor_model(db,actor)
+      +workspace : String <- identity_actor_workspace(db,actor)
+      +repository : String <- Control.workspace_repository(workspace)
       Bool.pick(IO(Bool),Bool.or(String.is_empty(actor),String.is_empty(model)),IO.pure(Bool,False{}),
       (do IO<Bool>:
         +executable : String <- IO.try(String,Lock.SessionLock.executable())
         identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-        launch : List<String> = Control.identity_args(Con{executable,Con{db,Con{verb,args}}},model,identity)
+        launch : List<String> = Control.identity_args(Con{executable,Con{db,Con{verb,args}}},model,identity,repository)
         guarded : List<String> = Con{"/usr/bin/env",Con{"BATON2_GIT_IDENTITY_APPLIED=1",launch}}
         result : Result<&1,&1,U32 & String,String> <- Git.Process.run(Tx.enc_argv(guarded),".")
         identity_result(result)))))

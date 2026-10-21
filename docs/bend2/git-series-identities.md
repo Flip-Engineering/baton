@@ -13,10 +13,10 @@ host. A source checkout uses `bend2/harness/git-series.mjs`. The Python source
 remains a legacy reference. The immutable 1.0 archive carries the earlier Python
 helper; its version-specific payload is described in [installation](installation.md).
 
-The helper currently supports only `Flip-Engineering/baton`. Its App
-installation and issued token must match that repository ID and the
-`contents:write`, `pull_requests:write`, `metadata:read` permissions below.
-This scope is specific to the current Baton setup.
+The selected identity's `github.repositoryFullName` names the repository the
+helper scopes. Its App installation and issued token must match that repository
+ID and the `contents:write`, `pull_requests:write`, `metadata:read` permissions
+below. A registry may route a series to an identity for another repository.
 
 ## Configuration
 
@@ -46,6 +46,25 @@ The registry has explicit exact-model mappings and series directories:
   }
 }
 ```
+
+A repository entry routes the named series to repository-specific identities:
+
+```json
+{
+  "repositories": {
+    "flip-engineer/flip": {
+      "series": {
+        "gpt": "/ABSOLUTE/CONFIG/DIRECTORY/flip/gpt",
+        "kimi": "/ABSOLUTE/CONFIG/DIRECTORY/flip/kimi"
+      }
+    }
+  }
+}
+```
+
+A repository entry must name every series it serves. Without an entry, the
+default `series` directories serve the repository their identities name. A
+selected identity that names another repository than the selection refuses.
 
 Both Kimi keys route to the same Kimi series.
 `kimi-code/kimi-for-coding` is the provider-qualified OMP selector for Kimi
@@ -126,6 +145,12 @@ explicit registry path. When a registry exists, `start` and `receiver` generate
 an endpoint using the installed Node helper and the recipient's recorded model.
 `dispatch-turn` applies the same selection to its direct native turn.
 
+`receiver`, `configure`, `start` and `dispatch-turn` read the assignment's
+origin remote and pass its GitHub repository to the helper as `--repository`.
+A nested worker registered from another worker's environment uses its own
+assignment workspace, so it receives that assignment's route. A workspace whose
+origin is not a GitHub URL passes no repository selection.
+
 ```sh
 baton2 /absolute/path/state.db receiver lead /absolute/path/omp \
   /absolute/path/lead-native.jsonl
@@ -137,7 +162,7 @@ Before it stores an endpoint or launches a turn, the coordinator asks the helper
 to resolve the recorded model key without launching a command:
 
 ```sh
-node "$GIT_SERIES" check --registry "$REGISTRY" --model-key MODEL
+node "$GIT_SERIES" check --registry "$REGISTRY" --model-key MODEL [--repository OWNER/REPO]
 ```
 
 The check exits 0 when the registry resolves the key and refuses otherwise.
@@ -193,6 +218,9 @@ preserves noncredential runtime Git settings. An MCP Conductor must launch its
 server through the helper so its coordinator tools inherit the selected
 identity. Standalone coordinator calls need the same explicit binding.
 
+The helper sets `GIT_ASKPASS` to `false`, a program that refuses the prompt. An
+inherited askpass command line is replaced.
+
 Inherited `GH_TOKEN` and `GITHUB_TOKEN` are cleared. GitHub CLI's stored login
 and SSH push authentication have their own actors. Repository, worktree and
 global Git configuration files remain unchanged.
@@ -228,7 +256,7 @@ repository protection provide review authority.
 Run the controlled fixtures with `node --test bend2/test/git-series.mjs`. They
 use invented public metadata, a generated signing key, API response doubles and
 a controlled Node child. Fixtures remain under `.scratch/git-series-node-fixtures/`.
-The checks cover identity selection, credential restrictions, signature
-verification and PID, stream and exit preservation. Real App authentication,
-native tool inheritance, commit attribution and remote actor verification
-require separate qualification.
+The checks cover identity selection, repository routes, credential
+restrictions, askpass execution, signature verification and PID, stream and
+exit preservation. Real App authentication, native tool inheritance, commit
+attribution and remote actor verification require separate qualification.

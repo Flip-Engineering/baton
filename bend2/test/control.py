@@ -241,10 +241,10 @@ class Control(unittest.TestCase):
         return subprocess.run(['git', '-C', str(self.repo), *args], env=self.environment,
                               check=True, capture_output=True, text=True)
 
-    def call(self, *args, ok=True, raw=False):
+    def call(self, *args, ok=True, raw=False, env=None):
         child = subprocess.Popen([str(EXE), str(self.db), *map(str, args)],
-                                 env=self.environment, stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE, text=True)
+                                 env=self.environment if env is None else env,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = child.communicate()
         record = {'argv': list(map(str, args)), 'pid': child.pid, 'code': child.returncode,
                   'stdout': stdout, 'stderr': stderr, 'direct_wait_completed': True}
