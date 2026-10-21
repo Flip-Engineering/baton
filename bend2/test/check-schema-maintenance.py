@@ -52,8 +52,11 @@ def main():
         require(invalid.returncode != 0, 'missing database argument is refused')
         invalid = run('extra-argument', [binary, '--ensure-schema', legacy, '--unknown'])
         require(invalid.returncode != 0 and digest(legacy) == original, 'extra arguments preserve the database')
+        help_result = run('ordinary-help', [binary, '--help'])
+        require(help_result.returncode == 0 and digest(legacy) == original, 'ordinary help succeeds and preserves the database')
         help_result = run('leading-help', [binary, '--help', '--ensure-schema', legacy])
-        require(help_result.returncode == 0 and digest(legacy) == original, 'leading help preserves the database')
+        require(help_result.returncode == 2 and digest(legacy) == original,
+                'leading help preserves the canonical usage status and database')
         missing = directory / 'missing.db'
         refused = run('missing-database', [binary, '--ensure-schema', missing])
         require(refused.returncode != 0 and not missing.exists(), 'canonical path resolution preserves a missing database path')
