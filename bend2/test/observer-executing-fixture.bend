@@ -12,15 +12,13 @@ import ../src/coordinator/stop.bend as Stop
 import ../src/coordinator/turn.bend as Turn
 import ../src/host/session-lock.bend as Lock
 import ../src/host/process.bend as P
-import ../src/git/text.bend as Tx
 
 def session_name() -> String:
   "parent"
 
 def init_db(db: String, harness: String) -> IO(Unit):
   do IO<Unit>:
-    ensured : Unit <- Store.ensure_before_begin(db)
-    saved : Result<&1,&1,U32 & String,String> <- Store.transact_sql(db,"BEGIN IMMEDIATE;INSERT OR IGNORE INTO sessions(id,parent,harness,model) VALUES(" ++ C.q(session_name()) ++ ",NULL," ++ C.q(harness) ++ ",'');COMMIT;")
+    saved : Result<&1,&1,U32 & String,String> <- Store.transact_sql(db,"BEGIN IMMEDIATE;" ++ C.schema() ++ "INSERT OR IGNORE INTO sessions(id,parent,harness,model) VALUES(" ++ C.q(session_name()) ++ ",NULL," ++ C.q(harness) ++ ",'');COMMIT;")
     IO.pure(Unit,Unit{})
 
 def start_attempt(+db: String, +id: String, +directory: String, +workspace: String, +log: String, +observed: String, +helper: String, +harness: String, +model: String, +effort: String, +python: String, +native: String, +marker: String) -> IO(Unit):
