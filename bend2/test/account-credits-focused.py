@@ -266,8 +266,8 @@ class FocusedAccountCredits(unittest.TestCase):
         self.credit_account(balance=None)
         self.assertIn('creditObservationUnavailable', self.gate('attempt-1'))
 
-    def reserve(self, attempt, session='leaf', cycle='2026-10', cap='2026-10'):
-        completed = self.entry('reserve', session, 'claude-code', attempt, cycle, cap)
+    def reserve(self, attempt, session='leaf', cap='2026-10'):
+        completed = self.entry('reserve', session, 'claude-code', attempt, cap)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return completed.stdout.strip().split('|')
 
@@ -368,13 +368,17 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(held[0], 'refused')
         self.assertIn('held', held[1])
 
-    def test_reservation_refuses_missing_observation_and_stale_cycle(self):
+    def test_reservation_refuses_missing_observation_and_expired_grant(self):
         self.record('claude-api', funding='api_key', secret='file:/fixture/api')
         self.bind('claude-api', 'leaf')
         self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditObservationUnavailable'])
         self.observe('claude-api', 'org-fixture')
-        self.import_credit('claude-api', 'org-fixture', '200.00')
-        self.assertEqual(self.reserve('attempt-1', cycle='2026-09'), ['refused', 'creditCycleMismatch'])
+        self.import_credit('claude-api', 'org-fixture', '200.00', 1760000000000,
+                           expires='2000-01-01', cycle='grant:2026-09-01')
+        self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditObservationExpired'])
+        self.import_credit('claude-api', 'org-fixture', '200.00', 1760000001000,
+                           expires='2099-12-31', cycle='grant:2026-10-11')
+        self.assertEqual(self.reserve('attempt-1')[:2], ['admitted', 'org-fixture'])
 
     def test_reservation_process_failure_keeps_the_bound(self):
         self.credit_account('200.00')
@@ -527,7 +531,7 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return json.loads(completed.stdout)
 
-    def import_credit(self, label, organization, balance, observed_at=1760000000000, state='reported', fact='promotional_credit', unit='USD', expires='', cycle='2026-10'):
+    def import_credit(self, label, organization, balance, observed_at=1760000000000, state='reported', fact='promotional_credit', unit='USD', expires='2099-12-31', cycle='grant:2026-10-11'):
         detail = json.dumps({'fact': fact, 'state': state, 'balance': balance, 'unit': unit,
                              'cycle': cycle, 'expires': expires, 'source': 'console-billing-display', 'observedAt': observed_at})
         completed = self.account('import-credit', label, organization=organization, detail=detail, session='')

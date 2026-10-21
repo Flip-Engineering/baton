@@ -47,11 +47,11 @@ def gate_line(pair: Maybe<List<String>> & String) -> String:
     case Some{values}: "binding|" ++ binding_text(values) ++ "|" ++ refusal
     case None{}: "refused|" ++ refusal
 
-def reserve_decided(+db: String, +session: String, +attempt: String, +cycle: String, +cap: String, account: Maybe<&2,A.AccountRecord>) -> IO(Unit):
+def reserve_decided(+db: String, +session: String, +attempt: String, +cap: String, account: Maybe<&2,A.AccountRecord>) -> IO(Unit):
   match account:
     case None{}: IO.print("refused|accountAbsent")
     case Some{+chosen}: do IO<Unit>:
-      decision : A.CreditAdmission <- A.credit_reserve_for(db,session,attempt,chosen,cycle,cap)
+      decision : A.CreditAdmission <- A.credit_reserve_for(db,session,attempt,chosen,cap)
       IO.print(admission_line(decision))
 
 def dispatch(arguments: List<String>) -> IO(Unit):
@@ -86,10 +86,10 @@ def dispatch(arguments: List<String>) -> IO(Unit):
         +account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
         recorded : Unit <- A.record_current_attempt(db,session,attempt,predecessor,account)
         IO.print("attempt-recorded")
-    case +db <> "reserve" <> +session <> +harness <> +attempt <> +cycle <> +cap <> Nil{}:
+    case +db <> "reserve" <> +session <> +harness <> +attempt <> +cap <> Nil{}:
       do IO<Unit>:
         +account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
-        reserve_decided(db,session,attempt,cycle,cap,account)
+        reserve_decided(db,session,attempt,cap,account)
     case +db <> "settle" <> +request <> +outcome <> +cost <> Nil{}:
       do IO<Unit>:
         state : String <- A.credit_settle_for(db,request,outcome,cost,False{})

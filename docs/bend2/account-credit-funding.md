@@ -76,36 +76,48 @@ other harnesses keep their existing bindings.
 
 ## Request-level reservation
 
-`credit_reservations` records one reservation per retained launch. The request
-identity is the attempt directory. A row carries the session, attempt, account,
-organization, balance cycle, cap period, observed balance, unit, reserved
-maximum, balance after the reserve, cap after the reserve, state, actual cost
-and outcome.
+`credit_reservations` records one reservation per request identity. The launch
+reservation uses the attempt directory as its request identity. A row carries
+the session, attempt, account, organization, grant cycle, cap period, observed
+balance, unit, reserved maximum, balance after the reserve, cap after the
+reserve, state, actual cost and outcome.
+
+The grant cycle is the `cycle` value on the newest reported promotional-credit
+observation, for example `grant:2026-10-11`. The calendar does not create a
+grant: a new allowance requires a new verified provider observation with its own
+cycle and expiry. The cap period is the current calendar month and remains a
+separate field.
 
 `credit_reserve_for` reads the newest reported promotional-credit observation
-and the recorded reservations for the verified organization and cap period. It
-refuses with a named reason when the route is not the Anthropic `claude-code`
-`api_key` route, the organization is unverified, the observation is absent or
-unavailable, the balance cycle differs from the current month, the cap period
-is empty, a present expiry is not a future 13-digit epoch millisecond value,
-reported balances conflict for the cycle, the unit is not `USD`, an amount is
-not a canonical decimal, an active reservation exists, the ledger exceeds the
-`$200` cycle ceiling, the balance is zero, the ceiling is spent, or the lower
-bound is zero.
+and the recorded reservations for the verified organization. It refuses with a
+named reason when the route is not the Anthropic `claude-code` `api_key` route,
+the organization is unverified, the observation is absent or unavailable, the
+grant cycle is empty, the cap period is empty, the expiry is absent, malformed
+or past, reported balances conflict for the grant cycle, the unit is not `USD`,
+an amount is not a canonical decimal, an active reservation exists, the grant or
+monthly spend exceeds the `$200` ceiling, the balance is zero, the ceiling is
+spent, or the lower bound is zero.
 
-The reserved maximum is the lower of the observed balance and the unspent
-ceiling: `min(balance, 200 - (recorded reservation spend + reconciled provider
-spend))`. The guard reserves the whole bound, so a second launch cannot start
-until the first settles. `credit_reservations_active` is a unique index on the
-organization, balance cycle and cap period for rows in state `reserved`. A
-repeated request returns its recorded row and does not reserve again.
+The observed expiry text is preserved exactly. A present expiry is either a
+13-digit epoch millisecond value or a `YYYY-MM-DD` date. A date-only expiry
+becomes 00:00 UTC on the following day, the conservative end of the stated UTC
+day.
+
+The reserved maximum is the lower of the observed balance and the two unspent
+ceilings: `min(balance, 200 - grant spend, 200 - monthly spend)`. Grant spend
+sums the reservations for the same grant cycle. Monthly spend sums the
+reservations for the same cap period and uses the larger of that ledger and the
+reconciled provider external spend. The guard reserves the whole bound, so a
+second launch cannot start until the first settles.
+`credit_reservations_active` is a unique index on the organization, grant cycle
+and cap period for rows in state `reserved`. A repeated request returns its
+recorded row and does not reserve again.
 
 `credit_settle_for` replaces the bound with the actual cost when one is
 reported. A completed or failed attempt without a cost keeps the reserved
 maximum counted and records state `failed`; `account reconcile` settles that row
 with the provider's actual cost later. `account import-spend` records the Admin
-cost report's numeric USD amount for the organization and cap period, and the
-guard uses the larger of the local ledger and that reported spend.
+cost report's numeric USD amount for the organization and cap period.
 
 `credit_launch_gate` is the production caller before send. For an Anthropic
 `claude-code` `api_key` account it records the reservation, then the one-use
@@ -116,9 +128,9 @@ source true only after the installed qualification passes.
 
 The provider enforces the promotional balance on each API request. A retained
 launch can contain more than one provider request, and Baton has no point that
-sees each request the Claude CLI makes. The reservation bounds the whole launch
-by the lower of the observed balance and the unspent ceiling. Per-request
-interception and per-request actual cost parsing remain absent.
+sees each request the Claude CLI makes. The current reservation bounds the whole
+launch. Per-request interception and per-request actual cost parsing remain the
+next required implementation.
 
 ## Funded credit observations
 

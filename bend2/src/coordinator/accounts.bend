@@ -568,7 +568,7 @@ type CreditObs is Data:
   CObs{state: String, balance: String, unit: String, cycle: String, expires: String}
 
 type ReservationRow is Data:
-  RRow{request: String, state: String, max_charge: String, actual_cost: String}
+  RRow{request: String, state: String, max_charge: String, actual_cost: String, cycle: String, cap_period: String}
 
 type ReservationFull is Data:
   RFull{request: String, state: String, max_charge: String, actual_cost: String, organization: String, cycle: String, cap_period: String, balance: String, balance_after: String, cap_after: String}
@@ -582,6 +582,10 @@ def credit_observation_fields(fields: List<&2,String>) -> CreditObs:
 def credit_obs_cycle(observation: CreditObs) -> String:
   match observation:
     case CObs{state,balance,unit,cycle,expires}: cycle
+
+def credit_obs_expires(observation: CreditObs) -> String:
+  match observation:
+    case CObs{state,balance,unit,cycle,expires}: expires
 
 def credit_observation_sql(+organization: String) -> String:
   "SELECT state||char(31)||balance||char(31)||unit||char(31)||cycle||char(31)||expires FROM credit_observations WHERE organization=" ++ C.q(organization) ++ " AND fact='promotional_credit' ORDER BY observed_at DESC,rowid DESC LIMIT 1;"
@@ -603,10 +607,17 @@ def expiry_digits(+text: String) -> Bool:
 def expiry_valid(+text: String) -> Bool:
   Bool.and(Nat.is_eq(String.length(text),13n),expiry_digits(text))
 
-def expiry_reason(+expires: String, +now_text: String) -> String:
-  Bool.pick(String,String.is_empty(expires),"",
-    Bool.pick(String,expiry_valid(expires),
-      Bool.pick(String,String.is_gt(expires,now_text),"","creditObservationExpired"),
+# The observed expiry text is preserved exactly. A present expiry is either a
+# 13-digit epoch millisecond value or a YYYY-MM-DD date. A date-only expiry
+# becomes 00:00 UTC on the following day, the conservative end of the stated UTC
+# day. An absent expiry is malformed for this route; a past value is expired.
+def credit_expiry_deadline_sql(+expires: String) -> String:
+  "SELECT CASE WHEN length(" ++ C.q(expires) ++ ")=13 AND " ++ C.q(expires) ++ " NOT GLOB '*[^0-9]*' THEN " ++ C.q(expires) ++ " WHEN length(" ++ C.q(expires) ++ ")=10 AND " ++ C.q(expires) ++ " GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' AND date(" ++ C.q(expires) ++ ")=" ++ C.q(expires) ++ " THEN printf('%013d',(CAST(strftime('%s'," ++ C.q(expires) ++ ") AS INTEGER)+86400)*1000) ELSE '0' END;"
+
+def expiry_deadline_reason(+deadline: String, +now_text: String) -> String:
+  Bool.pick(String,Bool.or(String.is_empty(deadline),String.eq(deadline,"0")),"creditObservationExpiryMalformed",
+    Bool.pick(String,expiry_valid(deadline),
+      Bool.pick(String,String.is_gt(deadline,now_text),"","creditObservationExpired"),
       "creditObservationExpiryMalformed"))
 
 def decimal_max(+a: String, +b: String) -> String:
@@ -617,9 +628,9 @@ def decimal_min(+a: String, +b: String) -> String:
 
 def reservation_row_fields(fields: List<&2,String>) -> ReservationRow:
   match fields:
-    case request <> state <> max_charge <> actual_cost <> rest:
-      RRow{request,state,max_charge,actual_cost}
-    case other: RRow{"","malformed","",""}
+    case request <> state <> max_charge <> actual_cost <> cycle <> cap_period <> rest:
+      RRow{request,state,max_charge,actual_cost,cycle,cap_period}
+    case other: RRow{"","malformed","","","",""}
 
 def reservation_rows_lines(lines: List<String>, acc: List<&2,ReservationRow>) -> List<&2,ReservationRow>:
   match lines:
@@ -630,23 +641,26 @@ def reservation_rows_lines(lines: List<String>, acc: List<&2,ReservationRow>) ->
 def reservation_rows(+text: String) -> List<&2,ReservationRow>:
   reservation_rows_lines(Tx.split_lines(text),Nil{})
 
-def reservation_row_valid(row: ReservationRow) -> Bool:
+def reservation_row_amount_valid(state: String, max_charge: String, +actual_cost: String) -> Bool:
+  match state:
+    case "reserved": decimal_text(max_charge)
+    case "settled": decimal_text(actual_cost)
+    case "failed": Bool.or(decimal_text(actual_cost),Bool.and(String.is_empty(actual_cost),decimal_text(max_charge)))
+    case other: False{}
+
+def reservation_row_valid(+row: ReservationRow) -> Bool:
   match row:
-    case RRow{request,state,max_charge,+actual_cost}:
-      match state:
-        case "reserved": Bool.and(Bool.not(String.is_empty(request)),decimal_text(max_charge))
-        case "settled": Bool.and(Bool.not(String.is_empty(request)),decimal_text(actual_cost))
-        case "failed": Bool.and(Bool.not(String.is_empty(request)),Bool.or(decimal_text(actual_cost),Bool.and(String.is_empty(actual_cost),decimal_text(max_charge))))
-        case other: False{}
+    case RRow{request,state,max_charge,actual_cost,cycle,cap_period}:
+      Bool.and(Bool.not(String.is_empty(request)),Bool.and(Bool.not(String.is_empty(cycle)),Bool.and(Bool.not(String.is_empty(cap_period)),reservation_row_amount_valid(state,max_charge,actual_cost))))
 
 def reservation_rows_valid(+rows: List<&2,ReservationRow>) -> Bool:
   match rows:
     case Nil{}: True{}
     case +row <> rest: Bool.and(reservation_row_valid(row),reservation_rows_valid(rest))
 
-def reservation_row_spend(row: ReservationRow) -> String:
+def reservation_row_spend(+row: ReservationRow) -> String:
   match row:
-    case RRow{request,state,max_charge,+actual_cost}:
+    case RRow{request,state,max_charge,+actual_cost,cycle,cap_period}:
       match state:
         case "reserved": max_charge
         case "settled": actual_cost
@@ -658,14 +672,38 @@ def reservation_spend_sum(+rows: List<&2,ReservationRow>, acc: String) -> String
     case Nil{}: acc
     case +row <> rest: reservation_spend_sum(rest,decimal_add(acc,reservation_row_spend(row)))
 
-def reservation_row_active(row: ReservationRow) -> Bool:
+def reservation_row_active(+row: ReservationRow) -> Bool:
   match row:
-    case RRow{request,state,max_charge,actual_cost}: String.eq(state,"reserved")
+    case RRow{request,state,max_charge,actual_cost,cycle,cap_period}: String.eq(state,"reserved")
 
 def reservation_rows_active(+rows: List<&2,ReservationRow>) -> Bool:
   match rows:
     case Nil{}: False{}
     case +row <> rest: Bool.or(reservation_row_active(row),reservation_rows_active(rest))
+
+def reservation_row_in_cycle(+row: ReservationRow, +cycle: String) -> Bool:
+  match row:
+    case RRow{request,state,max_charge,actual_cost,row_cycle,cap_period}: String.eq(row_cycle,cycle)
+
+def reservation_row_in_cap(+row: ReservationRow, +cap_period: String) -> Bool:
+  match row:
+    case RRow{request,state,max_charge,actual_cost,cycle,row_cap}: String.eq(row_cap,cap_period)
+
+def reservation_spend_sum_cycle(+rows: List<&2,ReservationRow>, +cycle: String, +acc: String) -> String:
+  match rows:
+    case Nil{}: acc
+    case +row <> rest:
+      Bool.pick(String,reservation_row_in_cycle(row,cycle),
+        reservation_spend_sum_cycle(rest,cycle,decimal_add(acc,reservation_row_spend(row))),
+        reservation_spend_sum_cycle(rest,cycle,acc))
+
+def reservation_spend_sum_cap(+rows: List<&2,ReservationRow>, +cap_period: String, +acc: String) -> String:
+  match rows:
+    case Nil{}: acc
+    case +row <> rest:
+      Bool.pick(String,reservation_row_in_cap(row,cap_period),
+        reservation_spend_sum_cap(rest,cap_period,decimal_add(acc,reservation_row_spend(row))),
+        reservation_spend_sum_cap(rest,cap_period,acc))
 
 def spend_reason(+state: String, +balance: String, +unit: String) -> String:
   Bool.pick(String,Bool.or(String.is_empty(state),String.eq(state,"unavailable")),"",
@@ -677,36 +715,36 @@ def spend_reason(+state: String, +balance: String, +unit: String) -> String:
 def credit_cycle_spent(+ledger: String, +state: String, +balance: String) -> String:
   Bool.pick(String,String.eq(state,"reported"),decimal_max(ledger,balance),ledger)
 
-def credit_reserve_arithmetic(+account: AccountRecord, +observation: CreditObs, +conflict: String, +spent: String, +current_cycle: String, +current_cap_period: String, +now_text: String) -> CreditAdmission:
+def credit_reserve_arithmetic(+account: AccountRecord, +observation: CreditObs, +conflict: String, +grant_spend: String, +monthly_spend: String, +current_cap_period: String, +expiry_deadline: String, +now_text: String) -> CreditAdmission:
   match observation:
     case CObs{state,balance,unit,cycle,expires}:
       Bool.pick(CreditAdmission,Bool.not(Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key")))),CRefused{"notPromotionalCreditRoute"},
       Bool.pick(CreditAdmission,String.is_empty(account_organization(account)),CRefused{"organizationUnverified"},
       Bool.pick(CreditAdmission,Bool.not(String.eq(state,"reported")),CRefused{"creditObservationUnavailable"},
-      Bool.pick(CreditAdmission,Bool.or(String.is_empty(cycle),Bool.not(String.eq(cycle,current_cycle))),CRefused{"creditCycleMismatch"},
+      Bool.pick(CreditAdmission,String.is_empty(cycle),CRefused{"creditCycleMissing"},
       Bool.pick(CreditAdmission,String.is_empty(current_cap_period),CRefused{"monthlyCapPeriodMismatch"},
-      Bool.pick(CreditAdmission,Bool.not(String.is_empty(expiry_reason(expires,now_text))),CRefused{expiry_reason(expires,now_text)},
+      Bool.pick(CreditAdmission,Bool.not(String.is_empty(expiry_deadline_reason(expiry_deadline,now_text))),CRefused{expiry_deadline_reason(expiry_deadline,now_text)},
       Bool.pick(CreditAdmission,Bool.not(credit_conflict_ok(conflict)),CRefused{"creditReadingsConflict"},
       Bool.pick(CreditAdmission,Bool.not(String.eq(unit,"USD")),CRefused{"creditUnitNotUSD"},
       Bool.pick(CreditAdmission,Bool.not(decimal_text(balance)),CRefused{"creditAmountMalformed"},
-      Bool.pick(CreditAdmission,decimal_is_gt(spent,credit_cycle_ceiling()),CRefused{"creditLedgerOverCap"},
+      Bool.pick(CreditAdmission,decimal_is_gt(grant_spend,credit_cycle_ceiling()),CRefused{"creditGrantExhausted"},
+      Bool.pick(CreditAdmission,decimal_is_gt(monthly_spend,credit_cycle_ceiling()),CRefused{"monthlyCapExhausted"},
       Bool.pick(CreditAdmission,decimal_is_zero(balance),CRefused{"promotionalCreditExhausted"},
-      Bool.pick(CreditAdmission,decimal_is_zero(decimal_sub(credit_cycle_ceiling(),spent)),CRefused{"monthlyCapExhausted"},
-      Bool.pick(CreditAdmission,decimal_is_zero(decimal_min(balance,decimal_sub(credit_cycle_ceiling(),spent))),CRefused{"requestChargeUnbounded"},
-      credit_request_admission(account,CMeter{account_organization(account),state,current_cycle,balance,unit,credit_cycle_ceiling(),current_cap_period,spent,"0"},current_cycle,current_cap_period,decimal_min(balance,decimal_sub(credit_cycle_ceiling(),spent))))))))))))))))
+      Bool.pick(CreditAdmission,decimal_is_zero(decimal_min(decimal_sub(credit_cycle_ceiling(),grant_spend),decimal_sub(credit_cycle_ceiling(),monthly_spend))),CRefused{"requestChargeUnbounded"},
+      credit_request_admission(account,CMeter{account_organization(account),state,cycle,balance,unit,credit_cycle_ceiling(),current_cap_period,decimal_max(grant_spend,monthly_spend),"0"},cycle,current_cap_period,decimal_min(balance,decimal_min(decimal_sub(credit_cycle_ceiling(),grant_spend),decimal_sub(credit_cycle_ceiling(),monthly_spend)))))))))))))))))
 
-def credit_reserve_decided(+account: AccountRecord, +observation: CreditObs, +conflict: String, +rows: List<&2,ReservationRow>, +spend_state: String, +spend_balance: String, +spend_unit: String, +current_cycle: String, +current_cap_period: String, +now_text: String) -> CreditAdmission:
+def credit_reserve_decided(+account: AccountRecord, +observation: CreditObs, +conflict: String, +rows: List<&2,ReservationRow>, +spend_state: String, +spend_balance: String, +spend_unit: String, +current_cap_period: String, +expiry_deadline: String, +now_text: String) -> CreditAdmission:
   Bool.pick(CreditAdmission,Bool.not(reservation_rows_valid(rows)),CRefused{"creditReservationLedgerMalformed"},
   Bool.pick(CreditAdmission,reservation_rows_active(rows),CRefused{"creditReservationInFlight"},
   Bool.pick(CreditAdmission,Bool.not(String.is_empty(spend_reason(spend_state,spend_balance,spend_unit))),CRefused{spend_reason(spend_state,spend_balance,spend_unit)},
-  credit_reserve_arithmetic(account,observation,conflict,credit_cycle_spent(reservation_spend_sum(rows,"0"),spend_state,spend_balance),current_cycle,current_cap_period,now_text))))
+  credit_reserve_arithmetic(account,observation,conflict,reservation_spend_sum_cycle(rows,credit_obs_cycle(observation),"0"),credit_cycle_spent(reservation_spend_sum_cap(rows,current_cap_period,"0"),spend_state,spend_balance),current_cap_period,expiry_deadline,now_text))))
 
-def credit_reserve_decision_fields(+account: AccountRecord, +observation: CreditObs, +conflict: String, +rows: List<&2,ReservationRow>, fields: List<&2,String>, +current_cycle: String, +current_cap_period: String, +now_text: String) -> CreditAdmission:
+def credit_reserve_decision_fields(+account: AccountRecord, +observation: CreditObs, +conflict: String, +rows: List<&2,ReservationRow>, fields: List<&2,String>, +current_cap_period: String, +expiry_deadline: String, +now_text: String) -> CreditAdmission:
   match fields:
     case state <> balance <> unit <> rest:
-      credit_reserve_decided(account,observation,conflict,rows,state,balance,unit,current_cycle,current_cap_period,now_text)
+      credit_reserve_decided(account,observation,conflict,rows,state,balance,unit,current_cap_period,expiry_deadline,now_text)
     case other:
-      credit_reserve_decided(account,observation,conflict,rows,"","","",current_cycle,current_cap_period,now_text)
+      credit_reserve_decided(account,observation,conflict,rows,"","","",current_cap_period,expiry_deadline,now_text)
 
 def reservation_request_sql(+request: String) -> String:
   "SELECT request||char(31)||state||char(31)||max_charge||char(31)||actual_cost||char(31)||organization||char(31)||cycle||char(31)||cap_period||char(31)||balance||char(31)||balance_after||char(31)||cap_after FROM credit_reservations WHERE request=" ++ C.q(request) ++ ";"
@@ -755,14 +793,14 @@ def credit_reserve_saved(+db: String, +attempt: String, +organization: String, +
     case "1": IO.pure(CreditAdmission,decision)
     case other: credit_reserve_reread(db,attempt,organization,cycle,cap_period)
 
-def credit_reserve_observed(+db: String, +session: String, +attempt: String, +account: AccountRecord, +current_cycle: String, +current_cap_period: String, observed: CreditObs, +decision: CreditAdmission) -> IO(CreditAdmission):
+def credit_reserve_observed(+db: String, +session: String, +attempt: String, +account: AccountRecord, +current_cap_period: String, observed: CreditObs, +decision: CreditAdmission) -> IO(CreditAdmission):
   match observed:
     case CObs{state,balance,unit,cycle,expires}:
       do IO<CreditAdmission>:
         saved : String <- Bool.pick(IO(String),credit_admission_admitted(decision),IO.try(String,commit_read(db,credit_reservation_insert_sql(session,attempt,account,current_cap_period,balance,unit,decision))),IO.pure(String,"refused"))
-        Bool.pick(IO(CreditAdmission),credit_admission_admitted(decision),credit_reserve_saved(db,attempt,account_organization(account),current_cycle,current_cap_period,decision,Tx.trim_nl(saved)),IO.pure(CreditAdmission,decision))
+        Bool.pick(IO(CreditAdmission),credit_admission_admitted(decision),credit_reserve_saved(db,attempt,account_organization(account),cycle,current_cap_period,decision,Tx.trim_nl(saved)),IO.pure(CreditAdmission,decision))
 
-def credit_reserve_existing(+db: String, +session: String, +attempt: String, +account: AccountRecord, +current_cycle: String, +current_cap_period: String, fields: List<&2,String>) -> IO(CreditAdmission):
+def credit_reserve_existing(+db: String, +session: String, +attempt: String, +account: AccountRecord, +current_cap_period: String, fields: List<&2,String>) -> IO(CreditAdmission):
   match fields:
     case request <> state <> max_charge <> actual_cost <> organization <> cycle <> cap_period <> balance <> balance_after <> cap_after <> rest:
       IO.pure(CreditAdmission,credit_reservation_admission(RFull{request,state,max_charge,actual_cost,organization,cycle,cap_period,balance,balance_after,cap_after}))
@@ -772,20 +810,21 @@ def credit_reserve_existing(+db: String, +session: String, +attempt: String, +ac
         +observation_fields : List<&2,String> <- IO.pure(List<&2,String>,String.split(Tx.trim_nl(observation),Char.from_u32(31)))
         +observed : CreditObs <- IO.pure(CreditObs,credit_observation_fields(observation_fields))
         conflict : String <- IO.try(String,DB.Sql.read(db,credit_conflict_sql(account_organization(account),credit_obs_cycle(observed))))
-        rows : String <- IO.try(String,DB.Sql.read(db,"SELECT request||char(31)||state||char(31)||max_charge||char(31)||actual_cost FROM credit_reservations WHERE organization=" ++ C.q(account_organization(account)) ++ " AND cap_period=" ++ C.q(current_cap_period) ++ " ORDER BY rowid;"))
+        rows : String <- IO.try(String,DB.Sql.read(db,"SELECT request||char(31)||state||char(31)||max_charge||char(31)||actual_cost||char(31)||cycle||char(31)||cap_period FROM credit_reservations WHERE organization=" ++ C.q(account_organization(account)) ++ " AND (cycle=" ++ C.q(credit_obs_cycle(observed)) ++ " OR cap_period=" ++ C.q(current_cap_period) ++ ") ORDER BY rowid;"))
         +reservations : List<&2,ReservationRow> <- IO.pure(List<&2,ReservationRow>,reservation_rows(rows))
         spend : String <- IO.try(String,DB.Sql.read(db,credit_observed_spend_sql(account_organization(account),current_cap_period)))
         +spend_fields : List<&2,String> <- IO.pure(List<&2,String>,String.split(Tx.trim_nl(spend),Char.from_u32(31)))
         now_text : String <- IO.try(String,DB.Sql.read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000;"))
-        +decision : CreditAdmission <- IO.pure(CreditAdmission,credit_reserve_decision_fields(account,observed,conflict,reservations,spend_fields,current_cycle,current_cap_period,Tx.trim_nl(now_text)))
-        credit_reserve_observed(db,session,attempt,account,current_cycle,current_cap_period,observed,decision)
+        deadline : String <- IO.try(String,DB.Sql.read(db,credit_expiry_deadline_sql(credit_obs_expires(observed))))
+        +decision : CreditAdmission <- IO.pure(CreditAdmission,credit_reserve_decision_fields(account,observed,conflict,reservations,spend_fields,current_cap_period,Tx.trim_nl(deadline),Tx.trim_nl(now_text)))
+        credit_reserve_observed(db,session,attempt,account,current_cap_period,observed,decision)
 
-def credit_reserve_for(+db: String, +session: String, +attempt: String, +account: AccountRecord, +current_cycle: String, +current_cap_period: String) -> IO(CreditAdmission):
+def credit_reserve_for(+db: String, +session: String, +attempt: String, +account: AccountRecord, +current_cap_period: String) -> IO(CreditAdmission):
   do IO<CreditAdmission>:
     ready : Unit <- ensure(db)
     existing : String <- IO.try(String,DB.Sql.read(db,reservation_request_sql(attempt)))
     +existing_fields : List<&2,String> <- IO.pure(List<&2,String>,String.split(Tx.trim_nl(existing),Char.from_u32(31)))
-    credit_reserve_existing(db,session,attempt,account,current_cycle,current_cap_period,existing_fields)
+    credit_reserve_existing(db,session,attempt,account,current_cap_period,existing_fields)
 
 def reserve_state_sql(+request: String) -> String:
   "SELECT state||char(31)||max_charge||char(31)||actual_cost FROM credit_reservations WHERE request=" ++ C.q(request) ++ ";"
@@ -1418,7 +1457,7 @@ def credit_launch_authorized(+db: String, +session: String, +attempt: String, +a
 def credit_launch_reserved(+db: String, +session: String, +attempt: String, +account: AccountRecord, +helper: String) -> IO(Maybe<List<String>> & String):
   do IO<Maybe<List<String>> & String>:
     +period : String <- credit_current_period_io(db)
-    +decision : CreditAdmission <- credit_reserve_for(db,session,attempt,account,period,period)
+    +decision : CreditAdmission <- credit_reserve_for(db,session,attempt,account,period)
     Bool.pick(IO(Maybe<List<String>> & String),credit_admission_admitted(decision),
       credit_launch_authorized(db,session,attempt,account,helper),
       IO.pure(Maybe<List<String>> & String,(None{},credit_guard_refusal_status(credit_admission_reason(decision)))))
