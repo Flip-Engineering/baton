@@ -121,29 +121,6 @@ class CompilerArmSharing(unittest.TestCase):
         args.extend(['--', self.bun, '--smol', UPSTREAM / 'main.ts', fixture, '-o', source])
         self.run_queue(args)
 
-    def run_check(self, fixture):
-        # The check uses the cgen lane: it shares the source closure and the
-        # host heavy-build lock with a C-generation request for the fixture.
-        inputs = [path for path in sorted(UPSTREAM.rglob('*')) if path.is_file()]
-        stdout = pathlib.Path(self.temp.name) / (fixture.stem + '.check.stdout')
-        stderr = pathlib.Path(self.temp.name) / (fixture.stem + '.check.stderr')
-        args = [
-            'run', '--kind', 'cgen', '--state-root', self.state, '--cwd', ROOT,
-            '--root', ROOT, '--source-root', ROOT,
-            '--entry', fixture.relative_to(ROOT).as_posix(),
-            '--compiler', self.bun,
-            '--artifact', 'stdout=%s' % stdout,
-            '--artifact', 'stderr=%s' % stderr,
-            '--option', 'frontend=check',
-        ]
-        for path in inputs:
-            args.extend(['--input', path])
-        args.extend(['--', self.bun, '--smol', UPSTREAM / 'main.ts', fixture, '--check-only'])
-        self.run_queue(args)
-        return subprocess.CompletedProcess(args=[], returncode=0,
-                                           stdout=stdout.read_text(),
-                                           stderr=stderr.read_text())
-
     def compile_fixture(self, tag, fixture, source):
         self.run_cgen(tag, fixture, source)
 
@@ -260,7 +237,7 @@ class CompilerArmSharing(unittest.TestCase):
         for name, (digest, output) in expected.items():
             with self.subTest(fixture=name):
                 fixture = FIXTURES / (name + '.bend')
-                check = self.run_check(fixture)
+                check = self.run_bun(UPSTREAM / 'main.ts', fixture, '--check-only')
                 self.assertEqual(check.stdout.strip(), 'All terms check.')
                 c = pathlib.Path(self.temp.name) / (name + '.c')
                 self.compile_fixture(name, fixture, c)
