@@ -29,12 +29,14 @@ def no_arguments(+mode: String, +db: String, rest: List<String>) -> IO(Unit):
     case Nil{}: schema_selected(String.eq(mode,"schema"),mode,db)
     case other: IO.die(Unit,2,"unexpected fixture arguments")
 
+def read_arguments(+db: String, args: List<String>) -> IO(Unit):
+  match args:
+    case +saved <> Nil{}: read(db,saved)
+    case other: IO.die(Unit,2,"read requires complete JSON")
+
 def read_selected(selected: Bool, +mode: String, +db: String, +rest: List<String>) -> IO(Unit):
   match selected:
-    case True{}:
-      match rest:
-        case +saved <> Nil{}: read(db,saved)
-        case other: IO.die(Unit,2,"read requires complete JSON")
+    case True{}: read_arguments(db,rest)
     case False{}: no_arguments(mode,db,rest)
 
 def arguments(+mode: String, +db: String, +rest: List<String>) -> IO(Unit):
