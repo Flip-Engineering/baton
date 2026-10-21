@@ -682,6 +682,26 @@ def run_supervised(attempt: String, keydir: String, kind: String, key: String,
               checked : Unit <- verify_artifacts(attempt ++ "/work", names)
               finish_success(attempt, keydir, kind, key, started, names)))
 
+def watch_heavy(attempt: String, pid: U32, start: String) -> IO(Unit):
+  do IO<Unit>:
+    alive <- IO.try(U32, L.alive(pid, start))
+    compiled <- regular(attempt ++ "/compiled")
+    result <- regular(attempt ++ "/result")
+    Bool.pick(IO(Unit), U32.is_eq(alive, 0), IO.pure(Unit, Unit{}),
+      Bool.pick(IO(Unit), compiled,
+        do IO<Unit>:
+          released : Unit <- IO.try(Unit, L.lock_release(8))
+          IO.pure(Unit, Unit{}),
+        Bool.pick(IO(Unit), result, IO.pure(Unit, Unit{}),
+          do IO<Unit>:
+            slept : Unit <- IO.try(Unit, L.sleep_millis(100))
+            watch_heavy(attempt, pid, start))))
+
+def watch_heavy_pid(parsed: Maybe<U32>, attempt: String, start: String) -> IO(Unit):
+  match parsed:
+    case None{}: IO.die(Unit, 2, "compile-queue: watch pid is malformed")
+    case Some{pid}: watch_heavy(attempt, pid, start)
+
 def supervise(attempt: String) -> IO(Unit):
   do IO<Unit>:
     meta <- IO.try(String, L.read_text(attempt ++ "/meta"))
@@ -708,6 +728,10 @@ def supervise(attempt: String) -> IO(Unit):
         released : Unit <- IO.try(Unit, L.lock_release(gate))
         # Descriptor 8 is the one host-wide heavy lock for cgen and cc.
         locked : Unit <- IO.try(Unit, L.lock_fd_acquire(8))
+        +marker = attempt ++ "/compiled"
+        signaled : Result<&1,&1,U32 & String,Unit> <- L.set_env("BATON_COMPILE_QUEUE_COMPILED", marker)
+        +watch_args = P.argv(Con{"__watch-heavy", Con{attempt, Con{U32.show(pid), Con{start, Nil{}}}}})
+        watcher : Result<&1,&1,U32 & String,U32> <- L.spawn_detached(watch_args, 9, 8)
         Bool.pick(IO(Unit), Tx.str_eq(kind, "cgen"),
           do IO<Unit>:
             before <- IO.try(String, L.read_text(attempt ++ "/source-digest"))
@@ -1275,6 +1299,8 @@ def main() -> IO(Unit):
       case "status" <> rest: status_command(rest)
       case "adopt" <> rest: adopt_command(rest)
       case "__supervise" <> attempt <> Nil{}: supervise(attempt)
+      case "__watch-heavy" <> attempt <> pid_text <> start <> Nil{}:
+        watch_heavy_pid(U32.read(pid_text), attempt, start)
       case "__guard" <> keydir <> pid <> start <> name <> path <> Nil{}:
         guard(keydir, pid, start, name, path)
       case other: IO.die(Unit, 2, usage())
