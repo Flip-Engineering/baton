@@ -16,6 +16,8 @@ def main():
     parser.add_argument('--binary', required=True, type=Path)
     parser.add_argument('--alias', action='append', default=[], type=Path)
     parser.add_argument('--fixture', required=True, type=Path)
+    parser.add_argument('--message-status-source', type=Path,
+                        default=Path(__file__).resolve().parents[2] / 'bend2/src/coordinator/message-status.bend')
     parser.add_argument('--directory', required=True, type=Path)
     args = parser.parse_args()
     directory = args.directory.resolve()
@@ -76,7 +78,8 @@ def main():
         checker = Path(__file__).with_name('check-message-read-index-native.py')
         for i, alias in enumerate([binary] + [p.absolute() for p in args.alias]):
             result = run('alias-' + str(i), [sys.executable, checker, '--fixture', fixture, '--cli', binary,
-                '--migration-cli', alias, '--directory', directory / ('alias-' + str(i))])
+                '--migration-cli', alias, '--message-status-source', args.message_status_source.absolute(),
+                '--directory', directory / ('alias-' + str(i))])
             require(result.returncode == 0, 'alias ' + str(i) + ' preserves complete messages and native identities with normal owner lifecycle')
         passed = True
     finally:

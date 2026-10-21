@@ -17,6 +17,8 @@ def main():
     parser.add_argument('--cli', required=True)
     parser.add_argument('--directory', required=True)
     parser.add_argument('--migration-cli')
+    parser.add_argument('--message-status-source', type=Path,
+                        default=Path(__file__).resolve().parents[2] / 'bend2/src/coordinator/message-status.bend')
     args = parser.parse_args()
     directory = Path(args.directory).resolve()
     directory.mkdir(parents=True, exist_ok=False)
@@ -100,6 +102,7 @@ def main():
         spec = importlib.util.spec_from_file_location('index_checks', Path(__file__).with_name('message-read-index.py'))
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
+        module.SOURCE = args.message_status_source.absolute()
         with closing(sqlite3.connect(database)) as db:
             plan = [row[3] for row in db.execute('EXPLAIN QUERY PLAN ' + module.projection_sql(), (module.payload(),))]
         (directory / 'query-plan.json').write_text(json.dumps(plan, indent=2))
@@ -124,6 +127,8 @@ def main():
                 'cli_sha256': hashlib.sha256(Path(cli).read_bytes()).hexdigest(),
                 'cli_invocation': cli, 'cli_resolved_payload': str(Path(cli).resolve()),
                 'migration_invocation': str(Path(args.migration_cli).absolute()) if args.migration_cli else None,
+                'message_status_source': str(args.message_status_source.absolute()),
+                'message_status_source_sha256': hashlib.sha256(args.message_status_source.read_bytes()).hexdigest(),
                 'migration_payload_sha256': hashlib.sha256(Path(args.migration_cli).read_bytes()).hexdigest() if args.migration_cli else None}, indent=2))
     print(json.dumps({'passed': passed, 'assertions': len(checks), 'directory': str(directory)}))
 
