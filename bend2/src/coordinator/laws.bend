@@ -289,7 +289,7 @@ def m17_two_successful_steps_are_a_success():
 
 law m13_an_open_input_is_not_closed:
   for +handle: U32
-  {Turn.close_input(handle, True{}) == IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}}) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Turn.close_input(handle, False{}) == IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def m13_an_open_input_is_not_closed(handle):
   {==}
