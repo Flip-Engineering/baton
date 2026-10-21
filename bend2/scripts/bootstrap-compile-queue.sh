@@ -51,6 +51,7 @@ trap cleanup_bootstrap EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+sh "$root/bend2/scripts/bend-lineage-guard.sh" "$compiler"
 "$compiler" "$entry" -o "$scratch/compile-queue.c"
 "$cc" -O1 -pthread "$scratch/compile-queue.c" -lsqlite3 -lm -o "$output"
 printf '%s\n' "$output"
