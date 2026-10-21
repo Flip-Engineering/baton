@@ -187,7 +187,8 @@ static int focused_receiver_verb(int argc,char **argv) {
 #if defined(BATON2_RECEIVE_FOCUSED) || defined(BATON2_NATIVE_RECEIVER_ROUTER)
 /* Bend parses each selected public action and resolves its recorded context. */
 static int clear_stop_public_args(int argc,char **argv) {
-  if(argc<2) return 0;
+  if(argc<2 || !strcmp(argv[1],"help") || !strcmp(argv[1],"--help") ||
+     !strcmp(argv[1],"-h")) return 0;
   int action=2;
   if(!strcmp(argv[1],"as")) action=3;
   else if(!strcmp(argv[1],"--project")) {

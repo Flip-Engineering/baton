@@ -114,6 +114,8 @@ def main():
         result = run("missing-agent-context",[binary,"clear-stop","--session","focused-clear-11"],missing)
         check("missing-agent-context-refused",result.returncode != 0 and "context" in result.stderr.lower())
         check("missing-agent-context-preserved",snapshot("session_stops") == before_invalid)
+        ordinary_help = run("ordinary-help",[binary,"help","stop"])
+        check("ordinary-help-delegated",ordinary_help.returncode == 0 and "Retain an explicit stop" in ordinary_help.stdout)
         help_result = run("clear-stop-help",[full,db,"clear-stop","--help"])
         check("public-help",help_result.returncode == 0 and "clear-stop" in help_result.stdout)
         for table, before in preserved.items():
