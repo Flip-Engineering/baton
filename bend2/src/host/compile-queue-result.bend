@@ -459,8 +459,9 @@ def CompileQueueResult.verify_completed(+keydir: String) -> IO(Result<&1,&1,U32 
 
 def CompileQueueResult.copy_row_fields(fields: List<&2,String>, +keydir: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match fields:
-    case name <> +destination <> tail:
+    case name_field <> +destination <> tail:
       do IO<Result<&1,&1,U32 & String,Unit>>:
+        +name : String <- IO.pure(String, String.drop(name_field, String.length("artifact=")))
         +staging : String <- IO.pure(String, destination ++ ".queue-tmp")
         removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
         installed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.install(keydir ++ "/completed/artifacts/" ++ name, destination, staging))
@@ -483,8 +484,8 @@ def CompileQueueResult.copy_artifacts(+keydir: String, +rows: String) -> IO(Resu
 
 def CompileQueueResult.receipt_row_parts(parts: List<&2,String>) -> String:
   match parts:
-    case name <> destination <> tail:
-      "artifact-" ++ name ++ "=" ++ destination ++ "\\n"
+    case name_field <> destination <> tail:
+      "artifact-" ++ String.drop(name_field, String.length("artifact=")) ++ "=" ++ destination ++ "\\n"
     case other: ""
 
 def CompileQueueResult.receipt_rows(rows: List<&2,String>) -> String:
