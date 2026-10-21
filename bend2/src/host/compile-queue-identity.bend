@@ -274,7 +274,7 @@ def CompileQueueIdentity.closure_targets(path: String, +text: String) -> List<&2
       CompileQueueIdentity.c_targets(String.lines(text)),
       Nil{}))
 
-def CompileQueueIdentity.file_targets(path: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
+def CompileQueueIdentity.file_targets(+path: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
   +name = String.to_lower(CompileQueueIdentity.path_basename(path))
   match Bool.or(String.ends_with(name, ".bend"),
                 Bool.or(String.ends_with(name, ".c"), String.ends_with(name, ".h"))):
