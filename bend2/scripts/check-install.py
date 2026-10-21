@@ -112,6 +112,15 @@ BINARY_LAYOUT = (
      'build_mode': 'recovery-native-entry'},
 )
 
+def verify_dispatch_runtime(prefix):
+    helper = prefix / 'libexec/baton2/task-start.mjs'
+    require(helper.is_file() and not helper.is_symlink() and os.access(helper, os.R_OK),
+            'The installation lacks the dispatch operation libexec/baton2/task-start.mjs')
+    runtimes = [prefix / 'bin/node', prefix / 'libexec/baton2/repl/bun']
+    require(any(path.is_file() and not path.is_symlink() and os.access(path, os.X_OK)
+                for path in runtimes),
+            'The installation has no Node or bundled Bun runtime for the dispatch operation')
+
 
 def verify_checksums(prefix):
     path = prefix / 'SHA256SUMS'
@@ -310,6 +319,7 @@ def check(prefix, output):
     verify_payload_checksums(prefix, checksums)
     binaries = verify_binaries(prefix, manifest, checksums)
     dependency = verify_repl(prefix, manifest)
+    verify_dispatch_runtime(prefix)
     system = platform.system()
     require(manifest.get('required_system_dependencies') == system_dependencies(system),
             'The installation manifest must record its required C toolchain and SQLite development files')

@@ -97,6 +97,10 @@ type Book = Omit<Bend.Book, "tlds"> & { tlds: Record<Bend.Name, TLD> };
 type Src = { refs: Set<Bend.Name>; deps: Set<Bend.Name>; flat: boolean };
 
 type Carb = {
+  // The book as the caller holds it. `book` is a shallow copy of it, so a
+  // definition the compiler rewrites must be rewritten there too, or the
+  // caller keeps the pre-elaboration object alive for the whole compile.
+  src: Book;
   book: Book;
   bangs: Set<Bend.Name>;
   sites: Map<Bend.Name, number>;
@@ -121,6 +125,9 @@ type File = Carb & {
   tabs: Map<string, number>;
   spins: [string, string, Set<string>][];
   spun: Map<string, string>;
+  armSeq: number;
+  armBusy: Set<string>;
+  armHints: Map<string, { term: HTerm; name: string; lay: Lay; ks: Kind[] }[]>;
   clos: Set<string>;
   img: string[];
   lits: Map<string, number>;
@@ -150,7 +157,10 @@ type HAdt = Of<"ADT">;
 
 type HLet = Of<"Let">;
 
-type UMap = Bend.PMap<number>;
+// A use map: probe index and use count pairs, ascending by index. The indexes
+// reach the millions, so a binary trie over them costs one node per bit of the
+// index; the maps are only ever read, so the pairs are all that is kept.
+type UMap = number[];
 
 type Level = [string, HTerm, () => Val[]];
 
@@ -195,7 +205,7 @@ const FOLD_FUEL = 8192;
 // of Metal compile, 2.6 s so); at 128 raytrace lost 31% on PAR-CPU.
 const SPIN_FAR = 256;
 
-const USE0 = Bend.Emp<number>();
+const USE0: UMap = [];
 
 const W32: Lay = { ks: ["w32"], arms: null };
 
@@ -623,6 +633,14 @@ const OPENS: Map<Of<"Lam"> | HLet, { ps: Probe[]; b: HTerm }> = new Map();
 
 const USES: Map<HTerm, UMap> = new Map();
 
+// Use maps are kept while the definition's held entries stay under this cap.
+// Past it a map is still computed, just not kept: the fold is pure, so a later
+// query recomputes the same pairs, and the kept maps are the post-order prefix
+// covering the subtrees a later query is likeliest to revisit.
+const USE_CAP = 1 << 24;
+
+let use_held = 0;
+
 const TELES: Map<HTerm, ReturnType<typeof Bend.tele_unbind>> = new Map();
 
 const SRCS: Map<Bend.Name, Src> = new Map();
@@ -732,6 +750,7 @@ function weak_memo<K extends object, V>(m: WeakMap<K, V>, k: K, f: () => V): V {
 function memo_gc(): void {
   [OPENS, USES, FOLDS, SPINES, CONSTS, TELES].forEach((m) => m.clear());
   PROBES.length = 1;
+  use_held = 0;
 }
 
 // Probe
@@ -887,25 +906,105 @@ function term_const(t: HTerm): boolean {
   }));
 }
 
-function term_use(u: UMap, p: Probe): number {
-  return Bend.pmap_get(u, p.i) ?? 0;
+function use_get(u: UMap, i: number): number {
+  let lo = 0;
+  let hi = (u.length >> 1) - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const k = u[mid << 1];
+    if (k === i) {
+      return u[(mid << 1) + 1];
+    }
+    if (k < i) {
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return 0;
 }
 
-// The uses of each probe in a term.
-function term_uses(cb: Carb, tm: HTerm): UMap {
-  return memo(USES, tm, () => {
-    const t = term_force(tm);
-    switch (t.$) {
-      case "Var": {
-        const p = probe_of(t);
-        return p === DUMMY ? USE0 : Bend.pmap_set(USE0, p.i, 1);
-      }
-      case "Mat": return Bend.pmap_union(term_uses(cb, t.h),
-        term_uses(cb, t.m), Math.max);
-      default: return term_kids(cb, t).reduce((u, x) =>
-        Bend.pmap_union(u, term_uses(cb, x), (a, b) => a + b), USE0);
+// The union of two maps: a probe in both folds its counts, a probe in one is
+// kept. Neither input is written, and the result is an input when the other is
+// empty, so a node with one live child shares that child's map.
+function use_union(a: UMap, b: UMap,
+  f: (x: number, y: number) => number): UMap {
+  if (a.length === 0) {
+    return b;
+  }
+  if (b.length === 0) {
+    return a;
+  }
+  const out: number[] = new Array(a.length + b.length);
+  let i = 0;
+  let j = 0;
+  let n = 0;
+  while (i < a.length && j < b.length) {
+    const ka = a[i];
+    const kb = b[j];
+    if (ka === kb) {
+      out[n++] = ka;
+      out[n++] = f(a[i + 1], b[j + 1]);
+      i += 2;
+      j += 2;
+    } else if (ka < kb) {
+      out[n++] = ka;
+      out[n++] = a[i + 1];
+      i += 2;
+    } else {
+      out[n++] = kb;
+      out[n++] = b[j + 1];
+      j += 2;
     }
-  });
+  }
+  while (i < a.length) {
+    out[n++] = a[i];
+    out[n++] = a[i + 1];
+    i += 2;
+  }
+  while (j < b.length) {
+    out[n++] = b[j];
+    out[n++] = b[j + 1];
+    j += 2;
+  }
+  out.length = n;
+  return out;
+}
+
+function term_use(u: UMap, p: Probe): number {
+  return use_get(u, p.i);
+}
+
+// The uses of each probe in a term. A map is held while the definition's held
+// entries fit the cap; see USE_CAP for the recompute fallback.
+function term_uses(cb: Carb, tm: HTerm): UMap {
+  const got = USES.get(tm);
+  if (got !== undefined) {
+    return got;
+  }
+  const t = term_force(tm);
+  let out: UMap;
+  switch (t.$) {
+    case "Var": {
+      const p = probe_of(t);
+      out = p === DUMMY ? USE0 : [p.i, 1];
+      break;
+    }
+    case "Mat": {
+      out = use_union(term_uses(cb, t.h), term_uses(cb, t.m), Math.max);
+      break;
+    }
+    default: {
+      out = term_kids(cb, t).reduce((u, x) =>
+        use_union(u, term_uses(cb, x), (a, b) => a + b), USE0);
+    }
+  }
+  const held = Math.max(1, out.length >> 1);
+  if (use_held + held <= USE_CAP) {
+    USES.set(tm, out);
+    use_held += held;
+  }
+  return out;
 }
 
 function rest_use(cb: Carb, rest: HTerm[], p: Probe): number {
@@ -1481,7 +1580,17 @@ function def_body(cb: Carb, k: Bend.Name): TLD | undefined {
     const h = Bend.term_higher(tld.e);
     const n = tld.n + Math.min(def_raise(cb.book, h, tld.n),
       tele_unbind(cb.book, tld.T).doms.length - tld.n);
-    cb.book.tlds[k] = { ...tld, n, h };
+    // The checked lowered term `e` is dead once its higher image `h` exists:
+    // the only reader in the compiler is the guard above. Install the
+    // elaborated definition over `e` in the caller's book as well, so each
+    // definition's lowered graph dies when it is elaborated instead of
+    // staying live, a second copy of every body, for the whole compile.
+    const next = { ...tld, n, h };
+    delete next.e;
+    cb.book.tlds[k] = next;
+    if (cb.src.tlds[k] === tld) {
+      cb.src.tlds[k] = next;
+    }
   }
   return cb.book.tlds[k];
 }
@@ -1501,6 +1610,7 @@ function carb_book(src: Bend.Book, roots: Bend.Name[]): Carb {
     }
   }
   const cb: Carb = {
+    src,
     book: { ...src, tlds: { ...src.tlds } },
     bangs: new Set(),
     sites: new Map(),
@@ -1564,6 +1674,205 @@ function type_adts(cb: Carb, T: HTerm): Bend.Name[] {
   }
 }
 
+// V
+// =
+
+// The refs a type names, opened through binders and cells. Bend.term_wnf
+// unfolds a definition only from inside a type, so a definition no type
+// names can never be unfolded by a compile.
+function type_live(t: HTerm, out: Set<Bend.Name>,
+  seen: Set<HTerm> = new Set(), d = 0): void {
+  const s = Bend.term_force(t);
+  if (seen.has(s)) {
+    return;
+  }
+  seen.add(s);
+  switch (s.$) {
+    case "Ref": out.add(s.k); return;
+    case "ADT":
+      out.add(s.k);
+      s.x.forEach((x) => type_live(x, out, seen, d));
+      return;
+    case "App":
+      type_live(s.f, out, seen, d);
+      type_live(s.x, out, seen, d);
+      return;
+    case "Lam":
+      type_live(s.f(Bend.Var<Bend.HBody>(s.k, d)), out, seen, d + 1);
+      return;
+    case "All":
+      type_live(s.A, out, seen, d);
+      type_live(s.B(Bend.Var<Bend.HBody>(s.k, d)), out, seen, d + 1);
+      return;
+    case "Let":
+      s.v.forEach((v) => type_live(v, out, seen, d));
+      type_live(s.f(s.k.map((k, j) => Bend.Var<Bend.HBody>(k, d + j))),
+        out, seen, d + s.k.length);
+      return;
+    case "Sub":
+      if (s.v.$ !== "PVar" && s.v.$ !== "PCtr") {
+        type_live(s.v as HTerm, out, seen, d);
+      }
+      type_live(s.f, out, seen, d);
+      return;
+    case "Ctr":
+      s.x.forEach((x) => type_live(x, out, seen, d));
+      return;
+    case "Mat":
+      type_live(s.h, out, seen, d);
+      type_live(s.m, out, seen, d);
+      return;
+    case "Eql":
+      type_live(s.a, out, seen, d);
+      type_live(s.b, out, seen, d);
+      type_live(s.T, out, seen, d);
+      return;
+    case "Rwt":
+      type_live(s.e, out, seen, d);
+      type_live(s.p, out, seen, d);
+      type_live(s.f, out, seen, d);
+      return;
+    case "Typ":
+      type_live(s.g, out, seen, d);
+      return;
+    case "Min":
+      type_live(s.a, out, seen, d);
+      type_live(s.b, out, seen, d);
+      return;
+    case "Ann":
+      type_live(s.x, out, seen, d);
+      type_live(s.T, out, seen, d);
+      return;
+    default: return;
+  }
+}
+
+// The types a higher body carries: an annotation's type, and a type-valued
+// node in a term. A ref in an argument or a body is not a type ref and
+// seeds nothing.
+function ann_live(t: HTerm, out: Set<Bend.Name>,
+  seen: Set<HTerm> = new Set(), d = 0): void {
+  const s = Bend.term_force(t);
+  if (seen.has(s)) {
+    return;
+  }
+  seen.add(s);
+  switch (s.$) {
+    case "Ann":
+      type_live(s.T, out);
+      ann_live(s.x, out, seen, d);
+      return;
+    case "Lam":
+      ann_live(s.f(Bend.Var<Bend.HBody>(s.k, d)), out, seen, d + 1);
+      return;
+    case "Let":
+      s.v.forEach((v) => ann_live(v, out, seen, d));
+      ann_live(s.f(s.k.map((k, j) => Bend.Var<Bend.HBody>(k, d + j))),
+        out, seen, d + s.k.length);
+      return;
+    case "App":
+      ann_live(s.f, out, seen, d);
+      ann_live(s.x, out, seen, d);
+      return;
+    case "Ctr":
+      s.x.forEach((x) => ann_live(x, out, seen, d));
+      return;
+    case "Mat":
+      ann_live(s.h, out, seen, d);
+      ann_live(s.m, out, seen, d);
+      return;
+    case "Sub":
+      if (s.v.$ !== "PVar" && s.v.$ !== "PCtr") {
+        ann_live(s.v as HTerm, out, seen, d);
+      }
+      ann_live(s.f, out, seen, d);
+      return;
+    case "Rwt":
+      type_live(s.p, out);
+      ann_live(s.e, out, seen, d);
+      ann_live(s.f, out, seen, d);
+      return;
+    case "Eql":
+      type_live(s.T, out);
+      ann_live(s.a, out, seen, d);
+      ann_live(s.b, out, seen, d);
+      return;
+    case "Typ":
+      type_live(s.g, out);
+      return;
+    case "All":
+    case "ADT":
+    case "Min":
+      type_live(s, out);
+      return;
+    default: return;
+  }
+}
+
+// The defs whose parsed body a compile can still unfold: every ref a type
+// names, closed over the bodies of the named defs. Seeded from every
+// signature and constructor telescope in the book, plus every type a
+// reachable elaborated body carries in an annotation.
+function v_live(cb: Carb): Set<Bend.Name> {
+  const live = new Set<Bend.Name>();
+  // A book handed to compile_book must stay runnable: book_run reads main.v.
+  live.add("main");
+  for (const tld of Object.values(cb.book.tlds)) {
+    type_live(tld.T, live);
+  }
+  for (const ctr of Object.values(cb.book.ctrs)) {
+    type_live(ctr.T, live);
+  }
+  for (const k of SRCS.keys()) {
+    const tld = cb.book.tlds[k];
+    if (tld?.$ === "Def" && tld.h !== undefined) {
+      ann_live(tld.h, live);
+    }
+  }
+  const done = new Set<Bend.Name>();
+  for (const queue = [...live]; queue.length > 0;) {
+    const k = queue.pop() as Bend.Name;
+    if (done.has(k)) {
+      continue;
+    }
+    done.add(k);
+    const tld = cb.book.tlds[k];
+    if (tld?.$ !== "Def" || tld.v === null || tld.v === undefined) {
+      continue;
+    }
+    const got = new Set<Bend.Name>();
+    type_live(tld.v, got);
+    for (const n of got) {
+      if (!live.has(n)) {
+        live.add(n);
+        queue.push(n);
+      }
+    }
+  }
+  return live;
+}
+
+// A definition outside the type closure is never unfolded by a compile,
+// so its parsed body is dead once carb_book has run: keep only the
+// elaborated body h. Install the replacement in the caller's book too, as
+// def_body does, or the old object stays live beside the new one and keeps
+// the parsed graph for the whole compile.
+function v_drop(cb: Carb, live: Set<Bend.Name>): void {
+  for (const k of SRCS.keys()) {
+    const tld = cb.book.tlds[k];
+    if (tld?.$ !== "Def" || tld.v === null || tld.v === undefined
+      || live.has(k)) {
+      continue;
+    }
+    const next = { ...tld };
+    delete (next as { v?: HTerm | null }).v;
+    cb.book.tlds[k] = next;
+    if (cb.src.tlds[k] === tld) {
+      cb.src.tlds[k] = next;
+    }
+  }
+}
+
 // Flat
 // ====
 
@@ -1605,7 +1914,7 @@ function cid_mac(k: string): string {
 
 function file_new(cb: Carb, decl: string): File {
   return { ...cb, decl, segs: [], seg: seg_new("", BOX, []), tab: 2,
-    cids: new Map(), tabs: new Map(), spins: [], spun: new Map(), clos: new Set(),
+    cids: new Map(), tabs: new Map(), spins: [], spun: new Map(), armSeq: 0, armBusy: new Set(), armHints: new Map(), clos: new Set(),
     img: [], lits: new Map(), consts: new Map(), reqs: "", fuel: 0,
     fresh: new Map(), spares: [],
     uses: new Map(), brwl: new Map(), rest: [], def: "",
@@ -2283,7 +2592,11 @@ function emit_native(fl: File, ck: Call, ers: HTerm[]): string {
     ...dst.ws.map((v, j) => `  o[${j}] = ${v};`),
     "  return 1;", "}"].join("\n"), seg.refs]);
   }
+  // The arm name counter is monotone across nested emission. Restoring the
+  // whole file must not roll it back, or a spin body's arm name is reused.
+  const armSeq = fl.armSeq;
   Object.assign(fl, outer);
+  fl.armSeq = armSeq;
   return name;
 }
 
@@ -2815,6 +3128,241 @@ function lits_cond(w: string, j: number, n: number): string {
   return j === 32 ? `${w} == ${n}` : `(${w} & ${2 ** j - 1}) == ${n}`;
 }
 
+// A match arm body that is closed is the same function at every column the
+// flattener duplicated it into. Emit its body once as a spin over its
+// parameters and call that spin from each site. The hint (outer node spans
+// and kinds, the innermost body's span, and the argument/result layouts) only
+// narrows the candidate list; structural alpha-equality decides every reuse.
+function arm_hint(h: HTerm): string {
+  let t = term_force(h);
+  let out = "";
+  for (let i = 0; i < 3; i++) {
+    const sp: any = (t as any).s;
+    out += (sp !== undefined && sp.beg !== undefined
+      ? sp.beg + ":" + sp.end : "?") + ":" + t.$ + ";";
+    if (t.$ === "Ann") {
+      t = term_force(t.x);
+    } else if (t.$ === "Lam") {
+      t = term_force(term_open(t).b);
+    } else {
+      break;
+    }
+  }
+  let b = term_force(h);
+  for (let i = 0; i < 100000; i++) {
+    if (b.$ === "Ann") {
+      b = term_force(b.x);
+    } else if (b.$ === "Lam") {
+      b = term_force(term_open(b).b);
+    } else {
+      break;
+    }
+  }
+  const sp: any = (b as any).s;
+  return out + "|" + (sp !== undefined && sp.beg !== undefined
+    ? sp.beg + ":" + sp.end : "?") + ":" + b.$;
+}
+
+function arm_eq(a: HTerm, b: HTerm): boolean {
+  const ba = new Map<number, number>(), bb = new Map<number, number>();
+  const fa = new Map<number, number>(), fb = new Map<number, number>();
+  const bind = (i: number, j: number, d: number): void => {
+    ba.set(i, d); bb.set(j, d);
+  };
+  const unbind = (i: number, j: number): void => {
+    ba.delete(i); bb.delete(j);
+  };
+  const same_var = (i: number, j: number, d: number): boolean => {
+    const xb = ba.has(i), yb = bb.has(j);
+    if (xb !== yb) return false;
+    if (xb) return d - ba.get(i)! === d - bb.get(j)!;
+    const xf = fa.get(i) ?? (fa.set(i, fa.size), fa.size - 1);
+    const yf = fb.get(j) ?? (fb.set(j, fb.size), fb.size - 1);
+    return xf === yf;
+  };
+  // A quantity compares by tag. A lambda's quantity is optional: absent
+  // (no annotation) is not the same term as an explicit erased binder.
+  const q_eq = (qa: Bend.Quant | undefined, qb: Bend.Quant | undefined): boolean =>
+    (qa === undefined ? "" : qa.$) === (qb === undefined ? "" : qb.$);
+  const go = (u: HTerm, v: HTerm, d: number): boolean => {
+    const x = term_force(u), y = term_force(v);
+    if (x.$ !== y.$) {
+      return false;
+    }
+    switch (x.$) {
+      case "Var": {
+        return same_var(x.i, (y as Of<"Var">).i, d);
+      }
+      case "Ref": {
+        const yr = y as Of<"Ref">;
+        return x.k === yr.k && (x.b === true) === (yr.b === true);
+      }
+      case "Lam": {
+        const ya = y as Of<"Lam">;
+        if (!q_eq(x.q, ya.q)) return false;
+        const oa = term_open(x), ob = term_open(ya);
+        bind(oa.ps[0].i, ob.ps[0].i, d);
+        const r = go(oa.b, ob.b, d + 1);
+        unbind(oa.ps[0].i, ob.ps[0].i);
+        return r;
+      }
+      case "Let": {
+        const ya = y as Of<"Let">;
+        const oa = term_open(x), ob = term_open(ya);
+        if (x.v.length !== ya.v.length) return false;
+        if (x.q.length !== ya.q.length) return false;
+        for (let i = 0; i < x.q.length; i++) {
+          if (x.q[i].$ !== ya.q[i].$) return false;
+        }
+        for (let i = 0; i < x.v.length; i++) if (!go(x.v[i], ya.v[i], d)) return false;
+        oa.ps.forEach((p, j) => bind(p.i, ob.ps[j].i, d + j));
+        const r = go(oa.b, ob.b, d + oa.ps.length);
+        oa.ps.forEach((p, j) => unbind(p.i, ob.ps[j].i));
+        return r;
+      }
+      case "App": return go(x.f, (y as Of<"App">).f, d) && go(x.x, (y as Of<"App">).x, d);
+      case "Ctr": {
+        const yc = y as Of<"Ctr">;
+        if (x.k !== yc.k || x.x.length !== yc.x.length) return false;
+        return x.x.every((z, i) => go(z, yc.x[i], d));
+      }
+      case "Mat": {
+        const ym = y as Of<"Mat">;
+        return x.k === ym.k && go(x.h, ym.h, d) && go(x.m, ym.m, d);
+      }
+      case "Lit": return JSON.stringify(x.v) === JSON.stringify((y as Of<"Lit">).v);
+      case "Ann": {
+        const ya = y as Of<"Ann">;
+        // A repeated copy keeps the same annotation object. Comparing it
+        // with itself costs a full traversal of a type that can carry the
+        // whole continuation, and the duplicate arms dominate the compile.
+        return go(x.x, ya.x, d) && (x.T === ya.T || go(x.T, ya.T, d));
+      }
+      case "Rwt": {
+        const yr = y as Of<"Rwt">;
+        return go(x.e, yr.e, d) && go(x.p, yr.p, d) && go(x.f, yr.f, d);
+      }
+      case "Eql": {
+        const ye = y as Of<"Eql">;
+        return go(x.a, ye.a, d) && go(x.b, ye.b, d) && go(x.T, ye.T, d);
+      }
+      // ADT.r is the checker's remaining-constructor refinement. book_adt
+      // reads it to filter the constructor list used for default-arm
+      // existence; layouts and calls key on k and the type arguments, so it
+      // stays out of the equality.
+      case "ADT": {
+        const yd = y as Of<"ADT">;
+        return x.k === yd.k && x.x.length === yd.x.length
+          && x.x.every((z, i) => go(z, yd.x[i], d));
+      }
+      case "Min": { const ym = y as Of<"Min">; return go(x.a, ym.a, d) && go(x.b, ym.b, d); }
+      case "Typ": return go(x.g, (y as Of<"Typ">).g, d);
+      case "Qua": return x.q.$ === (y as Of<"Qua">).q.$;
+      case "Hol": return x.k === (y as Of<"Hol">).k;
+      // A Sub's i is a substitution index, not a de Bruijn binder. Binding
+      // it can alias a probe or a binder with the same number, and the body
+      // cannot be renamed without rebuilding higher-order terms. Reuse is
+      // refused for an arm that carries one.
+      case "Sub": return false;
+      case "All": {
+        const ya = y as Of<"All">;
+        if (JSON.stringify(x.q) !== JSON.stringify(ya.q)) return false;
+        if (!go(x.A, ya.A, d)) return false;
+        // The synthetic binder key stays below every real index (probes are
+        // non-negative and term_force resolves the -1 cells). Keying on d
+        // aliases a probe whose index equals the comparison depth.
+        const key = -2 - d;
+        const va = Bend.Var(x.k, key), vb = Bend.Var(ya.k, key);
+        bind(key, key, d);
+        const r = go(x.B(va), ya.B(vb), d + 1);
+        unbind(key, key);
+        return r;
+      }
+      case "Qnt":
+      case "Rfl":
+      case "Efq": return true;
+      default: return false;
+    }
+  };
+  return go(a, b, 0);
+}
+
+function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst): boolean {
+  if (term_uses(fl, h).length !== 0) {
+    return false;
+  }
+  // A shared arm is emitted as an ordinary C helper with only its explicit
+  // parameters. WL_JMP uses the register bank declared for its segment, so
+  // an arm that can transfer segments must stay in its owning segment.
+  const has_segment_jump = term_any(fl, h, (node) => {
+    const call = call_kind(fl, node);
+    return call !== null && !flat_call(fl, node);
+  });
+  if (has_segment_jump) {
+    return false;
+  }
+  const lay = dst?.lay ?? fl.seg.ret;
+  const ks = av.flatMap((v) => v.lay.ks);
+  const base = [ks.join("."), lay.ks.join("."),
+    lay.arms === null ? "" : lay.arms.map((a) => a.k).join(",")].join("|");
+  const hint = arm_hint(h) + "|" + base;
+  const reps = fl.armHints.get(hint) ?? [];
+  for (const rep of reps) {
+    if (arm_eq(rep.term, h)) {
+      if (fl.armBusy.has(rep.name)) {
+        return false;
+      }
+      emit_arm_call(fl, rep, av, dst);
+      return true;
+    }
+  }
+  const name = seg_ref(fl, `arm_${fl.armSeq++}`);
+  const rec = { term: h, name, lay, ks };
+  reps.push(rec);
+  fl.armHints.set(hint, reps);
+  fl.armBusy.add(name);
+  const ts = ks.map(() => name_local(fl, "a"));
+  const outer = { seg: fl.seg, uses: fl.uses, spares: fl.spares,
+    tab: fl.tab, rest: fl.rest };
+  const seg = seg_new(name, lay, ts, ks);
+  fl.segs.push(seg);
+  Object.assign(fl, { seg, spares: [], tab: 2,
+    uses: new Map(fl.uses) });
+  let at = 0;
+  const argv = av.map((v) => {
+    const w = val_new(ts.slice(at, at + v.lay.ks.length), v.lay);
+    at += v.lay.ks.length;
+    return w;
+  });
+  const d = val_new(lay.ks.map(() => name_local(fl, "v")), lay);
+  emit_body(fl, h, null, [], argv, d);
+  if (!fl.dry) {
+    fl.spins.push([name, [`${seg.lines.length < SPIN_FAR ? "INLINE" : "FAR"} Term ${name}(Env e, THR Term* o${
+      seg.ks.map((k, i) => `, ${lay_c(k)} r${i}`).join("")}) {`,
+    "  u32 wpoll = 0;",
+    ...d.ws.map((v, j) => `  ${lay_c(lay.ks[j])} ${v} = 0;`),
+    ...seg_take(seg).map((l) => "  " + l),
+    "  WL_SPIN", ...seg.lines, "  break;", "  }",
+    ...d.ws.map((v, j) => `  o[${j}] = ${v};`),
+    "  return 1;", "}"].join("\n"), seg.refs]);
+  }
+  Object.assign(fl, outer);
+  fl.armBusy.delete(name);
+  emit_arm_call(fl, rec, av, dst);
+  return true;
+}
+
+function emit_arm_call(fl: File,
+  ent: { name: string; lay: Lay; ks: Kind[] }, av: Val[], dst: Dst): void {
+  seg_ref(fl, ent.name);
+  const ws = av.flatMap((v) => val_own(fl, v));
+  const o = name_local(fl, "o");
+  file_push(fl, `Term ${o}[${ent.lay.ks.length}];`);
+  block(fl, `if (${ent.name}(${["e", o, ...ws].join(", ")}) == 0) {`,
+    () => file_push(fl, "return 0;"));
+  emit_put(fl, dst, val_new(ent.lay.ks.map((_, j) => `${o}[${j}]`), ent.lay));
+}
+
 function emit_match(fl: File, x: Of<"Mat"> | Of<"Efq">,
   ty: HTerm | null, ers: HTerm[], args: Val[], dst: Dst): void {
   if (x.$ === "Efq") {
@@ -2880,7 +3428,10 @@ function emit_match(fl: File, x: Of<"Mat"> | Of<"Efq">,
     fl.spares = spares.slice();
     const outer = { seg: fl.seg, tab: fl.tab, uses: new Map(fl.uses) };
     bind_dead(fl, [h]);
-    emit_body(fl, h, null, ers, [...fs(), ...rest], dst);
+    const av = [...fs(), ...rest];
+    if (!emit_arm_shared(fl, h, av, dst)) {
+      emit_body(fl, h, null, ers, av, dst);
+    }
     if (dst !== null) {
       spare_flush(fl);
     }
@@ -3070,6 +3621,7 @@ export function compile_book(book: Bend.Book): string {
   const foreign_defs = done_defs(cb, def_foreign);
   const facts = () => cb.own.size + cb.hot.size + cb.stat.size;
   let diagnostic_pass = 0;
+  let v_dropped = false;
   const pass = (defs: [Bend.Name, Def][], dry = false): File => {
     const pass_number = ++diagnostic_pass;
     diagnostic("pass.begin", { pass: pass_number, definitions: defs.length,
@@ -3081,6 +3633,20 @@ export function compile_book(book: Bend.Book): string {
       for (const c of (cb.book.tlds[k] as Bend.ADT).c ?? []) {
         fl.cids.set(c.k, lay_node(fl.book, c.k).ks.length);
       }
+    }
+    if (!v_dropped) {
+      // show_main has read main.v and the constructor preamble has laid
+      // every reachable ADT out, so the type closure is complete here: a
+      // later pass cannot make a type it does not already name. Free the
+      // parsed body of every definition outside it, then re-point the
+      // reused definition lists at the replacement objects; they were
+      // built before this point and would otherwise keep the old ones,
+      // and their parsed graphs, live through the whole fixed point.
+      v_dropped = true;
+      v_drop(cb, v_live(cb));
+      [emission_defs, defs].forEach((ps) => ps.forEach((p) => {
+        p[1] = cb.book.tlds[p[0]] as Def;
+      }));
     }
     for (const [k, tld] of defs) {
       compile_def(fl, k, tld);
@@ -3191,6 +3757,13 @@ export function compile_book(book: Bend.Book): string {
     ["Tables", [diagnostic_join("fills.tables", defs, "\n"), ...[...fl.tabs].map(([r, i]) =>
       `CONSTV u64 TAB_${i}[] = { ${r} };`)]],
     ["Spins", [`CONSTV u64 STAT_IMG[] = { ${diagnostic_join("fills.image", fl.img, ", ") || 0} };`,
+      // A spin may call one emitted later (a nested spin is pushed before its
+      // caller's body is joined), so every spin is declared before the block.
+      ...fl.spins.map(([_, src]) => {
+        const sig = src.slice(0, src.indexOf("\n"))
+          .replace(/^(INLINE|FAR)\s+/, "").replace(/\s*\{\s*$/, "");
+        return `static ${sig};`;
+      }),
       ...fl.spins.map((s) => s[1])]],
     ["Segments", [compile_segs(fl)]],
     ["Requests", [fl.reqs]],

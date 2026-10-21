@@ -12,17 +12,22 @@ sh bend2/scripts/build-native.sh
 sh bend2/test/bend-launch-guard.sh
 sh bend2/scripts/build-native.sh bend2/test/process.bend .scratch/bend2/process-test
 "$PYTHON3" bend2/test/custody-adopt.py
+"$PYTHON3" bend2/test/start-gate.py
 "$PYTHON3" bend2/test/observer-monitor.py
 sh bend2/scripts/build-native.sh bend2/test/instance.bend .scratch/bend2/instance-test
 sh bend2/scripts/build-native.sh bend2/tests/git.bend .scratch/bend2/git-test
 .scratch/bend2/git-test
 sh bend2/scripts/build-native.sh bend2/tests/land.bend .scratch/bend2/land-test
 .scratch/bend2/land-test
+sh bend2/scripts/build-native.sh bend2/tests/storage.bend .scratch/bend2/storage-test
+.scratch/bend2/storage-test
 sh bend2/scripts/build-native.sh bend2/test/subscription-profiles.bend .scratch/bend2/subscription-profiles-test
 .scratch/bend2/subscription-profiles-test
 sh bend2/scripts/build-native.sh bend2/test/focused-reads.bend .scratch/bend2/focused-reads
 BATON2_EXE="$root/.scratch/bend2/focused-reads" "$PYTHON3" bend2/test/observed-usage.py
 BATON2_EXE="$root/.scratch/bend2/focused-reads" "$PYTHON3" bend2/test/harness-inventory.py
+sh bend2/scripts/build-native.sh bend2/test/knowledge-behavior.bend .scratch/bend2/knowledge-behavior-test
+BATON2_EXE="$root/.scratch/bend2/knowledge-behavior-test" "$PYTHON3" bend2/test/knowledge-behavior.py
 sh bend2/scripts/build-native.sh bend2/harness/api-key-exec.bend .scratch/bend2/api-key-exec
 sh bend2/scripts/build-native.sh bend2/test/api-key-spec.bend .scratch/bend2/api-key-spec
 BATON2_API_KEY_SPEC="$root/.scratch/bend2/api-key-spec" "$PYTHON3" bend2/test/api-key-spec.py
@@ -38,15 +43,68 @@ sh bend2/scripts/build-native.sh bend2/test/usage-windows-long.bend .scratch/ben
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-store.bend .scratch/bend2/usage-windows-store-test
 rm -f .scratch/bend2/usage-windows-store.db
 .scratch/bend2/usage-windows-store-test .scratch/bend2/usage-windows-store.db bend2/test/fake-omp-usage
+sh bend2/scripts/build-native.sh bend2/test/clear-stop-quota.bend .scratch/bend2/clear-stop-quota-test
+clear_stop_quota_db=$(mktemp "$root/.scratch/bend2/clear-stop-quota.XXXXXXXX")
+rm -f "$clear_stop_quota_db"
+(
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap '
+    clear_stop_quota_test_status=$?
+    trap - EXIT
+    clear_stop_quota_shutdown_status=0
+    .scratch/bend2/clear-stop-quota-test --instance-shutdown "$clear_stop_quota_db" || clear_stop_quota_shutdown_status=$?
+    if [ "$clear_stop_quota_shutdown_status" -ne 0 ]; then
+      printf "clear-stop-quota owner shutdown failed (exit %s) for %s\n" "$clear_stop_quota_shutdown_status" "$clear_stop_quota_db" >&2
+    fi
+    if [ "$clear_stop_quota_test_status" -ne 0 ]; then
+      exit "$clear_stop_quota_test_status"
+    fi
+    exit "$clear_stop_quota_shutdown_status"
+  ' EXIT
+  .scratch/bend2/clear-stop-quota-test "$clear_stop_quota_db"
+)
+sh bend2/scripts/build-native.sh bend2/test/quota-backoff-dedupe.bend .scratch/bend2/quota-backoff-dedupe-test
+quota_backoff_db=$(mktemp "$root/.scratch/bend2/quota-backoff-dedupe.XXXXXXXX")
+rm -f "$quota_backoff_db"
+(
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap '
+    quota_backoff_test_status=$?
+    trap - EXIT
+    quota_backoff_shutdown_status=0
+    .scratch/bend2/quota-backoff-dedupe-test --instance-shutdown "$quota_backoff_db" || quota_backoff_shutdown_status=$?
+    if [ "$quota_backoff_shutdown_status" -ne 0 ]; then
+      printf "quota-backoff-dedupe owner shutdown failed (exit %s) for %s\n" "$quota_backoff_shutdown_status" "$quota_backoff_db" >&2
+    fi
+    if [ "$quota_backoff_test_status" -ne 0 ]; then
+      exit "$quota_backoff_test_status"
+    fi
+    exit "$quota_backoff_shutdown_status"
+  ' EXIT
+  .scratch/bend2/quota-backoff-dedupe-test "$quota_backoff_db"
+)
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-wake.bend .scratch/bend2/usage-windows-wake-test
 rm -f .scratch/bend2/usage-windows-wake.db
 .scratch/bend2/usage-windows-wake-test .scratch/bend2/usage-windows-wake.db bend2/test/fake-wake-marker
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-wake-path.bend .scratch/bend2/usage-windows-wake-path-test
 rm -f .scratch/bend2/usage-windows-wake-path.db
 .scratch/bend2/usage-windows-wake-path-test .scratch/bend2/usage-windows-wake-path.db
+sh bend2/scripts/build-native.sh bend2/test/quota-exhaustion-reset.bend .scratch/bend2/quota-exhaustion-reset-test
+rm -f .scratch/bend2/quota-exhaustion-reset.db
+.scratch/bend2/quota-exhaustion-reset-test .scratch/bend2/quota-exhaustion-reset.db
 BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
 sh bend2/scripts/build-native.sh bend2/test/omp-home-preflight.bend .scratch/bend2/omp-home-preflight-test
 BATON2_EXE="$root/.scratch/bend2/omp-home-preflight-test" "$PYTHON3" bend2/test/omp-home-preflight.py
+sh bend2/scripts/build-native.sh bend2/test/launch-store.bend .scratch/bend2/launch-store-test
+BATON2_EXE="$root/.scratch/bend2/launch-store-test" "$PYTHON3" bend2/test/launch-store.py
+sh bend2/scripts/build-native.sh bend2/test/launch-store-retained.bend .scratch/bend2/launch-store-retained-test
+BATON2_EXE="$root/.scratch/bend2/launch-store-retained-test" "$PYTHON3" bend2/test/launch-store-retained.py
+"$PYTHON3" bend2/test/native-dispatch-runtime.py
+"$PYTHON3" bend2/test/check-install-dispatch-runtime.py
 sh bend2/scripts/build-native.sh bend2/test/dsh-player.bend .scratch/bend2/dsh-player-test
 BATON2_EXE="$root/.scratch/bend2/dsh-player-test" "$PYTHON3" bend2/test/dsh-player.py
 sh bend2/scripts/build-native.sh bend2/test/dsh-retained.bend .scratch/bend2/dsh-retained-test

@@ -199,9 +199,21 @@ def operator_reset_token(tok: String) -> Bool:
 # date-time, verbatim, or "" when the text names none. Providers separate the
 # date and clock by a space ("reset at 2026-10-06 07:12:52"), so a date-only
 # word followed by a clock-only word reads as one observation; the date alone
-# is never used when a clock word stands beside it.
+# is never used when a clock word stands beside it. A sentence-ending period
+# follows the timestamp in the Muse wording ("resets at 2026-10-19T06:38:50Z."),
+# so one final '.' is removed before the second validation.
+def token_without_final_dot(tok: String) -> String:
+  match tok:
+    case SNil{}: ""
+    case SCon{+head,SNil{}}: Bool.pick(String,Char.is_eq(head,Char.from_u32(46)),"",SCon{head,SNil{}})
+    case SCon{+head,+tail}: SCon{head,token_without_final_dot(tail)}
+
+def word_reset_stripped(+stripped: String) -> String:
+  Bool.pick(String,iso_token(stripped),stripped,"")
+
 def word_reset(+word: String) -> String:
-  Bool.pick(String,iso_token(take_ts(word)),take_ts(word),"")
+  +tok = take_ts(word)
+  Bool.pick(String,iso_token(tok),tok,word_reset_stripped(token_without_final_dot(tok)))
 
 def iso_date_only(tok: String) -> Bool:
   match tok:
@@ -424,22 +436,25 @@ def refresh(+db: String, +session: String, +account: String) -> IO(Unit):
 def exhausted_sql(+alias: String) -> String:
   "((" ++ alias ++ ".used_fraction IS NOT NULL AND " ++ alias ++ ".used_fraction >= 1) OR " ++ alias ++ ".reset_source='provider-message')"
 
-def latest_rows_sql(+harness: String, +provider: String, +account: String) -> String:
-  "SELECT w.* FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1)"
-
 def latest_provider_rows_sql(+harness: String, +provider: String, +account: String) -> String:
   "SELECT p.* FROM usage_windows p WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p.reset_source IN ('provider-message','provider-report') AND p.id=(SELECT p2.id FROM usage_windows p2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p2.reset_source IN ('provider-message','provider-report') AND p2.window=p.window ORDER BY p2.recorded_at DESC, p2.id DESC LIMIT 1)"
 
 def exhausted_windows_sql(+harness: String, +provider: String, +account: String) -> String:
   "SELECT p.window FROM (" ++ latest_provider_rows_sql(harness,provider,account) ++ ") p WHERE " ++ exhausted_sql("p")
 
+# The state row prefers the latest observed reset for an exhausted window, so
+# an unknown observation recorded after a future reset does not release the
+# hold. A non-exhausted window keeps its newest observation.
+def latest_rows_sql(+harness: String, +provider: String, +account: String) -> String:
+  +exhausted = exhausted_windows_sql(harness,provider,account)
+  "SELECT w.* FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY CASE WHEN w2.window IN (" ++ exhausted ++ ") AND w2.resets_at IS NULL THEN 1 ELSE 0 END,w2.recorded_at DESC,w2.id DESC LIMIT 1)"
+
 # --- the query ---------------------------------------------------------------
 
 # The latest observation per window for the session's binding, each with its
-# current state. No matching row reads back 'none recorded', never an empty
-# claim, and a model without a provider prefix reports that condition.
-def query_none(+session: String, +account: String) -> String:
-  "{\"schema\":\"baton2-usage-windows-v1\",\"session\":" ++ J.string_literal(session) ++ ",\"account\":" ++ J.string_literal(account) ++ ",\"windows\":\"none recorded\",\"condition\":\"noProviderQualifiedModel\"}"
+# current state. An unqualified model records and reads the empty provider
+# scope, which is the harness/account-wide window for its route. No matching
+# row reads back 'none recorded', never an empty claim.
 
 def query_answer_sql(+session: String, +harness: String, +provider: String, +account: String) -> String:
   +exhausted = exhausted_windows_sql(harness,provider,account)
@@ -458,18 +473,19 @@ def query(+db: String, +session: String, +account: String) -> IO(Unit):
     present : Unit <- observe_registered(found)
     +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
-    printed : Unit <- Bool.pick(IO(Unit),String.is_empty(provider_of(Tx.trim_nl(model))),IO.print(query_none(session,Tx.trim_nl(account))),query_bound(db,session,Tx.trim_nl(harness),provider_of(Tx.trim_nl(model)),Tx.trim_nl(account)))
+    printed : Unit <- query_bound(db,session,Tx.trim_nl(harness),provider_of(Tx.trim_nl(model)),Tx.trim_nl(account))
     IO.pure(Unit,Unit{})
 
 # --- the wake gate -----------------------------------------------------------
 #
-# Each window is represented by its latest row for state and reset, and by its
-# latest provider row for exhaustion evidence. A window is exhausted when the
-# provider said so: the latest provider row is a limit message or reports a used
-# fraction at or above 1. A partial provider report with a future reset is not
-# exhaustion and does not hold. An operator-observed reset keeps the window's
-# provider exhaustion and supplies the reset time. The gate holds when any
-# exhausted window's reset is still in the future, is elapsed when one has
+# Each window is represented by its state row and by its latest provider row
+# for exhaustion evidence. A window is exhausted when the provider said so:
+# the latest provider row is a limit message or reports a used fraction at or
+# above 1. A partial provider report with a future reset is not exhaustion and
+# does not hold. An observed reset supplies the reset time; once observed, an
+# unknown observation does not replace it, so the hold lasts until an actual
+# reset observation or the recorded reset instant passes. The gate holds when
+# any exhausted window's reset is still in the future, is elapsed when one has
 # passed, is unknown when the only exhausted evidence carries no reset, and is
 # none otherwise.
 
@@ -512,7 +528,7 @@ def gate_verdicted(+db: String, +session: String, +harness: String, +provider: S
     IO.pure(Gate,gate)
 
 def window_gate_model(+db: String, +session: String, harness: String, +model: String, +account: String) -> IO(Gate):
-  Bool.pick(IO(Gate),String.is_empty(provider_of(model)),IO.pure(Gate,GateNone{}),gate_verdicted(db,session,harness,provider_of(model),account))
+  gate_verdicted(db,session,harness,provider_of(model),account)
 
 def window_gate(+db: String, +session: String, +account: String) -> IO(Gate):
   do IO<Gate>:
@@ -520,6 +536,51 @@ def window_gate(+db: String, +session: String, +account: String) -> IO(Gate):
     +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     gate : Gate <- window_gate_model(db,session,Tx.trim_nl(harness),Tx.trim_nl(model),Tx.trim_nl(account))
     IO.pure(Gate,gate)
+
+# A stable identity for the latest exhausted provider row of one route, across
+# accounts. Reports for the same refusal share it so the first complete
+# evidence is durable and later attempts add no duplicate report.
+# The report identity is derived from the refusal observation recorded for this
+# attempt. This keeps an intervening account or window observation from changing
+# the report key while an exhaustion handoff is being recorded.
+def refusal_identity_sql(+session: String, +harness: String, +provider: String, +attempt: String) -> String:
+  "SELECT coalesce((SELECT " ++ C.q(session) ++ " || char(31) || p.harness || char(31) || p.provider || char(31) || p.account || char(31) || p.window || char(31) || coalesce(CAST(p.resets_at AS TEXT),'-') || char(31) || p.reset_source FROM usage_windows p WHERE p.harness=" ++ C.q(harness) ++ " AND p.provider=" ++ C.q(provider) ++ " AND p.message=" ++ C.q(attempt) ++ " AND p.reset_source IN ('provider-message','provider-report') AND " ++ exhausted_sql("p") ++ " ORDER BY p.recorded_at DESC,p.id DESC LIMIT 1),'')"
+
+# Account exhaustion uses the refusal observation for this attempt and confirms
+# its account label before deriving the stable account-scoped report identity.
+def refusal_account_identity_sql(+session: String, +harness: String, +provider: String, +account: String, +attempt: String) -> String:
+  "SELECT coalesce((SELECT " ++ C.q(session) ++ " || char(31) || p.harness || char(31) || p.provider || char(31) || p.account || char(31) || p.window || char(31) || coalesce(CAST(p.resets_at AS TEXT),'-') || char(31) || p.reset_source FROM usage_windows p WHERE p.harness=" ++ C.q(harness) ++ " AND p.provider=" ++ C.q(provider) ++ " AND p.account=" ++ C.q(account) ++ " AND p.message=" ++ C.q(attempt) ++ " AND p.reset_source IN ('provider-message','provider-report') AND " ++ exhausted_sql("p") ++ " ORDER BY p.recorded_at DESC,p.id DESC LIMIT 1),'')"
+
+# An operator-observed reset covers every exhausted window in the session's
+# route and account scope, including the empty label a Muse quota message
+# records. It adds observation rows only; no session, execution or provider
+# request follows.
+def reset_exhausted_sql(+session: String, +harness: String, +provider: String, +account: String, +value: String, +source: String) -> String:
+  +exhausted = "SELECT DISTINCT p.window FROM (" ++ latest_provider_rows_sql(harness,provider,account) ++ ") p WHERE p.window IN (" ++ exhausted_windows_sql(harness,provider,account) ++ ")"
+  "INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) SELECT " ++ now_ms() ++ "," ++ C.q(harness) ++ ",model," ++ C.q(provider) ++ "," ++ C.q(account) ++ ",e.window," ++ value ++ ",'operator-observation',NULL," ++ C.q("operator-observation: " ++ source) ++ ",'' FROM sessions,(" ++ exhausted ++ ") e WHERE sessions.id=" ++ C.q(session) ++ ";SELECT changes();"
+
+def reset_answer_sql(+session: String, +account: String, +count: String, +value: String, +source: String) -> String:
+  "SELECT json_object('schema','baton2-usage-window-reset-v1','session'," ++ C.q(session) ++ ",'account'," ++ C.q(account) ++ ",'recorded',CAST(" ++ C.q(count) ++ " AS INTEGER),'resetsAt'," ++ value ++ ",'source'," ++ C.q(source) ++ ");"
+
+def reset_exhausted_after_count(+db: String, +session: String, +account: String, +value: String, +source: String, count: String) -> IO(Unit):
+  match count:
+    case "0": IO.die(Unit,2,"No exhausted usage window is recorded for this session's route and account; read usage-windows before recording a reset.")
+    case other: do IO<Unit>:
+      +answer : String <- IO.try(String,DB.Sql.read(db,reset_answer_sql(session,account,other,value,source)))
+      IO.print(Tx.trim_nl(answer))
+
+def reset_exhausted(+db: String, +session: String, +resets: String, +source: String, +account: String) -> IO(Unit):
+  do IO<Unit>:
+    +found : String <- IO.try(String,Store.read(db,C.Session{session}))
+    present : Unit <- observe_registered(found)
+    +valid : String <- IO.try(String,DB.Sql.query(db,"SELECT length(" ++ C.q(source) ++ ")>0 AND instr(" ++ C.q(source) ++ ",char(10))=0 AND instr(" ++ C.q(source) ++ ",char(13))=0;"))
+    admitted : Unit <- Bool.pick(IO(Unit),String.eq(Tx.trim_nl(valid),"1"),IO.pure(Unit,Unit{}),IO.die(Unit,2,"A usage window reset requires nonempty source text without newlines."))
+    +value : String <- observe_reset_value(db,resets)
+    +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +saved : String <- IO.try(String,DB.Sql.query(db,reset_exhausted_sql(session,Tx.trim_nl(harness),provider_of(Tx.trim_nl(model)),account,value,source)))
+    +count : String <- IO.pure(String,Tx.trim_nl(saved))
+    reset_exhausted_after_count(db,session,account,value,source,count)
 
 # --- the post-reset continuation ---------------------------------------------
 #

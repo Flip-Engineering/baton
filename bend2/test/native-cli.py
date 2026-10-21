@@ -172,6 +172,76 @@ int baton2_runtime_main(int argc, char **argv) {
         expected = [str(binary), '--', *arguments]
         self.assertEqual(result.stdout.splitlines(), [arg.encode().hex() for arg in expected])
 
+    def test_focused_entry_routes_recovery_to_helper_and_general_cli_to_full_sibling(self):
+        runtime = self.directory / 'runtime.c'
+        runtime.write_text('int baton2_runtime_main(int argc, char **argv) { (void)argc; (void)argv; return 41; }\n')
+        binary = self.directory / 'baton'
+        compiled = subprocess.run([os.environ.get('CC', 'clang'), '-std=gnu11',
+                                   '-Wall', '-Wextra', '-Werror',
+                                   '-DBATON2_RECEIVE_FOCUSED',
+                                   str(ROOT / 'bend2/src/host/native-entry.c'),
+                                   str(runtime), '-o', str(binary)], capture_output=True, text=True)
+        self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
+        helper = self.directory / 'baton-recovery'
+        full = self.directory / 'baton-full'
+        helper.write_text('#!/usr/bin/env python3\nimport json,sys\nprint(json.dumps(["recovery",*sys.argv[1:]]))\n')
+        full.write_text('#!/usr/bin/env python3\nimport json,sys\nprint(json.dumps(["full",*sys.argv[1:]]))\n')
+        helper.chmod(0o755)
+        full.chmod(0o755)
+
+        recovered = subprocess.run([str(binary), '--recover-receive', 'db', 'session',
+                                     'attempt', '1', 'omp'], cwd=self.directory,
+                                   capture_output=True, text=True)
+        self.assertEqual(recovered.returncode, 0, recovered.stdout + recovered.stderr)
+        self.assertEqual(json.loads(recovered.stdout),
+                         ['recovery', '--recover-receive', 'db', 'session', 'attempt', '1', 'omp'])
+        self.assertEqual(recovered.stderr, '')
+
+        observer = subprocess.run([str(binary), 'db', 'recover-observer',
+                                   'session', 'observer'], cwd=self.directory,
+                                  capture_output=True, text=True)
+        self.assertEqual(observer.returncode, 0, observer.stdout + observer.stderr)
+        self.assertEqual(json.loads(observer.stdout),
+                         ['recovery', 'db', 'recover-observer', 'session', 'observer'])
+        self.assertEqual(observer.stderr, '')
+
+        general = subprocess.run([str(binary), 'status'], cwd=self.directory,
+                                 capture_output=True, text=True)
+        self.assertEqual(general.returncode, 0, general.stdout + general.stderr)
+        self.assertEqual(json.loads(general.stdout), ['full', 'status'])
+        self.assertEqual(general.stderr, '')
+
+    def test_help_before_dispatch_reaches_the_cli_not_the_dispatch_frontend(self):
+        runtime = self.directory / 'runtime.c'
+        runtime.write_text(r'''
+#include <stdio.h>
+int baton2_runtime_main(int argc, char **argv) {
+  if (argv[argc] != NULL) return 1;
+  for (int i = 0; i < argc; i++) {
+    for (const unsigned char *p = (const unsigned char *)argv[i]; *p; p++)
+      printf("%02x", *p);
+    putchar('\n');
+  }
+  return 23;
+}
+''')
+        binary = self.directory / 'baton-entry'
+        compiled = subprocess.run([os.environ.get('CC', 'clang'), '-std=gnu11',
+                                   '-Wall', '-Wextra', '-Werror',
+                                   str(ROOT / 'bend2/src/host/native-entry.c'),
+                                   str(runtime), '-o', str(binary)], capture_output=True, text=True)
+        self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
+        for arguments in (['help', 'dispatch'], ['help', 'task'],
+                          ['--help', 'dispatch'], ['-h', 'dispatch']):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run([str(binary), *arguments], cwd=self.directory,
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 23, result.stdout + result.stderr)
+                self.assertEqual(result.stderr, '')
+                expected = [str(binary), '--', *arguments]
+                self.assertEqual(result.stdout.splitlines(),
+                                 [arg.encode().hex() for arg in expected])
+
 
 if __name__ == '__main__':
     unittest.main()

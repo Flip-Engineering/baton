@@ -5,6 +5,41 @@ cd "$root"
 entry=${1:-bend2/src/coordinator/main.bend}
 output=${2:-.scratch/bend2/baton2}
 mkdir -p "$(dirname -- "$output")"
+if [ -n "${TMPDIR:-}" ]; then
+  scratch_base=$TMPDIR
+elif [ -n "${BATON2_SCRATCH_ROOT:-}" ]; then
+  scratch_base=$BATON2_SCRATCH_ROOT
+elif [ -r "${BATON2_SCRATCH_CONFIG:-/etc/baton/scratch-root}" ]; then
+  IFS= read -r scratch_base < "${BATON2_SCRATCH_CONFIG:-/etc/baton/scratch-root}" || :
+  [ -n "$scratch_base" ] || scratch_base=/tmp
+else
+  scratch_base=/tmp
+fi
+case "$scratch_base" in
+  /*) ;;
+  *) scratch_base="$root/$scratch_base" ;;
+esac
+build_scratch=$(mktemp -d "$scratch_base/baton2-build.XXXXXXXX")
+cleanup_build_scratch() {
+  status=$?
+  trap - EXIT
+  if [ "$status" -eq 0 ]; then
+    if ! rm -rf -- "$build_scratch"; then
+      printf 'build scratch cleanup failed; retained %s\n' "$build_scratch" >&2 || true
+    fi
+  else
+    printf 'build scratch retained after status %s: %s\n' "$status" "$build_scratch" >&2 || true
+  fi
+  exit "$status"
+}
+trap cleanup_build_scratch EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+TMPDIR=$build_scratch
+TMP=$build_scratch
+TEMP=$build_scratch
+export TMPDIR TMP TEMP
 entry_path=$(readlink -f -- "$entry" 2>/dev/null || printf '%s' "$entry")
 focused=${BATON2_RECEIVE_FOCUSED:-}
 router=${BATON2_NATIVE_RECEIVER_ROUTER:-}
@@ -33,18 +68,6 @@ if [ "$recovery" = 1 ] && { [ "$focused" = 1 ] || [ "$router" = 1 ]; }; then
   printf '{"error":"build-mode-conflict","condition":"recovery-helper-with-other-native-entry","entry":"%s"}\n' "$entry_path" >&2
   exit 78
 fi
-if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
-  compiler_path=$(readlink -f -- "$compiler" 2>/dev/null || printf '%s' "$compiler")
-  case "$compiler_path" in
-    */bin/bend) ;;
-    *) printf '{"error":"build-admission-required","condition":"compiler-not-guarded","compiler":"%s"}\n' "$compiler_path" >&2; exit 78 ;;
-  esac
-  grep -q 'build-admission-required' "$compiler_path" 2>/dev/null || {
-    printf '{"error":"build-admission-required","condition":"compiler-not-guarded","compiler":"%s"}\n' "$compiler_path" >&2
-    exit 78
-  }
-  BATON2_ADMISSION_CHECK_ONLY=1 "$compiler" "$entry" -o "$output.c" >/dev/null || exit $?
-fi
 generated=${BEND_GENERATED_C:-}
 if [ -z "$generated" ] && [ -n "${BATON2_MAIN_GENERATED_C:-}" ] &&
    [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
@@ -68,6 +91,7 @@ else
     echo 'This native binding requires Bend 2.0.25.' >&2
     exit 1
   fi
+  sh "$root/bend2/scripts/bend-lineage-guard.sh" "$compiler"
   "$compiler" "$entry" -o "$output.c"
 fi
 build_native_shards() {

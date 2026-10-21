@@ -1,0 +1,27 @@
+# Deployment template for the qualified immutable log-clean helper. Root
+# deploys it from a release that contains libexec/baton2/logs-clean-all.
+#
+# Run under the database owner with the standard Baton environment (HOME,
+# PATH and the deployed Baton variables). Do not add credentials to this unit.
+#
+# The helper prints one JSON object to stdout:
+#   {"results":[<one logs-clean response per registered session>]}
+# It enumerates session IDs from the database and calls the canonical
+# Logs.clean_all sequentially. Each session takes its lock, rereads pending
+# input and applies the settlement checks. Temporary scratch and build outputs
+# are not database candidates.
+[Unit]
+Description=Baton log cleanup (issue #912)
+Documentation=file:/path/to/repo/docs/bend2/storage-deployment.md
+
+[Service]
+Type=oneshot
+User=batonci
+Group=batonci
+ExecStart=/path/to/qualified-release/libexec/baton2/logs-clean-all /path/to/state.db
+StandardOutput=journal
+MemoryMax=2G
+MemorySwapMax=0
+TimeoutStartSec=infinity
+Nice=10
+IOSchedulingClass=idle

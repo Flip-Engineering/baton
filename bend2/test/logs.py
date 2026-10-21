@@ -1,5 +1,6 @@
 """Log levels, event preservation, storage inspection and cleanup checks."""
 import json
+import os
 import pathlib
 import sqlite3
 import subprocess
@@ -9,7 +10,8 @@ import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-EXE = ROOT / '.scratch/bend2/baton2'
+EXE = pathlib.Path(os.environ.get('BATON2_TEST_EXE', ROOT / '.scratch/bend2/baton2'))
+BULK_EXE = os.environ.get('BATON2_LOGS_CLEAN_ALL')
 
 class Logs(unittest.TestCase):
     def setUp(self):
@@ -71,7 +73,11 @@ class Logs(unittest.TestCase):
         self.temp.cleanup()
 
     def call(self, *args):
-        p = subprocess.run([str(EXE), str(self.db), *args], text=True, capture_output=True)
+        if args == ('logs-clean-all',) and BULK_EXE:
+            argv = [BULK_EXE, str(self.db)]
+        else:
+            argv = [str(EXE), str(self.db), *args]
+        p = subprocess.run(argv, text=True, capture_output=True)
         self.assertEqual(p.returncode, 0, p.stderr)
         return p.stdout
 
@@ -376,6 +382,144 @@ sys.exit(%d)
         for name in protected:
             self.assertTrue((attempt_dir / name).is_file(), name)
         self.assertEqual(json.loads(self.call('delivery', 'turn-1'))['body'], 'Complete answer λ')
+
+    def test_logs_clean_all_cleans_settled_attempts_and_preserves_pending_sessions(self):
+        self.stream([self.terminal()])
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        evidence = attempt_dir / 'stdout'
+        evidence.write_text('settled attempt diagnostic')
+        for name in ('native.stderr', 'observer.log', 'keeper.log'):
+            (attempt_dir / name).write_text('diagnostic data')
+        with sqlite3.connect(self.db) as connection:
+            connection.execute(
+                'INSERT INTO messages(id,sender,recipient,kind,body) VALUES (?,?,?,?,?)',
+                ('bulk-clean-pending', 'root', 'root', 'guidance', 'Keep this session pending.'))
+
+        results = json.loads(self.call('logs-clean-all'))['results']
+        by_session = {item['session']: item for item in results}
+        self.assertIn('omp-worker', by_session)
+        self.assertIn('root', by_session)
+        removed = by_session['omp-worker']['attemptFiles']
+        self.assertIn('stdout', {item['file'] for item in removed if item.get('removed')})
+        self.assertFalse(evidence.exists())
+        for name in ('manifest', 'status', 'released', 'acknowledged'):
+            self.assertTrue((attempt_dir / name).is_file(), name)
+        self.assertEqual(by_session['root']['skipped'], 'pending-input')
+        self.assertEqual(json.loads(self.call('delivery', 'bulk-clean-pending'))['body'],
+                         'Keep this session pending.')
+
+        second = json.loads(self.call('logs-clean-all'))['results']
+        repeated = next(item for item in second if item['session'] == 'omp-worker')
+        self.assertFalse(any(item.get('removed') for item in repeated['attemptFiles']))
+
+    def test_logs_clean_all_skips_inaccessible_attempt_and_cleans_next_session(self):
+        self.stream([self.terminal()])
+        attempt, eligible_dir = self.prepare_attempt_artifacts()
+        eligible = eligible_dir / 'stdout'
+        eligible.write_text('eligible diagnostics')
+
+        protected_session = 'a-protected'
+        protected_attempt = 'a-protected-attempt'
+        protected_dir = pathlib.Path(str(self.db) + '.attempt-' + protected_attempt.encode().hex())
+        protected_dir.mkdir()
+        (protected_dir / 'released').write_text('released\n')
+        with sqlite3.connect(self.db) as connection:
+            connection.execute(
+                'INSERT INTO sessions(id,harness,model) VALUES (?,?,?)',
+                (protected_session, 'test', ''))
+            connection.execute(
+                'INSERT INTO executions(session,id,mode,directory,phase,status) VALUES (?,?,?,?,?,?)',
+                (protected_session, protected_attempt, 'omp', str(protected_dir), 'exited', 'exit 0'))
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS log_generations(session TEXT NOT NULL,attempt TEXT NOT NULL,log TEXT NOT NULL,base TEXT NOT NULL,PRIMARY KEY(session,attempt))')
+            generation_log = str(self.log) + '.attempt-' + protected_attempt.encode().hex()
+            connection.execute(
+                'INSERT INTO log_files(session,log) VALUES (?,?)',
+                (protected_session, generation_log))
+            connection.execute(
+                'INSERT INTO log_generations(session,attempt,log,base) VALUES (?,?,?,?)',
+                (protected_session, protected_attempt, generation_log, str(self.log)))
+        pathlib.Path(generation_log).touch()
+
+        protected_dir.chmod(0)
+        try:
+            results = json.loads(self.call('logs-clean-all'))['results']
+            repeated = json.loads(self.call('logs-clean-all'))['results']
+        finally:
+            protected_dir.chmod(0o700)
+
+        by_session = {item['session']: item for item in results}
+        skipped = by_session[protected_session]['attemptFiles']
+        self.assertEqual(len(skipped), 1)
+        self.assertEqual(skipped[0]['attempt'], protected_attempt)
+        self.assertEqual(skipped[0]['skipped'], 'attempt-artifacts-inaccessible')
+        self.assertIn('Permission denied', skipped[0]['error'])
+        self.assertEqual((protected_dir / 'released').read_text(), 'released\n')
+        log_skip = by_session[protected_session]['attemptLogs']
+        self.assertEqual(len(log_skip), 1)
+        self.assertEqual(log_skip[0]['skipped'], 'attempt-artifacts-inaccessible')
+        self.assertIn('Permission denied', log_skip[0]['error'])
+
+        eligible_result = by_session['omp-worker']['attemptFiles']
+        self.assertIn('stdout', {item['file'] for item in eligible_result if item.get('removed')})
+        self.assertFalse(eligible.exists())
+        repeated_protected = next(item for item in repeated if item['session'] == protected_session)
+        self.assertEqual(repeated_protected['attemptFiles'][0]['skipped'], 'attempt-artifacts-inaccessible')
+        self.assertFalse(any(item.get('removed') for item in next(
+            item for item in repeated if item['session'] == 'omp-worker')['attemptFiles']))
+
+    def test_logs_clean_all_skips_inaccessible_superseded_generation(self):
+        self.stream([self.terminal()])
+        current_attempt, current_dir = self.prepare_attempt_artifacts()
+        old_attempt = 'older-protected-attempt'
+        old_dir = pathlib.Path(str(self.db) + '.attempt-' + old_attempt.encode().hex())
+        old_dir.mkdir()
+        (old_dir / 'released').write_text('released\n')
+        old_log = str(self.log) + '.attempt-' + old_attempt.encode().hex()
+        current_log = str(self.log) + '.attempt-' + current_attempt.encode().hex()
+        pathlib.Path(old_log).touch()
+        pathlib.Path(current_log).touch()
+        with sqlite3.connect(self.db) as connection:
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS log_generations(session TEXT NOT NULL,attempt TEXT NOT NULL,log TEXT NOT NULL,base TEXT NOT NULL,PRIMARY KEY(session,attempt))')
+            connection.execute(
+                'INSERT OR IGNORE INTO log_files(session,log) VALUES (?,?)',
+                ('omp-worker', old_log))
+            connection.execute(
+                'INSERT OR IGNORE INTO log_files(session,log) VALUES (?,?)',
+                ('omp-worker', current_log))
+            # Put the protected old generation before the current generation.
+            # The cleanup query treats the last rowid as current.
+            connection.execute(
+                'DELETE FROM log_generations WHERE session=? AND attempt=?',
+                ('omp-worker', current_attempt))
+            connection.execute(
+                'INSERT OR IGNORE INTO log_generations(session,attempt,log,base) VALUES (?,?,?,?)',
+                ('omp-worker', old_attempt, old_log, str(self.log)))
+            connection.execute(
+                'INSERT INTO log_generations(session,attempt,log,base) VALUES (?,?,?,?)',
+                ('omp-worker', current_attempt, current_log, str(self.log)))
+
+        with sqlite3.connect(self.db) as connection:
+            registered = {row[0] for row in connection.execute('SELECT log FROM log_files WHERE session=?', ('omp-worker',))}
+        self.assertIn(old_log, registered)
+        self.assertIn(current_log, registered)
+
+        registered_logs = json.loads(self.call('logs-storage'))['logs']
+        self.assertIn(old_log, [item['path'] for item in registered_logs], registered_logs)
+        old_dir.chmod(0)
+        try:
+            results = json.loads(self.call('logs-clean-all'))['results']
+        finally:
+            old_dir.chmod(0o700)
+
+        result = next(item for item in results if item['session'] == 'omp-worker')
+        protected = [item for item in result['attemptLogs']
+                     if item.get('skipped') == 'attempt-artifacts-inaccessible']
+        self.assertEqual(len(protected), 1, result)
+        self.assertEqual(protected[0]['attempt'], old_attempt)
+        self.assertIn('Permission denied', protected[0]['error'])
+        self.assertEqual((old_dir / 'released').read_text(), 'released\n')
 
     def test_attempt_without_durable_turn_record_is_retained(self):
         self.stream([self.terminal()])

@@ -521,7 +521,7 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
                                 input=json.dumps(['message', FOLLOWUP, 'root', 'worker', 'task',
                                                   followup_task], ensure_ascii=False))
                             retry = json.loads(checkpoint_command('normal-receive-retry', *receive, INITIAL))
-                            assert retry == {'session': 'worker', 'status': 'queued'}, retry
+                            assert retry['receive'] == 'none' and retry['attempt'] == '', retry
                             assert len(json_lines(out / 'launches.jsonl')) == 1
                             assert alive(first_pid)
                             loss = record('observer-killed-retry-queued', observer_pid=observer.pid,

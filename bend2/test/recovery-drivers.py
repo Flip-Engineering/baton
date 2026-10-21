@@ -283,7 +283,7 @@ with socket.create_connection(('127.0.0.1',int(sys.argv[1]))) as stream:
         messages = report['afterCompletion']['messages']
         for name, session in report['sessions'].items():
             self.assertEqual(session['restartResume'], 'native-' + name)
-            self.assertEqual(session['secondInvocation']['status'], 'queued')
+            self.assertEqual(session['secondInvocation']['receive'], 'none')
             self.assertEqual(session['inboxAfter'], [])
             original = next(message for message in report['beforeKill']['messages']
                             if message['id'] == 'pending-' + name)

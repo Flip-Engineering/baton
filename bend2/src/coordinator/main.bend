@@ -14,6 +14,7 @@ import ./instance.bend as Instance
 import ./usage.bend as Usage
 import ./usage-windows.bend as UsageWindows
 import ./../coordinator/logs.bend as Logs
+import ../storage/lifecycle.bend as StoragePolicy
 import ../coordinator/commands.bend as C
 import ../context/native.bend as ContextNative
 import ../context/native-runtime.bend as ContextRuntime
@@ -31,6 +32,7 @@ import ./repl.bend as Repl
 import ./task-input.bend as TaskInput
 import ../host/text.bend as T
 import ../host/process.bend as P
+import ./stall.bend as Stall
 import ../host/instance.bend as Custody
 
 def output(value: String, empty: Bool) -> IO(Unit):
@@ -58,7 +60,7 @@ def task_usage() -> String:
   "dispatch TEXT [OPTIONS]\ndispatch --stdin [OPTIONS]\ndispatch --help shows project, saved routes, overrides and continuation options.\ntask-input-read --current returns the current actor's latest complete request and setup result.\ntask-input-read --session PLAYER selects that actor's latest dispatch to the Player.\n"
 
 def usage_existing() -> String:
-  "Administration: baton DATABASE COMMAND ARGS\nserve\nowner-status\nproject PATH\nproject-sessions PATH\ntask-input-read --current | --session PLAYER\ndelivery MESSAGE_ID\ndelivery-batch IDS_JSON\nmessage-batch SENDER MESSAGES_JSON\ninput MESSAGE_ID\nturns PLAYER\nui-subscribe AFTER GENERATION\nview SUBJECT [READER [PORT]]\nlogs-storage\nlogs-clean SESSION\nproject PATH registers this database in the project Git common directory. --project PATH selects the registered database.\ndelivery and input inspect an intentionally selected historical message. Native command forms remain available for existing integrations.\n"
+  "Administration: baton DATABASE COMMAND ARGS\nserve\nowner-status\nstall\nstall-wake\nproject PATH\nproject-sessions PATH\ntask-input-read --current | --session PLAYER\ndelivery MESSAGE_ID\ndelivery-batch IDS_JSON\nmessage-batch SENDER MESSAGES_JSON\ninput MESSAGE_ID\nturns PLAYER\nui-subscribe AFTER GENERATION\nview SUBJECT [READER [PORT]]\nlogs-storage\nlogs-clean SESSION\nlogs-clean-all\nstorage-policy\nstorage-preview SESSION\nstorage-apply SESSION (refuses configured roots until cooperative writer leases are implemented)\nstall reports pending-input candidates with recorded state; stall-wake drives the oldest owed message for each stalled candidate through Wake.drive_id.\nproject PATH registers this database in the project Git common directory. --project PATH selects the registered database.\ndelivery and input inspect an intentionally selected historical message. Native command forms remain available for existing integrations.\n"
 
 def usage() -> String:
   task_usage() ++ usage_existing() ++ "native-attachment-input SESSION COMPONENT initializes recorded external native guidance from complete stdin.\n"
@@ -165,13 +167,16 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.HarnessInventory{}:
       Subscription.inventory(db)
     case C.UsageWindows{+session}: do IO<Unit>:
-      label : String <- Subscription.profile_label_io(db,session)
+      label : String <- Accounts.handoff_label_io(db,session)
       UsageWindows.query(db,session,label)
     case C.UsageWindowObserve{+session,window,resets,source}: do IO<Unit>:
-      label : String <- Subscription.profile_label_io(db,session)
+      label : String <- Accounts.handoff_label_io(db,session)
       UsageWindows.observe(db,session,window,resets,source,label)
+    case C.UsageWindowReset{+session,resets,source}: do IO<Unit>:
+      label : String <- Accounts.handoff_label_io(db,session)
+      UsageWindows.reset_exhausted(db,session,resets,source,label)
     case C.UsageWindowRefresh{+session}: do IO<Unit>:
-      label : String <- Subscription.profile_label_io(db,session)
+      label : String <- Accounts.handoff_label_io(db,session)
       UsageWindows.refresh(db,session,label)
     case C.Logs{session,level}: do IO<Unit>:
       saved : String <- Logs.apply(db,session,level)
@@ -182,6 +187,12 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.LogsClean{session}: do IO<Unit>:
       saved : String <- Logs.clean(db,session)
       log_answer(saved)
+    case C.LogsCleanAll{}: do IO<Unit>:
+      saved : String <- Logs.clean_all(db)
+      log_answer(saved)
+    case C.StoragePolicy{}: StoragePolicy.run_policy(db)
+    case C.StoragePreview{session}: StoragePolicy.run_preview(db,session)
+    case C.StorageApply{session}: StoragePolicy.run_apply(db,session)
     case C.Worktree{id}: Recruit.inspect(db,id)
     case C.KnowledgeRecord{id,author,claim,evidence,limits}:
       Knowledge.record(db,id,author,claim,evidence,limits)
@@ -216,6 +227,7 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.Project{path}: Project.describe(db,path)
     case C.ProjectSessions{path}: Project.sessions(db,path)
     case C.Resume{session,lift_stop}: Project.resume(db,session,lift_stop)
+    case C.ClearStop{session}: Stop.clear(db,session)
     case C.View{subject,reader,port}: UiView.run(db,subject,reader,port)
     case C.UiSubscribe{after_cursor,generation}:
       UISubscription.run(db,after_cursor,generation)
@@ -227,12 +239,15 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       ContextNative.query_file(db,owner,query,path)
     case C.ContextResult{query}:
       ContextNative.result(db,query)
+    case C.Stall{}: Stall.report(db)
+    case C.StallWake{}: Stall.wake_stalled(db)
     case C.Serve{}:
       IO.try(Unit,Instance.serve(db))
     case C.OwnerStatus{}:
       IO.try(Unit,Instance.owner_status(db))
-    case C.Receive{session,cmd,model,effort,cwd,log,message}:
-      IO.try(Unit,Receive.run(db,session,cmd,model,effort,cwd,log,message))
+    case C.Receive{+session,cmd,model,effort,cwd,log,+message}: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,Unit> & String <- Receive.run(db,session,cmd,model,effort,cwd,log,message)
+      Receive.report_result(db,session,message,result)
     case C.RecoverObserver{session,observer}:
       IO.try(Unit,Receive.recover_observer(db,session,observer))
     case C.RunTurn{player,id,cmd,model,effort,cwd,task,log,session}:
