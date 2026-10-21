@@ -686,16 +686,14 @@ def watch_heavy(attempt: String, pid: U32, start: String) -> IO(Unit):
   do IO<Unit>:
     alive <- IO.try(U32, L.alive(pid, start))
     compiled <- regular(attempt ++ "/compiled")
-    result <- regular(attempt ++ "/result")
     Bool.pick(IO(Unit), U32.is_eq(alive, 0), IO.pure(Unit, Unit{}),
       Bool.pick(IO(Unit), compiled,
         do IO<Unit>:
           released : Unit <- IO.try(Unit, L.lock_release(8))
           IO.pure(Unit, Unit{}),
-        Bool.pick(IO(Unit), result, IO.pure(Unit, Unit{}),
-          do IO<Unit>:
-            slept : Unit <- IO.try(Unit, L.sleep_millis(100))
-            watch_heavy(attempt, pid, start))))
+        do IO<Unit>:
+          slept : Unit <- IO.try(Unit, L.sleep_millis(100))
+          watch_heavy(attempt, pid, start)))
 
 def watch_heavy_pid(parsed: Maybe<U32>, attempt: String, start: String) -> IO(Unit):
   match parsed:
@@ -749,15 +747,7 @@ def supervise(attempt: String) -> IO(Unit):
             write_failure(attempt, keydir, "failed", code, kind, key, started,
               "compile marker environment could not be set: " ++ message, names)
           case Done{value}:
-            do IO<Unit>:
-              +watch_args = P.argv(Con{"__watch-heavy", Con{attempt, Con{U32.show(pid), Con{start, Nil{}}}}})
-              watcher : Result<&1,&1,U32 & String,U32> <- L.spawn_detached(watch_args, 9, 8)
-              match watcher:
-                case Fail{(code, message)}:
-                  write_failure(attempt, keydir, "failed", code, kind, key, started,
-                    "heavy release watcher could not start: " ++ message, names)
-                case Done{value}:
-                  supervise_command(attempt, keydir, kind, key, started, names, cwd, source_root, entry)
+            supervise_command(attempt, keydir, kind, key, started, names, cwd, source_root, entry)
 
 def start_attempt(config: Config, key: String, keydir: String, lock: U32, owner: String) -> IO<Unit>:
   do IO<Unit>:

@@ -72,7 +72,7 @@ def compile_cc(argv, inputs, output, cwd, compiler=None, options=()):
         raise unittest.SkipTest('the shared compile queue executable is unavailable')
     compiler = str(compiler if compiler is not None else argv[0])
     linker, version = compiler_identity(compiler)
-    request = [queue, 'run', '--kind', 'cc',
+    request = [queue, '--', 'run', '--kind', 'cc',
                '--state-root', str(state_root()),
                '--cwd', str(cwd),
                '--source-root', str(common_source_root(inputs, cwd)),

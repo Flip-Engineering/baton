@@ -575,6 +575,32 @@ static void cq_forward_signal(int sig) {
   cq_cancel_signal = sig;
 }
 
+static int cq_watch_command(const char *stdout_path) {
+  const char *suffix = strrchr(stdout_path, '/');
+  if (!suffix || strcmp(suffix, "/stdout")) return EINVAL;
+  char *start = NULL;
+  int error = cq_starttime_text((u32)getpid(), &start);
+  if (error) return error;
+  char pid[32];
+  snprintf(pid, sizeof(pid), "%u", (unsigned)getpid());
+  const char *kind = "__watch-heavy";
+  size_t attempt_length = (size_t)(suffix - stdout_path);
+  size_t length = strlen(kind) + 1 + attempt_length + 1
+    + strlen(pid) + 1 + strlen(start) + 1;
+  char *args = malloc(length);
+  if (!args) { free(start); return ENOMEM; }
+  char *at = args;
+  memcpy(at, kind, strlen(kind) + 1); at += strlen(kind) + 1;
+  memcpy(at, stdout_path, attempt_length); at[attempt_length] = 0;
+  at += attempt_length + 1;
+  memcpy(at, pid, strlen(pid) + 1); at += strlen(pid) + 1;
+  memcpy(at, start, strlen(start) + 1);
+  pid_t watcher = 0;
+  error = cq_spawn_detached(args, length, 9, 8, &watcher);
+  free(args); free(start);
+  return error;
+}
+
 static int cq_run_command(const char *argv_text, size_t argv_length, const char *cwd,
                           const char *stdout_path, const char *stderr_path,
                           u32 *code, int *disposition) {
@@ -622,10 +648,20 @@ static int cq_run_command(const char *argv_text, size_t argv_length, const char 
     }
     if (devnull > STDERR_FILENO) close(devnull);
     close(out); close(err);
+    /* Start the marker watcher before the command can execute. Its identity
+       follows this command when the requesting supervisor exits. */
+    int watcher_error = cq_watch_command(stdout_path);
+    if (watcher_error) {
+      write(status[1], &watcher_error, sizeof(watcher_error));
+      _exit(127);
+    }
     long limit = sysconf(_SC_OPEN_MAX);
     if (limit < 1024 || limit > 1048576) limit = 65536;
+    /* The command retains heavy execution custody if its supervisor exits.
+       The compiled marker releases this shared open file description when
+       the compiler proceeds to its separately queued C compilation. */
     for (int fd = 3; fd < (int)limit; fd++) {
-      if (fd != status[1]) close(fd);
+      if (fd != status[1] && fd != 8) close(fd);
     }
     if (cwd && chdir(cwd)) {
       int child_error = errno;

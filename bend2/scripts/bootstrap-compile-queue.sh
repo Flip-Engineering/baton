@@ -41,46 +41,97 @@ command -v "$cc" >/dev/null 2>&1 || {
 }
 mkdir -p "$(dirname -- "$output")"
 state=${BATON_COMPILE_QUEUE_ROOT:-}
-if [ -z "$state" ]; then
-  if [ -n "${XDG_CACHE_HOME:-}" ]; then
-    state="$XDG_CACHE_HOME/baton/compile-queue"
-  elif [ -n "${HOME:-}" ]; then
-    state="$HOME/.cache/baton/compile-queue"
-  else
-    state="/tmp/baton-compile-queue-$(id -u)"
+case "$state" in
+  /*) ;;
+  *)
+    echo 'Set BATON_COMPILE_QUEUE_ROOT to the shared absolute compile-queue state directory.' >&2
+    exit 2
+    ;;
+esac
+[ -d "$state" ] && [ -w "$state" ] && [ -x "$state" ] || {
+  echo "The shared compile-queue state root is unavailable: $state" >&2
+  exit 2
+}
+# Keep the request record outside build scratch, including failed attempts.
+umask 0007
+mkdir -p "$state/bootstrap-runs"
+record=$(mktemp -d "$state/bootstrap-runs/XXXXXXXX")
+telemetry="$record/telemetry"
+scratch=
+phase=waiting
+child=
+process_start() {
+  if [ -r "/proc/$1/stat" ]; then
+    sed 's/.*) //' "/proc/$1/stat" | awk '{print $20}'
   fi
-fi
-mkdir -p "$state"
-exec 8>"$state/heavy.lock"
-flock -x 8
-lock_inode=$(stat -c '%d:%i' "$state/heavy.lock")
-scratch=$(mktemp -d "${TMPDIR:-/tmp}/baton2-queue-bootstrap.XXXXXXXX")
-telemetry="$scratch/telemetry"
+}
+pressure() {
+  if [ -r /proc/sys/kernel/random/boot_id ]; then
+    printf 'boot_id=%s\n' "$(cat /proc/sys/kernel/random/boot_id)" >> "$telemetry"
+  fi
+  if [ -r /proc/vmstat ]; then
+    sed -n '/^oom_kill /s/^/vmstat=/p' /proc/vmstat >> "$telemetry"
+  fi
+  if [ -r /proc/meminfo ]; then
+    sed -n '/^MemAvailable:/p; /^SwapFree:/p' /proc/meminfo >> "$telemetry"
+  fi
+  if [ -r /proc/pressure/memory ]; then
+    sed 's/^/memory_pressure=/' /proc/pressure/memory >> "$telemetry"
+  fi
+}
 cleanup_bootstrap() {
   status=$?
   trap - EXIT
-  [ -n "${telemetry:-}" ] && [ -d "$scratch" ] && {
-    printf 'terminal_status=%s\n' "$status" >> "$telemetry"
-  }
-  rm -rf -- "$scratch"
+  printf 'phase=terminal\nlast_phase=%s\nterminal_status=%s\nfinished_ns=%s\n' \
+    "$phase" "$status" "$(date +%s%N)" >> "$telemetry"
+  pressure
+  if [ -n "$child" ] && [ -d "/proc/$child" ]; then
+    printf 'retained_child_pid=%s\nretained_scratch=%s\n' "$child" "$scratch" >> "$telemetry"
+  else
+    [ -z "$scratch" ] || rm -rf -- "$scratch"
+  fi
+  if [ -n "${BATON_COMPILE_QUEUE_TELEMETRY:-}" ]; then
+    if ! cp "$telemetry" "$BATON_COMPILE_QUEUE_TELEMETRY"; then
+      printf 'The bootstrap telemetry remains at %s\n' "$telemetry" >&2
+    fi
+  fi
+  # Closing the shell descriptor preserves custody held by a surviving child.
+  exec 8>&-
   exit "$status"
 }
 trap cleanup_bootstrap EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-printf 'schema=baton-compile-queue-custody-v1\n' > "$telemetry"
-printf 'kind=bootstrap\nlock_path=%s\nlock_identity=%s\nlock_descriptor=8\n' \
+printf 'schema=baton-compile-queue-custody-v1\nkind=bootstrap\n' > "$telemetry"
+printf 'pid=%s\nstarttime=%s\nentry=%s\ncompiler=%s\ncc=%s\nstarted_ns=%s\n' \
+  "$$" "$(process_start "$$")" "$entry" "$compiler" "$cc" "$(date +%s%N)" >> "$telemetry"
+pressure
+exec 8>"$state/heavy.lock"
+lock_inode=$(stat -Lc '%d:%i' /proc/self/fd/8 2>/dev/null || stat -f '%d:%i' "$state/heavy.lock")
+printf 'lock_path=%s\nlock_identity=%s\nlock_descriptor=8\nphase=waiting\n' \
   "$state/heavy.lock" "$lock_inode" >> "$telemetry"
-printf 'entry=%s\ncompiler=%s\ncc=%s\nstarted_ns=%s\n' \
-  "$entry" "$compiler" "$cc" "$(date +%s%N)" >> "$telemetry"
-printf 'phase=compile\n' >> "$telemetry"
-"$compiler" "$entry" -o "$scratch/compile-queue.c"
-printf 'phase=link\n' >> "$telemetry"
-"$cc" -O1 -pthread "$scratch/compile-queue.c" -lsqlite3 -lm -o "$output"
-printf 'phase=done\nterminal_status=0\n' >> "$telemetry"
-if [ -n "${BATON_COMPILE_QUEUE_TELEMETRY:-}" ]; then
-  cp "$telemetry" "$BATON_COMPILE_QUEUE_TELEMETRY" 2>/dev/null || true
-fi
-flock -u 8
+flock -x 8
+phase=compile
+printf 'phase=%s\nacquired_ns=%s\n' "$phase" "$(date +%s%N)" >> "$telemetry"
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/baton2-queue-bootstrap.XXXXXXXX")
+printf 'scratch=%s\n' "$scratch" >> "$telemetry"
+run_phase() {
+  "$@" > "$record/$phase.stdout" 2> "$record/$phase.stderr" &
+  child=$!
+  printf 'child_phase=%s\nchild_pid=%s\nchild_starttime=%s\n' \
+    "$phase" "$child" "$(process_start "$child")" >> "$telemetry"
+  rc=0
+  wait "$child" || rc=$?
+  cat "$record/$phase.stdout"
+  cat "$record/$phase.stderr" >&2
+  child=
+  return "$rc"
+}
+run_phase "$compiler" "$entry" -o "$scratch/compile-queue.c"
+phase=link
+printf 'phase=%s\n' "$phase" >> "$telemetry"
+run_phase "$cc" -O1 -pthread "$scratch/compile-queue.c" -lsqlite3 -lm -o "$output"
+phase=done
+printf 'phase=%s\n' "$phase" >> "$telemetry"
 printf '%s\n' "$output"
