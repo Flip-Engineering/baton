@@ -526,7 +526,7 @@ def common_task(out):
 Use the supplied native launchers and existing login. Keep credentials, global
 configuration, historical trials and other checkouts unchanged. Preserve this
 run's sessions, branches and worktrees. Do not push. Read complete incoming input
-with `"$B2" "$DB" inbox`, then use `"$B2" "$DB" acknowledge` after handling it.
+with `"$B2" "$DB" inbox`; Baton records the complete reads internally.
 Baton resolves the actor and handling state. Supply complete task and report
 text directly to Baton. Run only the selected Python checks.
 If a task cannot be completed, explain the concrete failure in your parent report.
@@ -577,10 +577,10 @@ checks that the retained native processes and current execution custody ended,
 and preserves the supplied wrapper through primary dispatch. Baton stores the
 complete correction and continues the existing assignment. Use no task-source
 file or correction suffix.
-Tell the Player to read its complete inbox and acknowledge its handled input.
+Tell the Player to read its complete inbox; Baton records the reads internally.
 End your turn while its correction runs; its native response resumes you.
 
-For each Player report, inspect its actual diff and check output, acknowledge it,
+For each Player report, inspect its actual diff and check output, read it,
 and run `"$PYTHON" "$STATE/acceptance.py" land-reviewed "$STATE" PLAYER`.
 The helper invokes checked landing onto hierarchy-lead with the assigned checks
 and retains each complete result under an automatically generated evidence name.
@@ -606,7 +606,7 @@ and assign its role with these commands:
 Run `"$PYTHON" "$STATE/acceptance.py" dispatch-lead "$STATE"` once. It dispatches
 the full task and configures the supplied lead wrapper. Acknowledge your handled
 input, then finish this turn. Each Associate Conductor report resumes this same
-Principal Conductor conversation. Read and acknowledge progress reports.
+Principal Conductor conversation. Read and review progress reports.
 
 On LEAD_READY, independently inspect both Player diffs, their bindings, guidance
 receipt, the lead branch diff and all selected checks. Run

@@ -338,13 +338,13 @@ sys.exit(p.wait())
             before = c.sequence()
             p = c.turn('omp', 'Do not use tools or edit files. Reply exactly with this report: '
                        f'Root: remember review label {marker} for later turns. Include it in your '
-                       'authored response and use the acknowledge action after reviewing this '
+                       'authored response after reviewing this '
                        'complete input. Do not edit, land, push or start Players.',
                        'root-report')
             report = c.completed(p, 'root-report')
             starts = list(events(c.path / 'starts.jsonl'))
             assert starts[0]['writerPid'] == p.pid, starts
-            assert report['receipt'], report
+            assert report.get('nativeInputStatus', {}).get('read') == 'recorded', report
             initial_reports = c.root_reports(before, marker)
             original = c.coord('player', 'root')['native']
             assert original
@@ -352,8 +352,8 @@ sys.exit(p.wait())
             before = c.sequence()
             task = ('Read bend2/scripts/mcp-conductor.mjs and bend2/src/coordinator/delivery.bend '
                     'completely and review recovery. Give a source finding and the review label '
-                    'remembered from our earlier turn in your authored response. Use the acknowledge '
-                    'action after handling the complete input. Do not search for the label, edit '
+                    'remembered from our earlier turn in your authored response. Read the '
+                    'complete input; Baton records the read internally. Do not search for the label, edit '
                     'files or launch agents.')
             p = c.start(c.command('agent-native-input'), 'root-interrupted', input=json.dumps(
                 ['message', 'root-interrupted', 'operator', 'root', 'guidance', task], ensure_ascii=False))
@@ -365,7 +365,7 @@ sys.exit(p.wait())
             resumed = run(attach, env=self.env)
             (c.path / 'resumed.out').write_text(resumed)
             report = c.coord('delivery', 'root-interrupted')
-            assert report['receipt'], report
+            assert report.get('nativeInputStatus', {}).get('read') == 'recorded', report
             resumed_reports = c.root_reports(before, marker)
             assert original == c.coord('player', 'root')['native']
             assert c.coord('inbox', 'root') == []
@@ -384,8 +384,8 @@ sys.exit(p.wait())
                 f'Remember root review label {marker}. Use baton2_inbox to read complete input. '
                 'When Player reports arrive, use baton2_action with action report and --text '
                 'to publish your remembered review label and the complete text of that Player '
-                'report to operator. Then use baton2_ack with no arguments after handling the input. '
-                'Acknowledge this setup after reading it. Do not poll, edit files, '
+                'report to operator. Baton records your complete reads internally. '
+                'Do not poll, edit files, '
                 'land, push or launch Players.')
         config = c.path / 'mcp.json'
         save(config, {'mcpServers': {'baton-conductor': {'command': 'node', 'args': [
