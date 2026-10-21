@@ -66,8 +66,27 @@ rm -f "$clear_stop_quota_db"
   .scratch/bend2/clear-stop-quota-test "$clear_stop_quota_db"
 )
 sh bend2/scripts/build-native.sh bend2/test/quota-backoff-dedupe.bend .scratch/bend2/quota-backoff-dedupe-test
-rm -f .scratch/bend2/quota-backoff-dedupe.db .scratch/bend2/quota-backoff-dedupe.db.profiles .scratch/bend2/quota-backoff-dedupe.db.profile-*
-.scratch/bend2/quota-backoff-dedupe-test .scratch/bend2/quota-backoff-dedupe.db
+quota_backoff_db=$(mktemp "$root/.scratch/bend2/quota-backoff-dedupe.XXXXXXXX")
+rm -f "$quota_backoff_db"
+(
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap '
+    quota_backoff_test_status=$?
+    trap - EXIT
+    quota_backoff_shutdown_status=0
+    .scratch/bend2/quota-backoff-dedupe-test --instance-shutdown "$quota_backoff_db" || quota_backoff_shutdown_status=$?
+    if [ "$quota_backoff_shutdown_status" -ne 0 ]; then
+      printf "quota-backoff-dedupe owner shutdown failed (exit %s) for %s\n" "$quota_backoff_shutdown_status" "$quota_backoff_db" >&2
+    fi
+    if [ "$quota_backoff_test_status" -ne 0 ]; then
+      exit "$quota_backoff_test_status"
+    fi
+    exit "$quota_backoff_shutdown_status"
+  ' EXIT
+  .scratch/bend2/quota-backoff-dedupe-test "$quota_backoff_db"
+)
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-wake.bend .scratch/bend2/usage-windows-wake-test
 rm -f .scratch/bend2/usage-windows-wake.db
 .scratch/bend2/usage-windows-wake-test .scratch/bend2/usage-windows-wake.db bend2/test/fake-wake-marker
