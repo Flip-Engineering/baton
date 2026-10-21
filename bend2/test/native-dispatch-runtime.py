@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import compile_queue
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -55,8 +56,10 @@ class DispatchRuntime(unittest.TestCase):
         stub = self.root / 'stub.c'
         stub.write_text(STUB)
         self.exe = self.bin / 'dispatch-test'
-        subprocess.run([compiler(), '-O1', '-pthread', str(NATIVE_ENTRY), str(stub),
-                        '-o', str(self.exe)], check=True, capture_output=True, text=True)
+        compile_queue.compile_cc(
+            [compiler(), '-O1', '-pthread', str(NATIVE_ENTRY), str(stub),
+             '-o', str(self.exe)],
+            [NATIVE_ENTRY, stub], self.exe, self.root)
 
     def run_dispatch(self, extra=None):
         self.receipt.unlink(missing_ok=True)

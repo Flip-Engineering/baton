@@ -119,6 +119,18 @@ set -eu
 directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 unset BUN_OPTIONS
 export BUN_JSC_maxPerThreadStackUsage=67108864
+# The shared host compile queue installs at bin/baton-compile-queue under the
+# install prefix. Export it so the compiler's internal C build step is
+# admitted by the queue; a preset BATON2_COMPILE_QUEUE_BIN wins.
+for candidate in \\
+  ${BATON2_COMPILE_QUEUE_BIN:+"$BATON2_COMPILE_QUEUE_BIN"} \\
+  "$directory/../../../bin/baton-compile-queue"; do
+  [ -n "$candidate" ] || continue
+  if [ -x "$candidate" ]; then
+    export BATON2_COMPILE_QUEUE_BIN="$candidate"
+    break
+  fi
+done
 exec "$directory/bun" --smol "$directory/upstream/repl.ts" "$@"
 ''')
     launcher.chmod(0o755)

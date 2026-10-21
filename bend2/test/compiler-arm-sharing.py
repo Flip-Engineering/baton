@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import compile_queue
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 UPSTREAM = ROOT / 'bend2/compiler/upstream'
@@ -43,6 +44,23 @@ def find_cc():
     return None
 
 
+def find_queue():
+    # All native compiler work uses the shared host queue.
+    return compile_queue.queue_entry()
+
+
+def shared_queue_root():
+    value = os.environ.get('BATON_COMPILE_QUEUE_ROOT')
+    if not value or not pathlib.Path(value).is_absolute():
+        raise RuntimeError('set BATON_COMPILE_QUEUE_ROOT to the shared absolute queue state directory')
+    return pathlib.Path(value)
+
+
+def upstream_sources():
+    return [path for path in UPSTREAM.rglob('*')
+            if path.is_file() and path.suffix in ('.ts', '.c', '.js')]
+
+
 class CompilerArmSharing(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -53,6 +71,10 @@ class CompilerArmSharing(unittest.TestCase):
         if cls.cc is None:
             raise unittest.SkipTest('a C compiler is unavailable')
         cls.temp = tempfile.TemporaryDirectory(prefix='compiler-arm-sharing-')
+        cls.queue = find_queue()
+        if cls.queue is None:
+            raise unittest.SkipTest('the shared compile queue executable is unavailable')
+        cls.state = shared_queue_root()
         cls.compiler = pathlib.Path(cls.temp.name) / 'compiler'
         bend2 = cls.compiler / 'bend2'
         bend2.mkdir(parents=True)
@@ -75,12 +97,43 @@ class CompilerArmSharing(unittest.TestCase):
                          % (' '.join(map(str, argv)), result.stdout, result.stderr))
         return result
 
+    def run_queue(self, args):
+        result = subprocess.run(
+            [self.queue, *map(str, args)],
+            capture_output=True, text=True, timeout=600)
+        self.assertEqual(result.returncode, 0,
+                         msg='queue failed: %s\nstdout:\n%s\nstderr:\n%s'
+                         % (' '.join(map(str, args)), result.stdout, result.stderr))
+        return result
+
+    def run_cgen(self, tag, fixture, source):
+        # Include the compiler frontend and runtime files in the queue key.
+        inputs = [path for path in sorted(UPSTREAM.rglob('*')) if path.is_file()]
+        args = [
+            'run', '--kind', 'cgen', '--state-root', self.state, '--cwd', ROOT,
+            '--root', ROOT, '--source-root', ROOT,
+            '--entry', fixture.relative_to(ROOT).as_posix(),
+            '--compiler', self.bun, '--artifact', 'c=%s' % source,
+            '--option', 'test=%s' % tag,
+        ]
+        for path in inputs:
+            args.extend(['--input', path])
+        args.extend(['--', self.bun, '--smol', UPSTREAM / 'main.ts', fixture, '-o', source])
+        self.run_queue(args)
+
+    def compile_fixture(self, tag, fixture, source):
+        self.run_cgen(tag, fixture, source)
+
     def build_and_run(self, source, argv_results):
         binary = source.with_suffix('.bin')
-        build = subprocess.run(
-            [self.cc, '-O1', '-w', str(source), '-lm', '-lpthread', '-o', str(binary)],
-            capture_output=True, text=True, timeout=180)
-        self.assertEqual(build.returncode, 0, msg=build.stderr)
+        linker, version = compile_queue.compiler_identity(self.cc)
+        self.run_queue([
+            'run', '--kind', 'cc', '--state-root', self.state, '--cwd', ROOT,
+            '--compiler', self.cc, '--linker', linker, '--version', version,
+            '--source-root', str(source.parent.resolve()),
+            '--input', source,
+            '--artifact', 'binary=%s' % binary, '--option', 'test=%s' % source.stem,
+            '--', self.cc, '-O1', '-w', source, '-lm', '-lpthread', '-o', binary])
         for argv, expected in argv_results:
             run = subprocess.run([str(binary), *argv], capture_output=True,
                                  text=True, timeout=30)
@@ -89,8 +142,29 @@ class CompilerArmSharing(unittest.TestCase):
 
     def mutated_c(self, test_name):
         source = pathlib.Path(self.temp.name) / (test_name + '.c')
-        self.run_bun(TEST_DIR / (test_name + '.ts'), self.compiler,
-                     env={**os.environ, 'ARM_EQ_C': str(source)})
+        fixture = TEST_DIR / (test_name + '.ts')
+        compiler_sources = [path for path in sorted((self.compiler / 'bend2').rglob('*'))
+                            if path.is_file()]
+        # The queue rewrites exact path arguments to staged inputs/artifacts.
+        # Pass the output as a positional argument so it can stage the path,
+        # then set ARM_EQ_C inside this wrapper.
+        wrapper = pathlib.Path(self.temp.name) / (test_name + '-cgen.sh')
+        wrapper.write_text('#!/bin/sh\nout=$1\nshift\nARM_EQ_C=$out exec "$@"\n')
+        wrapper.chmod(0o755)
+        inputs = [fixture, *compiler_sources, wrapper]
+        source_root = compile_queue.common_source_root(inputs, ROOT)
+        args = [
+            'run', '--kind', 'cgen', '--state-root', self.state, '--cwd', ROOT,
+            '--root', ROOT, '--source-root', str(source_root),
+            '--entry', str(fixture),
+            '--compiler', self.bun, '--artifact', 'c=%s' % source,
+            '--option', 'test=%s' % test_name,
+        ]
+        for path in inputs:
+            args.extend(['--input', path])
+        args.extend(['--', wrapper, source, self.bun, '--smol',
+                     fixture, self.compiler])
+        self.run_queue(args)
         self.assertTrue(source.is_file(), msg='the test did not write ' + str(source))
         return source
 
@@ -103,7 +177,7 @@ class CompilerArmSharing(unittest.TestCase):
     def test_native_arm_collision(self):
         fixture = FIXTURES / 'native_arm_collision.bend'
         source = pathlib.Path(self.temp.name) / 'native_arm_collision.c'
-        self.run_bun(UPSTREAM / 'main.ts', fixture, '-o', source)
+        self.compile_fixture('native_arm_collision', fixture, source)
         text = source.read_text()
         names = re.findall(r'^(?:INLINE|FAR) Term (arm_\d+)\(', text, re.M)
         self.assertTrue(names, msg='the fixture emitted no shared arms')
@@ -117,7 +191,7 @@ class CompilerArmSharing(unittest.TestCase):
     def test_nonflat_call_in_arm_keeps_segment_context(self):
         fixture = FIXTURES / 'arm_nonflat_call.bend'
         source = pathlib.Path(self.temp.name) / 'arm_nonflat_call.c'
-        self.run_bun(UPSTREAM / 'main.ts', fixture, '-o', source)
+        self.compile_fixture('arm_nonflat_call', fixture, source)
         self.build_and_run(source, [
             (['a'], 'one'),
             (['z'], 'xy'),
@@ -148,7 +222,7 @@ class CompilerArmSharing(unittest.TestCase):
         for name, (digest, output) in expected.items():
             with self.subTest(fixture=name):
                 c = pathlib.Path(self.temp.name) / (name + '.c')
-                self.run_bun(UPSTREAM / 'main.ts', FIXTURES / (name + '.bend'), '-o', c)
+                self.compile_fixture(name, FIXTURES / (name + '.bend'), c)
                 self.assertEqual(sha256(c), digest)
                 self.build_and_run(c, [([], output)])
 
@@ -166,7 +240,7 @@ class CompilerArmSharing(unittest.TestCase):
                 check = self.run_bun(UPSTREAM / 'main.ts', fixture, '--check-only')
                 self.assertEqual(check.stdout.strip(), 'All terms check.')
                 c = pathlib.Path(self.temp.name) / (name + '.c')
-                self.run_bun(UPSTREAM / 'main.ts', fixture, '-o', c)
+                self.compile_fixture(name, fixture, c)
                 self.assertEqual(sha256(c), digest)
                 self.build_and_run(c, [([], output)])
 
