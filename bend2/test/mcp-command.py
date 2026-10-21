@@ -16,17 +16,20 @@ import sys
 import time
 
 values = json.loads(Path(__file__).with_suffix('.json').read_text())
-if sys.argv[1:] == ['--help'] or (len(sys.argv) > 2 and sys.argv[2] == 'help'):
-    if values.get('batch', True):
-        sys.stdout.write('outbox\\ndelivery-batch\\nmessage-batch\\ninput MESSAGE_ID\\ntask --stdin\\nusage: baton2 as SESSION ACTION ARGS\\n')
-        if values.get('dispatch', True):
-            sys.stdout.write('dispatch --stdin\\n')
-        if values.get('repl', False):
-            sys.stdout.write('Actions: inbox, read, send, report, ask, guide, finish, confirm, dispatch, players, assignment, status, role, ensemble, section, orchestra, branch, knowledge, repl\\n')
+args = sys.argv[1:]
+if args == ['--help'] or (args and args[0] == 'help'):
+    if args == ['help', 'context']:
         if values.get('context_eval', True):
             sys.stdout.write('context engines|install|query|eval|result NAMED_ARGS\\n')
-    else:
-        sys.stdout.write('delivery\\nmessage\\n')
+    elif args == ['--help']:
+        if values.get('batch', True):
+            sys.stdout.write('outbox\\ndelivery-batch\\nmessage-batch\\ninput MESSAGE_ID\\ntask --stdin\\nusage: baton2 as SESSION ACTION ARGS\\n')
+            if values.get('dispatch', True):
+                sys.stdout.write('dispatch --stdin\\n')
+            if values.get('repl', False):
+                sys.stdout.write('Actions: inbox, read, send, report, ask, guide, finish, confirm, dispatch, players, assignment, status, role, ensemble, section, orchestra, branch, knowledge, repl\\n')
+        else:
+            sys.stdout.write('delivery\\nmessage\\n')
     sys.exit(0)
 time.sleep(values['delay'])
 sys.stdout.write(values['stdout'])

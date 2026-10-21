@@ -183,12 +183,18 @@ function coordinatorSurface() {
   return String(help.stdout ?? '') + String(help.stderr ?? '');
 }
 
+function contextCommandSurface() {
+  const help = spawnSync(coordinatorExe, ['help', 'context'], { encoding: 'utf8', maxBuffer: Infinity });
+  return String(help.stdout ?? '') + String(help.stderr ?? '');
+}
+
 const commandSurface = coordinatorSurface();
 const batchMessaging = ['outbox', 'delivery-batch', 'message-batch'].every((name) => commandSurface.includes(name));
 const inputDetail = commandSurface.includes('input MESSAGE_ID');
 const contextualActions = /baton2? as SESSION ACTION/.test(commandSurface);
 const replInput = contextualActions && /^Actions:.*\brepl\b/m.test(commandSurface);
-const contextEval = contextualActions && commandSurface.includes('context engines|install|query|eval|result');
+const contextSurface = contextualActions ? contextCommandSurface() : '';
+const contextEval = contextualActions && contextSurface.includes('context engines|install|query|eval|result');
 const nativeAttachmentInput = commandSurface.includes('native-attachment-input');
 const dispatchInput = commandSurface.includes('dispatch --stdin');
 const taskInput = dispatchInput || commandSurface.includes('task --stdin');
