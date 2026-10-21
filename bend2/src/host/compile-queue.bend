@@ -702,6 +702,20 @@ def watch_heavy_pid(parsed: Maybe<U32>, attempt: String, start: String) -> IO(Un
     case None{}: IO.die(Unit, 2, "compile-queue: watch pid is malformed")
     case Some{pid}: watch_heavy(attempt, pid, start)
 
+def supervise_command(attempt: String, keydir: String, kind: String, key: String,
+                      started: String, names: List<String>, cwd: String,
+                      source_root: String, entry: String) -> IO(Unit):
+  Bool.pick(IO(Unit), Tx.str_eq(kind, "cgen"),
+    do IO<Unit>:
+      before <- IO.try(String, L.read_text(attempt ++ "/source-digest"))
+      +before_digest = field(before, "digest")
+      after <- IO.try(String, Identity.source_digest(source_root, entry))
+      Bool.pick(IO(Unit), Tx.str_eq(before_digest, after),
+        run_supervised(attempt, keydir, kind, key, started, names, cwd),
+        write_failure(attempt, keydir, "failed", 1, kind, key, started,
+          "source changed before execution", names)),
+    run_supervised(attempt, keydir, kind, key, started, names, cwd))
+
 def supervise(attempt: String) -> IO(Unit):
   do IO<Unit>:
     meta <- IO.try(String, L.read_text(attempt ++ "/meta"))
@@ -730,18 +744,20 @@ def supervise(attempt: String) -> IO(Unit):
         locked : Unit <- IO.try(Unit, L.lock_fd_acquire(8))
         +marker = attempt ++ "/compiled"
         signaled : Result<&1,&1,U32 & String,Unit> <- L.set_env("BATON_COMPILE_QUEUE_COMPILED", marker)
-        +watch_args = P.argv(Con{"__watch-heavy", Con{attempt, Con{U32.show(pid), Con{start, Nil{}}}}})
-        watcher : Result<&1,&1,U32 & String,U32> <- L.spawn_detached(watch_args, 9, 8)
-        Bool.pick(IO(Unit), Tx.str_eq(kind, "cgen"),
-          do IO<Unit>:
-            before <- IO.try(String, L.read_text(attempt ++ "/source-digest"))
-            +before_digest = field(before, "digest")
-            after <- IO.try(String, Identity.source_digest(source_root, entry))
-            Bool.pick(IO(Unit), Tx.str_eq(before_digest, after),
-              run_supervised(attempt, keydir, kind, key, started, names, cwd),
-              write_failure(attempt, keydir, "failed", 1, kind, key, started,
-                "source changed before execution", names)),
-          run_supervised(attempt, keydir, kind, key, started, names, cwd)))
+        match signaled:
+          case Fail{(code, message)}:
+            write_failure(attempt, keydir, "failed", code, kind, key, started,
+              "compile marker environment could not be set: " ++ message, names)
+          case Done{value}:
+            do IO<Unit>:
+              +watch_args = P.argv(Con{"__watch-heavy", Con{attempt, Con{U32.show(pid), Con{start, Nil{}}}}})
+              watcher : Result<&1,&1,U32 & String,U32> <- L.spawn_detached(watch_args, 9, 8)
+              match watcher:
+                case Fail{(code, message)}:
+                  write_failure(attempt, keydir, "failed", code, kind, key, started,
+                    "heavy release watcher could not start: " ++ message, names)
+                case Done{value}:
+                  supervise_command(attempt, keydir, kind, key, started, names, cwd, source_root, entry)
 
 def start_attempt(config: Config, key: String, keydir: String, lock: U32, owner: String) -> IO<Unit>:
   do IO<Unit>:
