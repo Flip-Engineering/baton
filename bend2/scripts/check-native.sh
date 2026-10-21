@@ -51,6 +51,50 @@ sh bend2/scripts/build-native.sh bend2/test/usage-windows-long.bend .scratch/ben
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-store.bend .scratch/bend2/usage-windows-store-test
 rm -f .scratch/bend2/usage-windows-store.db
 .scratch/bend2/usage-windows-store-test .scratch/bend2/usage-windows-store.db bend2/test/fake-omp-usage
+sh bend2/scripts/build-native.sh bend2/test/clear-stop-quota.bend .scratch/bend2/clear-stop-quota-test
+clear_stop_quota_db=$(mktemp "$root/.scratch/bend2/clear-stop-quota.XXXXXXXX")
+rm -f "$clear_stop_quota_db"
+(
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap '
+    clear_stop_quota_test_status=$?
+    trap - EXIT
+    clear_stop_quota_shutdown_status=0
+    .scratch/bend2/clear-stop-quota-test --instance-shutdown "$clear_stop_quota_db" || clear_stop_quota_shutdown_status=$?
+    if [ "$clear_stop_quota_shutdown_status" -ne 0 ]; then
+      printf "clear-stop-quota owner shutdown failed (exit %s) for %s\n" "$clear_stop_quota_shutdown_status" "$clear_stop_quota_db" >&2
+    fi
+    if [ "$clear_stop_quota_test_status" -ne 0 ]; then
+      exit "$clear_stop_quota_test_status"
+    fi
+    exit "$clear_stop_quota_shutdown_status"
+  ' EXIT
+  .scratch/bend2/clear-stop-quota-test "$clear_stop_quota_db"
+)
+sh bend2/scripts/build-native.sh bend2/test/quota-backoff-dedupe.bend .scratch/bend2/quota-backoff-dedupe-test
+quota_backoff_db=$(mktemp "$root/.scratch/bend2/quota-backoff-dedupe.XXXXXXXX")
+rm -f "$quota_backoff_db"
+(
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap '
+    quota_backoff_test_status=$?
+    trap - EXIT
+    quota_backoff_shutdown_status=0
+    .scratch/bend2/quota-backoff-dedupe-test --instance-shutdown "$quota_backoff_db" || quota_backoff_shutdown_status=$?
+    if [ "$quota_backoff_shutdown_status" -ne 0 ]; then
+      printf "quota-backoff-dedupe owner shutdown failed (exit %s) for %s\n" "$quota_backoff_shutdown_status" "$quota_backoff_db" >&2
+    fi
+    if [ "$quota_backoff_test_status" -ne 0 ]; then
+      exit "$quota_backoff_test_status"
+    fi
+    exit "$quota_backoff_shutdown_status"
+  ' EXIT
+  .scratch/bend2/quota-backoff-dedupe-test "$quota_backoff_db"
+)
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-wake.bend .scratch/bend2/usage-windows-wake-test
 rm -f .scratch/bend2/usage-windows-wake.db
 .scratch/bend2/usage-windows-wake-test .scratch/bend2/usage-windows-wake.db bend2/test/fake-wake-marker

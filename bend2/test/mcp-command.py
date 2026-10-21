@@ -597,7 +597,7 @@ class McpCommand(unittest.TestCase):
                             'baton2_knowledge_promote': {'destination', 'finding'}}.get(
                                 tool, set(arguments))
                 self.assertEqual(set(schema.get('required', [])), required)
-                optional = {'baton2_resume': {'liftStop'},
+                optional = {'baton2_resume': {'liftStop', 'clearStop'},
                             'baton2_knowledge': {'scope', 'subject', 'index', 'id', 'pretty'},
                             'baton2_knowledge_relations': {'scope', 'subject', 'pretty'},
                             'baton2_knowledge_search': {'scope', 'subject', 'pretty'},
@@ -611,6 +611,9 @@ class McpCommand(unittest.TestCase):
         self.command(stdout='{"session":"recorded consumer"}\n', tool='baton2_resume',
                      arguments={'session': 'recorded consumer', 'liftStop': True}, session=session,
                      expected_args=['resume', 'recorded consumer', '--lift-stop'])
+        self.command(stdout='{"cleared":true}\n', tool='baton2_resume',
+                     arguments={'session': 'recorded consumer', 'clearStop': True}, session=session,
+                     expected_args=['resume', 'recorded consumer', '--clear-stop'])
         self.command(tool='baton2_knowledge_record', session=session,
                      arguments={'id': 'corrected-λ', 'kind': 'correction', 'claim': 'Corrected\nclaim',
                                 'evidence': 'message:retained-message', 'limits': 'One run'},
