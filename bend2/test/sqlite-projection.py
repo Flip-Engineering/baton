@@ -13,6 +13,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -181,6 +182,50 @@ class SqliteProjection(unittest.TestCase):
                              result.stdout + result.stderr)
         finally:
             self.stop(holder)
+
+    def test_noncurrent_install_waits_for_retained_reader(self):
+        self.assertEqual(self.install().returncode, 0)
+        conn = sqlite3.connect(self.db)
+        try:
+            conn.execute('DROP TRIGGER native_changes_knowledge_insert')
+            conn.commit()
+        finally:
+            conn.close()
+        holder = self.hold('hold-read', 2)
+        try:
+            installer = self.start('install-busy')
+            time.sleep(0.5)
+            self.assertIsNone(
+                installer.poll(),
+                'installer did not wait for the retained read transaction')
+            code, out, err = self.finish(installer, timeout=10)
+            self.assertEqual(code, 0, out + err)
+        finally:
+            self.stop(holder)
+
+    def test_read_transaction_release_unblocks_commit(self):
+        self.assertEqual(self.install().returncode, 0)
+        conn = sqlite3.connect(self.db)
+        try:
+            conn.execute('DROP TRIGGER native_changes_knowledge_insert')
+            conn.commit()
+        finally:
+            conn.close()
+        reader = sqlite3.connect(self.db, timeout=0, isolation_level=None)
+        writer = sqlite3.connect(self.db, timeout=0, isolation_level=None)
+        self.addCleanup(reader.close)
+        self.addCleanup(writer.close)
+        reader.execute('BEGIN')
+        reader.execute('SELECT count(*) FROM messages').fetchone()
+        writer.execute('BEGIN IMMEDIATE')
+        writer.execute('CREATE TABLE release_probe(x)')
+        with self.assertRaises(sqlite3.OperationalError):
+            writer.execute('COMMIT')
+        reader.execute('ROLLBACK')
+        writer.execute('COMMIT')
+        self.assertEqual(self.query(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' "
+            "AND name='release_probe'"), 1)
 
     def test_module_native_change_trigger_does_not_force_reinstall(self):
         self.assertEqual(self.install().returncode, 0)

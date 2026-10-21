@@ -1407,7 +1407,12 @@ static void baton_sql_read_call(IoWork *w) {
     }
     sqlite3_free(error);
   }
-  if (db) sqlite3_close(db);
+  if (db) {
+    /* End any caller-started transaction before the connection closes so a
+       read lock cannot survive this call. */
+    sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+    sqlite3_close(db);
+  }
 }
 
 #ifdef CID_SQL_READ
