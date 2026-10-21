@@ -120,9 +120,10 @@ recorded row and does not reserve again.
 
 `credit_settle_for` replaces the bound with the actual cost when one is
 reported. The turn and receive completion paths pass the terminal Claude result
-event to `attempt_completed_event`. That function accepts only a valid
-`result` frame whose root `total_cost_usd` is a JSON number; the raw token is
-read whole, so `1e2`, a nested field, a non-result frame or a malformed document
+event to `attempt_completed_event`. That function scans the raw event at object
+depth, reads the one root `total_cost_usd` field as an exact plain-decimal
+token, and ignores a nested same-named field. A duplicate root field, an
+exponent form, a non-result frame, a malformed document or a non-number field
 stays unknown. A repeated cumulative frame settles once. A completed or failed
 attempt without a usable cost keeps the reserved maximum counted and records
 state `failed`; `account reconcile` settles that row with the provider's actual

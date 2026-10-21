@@ -871,6 +871,118 @@ def credit_settle_for(+db: String, +request: String, +outcome: String, +cost: St
     +fields : List<&2,String> <- IO.pure(List<&2,String>,String.split(Tx.trim_nl(current),Char.from_u32(31)))
     credit_settle_fields(db,request,outcome,cost,allow_failed,fields)
 
+# --- request price -----------------------------------------------------------
+
+# Prices are the Anthropic first-party USD list rates, held in nanos per token
+# (one USD per million tokens is 1000 nanos per token). The host transport
+# supplies upper bounds for the request tokens and the request flags; this
+# function is the whole pricing policy.
+type CreditRequestFacts is Data:
+  CRF{model: String, input_tokens: String, output_tokens: String, cache_5m: String, cache_1h: String, cache_hit: String, geo: String, fast_mode: Bool, server_actions: String, tools: Bool}
+
+type CreditRequestPrice is Data:
+  Priced{max_charge: String}
+  PriceRefused{reason: String}
+
+type CreditRates is Data:
+  Rates{base_in: Nat, base_out: Nat, cache_5m: Nat, cache_1h: Nat, cache_hit_rate: Nat, tool_tokens: Nat, fast_allowed: Bool, fast_in: Nat, fast_out: Nat}
+
+def rates_opus() -> CreditRates:
+  Rates{4000n,20000n,5000n,8000n,200n,406n,True{},8000n,40000n}
+
+def rates_sonnet() -> CreditRates:
+  Rates{2000n,10000n,2500n,4000n,100n,286n,False{},0n,0n}
+
+def rates_haiku_low() -> CreditRates:
+  Rates{100n,500n,125n,200n,10n,406n,False{},0n,0n}
+
+def rates_haiku_high() -> CreditRates:
+  Rates{500n,2500n,625n,1000n,50n,406n,False{},0n,0n}
+
+def credit_rates_for(+model: String, +prompt: Nat) -> Maybe<&2,CreditRates>:
+  Bool.pick(Maybe<&2,CreditRates>,String.eq(model,"claude-opus-5-5"),Some{rates_opus()},
+    Bool.pick(Maybe<&2,CreditRates>,String.eq(model,"claude-sonnet-5-5"),Some{rates_sonnet()},
+      Bool.pick(Maybe<&2,CreditRates>,String.eq(model,"claude-haiku-5-5"),
+        Bool.pick(Maybe<&2,CreditRates>,Nat.is_lt(100000n,prompt),Some{rates_haiku_high()},Some{rates_haiku_low()}),
+        None{})))
+
+def credit_pad9(+text: String) -> String:
+  String.repeat("0",Nat.sub(9n,String.length(text))) ++ text
+
+def credit_nanos_usd(+nanos: Nat) -> String:
+  Nat.show(Nat.div(nanos,1000000000n)) ++ "." ++ credit_pad9(Nat.show(Nat.mod(nanos,1000000000n)))
+
+def credit_price_billed(+nanos: Nat, +premium: Bool) -> Nat:
+  match premium:
+    case True{}: Nat.div(Nat.add(Nat.mul(nanos,11n),9n),10n)
+    case False{}: nanos
+
+def credit_price_priced(+base_in: Nat, +base_out: Nat, +cache_5m: Nat, +cache_1h: Nat, +cache_hit_rate: Nat, +tool_tokens: Nat, +fast_in: Nat, +fast_out: Nat, +i: Nat, +o: Nat, +w5: Nat, +w1: Nat, +h: Nat, +fast: Bool, +premium: Bool, +tools: Bool) -> CreditRequestPrice:
+  in_rate = Bool.pick(Nat,fast,fast_in,base_in)
+  out_rate = Bool.pick(Nat,fast,fast_out,base_out)
+  w5_rate = Bool.pick(Nat,fast,Nat.div(Nat.mul(fast_in,5n),4n),cache_5m)
+  w1_rate = Bool.pick(Nat,fast,Nat.mul(fast_in,2n),cache_1h)
+  hit_rate = Bool.pick(Nat,fast,Nat.div(Nat.mul(fast_in,5n),100n),cache_hit_rate)
+  i2 = Bool.pick(Nat,tools,Nat.add(i,tool_tokens),i)
+  nanos = Nat.add(Nat.mul(i2,in_rate),Nat.add(Nat.mul(o,out_rate),Nat.add(Nat.mul(w5,w5_rate),Nat.add(Nat.mul(w1,w1_rate),Nat.mul(h,hit_rate)))))
+  billed = credit_price_billed(nanos,premium)
+  Priced{credit_nanos_usd(billed)}
+
+def credit_price_compute(+rates: CreditRates, +i: Nat, +o: Nat, +w5: Nat, +w1: Nat, +h: Nat, +fast: Bool, +premium: Bool, +tools: Bool) -> CreditRequestPrice:
+  match rates:
+    case Rates{base_in,base_out,cache_5m,cache_1h,cache_hit_rate,tool_tokens,fast_allowed,fast_in,fast_out}:
+      Bool.pick(CreditRequestPrice,Bool.and(fast,Bool.not(fast_allowed)),PriceRefused{"creditFastModeUnpriced"},
+        credit_price_priced(base_in,base_out,cache_5m,cache_1h,cache_hit_rate,tool_tokens,fast_in,fast_out,i,o,w5,w1,h,fast,premium,tools))
+
+def credit_price_rates_decided(+known: Maybe<&2,CreditRates>, +i: Nat, +o: Nat, +w5: Nat, +w1: Nat, +h: Nat, +fast: Bool, +premium: Bool, +tools: Bool) -> CreditRequestPrice:
+  match known:
+    case Some{+rates}: credit_price_compute(rates,i,o,w5,w1,h,fast,premium,tools)
+    case None{}: PriceRefused{"creditModelUnpriced"}
+
+def credit_price_rates(+model: String, +i: Nat, +o: Nat, +w5: Nat, +w1: Nat, +h: Nat, +fast: Bool, +premium: Bool, +tools: Bool) -> CreditRequestPrice:
+  prompt = Nat.add(i,Nat.add(w5,Nat.add(w1,h)))
+  credit_price_rates_decided(credit_rates_for(model,prompt),i,o,w5,w1,h,fast,premium,tools)
+
+def credit_price_tokens_decided(+input: Maybe<&2,Nat>, +output: Maybe<&2,Nat>, +cache_5m: Maybe<&2,Nat>, +cache_1h: Maybe<&2,Nat>, +cache_hit: Maybe<&2,Nat>, +model: String, +fast: Bool, +premium: Bool, +tools: Bool) -> CreditRequestPrice:
+  match input:
+    case Some{+i}:
+      match output:
+        case Some{+o}:
+          match cache_5m:
+            case Some{+w5}:
+              match cache_1h:
+                case Some{+w1}:
+                  match cache_hit:
+                    case Some{+h}: credit_price_rates(model,i,o,w5,w1,h,fast,premium,tools)
+                    case None{}: PriceRefused{"creditRequestMalformed"}
+                case None{}: PriceRefused{"creditRequestMalformed"}
+            case None{}: PriceRefused{"creditRequestMalformed"}
+        case None{}: PriceRefused{"creditRequestMalformed"}
+    case None{}: PriceRefused{"creditRequestMalformed"}
+
+def credit_price_tokens(+model: String, +input: String, +output: String, +cache_5m: String, +cache_1h: String, +cache_hit: String, +fast: Bool, +premium: Bool, +tools: Bool) -> CreditRequestPrice:
+  credit_price_tokens_decided(Nat.read(input),Nat.read(output),Nat.read(cache_5m),Nat.read(cache_1h),Nat.read(cache_hit),model,fast,premium,tools)
+
+def credit_price_geo(+model: String, +input: String, +output: String, +cache_5m: String, +cache_1h: String, +cache_hit: String, +geo: String, +fast: Bool, +tools: Bool) -> CreditRequestPrice:
+  Bool.pick(CreditRequestPrice,Bool.or(String.is_empty(geo),String.eq(geo,"global")),
+    credit_price_tokens(model,input,output,cache_5m,cache_1h,cache_hit,fast,False{},tools),
+    Bool.pick(CreditRequestPrice,String.eq(geo,"us"),
+      credit_price_tokens(model,input,output,cache_5m,cache_1h,cache_hit,fast,True{},tools),
+      PriceRefused{"creditResidencyUnpriced"}))
+
+def credit_request_price_server(+actions: Maybe<&2,Nat>, +model: String, +input: String, +output: String, +cache_5m: String, +cache_1h: String, +cache_hit: String, +geo: String, +fast: Bool, +tools: Bool) -> CreditRequestPrice:
+  match actions:
+    case Some{+count}:
+      Bool.pick(CreditRequestPrice,Nat.is_eq(count,0n),
+        credit_price_geo(model,input,output,cache_5m,cache_1h,cache_hit,geo,fast,tools),
+        PriceRefused{"creditServerToolUnpriced"})
+    case None{}: PriceRefused{"creditRequestMalformed"}
+
+def credit_request_price(+facts: CreditRequestFacts) -> CreditRequestPrice:
+  match facts:
+    case CRF{model,input_tokens,output_tokens,cache_5m,cache_1h,cache_hit,geo,fast_mode,server_actions,tools}:
+      credit_request_price_server(Nat.read(server_actions),model,input_tokens,output_tokens,cache_5m,cache_1h,cache_hit,geo,fast_mode,tools)
+
 # One row per account, fields separated by the ASCII unit separator, in operator
 # recording order.
 def account_row_sql() -> String:
@@ -1095,13 +1207,22 @@ def attempt_completed(+db: String, +attempt: String, +outcome: String, +error_te
     settled : String <- credit_settle_for(db,attempt,outcome,"",False{})
     IO.print(Tx.trim_nl(saved))
 
-# The cumulative total_cost_usd is read from a valid Claude result frame. The
-# root field must exist exactly once and be a JSON number; the raw token is
-# taken whole from the text, so 1e2, a nested field, a non-result frame or a
-# malformed document yields unknown cost. The observation text is unchanged and
-# a missing or unsupported token keeps the reserved bound counted.
+# The cumulative total_cost_usd is read from a valid Claude result frame at the
+# root object. The raw text is scanned at object depth to find the one root
+# total_cost_usd key; a nested same-named key is ignored and a duplicate root
+# key is refused as ambiguous. The exact decimal token is taken whole, so 1e2,
+# malformed, non-result and non-number values yield unknown cost; the
+# observation text is unchanged and a missing token keeps the bound counted.
 def credit_result_cost_sql(+event: String) -> String:
-  "WITH RECURSIVE v(e,ok) AS (SELECT " ++ C.q(event) ++ ", CASE WHEN json_valid(" ++ C.q(event) ++ ") AND json_type(" ++ C.q(event) ++ ")='object' AND json_extract(" ++ C.q(event) ++ ",'$.type')='result' AND json_type(" ++ C.q(event) ++ ",'$.total_cost_usd') IN ('integer','real') AND length(" ++ C.q(event) ++ ")-length(replace(" ++ C.q(event) ++ ",'\"total_cost_usd\"',''))=length('\"total_cost_usd\"') THEN 1 ELSE 0 END), t(s) AS (SELECT CASE WHEN ok=1 AND substr(ltrim(substr(e,instr(e,'\"total_cost_usd\"')+length('\"total_cost_usd\"')),' '||char(9)||char(10)||char(13)),1,1)=':' THEN ltrim(substr(ltrim(substr(e,instr(e,'\"total_cost_usd\"')+length('\"total_cost_usd\"')),' '||char(9)||char(10)||char(13)),2),' '||char(9)||char(10)||char(13)) ELSE '' END FROM v), scan(s,n) AS (SELECT s,0 FROM t UNION ALL SELECT s,n+1 FROM scan WHERE n<length(s) AND substr(s,n+1,1) GLOB '[0-9.]') SELECT CASE WHEN s='' OR n=0 THEN '' WHEN instr(',}' || char(9) || char(10) || char(13) || ' ', substr(s,n+1,1))>0 THEN substr(s,1,n) ELSE '' END FROM scan ORDER BY n DESC LIMIT 1;"
+  +e : String = C.q(event)
+  +k : String = "'\"total_cost_usd\"'"
+  +ws : String = "' '||char(9)||char(10)||char(13)"
+  "WITH RECURSIVE v0(e) AS (SELECT " ++ e ++ "), v(e,ok) AS (SELECT e,CASE WHEN json_valid(e) THEN CASE WHEN json_type(e)='object' AND (SELECT count(*) FROM json_tree(e) WHERE path='$' AND key='type')=1 AND (SELECT value FROM json_tree(e) WHERE path='$' AND key='type')='result' AND (SELECT count(*) FROM json_tree(e) WHERE path='$' AND key='total_cost_usd')=1 AND (SELECT type FROM json_tree(e) WHERE path='$' AND key='total_cost_usd') IN ('integer','real') THEN 1 ELSE 0 END ELSE 0 END FROM v0), "
+  ++ "pos(i,ch,in_str,esc,depth) AS (SELECT 1,substr(e,1,1),0,0,0 FROM v UNION ALL SELECT i+1,substr(e,i+1,1),CASE WHEN in_str=1 AND esc=1 THEN 0 WHEN in_str=1 AND ch='\"' THEN 0 WHEN in_str=0 AND ch='\"' THEN 1 ELSE in_str END,CASE WHEN in_str=1 AND esc=1 THEN 0 WHEN in_str=1 AND ch='\\' THEN 1 ELSE 0 END,depth + CASE WHEN in_str=0 AND ch='{' THEN 1 WHEN in_str=0 AND ch='[' THEN 1 WHEN in_str=0 AND ch='}' THEN -1 WHEN in_str=0 AND ch=']' THEN -1 ELSE 0 END FROM pos,v WHERE i<length(e)), "
+  ++ "keys(i) AS (SELECT i FROM pos,v WHERE ok=1 AND in_str=0 AND depth=1 AND substr(v.e,i,length(" ++ k ++ "))=" ++ k ++ " AND substr(ltrim(substr(v.e,i+length(" ++ k ++ "))," ++ ws ++ "),1,1)=':'), "
+  ++ "t(s) AS (SELECT CASE WHEN (SELECT count(*) FROM keys)=1 AND substr(ltrim(substr(v.e,(SELECT i FROM keys)+length(" ++ k ++ "))," ++ ws ++ "),1,1)=':' THEN ltrim(substr(ltrim(substr(v.e,(SELECT i FROM keys)+length(" ++ k ++ "))," ++ ws ++ "),2)," ++ ws ++ ") ELSE '' END FROM v), "
+  ++ "scan(s,n) AS (SELECT s,0 FROM t UNION ALL SELECT s,n+1 FROM scan WHERE n<length(s) AND substr(s,n+1,1) GLOB '[0-9.]') "
+  ++ "SELECT CASE WHEN s='' OR n=0 THEN '' WHEN n=length(s) OR instr(','||'}'||char(9)||char(10)||char(13)||' ',substr(s,n+1,1))>0 THEN substr(s,1,n) ELSE '' END FROM scan ORDER BY n DESC LIMIT 1;"
 
 def credit_result_cost_io(+db: String, +event: String) -> IO(String):
   do IO<String>:

@@ -101,7 +101,7 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(refused.returncode, 2, refused.stderr)
         self.assertEqual(self.json_account('read', label='claude-api')['accounts'][0]['secretRef'], 'file:/fixture/one')
 
-    def test_the_pool_names_conflicting_readings_and_unknown_credit_state(self):
+    def test_the_pool_names_a_chronological_decrease_without_a_conflict(self):
         self.record('claude-max')
         self.record('claude-api', funding='api_key', secret='file:/fixture/api')
         self.observe('claude-max', 'org-fixture')
@@ -112,11 +112,24 @@ class FocusedAccountCredits(unittest.TestCase):
         self.import_credit('claude-api', 'org-fixture', '184.32', 1760000002000)
         pooled = self.json_account('pool', organization='org-fixture')['organizations'][0]
         fact = {row['fact']: row for row in pooled['facts']}['promotional_credit']
-        self.assertTrue(fact['conflict'])
+        self.assertFalse(fact['conflict'])
+        self.assertEqual(fact['balance'], '184.32')
         self.assertEqual(sorted(row['balance'] for row in fact['readings']), ['184.32', '200.00'])
         chosen = self.json_account('select', harness='claude-code', funding='api_key')
         self.assertEqual((chosen['selected'], chosen['creditEligible'], chosen['observationState']),
                          ('claude-api', True, 'reported'))
+
+    def test_the_pool_names_conflicting_balances_at_the_same_observation_time(self):
+        self.record('claude-max')
+        self.record('claude-api', funding='api_key', secret='file:/fixture/api')
+        self.observe('claude-max', 'org-fixture')
+        self.observe('claude-api', 'org-fixture')
+        self.import_credit('claude-max', 'org-fixture', '200.00', 1760000002000)
+        self.import_credit('claude-api', 'org-fixture', '184.32', 1760000002000)
+        pooled = self.json_account('pool', organization='org-fixture')['organizations'][0]
+        fact = {row['fact']: row for row in pooled['facts']}['promotional_credit']
+        self.assertTrue(fact['conflict'])
+        self.assertEqual(sorted(row['balance'] for row in fact['readings']), ['184.32', '200.00'])
 
     def test_bind_requires_a_session_whose_harness_the_account_records(self):
         self.execute("INSERT INTO sessions(id,parent,harness) VALUES('omp-leaf','root','omp')")
@@ -441,10 +454,38 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
                          [('failed', '')])
 
-    def test_result_cost_rejects_a_nested_field(self):
+    def test_result_cost_reads_the_root_field_past_a_nested_field(self):
         self.credit_account('200.00')
         self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
         self.complete_event('attempt-1', '{"type":"result","usage":{"total_cost_usd":0.01},"total_cost_usd":1.25}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '1.25')])
+
+    def test_result_cost_preserves_the_exact_root_decimal_past_a_nested_field(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', '{"type":"result","usage":{"total_cost_usd":0.100000000000000001},"total_cost_usd":0.100000000000000002}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '0.100000000000000002')])
+
+    def test_result_cost_ignores_a_nested_exponent_field(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', '{"type":"result","usage":{"total_cost_usd":1e2},"total_cost_usd":1.25}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '1.25')])
+
+    def test_result_cost_refuses_duplicate_root_fields(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', '{"type":"result","total_cost_usd":0.1,"total_cost_usd":100}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('failed', '')])
+
+    def test_result_cost_refuses_duplicate_root_fields_with_equal_values(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', '{"type":"result","total_cost_usd":0.1,"total_cost_usd":0.1}')
         self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
                          [('failed', '')])
 
@@ -468,6 +509,35 @@ class FocusedAccountCredits(unittest.TestCase):
         self.complete_event('attempt-1', '{"type":"result","total_cost_usd" : 1.25}')
         self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
                          [('settled', '1.25')])
+
+    def price(self, model, input='0', output='0', cache5='0', cache1='0', cachehit='0', geo='global', fast='0', server='0', tools='0'):
+        completed = self.entry('price', model, input, output, cache5, cache1, cachehit, geo, fast, server, tools)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip()
+
+    def test_request_price_uses_the_verified_opus_rates(self):
+        self.assertEqual(self.price('claude-opus-5-5', '1000000', '1000000'), 'priced|24.000000000')
+        self.assertEqual(self.price('claude-opus-5-5', cache5='1000000'), 'priced|5.000000000')
+        self.assertEqual(self.price('claude-opus-5-5', cache1='1000000'), 'priced|8.000000000')
+        self.assertEqual(self.price('claude-opus-5-5', cachehit='1000000'), 'priced|0.200000000')
+
+    def test_request_price_uses_the_verified_sonnet_rates(self):
+        self.assertEqual(self.price('claude-sonnet-5-5', '1000000', '1000000'), 'priced|12.000000000')
+
+    def test_request_price_applies_the_haiku_long_context_tier(self):
+        self.assertEqual(self.price('claude-haiku-5-5', '100000', '100000'), 'priced|0.060000000')
+        self.assertEqual(self.price('claude-haiku-5-5', '100001', '100001'), 'priced|0.300003000')
+
+    def test_request_price_applies_fast_mode_residency_and_tools(self):
+        self.assertEqual(self.price('claude-opus-5-5', '1000000', '1000000', fast='1'), 'priced|48.000000000')
+        self.assertEqual(self.price('claude-opus-5-5', '1000000', '1000000', geo='us'), 'priced|26.400000000')
+        self.assertEqual(self.price('claude-opus-5-5', tools='1'), 'priced|0.001624000')
+
+    def test_request_price_refuses_unpriced_actions(self):
+        self.assertEqual(self.price('claude-opus-5-5', server='1'), 'refused|creditServerToolUnpriced')
+        self.assertEqual(self.price('claude-unknown'), 'refused|creditModelUnpriced')
+        self.assertEqual(self.price('claude-sonnet-5-5', fast='1'), 'refused|creditFastModeUnpriced')
+        self.assertEqual(self.price('claude-opus-5-5', geo='eu'), 'refused|creditResidencyUnpriced')
 
     def authorize(self, attempt, session='leaf'):
         completed = self.entry('authorize', session, 'claude-code', attempt)

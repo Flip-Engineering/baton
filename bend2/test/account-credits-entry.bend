@@ -47,6 +47,11 @@ def gate_line(pair: Maybe<List<String>> & String) -> String:
     case Some{values}: "binding|" ++ binding_text(values) ++ "|" ++ refusal
     case None{}: "refused|" ++ refusal
 
+def price_line(decision: A.CreditRequestPrice) -> String:
+  match decision:
+    case A.Priced{max_charge}: "priced|" ++ max_charge
+    case A.PriceRefused{reason}: "refused|" ++ reason
+
 def reserve_decided(+db: String, +session: String, +attempt: String, +cap: String, account: Maybe<&2,A.AccountRecord>) -> IO(Unit):
   match account:
     case None{}: IO.print("refused|accountAbsent")
@@ -112,6 +117,8 @@ def dispatch(arguments: List<String>) -> IO(Unit):
         +account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
         pair : Maybe<List<String>> & String <- A.credit_launch_gate(db,session,attempt,harness,account,Some{"/fixture/api-key-exec"},"",False{})
         IO.print(gate_line(pair))
+    case +db <> "price" <> +model <> +input <> +output <> +cache5 <> +cache1 <> +cachehit <> +geo <> +fast <> +server <> +tools <> Nil{}:
+      IO.print(price_line(A.credit_request_price(A.CRF{model,input,output,cache5,cache1,cachehit,geo,String.eq(fast,"1"),server,String.eq(tools,"1")})))
     case other: IO.die(Unit,2,"account-credits-entry: account|handoff|current|attempt|gate|complete|complete-event|reserve|settle|reconcile|gate-qualified|gate-held")
 
 def main() -> IO(Unit):
