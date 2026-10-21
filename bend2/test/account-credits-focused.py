@@ -71,6 +71,11 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return completed.stdout.strip()
 
+    def history_needed(self, first, second, harness='claude-code'):
+        completed = self.entry('history-needed', first, second, harness)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip()
+
     def test_record_and_read_keep_the_funding_route_and_leave_the_organization_unknown(self):
         row = self.json_account('record', label='claude-max', provider='anthropic', harness='claude-code', funding='subscription', secret='/fixture/store')['accounts'][0]
         self.assertEqual((row['id'], row['funding'], row['organization'], row['organizationKnown']),
@@ -231,6 +236,16 @@ class FocusedAccountCredits(unittest.TestCase):
         self.handoff('leaf')
         self.assertEqual(self.query("SELECT body FROM messages WHERE id='task-1'"), [('original task',)])
         self.assertEqual(self.query("SELECT count(*) FROM messages WHERE kind='guidance' AND recipient='leaf'"), [(0,)])
+
+    def test_account_history_transport_is_needed_only_for_distinct_subscription_stores(self):
+        self.record('claude-a', secret='/fixture/store-a')
+        self.record('claude-b', secret='/fixture/store-b')
+        self.record('claude-c', secret='/fixture/store-a')
+        self.record('api-a', funding='api_key', secret='file:/fixture/api-a')
+        self.record('api-b', funding='api_key', secret='file:/fixture/api-b')
+        self.assertEqual(self.history_needed('claude-a', 'claude-b'), 'yes')
+        self.assertEqual(self.history_needed('claude-a', 'claude-c'), 'no')
+        self.assertEqual(self.history_needed('api-a', 'api-b'), 'no')
 
     def test_a_subscription_usage_fact_is_not_a_credit_import(self):
         self.record('claude-max')
@@ -488,6 +503,34 @@ class FocusedAccountCredits(unittest.TestCase):
         self.complete_event('attempt-1', '{"type":"result","total_cost_usd":0.1,"total_cost_usd":0.1}')
         self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
                          [('failed', '')])
+
+    def test_result_cost_settles_past_an_escaped_newline(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', r'{"type":"result","result":"line\nbreak","total_cost_usd":1.25}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '1.25')])
+
+    def test_result_cost_settles_past_an_escaped_quote(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', r'{"type":"result","result":"quote\"inside","total_cost_usd":1.25}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '1.25')])
+
+    def test_result_cost_settles_past_an_escaped_backslash(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', r'{"type":"result","result":"slash\\inside","total_cost_usd":1.25}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '1.25')])
+
+    def test_result_cost_settles_past_an_escaped_tab(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', r'{"type":"result","result":"tab\tinside","total_cost_usd":1.25}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '1.25')])
 
     def test_result_cost_rejects_malformed_json(self):
         self.credit_account('200.00')

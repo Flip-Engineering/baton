@@ -52,6 +52,14 @@ def price_line(decision: A.CreditRequestPrice) -> String:
     case A.Priced{max_charge}: "priced|" ++ max_charge
     case A.PriceRefused{reason}: "refused|" ++ reason
 
+def history_needed_text(+first: Maybe<&2,A.AccountRecord>, +second: Maybe<&2,A.AccountRecord>) -> String:
+  match first:
+    case Some{+left}:
+      match second:
+        case Some{+right}: Bool.pick(String,A.account_history_needed(left,right),"yes","no")
+        case None{}: "absent"
+    case None{}: "absent"
+
 def reserve_decided(+db: String, +session: String, +attempt: String, +cap: String, account: Maybe<&2,A.AccountRecord>) -> IO(Unit):
   match account:
     case None{}: IO.print("refused|accountAbsent")
@@ -119,7 +127,12 @@ def dispatch(arguments: List<String>) -> IO(Unit):
         IO.print(gate_line(pair))
     case +db <> "price" <> +model <> +input <> +output <> +cache5 <> +cache1 <> +cachehit <> +geo <> +fast <> +server <> +tools <> Nil{}:
       IO.print(price_line(A.credit_request_price(A.CRF{model,input,output,cache5,cache1,cachehit,geo,String.eq(fast,"1"),server,String.eq(tools,"1")})))
-    case other: IO.die(Unit,2,"account-credits-entry: account|handoff|current|attempt|gate|complete|complete-event|reserve|settle|reconcile|gate-qualified|gate-held")
+    case +db <> "history-needed" <> +first <> +second <> +harness <> Nil{}:
+      do IO<Unit>:
+        left : Maybe<&2,A.AccountRecord> <- A.account_by_label(db,first,harness)
+        right : Maybe<&2,A.AccountRecord> <- A.account_by_label(db,second,harness)
+        IO.print(history_needed_text(left,right))
+    case other: IO.die(Unit,2,"account-credits-entry: account|handoff|current|attempt|gate|complete|complete-event|reserve|settle|reconcile|gate-qualified|gate-held|price|history-needed")
 
 def main() -> IO(Unit):
   do IO<Unit>:

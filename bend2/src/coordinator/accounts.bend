@@ -1142,6 +1142,9 @@ def account_handoff_body(+harness: String, +refused: String, +bound: String, +ca
 def account_exhausted_body(+harness: String, +refused: String, +cause: String) -> String:
   "accounts exhausted: harness=" ++ harness ++ "; account=" ++ refused ++ " was the last operator-recorded account for this harness and the provider reported usage exhaustion; cause: " ++ cause
 
+def account_history_needed(+refused: AccountRecord, +next: AccountRecord) -> Bool:
+  Bool.and(String.eq(account_funding(refused),"subscription"),Bool.and(String.eq(account_funding(next),"subscription"),Bool.not(String.eq(account_secret_ref(refused),account_secret_ref(next)))))
+
 def advance_append_observed(+db: String, +session: String, +id: String, +harness: String, +refused: AccountRecord, +next: AccountRecord, +cause: String, appended: Result<&1,&1,U32 & String,Unit>) -> IO(Bool):
   match appended:
     case Done{unit}: do IO<Bool>:
@@ -1151,33 +1154,40 @@ def advance_append_observed(+db: String, +session: String, +id: String, +harness
       noted : Unit <- Subs.report_body(db,session,id,"account-append-failed","account record append failed: " ++ U32.show(code) ++ ": " ++ detail ++ "; the provider cause stands and no account was advanced.")
       IO.pure(Bool,False{})
 
-def advance_account_decided(+db: String, +session: String, +id: String, +harness: String, +refused: AccountRecord, +cause: String, decided: Maybe<&2,AccountRecord>) -> IO(Bool):
+def advance_account_append(+db: String, +session: String, +id: String, +harness: String, +refused: AccountRecord, +next: AccountRecord, +cause: String) -> IO(Bool):
+  do IO<Bool>:
+    path : String <- account_sidecar(db,session)
+    appended : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(Tx.trim_nl(path),account_id(next) ++ "\n")
+    advance_append_observed(db,session,id,harness,refused,next,cause,appended)
+
+def advance_account_decided(+db: String, +session: String, +id: String, +harness: String, +refused: AccountRecord, +cause: String, native: String, cmd: String, cwd: String, decided: Maybe<&2,AccountRecord>) -> IO(Bool):
   match decided:
     case None{}: do IO<Bool>:
       noted : Unit <- Subs.report_body(db,session,id,"account-exhausted",account_exhausted_body(harness,account_id(refused),cause))
       IO.pure(Bool,False{})
     case Some{+next}: do IO<Bool>:
-      path : String <- account_sidecar(db,session)
-      appended : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(Tx.trim_nl(path),account_id(next) ++ "\n")
-      advance_append_observed(db,session,id,harness,refused,next,cause,appended)
+      prepared : Bool <- Bool.pick(IO(Bool),account_history_needed(refused,next),Subs.prepare_account_history(db,session,id,harness,account_secret_ref(refused),account_secret_ref(next),cmd,cwd,native),IO.pure(Bool,True{}))
+      Bool.pick(IO(Bool),prepared,advance_account_append(db,session,id,harness,refused,next,cause),IO.pure(Bool,False{}))
 
-def advance_account(+db: String, +session: String, +id: String, +harness: String, +refused: AccountRecord, +cause: String) -> IO(Bool):
+def advance_account(+db: String, +session: String, +id: String, +harness: String, +refused: AccountRecord, +cause: String, native: String, cmd: String, cwd: String) -> IO(Bool):
   do IO<Bool>:
     rows : String <- IO.try(String,DB.Sql.read(db,account_row_sql()))
     +accounts : List<&2,AccountRecord> <- IO.pure(List<&2,AccountRecord>,account_lines(Tx.split_lines(rows),Nil{}))
     +decided : Maybe<&2,AccountRecord> <- IO.pure(Maybe<&2,AccountRecord>,next_account_after(accounts,harness,account_id(refused),False{}))
-    advanced : Bool <- advance_account_decided(db,session,id,harness,refused,cause,decided)
+    advanced : Bool <- advance_account_decided(db,session,id,harness,refused,cause,native,cmd,cwd,decided)
     IO.pure(Bool,advanced)
 
 def handoff_decided(+db: String, +session: String, +id: String, +event: String, native: String, cmd: String, cwd: String, +cause: String, +harness: String, bound: Maybe<&2,AccountRecord>) -> IO(Bool):
   match bound:
     case None{}: Subs.profile_handoff(db,session,id,event,native,cmd,cwd)
-    case Some{+refused}: Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),advance_account(db,session,id,harness,refused,cause))
+    case Some{+refused}: Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),advance_account(db,session,id,harness,refused,cause,native,cmd,cwd))
 
 # Provider-reported exhaustion advances the account in force when a binding
-# put one in force, and the operator's profile list otherwise. The advance is
-# recorded before the caller relaunches, so the next attempt records the next
-# account beside its own attempt identity.
+# put one in force, and the operator's profile list otherwise. For two
+# subscription accounts with distinct credential stores, the native-history
+# helper materializes the next store before the sidecar records the advance.
+# The advance is recorded before the caller relaunches, so the next attempt
+# records the next account beside its own attempt identity.
 def handoff(+db: String, +session: String, +id: String, +event: String, native: String, cmd: String, cwd: String) -> IO(Bool):
   do IO<Bool>:
     +cause : String <- Subs.exhaustion_cause(db,event)
@@ -1218,7 +1228,7 @@ def credit_result_cost_sql(+event: String) -> String:
   +k : String = "'\"total_cost_usd\"'"
   +ws : String = "' '||char(9)||char(10)||char(13)"
   "WITH RECURSIVE v0(e) AS (SELECT " ++ e ++ "), v(e,ok) AS (SELECT e,CASE WHEN json_valid(e) THEN CASE WHEN json_type(e)='object' AND (SELECT count(*) FROM json_tree(e) WHERE path='$' AND key='type')=1 AND (SELECT value FROM json_tree(e) WHERE path='$' AND key='type')='result' AND (SELECT count(*) FROM json_tree(e) WHERE path='$' AND key='total_cost_usd')=1 AND (SELECT type FROM json_tree(e) WHERE path='$' AND key='total_cost_usd') IN ('integer','real') THEN 1 ELSE 0 END ELSE 0 END FROM v0), "
-  ++ "pos(i,ch,in_str,esc,depth) AS (SELECT 1,substr(e,1,1),0,0,0 FROM v UNION ALL SELECT i+1,substr(e,i+1,1),CASE WHEN in_str=1 AND esc=1 THEN 0 WHEN in_str=1 AND ch='\"' THEN 0 WHEN in_str=0 AND ch='\"' THEN 1 ELSE in_str END,CASE WHEN in_str=1 AND esc=1 THEN 0 WHEN in_str=1 AND ch='\\' THEN 1 ELSE 0 END,depth + CASE WHEN in_str=0 AND ch='{' THEN 1 WHEN in_str=0 AND ch='[' THEN 1 WHEN in_str=0 AND ch='}' THEN -1 WHEN in_str=0 AND ch=']' THEN -1 ELSE 0 END FROM pos,v WHERE i<length(e)), "
+  ++ "pos(i,ch,in_str,esc,depth) AS (SELECT 1,substr(e,1,1),0,0,0 FROM v UNION ALL SELECT i+1,substr(e,i+1,1),CASE WHEN in_str=1 AND esc=1 THEN 1 WHEN in_str=1 AND ch='\"' THEN 0 WHEN in_str=0 AND ch='\"' THEN 1 ELSE in_str END,CASE WHEN in_str=1 AND esc=1 THEN 0 WHEN in_str=1 AND ch='\\' THEN 1 ELSE 0 END,depth + CASE WHEN in_str=0 AND ch='{' THEN 1 WHEN in_str=0 AND ch='[' THEN 1 WHEN in_str=0 AND ch='}' THEN -1 WHEN in_str=0 AND ch=']' THEN -1 ELSE 0 END FROM pos,v WHERE i<length(e)), "
   ++ "keys(i) AS (SELECT i FROM pos,v WHERE ok=1 AND in_str=0 AND depth=1 AND substr(v.e,i,length(" ++ k ++ "))=" ++ k ++ " AND substr(ltrim(substr(v.e,i+length(" ++ k ++ "))," ++ ws ++ "),1,1)=':'), "
   ++ "t(s) AS (SELECT CASE WHEN (SELECT count(*) FROM keys)=1 AND substr(ltrim(substr(v.e,(SELECT i FROM keys)+length(" ++ k ++ "))," ++ ws ++ "),1,1)=':' THEN ltrim(substr(ltrim(substr(v.e,(SELECT i FROM keys)+length(" ++ k ++ "))," ++ ws ++ "),2)," ++ ws ++ ") ELSE '' END FROM v), "
   ++ "scan(s,n) AS (SELECT s,0 FROM t UNION ALL SELECT s,n+1 FROM scan WHERE n<length(s) AND substr(s,n+1,1) GLOB '[0-9.]') "
