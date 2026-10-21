@@ -169,7 +169,7 @@ static int native_help_request(int argc,char **argv) {
 
 #ifdef BATON2_RECEIVE_FOCUSED
 /* The focused executable owns receiver operations and exposes the same path
-   to native workers. All general Baton actions use the sibling full CLI. */
+   to native workers. Selected stop and quota commands use its public parser. */
 static int focused_receiver_verb(int argc,char **argv) {
   if(argc<2 || native_help_request(argc,argv)) return 0;
   const char *first=argv[1];
@@ -184,9 +184,35 @@ static int focused_receiver_verb(int argc,char **argv) {
 
 #endif
 
+#if defined(BATON2_RECEIVE_FOCUSED) || defined(BATON2_NATIVE_RECEIVER_ROUTER)
+/* Bend parses each selected public action and resolves its recorded context. */
+static int clear_stop_public_args(int argc,char **argv) {
+  if(argc<2) return 0;
+  int action=2;
+  if(!strcmp(argv[1],"as")) action=3;
+  else if(!strcmp(argv[1],"--project")) {
+    action=3;
+    if(argc>3 && !strcmp(argv[3],"as")) action=5;
+  } else if(!strcmp(argv[1],"clear-stop") || !strcmp(argv[1],"usage-window-reset") || !strcmp(argv[1],"resume") ||
+            !strcmp(argv[1],"stop")) action=1;
+  else if(argc>2 && !strcmp(argv[2],"as")) action=4;
+  for(int i=action;i<argc;i++) {
+    if(i!=action && strcmp(argv[i-1],"and") && strcmp(argv[i-1],"--and")) continue;
+    if(!strcmp(argv[i],"clear-stop") || !strcmp(argv[i],"usage-window-reset")) return 1;
+    if(strcmp(argv[i],"resume") && strcmp(argv[i],"stop")) continue;
+    const char *flag=!strcmp(argv[i],"resume")?"--clear-stop":"--clear";
+    for(int j=i+1;j<argc;j++) {
+      if(!strcmp(argv[j],"and") || !strcmp(argv[j],"--and")) break;
+      if(!strcmp(argv[j],flag)) return 1;
+    }
+  }
+  return 0;
+}
+#endif
+
 #ifdef BATON2_NATIVE_RECEIVER_ROUTER
 static int native_receiver_route(int argc, char **argv) {
-  if(native_help_request(argc,argv)) return -1;
+  if(native_help_request(argc,argv) && !clear_stop_public_args(argc,argv)) return -1;
   int native_input=argc>2 && !strcmp(argv[2],"agent-native-input");
   int recovery=(argc>1 && (!strcmp(argv[1],"--recover-observer") ||
                            !strcmp(argv[1],"--recover-receive"))) ||
@@ -198,7 +224,7 @@ static int native_receiver_route(int argc, char **argv) {
       !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"recover-observer") ||
       !strcmp(argv[2],"register-receiver") || !strcmp(argv[2],"storage-policy") ||
       !strcmp(argv[2],"storage-preview") || !strcmp(argv[2],"storage-apply"))) focused_verb=1;
-  if(!native_input && !focused_verb) return -1;
+  if(!native_input && !focused_verb && !clear_stop_public_args(argc,argv)) return -1;
   char *full=application_executable();
   char *directory=full?strdup(full):NULL;
   char *slash=directory?strrchr(directory,'/'):NULL;
@@ -296,8 +322,8 @@ static int recovery_helper_verb(int argc,char **argv) {
 
 /* Pass the complete application argv through the runtime's argument boundary. */
 int main(int argc, char **argv) {
-  if (argc < 1 || argc == INT_MAX ||
-      (size_t)argc > SIZE_MAX / sizeof(char *) - 2) {
+  if (argc < 1 || argc > INT_MAX - 2 ||
+      (size_t)argc > SIZE_MAX / sizeof(char *) - 3) {
     fputs("baton2: invalid native argument count.\n", stderr);
     return 1;
   }
@@ -321,7 +347,8 @@ int main(int argc, char **argv) {
   /* Native task bootstrap enters through the canonical full CLI once so its
      router can append the trusted executable identity expected by Bend. */
   if(argc==3 && !strcmp(argv[2],"agent-native-input")) return delegate_full_cli(argv);
-  if(!focused_receiver_verb(argc,argv)) return delegate_full_cli(argv);
+  int clear_stop_public=clear_stop_public_args(argc,argv);
+  if(!focused_receiver_verb(argc,argv) && !clear_stop_public) return delegate_full_cli(argv);
 #endif
 #ifdef BATON2_RECOVERY_HELPER_LEGACY_13_ARG
   /* The retained recovery C predates the optional input-tail argument. The
@@ -332,15 +359,20 @@ int main(int argc, char **argv) {
 #else
   int runtime_argc=argc;
 #endif
-  char **application = calloc((size_t)runtime_argc + 2, sizeof(*application));
+  int public_prefix=0;
+#ifdef BATON2_RECEIVE_FOCUSED
+  public_prefix=clear_stop_public;
+#endif
+  char **application = calloc((size_t)runtime_argc + 3, sizeof(*application));
   if (!application) {
     fputs("baton2: cannot allocate native arguments.\n", stderr);
     return 1;
   }
   application[0] = argv[0];
   application[1] = "--";
-  for (int i = 1; i < runtime_argc; i++) application[i + 1] = argv[i];
-  int status = baton2_runtime_main(runtime_argc + 1, application);
+  if(public_prefix) application[2]="--focused-clear-stop";
+  for (int i = 1; i < runtime_argc; i++) application[i + 1 + public_prefix] = argv[i];
+  int status = baton2_runtime_main(runtime_argc + 1 + public_prefix, application);
   free(application);
   return status;
 }

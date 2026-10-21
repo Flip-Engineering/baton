@@ -1,4 +1,6 @@
 import Base
+import ./clear-stop-focused.bend as ClearStop
+import ./stop.bend as Stop
 import ./receive.bend as Receive
 import ../host/instance.bend as Custody
 import ../host/process.bend as P
@@ -114,9 +116,10 @@ def focused_native_args(+full: String, +db: String, args: List<String>) -> IO(Un
     case +verb <> +session <> +observer <> Nil{}:
       focused_native_observer(String.eq(verb,"recover-observer"),full,db,verb,session,observer)
     case +verb <> +session <> Nil{}:
-      Bool.pick(IO(Unit), String.eq(verb,"storage-preview"), StoragePolicy.run_preview(db,session),
+      Bool.pick(IO(Unit), String.eq(verb,"clear-stop"), Stop.clear(db,session),
+        Bool.pick(IO(Unit), String.eq(verb,"storage-preview"), StoragePolicy.run_preview(db,session),
         Bool.pick(IO(Unit), String.eq(verb,"storage-apply"), StoragePolicy.run_apply(db,session),
-          focused_fallback(full,db,Con{verb,Con{session,Nil{}}})))
+          focused_fallback(full,db,Con{verb,Con{session,Nil{}}}))))
     case +verb <> Nil{}:
       Bool.pick(IO(Unit), String.eq(verb,"storage-policy"), StoragePolicy.run_policy(db),
         focused_fallback(full,db,Con{verb,Nil{}}))
@@ -169,7 +172,18 @@ def dispatch(args: List<String>) -> IO(Unit):
       dispatch_recover(String.eq(flag,"--recover-receive"),db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,inputs)
     case other: IO.die(Unit,2,"unsupported focused receive command")
 
+def focused_entry_route(selected: Bool, flag: String, rest: List<String>) -> IO(Unit):
+  match selected:
+    case True{}: ClearStop.run(rest)
+    case False{}: dispatch(Con{flag,rest})
+
+def focused_entry(args: List<String>) -> IO(Unit):
+  match args:
+    case +flag <> rest:
+      focused_entry_route(String.eq(flag,"--focused-clear-stop"),flag,rest)
+    case Nil{}: dispatch(Nil{})
+
 def main() -> IO(Unit):
   do IO<Unit>:
     args : List<String> <- IO.args()
-    dispatch(args)
+    focused_entry(args)
