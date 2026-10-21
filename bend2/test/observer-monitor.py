@@ -5,7 +5,11 @@ observer and the keeper. No status is retained. The focused coordinator entry
 adopts the attempt as monitor-only custody, reads its spool, advances the
 durable checkpoint once and leaves the owed input unread. The native identity,
 PID, UUID argument and manifest stay unchanged.
+
+When BATON_MONITOR_REPLAY_SPOOL_FIXTURE names a read-only data-only spool, an
+additional test replays it through test-owned monitor custody to normal EOF.
 """
+import hashlib
 import json
 import os
 import pathlib
@@ -42,6 +46,21 @@ def checkpoint_offset(directory):
     if data[:8] != b'BATONC03':
         return None
     return struct.unpack_from('=Q', data, 56)[0]
+
+
+def checkpoint_state(directory):
+    data = (pathlib.Path(directory) / 'checkpoint').read_bytes()
+    if data[:8] != b'BATONC03' or len(data) < 104:
+        return None
+    return json.loads(data[104:])
+
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def custody_flags(directory):
@@ -148,59 +167,82 @@ class ObserverMonitor(unittest.TestCase):
     def start_attempt(self, stderr_text='', native_uuid=NATIVE_UUID, attempt_id='attempt1',
                       stdout_text='monitor-line\n', sleep_seconds=8,
                       later_stdout_text='', stdout_file=None, later_stdout_file=None,
-                      harness='codex'):
-        self.native.write_text(
-            '\n'.join([
-                '#!' + sys.executable,
-                'import pathlib,sys,time',
-                'pathlib.Path(sys.argv[2]).write_text(sys.argv[1])',
-                *(['sys.stderr.write(' + repr(stderr_text) + ')'] if stderr_text else []),
-                *(['sys.stdout.write(' + repr(stdout_text) + ')',
-                   'sys.stdout.flush()'] if stdout_file is None else [
-                   'source = open(' + repr(str(stdout_file)) + ', "rb")',
-                   'while True:',
-                   '    chunk = source.read(65536)',
-                   '    if not chunk: break',
-                   '    sys.stdout.buffer.write(chunk)',
-                   '    sys.stdout.buffer.flush()',
-                   'source.close()']),
-                *(['while not pathlib.Path(sys.argv[3]).exists(): time.sleep(0.02)',
-                   'sys.stdout.write(' + repr(later_stdout_text) + ')',
-                   'sys.stdout.flush()'] if later_stdout_text else []),
-                *(['while not pathlib.Path(sys.argv[3]).exists(): time.sleep(0.02)',
-                   'source = open(' + repr(str(later_stdout_file)) + ', "rb")',
-                   'while True:',
-                   '    chunk = source.read(65536)',
-                   '    if not chunk: break',
-                   '    sys.stdout.buffer.write(chunk)',
-                   '    sys.stdout.buffer.flush()',
-                   'source.close()'] if later_stdout_file is not None else []),
-                'time.sleep(' + repr(sleep_seconds) + ')',
-            ]) + '\n')
+                      stdout_fixture=None, harness='codex', spool_timeout=10):
+        native_lines = [
+            '#!' + sys.executable,
+            'import pathlib,sys,time',
+            'pathlib.Path(sys.argv[2]).write_text(sys.argv[1])',
+        ]
+        if stderr_text:
+            native_lines.append('sys.stderr.write(' + repr(stderr_text) + ')')
+
+        def stream(path):
+            return [
+                'source = open(' + repr(str(path)) + ', "rb")',
+                'while True:',
+                '    chunk = source.read(65536)',
+                '    if not chunk: break',
+                '    sys.stdout.buffer.write(chunk)',
+                '    sys.stdout.buffer.flush()',
+                'source.close()',
+            ]
+
+        if stdout_fixture is not None:
+            native_lines.extend([
+                'with open(sys.argv[3], "rb") as source:',
+                '    for chunk in iter(lambda: source.read(1024 * 1024), b""):',
+                '        sys.stdout.buffer.write(chunk)',
+                '        sys.stdout.buffer.flush()',
+                'while not pathlib.Path(sys.argv[4]).exists(): time.sleep(0.02)',
+            ])
+        else:
+            if stdout_file is None:
+                native_lines.extend([
+                    'sys.stdout.write(' + repr(stdout_text) + ')',
+                    'sys.stdout.flush()',
+                ])
+            else:
+                native_lines.extend(stream(stdout_file))
+            if later_stdout_text or later_stdout_file is not None:
+                native_lines.append('while not pathlib.Path(sys.argv[3]).exists(): time.sleep(0.02)')
+                if later_stdout_text:
+                    native_lines.extend([
+                        'sys.stdout.write(' + repr(later_stdout_text) + ')',
+                        'sys.stdout.flush()',
+                    ])
+                if later_stdout_file is not None:
+                    native_lines.extend(stream(later_stdout_file))
+        native_lines.append('time.sleep(' + repr(sleep_seconds) + ')')
+        self.native.write_text('\n'.join(native_lines) + '\n')
         self.native.chmod(0o700)
         self.attempt_id = attempt_id
         self.native_uuid = native_uuid
         self.stdout_text = stdout_text
-        expected_stdout_bytes = (pathlib.Path(stdout_file).stat().st_size
-                                 if stdout_file is not None else len(stdout_text.encode()))
+        if stdout_fixture is not None:
+            expected_spool_size = pathlib.Path(stdout_fixture).stat().st_size
+        elif stdout_file is not None:
+            expected_spool_size = pathlib.Path(stdout_file).stat().st_size
+        else:
+            expected_spool_size = len(stdout_text.encode())
         self.fixture('init', self.db, harness)
         with sqlite3.connect(self.db) as database:
             database.execute("UPDATE sessions SET native=? WHERE id='parent'", (native_uuid,))
         start = subprocess.Popen(
             [str(FIXTURE), 'start', str(self.db), attempt_id, str(self.attempt),
-             str(self.workspace), str(self.log), native_uuid, str(COORDINATOR), harness,
+            str(self.workspace), str(self.log), native_uuid, str(COORDINATOR), harness,
              'controlled-model', 'low', sys.executable, str(self.native),
-             native_uuid, str(self.uuid_marker),
-             *([str(self.release_marker)] if later_stdout_text else [])],
+            native_uuid, str(self.uuid_marker),
+            *([str(stdout_fixture), str(self.release_marker)] if stdout_fixture is not None else []),
+            *([str(self.release_marker)] if stdout_fixture is None and (later_stdout_text or later_stdout_file is not None) else [])],
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env=self.environment)
         stdout, stderr = start.communicate(timeout=30)
         self.assertEqual(start.returncode, 0, stdout + stderr)
         self.assertIn('started', stdout)
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + spool_timeout
         while time.monotonic() < deadline:
             if (self.attempt / 'native.pid').exists() and (self.attempt / 'stdout').exists():
-                if ((self.attempt / 'stdout').stat().st_size >= expected_stdout_bytes and
+                if ((self.attempt / 'stdout').stat().st_size >= expected_spool_size and
                         self.uuid_marker.exists()):
                     break
             time.sleep(0.02)
@@ -236,10 +278,10 @@ class ObserverMonitor(unittest.TestCase):
         os.kill(self.native_process, 0)
         return observer, birth, manifest
 
-    def recover(self, observer):
+    def recover(self, observer, timeout=60):
         result = subprocess.run(
             [str(COORDINATOR), '--recover-observer', str(self.db), 'parent', str(observer)],
-            text=True, capture_output=True, env=self.environment, timeout=60)
+            text=True, capture_output=True, env=self.environment, timeout=timeout)
         return result
 
     @staticmethod
@@ -279,7 +321,6 @@ class ObserverMonitor(unittest.TestCase):
             self.assertEqual(execution, ('running', ''), 'live native status must remain pending')
 
     def test_codex_large_assistant_frame_stays_spanned_through_report(self):
-        import hashlib
 
         assistant_bytes = 8 * 1024 * 1024
         prefix = b'{"type":"item.completed","item":{"id":"bounded-large-message","type":"agent_message","text":"'
@@ -406,7 +447,6 @@ class ObserverMonitor(unittest.TestCase):
         self.assertFalse((self.attempt / 'released').exists())
 
     def test_codex_large_failed_terminal_replaces_legacy_checkpoint(self):
-        import hashlib
 
         error_bytes = 8 * 1024 * 1024
         prefix = b'{"type":"turn.failed","error":{"message":"'
@@ -504,7 +544,6 @@ class ObserverMonitor(unittest.TestCase):
         self.assertEqual(self.uuid_marker.read_text(), NATIVE_UUID)
 
     def test_codex_large_failed_terminal_stays_spanned_through_report(self):
-        import hashlib
 
         error_bytes = 8 * 1024 * 1024
         prefix = b'{"type":"turn.failed","error":{"message":"'
@@ -610,6 +649,46 @@ class ObserverMonitor(unittest.TestCase):
         self.assertEqual(turn_event, report)
         self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (1,))
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
+
+    def test_protected_spool_replays_to_normal_eof_with_unknown_monitor_custody(self):
+        fixture = os.environ.get('BATON_MONITOR_REPLAY_SPOOL_FIXTURE')
+        if not fixture:
+            self.skipTest('BATON_MONITOR_REPLAY_SPOOL_FIXTURE is not set')
+        spool_fixture = pathlib.Path(fixture)
+        self.assertTrue(spool_fixture.is_file() and not spool_fixture.is_symlink(),
+                        'replay fixture must be a regular data-only spool file')
+        source_size = spool_fixture.stat().st_size
+        self.assertGreater(source_size, 40_000_000,
+                           'replay fixture must contain the retained large spool')
+        source_digest = file_sha256(spool_fixture)
+        observer, birth, manifest = self.start_attempt(
+            stdout_fixture=spool_fixture, sleep_seconds=0, harness='omp',
+            spool_timeout=60)
+        self.assertEqual((self.attempt / 'stdout').stat().st_size, source_size)
+        self.assertEqual(file_sha256(self.attempt / 'stdout'), source_digest)
+
+        self.release_marker.touch()
+        self.wait_native_exit(timeout=30)
+        recovered = self.recover(observer, timeout=900)
+        self.assertNotEqual(recovered.returncode, 0,
+                            recovered.stdout + recovered.stderr)
+
+        self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
+        self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
+        self.assertEqual(checkpoint_offset(self.attempt), source_size,
+                         'normal EOF did not commit the final spool cursor')
+        self.assertEqual(custody_offset(self.attempt), source_size,
+                         'monitor custody cursor differs from the final checkpoint')
+        state = checkpoint_state(self.attempt)
+        self.assertIsNotNone(state, 'monitor recovery did not leave a readable checkpoint')
+        self.assertTrue(state['output_done'], 'normal EOF did not finalize the output cursor')
+        self.assertGreater(len(state['terminal'].encode()), 900_000,
+                           'the retained terminal was not carried through full replay')
+        output_log = pathlib.Path(str(self.log) + '.attempt-' + self.attempt_id)
+        self.assertGreater(output_log.stat().st_size, 0,
+                           'replay did not materialize native output')
+        self.assertEqual(int(state['output']), output_log.stat().st_size,
+                         'final output cursor does not match the materialized log')
 
     def test_spanned_agent_end_monitor_keeps_unknown_custody(self):
         frame = ('{"type":"agent_end","isTerminal":true,"messages":[{"role":"assistant",'
