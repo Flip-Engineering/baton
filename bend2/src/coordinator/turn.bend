@@ -1185,7 +1185,9 @@ def dsh_home_if(dsh: Bool, +db: String, +base: String, +player: String) -> IO(St
 
 def dsh_prepare_if(dsh: Bool, +directory: String, +model: String, +effort: String) -> IO(Result<&1,&1,U32 & String,Dsh.Prepared>):
   match dsh:
-    case True{}: Dsh.prepare(directory,model,effort)
+    # Native custody creates the attempt directory and seals its prompt. Keep
+    # the per-attempt patches in a sibling directory referenced by the argv.
+    case True{}: Dsh.prepare(directory ++ ".dsh",model,effort)
     case False{}: IO.pure(Result<&1,&1,U32 & String,Dsh.Prepared>,Done{Dsh.Prepared{"",""}})
 
 type IdentityParts is Data:
