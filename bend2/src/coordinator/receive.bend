@@ -1136,19 +1136,19 @@ def recover_unlocked(+db: String, +session: String, id: String, cursor: String, 
   attach_recorded(db,directory,log,handle => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,None{},again))
 
 # The blocked attempt recorded its admission ticket durably. Recovery reads that
-# row after the drain and settles it under the session guard. An older attempt
-# with no row falls back to the attempt id and an empty generation; the empty
-# generation skips the generation comparison, and the owner comparison still
-# preserves a different owner's claim.
-def settle_recovery_list(+db: String, +session: String, +id: String, +directory: String, parts: List<String>) -> IO(Unit):
+# row after the drain and settles it under the session guard only when both the
+# owner and generation still match. A legacy attempt with no durable row has an
+# unknown admission generation; reading the current generation would infer a
+# newer claim, so that claim is preserved for its live driver.
+def settle_recovery_list(+db: String, +session: String, +directory: String, parts: List<String>) -> IO(Unit):
   match parts:
     case owner <> generation <> Nil{}: claim_left_ticket(db,session,owner,generation,directory)
-    case other: claim_left_ticket(db,session,id,"",directory)
+    case other: IO.pure(Unit,Unit{})
 
-def settle_recovery_ticket(+db: String, +session: String, +id: String, +directory: String) -> IO(Unit):
+def settle_recovery_ticket(+db: String, +session: String, +directory: String) -> IO(Unit):
   do IO<Unit>:
     ticket : String <- Store.ticket(db,session,directory)
-    settle_recovery_list(db,session,id,directory,Tx.split_tabs(ticket))
+    settle_recovery_list(db,session,directory,Tx.split_tabs(ticket))
 
 # SQLITE_BUSY is a transient contention result, not a dead attempt: retain the
 # attempt, record its cause and settle its retained admission ticket under the
@@ -1162,7 +1162,7 @@ def recover_tail(+db: String, +session: String, +id: String, +directory: String,
           noted : Unit <- record_recovery_blocked(directory,db,session,native,(code,text))
           ended : Unit <- Chan.close(String,updates)
           drained : Unit <- IO.join(Unit,drainer)
-          settled : Unit <- settle_recovery_ticket(db,session,id,directory)
+          settled : Unit <- settle_recovery_ticket(db,session,directory)
           IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
         do IO<Result<&1,&1,U32 & String,Unit>>:
           ended : Unit <- Chan.close(String,updates)

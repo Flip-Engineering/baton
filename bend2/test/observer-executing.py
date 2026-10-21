@@ -362,9 +362,22 @@ class Executing(unittest.TestCase):
         return {name: (self.attempt / name).read_text().strip()
                 for name in names if (self.attempt / name).exists()}
 
-    def run_scenario(self, scenario, newer_claim=None):
+    def run_scenario(self, scenario, newer_claim=None, owed=True, ticket=None):
         self.seed()
         process, gate, first = self.start()
+        with sqlite3.connect(self.db) as database:
+            if not owed:
+                database.execute(
+                    "UPDATE messages SET receipt='read' WHERE recipient='parent'")
+            if ticket == 'delete':
+                database.execute(
+                    "DELETE FROM wake_claim_tickets WHERE session='parent' "
+                    "AND directory=?", (str(self.attempt),))
+            elif ticket is not None:
+                database.execute(
+                    "INSERT OR REPLACE INTO wake_claim_tickets"
+                    "(session,directory,owner,generation) VALUES('parent',?,?,?)",
+                    (str(self.attempt), ticket[0], ticket[1]))
         if newer_claim is not None:
             with sqlite3.connect(self.db) as database:
                 database.execute(
@@ -375,7 +388,7 @@ class Executing(unittest.TestCase):
         writer = None
         cycle = {}
         try:
-            if scenario in ('contention','newer-claim'):
+            if scenario in ('contention','newer-claim','settle'):
                 writer = sqlite3.connect(self.db, isolation_level=None, timeout=30)
                 writer.execute('BEGIN IMMEDIATE')
                 writer.execute("UPDATE messages SET body=body WHERE id='msg-02'")
@@ -616,6 +629,50 @@ class Lifecycle(Executing):
         evidence = self.run_scenario('newer-claim', newer_claim=('task', 3))
         print('EVIDENCE ' + json.dumps(evidence, sort_keys=True), flush=True)
         self.assert_newer_claim_preserved(evidence, 'task', 3)
+
+    def test_blocked_recovery_releases_a_matching_ticket_at_pure_settlement(self):
+        evidence = self.run_scenario(
+            'settle', newer_claim=('task', 2), owed=False)
+        print('EVIDENCE ' + json.dumps(evidence, sort_keys=True), flush=True)
+        self.assertTrue(evidence['blockedSeen'])
+        self.assertEqual(evidence['helperExit'], 0)
+        self.assertNotEqual(evidence['state']['claim'], 'claimed',
+                            'a matching dead ticket must be released')
+        self.assertEqual(evidence['state']['claimGeneration'], 0)
+        self.assertEqual(evidence['state']['pending'], 0)
+        self.assertNotIn(str(self.attempt), [
+            row[0] for row in evidence['state']['tickets']],
+            'a released ticket row must be removed')
+        self.assert_released_old_attempt()
+
+    def test_blocked_recovery_preserves_a_legacy_no_ticket_claim(self):
+        evidence = self.run_scenario(
+            'settle', newer_claim=('task', 2), owed=False, ticket='delete')
+        print('EVIDENCE ' + json.dumps(evidence, sort_keys=True), flush=True)
+        self.assertTrue(evidence['blockedSeen'])
+        self.assertEqual(evidence['helperExit'], 0)
+        self.assertEqual(evidence['state']['claim'], 'claimed',
+                         'an unknown admission generation must preserve the claim')
+        self.assertEqual(evidence['state']['claimOwner'], 'task')
+        self.assertEqual(evidence['state']['claimGeneration'], 2)
+        self.assertEqual(evidence['state']['pending'], 0)
+        self.assertNotIn(str(self.attempt), [
+            row[0] for row in evidence['state']['tickets']],
+            'a legacy attempt has no durable ticket row')
+
+    def test_blocked_recovery_preserves_a_newer_generation_at_pure_settlement(self):
+        evidence = self.run_scenario(
+            'settle', newer_claim=('task', 3), owed=False)
+        print('EVIDENCE ' + json.dumps(evidence, sort_keys=True), flush=True)
+        self.assertTrue(evidence['blockedSeen'])
+        self.assertEqual(evidence['helperExit'], 0)
+        self.assertEqual(evidence['state']['claim'], 'claimed')
+        self.assertEqual(evidence['state']['claimOwner'], 'task')
+        self.assertEqual(evidence['state']['claimGeneration'], 3)
+        self.assertIn((str(self.attempt), 'task', 2),
+                      evidence['state']['tickets'],
+                      'the retained ticket must stay at the admission generation')
+        self.assertEqual(evidence['state']['pending'], 0)
 
 
 if __name__ == '__main__':
