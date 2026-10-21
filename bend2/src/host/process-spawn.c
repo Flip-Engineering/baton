@@ -5794,7 +5794,7 @@ static void __attribute__((constructor)) baton_process_signals(void){signal(SIGP
 typedef struct {
   char *database, *session, *path, *directory;
   const char *detail;
-  int handle, error, kind, keeper, legacy_unknown, observer_life, observer_ended;
+  int handle, error, kind, keeper, legacy_unknown, observer_life, observer_ended, live_transfer;
   u32 observer;
   BatonProcessCall attempt;
 } BatonSessionLock;
@@ -5889,6 +5889,17 @@ static int br_monitor_lock(BatonRetained *retained) {
   retained->custody_lock=fd;
   return 0;
 }
+
+/* True only when the recorded native process is still alive. */
+static int br_native_live(pid_t pid) {
+  int ended=0;
+  int life=br_process_lifetime(pid,&ended);
+  if(life<0)return 0;
+  close(life);
+  return !ended;
+}
+
+static int baton_observer_transfer_supported(const char *directory);
 
 /* True only when the recorded observer process has ended. A live observer still
    owns the attempt; a second reader must not adopt beside it. */
@@ -6086,6 +6097,11 @@ static int baton_observer_completed(BatonSessionLock *call) {
     }
     }
   }
+  if(error && baton_observer_transfer_supported(call->directory)==0 &&
+     br_native_live((pid_t)native.pid)) {
+    call->live_transfer=1;
+    error=0;
+  }
   if(error) {call->detail="Observer recovery requires the original keeper to verify and retain the native exit status.";return error;}
   BrManifest manifest={0};
   if((error=br_manifest_read(call->directory,&manifest))) {
@@ -6184,6 +6200,11 @@ static int baton_observer_recover(BatonSessionLock *call) {
   call->attempt.database=call->database;
   call->attempt.directory=call->directory;
   call->attempt.lock=(u32)call->handle;
+  if(call->live_transfer && !call->keeper) {
+    call->detail="Live observer transfer requires the keeper connection.";
+    return EBUSY;
+  }
+
   if(call->keeper) {
     error=br_instance_attach_observer(&call->attempt,call->observer,call->legacy_unknown);
     if(error==EBUSY && call->legacy_unknown) {
