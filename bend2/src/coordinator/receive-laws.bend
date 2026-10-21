@@ -157,8 +157,10 @@ def attached_recovery(+db: String, +directory: String, +log: String, next: @+han
   Storage.with_writer_leases(Result<&1,&1,U32 & String,Unit>, log, directory,
     error => IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error}),
     unit => do IO<Result<&1,&1,U32 & String,Unit>>:
-      handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
-      next(handle))
+      attached : Result<&1,&1,U32 & String,U32> <- Custody.Instance.attach(db,directory)
+      match attached:
+        case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+        case Done{handle}: next(handle))
 
 law recovery_attaches_recorded_attempt:
   for +db: String
@@ -633,11 +635,12 @@ law keeper_recovery_preserves_the_original_input_cursor:
   for harness: String
   for directory: String
   for native: String
+  for lock: Maybe<U32>
   for +handle: U32
   for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,again) == Receive.observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,None{},again,False{}) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,lock,again) == Receive.observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,lock,again,False{}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def keeper_recovery_preserves_the_original_input_cursor(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,again):
+def keeper_recovery_preserves_the_original_input_cursor(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,lock,handle,again):
   {==}
 
 # M-5 and M-8 for the post-exit wake (#685). The driver reads the pending count

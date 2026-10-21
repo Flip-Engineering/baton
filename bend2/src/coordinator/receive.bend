@@ -1074,21 +1074,96 @@ def attach_recorded(+db: String, +directory: String, +log: String, next: @+handl
   Storage.with_writer_leases(Result<&1,&1,U32 & String,Unit>, log, directory,
     error => IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error}),
     unit => do IO<Result<&1,&1,U32 & String,Unit>>:
-      handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
-      next(handle))
+      attached : Result<&1,&1,U32 & String,U32> <- Custody.Instance.attach(db,directory)
+      match attached:
+        case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+        case Done{handle}: next(handle))
 
-def observe_attached(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, directory: String, native: String, +handle: U32, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,None{},again,False{})
+def observe_attached(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,lock,again,False{})
+
+# A recovery that could not reach the coordinator database records one typed
+# blocked cause in the attempt and retains every custody file and checkpoint.
+# The cause is durable for the next recovery, the stall report and the operator;
+# the keeper stops relaunching this attempt from it until an explicit recovery
+# reaches this point again.
+def recovery_blocked_text(+db: String, +session: String, +directory: String, +native: String, error: U32 & String) -> String:
+  match error:
+    case (code,+detail):
+      "{\"schema\":\"baton2-recovery-blocked-v1\",\"session\":" ++ J.string_literal(session) ++ ",\"attempt\":" ++ J.string_literal(directory) ++ ",\"native\":" ++ J.string_literal(native) ++ ",\"code\":" ++ U32.show(code) ++ ",\"cause\":" ++ J.string_literal(detail) ++ ",\"next\":\"The retained attempt and its checkpoint are unchanged. Retry recovery after the database writer releases its transaction; the wake claim is released for the next driver.\"}\n"
+
+def record_recovery_blocked(+directory: String, +db: String, +session: String, +native: String, error: U32 & String) -> IO(Unit):
+  do IO<Unit>:
+    written : Result<&1,&1,U32 & String,Unit> <- F.Files.write_private(directory ++ "/recovery-blocked",recovery_blocked_text(db,session,directory,native,error))
+    IO.pure(Unit,Unit{})
+
+# SQLITE_BUSY is a transient contention result, not a dead attempt: retain the
+# attempt and record its cause instead of exiting with the database code.
+def retain_busy_result(+db: String, +session: String, +directory: String, +native: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit> & Bool):
+  match result:
+    case Fail{(code,text)}:
+      Bool.pick(IO(Result<&1,&1,U32 & String,Unit> & Bool),U32.is_eq(code,5),
+        do IO<Result<&1,&1,U32 & String,Unit> & Bool>:
+          noted : Unit <- record_recovery_blocked(directory,db,session,native,(code,text))
+          IO.pure(Result<&1,&1,U32 & String,Unit> & Bool,(Done{Unit{}},True{})),
+        IO.pure(Result<&1,&1,U32 & String,Unit> & Bool,(Fail{(code,text)},False{})))
+    case Done{unit}: IO.pure(Result<&1,&1,U32 & String,Unit> & Bool,(Done{Unit{}},False{}))
+
+# A blocked owner must not keep a claim generation that no live driver owns.
+# The release names the exact ticket read under the session lock, so a newer
+# admission is untouched. Owed input stays unacknowledged for the next driver.
+def release_ticket_under(+db: String, +session: String, lock: Maybe<U32>) -> IO(Unit):
+  match lock:
+    case None{}: IO.pure(Unit,Unit{})
+    case Some{handle}: do IO<Unit>:
+      +owner : String <- Store.claim_owner(db,session)
+      +generation : String <- Store.claim_generation(db,session)
+      released : Unit <- Store.release_ticket(db,session,Tx.trim_nl(owner),generation)
+      IO.pure(Unit,Unit{})
+
+# The blocked helper still holds its session guard on the early contention path.
+# A new non-blocking acquisition answers None when that guard is ours; the
+# ticket is then released under the guard we already hold and the process exit
+# releases it. A guard released by a completion path is reacquired here, used
+# for the same release, and released again.
+def release_blocked_ticket(+db: String, +session: String, held: Maybe<U32>) -> IO(Unit):
+  do IO<Unit>:
+    acquired : Result<&1,&1,U32 & String,Maybe<U32>> <- Lock.SessionLock.try_acquire(db,session)
+    match acquired:
+      case Fail{error}: IO.pure(Unit,Unit{})
+      case Done{value}:
+        match value:
+          case None{}: release_ticket_under(db,session,held)
+          case Some{handle}: do IO<Unit>:
+            released : Unit <- release_ticket_under(db,session,Some{handle})
+            unlocked : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
+            IO.pure(Unit,Unit{})
+
+def recover_owned_session(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match lock:
+    case None{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case Some{handle}: attach_recorded(db,directory,log,attached => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,attached,Some{handle},again))
 
 # The keeper invokes this with the original attempt and inbox cutoff after the
 # observer exits. Attachment never launches a native process or sends its prompt.
+# The executing call takes the same session guard every other driver takes, so a
+# replacement observer cannot open a second reader beside it, and it settles the
+# wake claim when it returns. A SQLITE_BUSY completion is retained as a typed
+# blocked cause and the stale claim ticket is released to the next driver.
 def recover(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
+    cleared : Result<&1,&1,U32 & String,Unit> <- F.Files.remove(directory ++ "/recovery-blocked")
     +updates : Chan(String) <- Chan.new(String,1)
     +drainer : Chan(Unit) <- IO.fork(Unit,discard_admitted_start(updates))
-    result : Result<&1,&1,U32 & String,Unit> <- attach_recorded(db,directory,log,handle => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,previous => continue_receiver(db,session,cmd,model,effort,cwd,log,"explicit",previous,updates)))
+    +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    lock : Maybe<U32> <- IO.try(Maybe<U32>,Lock.SessionLock.try_acquire(canonical,session))
+    raw : Result<&1,&1,U32 & String,Unit> <- recover_owned_session(canonical,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,lock,previous => continue_receiver(canonical,session,cmd,model,effort,cwd,log,"explicit",previous,updates))
+    kept : Result<&1,&1,U32 & String,Unit> & Bool <- retain_busy_result(canonical,session,directory,native,raw)
+    (result,blocked)=kept
+    when_blocked : Unit <- Bool.pick(Unit,blocked,release_blocked_ticket(canonical,session,lock),IO.pure(Unit,Unit{}))
     ended : Unit <- Chan.close(String,updates)
     drained : Unit <- IO.join(Unit,drainer)
+    settled : Unit <- claim_left(canonical,session)
     IO.pure(Result<&1,&1,U32 & String,Unit>,result)
 
 # The supported receive command answers one JSON object. The invocation carries

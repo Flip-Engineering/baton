@@ -1490,6 +1490,14 @@ static int br_recovery_reap_unwatched(BrKeeper *keeper) {
 static void br_recover(BrKeeper *keeper) {
   if(keeper->recovery_attempted)return;
   keeper->recovery_attempted=1;
+  /* A recovery that recorded a typed blocked cause retains the attempt for an
+     explicit retry. Relaunching it from the keeper would repeat the same
+     database contention and lose the cause, so the automatic spawn stops here;
+     an operator or the next explicit recovery clears the marker. */
+  char *blocked=br_path(keeper->directory,"recovery-blocked");
+  int stopped=blocked && access(blocked,F_OK)==0;
+  free(blocked);
+  if(stopped)return;
   char **argv=br_argv(keeper->manifest.field[4],(size_t)keeper->manifest.header.lengths[4]);
   char *path=br_path(keeper->directory,"observer.log");
   int null=open("/dev/null",O_RDONLY|O_CLOEXEC),log=path?open(path,O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600):-1;
