@@ -138,7 +138,7 @@ class QueueOpaqueInputTests(unittest.TestCase):
                     self.fail("waiter exited before admission sample: " + stdout + stderr)
                 status = pathlib.Path(f"/proc/{process.pid}/status").read_text()
                 values = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
-                runs = list(self.state.glob("keys/*/runs/*/meta"))
+                runs = list(self.state.glob(f"keys/*/runs/*-{process.pid}/meta"))
                 if runs:
                     children = pathlib.Path(f"/proc/{process.pid}/task/{process.pid}/children").read_text().strip()
                     self.assertEqual(children, "")
