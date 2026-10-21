@@ -434,12 +434,20 @@ def finish_pending(+db: String, +session: String, id: String, attempt: String, l
 # Retirement follows acknowledgment on the same attempt handle: the shared
 # owner frees the attempt slot and advances its generation once the attempt
 # is acknowledged. The combined result keeps an acknowledgment failure
-# first, so a failed marker write still reports its own error.
-def ack_then_retire(+handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+# first, so a failed marker write still reports its own error. A monitor-only
+# handle keeps its custody open; the host refuses its acknowledgment and
+# retirement, and the observed result already records the attempt.
+def ack_and_retire(+handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     acked : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.acknowledge(handle)
     retired : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.retire(handle)
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(acked,retired))
+
+def ack_then_retire(+db: String, +handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    +monitor : Bool <- Observer.monitor_handle(db,handle)
+    Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),monitor,
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),ack_and_retire(handle))
 
 def completed_wake(+db: String, session: String, cursor: String, finished: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -489,7 +497,7 @@ def completed(+db: String, +session: String, +id: String, +log: String, attempt:
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
     observer_released : Unit <- release_observer(lock)
     native_released : Unit <- release_native(db,handle)
-    finished : Result<&1,&1,U32 & String,Unit> <- finish_pending(db,session,id,attempt,log,pending_cursor,outcome,deliveries,again,u => ack_then_retire(handle),superseded)
+    finished : Result<&1,&1,U32 & String,Unit> <- finish_pending(db,session,id,attempt,log,pending_cursor,outcome,deliveries,again,u => ack_then_retire(db,handle),superseded)
     wake_if_kept(db,session,pending_cursor,superseded,finished)
 
 # The recovery input records the workspace state and makes clearing the refused
@@ -852,12 +860,33 @@ def orphan_native_gone(db: String, handle: U32) -> IO(Bool):
     value : String <- IO.try(String,DB.Sql.read(db,"SELECT CASE WHEN json_valid(" ++ C.q(state) ++ ") AND json_extract(" ++ C.q(state) ++ ",'$.native_gone')=1 THEN '1' ELSE '0' END;"))
     IO.pure(Bool,String.eq(value,"1\n"))
 
+def gone_monitor(+db: String, +session: String, +id: String, cursor: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    +outcome : Turn.Outcome <- IO.pure(Turn.Outcome,Turn.Ended{"unknown after keeper loss","","The recorded native process has ended without a durable exit status. The original stdout and checkpoint remain in " ++ directory ++ ". Pending input remains available for the next native turn.",True{}})
+    exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
+    +normalized_harness : String <- IO.pure(String,recovered_harness(harness))
+    observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,normalized_harness,directory,directory,handle,"unknown")
+    completed_observation(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted,cmd)
+
+def gone_orphan(+db: String, +session: String, +id: String, +log: String, +directory: String, +handle: U32, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    +outcome : Turn.Outcome <- IO.pure(Turn.Outcome,Turn.Ended{"unknown after keeper loss","","The recorded native process has ended without a durable exit status. The original stdout and checkpoint remain in " ++ directory ++ ". Pending input remains available for the next native turn.",True{}})
+    exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
+    completed_orphan(db,session,id,log,directory,directory ++ "/native.stderr",handle,lock,outcome,Nil{},again)
+
+def gone_state_decided(+db: String, +session: String, +id: String, cursor: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, monitor: Bool, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match monitor:
+    case True{}: gone_monitor(db,session,id,cursor,cwd,log,harness,directory,native,handle,lock,again,adopted,cmd)
+    case False{}: gone_orphan(db,session,id,log,directory,handle,lock,again)
+
+def gone_state(+db: String, +session: String, +id: String, cursor: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    +monitor : Bool <- Observer.monitor_handle(db,handle)
+    gone_state_decided(db,session,id,cursor,cwd,log,harness,directory,native,handle,lock,monitor,again,adopted,cmd)
+
 def observe_guarded_state(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, gone: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match gone:
-    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      +outcome : Turn.Outcome <- IO.pure(Turn.Outcome,Turn.Ended{"unknown after keeper loss","","The recorded native process has ended without a durable exit status. The original stdout and checkpoint remain in " ++ directory ++ ". Pending input remains available for the next native turn.",True{}})
-      exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
-      completed_orphan(db,session,id,log,directory,directory ++ "/native.stderr",handle,lock,outcome,Nil{},again)
+    case True{}: gone_state(db,session,id,cursor,cwd,log,harness,directory,native,handle,lock,again,adopted,cmd)
     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       +normalized_harness : String <- IO.pure(String,recovered_harness(harness))
       observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,normalized_harness,directory,directory,handle,"unknown")
