@@ -991,7 +991,7 @@ def route_unavailable_body(harness: String, cause: String) -> String:
 def report_route_chosen(db: String, session: String, id: String, +route: Route, cause: String) -> IO(Unit):
   report_body(db,session,id,"route-chosen",route_chosen_body(route_harness(route),route_model(route),route_cmd(route),cause))
 
-def report_route_unavailable(db: String, session: String, id: String, harness: String, cause: String) -> IO(Unit):
+def report_route_unavailable(+db: String, +session: String, id: String, harness: String, cause: String) -> IO(Unit):
   do IO<Unit>:
     +base : String <- refusal_report_base(db,session,id)
     report_body(db,session,base,"route-unavailable",route_unavailable_body(harness,cause))
