@@ -21,6 +21,7 @@ import ../host/process.bend as P
 import ../host/instance.bend as Custody
 import ../host/session-lock.bend as Lock
 import ./turn.bend as Turn
+import ./subscription-fallback.bend as Subs
 import ./control.bend as Control
 import ./delivery.bend as Delivery
 import ./native-requests.bend as NativeRequests
@@ -91,13 +92,14 @@ def replay_output_failure_is_preserved(error):
 # with a pipe whose reader closes after both completion branches start.
 law completion_output_preserves_delivery_errors_and_returns_write_failure:
   for +db: String
-  for player: String
+  for +player: String
   for +id: String
-  {Turn.player_finished(db,player,id,False{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
+  {Turn.player_finished(db,player,id,False{},True{},"") == (do IO<Result<&1,&1,U32 & String,Unit>>:
     +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
+    exit_id : String <- Bool.pick(IO(String),True{},Subs.exit_report_id(db,player,id,""),IO.pure(String,id ++ ":exit"))
     diagnostic_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":observation","1","")
     delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id,"1",saved)
-    exit_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":exit","1","")
+    exit_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,exit_id,"1","")
     stopped : Result<&1,&1,U32 & String,Unit> <- Stop.deliver(db,player,id)
     written : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output(saved)
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(Turn.delivery_result(Turn.remember(Turn.remember(Turn.remember("",diagnostic_delivery),delivered),exit_delivery)),Turn.combine(stopped,written)))) : IO(Result<&1,&1,U32 & String,Unit>)}
