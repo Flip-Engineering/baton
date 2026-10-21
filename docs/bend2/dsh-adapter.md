@@ -52,6 +52,11 @@ and inserts one persistent shell group. The composed request carries exactly
 `bash`, `read_image` and `working_directory`. `bend2/test/dsh-canary.py`
 prints the request tool names, the effort and the event stream.
 
+Retained attempts store both patches in `<attempt>.dsh`. Native custody creates
+`<attempt>`, seals `prompt.txt` and retains its manifest and terminal markers.
+The launch argv records the patch paths; a retry keeps the seat's `DSH_HOME`
+and supplies the native session ID through `--session-id`.
+
 ## Canary evidence
 
 `bend2/test/dsh-canary.py` runs one tool call, its tool result and a
