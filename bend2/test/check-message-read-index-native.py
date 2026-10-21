@@ -20,7 +20,7 @@ def main():
     args = parser.parse_args()
     directory = Path(args.directory).resolve()
     directory.mkdir(parents=True, exist_ok=False)
-    fixture, cli = str(Path(args.fixture).resolve()), str(Path(args.cli).resolve())
+    fixture, cli = str(Path(args.fixture).resolve()), str(Path(args.cli).absolute())
     database = directory / 'existing.db'
     commands, checks = [], []
 
@@ -75,7 +75,7 @@ def main():
         commands.append({'name': 'instance-owner-start', 'argv': owner_argv, 'pid': owner.pid})
         before = run('public-before', [cli, str(database), 'as', 'index-operator', 'inbox'])
         original = snapshot()
-        migrate = [str(Path(args.migration_cli).resolve()), '--ensure-schema', str(database)] if args.migration_cli else [fixture, 'migrate', str(database)]
+        migrate = [str(Path(args.migration_cli).absolute()), '--ensure-schema', str(database)] if args.migration_cli else [fixture, 'migrate', str(database)]
         migrated = run('native-migrate', migrate)
         if args.migration_cli:
             require(json.loads(migrated) == {'schema': 'baton2-schema-ensure-v1', 'status': 'ready'}, 'production canonical migration reports completion')
@@ -121,7 +121,10 @@ def main():
         finally:
             (directory / 'result.json').write_text(json.dumps({'passed': passed, 'checks': checks, 'commands': commands,
                 'fixture_sha256': hashlib.sha256(Path(fixture).read_bytes()).hexdigest(),
-                'cli_sha256': hashlib.sha256(Path(cli).read_bytes()).hexdigest()}, indent=2))
+                'cli_sha256': hashlib.sha256(Path(cli).read_bytes()).hexdigest(),
+                'cli_invocation': cli, 'cli_resolved_payload': str(Path(cli).resolve()),
+                'migration_invocation': str(Path(args.migration_cli).absolute()) if args.migration_cli else None,
+                'migration_payload_sha256': hashlib.sha256(Path(args.migration_cli).read_bytes()).hexdigest() if args.migration_cli else None}, indent=2))
     print(json.dumps({'passed': passed, 'assertions': len(checks), 'directory': str(directory)}))
 
 if __name__ == '__main__':

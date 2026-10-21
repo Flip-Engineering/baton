@@ -20,7 +20,7 @@ def main():
     args = parser.parse_args()
     directory = args.directory.resolve()
     directory.mkdir(parents=True, exist_ok=False)
-    binary, fixture = args.binary.resolve(), args.fixture.resolve()
+    binary, fixture = args.binary.absolute(), args.fixture.resolve()
     records, checks = [], []
 
     def run(name, argv):
@@ -71,14 +71,16 @@ def main():
             require([row[2] for row in db.execute('PRAGMA index_info(message_reads_by_message)')] == ['message'],
                     'production maintenance installs the message-leading index')
         checker = Path(__file__).with_name('check-message-read-index-native.py')
-        for i, alias in enumerate([binary] + [p.resolve() for p in args.alias]):
+        for i, alias in enumerate([binary] + [p.absolute() for p in args.alias]):
             result = run('alias-' + str(i), [sys.executable, checker, '--fixture', fixture, '--cli', binary,
                 '--migration-cli', alias, '--directory', directory / ('alias-' + str(i))])
             require(result.returncode == 0, 'alias ' + str(i) + ' preserves complete messages and native identities with normal owner lifecycle')
         passed = True
     finally:
         (directory / 'result.json').write_text(json.dumps({'passed': passed, 'checks': checks, 'commands': records,
-            'binary_sha256': digest(binary), 'fixture_sha256': digest(fixture)}, indent=2))
+            'binary_sha256': digest(binary), 'binary_invocation': str(binary),
+            'alias_payloads': [{'invocation': str(p.absolute()), 'resolved_payload': str(p.resolve()),
+                                'sha256': digest(p)} for p in args.alias], 'fixture_sha256': digest(fixture)}, indent=2))
     print(json.dumps({'passed': passed, 'assertions': len(checks), 'directory': str(directory)}))
 
 if __name__ == '__main__':
