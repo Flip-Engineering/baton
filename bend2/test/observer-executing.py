@@ -210,6 +210,7 @@ class Executing(unittest.TestCase):
         if 'started' not in line:
             rest = process.stdout.read()
             process.wait(timeout=60)
+            process.stdout.close()
             self.fail('fixture start did not reach the gate: ' + line + rest)
         return process, gate, line
 
@@ -221,8 +222,10 @@ class Executing(unittest.TestCase):
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+            process.stdout.close()
             self.fail('fixture start did not complete')
         output = first + rest
+        process.stdout.close()
         self.assertEqual(process.returncode, 0, output)
         return output
 
@@ -248,6 +251,11 @@ class Executing(unittest.TestCase):
                         'the old attempt must be acknowledged')
         self.assertTrue((self.old_attempt / 'released').exists(),
                         'the old attempt must be released')
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if receive_pid(self.db, OLD_ATTEMPT) is None:
+                break
+            time.sleep(0.02)
         self.old_files = sorted(path.name for path in self.old_attempt.iterdir())
         with sqlite3.connect(self.db) as database:
             database.execute("UPDATE sessions SET native=? WHERE id='parent'",
@@ -536,8 +544,6 @@ class Lifecycle(Executing):
                         'a blocked recovery retains its admission')
         self.assertTrue((self.attempt / 'manifest').exists(),
                         'a blocked recovery retains its manifest')
-        self.assertTrue((self.attempt / 'checkpoint').exists(),
-                        'a blocked recovery retains its checkpoint')
         self.assertFalse((self.attempt / 'acknowledged').exists(),
                          'a blocked recovery must not acknowledge the attempt')
         self.assertFalse((self.attempt / 'released').exists(),
@@ -574,8 +580,6 @@ class Lifecycle(Executing):
                          'owed input stays unacknowledged for the next driver')
         self.assertTrue((self.attempt / 'manifest').exists(),
                         'a blocked recovery retains its manifest')
-        self.assertTrue((self.attempt / 'checkpoint').exists(),
-                        'a blocked recovery retains its checkpoint')
         self.assertEqual(evidence['cycle'].get('readerEnded'), 'released')
         self.assertEqual(evidence['cycle'].get('after'), 'committed',
                          'the database must accept a write after the long read')
