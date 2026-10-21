@@ -3,7 +3,9 @@
 # delivery and sets the message receipt. A held window reports and schedules a
 # continuation; the continuation re-enters this path, so a reset moved later is
 # re-evaluated and does not deliver at the old time, a reset moved earlier
-# delivers once, and a handled message is a no-op.
+# delivers once, and a handled message is a no-op. The unqualified case
+# covers the account DB Muse shape: a model without a provider prefix and empty
+# provider/window/account rows hold before the recorded reset.
 #
 # usage: usage-windows-wake-path DB
 #        usage-windows-wake-path --wake-message DB MESSAGE
@@ -60,6 +62,22 @@ def window(+db: String, +session: String, +message: String, +ms_offset: String) 
 
 def message(+db: String, +session: String, +message: String, +receipt: String) -> IO(Unit):
   query(db,"INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(" ++ C.q(message) ++ ",'root'," ++ C.q(session) ++ ",'guidance','owed',nullif(" ++ C.q(receipt) ++ ",''));")
+
+def unqualified_session(+db: String, +id: String) -> IO(Unit):
+  query(db,"INSERT OR IGNORE INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES(" ++ C.q(id) ++ ",'root','muse','muse-wonder-1.0','high','','');")
+
+def unqualified_window(+db: String, +session: String, +message: String, +ms_offset: String) -> IO(Unit):
+  query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'muse','muse-wonder-1.0','','','',CAST(strftime('%s','now') AS INTEGER)*1000+" ++ ms_offset ++ ",'provider-message',NULL,'window'," ++ C.q(message) ++ ");")
+
+def unqualified_case(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    created : Unit <- unqualified_session(db,"muse-unqualified")
+    window : Unit <- unqualified_window(db,"muse-unqualified","m-muse-unqualified","2000")
+    owed : Unit <- message(db,"muse-unqualified","m-muse-unqualified","")
+    held : Result<&1,&1,U32 & String,Unit> <- drive(db,"muse-unqualified")
+    none : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-muse-unqualified';","0\n","unqualified-window-held-no-delivery")
+    report : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id='m-muse-unqualified:usage-window-held';","1\n","unqualified-window-held-report")
+    IO.pure(Unit,Unit{})
 
 def move_reset(+db: String, +message: String, +ms_offset: String) -> IO(Unit):
   query(db,"UPDATE usage_windows SET resets_at=CAST(strftime('%s','now') AS INTEGER)*1000+" ++ ms_offset ++ " WHERE message=" ++ C.q(message) ++ ";")
@@ -135,6 +153,7 @@ def main_args(args: List<String>) -> IO(Unit):
       setup(db)
       later_case(db)
       earlier_case(db)
+      unqualified_case(db)
       handled_case(db)
       duplicate_case(db)
       far_case(db)

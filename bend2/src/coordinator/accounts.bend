@@ -704,11 +704,36 @@ def next_account_after(accounts: List<&2,AccountRecord>, +harness: String, +curr
         case True{}: Bool.pick(Maybe<&2,AccountRecord>,account_matches(harness,"",account),Some{account},next_account_after(rest,harness,current,True{}))
         case False{}: Bool.pick(Maybe<&2,AccountRecord>,String.eq(account_id(account),current),next_account_after(rest,harness,current,True{}),next_account_after(rest,harness,current,False{}))
 
+# Continue past an account whose provider has already reported a current quota
+# hold. Unknown and elapsed observations leave the configured account selectable.
+def gate_held(gate: UW.Gate) -> Bool:
+  match gate:
+    case UW.GateHeld{window,resets_at,source,receipt}: True{}
+    case other: False{}
+
+def account_candidates_after(accounts: List<&2,AccountRecord>, +harness: String, +current: String, seen: Bool) -> List<&2,AccountRecord>:
+  match accounts:
+    case Nil{}: Nil{}
+    case +account <> +rest:
+      match seen:
+        case True{}: Bool.pick(List<&2,AccountRecord>,account_matches(harness,"",account),Con{account,account_candidates_after(rest,harness,current,True{})},account_candidates_after(rest,harness,current,True{}))
+        case False{}: account_candidates_after(rest,harness,current,String.eq(account_id(account),current))
+
+def first_account_available(+db: String, +session: String, accounts: List<&2,AccountRecord>) -> IO(Maybe<&2,AccountRecord>):
+  match accounts:
+    case Nil{}: IO.pure(Maybe<&2,AccountRecord>,None{})
+    case +account <> +rest: do IO<Maybe<&2,AccountRecord>>:
+      gate : UW.Gate <- UW.window_gate(db,session,account_id(account))
+      Bool.pick(IO(Maybe<&2,AccountRecord>),gate_held(gate),first_account_available(db,session,rest),IO.pure(Maybe<&2,AccountRecord>,Some{account}))
+
+def next_account_available(db: String, session: String, accounts: List<&2,AccountRecord>, harness: String, current: String) -> IO(Maybe<&2,AccountRecord>):
+  first_account_available(db,session,account_candidates_after(accounts,harness,current,False{}))
+
 def account_handoff_body(+harness: String, +refused: String, +bound: String, +cause: String) -> String:
   "account handoff: harness=" ++ harness ++ "; refused account=" ++ refused ++ "; bound account=" ++ bound ++ "; original cause: " ++ cause
 
 def account_exhausted_body(+harness: String, +refused: String, +cause: String) -> String:
-  "accounts exhausted: harness=" ++ harness ++ "; account=" ++ refused ++ " was the last operator-recorded account for this harness and the provider reported usage exhaustion; cause: " ++ cause
+  "accounts exhausted: harness=" ++ harness ++ "; account=" ++ refused ++ " reported usage exhaustion and no later selectable operator-recorded account remains for this harness; cause: " ++ cause
 
 def advance_append_observed(+db: String, +session: String, +id: String, +harness: String, +refused: AccountRecord, +next: AccountRecord, +cause: String, appended: Result<&1,&1,U32 & String,Unit>) -> IO(Bool):
   match appended:
@@ -722,7 +747,7 @@ def advance_append_observed(+db: String, +session: String, +id: String, +harness
 def advance_account_decided(+db: String, +session: String, +id: String, +harness: String, +refused: AccountRecord, +cause: String, decided: Maybe<&2,AccountRecord>) -> IO(Bool):
   match decided:
     case None{}: do IO<Bool>:
-      noted : Unit <- Subs.report_body(db,session,id,"account-exhausted",account_exhausted_body(harness,account_id(refused),cause))
+      noted : Unit <- Subs.report_account_exhausted(db,session,id,account_id(refused),account_exhausted_body(harness,account_id(refused),cause))
       IO.pure(Bool,False{})
     case Some{+next}: do IO<Bool>:
       path : String <- account_sidecar(db,session)
@@ -733,7 +758,7 @@ def advance_account(+db: String, +session: String, +id: String, +harness: String
   do IO<Bool>:
     rows : String <- IO.try(String,DB.Sql.read(db,account_row_sql()))
     +accounts : List<&2,AccountRecord> <- IO.pure(List<&2,AccountRecord>,account_lines(Tx.split_lines(rows),Nil{}))
-    +decided : Maybe<&2,AccountRecord> <- IO.pure(Maybe<&2,AccountRecord>,next_account_after(accounts,harness,account_id(refused),False{}))
+    +decided : Maybe<&2,AccountRecord> <- next_account_available(db,session,accounts,harness,account_id(refused))
     advanced : Bool <- advance_account_decided(db,session,id,harness,refused,cause,decided)
     IO.pure(Bool,advanced)
 
@@ -774,7 +799,10 @@ def handoff(+db: String, +session: String, +id: String, +event: String, native: 
     +label : String <- label_for_bound(db,session,bound)
     recorded : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.record_cause(db,session,id,label,cause))
     advanced : Bool <- handoff_decided(db,session,id,event,native,cmd,cwd,cause,harness,bound)
-    IO.pure(Bool,advanced)
+    +next_label : String <- handoff_label_io(db,session)
+    gate : UW.Gate <- UW.window_gate(db,session,next_label)
+    held : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(cause)),gate_held(gate)))
+    IO.pure(Bool,Bool.and(advanced,Bool.not(held)))
 
 # --- the account selected for each attempt -----------------------------------
 
