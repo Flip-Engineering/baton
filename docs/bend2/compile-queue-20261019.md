@@ -100,6 +100,16 @@ captures stdout and stderr. On success it copies the declared artifacts into
 with the same key retries a failed or canceled attempt; a request that was
 waiting when the attempt failed receives the failure.
 
+The supervisor exports `BATON_COMPILE_QUEUE_HEAVY_RELEASE`, an attempt-local
+file path, in the command environment. A command that compiles and then runs
+tests creates that file after its compiler subprocesses exit. When the file
+appears, the supervisor releases the shared heavy lock while the command, its
+separate test semaphore, the key lock and its test ownership continue. A
+command that does not create the file keeps the earlier behavior: the
+supervisor releases the heavy lock after the command exits and artifacts are
+published. The release changes only the heavy lock; the key lock and the
+command's test semaphore are not transferred.
+
 Waiters block on the key lock. Requesters that witnessed an attempt compare the
 attempt finish time with the time they started waiting. This distinguishes a
 waiter that owns the failure from a later request that should retry.
@@ -119,6 +129,14 @@ process group is verified by leader start time, sent `SIGTERM`, and, after the
 grace window, `SIGKILL`. The supervisor writes a canceled result. External
 adopted executions are never signaled.
 
+`bend2/scripts/compile-queue-background.sh OUTPUT_DIR -- QUEUE_RUN_ARGS...`
+computes the request key, starts `run` in the background with `nohup`, records
+`key`, `pid`, `stdout` and `stderr` under `OUTPUT_DIR`, and returns. The
+background queue process remains the live owner. The conductor reads messages
+and later completes with
+`compile-queue.sh wait --state-root STATE --key KEY`, which copies the retained
+artifacts and prints the result. `cancel --token` withdraws that owner.
+
 ## Artifacts and state
 
 ```
@@ -128,6 +146,7 @@ $state/keys/<key>/completed/result
 $state/keys/<key>/completed/artifacts/<name>
 $state/keys/<key>/runs/<attempt>/command
 $state/keys/<key>/runs/<attempt>/meta
+$state/keys/<key>/runs/<attempt>/heavy-release  optional compiler-phase marker
 $state/keys/<key>/runs/<attempt>/stdout
 $state/keys/<key>/runs/<attempt>/stderr
 $state/keys/<key>/runs/<attempt>/result
@@ -316,6 +335,9 @@ other site uses the resulting executable. The installed prefix packages it as
 
 - The Bend2 implementation has passed static review only; it has not been
   built or run. Root owns the first build, qualification and deployment.
+- The compiler-phase heavy release and the background continuation wrapper
+  are source-only. Their regressions in `bend2/test/compile-queue.sh` and the
+  full-server phase marker are pending the #970 queue runtime.
 - Direct fixture compiler sites and Bend internal `cli_build` are wired in
   source. `cli_build` in `bend2/compiler/upstream/main.ts` requires the shared
   queue executable and the explicit state root; a missing entry, missing root

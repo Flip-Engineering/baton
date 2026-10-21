@@ -251,6 +251,66 @@ wait "$q1" || bad 'first cc requester failed'
 wait "$q2" || bad 'second cc requester failed'
 assert_serialized && pass 'distinct cc serialized' || bad 'distinct cc intervals overlap'
 
+# A command releases the shared heavy lock after its compiler subprocesses
+# exit while it keeps its separate host test semaphore. A distinct cc request
+# then compiles during the first command's test phase.
+cat > "$T/phase-command" <<'EOF'
+#!/bin/sh
+set -eu
+log=$1; compile_s=$2; test_s=$3; out=$4
+now() { python3 -c 'import time;print(time.time_ns())'; }
+exec 7>"$log.testlock"
+flock 7
+printf 'compile-start %s %s phase\n' "$(now)" "$$" >> "$log"
+sleep "$compile_s"
+printf 'compile-end %s %s phase\n' "$(now)" "$$" >> "$log"
+[ -n "${BATON_COMPILE_QUEUE_HEAVY_RELEASE:-}" ] || { printf 'missing release path\n' >&2; exit 9; }
+printf 'release %s %s phase\n' "$(now)" "$$" >> "$log"
+: > "$BATON_COMPILE_QUEUE_HEAVY_RELEASE"
+printf 'test-start %s %s phase\n' "$(now)" "$$" >> "$log"
+sleep "$test_s"
+printf 'test-end %s %s phase\n' "$(now)" "$$" >> "$log"
+printf 'artifact-phase' > "$out"
+EOF
+chmod +x "$T/phase-command"
+: > "$LOG"
+sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" \
+  --compiler "$T/phase-command" --linker "$T/phase-command" --version phase-version \
+  --input "$T/input.c" --artifact "binary=$T/phase-out" --option 'test=phase-release' \
+  --token tok-phase-release \
+  -- "$T/phase-command" "$LOG" 0.5 2 "$T/phase-out" >"$T/phase.out" 2>"$T/phase.err" &
+p1=$!
+i=0
+while [ "$i" -lt 300 ] && ! grep -q '^release ' "$LOG" 2>/dev/null; do i=$((i+1)); sleep 0.01; done
+grep -q '^release ' "$LOG" && pass 'phase command released the heavy lock' || bad 'phase command did not release'
+run_cc phase-wait "$T/phase-wait" --sleep 0.2 & p2=$!
+wait "$p2" || bad 'second compilation failed during the first test phase'
+if flock -n "$LOG.testlock" true 2>/dev/null; then
+  bad 'second compilation ran without the first test semaphore'
+else
+  pass 'first test semaphore remained held during the second compilation'
+fi
+wait "$p1" || bad 'phase command failed'
+python3 - "$LOG" <<'PY' && pass 'second compilation started after release and before first test end' || bad 'phase release overlap missing'
+import sys
+release = second = end = None
+for line in open(sys.argv[1]):
+    parts = line.split()
+    if len(parts) < 4:
+        continue
+    if parts[0] == 'release' and parts[3] == 'phase':
+        release = int(parts[1])
+    elif parts[0] == 'start' and parts[3] == 'phase-wait':
+        second = int(parts[1])
+    elif parts[0] == 'test-end' and parts[3] == 'phase':
+        end = int(parts[1])
+if release is None or second is None or end is None:
+    sys.exit(2)
+sys.exit(0 if release < second < end else 1)
+PY
+[ "$(cat "$T/phase-out")" = 'artifact-phase' ] && pass 'phase artifact published' || bad 'phase artifact missing'
+[ "$(cat "$T/phase-wait")" = 'artifact-phase-wait' ] && pass 'second artifact published' || bad 'second artifact missing'
+
 # C generation and native C compilation share the same host lock.
 : > "$LOG"
 run_cgen mixed-cgen "$T/mixed.c" --sleep 1 & m1=$!
@@ -347,6 +407,35 @@ lrc=0
 wait "$l2" || lrc=$?
 [ "$lrc" = 0 ] && pass 'surviving requester completed' || bad "survivor exit $lrc"
 [ "$(count_starts)" = 1 ] && pass 'requester loss shared one execution' || bad "loss starts=$(count_starts)"
+
+# A background owner returns before the compiler finishes; wait --key is the
+# durable continuation and the conductor keeps its native turn available.
+BACKGROUND=$ROOT/bend2/scripts/compile-queue-background.sh
+if [ -x "$BACKGROUND" ]; then
+  : > "$LOG"
+  out="$T/background"
+  bstart=$(date +%s%N)
+  sh "$BACKGROUND" "$out" -- --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" \
+    --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+    --input "$T/input.c" --artifact "binary=$T/background-out" \
+    --option 'test=background-continuation' --token tok-background \
+    --receipt "$out/receipt" \
+    -- "$FAKE" --tag background --log "$LOG" -o "$T/background-out" "$T/input.c" --sleep 2 \
+    >"$out.wrap" 2>&1
+  bend=$(date +%s%N)
+  [ $(( (bend - bstart) / 1000000 )) -lt 1000 ] && pass 'background wrapper returned before the compiler finished' || bad 'background wrapper waited for the compiler'
+  [ -f "$out/key" ] && [ -f "$out/pid" ] && pass 'background wrapper recorded key and owner process' || bad 'background metadata missing'
+  i=0
+  while [ "$i" -lt 300 ] && ! grep -q '^owner=' "$out/stderr" 2>/dev/null; do i=$((i+1)); sleep 0.01; done
+  grep -q '^owner=' "$out/stderr" && pass 'background queue published its owner' || bad 'background owner missing'
+  bkey=$(cat "$out/key")
+  sh "$QUEUE" wait --state-root "$STATE" --key "$bkey" >"$out/wait" 2>&1 || bad 'background wait failed'
+  grep -q '^status=completed' "$out/wait" && pass 'background wait observed completed result' || bad 'background wait result missing'
+  [ "$(cat "$T/background-out")" = 'artifact-background' ] && pass 'background artifact published' || bad 'background artifact missing'
+  [ -z "$(ls -A "$STATE/keys/$bkey/owners" 2>/dev/null)" ] && pass 'background owner removed after result' || bad 'background owner retained'
+else
+  bad 'background wrapper missing'
+fi
 
 # A live or uncertain active record refuses a fresh admission.
 : > "$LOG"

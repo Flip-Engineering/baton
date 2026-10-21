@@ -34,7 +34,7 @@
 extern char **environ;
 
 typedef struct {
-  char *path, *text, *second, *cwd, *stdout_path, *stderr_path, *argv;
+  char *path, *text, *second, *cwd, *stdout_path, *stderr_path, *release_path, *argv;
   u32 pid, sig, key_lock, cgen_lock, millis;
   int error, code, disposition;
   char *out;
@@ -44,7 +44,7 @@ typedef struct {
 static void cq_free(CqCall *call) {
   if (!call) return;
   free(call->path); free(call->text); free(call->second); free(call->cwd);
-  free(call->stdout_path); free(call->stderr_path); free(call->argv);
+  free(call->stdout_path); free(call->stderr_path); free(call->release_path); free(call->argv);
   free(call->out); free(call);
 }
 
@@ -577,6 +577,7 @@ static void cq_forward_signal(int sig) {
 
 static int cq_run_command(const char *argv_text, size_t argv_length, const char *cwd,
                           const char *stdout_path, const char *stderr_path,
+                          const char *release_path,
                           u32 *code, int *disposition) {
   char **parsed = NULL; int count = 0;
   int error = cq_parse_argv(argv_text, argv_length, &parsed, &count);
@@ -632,6 +633,11 @@ static int cq_run_command(const char *argv_text, size_t argv_length, const char 
       write(status[1], &child_error, sizeof(child_error));
       _exit(127);
     }
+    if (release_path && *release_path && setenv("BATON_COMPILE_QUEUE_HEAVY_RELEASE", release_path, 1)) {
+      int child_error = errno;
+      write(status[1], &child_error, sizeof(child_error));
+      _exit(127);
+    }
     execvp(parsed[0], parsed);
     int child_error = errno;
     write(status[1], &child_error, sizeof(child_error));
@@ -651,9 +657,21 @@ static int cq_run_command(const char *argv_text, size_t argv_length, const char 
     close(out); close(err); free(parsed);
     return child_error ? child_error : EIO;
   }
-  int wait_status = 0;
+  int wait_status = 0, released = 0;
   pid_t waited;
-  do { waited = waitpid(child, &wait_status, 0); } while (waited < 0 && errno == EINTR);
+  for (;;) {
+    waited = waitpid(child, &wait_status, WNOHANG);
+    if (waited == child) break;
+    if (waited < 0 && errno != EINTR) break;
+    if (!released && release_path && *release_path && access(release_path, F_OK) == 0) {
+      if (flock(8, LOCK_UN) == 0) released = 1;
+    }
+    struct timespec pause = {0, 20 * 1000 * 1000};
+    while (nanosleep(&pause, &pause) < 0 && errno == EINTR) {}
+  }
+  if (!released && release_path && *release_path && access(release_path, F_OK) == 0) {
+    if (flock(8, LOCK_UN) == 0) released = 1;
+  }
   sigaction(SIGTERM, &old_term, NULL);
   sigaction(SIGINT, &old_int, NULL);
   sigaction(SIGHUP, &old_hup, NULL);
@@ -823,7 +841,8 @@ static void cq_call_run_command(IoWork *work) {
   CqCall *call = (CqCall *)work->data;
   u32 code = 0; int disposition = 0;
   call->error = cq_run_command(call->argv, call->argv_length, call->cwd,
-                               call->stdout_path, call->stderr_path, &code, &disposition);
+                               call->stdout_path, call->stderr_path, call->release_path,
+                               &code, &disposition);
   call->code = (int)code; call->disposition = disposition;
 }
 
@@ -1246,6 +1265,7 @@ static Term cq_run_command_run(Env env, Term *fields, IoWork *work) {
   if (!call->error) call->error = cq_text_arg(env, fields[1], &call->cwd);
   if (!call->error) call->error = cq_text_arg(env, fields[2], &call->stdout_path);
   if (!call->error) call->error = cq_text_arg(env, fields[3], &call->stderr_path);
+  if (!call->error) call->error = cq_text_arg(env, fields[4], &call->release_path);
   work->data = (char *)call;
   if (call->error) return cq_run_command_pack(env, work);
   return io_work(work, cq_run_command_call, cq_run_command_pack);

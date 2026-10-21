@@ -102,9 +102,12 @@ def CompileQueueLifecycle.wait_pid(pid: U32) -> IO(Result<&1,&1,U32 & String,U32
   import "./compile-queue-lifecycle.c"
 
 # Runs one command in cwd with stdout and stderr appended to the named files.
+# release_path is exported as BATON_COMPILE_QUEUE_HEAVY_RELEASE in the command
+# environment. When the command creates that file, the supervisor releases the
+# shared heavy lock while the command and its test ownership continue.
 # The child owns a separate process group. TERM, INT and HUP are forwarded to
 # that group. The answer is (exit code, "exit" | "signal" | "canceled").
-def CompileQueueLifecycle.run_command(argv: String, cwd: String, stdout_path: String, stderr_path: String) -> IO(Result<&1,&1,U32 & String,U32 & String>):
+def CompileQueueLifecycle.run_command(argv: String, cwd: String, stdout_path: String, stderr_path: String, release_path: String) -> IO(Result<&1,&1,U32 & String,U32 & String>):
   import "./compile-queue-lifecycle.c"
 
 def CompileQueueLifecycle.cmdline(pid: U32) -> IO(Result<&1,&1,U32 & String,String>):

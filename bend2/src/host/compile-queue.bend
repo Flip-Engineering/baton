@@ -664,7 +664,7 @@ def run_supervised(attempt: String, keydir: String, kind: String, key: String,
     text <- IO.try(String, L.read_text(attempt ++ "/command"))
     +argv = P.argv(Tx.split_lines(text))
     outcome : Result<&1,&1,U32 & String,U32 & String> <- L.run_command(
-      argv, cwd, attempt ++ "/stdout", attempt ++ "/stderr")
+      argv, cwd, attempt ++ "/stdout", attempt ++ "/stderr", attempt ++ "/heavy-release")
     match outcome:
       case Fail{error}:
         write_failure(attempt, keydir, "failed", 1, kind, key, started,
