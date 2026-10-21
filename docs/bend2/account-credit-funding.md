@@ -114,10 +114,14 @@ and cap period for rows in state `reserved`. A repeated request returns its
 recorded row and does not reserve again.
 
 `credit_settle_for` replaces the bound with the actual cost when one is
-reported. A completed or failed attempt without a cost keeps the reserved
-maximum counted and records state `failed`; `account reconcile` settles that row
-with the provider's actual cost later. `account import-spend` records the Admin
-cost report's numeric USD amount for the organization and cap period.
+reported. The turn and receive completion paths pass the terminal Claude result
+event to `attempt_completed_event`. That function reads the cumulative
+`total_cost_usd` from the raw JSON text without a binary float, settles the
+reservation once, and treats a repeated cumulative frame idempotently. A
+completed or failed attempt without a usable cost keeps the reserved maximum
+counted and records state `failed`; `account reconcile` settles that row with
+the provider's actual cost later. `account import-spend` records the Admin cost
+report's numeric USD amount for the organization and cap period.
 
 `credit_launch_gate` is the production caller before send. For an Anthropic
 `claude-code` `api_key` account it records the reservation, then the one-use
@@ -129,8 +133,9 @@ source true only after the installed qualification passes.
 The provider enforces the promotional balance on each API request. A retained
 launch can contain more than one provider request, and Baton has no point that
 sees each request the Claude CLI makes. The current reservation bounds the whole
-launch. Per-request interception and per-request actual cost parsing remain the
-next required implementation.
+launch. Per-request interception through a local provider proxy is the next
+required implementation; the actual result cost and the completion settlement
+are recorded.
 
 ## Funded credit observations
 
