@@ -212,6 +212,7 @@ try:
                   if ('pid=' + str(supervisor) + '\n') in r.read_text()]
         assert len(active) == 1, ('fixture supervisor identity', supervisor, T)
         os.kill(supervisor, signal.SIGKILL)
+        stat = Path('/proc') / str(supervisor) / 'stat'
         deadline = time.monotonic() + 20
         while stat.exists():
             try:
