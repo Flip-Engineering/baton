@@ -3775,7 +3775,7 @@ export function compile_book(book: Bend.Book): string {
   let was: number;
   do {
     was = facts();
-    fl = pass(emission_defs, true);
+    pass(emission_defs, true);
   } while (was !== facts());
   const before = { own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size };
   fl = pass(emission_defs, false);
