@@ -119,6 +119,7 @@ tree. Processes of other users cannot be inspected on a host with restricted
 storage-policy                  # JSON: roots, classes, exclusivity, apply readiness
 storage-preview SESSION         # JSON: roots and entries owned by SESSION
 storage-apply SESSION           # JSON: receipts for SESSION's admitted entries
+storage-collect SESSION         # JSON: receipts for a settled SESSION
 ```
 
 Preview selects candidates whose recorded owner is exactly `SESSION`;
@@ -131,6 +132,21 @@ them after. If any root lease is unavailable it releases the leases it already
 holds and exits with status 3 naming that root. Overlapping configured roots
 are refused before any lease is acquired. Discovery skips the lease file name,
 so cleanup never proposes the lease file as a candidate.
+
+`storage-collect SESSION` runs the same apply plan for a session with no
+non-exited execution and no pending input. The receive and direct-turn
+completion paths and the landing wrapper call the same settled-session
+collector after custody retirement and after a successful landing; the
+receiver endpoint replacement calls it after recording the new endpoint. A
+triggered run that cannot acquire a lease or a covered root contributes no
+receipt and does not change the event that asked for collection. The original
+turn or landing result is preserved.
+
+The same evidence preserves a selected runtime and its rollback copy. A tree
+that no recorded session workspace or execution names has no owner, and an
+unknown owner preserves the candidate. A running selected runtime is also a
+process and runtime reference. Only a tree owned by a settled session with no
+dirty worktree, no unpublished commits and no live evidence is admitted.
 
 ## Writer lease protocol
 

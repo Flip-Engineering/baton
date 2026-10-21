@@ -11,6 +11,7 @@ import ../git/land.bend as GitLand
 import ../git/types.bend as G
 import ../git/text.bend as Tx
 import ../json/canonical.bend as J
+import ../storage/lifecycle.bend as StoragePolicy
 
 def require_player(found: Bool) -> IO(Unit):
   match found:
@@ -38,8 +39,20 @@ def line_reversed(s: String, original: String) -> String:
 def line(+s: String) -> String:
   line_reversed(Tx.str_rev(s), s)
 
-def show_outcome(o: G.LandOutcome) -> IO(Unit):
-  IO.print(GitLand.outcome_json(o))
+# A landed or already-contained target is a successful consolidation. Triggered
+# collection for the player then drains its settled scratch, build, export and
+# checkout candidates under the collector's own locks and leases.
+def collect_landed(+db: String, +player: String, ok: Bool) -> IO(Unit):
+  Bool.pick(IO(Unit), ok, StoragePolicy.collect_settled(db, player), IO.pure(Unit, Unit{}))
+
+def shown_pair(pair: Bool & String) -> IO(Bool):
+  (advanced, text) = pair
+  do IO<Bool>:
+    printed : Unit <- IO.print(text)
+    IO.pure(Bool, advanced)
+
+def show_outcome(o: G.LandOutcome) -> IO(Bool):
+  shown_pair(GitLand.outcome_json_success(o))
 
 def land_player(+db: String, +player: String, +repo: String, +target: String) -> IO(Unit):
   do IO<Unit>:
@@ -48,11 +61,13 @@ def land_player(+db: String, +player: String, +repo: String, +target: String) ->
     branch_raw : String <- IO.try(String, DB.Sql.query(db, "SELECT branch FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     branch : String <- require_branch(line(branch_raw))
     outcome : G.LandOutcome <- GitLand.land(repo, branch, target)
-    show_outcome(outcome)
+    shown : Bool <- show_outcome(outcome)
+    collected : Unit <- collect_landed(db, player, shown)
+    IO.pure(Unit, collected)
 
-def show_checked_outcome(result: Result<&1,&1,G.GitFail,G.LandOutcome>) -> IO(Unit):
+def show_checked_outcome(result: Result<&1,&1,G.GitFail,G.LandOutcome>) -> IO(Bool):
   match result:
-    case Fail{error}: IO.die(Unit,1,G.fail_text(error))
+    case Fail{error}: IO.die(Bool,1,G.fail_text(error))
     case Done{outcome}: show_outcome(outcome)
 
 # One attempt's scratch path comes from the Git landing module; earlier refused
@@ -63,7 +78,9 @@ def run_checked(+db: String, +player: String, +repo: String, +target: String, +c
     ts : String <- IO.pure(String, line(ts_raw))
     scratch : String <- GitLand.open_scratch(repo, player, ts)
     result : Result<&1,&1,G.GitFail,G.LandOutcome> <- GitLand.land_checked(repo, target, branch, check, Tx.split_spaces(files), scratch)
-    show_checked_outcome(result)
+    shown : Bool <- show_checked_outcome(result)
+    collected : Unit <- collect_landed(db, player, shown)
+    IO.pure(Unit, collected)
 
 # The checked landing: the player's branch is squashed onto the target and
 # the selected checks run on the candidate and on the target before the
@@ -296,7 +313,9 @@ def land_player_at(+db: String, +player: String, +repo: String, +target: String,
     picked : Selected <- select_reviewed(repo, branch, commit)
     oid : String <- selected_or_die(picked)
     outcome : G.LandOutcome <- GitLand.land_fast_forward_at(repo, oid, target)
-    show_outcome(outcome)
+    shown : Bool <- show_outcome(outcome)
+    collected : Unit <- collect_landed(db, player, shown)
+    IO.pure(Unit, collected)
 
 def land_checked_player_at(+db: String, +player: String, +repo: String, +target: String, +check: String, +files: String, +commit: String) -> IO(Unit):
   do IO<Unit>:

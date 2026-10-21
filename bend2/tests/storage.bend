@@ -863,6 +863,65 @@ def busy_check(+db: String, +root: String) -> IO(Unit):
     a : Unit <- check("lock-busy-refused", Result.is_fail(&1,&1,U32 & String,List<T.Receipt>,result), "busy returned success")
     IO.pure(Unit, Unit{})
 
+def sql_run(+db: String, +statement: String) -> IO(Unit):
+  do IO<Unit>:
+    _answer : String <- IO.try(String, DB.Sql.query(db, statement))
+    IO.pure(Unit, Unit{})
+
+def receipts_none(items: List<T.Receipt>) -> Bool:
+  match items:
+    case Nil{}: True{}
+    case other: False{}
+
+def collect_until_absent(+db: String, +session: String, +specs: List<&2,L.RootSpec>, +path: String, attempts: Nat) -> IO(Bool):
+  match attempts:
+    case 0n:
+      do IO<Bool>:
+        observed : O.Observation <- O.observe(path)
+        IO.pure(Bool, Bool.not(O.observation_is_found(observed)))
+    case 1n+rest:
+      do IO<Bool>:
+        _receipts : List<T.Receipt> <- L.collect_settled_roots(db, session, specs)
+        observed : O.Observation <- O.observe(path)
+        Bool.pick(IO(Bool), Bool.not(O.observation_is_found(observed)),
+          IO.pure(Bool, True{}),
+          collect_until_absent(db, session, specs, path, rest))
+
+# The triggered collector runs only for a settled session. A live execution or
+# pending input skips it, and an unknown session collects nothing.
+def collect_check(+db: String, +root: String) -> IO(Unit):
+  do IO<Unit>:
+    +collect_root : String = root ++ "-collect"
+    +work : String = collect_root ++ "/work"
+    cleared_root : Unit <- run_cmd(["/bin/rm", "-rf", collect_root])
+    made_root : Unit <- IO.try(Unit, F.Files.mkdir(collect_root))
+    made_work : Unit <- IO.try(Unit, F.Files.mkdir(work))
+    written : Unit <- write_file(work ++ "/artifact.bin", "collected")
+    cleared : Unit <- sql_run(db, "DELETE FROM sessions WHERE id='collect-owner' OR id='bad-endpoint';DELETE FROM executions WHERE session='collect-owner';DELETE FROM messages WHERE recipient='collect-owner' OR recipient='';")
+    inserted : Unit <- sql_run(db, "INSERT INTO sessions(id,parent,harness,workspace,branch,base) VALUES('collect-owner',NULL,'omp','" ++ work ++ "','','');")
+    +specs : List<&2,L.RootSpec> = Con{L.RootSpec{T.Scratch{}, collect_root, ""}, Nil{}}
+    settled : Bool <- collect_until_absent(db, "collect-owner", specs, work, 4n)
+    a : Unit <- check("collect-settled-scratch-removed", settled, "candidate retained")
+    made_work2 : Unit <- IO.try(Unit, F.Files.mkdir(work))
+    written2 : Unit <- write_file(work ++ "/artifact.bin", "active")
+    active_row : Unit <- sql_run(db, "INSERT INTO executions(session,id,directory,phase,status) VALUES('collect-owner','exec-collect','" ++ work ++ "','running','running');")
+    active_receipts : List<T.Receipt> <- L.collect_settled_roots(db, "collect-owner", specs)
+    b : Unit <- check("collect-active-execution-skips", receipts_none(active_receipts), "collected during execution")
+    observed_active : O.Observation <- O.observe(work)
+    c : Unit <- check("collect-active-execution-preserves", O.observation_is_found(observed_active), "active workspace removed")
+    dropped_exec : Unit <- sql_run(db, "DELETE FROM executions WHERE session='collect-owner';")
+    pending_row : Unit <- sql_run(db, "INSERT INTO messages(id,sender,recipient,kind,body) VALUES('collect-msg','operator','collect-owner','task','pending');")
+    pending_receipts : List<T.Receipt> <- L.collect_settled_roots(db, "collect-owner", specs)
+    d : Unit <- check("collect-pending-input-skips", receipts_none(pending_receipts), "collected with pending input")
+    observed_pending : O.Observation <- O.observe(work)
+    e : Unit <- check("collect-pending-input-preserves", O.observation_is_found(observed_pending), "pending workspace removed")
+    dropped_msg : Unit <- sql_run(db, "DELETE FROM messages WHERE recipient='collect-owner';")
+    unknown_receipts : List<T.Receipt> <- L.collect_settled_roots(db, "unknown-collect", specs)
+    f : Unit <- check("collect-unknown-session-skips", receipts_none(unknown_receipts), "unknown session collected")
+    observed_unknown : O.Observation <- O.observe(work)
+    g : Unit <- check("collect-unknown-session-preserves", O.observation_is_found(observed_unknown), "unknown session workspace removed")
+    IO.pure(Unit, Unit{})
+
 def main() -> IO(Unit):
   do IO<Unit>:
     +root : String <- command_output(["/usr/bin/realpath", "-m", ".scratch/bend2-storage-test"])
@@ -889,4 +948,5 @@ def main() -> IO(Unit):
     parent_rename : Unit <- parent_rename_check(db, root)
     malformed_db : Unit <- malformed_db_check(db, root)
     malformed_endpoint : Unit <- database_malformed_check(db, root)
+    collection : Unit <- collect_check(db, root)
     IO.print("storage checks: all green")

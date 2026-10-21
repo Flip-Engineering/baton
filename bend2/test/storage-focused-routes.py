@@ -43,6 +43,17 @@ class StorageFocusedRoutes(unittest.TestCase):
             self.assertNotEqual(run.returncode, 0)
             self.assertNotIn("unsupported focused receive command", run.stderr)
 
+    def test_storage_collect_routes_to_unknown_session_refusal(self):
+        with tempfile.TemporaryDirectory(prefix="baton-storage-route-") as name:
+            db = pathlib.Path(name) / "fixture.sqlite"
+            sqlite3.connect(db).close()
+            run = subprocess.run(
+                [str(BINARY), str(db), "storage-collect", "fixture-session"],
+                text=True, capture_output=True, check=False)
+            self.assertEqual(run.returncode, 2, run.stdout + run.stderr)
+            self.assertIn("unknown session: fixture-session", run.stderr)
+            self.assertNotIn("unsupported focused receive command", run.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

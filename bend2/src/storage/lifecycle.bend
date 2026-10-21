@@ -439,14 +439,20 @@ def root_preview_items(items: List<RootPreview>, +acc: String) -> String:
 def previews_json(items: List<RootPreview>) -> String:
   "{\"roots\":[" ++ root_preview_items(items, "") ++ "]}"
 
-def run_preview(+db: String, +session: String) -> IO(Unit):
-  do IO<Unit>:
+def preview_json(+db: String, +session: String) -> IO(String):
+  do IO<String>:
     specs : List<&2,RootSpec> <- configured_roots()
     +state : S.State <- S.load(db)
+    previews : List<RootPreview> <- preview_roots(session, specs, state, Nil{})
+    IO.pure(String, previews_json(previews))
+
+def run_preview(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    state : S.State <- S.load(db)
     Bool.pick(IO(Unit), S.session_known(state, session),
       do IO<Unit>:
-        previews : List<RootPreview> <- preview_roots(session, specs, state, Nil{})
-        IO.write(previews_json(previews)),
+        text : String <- preview_json(db, session)
+        IO.write(text),
       IO.die(Unit, 2, "unknown session: " ++ session))
 
 
@@ -681,6 +687,46 @@ def run_apply(+db: String, +session: String) -> IO(Unit):
     state : S.State <- S.load(db)
     Bool.pick(IO(Unit), S.session_known(state, session),
       run_apply_known(db, session),
+      IO.die(Unit, 2, "unknown session: " ++ session))
+
+# Triggered collection. A settled session has no non-exited execution and no
+# pending input; an unknown or unsettled session collects nothing. An apply
+# that a trigger cannot complete (busy lease, overlapping or uncovered roots)
+# contributes no receipt, so the trigger never changes the event that asked
+# for it.
+def collect_receipts(result: Result<&1,&1,U32 & String,List<T.Receipt>>) -> List<T.Receipt>:
+  match result:
+    case Done{receipts}: receipts
+    case Fail{error}: Nil{}
+
+def collect_settled_roots(+db: String, +session: String, +specs: List<&2,RootSpec>) -> IO(List<T.Receipt>):
+  do IO<List<T.Receipt>>:
+    state : S.State <- S.load(db)
+    +known : Bool = S.session_known(state, session)
+    settled_state : S.State <- S.load(db)
+    +reason : String = S.session_settled_reason(settled_state, session)
+    Bool.pick(IO(List<T.Receipt>), Bool.and(known, String.is_empty(reason)),
+      do IO<List<T.Receipt>>:
+        result : Result<&1,&1,U32 & String,List<T.Receipt>> <- apply_session_roots(db, session, specs)
+        IO.pure(List<T.Receipt>, collect_receipts(result)),
+      IO.pure(List<T.Receipt>, Nil{}))
+
+def collect_settled(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    specs : List<&2,RootSpec> <- configured_roots()
+    _receipts : List<T.Receipt> <- collect_settled_roots(db, session, specs)
+    IO.pure(Unit, Unit{})
+
+# Explicit collection for deployment and qualification: the same settled gate,
+# with the receipts the caller can record.
+def run_collect(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    state : S.State <- S.load(db)
+    Bool.pick(IO(Unit), S.session_known(state, session),
+      do IO<Unit>:
+        specs : List<&2,RootSpec> <- configured_roots()
+        receipts : List<T.Receipt> <- collect_settled_roots(db, session, specs)
+        IO.write(receipts_json(receipts)),
       IO.die(Unit, 2, "unknown session: " ++ session))
 
 def bool_json(+value: Bool) -> String:

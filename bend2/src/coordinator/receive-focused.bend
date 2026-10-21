@@ -14,7 +14,9 @@ def dispatch_receive(selected: Bool, +db: String, +session: String, +cmd: String
   match selected:
     case True{}: do IO<Unit>:
       result : Result<&1,&1,U32 & String,Unit> & String <- Receive.run(db,session,cmd,model,effort,cwd,log,message)
-      Receive.report_result(db,session,message,result)
+      reported : Unit <- Receive.report_result(db,session,message,result)
+      collected : Unit <- StoragePolicy.collect_settled(db,session)
+      IO.pure(Unit, collected)
     case False{}: IO.die(Unit,2,"expected receive")
 
 def dispatch_instance(owner: Bool, shutdown: Bool, +db: String) -> IO(Unit):
@@ -68,7 +70,10 @@ def dispatch_three(+flag: String, +first: String, +second: String) -> IO(Unit):
 
 def dispatch_turn(selected: Bool, +db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String) -> IO(Unit):
   match selected:
-    case True{}: Turn.run(db,player,id,cmd,model,effort,cwd,task,log,session)
+    case True{}: do IO<Unit>:
+      ran : Unit <- Turn.run(db,player,id,cmd,model,effort,cwd,task,log,session)
+      collected : Unit <- StoragePolicy.collect_settled(db,session)
+      IO.pure(Unit, collected)
     case False{}: IO.die(Unit,2,"expected turn")
 
 def focused_fallback_result(result: T.RunRes) -> IO(Unit):
@@ -93,7 +98,10 @@ def focused_native_receive(selected: Bool, +full: String, +db: String, +verb: St
 
 def focused_native_turn(turn_text: Bool, turn: Bool, +full: String, +db: String, +verb: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String) -> IO(Unit):
   match turn_text:
-    case True{}: Turn.run_text(db,player,id,cmd,model,effort,cwd,task,log,session)
+    case True{}: do IO<Unit>:
+      ran : Unit <- Turn.run_text(db,player,id,cmd,model,effort,cwd,task,log,session)
+      collected : Unit <- StoragePolicy.collect_settled(db,session)
+      IO.pure(Unit, collected)
     case False{}:
       match turn:
         case True{}: dispatch_turn(True{},db,player,id,cmd,model,effort,cwd,task,log,session)
@@ -116,7 +124,8 @@ def focused_native_args(+full: String, +db: String, args: List<String>) -> IO(Un
     case +verb <> +session <> Nil{}:
       Bool.pick(IO(Unit), String.eq(verb,"storage-preview"), StoragePolicy.run_preview(db,session),
         Bool.pick(IO(Unit), String.eq(verb,"storage-apply"), StoragePolicy.run_apply(db,session),
-          focused_fallback(full,db,Con{verb,Con{session,Nil{}}})))
+          Bool.pick(IO(Unit), String.eq(verb,"storage-collect"), StoragePolicy.run_collect(db,session),
+            focused_fallback(full,db,Con{verb,Con{session,Nil{}}}))))
     case +verb <> Nil{}:
       Bool.pick(IO(Unit), String.eq(verb,"storage-policy"), StoragePolicy.run_policy(db),
         focused_fallback(full,db,Con{verb,Nil{}}))
