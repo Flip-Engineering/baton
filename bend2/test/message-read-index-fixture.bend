@@ -14,24 +14,31 @@ def read(db: String, saved: String) -> IO(Unit):
     answer : String <- IO.try(String,DB.Sql.read(db,MessageStatus.decorate_observed_sql(saved,False{},True{})))
     IO.write(answer)
 
+def migrate_selected(selected: Bool, db: String) -> IO(Unit):
+  match selected:
+    case True{}: migrate(db)
+    case False{}: IO.die(Unit,2,"usage: message-read-index-fixture schema DB | migrate DB | read DB JSON")
+
+def schema_selected(selected: Bool, +mode: String, +db: String) -> IO(Unit):
+  match selected:
+    case True{}: IO.write(C.schema())
+    case False{}: migrate_selected(String.eq(mode,"migrate"),db)
+
 def no_arguments(+mode: String, +db: String, rest: List<String>) -> IO(Unit):
   match rest:
-    case Nil{}:
-      match String.eq(mode,"schema"):
-        case True{}: IO.write(C.schema())
-        case False{}:
-          match String.eq(mode,"migrate"):
-            case True{}: migrate(db)
-            case False{}: IO.die(Unit,2,"usage: message-read-index-fixture schema DB | migrate DB | read DB JSON")
+    case Nil{}: schema_selected(String.eq(mode,"schema"),mode,db)
     case other: IO.die(Unit,2,"unexpected fixture arguments")
 
-def arguments(+mode: String, +db: String, +rest: List<String>) -> IO(Unit):
-  match String.eq(mode,"read"):
+def read_selected(selected: Bool, +mode: String, +db: String, +rest: List<String>) -> IO(Unit):
+  match selected:
     case True{}:
       match rest:
         case +saved <> Nil{}: read(db,saved)
         case other: IO.die(Unit,2,"read requires complete JSON")
     case False{}: no_arguments(mode,db,rest)
+
+def arguments(+mode: String, +db: String, +rest: List<String>) -> IO(Unit):
+  read_selected(String.eq(mode,"read"),mode,db,rest)
 
 def main() -> IO(Unit):
   do IO<Unit>:
