@@ -1110,6 +1110,12 @@ def recover_owned_session(+db: String, +session: String, id: String, cursor: Str
     case None{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case Some{handle}: recover_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,again)
 
+# The keeper still holds the session guard for the attempt it retained, so the
+# executing call attaches and observes without taking that guard. Its completion
+# path releases nothing it does not own.
+def recover_unlocked(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  attach_recorded(db,directory,handle => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,None{},again))
+
 # SQLITE_BUSY is a transient contention result, not a dead attempt: retain the
 # attempt, record its cause and release the stale claim ticket instead of
 # exiting with the database code and letting the keeper relaunch the same work.
@@ -1146,7 +1152,7 @@ def recover(+db: String, +session: String, id: String, cursor: String, +cmd: Str
     +updates : Chan(String) <- Chan.new(String,1)
     +drainer : Chan(Unit) <- IO.fork(Unit,discard_admitted_start(updates))
     +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
-    raw : Result<&1,&1,U32 & String,Unit> <- recover_owned_session(canonical,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,None{},previous => continue_receiver(canonical,session,cmd,model,effort,cwd,log,"explicit",previous,updates))
+    raw : Result<&1,&1,U32 & String,Unit> <- recover_unlocked(canonical,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,previous => continue_receiver(canonical,session,cmd,model,effort,cwd,log,"explicit",previous,updates))
     recover_tail(canonical,session,directory,native,updates,drainer,raw)
 # The supported receive command answers one JSON object. The invocation carries
 # the attempt its own admission recorded, so a concurrent receiver that replaces
