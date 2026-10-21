@@ -299,6 +299,11 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return completed.stdout.strip().split('|')
 
+    def reserve_bound(self, attempt, bound, session='leaf', period='2026-10'):
+        completed = self.entry('reserve-bound', session, 'claude-code', attempt, period, bound)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip().split('|')
+
     def settle(self, request, outcome='completed', cost=''):
         completed = self.entry('settle', request, outcome, cost)
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -331,7 +336,7 @@ class FocusedAccountCredits(unittest.TestCase):
     def test_reservation_reserves_the_lower_bound_and_serializes(self):
         self.credit_account('200.00')
         first = self.reserve('attempt-1')
-        self.assertEqual(first[:3], ['admitted', 'org-fixture', '2026-10'])
+        self.assertEqual(first[:3], ['admitted', 'org-fixture', 'grant:2026-10-11'])
         self.assertEqual(first[3:], ['200', '0', '0'])
         self.assertEqual(self.reserve('attempt-2'), ['refused', 'creditReservationInFlight'])
         self.assertEqual(self.query("SELECT request,state,max_charge FROM credit_reservations"),
@@ -340,8 +345,18 @@ class FocusedAccountCredits(unittest.TestCase):
     def test_reservation_uses_the_observed_balance_when_lower(self):
         self.credit_account('150.00')
         admitted = self.reserve('attempt-1')
-        self.assertEqual(admitted[:3], ['admitted', 'org-fixture', '2026-10'])
+        self.assertEqual(admitted[:3], ['admitted', 'org-fixture', 'grant:2026-10-11'])
         self.assertEqual(admitted[3:], ['150', '0', '50'])
+
+    def test_a_bounded_reservation_reserves_only_the_request_charge(self):
+        self.credit_account('200.00')
+        first = self.reserve_bound('attempt-1', '1.25')
+        self.assertEqual(first[:3], ['admitted', 'org-fixture', 'grant:2026-10-11'])
+        self.assertEqual(first[3:], ['1.25', '198.75', '198.75'])
+        self.assertEqual(self.settle('attempt-1', 'completed', '1.25'), 'settled')
+        second = self.reserve_bound('attempt-2', '198.75')
+        self.assertEqual(second[:3], ['admitted', 'org-fixture', 'grant:2026-10-11'])
+        self.assertEqual(second[3:], ['198.75', '1.25', '0'])
 
     def test_reservation_uses_provider_spend_reconciliation(self):
         self.credit_account('200.00')

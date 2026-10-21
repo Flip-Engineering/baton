@@ -60,6 +60,13 @@ def history_needed_text(+first: Maybe<&2,A.AccountRecord>, +second: Maybe<&2,A.A
         case None{}: "absent"
     case None{}: "absent"
 
+def reserve_bound_decided(+db: String, +session: String, +attempt: String, +period: String, +bound: String, account: Maybe<&2,A.AccountRecord>) -> IO(Unit):
+  match account:
+    case None{}: IO.print("refused|accountAbsent")
+    case Some{+chosen}: do IO<Unit>:
+      decision : A.CreditAdmission <- A.credit_reserve_bounded_for(db,session,attempt,chosen,period,bound)
+      IO.print(admission_line(decision))
+
 def reserve_decided(+db: String, +session: String, +attempt: String, +cap: String, account: Maybe<&2,A.AccountRecord>) -> IO(Unit):
   match account:
     case None{}: IO.print("refused|accountAbsent")
@@ -132,7 +139,11 @@ def dispatch(arguments: List<String>) -> IO(Unit):
         left : Maybe<&2,A.AccountRecord> <- A.account_by_label(db,first,harness)
         right : Maybe<&2,A.AccountRecord> <- A.account_by_label(db,second,harness)
         IO.print(history_needed_text(left,right))
-    case other: IO.die(Unit,2,"account-credits-entry: account|handoff|current|attempt|gate|complete|complete-event|reserve|settle|reconcile|gate-qualified|gate-held|price|history-needed")
+    case +db <> "reserve-bound" <> +session <> +harness <> +attempt <> +period <> +bound <> Nil{}:
+      do IO<Unit>:
+        +account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
+        reserve_bound_decided(db,session,attempt,period,bound,account)
+    case other: IO.die(Unit,2,"account-credits-entry: account|handoff|current|attempt|gate|complete|complete-event|reserve|reserve-bound|settle|reconcile|gate-qualified|gate-held|price|history-needed")
 
 def main() -> IO(Unit):
   do IO<Unit>:
