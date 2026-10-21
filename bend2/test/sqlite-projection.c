@@ -52,10 +52,30 @@ int main(int argc, char **argv) {
     printf("read_call=1 code=%d output=%s error=%s\n",
            call.code, call.output ? call.output : "",
            call.error ? call.error : "");
+    printf("close_autocommit=%d close_refused=%d\n",
+           baton_test_close_autocommit, baton_test_close_refused);
     int code = call.code;
     free(call.output);
     free(call.error);
-    return code == SQLITE_OK ? 0 : 1;
+    if (code != SQLITE_OK)
+      return 1;
+    sqlite3 *writer = NULL;
+    int writer_code = sqlite3_open(argv[2], &writer);
+    if (writer_code != SQLITE_OK) {
+      printf("writer_commit=failed err=open:%d\n", writer_code);
+      if (writer) sqlite3_close(writer);
+      return 1;
+    }
+    sqlite3_busy_timeout(writer, 0);
+    char *writer_error = NULL;
+    writer_code = sqlite3_exec(writer,
+      "BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS read_call_release_probe(x); COMMIT;",
+      NULL, NULL, &writer_error);
+    printf("writer_commit=%s%s%s\n", writer_code == SQLITE_OK ? "ok" : "failed",
+           writer_error ? " err=" : "", writer_error ? writer_error : "");
+    sqlite3_free(writer_error);
+    sqlite3_close(writer);
+    return writer_code == SQLITE_OK ? 0 : 1;
   }
   sqlite3 *db = NULL;
   int rc = sqlite3_open(argv[2], &db);
