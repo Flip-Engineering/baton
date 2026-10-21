@@ -323,10 +323,17 @@ class FocusedAccountCredits(unittest.TestCase):
 
     def test_reservation_refuses_conflicting_readings(self):
         self.credit_account('200.00')
-        self.import_credit('claude-api', 'org-fixture', '199.00', 1760000009000)
+        self.import_credit('claude-api', 'org-fixture', '199.00', 1760000000000)
         self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditReadingsConflict'])
 
-    def test_reservation_refuses_non_usd_and_expired(self):
+    def test_reservation_accepts_chronological_balance_decrease(self):
+        self.credit_account('200.00')
+        self.import_credit('claude-api', 'org-fixture', '199.52', 1760000009000)
+        admitted = self.reserve('attempt-1')
+        self.assertEqual(admitted[:3], ['admitted', 'org-fixture', 'grant:2026-10-11'])
+        self.assertEqual(admitted[3], '199.52')
+
+    def test_reservation_refuses_non_usd_and_unverified_expiry(self):
         self.credit_account('200.00')
         self.import_credit('claude-api', 'org-fixture', '200.00', 1760000010000, unit='EUR')
         self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditUnitNotUSD'])
@@ -334,9 +341,12 @@ class FocusedAccountCredits(unittest.TestCase):
                            unit='USD', expires='1000000000000')
         self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditObservationExpired'])
         self.import_credit('claude-api', 'org-fixture', '200.00', 1760000012000,
-                           unit='USD', expires='soon')
-        self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditObservationExpiryMalformed'])
+                           unit='USD', expires='2026-11-14')
+        self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditObservationExpiryUnverified'])
         self.import_credit('claude-api', 'org-fixture', '200.00', 1760000013000,
+                           unit='USD', expires='soon')
+        self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditObservationExpiryUnverified'])
+        self.import_credit('claude-api', 'org-fixture', '200.00', 1760000014000,
                            unit='USD', expires='4102444800000')
         self.assertEqual(self.reserve('attempt-1')[:2], ['admitted', 'org-fixture'])
 
@@ -374,10 +384,10 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditObservationUnavailable'])
         self.observe('claude-api', 'org-fixture')
         self.import_credit('claude-api', 'org-fixture', '200.00', 1760000000000,
-                           expires='2000-01-01', cycle='grant:2026-09-01')
+                           expires='1000000000000', cycle='grant:2026-09-01')
         self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditObservationExpired'])
         self.import_credit('claude-api', 'org-fixture', '200.00', 1760000001000,
-                           expires='2099-12-31', cycle='grant:2026-10-11')
+                           expires='4102444800000', cycle='grant:2026-10-11')
         self.assertEqual(self.reserve('attempt-1')[:2], ['admitted', 'org-fixture'])
 
     def test_reservation_process_failure_keeps_the_bound(self):
@@ -423,6 +433,41 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
                          [('failed', '')])
         self.assertEqual(self.reserve('attempt-2'), ['refused', 'monthlyCapExhausted'])
+
+    def test_result_cost_rejects_an_exponent(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', '{"type":"result","total_cost_usd":1e2}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('failed', '')])
+
+    def test_result_cost_rejects_a_nested_field(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', '{"type":"result","usage":{"total_cost_usd":0.01},"total_cost_usd":1.25}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('failed', '')])
+
+    def test_result_cost_rejects_malformed_json(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', '{"type":"result","total_cost_usd":0.1garbage}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('failed', '')])
+
+    def test_result_cost_rejects_a_non_result_frame(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', '{"type":"message","total_cost_usd":0.1}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('failed', '')])
+
+    def test_result_cost_accepts_whitespace_before_the_colon(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', '{"type":"result","total_cost_usd" : 1.25}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '1.25')])
 
     def authorize(self, attempt, session='leaf'):
         completed = self.entry('authorize', session, 'claude-code', attempt)
@@ -558,7 +603,7 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return json.loads(completed.stdout)
 
-    def import_credit(self, label, organization, balance, observed_at=1760000000000, state='reported', fact='promotional_credit', unit='USD', expires='2099-12-31', cycle='grant:2026-10-11'):
+    def import_credit(self, label, organization, balance, observed_at=1760000000000, state='reported', fact='promotional_credit', unit='USD', expires='4102444800000', cycle='grant:2026-10-11'):
         detail = json.dumps({'fact': fact, 'state': state, 'balance': balance, 'unit': unit,
                              'cycle': cycle, 'expires': expires, 'source': 'console-billing-display', 'observedAt': observed_at})
         completed = self.account('import-credit', label, organization=organization, detail=detail, session='')

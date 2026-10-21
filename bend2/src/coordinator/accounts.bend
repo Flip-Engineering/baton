@@ -591,7 +591,7 @@ def credit_observation_sql(+organization: String) -> String:
   "SELECT state||char(31)||balance||char(31)||unit||char(31)||cycle||char(31)||expires FROM credit_observations WHERE organization=" ++ C.q(organization) ++ " AND fact='promotional_credit' ORDER BY observed_at DESC,rowid DESC LIMIT 1;"
 
 def credit_conflict_sql(+organization: String, +cycle: String) -> String:
-  "SELECT count(DISTINCT balance) FROM credit_observations WHERE organization=" ++ C.q(organization) ++ " AND fact='promotional_credit' AND state='reported' AND balance<>'' AND cycle=" ++ C.q(cycle) ++ ";"
+  "WITH latest AS (SELECT observed_at FROM credit_observations WHERE organization=" ++ C.q(organization) ++ " AND fact='promotional_credit' AND state='reported' ORDER BY observed_at DESC,rowid DESC LIMIT 1) SELECT count(DISTINCT balance) FROM credit_observations WHERE organization=" ++ C.q(organization) ++ " AND fact='promotional_credit' AND state='reported' AND balance<>'' AND cycle=" ++ C.q(cycle) ++ " AND observed_at=(SELECT observed_at FROM latest);"
 
 def credit_conflict_ok(+text: String) -> Bool:
   Bool.or(String.eq(text,"0"),String.eq(text,"1"))
@@ -607,18 +607,17 @@ def expiry_digits(+text: String) -> Bool:
 def expiry_valid(+text: String) -> Bool:
   Bool.and(Nat.is_eq(String.length(text),13n),expiry_digits(text))
 
-# The observed expiry text is preserved exactly. A present expiry is either a
-# 13-digit epoch millisecond value or a YYYY-MM-DD date. A date-only expiry
-# becomes 00:00 UTC on the following day, the conservative end of the stated UTC
-# day. An absent expiry is malformed for this route; a past value is expired.
+# The observed expiry text is preserved exactly. Admission requires an exact
+# 13-digit epoch millisecond boundary. A date-only or otherwise unverified
+# expiry is retained but does not admit a request; no day is added.
 def credit_expiry_deadline_sql(+expires: String) -> String:
-  "SELECT CASE WHEN length(" ++ C.q(expires) ++ ")=13 AND " ++ C.q(expires) ++ " NOT GLOB '*[^0-9]*' THEN " ++ C.q(expires) ++ " WHEN length(" ++ C.q(expires) ++ ")=10 AND " ++ C.q(expires) ++ " GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' AND date(" ++ C.q(expires) ++ ")=" ++ C.q(expires) ++ " THEN printf('%013d',(CAST(strftime('%s'," ++ C.q(expires) ++ ") AS INTEGER)+86400)*1000) ELSE '0' END;"
+  "SELECT CASE WHEN length(" ++ C.q(expires) ++ ")=13 AND " ++ C.q(expires) ++ " NOT GLOB '*[^0-9]*' THEN " ++ C.q(expires) ++ " ELSE '0' END;"
 
 def expiry_deadline_reason(+deadline: String, +now_text: String) -> String:
-  Bool.pick(String,Bool.or(String.is_empty(deadline),String.eq(deadline,"0")),"creditObservationExpiryMalformed",
+  Bool.pick(String,Bool.or(String.is_empty(deadline),String.eq(deadline,"0")),"creditObservationExpiryUnverified",
     Bool.pick(String,expiry_valid(deadline),
       Bool.pick(String,String.is_gt(deadline,now_text),"","creditObservationExpired"),
-      "creditObservationExpiryMalformed"))
+      "creditObservationExpiryUnverified"))
 
 def decimal_max(+a: String, +b: String) -> String:
   Bool.pick(String,decimal_is_gt(a,b),a,b)
@@ -1096,13 +1095,13 @@ def attempt_completed(+db: String, +attempt: String, +outcome: String, +error_te
     settled : String <- credit_settle_for(db,attempt,outcome,"",False{})
     IO.print(Tx.trim_nl(saved))
 
-# The Claude result frame's cumulative total_cost_usd is the actual cost source.
-# The raw JSON text is read so no binary float intervenes; the leading decimal
-# token is extracted by SQL text scanning and validated before settlement. A
-# missing or malformed token settles as unknown cost and keeps the reserved
-# bound counted.
+# The cumulative total_cost_usd is read from a valid Claude result frame. The
+# root field must exist exactly once and be a JSON number; the raw token is
+# taken whole from the text, so 1e2, a nested field, a non-result frame or a
+# malformed document yields unknown cost. The observation text is unchanged and
+# a missing or unsupported token keeps the reserved bound counted.
 def credit_result_cost_sql(+event: String) -> String:
-  "WITH RECURSIVE t(s) AS (VALUES(CASE WHEN instr(" ++ C.q(event) ++ ",'\"total_cost_usd\":')>0 THEN ltrim(substr(" ++ C.q(event) ++ ",instr(" ++ C.q(event) ++ ",'\"total_cost_usd\":')+length('\"total_cost_usd\":'))) ELSE '' END)), scan(s,n) AS (SELECT s,0 FROM t UNION ALL SELECT s,n+1 FROM scan WHERE n<length(s) AND substr(s,n+1,1) GLOB '[0-9.]') SELECT substr(s,1,n) FROM scan ORDER BY n DESC LIMIT 1;"
+  "WITH RECURSIVE v(e,ok) AS (SELECT " ++ C.q(event) ++ ", CASE WHEN json_valid(" ++ C.q(event) ++ ") AND json_type(" ++ C.q(event) ++ ")='object' AND json_extract(" ++ C.q(event) ++ ",'$.type')='result' AND json_type(" ++ C.q(event) ++ ",'$.total_cost_usd') IN ('integer','real') AND length(" ++ C.q(event) ++ ")-length(replace(" ++ C.q(event) ++ ",'\"total_cost_usd\"',''))=length('\"total_cost_usd\"') THEN 1 ELSE 0 END), t(s) AS (SELECT CASE WHEN ok=1 AND substr(ltrim(substr(e,instr(e,'\"total_cost_usd\"')+length('\"total_cost_usd\"')),' '||char(9)||char(10)||char(13)),1,1)=':' THEN ltrim(substr(ltrim(substr(e,instr(e,'\"total_cost_usd\"')+length('\"total_cost_usd\"')),' '||char(9)||char(10)||char(13)),2),' '||char(9)||char(10)||char(13)) ELSE '' END FROM v), scan(s,n) AS (SELECT s,0 FROM t UNION ALL SELECT s,n+1 FROM scan WHERE n<length(s) AND substr(s,n+1,1) GLOB '[0-9.]') SELECT CASE WHEN s='' OR n=0 THEN '' WHEN instr(',}' || char(9) || char(10) || char(13) || ' ', substr(s,n+1,1))>0 THEN substr(s,1,n) ELSE '' END FROM scan ORDER BY n DESC LIMIT 1;"
 
 def credit_result_cost_io(+db: String, +event: String) -> IO(String):
   do IO<String>:
@@ -1278,7 +1277,7 @@ def pool_answer_sql(+clause: String) -> String:
   ++ " organizations AS (SELECT organization FROM credit_observations WHERE " ++ clause ++ " UNION SELECT organization FROM accounts WHERE organization<>'' AND " ++ clause ++ ")"
   ++ " SELECT json_object('organizations',coalesce(json_group_array(json_object('organization',o.organization,'observationState',CASE WHEN EXISTS(SELECT 1 FROM ranked r2 WHERE r2.organization=o.organization AND r2.fact='promotional_credit' AND r2.rank=1 AND r2.state='reported') THEN 'reported' WHEN EXISTS(SELECT 1 FROM ranked r3 WHERE r3.organization=o.organization AND r3.fact='promotional_credit' AND r3.rank=1) THEN 'unavailable' ELSE 'unknown' END,'facts',json(o.facts),'accounts',json(o.accounts))),json('[]'))) FROM ("
   ++ " SELECT organization AS organization,"
-  ++ " (SELECT coalesce(json_group_array(json_object('fact',r.fact,'state',r.state,'balance',r.balance,'unit',r.unit,'expires',r.expires,'cycle',r.cycle,'source',r.source,'observedAt',r.observed_at,'previous',CASE WHEN r.state='unavailable' THEN (SELECT json_object('balance',p.balance,'unit',p.unit,'cycle',p.cycle,'observedAt',p.observed_at,'source',p.source) FROM credit_observations p WHERE p.organization=r.organization AND p.fact=r.fact AND p.state='reported' ORDER BY p.observed_at DESC,p.rowid DESC LIMIT 1) END,'conflict',json(CASE WHEN (SELECT count(DISTINCT balance) FROM credit_observations WHERE organization=r.organization AND fact=r.fact AND state='reported' AND balance<>'' AND cycle=r.cycle)>1 THEN 'true' ELSE 'false' END),'readings',(SELECT coalesce(json_group_array(json_object('balance',balance,'unit',unit,'source',source,'observedAt',observed_at,'authority',authority)),json('[]')) FROM (SELECT DISTINCT balance,unit,source,observed_at,authority FROM credit_observations WHERE organization=r.organization AND fact=r.fact AND state='reported' AND balance<>'' AND cycle=r.cycle)))),json('[]')) FROM ranked r WHERE r.rank=1 AND r.organization=o.organization) AS facts,"
+  ++ " (SELECT coalesce(json_group_array(json_object('fact',r.fact,'state',r.state,'balance',r.balance,'unit',r.unit,'expires',r.expires,'cycle',r.cycle,'source',r.source,'observedAt',r.observed_at,'previous',CASE WHEN r.state='unavailable' THEN (SELECT json_object('balance',p.balance,'unit',p.unit,'cycle',p.cycle,'observedAt',p.observed_at,'source',p.source) FROM credit_observations p WHERE p.organization=r.organization AND p.fact=r.fact AND p.state='reported' ORDER BY p.observed_at DESC,p.rowid DESC LIMIT 1) END,'conflict',json(CASE WHEN (SELECT count(DISTINCT balance) FROM credit_observations WHERE organization=r.organization AND fact=r.fact AND state='reported' AND balance<>'' AND cycle=r.cycle AND observed_at=r.observed_at)>1 THEN 'true' ELSE 'false' END),'readings',(SELECT coalesce(json_group_array(json_object('balance',balance,'unit',unit,'source',source,'observedAt',observed_at,'authority',authority)),json('[]')) FROM (SELECT DISTINCT balance,unit,source,observed_at,authority FROM credit_observations WHERE organization=r.organization AND fact=r.fact AND state='reported' AND balance<>'' AND cycle=r.cycle)))),json('[]')) FROM ranked r WHERE r.rank=1 AND r.organization=o.organization) AS facts,"
   ++ " (SELECT coalesce(json_group_array(id),json('[]')) FROM accounts a WHERE a.organization=o.organization) AS accounts"
   ++ " FROM organizations o) o;"
 

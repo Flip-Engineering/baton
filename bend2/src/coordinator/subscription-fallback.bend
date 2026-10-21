@@ -89,7 +89,7 @@ def first_profile(profiles: List<&2,Profile>, harness: String) -> Maybe<&2,Profi
 # The credential-store variable each harness reads. A harness without one gets no
 # binding, so an unknown harness adds nothing to the spawn environment.
 def store_variable(+harness: String) -> Maybe<String>:
-  Bool.pick(Maybe<String>,String.eq(harness,"codex"),Some{"CODEX_HOME"},Bool.pick(Maybe<String>,Bool.or(String.eq(harness,"claude-code"),String.eq(harness,"claude")),Some{"CLAUDE_CONFIG_DIR"},None{}))
+  Bool.pick(Maybe<String>,String.eq(harness,"codex"),Some{"CODEX_HOME"},Bool.pick(Maybe<String>,Bool.or(String.eq(harness,"claude-code"),String.eq(harness,"claude")),Some{"CLAUDE_CONFIG_DIR"},Bool.pick(Maybe<String>,String.eq(harness,"omp"),Some{"PI_CODING_AGENT_DIR"},Bool.pick(Maybe<String>,String.eq(harness,"muse"),Some{"XDG_CONFIG_HOME"},None{}))))
 
 def binding_for(variable: Maybe<String>, store: String) -> List<String>:
   match variable:

@@ -98,10 +98,15 @@ an amount is not a canonical decimal, an active reservation exists, the grant or
 monthly spend exceeds the `$200` ceiling, the balance is zero, the ceiling is
 spent, or the lower bound is zero.
 
-The observed expiry text is preserved exactly. A present expiry is either a
-13-digit epoch millisecond value or a `YYYY-MM-DD` date. A date-only expiry
-becomes 00:00 UTC on the following day, the conservative end of the stated UTC
-day.
+The observed expiry text is preserved exactly. Admission requires an exact
+13-digit epoch millisecond boundary. A date-only or otherwise unverified expiry
+is retained but does not admit a request; no day is added to the observed date.
+
+The conflict check compares reported balances recorded at the same observation
+time for the grant. A chronological balance decrease from one verified reading
+to a later one is normal consumption and keeps its historical provenance; it is
+not a conflict. Different balances at the same observation time refuse
+`creditReadingsConflict`.
 
 The reserved maximum is the lower of the observed balance and the two unspent
 ceilings: `min(balance, 200 - grant spend, 200 - monthly spend)`. Grant spend
@@ -115,13 +120,14 @@ recorded row and does not reserve again.
 
 `credit_settle_for` replaces the bound with the actual cost when one is
 reported. The turn and receive completion paths pass the terminal Claude result
-event to `attempt_completed_event`. That function reads the cumulative
-`total_cost_usd` from the raw JSON text without a binary float, settles the
-reservation once, and treats a repeated cumulative frame idempotently. A
-completed or failed attempt without a usable cost keeps the reserved maximum
-counted and records state `failed`; `account reconcile` settles that row with
-the provider's actual cost later. `account import-spend` records the Admin cost
-report's numeric USD amount for the organization and cap period.
+event to `attempt_completed_event`. That function accepts only a valid
+`result` frame whose root `total_cost_usd` is a JSON number; the raw token is
+read whole, so `1e2`, a nested field, a non-result frame or a malformed document
+stays unknown. A repeated cumulative frame settles once. A completed or failed
+attempt without a usable cost keeps the reserved maximum counted and records
+state `failed`; `account reconcile` settles that row with the provider's actual
+cost later. `account import-spend` records the Admin cost report's numeric USD
+amount for the organization and cap period.
 
 `credit_launch_gate` is the production caller before send. For an Anthropic
 `claude-code` `api_key` account it records the reservation, then the one-use
@@ -133,9 +139,9 @@ source true only after the installed qualification passes.
 The provider enforces the promotional balance on each API request. A retained
 launch can contain more than one provider request, and Baton has no point that
 sees each request the Claude CLI makes. The current reservation bounds the whole
-launch. Per-request interception through a local provider proxy is the next
-required implementation; the actual result cost and the completion settlement
-are recorded.
+launch. Per-request interception remains the next required implementation. The
+policy and persistent state stay in Bend2; host code may provide the transport
+I/O, and a Node policy/proxy is not an approved boundary.
 
 ## Funded credit observations
 
@@ -198,6 +204,14 @@ The handoff keeps the Player identity, parentage, workspace, branch, native
 conversation, retained messages and owed input, and records the account change
 and the provider's own cause. The attempt's terminal event stays in `turns`, so
 the failed attempt and its provider error are retained.
+
+The native Max window gate evaluates the provider for every model, including a
+native Claude id without a slash qualifier; an empty provider is not a bypass.
+The profile store variable maps `codex` to `CODEX_HOME`, `claude-code` and
+`claude` to `CLAUDE_CONFIG_DIR`, `omp` to `PI_CODING_AGENT_DIR` and `muse` to
+`XDG_CONFIG_HOME`. Max subscription quota and promotional API credit remain
+separate eligibility pools; neither is converted to the other.
+
 
 ## Command surface
 

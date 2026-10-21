@@ -512,7 +512,7 @@ def gate_verdicted(+db: String, +session: String, +harness: String, +provider: S
     IO.pure(Gate,gate)
 
 def window_gate_model(+db: String, +session: String, harness: String, +model: String, +account: String) -> IO(Gate):
-  Bool.pick(IO(Gate),String.is_empty(provider_of(model)),IO.pure(Gate,GateNone{}),gate_verdicted(db,session,harness,provider_of(model),account))
+  gate_verdicted(db,session,harness,provider_of(model),account)
 
 def window_gate(+db: String, +session: String, +account: String) -> IO(Gate):
   do IO<Gate>:
