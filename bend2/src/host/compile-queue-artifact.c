@@ -421,7 +421,7 @@ static int cq_art_copy_path(const char *source, const char *destination,
   if (S_ISREG(info->st_mode)) {
     int input = open(source, O_RDONLY);
     if (input < 0) return errno;
-    int output = open(destination, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0600);
+    int output = open(destination, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0660);
     if (output < 0) {
       int error = errno;
       close(input);

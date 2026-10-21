@@ -209,7 +209,7 @@ def CompileQueueResult.write_text_result(written: Result<&1,&1,U32 & String,Unit
 
 def CompileQueueResult.write_text(+path: String, +text: String, +temporary: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    written : Result<&1,&1,U32 & String,Unit> <- F.Files.write_private(temporary, text)
+    written : Result<&1,&1,U32 & String,Unit> <- F.Files.write_shared(temporary, text)
     CompileQueueResult.write_text_result(written, path, temporary)
 
 def CompileQueueResult.install(+source: String, +destination: String, +staging: String) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -286,15 +286,6 @@ def CompileQueueResult.log_text(+label: String, +path: String) -> IO(Result<&1,&
       present : Result<&1,&1,U32 & String,String> <- F.Files.regular(path)
       CompileQueueResult.log_rows(label, path, present))
 
-def CompileQueueResult.work_row(+work: String, +name: String) -> IO(Result<&1,&1,U32 & String,CompileQueueRow>):
-  do IO<Result<&1,&1,U32 & String,CompileQueueRow>>:
-    +kind : String <- IO.try(String, Artifact.CompileQueueArtifact.kind(work ++ "/" ++ name))
-    Bool.pick(IO(Result<&1,&1,U32 & String,CompileQueueRow>), String.eq(kind, "missing"),
-      IO.pure(Result<&1,&1,U32 & String,CompileQueueRow>, Done{CompileQueueRow{"", "0"}}),
-      do IO<Result<&1,&1,U32 & String,CompileQueueRow>>:
-        digest : String <- IO.try(String, Artifact.CompileQueueArtifact.digest(work ++ "/" ++ name))
-        IO.pure(Result<&1,&1,U32 & String,CompileQueueRow>, Done{CompileQueueRow{"artifact=" ++ name ++ "\t" ++ kind ++ "\t" ++ digest ++ "\n", "1"}}))
-
 def CompileQueueResult.combine_rows(+left: CompileQueueRow, +right: CompileQueueRow) -> CompileQueueRow:
   match left:
     case CompileQueueRow{left_rows, left_ok}:
@@ -302,15 +293,34 @@ def CompileQueueResult.combine_rows(+left: CompileQueueRow, +right: CompileQueue
         case CompileQueueRow{right_rows, right_ok}:
           CompileQueueRow{left_rows ++ right_rows, Bool.pick(String, Bool.and(String.eq(left_ok, "1"), String.eq(right_ok, "1")), "1", "0")}
 
+# Artifact rows carry the declared artifact name and digest the staged work
+# file, so completed caches stay keyed by the declared name while the work
+# directory uses the suffix-preserving staged name (issue #989).
+def CompileQueueResult.work_staged(+work: String, +declared: String, +staged: String) -> IO(Result<&1,&1,U32 & String,CompileQueueRow>):
+  do IO<Result<&1,&1,U32 & String,CompileQueueRow>>:
+    +kind : String <- IO.try(String, Artifact.CompileQueueArtifact.kind(work ++ "/" ++ staged))
+    Bool.pick(IO(Result<&1,&1,U32 & String,CompileQueueRow>), String.eq(kind, "missing"),
+      IO.pure(Result<&1,&1,U32 & String,CompileQueueRow>, Done{CompileQueueRow{"", "0"}}),
+      do IO<Result<&1,&1,U32 & String,CompileQueueRow>>:
+        digest : String <- IO.try(String, Artifact.CompileQueueArtifact.digest(work ++ "/" ++ staged))
+        IO.pure(Result<&1,&1,U32 & String,CompileQueueRow>, Done{CompileQueueRow{"artifact=" ++ declared ++ "\t" ++ kind ++ "\t" ++ digest ++ "\n", "1"}}))
+
+def CompileQueueResult.work_pair(+work: String, +line: String) -> IO(Result<&1,&1,U32 & String,CompileQueueRow>):
+  match String.split(line, Char.from_u32(9)):
+    case declared <> staged <> Nil{}:
+      CompileQueueResult.work_staged(work, declared, staged)
+    case other:
+      IO.pure(Result<&1,&1,U32 & String,CompileQueueRow>, Done{CompileQueueRow{"", "0"}})
+
 def CompileQueueResult.work_rows(+work: String, +names: List<&2,String>, +acc: CompileQueueRow) -> IO(Result<&1,&1,U32 & String,CompileQueueRow>):
   match names:
     case Nil{}:
       IO.pure(Result<&1,&1,U32 & String,CompileQueueRow>, Done{acc})
-    case +name <> +rest:
-      Bool.pick(IO(Result<&1,&1,U32 & String,CompileQueueRow>), String.is_empty(name),
+    case +line <> +rest:
+      Bool.pick(IO(Result<&1,&1,U32 & String,CompileQueueRow>), String.is_empty(line),
         CompileQueueResult.work_rows(work, rest, acc),
         do IO<Result<&1,&1,U32 & String,CompileQueueRow>>:
-          one : CompileQueueRow <- IO.try(CompileQueueRow, CompileQueueResult.work_row(work, name))
+          one : CompileQueueRow <- IO.try(CompileQueueRow, CompileQueueResult.work_pair(work, line))
           CompileQueueResult.work_rows(work, rest, CompileQueueResult.combine_rows(acc, one)))
 
 def CompileQueueResult.write_rows(+path: String, +status: String, +code: String, +kind: String, +key: String, +started: String, +finished: String, +attempt: String, +work: String, +stdout_row: String, +stderr_row: String, +row_result: CompileQueueRow, +detail: String) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -335,19 +345,28 @@ def CompileQueueResult.write(+path: String, +status: String, +code: String, +kin
     row_result : CompileQueueRow <- IO.try(CompileQueueRow, CompileQueueResult.work_rows(work, String.lines(names), CompileQueueRow{"", "1"}))
     CompileQueueResult.write_rows(path, status, code, kind, key, started, finished, attempt, work, stdout_row, stderr_row, row_result, detail)
 
+def CompileQueueResult.retain_pair(+work: String, +destination: String, +line: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match String.split(line, Char.from_u32(9)):
+    case declared <> staged <> Nil{}:
+      do IO<Result<&1,&1,U32 & String,Unit>>:
+        +target : String <- IO.pure(String, destination ++ "/" ++ declared)
+        +staging : String <- IO.pure(String, target ++ ".queue-tmp")
+        made : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(CompileQueueResult.dirname(target)))
+        removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
+        installed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.install(work ++ "/" ++ staged, target, staging))
+        IO.pure(Result<&1,&1,U32 & String,Unit>, Done{installed})
+    case other:
+      IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}})
+
 def CompileQueueResult.retain_rows(+work: String, +destination: String, +names: List<&2,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match names:
     case Nil{}:
       IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}})
-    case name <> rest:
-      Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.is_empty(name),
+    case +line <> +rest:
+      Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.is_empty(line),
         CompileQueueResult.retain_rows(work, destination, rest),
         do IO<Result<&1,&1,U32 & String,Unit>>:
-          +target : String <- IO.pure(String, destination ++ "/" ++ name)
-          +staging : String <- IO.pure(String, target ++ ".queue-tmp")
-          made : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(CompileQueueResult.dirname(target)))
-          removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
-          installed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.install(work ++ "/" ++ name, target, staging))
+          installed : Unit <- IO.try(Unit, CompileQueueResult.retain_pair(work, destination, line))
           CompileQueueResult.retain_rows(work, destination, rest))
 
 def CompileQueueResult.retain_artifacts(+work: String, +destination: String, +names: String) -> IO(Result<&1,&1,U32 & String,Unit>):

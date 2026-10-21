@@ -20,9 +20,17 @@ def Files.size(path: String) -> IO(Result<&1,&1,U32 & String,U32>):
 def Files.mode_of(path: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./files.c"
 
-# Creates one owner-only regular file with O_EXCL and no symlink follow. An
-# existing path is a failure; the caller chooses a fresh path.
+# Creates one owner-only regular file (0600) with O_EXCL and no symlink
+# follow. An existing path is a failure; the caller chooses a fresh path.
+# Owner-only content such as API credential specs uses this.
 def Files.write_private(path: String, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./files.c"
+
+# Creates one shared-writable regular file (0660) with O_EXCL and no symlink
+# follow. An existing path is a failure; the caller chooses a fresh path.
+# Shared queue results use this so every queue user can read completed
+# metadata (issue #970).
+def Files.write_shared(path: String, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./files.c"
 
 # Moves one log file onto another name. A source that does not exist is a no-op.
