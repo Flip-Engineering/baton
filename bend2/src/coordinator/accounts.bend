@@ -1262,11 +1262,20 @@ def select(+db: String, +harness: String, +funding: String) -> IO(Unit):
 # --- the command -------------------------------------------------------------
 
 def unknown_action(action: String) -> IO(Unit):
-  IO.die(Unit,2,"Unknown account action " ++ action ++ ". Use record, read, bind, attempts, select, pool, observe or import-credit.")
+  IO.die(Unit,2,"Unknown account action " ++ action ++ ". Use record, read, bind, attempts, select, pool, observe, import-credit, import-spend or reconcile.")
 
 # The verb's argv carries one action and the eight named options in a fixed
 # order: action, id, provider, harness, funding, secret-ref, organization,
 # detail, session. Each action reads the options it names.
+def reconcile_cost_sql(+detail: String) -> String:
+  "SELECT CASE WHEN json_valid(" ++ C.q(detail) ++ ") THEN coalesce(json_extract(" ++ C.q(detail) ++ ",'$.cost'),'') ELSE '' END;"
+
+def reconcile_action(+db: String, +request: String, +detail: String) -> IO(Unit):
+  do IO<Unit>:
+    +cost : String <- IO.try(String,DB.Sql.read(db,reconcile_cost_sql(detail)))
+    state : String <- credit_settle_for(db,request,"reconciled",Tx.trim_nl(cost),True{})
+    IO.print(state)
+
 def run(+db: String, +action: String, +id: String, +provider: String, +harness: String, +funding: String, +secret_ref: String, +organization: String, +detail: String, +session: String) -> IO(Unit):
   do IO<Unit>:
     ready : Unit <- ensure(db)
@@ -1278,7 +1287,9 @@ def run(+db: String, +action: String, +id: String, +provider: String, +harness: 
       Bool.pick(IO(Unit),String.eq(action,"pool"),pool(db,organization),
       Bool.pick(IO(Unit),String.eq(action,"observe"),observe(db,authority_of(session),id,detail),
       Bool.pick(IO(Unit),String.eq(action,"import-credit"),import_credit(db,authority_of(session),id,organization,detail),
-      unknown_action(action)))))))))
+      Bool.pick(IO(Unit),String.eq(action,"import-spend"),import_spend(db,authority_of(session),id,organization,detail),
+      Bool.pick(IO(Unit),String.eq(action,"reconcile"),reconcile_action(db,id,detail),
+      unknown_action(action)))))))))))
     IO.pure(Unit,Unit{})
 
 # The launch path records the account and funding route for the attempt it is
