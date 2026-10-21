@@ -11,17 +11,27 @@
 
 import Base
 
-# The durable classes of a project's stored data. Scratch and build output are
-# transient; checkout state and logs retain work; shared assets and Git objects
-# are content-addressed and reusable.
+# The durable classes of a project's stored data. Scratch, build output, export
+# trees and checkouts are transient: they hold work that cleanup may reclaim
+# once the owning session has settled. Shared assets and Git objects are
+# content-addressed and reusable; log evidence retains coordinator output.
 type StorageClass is Data:
   Scratch{}
   BuildOutput{}
+  Export{}
   Checkout{}
   SharedImmutable{}
   GitObject{}
   LogEvidence{}
   Unclassified{}
+
+def is_transient(+c: StorageClass) -> Bool:
+  match c:
+    case Scratch{}: True{}
+    case BuildOutput{}: True{}
+    case Export{}: True{}
+    case Checkout{}: True{}
+    case other: False{}
 
 # One observed preservation fact. Present carries the evidence detail a receipt
 # can replay, for example the live lease holder or the process identity.
@@ -42,10 +52,12 @@ type Owner is Data:
 # facts from their durable source and from the host primitives. The database
 # fact protects an active coordinator database path and every ancestor of it;
 # it is independent of the path owner because a coordinator database must
-# survive any cleanup run.
+# survive any cleanup run. The execution fact names a non-exited execution of
+# the owning session; the policy consults it for transient classes only.
 type Facts is Data:
   Facts{
     owner: Owner,
+    execution: Presence,
     database: Presence,
     lease: Presence,
     process: Presence,

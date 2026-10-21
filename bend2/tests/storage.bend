@@ -81,7 +81,7 @@ def db_setup(+db: String, +root: String) -> IO(Unit):
     IO.pure(Unit, Unit{})
 
 def clear_facts() -> T.Facts:
-  T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}
+  T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}
 
 def maybe_nat(value: Maybe<Nat>) -> Nat:
   match value:
@@ -199,9 +199,9 @@ def check_present_presence(label: String, presence: T.Presence) -> IO(Unit):
 
 def pure_owner_database_checks() -> IO(Unit):
   do IO<Unit>:
-    owner_bad : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerDiffers{"other"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
-    database_live : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Present{"database-path"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
-    database_unknown : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Unknown{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
+    owner_bad : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerDiffers{"other"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
+    database_live : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Present{"database-path"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
+    database_unknown : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Unknown{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
     a : Unit <- check_decision("owner-mismatch", owner_bad, "owner-mismatch")
     b : Unit <- check_decision("database-path", database_live, "database-path")
     c : Unit <- check_decision("database-path-unknown", database_unknown, "database-path-unknown")
@@ -209,9 +209,9 @@ def pure_owner_database_checks() -> IO(Unit):
 
 def pure_runtime_checks() -> IO(Unit):
   do IO<Unit>:
-    lease_live : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Present{"lease"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
-    process_live : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Present{"pid"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
-    runtime_live : T.Candidate = T.Candidate{"/x", T.BuildOutput{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"pid"}, T.Absent{}, T.Absent{}}}
+    lease_live : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Present{"lease"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
+    process_live : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"pid"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
+    runtime_live : T.Candidate = T.Candidate{"/x", T.BuildOutput{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"pid"}, T.Absent{}, T.Absent{}}}
     a : Unit <- check_decision("lease-live", lease_live, "lease-live")
     b : Unit <- check_decision("process-live", process_live, "process-live")
     c : Unit <- check_decision("runtime-input-live", runtime_live, "runtime-input-live")
@@ -219,9 +219,9 @@ def pure_runtime_checks() -> IO(Unit):
 
 def pure_checkout_checks() -> IO(Unit):
   do IO<Unit>:
-    dirty : T.Candidate = T.Candidate{"/x", T.Checkout{}, "owner", "proof", 1n, "dir:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"worktree"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
-    unpublished : T.Candidate = T.Candidate{"/x", T.Checkout{}, "owner", "proof", 1n, "dir:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"1"}, T.Absent{}, T.Absent{}, T.Absent{}}}
-    ref_live : T.Candidate = T.Candidate{"/x", T.GitObject{}, "owner", "proof", 1n, "dir:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"aa"}, T.Absent{}}}
+    dirty : T.Candidate = T.Candidate{"/x", T.Checkout{}, "owner", "proof", 1n, "dir:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"worktree"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
+    unpublished : T.Candidate = T.Candidate{"/x", T.Checkout{}, "owner", "proof", 1n, "dir:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"1"}, T.Absent{}, T.Absent{}, T.Absent{}}}
+    ref_live : T.Candidate = T.Candidate{"/x", T.GitObject{}, "owner", "proof", 1n, "dir:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"aa"}, T.Absent{}}}
     a : Unit <- check_decision("worktree-dirty", dirty, "worktree-dirty")
     b : Unit <- check_decision("unpublished-commits", unpublished, "unpublished-commits")
     c : Unit <- check_decision("ref-live", ref_live, "ref-live")
@@ -229,12 +229,26 @@ def pure_checkout_checks() -> IO(Unit):
 
 def pure_pending_checks() -> IO(Unit):
   do IO<Unit>:
-    pending : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"1"}}}
+    pending : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"1"}}}
     git_clear : T.Candidate = T.Candidate{"/x", T.GitObject{}, "owner", "proof", 1n, "dir:1:1", clear_facts()}
     base : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", clear_facts()}
     a : Unit <- check_decision("pending-attempt", pending, "pending-attempt")
     b : Unit <- check_decision("git-object-report-only", git_clear, "git-object-report-only")
     c : Unit <- check_decision("scratch-clear", base, "remove:scratch-settled")
+    IO.pure(Unit, Unit{})
+
+def pure_transient_checks() -> IO(Unit):
+  do IO<Unit>:
+    export_clear : T.Candidate = T.Candidate{"/x", T.Export{}, "owner", "proof", 1n, "dir:1:1", clear_facts()}
+    checkout_clear : T.Candidate = T.Candidate{"/x", T.Checkout{}, "owner", "proof", 1n, "dir:1:1", clear_facts()}
+    execution_live : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "dir:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Present{"execution:1"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
+    execution_unknown : T.Candidate = T.Candidate{"/x", T.BuildOutput{}, "owner", "proof", 1n, "dir:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Unknown{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
+    evidence_clear : T.Candidate = T.Candidate{"/x", T.LogEvidence{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Present{"execution:1"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
+    a : Unit <- check_decision("export-clear", export_clear, "remove:export-settled")
+    b : Unit <- check_decision("checkout-clear", checkout_clear, "remove:checkout-clean-published")
+    c : Unit <- check_decision("execution-live", execution_live, "execution-live")
+    d : Unit <- check_decision("execution-unknown", execution_unknown, "execution-unknown")
+    e : Unit <- check_decision("log-evidence-ignores-execution", evidence_clear, "remove:evidence-settled")
     IO.pure(Unit, Unit{})
 
 def pure_presence_checks() -> IO(Unit):
@@ -251,8 +265,10 @@ def pure_identity_checks() -> IO(Unit):
     runtime : Unit <- pure_runtime_checks()
     checkout : Unit <- pure_checkout_checks()
     pending : Unit <- pure_pending_checks()
+    transient : Unit <- pure_transient_checks()
     presence : Unit <- pure_presence_checks()
     IO.pure(Unit, Unit{})
+
 def presence_detail(presence: T.Presence) -> String:
   match presence:
     case T.Present{detail}: detail
@@ -304,7 +320,7 @@ def process_checks(+root: String) -> IO(Unit):
 
 def facts_database_or_unknown(+facts: T.Facts) -> T.Presence:
   match facts:
-    case T.Facts{owner, database, lease, process, dirty, unpublished, runtime_input, ref, pending_attempt}: database
+    case T.Facts{owner, execution, database, lease, process, dirty, unpublished, runtime_input, ref, pending_attempt}: database
 
 def lease_detail_refused(+detail: String, +root: String) -> Bool:
   Bool.and(String.starts_with(detail, "storage apply refused: cooperative root writer lease"), String.contains(detail, root))
@@ -739,7 +755,7 @@ def malformed_entries_check(+root: String) -> IO(Unit):
 
 def facts_owner_unknown(facts: T.Facts) -> Bool:
   match facts:
-    case T.Facts{owner, database, lease, process, dirty, unpublished, runtime_input, ref, pending_attempt}:
+    case T.Facts{owner, execution, database, lease, process, dirty, unpublished, runtime_input, ref, pending_attempt}:
       match owner:
         case T.OwnerUnknown{}: True{}
         case other: False{}
@@ -764,7 +780,7 @@ def parent_rename_check(+db: String, +root: String) -> IO(Unit):
 
 def facts_lease(+facts: T.Facts) -> T.Presence:
   match facts:
-    case T.Facts{owner, database, lease, process, dirty, unpublished, runtime_input, ref, pending_attempt}: lease
+    case T.Facts{owner, execution, database, lease, process, dirty, unpublished, runtime_input, ref, pending_attempt}: lease
 
 def active_retained_apply(result: Result<&1,&1,U32 & String,List<T.Receipt>>, +path: String) -> IO(Unit):
   match result:

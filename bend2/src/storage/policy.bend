@@ -4,11 +4,10 @@
 # validates that declaration against observed facts, derives the first
 # preservation reason, and renders the preview and receipt data the product
 # surface exposes. Timestamps are absent from every input.
-#
 # Preservation order is fixed so a receipt reason is reproducible: database
-# path, owner, lease, process, runtime input, dirty worktree, unpublished
-# commits, live ref, pending attempt, class. The first present or unknown fact
-# wins.
+# path, owner, transient owner-execution gate, lease, process, runtime input,
+# dirty worktree, unpublished commits, live ref, pending attempt, class. The
+# first present or unknown fact wins.
 
 import Base
 import ./types.bend as T
@@ -19,6 +18,7 @@ def class_name(+c: T.StorageClass) -> String:
   match c:
     case T.Scratch{}: "scratch"
     case T.BuildOutput{}: "build-output"
+    case T.Export{}: "export"
     case T.Checkout{}: "checkout"
     case T.SharedImmutable{}: "shared-immutable"
     case T.GitObject{}: "git-object"
@@ -30,11 +30,12 @@ def class_name(+c: T.StorageClass) -> String:
 def classify(+marker: String) -> T.StorageClass:
   Bool.pick(T.StorageClass, String.eq(marker, "scratch"), T.Scratch{},
   Bool.pick(T.StorageClass, String.eq(marker, "build-output"), T.BuildOutput{},
+  Bool.pick(T.StorageClass, String.eq(marker, "export"), T.Export{},
   Bool.pick(T.StorageClass, String.eq(marker, "checkout"), T.Checkout{},
   Bool.pick(T.StorageClass, String.eq(marker, "shared-immutable"), T.SharedImmutable{},
   Bool.pick(T.StorageClass, String.eq(marker, "git-object"), T.GitObject{},
   Bool.pick(T.StorageClass, String.eq(marker, "log-evidence"), T.LogEvidence{},
-    T.Unclassified{}))))))
+    T.Unclassified{})))))))
 
 def owner_reason_of(+expected: String, +owner: T.Owner) -> String:
   match owner:
@@ -58,22 +59,33 @@ def first_reason(reasons: List<String>) -> String:
     case Con{+head, tail}:
       Bool.pick(String, String.is_empty(head), first_reason(tail), head)
 
+def transient_class(+c: T.StorageClass) -> Bool:
+  T.is_transient(c)
+
 def class_reason(+c: T.StorageClass) -> String:
   match c:
     case T.Unclassified{}: "unclassified"
     case T.Scratch{}: ""
     case T.BuildOutput{}: ""
+    case T.Export{}: ""
     case T.Checkout{}: ""
     case T.SharedImmutable{}: ""
     case T.GitObject{}: "git-object-report-only"
     case T.LogEvidence{}: ""
 
+# A transient candidate is admitted only after its owning session has no
+# non-exited execution. Unknown execution evidence preserves the candidate,
+# and the fact is ignored for classes outside the transient set.
+def execution_reason(+cls: T.StorageClass, +execution: T.Presence) -> String:
+  Bool.pick(String, transient_class(cls), presence_reason(execution, "execution-live", "execution-unknown"), "")
+
 def preserve_reason(+cls: T.StorageClass, +owner: String, +facts: T.Facts) -> String:
   match facts:
-    case T.Facts{o, database, lease, process, dirty, unpublished, runtime_input, ref, pending_attempt}:
+    case T.Facts{o, execution, database, lease, process, dirty, unpublished, runtime_input, ref, pending_attempt}:
       first_reason([
         presence_reason(database, "database-path", "database-path-unknown"),
         owner_reason(owner, o),
+        execution_reason(cls, execution),
         presence_reason(lease, "lease-live", "lease-unknown"),
         presence_reason(process, "process-live", "process-unknown"),
         presence_reason(runtime_input, "runtime-input-live", "runtime-input-unknown"),
@@ -88,6 +100,7 @@ def remove_reason(+c: T.StorageClass) -> String:
   match c:
     case T.Scratch{}: "scratch-settled"
     case T.BuildOutput{}: "build-inputs-settled"
+    case T.Export{}: "export-settled"
     case T.Checkout{}: "checkout-clean-published"
     case T.SharedImmutable{}: "shared-reference-absent"
     case T.GitObject{}: "git-object-report-only"

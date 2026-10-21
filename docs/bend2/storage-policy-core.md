@@ -20,6 +20,7 @@ A storage root declares one class:
 | --- | --- | --- |
 | `scratch` | Scratch | Per-attempt temporary files. |
 | `build-output` | Build output | Build products and checkouts derived from source. |
+| `export` | Export | Completed export trees and generated deliverables. |
 | `checkout` | Checkout | A Git worktree or working checkout. |
 | `shared-immutable` | Shared immutable | Reusable assets and caches. |
 | `git-object` | Git objects | A loose-object prefix store. |
@@ -48,16 +49,17 @@ homelab path or relocate existing files.
 
 storage-policy reports each configured root, its class and whether it appears
 in BATON_STORAGE_EXCLUSIVE_ROOTS. That setting records an operator declaration;
-it does not prove that writers coordinate with cleanup. A root is covered only
-when its class is `log-evidence` and the coordinator database records a
-registered log, a retained generation (`log` or `base`), or an execution
-directory under it. An absolute log-evidence root with no such reference is an
-arbitrary root and is refused. The policy reports `covered` per root,
-`apply:"lease-gated"` when every configured root is covered, `apply:"refused"`
-when any root is not covered, and `apply:"ready"` when the root list is empty.
-storage-apply SESSION acquires the per-root writer lease described below. An
-empty root list returns an empty receipt. Preview and policy commands remain
-available.
+it does not prove that writers coordinate with cleanup. A `log-evidence` root
+is covered when the coordinator database records a registered log, a retained
+generation (`log` or `base`), or an execution directory under it. A transient
+`scratch`, `build-output`, `export` or `checkout` root is covered when a
+session workspace or execution directory is recorded under it. An absolute root
+with no such reference is arbitrary and is refused. The policy reports
+`covered` per root, `apply:"lease-gated"` when every configured root is covered,
+`apply:"refused"` when any root is not covered, and `apply:"ready"` when the
+root list is empty. storage-apply SESSION acquires the per-root writer lease
+described below. An empty root list returns an empty receipt. Preview and
+policy commands remain available.
 
 ## Preservation evidence
 
@@ -67,6 +69,7 @@ Each candidate carries the measured byte count, the host identity
 - active coordinator database path or an ancestor of one;
 - owner match against the recorded session or execution;
 - live lease;
+- settled owner execution (transient classes only);
 - live process reference;
 - runtime input (open descriptor or mapped file);
 - dirty worktree;

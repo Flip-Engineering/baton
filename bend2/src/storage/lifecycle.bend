@@ -144,19 +144,30 @@ def unproven_roots(specs: List<&2,RootSpec>, +exclusive: List<&2,String>, +acc: 
       Bool.pick(String, exclusive_member(path, exclusive), unproven_roots(tail, exclusive, acc),
         Bool.pick(String, String.is_empty(acc), path, acc))
 
-# Storage cleanup is admitted only for roots whose managed writer paths hold
-# the cooperative lease. The managed writer paths are retained output and its
-# attempt spool/checkpoint, so the covered class is `log-evidence`. Absolute
-# configuration is required because the recorded writer paths are canonical.
+# Storage cleanup is admitted for roots whose class is either managed by the
+# cooperative writer lease (log evidence) or whose transient owner has settled.
+# Absolute configuration is required because the recorded paths are canonical.
 def covered_class(+cls: T.StorageClass) -> Bool:
   match cls:
     case T.LogEvidence{}: True{}
+    case T.Scratch{}: True{}
+    case T.BuildOutput{}: True{}
+    case T.Export{}: True{}
+    case T.Checkout{}: True{}
     case other: False{}
 
 def covered_root(+spec: RootSpec) -> Bool:
   match spec:
     case RootSpec{cls, path, source}:
       Bool.and(covered_class(cls), String.starts_with(path, "/"))
+
+
+def workspace_rows_under(rows: List<&2,S.SessionRow>, +root: String) -> Bool:
+  match rows:
+    case Nil{}: False{}
+    case Con{head, tail}:
+      match head:
+        case S.SessionRow{id, workspace, branch, base}: Bool.or(S.path_under(workspace, root), workspace_rows_under(tail, root))
 
 def log_rows_under(rows: List<&2,S.LogRow>, +root: String) -> Bool:
   match rows:
@@ -186,9 +197,12 @@ def referenced_root(+spec: RootSpec, +state: S.State) -> Bool:
     case RootSpec{cls, path, source}:
       match state:
         case S.State{sessions, executions, logs, pending, databases, retained, valid}:
+          +transient = Bool.and(P.transient_class(cls),
+            Bool.or(workspace_rows_under(sessions, path), execution_rows_under(executions, path)))
           Bool.and(covered_root(spec),
-            Bool.or(log_rows_under(logs, path),
-              Bool.or(execution_rows_under(executions, path), retained_rows_under(retained, path))))
+            Bool.or(transient,
+              Bool.or(log_rows_under(logs, path),
+                Bool.or(execution_rows_under(executions, path), retained_rows_under(retained, path)))))
 
 def uncovered_roots_state(specs: List<&2,RootSpec>, +state: S.State, +acc: String) -> String:
   match specs:
