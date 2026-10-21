@@ -240,6 +240,11 @@ def path_under(+path: String, +parent: String) -> Bool:
   Bool.pick(Bool, String.is_empty(parent), False{},
     Bool.or(String.eq(path, parent), String.starts_with(path, parent ++ "/")))
 
+# DSH patches are retained beside their native custody directory. Storage
+# derives their owner and active lease from the same execution row.
+def execution_path(+path: String, +directory: String) -> Bool:
+  Bool.or(path_under(path,directory),path_under(path,directory ++ ".dsh"))
+
 def member(+value: String, values: List<String>) -> Bool:
   match values:
     case Nil{}: False{}
@@ -259,7 +264,7 @@ def execution_owners(rows: List<&2,ExecutionRow>, +path: String, acc: List<Strin
     case Con{head, tail}:
       match head:
         case ExecutionRow{session, +id, directory, phase, status}:
-          next = owner_append(path_under(path, directory), session, acc)
+          next = owner_append(execution_path(path, directory), session, acc)
           execution_owners(tail, path, next)
 
 def workspace_owners(rows: List<&2,SessionRow>, +path: String, acc: List<String>) -> List<String>:
@@ -305,7 +310,7 @@ def active_execution(rows: List<&2,ExecutionRow>, +path: String) -> String:
     case Con{head, tail}:
       match head:
         case ExecutionRow{session, +id, directory, phase, status}:
-          Bool.pick(String, Bool.and(path_under(path, directory), Bool.not(String.eq(phase, "exited"))),
+          Bool.pick(String, Bool.and(execution_path(path, directory), Bool.not(String.eq(phase, "exited"))),
             Bool.pick(String, String.is_empty(id), "execution", "execution:" ++ id),
             active_execution(tail, path))
 
