@@ -36,13 +36,6 @@ function diagnostic_join(site: string, values: (string | number)[],
   return result;
 }
 
-// Facts-only passes are OFF by default on this lineage. They converge
-// own/hot/stat before emitting C, but on the large fixtures they measured
-// 22-24% slower than the two full passes they replace, with identical output
-// (paired interleaved A/B, 8 pairs per fixture, receipts in the round record).
-// Set BEND_FACTS_ONLY_FIRST=1 to enable them; the code path is unchanged.
-const FACTS_ONLY_FIRST = process.env.BEND_FACTS_ONLY_FIRST === "1";
-
 // Comp
 // ====
 
@@ -3773,23 +3766,28 @@ export function compile_book(book: Bend.Book): string {
       own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size, dry });
     return fl;
   };
-  // Emitted callees first until a pass changes nothing (own, hot and stat
-  // only grow): that pass is kept.
+  // Dry emission walks converge the monotone facts; they still run
+  // emit_body/emit_args/val_own and skip only retained lines and spin
+  // sources. Each iteration gets a fresh File. The one real pass after the
+  // fixed point must not add facts; growth means the dry walk missed a
+  // producer and the result is not safe to emit.
   let fl: File;
   let was: number;
-  if (FACTS_ONLY_FIRST) {
-    // These passes compute the same monotone facts as emission while
-    // file_push avoids retaining generated C lines. The regular loop then
-    // emits and retains the stable pass from the converged fact sets.
-    do {
-      was = facts();
-      pass(done_defs(cb).reverse(), true);
-    } while (was !== facts());
-  }
   do {
     was = facts();
-    fl = pass(emission_defs, false);
+    fl = pass(emission_defs, true);
   } while (was !== facts());
+  const before = { own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size };
+  fl = pass(emission_defs, false);
+  const after = { own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size };
+  diagnostic("facts.no_growth", { before, after,
+    added: { own: after.own - before.own, hot: after.hot - before.hot,
+      stat: after.stat - before.stat } });
+  if (after.own !== before.own || after.hot !== before.hot
+    || after.stat !== before.stat) {
+    die("facts grew during real emission; the dry walk missed a producer: "
+      + JSON.stringify({ before, after }));
+  }
   // Foreign source text and request stubs do not contribute to own/hot/stat/lend facts.
   // Emit them once after the fixed point reaches its stable pass.
   diagnostic("requests.begin", { pass: diagnostic_pass, segments: fl.segs.length });
