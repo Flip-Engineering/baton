@@ -108,7 +108,7 @@ def receiver_model(+session: String) -> String:
   "(SELECT length(coalesce(model,''))>0 FROM sessions WHERE id=" ++ C.q(session) ++ ")"
 
 def receiver_admitted(+session: String, +endpoint: String, +cwd: String) -> String:
-  "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code','dsh')) AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ receiver_model(session) ++ " AND " ++ receiver_directory(session,cwd) ++ ")"
+  "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code','dsh')) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ receiver_model(session) ++ " AND " ++ receiver_directory(session,cwd) ++ ")"
 
 def receiver_update_sql(+session: String, +endpoint: String, +cwd: String, +admitted: String) -> String:
   "UPDATE sessions SET workspace=CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN " ++ C.q(cwd) ++ " ELSE workspace END,endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"

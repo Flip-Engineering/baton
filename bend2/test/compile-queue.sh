@@ -142,7 +142,7 @@ wait "$p2" || bad 'identical cc second requester failed'
 [ "$(count_starts)" = 1 ] && pass 'identical cc shared one execution' || bad "identical cc starts=$(count_starts)"
 [ "$(cat "$T/ident1")" = "$(cat "$T/ident2")" ] && pass 'identical cc artifacts match' || bad 'identical cc artifacts differ'
 # Successful results store bare artifact names and retain the declared bytes.
-ident_key=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+ident_key=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
   --input "$T/input.c" --artifact "binary=$T/ident1" --option 'test=ident' \
   --token tok-ident1 -- "$FAKE" --tag ident --log "$LOG" -o "$T/ident1" "$T/input.c")
 printf 'artifact=binary\tfile\t' > "$T/artifact-row-prefix"
