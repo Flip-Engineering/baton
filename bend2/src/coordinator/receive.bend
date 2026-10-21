@@ -461,6 +461,8 @@ def completed(+db: String, +session: String, +id: String, +log: String, attempt:
     failed : Bool <- outcome_failed(db,outcome)
     transient : Bool <- transient_provider_error(db,outcome)
     +pending_cursor : String <- IO.pure(String,Bool.pick(String,Bool.and(failed,Bool.not(Bool.and(transient,observation_clear(outcome)))),cursor,"0"))
+    attempt_current : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ "),'');"))
+    account_settled : Unit <- Turn.settle_account_attempt(db,Tx.trim_nl(attempt_current),outcome)
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
     observer_released : Unit <- release_observer(lock)
     native_released : Unit <- release_native(db,handle)

@@ -207,6 +207,10 @@ def record_exit(db: String, player: String, +id: String, log: String, outcome: O
   match outcome:
     case Ended{status,event,error,incomplete}: Stop.exited(db,player,id,status,event,error,generation_log(log,id))
 
+def settle_account_attempt(+db: String, +attempt: String, +outcome: Outcome) -> IO(Unit):
+  match outcome:
+    case Ended{status,event,error,incomplete}: Accounts.attempt_completed_event(db,attempt,status,error,event)
+
 def player_finished(+db: String, player: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
@@ -1585,6 +1589,7 @@ def direct_completed(+db: String, +player: String, +id: String, +log: String, +d
   (+outcome,deliveries)=observation
   do IO<Unit>:
     exited : Unit <- record_exit(db,player,id,log,outcome)
+    account_settled : Unit <- settle_account_attempt(db,directory,outcome)
     prepared : Unit <- prepare(db,player,id,log,directory ++ "/native.stderr",outcome)
     observer_released : Unit <- direct_release_lock(lock)
     native_released : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.release(handle)
@@ -1595,10 +1600,11 @@ def direct_completed(+db: String, +player: String, +id: String, +log: String, +d
     wake : Result<&1,&1,U32 & String,Unit> <- direct_settled_wake(db,player,id,log,outcome,settled)
     IO.pass(Unit,wake)
 
-def direct_unstarted(+db: String, +player: String, +id: String, +log: String, +directory: String, lock: Maybe<U32>, error: String) -> IO(Unit):
+def direct_unstarted(+db: String, +player: String, +id: String, +log: String, +directory: String, lock: Maybe<U32>, +error: String) -> IO(Unit):
   do IO<Unit>:
     +outcome : Outcome <- IO.pure(Outcome,Ended{"start failed","","Player process could not start: " ++ error,True{}})
     exited : Unit <- record_exit(db,player,id,log,outcome)
+    account_settled : Unit <- Accounts.attempt_completed_event(db,directory,"start failed","Player process could not start: " ++ error,"")
     prepared : Unit <- prepare(db,player,id,log,directory ++ "/native.stderr",outcome)
     released : Unit <- direct_release_lock(lock)
     finished : Result<&1,&1,U32 & String,Unit> <- finish(db,player,id,log,outcome)
