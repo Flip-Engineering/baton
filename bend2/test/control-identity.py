@@ -233,7 +233,8 @@ class ControlIdentity(unittest.TestCase):
         self.assertEqual(nested_native['askpass'], 'false')
         for suffix in ('', '.git'):
             helper = pairs[f'credential.https://github.com/flip-engineer/flip{suffix}.helper']
-            self.assertIn('--repository flip-engineer/flip', shlex.split(helper[1:]))
+            arguments = shlex.split(helper[1:])
+            self.assertEqual(arguments[arguments.index('--repository') + 1], 'flip-engineer/flip')
         self.assertFalse(any('Flip-Engineering/baton' in key for key in pairs), pairs)
         self.assertEqual(pairs['diff.algorithm'], 'patience')
         self.finish(nested_stream, 'The nested worker retained its assigned repository.')
