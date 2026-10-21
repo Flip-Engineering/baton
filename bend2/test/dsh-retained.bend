@@ -7,6 +7,7 @@ import ../src/host/process.bend as P
 import ../src/host/instance.bend as Custody
 import ../src/host/session-lock.bend as Lock
 import ../src/git/text.bend as Tx
+import ../src/storage/state.bend as Storage
 
 def print_arg_list(+label: String, xs: List<String>) -> IO(Unit):
   match xs:
@@ -60,6 +61,10 @@ def admit(+db: String, +directory: String, +cmd: String, +model: String, +effort
 
 def run(args: List<String>) -> IO(Unit):
   match args:
+    case "storage" <> +directory <> +path <> phase <> Nil{}: do IO<Unit>:
+      +rows : List<&2,Storage.ExecutionRow> <- IO.pure(List<&2,Storage.ExecutionRow>,[Storage.ExecutionRow{"dsh-fixture","turn",directory,phase,""}])
+      IO.print("owners\t" ++ Tx.join(",",Storage.execution_owners(rows,path,Nil{})))
+      IO.print("active\t" ++ Storage.active_execution(rows,path))
     case "--instance-owner" <> db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
     case "shutdown" <> db <> Nil{}: IO.try(Unit,Custody.Instance.shutdown(db))
     case "admit" <> db <> directory <> cmd <> model <> effort <> native <> Nil{}:

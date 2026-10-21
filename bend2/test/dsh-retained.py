@@ -134,6 +134,25 @@ print(json.dumps({'argv': args, 'prompt': prompt, 'home': os.environ['DSH_HOME']
         self.assertEqual((retry / 'prompt.txt').read_text(), 'fixture task')
         self.assertTrue((retry / 'acknowledged').is_file())
 
+    def test_patch_storage_tracks_the_execution_owner_and_lease(self):
+        for path in [self.patches, self.patches / 'dsh-model.patch.yml']:
+            with self.subTest(path=path):
+                active = subprocess.run(
+                    [str(EXE), 'storage', str(self.attempt), str(path), 'running'],
+                    text=True, capture_output=True, check=True)
+                self.assertIn('owners\tdsh-fixture', active.stdout)
+                self.assertIn('active\texecution:turn', active.stdout)
+                ended = subprocess.run(
+                    [str(EXE), 'storage', str(self.attempt), str(path), 'exited'],
+                    text=True, capture_output=True, check=True)
+                self.assertIn('owners\tdsh-fixture', ended.stdout)
+                self.assertNotIn('execution:turn', ended.stdout)
+        unrelated = subprocess.run(
+            [str(EXE), 'storage', str(self.attempt), str(self.root / 'attempt.dsh-other'), 'running'],
+            text=True, capture_output=True, check=True)
+        self.assertNotIn('dsh-fixture', unrelated.stdout)
+        self.assertNotIn('execution:turn', unrelated.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -56,6 +56,8 @@ Retained attempts store both patches in `<attempt>.dsh`. Native custody creates
 `<attempt>`, seals `prompt.txt` and retains its manifest and terminal markers.
 The launch argv records the patch paths; a retry keeps the seat's `DSH_HOME`
 and supplies the native session ID through `--session-id`.
+Configured-root storage cleanup derives the patch directory's owner and active
+lease from the same execution row as its custody directory.
 
 ## Canary evidence
 
