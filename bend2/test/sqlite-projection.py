@@ -23,22 +23,28 @@ SCRATCH = ROOT / '.scratch/bend2'
 FIXTURE = SCRATCH / 'sqlite-projection'
 
 
-def build_fixture():
-    SCRATCH.mkdir(parents=True, exist_ok=True)
-    lines = SQLITE_C.read_text().splitlines(keepends=True)
-    start = next(i for i, line in enumerate(lines)
-                 if line.startswith('static int baton_sql_install_projection'))
+def function_end(lines, start):
     end = start
     while lines[end].rstrip() != '}':
         end += 1
+    return end
+
+
+def build_fixture():
+    SCRATCH.mkdir(parents=True, exist_ok=True)
+    lines = SQLITE_C.read_text().splitlines(keepends=True)
     busy = next(i for i, line in enumerate(lines)
                 if line.startswith('static int baton_sql_busy'))
-    busy_end = busy
-    while lines[busy_end].rstrip() != '}':
-        busy_end += 1
+    busy_end = function_end(lines, busy)
+    encoding = next(i for i, line in enumerate(lines)
+                    if line.startswith('#define BATON_SQL_NOT_UTF8'))
+    read = next(i for i, line in enumerate(lines)
+                if line.startswith('static void baton_sql_read_call'))
+    read_end = function_end(lines, read)
     combined = SCRATCH / 'sqlite-projection-combined.c'
-    combined.write_text(''.join(lines[:end + 1])
-                        + ''.join(lines[busy:busy_end + 1])
+    combined.write_text(''.join(lines[:busy_end + 1])
+                        + 'typedef struct { void *data; } IoWork;\n\n'
+                        + ''.join(lines[encoding:read_end + 1])
                         + FIXTURE_MAIN.read_text())
     result = subprocess.run(
         [os.environ.get('CC', 'cc'), '-Wall', '-Wextra', '-O2',
@@ -226,6 +232,21 @@ class SqliteProjection(unittest.TestCase):
         self.assertEqual(self.query(
             "SELECT count(*) FROM sqlite_master WHERE type='table' "
             "AND name='release_probe'"), 1)
+
+    def test_read_call_releases_retained_transaction(self):
+        self.assertEqual(self.install().returncode, 0)
+        result = self.install('read-call')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('read_call=1', result.stdout)
+        self.assertIn('output=0', result.stdout)
+        writer = sqlite3.connect(self.db, timeout=0, isolation_level=None)
+        self.addCleanup(writer.close)
+        writer.execute('BEGIN IMMEDIATE')
+        writer.execute('CREATE TABLE read_call_release_probe(x)')
+        writer.execute('COMMIT')
+        self.assertEqual(self.query(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' "
+            "AND name='read_call_release_probe'"), 1)
 
     def test_module_native_change_trigger_does_not_force_reinstall(self):
         self.assertEqual(self.install().returncode, 0)

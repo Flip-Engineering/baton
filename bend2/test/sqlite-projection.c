@@ -37,8 +37,25 @@ static int print_row(void *context, int count, char **values, char **columns) {
 
 int main(int argc, char **argv) {
   if (argc < 3) {
-    fprintf(stderr, "usage: hold|hold-read|install|install-busy|state|recover|bad DB [N]\n");
+    fprintf(stderr, "usage: hold|hold-read|read-call|install|install-busy|state|recover|bad DB [N]\n");
     return 2;
+  }
+  if (!strcmp(argv[1], "read-call")) {
+    BatonSql call;
+    memset(&call, 0, sizeof(call));
+    IoWork work;
+    work.data = &call;
+    char sql[] = "BEGIN; SELECT count(*) FROM messages;";
+    call.path = argv[2];
+    call.sql = sql;
+    baton_sql_read_call(&work);
+    printf("read_call=1 code=%d output=%s error=%s\n",
+           call.code, call.output ? call.output : "",
+           call.error ? call.error : "");
+    int code = call.code;
+    free(call.output);
+    free(call.error);
+    return code == SQLITE_OK ? 0 : 1;
   }
   sqlite3 *db = NULL;
   int rc = sqlite3_open(argv[2], &db);
