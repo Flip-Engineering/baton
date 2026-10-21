@@ -384,6 +384,15 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(self.reconcile('attempt-1', '5.00'), 'settled')
         self.assertEqual(self.reserve('attempt-2')[3], '195')
 
+    def test_account_reconcile_dispatches(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.assertEqual(self.settle('attempt-1', 'completed', ''), 'failed')
+        completed = self.account('reconcile', 'attempt-1',
+                                 detail=json.dumps({'cost': '12.50'}), session='')
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), 'settled')
+
     def authorize(self, attempt, session='leaf'):
         completed = self.entry('authorize', session, 'claude-code', attempt)
         self.assertEqual(completed.returncode, 0, completed.stderr)
