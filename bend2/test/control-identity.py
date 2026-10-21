@@ -4,6 +4,7 @@ import importlib.util
 import json
 import pathlib
 import shutil
+import subprocess
 import sys
 import unittest
 
@@ -130,6 +131,26 @@ class ControlIdentity(unittest.TestCase):
             self.assertEqual(hashlib.sha256(pathlib.Path(pin['copy']).read_bytes()).hexdigest(), pin['sha256'])
         self.assertEqual(list(self.home.rglob('private-key.pem')), [])
 
+    def test_native_worker_commit_uses_the_selected_series_over_shared_configuration(self):
+        self.root()
+        assignment = self.call('recruit', 'recipient', 'root', 'omp', 'kimi-code/k3', 'low',
+                               self.repo, 'recipient-branch', self.checkouts / 'recipient', self.base)
+        log = self.directory / 'recipient.jsonl'
+        self.call('receiver', 'recipient', self.fixture, log)
+        self.dispatch('dispatch-file', 'recipient-task', 'root', 'recipient', 'task', self.task)
+        stream, native = self.accept('recipient')
+        result = self.action(stream, git_commit=['worker.txt', 'worker change\n'])
+        self.assertEqual(result['git_commit']['code'], 0, result)
+        header = subprocess.run(
+            ['git', '-C', assignment['workspace'], 'cat-file', '-p', 'HEAD'],
+            check=True, text=True, capture_output=True, env=self.environment).stdout
+        for field in ('author', 'committer'):
+            self.assertIn(f"{field} Flip Baton - Kimi <{self.identities['kimi']['commitEmail']}> ", header)
+        self.assertNotIn('fixture@example.invalid', header)
+        self.finish(stream, 'The worker commit retained the selected series identity.')
+        self.exited('recipient')
+        controls.shutdown_fixture_owner(self)
+        self.eventually(lambda: not self.process_rows())
 
     def test_unmapped_recorded_model_refuses_configuration_before_launch(self):
         self.root()

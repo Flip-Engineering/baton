@@ -213,9 +213,15 @@ process memory and are excluded from arguments, URLs, files and diagnostics.
 Commit author and committer are editable commit metadata. The installation
 token authenticates the HTTPS push as the selected App. Current checked
 landing creates a squash commit under the reviewing Conductor's environment;
-the retained Player commits keep their own attribution. Verify source commit,
-landed commit and authenticated push actor separately. Conductor review,
-selected landing checks and repository protection provide review authority.
+the retained Player commits keep their own attribution. `baton land` and
+`baton push` read the current actor from `BATON_SESSION`, resolve its recorded
+model through the configured registry, and re-enter the command through the
+helper with `BATON2_GIT_IDENTITY_APPLIED` set. The helper's author and
+committer variables therefore take precedence over inherited repository or
+global Git configuration. An absent actor session or registry keeps the
+inherited environment. Verify source commit, landed commit and authenticated
+push actor separately. Conductor review, selected landing checks and
+repository protection provide review authority.
 
 ## Validation
 
