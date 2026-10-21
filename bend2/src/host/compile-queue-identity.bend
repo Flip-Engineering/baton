@@ -277,6 +277,18 @@ def CompileQueueIdentity.c_targets(lines: List<&2,String>) -> List<&2,String>:
       Bool.pick(List<&2,String>, String.is_empty(target), CompileQueueIdentity.c_targets(rest),
         target <> CompileQueueIdentity.c_targets(rest))
 
+# Only source extensions contribute closure targets. Other files contribute
+# their digest and size without materializing their bytes as text.
+def CompileQueueIdentity.text_source(path: String) -> Bool:
+  name = String.to_lower(CompileQueueIdentity.path_basename(path))
+  Bool.or(String.ends_with(name, ".bend"),
+    Bool.or(String.ends_with(name, ".c"), String.ends_with(name, ".h")))
+
+def CompileQueueIdentity.read_source_text(path: String) -> IO(String):
+  Bool.pick(IO(String), CompileQueueIdentity.text_source(path),
+    T.Text.read(path),
+    IO.pure(String, ""))
+
 def CompileQueueIdentity.closure_targets(path: String, text: String) -> List<&2,String>:
   name = String.to_lower(CompileQueueIdentity.path_basename(path))
   Bool.pick(List<&2,String>, String.ends_with(name, ".bend"),
@@ -310,7 +322,7 @@ def CompileQueueIdentity.walk(state: CompileQueueWalk, root: String) -> IO(Resul
                 Bool.pick(IO<Result<&1,&1,U32 & String,CompileQueueWalk>>, CompileQueueIdentity.list_contains(visited, resolved),
                   CompileQueueIdentity.walk(CompileQueueWalk{rest, visited, records}, root),
                   do IO<Result<&1,&1,U32 & String,CompileQueueWalk>>:
-                    text : String <- IO.try(String, T.Text.read(resolved))
+                    text : String <- IO.try(String, CompileQueueIdentity.read_source_text(resolved))
                     digest : String <- IO.try(String, CompileQueueIdentity.file_digest(resolved))
                     size : String <- IO.try(String, CompileQueueIdentity.file_size(resolved))
                     record = CompileQueueIdentity.path_relative(root, resolved) ++ "\t" ++ digest ++ "\t" ++ size
