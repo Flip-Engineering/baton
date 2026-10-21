@@ -20,7 +20,7 @@ def prepared(request: Agent.PreparedRequest) -> IO(Unit):
         case A.Invalid{cause}: IO.die(Unit,2,cause)
         case other: IO.die(Unit,2,"unsupported focused stop action")
 
-def legacy_command(db: String, command: C.Command) -> IO(Unit):
+def legacy_command(+db: String, command: C.Command) -> IO(Unit):
   match command:
     case C.ClearStop{session}: Stop.clear(db,session)
     case C.UsageWindowReset{+session,resets,source}: do IO<Unit>:
