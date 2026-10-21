@@ -368,9 +368,10 @@ const TOOLS = [
   },
   {
     name: 'baton2_resume',
-    description: 'Continue a recorded session through its registered receiver using its oldest pending input. An empty inbox after a failed native turn receives recovery guidance to continue the interrupted task in the same conversation.',
+    description: 'Continue a recorded session through its registered receiver using its oldest pending input. An empty inbox after a failed native turn receives recovery guidance to continue the interrupted task in the same conversation. clearStop removes a terminal stop without continuing the conversation.',
     inputSchema: { type: 'object', properties: { session: { type: 'string' },
-      liftStop: { type: 'boolean', description: 'Explicitly lift the current stop before resuming the same conversation.' } },
+      liftStop: { type: 'boolean', description: 'Explicitly lift the current stop before resuming the same conversation.' },
+      clearStop: { type: 'boolean', description: 'Remove the terminal stop only; deliver no input, drive no wake and start no native.' } },
       required: ['session'], additionalProperties: false },
   },
   {
@@ -1054,7 +1055,11 @@ function handleToolCall(msg) {
         result = coord('project-sessions', args.path);
         break;
       case 'baton2_resume':
-        result = coord('resume', args.session, ...(args.liftStop === true ? ['--lift-stop'] : []));
+        if (args.liftStop === true && args.clearStop === true) {
+          throw new Error('baton2_resume accepts liftStop or clearStop, not both.');
+        }
+        result = coord('resume', args.session, ...(args.clearStop === true ? ['--clear-stop']
+          : args.liftStop === true ? ['--lift-stop'] : []));
         break;
       case 'baton2_context_engines':
         result = coord('context-engines', ...(args?.scope === 'session' ? [sessionId] : []));

@@ -335,7 +335,7 @@ class AccountCredits(unittest.TestCase):
             "SELECT body FROM messages WHERE body LIKE 'accounts exhausted:%'")]
         self.assertEqual(len(exhausted), 1, exhausted)
         self.assertIn('account=omp-only', exhausted[0]['body'])
-        self.assertIn('was the last operator-recorded account', exhausted[0]['body'])
+        self.assertIn('no later selectable operator-recorded account remains', exhausted[0]['body'])
         self.assertIn(cause, exhausted[0]['body'])
 
 

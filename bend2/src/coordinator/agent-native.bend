@@ -194,7 +194,7 @@ def prepare_identity(+db: String, +session: String, +verb: String, +options: Lis
     select_identity(db,reply_identity_sql(session,options),"--request",options,"Select --to WORKER for exactly one pending unanswered native request addressed to this actor."),
     Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(String.eq(verb,"context-result"),Bool.not(D.present(options,"--id"))),
       select_identity(db,query_identity_sql(session),"--id",options,"This actor has no retained context query."),
-      Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(D.member(verb,["stop","force-stop"]),Bool.not(D.present(options,"--id"))),
+      Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(D.member(verb,["stop","force-stop"]),Bool.and(Bool.not(D.present(options,"--id")),Bool.not(D.present(options,"--clear")))),
         select_identity(db,stop_identity_sql(D.value(options,"--session",session),String.eq(verb,"force-stop")),"--id",options,"The selected session has no existing stop to force."),
         Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(D.member(verb,Tx.split_spaces("continue-task turn report ask dispatch knowledge-record knowledge-relate knowledge-promote context-query")),Bool.not(D.present(options,"--id"))),
           select_identity(db,new_identity_sql(verb),"--id",options,"The native operation identity could not be generated."),
@@ -327,9 +327,11 @@ def legacy_args_selected(+session: String, verb: String, +options: List<&2,D.Opt
       ["receiver",target,D.value(options,"--command",""),D.value(options,"--output-log",""),D.value(options,"--cwd","")],
       ["receiver",target,D.value(options,"--command",""),D.value(options,"--output-log","")])
     case "configure": ["configure",target,actual(options,saved,"--harness"),actual(options,saved,"--model"),actual(options,saved,"--effort"),actual(options,saved,"--command"),actual(options,saved,"--output-log"),D.value(options,"--expected-harness",D.value(saved,"--harness","")),D.value(options,"--expected-model",D.value(saved,"--model","")),D.value(options,"--expected-effort",D.value(saved,"--effort",""))]
-    case "resume": Bool.pick(List<String>,D.present(options,"--lift-stop"),["resume",target,"--lift-stop"],["resume",target])
-    case "stop": ["stop",target,D.value(options,"--id",""),D.value(options,"--reason","")]
+    case "resume": Bool.pick(List<String>,D.present(options,"--clear-stop"),["clear-stop",target],
+      Bool.pick(List<String>,D.present(options,"--lift-stop"),["resume",target,"--lift-stop"],["resume",target]))
+    case "stop": Bool.pick(List<String>,D.present(options,"--clear"),["clear-stop",target],["stop",target,D.value(options,"--id",""),D.value(options,"--reason","")])
     case "force-stop": ["force-stop",target,D.value(options,"--id","")]
+    case "clear-stop": ["clear-stop",target]
     case "recover-observer": ["recover-observer",target,D.value(options,"--observer","")]
     case "continue-task": ["continue-task",target,D.value(options,"--id","")]
     case "turn": Bool.pick(List<String>,D.present(options,"--text"),
