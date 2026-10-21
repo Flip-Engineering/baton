@@ -5,6 +5,8 @@
 # stays held after the clear and after an unknown observation; a past reset
 # observation makes the window selectable without starting an execution. The
 # stop.py and usage-windows.py suites cover operator-facing refusal responses.
+# Store publishes committed changes through the database owner. This executable
+# handles the owner and shutdown modes so the host can start and stop that owner.
 #
 # usage: clear-stop-quota DB
 import Base
@@ -12,6 +14,7 @@ import ../src/coordinator/commands.bend as C
 import ../src/coordinator/stop.bend as Stop
 import ../src/coordinator/usage-windows.bend as UW
 import ../src/host/sqlite.bend as DB
+import ../src/host/instance.bend as Custody
 import ../src/coordinator/agent-domain.bend as D
 import ../src/git/text.bend as Tx
 
@@ -171,6 +174,8 @@ def agent_parse_cases() -> IO(Unit):
 
 def main_args(args: List<String>) -> IO(Unit):
   match args:
+    case "--instance-owner" <> db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
+    case "--instance-shutdown" <> db <> Nil{}: IO.try(Unit,Custody.Instance.shutdown(db))
     case +path <> Nil{}: do IO<Unit>:
       setup(path)
       parse_cases()
