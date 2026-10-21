@@ -14,7 +14,7 @@ import Base
 import ../json/canonical.bend as J
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./wake.bend as Wake
 
 # The endpoint predicate the coordinator already uses for a runnable route.
