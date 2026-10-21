@@ -73,13 +73,17 @@ def stop_failed(error: U32 & String) -> IO(Unit):
   match error:
     case (code,text): IO.die(Unit,2,"fixture stop failed: " ++ U32.show(code) ++ ": " ++ text)
 
+def stop_result(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Fail{error}: stop_failed(error)
+    case Done{+saved}: Stop.validate(saved)
+
 def stop_session(+db: String, +session: String, +id: String, +reason: String) -> IO(Unit):
   do IO<Unit>:
     recorded : String <- IO.try(String,DB.Sql.query(db,"UPDATE executions SET phase='exited',status='exit 0' WHERE session=" ++ C.q(session) ++ ";"))
     result : Result<&1,&1,U32 & String,String> <- Stop.request(db,session,id,reason,False{})
-    match result:
-      case Fail{error}: stop_failed(error)
-      case Done{+saved}: Stop.validate(saved)
+    handled : Unit <- stop_result(result)
+    IO.pure(Unit,Unit{})
 
 def run(args: List<String>) -> IO(Unit):
   match args:
