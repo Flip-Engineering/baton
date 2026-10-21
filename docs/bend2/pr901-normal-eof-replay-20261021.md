@@ -146,12 +146,13 @@ if(retained->observer_only &&
 }
 ```
 
-The recovery restores the 13,598-byte checkpoint, rejects its reducer state,
-and calls `Instance.replay` to rewind to offset 0. The host refuses
-`BP_INSTANCE_REPLAY` on the monitor-only handle with `EPERM`, so the recovery
-never reads the spool. The completion path then reaches `ack_then_retire`;
-`br_command` refuses `BR_ACK` for the same monitor-only keeper. Both refusals
-carry `EPERM`; the replay refusal occurs first.
+The guard includes `BP_INSTANCE_REPLAY`. Follow-up runtime tracing of the
+canonical binary recorded `BP_OBSERVER_RECOVERY`, `BP_INSTANCE_STATE`,
+`BP_INSTANCE_INPUT_WITNESS`, `BP_ACK` and `BP_INSTANCE_RETIRE`. No
+`BP_INSTANCE_REPLAY` or `BP_READ_SPAN` call occurred. The recovery skipped
+retained output in the gone-native branch. The direct `EPERM` is the host
+refusal of `BP_ACK` and `BP_INSTANCE_RETIRE` for the monitor-only handle. The
+earlier `BP_INSTANCE_REPLAY` attribution was not observed in that run.
 
 ## Historic and auxiliary evidence
 
@@ -172,7 +173,8 @@ scaling to 46,123,112 bytes is an estimate.
 
 The required 46,123,112-byte replay did not reach normal EOF on the combined
 build. No source fix was applied. The failure occurs before the large terminal
-frame is reached. The host's `BP_INSTANCE_REPLAY` refusal for monitor-only
-handles is the direct cause. The session-lock `EAGAIN` observation is recorded
-and is not isolated as a second defect. The historic f65 timeout and the
-current early failure have different observable causes.
+frame is reached. The gone-native branch skipped retained output, and the
+monitor-only handle then failed its `BP_ACK` and `BP_INSTANCE_RETIRE` host
+calls with `EPERM`. The session-lock `EAGAIN` observation is recorded and is
+not the terminating operation. The historic f65 timeout and the current early
+failure have different observable causes.
