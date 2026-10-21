@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise queue launchers and bootstrap with disposable compiler processes."""
+import fcntl
 import json
 import importlib.util
 import os
@@ -49,6 +50,12 @@ def event(name):
  except OSError: pass
  with (root/'events').open('a') as f:f.write(json.dumps(row)+'\\n')
 event('start')
+release=os.environ.get('CUSTODY_TEST_RELEASE_FILE')
+deadline=time.monotonic()+20
+while release and not pathlib.Path(release).exists():
+ if time.monotonic()>=deadline:
+  active.unlink();sys.exit(92)
+ time.sleep(0.02)
 time.sleep(float(os.environ.get('CUSTODY_TEST_DELAY','0.15')))
 if os.environ.get('CUSTODY_TEST_NESTED') == '1':
  event('cgen-end');active.unlink()
@@ -112,8 +119,13 @@ def launch(tag, bootstrap=False, launcher=None, separated=False, **extra):
     return p
 
 def wait(p, expected=0):
-    rc = p.wait()
-    assert rc == expected, (p.args, rc, expected, T)
+    # This wait covers disposable fixture commands and preserves stalled children.
+    try:
+        rc = p.wait(timeout=20)
+    except subprocess.TimeoutExpired as error:
+        raise AssertionError(('fixture command did not return', p.pid, p.args, T)) from error
+    if expected is not None:
+        assert rc == expected, (p.args, rc, expected, T)
 
 def records():
     return list((STATE / 'bootstrap-runs').glob('*/telemetry'))
@@ -200,14 +212,36 @@ try:
                   if ('pid=' + str(supervisor) + '\n') in r.read_text()]
         assert len(active) == 1, ('fixture supervisor identity', supervisor, T)
         os.kill(supervisor, signal.SIGKILL)
+        deadline = time.monotonic() + 20
+        while stat.exists():
+            try:
+                state = stat.read_text().rsplit(')', 1)[1].split()[0]
+            except FileNotFoundError:
+                break
+            if state == 'Z':
+                break
+            assert time.monotonic() < deadline, ('fixture supervisor did not exit', supervisor, T)
+            time.sleep(0.02)
         # The killed process is the active supervisor of this fixture's stub.
         return p
 
     if '--native-supervisor-exit' in sys.argv[1:]:
-        p = exit_supervisor('native-retained-child')
-        wait(launch('after-native-supervisor-exit', True))
+        release = T / 'native-retained-child.release'
+        try:
+            p = exit_supervisor('native-retained-child', CUSTODY_TEST_RELEASE_FILE=str(release))
+            with lock.open('r+') as probe:
+                try:
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    pass
+                else:
+                    raise AssertionError(('surviving fixture compiler lost heavy custody', T))
+            contender = launch('after-native-supervisor-exit', True)
+        finally:
+            release.touch()
+        wait(contender)
         assert not any(r['event'] == 'overlap' for r in events())
-        p.wait()
+        wait(p, None)
         print('PASS native compiler retains custody after its supervisor exits')
 
     if '--native-supervisor-marker' in sys.argv[1:]:
@@ -215,7 +249,7 @@ try:
         wait_started('native-marker-child-cc')
         wait_event('native-marker-child', 'nested-completed')
         wait(launch('after-orphan-marker'))
-        p.wait()
+        wait(p, None)
         assert not any(r['event'] == 'overlap' for r in events())
         print('PASS surviving compiler releases its marker and completes nested queued C work')
     print('evidence=' + str(T))

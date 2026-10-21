@@ -29,6 +29,8 @@ class QueueOpaqueInputTests(unittest.TestCase):
         self.root = pathlib.Path(self.temporary.name)
         self.state = self.root / "state"
         self.state.mkdir(mode=0o2770)
+        self.state.chmod(0o2770)
+        self.environment = dict(os.environ, BATON_COMPILE_QUEUE_ROOT=str(self.state))
         self.compiler = self.root / "fake-compiler"
         self.compiler.write_text(
             "#!/bin/sh\n"
@@ -62,7 +64,8 @@ class QueueOpaqueInputTests(unittest.TestCase):
         return command
 
     def key(self, binary, **kwargs):
-        result = subprocess.run(self.command(binary, **kwargs), capture_output=True, text=True)
+        result = subprocess.run(self.command(binary, **kwargs), env=self.environment,
+                                capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
@@ -119,7 +122,8 @@ class QueueOpaqueInputTests(unittest.TestCase):
         outside.write_text("#define OUTSIDE 1\n")
         (self.root / "local.h").write_text('#include "../' + outside.name + '"\n')
         for binary in filter(None, (self.candidate, self.baseline)):
-            result = subprocess.run(self.command(binary), capture_output=True, text=True)
+            result = subprocess.run(self.command(binary), env=self.environment,
+                                    capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("outside root", result.stderr)
 
@@ -129,7 +133,8 @@ class QueueOpaqueInputTests(unittest.TestCase):
         self.addCleanup(lock.close)
         fcntl.flock(lock, fcntl.LOCK_EX)
         process = subprocess.Popen(self.command(self.candidate, action="run", payload=payload),
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                                   env=self.environment, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True)
         try:
             deadline = time.monotonic() + 60
             samples = []
