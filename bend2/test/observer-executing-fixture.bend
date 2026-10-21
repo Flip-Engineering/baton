@@ -14,6 +14,7 @@ import ../src/coordinator/store.bend as Store
 import ../src/coordinator/stop.bend as Stop
 import ../src/coordinator/turn.bend as Turn
 import ../src/host/files.bend as F
+import ../src/host/instance.bend as Custody
 import ../src/host/sqlite.bend as DB
 import ../src/host/session-lock.bend as Lock
 import ../src/git/text.bend as Tx
@@ -75,6 +76,35 @@ def start_attempt(+db: String, +id: String, +directory: String, +workspace: Stri
     gated : Unit <- Bool.pick(IO(Unit),String.is_empty(gate),IO.pure(Unit,Unit{}),wait_gate(gate))
     IO.pure(Unit,Unit{})
 
+# The same admission as start, with the caller supplying the recovery
+# executable. A test can record a captured argv that leaves a marker when the
+# keeper replays it.
+def start_obsolete(+db: String, +id: String, +directory: String, +workspace: String,
+                   +log: String, +observed: String, +recovery_executable: String,
+                   +harness: String, +model: String, +effort: String, +python: String,
+                   +native: String, +marker: String, +cursor: String, +gate: String) -> IO(Unit):
+  do IO<Unit>:
+    +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    allowed : Bool <- Stop.admit(canonical,session_name(),id,"retained",directory)
+    admitted : Unit <- Stop.admitted(allowed)
+    lock : U32 <- IO.try(U32,Lock.SessionLock.wait_acquire(canonical,session_name()))
+    started : Unit <- Stop.started(canonical,session_name(),id,directory)
+    +head : String <- first_pending(canonical)
+    claimed : Unit <- Bool.pick(IO(Unit),String.is_empty(head),IO.pure(Unit,Unit{}),retain_claim(canonical,session_name(),directory,head))
+    +arguments : String = P.argv([python,native,observed,marker])
+    +recovery : String = P.argv([recovery_executable,"--recover-receive",canonical,session_name(),id,cursor,native,model,effort,workspace,log,harness,directory,observed])
+    launch : Turn.RetainedLaunch = Turn.Prepared{arguments,"","fixture task",0,False{}}
+    started_result : P.RetainedStart <- IO.try(P.RetainedStart,Turn.retained_admit(canonical,directory,workspace,"fixture task",lock,recovery,launch))
+    IO.print("started " ++ id)
+    gated : Unit <- Bool.pick(IO(Unit),String.is_empty(gate),IO.pure(Unit,Unit{}),wait_gate(gate))
+    IO.pure(Unit,Unit{})
+
+# One attach and ready exchange followed by process exit. Repeating it drives
+# the keeper's disconnect and BR_READY cycles without observing the attempt.
+def probe(+db: String, +directory: String) -> IO(Unit):
+  handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
+  IO.pure(Unit,Unit{})
+
 def run(args: List<String>) -> IO(Unit):
   match args:
     case "init" <> +db <> +harness <> Nil{}: init_db(db,harness)
@@ -82,7 +112,11 @@ def run(args: List<String>) -> IO(Unit):
       start_attempt(db,id,directory,workspace,log,observed,helper,harness,model,effort,python,native,marker,cursor,gate)
     case "settle" <> +db <> +session <> +directory <> Nil{}:
       Receive.settle_recovery_ticket(db,session,directory)
-    case other: IO.die(Unit,2,"usage: observer-executing-fixture init DB HARNESS | start DB ID DIRECTORY WORKSPACE LOG OBSERVED HELPER HARNESS MODEL EFFORT PYTHON SCRIPT MARKER CURSOR GATE | settle DB SESSION DIRECTORY")
+    case "start-obsolete" <> +db <> +id <> +directory <> +workspace <> +log <> +observed <> +recovery_executable <> +harness <> +model <> +effort <> +python <> +native <> +marker <> +cursor <> +gate <> Nil{}:
+      start_obsolete(db,id,directory,workspace,log,observed,recovery_executable,harness,model,effort,python,native,marker,cursor,gate)
+    case "probe" <> +db <> +directory <> Nil{}:
+      probe(db,directory)
+    case other: IO.die(Unit,2,"usage: observer-executing-fixture init DB HARNESS | start DB ID DIRECTORY WORKSPACE LOG OBSERVED HELPER HARNESS MODEL EFFORT PYTHON SCRIPT MARKER CURSOR GATE | start-obsolete DB ID DIRECTORY WORKSPACE LOG OBSERVED RECOVERY HARNESS MODEL EFFORT PYTHON SCRIPT MARKER CURSOR GATE | settle DB SESSION DIRECTORY | probe DB DIRECTORY")
 
 def main() -> IO(Unit):
   do IO<Unit>:
