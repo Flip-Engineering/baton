@@ -28,6 +28,28 @@ live requesters, and cancellation stops the execution only when no live owner
 remains. The fake-command suite covers distinct cgen serialization, concurrent
 cc overlap, identical coalescing, requester loss, and one-owner withdrawal.
 
+## Frontend checks
+
+The queue lanes cover C generation and C compilation. A `--check-only`
+invocation performs type checking and writes no C. A `cgen` request validates
+every declared artifact as a regular nonempty text file whose name ends in
+`.c` (`verify_artifacts` and `invalid_cgen_name` in
+`bend2/src/host/compile-queue.bend`), so a check result has no acceptable
+`cgen` artifact.
+
+A bare `bend FILE` run performs the frontend phase and then calls
+`cli_build` (`bend2/compiler/upstream/main.ts:457`), which submits a `cc`
+request. An outer queue request around the run holds the heavy lock while the
+compiler waits for the nested `cc` request.
+
+Frontend checks run directly through the compiler. The maintained callers
+`bend2/scripts/run-checks.mjs` and `bend2/test/compiler-arm-sharing.py` do not
+declare queue artifacts for the check. A first-class frontend kind is
+deferred. It would take the heavy lock, compute the source closure, and accept
+a text result without a C artifact. A queued request that uses a helper file
+declares that file with `--input`; `--aux` records the path and not the file
+bytes, so the request key does not change when the helper bytes change.
+
 ## Identity
 
 The material for one request is a line-oriented text record. The identity schema is versioned independently of the bootstrap shell; a shell key is never reused as a permanent cache key because it omits imported C and header inputs.
