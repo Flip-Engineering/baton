@@ -56,7 +56,7 @@ def repository_url(+url: String) -> String:
 def repository_remote(result: T.GitOut) -> String:
   match result:
     case T.GRun{code, out}:
-      Bool.pick(String, U32.is_eq(code, 0), without_git_suffix(Tx.trim_nl(out)), "")
+      Bool.pick(String, U32.is_eq(code, 0), without_git_suffix(repository_url(Tx.trim_nl(out))), "")
     case T.GBroken{detail}: ""
 
 def workspace_repository(workspace: String) -> IO(String):
