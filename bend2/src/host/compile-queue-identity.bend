@@ -266,6 +266,17 @@ def CompileQueueIdentity.c_targets(lines: List<&2,String>) -> List<&2,String>:
       +tail = CompileQueueIdentity.c_targets(rest)
       Bool.pick(List<&2,String>, String.is_empty(target), tail, target <> tail)
 
+# Only source extensions contribute closure targets. Other files contribute
+# their digest and size without materializing their bytes as text.
+def CompileQueueIdentity.text_source(+name: String) -> Bool:
+  Bool.or(String.ends_with(name, ".bend"),
+    Bool.or(String.ends_with(name, ".c"), String.ends_with(name, ".h")))
+
+def CompileQueueIdentity.read_source_text(+name: String, +path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  Bool.pick(IO(Result<&1,&1,U32 & String,String>), CompileQueueIdentity.text_source(name),
+    T.Text.read(path),
+    IO.pure(Result<&1,&1,U32 & String,String>, Done{""}))
+
 def CompileQueueIdentity.closure_targets(path: String, +text: String) -> List<&2,String>:
   +name = String.to_lower(CompileQueueIdentity.path_basename(path))
   Bool.pick(List<&2,String>, String.ends_with(name, ".bend"),
@@ -314,7 +325,8 @@ def CompileQueueIdentity.walk_queue(queue: List<&2,String>, +visited: List<&2,St
               +next : CompileQueueWalk <- IO.try(CompileQueueWalk, Bool.pick(IO(Result<&1,&1,U32 & String,CompileQueueWalk>), seen,
                 IO.pure(Result<&1,&1,U32 & String,CompileQueueWalk>, Done{CompileQueueWalk{rest, visited, records}}),
                 do IO<Result<&1,&1,U32 & String,CompileQueueWalk>>:
-                  +text : String <- IO.try(String, T.Text.read(resolved))
+                  +name : String <- IO.pure(String, String.to_lower(CompileQueueIdentity.path_basename(resolved)))
+                  +text : String <- IO.try(String, CompileQueueIdentity.read_source_text(name, resolved))
                   digest : String <- IO.try(String, CompileQueueIdentity.file_digest(resolved))
                   size : String <- IO.try(String, CompileQueueIdentity.file_size(resolved))
                   record : String <- IO.pure(String, CompileQueueIdentity.path_relative(root, resolved) ++ "\t" ++ digest ++ "\t" ++ size)

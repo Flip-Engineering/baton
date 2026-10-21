@@ -556,4 +556,51 @@ cmp -s "$expected" "$T/runtime-argv.tail" \
 [ -s "$T/runtime-argv-output" ] \
   && pass 'argv recorder published its declared binary' || bad 'argv recorder output missing'
 
+# Opaque inputs contribute bytes and size without text materialization.
+python3 - "$T" <<'PY'
+import pathlib, sys
+root = pathlib.Path(sys.argv[1])
+(root / 'opaque.bin').write_bytes(b'opaque\x00\xff\xfe' + bytes(range(32)))
+(root / 'invalid.bin').write_bytes(b'bad\x00\xff')
+(root / 'opaque-input.c').write_text('int main(void){return 0;}\n')
+PY
+opaque_key() {
+  sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" \
+    --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+    --input "$T/opaque-input.c" --aux "$T/opaque.bin" --artifact "binary=$T/opaque-out" \
+    -- "$FAKE" -o "$T/opaque-out" "$T/opaque-input.c"
+}
+opaque_before=$(opaque_key)
+opaque_same=$(opaque_key)
+[ "$opaque_before" = "$opaque_same" ] && pass 'opaque closure identity stable' || bad 'opaque closure identity unstable'
+printf 'x' >> "$T/opaque.bin"
+opaque_after=$(opaque_key)
+[ "$opaque_before" != "$opaque_after" ] && pass 'opaque bytes change the key' || bad 'opaque bytes kept the key'
+invalid_key=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" \
+  --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+  --input "$T/opaque-input.c" --aux "$T/invalid.bin" --artifact "binary=$T/invalid-out" \
+  -- "$FAKE" -o "$T/invalid-out" "$T/opaque-input.c") \
+  && pass 'invalid UTF-8 opaque input hashed' || bad 'invalid UTF-8 opaque input failed'
+
+# Bend imports and C includes both pull child bytes into the closure.
+printf 'import Base\nimport "./child.bend"\ndef main() -> IO(Unit): IO.die(Unit,0,"fixture")\n' \
+  > "$T/src/bend2/src/fixture.bend"
+printf 'def child() -> Unit: Unit{}\n' > "$T/src/bend2/src/child.bend"
+bend_before=$(cgen_key child "$T/child-out")
+printf 'def child_more() -> Unit: Unit{}\n' >> "$T/src/bend2/src/child.bend"
+bend_after=$(cgen_key child "$T/child-out")
+[ "$bend_before" != "$bend_after" ] && pass 'Bend child change changes the key' || bad 'Bend child change kept the key'
+printf '#define CHILD 1\n' > "$T/child.h"
+printf '#include "child.h"\nint main(void){return 0;}\n' > "$T/opaque-input.c"
+c_before=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" \
+  --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+  --input "$T/opaque-input.c" --artifact "binary=$T/child-c-out" \
+  -- "$FAKE" -o "$T/child-c-out" "$T/opaque-input.c")
+printf '#define CHILD 2\n' > "$T/child.h"
+c_after=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" \
+  --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+  --input "$T/opaque-input.c" --artifact "binary=$T/child-c-out" \
+  -- "$FAKE" -o "$T/child-c-out" "$T/opaque-input.c")
+[ "$c_before" != "$c_after" ] && pass 'C include change changes the key' || bad 'C include change kept the key'
+
 exit "$fail"
