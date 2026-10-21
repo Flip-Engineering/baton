@@ -1070,12 +1070,20 @@ def recover_observer(+db: String, +session: String, observer: String) -> IO(Resu
     canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
     recover_observer_pid(canonical,session,U32.read(observer))
 
+# The attach result carries its own code and detail. Propagate a failure so a
+# SQLITE_BUSY attach reaches recover_tail and is recorded as a typed cause
+# instead of becoming an empty handle and an untyped exit.
+def attach_handle(attached: Result<&1,&1,U32 & String,U32>, next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match attached:
+    case Done{handle}: next(handle)
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+
 def attach_recorded(+db: String, +directory: String, +log: String, next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   Storage.with_writer_leases(Result<&1,&1,U32 & String,Unit>, log, directory,
     error => IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error}),
     unit => do IO<Result<&1,&1,U32 & String,Unit>>:
-      handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
-      next(handle))
+      attached : Result<&1,&1,U32 & String,U32> <- Custody.Instance.attach(db,directory)
+      attach_handle(attached, next))
 
 def observe_attached(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,lock,again,False{})
@@ -1123,16 +1131,7 @@ def clear_blocked(directory: String) -> IO(Unit):
     ignored : Result<&1,&1,U32 & String,Unit> <- F.Files.remove(directory ++ "/recovery-blocked")
     IO.pure(Unit,Unit{})
 
-def recover_attached(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +lock: U32, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  attach_recorded(db,directory,log,handle => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},again))
 
-def recover_owned_session(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match lock:
-    case None{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      noted : Unit <- record_recovery_blocked(directory,db,session,native,(75,"session guard is held by another driver; the retained attempt and checkpoint are unchanged"))
-      released : Unit <- release_ticket_held(db,session,None{})
-      IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(75,"session guard is held by another driver")})
-    case Some{handle}: recover_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,again)
 
 # The keeper still holds the session guard for the attempt it retained, so the
 # executing call attaches and observes without taking that guard. Its completion
