@@ -437,8 +437,7 @@ function queue_cc(queue: string, stateRoot: string, compiler: string, linker: st
   if (bangs && !mac) argv.push("--option", "cuda-root=" + cuda);
   for (const option of extraOptions) argv.push("--option", option);
   argv.push("--", compiler, ...args);
-  const invocation = process.env.BATON2_COMPILE_QUEUE_BIN ? ["--", ...argv] : argv;
-  const result = child.spawnSync(queue, invocation, { encoding: "utf8" });
+  const result = child.spawnSync(queue, argv, { encoding: "utf8" });
   const stderr = result.stderr || "";
   if (result.error || result.status !== 0) {
     throw "Error: the compile queue failed to build " + artifactPath
