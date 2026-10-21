@@ -102,8 +102,9 @@ def start_obsolete(+db: String, +id: String, +directory: String, +workspace: Str
 # One attach and ready exchange followed by process exit. Repeating it drives
 # the keeper's disconnect and BR_READY cycles without observing the attempt.
 def probe(+db: String, +directory: String) -> IO(Unit):
-  handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
-  IO.pure(Unit,Unit{})
+  do IO<Unit>:
+    handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
+    IO.pure(Unit,Unit{})
 
 def run(args: List<String>) -> IO(Unit):
   match args:

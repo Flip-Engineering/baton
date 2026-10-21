@@ -25,7 +25,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 FIXTURE = pathlib.Path(os.environ.get(
-    'RECOVERY_REPLAY_FIXTURE', ROOT / '.scratch/bend2/monitor-fixture'))
+    'RECOVERY_REPLAY_FIXTURE', ROOT / '.scratch/bend2/recovery-replay-fixture'))
 HELPER = pathlib.Path(os.environ.get(
     'RECOVERY_REPLAY_HELPER', ROOT / '.scratch/bend2/baton-recovery-fix'))
 OWNER = pathlib.Path(os.environ.get(
