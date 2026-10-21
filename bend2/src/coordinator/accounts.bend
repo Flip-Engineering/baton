@@ -1052,6 +1052,7 @@ def attempt_completed_sql(+attempt: String, +outcome: String, +error_text: Strin
 def attempt_completed(+db: String, +attempt: String, +outcome: String, +error_text: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,commit_read(db,attempt_completed_sql(attempt,outcome,error_text)))
+    settled : String <- credit_settle_for(db,attempt,outcome,"",False{})
     IO.print(Tx.trim_nl(saved))
 
 # The launch records the selected account beside the attempt. A failed record
@@ -1167,6 +1168,39 @@ def import_credit(+db: String, +authority: String, +account: String, +organizati
     +fields : String <- IO.try(String,DB.Sql.read(db,import_fields_sql(detail)))
     returned : Unit <- import_fields(db,authority,account,organization,detail,String.split(Tx.trim_nl(fields),Char.from_u32(31)))
     IO.pure(Unit,Unit{})
+
+# An external spend reading is the provider's Admin cost report for one
+# organization and cap period. It is recorded as a numeric observation so the
+# reservation guard can reconcile its own ledger against the provider's report.
+def import_spend_insert_sql(+authority: String, +account: String, +organization: String, +detail: String) -> String:
+  "INSERT OR IGNORE INTO credit_observations(id,organization,fact,state,balance,unit,expires,cycle,source,detail,observed_at,authority) SELECT " ++ import_id_sql(account,detail) ++ "," ++ C.q(organization) ++ ",'external_spend',coalesce(json_extract(" ++ C.q(detail) ++ ",'$.state'),'reported'),coalesce(json_extract(" ++ C.q(detail) ++ ",'$.balance'),''),coalesce(json_extract(" ++ C.q(detail) ++ ",'$.unit'),'USD'),coalesce(json_extract(" ++ C.q(detail) ++ ",'$.expires'),''),coalesce(json_extract(" ++ C.q(detail) ++ ",'$.cycle'),''),coalesce(nullif(json_extract(" ++ C.q(detail) ++ ",'$.source'),''),'unsourcedObservation')," ++ C.q(detail) ++ "," ++ observe_observed_at(detail) ++ "," ++ C.q(authority) ++ ";"
+  ++ "SELECT json_object('observation',(SELECT " ++ observation_object_sql() ++ " FROM credit_observations WHERE id=" ++ import_id_sql(account,detail) ++ "));"
+
+def import_spend_admitted(+db: String, +authority: String, +account: String, +organization: String, +detail: String, present: Bool) -> IO(Unit):
+  match present:
+    case False{}: IO.die(Unit,2,"A spend import requires a JSON document, a recorded account whose verified organization is the imported organization, a fact of external_spend, a state of reported, a canonical USD balance, a named source and a cycle. No reading was recorded.")
+    case True{}: do IO<Unit>:
+      +saved : String <- IO.try(String,commit_read(db,import_spend_insert_sql(authority,account,organization,detail)))
+      IO.print(Tx.trim_nl(saved))
+
+def import_spend_selected(+db: String, +authority: String, +account: String, +organization: String, +detail: String, fact: String, +state: String, balance: String, unit: String, source: String, valid_json: Bool) -> IO(Unit):
+  do IO<Unit>:
+    verified : String <- IO.try(String,DB.Sql.read(db,"SELECT EXISTS(SELECT 1 FROM accounts WHERE id=" ++ C.q(account) ++ " AND organization=" ++ C.q(organization) ++ " AND organization<>'');"))
+    reported : Bool <- IO.pure(Bool,Bool.and(decimal_text(balance),Bool.and(String.eq(unit,"USD"),Bool.not(String.is_empty(source)))))
+    admitted : Bool <- IO.pure(Bool,Bool.and(valid_json,Bool.and(String.eq(fact,"external_spend"),Bool.and(String.eq(state,"reported"),Bool.and(String.eq(Tx.trim_nl(verified),"1"),reported)))))
+    import_spend_admitted(db,authority,account,organization,detail,admitted)
+
+def import_spend_fields(+db: String, +authority: String, +account: String, +organization: String, +detail: String, fields: List<&2,String>) -> IO(Unit):
+  match fields:
+    case valid <> fact <> state <> balance <> unit <> source <> rest: import_spend_selected(db,authority,account,organization,detail,fact,state,balance,unit,source,String.eq(valid,"1"))
+    case other: import_spend_admitted(db,authority,account,organization,detail,False{})
+
+def import_spend(+db: String, +authority: String, +account: String, +organization: String, +detail: String) -> IO(Unit):
+  do IO<Unit>:
+    +fields : String <- IO.try(String,DB.Sql.read(db,import_fields_sql(detail)))
+    returned : Unit <- import_spend_fields(db,authority,account,organization,detail,String.split(Tx.trim_nl(fields),Char.from_u32(31)))
+    IO.pure(Unit,Unit{})
+
 
 # --- the pooled read ---------------------------------------------------------
 
