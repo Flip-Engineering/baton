@@ -72,7 +72,8 @@ def setup(+db: String) -> IO(Unit):
     wonder2 : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint,workspace,branch,base) VALUES('wonder2',NULL,'muse','muse-wonder-1.0','high','01a1549a-4b05-78c1-982a-ebda86e8b068','','/wonder2','wonder2-branch','base-sha');")
     wonder_first : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint,workspace,branch,base) VALUES('wonder-first',NULL,'muse-first','muse-wonder-1.0','high','01a1549a-4b05-78c1-982a-ebda86e8b069','','/wonder-first','wonder-first-branch','base-sha');")
     wonder_gate : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint,workspace,branch,base) VALUES('wonder-gate',NULL,'muse','muse-wonder-1.0','high','01a1549a-4b05-78c1-982a-ebda86e8b070','','/wonder-gate','wonder-gate-branch','base-sha');")
-    fallback_sessions : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('route-forward',NULL,'omp','kimi-code/kimi-for-coding','high','native-forward',''),('route-all-held',NULL,'omp','kimi-code/kimi-for-coding','high','native-all-held','');")
+    fallback_sessions : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('route-forward','operator','omp','kimi-code/kimi-for-coding','high','native-forward',''),('route-all-held','operator','omp','kimi-code/kimi-for-coding','high','native-all-held','');")
+    legacy_sessions : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('legacy-forward','operator','omp','profile-test/model','high','native-legacy-forward',''),('legacy-all-held','operator','omp','profile-test/model','high','native-legacy-all-held',''),('legacy-elapsed','operator','omp','profile-test/model','high','native-legacy-elapsed','');")
     roles : Unit <- query(db,"INSERT INTO session_roles(session,role) VALUES('operator','operator'),('wonder','conductor'),('wonder2','conductor'),('wonder-first','conductor'),('wonder-gate','conductor');")
     attempt : Unit <- query(db,"INSERT INTO executions(session,id,mode,directory,phase,status) VALUES('wonder','attempt-prod','retained','/wonder','exited','exit 1');")
     stop : Unit <- query(db,"INSERT INTO session_stops(session,id,reason,attempt,directory,signal,applied_signal,outcome,native_status,report_id) VALUES('wonder','stop-prod','provider exhaustion retained','attempt-prod','/wonder',15,15,'stopped','exit 1','stop-result:stop-prod');")
@@ -115,6 +116,48 @@ def account_fallback_cases(+db: String) -> IO(Unit):
       case None{}: IO.die(Unit,1,"fixture-quota-backoff alternate route was not selected")
       case Some{route}: expect("all-held-selects-configured-alternate-route",String.eq(Subs.route_harness(route),"codex"))
     expect_read(db,"SELECT count(*) FROM executions WHERE session IN ('route-forward','route-all-held');","0\n","account-selection-starts-no-execution")
+
+# The legacy profile path uses the same recorded provider holds. Only the
+# selected profile receives a binding and handoff report; the original refusal
+# remains the cause when a later profile is selected or the list is exhausted.
+def profile_fallback_cases(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    +listed_path : String <- Subs.profile_list_path(db)
+    listed : Unit <- IO.try(Unit,Text.Text.append(listed_path,"omp legacy-a /profiles/legacy-a\nomp legacy-b /profiles/legacy-b\nomp legacy-c /profiles/legacy-c\n"))
+    bound : Unit <- Subs.bind_profile(db,"legacy-forward","omp","legacy-a","/profiles/legacy-a")
+    held_b : Unit <- UW.record_cause(db,"legacy-forward","legacy-b-refusal","legacy-b",cause("legacy-b-request"))
+    unknown_c : Unit <- UW.record_cause(db,"legacy-forward","legacy-c-unknown","legacy-c","provider-reported usage exhaustion: API error 429: Subscription quota exhausted. (rate_limit_error)")
+    unknown_gate : Unit <- expect_gate(db,"legacy-forward","legacy-c","unknown","legacy-unknown-profile-remains-selectable")
+    advanced : Bool <- Accounts.handoff(db,"legacy-forward","legacy-a-refusal",quota_event("legacy-a-request"),"native-legacy-forward","","/legacy-forward")
+    expect("legacy-handoff-skips-held-profile",advanced)
+    +chosen : String <- Subs.profile_label_io(db,"legacy-forward")
+    expect("legacy-handoff-reaches-unknown-profile",String.eq(chosen,"legacy-c"))
+    +record_path : String <- Subs.profile_record_path(db,"legacy-forward")
+    +recorded : String <- Subs.file_text(record_path)
+    expect("legacy-held-profile-never-bound",String.eq(recorded," omp legacy-a /profiles/legacy-a\n omp legacy-c /profiles/legacy-c\n"))
+    +handoff_body : String <- read(db,"SELECT body FROM messages WHERE id='legacy-a-refusal:profile-handoff-legacy-c';")
+    expect("legacy-selected-profile-preserves-refusal-cause",Bool.and(String.contains(handoff_body,"refused profile=legacy-a; bound profile=legacy-c"),String.contains(handoff_body,"legacy-a-request")))
+    held_stays : Unit <- expect_gate(db,"legacy-forward","legacy-b","held","legacy-skipped-profile-hold-preserved")
+    bound_all : Unit <- Subs.bind_profile(db,"legacy-all-held","omp","legacy-a","/profiles/legacy-a")
+    held_c : Unit <- UW.record_cause(db,"legacy-all-held","legacy-c-refusal","legacy-c",cause("legacy-c-request"))
+    exhausted : Bool <- Accounts.handoff(db,"legacy-all-held","legacy-all-held-refusal",quota_event("legacy-all-held-request"),"native-legacy-all-held","","/legacy-all-held")
+    expect("legacy-all-held-profiles-do-not-continue",Bool.not(exhausted))
+    +unchanged : String <- Subs.profile_label_io(db,"legacy-all-held")
+    expect("legacy-all-held-preserves-original-binding",String.eq(unchanged,"legacy-a"))
+    triggered : Bool <- Subs.route_trigger(db,"legacy-all-held","legacy-all-held-refusal",quota_event("legacy-all-held-request"))
+    expect("legacy-all-held-retains-alternate-route-trigger",triggered)
+    selected : Maybe<&2,Subs.Route> <- Subs.select_route(db,"legacy-all-held","legacy-all-held-refusal")
+    match selected:
+      case None{}: IO.die(Unit,1,"fixture-quota-backoff legacy alternate route was not selected")
+      case Some{route}: expect("legacy-all-held-selects-configured-alternate-route",String.eq(Subs.route_model(route),"kimi-code/kimi-for-coding"))
+    elapsed_b : Unit <- UW.reset_exhausted(db,"legacy-forward","2020-01-01T00:00:00Z","provider reset observed by fixture","legacy-b")
+    elapsed_gate : Unit <- expect_gate(db,"legacy-forward","legacy-b","elapsed","legacy-elapsed-profile-remains-selectable")
+    bound_elapsed : Unit <- Subs.bind_profile(db,"legacy-elapsed","omp","legacy-a","/profiles/legacy-a")
+    advanced_elapsed : Bool <- Accounts.handoff(db,"legacy-elapsed","legacy-elapsed-refusal",quota_event("legacy-elapsed-request"),"native-legacy-elapsed","","/legacy-elapsed")
+    expect("legacy-handoff-selects-elapsed-profile",advanced_elapsed)
+    +elapsed_chosen : String <- Subs.profile_label_io(db,"legacy-elapsed")
+    expect("legacy-elapsed-profile-order-preserved",String.eq(elapsed_chosen,"legacy-b"))
+    expect_read(db,"SELECT count(*) FROM executions WHERE session IN ('legacy-forward','legacy-all-held','legacy-elapsed');","0\n","legacy-selection-starts-no-execution")
 
 def gate_attempts(+db: String, +session: String, +account: String, attempts: List<String>) -> IO(Unit):
   match attempts:
@@ -245,6 +288,7 @@ def main_args(args: List<String>) -> IO(Unit):
       gate_cases(path)
       dedupe_cases(path)
       account_fallback_cases(path)
+      profile_fallback_cases(path)
       first_exit_cases(path)
       handoff_cases(path)
       clear_cases(path)

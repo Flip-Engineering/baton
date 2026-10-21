@@ -111,8 +111,7 @@ def history_store_variable(+harness: String) -> Maybe<String>:
   Bool.pick(Maybe<String>,Bool.or(String.eq(harness,"omp"),String.eq(harness,"muse")),None{},store_variable(harness))
 
 # The profile after the one that refused, in operator order, or none when the
-# operator listed no further profile for that harness. Order is the file's own order;
-# no history and no observation reorders or suppresses a listed profile.
+# operator listed no further profile for that harness. Order is the file's own order.
 def next_after(profiles: List<&2,Profile>, +harness: String, +current: String, seen: Bool) -> Maybe<&2,Profile>:
   match profiles:
     case Nil{}: None{}
@@ -127,6 +126,17 @@ def next_profile(profiles: List<&2,Profile>, harness: String, current: String) -
 # A handoff with no profile record yet selects the head of the operator's list.
 def started_or_next(+profiles: List<&2,Profile>, +harness: String, +current: String) -> Maybe<&2,Profile>:
   Bool.pick(Maybe<&2,Profile>,String.is_empty(current),first_profile(profiles,harness),next_profile(profiles,harness,current))
+
+# A recorded current provider hold makes a profile unavailable until its reset.
+# Unknown and elapsed observations leave the operator's next profile selectable.
+def next_profile_available(db: String, session: String, profiles: List<&2,Profile>, harness: String, current: String) -> IO(Maybe<&2,Profile>):
+  match started_or_next(profiles,harness,current):
+    case None{}: IO.pure(Maybe<&2,Profile>,None{})
+    case Some{+profile}: do IO<Maybe<&2,Profile>>:
+      gate : UW.Gate <- UW.window_gate(db,session,profile_label(profile))
+      match gate:
+        case UW.GateHeld{window,resets_at,source,receipt}: next_profile_available(db,session,profiles,harness,profile_label(profile))
+        case other: IO.pure(Maybe<&2,Profile>,Some{profile})
 
 def record_fields(+label: String, +store: String) -> Maybe<&2,Profile>:
   Bool.pick(Maybe<&2,Profile>,Bool.and(Bool.not(String.is_empty(label)),Bool.not(String.is_empty(store))),Some{Pr{"",label,store}},None{})
@@ -236,7 +246,7 @@ def handoff_body(harness: String, refused: String, bound: String, store: String,
   "subscription profile handoff: harness=" ++ harness ++ "; refused profile=" ++ refused ++ "; bound profile=" ++ bound ++ "; credential store=" ++ store ++ "; original cause: " ++ cause
 
 def all_refused_body(harness: String, refused: String, cause: String) -> String:
-  "subscription profiles exhausted: harness=" ++ harness ++ "; profile=" ++ refused ++ " was the last operator-listed profile and the provider reported usage exhaustion; cause: " ++ cause
+  "subscription profiles exhausted: harness=" ++ harness ++ "; profile=" ++ refused ++ " reported usage exhaustion and no later selectable operator-listed profile remains for this harness; cause: " ++ cause
 
 # The provider's own diagnostic text for a terminal error frame, per the shapes this
 # tree already handles plus the Claude SDK result message and the Muse run terminal:
@@ -649,8 +659,9 @@ def advance_profile(+db: String, +session: String, +id: String, cause: String, n
     +last_record : String <- IO.pure(String,last_line(Tx.split_lines(current)))
     +from_label : String <- IO.pure(String,record_current(Tx.trim_nl(harness),last_record))
     from_store : String <- IO.pure(String,record_source(Tx.trim_nl(harness),last_record))
-    prepared : Bool <- prepare_history(db,session,id,Tx.trim_nl(harness),from_store,cmd,cwd,native,started_or_next(profiles,Tx.trim_nl(harness),from_label))
-    taken : Bool <- Bool.pick(IO(Bool),prepared,choose_profile(db,session,id,record_path,Tx.trim_nl(harness),from_label,cause,started_or_next(profiles,Tx.trim_nl(harness),from_label)),IO.pure(Bool,False{}))
+    decided : Maybe<&2,Profile> <- next_profile_available(db,session,profiles,Tx.trim_nl(harness),from_label)
+    prepared : Bool <- prepare_history(db,session,id,Tx.trim_nl(harness),from_store,cmd,cwd,native,decided)
+    taken : Bool <- Bool.pick(IO(Bool),prepared,choose_profile(db,session,id,record_path,Tx.trim_nl(harness),from_label,cause,decided),IO.pure(Bool,False{}))
     IO.pure(Bool,taken)
 
 # True only when a next operator-listed profile was recorded, so the caller continues the
@@ -934,10 +945,9 @@ def select_route(+db: String, +session: String, id: String) -> IO(Maybe<&2,Route
     recorded : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(refused_path,Tx.trim_nl(marker) ++ " " ++ Tx.trim_nl(assignment) ++ " " ++ Tx.trim_nl(harness) ++ " " ++ Tx.trim_nl(model) ++ "\n")
     select_recorded(db,session,id,refused_path,chosen,recorded)
 
-# True on the actual all-accounts-refused outcome: the terminal states
-# provider-reported usage exhaustion and this attempt recorded the exhausted
-# report - the profile form for operator-listed profiles, the account form for
-# a bound account that was the last recorded account for its harness. History
+# True when provider-reported usage exhaustion leaves no later selectable
+# account and this attempt recorded the exhausted report: the profile form for
+# operator-listed profiles, or the account form for registered accounts. History
 # and lineage append IO failures write different reports, so they return false
 # here and never cause a cross-route switch.
 def exhausted_reported(db: String, session: String, id: String) -> IO(Bool):
