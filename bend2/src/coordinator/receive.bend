@@ -1128,7 +1128,10 @@ def recover_attached(+db: String, +session: String, id: String, cursor: String, 
 
 def recover_owned_session(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match lock:
-    case None{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case None{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      noted : Unit <- record_recovery_blocked(directory,db,session,native,(75,"session guard is held by another driver; the retained attempt and checkpoint are unchanged"))
+      released : Unit <- release_ticket_held(db,session,None{})
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(75,"session guard is held by another driver")})
     case Some{handle}: recover_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,again)
 
 # The keeper still holds the session guard for the attempt it retained, so the

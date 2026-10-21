@@ -36,6 +36,8 @@ FIXTURE = pathlib.Path(os.environ.get(
     'OBSERVER_EXECUTING_FIXTURE', ROOT / '.scratch/bend2/monitor-fixture'))
 HELPER = pathlib.Path(os.environ.get(
     'OBSERVER_EXECUTING_HELPER', ROOT / '.scratch/bend2/baton-recovery-fix'))
+OWNER = pathlib.Path(os.environ.get(
+    'OBSERVER_EXECUTING_OWNER', str(HELPER)))
 SESSION = 'parent'
 ATTEMPT = 'turn1'
 NATIVE_UUID = '01a15c9e-2f4a-7000-9d33-8d0e2b7c41aa'
@@ -103,7 +105,7 @@ def owner_pid(database):
 class Executing(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        for path in (FIXTURE, HELPER):
+        for path in (FIXTURE, HELPER, OWNER):
             if not path.exists():
                 raise unittest.SkipTest(
                     'missing fixture %s; build it with bend2/scripts/build-native.sh' % path)
@@ -120,21 +122,59 @@ class Executing(unittest.TestCase):
         self.db = self.directory / 'state.db'
         self.attempt = self.directory / 'attempt'
         self.workspace = self.directory / 'workspace'
+        sqlite3.connect(self.db).close()
         self.workspace.mkdir()
         self.log = self.directory / 'native.log'
         self.uuid_marker = self.directory / 'native-uuid.txt'
         self.native = self.directory / 'native.py'
         write_native(self.native)
+        self.owner_log = self.directory / 'owner.log'
+        self.owner_out = open(self.owner_log, 'w')
+        self.owner = subprocess.Popen(
+            [str(OWNER), '--instance-owner', str(self.db)],
+            stdin=subprocess.DEVNULL, stdout=self.owner_out,
+            stderr=subprocess.STDOUT, env=self.environment)
+        self.addCleanup(self.stop_owner)
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if owner_pid(self.db):
+                break
+            if self.owner.poll() is not None:
+                self.fail('instance owner exited: ' + self.owner_log.read_text())
+            time.sleep(0.02)
+        self.assertIsNotNone(owner_pid(self.db),
+                             'instance owner did not stay live')
+
+    def stop_owner(self):
+        if self.owner.poll() is None:
+            self.owner.terminate()
+            try:
+                self.owner.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.owner.kill()
+                self.owner.wait()
+        self.owner_out.close()
 
     def fixture(self, *args):
-        result = subprocess.run([str(FIXTURE), *map(str, args)], text=True,
-                                capture_output=True, env=self.environment,
-                                timeout=60)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        log = self.directory / ('fixture-%d.log' % time.monotonic_ns())
+        with open(log, 'w') as out:
+            result = subprocess.run(
+                [str(FIXTURE), *map(str, args)], text=True,
+                stdin=subprocess.DEVNULL, stdout=out,
+                stderr=subprocess.STDOUT, env=self.environment, timeout=60)
+        if result.returncode:
+            self.fail(log.read_text())
         return result
 
     def seed(self):
         self.fixture('init', self.db, 'omp')
+        self.old_attempt = self.directory / (
+            'state.db.attempt-' + 'receive:parent:old'.encode().hex())
+        self.old_attempt.mkdir()
+        (self.old_attempt / 'acknowledged').write_text('acknowledged\n')
+        (self.old_attempt / 'released').write_text('released\n')
+        (self.old_attempt / 'status').write_text('0\n')
+        (self.old_attempt / 'launch').write_text('launch\n')
         with sqlite3.connect(self.db) as database:
             database.execute("UPDATE sessions SET native=? WHERE id='parent'",
                              (NATIVE_UUID,))
@@ -148,16 +188,24 @@ class Executing(unittest.TestCase):
                 "VALUES('parent','claimed','task',1)")
 
     def start(self):
-        start = subprocess.Popen(
-            [str(FIXTURE), 'start', str(self.db), ATTEMPT, str(self.attempt),
-             str(self.workspace), str(self.log), NATIVE_UUID, str(HELPER), 'omp',
-             'controlled-model', 'low', sys.executable, str(self.native),
-             NATIVE_UUID, str(self.uuid_marker)],
-            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env=self.environment)
-        stdout, stderr = start.communicate(timeout=60)
-        self.assertEqual(start.returncode, 0, stdout + stderr)
-        self.assertIn('started', stdout)
+        log = self.directory / 'start.log'
+        with open(log, 'w') as out:
+            start = subprocess.Popen(
+                [str(FIXTURE), 'start', str(self.db), ATTEMPT, str(self.attempt),
+                 str(self.workspace), str(self.log), NATIVE_UUID, str(HELPER),
+                 'omp', 'controlled-model', 'low', sys.executable, str(self.native),
+                 NATIVE_UUID, str(self.uuid_marker)],
+                text=True, stdin=subprocess.DEVNULL, stdout=out,
+                stderr=subprocess.STDOUT, env=self.environment)
+            try:
+                start.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                start.kill()
+                start.wait()
+                self.fail('fixture start did not complete: ' + log.read_text())
+        output = log.read_text()
+        self.assertEqual(start.returncode, 0, output)
+        self.assertIn('started', output)
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             if (self.attempt / 'native.pid').exists() and self.uuid_marker.exists():
@@ -197,7 +245,9 @@ class Executing(unittest.TestCase):
                 (ATTEMPT,)).fetchone()
             turns = database.execute(
                 "SELECT count(*) FROM turns WHERE worker='parent'").fetchone()[0]
-            attempts = len(sorted(self.directory.glob('state.db.attempt-*')))
+            attempts = len([
+                path for path in self.directory.iterdir()
+                if path.name == 'attempt' or path.name.startswith('state.db.attempt-')])
         return {'claim': claim, 'claimOwner': claim_owner,
                 'claimGeneration': claim_generation, 'pending': pending,
                 'execution': execution, 'turns': turns, 'attempts': attempts}
@@ -303,8 +353,13 @@ class Lifecycle(Executing):
         self.assertGreaterEqual(evidence['state']['turns'], 1,
                                 'the released attempt must continue the owed '
                                 'input in a new attempt')
-        self.assertGreaterEqual(evidence['state']['attempts'], 1,
-                                'the released attempt must remain on record')
+        self.assertTrue((self.old_attempt / 'acknowledged').exists(),
+                        'the released old attempt must stay acknowledged')
+        self.assertTrue((self.old_attempt / 'released').exists(),
+                        'the released old attempt must stay released')
+        self.assertGreaterEqual(evidence['state']['attempts'], 2,
+                                'the released attempt and its continuation attempt '
+                                'must both remain on record')
 
     def test_contention_records_a_typed_blocked_cause_and_releases_the_ticket(self):
         evidence = self.run_scenario(True)
@@ -335,6 +390,13 @@ class Lifecycle(Executing):
                          'the exact admission ticket must be released')
         self.assertEqual(evidence['state']['pending'], PENDING,
                          'owed input stays unacknowledged for the next driver')
+        self.assertTrue((self.old_attempt / 'acknowledged').exists(),
+                        'the released old attempt must stay acknowledged')
+        self.assertTrue((self.old_attempt / 'released').exists(),
+                        'the released old attempt must stay released')
+        self.assertGreaterEqual(evidence['state']['attempts'], 2,
+                                'the released attempt and its continuation attempt '
+                                'must both remain on record')
 
 
 if __name__ == '__main__':
