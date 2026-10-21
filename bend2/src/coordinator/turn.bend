@@ -211,7 +211,7 @@ def direct_task_prompt(+db: String, +player: String, +id: String, prompt: String
     executable : String <- IO.try(String,Lock.SessionLock.executable())
     parent : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(parent,'') FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     header : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":task-input") ++ " AND recipient=" ++ C.q(player) ++ " AND kind='task-assignment') THEN 'Message (task-assignment) from ' || " ++ C.q(player) ++ " || ' [id: ' || " ++ C.q(id ++ ":task-input") ++ " || ']:' ELSE '' END;"))
-    IO.pure(String,task_instructions() ++ knowledge_instructions() ++ "Coordinator executable, database and session argv: [" ++ J.string_literal(executable) ++ "," ++ J.string_literal(db) ++ "," ++ J.string_literal(player) ++ "]. Recorded parent: " ++ Tx.trim_nl(parent) ++ ".\nUse baton inbox to read complete owed input. Baton resolves your session and database from the launch context and records complete reads internally. Use baton completion-request --text SUMMARY when the assignment is ready; your recorded parent resolves and confirms the current request.\n" ++ Tx.trim_nl(header) ++ "\n" ++ prompt)
+    IO.pure(String,task_instructions() ++ knowledge_instructions() ++ "Coordinator executable, database and session argv: [" ++ J.string_literal(executable) ++ "," ++ J.string_literal(db) ++ "," ++ J.string_literal(player) ++ "]. Recorded parent: " ++ Tx.trim_nl(parent) ++ ".\nUse baton inbox to read complete owed input. Baton resolves your session and database from the launch context. Baton records delivery and complete reads internally. Use baton completion-request --text SUMMARY when the assignment is ready; your recorded parent resolves and confirms the current request.\n" ++ Tx.trim_nl(header) ++ "\n" ++ prompt)
 
 def generation_log(+log: String, +id: String) -> String:
   Logs.attempt_log(log,id)
@@ -908,7 +908,7 @@ def question_frame_failed(result: Result<&1,&1,U32 & String,String>) -> Bool:
 @unsafe
 def consume_frame(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, +spool: String, +spanned: Bool, +cursor: String, +last_message: String, +primary: String, +current: String, +terminal: String, +filter: String, +requested: String, +codex_log: String, +first_error: String, +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, +monitor: Bool, +wake_sub: U32, +alive: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, +line: String, +notice: String) -> IO(WakeRead):
   do IO<WakeRead>:
-    +drained : String <- Guidance.awake_pending(db,player,handle,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
+    +drained : String <- Guidance.awake_pending(db,player,handle,attempt,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
     +decoded : Frame.FrameDecoded <- IO.pure(Frame.FrameDecoded,Frame.decode(line,spool,spanned))
     +invalid : Bool <- IO.pure(Bool,Frame.is_invalid(decoded))
     +decode_error : String <- IO.pure(String,Bool.pick(String,invalid,Frame.invalid_error(),""))
@@ -933,7 +933,7 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
       +failed : Bool <- IO.pure(Bool,Logs.failed_now(log_failed,unshared_result(Unit,written)))
       +relevant : Bool <- IO.pure(Bool,Guidance.relevant(kind,String.eq(harness,"omp\n")))
       +sealed : Bool <- IO.pure(Bool,Bool.not(String.is_empty(terminal)))
-      +next_cursor : String <- Guidance.observe(db,player,handle,decoded,line,drained,Bool.and(String.eq(harness,"omp\n"),relevant),monitor)
+      +next_cursor : String <- Guidance.observe(db,player,handle,attempt,decoded,line,drained,Bool.and(String.eq(harness,"omp\n"),relevant),monitor)
       +next_primary : String <- primary_command(db,event,primary,String.eq(harness,"muse\n"))
       +next_current : String <- current_command(db,event,current,String.eq(harness,"muse\n"))
       +terminal_frame : Bool <- primary_terminal(db,event,"",False{})
@@ -989,7 +989,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
       IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(unshared_result(String,waited)),terminal,error,True{}},deliveries))
     case Done{Again{policy,held,log_failed,cursor,last_message,primary,current,terminal,filter,codex_log,first_error,checkpoint_state,incomplete,alive,deliveries,next}}: consume(db,player,id,log,policy,held,log_failed,handle,harness,spool,spanned,cursor,last_message,primary,current,terminal,filter,requested,codex_log,first_error,sender,attempt,checkpoint_state,incomplete,monitor,wake_sub,alive,deliveries,next)
     case Done{AwakeEnd{+notice,+alive}}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
-      +drained : String <- Guidance.awake_pending(db,player,handle,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
+      +drained : String <- Guidance.awake_pending(db,player,handle,attempt,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
       continuation : (List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>)) <- IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>),Bool.pick(List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>),String.is_empty(notice),
         pending => consume_exhausted(db,player,id,log,spool,held,log_failed,handle,harness,codex_log,terminal,filter,requested,first_error,sender,attempt,checkpoint_state,incomplete_observation,monitor,pending,wake_sub,alive),
         pending => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:

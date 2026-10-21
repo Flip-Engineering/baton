@@ -3827,7 +3827,7 @@ class Receive(unittest.TestCase):
         self.assertIn('model=muse-main', guidance[0][0])
         self.assertIn('original retained attempt', guidance[0][0])
         self.assertIn('previous native conversation lineage is ' + original['native'], guidance[0][0])
-        self.assertIn('already acknowledged', guidance[0][0])
+        self.assertNotIn('acknowledged', guidance[0][0])
         self.assertNotIn('SELECT', guidance[0][0])
         lineage = self.directory / ('state.db.route-' + 'parent'.encode().hex())
         self.assertEqual(lineage.read_text().splitlines()[-1].split()[-2:], ['omp', 'parent'])
@@ -4474,6 +4474,89 @@ class Receive(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(directory, 'released')))
         self.assertFalse(os.path.exists(os.path.join(directory, 'status')))
 
+    def test_dead_native_nul_spool_recovery_preserves_receipts_until_new_owner(self):
+        """A missing native status and NUL in retained stdout do not consume inbox input."""
+        self.player()
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['record_launches'] = True
+        config_path.write_text(json.dumps(config))
+        self.prepare_input('first', 'parent')
+        original_receiver = self.spawn(*self.receive_args('parent'))
+        original_control, original_started = self.accept_child(
+            original_receiver, 'parent', 'original receiver exited before stub startup')
+        self.assertIn('[id: first]', original_started['prompt'])
+        original_native = original_started['native']
+        original_attempt = pathlib.Path(self.execution('parent')[2])
+        self.message('second', 'parent')
+
+        self.suspend_observer_without_database_reader(self.selected_process(original_receiver.pid))
+        self.action(original_control, body='This response is retained but cannot be decoded.', hold_exit=True)
+        self.assertEqual(json.loads(original_control.readline()), {'terminal_written': True})
+        self.eventually(
+            lambda: b'This response is retained but cannot be decoded.'
+            in (original_attempt / 'stdout').read_bytes(),
+            'the original response was not spooled')
+        self.freeze_owned()
+        original_receiver.kill()
+        original_receiver.wait()
+        self.kill_keeper(original_receiver)
+        self.kill_fixture()
+        self.drain_owned()
+        self.assertFalse((original_attempt / 'status').exists())
+        self.assertFalse((original_attempt / 'acknowledged').exists())
+
+        raw_spool = original_attempt / 'stdout'
+        with raw_spool.open('ab') as output:
+            output.write(b'\x00unframed interrupted tail')
+        preserved = raw_spool.read_bytes()
+        self.assertIn(b'\x00', preserved)
+        with sqlite3.connect(self.db) as database:
+            receipts_before = database.execute(
+                "SELECT id,receipt FROM messages WHERE recipient='parent' ORDER BY seq"
+            ).fetchall()
+        self.assertEqual(receipts_before, [('first', None), ('second', None)])
+
+        recovery = self.spawn(*self.receive_args('parent'))
+        resumed, recovery_started = self.accept_child(
+            recovery, 'parent', 'recovery receiver exited before new stub startup')
+        self.assertEqual(recovery_started['native'], original_native)
+        self.assertNotEqual(recovery_started['pid'], original_started['pid'])
+        self.assertIn('[id: first]', recovery_started['prompt'])
+        self.assertIn('[id: second]', recovery_started['prompt'])
+        self.assertEqual(raw_spool.read_bytes(), preserved)
+        self.assertNotIn('This response is retained but cannot be decoded.',
+                         [row['reportBody'] for row in self.coord('turns', 'parent')])
+        with sqlite3.connect(self.db) as database:
+            self.assertEqual(database.execute(
+                "SELECT id,receipt FROM messages WHERE recipient='parent' ORDER BY seq"
+            ).fetchall(), receipts_before)
+        self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 2)
+
+        self.action(resumed, body='The new owner completed both retained inputs.', read=['first', 'second'], ack=False)
+        _, recovery_error = self.finish(recovery, ok=False)
+        self.assertIn('Native receive failed', recovery_error)
+        report_bodies = [row['reportBody'] for row in self.coord('turns', 'parent')]
+        self.assertEqual(report_bodies.count('The new owner completed both retained inputs.'), 1)
+        self.assertNotIn('This response is retained but cannot be decoded.', report_bodies)
+        with sqlite3.connect(self.db) as database:
+            reads = database.execute(
+                "SELECT message,attempt,native,handled FROM message_reads "
+                "WHERE recipient='parent' ORDER BY message"
+            ).fetchall()
+            receipts = database.execute(
+                "SELECT id,receipt FROM messages WHERE recipient='parent' ORDER BY seq"
+            ).fetchall()
+        self.assertEqual([row[0] for row in reads], ['first', 'second'])
+        self.assertEqual({row[1] for row in reads}, {reads[0][1]})
+        self.assertEqual({row[2] for row in reads}, {original_native})
+        self.assertEqual({row[3] for row in reads}, {'native-turn:' + reads[0][1]})
+        self.assertEqual(receipts, [
+            ('first', 'native-turn:' + reads[0][1]),
+            ('second', 'native-turn:' + reads[0][1]),
+        ])
+        self.assertEqual(raw_spool.read_bytes(), preserved)
+
     def test_direct_receive_behind_a_live_child_starts_no_second_turn(self):
         """A live retained child outlives its dead observer with the session
         lock free: a direct receive adopts rather than duplicating, so no
@@ -4492,6 +4575,8 @@ class Receive(unittest.TestCase):
         self.drain_others()
         directory = self.execution('parent')[2]
         self.assert_native_alive(directory, 'retained child died; the live-child premise is void')
+        self.assertFalse((pathlib.Path(directory) / 'status').exists())
+        self.assertFalse((pathlib.Path(directory) / 'acknowledged').exists())
         self.connect('parent')
         with sqlite3.connect(str(self.db)) as database:
             database.execute("UPDATE executions SET phase='exited',status='owner-death'"
@@ -4515,6 +4600,7 @@ class Receive(unittest.TestCase):
         self.assertIsNone(second.poll(),
                           'direct receive exited instead of adopting the live attempt')
         self.assert_native_alive(directory, 'retained child died during adoption')
+        self.assertFalse((pathlib.Path(directory) / 'acknowledged').exists())
         self.assertEqual(self.claim_rows('parent'), before)
         self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['first'])
 
@@ -4613,12 +4699,12 @@ class Receive(unittest.TestCase):
                 first = self.spawn(*self.receive_args(session))
                 control, original = self.accept(session)
                 self.assertIn('[id: ' + ident + ']', original['prompt'])
-                self.assertIn('Review this input.', original['prompt'])
+                self.assertIn('read the complete body with baton read ' + ident, original['prompt'])
                 with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
                     attempt, = database.execute('SELECT id FROM executions WHERE session=?',
                                                 (session,)).fetchone()
                 directory = pathlib.Path(self.execution(session)[2])
-                self.action(control, ack=False, complete_task=False)
+                self.action(control, read=[ident], ack=False, complete_task=False)
                 self.finish_without_start(first)
                 self.assertEqual(self.coord('inbox', session), [])
                 self.assertEqual(self.coord('delivery', ident)['receipt'], 'native-turn:' + attempt)

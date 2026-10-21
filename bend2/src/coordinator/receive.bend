@@ -55,8 +55,7 @@ def orientation_text(db: String, session: String) -> IO(String):
 
 def instructions(executable: String, database: String, +session: String, orientation: String) -> String:
   "You are session " ++ session ++ " in a Baton Orchestra.\nRecorded orientation: " ++ orientation ++ "\nCoordinator executable/database argv: [" ++ J.string_literal(executable) ++ "," ++ J.string_literal(database) ++ "]\n"
-  ++ "Read complete owed input with inbox. Baton resolves the database, current actor, assignment and coordinator from the launch context and records complete reads internally. Read your inbox again as work continues. Explicit stops and direct operator instructions remain effective.\nUse report --text TEXT and ask --text TEXT to reach your recorded coordinator. Use completion-request --text SUMMARY when your assignment is ready. A parentless session follows its operator task. A coordinator uses completion-confirmed --to PLAYER to confirm that Player's current request. Pending delivery reports state their retained byte count; read each complete body with baton read MESSAGE_ID before acting on it. Use guide --to PLAYER --text TEXT for further instructions and native-reply --to PLAYER --text JSON for a pending native question.\nUse dispatch --to PLAYER --text TEXT to deliver a task to a recorded Player. An open assignment receives continuation input. Dispatch stores the complete text, request and setup outcome in the database. Use dispatch --stdin for standard input and dispatch --help for route selection. Independent Players can run concurrently. Their retained reports reach the recorded coordinator when their native turns end.\n"
-  ++ "Use join --session PLAYER --harness HARNESS --model MODEL --effort EFFORT --path WORKSPACE for a shared checkout. Use recruit --session PLAYER --harness HARNESS --model MODEL --effort EFFORT --repo REPO --branch BRANCH --path PATH --base COMMIT for a separate worktree. Baton records the current actor as parent. Register a receiver with receiver --session PLAYER --command EXECUTABLE --output-log PATH.\nFor source work, name the checkout, target branch and remote in the assignment. Commit completed contributions and report remaining work. The coordinating Conductor integrates and publishes contributions. Use land --session PLAYER --repo REPO --target BRANCH for a fast-forward contribution, or reconcile divergent contributions with ordinary Git operations. After the Player's owned turn finishes, receiver --session PLAYER --command EXECUTABLE --output-log PATH --cwd SHARED_CWD preserves its conversation and moves its recorded workspace. Remove a clean inactive temporary worktree and fully integrated branch with ordinary Git commands. Preserve active checkouts, unfinished changes, later unintegrated commits and explicit stops.\nUse players, orchestra, assignment, attempts and status to inspect recorded work. Use knowledge read for complete scoped findings and knowledge promote --to DESTINATION --finding FINDING to share reviewed evidence. Existing finding and message references select evidence; Baton generates identities for new records and relations. Use help ACTION for named arguments and as SESSION for an explicit actor override.\n"
+  ++ "Read complete owed input with inbox. Baton resolves the database, current actor, assignment and coordinator from the launch context. Baton records delivery and complete reads internally. Read your inbox again as work continues. Explicit stops and direct operator instructions remain effective.\nUse report --text TEXT and ask --text TEXT to reach your recorded coordinator. Use completion-request --text SUMMARY when your assignment is ready. A parentless session follows its operator task. A coordinator uses completion-confirmed --to PLAYER to confirm that Player's current request. Pending delivery reports state their retained byte count; read each complete body with baton read MESSAGE_ID before acting on it. Use guide --to PLAYER --text TEXT for further instructions and native-reply --to PLAYER --text JSON for a pending native question.\nUse dispatch --to PLAYER --text TEXT to deliver a task to a recorded Player. An open assignment receives continuation input. Dispatch stores the complete text, request and setup outcome in the database. Use dispatch --stdin for standard input and dispatch --help for route selection. Independent Players can run concurrently. Their retained reports reach the recorded coordinator when their native turns end.\nUse join --session PLAYER --harness HARNESS --model MODEL --effort EFFORT --path WORKSPACE for a shared checkout. Use recruit --session PLAYER --harness HARNESS --model MODEL --effort EFFORT --repo REPO --branch BRANCH --path PATH --base COMMIT for a separate worktree. Baton records the current actor as parent. Register a receiver with receiver --session PLAYER --command EXECUTABLE --output-log PATH.\nFor source work, name the checkout, target branch and remote in the assignment. Commit completed contributions and report remaining work. The coordinating Conductor integrates and publishes contributions. Use land --session PLAYER --repo REPO --target BRANCH for a fast-forward contribution, or reconcile divergent contributions with ordinary Git operations. After the Player's owned turn finishes, receiver --session PLAYER --command EXECUTABLE --output-log PATH --cwd SHARED_CWD preserves its conversation and moves its recorded workspace. Remove a clean inactive temporary worktree and fully integrated branch with ordinary Git commands. Preserve active checkouts, unfinished changes, later unintegrated commits and explicit stops.\nUse players, orchestra, assignment, attempts and status to inspect recorded work. Use knowledge read for complete scoped findings and knowledge promote --to DESTINATION --finding FINDING to share reviewed evidence. Existing finding and message references select evidence; Baton generates identities for new records and relations. Use help ACTION for named arguments and as SESSION for an explicit actor override.\n"
   ++ Turn.task_instructions()
   ++ Turn.knowledge_instructions()
 
@@ -454,6 +453,24 @@ def wake_if_kept(db: String, session: String, cursor: String, superseded: Bool, 
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,finished)
     case False{}: completed_wake(db,session,cursor,finished)
 
+# Record an ended adopted attempt with unknown status, preserve its stdout,
+# and retire its capability before continuing with the pending inbox.
+def completed_orphan_final(+db: String, +session: String, +id: String, +log: String, attempt: String, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), combined: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match combined:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+    case Done{unit}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      finished : Result<&1,&1,U32 & String,Unit> <- finish_pending(db,session,id,attempt,log,"0",outcome,deliveries,again,u => IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),False{})
+      wake_if_kept(db,session,"0",False{},finished)
+
+def completed_orphan(+db: String, +session: String, +id: String, +log: String, attempt: String, stderr: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
+    acknowledged : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.acknowledge(handle)
+    retired : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.retire(handle)
+    observer_released : Unit <- release_observer(lock)
+    completed_orphan_final(db,session,id,log,attempt,outcome,deliveries,again,Turn.combine(acknowledged,retired))
+
+
 # Successful observations and complete recoverable provider errors resume all owed
 # input. Other failures retain the attempt cursor. A recorded profile advance runs
 # its own continuation, and completion operations preserve their results.
@@ -540,7 +557,7 @@ def observed_output(db: String, session: String, id: String, log: String, cursor
 # continuation resumes, so a session that already holds owed input is left untouched.
 def handoff_guidance(db: String, +session: String, id: String, attempt: String) -> IO(Unit):
   do IO<Unit>:
-    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":handoff-guidance") ++ ",id,id,'guidance'," ++ C.q("The provider reported usage exhaustion and the subscription profile advanced to the next operator-listed account. Continue the original retained attempt " ++ attempt ++ " on this binding; the task message that started it is already acknowledged.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"))
+    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":handoff-guidance") ++ ",id,id,'guidance'," ++ C.q("The provider reported usage exhaustion and the subscription profile advanced to the next operator-listed account. Continue the original retained attempt " ++ attempt ++ " on this binding.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"))
     IO.pure(Unit,Unit{})
 
 # After a successful cleanup and a recorded handoff the same actor continues on the binding
@@ -561,7 +578,7 @@ def continue_after_advance(+db: String, +session: String, id: String, +attempt: 
 # acknowledged.
 def transient_guidance(db: String, +session: String, id: String, attempt: String) -> IO(Unit):
   do IO<Unit>:
-    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":transient-guidance") ++ ",id,id,'guidance'," ++ C.q("The attempt ended with a transient provider error. Continue the unfinished task on the retained attempt " ++ attempt ++ " in the same conversation and account; the task message that started it is already acknowledged and the failed turn stays recorded with the provider cause.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"))
+    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":transient-guidance") ++ ",id,id,'guidance'," ++ C.q("The attempt ended with a transient provider error. Continue the unfinished task on the retained attempt " ++ attempt ++ " in the same conversation and account; the failed turn stays recorded with the provider cause.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"))
     IO.pure(Unit,Unit{})
 
 # After a recorded transient failure with nothing owed, the same actor resumes
@@ -645,7 +662,7 @@ def route_decided(+db: String, +session: String, +id: String, +outcome: Turn.Out
 # carries its provenance on a busy session too.
 def route_guidance(db: String, +session: String, id: String, attempt: String, native: String, harness: String, model: String) -> IO(Unit):
   do IO<Unit>:
-    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":route-guidance") ++ ",id,id,'guidance'," ++ C.q("All subscription accounts refused with provider-reported usage exhaustion and the task continues on another operator-listed route: harness=" ++ harness ++ " model=" ++ model ++ ". Continue the original retained attempt " ++ attempt ++ " from the original assignment and context; the previous native conversation lineage is " ++ native ++ "; the task message that started it is already acknowledged and the failed turn stays recorded with the provider cause.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"))
+    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":route-guidance") ++ ",id,id,'guidance'," ++ C.q("All subscription accounts refused with provider-reported usage exhaustion and the task continues on another operator-listed route: harness=" ++ harness ++ " model=" ++ model ++ ". Continue the original retained attempt " ++ attempt ++ " from the original assignment and context; the previous native conversation lineage is " ++ native ++ "; the failed turn stays recorded with the provider cause.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"))
     IO.pure(Unit,Unit{})
 
 def route_applied(+db: String, +session: String, +id: String, +attempt: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>), native: String, log: String, +cause: String, +old_harness: String, old_model: String, +effort: String, chosen: Maybe<&2,Subs.Route>) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -829,12 +846,28 @@ def acquired_pending(+db: String, +session: String, cmd: String, model: String, 
 def recovered_harness(+harness: String) -> String:
   Tx.trim_nl(harness) ++ "\n"
 
+def orphan_native_gone(db: String, handle: U32) -> IO(Bool):
+  do IO<Bool>:
+    +state : String <- IO.try(String,Custody.Instance.state(handle))
+    value : String <- IO.try(String,DB.Sql.read(db,"SELECT CASE WHEN json_valid(" ++ C.q(state) ++ ") AND json_extract(" ++ C.q(state) ++ ",'$.native_gone')=1 THEN '1' ELSE '0' END;"))
+    IO.pure(Bool,String.eq(value,"1\n"))
+
+def observe_guarded_state(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, gone: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match gone:
+    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      +outcome : Turn.Outcome <- IO.pure(Turn.Outcome,Turn.Ended{"unknown after keeper loss","","The recorded native process has ended without a durable exit status. The original stdout and checkpoint remain in " ++ directory ++ ". Pending input remains available for the next native turn.",True{}})
+      exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
+      completed_orphan(db,session,id,log,directory,directory ++ "/native.stderr",handle,lock,outcome,Nil{},again)
+    case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      +normalized_harness : String <- IO.pure(String,recovered_harness(harness))
+      observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,normalized_harness,directory,directory,handle,"unknown")
+      completed_observation(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted,cmd)
+
 def observe_guarded(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    +normalized_harness : String <- IO.pure(String,recovered_harness(harness))
     reconciled : Unit <- Stop.observing(db,session,id,directory)
-    observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,normalized_harness,directory,directory,handle,"unknown")
-    completed_observation(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted,cmd)
+    gone : Bool <- orphan_native_gone(db,handle)
+    observe_guarded_state(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,lock,again,adopted,gone)
 
 def recovery_arguments(args: List<&2,String>) -> List<&2,String>:
   match args:

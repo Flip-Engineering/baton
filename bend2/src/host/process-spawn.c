@@ -4720,6 +4720,7 @@ static int br_instance_retire(BatonProcessCall *call) {
   if(retained->life>=0)close(retained->life);
   if(retained->watch>=0)close(retained->watch);
   if(retained->custody_lock>=0)close(retained->custody_lock);
+  if(retained->guard>=0)close(retained->guard);
   pthread_mutex_destroy(&retained->state);pthread_mutex_destroy(&retained->command);
   pthread_mutex_destroy(&retained->reader);pthread_cond_destroy(&retained->changed);
   free(retained->directory);free(retained->database);free(retained);
@@ -5139,7 +5140,9 @@ static void br_instance_state_call(BatonProcessCall *call) {
   if(!retained || !retained->directory) {call->error=EBADF;return;}
   BrLifecycle record;uint64_t pid=0;int status_known=0,status=0;
   const char *state=br_lifecycle_state(retained->directory,&record,&pid,&status_known,&status);
-  pthread_mutex_lock(&retained->state);int status_unavailable=retained->unknown;
+  pthread_mutex_lock(&retained->state);
+  int status_unavailable=retained->unknown;
+  int native_gone=(retained->orphan || retained->observer_only) && retained->exited && retained->unknown;
   pthread_mutex_unlock(&retained->state);
   if(retained->observer_only && status_unavailable)state="unavailable";
   uint64_t guard_device=0,guard_inode=0;
@@ -5156,7 +5159,7 @@ static void br_instance_state_call(BatonProcessCall *call) {
   const char *format=
     "{\"schema\":\"baton2-host-ready-v1\",\"state\":\"%s\",\"observation\":\"%s\",\"handle\":%u,\"directory\":\"%s\","
     "\"ownerIncarnation\":%llu,\"ownerEpoch\":%llu,\"ownerAttempt\":%llu,\"guardDevice\":%llu,\"guardInode\":%llu,\"guard\":\"%llu:%llu\","
-    "\"observer_ready\":%s,\"native_pid\":%llu,\"status_known\":%s,\"status\":%d,"
+    "\"observer_ready\":%s,\"native_pid\":%llu,\"status_known\":%s,\"status\":%d,\"native_gone\":%s,"
     "\"spawn_latched\":%s,\"cancelled\":%s,\"identity\":\"%s\",\"expectedBinding\":\"%s\","
     "\"grant\":\"%s\",\"rejection\":\"%s\"}";
   int needed=snprintf(NULL,0,format,
@@ -5166,7 +5169,7 @@ static void br_instance_state_call(BatonProcessCall *call) {
     (unsigned long long)guard_device,(unsigned long long)guard_inode,
     (unsigned long long)guard_device,(unsigned long long)guard_inode,
     retained->socket>=0 && record.observer_ready?"true":"false",(unsigned long long)pid,
-    status_known?"true":"false",status,
+    status_known?"true":"false",status,native_gone?"true":"false",
     record.latched?"true":"false",record.cancelled?"true":"false",
     br_lifecycle_has_expected(&record)?"fixed":"none",
     br_lifecycle_has_expected(&record)?expected:"",grant,rejection);
@@ -5181,7 +5184,7 @@ static void br_instance_state_call(BatonProcessCall *call) {
     (unsigned long long)guard_device,(unsigned long long)guard_inode,
     (unsigned long long)guard_device,(unsigned long long)guard_inode,
     retained->socket>=0 && record.observer_ready?"true":"false",(unsigned long long)pid,
-    status_known?"true":"false",status,
+    status_known?"true":"false",status,native_gone?"true":"false",
     record.latched?"true":"false",record.cancelled?"true":"false",
     br_lifecycle_has_expected(&record)?"fixed":"none",
     br_lifecycle_has_expected(&record)?expected:"",grant,rejection);

@@ -280,9 +280,9 @@ def resume_oldest(+db: String, +session: String, oldest: String, empty: Bool) ->
       decoded : String <- field(endpoint)
       resume_endpoint(db,session,oldest,decoded)
 
-# An explicit resume can continue an interrupted task whose input the actor
-# already acknowledged. The failed turn stays in history, and this recovery
-# message follows the recorded receiver into the same native conversation.
+# An explicit resume continues unfinished work in the recorded native conversation.
+# The failed turn stays in history, and this recovery message follows the recorded
+# receiver into the same workspace.
 def resume_input_sql(+session: String) -> String:
   "BEGIN IMMEDIATE;INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT 'resume:' || lower(hex(e.id)),s.id,s.id,'recovery','Continue unfinished work from native attempt ' || e.id || ' in your recorded conversation and workspace.' || coalesce((SELECT ' The latest read task is ' || m.id || '.' FROM messages m WHERE m.recipient=s.id AND m.kind='task' AND " ++ C.read_sql("m") ++ " ORDER BY m.seq DESC LIMIT 1),'') || ' Review the current work before continuing. The original task receipt and failed turn remain recorded.' FROM executions e JOIN sessions s ON s.id=e.session WHERE s.id=" ++ C.q(session) ++ " AND e.phase='exited' AND " ++ C.blocked_cause_sql("s.id") ++ "='provider-failure' AND NOT EXISTS(SELECT 1 FROM messages WHERE recipient=s.id AND receipt IS NULL);"
   ++ "SELECT hex(coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ " ORDER BY seq LIMIT 1),''));COMMIT;"
