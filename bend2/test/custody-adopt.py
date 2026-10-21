@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import compile_queue
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PROCESS_C = ROOT / '.scratch/bend2/process-test.c'
@@ -23,11 +24,11 @@ class CustodyAdopt(unittest.TestCase):
                                     cwd=ROOT, capture_output=True, text=True)
             if result.returncode:
                 raise AssertionError(result.stdout + result.stderr)
-        result = subprocess.run([
-            os.environ.get('CC', 'clang'), '-O1', '-pthread',
-            '-DBATON2_PROCESS_SOURCE=' + repr(str(PROCESS_C)).replace("'", '"'),
-            str(SOURCE), '-lsqlite3', '-lm', '-o', str(FIXTURE),
-        ], capture_output=True, text=True)
+        result = compile_queue.compile_cc(
+            [os.environ.get('CC', 'clang'), '-O1', '-pthread',
+             '-DBATON2_PROCESS_SOURCE=' + repr(str(PROCESS_C)).replace("'", '"'),
+             str(SOURCE), '-lsqlite3', '-lm', '-o', str(FIXTURE)],
+            [PROCESS_C, SOURCE], FIXTURE, ROOT)
         if result.returncode:
             raise AssertionError(result.stdout + result.stderr)
 

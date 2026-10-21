@@ -24,6 +24,7 @@ import tempfile
 import threading
 import time
 import unittest
+import compile_queue
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/instance-test'
@@ -312,9 +313,10 @@ class SharedInstance(unittest.TestCase):
         library = directory / 'fail-inotify-init.so'
         source.write_text('#include <errno.h>\n'
                           'int inotify_init1(int flags) { (void)flags; errno = EMFILE; return -1; }\n')
-        compiled = subprocess.run([os.environ.get('CC', 'cc'), '-shared', '-fPIC', '-O1',
-                                   str(source), '-o', str(library)],
-                                  capture_output=True, text=True)
+        compiled = compile_queue.compile_cc(
+            [os.environ.get('CC', 'cc'), '-shared', '-fPIC', '-O1',
+             str(source), '-o', str(library)],
+            [source], library, directory)
         self.assertEqual(compiled.returncode, 0, compiled.stderr)
         return library
 
@@ -1001,12 +1003,12 @@ class SharedInstance(unittest.TestCase):
 
     def test_legacy_keeper_replies_ready_before_initial_output_and_exit(self):
         probe = self.home / 'legacy-ready'
-        compiled = subprocess.run([
-            os.environ.get('CC', 'clang'), '-O1', '-pthread',
-            '-DBATON2_PROCESS_SOURCE=' + json.dumps(str(ROOT / '.scratch/bend2/process-test.c')),
-            str(ROOT / 'bend2/test/legacy-ready.c'),
-            '-lsqlite3', '-lm', '-o', str(probe),
-        ], capture_output=True, text=True)
+        compiled = compile_queue.compile_cc(
+            [os.environ.get('CC', 'clang'), '-O1', '-pthread',
+             '-DBATON2_PROCESS_SOURCE=' + json.dumps(str(ROOT / '.scratch/bend2/process-test.c')),
+             str(ROOT / 'bend2/test/legacy-ready.c'),
+             '-lsqlite3', '-lm', '-o', str(probe)],
+            [ROOT / '.scratch/bend2/process-test.c', ROOT / 'bend2/test/legacy-ready.c'], probe, self.home)
         self.assertEqual(compiled.returncode, 0, compiled.stderr)
         attempt = self.home / 'legacy-ready-attempt'
         result = subprocess.run([str(probe), str(attempt)], capture_output=True, text=True)

@@ -71,8 +71,6 @@ def build_binary(env, directory, label, entry=None, focused=False, router=False,
     stdout = build_dir / 'build.stdout'
     stderr = build_dir / 'build.stderr'
     role_env = dict(env)
-    if focused or label != 'baton-full':
-        role_env.pop('BEND_GENERATED_C', None)
     if focused:
         role_env['BATON2_RECEIVE_FOCUSED'] = '1'
     if router:
@@ -87,8 +85,6 @@ def build_binary(env, directory, label, entry=None, focused=False, router=False,
               'elapsed_seconds': time.monotonic() - started,
               'stdout': {'path': output_path(stdout, build_dir)},
               'stderr': {'path': output_path(stderr, build_dir)}}
-    if role_env.get('BEND_GENERATED_C'):
-        record['generated_c_input'] = role_env['BEND_GENERATED_C']
     write_json(build_dir / 'build.json', record)
     require(result.returncode == 0, 'Native ' + label + ' build failed; full output is retained in ' + str(build_dir))
     return output, record
@@ -652,6 +648,23 @@ def stage_receiver_binaries(payload, specs, built, c_hashes=None):
     return records
 
 
+def stage_compile_queue(payload, args):
+    source_path = Path(args.compile_queue_binary)
+    require(source_path.is_file() and not source_path.is_symlink() and os.access(source_path, os.X_OK),
+            'The supplied compile queue binary is unavailable or not executable: ' + str(source_path))
+    source_path = source_path.resolve()
+    default = {'directory': str(ROOT), **source_identity()}
+    source = source_pin(args.compile_queue_source_commit, args.compile_queue_source_tree,
+                        args.compile_queue_source_status, None, default,
+                        args.compile_queue_source_directory)
+    destination = payload / 'bin/baton-compile-queue'
+    shutil.copyfile(source_path, destination)
+    destination.chmod(0o755)
+    return {'path': 'bin/baton-compile-queue', 'sha256': sha256(destination),
+            'source': source, 'state_root_environment': 'BATON_COMPILE_QUEUE_ROOT',
+            'state_root_contract': 'absolute writable shared directory outside the install prefix'}
+
+
 def artifact_identity(release_version):
     if release_version is None:
         return {'archive_root': ARCHIVE_ROOT, 'kind': 'development'}
@@ -670,14 +683,14 @@ def package(args):
     result = {'status': 'running', 'source_directory': str(ROOT), 'output': str(output)}
     write_json(output / 'result.json', result)
     try:
+        require(not os.environ.get('BEND_GENERATED_C'),
+                'BEND_GENERATED_C is unsupported; use the verified Main-C reuse inputs')
         repl_inputs(args)
         require(platform.system() == 'Darwin' and platform.machine() == 'arm64',
                 'This native artifact requires a Darwin arm64 build host')
         identity = artifact_identity(args.release_version)
         compiler = args.bend.resolve()
         env = dict(os.environ, BEND=str(compiler))
-        if args.generated_c is not None:
-            env['BEND_GENERATED_C'] = str(args.generated_c.resolve())
         specs = receiver_binaries(args)
         built = {}
         builds = {}
@@ -715,6 +728,7 @@ def package(args):
                   'tree': git('rev-parse', 'HEAD^{tree}')}
         payload = output / identity['archive_root']
         records = stage_receiver_binaries(payload, specs, built, c_hashes)
+        compile_queue = stage_compile_queue(payload, args)
         closures = stage_source_closures(payload, args)
         require_manifest_closures(specs, closures)
         stage_adapters(payload)
@@ -745,6 +759,7 @@ def package(args):
                           'sha256': record['sha256'], 'build_mode': record['build_mode']}
                          for record in records],
             'closures': closures,
+            'compile_queue': compile_queue,
         }
         if full_record.get('wrapper_source') is not None:
             source_manifest['full']['wrapper_source'] = full_record['wrapper_source']
@@ -757,6 +772,7 @@ def package(args):
             'platform': {'system': platform.system(), 'machine': platform.machine(), 'artifact': 'darwin-arm64'},
             'source': source,
             'binaries': records, 'source_manifest': source_manifest,
+            'compile_queue': compile_queue,
             'binary': {'path': focused['path'], 'alias': focused.get('alias'),
                        'sha256': focused['sha256'], 'source': focused['source']},
             'selected_modules': selected_context,
@@ -795,8 +811,6 @@ def main():
     parser.add_argument('--bend', required=True, type=Path, help='installed Bend compiler')
     parser.add_argument('--compiler-archive', required=True, type=Path,
                         help='verified official Bend 2.0.25 archive used for license notices')
-    parser.add_argument('--generated-c', type=Path,
-                        help='compile a generated production C file on the package host')
     for role in ('focused', 'full', 'recovery'):
         parser.add_argument('--' + role + '-binary', type=Path,
                             help='prebuilt ' + role + ' binary; otherwise build from source')
@@ -818,6 +832,12 @@ def main():
     parser.add_argument('--release-version', help='version identifier for a release archive; requires the project root LICENSE')
     parser.add_argument('--repl-compiler-source', type=Path, default=ROOT / 'bend2/compiler/upstream',
                         help='exact pinned compiler source; defaults to the required checked-in closure')
+    parser.add_argument('--compile-queue-binary', type=Path, required=True,
+                        help='qualified native queue executable included as bin/baton-compile-queue')
+    parser.add_argument('--compile-queue-source-commit', required=True)
+    parser.add_argument('--compile-queue-source-tree', required=True)
+    parser.add_argument('--compile-queue-source-status', default='')
+    parser.add_argument('--compile-queue-source-directory')
     parser.add_argument('--repl-runtime', type=Path, required=True,
                         help='required platform Bun executable for the bundled REPL compiler')
     parser.add_argument('--repl-runtime-sha256', required=True,

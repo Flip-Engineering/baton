@@ -53,6 +53,10 @@ def main():
     parser.add_argument('--focused-binary', type=Path, required=True)
     parser.add_argument('--full-binary', type=Path, required=True)
     parser.add_argument('--recovery-binary', type=Path, required=True)
+    parser.add_argument('--compile-queue-binary', type=Path, required=True)
+    parser.add_argument('--compile-queue-source-commit', required=True)
+    parser.add_argument('--compile-queue-source-tree', required=True)
+    parser.add_argument('--compile-queue-source-status', default='')
     for role in ('focused', 'full', 'recovery'):
         parser.add_argument('--' + role + '-source-commit', required=True)
         parser.add_argument('--' + role + '-source-tree', required=True)
@@ -73,6 +77,10 @@ def main():
              '--prefix', args.prefix, '--focused-binary', args.focused_binary,
              '--full-binary', args.full_binary,
              '--recovery-binary', args.recovery_binary,
+             '--compile-queue-binary', args.compile_queue_binary,
+             '--compile-queue-source-commit', args.compile_queue_source_commit,
+             '--compile-queue-source-tree', args.compile_queue_source_tree,
+             '--compile-queue-source-status', args.compile_queue_source_status,
              '--repl-compiler-source', args.repl_compiler_source,
              '--repl-runtime', args.repl_runtime,
              '--repl-runtime-sha256', args.repl_runtime_sha256,
