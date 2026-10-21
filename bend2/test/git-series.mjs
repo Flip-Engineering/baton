@@ -165,6 +165,49 @@ test('the configured askpass executable runs and denies without a credential rou
   assert.doesNotMatch(result.stderr, /cannot exec/);
 });
 
+test('an inherited literal multi-word askpass cannot exec and is replaced by controlled denial', async () => {
+  const repository = 'flip-engineer/automated-content-pipeline';
+  const production = [process.execPath, SOURCE, 'deny-askpass'].join(' ');
+  const request = `protocol=https\nhost=github.com\npath=${repository}.git\n\n`;
+  const credential = environment => new Promise((accept, reject) => {
+    const processChild = spawn('git', ['credential', 'fill'], { cwd: directory, env: environment,
+      stdio: ['pipe', 'pipe', 'pipe'] });
+    const stdout = [], stderr = [];
+    processChild.on('error', reject);
+    processChild.stdout.on('data', chunk => stdout.push(chunk));
+    processChild.stderr.on('data', chunk => stderr.push(chunk));
+    processChild.stdin.end(request);
+    processChild.on('close', code => accept({ code, stdout: Buffer.concat(stdout).toString(),
+      stderr: Buffer.concat(stderr).toString() }));
+  });
+
+  const raw = await credential({ PATH: process.env.PATH, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: production });
+  assert.equal(raw.code, 128, raw.stderr);
+  assert.equal(raw.stdout, '');
+  assert.match(raw.stderr, /cannot exec/);
+  assert.match(raw.stderr, /No such file or directory/);
+  assert.match(raw.stderr, /could not read Username/);
+
+  const inherited = { PATH: process.env.PATH, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: production,
+    GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.askpass', GIT_CONFIG_VALUE_0: production };
+  const environment = model.scoped_environment(registry, 'gpt', identities.gpt, inherited);
+  assert.equal(environment.GIT_ASKPASS, 'false');
+  const pairs = Array.from({ length: Number(environment.GIT_CONFIG_COUNT) }, (_, index) =>
+    [environment[`GIT_CONFIG_KEY_${index}`], environment[`GIT_CONFIG_VALUE_${index}`]]);
+  assert.ok(!pairs.some(([key, value]) => key === 'core.askpass' || value === production));
+
+  const scoped = await credential(environment);
+  assert.equal(scoped.code, 128, scoped.stderr);
+  assert.equal(scoped.stdout, '');
+  assert.match(scoped.stderr, /unable to read askpass response from 'false'/);
+  assert.doesNotMatch(scoped.stderr, /cannot exec/);
+  assert.doesNotMatch(scoped.stderr, /deny-askpass/);
+
+  assert.throws(() => model.check({ registry, model_key: 'gpt-6-astra', repository }),
+    /different repository/);
+  assert.throws(() => model.credential_context(request, 'Flip-Engineering/baton'), model.Refusal);
+});
+
 test('shared registry attribution changes Git headers and leaves selected App identities intact', async () => {
   const sharedRegistry = join(directory, 'shared-attribution.json');
   const attribution = { name: 'Flip - Baton', email: 'baton@example.invalid' };
