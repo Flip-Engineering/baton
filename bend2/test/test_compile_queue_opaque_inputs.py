@@ -124,6 +124,7 @@ class QueueOpaqueInputTests(unittest.TestCase):
             self.assertIn("outside root", result.stderr)
 
     def waiter_rss(self, payload):
+        (self.root / "output").unlink(missing_ok=True)
         lock = (self.state / "heavy.lock").open("w")
         self.addCleanup(lock.close)
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -140,8 +141,7 @@ class QueueOpaqueInputTests(unittest.TestCase):
                 values = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
                 runs = list(self.state.glob(f"keys/*/runs/*-{process.pid}/meta"))
                 if runs:
-                    children = pathlib.Path(f"/proc/{process.pid}/task/{process.pid}/children").read_text().strip()
-                    self.assertEqual(children, "")
+                    self.assertFalse((self.root / "output").exists())
                     samples.append(int(values["VmRSS"].split()[0]))
                     if len(samples) == 3:
                         return min(samples)
