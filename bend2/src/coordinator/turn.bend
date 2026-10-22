@@ -977,7 +977,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
       closed : Result<&1,&1,U32 & String,Unit> <- close_input(handle,Bool.not(monitor))
       sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
       +waited : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,P.ProcessChild.wait(handle))
-      +positioned : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,Logs.write_positioned(log,Logs.flush(held),Observer.output(checkpoint_state),log_failed,Bool.not(String.is_empty(attempt)),False{}))
+      +positioned : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,Logs.write_positioned(log,List.append(&1,String,Logs.flush(held),filter_lines(filter,requested,String.eq(harness,"omp\n"))),Observer.output(checkpoint_state),log_failed,Bool.not(String.is_empty(attempt)),False{}))
       +flushed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.position_write(log,unshared_result(String,positioned))))
       +write_failed : Bool <- IO.pure(Bool,Logs.failed_now(log_failed,unshared_result(Unit,flushed)))
       checkpoint_done : Result<&1,&1,U32 & String,Unit> <- checkpoint(Bool.and(String.is_empty(attempt),Bool.not(write_failed)),log,"")
