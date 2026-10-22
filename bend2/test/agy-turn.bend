@@ -29,6 +29,7 @@ def admitted_line(+db: String, +id: String, +line: String, admit: Bool) -> IO(Un
     case True{}: observe(db,id,line)
     case False{}: IO.pure(Unit,Unit{})
 
+@unsafe
 def lines(+db: String, +mode: String, +handle: U32, next: Maybe<String>) -> IO(Unit):
   match next:
     case None{}: IO.pure(Unit,Unit{})
