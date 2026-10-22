@@ -127,7 +127,7 @@ typedef struct {
   uintptr_t connection;
 } ThreadRead;
 
-static _Atomic int thread_barrier;
+static int thread_barrier;
 
 static void *thread_read(void *argument) {
   ThreadRead *state = argument;
@@ -325,7 +325,7 @@ static int test_multi(const char *database) {
 
 typedef struct {
   const char *path;
-  _Atomic int ready;
+  int ready;
 } BusyWriter;
 
 static void *busy_writer(void *argument) {
