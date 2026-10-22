@@ -108,6 +108,7 @@ class ReplayGuard(unittest.TestCase):
         self.native = self.directory / 'native.py'
         self.recovery = self.directory / 'recovery.py'
         write_recovery(self.recovery, self.recovery_marker)
+        self.fixture('init', self.db, 'omp')
         self.owner_log = self.directory / 'owner.log'
         self.owner_out = open(self.owner_log, 'w')
         self.owner = subprocess.Popen(
@@ -124,7 +125,6 @@ class ReplayGuard(unittest.TestCase):
             time.sleep(0.02)
         self.assertIsNotNone(owner_pid(self.db),
                              'instance owner did not stay live')
-        self.fixture('init', self.db, 'omp')
 
     def stop_owner(self):
         if self.owner.poll() is None:
