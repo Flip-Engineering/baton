@@ -18,6 +18,17 @@ def admit(+db: String, +session: String, +id: String, +mode: String, +directory:
     result : String <- IO.try(String,DB.Sql.query(db,admit_sql(session,id,mode,directory)))
     IO.pure(Bool,String.eq(result,"1\n"))
 
+# A held start admitted under the session lock never launches, so the row that
+# admission wrote for it is removed. The id and phase guards leave any row that
+# a later admission has already replaced.
+def held_release_sql(+session: String, +id: String) -> String:
+  "DELETE FROM executions WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(id) ++ " AND phase='starting';"
+
+def held_release(+db: String, +session: String, +id: String) -> IO(Unit):
+  do IO<Unit>:
+    saved : String <- IO.try(String,DB.Sql.query(db,held_release_sql(session,id)))
+    IO.pure(Unit,Unit{})
+
 def stopped_sql(+session: String) -> String:
   "SELECT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ");"
 
