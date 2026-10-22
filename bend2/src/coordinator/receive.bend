@@ -1107,7 +1107,7 @@ def recover_observer_acquired(+db: String, +session: String, id: String, cursor:
 def recover_observer_result(acquired: Result<&1,&1,U32 & String,U32 & U32>, +db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +harness: String, +directory: String, +native: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match acquired:
     case Fail{error}: report_recovery_pass(db,session,id,directory,Fail{error})
-    case Done{+value}: recover_observer_acquired(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,value)
+    case Done{(lock,pid)}: recover_observer_acquired(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,(lock,pid))
 
 def recover_observer_arguments_base(+db: String, +session: String, +directory: String, observer: U32, args: List<&2,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match args:
