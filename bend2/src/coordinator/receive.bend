@@ -508,9 +508,9 @@ def wake_if_kept(db: String, session: String, cursor: String, superseded: Bool, 
       case Done{unit}: completed_wake(db,session,cursor,finished)
       case Fail{error}: do IO<Result<&1,&1,U32 & String,Unit>>:
         starting : Bool <- wake_starting(db,session)
-        Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),starting,
-          IO.pure(Result<&1,&1,U32 & String,Unit>,finished),
-          completed_wake(db,session,cursor,finished))
+        match starting:
+          case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+          case False{}: completed_wake(db,session,cursor,Fail{error})
 
 # Record an ended adopted attempt with unknown status, preserve its stdout,
 # and retire its capability before continuing with the pending inbox.
