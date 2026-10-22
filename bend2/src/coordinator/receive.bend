@@ -915,7 +915,7 @@ def acquired_recorded(+db: String, +session: String, +lock: U32, again: String -
 # status, or a missing prior attempt admits; a live or unreadable pid refuses.
 # The /proc stat read of a recorded pid: a readable entry is a live native, a
 # missing entry is a dead one, and any other read error is uncertain.
-def prior_proc_state(+proc: Result<&1,&1,U32 & String,String>) -> PriorNative:
+def prior_proc_state(proc: Result<&1,&1,U32 & String,String>) -> PriorNative:
   match proc:
     case Done{text}: PriorLive{}
     case Fail{(code,text)}: Bool.pick(PriorNative,U32.is_eq(code,2),PriorDead{},PriorUncertain{})
@@ -930,12 +930,12 @@ def prior_pid_number(number: Maybe<&2,U32>) -> IO(PriorNative):
       proc : Result<&1,&1,U32 & String,String> <- Text.Text.read("/proc/" ++ U32.show(pid) ++ "/stat")
       IO.pure(PriorNative,prior_proc_state(proc))
 
-def prior_missing_pid_state(+status: Result<&1,&1,U32 & String,String>) -> IO(PriorNative):
+def prior_missing_pid_state(status: Result<&1,&1,U32 & String,String>) -> IO(PriorNative):
   match status:
     case Done{text}: IO.pure(PriorNative,Bool.pick(PriorNative,Bool.not(String.is_empty(Tx.trim_nl(text))),PriorDead{},PriorUncertain{}))
     case Fail{error}: IO.pure(PriorNative,PriorUncertain{})
 
-def prior_pid_or_status(+pid: Result<&1,&1,U32 & String,String>, +status: Result<&1,&1,U32 & String,String>) -> IO(PriorNative):
+def prior_pid_or_status(pid: Result<&1,&1,U32 & String,String>, status: Result<&1,&1,U32 & String,String>) -> IO(PriorNative):
   match pid:
     case Done{text}: prior_pid_state(text)
     case Fail{error}: prior_missing_pid_state(status)
@@ -946,7 +946,7 @@ def prior_state_at(+directory: String) -> IO(PriorNative):
     pid : Result<&1,&1,U32 & String,String> <- Text.Text.read(directory ++ "/native.pid")
     prior_pid_or_status(pid,status)
 
-def prior_resolved_state(+db: String, +hexid: String, +directory: String, +state: PriorNative) -> IO(PriorNative):
+def prior_resolved_state(+db: String, +hexid: String, +directory: String, state: PriorNative) -> IO(PriorNative):
   match state:
     case PriorLive{}: IO.pure(PriorNative,PriorLive{})
     case PriorDead{}: IO.pure(PriorNative,PriorDead{})
@@ -958,7 +958,7 @@ def prior_row_state(+db: String, +hexid: String, +directory: String) -> IO(Prior
     state : PriorNative <- prior_state_at(directory)
     prior_resolved_state(db,hexid,directory,state)
 
-def prior_fields_state(+db: String, +fields: List<String>) -> IO(PriorNative):
+def prior_fields_state(+db: String, fields: List<String>) -> IO(PriorNative):
   match fields:
     case hexid <> directory <> Nil{}: prior_row_state(db,hexid,directory)
     case other: IO.pure(PriorNative,PriorUncertain{})
@@ -966,7 +966,7 @@ def prior_fields_state(+db: String, +fields: List<String>) -> IO(PriorNative):
 def prior_trimmed_state(+db: String, +trimmed: String) -> IO(PriorNative):
   prior_empty_state(db,String.is_empty(trimmed),Tx.split_tabs(trimmed))
 
-def prior_empty_state(+db: String, +empty: Bool, +fields: List<String>) -> IO(PriorNative):
+def prior_empty_state(+db: String, empty: Bool, fields: List<String>) -> IO(PriorNative):
   match empty:
     case True{}: IO.pure(PriorNative,PriorNone{})
     case False{}: prior_fields_state(db,fields)
