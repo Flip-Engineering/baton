@@ -179,8 +179,8 @@ export function runtime_pairs(environment) {
   return pairs;
 }
 
-// An assigned repository limits the helper to that repository. Without one, the
-// helper takes the repository from each credential request's path.
+// Credential requests select their repository. The workspace repository supplies
+// a default when Git omits the request path.
 export function scoped_environment(registry_path, series_key, github, inherited,
   author_email = github.commitEmail, author_name = 'Flip Baton - ' + SERIES_LABELS[series_key],
   repository = null) {
@@ -195,8 +195,7 @@ export function scoped_environment(registry_path, series_key, github, inherited,
   const scope = selected === null ? [] : ['--repository', selected];
   const helper = '!' + [process.execPath, fileURLToPath(import.meta.url), 'helper',
     '--registry', registry_path, '--series-key', series_key, ...scope].map(shell_quote).join(' ');
-  const contexts = selected === null ? ['https://github.com']
-    : ['https://github.com/' + selected, 'https://github.com/' + selected + '.git'];
+  const contexts = ['https://github.com'];
   pairs.push(['credential.helper', ''], ['credential.interactive', 'false'],
     ['http.extraHeader', ''], ['http.https://github.com/.extraHeader', '']);
   for (const repository_context of contexts) {
@@ -493,22 +492,14 @@ function credential_fields(input) {
   return fields;
 }
 
-function credential_repository(fields, repository) {
-  const selected = repository_path(repository);
-  require([selected, selected + '.git'].some(candidate => same_repository(fields.get('path'), candidate)),
-    'Git credentials are restricted to the assigned HTTPS repository.');
-}
-
 // The request path names the repository as OWNER/NAME or OWNER/NAME.git.
-function credential_path(fields) {
-  const value = fields.get('path') ?? '';
+function credential_path(fields, repository = null) {
+  const value = fields.get('path') || repository || '';
   return repository_path(value.endsWith('.git') ? value.slice(0, -4) : value);
 }
 
 export function credential_context(input, repository = null) {
-  const fields = credential_fields(input);
-  if (repository === null) credential_path(fields);
-  else credential_repository(fields, repository);
+  credential_path(credential_fields(input), repository);
 }
 
 export async function helper(args, input = process.stdin, output = process.stdout, issue = installation_token) {
@@ -520,9 +511,7 @@ export async function helper(args, input = process.stdin, output = process.stdou
     if (context.startsWith('\n') || context.includes('\n\n')) break;
   }
   input.pause();
-  const fields = credential_fields(context), assigned = args.repository ?? null;
-  if (assigned !== null) credential_repository(fields, assigned);
-  const repository = assigned ?? credential_path(fields);
+  const repository = credential_path(credential_fields(context), args.repository ?? null);
   const [, directory, github] = selected_identity(path(args.registry), null, args.series_key);
   const token = await issue(directory, github, repository);
   output.write('username=x-access-token\npassword=' + token + '\n\n');

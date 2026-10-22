@@ -165,10 +165,11 @@ an endpoint using the installed Node helper and the recipient's recorded model.
 origin remote and pass its GitHub repository to the helper as `--repository`.
 A nested worker registered from another worker's environment uses its own
 assignment workspace, so it receives that assignment's repository. A workspace whose
-origin is not a GitHub URL passes no repository selection. With a selection,
-the helper accepts credential requests only for that repository. With no
-selection, each request names its own repository and the helper uses that
-repository's owner installation.
+origin is not a GitHub URL passes no repository selection. Git credential
+requests select their target through the `path=OWNER/NAME` field. The helper
+sets `credential.useHttpPath=true` for GitHub HTTPS requests. The workspace
+repository supplies the default when a request omits that field. This rule
+also applies inside a Baton session with `BATON_SESSION` set.
 
 ```sh
 baton2 /absolute/path/state.db receiver lead /absolute/path/omp \
@@ -244,8 +245,8 @@ Each `gh` invocation selects its repository in this order:
 
 An unresolved owner produces a refusal naming these inputs. Commands such as
 `gh auth status` and `gh api /user` need one of these inputs too. The Git
-credential helper's optional `--repository` restriction applies to Git
-credential requests; `gh` uses the repository selected by its invocation.
+credential helper's optional `--repository` supplies its workspace default;
+`gh` uses the repository selected by its invocation.
 
 The wrapper finds the executable `gh` on `PATH`, skipping entries that resolve
 to `git-series-bin/gh` in any source or installed prefix. It requests a fresh
