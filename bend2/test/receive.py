@@ -1,11 +1,13 @@
 """Native inbox delivery with controlled harness processes and real coordinator state."""
 import errno
 import fcntl
+import hashlib
 import json
 import os
 import pathlib
 import select
 import shlex
+import shutil
 import signal
 import socket
 import sqlite3
@@ -20,6 +22,19 @@ from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
+
+def require_candidate():
+    """Require the bound candidate when qualification sets its SHA256."""
+    expected = os.environ.get('BATON_TEST_EXPECT_SHA256', '')
+    if not EXE.exists():
+        if expected:
+            raise AssertionError(f'Coordinator missing at {EXE}; expected sha256 {expected}')
+        return False
+    if expected:
+        actual = hashlib.sha256(EXE.read_bytes()).hexdigest()
+        if actual != expected:
+            raise AssertionError(f'Coordinator sha256 mismatch at {EXE}: {actual} != {expected}')
+    return True
 
 
 def write_public_queue_codex(directory, calls):
@@ -566,11 +581,12 @@ client.close()
 
 class Receive(unittest.TestCase):
     def setUp(self):
-        if not EXE.exists():
+        if not require_candidate():
             self.skipTest(f'Coordinator not built at {EXE}')
         self.temp = tempfile.TemporaryDirectory(prefix="receive ' paths ", dir=ROOT / '.scratch/bend2')
         self.addCleanup(self.temp.cleanup)
         self.directory = pathlib.Path(self.temp.name)
+        self.environment = None
         self.ipc = tempfile.TemporaryDirectory(prefix='baton2-receive-ipc-', dir='/tmp')
         self.addCleanup(self.ipc.cleanup)
         original_runtime = os.environ.get('XDG_RUNTIME_DIR')
@@ -687,17 +703,20 @@ class Receive(unittest.TestCase):
             self.assertEqual(stopped.returncode, 0, stopped.stderr)
             self.eventually(lambda: not self.owned_processes(), description)
 
-    def coord(self, *args, ok=True):
-        result = subprocess.run([str(EXE), str(self.db), *map(str, args)],
-                                capture_output=True, text=True)
+    def coord(self, *args, ok=True, executable=None, environment=None):
+        selected = self.environment if environment is None else environment
+        result = subprocess.run([str(executable or EXE), str(self.db), *map(str, args)],
+                                capture_output=True, text=True, env=selected)
         if ok:
             self.assertEqual(result.returncode, 0, result.stderr)
             return json.loads(result.stdout)
         return result
 
-    def spawn(self, *args):
-        child = subprocess.Popen([str(EXE), str(self.db), *map(str, args)],
-                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    def spawn(self, *args, executable=None, environment=None):
+        selected = self.environment if environment is None else environment
+        child = subprocess.Popen([str(executable or EXE), str(self.db), *map(str, args)],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                 env=selected)
         self.children.append(child)
         return child
 
@@ -709,6 +728,22 @@ class Receive(unittest.TestCase):
     def receive_args(self, session, executable=None):
         return ['receive', session, str(executable or self.fixture), session, 'low',
                 str(self.directory), str(self.directory / (session + '.jsonl')), '']
+
+    def private_candidate(self):
+        """Copy the candidate into a fixture package whose helper can be removed."""
+        package = self.directory / 'candidate-package'
+        (package / 'bin').mkdir(parents=True)
+        (package / 'libexec' / 'baton2').mkdir(parents=True)
+        candidate = package / 'bin' / 'baton2'
+        shutil.copy2(EXE, candidate)
+        candidate.chmod(0o755)
+        helper = package / 'libexec' / 'baton2' / 'git-series.mjs'
+        for source in (ROOT / 'bend2' / 'harness').glob('*.mjs'):
+            shutil.copy2(source, package / 'libexec' / 'baton2' / source.name)
+        self.assertEqual(hashlib.sha256(candidate.read_bytes()).hexdigest(),
+                         hashlib.sha256(EXE.read_bytes()).hexdigest(),
+                         'the private candidate copy differs from the bound candidate')
+        return package, candidate, helper
 
     def output_log(self, session):
         """Return the path registered for the session's current receive attempt."""
@@ -740,12 +775,12 @@ class Receive(unittest.TestCase):
         self.assertTrue(data, 'the reference launch produced no diagnostic')
         return data
 
-    def endpoint(self, session):
-        return json.dumps([str(EXE), str(self.db), *self.receive_args(session)[:-1]])
+    def endpoint(self, session, executable=None):
+        return json.dumps([str(executable or EXE), str(self.db), *self.receive_args(session)[:-1]])
 
-    def connect(self, session):
+    def connect(self, session, executable=None):
         native = self.coord('player', session)['native']
-        self.coord('connect', session, native, self.endpoint(session))
+        self.coord('connect', session, native, self.endpoint(session, executable))
 
     def prepare_input(self, ident, recipient, body='Review this input.', kind='guidance'):
         sender = 'operator' if recipient == 'root' else 'root'
@@ -1215,6 +1250,173 @@ class Receive(unittest.TestCase):
                     self.assertEqual(self.coord('delivery', name + '-confirmed')['receipt'], 'native-reviewed')
                     self.assertEqual(self.coord('delivery', request)['receipt'], 'parent-received')
 
+
+    def test_missing_identity_helper_continuation_reports_setup_failure(self):
+        package, candidate, helper = self.private_candidate()
+        private_home = self.directory / 'private-home'
+        registry = private_home / '.config' / 'baton' / 'github-apps' / 'series.json'
+        registry.parent.mkdir(parents=True)
+        environment = os.environ.copy()
+        environment.pop('BATON2_GIT_REGISTRY', None)
+        environment['HOME'] = str(private_home)
+        self.environment = environment
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['record_launches'] = True
+        config['ack_root'] = False
+        config_path.write_text(json.dumps(config))
+        self.player()
+        self.prepare_input('identity-task', 'parent', 'Complete the original input.', kind='task')
+        self.coord('connect', 'root', 'native-root',
+                   json.dumps([str(self.fixture), 'parent_endpoint']))
+        self.connect('parent', executable=candidate)
+        observer = self.spawn(*self.receive_args('parent'), executable=candidate)
+        first, started = self.accept_child(observer, 'parent')
+        native_id = self.eventually(lambda: self.coord('player', 'parent')['native'],
+                                    'The original native identity was not recorded.')
+        self.assertEqual(native_id, started['native'])
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            original_id, original_directory = database.execute(
+                "SELECT id,directory FROM executions "
+                "WHERE session='parent' AND mode='retained' ORDER BY rowid DESC LIMIT 1"
+            ).fetchone()
+        launches = self.directory / 'native-launches.jsonl'
+        before = launches.read_bytes()
+        self.assertTrue(helper.exists())
+        registry.write_text('{}\n')
+        helper.unlink()
+        self.assertFalse((package / 'bend2' / 'harness' / 'git-series.mjs').exists())
+        self.action(first, body='Original result completed before the continuation.',
+                    complete_task=False)
+        self.assertEqual(first.readline(), b'')
+        stdout, stderr = self.finish(observer, ok=False)
+        original_failure = 'Native control setup failed; inspect the registered session and retained input.'
+        self.assertNotEqual(observer.returncode, 0, stdout + stderr)
+        self.assertIn(original_failure, stdout + stderr)
+        self.assertEqual(launches.read_bytes(), before,
+                         'the failed continuation launched another native')
+        self.assert_no_start()
+        self.shutdown_idle_database_owner(
+            'The failed setup left an owner process.', reject_start=True)
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            row = database.execute(
+                "SELECT id,directory,phase,status FROM executions "
+                "WHERE session='parent' ORDER BY rowid DESC LIMIT 1").fetchone()
+        self.assertIsNotNone(row)
+        attempt_id, directory, phase, status = row
+        self.assertNotEqual(attempt_id, original_id)
+        self.assertEqual((phase, status), ('starting', ''), row)
+        attempt = pathlib.Path(directory)
+        for name in ('native.pid', 'native.stderr', 'stdout', 'manifest', 'native.birth'):
+            self.assertFalse((attempt / name).exists(),
+                             f'{name} exists in the failed setup attempt')
+        initialization = self.initial_inputs('parent')
+        self.assertGreaterEqual(len(initialization), 2, initialization)
+        self.assertEqual(self.coord('player', 'parent')['native'], native_id)
+        report_id = original_id + ':continuation-failure'
+
+        def report_row():
+            with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+                return database.execute(
+                    "SELECT id,recipient,kind,body FROM messages WHERE id=?",
+                    (report_id,)).fetchone()
+
+        report = self.eventually(report_row,
+                                 'The conductor did not receive the continuation setup failure report')
+        self.assertEqual(report[1:3], ('root', 'report'))
+        self.assertEqual(report[0], report_id)
+        self.assertIn('2: ' + original_failure, report[3])
+        self.assertIn(str(original_directory), report[3])
+
+        def delivered_report():
+            path = self.directory / 'parent-deliveries.jsonl'
+            if not path.exists():
+                return None
+            for line in path.read_text().splitlines():
+                message = json.loads(line)
+                if message['id'] == report_id:
+                    return message
+            return None
+
+        witness = self.eventually(delivered_report,
+                                  'The conductor endpoint did not receive the setup failure')
+        self.assertEqual(witness['body'], report[3])
+        self.assertEqual(self.coord('delivery', report_id)['body'], report[3])
+
+    def test_recovery_observer_acquisition_failure_reports_and_does_not_launch(self):
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['record_launches'] = True
+        config['ack_root'] = False
+        config_path.write_text(json.dumps(config))
+        self.coord('connect', 'root', 'native-root',
+                   json.dumps([str(self.fixture), 'parent_endpoint']))
+        self.player('parent', harness='omp')
+        self.prepare_input('recovery-task', 'parent', 'Complete the original input.', kind='task')
+        self.connect('parent')
+        observer = self.spawn(*self.receive_args('parent'))
+        first, started = self.accept_child(observer, 'parent')
+        native_id = self.eventually(lambda: self.coord('player', 'parent')['native'],
+                                    'The original native identity was not recorded.')
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            attempt_id, directory = database.execute(
+                "SELECT id,directory FROM executions "
+                "WHERE session='parent' AND mode='retained' ORDER BY rowid DESC LIMIT 1"
+            ).fetchone()
+            cursor = database.execute(
+                "SELECT seq FROM messages WHERE id='recovery-task'").fetchone()[0]
+        attempt = pathlib.Path(directory)
+        retained = {name: (attempt / name).read_bytes() for name in ('manifest', 'native.birth')
+                    if (attempt / name).exists()}
+        before_execution = self.execution('parent')
+        launches = self.directory / 'native-launches.jsonl'
+        before_launches = launches.read_bytes()
+        log = self.output_log('parent')
+        recovery = [str(EXE.resolve()), '--recover-receive', str(self.db.resolve()), 'parent',
+                    attempt_id, str(cursor) + '\n', str(self.fixture), 'parent', 'low',
+                    str(self.directory), str(log), 'omp\n', str(attempt), native_id]
+        failed = subprocess.run(recovery, capture_output=True, text=True)
+        self.assertNotEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+        self.assertIn(os.strerror(errno.EBUSY), failed.stderr)
+        self.assertEqual(self.execution('parent'), before_execution)
+        self.assertEqual(self.coord('player', 'parent')['native'], native_id)
+        for name, content in retained.items():
+            self.assertEqual((attempt / name).read_bytes(), content)
+        self.assertEqual(launches.read_bytes(), before_launches,
+                         'the refused recovery launched another native')
+        self.assert_no_start()
+        report_id = attempt_id + ':recovery-failure'
+
+        def report_row():
+            with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+                return database.execute(
+                    "SELECT id,recipient,kind,body FROM messages WHERE id=?",
+                    (report_id,)).fetchone()
+
+        report = self.eventually(report_row, 'The conductor did not receive the recovery failure report')
+        self.assertEqual(report[1:3], ('root', 'report'))
+        self.assertEqual(report[0], report_id)
+        self.assertIn('Recovery of retained attempt', report[3])
+        self.assertIn(os.strerror(errno.EBUSY), report[3])
+
+        def delivered_report():
+            path = self.directory / 'parent-deliveries.jsonl'
+            if not path.exists():
+                return None
+            for line in path.read_text().splitlines():
+                message = json.loads(line)
+                if message['id'] == report_id:
+                    return message
+            return None
+
+        witness = self.eventually(delivered_report,
+                                  'The conductor endpoint did not receive the recovery failure')
+        self.assertEqual(witness['body'], report[3])
+        self.assertEqual(self.coord('delivery', report_id)['body'], report[3])
+        self.action(first, body='Recovery acquisition refusal left the live native intact.')
+        self.assertEqual(first.readline(), b'')
+        self.finish(observer)
+        self.shutdown_idle_database_owner('The refused recovery left an owner process.')
 
     def test_ready_request_preserves_new_input_reports_and_physical_failure(self):
         config_path = self.directory / 'fixture.json'

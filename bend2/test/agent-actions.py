@@ -18,6 +18,8 @@ EXE = ROOT / '.scratch/bend2/baton2'
 
 class AgentActions(unittest.TestCase):
     def setUp(self):
+        if not receive_fixture.require_candidate():
+            self.fail(f'Coordinator not built at {receive_fixture.EXE}')
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
         self.addCleanup(self.temp.cleanup)
         self.directory = pathlib.Path(self.temp.name)
