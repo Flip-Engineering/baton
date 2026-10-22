@@ -46,6 +46,15 @@ class Naming(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         return run.stdout
 
+    def read_count(self, ident, recipient=None):
+        with closing(sqlite3.connect(self.db)) as database:
+            if recipient is None:
+                return database.execute(
+                    'SELECT count(*) FROM message_reads WHERE message=?', (ident,)).fetchone()[0]
+            return database.execute(
+                'SELECT count(*) FROM message_reads WHERE message=? AND recipient=?',
+                (ident, recipient)).fetchone()[0]
+
     def call(self, *args, error=None):
         run = subprocess.run([str(EXE), str(self.db), *args], cwd=self.directory,
                              text=True, capture_output=True)
@@ -142,7 +151,7 @@ class Naming(unittest.TestCase):
                 self.assertEqual(self.stored(), before)
         self.call('message', 'retained-member-input', self.principal, self.player, 'task', 'Keep this input λ\n')
         self.call('report', 'retained-member-report', self.player, 'Keep this report λ\n')
-        self.call('ack', 'retained-member-report', self.associate, 'accepted report λ')
+        self.call('as', self.associate, 'read', 'retained-member-report')
         messages = self.stored()['messages']
         self.call('ensemble-member', 'build', self.principal, self.player, 'remove')
         self.assertEqual(self.stored()['messages'], messages)
@@ -226,7 +235,7 @@ class Naming(unittest.TestCase):
         event = self.directory / 'event.json'
         event.write_text(json.dumps({'type': 'result', 'result': 'Full report λ\n'}))
         self.call('observe-file', 'turn preserved', self.player, str(event))
-        self.call('ack', 'turn preserved', self.associate, 'native receipt λ')
+        self.call('as', self.associate, 'read', 'turn preserved')
         # Removing the empty new tables models the previous on-disk schema.
         with closing(sqlite3.connect(self.db)) as db:
             db.execute('DROP TABLE section_members')
@@ -248,7 +257,8 @@ class Naming(unittest.TestCase):
         self.assertEqual(turns[0]['player'], self.player)
         self.assertNotIn('worker', turns[0])
         self.assertEqual(turns[0]['reportBody'], 'Full report λ\n')
-        self.assertEqual(turns[0]['receipt'], 'native receipt λ')
+        self.assertIsNone(turns[0]['receipt'])
+        self.assertGreater(self.read_count(turns[0]['id'], self.associate), 0)
         self.assertEqual(self.call('player', self.player)['native'], 'native preserved λ')
         self.assertEqual(self.call('inbox', self.player)[0]['body'], 'Full pending body λ\n')
 
@@ -291,11 +301,11 @@ class Naming(unittest.TestCase):
         self.assertEqual([(row['id'], row['sender'], row['body'])
                           for row in self.call('inbox', child)],
                          [('empty-parent-task', '', 'Queued parent task λ\n')])
-        self.assertEqual(self.call('ack', 'empty-parent-task', child, 'accepted task λ')['receipt'],
-                         'accepted task λ')
+        self.call('as', child, 'read', 'empty-parent-task')
+        self.assertGreater(self.read_count('empty-parent-task', child), 0)
         delivered = self.call('delivery', 'empty-parent-task')
         self.assertEqual(delivered['body'], 'Queued parent task λ\n')
-        self.assertEqual(delivered['receipt'], 'accepted task λ')
+        self.assertIsNone(delivered['receipt'])
         self.assertEqual(self.call('inbox', child), [])
         report = self.call('report', 'empty-parent-report', child, 'Child report body λ\n')
         self.assertEqual((report['sender'], report['recipient'], report['kind'],
@@ -304,11 +314,11 @@ class Naming(unittest.TestCase):
         self.assertEqual([(row['id'], row['sender'], row['body'])
                           for row in self.call('inbox', '')],
                          [('empty-parent-report', child, 'Child report body λ\n')])
-        self.assertEqual(self.call('ack', 'empty-parent-report', '', 'accepted report λ')['receipt'],
-                         'accepted report λ')
+        self.call('as', '', 'read', 'empty-parent-report')
+        self.assertGreater(self.read_count('empty-parent-report'), 0)
         delivered = self.call('delivery', 'empty-parent-report')
         self.assertEqual(delivered['body'], 'Child report body λ\n')
-        self.assertEqual(delivered['receipt'], 'accepted report λ')
+        self.assertIsNone(delivered['receipt'])
         self.assertEqual(self.call('inbox', ''), [])
 
 
