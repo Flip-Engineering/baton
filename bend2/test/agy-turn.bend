@@ -34,8 +34,8 @@ def lines(+db: String, +mode: String, +handle: U32, next: Maybe<String>) -> IO(U
   match next:
     case None{}: IO.pure(Unit,Unit{})
     case Some{text}: do IO<Unit>:
-      line : String <- IO.pure(String,Tx.trim_nl(text))
-      kind : String <- IO.pure(String,Agy.kind(line))
+      +line : String <- IO.pure(String,Tx.trim_nl(text))
+      +kind : String <- IO.pure(String,Agy.kind(line))
       IO.print("kind\t" ++ kind)
       admit : Bool <- IO.pure(Bool,Agy.admitted(kind))
       observed : Unit <- admitted_line(db,mode ++ "-" ++ kind,line,admit)
