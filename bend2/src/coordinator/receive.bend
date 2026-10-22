@@ -510,7 +510,7 @@ def wake_if_kept(+db: String, +session: String, cursor: String, superseded: Bool
   match superseded:
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,finished)
     case False{}: match finished:
-      case Done{unit}: completed_wake(db,session,cursor,finished)
+      case Done{unit}: completed_wake(db,session,cursor,Done{unit})
       case Fail{error}: do IO<Result<&1,&1,U32 & String,Unit>>:
         starting : Bool <- wake_starting(db,session)
         failed_wake(starting,db,session,cursor,error)
@@ -571,7 +571,7 @@ def record_recovery(db: String, session: String, id: String, native: String, cwd
       note : String <- Turn.refused_note(cwd,"")
       recovery_input(db,session,id,native,note)
 
-def report_recovery_failure(db: String, session: String, id: String, directory: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+def report_recovery_failure(db: String, session: String, +id: String, directory: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   match result:
     case Done{unit}: IO.pure(Unit,Unit{})
     case Fail{(code,text)}: Delivery.failure_report(db,session,id ++ ":recovery-failure",
@@ -1161,7 +1161,7 @@ def observe_attached(+db: String, +session: String, id: String, cursor: String, 
 
 # The keeper invokes this with the original attempt and inbox cutoff after the
 # observer exits. Attachment never launches a native process or sends its prompt.
-def recover(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def recover(+db: String, +session: String, +id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +updates : Chan(String) <- Chan.new(String,1)
     +drainer : Chan(Unit) <- IO.fork(Unit,discard_admitted_start(updates))
