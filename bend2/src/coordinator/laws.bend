@@ -23,6 +23,7 @@ import ../host/sqlite.bend as DB
 import ../harness/codex-player.bend as Codex
 import ../harness/omp-player.bend as Omp
 import ../harness/claude-player.bend as Claude
+import ../harness/agy-player.bend as Agy
 import ../harness/muse-player.bend as Muse
 import ../host/laws.bend as HostLaws
 import ../json/laws.bend as JsonLaws
@@ -835,6 +836,15 @@ law m11_any_other_harness_input_reaches_the_claude_adapter:
 def m11_any_other_harness_input_reaches_the_claude_adapter(handle, prompt, level):
   {==}
 
+law m11_agy_input_reaches_the_agy_adapter:
+  for +handle: U32
+  for +prompt: String
+  for +level: String
+  {Turn.input(handle, prompt, "agy\n", level) == Agy.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def m11_agy_input_reaches_the_agy_adapter(handle, prompt, level):
+  {==}
+
 law m2_omp_launch_reaches_the_omp_adapter:
   for +db: String
   for +player: String
@@ -901,6 +911,47 @@ law m2_any_other_harness_launch_reaches_the_claude_adapter:
   {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "claude-code\n", log, task) == Turn.claude_launch(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m2_any_other_harness_launch_reaches_the_claude_adapter(db, player, sessions, cmd, model, effort, cwd, stderr, session, log, task):
+  {==}
+
+law m2_agy_launch_reaches_the_agy_adapter:
+  for +db: String
+  for +player: String
+  for +sessions: String
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
+  for +log: String
+  for +stderr: String
+  for +session: String
+  for +task: String
+  {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "agy\n", log, task) == Turn.agy_launch(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+
+def m2_agy_launch_reaches_the_agy_adapter(db, player, sessions, cmd, model, effort, cwd, stderr, session, log, task):
+  {==}
+
+law m5_a_fresh_agy_turn_starts_a_conversation:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
+  for +stderr: String
+  for +session: String
+  {Turn.agy_launch(cmd, model, effort, cwd, stderr, session, True{}) == Agy.start_player(cmd, model, effort, cwd, stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+
+def m5_a_fresh_agy_turn_starts_a_conversation(cmd, model, effort, cwd, stderr, session):
+  {==}
+
+law m5_a_resumable_agy_turn_carries_the_recorded_conversation:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
+  for +stderr: String
+  for +session: String
+  {Turn.agy_launch(cmd, model, effort, cwd, stderr, session, False{}) == Agy.resume_player(cmd, model, effort, cwd, stderr, session) : IO(Result<&1,&1,U32 & String,U32>)}
+
+def m5_a_resumable_agy_turn_carries_the_recorded_conversation(cmd, model, effort, cwd, stderr, session):
   {==}
 
 law m5_a_fresh_claude_turn_starts_a_session:
