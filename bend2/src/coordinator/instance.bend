@@ -33,7 +33,7 @@ type Event is Type:
 def coordinator_role_key() -> String:
   "676b676b676b676b676b676b676b676b676b676b676b676b676b676b676b676b"
 
-# Sessions holding actionable pending input: unacknowledged messages on live
+# Sessions holding actionable pending input: unread messages on live
 # sessions with a registered receiver endpoint, excluding terminally stopped
 # sessions like the wake path. The harness travels with the session so every
 # task keeps its native identity down to the route.

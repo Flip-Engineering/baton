@@ -725,7 +725,7 @@ def started(+db: String, +session: String, +id: String, +log: String, cursor: St
       finish_pending(db,session,id,attempt,log,cursor,outcome,Nil{},again,u => IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),False{})
 
 # An admitted start takes the obligation under the held session lock before the
-# native process exists: the claim names the head unacknowledged message as
+# native process exists: the claim names the head unread message as
 # owner and fences the generation past any stale row, so a driver that dies
 # before launch never suppresses the next wake.
 #
