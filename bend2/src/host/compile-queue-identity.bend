@@ -485,10 +485,8 @@ def CompileQueueIdentity.release_items(names: List<&2,String>, +directory: Strin
       CompileQueueIdentity.release_items_step(name, CompileQueueIdentity.release_items(rest, directory, prefix), directory, prefix)
 
 def CompileQueueIdentity.release_items_step(name: String, remaining: List<&2,CompileQueueReleaseItem>, +directory: String, +prefix: String) -> List<&2,CompileQueueReleaseItem>:
-  +empty = String.is_empty(name)
-  match empty:
-    case True{}: remaining
-    case False{}: CompileQueueReleaseItem{directory ++ "/" ++ name, prefix ++ "/" ++ name} <> remaining
+  Bool.pick(List<&2,CompileQueueReleaseItem>, String.is_empty(name), remaining,
+    CompileQueueReleaseItem{directory ++ "/" ++ name, prefix ++ "/" ++ name} <> remaining)
 
 def CompileQueueIdentity.release_step_items(step: CompileQueueReleaseStep) -> List<&2,CompileQueueReleaseItem>:
   match step:
