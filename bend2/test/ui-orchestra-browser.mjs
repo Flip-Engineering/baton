@@ -133,8 +133,8 @@ writeFileSync(parentReviewer,
   `  const completion = coordinator('session', 'worker').taskCompletion;\n` +
   `  if (completion.coordinator !== 'lead' || completion.requestId !== request) throw new Error(JSON.stringify(completion));\n` +
   `  const assignment = coordinator('delivery', completion.assignmentId);\n` +
-  `  if (assignment.recipient !== 'worker' || assignment.receipt === null) throw new Error(JSON.stringify(assignment));\n` +
-  `  coordinator('ack', request, 'lead', 'Fixture coordinator reviewed the requested result.');\n` +
+  `  if (assignment.recipient !== 'worker') throw new Error(JSON.stringify(assignment));\n` +
+  `  coordinator('as', 'lead', 'read', request);\n` +
   `  coordinator('message', request + ':confirmed', 'lead', 'worker', 'completion-confirmed', request);\n` +
   `}\n`);
 baton('connect', 'lead', parentState.native, JSON.stringify([process.execPath, parentReviewer]));
@@ -160,7 +160,7 @@ writeFileSync(workerCmd, `#!${process.execPath}\n` +
   `for (const id of new Set(inputs)) {\n` +
   `  const delivered = spawnSync(${JSON.stringify(EXE)}, [${JSON.stringify(DB)}, 'delivery', id], {encoding:'utf8'});\n` +
   `  if (delivered.status !== 0 || JSON.parse(delivered.stdout).recipient !== 'worker') throw new Error(delivered.stderr || 'wrong fixture recipient');\n` +
-  `  const accepted = spawnSync(${JSON.stringify(EXE)}, [${JSON.stringify(DB)}, 'ack', id, 'worker', 'fixture-native-reviewed'], {encoding:'utf8'});\n` +
+  `  const accepted = spawnSync(${JSON.stringify(EXE)}, [${JSON.stringify(DB)}, 'as', 'worker', 'read', id], {encoding:'utf8'});\n` +
   `  if (accepted.status !== 0) throw new Error(accepted.stdout + accepted.stderr);\n` +
   `}\n` +
   `const coordinator = (...args) => {\n` +
@@ -172,17 +172,16 @@ writeFileSync(workerCmd, `#!${process.execPath}\n` +
   `const completion = state.taskCompletion;\n` +
   `if (!completion.open || completion.coordinator !== state.parent) throw new Error(JSON.stringify(state));\n` +
   `const assignment = coordinator('delivery', completion.assignmentId);\n` +
-  `if (assignment.recipient !== 'worker' || assignment.receipt === null) throw new Error(JSON.stringify(assignment));\n` +
+  `if (assignment.recipient !== 'worker') throw new Error(JSON.stringify(assignment));\n` +
   `const request = 'qa-worker-completion:' + completion.assignmentId;\n` +
   `const resultText = 'Worker completed the assigned task.';\n` +
   `coordinator('message', request, 'worker', completion.coordinator, 'completion-request', resultText);\n` +
   `const reviewed = coordinator('delivery', request);\n` +
   `if (reviewed.sender !== 'worker' || reviewed.recipient !== completion.coordinator || reviewed.kind !== 'completion-request' || reviewed.body !== resultText) throw new Error(JSON.stringify(reviewed));\n` +
-  `if (reviewed.receipt !== 'Fixture coordinator reviewed the requested result.') throw new Error(JSON.stringify(reviewed));\n` +
   `const confirmation = request + ':confirmed';\n` +
   `const confirmed = coordinator('delivery', confirmation);\n` +
   `if (confirmed.sender !== completion.coordinator || confirmed.recipient !== 'worker' || confirmed.kind !== 'completion-confirmed' || confirmed.body !== request) throw new Error(JSON.stringify(confirmed));\n` +
-  `coordinator('ack', confirmation, 'worker', 'Fixture worker handled coordinator confirmation.');\n` +
+  `coordinator('as', 'worker', 'read', confirmation);\n` +
   `const settled = coordinator('session', 'worker').taskCompletion;\n` +
   `if (settled.assignmentId !== completion.assignmentId || settled.requestId !== request || !settled.confirmed || settled.open) throw new Error(JSON.stringify(settled));\n` +
   `console.log(JSON.stringify({stream:{kind:'session',id:'native-worker'},payload_type:'run.terminal.completed',payload:{kind:'run_terminal',terminal:'completed',command_id:'worker-primary',text:'Worker completed the assigned task.'}}));\n`);
@@ -1261,7 +1260,7 @@ await until('the long message displays its complete stored body', `(() => {
     && !!body && body.classList.contains('sel-body')
     && body.textContent === ${JSON.stringify(longPendingBody)};
 })()`);
-baton('ack', 'qa-aide-long-quote', 'aide', 'fixture-ui-read');
+baton('as', 'aide', 'read', 'qa-aide-long-quote');
 committed();
 await until('the acknowledged long message leaves the queued record',
   `document.querySelector('#selection #sel-sec-queued [data-selkey="sel:msg:qa-aide-long-quote"]') === null`);
@@ -1480,7 +1479,7 @@ check('the worker reviews the complete promoted finding',
     && promotedFindings[0].limits === 'Worker limits.');
 for (const id of ['qa-guidance-native', 'qa-guidance-1', 'qa-guidance-2', 'qa-guidance-lane-focus',
                   'qa-relation-live-frame:promotion-notice']) {
-  baton('ack', id, 'worker', 'fixture-ui-read');
+  baton('as', 'worker', 'read', id);
 }
 committed();
 await until('cleared seats fold the rail away',

@@ -844,9 +844,9 @@ class CodexRootEndToEnd(unittest.TestCase):
             'cat > /dev/null\n'
             'echo \'{"type":"thread.started","thread_id":"mock"}\'\n'
             'echo \'{"type":"turn.started"}\'\n'
-            f'{EXE} {self.db} ack turn-1 root codex-root-ack\n'
+            f'{EXE} {self.db} as root read turn-1\n'
             f'{EXE} {self.db} land w1 {self.repo} main\n'
-            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Acknowledged and landed."}}\'\n'
+            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Read and landed."}}\'\n'
             'echo \'{"type":"turn.completed"}\'\n'
         )
         mock_codex.chmod(0o755)
@@ -859,7 +859,7 @@ class CodexRootEndToEnd(unittest.TestCase):
         self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
 
         inbox = json.loads(self.coord('inbox', 'root'))
-        self.assertEqual(len(inbox), 0, 'Root inbox should be empty after ack')
+        self.assertEqual(len(inbox), 0, 'Root inbox should be empty after the read')
 
         main_tip = self.git('rev-parse', 'main').strip()
         self.assertEqual(main_tip, player_commit)
