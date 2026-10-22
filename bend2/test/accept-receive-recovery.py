@@ -132,7 +132,8 @@ class ReceiveAcceptance(unittest.TestCase):
         native = [json.loads(line) for line in (directory / 'native-observations.jsonl').read_text().splitlines()]
         self.assertEqual([row['resume'] for row in native], ['', 'controlled-receive-thread'])
         self.assertTrue(all(row['cwd'] == str(repo) and row['api_keys_absent'] for row in native))
-        self.assertTrue(all(row['receipt'] for row in evidence['state']['messages']))
+        read_ids = {row['message'] for row in evidence['state']['message_reads']}
+        self.assertTrue(all(row['id'] in read_ids for row in evidence['state']['messages']))
         observation['evidence_sha256'] = hashlib.sha256((out / 'evidence.json').read_bytes()).hexdigest()
 
 
