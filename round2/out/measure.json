@@ -1,0 +1,82 @@
+{
+  "five-overlap": {
+    "before": {
+      "bytes": 33992046,
+      "lines": 432223,
+      "wall_s": 55.28,
+      "max_rss_kib": 4769288,
+      "wl_case": 7658
+    },
+    "after": {
+      "bytes": 493026,
+      "lines": 8139,
+      "wall_s": 31.2,
+      "max_rss_kib": 3943124,
+      "wl_case": 16
+    }
+  },
+  "minimal": {
+    "before": {
+      "bytes": 5215600,
+      "lines": 77836,
+      "wall_s": 10.01,
+      "max_rss_kib": 899512,
+      "wl_case": 1404
+    },
+    "after": {
+      "bytes": 270581,
+      "lines": 5408,
+      "wall_s": 5.3,
+      "max_rss_kib": 747904,
+      "wl_case": 16
+    }
+  },
+  "pr890-shaped": {
+    "before": {
+      "bytes": 31392684,
+      "lines": 429444,
+      "wall_s": 55.16,
+      "max_rss_kib": 4659608,
+      "wl_case": 9048
+    },
+    "after": {
+      "bytes": 465981,
+      "lines": 7873,
+      "wall_s": 28.09,
+      "max_rss_kib": 3368344,
+      "wl_case": 16
+    }
+  },
+  "control-two-long": {
+    "before": {
+      "bytes": 102122,
+      "lines": 3769,
+      "wall_s": 0.45,
+      "max_rss_kib": 108644,
+      "wl_case": 27
+    },
+    "after": {
+      "bytes": 109402,
+      "lines": 3824,
+      "wall_s": 0.45,
+      "max_rss_kib": 101456,
+      "wl_case": 16
+    }
+  },
+  "control-literal-two": {
+    "before": {
+      "bytes": 170585,
+      "lines": 5971,
+      "wall_s": 0.92,
+      "max_rss_kib": 144200,
+      "wl_case": 84
+    },
+    "after": {
+      "bytes": 94356,
+      "lines": 3627,
+      "wall_s": 0.67,
+      "max_rss_kib": 129952,
+      "wl_case": 16
+    }
+  }
+}
