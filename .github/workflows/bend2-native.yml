@@ -351,7 +351,8 @@ jobs:
           recorder = candidate / '.github/scripts/record-native-checks.py'
           selected = runpy.run_path(str(recorder))['SELECTED']
           subprocess.run([sys.executable, str(recorder), 'shim', str(run / 'python-shim'), str(evidence / 'selected')], check=True)
-          check_environment = runpy.run_path(str(candidate / '.github/scripts/queue-native-checks.py'))['environment'](run)
+          queue = runpy.run_path(str(candidate / '.github/scripts/queue-native-checks.py'))
+          check_environment = queue['environment'](run)
           check_environment['PATH'] = str(run / 'python-shim') + os.pathsep + check_environment['PATH']
           records = []
           def record(label, argv, environment=check_environment):
@@ -368,7 +369,8 @@ jobs:
               status = record('target-build-reuse', [sys.executable, str(candidate / '.github/scripts/reuse-native-target.py'),
                               str(transfer), str(target), str(evidence), os.environ['BATON2_TARGET_COMMIT'], previous], environment=os.environ)
           else:
-              status = record('target-build', ['sh', 'bend2/scripts/build-native.sh'])
+              status = record('target-build', ['sh', 'bend2/scripts/build-native.sh'],
+                              environment=queue['legacy_environment'](check_environment))
           if status:
               raise SystemExit(status)
           contracts = {}

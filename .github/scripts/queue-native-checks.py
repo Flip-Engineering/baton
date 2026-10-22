@@ -23,16 +23,22 @@ def write(path, value):
 
 
 def environment(run):
-    """Keep workflow identity probes on the selected, unwrapped toolchain."""
+    """Enable the build-native.sh compiler hooks for this Linux job."""
     run = Path(run).resolve()
-    directory = run / 'queue-bin'
-    directory.mkdir()
     config = {'run': str(run), 'bend': str(Path(os.environ['BEND']).resolve()),
-              'cc': str(Path(shutil.which(os.environ['CC'])).resolve()), 'client': CLIENT, 'state': STATE,
-              'verifier': os.environ.get('BATON2_MAIN_C_VERIFIER', '')}
+              'cc': str(Path(shutil.which(os.environ['CC'])).resolve()),
+              'client': CLIENT, 'state': STATE}
     write(run / 'queue-config.json', config)
-    env = dict(os.environ, BATON2_NATIVE_QUEUE=str(run / 'queue-config.json'))
-    for name, mode in [('bend', 'bend'), ('cc', 'cc'), ('clang', 'cc'), ('clang-19', 'cc')]:
+    return dict(os.environ, BATON2_NATIVE_QUEUE=str(run / 'queue-config.json'),
+                BATON2_NATIVE_QUEUE_DRIVER=SCRIPT)
+
+
+def legacy_environment(env):
+    """Queue an old target build through its existing BEND and CC inputs."""
+    config = json.loads(Path(env['BATON2_NATIVE_QUEUE']).read_text())
+    directory = Path(config['run']) / 'queue-bin'
+    directory.mkdir()
+    for name, mode in [('bend', 'bend'), ('cc', 'cc')]:
         actual = config['bend' if mode == 'bend' else 'cc']
         # The lineage reader follows this literal exec target to the real release.
         literal = actual.replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$').replace('`', '\\`')
@@ -41,54 +47,8 @@ def environment(run):
                         'exec "' + literal + '" "$@"\n;;\nesac\n'
                         'exec ' + shlex.join([sys.executable, SCRIPT, 'compiler', mode]) + ' "$@"\n')
         path.chmod(0o755)
-    verifier = directory / 'verify-main.py'
-    verifier.write_text('import os, sys\nos.execv(' + repr(sys.executable) + ', '
-                        + repr([sys.executable, SCRIPT, 'verify-main']) + ' + sys.argv[1:])\n')
-    env.update(BEND=str(directory / 'bend'), CC=str(directory / 'cc'),
-               PATH=str(directory) + os.pathsep + env['PATH'],
-               BATON2_MAIN_C_VERIFIER=str(verifier))
-    return env
-
-
-def install():
-    """Include compiler subprocesses in Python fixtures recorded by the CI shim."""
-    if not os.environ.get('BATON2_NATIVE_QUEUE') or getattr(subprocess, '_native_queue', False):
-        return
-    config = json.loads(Path(os.environ['BATON2_NATIVE_QUEUE']).read_text())
-    original = subprocess.Popen
-
-    class QueuedCompiler(original):
-        def __init__(self, args, *positional, **kwargs):
-            self.queue_wait = False
-            if isinstance(args, (list, tuple)) and args and not kwargs.get('shell'):
-                argv = list(map(os.fspath, args))
-                executable = shutil.which(argv[0]) or argv[0]
-                executable = str(Path(executable).resolve())
-                mode = None
-                if executable == config['cc'] and not any(a in argv for a in ('--version', '-dumpmachine', '-print-resource-dir')):
-                    mode = 'cc'
-                elif executable == config['bend'] and argv[1:] not in (['version'], ['--version']):
-                    mode = 'bend'
-                elif Path(executable).name == 'bun' and any(
-                        a.endswith('.ts') and ('/compiler/upstream/' in a or '/test/compiler/' in a)
-                        for a in argv[1:]):
-                    mode = 'bun'
-                if mode:
-                    args = [sys.executable, SCRIPT, 'compiler', mode, *argv[1:]]
-                    if mode == 'bun':
-                        kwargs['env'] = dict(kwargs.get('env') or os.environ, BATON2_QUEUE_BUN=executable)
-                self.queue_wait = bool(mode) or any(
-                    a.endswith('/build-native.sh') or a.startswith(config['run'] + '/queue-bin/') for a in argv)
-            super().__init__(args, *positional, **kwargs)
-
-        def communicate(self, input=None, timeout=None):
-            return super().communicate(input=input, timeout=None if self.queue_wait else timeout)
-
-        def wait(self, timeout=None):
-            return super().wait(timeout=None if self.queue_wait else timeout)
-
-    subprocess.Popen = QueuedCompiler
-    subprocess._native_queue = True
+    return dict(env, BATON2_NATIVE_QUEUE_DRIVER='',
+                BEND=str(directory / 'bend'), CC=str(directory / 'cc'))
 
 
 def cancel(config, request, directory):
@@ -173,11 +133,13 @@ def compiler(mode, argv, key_only=False):
         fcntl.flock(lock, fcntl.LOCK_EX)
         directory = evidence / uuid.uuid4().hex
         directory.mkdir()
-        output = Path(argv[argv.index('-o') + 1]).absolute() if '-o' in argv else directory / 'checked.c'
-        if '-o' in argv:
-            argv[argv.index('-o') + 1] = str(output)
+        output_flag = '--binary' if '--binary' in argv else '-o'
+        output = Path(argv[argv.index(output_flag) + 1]).absolute() if output_flag in argv else directory / 'checked.c'
+        if output_flag in argv:
+            argv[argv.index(output_flag) + 1] = str(output)
         if mode == 'cc':
-            actual = config['cc']
+            actual = argv[argv.index('--cc') + 1] if '--cc' in argv else argv[0]
+            actual = str(Path(shutil.which(actual) or actual).resolve())
             version = subprocess.check_output([actual, '--version'], text=True)
             options = ['--kind', 'cc', '--source-root', '/', '--compiler', actual,
                        '--linker', '/usr/bin/ld', '--version', version,
@@ -185,57 +147,37 @@ def compiler(mode, argv, key_only=False):
             for value in argv:
                 if value != str(output) and not value.startswith('-') and Path(value).is_file():
                     options.extend(['--aux', str(Path(value).resolve())])
-            command = [sys.executable, SCRIPT, 'execute-cc', str(output), actual, *argv]
+            command = [sys.executable if argv[0] == 'python3' else argv[0], *argv[1:]]
         else:
-            actual = config['bend'] if mode == 'bend' else os.environ['BATON2_QUEUE_BUN']
-            entry = next((str(Path(a).resolve()) for a in argv if a.endswith('.bend') and Path(a).is_file()), None)
-            entry = entry or next(str(Path(a).resolve()) for a in argv if a.endswith('.ts') and Path(a).is_file())
-            options = ['--kind', 'cgen', '--source-root', '/', '--entry', entry,
-                       '--compiler', actual, '--artifact', 'output.c=' + str(output)]
-            if mode == 'bun':
-                # These fixtures select copied TypeScript compiler modules at runtime.
-                digest = hashlib.sha256()
-                roots = [Path(a).resolve() for a in argv if Path(a).is_dir()]
-                roots.append(Path(entry).parents[1] if entry.endswith('.bend') else Path(entry).parent)
-                roots.append(Path.cwd() / 'bend2/compiler/upstream')
-                for path in sorted({p for root in roots for p in root.rglob('*')
-                                    if p.is_file() and p.suffix in ('.ts', '.bend')}):
-                    digest.update(str(path).encode() + b'\0' + path.read_bytes())
-                options.extend(['--option', 'frontend-sha256=' + digest.hexdigest()])
-                if os.environ.get('ARM_EQ_C'):
-                    output = Path(os.environ['ARM_EQ_C']).absolute()
-                    options[options.index('--artifact') + 1] = 'output.c=' + str(output)
-            command = [sys.executable, SCRIPT, 'execute-cgen', str(output), actual, *argv]
+            entry = next(str(Path(a).resolve()) for a in argv if a.endswith('.bend') and Path(a).is_file())
+            options = ['--kind', 'cgen', '--source-root', str(Path.cwd()), '--entry', os.path.relpath(entry),
+                       '--compiler', argv[0], '--artifact', 'output.c=' + str(output)]
+            command = [sys.executable, SCRIPT, 'execute-cgen', str(output), *argv]
         options.extend(['--option', 'adapter-sha256=' + hashlib.sha256(Path(SCRIPT).read_bytes()).hexdigest()])
         return submit(config, directory, options, command, key_only)
+
+
+def config_tool(mode):
+    config = json.loads(Path(os.environ['BATON2_NATIVE_QUEUE']).read_text())
+    return config['bend' if mode == 'bend' else 'cc']
 
 
 def main():
     mode, *argv = sys.argv[1:]
     if mode == 'compiler':
-        return compiler(argv[0], argv[1:])
+        return compiler(argv[0], [config_tool(argv[0]), *argv[1:]])
     if mode == 'key':
-        return compiler(argv[0], argv[1:], key_only=True)
+        return compiler(argv[0], [config_tool(argv[0]), *argv[1:]], key_only=True)
     if mode == 'execute-cgen':
-        output, actual, *arguments = argv
-        code = subprocess.run([actual, *arguments]).returncode
-        if not code and '-o' not in arguments:
-            if os.environ.get('ARM_EQ_C'):
-                shutil.copyfile(os.environ['ARM_EQ_C'], output)
-            else:
-                Path(output).write_text('/* Compiler check completed successfully. */\n')
+        output, *command = argv
+        code = subprocess.run(command).returncode
+        if not code and '-o' not in command:
+            Path(output).write_text('/* Compiler check completed successfully. */\n')
         return code
-    if mode == 'execute-cc':
-        output, actual, *arguments = argv
-        code = subprocess.run([actual, *arguments]).returncode
-        if not code and '-o' not in arguments:
-            Path(output).write_text('C compiler invocation completed successfully.\n')
-        return code
-    if mode == 'verify-main':
-        config = json.loads(Path(os.environ['BATON2_NATIVE_QUEUE']).read_text())
-        if '--compiler' in argv:
-            argv[argv.index('--compiler') + 1] = config['bend']
-        os.execv(sys.executable, [sys.executable, config['verifier'], *argv])
+    if mode == 'stage':
+        return compiler(argv[0], argv[1:])
+    if mode == 'key-stage':
+        return compiler(argv[0], argv[1:], key_only=True)
     if mode == 'cancel':
         config = json.loads((Path(argv[0]) / 'queue-config.json').read_text())
         codes = []
@@ -243,7 +185,7 @@ def main():
             request = json.loads(path.read_text())
             codes.append(cancel(config, request, path.parent))
         return int(any(codes))
-    raise SystemExit('usage: queue-native-checks.py compiler|key bend|cc|bun ARGS | cancel RUN')
+    raise SystemExit('usage: queue-native-checks.py compiler|key bend|cc ARGS | stage|key-stage bend|cc COMMAND | cancel RUN')
 
 
 if __name__ == '__main__':

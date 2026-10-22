@@ -5,6 +5,15 @@ cd "$root"
 entry=${1:-bend2/src/coordinator/main.bend}
 output=${2:-.scratch/bend2/baton2}
 mkdir -p "$(dirname -- "$output")"
+native_compile() {
+  compile_kind=$1
+  shift
+  if [ -n "${BATON2_NATIVE_QUEUE_DRIVER:-}" ]; then
+    python3 "$BATON2_NATIVE_QUEUE_DRIVER" stage "$compile_kind" "$@"
+  else
+    "$@"
+  fi
+}
 if [ -n "${TMPDIR:-}" ]; then
   scratch_base=$TMPDIR
 elif [ -n "${BATON2_SCRATCH_ROOT:-}" ]; then
@@ -92,7 +101,7 @@ else
     exit 1
   fi
   sh "$root/bend2/scripts/bend-lineage-guard.sh" "$compiler"
-  "$compiler" "$entry" -o "$output.c"
+  native_compile bend "$compiler" "$entry" -o "$output.c"
 fi
 build_native_shards() {
   native_link_flags="-O1 -pthread -lsqlite3 -lm"
@@ -114,7 +123,7 @@ build_native_shards() {
   if [ -n "${BATON2_CCACHE:-}" ]; then
     set -- "$@" --ccache "$BATON2_CCACHE"
   fi
-  python3 "$root/tools/cgen-clang-parallel/build_and_measure.py" "$@"
+  native_compile cc python3 "$root/tools/cgen-clang-parallel/build_and_measure.py" "$@"
 }
 if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
   if [ "$router" = 1 ]; then
@@ -131,6 +140,6 @@ else
   case "$entry_path" in
     */bend2/harness/claude-credit-observe.bend) extra_libs=-lcurl ;;
   esac
-  "${CC:-clang}" -O1 -pthread "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
+  native_compile cc "${CC:-clang}" -O1 -pthread "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
 fi
 printf '%s\n' "$output"
