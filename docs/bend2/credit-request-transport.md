@@ -61,21 +61,34 @@ The host has no effect that accepts a connection or streams an upstream response
 6. An upstream failure after admission settles the reservation with
    `allow_failed` and keeps the reserved maximum counted.
 
-## Decisions for the coordinator
+## Accepted decisions
 
-1. Boundary change. The child process no longer holds the provider key. The
-   listener holds it and injects it on each forwarded request. The listener is a
-   new long-lived process that holds the key, so the root must accept this
-   boundary before implementation starts.
-2. Concurrency. `credit_reservations_active` allows one active reservation per
-   organization, grant cycle and cap period. The Claude CLI may issue parallel
-   requests from subagents; this has not been observed on the installed release.
-   The listener must either queue the second request
-   until the first settles or hold it with a named refusal. The choice changes the
-   observable behavior of parallel work and needs approval.
-3. Usage parsing. The settle path needs the usage fields from the streamed
-   response. The design uses the `usage` object of each event. A response with no
-   usage fields settles to the reserved maximum.
+The root accepted these decisions on 2026-10-22.
+
+1. Process boundary. The proxy is a per-launch child of `api-key-exec`. Its
+   lifetime ends with the harness. It reads the provider key owner-only and
+   injects it into each forwarded request. The harness child never holds the key.
+   There is no shared daemon.
+2. Concurrency. There is no cap of one reservation per organization, grant cycle
+   and cap period. The admission rule is the credit balance for the grant cycle.
+   A request is admitted while the sum of open reservations and settled spend,
+   plus the request's reserved maximum, stays within the remaining promotional
+   balance for that cycle. A request that would exceed the balance waits in
+   first-in-first-out order until earlier reservations settle and release
+   headroom. It is refused only when the balance is exhausted. Settlement releases
+   the unused part of each reservation.
+
+The current source does not implement rule 2. `credit_reservations_active` is a
+unique index that allows one active reservation per organization, grant cycle and
+cap period. The implementation replaces that index with the balance-sum rule, and
+the funding document's launch-serialization sentence changes with it.
+
+## Open implementation choices
+
+1. Usage parsing. The settle path reads the `usage` fields of the streamed
+   response: `message_start` for input and cache tokens, and `message_delta` for
+   output tokens. A response with no usage fields settles to the reserved maximum.
+   The root did not decide this point.
 
 ## Native effects required
 
@@ -94,8 +107,9 @@ None of these exist in the host today. Each needs a C implementation in
   implements the Messages event shape. The fixture reports usage, and the test
   checks the reserved maximum, the settled cost, the one-use authorization and the
   hold text for a second request while the first is active.
-- No test calls the live provider. The live exercise is a separate step with its
-  own plan (`docs/bend2/`, to be written after this design is accepted).
+- No test calls the live provider. The live fallback exercise is a separate step.
+  Its plan is approved in outline by the root and is recorded outside this
+  repository; the exercise runs only after the native qualification passes.
 - The guard stays false until the installed release passes this test and the
   root qualifies it.
 
