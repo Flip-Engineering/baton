@@ -803,8 +803,10 @@ law a_held_obligation_launches_nothing:
   for launch: String -> IO(Result<&1,&1,U32 & String,Unit>)
   for lock: U32
   {Receive.wake_stand(db,session,cursor,launch,lock,True{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
+    +found : String <- Receive.wake_found(db,session,cursor)
     released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})) : IO(Result<&1,&1,U32 & String,Unit>)}
+    Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.is_empty(found),
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),Receive.wake_launch(db,found))) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def a_held_obligation_launches_nothing(db,session,cursor,launch,lock):
   {==}
