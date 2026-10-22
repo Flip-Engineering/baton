@@ -732,9 +732,10 @@ def started(+db: String, +session: String, +id: String, +log: String, cursor: St
 # The receiver endpoint is also entered directly by retained endpoints, so the
 # usage gate is checked under this admission's held session lock before any
 # native process exists: a held window reports the hold, schedules the reset
-# continuation, releases the lock and leaves the input owed. The message is not
-# claimed, so the next wake still owns it.
-def window_held_start(+db: String, +session: String, +head: String, +lock: U32, gate: UW.Gate) -> IO(Bool):
+# continuation, removes the execution row that this admission wrote, releases
+# the lock and leaves the input owed. The message is not claimed, so the next
+# wake still owns it.
+def window_held_start(+db: String, +session: String, +id: String, +head: String, +lock: U32, gate: UW.Gate) -> IO(Bool):
   match gate:
     case UW.GateHeld{+window,+resets_at,+source,+receipt}:
       Bool.pick(IO(Bool),String.is_empty(head),
@@ -742,6 +743,7 @@ def window_held_start(+db: String, +session: String, +head: String, +lock: U32, 
         do IO<Bool>:
           held : Unit <- UW.report_held(db,session,head,UW.GateHeld{window,resets_at,source,receipt})
           scheduled : Unit <- UW.schedule_held(db,head,resets_at)
+          cleared : Unit <- Stop.held_release(db,session,id)
           released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
           IO.pure(Bool,True{}))
     case other: IO.pure(Bool,False{})
@@ -755,7 +757,7 @@ def start_admitted(+db: String, +session: String, +id: String, +cmd: String, rou
       +head : String <- wake_found(db,session,"0")
       +label : String <- Accounts.handoff_label_io(db,session)
       gate : UW.Gate <- UW.window_gate(db,session,Tx.trim_nl(label))
-      held : Bool <- window_held_start(db,session,head,lock,gate)
+      held : Bool <- window_held_start(db,session,id,head,lock,gate)
       Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),held,
         IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
         do IO<Result<&1,&1,U32 & String,Unit>>:
