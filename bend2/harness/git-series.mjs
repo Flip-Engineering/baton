@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // Series-scoped Git environment and GitHub App HTTPS credential helper.
 import { constants as cryptoConstants, sign } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { accessSync, constants, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import https from 'node:https';
 import { homedir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isDeepStrictEqual } from 'node:util';
 
 export const REPOSITORY_PATTERN = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 export const PERMISSIONS = { contents: 'write', pull_requests: 'write', metadata: 'read' };
@@ -14,6 +14,7 @@ export const API_ROOT = 'https://api.github.com';
 export const SERIES = ['gpt', 'muse', 'deepseek', 'claude', 'glm', 'kimi'];
 export const SERIES_LABELS = { gpt: 'GPT', muse: 'Muse', deepseek: 'DeepSeek',
   claude: 'Claude', glm: 'GLM', kimi: 'Kimi' };
+const GH_BIN = fileURLToPath(new URL('./git-series-bin/', import.meta.url));
 
 export class Refusal extends Error {}
 // GitHub answered 404 for the requested resource.
@@ -35,6 +36,14 @@ export function same_repository(left, right) {
 
 function object(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function minimum_permissions(granted, source) {
+  for (const [permission, level] of Object.entries(PERMISSIONS)) {
+    require(object(granted) && Object.hasOwn(granted, permission)
+      && (granted[permission] === level || (level === 'read' && granted[permission] === 'write')),
+    `${source} requires ${permission}:${level} permission.`);
+  }
 }
 
 function path(value) {
@@ -84,8 +93,7 @@ export function selected_identity(registry_path, model_key = null, series_key = 
   require(github.botLogin === github.slug + '[bot]', 'The bot login differs from the App slug.');
   require(github.commitEmail === `${github.botId}+${github.botLogin}@users.noreply.github.com`,
     'The commit email differs from the verified bot identity.');
-  require(isDeepStrictEqual(github.permissions, PERMISSIONS),
-    'The App identity permissions differ from the approved permissions.');
+  minimum_permissions(github.permissions, 'The App identity');
   let author_name = 'Flip Baton - ' + SERIES_LABELS[series_key];
   let author_email = Object.hasOwn(identity, 'authorEmail') ? identity.authorEmail : github.commitEmail;
   if (Object.hasOwn(registry, 'attribution')) {
@@ -232,6 +240,9 @@ export function launch(args, inherited = process.env, execute = exec_command) {
   }
   const [series_key, , github, author_email, author_name] = selected_identity(registry_path, args.model_key, args.series_key);
   const environment = scoped_environment(registry_path, series_key, github, inherited, author_email, author_name, args.repository);
+  environment.PATH = GH_BIN + delimiter + (environment.PATH ?? '/bin:/usr/bin');
+  environment.BATON2_GH_REGISTRY = registry_path;
+  environment.BATON2_GH_SERIES = series_key;
   if (series_key === 'gpt') {
     delete environment.OPENAI_API_KEY;
     delete environment.CODEX_API_KEY;
@@ -307,8 +318,7 @@ function verify_installation(installation, github, owner) {
     && same_repository(installation.account.login, owner)
     && (installation.suspended_at ?? null) === null,
     'The GitHub installation account is incorrect or suspended.');
-  require(isDeepStrictEqual(installation.permissions, PERMISSIONS),
-    'The GitHub installation permissions differ from the approved permissions.');
+  minimum_permissions(installation.permissions, 'The GitHub installation');
 }
 
 function valid_expiration(value) {
@@ -339,14 +349,62 @@ export async function installation_token(directory, github, repository, jwt = ap
     throw error;
   });
   verify_installation(installation, github, owner);
-  const issued = await request(`/app/installations/${installation.id}/access_tokens`, signed,
-    { permissions: PERMISSIONS });
-  require(isDeepStrictEqual(issued.permissions, PERMISSIONS),
-    'The issued token permissions differ from the approved permissions.');
+  const issued = await request(`/app/installations/${installation.id}/access_tokens`, signed, {});
+  minimum_permissions(issued.permissions, 'The issued token');
   require(typeof issued.token === 'string' && issued.token && !/[\r\n\0]/.test(issued.token),
     'GitHub returned an invalid installation token.');
   require(valid_expiration(issued.expires_at), 'GitHub returned an expired installation token.');
   return issued.token;
+}
+
+function origin_repository(environment) {
+  try {
+    const remote = execFileSync('git', ['remote', 'get-url', 'origin'],
+      { env: environment, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const match = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^/]+\/[^/]+?)\/?$/.exec(remote);
+    return match ? match[1].replace(/\.git$/, '') : null;
+  } catch { return null; }
+}
+
+export function gh_repository(command, environment, origin = origin_repository) {
+  let selected = null;
+  for (let index = 0; index < command.length && command[index] !== '--'; index++) {
+    const option = command[index];
+    if (option === '-R' || option === '--repo') {
+      selected = command[++index];
+      require(selected !== undefined, 'The gh repository option requires OWNER/NAME.');
+    } else if (option.startsWith('--repo=')) selected = option.slice(7);
+    else if (option.startsWith('-R')) selected = option.slice(2);
+  }
+  selected ??= environment.GH_REPO ?? origin(environment);
+  require(selected !== null && selected !== undefined,
+    'The gh repository owner could not be resolved; set -R/--repo OWNER/NAME, GH_REPO or a GitHub origin remote.');
+  return repository_path(selected);
+}
+
+function real_gh(environment) {
+  const wrapper = realpathSync(join(GH_BIN, 'gh'));
+  for (const directory of (environment.PATH ?? '/bin:/usr/bin').split(delimiter)) {
+    const filename = resolve(directory || '.', 'gh');
+    try {
+      accessSync(filename, constants.X_OK);
+      if (statSync(filename).isFile() && realpathSync(filename) !== wrapper) return filename;
+    } catch {}
+  }
+  throw new Refusal('The gh wrapper requires an executable gh on the inherited PATH.');
+}
+
+export async function gh(command, inherited = process.env, execute = exec_command,
+  issue = installation_token, origin = origin_repository) {
+  const repository = gh_repository(command, inherited, origin);
+  const program = real_gh(inherited);
+  require(inherited.BATON2_GH_REGISTRY && inherited.BATON2_GH_SERIES,
+    'The gh wrapper requires a series launch environment.');
+  const [, directory, github] = selected_identity(path(inherited.BATON2_GH_REGISTRY), null, inherited.BATON2_GH_SERIES);
+  const environment = { ...inherited };
+  delete environment.GITHUB_TOKEN;
+  environment.GH_TOKEN = await issue(directory, github, repository);
+  execute(program, [program, ...command], environment);
 }
 
 function credential_fields(input) {
@@ -437,6 +495,10 @@ export function parse(argv) {
 
 export async function main(argv = process.argv.slice(2)) {
   try {
+    if (argv[0] === 'gh') {
+      await gh(argv.slice(1));
+      return 0;
+    }
     const args = parse(argv);
     if (args.help) {
       process.stdout.write('git-series.mjs launch --registry FILE [--model-key MODEL] [--series-key SERIES] [--repository OWNER/REPO] [--native-model] -- COMMAND...\n'
