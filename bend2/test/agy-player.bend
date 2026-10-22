@@ -1,5 +1,5 @@
 # Focused fixture for the agy player. It drives the real argument composition,
-# user frame encoding and event projection; no model provider is contacted.
+# frame builder and event projection; no model provider is contacted.
 import Base
 import ../src/harness/agy-player.bend as Agy
 import ../src/git/text.bend as Tx
@@ -11,20 +11,21 @@ def print_arg_list(+label: String, xs: List<String>) -> IO(Unit):
       IO.print(label ++ "\t" ++ head)
       print_arg_list(label,rest)
 
+def print_argv(label: String, value: String) -> IO(Unit):
+  print_arg_list(label,Tx.split_nul(value))
+
 def cli(args: List<String>) -> IO(Unit):
   match args:
-    case "arguments" <> cmd <> model <> effort <> Nil{}:
-      print_arg_list("arg",Agy.arguments(cmd,model,effort))
-    case "argv-fresh" <> cmd <> model <> effort <> session <> Nil{}:
-      print_arg_list("arg",Agy.argv(cmd,model,effort,session,True{}))
+    case "argv-fresh" <> cmd <> model <> effort <> Nil{}:
+      print_argv("arg",Agy.argv(cmd,model,effort,"",True{}))
     case "argv-resume" <> cmd <> model <> effort <> session <> Nil{}:
-      print_arg_list("arg",Agy.argv(cmd,model,effort,session,False{}))
+      print_argv("arg",Agy.argv(cmd,model,effort,session,False{}))
     case "frame" <> text <> Nil{}:
-      IO.print("frame\t" ++ Tx.trim_nl(Agy.user_frame(text)))
+      IO.print("frame\t" ++ Agy.user_frame(text))
     case "kind" <> line <> Nil{}:
       IO.print("kind\t" ++ Agy.kind(line))
     case "admitted" <> kind <> Nil{}:
-      IO.print("admitted\t" ++ Bool.pick(String,Agy.admitted(kind),"true","false"))
+      IO.print("admitted\t" ++ Bool.pick(String,Agy.admitted(kind),"yes","no"))
     case "event" <> db <> line <> Nil{}: do IO<Unit>:
       value : String <- Agy.event(db,line)
       IO.print("event\t" ++ value)
