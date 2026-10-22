@@ -39,7 +39,7 @@ def request_error(+db: String, +session: String, +id: String, +reason: String, f
     error : String <- IO.try(String,Stop.request(db,session,id,reason,force))
     IO.pure(String,Tx.trim_nl(error))
 
-def session_row(id: String, harness: String, native: String, workspace: String) -> String:
+def session_row(+id: String, harness: String, native: String, workspace: String) -> String:
   "INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint,workspace,branch,base) VALUES("
   ++ C.q(id) ++ ",NULL," ++ C.q(harness) ++ ",'deepseek/deepseek-flash','high'," ++ C.q(native)
   ++ ",''," ++ C.q(workspace) ++ "," ++ C.q(id) ++ "-branch,'base-sha');"
