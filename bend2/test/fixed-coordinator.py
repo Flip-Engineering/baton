@@ -245,6 +245,11 @@ class FixedCoordinator(unittest.TestCase):
                 if error.sqlite_errorcode != sqlite3.SQLITE_BUSY:
                     raise
 
+    def read_count(self, ident, recipient=None):
+        clause = f" AND recipient='{recipient}'" if recipient else ''
+        return self.query(
+            f"SELECT count(*) FROM message_reads WHERE message='{ident}'{clause}")[0][0]
+
     def recruit(self, name, harness):
         session = self.coord('recruit', name, 'root', harness, name, 'low', str(self.repo),
                              name + '-branch', str(self.checkouts / name), self.base)
@@ -533,8 +538,7 @@ finally:
             and any('w2 turn one complete' in m['body'] for m in messages) else None),
             'concurrent turn reports never reached the root inbox')
         for ident in ('t1', 't2', 'g1'):
-            row = self.query(f"SELECT receipt FROM messages WHERE id='{ident}'")
-            self.assertNotEqual(row, [(None,)], f'{ident} was not acknowledged')
+            self.assertGreater(self.read_count(ident), 0, f'{ident} has no stored read')
         self.shutdown()
 
     def test_01_wrapped_receivers_use_the_recorded_harness_and_log(self):
@@ -598,8 +602,7 @@ finally:
                 self.assertEqual(saved['native'], native['native'])
                 self.assertEqual(saved['model'], name)
                 self.assertEqual(saved['workspace'], assignments[name]['workspace'])
-                self.assertNotEqual(self.query(
-                    f"SELECT receipt FROM messages WHERE id='{name}-task'"), [(None,)])
+                self.assertGreater(self.read_count(f'{name}-task'), 0)
                 registered = self.query(
                     "SELECT g.log,g.base FROM log_generations g JOIN executions e "
                     "ON e.session=g.session AND e.id=g.attempt "
@@ -627,8 +630,8 @@ finally:
         self.assertEqual(len(serve), 1, 'the serve stays up with only stopped input pending')
         bodies = [m['body'] for m in self.inbox('root')]
         self.assertFalse(any('w4' in body for body in bodies), 'stopped input executed')
-        row = self.query("SELECT receipt FROM messages WHERE id='t4'")
-        self.assertEqual(row, [(None,)], 'stopped input must stay pending and unexecuted')
+        self.assertEqual(self.read_count('t4'), 0,
+                         'stopped input must stay pending and unexecuted')
         self.shutdown()
 
     def test_03_killed_serve_is_adopted_without_duplicate_resume(self):
@@ -658,8 +661,7 @@ finally:
             'adopted report never reached the root inbox')
         bodies = [m['body'] for m in self.inbox('root') if m['sender'] == 'w7']
         self.assertEqual(len([b for b in bodies if 'w7 adopted turn complete' in b]), 1)
-        row = self.query("SELECT receipt FROM messages WHERE id='t7'")
-        self.assertNotEqual(row, [(None,)], 'adopted input was lost')
+        self.assertGreater(self.read_count('t7'), 0, 'adopted input was lost')
         owners = [p for p in self.owned_processes() if self.is_owner(p)]
         self.assertEqual(len(owners), 1, 'adoption keeps exactly one shared owner')
         attempt = self.query("SELECT directory, mode FROM executions WHERE session='w7'")
@@ -668,7 +670,7 @@ finally:
         self.assertEqual(attempt[0][1], 'retained', 'adopted attempt lost its mode')
         self.shutdown()
 
-    def test_04_owner_loss_preserves_live_native_and_receipted_input(self):
+    def test_04_owner_loss_preserves_live_native_and_read_input(self):
         # Keepers run inside the owner process on the owner admission path, so
         # owner loss is the keeper-loss drill: the keeper dies with the owner
         # while the native survives as an orphan. Full orphan re-adoption waits
@@ -690,8 +692,7 @@ finally:
             os.kill(native_pid, 0)
         except ProcessLookupError:
             self.fail('the native died with its owner')
-        row = self.query("SELECT receipt FROM messages WHERE id='t8'")
-        self.assertNotEqual(row, [(None,)], 'owner-loss input was lost')
+        self.assertGreater(self.read_count('t8'), 0, 'owner-loss input was lost')
         rows = self.query("SELECT phase FROM executions WHERE session='w8'")
         self.assertTrue(rows, 'owner-loss execution record was lost')
         owners = [p for p in self.owned_processes() if self.is_owner(p)]
@@ -839,7 +840,7 @@ finally:
         original = self.connections('m1')[0]
         self.assertIn('[id: tm1]', original['prompt'])
         first_attempt = self.query("SELECT id FROM executions WHERE session='m1'")[0][0]
-        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='tm1'"), [(None,)])
+        self.assertEqual(self.read_count('tm1'), 0)
         self.dispatch('gm1', 'm1', 'Complete the owed task and this new guidance.', kind='guidance')
         self.assertEqual(len(self.connections('m1')), 1, 'guidance started a second live Muse process')
         self.release('m1')
@@ -896,8 +897,7 @@ finally:
         self.dispatch('t2', 'w1', 'Second task after the first completion.')
         second_w1, _ = self.stream_for('w1', 1)
         self.assertEqual(json.loads(second_w1.readline()), {'terminal_written': True})
-        row = self.query("SELECT receipt FROM messages WHERE id='t2'")
-        self.assertNotEqual(row, [(None,)], 't2 was not acknowledged')
+        self.assertGreater(self.read_count('t2'), 0, 't2 has no stored read')
 
         phase('changing the receiver while the second native attempt remains held')
         self.managed_app_proxy()
@@ -917,8 +917,8 @@ finally:
         phase('releasing the old native task after the receiver changed')
         self.release('w1', 1)
         def app_admitted():
-            self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='t3'"), [(None,)],
-                             'the old native continuation acknowledged managed input')
+            self.assertEqual(self.read_count('t3'), 0,
+                             'the old native continuation recorded a managed read')
             self.assertEqual(len(self.connections('w1')), 2,
                              'the previous native receiver ran after the managed route was recorded')
             return app_calls('turn/steer')
@@ -931,8 +931,8 @@ finally:
             'later dispatch for a completed session never ran')
         phase('waiting for the current managed receiver')
         def managed_connected():
-            self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='t3'"), [(None,)],
-                             'the old native continuation acknowledged managed input')
+            self.assertEqual(self.read_count('t3'), 0,
+                             'the old native continuation recorded a managed read')
             self.assertEqual(len(self.connections('w1')), 2,
                              'the previous native receiver ran after the managed route was recorded')
             return self.connections('w1-app')
@@ -940,7 +940,7 @@ finally:
                         contradiction=lambda: self.completed_managed_failure(require_follower=True))
         self.stream_for('w1-app', contradiction=self.completed_managed_failure)
         self.assertTrue(app_calls('turn/steer'), 'the short sender admitted input to the active App turn')
-        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='t3'"), [(None,)])
+        self.assertEqual(self.read_count('t3'), 0)
 
         def follow_events(kind):
             if not self.app_follow_events.exists():
@@ -975,13 +975,14 @@ finally:
         self.assertEqual(app_calls('turn/start'), [], 'unchanged owed input started another native turn')
         self.assertEqual(len(follow_events('codexInboxSubscribed')), 1,
                          'writer contention replaced the existing App follower')
-        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='t3'"), [(None,)],
-                         'the lifecycle watcher acknowledged input')
+        self.assertEqual(self.read_count('t3'), 0,
+                         'the lifecycle watcher recorded a read')
         self.dispatch('g3', 'w1', 'New coordinator work after the actual terminal.', kind='guidance')
         self.eventually(lambda: len(app_calls('turn/start')) == 1,
                         'the coordinator guidance did not start the next native turn')
         self.assertIn('"recipient":"w1"', app_calls('turn/start')[0]['params']['input'][0]['text'])
-        self.coord('ack', 't3', 'w1', 'w1-app-handled-t3')
+        self.coord('as', 'w1', 'read', 't3')
+        self.assertGreater(self.read_count('t3', 'w1'), 0)
         self.dispatch('g4', 'w1', 'Later guidance after the recipient handled its earlier input.', kind='guidance')
         guidance_seq = self.query("SELECT seq FROM messages WHERE id='g4'")[0][0]
 
@@ -1005,8 +1006,8 @@ finally:
             contradiction=lambda: self.app_settlement_contradiction('app-turn-1', 1))
         self.assertEqual(len(app_calls('turn/start')), 1, 'unchanged guidance automatically restarted the App turn')
         self.assertEqual(len(self.connections('w1-app')), 1, 'settlement duplicated the App watcher')
-        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id IN ('g3','g4') ORDER BY id"),
-                         [(None,), (None,)], 'App input admission changed recipient receipts')
+        self.assertEqual([self.read_count(ident) for ident in ('g3', 'g4')], [0, 0],
+                         'App input admission recorded a read')
         self.assertEqual(len(self.connections('w1')), 2,
                          'the previous native receiver ran while later App guidance was pending')
         self.dispatch('g5', 'w1', 'The coordinator requests this next bounded native turn.', kind='guidance')
@@ -1043,8 +1044,8 @@ finally:
                          [('root', 'w1', 'report', fresh_body, None)])
         self.eventually(lambda: len(app_calls('turn/start')) == 3,
                         'a fresh report remained behind the failed admission claim')
-        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id IN ('g3','g4','g5','fresh-app-report') ORDER BY id"),
-                         [(None,), (None,), (None,), (None,)])
+        self.assertEqual([self.read_count(ident) for ident in
+                          ('g3', 'g4', 'g5', 'fresh-app-report')], [0, 0, 0, 0])
         phase('interrupting the continued App turn with guidance still owed')
         self.release('w1-app', settle=True, status='interrupted')
         self.eventually(lambda: any(event['turn']['status'] == 'interrupted'
@@ -1092,7 +1093,7 @@ finally:
 
         self.eventually(lambda: events('codexInboxSubscribed'),
                         'The managed watcher did not observe the active native turn.')
-        self.coord('ack', 'managed-task', 'w1', 'The worker handled its original task input.')
+        self.coord('as', 'w1', 'read', 'managed-task')
         self.assertEqual(self.inbox('w1'), [])
         self.assertTrue(self.coord('session', 'w1')['taskCompletion']['open'])
         self.assertTrue(any('--follow' in process['command'] for process in self.owned_processes()))
@@ -1106,8 +1107,8 @@ finally:
                                        for process in self.owned_processes()),
                         'The settled App follower remained active after releasing its observation.')
         report_id = 'codex-inbox-turn:w1:native-w1:app-initial'
-        self.eventually(lambda: self.query('SELECT receipt FROM messages WHERE id=' + repr(report_id))
-                        == [('parent-received',)],
+        self.eventually(lambda: self.query(
+                        'SELECT count(*) FROM messages WHERE id=' + repr(report_id)) == [(1,)],
                         'The recorded coordinator did not receive the App terminal result.')
         report = self.coord('delivery', report_id)
         self.assertEqual((report['sender'], report['recipient'], report['kind']),
@@ -1124,8 +1125,7 @@ finally:
         self.assertTrue(state['open'])
         self.assertFalse(state['confirmed'])
         self.assertEqual(self.coord('delivery', 'managed-task')['body'], task)
-        self.assertEqual(self.coord('delivery', 'managed-task')['receipt'],
-                         'The worker handled its original task input.')
+        self.assertGreater(self.read_count('managed-task', 'w1'), 0)
 
         self.queue('w1-app', {'controlReady': True})
         guidance = 'Review the changed source evidence.\nRetain the original qualification and λ🙂.'
@@ -1138,11 +1138,13 @@ finally:
         self.assertEqual(starts()[0]['params']['threadId'], 'native-w1')
         self.assertEqual(self.coord('delivery', 'managed-next')['body'], guidance)
         self.assertIsNone(self.coord('delivery', 'managed-next')['receipt'])
-        self.coord('ack', 'managed-next', 'w1', 'The worker handled the changed source evidence.')
+        self.coord('as', 'w1', 'read', 'managed-next')
+        self.assertGreater(self.read_count('managed-next', 'w1'), 0)
 
         self.coord('message', 'managed-ready', 'w1', 'root', 'completion-request',
                    'The managed worker task result is ready.')
-        self.assertEqual(self.coord('delivery', 'managed-ready')['receipt'], 'parent-received')
+        self.assertEqual(self.coord('delivery', 'managed-ready')['body'],
+                         'The managed worker task result is ready.')
         ready = self.coord('session', 'w1')['taskCompletion']
         self.assertEqual(ready['assignmentId'], 'managed-next')
         self.assertEqual(ready['requestId'], 'managed-ready')
@@ -1150,7 +1152,8 @@ finally:
         self.assertFalse(ready['confirmed'])
         self.coord('message', 'managed-confirmed', 'root', 'w1', 'completion-confirmed', 'managed-ready')
         self.assertEqual(self.coord('delivery', 'managed-confirmed')['body'], 'managed-ready')
-        self.coord('ack', 'managed-confirmed', 'w1', 'The worker handled coordinator confirmation.')
+        self.coord('as', 'w1', 'read', 'managed-confirmed')
+        self.assertGreater(self.read_count('managed-confirmed', 'w1'), 0)
         self.release('w1-app', 1, settle=True, items=[{'type': 'agentMessage', 'id': 'app-reviewed',
                                                     'text': 'The coordinator reviewed the retained result.'}])
         self.eventually(lambda: len(events('codexInboxReleased')) == 2,
@@ -1213,8 +1216,7 @@ finally:
         self.assertNotIn('serve-refused w1', log,
                          'the serve refused work the owner drain consumed')
         for ident in ('t1', 'g1'):
-            row = self.query(f"SELECT receipt FROM messages WHERE id='{ident}'")
-            self.assertNotEqual(row, [(None,)], f'{ident} was not acknowledged')
+            self.assertGreater(self.read_count(ident), 0, f'{ident} has no stored read')
         stdout, stderr = original_receive.communicate()
         self.assertEqual(original_receive.returncode, 0, stdout + stderr)
         self.shutdown()
@@ -1238,9 +1240,8 @@ finally:
                 fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.dispatch('failed-task', 'bad', 'Accepted work whose provider fails.')
             self.dispatch('held-task', 'held', 'Keep this native work active.')
-            self.assertEqual(self.query(
-                "SELECT id,receipt FROM messages WHERE id IN ('failed-task','held-task') ORDER BY id"),
-                [('failed-task', None), ('held-task', None)])
+            self.assertEqual([self.read_count(ident) for ident in ('failed-task', 'held-task')],
+                             [0, 0])
             self.assertEqual(self.query(
                 "SELECT count(*) FROM executions WHERE session IN ('bad','held')"), [(0,)])
             for session, ident in (('bad', 'failed-task'), ('held', 'held-task')):
@@ -1275,8 +1276,7 @@ finally:
         self.eventually(lambda: any('Serve task bad failed:' in line for line in serve_lines),
                         'the failed session result never reached the shared event loop')
         self.assertIsNone(self.serve_proc.poll(), 'one session failure ended the serve')
-        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='failed-task'"),
-                         [('native-reviewed',)])
+        self.assertGreater(self.read_count('failed-task'), 0)
         self.assertEqual(len(self.connections('bad')), 1,
                          'the failed session was immediately launched again')
         self.assertEqual(len(self.connections('held')), 1,
@@ -1361,8 +1361,7 @@ finally:
 
         self.assertEqual(self.query("SELECT native,endpoint FROM sessions WHERE id='w1'"),
                          [('native-w1', '')])
-        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='endpointless-task'"),
-                         [(None,)])
+        self.assertEqual(self.read_count('endpointless-task'), 0)
         self.assertTrue(app_calls('turn/steer'), 'the public sender did not admit the original input')
         self.release('w1-app', settle=True)
         self.await_inbox('root', lambda messages: next((message for message in messages
@@ -1382,8 +1381,9 @@ finally:
         self.assertEqual(len(app_calls('turn/start')), 1, 'the follower retried unchanged guidance')
         pointer = app_calls('turn/start')[-1]['params']['input'][0]['text']
         self.assertIn('"pendingCount":2', pointer)
-        self.assertEqual(self.query("SELECT receipt FROM messages WHERE recipient='w1' ORDER BY seq"),
-                         [(None,), (None,)])
+        self.assertEqual([self.read_count(row[0]) for row in
+                          self.query("SELECT id FROM messages WHERE recipient='w1' ORDER BY seq")],
+                         [0, 0])
         self.assertEqual(len(self.connections('w1-app')), 1,
                          'the original App follower was replaced')
         self.assertEqual(len(self.connections('w1')), 0,
@@ -1467,8 +1467,8 @@ finally:
         self.assertEqual(wake.returncode, 0, ''.join(wake.stderr.readlines()))
         self.assertTrue(any(event['type'] == 'codexInboxCoalesced' for event in wake_events))
         self.assertEqual(len(app_calls('turn/steer')), 1, 'the one-shot wake repeated unchanged admitted input')
-        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='busy-task'"),
-                         [(None,)], 'the one-shot wake acknowledged the input')
+        self.assertEqual(self.read_count('busy-task'), 0,
+                         'the one-shot wake recorded a read')
 
         phase('changing the recorded native conversation before another one-shot read')
         self.coord('connect', 'w1', 'native-w2', json.dumps([
