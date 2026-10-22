@@ -280,8 +280,8 @@ class ReplayGuard(unittest.TestCase):
                           'the owed input must stay unacknowledged')
         self.assertEqual((self.attempt / 'status').read_text().strip(), '0',
                          'the durable native status must be preserved')
-        self.assertEqual((self.attempt / 'stdout').stat().st_size, spool,
-                         'the retained stdout must be preserved')
+        self.assertFalse((self.attempt / 'stdout').exists(),
+                         'successful retirement must remove the retained stdout')
         self.assertFalse(self.recovery_marker.exists(),
                          'the transfer path must not replay the captured recovery')
         self.assertEqual(self.recovery_children(), [],
