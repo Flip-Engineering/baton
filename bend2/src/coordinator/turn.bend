@@ -1647,17 +1647,32 @@ def direct_route_wake(+db: String, +player: String, +id: String, +log: String, o
     case False{}: direct_wake(db,player,id,outcome)
     case True{}: direct_route_continue(db,player,id,log,outcome)
 
+def direct_failure_report(db: String, player: String, id: String, label: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match result:
+    case Done{unit}: IO.pure(Unit,Unit{})
+    case Fail{(code,text)}: Delivery.failure_report(db,player,id ++ ":" ++ label ++ "-failure",
+      "Direct " ++ label ++ " of turn " ++ id ++ " failed: " ++ U32.show(code) ++ ": " ++ text)
+
 # A route launches only on clean settlement: any native release, finish, question or
 # acknowledgment failure keeps its own failed result and wakes ordinarily, matching
 # the receive route_after_advance gate.
 def direct_settled_wake(+db: String, +player: String, +id: String, +log: String, +outcome: Outcome, settled: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match settled:
     case Fail{error}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      settled_report : Unit <- direct_failure_report(db,player,id,"settled",Fail{error})
       wake : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
+      wake_report : Unit <- direct_failure_report(db,player,id,"wake",wake)
       IO.pure(Result<&1,&1,U32 & String,Unit>,combine(Fail{error},wake))
     case Done{unit}: do IO<Result<&1,&1,U32 & String,Unit>>:
       routed : Bool <- direct_route_decided(db,player,id,outcome)
+      normal : Bool <- settlement_success(db,outcome)
+      reminded : Unit <- Bool.pick(IO(Unit),Bool.and(normal,Bool.not(routed)),
+        do IO<Unit>:
+          saved : String <- IO.try(String,DB.Sql.query(db,C.task_continuation_sql(player,id)))
+          IO.pure(Unit,Unit{}),
+        IO.pure(Unit,Unit{}))
       wake : Result<&1,&1,U32 & String,Unit> <- direct_route_wake(db,player,id,log,outcome,routed)
+      wake_report : Unit <- direct_failure_report(db,player,id,"wake",wake)
       IO.pure(Result<&1,&1,U32 & String,Unit>,combine(Done{unit},wake))
 
 def direct_completed(+db: String, +player: String, +id: String, +log: String, +directory: String, +handle: U32, lock: Maybe<U32>, observation: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> IO(Unit):
@@ -1682,6 +1697,7 @@ def direct_unstarted(+db: String, +player: String, +id: String, +log: String, +d
     released : Unit <- direct_release_lock(lock)
     finished : Result<&1,&1,U32 & String,Unit> <- finish(db,player,id,log,outcome,False{})
     wake : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
+    wake_report : Unit <- direct_failure_report(db,player,id,"wake",wake)
     IO.pass(Unit,combine(finished,wake))
 
 # Pass the delivery channels and lock to the selected continuation: the verdict is the

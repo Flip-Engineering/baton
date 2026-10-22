@@ -1092,7 +1092,7 @@ class Receive(unittest.TestCase):
         self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')],
                          ['Original result complete.', 'Queued result complete.'])
 
-    def test_worker_settlement_wakes_coordinator_and_continuation_requires_input(self):
+    def test_worker_settlement_continues_open_assignment_with_reminder(self):
         config_path = self.directory / 'fixture.json'
         config = json.loads(config_path.read_text())
         config['record_launches'] = True
@@ -1140,14 +1140,12 @@ class Receive(unittest.TestCase):
                     first, started = self.accept_child(observer, name)
                     self.action(first, body='Intermediate work is retained.', complete_task=False)
                     self.assertEqual(first.readline(), b'')
-                    self.finish_without_start(observer)
                     self.assertIsNotNone(self.coord('delivery', assignment)['receipt'])
                     state = self.coord('session', name)['taskCompletion']
                     self.assertTrue(state['open'])
                     self.assertEqual(state['assignmentId'], assignment)
                     self.assertIsNone(state['requestId'])
                     self.assertFalse(state['confirmed'])
-                    self.assertEqual(self.coord('inbox', name), [])
                     report, = self.coord('turns', name)
                     self.assertEqual(report['reportBody'], 'Intermediate work is retained.')
                     self.assertEqual(report['receipt'], 'parent-received')
@@ -1157,14 +1155,16 @@ class Receive(unittest.TestCase):
                                   [message['id'] for message in delivered])
                     self.assertFalse(any(message['sender'] == name and message['kind'] == 'completion-request'
                                          for message in self.coord('inbox', 'root')))
-                    unchanged_wakes(name)
-
-                    continued_input = self.coord('continue-task', name, name + '-coordinator-review')
-                    self.assertEqual(continued_input['continuationId'],
-                                     name + '-coordinator-review:task-continuation')
                     second, continued = self.accept(name)
                     self.assertEqual(continued['native'], started['native'])
-                    self.assertIn('[id: ' + continued_input['continuationId'] + ']', continued['prompt'])
+                    with sqlite3.connect(self.db) as database:
+                        reminders = database.execute(
+                            "SELECT id,body,receipt FROM messages WHERE recipient=? AND kind='task-continuation'",
+                            (name,)).fetchall()
+                    self.assertEqual(len(reminders), 1, reminders)
+                    self.assertIn('completion-request', reminders[0][1])
+                    self.assertIn('[id: ' + reminders[0][0] + ']', continued['prompt'])
+                    self.assertIn('baton read ' + reminders[0][0], continued['prompt'])
 
                     request = name + '-ready'
                     self.action(second, completion_request=[request, 'The task result is ready.'])
@@ -1172,7 +1172,8 @@ class Receive(unittest.TestCase):
                     self.assertEqual((requested['sender'], requested['recipient'], requested['kind']),
                                      (name, 'root', 'completion-request'))
                     self.assertTrue(self.coord('session', name)['taskCompletion']['open'])
-                    self.action(second, body='The task result is ready.', complete_task=False)
+                    self.action(second, body='The task result is ready.',
+                                read=[reminders[0][0]], complete_task=False)
                     self.assertEqual(second.readline(), b'')
                     self.shutdown_idle_database_owner(
                         'The explicit continuation did not settle naturally.', reject_start=True)
@@ -1209,6 +1210,7 @@ class Receive(unittest.TestCase):
                                       'The coordinator confirmed this task.'])
                     self.assertEqual(self.coord('delivery', name + '-confirmed')['receipt'], 'native-reviewed')
                     self.assertEqual(self.coord('delivery', request)['receipt'], 'parent-received')
+
 
     def test_ready_request_preserves_new_input_reports_and_physical_failure(self):
         config_path = self.directory / 'fixture.json'

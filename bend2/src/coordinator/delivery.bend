@@ -285,6 +285,15 @@ def deliver(+db: String, +id: String, +condition: String, saved: String) -> IO(R
     +kind : String <- IO.pure(String,Tx.trim_nl(value))
     routed(db,id,condition,saved,kind,String.is_empty(kind))
 
+# A failure report is inserted and delivered through the ordinary message path.
+# Its insert and delivery results are ignored so the caller keeps its original
+# recovery or continuation failure.
+def failure_report(+db: String, +session: String, +id: String, +body: String) -> IO(Unit):
+  do IO<Unit>:
+    saved : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id) ++ ",s.id," ++ C.report_recipient("s.id") ++ ",'report'," ++ C.q(body) ++ " FROM sessions s WHERE s.id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL;")
+    delivered : Result<&1,&1,U32 & String,String> <- deliver(db,id,"1","")
+    IO.pure(Unit,Unit{})
+
 def wake_result(result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,Unit>:
   match result:
     case Fail{error}: Fail{error}
