@@ -420,7 +420,7 @@ def report_continuation_text(+db: String, +session: String, id: String, attempt:
 def report_continuation_pass(+db: String, +session: String, id: String, attempt: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match result:
     case Done{unit}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{unit})
-    case Fail{(code,+text)}: do IO<Result<&1,&1,U32 & String,Unit>>:
+    case Fail{(+code,+text)}: do IO<Result<&1,&1,U32 & String,Unit>>:
       reported : Unit <- report_continuation_text(db,session,id,attempt,code,text)
       IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,text)})
 
@@ -431,7 +431,7 @@ def report_reminder_text(+db: String, +session: String, +id: String, code: U32, 
 def report_reminder_pass(+db: String, +session: String, id: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match result:
     case Done{unit}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{unit})
-    case Fail{(code,+text)}: do IO<Result<&1,&1,U32 & String,Unit>>:
+    case Fail{(+code,+text)}: do IO<Result<&1,&1,U32 & String,Unit>>:
       reported : Unit <- report_reminder_text(db,session,id,code,text)
       IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,text)})
 
@@ -442,7 +442,7 @@ def report_recovery_text(+db: String, +session: String, +id: String, +directory:
 def report_recovery_pass(+db: String, +session: String, +id: String, +directory: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match result:
     case Done{unit}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{unit})
-    case Fail{(code,+text)}: do IO<Result<&1,&1,U32 & String,Unit>>:
+    case Fail{(+code,+text)}: do IO<Result<&1,&1,U32 & String,Unit>>:
       reported : Unit <- report_recovery_text(db,session,id,directory,code,text)
       IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,text)})
 

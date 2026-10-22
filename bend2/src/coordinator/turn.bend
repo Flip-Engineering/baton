@@ -1671,7 +1671,7 @@ def direct_failure_text(+db: String, +player: String, +id: String, +label: Strin
 def direct_failure_pass(+db: String, +player: String, +id: String, +label: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match result:
     case Done{unit}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{unit})
-    case Fail{(code,+text)}: do IO<Result<&1,&1,U32 & String,Unit>>:
+    case Fail{(+code,+text)}: do IO<Result<&1,&1,U32 & String,Unit>>:
       reported : Unit <- direct_failure_text(db,player,id,label,code,text)
       IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,text)})
 
@@ -1680,7 +1680,7 @@ def direct_failure_pass(+db: String, +player: String, +id: String, +label: Strin
 # the receive route_after_advance gate.
 def direct_settled_wake(+db: String, +player: String, +id: String, +log: String, +outcome: Outcome, settled: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match settled:
-    case Fail{(code,+text)}: do IO<Result<&1,&1,U32 & String,Unit>>:
+    case Fail{(+code,+text)}: do IO<Result<&1,&1,U32 & String,Unit>>:
       settled_report : Unit <- direct_failure_text(db,player,id,"settled",code,text)
       wake0 : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
       wake : Result<&1,&1,U32 & String,Unit> <- direct_failure_pass(db,player,id,"wake",wake0)
