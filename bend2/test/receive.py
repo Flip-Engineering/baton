@@ -1048,10 +1048,9 @@ class Receive(unittest.TestCase):
         report0 = self.coord('delivery', 'report-0')
         self.assertTrue(read_recorded(self.db, report0['id']))
         self.assertEqual(report0['nativeInputStatus']['read'], 'recorded')
-        self.assertEqual(report0['nativeInputStatus']['handled'], 'recorded')
         report1 = self.coord('delivery', 'report-1')
         self.assertFalse(read_recorded(self.db, report1['id']))
-        self.assertNotEqual(report1['nativeInputStatus']['handled'], 'recorded')
+        self.assertEqual(report1['nativeInputStatus']['read'], 'unrecorded')
         self.assertEqual(self.coord('delivery', 'report-0')['body'], body + ' marker-0')
         reads = [json.loads(line) for line in
                  (self.directory / 'native-reads.jsonl').read_text().splitlines()]
@@ -1070,7 +1069,6 @@ class Receive(unittest.TestCase):
         report1 = self.coord('delivery', 'report-1')
         self.assertTrue(read_recorded(self.db, report1['id']))
         self.assertEqual(report1['nativeInputStatus']['read'], 'recorded')
-        self.assertEqual(report1['nativeInputStatus']['handled'], 'recorded')
 
     def test_large_pending_guidance_is_referenced_not_expanded(self):
         config_path = self.directory / 'fixture.json'
@@ -4758,9 +4756,9 @@ class Receive(unittest.TestCase):
                 self.assertTrue(read_recorded(self.db, ident))
                 with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
                     read = database.execute(
-                        'SELECT attempt,native,handled FROM message_reads WHERE message=? AND recipient=?',
+                        'SELECT attempt,native FROM message_reads WHERE message=? AND recipient=?',
                         (ident, session)).fetchall()
-                self.assertEqual(read, [(attempt, original['native'], 'native-turn:' + attempt)])
+                self.assertEqual(read, [(attempt, original['native'])])
                 turns = self.coord('turns', session)
                 self.assertEqual(len(turns), 1)
                 self.assertEqual(turns[0]['reportBody'], 'native review complete')

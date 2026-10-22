@@ -63,7 +63,7 @@ def clear_result_sql(+session: String) -> String:
   ++ ",'branch',(SELECT branch FROM sessions WHERE id=" ++ s ++ ")"
   ++ ",'base',(SELECT base FROM sessions WHERE id=" ++ s ++ ")"
   ++ ",'messages',(SELECT count(*) FROM messages WHERE recipient=" ++ s ++ ")"
-  ++ ",'retainedInputs',(SELECT count(*) FROM messages WHERE recipient=" ++ s ++ " AND receipt IS NULL)"
+  ++ ",'retainedInputs',(SELECT count(*) FROM messages WHERE recipient=" ++ s ++ " AND " ++ C.owed_sql("messages") ++ ")"
   ++ ",'executions',(SELECT count(*) FROM executions WHERE session=" ++ s ++ "))"
   ++ ",'execution',(SELECT json_object('attempt',id,'mode',mode,'phase',phase,'status',status) FROM executions WHERE session=" ++ s ++ " ORDER BY rowid DESC LIMIT 1)"
   ++ ",'executionCreated',json('false'),'providerRequest',json('false'))"

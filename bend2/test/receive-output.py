@@ -86,8 +86,7 @@ class ReceiveOutput(unittest.TestCase):
                   json.dumps([sys.executable, str(directory / 'gate.py'), 'delivery']))
             expected_delivery = json.loads(coord('delivery', 'completed'))
             self.assertEqual(expected_delivery.pop('nativeInputStatus'), {
-                'delivered': 'unrecorded', 'read': 'unrecorded',
-                'handled': 'unrecorded', 'attempts': [],
+                'delivered': 'recorded', 'read': 'unrecorded', 'attempts': [],
             })
             expected = json.dumps(expected_delivery, ensure_ascii=False,
                                   separators=(',', ':')) + '\n'

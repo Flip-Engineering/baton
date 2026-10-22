@@ -304,7 +304,7 @@ class Acceptance:
                 'Focus on just one documentation improvement. Start the final report with ' + marker)
         report = c.completed(p, 'guided')
         delivery = c.coord('delivery', 'guide')
-        assert delivery['receipt'] and marker in report['body'], (delivery, report)
+        assert delivery['nativeInputStatus']['read'] == 'recorded' and marker in report['body'], (delivery, report)
         c.evidence({'guidance': delivery, 'guidance_origin': 'acceptance-driver', 'report': report})
 
     def root_tap(self, c, kind):
