@@ -31,9 +31,23 @@ transition. Issue comments need `issues:write`; workflow changes need
 `workflows:write`; CI reads need `actions:read`, `checks:read` and `statuses:read`.
 The App registrations and installation owners must approve these grants.
 
-If the App is not installed for `OWNER`, the helper refuses with a message that
-names the App slug and the owner. The helper does not fall back to another
-installation.
+An unresolved installation produces a refusal naming the App slug and the
+requested owner.
+
+Renamed owners and repositories resolve through GitHub's canonical numeric
+repository identity. A 301 installation response can select
+`https://api.github.com/repositories/ID/installation`. When the old installation
+URL returns 404, the helper reads the App's installations and tries their tokens
+one at a time to resolve the old repository's metadata. The first successful
+lookup supplies the canonical repository ID and owner. A metadata redirect
+must be a 301 to `https://api.github.com/repositories/ID`, with numeric `ID`.
+These metadata tokens remain in memory and serve only that lookup.
+
+The helper fetches the canonical installation with its App JWT and verifies
+the App, permissions, suspension state and canonical owner before issuing the
+command's token. Other redirect hosts and paths are refused. App identity and
+token-issuance requests refuse redirects. If every installation reports the
+repository missing, the refusal names the requested App and owner.
 
 ## Configuration
 

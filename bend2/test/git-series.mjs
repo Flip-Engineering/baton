@@ -53,6 +53,7 @@ function installation_api(github, installed, tamper = {}) {
   const request = async (api_path, authorization, body) => {
     calls.push({ api_path, authorization, body });
     if (api_path === '/app') return answer('app', { id: github.appId, slug: github.slug, client_id: github.clientId });
+    if (api_path.startsWith('/app/installations?')) return [];
     const lookup = /^\/repos\/([^/]+)\/([^/]+)\/installation$/.exec(api_path);
     if (lookup) {
       const found = installed.find(entry => entry.owner === lookup[1]);
@@ -66,6 +67,43 @@ function installation_api(github, installed, tamper = {}) {
       expires_at: new Date(Date.now() + 86400000).toISOString() });
   };
   return { calls, request };
+}
+
+function renamed_api({ lookup = 404, missing = false, wrong_account = false, repository_status = 301,
+  location = model.API_ROOT + '/repositories/7000' } = {}) {
+  const github = identities.gpt, calls = [];
+  const installation = (owner, id) => ({ id, app_id: github.appId, app_slug: github.slug,
+    account: { login: owner }, suspended_at: null, permissions: { ...model.PERMISSIONS } });
+  const transport = (url, options, received) => {
+    const outgoing = new EventEmitter();
+    outgoing.end = body => {
+      const path = new URL(url).pathname + new URL(url).search;
+      calls.push({ path, authorization: options.headers.Authorization, body });
+      let status = 200, value, redirect;
+      if (path === '/app') value = { id: github.appId, slug: github.slug, client_id: github.clientId };
+      else if (path === '/repos/Old-Owner/project/installation') {
+        status = lookup; redirect = model.API_ROOT + '/repositories/7000/installation';
+      } else if (path === '/app/installations?per_page=100&page=1') {
+        value = [installation('Other-Owner', 5100), installation('New-Owner', 5200)];
+      } else if (/^\/app\/installations\/[0-9]+\/access_tokens$/.test(path)) {
+        value = { token: 'fixture-' + path.split('/')[3], permissions: { ...model.PERMISSIONS },
+          expires_at: new Date(Date.now() + 3600000).toISOString() };
+      } else if (path === '/repos/Old-Owner/project') {
+        status = missing || options.headers.Authorization.endsWith('5100') ? 404 : repository_status;
+        redirect = location;
+        if (status === 200) value = { id: 7000, full_name: 'New-Owner/project', owner: { login: 'New-Owner' } };
+      } else if (path === '/repositories/7000') {
+        value = { id: 7000, full_name: 'New-Owner/project', owner: { login: 'New-Owner' } };
+      } else if (path === '/repositories/7000/installation') {
+        value = installation(wrong_account ? 'Wrong-Owner' : 'New-Owner', 5200);
+      } else assert.fail('Unexpected fixture path ' + path);
+      const incoming = new PassThrough(); incoming.statusCode = status;
+      incoming.headers = redirect ? { location: redirect } : {};
+      queueMicrotask(() => { received(incoming); incoming.end(JSON.stringify(value ?? {})); });
+    };
+    return outgoing;
+  };
+  return { calls, request: (path, authorization, body = null) => model.api(path, authorization, body, transport) };
 }
 function child(argv, { cwd = directory, input = '', env = { PATH: process.env.PATH } } = {}) {
   return new Promise((accept, reject) => {
@@ -144,6 +182,82 @@ test('a repository whose owner has no App installation refuses and names the App
     error => error instanceof model.Refusal && error.message === 'The GitHub App fixture-series-gpt is not installed for flip-engineer; '
       + 'install it on flip-engineer to grant access to flip-engineer/flip.');
   assert.ok(!fixture.calls.some(call => call.api_path.includes('/access_tokens')));
+});
+
+test('a 404 installation lookup resolves a renamed private repository through the second installation', async () => {
+  const fixture = renamed_api();
+  const token = await model.installation_token(series.gpt, identities.gpt, 'Old-Owner/project',
+    () => 'fixture-jwt', fixture.request);
+  assert.ok(token === 'fixture-' + 5200);
+  assert.deepEqual(fixture.calls.map(call => call.path), [
+    '/app', '/repos/Old-Owner/project/installation', '/app/installations?per_page=100&page=1',
+    '/app/installations/5100/access_tokens', '/repos/Old-Owner/project',
+    '/app/installations/5200/access_tokens', '/repos/Old-Owner/project', '/repositories/7000',
+    '/repositories/7000/installation', '/app/installations/5200/access_tokens']);
+  for (const call of fixture.calls.filter(call => call.path.endsWith('/access_tokens'))) assert.equal(call.body, '{}');
+  assert.ok(fixture.calls.filter(call => call.path === '/repositories/7000/installation')
+    .every(call => call.authorization === 'Bearer fixture-jwt'));
+  assert.ok(fixture.calls.filter(call => call.path === '/repositories/7000')
+    .every(call => call.authorization === 'Bearer fixture-' + 5200));
+  const direct = renamed_api({ repository_status: 200 });
+  assert.ok(await model.installation_token(series.gpt, identities.gpt, 'Old-Owner/project',
+    () => 'fixture-jwt', direct.request));
+  assert.ok(!direct.calls.some(call => call.path === '/repositories/7000'));
+});
+
+test('installation redirects accept the canonical owner and keep App and account verification', async () => {
+  const fixture = renamed_api({ lookup: 301 });
+  assert.ok(await model.installation_token(series.gpt, identities.gpt, 'Old-Owner/project',
+    () => 'fixture-jwt', fixture.request));
+  assert.ok(!fixture.calls.some(call => call.path.startsWith('/app/installations?')));
+  for (const lookup of [301, 404]) {
+    const wrong = renamed_api({ lookup, wrong_account: true });
+    await assert.rejects(model.installation_token(series.gpt, identities.gpt, 'Old-Owner/project',
+      () => 'fixture-jwt', wrong.request), /installation account is incorrect or suspended/);
+  }
+});
+
+test('an old name no installation can resolve retains the missing-installation refusal', async () => {
+  const fixture = renamed_api({ missing: true });
+  await assert.rejects(model.installation_token(series.gpt, identities.gpt, 'Old-Owner/project',
+    () => 'fixture-jwt', fixture.request), error => error instanceof model.Refusal
+      && error.message === 'The GitHub App fixture-series-gpt is not installed for Old-Owner; '
+        + 'install it on Old-Owner to grant access to Old-Owner/project.');
+  assert.equal(fixture.calls.filter(call => call.path === '/repos/Old-Owner/project').length, 2);
+  assert.ok(!fixture.calls.some(call => call.path === '/repositories/7000/installation'));
+});
+
+test('repository resolution refuses redirects outside the confirmed HTTPS numeric API path', async () => {
+  for (const location of ['https://other.example/repositories/7000', 'http://api.github.com/repositories/7000',
+    'https://api.github.com/repos/New-Owner/project', 'https://api.github.com/repositories/7000/installation',
+    'https://api.github.com/repositories/7000?extra=1', 'https://api.github.com/repositories/not-numeric',
+    'https://api.github.com@other.example/repositories/7000']) {
+    const fixture = renamed_api({ location });
+    await assert.rejects(model.installation_token(series.gpt, identities.gpt, 'Old-Owner/project',
+      () => 'fixture-jwt', fixture.request), /must not redirect/);
+    assert.ok(!fixture.calls.some(call => call.path === '/repositories/7000/installation'));
+  }
+});
+
+test('old repository names work through both the credential helper and gh owner selection', async () => {
+  const fixture = renamed_api();
+  const issue = (home, github, repository) => model.installation_token(home, github, repository,
+    () => 'fixture-jwt', fixture.request);
+  let output = '';
+  await model.helper({ registry, series_key: 'gpt', operation: 'get' },
+    Readable.from(['protocol=https\nhost=github.com\npath=Old-Owner/project.git\n\n']),
+    { write(value) { output += value; } }, issue);
+  assert.ok(output === 'username=x-access-token\npassword=fixture-' + 5200 + '\n\n');
+  const bin = join(directory, 'renamed-gh'); mkdirSync(bin);
+  writeFileSync(join(bin, 'gh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const environment = execution(args(null, ['seat'], false, 'gpt'), { PATH: bin })[2];
+  let executed = false;
+  await model.gh(['pr', 'checks', '-R', 'Old-Owner/project'], environment, (program, argv, child) => {
+    executed = true;
+    assert.ok(child.GH_TOKEN === 'fixture-' + 5200);
+    assert.deepEqual(argv.slice(1), ['pr', 'checks', '-R', 'Old-Owner/project']);
+  }, issue);
+  assert.ok(executed && !('GH_TOKEN' in environment));
 });
 
 test('identity, installation and issued permissions accept the minimum and additional grants', async () => {
@@ -664,6 +778,30 @@ test('HTTP requests bind fixed API authority, reject redirects and redact transp
   await assert.rejects(model.api('//other.example', 'fixture', null, () => assert.fail('request')), model.Refusal);
   await assert.rejects(model.api('/app', 'fixture', null, () => { throw new Error('fixture-secret'); }), error =>
     error instanceof model.Refusal && !error.message.includes('fixture-secret'));
+});
+
+test('app and token requests refuse canonical-looking redirects and installation redirects reject other targets', async () => {
+  for (const [path, body, status, location] of [
+    ['/app', null, 301, model.API_ROOT + '/repositories/7000'],
+    ['/app/installations/5200/access_tokens', {}, 301, model.API_ROOT + '/repositories/7000/installation'],
+    ['/repos/Old-Owner/project/installation', null, 302, model.API_ROOT + '/repositories/7000/installation'],
+    ['/repos/Old-Owner/project/installation', null, 301, 'https://other.example/repositories/7000/installation'],
+    ['/repos/Old-Owner/project/installation', null, 301, model.API_ROOT + '/app'],
+  ]) {
+    let calls = 0;
+    const request = (url, options, received) => {
+      calls++; assert.ok(url.startsWith(model.API_ROOT + '/'));
+      const outgoing = new EventEmitter();
+      outgoing.end = () => {
+        const incoming = new PassThrough(); incoming.statusCode = status; incoming.headers = { location };
+        queueMicrotask(() => { received(incoming); incoming.end('{}'); });
+      };
+      return outgoing;
+    };
+    await assert.rejects(model.api(path, 'fixture-authorization', body, request),
+      error => error instanceof model.Refusal && !(error instanceof model.Moved));
+    assert.equal(calls, 1);
+  }
 });
 
 test('RSA JWT signs fixture claims and refuses public permissions or symlink keys', () => {

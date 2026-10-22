@@ -19,6 +19,13 @@ const GH_BIN = fileURLToPath(new URL('./git-series-bin/', import.meta.url));
 export class Refusal extends Error {}
 // GitHub answered 404 for the requested resource.
 export class Missing extends Refusal {}
+// A repository lookup supplied GitHub's numeric canonical resource path.
+export class Moved extends Refusal {
+  constructor(api_path) {
+    super('GitHub authentication responses must not redirect.');
+    this.api_path = api_path;
+  }
+}
 
 function require(condition, message) {
   if (!condition) throw new Refusal(message);
@@ -269,7 +276,12 @@ export async function api(api_path, authorization, body = null, request = https.
           'X-GitHub-Api-Version': '2026-03-10', 'Content-Type': 'application/json', 'User-Agent': 'Baton2-series-git' },
       }, incoming => {
         if (incoming.statusCode >= 300 && incoming.statusCode < 400) {
-          refuse(new Refusal('GitHub authentication responses must not redirect.'));
+          const source = /^\/repos\/[^/]+\/[^/]+(\/installation)?$/.exec(api_path);
+          const target = typeof incoming.headers.location === 'string'
+            && /^https:\/\/api\.github\.com(\/repositories\/[1-9][0-9]*(\/installation)?)$/.exec(incoming.headers.location);
+          refuse(incoming.statusCode === 301 && body === null && source && target
+            && (source[1] ?? '') === (target[2] ?? '') ? new Moved(target[1])
+            : new Refusal('GitHub authentication responses must not redirect.'));
           incoming.resume();
           return;
         }
@@ -335,26 +347,84 @@ function valid_expiration(value) {
     && Date.parse(value) > Date.now();
 }
 
-// Each account owner has its own installation of the App. The installation for
-// the repository's owner authorizes a token with no repository restriction.
-export async function installation_token(directory, github, repository, jwt = app_jwt, request = api) {
-  const signed = jwt(directory, github), app = await request('/app', signed);
-  require(app.id === github.appId && app.slug === github.slug,
-    'The signing key authenticated another GitHub App.');
-  if (Object.hasOwn(app, 'client_id')) require(app.client_id === github.clientId, 'The GitHub App client ID differs.');
-  const owner = repository_path(repository).split('/')[0];
-  const installation = await request('/repos/' + repository + '/installation', signed).catch(error => {
-    if (error instanceof Missing) throw new Refusal(`The GitHub App ${github.slug} is not installed for ${owner}; `
-      + `install it on ${owner} to grant access to ${repository}.`);
-    throw error;
-  });
-  verify_installation(installation, github, owner);
+async function issued_token(installation, signed, request) {
   const issued = await request(`/app/installations/${installation.id}/access_tokens`, signed, {});
   minimum_permissions(issued.permissions, 'The issued token');
   require(typeof issued.token === 'string' && issued.token && !/[\r\n\0]/.test(issued.token),
     'GitHub returned an invalid installation token.');
   require(valid_expiration(issued.expires_at), 'GitHub returned an expired installation token.');
   return issued.token;
+}
+
+async function repository_metadata(api_path, token, request) {
+  let resolved = api_path, metadata;
+  try { metadata = await request(api_path, token); }
+  catch (error) {
+    if (!(error instanceof Moved)) throw error;
+    require(/^\/repositories\/[1-9][0-9]*$/.test(error.api_path),
+      'The canonical repository path is invalid.');
+    resolved = error.api_path;
+    metadata = await request(resolved, token);
+  }
+  const full_name = repository_path(metadata.full_name);
+  require(Number.isSafeInteger(metadata.id) && metadata.id > 0
+    && typeof metadata.owner?.login === 'string'
+    && same_repository(metadata.owner.login, full_name.split('/')[0])
+    && (!resolved.startsWith('/repositories/') || resolved === '/repositories/' + metadata.id),
+  'The canonical repository identity is invalid.');
+  return metadata;
+}
+
+// A private repository's old installation URL can return 404. A token from an
+// App installation can resolve its canonical repository metadata.
+async function renamed_repository(github, signed, repository, request) {
+  for (let page = 1; ; page++) {
+    const installations = await request(`/app/installations?per_page=100&page=${page}`, signed);
+    require(Array.isArray(installations), 'GitHub returned an invalid installation list.');
+    for (const installation of installations) {
+      if (installation.suspended_at) continue;
+      verify_installation(installation, github, installation.account?.login ?? '');
+      const token = await issued_token(installation, signed, request);
+      try { return await repository_metadata('/repos/' + repository, token, request); }
+      catch (error) { if (!(error instanceof Missing)) throw error; }
+    }
+    if (installations.length < 100) throw new Missing('GitHub reported no matching resource.');
+  }
+}
+
+// Each account owner has its own installation of the App. The installation for
+// the canonical repository owner authorizes a token with its full grant.
+export async function installation_token(directory, github, repository, jwt = app_jwt, request = api) {
+  const signed = jwt(directory, github), app = await request('/app', signed);
+  require(app.id === github.appId && app.slug === github.slug,
+    'The signing key authenticated another GitHub App.');
+  if (Object.hasOwn(app, 'client_id')) require(app.client_id === github.clientId, 'The GitHub App client ID differs.');
+  const requested_owner = repository_path(repository).split('/')[0];
+  let owner = requested_owner, installation;
+  try {
+    try { installation = await request('/repos/' + repository + '/installation', signed); }
+    catch (error) {
+      let metadata;
+      if (error instanceof Missing) {
+        metadata = await renamed_repository(github, signed, repository, request);
+        installation = await request('/repositories/' + metadata.id + '/installation', signed);
+      } else if (error instanceof Moved) {
+        const canonical = /^\/repositories\/([1-9][0-9]*)\/installation$/.exec(error.api_path);
+        require(canonical, 'The canonical installation path is invalid.');
+        installation = await request(error.api_path, signed);
+        verify_installation(installation, github, installation.account?.login ?? '');
+        const token = await issued_token(installation, signed, request);
+        metadata = await repository_metadata('/repositories/' + canonical[1], token, request);
+      } else throw error;
+      owner = metadata.full_name.split('/')[0];
+    }
+  } catch (error) {
+    if (error instanceof Missing) throw new Refusal(`The GitHub App ${github.slug} is not installed for ${requested_owner}; `
+      + `install it on ${requested_owner} to grant access to ${repository}.`);
+    throw error;
+  }
+  verify_installation(installation, github, owner);
+  return issued_token(installation, signed, request);
 }
 
 function origin_repository(environment) {
