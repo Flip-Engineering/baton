@@ -1,0 +1,11 @@
+Error:
+- expected : an annotated term (cannot infer)
+- observed : \{Z: b; S: (d => d)}
+Context:
+- a : N
+- b : N
+- c : N
+Location: main
+17 |       c = a
+18>|       (\{Z:b;S: d =>d})(c)
+19 | 

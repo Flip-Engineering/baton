@@ -1,0 +1,9 @@
+Error:
+- expected : an annotated term (cannot infer)
+- observed : \{T: {==}; F: {==}}
+Context:
+- n : W
+Location: main
+39 | def main(n):
+40>|   \{T: {==}; F: {==}}(even(n))
+41 | 

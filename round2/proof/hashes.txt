@@ -1,0 +1,4 @@
+93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85  round2/compiler-src/bend2/bend.ts
+2c0296427562a8ec42b5143a29aaf9ddc3a6b2a88c53a27f1df31a7d8c79a0d2  round2/compiler-src/bend2/comp.ts
+53ce8e48c7540db6c3e66133a7c7eb270d6f64813fe10a631fd50d22112eb07d  round2/compiler-src/bend2/main.ts
+e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798  round2/compiler-src/bend2/base.bend

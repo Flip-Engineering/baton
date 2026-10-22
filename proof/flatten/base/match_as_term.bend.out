@@ -1,0 +1,9 @@
+Error:
+- expected : an annotated term (cannot infer)
+- observed : S{x}
+Context:
+- x : Nt
+Location: main
+19 |     case T{}:
+20>|       y = S{x}
+21 |       y

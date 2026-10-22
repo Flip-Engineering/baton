@@ -1,0 +1,145 @@
+--- /mnt/nvme4tb/ci-runners/baton2-native-homelab/retained/baton-compiler-forkflush-20261016T195048Z/private/consumer-27629713-20261018/home/bend-2.0.25-baton-27629713/bend2/bend.ts	2026-10-17 19:08:25.000000000 -0700
++++ compiler-src/bend2/bend.ts	2026-10-18 22:48:52.466286880 -0700
+@@ -321,7 +321,7 @@
+ export type PVar  = { $: "PVar"; k: Name; i: number; q: Quant; s?: Span };
+ export type PCtr  = { $: "PCtr"; k: Name; x: Patt[]; s?: Span };
+ export type Patt  = PVar | PCtr;
+-export type Case  = { p: Patt[]; f: Body };
++export type Case  = { p: Patt[]; f: Body; o?: number };
+ export type Rows  = Array<Case>;
+ export type Match = { $: "Match"; e: LTerm[]; r: Rows; s?: Span };
+ export type Local = { $: "Local"; k: Patt[]; q: Quant; v: LTerm[]; f: Body };
+@@ -2732,7 +2732,7 @@
+   switch (b.$) {
+     case "Match": {
+       const es = b.e.map(scrut);
+-      const rs = b.r.map((row): Case => ({ p: row.p, f: body_sub(row.f, i, v) }));
++      const rs = b.r.map((row): Case => ({ p: row.p, f: body_sub(row.f, i, v), o: case_origin(row) }));
+       return { $: "Match", e: es, r: rs, s: b.s };
+     }
+     case "Local": {
+@@ -2747,7 +2747,67 @@
+   }
+ }
+ 
+-export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
++// Flatten shares the fallback continuation of a literal pattern. A string
++// literal expands to SCon{Chr{c},..} constructors, so every character column
++// re-flattens the same PVar fallback rows. When a nested constructor split
++// stands at the first field of the previous split and its fallback rows are
++// the same rows, all PVar, the nested default rebuilds the previous
++// constructor value and applies the previous default instead of flattening
++// those rows again. `cur` is the variable id of the scrutinee the next split
++// must see; a different column drops the alternative. o (case_origin) is the
++// stable row origin: body_sub and ps copies carry it.
++type Alt = {
++  term: LTerm;                              // the flattened fallback term
++  ds: Rows;                                 // the fallback rows it was built from
++  vars: PVar[];                             // its binders, in order
++  path: { k: Name; x: PVar[] }[];           // constructors from the fallback split down
++  cur: number;                              // the scrutinee id the next split must see
++};
++const CASE_IDS = new WeakMap<Case, number>();
++let CASE_SEQ = 0;
++export function case_origin(row: Case): number {
++  if (row.o !== undefined) {
++    return row.o;
++  }
++  let id = CASE_IDS.get(row);
++  if (id === undefined) {
++    id = CASE_SEQ++;
++    CASE_IDS.set(row, id);
++  }
++  return id;
++}
++
++function alt_wrap(alt: Alt, scu: LTerm, vars: PVar[]): LTerm | null {
++  let v: LTerm = scu;
++  for (let i = alt.path.length - 1; i >= 0; i--) {
++    const st = alt.path[i];
++    v = Ctr(st.k, [v, ...st.x.slice(1).map((q) => patt_term(q))], st.x[0]?.s);
++  }
++  const skip = 1 + alt.path.reduce((n, st) => n + (st.x.length - 1), 0);
++  const rest = vars.slice(skip, skip + alt.vars.length - 1)
++    .map((q) => patt_term(q));
++  const args = [v, ...rest];
++  const subs: [number, LTerm][] = [];
++  let body = alt.term;
++  while (subs.length < args.length && body.$ === "Lam") {
++    subs.push([body.i, args[subs.length]]);
++    body = body.f;
++  }
++  if (subs.length !== args.length) {
++    return null;
++  }
++  for (let i = subs.length - 1; i >= 0; i--) {
++    body = Sub(subs[i][0], subs[i][1], body);
++  }
++  let out = body;
++  for (let i = vars.length - 1; i >= 0; i--) {
++    out = Lam(vars[i].k, vars[i].i, out, vars[i].s, vars[i].q);
++  }
++  return out;
++}
++
++export function match_flatten(m: Match, vars: PVar[], fr: () => number,
++  alt?: Alt): LTerm {
+   if (m.e.length === 0 && m.r.length > 0) {
+     return body_flatten(m.r[0].f, vars, fr);
+   } else if (m.e.length === 0) {
+@@ -2783,7 +2843,7 @@
+         if (p0.$ !== "PVar") {
+           throw Err(book_nil(), ctx_nil(), "a variable pattern (this column has no constructor row)", undefined, p0.s);
+         }
+-        return { p: row.p.slice(1), f: body_sub(row.f, p0.i, w) };
++        return { p: row.p.slice(1), f: body_sub(row.f, p0.i, w), o: case_origin(row) };
+       });
+       return match_flatten({ $: "Match", e: m.e.slice(1), r: rs, s: m.s }, vars.map((u) => u === v ? w : u), fr);
+     } else if (v === x) {
+@@ -2807,20 +2867,42 @@
+                 return [];
+               }
+               const f = body_sub(row.f, x.i, kx);
+-              return [{ p: [...p0.x, ...row.p.slice(1)], f }];
++              return [{ p: [...p0.x, ...row.p.slice(1)], f, o: case_origin(row) }];
+             }
+             case "PVar": {
+               const g = body_sub(row.f, p0.i, x);
+               const f = body_sub(g, x.i, kx);
+-              return [{ p: [...xs, ...row.p.slice(1)], f }];
++              return [{ p: [...xs, ...row.p.slice(1)], f, o: case_origin(row) }];
+             }
+           }
+         });
+         const pe = xs.map((q) => patt_term(q)).concat(m.e.slice(1));
+         const pv = xs.concat(vars.slice(1));
+-        const pt = match_flatten({ $: "Match", e: pe, r: ps, s: m.s }, pv, fr);
+         const ds = m.r.filter((row) => row.p[0].$ !== "PCtr" || row.p[0].k !== c.k);
+-        const dt = match_flatten({ $: "Match", e: m.e, r: ds, s: m.s }, vars, fr);
++        // A nested split at the previous split's first field sees the same
++        // PVar fallback rows: rebuild the previous constructor and apply the
++        // previous default instead of re-flattening those rows.
++        const ds_var = ds.length > 0
++          && ds.every((row) => row.p.every((q) => q.$ === "PVar"));
++        const at_cur = alt !== undefined && m.e[0].$ === "Var"
++          && m.e[0].i === alt.cur;
++        const same_rows = alt !== undefined && ds_var
++          && ds.length === alt.ds.length
++          && ds.every((row, i) => case_origin(row) === case_origin(alt.ds[i]));
++        const one_ctr = m.r.every((row) => row.p[0].$ === "PVar"
++          || (row.p[0].$ === "PCtr" && row.p[0].k === c.k));
++        const alt_ok = at_cur && same_rows && one_ctr;
++        const wrapped = alt_ok ? alt_wrap(alt!, m.e[0], vars) : null;
++        const dt = wrapped ?? match_flatten(
++          { $: "Match", e: m.e, r: ds, s: m.s }, vars, fr);
++        const next: Alt | undefined = alt_ok && wrapped !== null
++          ? { term: alt!.term, ds: alt!.ds, vars: alt!.vars,
++            path: [...alt!.path, { k: c.k, x: xs }], cur: xs[0]?.i ?? -1 }
++          : ds_var
++            ? { term: dt, ds, vars, path: [{ k: c.k, x: xs }],
++              cur: xs[0]?.i ?? -1 }
++            : undefined;
++        const pt = match_flatten({ $: "Match", e: pe, r: ps, s: m.s }, pv, fr, next);
+         return Mat(c.k, pt, dt, c.s);
+       }
+     } else {

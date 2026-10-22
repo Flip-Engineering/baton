@@ -1,0 +1,7 @@
+Error:
+- expected : cases for By, Cy
+- observed : \{}
+Location: f
+19 | def f(x, y):
+20>|   match x, y:
+21 |     case Oy{}, Ay{}:

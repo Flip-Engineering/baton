@@ -1,0 +1,8 @@
+Error:
+- expected : 4 patterns (one per scrutinee)
+- observed : '
+'
+Location:
+12 |   match Bool.not(a), b as e:
+13>|     case True{}, True{}:
+14 |       1

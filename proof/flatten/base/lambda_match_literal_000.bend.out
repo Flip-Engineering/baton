@@ -1,0 +1,9 @@
+Error:
+- expected : an annotated term (cannot infer)
+- observed : \{T: W; F: W}
+Context:
+- b : Bl
+Location: main
+11 | law main:
+12>|   @b: Bl -> \{T: W; F: W}(b)
+13 | 

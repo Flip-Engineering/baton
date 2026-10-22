@@ -1,0 +1,9 @@
+Error:
+- expected : cases for Zz0
+- observed : \{}
+Context:
+- b : Lz0<Nz0>
+Location: f
+25 | def f(a, b):
+26>|   match a, b:
+27 |     case Cl0{Sz0{a}, b}, Cl0{Sz0{c}, d}:

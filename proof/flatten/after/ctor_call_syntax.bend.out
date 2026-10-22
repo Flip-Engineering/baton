@@ -1,0 +1,9 @@
+Error:
+- expected : a defined name
+- observed : Aw4
+Context:
+- x : Nw4
+Location: f
+14 | def f(x):
+15>|   Aw4(x)
+16 | 

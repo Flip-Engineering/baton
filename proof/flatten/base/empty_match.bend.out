@@ -1,0 +1,9 @@
+Error:
+- expected : an annotated term (cannot infer)
+- observed : \{}
+Context:
+- e : Emp
+Location: main
+ 9 | def main(e):
+10>|   (\{})(e)
+11 | 

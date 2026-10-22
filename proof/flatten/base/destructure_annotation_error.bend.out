@@ -1,0 +1,9 @@
+Error:
+- expected : Bw7
+- observed : Pw2
+Context:
+- p : Pw2
+Location: swap
+24 | def swap(p):
+25>|   swap.go({p : Bw7})
+26 | 

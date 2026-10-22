@@ -1,0 +1,9 @@
+Error:
+- expected : an annotated term (cannot infer)
+- observed : \{T: \{T: {==}; F: {==}}(odd(n)); F: \{T: {==}; F: {==}}(odd(n))}
+Context:
+- n : W
+Location: main
+62 | def main(n):
+63>|   \{T: \{T: {==}; F: {==}}(odd(n)); F: \{T: {==}; F: {==}}(odd(n))}(pos(n))
+64 | 

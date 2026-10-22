@@ -1,0 +1,10 @@
+Error:
+- expected : an annotated term (cannot infer)
+- observed : \{T: {n == n : Nt}; F: Nt}
+Context:
+- n : Nt
+- b : Bl
+Location: main
+11 | law main:
+12>|   @n: Nt -> @b: Bl -> \{T: {n == n : Nt}; F: Nt}(b)
+13 | 

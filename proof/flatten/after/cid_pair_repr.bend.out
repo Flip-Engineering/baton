@@ -1,0 +1,7 @@
+Error:
+- expected : '('
+- observed : '<'
+Location:
+14 | 
+15>| def wrap<A>(x):
+16 |   Done{x}

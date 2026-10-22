@@ -1,0 +1,9 @@
+Error:
+- expected : cases for Cl1
+- observed : \{}
+Context:
+- b : Lz1<Nz1>
+Location: f
+23 | def f(a, b, c):
+24>|   match a, b, c:
+25 |     case Nl1{}, a, Nl1{}:

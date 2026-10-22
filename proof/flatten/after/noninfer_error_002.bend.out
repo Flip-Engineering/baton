@@ -1,0 +1,9 @@
+Error:
+- expected : an annotated term (cannot infer)
+- observed : \{Sn: (k => Z{})}
+Context:
+- n : Nt
+Location: f
+15 | def f(n):
+16>|   \{Sn: (k => Z{})}(Sn{n})
+17 | 

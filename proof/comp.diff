@@ -1,0 +1,40 @@
+--- /mnt/nvme4tb/ci-runners/baton2-native-homelab/retained/baton-compiler-forkflush-20261016T195048Z/private/consumer-27629713-20261018/home/bend-2.0.25-baton-27629713/bend2/comp.ts	2026-10-17 19:08:25.000000000 -0700
++++ compiler-src/bend2/comp.ts	2026-10-18 22:49:01.035756013 -0700
+@@ -122,6 +122,7 @@
+   spins: [string, string, Set<string>][];
+   spun: Map<string, string>;
+   clos: Set<string>;
++  clom: Map<string, string>;
+   img: string[];
+   lits: Map<string, number>;
+   consts: Map<string, Map<HTerm, Val>>;
+@@ -1605,7 +1606,7 @@
+ 
+ function file_new(cb: Carb, decl: string): File {
+   return { ...cb, decl, segs: [], seg: seg_new("", BOX, []), tab: 2,
+-    cids: new Map(), tabs: new Map(), spins: [], spun: new Map(), clos: new Set(),
++    cids: new Map(), tabs: new Map(), spins: [], spun: new Map(), clos: new Set(), clom: new Map(),
+     img: [], lits: new Map(), consts: new Map(), reqs: "", fuel: 0,
+     fresh: new Map(), spares: [],
+     uses: new Map(), brwl: new Map(), rest: [], def: "",
+@@ -2334,7 +2335,20 @@
+       return [p, { ...b, val: bind_pop(fl, p) }];
+     });
+   const words = live.flatMap(([, b]) => val_own(fl, b.val));
++  // A closure segment depends on its body and capture layout, not on the
++  // captured words: term_lower/term_higher rebuild terms, so equal bodies
++  // are different objects at this point. Reuse the emitted segment when the
++  // lowered term and the capture layout agree, and build a fresh closure
++  // node over this site's words.
++  const clok = JSON.stringify(Bend.term_lower(x), (k, v) => k === "s"
++    ? undefined : v?.$ === "Ann" ? Bend.term_strip(v) : v)
++    + "|" + live.map(([, b]) => b.val.lay.ks.join(".")).join(";");
++  const got = fl.clom.get(clok);
++  if (got !== undefined) {
++    return val_new([seg_clo(fl, got, words)], BOX);
++  }
+   const name = seg_name(fl, "c");
++  fl.clom.set(clok, seg_fid(name));
+   const clo = seg_clo(fl, seg_fid(name), words);
+   const outer = { seg: fl.seg, uses: fl.uses, spares: fl.spares,
+     tab: fl.tab, rest: fl.rest };

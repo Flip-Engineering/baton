@@ -1,0 +1,222 @@
+--- /mnt/nvme4tb/ci-runners/baton2-native-homelab/retained/baton-consolidation-review-20261017/private/consolidation-active-ds-20261017/dsh/native-package-reconcile-f32545c-20261018/guard-combined-37b29f3-20261018/bend2/comp.ts	2026-10-17 22:39:55.798268499 -0700
++++ round2/compiler-src/bend2/comp.ts	2026-10-19 04:00:06.794751690 -0700
+@@ -125,6 +125,8 @@
+   tabs: Map<string, number>;
+   spins: [string, string, Set<string>][];
+   spun: Map<string, string>;
++  arms: Map<string, { name: string; lay: Lay; ks: Kind[]; term: HTerm }>;
++  armBusy: Set<string>;
+   clos: Set<string>;
+   img: string[];
+   lits: Map<string, number>;
+@@ -1911,7 +1913,7 @@
+ 
+ function file_new(cb: Carb, decl: string): File {
+   return { ...cb, decl, segs: [], seg: seg_new("", BOX, []), tab: 2,
+-    cids: new Map(), tabs: new Map(), spins: [], spun: new Map(), clos: new Set(),
++    cids: new Map(), tabs: new Map(), spins: [], spun: new Map(), arms: new Map(), armBusy: new Set(), clos: new Set(),
+     img: [], lits: new Map(), consts: new Map(), reqs: "", fuel: 0,
+     fresh: new Map(), spares: [],
+     uses: new Map(), brwl: new Map(), rest: [], def: "",
+@@ -3121,6 +3123,189 @@
+   return j === 32 ? `${w} == ${n}` : `(${w} & ${2 ** j - 1}) == ${n}`;
+ }
+ 
++// A match arm body that is closed and comes from one source expression is
++// the same function at every column the flattener duplicated it into. Emit
++// its body once as a spin over its parameters and call that spin from each
++// site. `s` (the source span of the peeled body) is the stable key: the
++// checker rebuilds the term per site, so object identity cannot serve.
++// A canonical numeric key of the arm term plus a structural equality check:
++// binders become relative depths, free variables first-occurrence positions.
++// The checker rebuilds the term per site, so object identity cannot key the
++// shared spin; a key hit is only shared when the terms are alpha-equal.
++function arm_hash(t: HTerm, bound = new Map<number, number>(),
++  free = new Map<number, number>(), d = 0): number {
++  const s = term_force(t);
++  let h = 2166136261;
++  const mix = (n: number): void => { h = Math.imul(h ^ n, 16777619); };
++  const str = (k: string): void => { for (let i = 0; i < k.length; i++) mix(k.charCodeAt(i)); };
++  const go = (u: HTerm, dep: number): void => {
++    const v = term_force(u);
++    mix(v.$ === "Var" ? 1 : v.$ === "Lam" ? 2 : v.$ === "Mat" ? 3
++      : v.$ === "App" ? 4 : v.$ === "Ctr" ? 5 : v.$ === "Ref" ? 6
++      : v.$ === "Ann" ? 7 : v.$ === "Let" ? 8 : v.$ === "Lit" ? 9
++      : v.$ === "Efq" ? 10 : v.$ === "Rwt" ? 11 : v.$ === "Rfl" ? 12 : 13);
++    switch (v.$) {
++      case "Var":
++        if (bound.has(v.i)) { mix(0); mix(dep - bound.get(v.i)!); }
++        else { mix(1); mix(free.get(v.i) ?? (free.set(v.i, free.size), free.size - 1)); }
++        return;
++      case "Ref": str(v.k); return;
++      case "Lam": {
++        const o = term_open(v); bound.set(o.ps[0].i, dep);
++        go(o.b, dep + 1); bound.delete(o.ps[0].i); return;
++      }
++      case "Let": {
++        const o = term_open(v);
++        v.v.forEach((x) => go(x, dep));
++        o.ps.forEach((p, j) => bound.set(p.i, dep + j));
++        go(o.b, dep + o.ps.length);
++        o.ps.forEach((p) => bound.delete(p.i)); return;
++      }
++      case "App": go(v.f, dep); go(v.x, dep); return;
++      case "Ctr": str(v.k); v.x.forEach((x) => go(x, dep)); return;
++      case "Mat": str(v.k); go(v.h, dep); go(v.m, dep); return;
++      case "Lit": str(JSON.stringify(v.v)); return;
++      case "Ann": go(v.x, dep); return;
++      case "Rwt": go(v.e, dep); go(v.p, dep); go(v.f, dep); return;
++      case "Eql": go(v.a, dep); go(v.b, dep); go(v.T, dep); return;
++      case "ADT": str(v.k); v.x.forEach((x) => go(x, dep)); return;
++      case "Min": go(v.a, dep); go(v.b, dep); return;
++      default: return;
++    }
++  };
++  go(t, d);
++  return h >>> 0;
++}
++
++function arm_eq(a: HTerm, b: HTerm): boolean {
++  const ba = new Map<number, number>(), bb = new Map<number, number>();
++  const fa = new Map<number, number>(), fb = new Map<number, number>();
++  const go = (u: HTerm, v: HTerm, d: number): boolean => {
++    const x = term_force(u), y = term_force(v);
++    if (x.$ !== y.$) {
++      return false;
++    }
++    switch (x.$) {
++      case "Var": {
++        const yv = y as Of<"Var">;
++        const xb = ba.has(x.i), yb = bb.has(yv.i);
++        if (xb !== yb) return false;
++        if (xb) return d - ba.get(x.i)! === d - bb.get(yv.i)!;
++        const xf = fa.get(x.i) ?? (fa.set(x.i, fa.size), fa.size - 1);
++        const yf = fb.get(yv.i) ?? (fb.set(yv.i, fb.size), fb.size - 1);
++        return xf === yf;
++      }
++      case "Ref": return x.k === (y as Of<"Ref">).k;
++      case "Lam": {
++        const oa = term_open(x), ob = term_open(y as Of<"Lam">);
++        ba.set(oa.ps[0].i, d); bb.set(ob.ps[0].i, d);
++        const r = go(oa.b, ob.b, d + 1);
++        ba.delete(oa.ps[0].i); bb.delete(ob.ps[0].i);
++        return r;
++      }
++      case "Let": {
++        const ya = y as Of<"Let">;
++        const oa = term_open(x), ob = term_open(ya);
++        if (x.v.length !== ya.v.length) return false;
++        for (let i = 0; i < x.v.length; i++) if (!go(x.v[i], ya.v[i], d)) return false;
++        oa.ps.forEach((p, j) => { ba.set(p.i, d + j); bb.set(ob.ps[j].i, d + j); });
++        const r = go(oa.b, ob.b, d + oa.ps.length);
++        oa.ps.forEach((p) => { ba.delete(p.i); bb.delete(p.i); });
++        return r;
++      }
++      case "App": return go(x.f, (y as Of<"App">).f, d) && go(x.x, (y as Of<"App">).x, d);
++      case "Ctr": {
++        const yc = y as Of<"Ctr">;
++        if (x.k !== yc.k || x.x.length !== yc.x.length) return false;
++        return x.x.every((z, i) => go(z, yc.x[i], d));
++      }
++      case "Mat": {
++        const ym = y as Of<"Mat">;
++        return x.k === ym.k && go(x.h, ym.h, d) && go(x.m, ym.m, d);
++      }
++      case "Lit": return JSON.stringify(x.v) === JSON.stringify((y as Of<"Lit">).v);
++      case "Ann": return go(x.x, (y as Of<"Ann">).x, d);
++      case "Rwt": {
++        const yr = y as Of<"Rwt">;
++        return go(x.e, yr.e, d) && go(x.p, yr.p, d) && go(x.f, yr.f, d);
++      }
++      case "Eql": {
++        const ye = y as Of<"Eql">;
++        return go(x.a, ye.a, d) && go(x.b, ye.b, d) && go(x.T, ye.T, d);
++      }
++      case "ADT": {
++        const yd = y as Of<"ADT">;
++        return x.k === yd.k && x.x.length === yd.x.length
++          && x.x.every((z, i) => go(z, yd.x[i], d));
++      }
++      case "Min": { const ym = y as Of<"Min">; return go(x.a, ym.a, d) && go(x.b, ym.b, d); }
++      default: return true;
++    }
++  };
++  return go(a, b, 0);
++}
++
++function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst): boolean {
++  if (term_uses(fl, h).length !== 0) {
++    return false;
++  }
++  const lay = dst?.lay ?? fl.seg.ret;
++  const ks = av.flatMap((v) => v.lay.ks);
++  const key = [arm_hash(h), ks.join("."),
++    lay.ks.join("."), lay.arms === null ? "" : lay.arms.map((a) => a.k).join(",")].join("|");
++  const got = fl.arms.get(key);
++  if (got !== undefined) {
++    if (fl.armBusy.has(key) || !arm_eq(got.term, h)) {
++      return false;
++    }
++    emit_arm_call(fl, { name: got.name, lay: got.lay, ks: got.ks }, av, dst);
++    return true;
++  }
++  const name = seg_ref(fl, `arm_${fl.arms.size}`);
++  fl.arms.set(key, { name, lay, ks, term: h });
++  fl.armBusy.add(key);
++  const ts = ks.map(() => name_local(fl, "a"));
++  const outer = { seg: fl.seg, uses: fl.uses, spares: fl.spares,
++    tab: fl.tab, rest: fl.rest };
++  const seg = seg_new(name, lay, ts, ks);
++  fl.segs.push(seg);
++  Object.assign(fl, { seg, spares: [], tab: 2,
++    uses: new Map(fl.uses) });
++  let at = 0;
++  const argv = av.map((v) => {
++    const w = val_new(ts.slice(at, at + v.lay.ks.length), v.lay);
++    at += v.lay.ks.length;
++    return w;
++  });
++  const d = val_new(lay.ks.map(() => name_local(fl, "v")), lay);
++  emit_body(fl, h, null, [], argv, d);
++  if (!fl.dry) {
++    fl.spins.push([name, [`${seg.lines.length < SPIN_FAR ? "INLINE" : "FAR"} Term ${name}(Env e, THR Term* o${
++      seg.ks.map((k, i) => `, ${lay_c(k)} r${i}`).join("")}) {`,
++    "  u32 wpoll = 0;",
++    ...d.ws.map((v, j) => `  ${lay_c(lay.ks[j])} ${v} = 0;`),
++    ...seg_take(seg).map((l) => "  " + l),
++    "  WL_SPIN", ...seg.lines, "  break;", "  }",
++    ...d.ws.map((v, j) => `  o[${j}] = ${v};`),
++    "  return 1;", "}"].join("\n"), seg.refs]);
++  }
++  Object.assign(fl, outer);
++  fl.armBusy.delete(key);
++  emit_arm_call(fl, { name, lay, ks }, av, dst);
++  return true;
++}
++
++function emit_arm_call(fl: File,
++  ent: { name: string; lay: Lay; ks: Kind[] }, av: Val[], dst: Dst): void {
++  seg_ref(fl, ent.name);
++  const ws = av.flatMap((v) => val_own(fl, v));
++  const o = name_local(fl, "o");
++  file_push(fl, `Term ${o}[${ent.lay.ks.length}];`);
++  block(fl, `if (${ent.name}(${["e", o, ...ws].join(", ")}) == 0) {`,
++    () => file_push(fl, "return 0;"));
++  emit_put(fl, dst, val_new(ent.lay.ks.map((_, j) => `${o}[${j}]`), ent.lay));
++}
++
+ function emit_match(fl: File, x: Of<"Mat"> | Of<"Efq">,
+   ty: HTerm | null, ers: HTerm[], args: Val[], dst: Dst): void {
+   if (x.$ === "Efq") {
+@@ -3186,7 +3371,10 @@
+     fl.spares = spares.slice();
+     const outer = { seg: fl.seg, tab: fl.tab, uses: new Map(fl.uses) };
+     bind_dead(fl, [h]);
+-    emit_body(fl, h, null, ers, [...fs(), ...rest], dst);
++    const av = [...fs(), ...rest];
++    if (!emit_arm_shared(fl, h, av, dst)) {
++      emit_body(fl, h, null, ers, av, dst);
++    }
+     if (dst !== null) {
+       spare_flush(fl);
+     }

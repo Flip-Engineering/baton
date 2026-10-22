@@ -1,0 +1,8 @@
+Error:
+- expected : 2 patterns (one per scrutinee)
+- observed : '
+'
+Location:
+16 |   match a, b:
+17>|     case Zw2{}:
+18 |       Aw2{}

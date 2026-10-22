@@ -1,0 +1,7 @@
+Error:
+- expected : cases for True
+- observed : \{}
+Location: main
+19 | def main(a):
+20>|   match a:
+21 |     case 0:

@@ -1,0 +1,7 @@
+Error:
+- expected : cases for Zx7
+- observed : \{}
+Location: f
+16 | def f(a):
+17>|   match a:
+18 |     case Sx7{Sx7{a}}:
