@@ -1260,6 +1260,17 @@ def retained_launch_arguments(omp: Bool, claude: Bool, muse: Bool, cmd: String, 
     case Some{bound}: Done{prefix ++ retained_profile_arguments(omp,claude,muse,bound,Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,prompt_file,native)}
     case None{}: retained_launch_plain(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,account,credit_refusal)
 
+
+def retained_identity_result(identity: Result<&1,&1,U32 & String,String & String>, next: String & String -> IO(Result<&1,&1,U32 & String,RetainedLaunch>)) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
+  match identity:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Fail{error})
+    case Done{+value}: next(value)
+
+def retained_identity(executable: String, next: String & String -> IO(Result<&1,&1,U32 & String,RetainedLaunch>)) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
+  do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
+    identity : Result<&1,&1,U32 & String,String & String> <- HostControl.Control.identity(executable)
+    retained_identity_result(identity,next)
+
 def retained_prepare_checked(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool, +predecessor: String, checked: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   match checked:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Fail{error})
@@ -1268,25 +1279,25 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
       +native : String <- retained_native(db,player,sessions,session,harness)
       +prompt_file : String <- IO.pure(String,directory ++ "/prompt.txt")
       +executable : String <- IO.try(String,Lock.SessionLock.executable())
-      identity : String & String <- IO.try(String & String,HostControl.Control.identity(executable))
-      +absolute_db : String <- IO.try(String,Lock.SessionLock.canonical(db))
-      +parts : IdentityParts <- IO.pure(IdentityParts,identity_products(model,identity))
-      +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
-      +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
-      +dsh : Bool <- IO.pure(Bool,String.eq(harness,"dsh\n"))
-      +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
-      home : String <- dsh_home_if(dsh,db,absolute_db,player)
-      prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort)
-      +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory]) ++ identity_prefix(parts))
-      +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
-      store : String <- current_store(db,player,harness)
-      history : String <- current_history(db,player)
-      credit_refusal : String <- Accounts.credit_launch_refusal_for(db,account)
-      binding : Maybe<List<String>> <- Accounts.credit_launch_binding(db,player,directory,Tx.trim_nl(harness),account,identity_resolver(parts),store)
-      recorded : Unit <- Accounts.record_current_attempt(db,player,directory,predecessor,account)
-      +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,history,Tx.trim_nl(harness),account,binding,credit_refusal)))
-      launch : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_launch_checked(prepared,dsh,prefix,home,cmd,model,effort,native,muse,args,initial,omp,claude,level,seal_prompt)
-      IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,launch)
+      retained_identity(executable, identity => do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
+        +absolute_db : String <- IO.try(String,Lock.SessionLock.canonical(db))
+        +parts : IdentityParts <- IO.pure(IdentityParts,identity_products(model,identity))
+        +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
+        +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
+        +dsh : Bool <- IO.pure(Bool,String.eq(harness,"dsh\n"))
+        +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
+        home : String <- dsh_home_if(dsh,db,absolute_db,player)
+        prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort)
+        +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory]) ++ identity_prefix(parts))
+        +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
+        store : String <- current_store(db,player,harness)
+        history : String <- current_history(db,player)
+        credit_refusal : String <- Accounts.credit_launch_refusal_for(db,account)
+        binding : Maybe<List<String>> <- Accounts.credit_launch_binding(db,player,directory,Tx.trim_nl(harness),account,identity_resolver(parts),store)
+        recorded : Unit <- Accounts.record_current_attempt(db,player,directory,predecessor,account)
+        +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,history,Tx.trim_nl(harness),account,binding,credit_refusal)))
+        launch : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_launch_checked(prepared,dsh,prefix,home,cmd,model,effort,native,muse,args,initial,omp,claude,level,seal_prompt)
+        IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,launch))
 
 def retained_prepare(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool, predecessor: String) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
@@ -1297,10 +1308,16 @@ def retained_admit(+db: String, +directory: String, +cwd: String, +prompt: Strin
     case Prepared{+arguments,+input,+initial,+keep_stdin,file_input}:
       Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),file_input,Custody.Instance.admit_with_file(db,directory,arguments,cwd,directory ++ "/native.stderr","prompt.txt",initial,input,keep_stdin,Some{lock},recovery),Custody.Instance.admit(db,directory,arguments,cwd,directory ++ "/native.stderr",input,keep_stdin,Some{lock},recovery))
 
+
+def retained_mode_result(launch: Result<&1,&1,U32 & String,RetainedLaunch>, +db: String, +directory: String, +cwd: String, +prompt: String, +lock: U32, +recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
+  match launch:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Fail{error})
+    case Done{+value}: retained_admit(db,directory,cwd,prompt,lock,recovery,value)
+
 def retained_mode(+db: String, player: String, +directory: String, cmd: String, model: String, effort: String, cwd: String, session: String, harness: String, sessions: String, +prompt: String, lock: U32, recovery: String, level: String, seal_prompt: Bool, predecessor: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
-    launch : RetainedLaunch <- IO.try(RetainedLaunch,retained_prepare(db,player,directory,cmd,model,effort,session,harness,sessions,prompt,level,seal_prompt,predecessor))
-    retained_admit(db,directory,cwd,prompt,lock,recovery,launch)
+    launch_result : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_prepare(db,player,directory,cmd,model,effort,session,harness,sessions,prompt,level,seal_prompt,predecessor)
+    retained_mode_result(launch_result,db,directory,cwd,prompt,lock,recovery)
 
 def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, +lock: U32, +recovery: String, +level: String, predecessor: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   retained_mode(db,player,directory,cmd,model,effort,cwd,session,harness,sessions,prompt,lock,recovery,level,True{},predecessor)
