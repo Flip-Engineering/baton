@@ -413,17 +413,38 @@ def finish_pending_result(finished: Result<&1,&1,U32 & String,Unit>, questions: 
 
 # A failed continuation is reported to the recorded conductor; the turn
 # settlement still returns the failure and retained cause unchanged.
-def report_continuation_failure(db: String, session: String, id: String, attempt: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
-  match result:
-    case Done{unit}: IO.pure(Unit,Unit{})
-    case Fail{(code,text)}: Delivery.failure_report(db,session,id ++ ":continuation-failure",
-      "Continuation of retained attempt " ++ attempt ++ " failed: " ++ U32.show(code) ++ ": " ++ text)
+def report_continuation_text(+db: String, +session: String, id: String, attempt: String, code: U32, +text: String) -> IO(Unit):
+  Delivery.failure_report(db,session,id ++ ":continuation-failure",
+    "Continuation of retained attempt " ++ attempt ++ " failed: " ++ U32.show(code) ++ ": " ++ text)
 
-def report_reminder_failure(db: String, session: String, id: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+def report_continuation_pass(+db: String, +session: String, id: String, attempt: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match result:
-    case Done{output}: IO.pure(Unit,Unit{})
-    case Fail{(code,text)}: Delivery.failure_report(db,session,id ++ ":reminder-failure",
-      "Completion reminder for attempt " ++ id ++ " failed: " ++ U32.show(code) ++ ": " ++ text)
+    case Done{unit}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{unit})
+    case Fail{(code,+text)}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      reported : Unit <- report_continuation_text(db,session,id,attempt,code,text)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,text)})
+
+def report_reminder_text(+db: String, +session: String, +id: String, code: U32, +text: String) -> IO(Unit):
+  Delivery.failure_report(db,session,id ++ ":reminder-failure",
+    "Completion reminder for attempt " ++ id ++ " failed: " ++ U32.show(code) ++ ": " ++ text)
+
+def report_reminder_pass(+db: String, +session: String, id: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match result:
+    case Done{unit}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{unit})
+    case Fail{(code,+text)}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      reported : Unit <- report_reminder_text(db,session,id,code,text)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,text)})
+
+def report_recovery_text(+db: String, +session: String, +id: String, +directory: String, code: U32, +text: String) -> IO(Unit):
+  Delivery.failure_report(db,session,id ++ ":recovery-failure",
+    "Recovery of retained attempt " ++ id ++ " at " ++ directory ++ " failed: " ++ U32.show(code) ++ ": " ++ text)
+
+def report_recovery_pass(+db: String, +session: String, +id: String, +directory: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match result:
+    case Done{unit}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{unit})
+    case Fail{(code,+text)}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      reported : Unit <- report_recovery_text(db,session,id,directory,code,text)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,text)})
 
 # The exit-status synthesis suppresses only the provider failure a complete observation
 # superseded, or a classified complete provider failure whose owed continuation succeeded;
@@ -436,11 +457,11 @@ def finish_pending(+db: String, +session: String, id: String, attempt: String, l
     +exhaustion : String <- Subs.exhaustion_cause(db,terminal_event(outcome))
     +exhausted : Bool = Bool.not(String.is_empty(exhaustion))
     +normal : Bool = Bool.and(Bool.not(failed),Bool.and(Bool.not(transient),Bool.not(Bool.or(superseded,exhausted))))
-    +reminder : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>),normal,
+    reminder : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>),normal,
       DB.Sql.query(db,C.task_continuation_sql(session,id)),
       IO.pure(Result<&1,&1,U32 & String,String>,Done{""}))
-    +reminder_unit : Result<&1,&1,U32 & String,Unit> = Delivery.wake_result(reminder)
-    reminder_report : Unit <- report_reminder_failure(db,session,id,reminder)
+    reminder0 : Result<&1,&1,U32 & String,Unit> = Delivery.wake_result(reminder)
+    reminder_unit : Result<&1,&1,U32 & String,Unit> <- report_reminder_pass(db,session,id,reminder0)
     owed : Bool <- wake_owed(db,session,cursor)
     delivery_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Turn.finish(db,session,id,log,outcome,True{}))
     continued_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),Bool.or(superseded,exhausted),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),continue_pending(db,session,cursor,previous => again(Bool.pick(String,Bool.and(failed,transient),attempt,previous)))))
@@ -448,8 +469,8 @@ def finish_pending(+db: String, +session: String, id: String, attempt: String, l
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     stopped : Bool <- Stop.stopped(db,session)
     ack : Result<&1,&1,U32 & String,Unit> <- acknowledge_if_observed(Bool.and(native_observation_failed(outcome),Bool.not(stopped)),acknowledge)
-    +next : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
-    reported : Unit <- report_continuation_failure(db,session,id,attempt,next)
+    next0 : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
+    next : Result<&1,&1,U32 & String,Unit> <- report_continuation_pass(db,session,id,attempt,next0)
     finish_pending_result(finished,questions,ack,failed,superseded,outcome,transient,owed,next,reminder_unit)
 
 # Retirement follows acknowledgment on the same attempt handle: the shared
@@ -927,13 +948,10 @@ def recovery_arguments(args: List<&2,String>) -> List<&2,String>:
 
 def recover_owned_attached(+db: String, +session: String, id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +lock: U32, again: String -> IO(Result<&1,&1,U32 & String,Unit>), attached: Result<&1,&1,U32 & String,U32>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match attached:
-    case Fail{error}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      +failed : Result<&1,&1,U32 & String,Unit> = Fail{error}
-      reported : Unit <- report_recovery_failure(db,session,id,directory,failed)
-      IO.pure(Result<&1,&1,U32 & String,Unit>,failed)
+    case Fail{error}: report_recovery_pass(db,session,id,directory,Fail{error})
     case Done{+handle}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      +result : Result<&1,&1,U32 & String,Unit> <- observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},again,True{})
-      reported : Unit <- report_recovery_failure(db,session,id,directory,result)
+      result0 : Result<&1,&1,U32 & String,Unit> <- observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},again,True{})
+      result : Result<&1,&1,U32 & String,Unit> <- report_recovery_pass(db,session,id,directory,result0)
       IO.pure(Result<&1,&1,U32 & String,Unit>,result)
 
 def recover_owned_arguments(+db: String, +session: String, +directory: String, +lock: U32, args: List<&2,String>, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -1085,10 +1103,7 @@ def recover_observer_acquired(+db: String, +session: String, id: String, cursor:
 
 def recover_observer_result(acquired: Result<&1,&1,U32 & String,U32 & U32>, +db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +harness: String, +directory: String, +native: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match acquired:
-    case Fail{error}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      +failed : Result<&1,&1,U32 & String,Unit> = Fail{error}
-      reported : Unit <- report_recovery_failure(db,session,id,directory,failed)
-      IO.pure(Result<&1,&1,U32 & String,Unit>,failed)
+    case Fail{error}: report_recovery_pass(db,session,id,directory,Fail{error})
     case Done{+value}: recover_observer_acquired(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,value)
 
 def recover_observer_arguments_base(+db: String, +session: String, +directory: String, observer: U32, args: List<&2,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -1147,8 +1162,8 @@ def recover(+db: String, +session: String, id: String, cursor: String, +cmd: Str
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +updates : Chan(String) <- Chan.new(String,1)
     +drainer : Chan(Unit) <- IO.fork(Unit,discard_admitted_start(updates))
-    +result : Result<&1,&1,U32 & String,Unit> <- attach_recorded(db,directory,handle => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,previous => continue_receiver(db,session,cmd,model,effort,cwd,log,"explicit",previous,updates)))
-    reported : Unit <- report_recovery_failure(db,session,id,directory,result)
+    result0 : Result<&1,&1,U32 & String,Unit> <- attach_recorded(db,directory,handle => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,previous => continue_receiver(db,session,cmd,model,effort,cwd,log,"explicit",previous,updates)))
+    result : Result<&1,&1,U32 & String,Unit> <- report_recovery_pass(db,session,id,directory,result0)
     ended : Unit <- Chan.close(String,updates)
     drained : Unit <- IO.join(Unit,drainer)
     IO.pure(Result<&1,&1,U32 & String,Unit>,result)
