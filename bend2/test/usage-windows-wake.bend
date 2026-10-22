@@ -62,10 +62,10 @@ def window(+db: String, +session: String, +message: String, +ms_offset: String) 
     window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code'," ++ C.q(session) ++ ",'5-hour'," ++ Tx.trim_nl(reset) ++ ",'provider-message',NULL,'window'," ++ C.q(message) ++ ");")
     IO.pure(String,Tx.trim_nl(reset))
 
-def message(+db: String, +session: String, +message: String, +receipt: String) -> IO<Unit>:
+def message(+db: String, +session: String, +message: String, +receipt: String) -> IO(Unit):
   do IO<Unit>:
     saved : Unit <- query(db,"INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(" ++ C.q(message) ++ ",'root'," ++ C.q(session) ++ ",'guidance','owed',nullif(" ++ C.q(receipt) ++ ",''));")
-    read : Unit <- Bool.pick(IO(Unit),String.is_empty(receipt),IO.pure(Unit,Unit{}),
+    marked : Unit <- Bool.pick(IO(Unit),String.is_empty(receipt),IO.pure(Unit,Unit{}),
       query(db,"INSERT OR IGNORE INTO message_reads(attempt,message,recipient,native,identity) VALUES('legacy'," ++ C.q(message) ++ "," ++ C.q(session) ++ ",'','receipt');"))
     IO.pure(Unit,Unit{})
 
