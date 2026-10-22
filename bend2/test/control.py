@@ -209,6 +209,7 @@ class Control(unittest.TestCase):
         self.home = self.directory / 'isolated-home'
         self.home.mkdir()
         self.environment = dict(os.environ, HOME=str(self.home),
+                                GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1',
                                 OPENAI_API_KEY='fixture-unused', CODEX_API_KEY='fixture-unused')
         self.environment.pop('BATON2_GIT_REGISTRY', None)
         self.repo = self.directory / 'repository'

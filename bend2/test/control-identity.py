@@ -88,35 +88,15 @@ class ControlIdentity(unittest.TestCase):
             github = {'appId': 20000 + index, 'clientId': 'fixture-client-' + series,
                       'slug': slug, 'botLogin': slug + '[bot]', 'botId': bot,
                       'commitEmail': f'{bot}+{slug}[bot]@users.noreply.github.com',
-                      'installationId': 30000 + index, 'repositoryFullName': 'Flip-Engineering/baton',
-                      'repositoryId': 40000,
+                      'installationId': 30000 + index,
                       'permissions': {'contents': 'write', 'pull_requests': 'write', 'metadata': 'read'}}
             metadata = directory / 'identity-series.json'
             metadata.write_text(json.dumps({'seriesKey': series, 'displaySeries': display, 'github': github}))
             metadata.chmod(0o600)
             self.identities[series] = github
             profiles[series] = str(directory)
-        flip_profiles, self.flip_identities = {}, {}
-        for index, (series, display) in enumerate((('gpt', 'GPT'), ('kimi', 'Kimi'))):
-            directory = self.registry.parent / ('flip-' + series)
-            directory.mkdir()
-            slug = 'fixture-flip-' + series
-            bot = 11000 + index
-            github = {'appId': 21000 + index, 'clientId': 'fixture-flip-client-' + series,
-                      'slug': slug, 'botLogin': slug + '[bot]', 'botId': bot,
-                      'commitEmail': f'{bot}+{slug}[bot]@users.noreply.github.com',
-                      'installationId': 31000 + index, 'repositoryFullName': 'flip-engineer/flip',
-                      'repositoryId': 50000 + index,
-                      'permissions': {'contents': 'write', 'pull_requests': 'write', 'metadata': 'read'}}
-            metadata = directory / 'identity-series.json'
-            metadata.write_text(json.dumps(
-                {'seriesKey': series, 'displaySeries': display, 'github': github}))
-            metadata.chmod(0o600)
-            self.flip_identities[series] = github
-            flip_profiles[series] = str(directory)
         self.registry.write_text(json.dumps({'models': {'gpt-6-astra': 'gpt', 'kimi-code/k3': 'kimi'},
-                                            'series': profiles,
-                                            'repositories': {'flip-engineer/flip': {'series': flip_profiles}}}))
+                                            'series': profiles}))
         self.registry.chmod(0o600)
         self.environment.update(GIT_AUTHOR_NAME='Flip Baton - GPT', GIT_COMMITTER_NAME='Flip Baton - GPT',
                                 GIT_AUTHOR_EMAIL=self.identities['gpt']['commitEmail'],
