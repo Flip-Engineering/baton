@@ -110,10 +110,13 @@ def receiver_model(+session: String) -> String:
 def receiver_admitted(+session: String, +endpoint: String, +cwd: String) -> String:
   "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code','dsh')) AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ receiver_model(session) ++ " AND " ++ receiver_directory(session,cwd) ++ ")"
 
-def receiver_update_sql(+session: String, +endpoint: String, +cwd: String, +admitted: String) -> String:
-  "UPDATE sessions SET workspace=CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN " ++ C.q(cwd) ++ " ELSE workspace END,endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
+def receiver_update_sql_when(+session: String, +endpoint: String, +cwd: String, +admitted: String, selected: String) -> String:
+  "UPDATE sessions SET workspace=CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN " ++ C.q(cwd) ++ " ELSE workspace END,endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ " AND " ++ selected ++ ";"
   ++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered Codex, OMP, Muse or Claude Code session with a recorded model, a working directory and valid text argv.','next','Record the model with configure and the working directory with receiver, then dispatch complete task text with dispatch TEXT --to SESSION. Pass the CWD argument when only the directory is missing. Inspect the session and retained inbox and retry. Receiver registration preserves an explicit stop; resume SESSION --lift-stop explicitly lifts it and continues pending work.') WHERE NOT " ++ admitted ++ ";"
   ++ "SELECT json_object('session'," ++ C.q(session) ++ ",'endpoint',json(" ++ C.q(endpoint) ++ "),'workspace',(SELECT workspace FROM sessions WHERE id=" ++ C.q(session) ++ ")) WHERE " ++ admitted ++ ";"
+
+def receiver_update_sql(session: String, endpoint: String, cwd: String, admitted: String) -> String:
+  receiver_update_sql_when(session,endpoint,cwd,admitted,"1")
 
 def receiver_sql(+session: String, +endpoint: String, +cwd: String) -> String:
   receiver_update_sql(session,endpoint,cwd,receiver_admitted(session,endpoint,cwd))
@@ -310,7 +313,7 @@ def recruitment_receiver_body(+db: String, +session: String, +command: String) -
       model : String <- recorded_field(db,session,"model")
       log : String <- recruitment_log(db,session)
       +endpoint : String <- configured_endpoint(db,session,command,log,model)
-      +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ receiver_update_sql(session,endpoint,"","(" ++ receiver_admitted(session,endpoint,"") ++ " AND coalesce((SELECT endpoint FROM sessions WHERE id=" ++ C.q(session) ++ "),'')='' AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ")") ++ "COMMIT;"))
+      +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ receiver_update_sql_when(session,endpoint,"",receiver_admitted(session,endpoint,""),"(coalesce((SELECT endpoint FROM sessions WHERE id=" ++ C.q(session) ++ "),'')='' AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ")") ++ "COMMIT;"))
       accepted : String <- receiver_result(saved,Tx.starts_with(saved,"{\"error\":\"receiver-refused\""))
       IO.pure(Unit,Unit{})
 
