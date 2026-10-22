@@ -1686,7 +1686,7 @@ def direct_settled_wake(+db: String, +player: String, +id: String, +log: String,
       wake : Result<&1,&1,U32 & String,Unit> <- direct_failure_pass(db,player,id,"wake",wake0)
       IO.pure(Result<&1,&1,U32 & String,Unit>,combine(Fail{(code,text)},wake))
     case Done{unit}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      routed : Bool <- direct_route_decided(db,player,id,outcome)
+      +routed : Bool <- direct_route_decided(db,player,id,outcome)
       normal : Bool <- settlement_success(db,outcome)
       reminder_source : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>),Bool.and(normal,Bool.not(routed)),
         DB.Sql.query(db,C.task_continuation_sql(player,id)),
