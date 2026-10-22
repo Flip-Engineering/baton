@@ -295,8 +295,8 @@ The server creates a local socket beside the database and records a one-shot
 socket client as its receive endpoint. A report writer calls that client; the
 server reads the committed message and sends
 `notifications/claude/channel` with its full content and string metadata.
-The native channel notification starts the Conductor's turn. The Conductor calls
-`baton2_ack` after accepting the report.
+The native channel notification starts the Conductor's turn. The Conductor reads
+the report through the coordinator, and Baton records that read.
 
 On attachment, pending messages wait until tool discovery completes a client
 `ping` round trip. That order addresses the observed native startup replay loss.
