@@ -81,7 +81,7 @@ def extend_frontend(source):
         raise RuntimeError('The pinned compiler source has no recognized direct or queued build path')
     source = replace_once(source, queue_signature, queue_signature.replace(
         'args: string[]): void {', 'args: string[], diagnosticsToStderr = false): void {'))
-    spawn = '  const result = child.spawnSync(queue, invocation, { encoding: "utf8" });'
+    spawn = '  const result = child.spawnSync(queue, argv, { encoding: "utf8" });'
     source = replace_once(source, spawn,
         spawn + '\n  if (diagnosticsToStderr) {\n'
         '    if (result.stdout) process.stderr.write(result.stdout);\n'
