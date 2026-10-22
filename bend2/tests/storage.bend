@@ -38,13 +38,6 @@ def setup_root(+root: String) -> IO(Unit):
     made : Unit <- IO.try(Unit, F.Files.mkdir(root))
     IO.pure(Unit, made)
 
-def command_output(args: List<String>) -> IO(String):
-  do IO<String>:
-    result : G.RunRes <- Git.runFull(args, ".")
-    match result:
-      case G.RRun{G.SExit{code}, out}: Bool.pick(String, U32.is_eq(code, 0), Tx.trim_nl(out), "")
-      case other: ""
-
 def run_ignore(args: List<String>) -> IO(Unit):
   do IO<Unit>:
     result : G.RunRes <- Git.runFull(args, ".")
@@ -93,7 +86,7 @@ def candidate_for(+path: String, +cls: T.StorageClass, +facts: T.Facts) -> IO(T.
     identity : String = O.observation_identity(observed)
     IO.pure(T.Candidate, T.Candidate{path, cls, "owner", "proof", bytes, identity, facts})
 
-def u32_of(value: Maybe<U32>) -> U32:
+def u32_of(value: Maybe<&2,U32>) -> U32:
   match value:
     case Some{found}: found
     case None{}: 0
@@ -157,7 +150,7 @@ def presence_unknown(presence: T.Presence) -> Bool:
 
 def pure_checks() -> IO(Unit):
   do IO<Unit>:
-    base : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", clear_facts()}
+    base : T.Candidate <- IO.pure(T.Candidate, T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", clear_facts()})
     owner_bad : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerDiffers{"other"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
     database_live : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Present{"database-path"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
     database_unknown : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Unknown{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
@@ -222,7 +215,7 @@ def spawned_process(result: Result<&1,&1,U32 & String,U32>, +dir: String) -> IO(
 
 def process_checks(+root: String) -> IO(Unit):
   do IO<Unit>:
-    +dir : String = root ++ "/proc-parent"
+    +dir : String <- IO.pure(String, root ++ "/proc-parent")
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
     spawned : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sleep", "30"]), dir, dir ++ "/stderr")
     unit : Unit <- spawned_process(spawned, dir)
@@ -238,14 +231,14 @@ def facts_database_or_unknown(+facts: T.Facts) -> T.Presence:
 
 def database_checks(+db: String, +root: String) -> IO(Unit):
   do IO<Unit>:
-    +dir : String = root ++ "/database-protected"
+    +dir : String <- IO.pure(String, root ++ "/database-protected")
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
     +database : String = dir ++ "/orchestra.db"
     wrote : Unit <- write_file(database, "payload")
     seeded : Unit <- db_endpoint_setup(db, root, database)
     +state : S.State <- S.load(db)
     +facts_dir : T.Facts <- S.facts_for(T.Scratch{}, "", dir, state)
-    +dir_reason = decision_text(P.decide(T.Scratch{}, "owner", facts_dir))
+    +dir_reason : String = decision_text(P.decide(T.Scratch{}, "owner", facts_dir))
     a : Unit <- check("database-ancestor-preserved", String.eq(dir_reason, "database-path"), dir_reason)
     +dir_candidate : T.Candidate <- candidate_for(dir, T.Scratch{}, facts_dir)
     receipt : T.Receipt <- one_apply(db, root, dir_candidate)
@@ -253,12 +246,12 @@ def database_checks(+db: String, +root: String) -> IO(Unit):
     kept : O.Observation <- O.observe(database)
     c : Unit <- check("database-file-kept", O.observation_is_found(kept), "database file missing")
     facts_file : T.Facts <- S.facts_for(T.Scratch{}, "", database, state)
-    +file_reason = decision_text(P.decide(T.Scratch{}, "owner", facts_file))
+    +file_reason : String = decision_text(P.decide(T.Scratch{}, "owner", facts_file))
     d : Unit <- check("database-exact-preserved", String.eq(file_reason, "database-path"), file_reason)
     removed : Unit <- run_cmd(["/bin/rm", "-f", database])
     state2 : S.State <- S.load(db)
     facts_unlinked : T.Facts <- S.facts_for(T.Scratch{}, "", dir, state2)
-    +unlinked_reason = decision_text(P.decide(T.Scratch{}, "owner", facts_unlinked))
+    +unlinked_reason : String = decision_text(P.decide(T.Scratch{}, "owner", facts_unlinked))
     e : Unit <- check("database-unlinked-ancestor-preserved", String.eq(unlinked_reason, "database-path"), unlinked_reason)
     IO.pure(Unit, Unit{})
 
@@ -271,67 +264,9 @@ def database_malformed_check(+db: String, +root: String) -> IO(Unit):
     b : Unit <- check("malformed-endpoint-unknown", presence_unknown(facts_database_or_unknown(facts)), "malformed endpoint produced known database evidence")
     IO.pure(Unit, Unit{})
 
-def wait_pidfile(+path: String, +attempts: U32) -> IO(Bool):
-  match attempts:
-    case 0: IO.pure(Bool, False{})
-    case _:
-      do IO<Bool>:
-        observed : O.Observation <- O.observe(path)
-        match observed:
-          case O.Found{path, kind, device, inode, bytes}:
-            Bool.pick(IO(Bool), Nat.is_gt(bytes, 0n), IO.pure(Bool, True{}),
-              do IO<Bool>:
-                slept : Unit <- IO.sleep(50)
-                wait_pidfile(path, U32.sub(attempts, 1)))
-          case other:
-            do IO<Bool>:
-              slept : Unit <- IO.sleep(50)
-              wait_pidfile(path, U32.sub(attempts, 1))
-
-def wait_presence(+dir: String, +attempts: U32) -> IO(T.Presence):
-  match attempts:
-    case 0: O.runtime_presence(dir)
-    case _:
-      do IO<T.Presence>:
-        presence : T.Presence <- O.runtime_presence(dir)
-        match presence:
-          case T.Present{detail}: IO.pure(T.Presence, presence)
-          case other:
-            do IO<T.Presence>:
-              slept : Unit <- IO.sleep(50)
-              wait_presence(dir, U32.sub(attempts, 1))
-
-def unlinked_holder_check(+root: String) -> IO(Unit):
-  do IO<Unit>:
-    absolute : String <- command_output(["/bin/realpath", "-m", root])
-    +dir : String = absolute ++ "/unlinked-owner"
-    made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
-    +database : String = dir ++ "/orchestra.db"
-    wrote : Unit <- write_file(database, "payload")
-    +pidfile : String = dir ++ "/holder.pid"
-    +marker : String = dir ++ "/holder.ready"
-    +script : String = "(exec 3<\"$1\"; echo running > \"$3\"; sleep 30) & echo $! > \"$2\"; wait"
-    spawned : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sh", "-c", script, "sh", database, pidfile, marker]), ".", dir ++ ".stderr")
-    match spawned:
-      case Fail{error}: IO.die(Unit, 1, "unlinked holder spawn failed")
-      case Done{+handle}:
-        do IO<Unit>:
-          ready : Bool <- wait_pidfile(marker, 40)
-          a : Unit <- check("unlinked-holder-started", ready, "holder pid file missing")
-          removed : Unit <- run_cmd(["/bin/rm", "-f", database])
-          presence : T.Presence <- wait_presence(dir, 40)
-          +seen : String = presence_detail(presence)
-          b : Unit <- check("unlinked-fd-owner", Bool.and(Bool.not(String.is_empty(seen)), Bool.not(String.eq(seen, "unknown"))), seen)
-          +pid_text : String = command_output(["/bin/cat", pidfile])
-          +pid : U32 = u32_of(U32.read(pid_text))
-          killed : Unit <- Bool.pick(IO(Unit), U32.is_lt(0, pid), run_ignore(["/bin/kill", "-TERM", U32.show(pid)]), IO.pure(Unit, Unit{}))
-          signaled : Unit <- run_ignore(["/bin/kill", "-TERM", U32.show(handle)])
-          waited : String <- IO.try(String, Proc.ProcessChild.wait(handle))
-          IO.pure(Unit, Unit{})
-
 def exclusive_check() -> IO(Unit):
   do IO<Unit>:
-    +rows : List<&2,String> = L.parse_exclusive("# comment\nexclusive-a\n\nexclusive-b/\n")
+    +rows : List<&2,String> <- IO.pure(List<&2,String>, L.parse_exclusive("# comment\nexclusive-a\n\nexclusive-b/\n"))
     a : Unit <- check("exclusive-member", L.exclusive_member("exclusive-a", rows), "exclusive root missing")
     b : Unit <- check("exclusive-normalized", L.exclusive_member("exclusive-b", rows), "trailing slash not normalized")
     +specs : List<&2,L.RootSpec> = Con{L.RootSpec{T.Scratch{}, "exclusive-a", ""}, Con{L.RootSpec{T.BuildOutput{}, "exclusive-c", ""}, Nil{}}}
@@ -347,7 +282,7 @@ def exclusive_check() -> IO(Unit):
 
 def apply_checks(+db: String, +root: String) -> IO(Unit):
   do IO<Unit>:
-    +file : String = root ++ "/file.txt"
+    +file : String <- IO.pure(String, root ++ "/file.txt")
     wrote : Unit <- write_file(file, "payload")
     +candidate : T.Candidate <- candidate_for(file, T.Scratch{}, clear_facts())
     receipt : T.Receipt <- one_apply(db, root, candidate)
@@ -375,7 +310,7 @@ def apply_checks(+db: String, +root: String) -> IO(Unit):
 
 def root_replacement_check(+db: String, +root: String) -> IO(Unit):
   do IO<Unit>:
-    +file : String = root ++ "/root-race.txt"
+    +file : String <- IO.pure(String, root ++ "/root-race.txt")
     wrote : Unit <- write_file(file, "payload")
     +candidate : T.Candidate <- candidate_for(file, T.Scratch{}, clear_facts())
     preview : T.Preview <- one_preview(root, candidate)
@@ -394,7 +329,7 @@ def observation_unreadable(observed: O.Observation) -> Bool:
 
 def unreadable_check(+db: String, +root: String) -> IO(Unit):
   do IO<Unit>:
-    +locked : String = root ++ "/locked"
+    +locked : String <- IO.pure(String, root ++ "/locked")
     made : Unit <- IO.try(Unit, F.Files.mkdir(locked))
     +file : String = locked ++ "/file"
     wrote : Unit <- write_file(file, "payload")
@@ -410,7 +345,7 @@ def scan_ok(scan: O.Scan) -> Bool:
 
 def malformed_entries_check(+root: String) -> IO(Unit):
   do IO<Unit>:
-    +dir : String = root ++ "/entries"
+    +dir : String <- IO.pure(String, root ++ "/entries")
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
     +file : String = dir ++ "/bad\tname"
     wrote : Unit <- write_file(file, "x")
@@ -427,7 +362,7 @@ def facts_owner_unknown(facts: T.Facts) -> Bool:
 
 def parent_rename_check(+db: String, +root: String) -> IO(Unit):
   do IO<Unit>:
-    +parent : String = root ++ "/parent-race"
+    +parent : String <- IO.pure(String, root ++ "/parent-race")
     made : Unit <- IO.try(Unit, F.Files.mkdir(parent))
     +file : String = parent ++ "/file"
     wrote : Unit <- write_file(file, "payload")
@@ -445,7 +380,7 @@ def parent_rename_check(+db: String, +root: String) -> IO(Unit):
 
 def interrupted_check(+db: String, +root: String) -> IO(Unit):
   do IO<Unit>:
-    +dir : String = root ++ "/interrupted"
+    +dir : String <- IO.pure(String, root ++ "/interrupted")
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
     +file : String = dir ++ "/first"
     wrote : Unit <- write_file(file, "payload")
@@ -486,10 +421,52 @@ def busy_check(+db: String, +root: String) -> IO(Unit):
     a : Unit <- check("lock-busy-refused", Result.is_fail(&1,&1,U32 & String,List<T.Receipt>,result), "busy returned success")
     IO.pure(Unit, Unit{})
 
+def command_output_result(result: G.RunRes) -> IO(String):
+  match result:
+    case G.RRun{G.SExit{code}, out}: IO.pure(String, Bool.pick(String, U32.is_eq(code, 0), Tx.trim_nl(out), ""))
+    case other: IO.pure(String, "")
+
+def command_output(args: List<String>) -> IO(String):
+  do IO<String>:
+    result : G.RunRes <- Git.runFull(args, ".")
+    command_output_result(result)
+
+def unlinked_holder_spawned(+dir: String, +database: String, +pidfile: String, +marker: String, spawned: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
+  match spawned:
+    case Fail{error}: IO.die(Unit, 1, "unlinked holder spawn failed")
+    case Done{+handle}:
+      do IO<Unit>:
+        slept : Unit <- IO.sleep(500)
+        marker_state : O.Observation <- O.observe(marker)
+        a : Unit <- check("unlinked-holder-started", O.observation_is_found(marker_state), "holder marker missing")
+        removed : Unit <- run_cmd(["/bin/rm", "-f", database])
+        presence : T.Presence <- O.runtime_presence(dir)
+        +seen : String = presence_detail(presence)
+        b : Unit <- check("unlinked-fd-owner", Bool.and(Bool.not(String.is_empty(seen)), Bool.not(String.eq(seen, "unknown"))), seen)
+        pid_text : String <- command_output(["/bin/cat", pidfile])
+        +pid : U32 = u32_of(U32.read(pid_text))
+        killed : Unit <- Bool.pick(IO(Unit), U32.is_lt(0, pid), run_ignore(["/bin/kill", "-TERM", U32.show(pid)]), IO.pure(Unit, Unit{}))
+        signaled : Unit <- run_ignore(["/bin/kill", "-TERM", U32.show(handle)])
+        waited : String <- IO.try(String, Proc.ProcessChild.wait(handle))
+        IO.pure(Unit, Unit{})
+
+def unlinked_holder_check(+root: String) -> IO(Unit):
+  do IO<Unit>:
+    absolute : String <- command_output(["/bin/realpath", "-m", root])
+    +dir : String = absolute ++ "/unlinked-owner"
+    made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
+    +database : String = dir ++ "/orchestra.db"
+    wrote : Unit <- write_file(database, "payload")
+    +pidfile : String = dir ++ "/holder.pid"
+    +marker : String = dir ++ "/holder.ready"
+    +script : String = "(exec 3<\"$1\"; echo running > \"$3\"; sleep 30) & echo $! > \"$2\"; wait"
+    spawned : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sh", "-c", script, "sh", database, pidfile, marker]), ".", dir ++ ".stderr")
+    unlinked_holder_spawned(dir, database, pidfile, marker, spawned)
+
 def main() -> IO(Unit):
   do IO<Unit>:
-    +root : String = ".scratch/bend2-storage-test"
-    +db : String = ".scratch/bend2-storage-test.db"
+    +root : String <- IO.pure(String, ".scratch/bend2-storage-test")
+    +db : String <- IO.pure(String, ".scratch/bend2-storage-test.db")
     setup : Unit <- setup_root(root)
     database : Unit <- db_setup(db, root)
     pure : Unit <- pure_checks()

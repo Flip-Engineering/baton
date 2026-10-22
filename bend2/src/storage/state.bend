@@ -102,30 +102,25 @@ def pending_walk(rows: List<String>, acc: List<&2,PendingRow>) -> List<&2,Pendin
 
 # Session endpoints record the coordinator argv as a JSON array. Element two
 # is the database path the session was launched with. An empty endpoint is a
-# session with no recorded launch; a non-empty endpoint that is not an array
-# with a text second element makes the database evidence incomplete.
-def database_value(+text: String) -> String:
-  match text:
-    case "~invalid": "~invalid"
-    case "~missing": "~missing"
-    case other: decode_field(other)
-
-def database_lines_walk(rows: List<String>, acc: List<&2,String>, invalid: Bool) -> List<&2,String> & Bool:
+# session with no recorded launch. The SQL projections return a hex path for
+# every usable endpoint and count every non-empty endpoint that is not an
+# array with a non-empty text second element. A nonzero count makes the
+# database evidence incomplete.
+def database_hex_walk(rows: List<String>, acc: List<&2,String>) -> List<&2,String>:
   match rows:
-    case Nil{}: (List.reverse(&2, String, acc), invalid)
-    case Con{head, tail}:
-      match String.is_empty(head):
-        case True{}: database_lines_walk(tail, acc, invalid)
-        case False{}:
-          +value = database_value(head)
-          match Bool.or(String.eq(value, "~invalid"), String.eq(value, "~missing")):
-            case True{}: database_lines_walk(tail, acc, True{})
-            case False{}: database_lines_walk(tail, Con{value, acc}, invalid)
+    case Nil{}: List.reverse(&2, String, acc)
+    case Con{head, tail}: database_hex_walk(tail, Con{decode_field(head), acc})
 
-def database_entries(+db: String, +text: String) -> List<&2,String> & Bool:
-  +pair = database_lines_walk(Tx.split_lines(text), Nil{}, False{})
-  (rows, invalid) = pair
-  Bool.pick(List<&2,String> & Bool, String.is_empty(db), (rows, invalid), (Con{db, rows}, invalid))
+def database_add_current(+db: String, +rows: List<&2,String>) -> List<&2,String>:
+  Bool.pick(List<&2,String>, String.is_empty(db), rows, Con{db, rows})
+
+def invalid_maybe(value: Maybe<&2,U32>) -> Bool:
+  match value:
+    case Some{count}: Bool.not(U32.is_eq(count, 0))
+    case None{}: True{}
+
+def invalid_of(+text: String) -> Bool:
+  invalid_maybe(U32.read(Tx.trim_nl(text)))
 
 def sessions_ok(rows: List<&2,SessionRow>) -> Bool:
   match rows:
@@ -159,21 +154,26 @@ def valid_of(state: State) -> Bool:
   match state:
     case State{sessions, executions, logs, pending, databases, valid}: valid
 
+def state_rows(databases: List<&2,String>, database_invalid: Bool, +sessions: List<&2,SessionRow>, +executions: List<&2,ExecutionRow>, +logs: List<&2,LogRow>, +pending: List<&2,PendingRow>) -> State:
+  +valid = Bool.and(Bool.not(database_invalid), Bool.and(sessions_ok(sessions), Bool.and(executions_ok(executions), Bool.and(logs_ok(logs), pending_ok(pending)))))
+  State{sessions, executions, logs, pending, databases, valid}
+
 def load(+db: String) -> IO(State):
   do IO<State>:
     sessions_text : String <- IO.try(String, DB.Sql.read(db, "SELECT CASE WHEN id='' THEN '~' ELSE hex(id) END,CASE WHEN workspace='' THEN '~' ELSE hex(workspace) END,CASE WHEN branch='' THEN '~' ELSE hex(branch) END,CASE WHEN base='' THEN '~' ELSE hex(base) END FROM sessions ORDER BY id;"))
     executions_text : String <- IO.try(String, DB.Sql.read(db, "SELECT CASE WHEN session='' THEN '~' ELSE hex(session) END,CASE WHEN id='' THEN '~' ELSE hex(id) END,CASE WHEN directory='' THEN '~' ELSE hex(directory) END,CASE WHEN phase='' THEN '~' ELSE hex(phase) END,CASE WHEN status='' THEN '~' ELSE hex(status) END FROM executions ORDER BY session;"))
     logs_text : String <- IO.try(String, DB.Sql.read(db, "SELECT CASE WHEN session='' THEN '~' ELSE hex(session) END,CASE WHEN log='' THEN '~' ELSE hex(log) END FROM log_files ORDER BY session,log;"))
     pending_text : String <- IO.try(String, DB.Sql.read(db, "SELECT CASE WHEN recipient='' THEN '~' ELSE hex(recipient) END,count(*) FROM messages WHERE receipt IS NULL GROUP BY recipient ORDER BY recipient;"))
+    database_text : String <- IO.try(String, DB.Sql.read(db, "SELECT hex(json_extract(endpoint,'$[1]')) FROM sessions WHERE endpoint!='' AND CASE WHEN json_valid(endpoint)=0 THEN 0 ELSE CASE WHEN json_type(endpoint)!='array' THEN 0 ELSE CASE WHEN json_type(endpoint,'$[1]')!='text' OR json_extract(endpoint,'$[1]')='' THEN 0 ELSE 1 END END END=1 ORDER BY id;"))
+    database_invalid_text : String <- IO.try(String, DB.Sql.read(db, "SELECT coalesce(sum(CASE WHEN endpoint='' THEN 0 WHEN json_valid(endpoint)=0 THEN 1 ELSE CASE WHEN json_type(endpoint)!='array' THEN 1 WHEN json_type(endpoint,'$[1]')!='text' OR json_extract(endpoint,'$[1]')='' THEN 1 ELSE 0 END END),0) FROM sessions;"))
     +sessions : List<&2,SessionRow> = sessions_walk(Tx.split_lines(sessions_text), Nil{})
     +executions : List<&2,ExecutionRow> = executions_walk(Tx.split_lines(executions_text), Nil{})
     +logs : List<&2,LogRow> = logs_walk(Tx.split_lines(logs_text), Nil{})
     +pending : List<&2,PendingRow> = pending_walk(Tx.split_lines(pending_text), Nil{})
-    database_text : String <- IO.try(String, DB.Sql.read(db, "SELECT CASE WHEN endpoint='' THEN '' WHEN json_valid(endpoint)=0 THEN '~invalid' ELSE CASE WHEN json_type(endpoint)!='array' THEN '~invalid' WHEN json_extract(endpoint,'$[1]') IS NULL OR json_type(endpoint,'$[1]')!='text' OR json_extract(endpoint,'$[1]')='' THEN '~missing' ELSE hex(json_extract(endpoint,'$[1]')) END END FROM sessions ORDER BY id;"))
-    +database_pair = database_entries(db, database_text)
-    (databases, database_invalid) = database_pair
-    valid : Bool = Bool.and(Bool.not(database_invalid), Bool.and(sessions_ok(sessions), Bool.and(executions_ok(executions), Bool.and(logs_ok(logs), pending_ok(pending)))))
-    IO.pure(State, State{sessions, executions, logs, pending, databases, valid})
+    +database_paths : List<&2,String> = database_hex_walk(Tx.split_lines(database_text), Nil{})
+    +database_invalid : Bool = invalid_of(database_invalid_text)
+    +all_databases : List<&2,String> = database_add_current(db, database_paths)
+    IO.pure(State, state_rows(all_databases, database_invalid, sessions, executions, logs, pending))
 
 def path_under(+path: String, +parent: String) -> Bool:
   Bool.pick(Bool, String.is_empty(parent), False{},
