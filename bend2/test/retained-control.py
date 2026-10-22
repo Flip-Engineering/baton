@@ -318,6 +318,18 @@ class RetainedControl(unittest.TestCase):
             'terminalStatusPreserved': True,
         })
 
+    def test_status_write_enospc_keeps_the_reaped_status(self):
+        initial, _ = self.payload('status-write')
+        observer, stream, native = self.start(initial)
+        self.assertTrue((self.attempt / 'manifest').exists())
+        (self.attempt / 'status.tmp').symlink_to('/dev/full')
+        self.send(stream, finish=True)
+        self.line(observer, 'native-exit 0')
+        self.finish(observer, status_observed=True)
+        self.assertEqual((self.attempt / 'status-write-error').read_text(),
+                         f'{errno.ENOSPC}: {os.strerror(errno.ENOSPC)}\n')
+        self.assertFalse((self.attempt / 'status').exists())
+
     def test_observer_and_control_writes_preserve_complete_frames(self):
         initial, first = self.payload('observer', 40000)
         observer, stream, native = self.start(initial)
