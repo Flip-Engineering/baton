@@ -478,7 +478,7 @@ type CompileQueueReleaseItem is Data:
 type CompileQueueReleaseStep is Data:
   CompileQueueReleaseStep{items: List<&2,CompileQueueReleaseItem>, acc: List<&2,String>}
 
-def CompileQueueIdentity.release_items_step(empty: Bool, name: String, remaining: List<&2,CompileQueueReleaseItem>, +directory: String, +prefix: String) -> List<&2,CompileQueueReleaseItem>:
+def CompileQueueIdentity.release_items_step(empty: Bool, +name: String, remaining: List<&2,CompileQueueReleaseItem>, +directory: String, +prefix: String) -> List<&2,CompileQueueReleaseItem>:
   match empty:
     case True{}: remaining
     case False{}: CompileQueueReleaseItem{directory ++ "/" ++ name, prefix ++ "/" ++ name} <> remaining
