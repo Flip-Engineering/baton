@@ -27,8 +27,9 @@ databases self-upgrade on the next commit). Each row records:
 - `window`: `5-hour`, `7-day`, `monthly`, or empty when the wording is
   unrecognized. The empty label is durable and readable; Muse's
   "Subscription quota exhausted" wording records it.
-- `resets_at`: milliseconds epoch, or NULL. NULL is the explicit unknown; the
-  store never invents a reset time.
+- `resets_at`: milliseconds epoch, or NULL. The stored value is the provider's
+  reset time when the text names one, or the upper bound of a named window (see
+  Recording). NULL means no reset is recorded; the gate re-probes it.
 - `reset_source`: `provider-message`, `provider-report`, or
   `operator-observation`.
 - `receipt`, `message`: what was observed, and the message id that carried the
@@ -44,8 +45,11 @@ Three sources write observations:
    the operator's profile list use this path, and the observation names the
    account label the wake gate later reads. The window kind is extracted from
    the cause text; an embedded ISO-8601 reset time is converted to
-   milliseconds, and a missing one stays NULL. A sentence-ending period after
-   the timestamp is removed before parsing.
+   milliseconds. With no embedded time, a `5-hour` window records now plus 5
+   hours and a `7-day` window records now plus 7 days; this is the upper bound
+   of a rolling window that started at or before the refusal. A `monthly` or
+   unnamed window stays NULL. A sentence-ending period after the timestamp is
+   removed before parsing.
 
    The classification covers the Muse run terminal
    (`payload_type=run.terminal.failed`, `payload.kind=run_terminal`,
@@ -99,8 +103,12 @@ the latest provider row per window for exhaustion evidence:
 - Elapsed: no window is held and an exhausted window's reset has passed. The
   wake reports `usage-window-restored` once per message and admits the owed
   input on the retained assignment and account.
-- Unknown: the only exhausted evidence is a limit message with no reset. The
-  wake proceeds; an unknown reset never blocks.
+- Re-probe: an exhausted window with no recorded reset is held until its
+  latest refusal plus one hour (`probe_interval_ms`). The instant is computed
+  in the query and is not stored. The wake reports `usage-window-held` with
+  that instant and schedules the continuation there. When the instant passes,
+  the owed input's next attempt is the probe: a success clears the window (see
+  Provider success), and a refusal records a new row with a new instant.
 - None: no exhausted window. Partial reports stay visible in the query and do
   not hold.
 
@@ -138,12 +146,26 @@ poll. Delivery stays receipt-gated, so a handled message gains no second
 delivery; two continuations for the same message leave one delivery and one
 held report.
 
+## Provider success
+
+A completed attempt that did not fail clears the exhausted windows of its
+account label and provider scope. `Accounts.attempt_settled` runs this at both
+the receive completion (`receive.bend` `completed`) and the direct turn
+completion (`turn.bend` `direct_completed`). It writes one `provider-success`
+row per cleared window, with NULL reset and NULL used fraction.
+
+Only refusals recorded before the attempt started clear. The start time is
+`account_attempts.started_at` for the attempt. A refusal recorded inside the
+attempt keeps its hold. An attempt with no account record, such as a
+profile-bound attempt, clears nothing; its hold ends at the re-probe instant.
+
 ## Query
 
 `usage-windows SESSION` prints the newest observation per window with its
-current state: `held`, `elapsed`, and `unknown` for exhausted windows, and
-`open` for a window without exhaustion evidence (a partial report or an
-operator-only record). The state uses the same per-window provider-exhaustion
+current state: `held` and `elapsed` for exhausted windows, and `open` for a
+window without exhaustion evidence (a partial report or an operator-only
+record). A row with no recorded reset also carries `reprobeAt`, the re-probe
+instant in milliseconds. The state uses the same per-window provider-exhaustion
 projection as the gate, so an operator-observed reset after a provider limit
 message reports `held` before the reset and `elapsed` after it, matching the
 gate verdict. Each row carries `source` (the reset's provenance, for example
@@ -157,6 +179,7 @@ reads the empty provider/harness scope rather than a no-provider condition.
 
 `bend2/test/usage-windows.bend` drives the real extraction functions over the
 observed Kimi, ZAI, and Claude wordings. `bend2/test/usage-windows-store.bend`
+covers the window bound, the re-probe instant and the provider-success clear.
 drives the store, gate, reports, refresh, and multiwindow state over a
 temporary database. `bend2/test/usage-windows-long.bend` bounds the reset scan
 on a long provider message. `bend2/test/usage-windows-wake.bend` proves the

@@ -35,7 +35,6 @@ def expect_read(+db: String, +text: String, +expected: String, +label: String) -
 def gate_class(gate: UW.Gate) -> String:
   match gate:
     case UW.GateNone{}: "none"
-    case UW.GateUnknown{window,source,receipt}: "unknown"
     case UW.GateHeld{window,resets_at,source,receipt}: "held"
     case UW.GateElapsed{window,resets_at,source,receipt}: "elapsed"
 

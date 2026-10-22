@@ -39,7 +39,6 @@ def expect_read(+db: String, +text: String, +expected: String, +label: String) -
 def gate_class(gate: UW.Gate) -> String:
   match gate:
     case UW.GateNone{}: "none"
-    case UW.GateUnknown{window,source,receipt}: "unknown"
     case UW.GateHeld{window,resets_at,source,receipt}: "held"
     case UW.GateElapsed{window,resets_at,source,receipt}: "elapsed"
 
@@ -136,16 +135,14 @@ def profile_fallback_cases(+db: String) -> IO(Unit):
     bound : Unit <- Subs.bind_profile(db,"legacy-forward","omp","legacy-a","/profiles/legacy-a")
     held_b : Unit <- UW.record_cause(db,"legacy-forward","legacy-b-refusal","legacy-b",cause("legacy-b-request"))
     unknown_c : Unit <- UW.record_cause(db,"legacy-forward","legacy-c-unknown","legacy-c","provider-reported usage exhaustion: API error 429: Subscription quota exhausted. (rate_limit_error)")
-    unknown_gate : Unit <- expect_gate(db,"legacy-forward","legacy-c","unknown","legacy-unknown-profile-remains-selectable")
+    unnamed_gate : Unit <- expect_gate(db,"legacy-forward","legacy-c","held","legacy-unnamed-refusal-holds-profile-until-reprobe")
     advanced : Bool <- Accounts.handoff(db,"legacy-forward","legacy-a-refusal",quota_event("legacy-a-request"),"native-legacy-forward","","/legacy-forward")
-    expect("legacy-handoff-skips-repeated-held-profile",advanced)
+    expect("legacy-handoff-holds-when-only-reprobe-profile-remains",Bool.not(advanced))
     +chosen : String <- Subs.profile_label_io(db,"legacy-forward")
-    expect("legacy-handoff-reaches-unknown-profile",String.eq(chosen,"legacy-c"))
+    expect("legacy-bound-profile-stays-on-refused-account",String.eq(chosen,"legacy-a"))
     +record_path : String <- Subs.profile_record_path(db,"legacy-forward")
     +recorded : String <- Subs.file_text(record_path)
-    expect("legacy-held-profile-never-bound",String.eq(recorded," omp legacy-a /profiles/legacy-a\n omp legacy-c /profiles/legacy-c\n"))
-    +handoff_body : String <- read(db,"SELECT body FROM messages WHERE id='legacy-a-refusal:profile-handoff-legacy-c';")
-    expect("legacy-selected-profile-preserves-refusal-cause",Bool.and(String.contains(handoff_body,"refused profile=legacy-a; bound profile=legacy-c"),String.contains(handoff_body,"legacy-a-request")))
+    expect("legacy-held-profile-never-bound",Bool.not(String.contains(recorded,"legacy-c")))
     held_stays : Unit <- expect_gate(db,"legacy-forward","legacy-b","held","legacy-skipped-profile-hold-preserved")
     bound_all : Unit <- Subs.bind_profile(db,"legacy-all-held","omp","legacy-a","/profiles/legacy-a")
     held_c : Unit <- UW.record_cause(db,"legacy-all-held","legacy-c-refusal","legacy-c",cause("legacy-c-request"))
