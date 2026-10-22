@@ -73,7 +73,7 @@ baton2 state.db inbox PLAYER
 baton2 state.db force-stop PLAYER stop-review-1
 ```
 
-`stop` records a terminal state for a retained OMP or Codex session. Current
+`stop` records a terminal state for a retained OMP, Codex, Muse, Claude Code or DSH session. Current
 execution receives TERM through its recorded keeper and native process group.
 Queued task, guidance and recovery input keeps its original body and receipt,
 with a stopped execution disposition. New execution input is refused. An exact

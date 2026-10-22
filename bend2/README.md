@@ -681,7 +681,7 @@ questions are pending, and `--file PATH` imports an existing JSON response.
 `stdin-written` records transport completion; subsequent native output records
 progress. See [native interaction semantics and limits](../docs/bend2/native-interactions.md).
 
-Use `baton stop --session PLAYER --reason TEXT` to end a retained OMP or Codex session. The
+Use `baton stop --session PLAYER --reason TEXT` to end a retained OMP, Codex, Muse, Claude Code or DSH session. The
 command records a terminal stop, prevents further queued execution and submits
 TERM to its current native process group. `baton force-stop --session PLAYER` explicitly
 submits KILL to the same still-owned attempt. Baton generates or selects the

@@ -65,6 +65,8 @@ rm -f "$clear_stop_quota_db"
   ' EXIT
   .scratch/bend2/clear-stop-quota-test "$clear_stop_quota_db"
 )
+sh bend2/scripts/build-native.sh bend2/test/stop-dsh.bend .scratch/bend2/stop-dsh-test
+BATON2_EXE="$root/.scratch/bend2/stop-dsh-test" "$PYTHON3" bend2/test/stop-dsh.py
 sh bend2/scripts/build-native.sh bend2/test/quota-backoff-dedupe.bend .scratch/bend2/quota-backoff-dedupe-test
 quota_backoff_db=$(mktemp "$root/.scratch/bend2/quota-backoff-dedupe.XXXXXXXX")
 rm -f "$quota_backoff_db"
