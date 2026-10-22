@@ -4,6 +4,8 @@ import importlib.util
 import json
 import pathlib
 import shutil
+import shlex
+import subprocess
 import sys
 import unittest
 
@@ -32,7 +34,11 @@ class ControlIdentity(unittest.TestCase):
 
     def setUp(self):
         controls.Control.setUp(self)
+        subprocess.run(['git', '-C', str(self.repo), 'remote', 'add', 'origin',
+                        'https://github.com/Flip-Engineering/baton.git'],
+                       env=self.environment, check=True, capture_output=True)
         previous = controls.EXE
+
         self.prefix = self.directory / 'installed-prefix'
         self.binary = self.prefix / 'bin/baton2'
         self.helper = self.prefix / 'libexec/baton2/git-series.mjs'
@@ -54,7 +60,8 @@ class ControlIdentity(unittest.TestCase):
         self.addCleanup(setattr, controls, 'EXE', previous)
         config_path = self.directory / 'fixture.json'
         config = json.loads(config_path.read_text())
-        config.update(exe=str(self.binary), sessions={'kimi-code/k3': 'recipient'})
+        config.update(exe=str(self.binary), sessions={'kimi-code/k3': 'recipient'},
+                      envDump=str(self.directory / 'native-env.json'))
         config_path.write_text(json.dumps(config))
         original = controls.FIXTURE
         marker = "'apiKeyVariablesPresent':"
@@ -62,6 +69,11 @@ class ControlIdentity(unittest.TestCase):
         fixture = original.replace(marker,
             "'author':os.environ.get('GIT_AUTHOR_NAME'),'authorEmail':os.environ.get('GIT_AUTHOR_EMAIL'),"
             "'committer':os.environ.get('GIT_COMMITTER_NAME'),'committerEmail':os.environ.get('GIT_COMMITTER_EMAIL'),"
+            "'gitConfig':{k:v for k,v in os.environ.items() if k.startswith('GIT_CONFIG_')},"
+            "'askpass':os.environ.get('GIT_ASKPASS'),"
+            "'envDump':(pathlib.Path(config['envDump']).write_text(json.dumps("
+            "{k:v for k,v in os.environ.items() if k.startswith('GIT_') "
+            "or k == 'BATON2_GIT_REGISTRY' or k in ('HOME','PATH')})),None)[1],"
             + marker, 1)
         self.fixture.write_text('#!' + sys.executable + '\n' + fixture)
         self.registry = self.home / '.config/baton/github-apps/series.json'
@@ -76,8 +88,7 @@ class ControlIdentity(unittest.TestCase):
             github = {'appId': 20000 + index, 'clientId': 'fixture-client-' + series,
                       'slug': slug, 'botLogin': slug + '[bot]', 'botId': bot,
                       'commitEmail': f'{bot}+{slug}[bot]@users.noreply.github.com',
-                      'installationId': 30000 + index, 'repositoryFullName': 'Flip-Engineering/baton',
-                      'repositoryId': 40000,
+                      'installationId': 30000 + index,
                       'permissions': {'contents': 'write', 'pull_requests': 'write', 'metadata': 'read'}}
             metadata = directory / 'identity-series.json'
             metadata.write_text(json.dumps({'seriesKey': series, 'displaySeries': display, 'github': github}))
@@ -102,7 +113,8 @@ class ControlIdentity(unittest.TestCase):
         log = self.directory / 'recipient.jsonl'
         configured = self.call('receiver', 'recipient', self.fixture, log)
         endpoint = ['node', str(self.helper.resolve()), 'launch', '--registry', str(self.registry.resolve()),
-                    '--model-key', 'kimi-code/k3', '--', str(self.binary.resolve()), str(self.db.resolve()),
+                    '--model-key', 'kimi-code/k3', '--repository', 'Flip-Engineering/baton',
+                    '--', str(self.binary.resolve()), str(self.db.resolve()),
                     'receive', 'recipient', str(self.fixture.resolve()), '', '', '', str(log.resolve())]
         self.assertEqual(configured['endpoint'], endpoint)
         self.dispatch('dispatch-file', 'recipient-task', 'root', 'recipient', 'task', self.task)
@@ -130,6 +142,87 @@ class ControlIdentity(unittest.TestCase):
             self.assertEqual(hashlib.sha256(pathlib.Path(pin['copy']).read_bytes()).hexdigest(), pin['sha256'])
         self.assertEqual(list(self.home.rglob('private-key.pem')), [])
 
+    def test_native_worker_commit_uses_the_selected_series_over_shared_configuration(self):
+        self.root()
+        assignment = self.call('recruit', 'recipient', 'root', 'omp', 'kimi-code/k3', 'low',
+                               self.repo, 'recipient-branch', self.checkouts / 'recipient', self.base)
+        log = self.directory / 'recipient.jsonl'
+        self.call('receiver', 'recipient', self.fixture, log)
+        self.dispatch('dispatch-file', 'recipient-task', 'root', 'recipient', 'task', self.task)
+        stream, native = self.accept('recipient')
+        result = self.action(stream, git_commit=['worker.txt', 'worker change\n'])
+        self.assertEqual(result['git_commit']['code'], 0, result)
+        header = subprocess.run(
+            ['git', '-C', assignment['workspace'], 'cat-file', '-p', 'HEAD'],
+            check=True, text=True, capture_output=True, env=self.environment).stdout
+        for field in ('author', 'committer'):
+            self.assertIn(f"{field} Flip Baton - Kimi <{self.identities['kimi']['commitEmail']}> ", header)
+        self.assertNotIn('fixture@example.invalid', header)
+        self.finish(stream, 'The worker commit retained the selected series identity.')
+        self.exited('recipient')
+        controls.shutdown_fixture_owner(self)
+        self.eventually(lambda: not self.process_rows())
+
+    def test_nested_receiver_selects_its_assignment_repository_over_an_inherited_scope(self):
+        self.root()
+        outer = self.call('recruit', 'outer', 'root', 'omp', 'gpt-6-astra', 'low',
+                          self.repo, 'outer-branch', self.checkouts / 'outer', self.base)
+        outer_log = self.directory / 'outer.jsonl'
+        outer_endpoint = self.call('receiver', 'outer', self.fixture, outer_log)['endpoint']
+        self.assertEqual(outer_endpoint[outer_endpoint.index('--repository') + 1],
+                         'Flip-Engineering/baton')
+        self.dispatch('dispatch-file', 'outer-task', 'root', 'outer', 'task', self.task)
+        outer_stream, outer_native = self.accept('gpt-6-astra')
+        self.assertEqual(outer_native['cwd'], outer['workspace'])
+        inherited = json.loads((self.directory / 'native-env.json').read_text())
+        count = int(inherited['GIT_CONFIG_COUNT'])
+        inherited[f'GIT_CONFIG_KEY_{count}'] = 'diff.algorithm'
+        inherited[f'GIT_CONFIG_VALUE_{count}'] = 'patience'
+        inherited['GIT_CONFIG_COUNT'] = str(count + 1)
+        self.assertTrue(any('credential.https://github.com/Flip-Engineering/baton' in value
+                            for value in inherited.values()), inherited)
+
+        flip_repo = self.directory / 'flip-repository'
+        flip_repo.mkdir()
+        for args in (['init', '-q', '-b', 'main'], ['config', 'user.name', 'Flip fixture'],
+                     ['config', 'user.email', 'flip@example.invalid']):
+            subprocess.run(['git', '-C', str(flip_repo), *args], env=self.environment,
+                           check=True, capture_output=True)
+        (flip_repo / 'seed.txt').write_text('flip seed\n')
+        for args in (['add', 'seed.txt'], ['commit', '-q', '-m', 'Flip seed'],
+                     ['remote', 'add', 'origin', 'https://github.com/flip-engineer/flip.git']):
+            subprocess.run(['git', '-C', str(flip_repo), *args], env=self.environment,
+                           check=True, capture_output=True)
+        flip_base = subprocess.run(['git', '-C', str(flip_repo), 'rev-parse', 'HEAD'],
+                                   env=self.environment, check=True, capture_output=True,
+                                   text=True).stdout.strip()
+        self.call('recruit', 'nested', 'outer', 'omp', 'kimi-code/k3', 'low',
+                  flip_repo, 'nested-branch', self.checkouts / 'nested', flip_base, env=inherited)
+        nested_log = self.directory / 'nested.jsonl'
+        nested_endpoint = self.call('receiver', 'nested', self.fixture, nested_log,
+                                    env=inherited)['endpoint']
+        self.assertEqual(nested_endpoint[nested_endpoint.index('--repository') + 1],
+                         'flip-engineer/flip')
+        launched = self.call('dispatch-file', 'nested-task', 'outer', 'nested', 'task',
+                             self.task, env=inherited)
+        self.assertEqual(launched['state'], 'launched')
+        nested_stream, nested_native = self.accept('recipient')
+        config = nested_native['gitConfig']
+        pairs = {config[f'GIT_CONFIG_KEY_{index}']: config[f'GIT_CONFIG_VALUE_{index}']
+                 for index in range(int(config['GIT_CONFIG_COUNT']))}
+        self.assertEqual(nested_native['askpass'], 'false')
+        for suffix in ('', '.git'):
+            helper = pairs[f'credential.https://github.com/flip-engineer/flip{suffix}.helper']
+            arguments = shlex.split(helper[1:])
+            self.assertEqual(arguments[arguments.index('--repository') + 1], 'flip-engineer/flip')
+        self.assertFalse(any('Flip-Engineering/baton' in key for key in pairs), pairs)
+        self.assertEqual(pairs['diff.algorithm'], 'patience')
+        self.finish(nested_stream, 'The nested worker retained its assigned repository.')
+        self.exited('nested')
+        self.finish(outer_stream, 'The outer worker completed its fixture turn.')
+        self.exited('outer')
+        controls.shutdown_fixture_owner(self)
+        self.eventually(lambda: not self.process_rows())
 
     def test_unmapped_recorded_model_refuses_configuration_before_launch(self):
         self.root()

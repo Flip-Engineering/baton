@@ -6,6 +6,8 @@ import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ../host/sqlite.bend as DB
 import ../host/control.bend as Host
+import ../host/session-lock.bend as Lock
+import ./control.bend as Control
 import ../git/process.bend as Git
 import ../git/land.bend as GitLand
 import ../git/types.bend as G
@@ -41,7 +43,80 @@ def line(+s: String) -> String:
 def show_outcome(o: G.LandOutcome) -> IO(Unit):
   IO.print(GitLand.outcome_json(o))
 
-def land_player(+db: String, +player: String, +repo: String, +target: String) -> IO(Unit):
+# The native agent shell records BATON_SESSION. When the series registry
+# resolves that session's model, the landing re-enters itself through the
+# existing git-series launcher, so every Git child of the landing carries the
+# verified bot author and committer instead of an inherited shared-config
+# identity. The guard stops the child from wrapping a second time.
+def identity_environment_value(result: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match result:
+    case Done{value}: IO.pure(String,value)
+    case Fail{(+code,detail)}:
+      Bool.pick(IO(String),U32.is_eq(code,2),IO.pure(String,""),IO.die(String,code,detail))
+
+def identity_environment(name: String) -> IO(String):
+  do IO<String>:
+    result : Result<&1,&1,U32 & String,String> <- IO.get_env(name)
+    identity_environment_value(result)
+
+def identity_model_value(result: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match result:
+    case Done{value}: IO.pure(String,Tx.trim_nl(value))
+    case Fail{error}: IO.pure(String,"")
+
+def identity_actor_model(+db: String, +actor: String) -> IO(String):
+  Bool.pick(IO(String),String.is_empty(actor),IO.pure(String,""),
+    (do IO<String>:
+      result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(actor) ++ ";")
+      identity_model_value(result)))
+
+def identity_actor_workspace(+db: String, +actor: String) -> IO(String):
+  Bool.pick(IO(String),String.is_empty(actor),IO.pure(String,""),
+    (do IO<String>:
+      result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT workspace FROM sessions WHERE id=" ++ C.q(actor) ++ ";")
+      identity_model_value(result)))
+
+def identity_write(+out: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.is_empty(out),IO.pure(Unit,Unit{}),IO.write(out))
+
+def identity_run_value(result: G.RunRes) -> IO(Bool):
+  match result:
+    case G.RRun{G.SExit{+code}, +out}:
+      Bool.pick(IO(Bool),U32.is_eq(code,0),
+        do IO<Bool>:
+          _written : Unit <- identity_write(out)
+          IO.pure(Bool,True{}),
+        do IO<Bool>:
+          _written : Unit <- identity_write(out)
+          IO.die(Bool,code,"The configured landing identity wrapper exited " ++ U32.show(code) ++ "."))
+    case G.RRun{G.SSignal{+num}, +out}:
+      do IO<Bool>:
+        _written : Unit <- identity_write(out)
+        IO.die(Bool,U32.add(num,128),"The configured landing identity wrapper was killed by a signal.")
+    case G.RSpawn{detail}: IO.die(Bool,1,detail)
+
+def identity_result(result: Result<&1,&1,U32 & String,String>) -> IO(Bool):
+  identity_run_value(Tx.run_res(result))
+
+def identity_wrapped(+db: String, verb: String, args: List<String>) -> IO(Bool):
+  do IO<Bool>:
+    applied : String <- identity_environment("BATON2_GIT_IDENTITY_APPLIED")
+    Bool.pick(IO(Bool),Bool.not(String.is_empty(applied)),IO.pure(Bool,False{}),
+    (do IO<Bool>:
+      +actor : String <- identity_environment("BATON_SESSION")
+      +model : String <- identity_actor_model(db,actor)
+      +workspace : String <- identity_actor_workspace(db,actor)
+      +repository : String <- Control.workspace_repository(workspace)
+      Bool.pick(IO(Bool),Bool.or(String.is_empty(actor),String.is_empty(model)),IO.pure(Bool,False{}),
+      (do IO<Bool>:
+        +executable : String <- IO.try(String,Lock.SessionLock.executable())
+        identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
+        launch : List<String> = Control.identity_args(Con{executable,Con{db,Con{verb,args}}},model,identity,repository)
+        guarded : List<String> = Con{"/usr/bin/env",Con{"BATON2_GIT_IDENTITY_APPLIED=1",launch}}
+        result : Result<&1,&1,U32 & String,String> <- Git.Process.run(Tx.enc_argv(guarded),".")
+        identity_result(result)))))
+
+def land_player_body(+db: String, +player: String, +repo: String, +target: String) -> IO(Unit):
   do IO<Unit>:
     player_row : String <- IO.try(String, Store.apply(db, C.Session{player}))
     present : Unit <- require_player(Bool.not(String.is_empty(player_row)))
@@ -49,6 +124,11 @@ def land_player(+db: String, +player: String, +repo: String, +target: String) ->
     branch : String <- require_branch(line(branch_raw))
     outcome : G.LandOutcome <- GitLand.land(repo, branch, target)
     show_outcome(outcome)
+
+def land_player(+db: String, +player: String, +repo: String, +target: String) -> IO(Unit):
+  do IO<Unit>:
+    wrapped : Bool <- identity_wrapped(db,"land",[player,repo,target])
+    Bool.pick(IO(Unit),wrapped,IO.pure(Unit,Unit{}),land_player_body(db,player,repo,target))
 
 def show_checked_outcome(result: Result<&1,&1,G.GitFail,G.LandOutcome>) -> IO(Unit):
   match result:
@@ -69,13 +149,18 @@ def run_checked(+db: String, +player: String, +repo: String, +target: String, +c
 # the selected checks run on the candidate and on the target before the
 # target advances. FILES is space-separated; CHECK runs as /bin/sh CHECK
 # FILE inside each checked tree.
-def land_checked_player(+db: String, +player: String, +repo: String, +target: String, +check: String, +files: String) -> IO(Unit):
+def land_checked_player_body(+db: String, +player: String, +repo: String, +target: String, +check: String, +files: String) -> IO(Unit):
   do IO<Unit>:
     player_row : String <- IO.try(String, Store.apply(db, C.Session{player}))
     present : Unit <- require_player(Bool.not(String.is_empty(player_row)))
     branch_raw : String <- IO.try(String, DB.Sql.query(db, "SELECT branch FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     branch : String <- require_branch(line(branch_raw))
     run_checked(db, player, repo, target, check, files, branch)
+
+def land_checked_player(+db: String, +player: String, +repo: String, +target: String, +check: String, +files: String) -> IO(Unit):
+  do IO<Unit>:
+    wrapped : Bool <- identity_wrapped(db,"land-checked",[player,repo,target,check,files])
+    Bool.pick(IO(Unit),wrapped,IO.pure(Unit,Unit{}),land_checked_player_body(db,player,repo,target,check,files))
 
 def push_ok(ok: Bool, branch: String, remote: String) -> IO(Unit):
   match ok:
@@ -87,10 +172,15 @@ def push_pick(r: G.GitOut, branch: String, remote: String) -> IO(Unit):
     case G.GRun{code, out}: push_ok(U32.is_eq(code, 0), branch, remote)
     case G.GBroken{detail}: IO.die(Unit, 1, detail)
 
-def push_branch(+repo: String, +branch: String, +remote: String) -> IO(Unit):
+def push_branch_body(+repo: String, +branch: String, +remote: String) -> IO(Unit):
   do IO<Unit>:
     r : G.GitOut <- GitLand.push_git(repo, branch, remote)
     push_pick(r, branch, remote)
+
+def push_branch(+db: String, +repo: String, +branch: String, +remote: String) -> IO(Unit):
+  do IO<Unit>:
+    wrapped : Bool <- identity_wrapped(db,"push",[repo,branch,remote])
+    Bool.pick(IO(Unit),wrapped,IO.pure(Unit,Unit{}),push_branch_body(repo,branch,remote))
 
 # The declared remote read's answer. The status names which outcome the read
 # reached, and every answer names the declared repository, branch and remote.
@@ -286,7 +376,7 @@ def require_association(+db: String, +player: String, +repo: String) -> IO(Unit)
 
 # The recorded branch tip is the default source; the reviewed entry selects an
 # exact commit from that same recorded branch and lands only that object.
-def land_player_at(+db: String, +player: String, +repo: String, +target: String, +commit: String) -> IO(Unit):
+def land_player_at_body(+db: String, +player: String, +repo: String, +target: String, +commit: String) -> IO(Unit):
   do IO<Unit>:
     player_row : String <- IO.try(String, Store.apply(db, C.Session{player}))
     present : Unit <- require_player(Bool.not(String.is_empty(player_row)))
@@ -298,7 +388,12 @@ def land_player_at(+db: String, +player: String, +repo: String, +target: String,
     outcome : G.LandOutcome <- GitLand.land_fast_forward_at(repo, oid, target)
     show_outcome(outcome)
 
-def land_checked_player_at(+db: String, +player: String, +repo: String, +target: String, +check: String, +files: String, +commit: String) -> IO(Unit):
+def land_player_at(+db: String, +player: String, +repo: String, +target: String, +commit: String) -> IO(Unit):
+  do IO<Unit>:
+    wrapped : Bool <- identity_wrapped(db,"land",[player,repo,target,"--commit",commit])
+    Bool.pick(IO(Unit),wrapped,IO.pure(Unit,Unit{}),land_player_at_body(db,player,repo,target,commit))
+
+def land_checked_player_at_body(+db: String, +player: String, +repo: String, +target: String, +check: String, +files: String, +commit: String) -> IO(Unit):
   do IO<Unit>:
     player_row : String <- IO.try(String, Store.apply(db, C.Session{player}))
     present : Unit <- require_player(Bool.not(String.is_empty(player_row)))
@@ -308,3 +403,8 @@ def land_checked_player_at(+db: String, +player: String, +repo: String, +target:
     picked : Selected <- select_reviewed(repo, branch, commit)
     oid : String <- selected_or_die(picked)
     run_checked(db, player, repo, target, check, files, oid)
+
+def land_checked_player_at(+db: String, +player: String, +repo: String, +target: String, +check: String, +files: String, +commit: String) -> IO(Unit):
+  do IO<Unit>:
+    wrapped : Bool <- identity_wrapped(db,"land-checked",[player,repo,target,check,files,"--commit",commit])
+    Bool.pick(IO(Unit),wrapped,IO.pure(Unit,Unit{}),land_checked_player_at_body(db,player,repo,target,check,files,commit))

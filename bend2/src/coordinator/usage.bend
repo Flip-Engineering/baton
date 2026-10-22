@@ -242,11 +242,11 @@ def project_sql(malformed: String, entries_json: String, session: String, harnes
 # The provider answer comes from the session's recorded harness command.
 
 # Control.receiver_args places the harness command at index 4 of the nine-element
-# receiver form; Control.identity_args prepends eight elements, so the
-# identity-prefixed form carries it at index 12. An endpoint of another shape
-# records no command.
+# receiver form; Control.identity_args prepends eight elements, and a repository
+# selection adds two more. The identity-prefixed forms carry the command at index
+# 12 or 14. An endpoint of another shape records no command.
 def harness_command_sql(+session: String) -> String:
-  "SELECT CASE WHEN json_valid(endpoint) THEN CASE json_array_length(endpoint) WHEN 9 THEN coalesce(json_extract(endpoint,'$[4]'),'') WHEN 17 THEN coalesce(json_extract(endpoint,'$[12]'),'') ELSE '' END ELSE '' END FROM sessions WHERE id=" ++ C.q(session) ++ ";"
+  "SELECT CASE WHEN json_valid(endpoint) THEN CASE json_array_length(endpoint) WHEN 9 THEN coalesce(json_extract(endpoint,'$[4]'),'') WHEN 17 THEN coalesce(json_extract(endpoint,'$[12]'),'') WHEN 19 THEN coalesce(json_extract(endpoint,'$[14]'),'') ELSE '' END ELSE '' END FROM sessions WHERE id=" ++ C.q(session) ++ ";"
 
 def provider_usage_args(command: String) -> List<String>:
   [command,"usage","--json"]
@@ -429,7 +429,7 @@ type Discovered is Data:
   DRoute{session: String, harness: String, command: String, model: String, effort: String, workspace: String}
 
 def models_all_command_sql() -> String:
-  "CASE WHEN json_valid(endpoint) THEN CASE json_array_length(endpoint) WHEN 9 THEN coalesce(json_extract(endpoint,'$[4]'),'') WHEN 17 THEN coalesce(json_extract(endpoint,'$[12]'),'') ELSE '' END ELSE '' END"
+  "CASE WHEN json_valid(endpoint) THEN CASE json_array_length(endpoint) WHEN 9 THEN coalesce(json_extract(endpoint,'$[4]'),'') WHEN 17 THEN coalesce(json_extract(endpoint,'$[12]'),'') WHEN 19 THEN coalesce(json_extract(endpoint,'$[14]'),'') ELSE '' END ELSE '' END"
 
 def models_all_routes_sql() -> String:
   "SELECT row FROM (SELECT id || '|' || harness || '|' || " ++ models_all_command_sql() ++ " || '|' || coalesce(model,'') || '|' || coalesce(effort,'') || '|' || coalesce(workspace,'') AS row, harness, " ++ models_all_command_sql() ++ " AS command, coalesce(model,'') AS model, coalesce(effort,'') AS effort, coalesce(workspace,'') AS cwd FROM sessions WHERE harness <> '') WHERE harness NOT LIKE '%|%' AND command NOT LIKE '%|%' AND model NOT LIKE '%|%' AND effort NOT LIKE '%|%' AND cwd NOT LIKE '%|%' ORDER BY row;"
