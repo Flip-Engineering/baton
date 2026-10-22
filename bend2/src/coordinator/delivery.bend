@@ -285,12 +285,49 @@ def deliver(+db: String, +id: String, +condition: String, saved: String) -> IO(R
     +kind : String <- IO.pure(String,Tx.trim_nl(value))
     routed(db,id,condition,saved,kind,String.is_empty(kind))
 
+def normal_delivery_argv(encoded: Result<&1,&1,U32 & String,String>, +db: String, +id: String, +condition: String, +saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match encoded:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{output}: do IO<Result<&1,&1,U32 & String,String>>:
+      +argv : String = Tx.trim_nl(output)
+      Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(argv),
+        IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"Failure report retained in the recipient inbox; the recipient has no launchable endpoint. Read the retained report.")}),
+        launch(db,id,saved,argv))
+
+def normal_delivery_existing(+db: String, +id: String, +condition: String, +saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    encoded : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,endpoint_sql(id,condition))
+    normal_delivery_argv(encoded,db,id,condition,saved)
+
+def handoff_result(selected: Result<&1,&1,U32 & String,String>, +id: String, next: String -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Result<&1,&1,U32 & String,String>):
+  match selected:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{output}: do IO<Result<&1,&1,U32 & String,String>>:
+      +notification : String = Tx.trim_nl(output)
+      handoff_selected(id,notification,next,String.is_empty(notification))
+
+def handoff_existing(+db: String, +id: String, next: String -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    selected : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,handoff_sql(id))
+    handoff_result(selected,id,next)
+
+def stopped_delivery_existing(+db: String, +id: String, +saved: String, retained: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  match retained:
+    case True{}: handoff_existing(db,id,notification => normal_delivery_existing(db,notification,"1",saved))
+    case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"Session is terminally stopped; the retained input will not execute. Inspect its session and inbox.")})
+
+def routed_existing(+db: String, +id: String, +condition: String, +saved: String, +kind: String, ordinary: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  match ordinary:
+    case False{}: stopped_delivery_existing(db,id,saved,Bool.or(String.eq(kind,"report"),String.eq(kind,"question")))
+    case True{}: normal_delivery_existing(db,id,condition,saved)
+
+
 def deliver_kind(kind_result: Result<&1,&1,U32 & String,String>, +db: String, +id: String, +condition: String, +saved: String) -> IO(Result<&1,&1,U32 & String,String>):
   match kind_result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
     case Done{output}: do IO<Result<&1,&1,U32 & String,String>>:
       +kind : String = Tx.trim_nl(output)
-      routed(db,id,condition,saved,kind,String.is_empty(kind))
+      routed_existing(db,id,condition,saved,kind,String.is_empty(kind))
 
 def deliver_existing(+db: String, +id: String, +condition: String, +saved: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
