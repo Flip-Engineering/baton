@@ -150,8 +150,26 @@ if '--profile' in args:
     print(json.dumps({'type':'session','sessionId':'dsh-native-'+str(os.getpid()),'cwd':os.getcwd()}),flush=True)
     task=sys.stdin.read()
     identifiers=list(dict.fromkeys(re.findall(r'\[id: ([^\]]+)\]',task)))
+    database=config['db']
+    environment=None
+    snapshot=config.get('dsh_readonly_snapshot')
+    if snapshot:
+        # The public read runs against a read-only snapshot of the live attempt
+        # state, reproducing a recipient whose database cannot accept the read
+        # record. The read body is still returned; the recording write fails.
+        source=sqlite3.connect('file:'+config['db']+'?mode=ro',uri=True)
+        target=sqlite3.connect(snapshot)
+        source.backup(target)
+        if identifiers:
+            target.execute('DELETE FROM message_reads WHERE message IN (' +
+                           ','.join('?' for _ in identifiers) + ')', identifiers)
+            target.commit()
+        target.close();source.close()
+        os.chmod(snapshot,0o444)
+        database=snapshot
+        environment=dict(os.environ,BATON_DATABASE=snapshot)
     for ident in identifiers:
-        result=subprocess.run([config['exe'],config['db'],'read',ident],capture_output=True,text=True)
+        result=subprocess.run([config['exe'],database,'read',ident],capture_output=True,text=True,env=environment)
         with (home/'dsh-reads.jsonl').open('a') as recorded:
             recorded.write(json.dumps({'id':ident,'code':result.returncode,
                                        'stdout':result.stdout,'stderr':result.stderr})+'\n')
