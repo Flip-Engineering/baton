@@ -39,7 +39,7 @@ def _checkpoint_covers_spool(checkpoint, minimum_spool_offset):
         return False
 
 def _checkpoint_offset(checkpoint):
-    record = checkpoint.read_bytes()
+    record = checkpoint if isinstance(checkpoint, (bytes, bytearray)) else checkpoint.read_bytes()
     if len(record) < 64 or record[:8] != b"BATONC03":
         return None
     return int.from_bytes(record[56:64], "little")
@@ -324,6 +324,8 @@ assert sys.stdin.read()==''
         checkpoint_stat = checkpoint.stat()
         raw_before = raw_output.read_bytes()
         raw_stat = raw_output.stat()
+        # The trailing NUL block is kept as producer evidence; its writer is
+        # not established from this spool. This asserts the reader boundary.
         tail = bytes([0]) * 1642
         self.action(control, emit_nul_tail=len(tail), exit_after_nul_tail=True)
         self.assertEqual(json.loads(control.readline()), {'nul_tail_written': len(tail)})
@@ -396,6 +398,29 @@ assert sys.stdin.read()==''
         self.assertEqual(raw_output.read_bytes(), raw_before + tail)
         self.assertFalse((attempt / 'acknowledged').exists())
 
+    def test_fresh_receive_refuses_a_live_prior_native(self):
+        self.player(harness='omp')
+        self.prepare_input('fresh-guard-task', 'parent',
+                           'Do not start a second native while the prior one is live.', kind='task')
+        attempt = self.directory / 'prior-live-attempt'
+        attempt.mkdir()
+        (attempt / 'native.pid').write_text(f'{os.getpid()}\n')
+        with sqlite3.connect(str(self.db)) as database:
+            database.execute(
+                "INSERT OR REPLACE INTO executions(session,id,mode,directory,phase,status)"
+                " VALUES(?,?,?,?,?,?)",
+                ('parent', 'receive:parent:live:fresh-guard', 'retained',
+                 str(attempt), 'running', ''))
+        result = subprocess.run(
+            [str(receive.EXE), str(self.db), 'receive-fresh', 'parent', str(self.fixture),
+             'parent', 'low', str(self.directory), str(self.directory / 'fresh-guard.jsonl'), ''],
+            capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('confirmed prior native exit', result.stdout + result.stderr)
+        self.assertEqual(self.execution('parent'),
+                         ('running', '', str(attempt)))
+        self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['fresh-guard-task'])
+
 def _suite():
     suite = unittest.TestSuite()
     suite.addTest(MemoryGateTests('test_repeated_semantic_checkpoints_keep_one_latest_open_frame'))
@@ -403,6 +428,7 @@ def _suite():
     suite.addTest(MemoryGateTests('test_checkpoint_write_failure_stops_read_and_preserves_input'))
     suite.addTest(MemoryGateTests('test_direct_omp_keeps_record_separator_provider_line_raw'))
     suite.addTest(MemoryGateTests('test_nul_span_refusal_preserves_checkpoint_spool_and_input'))
+    suite.addTest(MemoryGateTests('test_fresh_receive_refuses_a_live_prior_native'))
     suite.addTest(MemoryGateTests('test_fresh_receive_admits_a_new_attempt_after_nul_refusal'))
     return suite
 

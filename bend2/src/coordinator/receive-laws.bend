@@ -391,15 +391,14 @@ law acquired_native_owner_resolves_recorded_attempt:
 def acquired_native_owner_resolves_recorded_attempt(db,session,cmd,model,effort,cwd,log,lock,predecessor,again,updates):
   {==}
 
-def fresh_admission_pending(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, +lock: U32, predecessor: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>), +updates: Chan(String)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def fresh_admission_guarded(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, +lock: U32, predecessor: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>), +updates: Chan(String)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     ensured : Unit <- Store.ensure_before_begin(db)
-    Receive.acquired_pending(db,session,cmd,model,effort,cwd,log,lock,again,predecessor,updates)
+    Receive.fresh_admission(db,session,cmd,model,effort,cwd,log,lock,again,predecessor,updates)
 
-# #971: the explicit fresh admission skips the recorded attempt binding, so a
-# retained spool that cannot be replayed stays on disk while pending input
-# continues in a new attempt.
-law fresh_admission_skips_the_recorded_attempt:
+# #971: the explicit fresh admission consults the recorded attempt's native
+# before it can skip its binding and admit a new attempt.
+law fresh_admission_consults_the_prior_native:
   for db: String
   for session: String
   for cmd: String
@@ -411,9 +410,33 @@ law fresh_admission_skips_the_recorded_attempt:
   for predecessor: String
   for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
   for -updates: Chan(String)
-  {Receive.acquired(db,session,cmd,model,effort,cwd,log,Some{lock},again,predecessor,True{},updates) == fresh_admission_pending(db,session,cmd,model,effort,cwd,log,lock,predecessor,again,updates) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.acquired(db,session,cmd,model,effort,cwd,log,Some{lock},again,predecessor,True{},updates) == fresh_admission_guarded(db,session,cmd,model,effort,cwd,log,lock,predecessor,again,updates) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def fresh_admission_skips_the_recorded_attempt(db,session,cmd,model,effort,cwd,log,lock,predecessor,again,updates):
+def fresh_admission_consults_the_prior_native(db,session,cmd,model,effort,cwd,log,lock,predecessor,again,updates):
+  {==}
+
+law fresh_admission_accepts_a_proven_dead_prior_native:
+  {Receive.fresh_allowed(Receive.PriorDead{}) == True{} : Bool}
+
+def fresh_admission_accepts_a_proven_dead_prior_native():
+  {==}
+
+law fresh_admission_refuses_a_live_prior_native:
+  {Receive.fresh_allowed(Receive.PriorLive{}) == False{} : Bool}
+
+def fresh_admission_refuses_a_live_prior_native():
+  {==}
+
+law fresh_admission_refuses_an_uncertain_prior_native:
+  {Receive.fresh_allowed(Receive.PriorUncertain{}) == False{} : Bool}
+
+def fresh_admission_refuses_an_uncertain_prior_native():
+  {==}
+
+law fresh_admission_accepts_no_prior_native:
+  {Receive.fresh_allowed(Receive.PriorNone{}) == True{} : Bool}
+
+def fresh_admission_accepts_no_prior_native():
   {==}
 
 def recorded_attempt_before_pending(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, +lock: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
