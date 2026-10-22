@@ -54,7 +54,7 @@ def launched(+db: String, mode: String, text: String, result: Result<&1,&1,U32 &
     case Fail{error}: IO.die(Unit,2,"agy launch failed")
     case Done{+handle}: sent(db,mode,handle,text)
 
-def start(+db: String, mode: String, cmd: String, text: String) -> IO(Unit):
+def start(+db: String, +mode: String, cmd: String, text: String) -> IO(Unit):
   match mode:
     case "fresh": do IO<Unit>:
       setup(db)
@@ -77,7 +77,7 @@ def report(+db: String, +id: String) -> IO(Unit):
 
 def run(args: List<String>) -> IO(Unit):
   match args:
-    case +db <> cmd <> mode <> text <> Nil{}: do IO<Unit>:
+    case +db <> cmd <> +mode <> text <> Nil{}: do IO<Unit>:
       start(db,mode,cmd,text)
       native : String <- IO.try(String,DB.Sql.read(db,"SELECT native FROM sessions WHERE id='agy-player';"))
       IO.print("native\t" ++ Tx.trim_nl(native))
