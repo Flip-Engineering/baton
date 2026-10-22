@@ -31,6 +31,8 @@ import ./agent-native.bend as AgentNative
 import ./repl.bend as Repl
 import ./task-input.bend as TaskInput
 import ../host/text.bend as T
+import ../host/sqlite.bend as DB
+import ../git/text.bend as Tx
 import ../host/process.bend as P
 import ./stall.bend as Stall
 import ../host/instance.bend as Custody
@@ -255,7 +257,8 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.ObserveFile{id,player,path}:
       do IO<Unit>:
         event : String <- IO.try(String,T.Text.read(path))
-        run(db,C.Observe{id,player,event,False{}})
+        +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+        run(db,C.Observe{id,player,event,False{},Tx.trim_nl(harness)})
     case C.NativeReply{parent,id,response}: NativeRequests.reply(db,parent,id,response)
     case C.NativeReplyFile{parent,id,path}:
       do IO<Unit>:

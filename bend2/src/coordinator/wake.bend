@@ -13,7 +13,7 @@ def admitted_message_id(command: C.Command) -> String:
     case C.Message{id,sender,recipient,kind,body}: id
     case C.Report{id,sender,body}: id
     case C.Ask{id,player,body}: id
-    case C.Observe{id,player,event,sealed}: id
+    case C.Observe{id,player,event,sealed,harness}: id
     case C.TaskContinue{session,id}: id ++ ":task-continuation"
     case other: ""
 
