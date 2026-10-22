@@ -285,66 +285,35 @@ def deliver(+db: String, +id: String, +condition: String, saved: String) -> IO(R
     +kind : String <- IO.pure(String,Tx.trim_nl(value))
     routed(db,id,condition,saved,kind,String.is_empty(kind))
 
-def normal_delivery_argv(encoded: Result<&1,&1,U32 & String,String>, +db: String, +id: String, +condition: String, +saved: String) -> IO(Result<&1,&1,U32 & String,String>):
-  match encoded:
+def dispatch_canonical(executable: String, canonical_result: Result<&1,&1,U32 & String,String>, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match canonical_result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
-    case Done{output}: do IO<Result<&1,&1,U32 & String,String>>:
-      +argv : String = Tx.trim_nl(output)
-      Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(argv),
-        IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"Failure report retained in the recipient inbox; the recipient has no launchable endpoint. Read the retained report.")}),
-        launch(db,id,saved,argv))
+    case Done{+canonical}: Process.Process.run(Tx.enc_argv([executable,"--dispatch-message",canonical,id]),".")
 
-def normal_delivery_existing(+db: String, +id: String, +condition: String, +saved: String) -> IO(Result<&1,&1,U32 & String,String>):
-  do IO<Result<&1,&1,U32 & String,String>>:
-    encoded : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,endpoint_sql(id,condition))
-    normal_delivery_argv(encoded,db,id,condition,saved)
-
-def handoff_result(selected: Result<&1,&1,U32 & String,String>, +id: String, next: String -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Result<&1,&1,U32 & String,String>):
-  match selected:
+def dispatch_argv(executable_result: Result<&1,&1,U32 & String,String>, canonical_result: Result<&1,&1,U32 & String,String>, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match executable_result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
-    case Done{output}: do IO<Result<&1,&1,U32 & String,String>>:
-      +notification : String = Tx.trim_nl(output)
-      handoff_selected(id,notification,next,String.is_empty(notification))
+    case Done{+executable}: dispatch_canonical(executable,canonical_result,id)
 
-def handoff_existing(+db: String, +id: String, next: String -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Result<&1,&1,U32 & String,String>):
+def dispatch_existing(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    selected : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,handoff_sql(id))
-    handoff_result(selected,id,next)
-
-def stopped_delivery_existing(+db: String, +id: String, +saved: String, retained: Bool) -> IO(Result<&1,&1,U32 & String,String>):
-  match retained:
-    case True{}: handoff_existing(db,id,notification => normal_delivery_existing(db,notification,"1",saved))
-    case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"Session is terminally stopped; the retained input will not execute. Inspect its session and inbox.")})
-
-def routed_existing(+db: String, +id: String, +condition: String, +saved: String, +kind: String, ordinary: Bool) -> IO(Result<&1,&1,U32 & String,String>):
-  match ordinary:
-    case False{}: stopped_delivery_existing(db,id,saved,Bool.or(String.eq(kind,"report"),String.eq(kind,"question")))
-    case True{}: normal_delivery_existing(db,id,condition,saved)
-
-
-def deliver_kind(kind_result: Result<&1,&1,U32 & String,String>, +db: String, +id: String, +condition: String, +saved: String) -> IO(Result<&1,&1,U32 & String,String>):
-  match kind_result:
-    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
-    case Done{output}: do IO<Result<&1,&1,U32 & String,String>>:
-      +kind : String = Tx.trim_nl(output)
-      routed_existing(db,id,condition,saved,kind,String.is_empty(kind))
-
-def deliver_existing(+db: String, +id: String, +condition: String, +saved: String) -> IO(Result<&1,&1,U32 & String,String>):
-  do IO<Result<&1,&1,U32 & String,String>>:
-    kind_result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,stopped_kind_sql(id,condition))
-    deliver_kind(kind_result,db,id,condition,saved)
+    executable_result : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.executable()
+    canonical_result : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(db)
+    dispatch_argv(executable_result,canonical_result,id)
 
 def failure_report_result(saved: Result<&1,&1,U32 & String,String>, +db: String, +id: String) -> IO(Unit):
   match saved:
     case Fail{error}: IO.pure(Unit,Unit{})
     case Done{output}: do IO<Unit>:
-      delivered : Result<&1,&1,U32 & String,String> <- deliver_existing(db,id,"1","")
+      dispatched : Result<&1,&1,U32 & String,String> <- dispatch_existing(db,id)
       IO.pure(Unit,Unit{})
 
-# A failure report is inserted first. Dispatch runs only after a successful
-# insert, and the returned dispatch Result is ignored so the caller keeps its
-# original recovery or continuation failure. An unavailable database never
-# reaches dispatch.
+# A failure report is inserted first. Dispatch runs the existing self
+# --dispatch-message entry only after a successful insert; that subprocess keeps
+# the complete delivery route and returns a process Result. The insert and
+# process Results are ignored so the caller keeps its original recovery or
+# continuation failure.
+
 def failure_report(+db: String, +session: String, +id: String, +body: String) -> IO(Unit):
   do IO<Unit>:
     saved : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id) ++ ",s.id," ++ C.report_recipient("s.id") ++ ",'report'," ++ C.q(body) ++ " FROM sessions s WHERE s.id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL;")
