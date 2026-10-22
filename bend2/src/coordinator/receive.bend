@@ -1256,7 +1256,7 @@ def recover_tail(+db: String, +session: String, +id: String, +directory: String,
           ended : Unit <- Chan.close(String,updates)
           drained : Unit <- IO.join(Unit,drainer)
           settled : Unit <- claim_left(db,session)
-          report_recovery_pass(db,session,id,directory,Fail{(code,text)})))
+          report_recovery_pass(db,session,id,directory,Fail{(code,text)}))
     case Done{unit}: do IO<Result<&1,&1,U32 & String,Unit>>:
       ended : Unit <- Chan.close(String,updates)
       drained : Unit <- IO.join(Unit,drainer)
