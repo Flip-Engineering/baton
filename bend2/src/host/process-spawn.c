@@ -1487,8 +1487,30 @@ static int br_recovery_reap_unwatched(BrKeeper *keeper) {
   }
   return 0;
 }
+/* A recorded status file is the durable native-exit record. The keeper may
+   have reaped the native in this incarnation, or an earlier keeper may have
+   written the status before it was lost. A released or acknowledged attempt
+   has already retired its custody. In all three cases the captured recovery
+   argv must not run again: the completed observer transfer path adopts the
+   attempt and reads its retained output. */
+static int br_attempt_completed(BrKeeper *keeper) {
+  if(keeper->exited)return 1;
+  char *path=br_path(keeper->directory,"status");
+  int recorded=path && access(path,F_OK)==0;
+  free(path);
+  if(recorded)return 1;
+  path=br_path(keeper->directory,"released");
+  int released=path && access(path,F_OK)==0;
+  free(path);
+  if(released)return 1;
+  path=br_path(keeper->directory,"acknowledged");
+  int acknowledged=path && access(path,F_OK)==0;
+  free(path);
+  return acknowledged;
+}
 static void br_recover(BrKeeper *keeper) {
   if(keeper->recovery_attempted)return;
+  if(br_attempt_completed(keeper))return;
   keeper->recovery_attempted=1;
   char **argv=br_argv(keeper->manifest.field[4],(size_t)keeper->manifest.header.lengths[4]);
   char *path=br_path(keeper->directory,"observer.log");
@@ -1515,7 +1537,8 @@ static void br_detach_observer(BrKeeper *keeper) {
 }
 static void br_disconnected(BrKeeper *keeper) {
   br_detach_observer(keeper);
-  if(!keeper->finishing && keeper->native_pid && !keeper->recovery_attempted) br_recover(keeper);
+  if(!keeper->finishing && keeper->native_pid && !keeper->recovery_attempted &&
+     !br_attempt_completed(keeper)) br_recover(keeper);
 }
 static int br_record_native_exit(BrKeeper *keeper) {
   if(!keeper->native_waiting || !keeper->native_pid)return 0;
@@ -1555,7 +1578,11 @@ static int br_command(BrKeeper *keeper,BrFrame frame,const char *payload) {
     int error=br_lifecycle_ready(keeper->directory);
     if(error)return br_reply(keeper,frame.serial,keeper->generation,error);
     keeper->ready=1;
-    keeper->recovery_attempted=0;
+    /* An active attempt may recover after the next observer disconnect. A
+       completed or retired native is adopted through observer-transfer-v1 /
+       completed-observer; resetting here would let the captured manifest argv
+       replay against a finished attempt. */
+    if(!br_attempt_completed(keeper))keeper->recovery_attempted=0;
     if((error=br_reply(keeper,frame.serial,keeper->generation,0)))return error;
     /* A waiter can observe the native exit before readiness. Reap that exit now
        that readiness is set; a running native returns without error. An error is
@@ -4720,6 +4747,7 @@ static int br_instance_retire(BatonProcessCall *call) {
   if(retained->life>=0)close(retained->life);
   if(retained->watch>=0)close(retained->watch);
   if(retained->custody_lock>=0)close(retained->custody_lock);
+  if(retained->guard>=0)close(retained->guard);
   pthread_mutex_destroy(&retained->state);pthread_mutex_destroy(&retained->command);
   pthread_mutex_destroy(&retained->reader);pthread_cond_destroy(&retained->changed);
   free(retained->directory);free(retained->database);free(retained);
@@ -5139,7 +5167,9 @@ static void br_instance_state_call(BatonProcessCall *call) {
   if(!retained || !retained->directory) {call->error=EBADF;return;}
   BrLifecycle record;uint64_t pid=0;int status_known=0,status=0;
   const char *state=br_lifecycle_state(retained->directory,&record,&pid,&status_known,&status);
-  pthread_mutex_lock(&retained->state);int status_unavailable=retained->unknown;
+  pthread_mutex_lock(&retained->state);
+  int status_unavailable=retained->unknown;
+  int native_gone=(retained->orphan || retained->observer_only) && retained->exited && retained->unknown;
   pthread_mutex_unlock(&retained->state);
   if(retained->observer_only && status_unavailable)state="unavailable";
   uint64_t guard_device=0,guard_inode=0;
@@ -5156,7 +5186,7 @@ static void br_instance_state_call(BatonProcessCall *call) {
   const char *format=
     "{\"schema\":\"baton2-host-ready-v1\",\"state\":\"%s\",\"observation\":\"%s\",\"handle\":%u,\"directory\":\"%s\","
     "\"ownerIncarnation\":%llu,\"ownerEpoch\":%llu,\"ownerAttempt\":%llu,\"guardDevice\":%llu,\"guardInode\":%llu,\"guard\":\"%llu:%llu\","
-    "\"observer_ready\":%s,\"native_pid\":%llu,\"status_known\":%s,\"status\":%d,"
+    "\"observer_ready\":%s,\"native_pid\":%llu,\"status_known\":%s,\"status\":%d,\"native_gone\":%s,"
     "\"spawn_latched\":%s,\"cancelled\":%s,\"identity\":\"%s\",\"expectedBinding\":\"%s\","
     "\"grant\":\"%s\",\"rejection\":\"%s\"}";
   int needed=snprintf(NULL,0,format,
@@ -5166,7 +5196,7 @@ static void br_instance_state_call(BatonProcessCall *call) {
     (unsigned long long)guard_device,(unsigned long long)guard_inode,
     (unsigned long long)guard_device,(unsigned long long)guard_inode,
     retained->socket>=0 && record.observer_ready?"true":"false",(unsigned long long)pid,
-    status_known?"true":"false",status,
+    status_known?"true":"false",status,native_gone?"true":"false",
     record.latched?"true":"false",record.cancelled?"true":"false",
     br_lifecycle_has_expected(&record)?"fixed":"none",
     br_lifecycle_has_expected(&record)?expected:"",grant,rejection);
@@ -5181,7 +5211,7 @@ static void br_instance_state_call(BatonProcessCall *call) {
     (unsigned long long)guard_device,(unsigned long long)guard_inode,
     (unsigned long long)guard_device,(unsigned long long)guard_inode,
     retained->socket>=0 && record.observer_ready?"true":"false",(unsigned long long)pid,
-    status_known?"true":"false",status,
+    status_known?"true":"false",status,native_gone?"true":"false",
     record.latched?"true":"false",record.cancelled?"true":"false",
     br_lifecycle_has_expected(&record)?"fixed":"none",
     br_lifecycle_has_expected(&record)?expected:"",grant,rejection);
