@@ -234,8 +234,9 @@ credential helper's optional `--repository` restriction applies to Git
 credential requests; `gh` uses the repository selected by its invocation.
 
 The wrapper finds the executable `gh` on `PATH`, skipping entries that resolve
-to its own wrapper file. It requests a fresh installation token through the
-same App and installation verification used by Git credentials, and sets
+to `git-series-bin/gh` in any source or installed prefix. It requests a fresh
+installation token through the same App and installation verification used by
+Git credentials, and sets
 `GH_TOKEN` in the environment passed to that executable. The seat environment
 remains free of the issued token. The wrapper preserves the command arguments,
 cwd, PID, standard streams and exit status. Tokens remain in process memory.

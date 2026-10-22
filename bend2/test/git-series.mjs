@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { generateKeyPairSync, verify } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import test from 'node:test';
@@ -160,7 +160,7 @@ test('identity, installation and issued permissions accept the minimum and addit
       { name, field: 'permissions', value: permissions });
     assert.ok(await model.installation_token(home, identities.gpt, REPOSITORY,
       () => 'fixture-jwt-no-key', fixture.request));
-    assert.ok(!Object.hasOwn(fixture.calls.at(-1).body, 'permissions'));
+    assert.deepEqual(fixture.calls.at(-1).body, {});
   }
 });
 
@@ -287,8 +287,11 @@ process.stdout.write(JSON.stringify({ pid: process.pid, argv: process.argv.slice
   senderRemoved: !('GITHUB_TOKEN' in process.env) }));
 process.stderr.write('gh fixture diagnostic\\n'); process.exitCode = 7;\n`, { mode: 0o755 });
   const wrapper = join(dirname(SOURCE), 'git-series-bin/gh');
-  // Repeated wrapper directories exercise nested seat launches.
-  const environment = { PATH: [dirname(wrapper), dirname(wrapper), bin, dirname(process.execPath)].join(delimiter),
+  const previous = join(home, 'previous-prefix/git-series-bin'); mkdirSync(previous, { recursive: true });
+  copyFileSync(SOURCE, join(dirname(previous), 'git-series.mjs'));
+  copyFileSync(wrapper, join(previous, 'gh')); chmodSync(join(previous, 'gh'), 0o755);
+  // Nested source and installed launches share the seat's PATH.
+  const environment = { PATH: [dirname(wrapper), previous, dirname(wrapper), bin, dirname(process.execPath)].join(delimiter),
     NODE_OPTIONS: '--import=' + pathToFileURL(preload).href, GH_REPO: 'flip-engineer/flip' };
   const result = await child([SOURCE, 'launch', '--registry', alternative, '--series-key', 'gpt',
     '--', 'gh', 'pr', 'checks', '--json', 'name,state'], { env: environment, input: 'fixture input\n' });

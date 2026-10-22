@@ -383,12 +383,11 @@ export function gh_repository(command, environment, origin = origin_repository) 
 }
 
 function real_gh(environment) {
-  const wrapper = realpathSync(join(GH_BIN, 'gh'));
   for (const directory of (environment.PATH ?? '/bin:/usr/bin').split(delimiter)) {
     const filename = resolve(directory || '.', 'gh');
     try {
       accessSync(filename, constants.X_OK);
-      if (statSync(filename).isFile() && realpathSync(filename) !== wrapper) return filename;
+      if (statSync(filename).isFile() && !realpathSync(filename).endsWith('/git-series-bin/gh')) return filename;
     } catch {}
   }
   throw new Refusal('The gh wrapper requires an executable gh on the inherited PATH.');
