@@ -38,7 +38,16 @@ def observe(output, argv):
         argv = argv[1:]
     selected = {str(pathlib.Path('bend2/test', name).resolve()): name for name in SELECTED}
     path = pathlib.Path(argv[0]).resolve() if argv else None
+    queued = os.environ.get('BATON2_NATIVE_QUEUE')
+    if queued:
+        adapter = pathlib.Path(__file__).with_name('queue-native-checks.py')
+        runpy.run_path(str(adapter))['install']()
     if path is None or str(path) not in selected:
+        if queued and path is not None and path.is_file():
+            sys.path[0] = str(path.parent)
+            sys.argv = argv
+            runpy.run_path(str(path), run_name='__main__')
+            return
         os.execv(sys.executable, [sys.executable, *argv])
     name = selected[str(path)]
     document = {'file': 'bend2/test/' + name, 'argv': argv,
