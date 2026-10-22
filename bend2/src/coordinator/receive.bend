@@ -450,7 +450,7 @@ def report_recovery_pass(+db: String, +session: String, +id: String, +directory:
 # superseded, or a classified complete provider failure whose owed continuation succeeded;
 # every other Result below keeps its own combination, and an attempt whose
 # advance was recorded runs the advance's own continuation instead of the ordinary one.
-def finish_pending(+db: String, +session: String, id: String, attempt: String, log: String, +cursor: String, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def finish_pending(+db: String, +session: String, +id: String, +attempt: String, +log: String, +cursor: String, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +failed : Bool <- outcome_failed(db,outcome)
     +transient : Bool <- transient_provider_error(db,outcome)
