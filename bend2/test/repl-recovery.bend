@@ -94,8 +94,10 @@ def run(+db: String, +root: String) -> IO(Unit):
 
 def cli(args: List<String>) -> IO(Unit):
   match args:
-    case "--instance-owner" <> database <> Nil{}: IO.try(Unit,Custody.Instance.owner(database))
-    case db <> root <> Nil{}: run(db,root)
+    case +flag <> +database <> Nil{}:
+      Bool.pick(IO(Unit),String.eq(flag,"--instance-owner"),
+        IO.try(Unit,Custody.Instance.owner(database)),
+        run(flag,database))
     case _: IO.die(Unit,2,"DATABASE ROOT")
 
 def main() -> IO(Unit):

@@ -54,12 +54,16 @@ def print_witness(witness: Result<&1,&1,U32 & String,String>) -> IO(Unit):
 
 def run(args: List<String>) -> IO(Unit):
   match args:
-    case "--instance-owner" <> +db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
-    case "--instance-shutdown" <> +db <> Nil{}: IO.try(Unit,Custody.Instance.shutdown(db))
-    case "--instance-witness" <> +db <> Nil{}: do IO<Unit>:
-      witness : Result<&1,&1,U32 & String,String> <- Custody.Instance.owner_witness(db)
-      print_witness(witness)
-    case +db <> +directory <> Nil{}: prepare(db,directory)
+    case +flag <> +db <> Nil{}:
+      Bool.pick(IO(Unit),String.eq(flag,"--instance-owner"),
+        IO.try(Unit,Custody.Instance.owner(db)),
+        Bool.pick(IO(Unit),String.eq(flag,"--instance-shutdown"),
+          IO.try(Unit,Custody.Instance.shutdown(db)),
+          Bool.pick(IO(Unit),String.eq(flag,"--instance-witness"),
+            do IO<Unit>:
+              witness : Result<&1,&1,U32 & String,String> <- Custody.Instance.owner_witness(db)
+              print_witness(witness),
+            prepare(flag,db))))
     case other: IO.die(Unit,2,"usage: account-retained DB DIRECTORY | --instance-owner DB | --instance-shutdown DB")
 
 def main() -> IO(Unit):
