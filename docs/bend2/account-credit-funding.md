@@ -113,8 +113,11 @@ The reserved maximum is the lower of the observed balance and the two unspent
 ceilings: `min(balance, 200 - grant spend, 200 - monthly spend)`. Grant spend
 sums the reservations for the same grant cycle. Monthly spend sums the
 reservations for the same cap period and uses the larger of that ledger and the
-reconciled provider external spend. The guard reserves the whole bound, so a
-second launch cannot start until the first settles.
+reconciled provider external spend. `credit_reserve_bounded_for` reserves a
+supplied request charge instead of the whole bound; `credit_launch_gate_priced`
+supplies the price of the actual request body. The unpriced launch gate keeps
+the full-bound path. The active reservation serializes launches, so a second
+launch cannot start until the first settles.
 `credit_reservations_active` is a unique index on the organization, grant cycle
 and cap period for rows in state `reserved`. A repeated request returns its
 recorded row and does not reserve again.
