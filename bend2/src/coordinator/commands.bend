@@ -6,7 +6,7 @@ type Command is Data:
   Join{id: String, parent: String, harness: String, model: String, effort: String, path: String}
   Recruit{id: String, parent: String, harness: String, model: String, effort: String, repo: String, branch: String, path: String, base: String}
   Worktree{id: String}
-  Receive{session: String, cmd: String, model: String, effort: String, cwd: String, log: String, message: String}
+  Receive{session: String, cmd: String, model: String, effort: String, cwd: String, log: String, message: String, fresh: Bool}
   RecoverObserver{session: String, observer: String}
   Start{session: String, harness: String, cmd: String, model: String, effort: String, cwd: String, log: String, id: String, task: String}
   StartSetup{session: String, harness: String, cmd: String, model: String, effort: String, cwd: String, log: String}
@@ -633,7 +633,7 @@ def sql(command: Command) -> String:
     case Stop{session,id,reason}: ""
     case ForceStop{session,id}: ""
     case RunTurn{player,id,cmd,model,effort,cwd,task,log,session}: ""
-    case Receive{session,cmd,model,effort,cwd,log,message}: ""
+    case Receive{session,cmd,model,effort,cwd,log,message,fresh}: ""
     case RecoverObserver{session,observer}: ""
     case Start{session,harness,cmd,model,effort,cwd,log,id,task}: ""
     case StartSetup{session,harness,cmd,model,effort,cwd,log}: ""
@@ -891,7 +891,8 @@ def parse_verb_five_args(+verb: String, +id: String, +one: String, +two: String,
 def parse_receive(+verb: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +message: String) -> Command:
   match verb:
     case "start-setup": StartSetup{session,cmd,model,effort,cwd,log,message}
-    case "receive": Receive{session,cmd,model,effort,cwd,log,message}
+    case "receive": Receive{session,cmd,model,effort,cwd,log,message,False{}}
+    case "receive-fresh": Receive{session,cmd,model,effort,cwd,log,message,True{}}
     case "promote-scoped": KnowledgePromoteScoped{session,cmd,model,effort,cwd,log,message}
     case _: Invalid{}
 
@@ -1037,6 +1038,36 @@ def parse(args: List<String>) -> Command:
     case "inbox" <> +id <> rest:
       index_options(rest,Inbox{id},True{},"m.recipient=" ++ q(id),"m.receipt IS NULL",False{},False{},False{})
     case other: parse_basic(other)
+
+# An ordinary receive adopts the recorded retained attempt. The explicit
+# fresh form admits a new attempt under the same session lock so an attempt
+# whose retained spool cannot be replayed stays on disk while pending input
+# continues in a new attempt.
+law receive_parser_adopts_the_recorded_attempt:
+  for +session: String
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
+  for +log: String
+  for +message: String
+  {parse(["receive",session,cmd,model,effort,cwd,log,message]) == Receive{session,cmd,model,effort,cwd,log,message,False{}} : Command}
+
+def receive_parser_adopts_the_recorded_attempt(session,cmd,model,effort,cwd,log,message):
+  {==}
+
+law receive_fresh_parser_admits_a_new_attempt:
+  for +session: String
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
+  for +log: String
+  for +message: String
+  {parse(["receive-fresh",session,cmd,model,effort,cwd,log,message]) == Receive{session,cmd,model,effort,cwd,log,message,True{}} : Command}
+
+def receive_fresh_parser_admits_a_new_attempt(session,cmd,model,effort,cwd,log,message):
+  {==}
 
 law help_word_selects_the_help_command:
   {parse(["help"]) == Help{} : Command}

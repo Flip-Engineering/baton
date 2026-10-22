@@ -38,6 +38,12 @@ def _checkpoint_covers_spool(checkpoint, minimum_spool_offset):
     except (KeyError, TypeError, ValueError, OSError):
         return False
 
+def _checkpoint_offset(checkpoint):
+    record = checkpoint if isinstance(checkpoint, (bytes, bytearray)) else checkpoint.read_bytes()
+    if len(record) < 64 or record[:8] != b"BATONC03":
+        return None
+    return int.from_bytes(record[56:64], "little")
+
 
 class MemoryGateTests(receive.Receive):
     def eventually(self, observation, description, timeout=30):
@@ -318,6 +324,8 @@ assert sys.stdin.read()==''
         checkpoint_stat = checkpoint.stat()
         raw_before = raw_output.read_bytes()
         raw_stat = raw_output.stat()
+        # The trailing NUL block is kept as producer evidence; its writer is
+        # not established from this spool. This asserts the reader boundary.
         tail = bytes([0]) * 1642
         self.action(control, emit_nul_tail=len(tail), exit_after_nul_tail=True)
         self.assertEqual(json.loads(control.readline()), {'nul_tail_written': len(tail)})
@@ -329,11 +337,89 @@ assert sys.stdin.read()==''
         self.assertEqual(checkpoint.read_bytes(), checkpoint_before)
         self.assertEqual((checkpoint.stat().st_ino, checkpoint.stat().st_size),
                          (checkpoint_stat.st_ino, checkpoint_stat.st_size))
+        # The durable replay cursor stays on the last complete line. The
+        # trailing NUL block remains in the spool and is not consumed.
+        first_nul = len(raw_before)
+        self.assertEqual(raw_before.find(b'\x00'), -1)
+        self.assertTrue(raw_before.endswith(b'\n'))
+        self.assertEqual(_checkpoint_offset(checkpoint_before), first_nul)
+        self.assertEqual(_checkpoint_offset(checkpoint), first_nul)
+        self.assertEqual(self.coord('turns', 'parent'), [])
         self.assertFalse((attempt / 'acknowledged').exists())
         self.assertIsNone(self.coord('delivery', 'nul-span-task')['receipt'])
         self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['nul-span-task'])
         self.assertEqual(self.coord('player', 'parent')['native'], native_id)
         self.assertEqual(self.execution('parent')[2], str(attempt))
+
+    def test_fresh_receive_admits_a_new_attempt_after_nul_refusal(self):
+        self.player(harness='omp')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['record_launches'] = True
+        config_path.write_text(json.dumps(config))
+        self.prepare_input('nul-fresh-task', 'parent',
+                           'Continue the pending task in a fresh attempt.', kind='task')
+        observer = self.spawn(*self.receive_args('parent'))
+        control, _ = self.accept_bounded(observer, 'parent')
+        attempt = pathlib.Path(self.execution('parent')[2])
+        checkpoint = attempt / 'checkpoint'
+        raw_output = attempt / 'stdout'
+        self.action(control, emit_checkpoint_message='nul-fresh-checkpoint')
+        self.assertEqual(json.loads(control.readline()),
+                         {'checkpoint_message_written': 'nul-fresh-checkpoint'})
+        marker_end = raw_output.stat().st_size
+        self.eventually(lambda: _checkpoint_covers_spool(checkpoint, marker_end),
+                        'Marker was not durably consumed before the NUL baseline.')
+        checkpoint_before = checkpoint.read_bytes()
+        raw_before = raw_output.read_bytes()
+        tail = bytes([0]) * 1642
+        self.action(control, emit_nul_tail=len(tail), exit_after_nul_tail=True)
+        self.assertEqual(json.loads(control.readline()), {'nul_tail_written': len(tail)})
+        stdout, stderr = self.finish_bounded(observer, ok=False)
+        self.assertIn('stdout frame contains NUL', stdout + stderr)
+        self.assertEqual(checkpoint.read_bytes(), checkpoint_before)
+        self.assertEqual(raw_output.read_bytes(), raw_before + tail)
+        self.assertEqual(self.coord('turns', 'parent'), [])
+        self.assertFalse((attempt / 'acknowledged').exists())
+        # A fresh admission ignores the recorded attempt binding, leaves its
+        # spool and checkpoint in place, and carries the pending input into a
+        # new attempt with its own spool.
+        fresh = self.spawn('receive-fresh', 'parent', str(self.fixture), 'parent', 'low',
+                           str(self.directory), str(self.directory / 'parent-fresh.jsonl'), '')
+        fresh_control, started = self.accept_bounded(fresh, 'parent')
+        fresh_attempt = pathlib.Path(self.execution('parent')[2])
+        self.assertNotEqual(fresh_attempt, attempt)
+        self.assertIn('[id: nul-fresh-task]', started['prompt'])
+        self.action(fresh_control, body='Completed after fresh admission.', exit_after_terminal=True)
+        self.finish(fresh)
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+        self.assertEqual(len(self.coord('turns', 'parent')), 1)
+        self.assertEqual(checkpoint.read_bytes(), checkpoint_before)
+        self.assertEqual(raw_output.read_bytes(), raw_before + tail)
+        self.assertFalse((attempt / 'acknowledged').exists())
+
+    def test_fresh_receive_refuses_a_live_prior_native(self):
+        self.player(harness='omp')
+        self.prepare_input('fresh-guard-task', 'parent',
+                           'Do not start a second native while the prior one is live.', kind='task')
+        attempt = self.directory / 'prior-live-attempt'
+        attempt.mkdir()
+        (attempt / 'native.pid').write_text(f'{os.getpid()}\n')
+        with sqlite3.connect(str(self.db)) as database:
+            database.execute(
+                "INSERT OR REPLACE INTO executions(session,id,mode,directory,phase,status)"
+                " VALUES(?,?,?,?,?,?)",
+                ('parent', 'receive:parent:live:fresh-guard', 'retained',
+                 str(attempt), 'running', ''))
+        result = subprocess.run(
+            [str(receive.EXE), str(self.db), 'receive-fresh', 'parent', str(self.fixture),
+             'parent', 'low', str(self.directory), str(self.directory / 'fresh-guard.jsonl'), ''],
+            capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('confirmed prior native exit', result.stdout + result.stderr)
+        self.assertEqual(self.execution('parent'),
+                         ('running', '', str(attempt)))
+        self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['fresh-guard-task'])
 
 def _suite():
     suite = unittest.TestSuite()
@@ -342,6 +428,8 @@ def _suite():
     suite.addTest(MemoryGateTests('test_checkpoint_write_failure_stops_read_and_preserves_input'))
     suite.addTest(MemoryGateTests('test_direct_omp_keeps_record_separator_provider_line_raw'))
     suite.addTest(MemoryGateTests('test_nul_span_refusal_preserves_checkpoint_spool_and_input'))
+    suite.addTest(MemoryGateTests('test_fresh_receive_refuses_a_live_prior_native'))
+    suite.addTest(MemoryGateTests('test_fresh_receive_admits_a_new_attempt_after_nul_refusal'))
     return suite
 
 
