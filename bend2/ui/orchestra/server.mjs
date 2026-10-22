@@ -692,7 +692,7 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
           return { id, type: 'player', data: player, transition: change,
             sessionVisible: visible.has(change.session),
             pending: player && (change.kind.startsWith('message:')
-              || ['receipt', 'report', 'stop', 'execution', 'role'].includes(change.kind))
+              || ['read', 'report', 'stop', 'execution', 'role'].includes(change.kind))
               ? { session: player.id, pendingCount: player.pendingCount,
                 unreadCount: player.unreadCount,
                 lastTurnId: player.lastTurnId, latestReportId: player.latestReportId } : null };

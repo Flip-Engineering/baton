@@ -641,19 +641,19 @@ test('SSE pumps committed rows from owner hints and replays by durable cursor af
     messageEvents += decoder.decode(chunk.value);
   }
   assert.match(messageEvents, /event: pending/);
-  assert.match(messageEvents, /"unacknowledgedCount":2/);
+  assert.match(messageEvents, /"unreadCount":2/);
   assert.match(messageEvents, /"at":"\d{4}-\d\d-\d\dT/);
   assert.match(messageEvents, /guidance from root/);
   writer.exec("INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES('fixture','pending-2','child','native','fixture');");
   notifications.committed();
   let receiptEvents = '';
-  while (!receiptEvents.includes('"unacknowledgedCount":1')) {
+  while (!receiptEvents.includes('"unreadCount":1')) {
     const chunk = await reader.read();
     if (chunk.done) break;
     receiptEvents += decoder.decode(chunk.value);
   }
   assert.match(receiptEvents, /event: pending/);
-  assert.match(receiptEvents, /"unacknowledgedCount":1/);
+  assert.match(receiptEvents, /"unreadCount":1/);
   const beforeRollback = await fetch(`${base}/orchestra/snapshot?subject=root&since=0`);
   const beforeRollbackCursor = (await beforeRollback.json()).cursor;
   writer.exec("BEGIN; UPDATE executions SET phase='exited', status='exit 1' WHERE session='child'; ROLLBACK;");
@@ -1382,14 +1382,14 @@ test('awaiting report metadata keeps input counts and complete message bodies re
   const snapshot = await (await fetch(`${base}/orchestra/snapshot?subject=root`)).json();
   const child = snapshot.players.find((player) => player.id === 'child');
   assert.equal(child.pendingCount, 1);
-  assert.equal(child.unacknowledgedCount, 2);
+  assert.equal(child.unreadCount, 2);
   assert.deepEqual(child.pendingSample.map((message) => [message.id, message.sender, message.kind]),
     [['qa-report-owed', 'grandchild', 'report'], ['pending-1', 'root', 'task']]);
   assert.match(child.pendingSample[0].at, /^\d{4}-\d{2}-\d{2}T/);
   assert.equal(Object.hasOwn(child.pendingSample[0], 'body'), false);
   const root = snapshot.players.find((player) => player.id === 'root');
   assert.equal(root.pendingCount, 0);
-  assert.equal(root.unacknowledgedCount, 2);
+  assert.equal(root.unreadCount, 2);
   assert.deepEqual(root.pendingSample.map((message) => message.id), ['empty-1', 'support-1']);
 
   const found = await (await fetch(`${base}/orchestra/message?id=support-1`)).json();
@@ -1412,7 +1412,7 @@ test('awaiting report metadata keeps input counts and complete message bodies re
   const stoppedSnapshot = await (await fetch(`${base}/orchestra/snapshot?subject=child`)).json();
   const stopped = stoppedSnapshot.players.find((player) => player.id === 'child');
   assert.equal(stopped.pendingCount, 0);
-  assert.equal(stopped.unacknowledgedCount, 2);
+  assert.equal(stopped.unreadCount, 2);
   assert.deepEqual(stopped.pendingSample.map((message) => [message.id, message.sender, message.kind]),
     [['qa-report-owed', 'grandchild', 'report']]);
 

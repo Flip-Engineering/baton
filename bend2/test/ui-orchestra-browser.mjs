@@ -1276,7 +1276,7 @@ check('the worker seat states its newly queued input', await evalJs(
 check('the worker seat retains the complete owed count in its state', await evalJs(
   `/\\d+ owed/.test(document.querySelector('#attention-band .att-seat[data-att-id="worker"] .att-seat-state').textContent)`));
 // A report is owed work without queued input: the pending set excludes it,
-// the unacknowledged count records it. The aide seat retains every owed item.
+// the unread count records it. The aide seat retains every owed item.
 let aideOwed;
 {
   const db = new DatabaseSync(DB);

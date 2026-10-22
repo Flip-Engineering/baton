@@ -2068,7 +2068,7 @@ function documentPlayers() {
       // The stored sample carries the kinds, so the report mark reads its own
       // count. This is not unreadCount minus pendingCount: a stopped
       // actor's queued inputs leave pendingCount while its reports stay
-      // read, so the difference reads as reports that are not there.
+      // unread, so the difference reads as reports that are not there.
       reportCount: pendingItems(p).filter((m) => m && m.kind === "report").length,
       // Everything the seat owes, whatever the kind, for ordering and the rail.
       owedTotal: Math.max(p.pendingCount || 0, p.unreadCount || 0),
