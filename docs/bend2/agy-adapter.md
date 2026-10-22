@@ -1,7 +1,8 @@
 # Antigravity CLI adapter
 
 `bend2/src/harness/agy-player.bend` launches the Google Antigravity CLI
-(`agy`) in its stream-json print mode. The database harness name is `agy`.
+(`agy`) in its stream-json print mode. The database harness name is
+`antigravity`; the executable is `agy`.
 [Harness setup](harness-setup.md#antigravity-cli) describes installation and
 sign-in. This adapter is issue #721.
 
@@ -28,7 +29,10 @@ accepts an `--effort` that differs from the tier in the model id is not yet
 observed.
 
 The launch registry (`series.json`) maps each recorded model id to a Git
-identity series. The agy Claude ids map to the `claude` series.
+identity series. The agy Claude ids map to the `claude` series. The Gemini and
+`gpt-oss` ids are registered with a `null` series because no GitHub App
+identity is assigned to them yet; selecting one of them for a launch is refused
+with `The model MODEL is registered without a GitHub identity series.`
 
 ## Verified protocol facts
 

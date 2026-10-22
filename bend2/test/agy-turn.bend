@@ -15,7 +15,7 @@ import ../src/git/text.bend as Tx
 def setup(+db: String) -> IO(Unit):
   do IO<Unit>:
     made : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN;" ++ C.schema() ++ "COMMIT;")
-    seated : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"INSERT INTO sessions(id,parent,harness) VALUES('operator',NULL,'operator');INSERT INTO sessions(id,parent,harness,model,effort) VALUES('agy-player','operator','agy','agy-model-test','high');")
+    seated : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"INSERT INTO sessions(id,parent,harness) VALUES('operator',NULL,'operator');INSERT INTO sessions(id,parent,harness,model,effort) VALUES('agy-player','operator','antigravity','agy-model-test','high');")
     IO.pure(Unit,Unit{})
 
 def observe(+db: String, +id: String, +line: String) -> IO(Unit):

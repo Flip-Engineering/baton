@@ -288,7 +288,7 @@ headless account needs a keyring that stays unlocked. The alternative route is
 `GEMINI_API_KEY` in the environment; it reaches only Gemini models. After
 signing in, `agy models` lists the models the account can use.
 
-Record the route with `--harness agy`, `--model MODEL_ID` and the tier word of
+Record the route with `--harness antigravity`, `--model MODEL_ID` and the tier word of
 that id as `--effort`, for example `claude-sonnet-5-5-high` and `high`. The
 [Antigravity CLI adapter](agy-adapter.md) lists the protocol facts and the
 unverified items.

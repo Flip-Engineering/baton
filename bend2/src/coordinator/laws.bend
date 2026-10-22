@@ -840,7 +840,7 @@ law m11_agy_input_reaches_the_agy_adapter:
   for +handle: U32
   for +prompt: String
   for +level: String
-  {Turn.input(handle, prompt, "agy\n", level) == Agy.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Turn.input(handle, prompt, "antigravity\n", level) == Agy.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def m11_agy_input_reaches_the_agy_adapter(handle, prompt, level):
   {==}
@@ -925,7 +925,7 @@ law m2_agy_launch_reaches_the_agy_adapter:
   for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "agy\n", log, task) == Turn.agy_launch(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "antigravity\n", log, task) == Turn.agy_launch(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m2_agy_launch_reaches_the_agy_adapter(db, player, sessions, cmd, model, effort, cwd, stderr, session, log, task):
   {==}

@@ -300,7 +300,7 @@ def input(+handle: U32, +prompt: String, +harness: String, level: String) -> IO(
     Codex.input(handle,prompt),
   Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.eq(harness,"dsh\n"),
     Dsh.input(handle,prompt),
-  Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.eq(harness,"agy\n"),
+  Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.eq(harness,"antigravity\n"),
     Agy.input(handle,prompt),
     Claude.input(handle,prompt))))))
 
@@ -708,7 +708,7 @@ def agy_frame_kind(line: String) -> IO(String):
 def frame_kind_other(+db: String, decoded: Frame.FrameDecoded, +line: String, +harness: String) -> IO(String):
   match harness:
     case "dsh\n": dsh_frame_kind(line)
-    case "agy\n": agy_frame_kind(line)
+    case "antigravity\n": agy_frame_kind(line)
     case other: omp_frame_kind(db,decoded,String.eq(harness,"omp\n"))
 
 def frame_kind_selected(+db: String, decoded: Frame.FrameDecoded, +line: String, harness: String, codex: Bool) -> IO(String):
@@ -947,7 +947,7 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
     +decode_error : String <- IO.pure(String,Bool.pick(String,invalid,Frame.invalid_error(),""))
     +kind : String <- frame_kind(db,decoded,line,harness)
     +dsh : Bool <- IO.pure(Bool,String.eq(harness,"dsh\n"))
-    +agy : Bool <- IO.pure(Bool,String.eq(harness,"agy\n"))
+    +agy : Bool <- IO.pure(Bool,String.eq(harness,"antigravity\n"))
     +frame_key_raw : String <- Logs.frame_identity(db,decoded,line,Tx.trim_nl(kind),String.eq(harness,"omp\n"))
     +frame_key : String <- IO.pure(String,Tx.trim_nl(frame_key_raw))
     +message_frame : Bool <- IO.pure(Bool,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"message_end")))
@@ -1289,7 +1289,7 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
       +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
       +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
       +dsh : Bool <- IO.pure(Bool,String.eq(harness,"dsh\n"))
-      +agy : Bool <- IO.pure(Bool,String.eq(harness,"agy\n"))
+      +agy : Bool <- IO.pure(Bool,String.eq(harness,"antigravity\n"))
       +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
       home : String <- dsh_home_if(dsh,db,absolute_db,player)
       prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort)
@@ -1426,7 +1426,7 @@ def launch(+db: String, +player: String, sessions: String, +cmd: String, +model:
     muse_launch_configured(db,player,cmd,model,effort,cwd,stderr,session,task),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"dsh\n"),
     dsh_launch(db,player,log,cmd,model,effort,cwd,stderr,session),
-  Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"agy\n"),
+  Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"antigravity\n"),
     agy_launch(cmd,model,effort,cwd,stderr,session,String.is_empty(session)),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"codex\n"),
     Codex.start_player(cmd,model,effort,cwd,stderr,session,String.is_empty(session)),
@@ -1952,7 +1952,7 @@ def player_checked(+db: String, +player: String, +id: String, +cmd: String, +mod
     case True{}: IO.die(Unit,2,"Player is not registered; register it before starting a turn.")
     case False{}:
       do IO<Unit>:
-        supported : Unit <- supported_harness(Bool.or(String.eq(harness,"omp\n"),Bool.or(String.eq(harness,"codex\n"),Bool.or(String.eq(harness,"claude-code\n"),Bool.or(String.eq(harness,"muse\n"),Bool.or(String.eq(harness,"dsh\n"),String.eq(harness,"agy\n")))))))
+        supported : Unit <- supported_harness(Bool.or(String.eq(harness,"omp\n"),Bool.or(String.eq(harness,"codex\n"),Bool.or(String.eq(harness,"claude-code\n"),Bool.or(String.eq(harness,"muse\n"),Bool.or(String.eq(harness,"dsh\n"),String.eq(harness,"antigravity\n")))))))
         foreign : String <- IO.try(String,DB.Sql.query(db,id_owner_sql(id,player)))
         identity : Unit <- matching_turn(String.eq(foreign,"0\n"))
         +prompt : String <- supplied_task(task,supplied)

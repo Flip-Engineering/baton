@@ -33,7 +33,7 @@ law principal_startup_checks_assignment_and_operator_scope:
   for +model: String
   for +effort: String
   for +cwd: String
-  {Control.start_admission(session,harness,model,effort,cwd) == ("(" ++ C.q(session) ++ "<>'operator' AND " ++ C.q(session) ++ "<>'' AND " ++ C.q(harness) ++ " IN ('codex','omp','muse','claude-code','dsh','agy') AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ") OR EXISTS(SELECT 1 FROM sessions WHERE " ++ Control.principal_matches(session,harness,model,effort,cwd) ++ ")) AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id='operator') OR EXISTS(SELECT 1 FROM sessions WHERE id='operator' AND parent IS NULL AND ((harness='operator' AND NOT EXISTS(SELECT 1 FROM session_roles WHERE session='operator')) OR " ++ C.assigned_role("sessions.id") ++ "='operator'))))") : String}
+  {Control.start_admission(session,harness,model,effort,cwd) == ("(" ++ C.q(session) ++ "<>'operator' AND " ++ C.q(session) ++ "<>'' AND " ++ C.q(harness) ++ " IN ('codex','omp','muse','claude-code','dsh','antigravity') AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ") OR EXISTS(SELECT 1 FROM sessions WHERE " ++ Control.principal_matches(session,harness,model,effort,cwd) ++ ")) AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id='operator') OR EXISTS(SELECT 1 FROM sessions WHERE id='operator' AND parent IS NULL AND ((harness='operator' AND NOT EXISTS(SELECT 1 FROM session_roles WHERE session='operator')) OR " ++ C.assigned_role("sessions.id") ++ "='operator'))))") : String}
 
 def principal_startup_checks_assignment_and_operator_scope(session,harness,model,effort,cwd):
   {==}
@@ -42,7 +42,7 @@ law native_receiver_checks_harness_stop_and_endpoint_admission:
   for +session: String
   for +endpoint: String
   for +cwd: String
-  {Control.receiver_admitted(session,endpoint,cwd) == ("(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code','dsh','agy')) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ Control.receiver_model(session) ++ " AND " ++ Control.receiver_directory(session,cwd) ++ ")") : String}
+  {Control.receiver_admitted(session,endpoint,cwd) == ("(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code','dsh','antigravity')) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ Control.receiver_model(session) ++ " AND " ++ Control.receiver_directory(session,cwd) ++ ")") : String}
 
 def native_receiver_checks_harness_stop_and_endpoint_admission(session,endpoint,cwd):
   {==}
@@ -103,7 +103,7 @@ def principal_startup_validates_before_assignment_and_dispatch(db,session,harnes
 
 law detached_turn_requires_a_recruited_active_supported_player:
   for +player: String
-  {Control.turn_admission_sql(player) == ("SELECT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(player) ++ " AND parent IS NOT NULL AND workspace<>'' AND harness IN ('codex','omp','muse','claude-code','dsh','agy') AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ ");") : String}
+  {Control.turn_admission_sql(player) == ("SELECT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(player) ++ " AND parent IS NOT NULL AND workspace<>'' AND harness IN ('codex','omp','muse','claude-code','dsh','antigravity') AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ ");") : String}
 
 def detached_turn_requires_a_recruited_active_supported_player(player):
   {==}
