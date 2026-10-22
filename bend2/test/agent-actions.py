@@ -666,6 +666,18 @@ class AgentActions(unittest.TestCase):
                 self.assertEqual(self.legacy('session', 'worker-a')['taskCompletion'], state)
         current = self.action('worker-a', 'completion-request', '--text',
                               'New bounded assignment handled.')[0]['id']
+        state = self.legacy('session', 'worker-a')['taskCompletion']
+        self.assertEqual(state['requestId'], current)
+        self.assertTrue(state['open'])
+        before = self.stored_messages()
+        for arguments in (('--request', older),
+                          ('--to', 'worker-a', '--request', older)):
+            with self.subTest(arguments=arguments):
+                refused = self.action('root', 'completion-confirmed', *arguments)[0]
+                self.assertEqual(refused['status'], 'refused')
+                self.assertIn('older assignment', refused['admission']['cause'])
+                self.assertEqual(self.stored_messages(), before)
+                self.assertEqual(self.legacy('session', 'worker-a')['taskCompletion'], state)
         explicit = self.action('root', 'completion-confirmed', '--to', 'worker-a',
                                '--request', current)[0]
         self.assertEqual(explicit['status'], 'admitted')
