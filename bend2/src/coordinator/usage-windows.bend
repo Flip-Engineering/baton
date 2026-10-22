@@ -274,8 +274,15 @@ def now_ms() -> String:
 def window_match_sql(+harness: String, +provider: String, +account: String) -> String:
   "harness=" ++ C.q(harness) ++ " AND provider=" ++ C.q(provider) ++ " AND (account=" ++ C.q(account) ++ " OR account='')"
 
+# A provider time with a clock and no UTC designator is China Standard Time (UTC+8,
+# no daylight saving). z.ai writes "Your limit will reset at 2026-10-23 06:54:13"
+# without an offset, so the instant is that clock minus eight hours. A time with
+# Z or an explicit offset is read as written, and a date-only text as UTC.
 def parsed_reset_sql(+reset_text: String) -> String:
-  Bool.pick(String,String.is_empty(reset_text),"NULL","(SELECT CAST(strftime('%s'," ++ C.q(reset_text) ++ ") AS INTEGER)*1000)")
+  Bool.pick(String,String.is_empty(reset_text),"NULL","(SELECT CAST(strftime('%s'," ++ C.q(reset_text) ++ "," ++ offsetless_clock_modifier_sql(reset_text) ++ ") AS INTEGER)*1000)")
+
+def offsetless_clock_modifier_sql(+text: String) -> String:
+  "CASE WHEN length(" ++ C.q(text) ++ ")>10 AND " ++ C.q(text) ++ " NOT GLOB '*[Zz+]*' AND substr(" ++ C.q(text) ++ ",11) NOT LIKE '%-%' THEN '-8 hours' ELSE '+0 seconds' END"
 
 # The upper bound, in milliseconds, of a named subscription window. A rolling window
 # that started at or before a refusal ends by the refusal time plus its length. A
@@ -291,10 +298,19 @@ def probe_interval_ms() -> String:
 
 # The reset recorded for a refusal: the provider's own time when the text names one,
 # else the upper bound of a named window, else NULL.
+# The window bound as an SQL instant, or NULL for a window with no fixed length.
+def bound_sql(+window: String) -> String:
+  Bool.pick(String,String.is_empty(window_length_ms(window)),"NULL","(" ++ now_ms() ++ "+" ++ window_length_ms(window) ++ ")")
+
+# A parsed provider reset is rejected when it lies further after the refusal than the
+# window's own length (a 5-hour window cannot reset more than 5 hours after a refusal),
+# or when it does not parse. A rejected or missing time falls back to the window bound.
+# A window with no fixed length keeps the parsed time.
 def reset_or_bound_sql(+reset_text: String, +window: String) -> String:
   Bool.pick(String,String.is_empty(reset_text),
-    Bool.pick(String,String.is_empty(window_length_ms(window)),"NULL","(" ++ now_ms() ++ "+" ++ window_length_ms(window) ++ ")"),
-    parsed_reset_sql(reset_text))
+    bound_sql(window),
+    Bool.pick(String,String.is_empty(window_length_ms(window)),parsed_reset_sql(reset_text),
+      "(CASE WHEN " ++ parsed_reset_sql(reset_text) ++ " IS NULL OR " ++ parsed_reset_sql(reset_text) ++ " > " ++ now_ms() ++ "+" ++ window_length_ms(window) ++ " THEN " ++ bound_sql(window) ++ " ELSE " ++ parsed_reset_sql(reset_text) ++ " END)"))
 
 # The instant the gate reads for an exhausted state row: the recorded reset, or the
 # re-probe instant when none is recorded. The alias is "w." or "" for a bare row. The
@@ -756,10 +772,4 @@ law monthly_window_has_no_bound:
   {reset_or_bound_sql("","monthly") == "NULL" : String}
 
 def monthly_window_has_no_bound():
-  {==}
-
-law provider_reset_text_wins_over_window_bound:
-  {reset_or_bound_sql("2026-10-06 07:12:52","5-hour") == parsed_reset_sql("2026-10-06 07:12:52") : String}
-
-def provider_reset_text_wins_over_window_bound():
   {==}

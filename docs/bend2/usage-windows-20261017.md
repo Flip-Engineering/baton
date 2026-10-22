@@ -51,6 +51,13 @@ Three sources write observations:
    unnamed window stays NULL. A sentence-ending period after the timestamp is
    removed before parsing.
 
+   A clock with no UTC designator (z.ai writes "reset at 2026-10-23 06:54:13")
+   is China Standard Time, UTC+8 with no daylight saving, so it is converted by
+   subtracting eight hours. A date-only text is read as UTC. A parsed reset later
+   than the window's length after the refusal (5 hours for `5-hour`, 7 days for
+   `7-day`) is rejected and replaced by the window bound; a window with no fixed
+   length keeps the parsed time.
+
    The classification covers the Muse run terminal
    (`payload_type=run.terminal.failed`, `payload.kind=run_terminal`,
    `payload.terminal=failed`, diagnostic in `payload.reason`) and the observed

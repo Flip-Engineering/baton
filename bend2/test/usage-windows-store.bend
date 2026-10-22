@@ -190,12 +190,33 @@ def projection_cases(+db: String) -> IO(Unit):
     elapsed_state : Unit <- expect_projection(db,"proj","proj","5-hour","$.state","elapsed\n","projection-elapsed-matches-gate")
     IO.pure(Unit,Unit{})
 
+def zai_message(reset: String) -> String:
+  "provider-reported usage exhaustion: 429 Usage limit reached for 5 hour. Your limit will reset at " ++ reset ++ " (type=1308)"
+
+# z.ai writes its reset time as a China Standard Time clock with no offset (#1025). The
+# parser reads that clock as UTC+8. A reset further after the refusal than the 5-hour
+# window length is rejected and falls back to the window bound.
+def zai_cases(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    created : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('zai','root','omp','zai/glm-5.3-flash','high','','');")
+    offsetless : String <- read(db,"SELECT " ++ UW.parsed_reset_sql("2026-10-23 06:54:13") ++ ";")
+    expect("zai-clock-without-offset-is-utc-plus-8",String.eq(Tx.trim_nl(offsetless),"1792709653000"))
+    designated : String <- read(db,"SELECT " ++ UW.parsed_reset_sql("2026-10-23T06:54:13Z") ++ ";")
+    expect("explicit-z-is-read-as-written",String.eq(Tx.trim_nl(designated),"1792738453000"))
+    local_text : String <- read(db,"SELECT strftime('%Y-%m-%d %H:%M:%S','now','+2 hours','+8 hours');")
+    inside : Unit <- UW.record_cause(db,"zai","zai-kept","",zai_message(Tx.trim_nl(local_text)))
+    expect_read(db,"SELECT CASE WHEN ABS(resets_at-(CAST(strftime('%s','now','+2 hours') AS INTEGER)*1000))<5000 THEN 'kept' ELSE 'other' END FROM usage_windows WHERE message='zai-kept';","kept\n","in-window-zai-reset-is-kept")
+    far : Unit <- UW.record_cause(db,"zai","zai-capped","",zai_message("2999-01-01 00:00:00"))
+    expect_read(db,"SELECT CASE WHEN resets_at <= CAST(strftime('%s','now') AS INTEGER)*1000+18000000 THEN 'bounded' ELSE 'other' END FROM usage_windows WHERE message='zai-capped';","bounded\n","far-zai-reset-falls-back-to-window-bound")
+    IO.pure(Unit,Unit{})
+
 def main_args(args: List<String>) -> IO(Unit):
   match args:
     case +path <> script <> Nil{}: do IO<Unit>:
       setup(path)
       limit_case(path)
       probe_cases(path)
+      zai_cases(path)
       observe_cases(path)
       report_cases(path)
       refresh_cases(path,script)
