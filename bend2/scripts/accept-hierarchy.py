@@ -231,7 +231,9 @@ End your turn. No push, no changes outside the scratch directory.
                      'token: blue-green counts as one. Add an explicit blue-green regression test.')
     guidance = next(m for m in messages if m['sender'] == 'lead' and m['recipient'] == 'child-a'
                     and m['kind'] == 'guidance' and m['body'] == guidance_body)
-    assert guidance['receipt'], guidance
+    with sqlite3.connect(f'{db.as_uri()}?mode=ro', uri=True) as connection:
+        read_ids = {row[0] for row in connection.execute('SELECT message FROM message_reads')}
+    assert guidance['id'] in read_ids, guidance
     child_turns = {turn['id'] for turn in turns if turn['worker'] == 'child-a'}
     native_steer = []
     generation_facts = []
@@ -255,8 +257,8 @@ End your turn. No push, no changes outside the scratch directory.
     for child in ['child-a', 'child-b']:
         report = next(m for m in messages if m['sender'] == child and m['kind'] == 'report'
                       and any(turn['id'] == m['id'] and turn['worker'] == child for turn in turns))
-        assert report['recipient'] == 'lead' and report['receipt']
-    assert any(m['sender'] == 'lead' and m['recipient'] == 'root' and m['receipt']
+        assert report['recipient'] == 'lead' and report['id'] in read_ids
+    assert any(m['sender'] == 'lead' and m['recipient'] == 'root' and m['id'] in read_ids
                for m in messages)
     target = run('git', '-C', repo, 'rev-parse', 'hierarchy-target')
     lead = run('git', '-C', repo, 'rev-parse', 'hierarchy-lead')

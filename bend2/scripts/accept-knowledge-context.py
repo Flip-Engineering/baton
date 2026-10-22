@@ -59,7 +59,7 @@ def state(db):
             "SELECT name FROM sqlite_master WHERE type='table'")}
         return {table: [dict(row) for row in connection.execute(f'SELECT * FROM {table}')]
                 for table in ['sessions', 'messages', 'turns', 'knowledge',
-                              'knowledge_promotions', 'executions', 'session_stops']
+                              'knowledge_promotions', 'executions', 'session_stops', 'message_reads']
                 if table in tables}
 
 
@@ -317,13 +317,15 @@ def verify_phase(out, phase, run, before):
     assert call(out, 'inbox', session) == []
     new = [row for row in records(out) if row['wrapper_pid'] not in before]
     assert len(new) == 1 and new[0]['native_exit_code'] == 0, new
-    messages = state(out / 'state.db')['messages']
+    snapshot_state = state(out / 'state.db')
+    messages = snapshot_state['messages']
+    read_ids = {row['message'] for row in snapshot_state['message_reads']}
     seen = visible_finding(out, 'root' if phase == 'produce' else 'consumer')
     evidence_ids = {row['evidenceMessage']['id'] for row in seen
                     if row['id'] in (FINDING, LOCAL_FINDING)}
     reports = [row for row in messages if row['sender'] == session
                and row['kind'] == 'report' and row['id'] not in evidence_ids
-               and row['receipt'] is None]
+               and row['id'] not in read_ids]
     assert reports and all(row['body'].strip() for row in reports)
     deliveries = [json.loads(line) for line in (out / 'parent-deliveries.jsonl').read_text().splitlines()]
     delivered = {row['message']['id']: row['message'] for row in deliveries}
@@ -427,7 +429,7 @@ def collect(out, ident):
         message = dict(row)
     append(out / 'parent-deliveries.jsonl',
            {'received_unix': time.time(), 'pid': os.getpid(), 'message': message})
-    print(json.dumps({'received': ident, 'receipt_written': False}))
+    print(json.dumps({'received': ident, 'read_recorded': False}))
 
 
 def observe_frame(frame, number, offset):

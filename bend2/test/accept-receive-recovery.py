@@ -65,8 +65,8 @@ else:
 git('add',str(document.relative_to(repo)))
 git('commit','-q','-m',ident)
 commit=git('rev-parse','HEAD')
-ack=subprocess.run([str(out/'baton2'),str(out/'state.db'),'ack',ident,'worker',
-                    'controlled native reviewed '+ident],check=True,text=True,capture_output=True)
+ack=subprocess.run([str(out/'baton2'),str(out/'state.db'),'as','worker','read',ident],
+                    check=True,text=True,capture_output=True)
 text=marker+' '+previous+' '+commit+'; controlled native protocol, no model or login store.'
 emit({'type':'item.completed','item':{'id':'answer','type':'agent_message','text':text}})
 emit({'type':'turn.completed','usage':{'input_tokens':0,'output_tokens':0}})

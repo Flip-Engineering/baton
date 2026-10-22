@@ -278,7 +278,7 @@ class OmpRootAdapter(unittest.TestCase):
             f'cmd={ [str(EXE), str(self.db)]!r}\n'
             'row=json.loads(subprocess.check_output(cmd+["delivery",sys.argv[-1]],text=True))\n'
             f'with pathlib.Path({str(root_calls)!r}).open("a") as f: f.write(json.dumps(row)+"\\n")\n'
-            'subprocess.run(cmd+["ack",row["id"],"root","root reviewed lead"],check=True)\n')
+            'subprocess.run(cmd+["as","root","read",row["id"]],check=True)\n')
         self.coord('attach', 'root', 'codex', 'native-root',
                    json.dumps([sys.executable, str(root_endpoint)]))
         self.register('lead', 'root', 'omp', 'lead-model', 'low', str(temp), 'lead-branch', 'base')
@@ -292,7 +292,7 @@ class OmpRootAdapter(unittest.TestCase):
             'ident="first" if "[id: first]" in prompt else "second"\n' +
             f'with pathlib.Path({str(calls)!r}).open("a") as f: f.write(json.dumps({{"args":sys.argv[1:],"cwd":os.getcwd(),"prompt":prompt}})+"\\n")\n' +
             'print(json.dumps({"type":"session","id":"native-lead"}),flush=True)\n'
-            'subprocess.run(cmd+["ack",ident,"lead","lead reviewed child"],check=True,stdout=subprocess.DEVNULL)\n'
+            'subprocess.run(cmd+["as","lead","read",ident],check=True,stdout=subprocess.DEVNULL)\n'
             'print(json.dumps({"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Reviewed and landed "+ident}]}}),flush=True)\n'
             'print(json.dumps({"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"Reviewed and landed "+ident}]}],"isTerminal":True}),flush=True)\n'
             'sys.stdin.read()\n')
@@ -342,7 +342,7 @@ class OmpRootAdapter(unittest.TestCase):
         native.write_text('#!' + sys.executable + '\nimport json,os,pathlib,subprocess,sys\n'
             + 'native_id="saved-omp"\n' + RPC_INPUT
             + f'pathlib.Path({str(calls)!r}).write_text(json.dumps({{"argv":sys.argv[1:],"cwd":os.getcwd(),"prompt":prompt}}))\n'
-            + f'subprocess.run({[str(EXE), str(self.db), "ack", "selected-report", associate, "selected-reviewed"]!r},check=True,stdout=subprocess.DEVNULL)\n'
+            + f'subprocess.run({[str(EXE), str(self.db), "as", associate, "read", "selected-report"]!r},check=True,stdout=subprocess.DEVNULL)\n'
             + 'print(json.dumps({"type":"session","id":"saved-omp"}),flush=True)\n'
             + 'print(json.dumps({"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Selected Associate reviewed."}]}}),flush=True)\n'
             + 'print(json.dumps({"type":"agent_end","isTerminal":True,"messages":[{"role":"assistant","content":[{"type":"text","text":"Selected Associate reviewed."}]}]}),flush=True)\n'
@@ -462,7 +462,7 @@ class OmpRootAdapter(unittest.TestCase):
             f'with pathlib.Path({str(calls)!r}).open("a") as f:f.write(json.dumps({{"argv":sys.argv[1:],"prompt":body}})+"\\n")\n' +
             'ident="first" if "[id: first]" in body else ("during-turn" if "[id: during-turn]" in body else "second")\n' +
             'print(\'{"type": "session", "id": "native-root"}\',flush=True)\n' +
-            f'subprocess.run({[str(EXE), str(self.db), "ack"]!r}+[ident,"root","reviewed"],check=True,stdout=subprocess.DEVNULL)\n' +
+            f'subprocess.run({[str(EXE), str(self.db), "as", "root", "read"]!r}+[ident],check=True,stdout=subprocess.DEVNULL)\n' +
             'if ident=="first":\n' +
             f' subprocess.run({[str(EXE), str(self.db), "report", "during-turn", "sender", "Later report during the live turn."]!r},check=True,stdout=subprocess.DEVNULL)\n' +
             'print(\'{"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "Reviewed"}]}}\')\n' +
@@ -722,10 +722,10 @@ class OmpRootEndToEnd(unittest.TestCase):
             'echo \'{"type":"session","id":"mock"}\'\n'
             'echo \'{"type":"turn_start"}\'\n'
             # Simulate bash tool calls that ack and land
-            f'{EXE} {self.db} ack turn-1 root omp-root-ack\n'
+            f'{EXE} {self.db} as root read turn-1\n'
             f'{EXE} {self.db} land w1 {self.repo} main\n'
-            'echo \'{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"Acknowledged and landed."}]}}\'\n'
-            'echo \'{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"Acknowledged and landed."}]}]}\'\n'
+            'echo \'{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"Read and landed."}]}}\'\n'
+            'echo \'{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"Read and landed."}]}]}\'\n'
         )
         mock_omp.chmod(0o755)
 
@@ -738,7 +738,7 @@ class OmpRootEndToEnd(unittest.TestCase):
 
         # 5. Verify the message was acknowledged.
         inbox = json.loads(self.coord('inbox', 'root'))
-        self.assertEqual(len(inbox), 0, 'Root inbox should be empty after ack')
+        self.assertEqual(len(inbox), 0, 'Root inbox should be empty after the read')
 
         # 6. Verify the target branch advanced.
         main_tip = self.git('rev-parse', 'main').strip()
