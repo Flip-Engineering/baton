@@ -949,7 +949,7 @@ def recovery_arguments(args: List<&2,String>) -> List<&2,String>:
       [executable,flag,db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native]
     case other: other
 
-def recover_owned_attached(+db: String, +session: String, id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +lock: U32, again: String -> IO(Result<&1,&1,U32 & String,Unit>), attached: Result<&1,&1,U32 & String,U32>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def recover_owned_attached(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +lock: U32, again: String -> IO(Result<&1,&1,U32 & String,Unit>), attached: Result<&1,&1,U32 & String,U32>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match attached:
     case Fail{error}: report_recovery_pass(db,session,id,directory,Fail{error})
     case Done{+handle}: do IO<Result<&1,&1,U32 & String,Unit>>:
