@@ -366,8 +366,8 @@ Continue your existing conversation and inspect your previous committed example.
 Extend {DOCUMENT} with a brief contributor note explaining what a busy receive
 returns and how an observer recovery uses the retained attempt. Cite the relevant
 source paths, and state the implemented recovery scope precisely. Verify the
-claims against the runtime source, then commit the document update. Acknowledge
-the assigned input, then return a final response beginning RECOVERY_FOLLOWUP_DONE with
+claims against the runtime source, then commit the document update and return
+a final response beginning RECOVERY_FOLLOWUP_DONE with
 both your previous commit hash and the new one. Do not repeat the checkpoint tool.
 '''
     receive = ['receive', 'worker', str(wrapper), args.model, args.effort,

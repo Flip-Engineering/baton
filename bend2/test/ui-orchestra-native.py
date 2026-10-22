@@ -364,7 +364,9 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
                             for row in rows))
         with sqlite3.connect(self.db) as db:
             pending_inputs = db.execute('''SELECT id, kind, sender, receipt FROM messages
-                                             WHERE recipient='worker' AND receipt IS NULL
+                                             WHERE recipient='worker'
+                                               AND NOT EXISTS (SELECT 1 FROM message_reads r
+                                                                WHERE r.message=messages.id AND r.recipient=messages.recipient)
                                                AND kind IN ('task', 'guidance', 'recovery')
                                                AND NOT EXISTS (SELECT 1 FROM session_stops
                                                                 WHERE session='worker')

@@ -91,7 +91,7 @@ def main():
             (seed / dependency).symlink_to((ROOT / dependency).resolve(), target_is_directory=True)
     scratch = seed / '.scratch/bend2'
     scratch.mkdir(parents=True)
-    for name in ('baton2', 'process-test', 'process-test.c', 'instance-test', 'git-test', 'land-test'):
+    for name in ('baton2', 'process-test', 'process-test.c', 'codex-proxy-test', 'instance-test', 'git-test', 'land-test'):
         shutil.copy2(ROOT / '.scratch/bend2' / name, scratch / name)
     python = sys.argv[1]
     queue = [{'label': path.name, 'argv': [python, 'bend2/test/' + path.name]}

@@ -526,7 +526,7 @@ def common_task(out):
 Use the supplied native launchers and existing login. Keep credentials, global
 configuration, historical trials and other checkouts unchanged. Preserve this
 run's sessions, branches and worktrees. Do not push. Read complete incoming input
-with `"$B2" "$DB" inbox`; Baton records the complete reads internally.
+with `"$B2" inbox`; Baton records the complete reads internally.
 Baton resolves the actor and handling state. Supply complete task and report
 text directly to Baton. Run only the selected Python checks.
 If a task cannot be completed, explain the concrete failure in your parent report.
@@ -548,7 +548,7 @@ def lead_task(out, run):
 You are the Kimi Associate Conductor, session lead under Principal Conductor root.
 Deliver the two assigned changes through DeepSeek and Muse. Review their actual
 diffs and tests, then land them. Your native final response reports to root.
-Acknowledge each handled task/report. Do not issue a duplicate manual report.
+Read complete tasks and reports. Do not issue a duplicate manual report.
 
 Recruit the two Players with these commands:
 "$B2" "$DB" recruit --session deepseek --harness omp --model "$DEEPSEEK_MODEL" --effort "$DEEPSEEK_EFFORT" --repo "$REPO" --branch hierarchy-deepseek --path "$STATE/deepseek" --base hierarchy-lead
@@ -604,9 +604,9 @@ and assign its role with these commands:
 "$B2" "$DB" recruit --session lead --harness omp --model "$ASSOCIATE_MODEL" --effort "$ASSOCIATE_EFFORT" --repo "$REPO" --branch hierarchy-lead --path "$STATE/lead" --base bend2-trial
 "$B2" "$DB" role --session lead --role associate-conductor
 Run `"$PYTHON" "$STATE/acceptance.py" dispatch-lead "$STATE"` once. It dispatches
-the full task and configures the supplied lead wrapper. Acknowledge your handled
-input, then finish this turn. Each Associate Conductor report resumes this same
-Principal Conductor conversation. Read and review progress reports.
+the full task and configures the supplied lead wrapper. Read the complete
+input, then finish this native turn. Each Associate Conductor report resumes this same
+Principal Conductor conversation. Read and review complete progress reports.
 
 On LEAD_READY, independently inspect both Player diffs, their bindings, guidance
 receipt, the lead branch diff and all selected checks. Run

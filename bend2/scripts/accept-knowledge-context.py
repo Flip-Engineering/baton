@@ -209,8 +209,8 @@ def task_text(out, phase):
 Read AGENTS.md. Do not recruit, push, promote findings, change credentials or
 global configuration, stop processes, or run model sessions yourself. Preserve
 the existing source. Use the scoped knowledge command for retrieval; do not read
-the coordinator SQLite file or another Player's workspace. Acknowledge this
-task after reading it completely with `{cli} inbox`; Baton records the read internally.
+the coordinator SQLite file or another Player's workspace. Read this
+task completely with `{cli} inbox`; Baton records the read internally.
 End your native turn after completing the task so the parent receives its report.
 '''
     if phase == 'produce':

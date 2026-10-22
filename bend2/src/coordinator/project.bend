@@ -237,7 +237,7 @@ def resume_answer(db: String, +session: String, +oldest: String, result: Result<
 def resume_deliver(+db: String, session: String, +oldest: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String, Store.commit(db, C.Delivery{oldest}))
-    result : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db, oldest, "1", Tx.trim_nl(saved))
+    result : Result<&1,&1,U32 & String,String> <- Delivery.redeliver(db, oldest, "1", Tx.trim_nl(saved))
     resume_answer(db, session, oldest, result)
 
 # A Codex session without an endpoint still has the supported native queue.
