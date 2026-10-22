@@ -335,14 +335,103 @@ def codex_result_sql(source: String) -> String:
   "WITH frames(value) AS (SELECT " ++ events ++ ") SELECT json_object('type','result','is_error',json_extract(e.value,'$.type')='turn.failed','nativeEvent',json(e.value),'result',CASE WHEN json_extract(e.value,'$.type')='turn.failed' THEN json_extract(e.value,'$.error.message') ELSE (SELECT json_extract(m.value,'$.item.text') FROM json_each(frames.value) m WHERE m.key<e.key AND json_extract(m.value,'$.type')='item.completed' AND json_extract(m.value,'$.item.type')='agent_message' ORDER BY m.key DESC LIMIT 1) END) FROM frames,json_each(frames.value) e WHERE json_extract(e.value,'$.type') IN ('turn.completed','turn.failed') ORDER BY e.key DESC LIMIT 1;"
 
 # Keep this invocation's latest Codex assistant message and terminal event.
+type CodexState is Type:
+  CodexSpanState{message: String, terminal: String}
+  CodexLegacyState{value: String}
+
+def codex_state_decode(+value: String, lines: List<&2,String>) -> CodexState:
+  match lines:
+    case tag <> message <> terminal <> Nil{}:
+      Bool.pick(CodexState,String.eq(tag,"codex-span-v1"),CodexSpanState{message,terminal},CodexLegacyState{value})
+    case other: CodexLegacyState{value}
+
+def codex_state_parts(+value: String) -> CodexState:
+  codex_state_decode(value,String.split(value,Char.from_u32(10)))
+
+def codex_state_encode(+message: String, +terminal: String) -> String:
+  "codex-span-v1\n" ++ Bool.pick(String,String.is_empty(message),"-",message) ++ "\n" ++ Bool.pick(String,String.is_empty(terminal),"-",terminal)
+
+def codex_state_replace_message(state: CodexState, token: String) -> String:
+  match state:
+    case CodexSpanState{message,+terminal}: codex_state_encode(token,Bool.pick(String,String.eq(terminal,"-"),"",terminal))
+    case CodexLegacyState{value}: codex_state_encode(token,"")
+
+def codex_state_replace_terminal(state: CodexState, +terminal_value: String) -> String:
+  match state:
+    case CodexSpanState{+message,terminal}: codex_state_encode(Bool.pick(String,String.eq(message,"-"),"",message),terminal_value)
+    case CodexLegacyState{+value}: Bool.pick(String,String.is_empty(value),terminal_value,value ++ "\n" ++ terminal_value)
+
+def codex_span_result_sql(+message_value: String, +terminal_value: String) -> String:
+  "WITH message(value) AS (VALUES(" ++ message_value ++ ")), terminal(value) AS (VALUES(" ++ terminal_value ++ ")) SELECT json_object('type','result','is_error',json_extract(terminal.value,'$.type')='turn.failed','nativeEvent',json(terminal.value),'result',CASE WHEN json_extract(terminal.value,'$.type')='turn.failed' THEN json_extract(terminal.value,'$.error.message') ELSE json_extract(message.value,'$.item.text') END) AS value FROM message,terminal WHERE json_valid(terminal.value) AND json_extract(terminal.value,'$.type') IN ('turn.completed','turn.failed')"
+
+def codex_span_observe_sql(+id: String, +player: String, +message_value: String, +terminal_value: String, sealed: Bool) -> String:
+  +frame = C.observation_frame()
+  +event = codex_span_result_sql(message_value,terminal_value)
+  "BEGIN IMMEDIATE;CREATE TEMP TABLE baton_observation_frame(value TEXT NOT NULL);"
+  ++ "INSERT INTO temp.baton_observation_frame(value) SELECT value FROM (" ++ event ++ ") WHERE json_valid(value);"
+  ++ C.observe_identity_sql_expr(player,frame)
+  ++ Bool.pick(String,sealed,"",C.completion_sql_expr(id,player,frame))
+  ++ "SELECT coalesce((SELECT json_object('type','result','is_error',json_extract(value,'$.is_error')) FROM temp.baton_observation_frame),'');"
+  ++ "DROP TABLE temp.baton_observation_frame;COMMIT;"
+
+def codex_span_observe_fields(+db: String, +player: String, +id: String, +spool: String, +offset: String, +length: String, +message_value: String, +terminal_value: String, sealed: Bool) -> IO(String):
+  do IO<String>:
+    recorded : String <- IO.try(String,DB.Sql.query(db,codex_report_recorded_sql(player,id)))
+    +effective_seal : Bool <- IO.pure(Bool,Bool.or(sealed,String.eq(recorded,"1\n")))
+    ensured : Unit <- Store.ensure_before_begin(db)
+    committed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_span(db,spool,offset,length,codex_span_observe_sql(id,player,message_value,terminal_value,effective_seal))
+    +saved : String <- IO.try(String,Store.publish_after_commit(db,committed))
+    IO.pure(String,Subs.last_line(Tx.split_lines(Tx.trim_nl(saved))))
+
+def codex_span_observe(db: String, player: String, id: String, span: Frame.FrameSpan, terminal: String, sealed: Bool) -> IO(String):
+  match span:
+    case Frame.FrameSpan{spool,offset,length}: codex_span_observe_fields(db,player,id,spool,offset,length,"?1",C.q(terminal),sealed)
+
+def codex_span_observe_terminal(db: String, player: String, id: String, span: Frame.FrameSpan, sealed: Bool) -> IO(String):
+  match span:
+    case Frame.FrameSpan{spool,offset,length}: codex_span_observe_fields(db,player,id,spool,offset,length,"NULL","?1",sealed)
+
+def codex_span_finished_event_span(db: String, span: Maybe<Frame.FrameSpan>, +terminal: String) -> IO(String):
+  match span:
+    case Some{+span}: do IO<String>:
+      value : String <- IO.try(String,DB.Sql.query_span(db,Frame.spool(span),Frame.offset(span),Frame.length(span),codex_span_result_sql("?1",C.q(terminal))))
+      IO.pure(String,Tx.trim_nl(value))
+    case None{}: do IO<String>:
+      value : String <- IO.try(String,DB.Sql.query(db,codex_span_result_sql("NULL",C.q(terminal))))
+      IO.pure(String,Tx.trim_nl(value))
+
+def codex_span_finished_event(db: String, +message: String, +terminal: String) -> IO(String):
+  codex_span_finished_event_span(db,Frame.span_of(message),terminal)
+
+def codex_span_finished_dispatch(+db: String, +player: String, +id: String, span: Maybe<Frame.FrameSpan>, +terminal: String, sealed: Bool) -> IO(String):
+  match span:
+    case Some{+value}: codex_span_observe(db,player,id,value,terminal,sealed)
+    case None{}: do IO<String>:
+      +event : String <- codex_span_finished_event_span(db,None{},terminal)
+      saved : Unit <- codex_report(db,player,id,event,String.is_empty(event),sealed)
+      IO.pure(String,event)
+
+def codex_span_terminal_dispatch(+db: String, +player: String, +id: String, message: String, terminal_span: Maybe<Frame.FrameSpan>, +terminal: String, sealed: Bool) -> IO(String):
+  match terminal_span:
+    case Some{+span}: codex_span_observe_terminal(db,player,id,span,sealed)
+    case None{}: codex_span_finished_dispatch(db,player,id,Frame.span_of(message),terminal,sealed)
+
+def codex_finished_span(+db: String, player: String, id: String, state: CodexState, previous: String, sealed: Bool) -> IO(String):
+  match state:
+    case CodexSpanState{+message,+terminal}:
+      +terminal_value = Bool.pick(String,String.eq(terminal,"-"),previous,terminal)
+      codex_span_terminal_dispatch(db,player,id,message,Frame.span_of(terminal_value),terminal_value,sealed)
+    case CodexLegacyState{+value}:
+      do IO<String>:
+        +bounded_source : String <- IO.pure(String,Bool.pick(String,String.is_empty(value),previous,value))
+        +event : String <- IO.try(String,DB.Sql.query(db,codex_result_sql(bounded_source)))
+        saved : Unit <- codex_report(db,player,id,event,String.is_empty(event),sealed)
+        IO.pure(String,event)
+
 def codex_finished(+db: String, player: String, id: String, +source: String, previous: String, codex: Bool, sealed: Bool) -> IO(String):
   match codex:
     case False{}: IO.pure(String,previous)
-    case True{}: do IO<String>:
-      +bounded_source : String <- IO.pure(String,Bool.pick(String,String.is_empty(source),previous,source))
-      +event : String <- IO.try(String,DB.Sql.query(db,codex_result_sql(bounded_source)))
-      saved : Unit <- codex_report(db,player,id,event,String.is_empty(event),sealed)
-      IO.pure(String,event)
+    case True{}: codex_finished_span(db,player,id,codex_state_parts(source),previous,sealed)
 
 # The live issue-608-reclaim turn emitted its report in message_end, then an
 # agent_end with messages=[] and messageCount=352. Keep the latest assistant
@@ -672,9 +761,28 @@ def omp_frame_kind(+db: String, decoded: Frame.FrameDecoded, omp: Bool) -> IO(St
     case False{}: IO.pure(String,"")
     case True{}: omp_frame_kind_decoded(db,decoded)
 
-def codex_frame_kind(db: String, line: String) -> IO(String):
-  IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.item.type')='command_execution' AND json_type(value,'$.item.id')='text' AND json_extract(value,'$.item.id')<>'' THEN CASE json_extract(value,'$.type') WHEN 'item.started' THEN 'codex_command_start' WHEN 'item.completed' THEN 'codex_command_end' ELSE '' END ELSE '' END ELSE '' END FROM frame;"))
+def codex_frame_kind_sql(+value: String) -> String:
+  "WITH frame(value) AS (VALUES(" ++ value ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.item.type')='command_execution' AND json_type(value,'$.item.id')='text' AND json_extract(value,'$.item.id')<>'' THEN CASE json_extract(value,'$.type') WHEN 'item.started' THEN 'codex_command_start' WHEN 'item.completed' THEN 'codex_command_end' ELSE '' END ELSE '' END ELSE '' END FROM frame;"
 
+# A large frame is classified from a bounded prefix. The prefix either parses
+# already or is closed at the end of the string and object; this avoids parsing
+# the retained body while keeping the type checks exact for the generated frames.
+def codex_span_prefix_sql(+value: String) -> String:
+  "CASE WHEN json_valid(substr(" ++ value ++ ",1,4096)) THEN substr(" ++ value ++ ",1,4096) ELSE substr(" ++ value ++ ",1,4096) || char(34) || '}}' END"
+
+def codex_frame_kind_span_sql(+value: String) -> String:
+  "WITH frame(value) AS (SELECT " ++ codex_span_prefix_sql(value) ++ ") SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.item.type')='command_execution' AND json_type(value,'$.item.id')='text' AND json_extract(value,'$.item.id')<>'' THEN CASE json_extract(value,'$.type') WHEN 'item.started' THEN 'codex_command_start' WHEN 'item.completed' THEN 'codex_command_end' ELSE '' END ELSE '' END ELSE '' END FROM frame;"
+
+def codex_frame_kind_decoded(db: String, decoded: Frame.FrameDecoded, +line: String) -> IO(String):
+  match decoded:
+    case Frame.TextFrame{line}: IO.try(String,DB.Sql.query(db,codex_frame_kind_sql(C.q(line))))
+    case Frame.SpanFrame{spool,offset,length}: IO.try(String,DB.Sql.query_span(db,spool,offset,length,codex_frame_kind_span_sql("?1")))
+    case Frame.InvalidFrame{line}: IO.pure(String,"")
+
+
+
+def codex_frame_kind(db: String, decoded: Frame.FrameDecoded, +line: String) -> IO(String):
+  codex_frame_kind_decoded(db,decoded,line)
 
 # The requested selection is active only when the server answered the
 # set_event_filter request successfully with that exact selection: the echoed
@@ -700,7 +808,7 @@ def frame_kind_other(+db: String, decoded: Frame.FrameDecoded, +line: String, +h
 
 def frame_kind_selected(+db: String, decoded: Frame.FrameDecoded, +line: String, harness: String, codex: Bool) -> IO(String):
   match codex:
-    case True{}: codex_frame_kind(db,line)
+    case True{}: codex_frame_kind(db,decoded,line)
     case False{}: frame_kind_other(db,decoded,line,harness)
 
 def frame_kind(+db: String, decoded: Frame.FrameDecoded, +line: String, +harness: String) -> IO(String):
@@ -730,12 +838,92 @@ def terminal_event(event: String, previous: String, selected: Bool) -> IO(String
     case False{}: IO.pure(String,previous)
     case True{}: IO.pure(String,event)
 
-def codex_frames(db: String, +previous: String, +line: String, codex: Bool) -> IO(String):
+def codex_frame_role_sql(+value: String) -> String:
+  "WITH frame(value) AS (SELECT " ++ codex_span_prefix_sql(value) ++ ") SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.type')='item.completed' AND json_extract(value,'$.item.type')='agent_message' THEN 'assistant' WHEN json_extract(value,'$.type')='turn.failed' THEN 'terminal-error' WHEN json_extract(value,'$.type')='turn.completed' THEN 'terminal' ELSE '' END ELSE '' END FROM frame;"
+
+def codex_span_small_parsed(parsed: Maybe<&2,U32>) -> Bool:
+  match parsed:
+    case Some{+value}: U32.is_lt(value,4097)
+    case None{}: False{}
+
+def codex_span_small(+length: String) -> Bool:
+  codex_span_small_parsed(U32.read(length))
+
+def codex_frames_span_role(previous: String, decoded: Frame.FrameDecoded, spool: String, offset: String, length: String, role: String) -> IO(String):
+  match role:
+    case "assistant": IO.pure(String,codex_state_replace_message(codex_state_parts(previous),Frame.token_of(spool,offset,length)))
+    case "terminal-error": IO.pure(String,codex_state_encode("",Frame.token_of(spool,offset,length)))
+    case "terminal": do IO<String>:
+      frame_text : String <- IO.try(String,Frame.text_result_decoded(decoded))
+      IO.pure(String,codex_state_replace_terminal(codex_state_parts(previous),frame_text))
+    case other: IO.pure(String,previous)
+
+def codex_frames_text(db: String, +previous: String, +line: String) -> IO(String):
+  do IO<String>:
+    value : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")), prior(value) AS (VALUES(" ++ C.q(previous) ++ ")) SELECT CASE WHEN json_valid(frame.value) THEN CASE WHEN json_extract(frame.value,'$.type')='item.completed' AND json_extract(frame.value,'$.item.type')='agent_message' THEN frame.value WHEN json_extract(frame.value,'$.type') IN ('turn.completed','turn.failed') THEN CASE WHEN prior.value='' THEN frame.value ELSE prior.value || char(10) || frame.value END ELSE prior.value END ELSE prior.value END FROM frame,prior;"))
+    IO.pure(String,Tx.trim_nl(value))
+
+def codex_frames_span_branch(+db: String, +previous: String, +decoded: Frame.FrameDecoded, +spool: String, +offset: String, +length: String, small: Bool) -> IO(String):
+  match small:
+    case True{}: do IO<String>:
+      frame_text : String <- IO.try(String,Frame.text_result_decoded(decoded))
+      codex_frames_text(db,previous,frame_text)
+    case False{}: do IO<String>:
+      role : String <- IO.try(String,DB.Sql.query_span(db,spool,offset,length,codex_frame_role_sql("?1")))
+      +normalized_role : String <- IO.pure(String,Tx.trim_nl(role))
+      codex_frames_span_role(previous,decoded,spool,offset,length,normalized_role)
+
+def codex_frames_span(db: String, previous: String, +decoded: Frame.FrameDecoded) -> IO(String):
+  match decoded:
+    case Frame.SpanFrame{spool,offset,length}: codex_frames_span_branch(db,previous,decoded,spool,offset,length,codex_span_small(length))
+    case other: IO.pure(String,previous)
+
+
+def codex_frames_selected(db: String, +previous: String, +decoded: Frame.FrameDecoded, +line: String) -> IO(String):
+  match decoded:
+    case Frame.SpanFrame{spool,offset,length}: codex_frames_span(db,previous,decoded)
+    case Frame.TextFrame{line}: codex_frames_text(db,previous,line)
+    case Frame.InvalidFrame{line}: IO.pure(String,previous)
+
+def codex_frames(db: String, +previous: String, decoded: Frame.FrameDecoded, +line: String, codex: Bool) -> IO(String):
   match codex:
     case False{}: IO.pure(String,previous)
+    case True{}: codex_frames_selected(db,previous,decoded,line)
+
+# Generic Codex observation. Small spans are materialized and keep the exact
+# text. Large spans are classified from a bounded prefix and represented
+# without their body; the exact result remains readable from the full span.
+def codex_observation_span_sql(+value: String) -> String:
+  "WITH frame(value) AS (SELECT " ++ codex_span_prefix_sql(value) ++ ") SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.type')='item.completed' AND json_extract(value,'$.item.type')='agent_message' THEN json_object('type','item.completed','item',json_object('type','agent_message')) WHEN json_extract(value,'$.type')='turn.failed' THEN json_object('type','turn.failed') WHEN json_extract(value,'$.type')='turn.completed' THEN json_object('type','turn.completed') ELSE '' END ELSE '' END FROM frame;"
+
+def codex_observation_span_parsed(+db: String, +decoded: Frame.FrameDecoded, +spool: String, +offset: String, +length: String, small: Bool) -> IO(String):
+  match small:
     case True{}: do IO<String>:
-      value : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(line) ++ ") THEN CASE WHEN json_extract(" ++ C.q(line) ++ ",'$.type')='item.completed' AND json_extract(" ++ C.q(line) ++ ",'$.item.type')='agent_message' THEN " ++ C.q(line) ++ " WHEN json_extract(" ++ C.q(line) ++ ",'$.type') IN ('turn.completed','turn.failed') THEN CASE WHEN " ++ C.q(previous) ++ "='' THEN " ++ C.q(line) ++ " ELSE " ++ C.q(previous) ++ " || char(10) || " ++ C.q(line) ++ " END ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END;"))
+      value : String <- IO.try(String,Frame.text_result_decoded(decoded))
+      IO.pure(String,value)
+    case False{}: do IO<String>:
+      value : String <- IO.try(String,DB.Sql.query_span(db,spool,offset,length,codex_observation_span_sql("?1")))
       IO.pure(String,Tx.trim_nl(value))
+
+def codex_observation_span_branch(+db: String, +decoded: Frame.FrameDecoded) -> IO(String):
+  match decoded:
+    case Frame.SpanFrame{spool,offset,length}: codex_observation_span_parsed(db,decoded,spool,offset,length,codex_span_small(length))
+    case other: IO.pure(String,"")
+
+def codex_observation_decoded(+db: String, decoded: Frame.FrameDecoded, +line: String) -> IO(String):
+  match decoded:
+    case Frame.TextFrame{line}: IO.pure(String,line)
+    case other: codex_observation_span_branch(db,other)
+
+def frame_is_span(+decoded: Frame.FrameDecoded) -> Bool:
+  match decoded:
+    case Frame.SpanFrame{spool,offset,length}: True{}
+    case other: False{}
+
+def observed_frame_event(db: String, decoded: Frame.FrameDecoded, +line: String, +message: String, +activity: String, codex: Bool, omp: Bool, relevant: Bool) -> IO(String):
+  match codex:
+    case True{}: codex_observation_decoded(db,decoded,line)
+    case False{}: omp_terminal(db,decoded,message,activity,omp,relevant)
 
 # The checkpoint contains each incomplete identity's newest frame and stays
 # available when the native observer exits before its EOF handler runs.
@@ -940,7 +1128,7 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
     +message : String <- omp_message(db,decoded,last_message,message_frame)
     +activity_frame : Bool <- IO.pure(Bool,Bool.and(String.eq(harness,"omp\n"),Bool.or(String.eq(Tx.trim_nl(kind),"message_start"),String.eq(Tx.trim_nl(kind),"message_end"))))
     +activity : String <- omp_activity(db,decoded,Observer.omp_activity(checkpoint_state),activity_frame)
-    +raw_event : String <- omp_terminal(db,decoded,message,activity,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"agent_end")),Guidance.relevant(kind,String.eq(harness,"omp\n")))
+    +raw_event : String <- observed_frame_event(db,decoded,line,message,activity,String.eq(harness,"codex\n"),Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"agent_end")),Guidance.relevant(kind,String.eq(harness,"omp\n")))
     +event : String <- dsh_event(db,line,Bool.and(dsh,Dsh.admitted(Tx.trim_nl(kind))),raw_event)
     +kept : String <- Logs.retained(db,policy,Tx.trim_nl(kind),decoded,event,log)
     step : List<String> & String <- IO.pure(List<String> & String,Logs.frame_step(policy,Tx.trim_nl(kind),frame_key,kept,held))
@@ -967,7 +1155,7 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
       +ended : String <- terminal_event(event,terminal,terminal_selected)
       +closed_input : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,close_input(handle,Bool.and(Bool.not(monitor),Bool.and(String.eq(harness,"omp\n"),Bool.and(String.is_empty(terminal),Bool.not(String.is_empty(ended)))))))
       +codex_frame : Bool <- IO.pure(Bool,String.eq(harness,"codex\n"))
-      +codex_state : String <- codex_frames(db,codex_log,line,codex_frame)
+      +codex_state : String <- codex_frames(db,codex_log,decoded,line,codex_frame)
       +question_needed : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(attempt)),String.eq(kind,"extension_ui_request\n")))
       +question_result : Result<&1,&1,U32 & String,String> <- question_frame_result(question_needed,decoded,line)
       +question_frame : String <- IO.pure(String,question_frame_text(question_result))
@@ -978,7 +1166,7 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
       NativeRequests.with_observation(WakeRead,questions,wakes => question_error => question_incomplete => do IO<WakeRead>:
         +question_text : String <- IO.pure(String,question_error)
         +request_incomplete : Bool <- IO.pure(Bool,question_incomplete)
-        +checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(incomplete_observation),Bool.and(Bool.not(failed),Bool.and(Bool.not(request_incomplete),Bool.and(Bool.not(invalid),Bool.and(Bool.not(observation_store_failed(unshared_result(String,observed))),Bool.and(Bool.not(String.is_empty(attempt)),Observer.checkpoint_due_fields(checkpoint_state,next_checkpoint,message_frame,terminal_selected,codex_frame))))))))
+        +checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(incomplete_observation),Bool.and(Bool.not(failed),Bool.and(Bool.not(request_incomplete),Bool.and(Bool.not(invalid),Bool.and(Bool.not(observation_store_failed(unshared_result(String,observed))),Bool.and(Bool.not(String.is_empty(attempt)),Bool.or(Observer.checkpoint_due_fields(checkpoint_state,next_checkpoint,message_frame,terminal_selected,codex_frame),frame_is_span(decoded)))))))))
         +next_checkpoint_state : Observer.State <- Observer.checkpoint_state(spool,next_checkpoint,checkpoint_enabled)
         +checkpointed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,Observer.after_materialized_observation(db,handle,next_checkpoint_state,checkpoint_enabled,monitor,unshared_result(String,observed)))
         checkpoint_notice : Unit <- checkpoint_failure_notice(db,player,id,attempt,checkpoint_enabled,unshared_result(Unit,checkpointed))
@@ -1058,15 +1246,10 @@ def observed_result(monitor: Bool, observation: Outcome & List<Chan(Result<&1,&1
 
 # The retained process sends its initial input once. Reattachment reads the same
 # attempt from its first frame so native completion can be reconstructed.
-@unsafe
-def retained_output(+db: String, +player: String, +id: String, +log: String, +harness: String, +attempt: String, +directory: String, +handle: U32, +supplied_requested: String) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def retained_output_state(+db: String, +player: String, +id: String, +log: String, +harness: String, +attempt: String, +directory: String, +handle: U32, +supplied_requested: String, +generation: String, +monitor: Bool, +checkpoint_state: Observer.State) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
-    +generation : String <- IO.pure(String,generation_log(log,id))
-    +monitor : Bool <- Observer.monitor_handle(db,handle)
     +policy : Logs.Policy <- Logs.open_attempt(db,player,log,id)
     sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
-    output_present : Bool <- Logs.prepare_retained_output(generation)
-    +checkpoint_state : Observer.State <- Bool.pick(IO(Observer.State),Bool.or(monitor,output_present),Observer.restore(db,handle,monitor),Observer.reset_empty(db,handle,monitor))
     +resumed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,NativeRequests.resume(db,player,id,attempt,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(attempt)),String.is_empty(Observer.terminal(checkpoint_state))))))
     +resume_error : String <- IO.pure(String,append_write_error("",unshared_result(Unit,resumed)))
     +resume_failed : Bool <- IO.pure(Bool,checkpoint_write_failed(unshared_result(Unit,resumed)))
@@ -1075,7 +1258,7 @@ def retained_output(+db: String, +player: String, +id: String, +log: String, +ha
     +wake_sub : U32 <- IO.pure(U32,subscribe_handle(subscription))
     +wake_on : Bool <- IO.pure(Bool,subscribe_active(subscription))
     +spool : String <- IO.pure(String,directory ++ "/stdout")
-    +spanned : Bool <- IO.pure(Bool,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(attempt))))
+    +spanned : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(attempt)),Bool.or(String.eq(harness,"omp\n"),String.eq(harness,"codex\n"))))
     first : Result<&1,&1,U32 & String,WakeRead> <- next_wake(spool,handle,wake_sub,wake_on,spanned)
     cursor : String <- IO.pure(String,Observer.cursor(checkpoint_state))
     last_message : String <- IO.pure(String,Observer.last_message(checkpoint_state))
@@ -1088,6 +1271,20 @@ def retained_output(+db: String, +player: String, +id: String, +log: String, +ha
     held : String <- IO.pure(String,Observer.held(checkpoint_state))
     observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,generation,policy,held,False{},handle,harness,spool,spanned,cursor,last_message,primary,current,terminal,filter,requested,codex_log,resume_error,sender,attempt,checkpoint_state,resume_failed,monitor,wake_sub,wake_on,Nil{},first)
     observed_result(monitor,observation)
+
+def retained_output_restored(+db: String, +player: String, +id: String, +log: String, +harness: String, +attempt: String, +directory: String, +handle: U32, +supplied_requested: String, +generation: String, +monitor: Bool, restored: Observer.RestoreOutcome) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+  match restored:
+    case Observer.Restored{+state}: retained_output_state(db,player,id,log,harness,attempt,directory,handle,supplied_requested,generation,monitor,state)
+    case Observer.Rejected{+reason}: IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{"checkpoint rejected","",reason,True{}},Nil{}))
+
+@unsafe
+def retained_output(+db: String, +player: String, +id: String, +log: String, +harness: String, +attempt: String, +directory: String, +handle: U32, +supplied_requested: String) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+  do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
+    +generation : String <- IO.pure(String,generation_log(log,id))
+    +monitor : Bool <- Observer.monitor_handle(db,handle)
+    output_present : Bool <- Logs.prepare_retained_output(generation)
+    restored : Observer.RestoreOutcome <- Bool.pick(IO(Observer.RestoreOutcome),Bool.or(monitor,output_present),Observer.restore(db,handle,monitor),Observer.empty_checkpoint_outcome(db,handle,monitor))
+    retained_output_restored(db,player,id,log,harness,attempt,directory,handle,supplied_requested,generation,monitor,restored)
 
 def muse_retained_arguments(cmd: String, model: String, effort: String, prompt_file: String, +session: String) -> List<String>:
   Muse.resume_arguments(cmd,model,effort,prompt_file,session)
