@@ -1410,7 +1410,7 @@ typedef struct {
 static pthread_key_t baton_sql_read_key;
 static pthread_once_t baton_sql_read_once = PTHREAD_ONCE_INIT;
 static int baton_sql_read_key_ready;
-static _Atomic int baton_sql_read_live;
+static int baton_sql_read_live;
 
 static void baton_sql_read_cache_destroy(void *value);
 
