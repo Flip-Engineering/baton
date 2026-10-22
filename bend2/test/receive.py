@@ -1285,7 +1285,8 @@ class Receive(unittest.TestCase):
         self.assertTrue(helper.exists())
         registry.write_text('{}\n')
         helper.unlink()
-        self.assertFalse((package / 'bend2' / 'harness' / 'git-series.mjs').exists())
+        self.assertFalse((package / 'libexec' / 'baton2' / 'git-series.mjs').exists())
+        self.assertFalse((package.parent / 'bend2' / 'harness' / 'git-series.mjs').exists())
         self.action(first, body='Original result completed before the continuation.',
                     complete_task=False)
         self.assertEqual(first.readline(), b'')
@@ -1311,7 +1312,9 @@ class Receive(unittest.TestCase):
             self.assertFalse((attempt / name).exists(),
                              f'{name} exists in the failed setup attempt')
         initialization = self.initial_inputs('parent')
-        self.assertGreaterEqual(len(initialization), 2, initialization)
+        self.assertEqual(len(initialization), 2, initialization)
+        self.assertEqual(initialization[0]['attempt'], str(original_directory))
+        self.assertEqual(initialization[1]['attempt'], str(directory))
         self.assertEqual(self.coord('player', 'parent')['native'], native_id)
         report_id = original_id + ':continuation-failure'
 
