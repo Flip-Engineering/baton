@@ -51,25 +51,25 @@ class AgyPlayer(unittest.TestCase):
     def arg_list(self, *args):
         return self.values(self.out(*args), 'arg')
 
+    def fresh_argv(self):
+        return self.arg_list('argv-fresh', CMD, MODEL, EFFORT)
+
     def event(self, line):
         return json.loads(self.out('event', self.db, line).split('\t', 1)[1])
 
-    def test_arguments_compose_the_headless_stream_profile(self):
-        self.assertEqual(self.arg_list('arguments', CMD, MODEL, EFFORT), [
+    def test_fresh_argv_composes_the_headless_stream_profile(self):
+        self.assertEqual(self.fresh_argv(), [
             CMD, '--input-format', 'stream-json', '--output-format', 'stream-json',
             '--dangerously-skip-permissions', '--print-timeout', '0',
             '--model', MODEL, '--effort', EFFORT])
 
     def test_fresh_argv_has_no_conversation_flag(self):
-        args = self.arg_list('argv-fresh', CMD, MODEL, EFFORT, '')
-        self.assertEqual(args, self.arg_list('arguments', CMD, MODEL, EFFORT))
-        self.assertNotIn('--conversation', args)
+        self.assertNotIn('--conversation', self.fresh_argv())
 
     def test_resume_argv_appends_the_conversation_id_last(self):
         session = 'c622d4e6-ea22-4a9d-b6be-b365ab31d87f'
         args = self.arg_list('argv-resume', CMD, MODEL, EFFORT, session)
-        self.assertEqual(args, self.arg_list('arguments', CMD, MODEL, EFFORT)
-                         + ['--conversation', session])
+        self.assertEqual(args, self.fresh_argv() + ['--conversation', session])
 
     def test_user_frame_is_one_json_object_for_each_text(self):
         texts = [
@@ -151,8 +151,8 @@ class AgyPlayer(unittest.TestCase):
         self.assertEqual(usage, json.loads(line)['result']['usage'])
 
     def test_admission_covers_init_and_result_only(self):
-        for kind, admitted in (('init', 'true'), ('result', 'true'),
-                               ('step_update', 'false'), ('', 'false')):
+        for kind, admitted in (('init', 'yes'), ('result', 'yes'),
+                               ('step_update', 'no'), ('', 'no')):
             with self.subTest(kind=kind):
                 self.assertEqual(self.values(self.out('admitted', kind), 'admitted'),
                                  [admitted])
