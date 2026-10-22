@@ -1,6 +1,7 @@
 # Baton-level agy turn fixture. It launches the fake agy through the real player
-# launcher, writes the user frame, reads stdout to EOF, and projects each admitted
-# frame (init and result) into the session identity and the turn report SQL.
+# launcher, writes the user frame, closes stdin, reads stdout to EOF, and projects
+# each admitted frame (init and result) into the session identity and the turn
+# report SQL.
 # Mode `fresh` creates the database and starts a conversation. Mode `resume` reads the
 # native identity recorded by an earlier `fresh` run and resumes it. No model provider
 # is contacted.
@@ -43,6 +44,7 @@ def lines(+db: String, +mode: String, +handle: U32, next: Maybe<String>) -> IO(U
 def sent(+db: String, +mode: String, +handle: U32, text: String) -> IO(Unit):
   do IO<Unit>:
     written : Result<&1,&1,U32 & String,Unit> <- Agy.input(handle,text)
+    closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
     first : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
     lines(db,mode,handle,first)
 
