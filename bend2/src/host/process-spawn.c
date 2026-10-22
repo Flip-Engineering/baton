@@ -4907,6 +4907,12 @@ static int br_spool_try_line(BatonRetained *retained,BatonProcessCall *call) {
    of output commits a partial tail with its own length, mirroring
    br_spool_try_line. A silent or failed probe commits nothing. */
 static int br_spool_try_line_span(BatonRetained *retained,BatonProcessCall *call) {
+  /* The buffered tail came from an earlier read. Check a newly recorded child
+     error before consuming it, as an uncached read does. */
+  pthread_mutex_lock(&retained->state);
+  call->error=retained->error;
+  pthread_mutex_unlock(&retained->state);
+  if(call->error) return -1;
   uint64_t start=(uint64_t)retained->offset;
   if(retained->spool_state_offset!=retained->offset) {
     retained->spool_tail_length=0;

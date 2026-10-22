@@ -147,13 +147,47 @@ static int eof_case(const char *directory) {
   return 0;
 }
 
+
+static int buffered_error_case(const char *directory) {
+  char path[PATH_MAX];
+  if (snprintf(path, sizeof path, "%s/buffered-error", directory) >= (int)sizeof path)
+    return 1;
+  int fd = open(path, O_CREAT | O_TRUNC | O_RDWR | O_CLOEXEC, 0600);
+  if (fd < 0) return 1;
+  if (write_all(fd, "first\nsecond\n", 13)) { close(fd); return 1; }
+  BatonRetained retained;
+  memset(&retained, 0, sizeof retained);
+  retained.spool = fd;
+  retained.exited = 1;
+  pthread_mutex_init(&retained.state, NULL);
+  BatonProcessCall call;
+  memset(&call, 0, sizeof call);
+  if (br_spool_try_line_span(&retained, &call) != 1 ||
+      call.frame_start != 0 || call.frame_length != 5 ||
+      retained.offset != 6 || retained.spool_tail_length != 7) {
+    close(fd); return 1;
+  }
+  pthread_mutex_lock(&retained.state);
+  retained.error = EIO;
+  pthread_mutex_unlock(&retained.state);
+  memset(&call, 0, sizeof call);
+  if (br_spool_try_line_span(&retained, &call) != -1 ||
+      call.error != EIO || retained.offset != 6 ||
+      retained.spool_tail_length != 7) {
+    close(fd); return 1;
+  }
+  close(fd);
+  return 0;
+}
+
 int main(void) {
   char directory[] = "/tmp/baton-spool-line-XXXXXX";
   if (!mkdtemp(directory)) {
     fprintf(stderr, "mkdtemp: %s\n", strerror(errno));
     return 2;
   }
-  if (complete_case(directory) || partial_case(directory) || eof_case(directory)) {
+  if (complete_case(directory) || partial_case(directory) || eof_case(directory) ||
+      buffered_error_case(directory)) {
     fprintf(stderr, "spool line span fixture failure\n");
     return 1;
   }
