@@ -506,7 +506,7 @@ def failed_wake(starting: Bool, db: String, session: String, cursor: String, err
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
     case False{}: completed_wake(db,session,cursor,Fail{error})
 
-def wake_if_kept(db: String, session: String, cursor: String, superseded: Bool, finished: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def wake_if_kept(+db: String, +session: String, cursor: String, superseded: Bool, finished: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match superseded:
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,finished)
     case False{}: match finished:
