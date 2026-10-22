@@ -5,6 +5,7 @@
 #   launch CMD DIRECTORY MODEL EFFORT NATIVE INITIAL
 #   admit DB DIRECTORY CMD MODEL EFFORT NATIVE INITIAL
 #   shutdown DB
+#   --instance-owner DB   (the instance owner that Turn.retained_admit starts)
 import Base
 import ../src/coordinator/turn.bend as Turn
 import ../src/harness/dsh-player.bend as Dsh
@@ -63,7 +64,7 @@ def launch_mode(directory: String, cmd: String, model: String, effort: String, n
     launch : Result<&1,&1,U32 & String,Turn.RetainedLaunch> <- Turn.retained_launch_checked(unused_prepared(),False{},True{},"","",cmd,model,effort,native,False{},"",initial,False{},False{},"default",False{})
     launch_value(launch)
 
-def admit(+db: String, +directory: String, +cmd: String, +model: String, +effort: String, native: String, +initial: String) -> IO(Unit):
+def admit(+db: String, +directory: String, +cmd: String, model: String, effort: String, native: String, +initial: String) -> IO(Unit):
   do IO<Unit>:
     +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
     launch : Turn.RetainedLaunch <- IO.try(Turn.RetainedLaunch,Turn.retained_launch_checked(unused_prepared(),False{},True{},"","",cmd,model,effort,native,False{},"",initial,False{},False{},"default",False{}))
@@ -79,6 +80,8 @@ def run(args: List<String>) -> IO(Unit):
       launch_mode(directory,cmd,model,effort,native,initial)
     case "admit" <> db <> directory <> cmd <> model <> effort <> native <> initial <> Nil{}:
       admit(db,directory,cmd,model,effort,native,initial)
+    case "--instance-owner" <> db <> Nil{}:
+      IO.try(Unit,Custody.Instance.owner(db))
     case "shutdown" <> db <> Nil{}:
       shutdown(db)
     case other: IO.die(Unit,2,"usage: agy-retained launch|admit|shutdown ...")

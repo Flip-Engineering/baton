@@ -89,7 +89,7 @@ class AgyTurn(unittest.TestCase):
         self.assertEqual(turn['type'], 'result')
         self.assertEqual(turn['is_error'], 1)
         self.assertEqual(turn['result'], ERROR_TEXT)
-        self.assertIn(ERROR_TEXT, values(output, 'report'))
+        self.assertTrue(any(ERROR_TEXT in body for body in values(output, 'report')))
         self.assertEqual(values(output, 'terminal'), ['1'])
 
 

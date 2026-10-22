@@ -14,7 +14,7 @@ Environment:
 
 A fixture with a sibling .stderr file writes that file to stderr. A run with
 --conversation ID replays the fixture with each non-empty conversation_id value
-replaced by ID.
+replaced by ID. The replay keeps the compact separators that agy writes.
 
 The run exits 1 with a message on stderr when argv lacks
 `--input-format stream-json` or `--output-format stream-json`, or when stdin is
@@ -78,7 +78,7 @@ def replay(fixture, conversation):
         return
     for line in fixture.read_text(encoding='utf-8').splitlines():
         frame = with_conversation(json.loads(line), conversation)
-        sys.stdout.write(json.dumps(frame, ensure_ascii=False) + '\n')
+        sys.stdout.write(json.dumps(frame, ensure_ascii=False, separators=(',', ':')) + '\n')
 
 
 def main(argv):
