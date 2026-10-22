@@ -66,6 +66,37 @@ static void print_output(const char *name, const char *output) {
   printf("%s_END\n", name);
 }
 
+
+static int test_span_transaction(const char *database, const char *spool) {
+  char *output = NULL;
+  unsigned long long rchar = 0;
+  int code = 0;
+  if (run_span(database, spool, "BEGIN; SELECT length(?1);", &output, &rchar, &code))
+    return 1;
+  int failed = code != SQLITE_OK || !output || strcmp(output, "7\n") != 0;
+  free(output);
+  BatonSqlReadCache *cache = baton_sql_read_cache(0);
+  if (!failed && (!cache || !cache->db || !sqlite3_get_autocommit(cache->db))) {
+    fprintf(stderr, "fail span-transaction: read transaction remained open\n");
+    failed = 1;
+  }
+  if (failed) {
+    fprintf(stderr, "fail span-transaction: code=%d\n", code);
+    return 1;
+  }
+  if (run_span(database, spool, "SELECT length(?1);", &output, &rchar, &code))
+    return 1;
+  failed = code != SQLITE_OK || !output || strcmp(output, "7\n") != 0 ||
+           !cache || !sqlite3_get_autocommit(cache->db);
+  free(output);
+  if (failed) {
+    fprintf(stderr, "fail span-transaction-followup: code=%d\n", code);
+    return 1;
+  }
+  printf("ok span-transaction-rollback\n");
+  return 0;
+}
+
 int main(int argc, char **argv) {
   if (argc != 4) {
     fprintf(stderr, "usage: %s db1 db2 spool\n", argv[0]);
@@ -97,6 +128,7 @@ int main(int argc, char **argv) {
   printf("CACHE_LIVE_AFTER=%d\n", baton_sql_read_test_live());
   int failed = first_code != SQLITE_OK || second_code != SQLITE_OK ||
                third_code != SQLITE_OK;
+  if (!failed) failed = test_span_transaction(argv[1], argv[3]);
   free(first); free(second); free(third);
   return failed ? 1 : 0;
 }

@@ -142,6 +142,7 @@ class SpanCache(unittest.TestCase):
         self.assertEqual(cache_after, 1)
         self.assertLessEqual(second, first)
         self.assertLess(second, 8192)
+        self.assertIn('ok span-transaction-rollback', result.stdout)
         print('evidence', result.stdout.strip())
 
 

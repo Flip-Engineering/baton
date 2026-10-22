@@ -464,6 +464,15 @@ static void baton_sql_span_call(IoWork *w) {
     if (call->code != SQLITE_OK) {
       call->error = strdup(error ? error : sqlite3_errmsg(db));
       sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+    } else if (!sqlite3_get_autocommit(db)) {
+      /* A cached read connection outlives this call. Roll back any
+         transaction the query left open before the connection returns to the
+         cache, as the per-call close did. */
+      int rollback = sqlite3_exec(db, "ROLLBACK", NULL, NULL, &error);
+      if (rollback != SQLITE_OK || !sqlite3_get_autocommit(db)) {
+        call->code = rollback != SQLITE_OK ? rollback : SQLITE_ERROR;
+        call->error = strdup(error ? error : sqlite3_errmsg(db));
+      }
     }
     sqlite3_free(error);
   }
