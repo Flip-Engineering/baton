@@ -24,8 +24,11 @@ SCRIPTS.mkdir(parents=True)
 ENTRY = SOURCE / 'bend2/src/host/compile-queue.bend'
 ENTRY.parent.mkdir(parents=True)
 ENTRY.write_text('import Base\ndef main() -> IO(Unit): IO.pure(Unit,Unit{})\n')
-for name in ('bootstrap-compile-queue.sh', 'compile-queue.sh'):
+for name in ('bootstrap-compile-queue.sh', 'compile-queue.sh', 'bend-lineage-guard.sh'):
     shutil.copyfile(ROOT / 'bend2/scripts' / name, SCRIPTS / name)
+# The bootstrap runs the lineage guard, which reads the runtime pin beside scripts/.
+(SOURCE / 'bend2/toolchain').mkdir()
+shutil.copyfile(ROOT / 'bend2/toolchain/runtime-pin.txt', SOURCE / 'bend2/toolchain/runtime-pin.txt')
 REFERENCE = T / 'ref-compile-queue.sh'
 shutil.copyfile(SCRIPTS / 'compile-queue.sh', REFERENCE)
 FAKE = T / 'compiler'
