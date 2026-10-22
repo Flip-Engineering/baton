@@ -296,15 +296,10 @@ class McpRoot(unittest.TestCase):
                                  (original['native'], '')]:
             with self.subTest(native=native, endpoint=endpoint):
                 self.coord('connect', 'root', native, endpoint)
-                result = self.tool(proc, 'baton2_ack', ok=False)
-                self.assertTrue(result['isError'], result)
-                self.assertIn('handling', result['content'][0]['text'].lower())
                 self.assertEqual(self.native_reads(), before)
                 self.assertIsNone(json.loads(self.coord('delivery', 'connected-owned'))['receipt'])
         self.coord('connect', 'root', original['native'], original['endpoint'])
         self.coord('stop', 'root', 'connected-explicit-stop', 'Keep this operator stop.')
-        result = self.tool(proc, 'baton2_ack', ok=False)
-        self.assertTrue(result['isError'], result)
         self.assertEqual(self.native_reads(), before)
         self.assertIsNone(json.loads(self.coord('delivery', 'connected-owned'))['receipt'])
         self.assertEqual(json.loads(self.coord('session', 'root'))['stop']['id'],
@@ -383,7 +378,8 @@ class McpRoot(unittest.TestCase):
         notification = read_mcp(proc)
         self.assertEqual(notification['params']['meta']['recipient'], associate)
         self.assertEqual(json.loads(notification['params']['meta']['messageIds']), ['associate-report'])
-        self.tool(proc, 'baton2_ack', {'id': 'associate-report', 'receipt': 'selected-reviewed'})
+        read = self.coord('as', associate, 'read', 'associate-report')
+        self.assertEqual(read.returncode, 0, read.stderr)
         self.assertEqual(json.loads(self.coord('inbox', associate)), [])
         self.assertEqual(json.loads(self.coord('inbox', '')), [])
         self.tool(proc, 'baton2_guide',
@@ -456,18 +452,10 @@ class McpRoot(unittest.TestCase):
         notif = read_mcp(proc)
         self.assertEqual(notif['method'], 'notifications/claude/channel')
 
-        # Ack the message.
-        send_mcp(proc, {
-            'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call',
-            'params': {
-                'name': 'baton2_ack',
-                'arguments': {'id': 'turn-1', 'receipt': 'channel-delivered'},
-            },
-        })
-        resp = read_mcp(proc)
-        while 'method' in resp:
-            resp = read_mcp(proc)
-        self.assertNotIn('isError', resp['result'])
+        # The recipient reads the complete body through the public CLI; the
+        # read event records itself.
+        read = self.coord('as', 'root', 'read', 'turn-1')
+        self.assertEqual(read.returncode, 0, read.stderr)
 
         # Inbox should be empty.
         send_mcp(proc, {
