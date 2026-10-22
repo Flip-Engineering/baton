@@ -18,6 +18,8 @@ sh bend2/scripts/build-native.sh bend2/tests/git.bend .scratch/bend2/git-test
 .scratch/bend2/git-test
 sh bend2/scripts/build-native.sh bend2/tests/land.bend .scratch/bend2/land-test
 .scratch/bend2/land-test
+sh bend2/scripts/build-native.sh bend2/tests/storage.bend .scratch/bend2/storage-test
+.scratch/bend2/storage-test
 sh bend2/scripts/build-native.sh bend2/test/subscription-profiles.bend .scratch/bend2/subscription-profiles-test
 .scratch/bend2/subscription-profiles-test
 sh bend2/scripts/build-native.sh bend2/test/focused-reads.bend .scratch/bend2/focused-reads
@@ -30,6 +32,8 @@ sh bend2/scripts/build-native.sh bend2/test/api-key-spec.bend .scratch/bend2/api
 BATON2_API_KEY_SPEC="$root/.scratch/bend2/api-key-spec" "$PYTHON3" bend2/test/api-key-spec.py
 sh bend2/scripts/build-native.sh bend2/test/account-credits-entry.bend .scratch/bend2/account-credits-entry
 BATON2_ACCOUNT_ENTRY="$root/.scratch/bend2/account-credits-entry" "$PYTHON3" bend2/test/account-credits-focused.py
+sh bend2/scripts/build-native.sh bend2/harness/credit-intermediary.bend .scratch/bend2/credit-intermediary
+BATON2_ACCOUNT_ENTRY="$root/.scratch/bend2/account-credits-entry" BATON2_CREDIT_INTERMEDIARY_ENTRY="$root/.scratch/bend2/credit-intermediary" "$PYTHON3" bend2/test/credit-intermediary.py
 sh bend2/scripts/build-native.sh bend2/harness/claude-credit-observe.bend .scratch/bend2/claude-credit-observe
 BATON2_CREDIT_OBSERVE="$root/.scratch/bend2/claude-credit-observe" "$PYTHON3" bend2/test/claude-credit-observe.py
 BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" BATON2_CREDIT_OBSERVE="$root/.scratch/bend2/claude-credit-observe" "$PYTHON3" bend2/test/native-helper-install.py
@@ -49,9 +53,15 @@ rm -f .scratch/bend2/usage-windows-wake-path.db
 sh bend2/scripts/build-native.sh bend2/test/quota-exhaustion-reset.bend .scratch/bend2/quota-exhaustion-reset-test
 rm -f .scratch/bend2/quota-exhaustion-reset.db
 .scratch/bend2/quota-exhaustion-reset-test .scratch/bend2/quota-exhaustion-reset.db
-BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
+BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" BATON2_ACCOUNT_ENTRY="$root/.scratch/bend2/account-credits-entry" BATON2_CREDIT_INTERMEDIARY_ENTRY="$root/.scratch/bend2/credit-intermediary" "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
 sh bend2/scripts/build-native.sh bend2/test/omp-home-preflight.bend .scratch/bend2/omp-home-preflight-test
 BATON2_EXE="$root/.scratch/bend2/omp-home-preflight-test" "$PYTHON3" bend2/test/omp-home-preflight.py
+sh bend2/scripts/build-native.sh bend2/test/launch-store.bend .scratch/bend2/launch-store-test
+BATON2_EXE="$root/.scratch/bend2/launch-store-test" "$PYTHON3" bend2/test/launch-store.py
+sh bend2/scripts/build-native.sh bend2/test/launch-store-retained.bend .scratch/bend2/launch-store-retained-test
+BATON2_EXE="$root/.scratch/bend2/launch-store-retained-test" "$PYTHON3" bend2/test/launch-store-retained.py
+"$PYTHON3" bend2/test/native-dispatch-runtime.py
+"$PYTHON3" bend2/test/check-install-dispatch-runtime.py
 sh bend2/scripts/build-native.sh bend2/test/dsh-player.bend .scratch/bend2/dsh-player-test
 BATON2_EXE="$root/.scratch/bend2/dsh-player-test" "$PYTHON3" bend2/test/dsh-player.py
 sh bend2/scripts/build-native.sh bend2/test/dsh-retained.bend .scratch/bend2/dsh-retained-test

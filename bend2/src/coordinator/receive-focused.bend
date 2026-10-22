@@ -8,10 +8,13 @@ import ./native-input.bend as NativeInput
 import ../git/process.bend as GitProcess
 import ../git/text.bend as Tx
 import ../git/types.bend as T
+import ../storage/lifecycle.bend as StoragePolicy
 
 def dispatch_receive(selected: Bool, +db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +message: String) -> IO(Unit):
   match selected:
-    case True{}: IO.try(Unit,Receive.run(db,session,cmd,model,effort,cwd,log,message))
+    case True{}: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,Unit> & String <- Receive.run(db,session,cmd,model,effort,cwd,log,message)
+      Receive.report_result(db,session,message,result)
     case False{}: IO.die(Unit,2,"expected receive")
 
 def dispatch_instance(owner: Bool, shutdown: Bool, +db: String) -> IO(Unit):
@@ -101,6 +104,7 @@ def focused_native_observer(selected: Bool, +full: String, +db: String, +verb: S
     case True{}: dispatch_observer(True{},db,session,observer)
     case False{}: focused_fallback(full,db,Con{verb,Con{session,Con{observer,Nil{}}}})
 
+
 def focused_native_args(+full: String, +db: String, args: List<String>) -> IO(Unit):
   match args:
     case +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
@@ -109,6 +113,13 @@ def focused_native_args(+full: String, +db: String, args: List<String>) -> IO(Un
       focused_native_turn(String.eq(verb,"turn-text"),String.eq(verb,"turn"),full,db,verb,player,id,cmd,model,effort,cwd,task,log,session)
     case +verb <> +session <> +observer <> Nil{}:
       focused_native_observer(String.eq(verb,"recover-observer"),full,db,verb,session,observer)
+    case +verb <> +session <> Nil{}:
+      Bool.pick(IO(Unit), String.eq(verb,"storage-preview"), StoragePolicy.run_preview(db,session),
+        Bool.pick(IO(Unit), String.eq(verb,"storage-apply"), StoragePolicy.run_apply(db,session),
+          focused_fallback(full,db,Con{verb,Con{session,Nil{}}})))
+    case +verb <> Nil{}:
+      Bool.pick(IO(Unit), String.eq(verb,"storage-policy"), StoragePolicy.run_policy(db),
+        focused_fallback(full,db,Con{verb,Nil{}}))
     case other: focused_fallback(full,db,other)
 
 def focused_native_input(+db: String, +full: String) -> IO(Unit):
@@ -134,20 +145,22 @@ def register_receiver_cwd(selected: Bool, +db: String, +session: String, +cmd: S
 
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
+    case +db <> +verb <> Nil{}:
+      Bool.pick(IO(Unit), String.eq(verb,"storage-policy"), StoragePolicy.run_policy(db),
+        dispatch_instance(String.eq(db,"--instance-owner"),String.eq(db,"--instance-shutdown"),verb))
+    case +db <> +verb <> +third <> Nil{}:
+      Bool.pick(IO(Unit), String.eq(verb,"storage-preview"), StoragePolicy.run_preview(db,third),
+        Bool.pick(IO(Unit), String.eq(verb,"storage-apply"), StoragePolicy.run_apply(db,third),
+          Bool.pick(IO(Unit), String.eq(verb,"agent-native-input"), focused_native_input(db,third),
+            dispatch_three(db,verb,third))))
     case +db <> +route <> +session <> +cmd <> +log <> Nil{}:
       register_receiver(String.eq(route,"register-receiver"),db,session,cmd,log)
     case +db <> +route <> +session <> +cmd <> +log <> +cwd <> Nil{}:
       register_receiver_cwd(String.eq(route,"register-receiver"),db,session,cmd,log,cwd)
-    case +db <> +verb <> +full <> Nil{}:
-      Bool.pick(IO(Unit),String.eq(verb,"agent-native-input"),focused_native_input(db,full),dispatch_three(db,verb,full))
     case +db <> +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
       dispatch_receive(String.eq(verb,"receive"),db,session,cmd,model,effort,cwd,log,message)
     case +db <> +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
       Bool.pick(IO(Unit),String.eq(verb,"turn-text"),Turn.run_text(db,player,id,cmd,model,effort,cwd,task,log,session),dispatch_turn(String.eq(verb,"turn"),db,player,id,cmd,model,effort,cwd,task,log,session))
-    case +flag <> +db <> Nil{}:
-      dispatch_instance(String.eq(flag,"--instance-owner"),String.eq(flag,"--instance-shutdown"),db)
-    case +flag <> +first <> +second <> Nil{}:
-      dispatch_three(flag,first,second)
     case +first <> +second <> +session <> +observer <> Nil{}:
       dispatch_observer_argv(String.eq(first,"--recover-observer"),first,second,session,observer)
     case +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> Nil{}:
