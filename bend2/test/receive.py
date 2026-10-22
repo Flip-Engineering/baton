@@ -150,6 +150,13 @@ if '--profile' in args:
     print(json.dumps({'type':'session','sessionId':'dsh-native-'+str(os.getpid()),'cwd':os.getcwd()}),flush=True)
     task=sys.stdin.read()
     identifiers=list(dict.fromkeys(re.findall(r'\[id: ([^\]]+)\]',task)))
+    late=config.get('dsh_late_read','')
+    if late:
+        # The test delivers this input after admission, so only the public read
+        # below can record it.
+        (home/'dsh-ready').write_text('ready\n')
+        while not (home/'dsh-release').exists(): time.sleep(.01)
+        identifiers=[late] if config.get('dsh_read_prompt',True) is False else list(dict.fromkeys(identifiers+[late]))
     database=config['db']
     environment=None
     snapshot=config.get('dsh_readonly_snapshot')

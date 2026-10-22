@@ -54,6 +54,29 @@ class DshPublicRead(unittest.TestCase):
                             for row in rows), rows)
         self.assertIsNone(self.fx.coord('delivery', 'dsh-input')['receipt'])
 
+    def test_public_read_records_input_delivered_after_admission(self):
+        config_path = self.fx.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config.update(dsh_late_read='dsh-late', dsh_read_prompt=False)
+        config_path.write_text(json.dumps(config))
+        child = self.fx.spawn(*self.fx.receive_args('dsh-parent'))
+        ready = self.fx.directory / 'dsh-ready'
+        self.fx.eventually(lambda: ready.exists(),
+                           'the DSH native did not reach its public read point')
+        self.fx.prepare_input('dsh-late', 'dsh-parent',
+                              'Read the late DSH input.\n', kind='guidance')
+        (self.fx.directory / 'dsh-release').write_text('go\n')
+        stdout, stderr = self.fx.finish(child)
+        log = self.fx.directory / 'dsh-reads.jsonl'
+        self.assertTrue(log.exists(), stdout + stderr)
+        reads = [json.loads(line) for line in log.read_text().splitlines()]
+        self.assertEqual([row['id'] for row in reads], ['dsh-late'], stdout + stderr)
+        self.assertEqual(reads[0]['code'], 0, reads[0])
+        rows = receive.message_reads(self.fx.db, 'dsh-late', 'dsh-parent')
+        self.assertTrue(rows, 'the public read of post-admission input recorded no complete read')
+        self.assertTrue(all(row['native'] and row['identity'] and row['handled'] is None
+                            for row in rows), rows)
+
     def test_public_read_preserves_readonly_recording_failure(self):
         snapshot = self.fx.directory / 'readonly-snapshot.db'
         config_path = self.fx.directory / 'fixture.json'
