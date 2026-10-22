@@ -921,7 +921,10 @@ def prior_proc_state(+proc: Result<&1,&1,U32 & String,String>) -> PriorNative:
     case Fail{(code,text)}: Bool.pick(PriorNative,U32.is_eq(code,2),PriorDead{},PriorUncertain{})
 
 def prior_pid_state(+pid_text: String) -> IO(PriorNative):
-  match U32.read(Tx.trim_nl(pid_text)):
+  prior_pid_number(U32.read(Tx.trim_nl(pid_text)))
+
+def prior_pid_number(number: Maybe<&2,U32>) -> IO(PriorNative):
+  match number:
     case None{}: IO.pure(PriorNative,PriorUncertain{})
     case Some{pid}: do IO<PriorNative>:
       proc : Result<&1,&1,U32 & String,String> <- Text.Text.read("/proc/" ++ U32.show(pid) ++ "/stat")
@@ -961,9 +964,12 @@ def prior_fields_state(+db: String, +fields: List<String>) -> IO(PriorNative):
     case other: IO.pure(PriorNative,PriorUncertain{})
 
 def prior_trimmed_state(+db: String, +trimmed: String) -> IO(PriorNative):
-  match String.is_empty(trimmed):
+  prior_empty_state(db,String.is_empty(trimmed),Tx.split_tabs(trimmed))
+
+def prior_empty_state(+db: String, +empty: Bool, +fields: List<String>) -> IO(PriorNative):
+  match empty:
     case True{}: IO.pure(PriorNative,PriorNone{})
-    case False{}: prior_fields_state(db,Tx.split_tabs(trimmed))
+    case False{}: prior_fields_state(db,fields)
 
 def prior_native_state(+db: String, +session: String) -> IO(PriorNative):
   do IO<PriorNative>:
