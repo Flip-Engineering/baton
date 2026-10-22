@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 export const SETTINGS_SCHEMA = 'baton2-project-settings-v1';
 export const SETTINGS_RELATIVE_PATH = 'baton2/settings.json';
 
-const ROUTE_HARNESSES = new Set(['codex', 'omp', 'muse', 'claude-code', 'dsh']);
+const ROUTE_HARNESSES = new Set(['codex', 'omp', 'muse', 'claude-code', 'dsh', 'agy']);
 const SUBSCRIPTION_HARNESSES = new Set(['codex', 'omp', 'muse', 'claude-code', 'claude']);
 
 function refused(reason, detail = null) {
