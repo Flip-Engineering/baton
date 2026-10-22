@@ -69,7 +69,8 @@ def recruit(+db: String,+id: String,+parent: String,harness: String,model: Strin
     base_result : G.GitOut <- Git.runGit(repo,["rev-parse","--verify","--end-of-options",base ++ "^{commit}"])
     commit : String <- git_output("git rev-parse --verify", base_result)
     existing : String <- IO.try(String,Store.apply(db,C.Session{id}))
-    create(db,id,parent,harness,model,effort,repo,branch,absolute(line(root),path,Tx.starts_with(path,"/")),line(commit),Bool.not(String.is_empty(existing)))
+    +target : String <- IO.try(String,Host.Control.output(absolute(line(root),path,Tx.starts_with(path,"/"))))
+    create(db,id,parent,harness,model,effort,repo,branch,target,line(commit),Bool.not(String.is_empty(existing)))
 
 # Join an existing checkout. Several Players can use the same worktree.
 def join(+db: String,+id: String,+parent: String,harness: String,model: String,effort: String,+path: String) -> IO(Unit):

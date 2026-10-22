@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include "persistent-path.h"
 
 extern char **environ;
 
@@ -6263,6 +6264,7 @@ static void baton_session_lock_call(IoWork *w) {
     call->path=realpath("/proc/self/exe",NULL);
     if(!call->path) call->error=errno;
 #endif
+    if(!call->error && (call->error=BATON_REMAP_RESOLVED(&call->path))) {free(call->path);call->path=NULL;}
     return;
   }
   struct stat info;
