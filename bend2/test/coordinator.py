@@ -45,6 +45,15 @@ class Coordinator(unittest.TestCase):
         self.assertNotEqual(p.returncode, 0)
         return p
 
+    def read_count(self, ident, recipient=None):
+        with sqlite3.connect(self.db) as database:
+            if recipient is None:
+                return database.execute(
+                    'SELECT count(*) FROM message_reads WHERE message=?', (ident,)).fetchone()[0]
+            return database.execute(
+                'SELECT count(*) FROM message_reads WHERE message=? AND recipient=?',
+                (ident, recipient)).fetchone()[0]
+
     def player(self, name, parent='root', harness='requested-harness',
                model='requested-model', effort='high', workspace=None, branch=None, base=None):
         """Recruit a session into the fixture repository's own checkout."""
@@ -66,10 +75,11 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(self.call('inbox', 'root')[0]['body'], text)
         self.call('attach', 'root', 'native-test', 'resumed-session', 'new-endpoint')
         self.assertEqual(self.call('inbox', 'root')[0]['id'], 'turn-1')
-        self.call('ack', 'turn-1', 'root', 'native-accepted-42')
+        self.call('as', 'root', 'read', 'turn-1')
         self.assertEqual(self.call('inbox', 'root'), [])
         retry = self.call('report', 'turn-1', 'worker', text)
-        self.assertEqual(retry['receipt'], 'native-accepted-42')
+        self.assertIsNone(retry['receipt'])
+        self.assertGreater(self.read_count('turn-1', 'root'), 0)
         self.assertEqual(self.call('inbox', 'root'), [])
 
     def test_attach_reports_parented_session_conflict_and_preserves_original_state(self):
@@ -107,7 +117,7 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(self.call('inbox', 'worker')[0]['kind'], 'guide')
         self.call('message', 'ask-1', 'worker', 'root', 'ask', 'Which branch?')
         self.assertEqual(self.call('inbox', 'root')[0]['body'], 'Which branch?')
-        self.call('ack', 'guide-1', 'worker', 'accepted')
+        self.call('as', 'worker', 'read', 'guide-1')
         self.assertEqual(self.call('inbox', 'worker'), [])
         self.assertEqual(len(self.call('inbox', 'root')), 1)
 
@@ -153,9 +163,10 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(delivery['body'], 'work available')
         self.assertEqual(self.call('player', 'root')['native'], 'new-native-session')
         self.assertEqual(self.call('pending'), [delivery])
-        self.call('ack', 'turn-1', 'root', 'accepted')
+        self.call('as', 'root', 'read', 'turn-1')
         self.assertEqual(self.call('pending'), [])
-        self.assertEqual(self.call('delivery', 'turn-1')['receipt'], 'accepted')
+        self.assertIsNone(self.call('delivery', 'turn-1')['receipt'])
+        self.assertGreater(self.read_count('turn-1', 'root'), 0)
 
     def test_message_index_keeps_owed_messages_and_complete_body_retrieval(self):
         body = "Retained report with apostrophe ' and unicode λ🙂.\n" * 4000
@@ -163,7 +174,7 @@ class Coordinator(unittest.TestCase):
         report.write_text(body)
         self.call('report-file', 'large-report', 'worker', str(report))
         self.call('report', 'handled-report', 'worker', 'Already handled.')
-        self.call('ack', 'handled-report', 'root', '')
+        self.call('as', 'root', 'read', 'handled-report')
         self.player('stopped-worker', harness='omp')
         self.call('message', 'stopped-task', 'root', 'stopped-worker', 'task',
                   'This input remains owed after the explicit stop.')
@@ -207,7 +218,7 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(self.call('delivery', 'handled-report')['receipt'], '')
         self.assertEqual(self.call('inbox', 'root'), full)
 
-    def test_message_index_filters_receipts_routes_and_exact_sequence_ranges(self):
+    def test_message_index_filters_read_state_routes_and_exact_sequence_ranges(self):
         wide = 9007199254740993
         rows = [
             ('first-report', 'worker', 'root', 'report', 'First retained body.', None),
@@ -229,9 +240,10 @@ class Coordinator(unittest.TestCase):
         index = self.call('inbox', 'root', '--index', '--state', 'all')
         self.assertEqual([row['seq'] for row in index], sorted(row['seq'] for row in index))
         self.assertTrue(all('body' not in row for row in index))
-        handled = self.call('inbox', 'root', '--index', '--state', 'acknowledged')
+        handled = self.call('inbox', 'root', '--index', '--state', 'read')
         self.assertEqual([row['id'] for row in handled], ['handled-report'])
         self.assertEqual(handled[0]['receipt'], '')
+        self.assertGreater(self.read_count('handled-report', 'root'), 0)
         reports = self.call('pending', '--pretty', '--recipient', 'root', '--index',
                             '--sender', 'worker', '--kind', 'report', '--state', 'all')
         self.assertEqual([row['id'] for row in reports],
@@ -344,7 +356,7 @@ class Coordinator(unittest.TestCase):
         seen = self.observe('turn-1', 'worker', raw)
         self.assertEqual(seen['reportId'], 'turn-1')
         self.assertEqual(self.call('inbox', 'root')[0]['body'], result['result'])
-        self.call('ack', 'turn-1', 'root', 'native-acceptance')
+        self.call('as', 'root', 'read', 'turn-1')
         self.observe('turn-1', 'worker', raw)
         self.assertEqual(self.call('pending'), [])
         with sqlite3.connect(self.db) as db:
@@ -372,7 +384,7 @@ class Coordinator(unittest.TestCase):
     def test_worker_completion_requires_its_immediate_coordinator_and_current_assignment(self):
         self.player('leaf', parent='worker', harness='omp')
         self.call('message', 'leaf-task', 'worker', 'leaf', 'task', 'Complete the assigned work.')
-        self.call('ack', 'leaf-task', 'leaf', 'The task was read and handled.')
+        self.call('as', 'leaf', 'read', 'leaf-task')
         self.assertTrue(self.call('session', 'leaf')['taskCompletion']['open'])
         first = self.call('continue-task', 'leaf', 'leaf-native-one')
         self.assertEqual(first['continuationId'], 'leaf-native-one:task-continuation')
@@ -380,13 +392,13 @@ class Coordinator(unittest.TestCase):
         self.assertEqual([row['id'] for row in self.call('inbox', 'leaf')],
                          ['leaf-native-one:task-continuation'])
         self.assertEqual(self.call('inbox', 'worker'), [])
-        self.call('ack', first['continuationId'], 'leaf', 'Continued the assignment.')
+        self.call('as', 'leaf', 'read', first['continuationId'])
 
         self.call('message', 'leaf-ready', 'leaf', 'worker', 'completion-request',
                   'The assigned result is ready for the immediate coordinator.')
-        self.call('ack', 'leaf-ready', 'worker', 'Reviewed the result.')
+        self.call('as', 'worker', 'read', 'leaf-ready')
         self.call('message', 'wrong-coordinator', 'root', 'leaf', 'completion-confirmed', 'leaf-ready')
-        self.call('ack', 'wrong-coordinator', 'leaf', 'The immediate coordinator must decide.')
+        self.call('as', 'leaf', 'read', 'wrong-coordinator')
         self.assertFalse(self.call('session', 'leaf')['taskCompletion']['confirmed'])
         self.call('report', 'ordinary-progress', 'leaf', 'An intermediate native report.')
         self.assertEqual(self.call('session', 'leaf')['taskCompletion']['assignmentId'], 'leaf-task')
@@ -398,7 +410,7 @@ class Coordinator(unittest.TestCase):
                          ('leaf-task', 'leaf-ready', 'worker'))
         self.assertTrue(state['confirmed'])
         self.assertFalse(state['open'])
-        self.call('ack', 'leaf-confirmed', 'leaf', 'The coordinator confirmed completion.')
+        self.call('as', 'leaf', 'read', 'leaf-confirmed')
         self.assertIsNone(self.call('continue-task', 'leaf', 'leaf-native-two')['continuationId'])
 
         self.call('message', 'leaf-next', 'worker', 'leaf', 'guidance', 'Complete the next work.')
@@ -419,7 +431,7 @@ class Coordinator(unittest.TestCase):
 
     def test_ready_request_wakes_coordinator_and_preserves_open_assignment_without_self_input(self):
         self.call('message', 'ready-task', 'root', 'worker', 'task', 'Complete the assigned work.')
-        self.call('ack', 'ready-task', 'worker', 'Read and completed the assigned work.')
+        self.call('as', 'worker', 'read', 'ready-task')
         self.call('message', 'ready-request', 'worker', 'root', 'completion-request',
                   'The complete result is ready for review.')
         pending = self.call('inbox', 'root')
@@ -436,18 +448,17 @@ class Coordinator(unittest.TestCase):
             self.assertEqual(self.call('inbox', 'root'), pending)
             self.assertEqual(continued['taskCompletion'], state)
 
-        self.call('ack', 'ready-request', 'root', 'Reviewed the complete result.')
+        self.call('as', 'root', 'read', 'ready-request')
         continued = self.call('continue-task', 'worker', 'ready-reviewed')
         self.assertIsNone(continued['continuationId'])
         self.assertEqual(continued['taskCompletion'], state)
-        self.assertEqual(self.call('delivery', 'ready-request')['receipt'],
-                         'Reviewed the complete result.')
+        self.assertGreater(self.read_count('ready-request', 'root'), 0)
 
         self.call('message', 'ready-next', 'root', 'worker', 'guidance', 'Complete the new work.')
-        self.call('ack', 'ready-next', 'worker', 'Read the new assignment.')
+        self.call('as', 'worker', 'read', 'ready-next')
         self.call('message', 'ready-old-confirmation', 'root', 'worker',
                   'completion-confirmed', 'ready-request')
-        self.call('ack', 'ready-old-confirmation', 'worker', 'Retained the earlier confirmation.')
+        self.call('as', 'worker', 'read', 'ready-old-confirmation')
         current = self.call('session', 'worker')['taskCompletion']
         self.assertEqual(current['assignmentId'], 'ready-next')
         self.assertIsNone(current['requestId'])
@@ -457,8 +468,7 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(resumed['continuationId'], 'ready-next-native:task-continuation')
         self.assertEqual([row['id'] for row in self.call('inbox', 'worker')],
                          ['ready-next-native:task-continuation'])
-        self.assertEqual(self.call('delivery', 'ready-request')['receipt'],
-                         'Reviewed the complete result.')
+        self.assertGreater(self.read_count('ready-request', 'root'), 0)
 
     def test_parented_assignment_authority_uses_parent_and_keeps_peer_messages_pending(self):
         self.call('configure', 'worker', 'omp', 'requested-model', 'high', sys.executable,
@@ -483,7 +493,7 @@ class Coordinator(unittest.TestCase):
             self.assertEqual(state['assignmentId'], ident)
             self.assertEqual(state['coordinator'], 'root')
             self.assertTrue(state['open'])
-            self.call('ack', ident, 'worker', 'Parent assignment input was reviewed.')
+            self.call('as', 'worker', 'read', ident)
 
         # A retained direct turn records a self-authored task input whose ID
         # carries the exact public request ID suffix.
@@ -504,8 +514,8 @@ class Coordinator(unittest.TestCase):
                               'A self recovery notice does not replace the parent assignment.'))
         state = self.call('session', 'worker')['taskCompletion']
         self.assertEqual(state['assignmentId'], 'worker-direct:task-input')
-        self.call('ack', 'worker-self-recovery', 'worker', 'Self recovery notice was reviewed.')
-        self.call('ack', 'worker-self-assignment', 'worker', 'Unlinked self task input was reviewed.')
+        self.call('as', 'worker', 'read', 'worker-self-recovery')
+        self.call('as', 'worker', 'read', 'worker-self-assignment')
 
         request = 'worker-completion-request'
         self.call('message', request, 'worker', 'root', 'completion-request',
@@ -525,7 +535,7 @@ class Coordinator(unittest.TestCase):
                              ('peer', 'worker', kind))
             self.assertIsNone(delivery['receipt'])
 
-        self.call('ack', request, 'root', 'The parent reviewed the completion request.')
+        self.call('as', 'root', 'read', request)
         self.call('message', 'worker-completion-confirmed', 'root', 'worker',
                   'completion-confirmed', request)
         state = self.call('session', 'worker')['taskCompletion']
@@ -543,8 +553,8 @@ class Coordinator(unittest.TestCase):
         stopped = self.call('session', 'worker')['taskCompletion']
         self.assertEqual((stopped['assignmentId'], stopped['open']),
                          ('parent-next-guidance', False))
-        self.assertEqual([self.call('delivery', ident)['receipt'] for ident in peer_inputs],
-                         [None] * len(peer_inputs))
+        self.assertEqual([self.read_count(ident, 'worker') for ident in peer_inputs],
+                         [0] * len(peer_inputs))
 
         self.operator()
         for kind in ('task', 'guidance', 'recovery', 'task-assignment'):
@@ -574,10 +584,10 @@ class Coordinator(unittest.TestCase):
                          ('root', 'operator', 'report', text))
         self.assertIsNone(delivered['receipt'])
         self.assertEqual(self.call('inbox', 'operator')[0]['body'], text)
-        self.call('ack', 'principal-result', 'operator', 'operator-reviewed')
+        self.call('as', 'operator', 'read', 'principal-result')
         self.observe('principal-result', 'root', raw)
         self.assertEqual(self.call('inbox', 'operator'), [])
-        self.assertEqual(self.call('delivery', 'principal-result')['receipt'], 'operator-reviewed')
+        self.assertGreater(self.read_count('principal-result', 'operator'), 0)
         changed = dict(event, result=text + 'changed')
         self.observe('principal-result', 'root', json.dumps(changed), success=False)
         self.assertEqual(self.call('turns', 'root')[0]['reportBody'], text)
@@ -665,8 +675,9 @@ class Coordinator(unittest.TestCase):
         self.call('report', 'turn-1', 'worker', 'different', success=False)
         self.assertEqual(self.call('inbox', 'root')[0]['body'], 'first')
         self.assertEqual(len(self.call('inbox', 'root')), 1)
-        self.call('ack', 'turn-1', 'worker', 'wrong-recipient', success=False)
+        self.call('as', 'worker', 'read', 'turn-1')
         self.assertEqual(len(self.call('inbox', 'root')), 1)
+        self.assertEqual(self.read_count('turn-1', 'worker'), 0)
 
     def test_route_observation_preserves_requested_route_and_workspace(self):
         self.call('bind', 'worker', 'real-session', 'observed-harness', 'observed-model', 'low')
@@ -747,9 +758,10 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(turns[1]['id'], 'turn-2')
         self.assertEqual(turns[1]['reportBody'], 'second answer')
 
-        self.call('ack', 'turn-1', 'root', 'accepted')
+        self.call('as', 'root', 'read', 'turn-1')
         turns_after = self.call('turns', 'worker')
-        self.assertEqual(turns_after[0]['receipt'], 'accepted')
+        self.assertIsNone(turns_after[0]['receipt'])
+        self.assertGreater(self.read_count('turn-1', 'root'), 0)
         self.assertIsNone(turns_after[1]['receipt'])
 
     def test_parallel_reports_have_one_durable_record_per_id(self):
