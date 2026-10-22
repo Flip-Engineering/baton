@@ -55,6 +55,20 @@ def checkpoint_state(directory):
     return json.loads(data[104:])
 
 
+def checkpoint_record(header, state):
+    # Rebuilds a host checkpoint record around a new state. The host checksum is
+    # FNV-1a 64 over the header with its check field (bytes 72..80) excluded,
+    # then over the state bytes (bend2/src/host/process-spawn.c).
+    record = bytearray(header)
+    struct.pack_into('=Q', record, 64, len(state))
+    struct.pack_into('=Q', record, 72, 0)
+    digest = 0xcbf29ce484222325
+    for byte in bytes(record[:72]) + bytes(record[80:104]) + state:
+        digest = ((digest ^ byte) * 0x100000001b3) & 0xffffffffffffffff
+    struct.pack_into('=Q', record, 72, digest)
+    return bytes(record) + state
+
+
 def file_sha256(path):
     digest = hashlib.sha256()
     with open(path, 'rb') as source:
@@ -832,6 +846,57 @@ class ObserverMonitor(unittest.TestCase):
         self.assert_unknown_pending(native_exited=True)
         self.assertFalse((self.attempt / 'acknowledged').exists())
         self.assertFalse((self.attempt / 'released').exists())
+
+    def test_invalid_monitor_checkpoint_state_is_rejected_without_writes(self):
+        first_line = 'monitor-line\n'
+        observer, birth, manifest = self.start_attempt(
+            stdout_text=first_line, sleep_seconds=12)
+        first = subprocess.Popen(
+            [str(COORDINATOR), '--recover-observer', str(self.db), 'parent', str(observer)],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.environment)
+        self.addCleanup(self.stop_owned_process, first)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if (checkpoint_offset(self.attempt) == len(first_line.encode()) and
+                    custody_offset(self.attempt) == len(first_line.encode())):
+                break
+            if first.poll() is not None:
+                break
+            time.sleep(0.02)
+        self.stop_owned_process(first)
+        self.assertEqual(checkpoint_offset(self.attempt), len(first_line.encode()),
+                         'first monitor recovery did not persist a valid cursor')
+        self.wait_native_exit(timeout=20)
+
+        # The host record is valid at the nonzero cursor and its checksum is
+        # rebuilt for the new state, so only the observer validity check can
+        # refuse it. The state is valid JSON without the observer fields.
+        valid = (self.attempt / 'checkpoint').read_bytes()
+        header = valid[:104]
+        rejected = checkpoint_record(header, b'{}')
+        (self.attempt / 'checkpoint').write_bytes(rejected)
+        custody = (self.attempt / 'custody').read_bytes()
+        self.assertEqual(custody_offset(self.attempt), len(first_line.encode()))
+
+        recovered = self.recover(observer, timeout=60)
+        self.assertNotEqual(recovered.returncode, 0, recovered.stdout + recovered.stderr)
+        # The first recovery writes a replay diagnostic before any checkpoint
+        # exists. The host refusal of a record is a separate diagnostic.
+        diagnostic = self.attempt / 'checkpoint-error'
+        self.assertFalse(diagnostic.exists() and b'unusable' in diagnostic.read_bytes(),
+                         'the host refused the record before the observer validity check')
+        self.assertEqual((self.attempt / 'checkpoint').read_bytes(), rejected,
+                         'an invalid monitor state was written over the checkpoint')
+        self.assertEqual(custody_offset(self.attempt), len(first_line.encode()))
+        self.assertEqual((self.attempt / 'custody').read_bytes(), custody)
+        self.assertEqual((self.attempt / 'stdout').read_bytes(), first_line.encode())
+        self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
+        self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
+        self.assertEqual(self.uuid_marker.read_text(), NATIVE_UUID)
+        self.assertFalse((self.attempt / 'acknowledged').exists())
+        self.assertFalse((self.attempt / 'released').exists())
+        self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
+        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (0,))
 
     def test_concurrent_observers_advance_the_cursor_once(self):
         observer, birth, manifest = self.start_attempt(sleep_seconds=30)
