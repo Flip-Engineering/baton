@@ -24,8 +24,8 @@ class ScheduledLogCleanup(unittest.TestCase):
             service)
         self.assertIn('Deployment template', service)
         self.assertIn('StandardOutput=journal', service)
-        self.assertIn('MemoryMax=2G', service)
-        self.assertIn('MemorySwapMax=0', service)
+        for directive in ('MemoryMax', 'MemoryHigh', 'MemorySwapMax'):
+            self.assertNotIn(directive, service)
         self.assertIn('TimeoutStartSec=infinity', service)
         self.assertNotIn('Environment=', service)
         self.assertNotIn('storage-policy', service)
