@@ -372,7 +372,6 @@ def wake_due(+db: String, +session: String, +cursor: String, launch: String -> I
     owed : Bool <- wake_owed(db,session,cursor)
     wake_locked(db,session,cursor,launch,owed)
 
-
 def release_observer(lock: Maybe<U32>) -> IO(Unit):
   match lock:
     case None{}: IO.pure(Unit,Unit{})
@@ -478,7 +477,6 @@ def completed_orphan(+db: String, +session: String, +id: String, +log: String, a
     retired : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.retire(handle)
     observer_released : Unit <- release_observer(lock)
     completed_orphan_final(db,session,id,log,attempt,outcome,deliveries,again,Turn.combine(acknowledged,retired))
-
 
 # Successful observations and complete recoverable provider errors resume all owed
 # input. Other failures retain the attempt cursor. A recorded profile advance runs
@@ -999,19 +997,19 @@ def fresh_admission(+db: String, +session: String, cmd: String, model: String, e
       acquired_pending(db,session,cmd,model,effort,cwd,log,lock,again,predecessor,updates),
       fresh_refused(lock))
 
-def acquired(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, result: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), predecessor: String, fresh: Bool, +updates: Chan(String)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match result:
-    case None{}: receive_silent("queued")
-    case Some{+lock}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      ensured : Unit <- Store.ensure_before_begin(db)
-      acquired_route(db,session,cmd,model,effort,cwd,log,lock,again,predecessor,fresh,updates)
-
 # Each route consumes the predecessor once. A two-branch Bool.pick would
 # count both branches as uses.
 def acquired_route(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, +lock: U32, again: String -> IO(Result<&1,&1,U32 & String,Unit>), predecessor: String, fresh: Bool, +updates: Chan(String)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match fresh:
     case True{}: fresh_admission(db,session,cmd,model,effort,cwd,log,lock,again,predecessor,updates)
     case False{}: acquired_recorded(db,session,lock,again,continuation => acquired_pending(db,session,cmd,model,effort,cwd,log,lock,continuation,predecessor,updates))
+
+def acquired(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, result: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), predecessor: String, fresh: Bool, +updates: Chan(String)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match result:
+    case None{}: receive_silent("queued")
+    case Some{+lock}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      ensured : Unit <- Store.ensure_before_begin(db)
+      acquired_route(db,session,cmd,model,effort,cwd,log,lock,again,predecessor,fresh,updates)
 
 def registered(exists: Bool) -> IO(Unit):
   match exists:
