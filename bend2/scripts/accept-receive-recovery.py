@@ -73,7 +73,7 @@ def snapshot(db):
     with sqlite3.connect(f'{db.as_uri()}?mode=ro', uri=True) as connection:
         connection.row_factory = sqlite3.Row
         return {table: [dict(row) for row in connection.execute(f'SELECT * FROM {table}')]
-                for table in ['sessions', 'messages', 'turns', 'executions']}
+                for table in ['sessions', 'messages', 'turns', 'executions', 'message_reads']}
 
 
 def json_lines(path):
@@ -603,7 +603,8 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
             assert all(frame['type'] == 'turn.completed' for frame in terminal), terminal
             assert native_ids and set(native_ids) == {first_native}, native_ids
             assert [row['body'] for row in reports] == texts
-            assert all(row['receipt'] for row in final['messages']), final
+            read_ids = {row['message'] for row in final['message_reads']}
+            assert {row['id'] for row in reports} <= read_ids, final
             assert [row['body'].startswith(marker) for row, marker in zip(
                 reports, ['RECOVERY_INITIAL_DONE', 'RECOVERY_FOLLOWUP_DONE'])] == [True, True]
             received = {event['message']['id']: event for event in receipts}

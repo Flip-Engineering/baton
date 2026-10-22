@@ -29,10 +29,10 @@ FIXTURE = FIXTURE.replace("    if action.get('progress'):", """    if action.get
         signal.signal(signal.SIGTERM, lambda signum, frame: reply({'signal': signum}))
         reply({'resists_term': True})
         continue
-    if action.get('ack_only'):
+    if action.get('read_only'):
         for ident in re.findall(r'^Message \\([^\\n]*\\) from [^\\n]* \\[id: (.*?)\\]:$',prompt,re.M):
-            subprocess.run([config['exe'],config['db'],'ack',ident,model,'accepted-before-stop'],check=True,stdout=subprocess.DEVNULL)
-        reply({'accepted': True})
+            subprocess.run([config['exe'],config['db'],'as',model,'read',ident],check=True,stdout=subprocess.DEVNULL)
+        reply({'read': True})
         continue
     if action.get('start_tool'):
         tool=subprocess.Popen([sys.executable,__file__,'tool_fixture'],stdin=subprocess.DEVNULL)
@@ -115,8 +115,8 @@ class Stop(unittest.TestCase):
         observer = self.spawn(*self.receive_args('parent'))
         stream, started = self.accept_child(observer, 'parent',
                                             'Stop observer exited before native startup')
-        self.action(stream, ack_only=True)
-        self.assertEqual(json.loads(stream.readline()), {'accepted': True})
+        self.action(stream, read_only=True)
+        self.assertEqual(json.loads(stream.readline()), {'read': True})
         self.action(stream, progress='output before terminal stop')
         self.assertEqual(json.loads(stream.readline()), {'progress_written': 'output before terminal stop'})
         self.eventually(lambda: self.coord('player', 'parent')['native'] == started['native'],
@@ -190,7 +190,7 @@ class Stop(unittest.TestCase):
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.assertIn('output before terminal stop', self.output_log().read_text())
         report = self.rows('SELECT * FROM messages WHERE id=?', [completed['reportId']])[0]
-        self.assertEqual(report['receipt'], 'parent-received')
+        self.assertTrue(receive.read_recorded(self.db, report['id'], 'root'))
         self.assertEqual(json.loads(report['body'])['nativeStatus'], 'signal 15')
         self.assertEqual(json.loads(report['body'])['workspace'], str(self.checkouts / 'parent'))
         self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
@@ -235,7 +235,7 @@ class Stop(unittest.TestCase):
         self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.assertEqual(self.coord('force-stop', 'parent', 'operator-stop')['nativeStatus'], 'signal 9')
-        self.assertEqual(self.rows('SELECT * FROM messages WHERE id=?', [completed['reportId']])[0]['receipt'], 'parent-received')
+        self.assertTrue(receive.read_recorded(self.db, completed['reportId'], 'root'))
 
     def test_legacy_direct_turn_refuses_stop_without_mutating_input(self):
         self.configure()
@@ -298,7 +298,7 @@ class Stop(unittest.TestCase):
         self.assertEqual(self.rows("SELECT * FROM messages WHERE id='child-report'")[0], before)
         notices = self.rows("SELECT * FROM messages WHERE sender='parent' AND recipient='root'")
         self.assertEqual(len(notices), 1)
-        self.assertEqual(notices[0]['receipt'], 'parent-received')
+        self.assertTrue(receive.read_recorded(self.db, notices[0]['id'], 'root'))
         body = json.loads(notices[0]['body'])
         self.assertEqual(body['originalMessage'], 'child-report')
         self.assertEqual(body['originalBody'], before['body'])
@@ -322,7 +322,7 @@ class Stop(unittest.TestCase):
         event = {'type': 'extension_ui_request', 'id': 'question-before-stop',
                  'method': 'input', 'title': 'An answer is pending when the session stops'}
         request = self.native_question(stream, event)
-        self.eventually(lambda: self.coord('delivery', request['id'])['receipt'],
+        self.eventually(lambda: receive.read_recorded(self.db, request['id'], 'root'),
                         'parent did not receive the native question')
         self.assertIsNone(self.native_requests()[0]['closed'])
         stopped = self.stop()
@@ -345,7 +345,7 @@ class Stop(unittest.TestCase):
         self.assertEqual(self.completed()['nativeStatus'], 'exit 0')
         self.shutdown_idle_database_owner('stopped native question processes remained')
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
-        self.assertEqual(self.coord('delivery', request['id'])['receipt'], 'parent-received')
+        self.assertTrue(receive.read_recorded(self.db, request['id'], 'root'))
         self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')], [body])
 
     def test_native_reply_initializes_stop_schema_in_existing_request_database(self):
