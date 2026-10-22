@@ -718,8 +718,9 @@ def credit_cycle_spent(+ledger: String, +state: String, +balance: String) -> Str
 def credit_reserve_arithmetic(+account: AccountRecord, +observation: CreditObs, +conflict: String, +grant_spend: String, +monthly_spend: String, +current_cap_period: String, +expiry_deadline: String, +now_text: String, +request_charge: String) -> CreditAdmission:
   match observation:
     case CObs{state,balance,unit,cycle,expires}:
+      +available : String = Bool.pick(String,decimal_is_gt(grant_spend,balance),"0",decimal_sub(balance,grant_spend))
       +headroom : String = decimal_min(decimal_sub(credit_cycle_ceiling(),grant_spend),decimal_sub(credit_cycle_ceiling(),monthly_spend))
-      +bound : String = Bool.pick(String,String.is_empty(request_charge),decimal_min(balance,headroom),request_charge)
+      +bound : String = Bool.pick(String,String.is_empty(request_charge),decimal_min(available,headroom),request_charge)
       Bool.pick(CreditAdmission,Bool.not(Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key")))),CRefused{"notPromotionalCreditRoute"},
       Bool.pick(CreditAdmission,String.is_empty(account_organization(account)),CRefused{"organizationUnverified"},
       Bool.pick(CreditAdmission,Bool.not(String.eq(state,"reported")),CRefused{"creditObservationUnavailable"},
@@ -731,11 +732,11 @@ def credit_reserve_arithmetic(+account: AccountRecord, +observation: CreditObs, 
       Bool.pick(CreditAdmission,Bool.not(decimal_text(balance)),CRefused{"creditAmountMalformed"},
       Bool.pick(CreditAdmission,decimal_is_gt(grant_spend,credit_cycle_ceiling()),CRefused{"creditGrantExhausted"},
       Bool.pick(CreditAdmission,decimal_is_gt(monthly_spend,credit_cycle_ceiling()),CRefused{"monthlyCapExhausted"},
-      Bool.pick(CreditAdmission,decimal_is_zero(balance),CRefused{"promotionalCreditExhausted"},
+      Bool.pick(CreditAdmission,decimal_is_zero(available),CRefused{"promotionalCreditExhausted"},
       Bool.pick(CreditAdmission,decimal_is_zero(decimal_sub(credit_cycle_ceiling(),monthly_spend)),CRefused{"monthlyCapExhausted"},
       Bool.pick(CreditAdmission,decimal_is_zero(decimal_sub(credit_cycle_ceiling(),grant_spend)),CRefused{"creditGrantExhausted"},
       Bool.pick(CreditAdmission,decimal_is_zero(bound),CRefused{"requestChargeUnbounded"},
-      credit_request_admission(account,CMeter{account_organization(account),state,cycle,balance,unit,credit_cycle_ceiling(),current_cap_period,decimal_max(grant_spend,monthly_spend),"0"},cycle,current_cap_period,bound))))))))))))))))
+      credit_request_admission(account,CMeter{account_organization(account),state,cycle,available,unit,credit_cycle_ceiling(),current_cap_period,decimal_max(grant_spend,monthly_spend),"0"},cycle,current_cap_period,bound))))))))))))))))
 
 def credit_reserve_decided(+account: AccountRecord, +observation: CreditObs, +conflict: String, +rows: List<&2,ReservationRow>, +spend_state: String, +spend_balance: String, +spend_unit: String, +current_cap_period: String, +expiry_deadline: String, +now_text: String, +request_charge: String) -> CreditAdmission:
   Bool.pick(CreditAdmission,Bool.not(reservation_rows_valid(rows)),CRefused{"creditReservationLedgerMalformed"},

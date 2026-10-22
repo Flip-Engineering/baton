@@ -24,8 +24,25 @@ def headroom_checks() -> IO(Unit):
     unbounded : Unit <- reason_is(A.credit_request_admission(A.Ac{"claude-credit","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10-cycle","50","USD","200","2026-10","0","0"},"2026-10-cycle","2026-10","0"),"requestChargeUnbounded","headroom-zero-charge-refused")
     IO.pure(Unit,Unit{})
 
+def reserve_fits(grant_spend: String, balance: String, request: String, +label: String, +expected_total: String) -> IO(Unit):
+  check(label,String.eq(A.credit_admission_reserved_total(A.credit_reserve_arithmetic(A.Ac{"claude-credit","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CObs{"reported",balance,"USD","2026-10-cycle","1793000000000"},"1",grant_spend,"0","2026-10","1793000000000","1792600000000",request)),expected_total))
+
+def reserve_reason_is(grant_spend: String, balance: String, request: String, +expected: String, +label: String) -> IO(Unit):
+  check(label,String.eq(A.credit_admission_reason(A.credit_reserve_arithmetic(A.Ac{"claude-credit","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CObs{"reported",balance,"USD","2026-10-cycle","1793000000000"},"1",grant_spend,"0","2026-10","1793000000000","1792600000000",request)),expected))
+
+# The grant spend already holds open reservations and settled cost for the cycle, so
+# the balance left for a new request is the balance minus that spend.
+def reserve_headroom_checks() -> IO(Unit):
+  do IO<Unit>:
+    fits : Unit <- reserve_fits("40","50","10","reserve-request-fits-after-open-spend","10")
+    over : Unit <- reserve_reason_is("40","50","11","promotionalCreditInsufficient","reserve-request-over-remaining-refused")
+    spent : Unit <- reserve_reason_is("50","50","1","promotionalCreditExhausted","reserve-balance-spent-by-cycle-refused")
+    past : Unit <- reserve_reason_is("60","50","1","promotionalCreditExhausted","reserve-spend-beyond-balance-refused")
+    IO.pure(Unit,Unit{})
+
 def main() -> IO(Unit):
   do IO<Unit>:
     headroom : Unit <- headroom_checks()
+    reserve : Unit <- reserve_headroom_checks()
     printed : Unit <- IO.print("fixture-headroom-ok")
     IO.pure(Unit,Unit{})
