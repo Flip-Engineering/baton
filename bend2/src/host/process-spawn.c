@@ -827,7 +827,25 @@ static char *br_self(void) {
   if(buffer && !_NSGetExecutablePath(buffer,&size)) path=realpath(buffer,NULL);
   free(buffer);return path;
 #else
-  return realpath("/proc/self/exe",NULL);
+  static const char deleted[]=" (deleted)";
+  char link[PATH_MAX+1];
+  ssize_t length=readlink("/proc/self/exe",link,PATH_MAX);
+  if(length<0 || length>=PATH_MAX)return NULL;
+  link[length]=0;
+  size_t suffix=sizeof(deleted)-1;
+  if((size_t)length<suffix || memcmp(link+length-suffix,deleted,suffix))
+    return realpath(link,NULL);
+  struct stat exact;
+  if(!stat(link,&exact))return realpath(link,NULL);
+  if(errno!=ENOENT)return NULL;
+  link[length-suffix]=0;
+  char *current=realpath(link,NULL);
+  if(!current)return NULL;
+  struct stat info;
+  if(stat(current,&info) || !S_ISREG(info.st_mode) || access(current,X_OK)) {
+    free(current);return NULL;
+  }
+  return current;
 #endif
 }
 
