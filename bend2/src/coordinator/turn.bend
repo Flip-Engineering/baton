@@ -1677,7 +1677,7 @@ def direct_settled_wake(+db: String, +player: String, +id: String, +log: String,
   match settled:
     case Fail{error}: do IO<Result<&1,&1,U32 & String,Unit>>:
       settled_report : Unit <- direct_failure_report(db,player,id,"settled",Fail{error})
-      wake : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
+      +wake : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
       wake_report : Unit <- direct_failure_report(db,player,id,"wake",wake)
       IO.pure(Result<&1,&1,U32 & String,Unit>,combine(Fail{error},wake))
     case Done{unit}: do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -1688,7 +1688,7 @@ def direct_settled_wake(+db: String, +player: String, +id: String, +log: String,
         IO.pure(Result<&1,&1,U32 & String,String>,Done{""}))
       +reminder_unit : Result<&1,&1,U32 & String,Unit> = Delivery.wake_result(reminder)
       reminder_report : Unit <- direct_failure_report(db,player,id,"reminder",reminder_unit)
-      wake : Result<&1,&1,U32 & String,Unit> <- direct_route_wake(db,player,id,log,outcome,routed)
+      +wake : Result<&1,&1,U32 & String,Unit> <- direct_route_wake(db,player,id,log,outcome,routed)
       wake_report : Unit <- direct_failure_report(db,player,id,"wake",wake)
       IO.pure(Result<&1,&1,U32 & String,Unit>,combine(reminder_unit,combine(Done{unit},wake)))
 
@@ -1713,7 +1713,7 @@ def direct_unstarted(+db: String, +player: String, +id: String, +log: String, +d
     prepared : Unit <- prepare(db,player,id,log,directory ++ "/native.stderr",outcome)
     released : Unit <- direct_release_lock(lock)
     finished : Result<&1,&1,U32 & String,Unit> <- finish(db,player,id,log,outcome,False{})
-    wake : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
+    +wake : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
     wake_report : Unit <- direct_failure_report(db,player,id,"wake",wake)
     IO.pass(Unit,combine(finished,wake))
 
