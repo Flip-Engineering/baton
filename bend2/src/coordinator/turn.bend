@@ -1664,7 +1664,7 @@ def direct_route_wake(+db: String, +player: String, +id: String, +log: String, o
     case False{}: direct_wake(db,player,id,outcome)
     case True{}: direct_route_continue(db,player,id,log,outcome)
 
-def direct_failure_report(db: String, player: String, id: String, label: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+def direct_failure_report(+db: String, +player: String, +id: String, +label: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   match result:
     case Done{unit}: IO.pure(Unit,Unit{})
     case Fail{(code,text)}: Delivery.failure_report(db,player,id ++ ":" ++ label ++ "-failure",
