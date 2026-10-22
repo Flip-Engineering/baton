@@ -15,9 +15,8 @@ baton2 state.db as parent inbox
 ```
 
 The agent `inbox` action returns the parent's pending complete messages. Baton
-records each complete owned read against the current native turn, and a successful
-completed turn records handling and creates the first receipt automatically.
-Failed turns and unread input remain pending.
+records each complete owned read against the current native turn. The read
+persists if the turn later fails, and unread input remains pending.
 
 A question body is a JSON object:
 
