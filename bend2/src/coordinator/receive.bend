@@ -1004,9 +1004,14 @@ def acquired(+db: String, +session: String, cmd: String, model: String, effort: 
     case None{}: receive_silent("queued")
     case Some{+lock}: do IO<Result<&1,&1,U32 & String,Unit>>:
       ensured : Unit <- Store.ensure_before_begin(db)
-      Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),fresh,
-        fresh_admission(db,session,cmd,model,effort,cwd,log,lock,again,predecessor,updates),
-        acquired_recorded(db,session,lock,again,continuation => acquired_pending(db,session,cmd,model,effort,cwd,log,lock,continuation,predecessor,updates)))
+      acquired_route(db,session,cmd,model,effort,cwd,log,lock,again,predecessor,fresh,updates)
+
+# Each route consumes the predecessor once. A two-branch Bool.pick would
+# count both branches as uses.
+def acquired_route(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, +lock: U32, again: String -> IO(Result<&1,&1,U32 & String,Unit>), predecessor: String, fresh: Bool, +updates: Chan(String)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match fresh:
+    case True{}: fresh_admission(db,session,cmd,model,effort,cwd,log,lock,again,predecessor,updates)
+    case False{}: acquired_recorded(db,session,lock,again,continuation => acquired_pending(db,session,cmd,model,effort,cwd,log,lock,continuation,predecessor,updates))
 
 def registered(exists: Bool) -> IO(Unit):
   match exists:
