@@ -24,6 +24,13 @@ def owed_sql(+row: String) -> String:
 def read_sql(+row: String) -> String:
   "EXISTS(SELECT 1 FROM message_reads has_read WHERE has_read.message=" ++ row ++ ".id AND has_read.recipient=" ++ row ++ ".recipient)"
 
+# A public read of an owned message records the read event itself. An active
+# attempt binds its own attempt and native witness before this path is reached;
+# this row is the recipient's CLI read, so it uses the stable CLI identity.
+def cli_read_sql(+session: String, saved: String) -> String:
+  "BEGIN IMMEDIATE;INSERT INTO message_reads(attempt,message,recipient,native,identity) SELECT 'cli',m.id,m.recipient,coalesce((SELECT s.native FROM sessions s WHERE s.id=m.recipient),''),'cli' FROM json_each(" ++ q(saved) ++ ") j JOIN messages m ON m.id=json_extract(j.value,'$.id') WHERE m.recipient=" ++ q(session) ++ " AND json_extract(j.value,'$.status')='found' ON CONFLICT(attempt,identity,message) DO NOTHING;"
+  ++ "DELETE FROM wake_claims WHERE session=" ++ q(session) ++ " AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.recipient=" ++ q(session) ++ " AND " ++ owed_sql("m") ++ ");COMMIT;"
+
 def present_sql() -> String:
   "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='message_reads';"
 
