@@ -293,9 +293,6 @@ def contextual_args(+session: String, verb: String, +options: List<&2,D.Option>)
       request = optional_arg(["agent-contextual-input",session,"completion-confirmed"],"--request",D.value(options,"--request",""),D.present(options,"--request"))
       args = optional_arg(request,"--to",D.value(options,"--to",""),D.present(options,"--to"))
       optional_arg(args,"--id",D.value(options,"--id",""),D.present(options,"--id"))
-    case "acknowledge":
-      args = Bool.pick(List<String>,D.present(options,"--message"),["agent-contextual-input",session,"acknowledge",D.value(options,"--message","")],["agent-contextual-input",session,"acknowledge"])
-      optional_arg(args,"--receipt",D.value(options,"--receipt",""),D.present(options,"--receipt"))
     case "guide":
       optional_arg(["agent-contextual-input",session,"guide","--to",D.value(options,"--to",""),"--text",D.value(options,"--text","")],"--id",D.value(options,"--id",""),D.present(options,"--id"))
     case other: Nil{}
@@ -309,7 +306,6 @@ def legacy_args_selected(+session: String, verb: String, +options: List<&2,D.Opt
     case "completion-request": contextual_args(session,"completion-request",options)
     case "completion-confirmed": contextual_args(session,"completion-confirmed",options)
     case "guide": contextual_args(session,"guide",options)
-    case "acknowledge": contextual_args(session,"acknowledge",options)
     case "status": native_flags(["--pretty"],options,["status"])
     case "pending": native_flags(Tx.split_spaces("--index --sender --recipient --kind --state --after-seq --through-seq --pretty"),options,["pending"])
     case "orchestra": native_flags(["--pretty"],options,["orchestra"])

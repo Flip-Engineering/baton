@@ -135,7 +135,7 @@ function playerSupport(db, sessionIds) {
     execution: new Map(),
     lastTurn: new Map(),
     latestReport: new Map(),
-    unacknowledged: new Map(),
+    unread: new Map(),
     pending: new Map(),
     pendingSample: new Map(),
     latestTask: new Map(),
@@ -204,6 +204,7 @@ function playerSupport(db, sessionIds) {
   // Read the newest assignment's first-line preview for each recipient.
   // The selected work read returns the complete recorded body.
   for (const row of rows(db, `SELECT recipient, id, receipt,
+                                    (EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient)) AS read,
                                     substr(ltrim(body, char(9) || char(10) || char(13) || ' '), 1, 161) AS preview
                                FROM messages WHERE seq IN (
                                  SELECT max(seq) FROM messages
@@ -223,9 +224,10 @@ function playerSupport(db, sessionIds) {
     support.executionInput.set(row.session, row);
   }
   for (const row of rows(db, `SELECT recipient, count(*) AS n FROM messages
-                               WHERE recipient IN (${placeholders}) AND receipt IS NULL
+                               WHERE recipient IN (${placeholders})
+                               AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient)
                                GROUP BY recipient`, ...ids)) {
-    support.unacknowledged.set(row.recipient, row.n);
+    support.unread.set(row.recipient, row.n);
   }
   // A recorded stop suppresses the pending set for that session.
   for (const row of rows(db, `SELECT session, id, outcome AS status, attempt,
@@ -239,9 +241,10 @@ function playerSupport(db, sessionIds) {
     }
   }
   // The pending badge counts stored task, guidance and recovery messages
-  // awaiting acknowledgement on a session with no recorded stop.
+  // awaiting a recipient read on a session with no recorded stop.
   for (const row of rows(db, `SELECT recipient, count(*) AS n FROM messages
-                               WHERE recipient IN (${placeholders}) AND receipt IS NULL
+                               WHERE recipient IN (${placeholders})
+                               AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient)
                                  AND kind IN ('task', 'guidance', 'recovery')
                                GROUP BY recipient`, ...ids)) {
     if (!support.stop.has(row.recipient)) support.pending.set(row.recipient, row.n);
@@ -249,7 +252,8 @@ function playerSupport(db, sessionIds) {
   // Awaiting input and report metadata, newest first per recipient. Reports
   // remain readable when the recipient has a recorded stop.
   for (const row of rows(db, `SELECT recipient, id, sender, kind FROM messages
-                               WHERE recipient IN (${placeholders}) AND receipt IS NULL
+                               WHERE recipient IN (${placeholders})
+                               AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient)
                                  AND kind IN ('task', 'guidance', 'recovery', 'report')
                                ORDER BY seq DESC`, ...ids)) {
     if (support.stop.has(row.recipient) && row.kind !== 'report') continue;
@@ -356,7 +360,7 @@ function taskTitle(body) {
 }
 
 // The tasks map carries one entry per actor with a recorded task message:
-// the message id, the title excerpt, the recorded receipt state, and the
+// the message id, the title excerpt, the recorded read state, and the
 // recorded insert time. Actors with no task message stay absent.
 function snapshotTasks(support) {
   const tasks = {};
@@ -371,7 +375,7 @@ function taskSnapshot(support, session) {
   return row ? {
     id: row.id,
     title: taskTitle(row.preview),
-    status: row.receipt == null ? 'pending' : 'acknowledged',
+    status: row.read ? 'read' : 'pending',
     updatedAt: support.messageAt.get(row.id) || '',
   } : null;
 }
@@ -457,7 +461,7 @@ function playerSnapshot(db, session, support) {
     latestReportId: support.latestReport.get(session) || '',
     task: taskSnapshot(support, session),
     pendingCount: support.pending.get(session) || 0,
-    unacknowledgedCount: support.unacknowledged.get(session) || 0,
+    unreadCount: support.unread.get(session) || 0,
     ownedEnsembles: support.ownedEnsembles.get(session) || [],
     memberEnsembles: support.memberEnsembles.get(session) || [],
     liveReceiver: null,
@@ -690,7 +694,7 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
             pending: player && (change.kind.startsWith('message:')
               || ['receipt', 'report', 'stop', 'execution', 'role'].includes(change.kind))
               ? { session: player.id, pendingCount: player.pendingCount,
-                unacknowledgedCount: player.unacknowledgedCount,
+                unreadCount: player.unreadCount,
                 lastTurnId: player.lastTurnId, latestReportId: player.latestReportId } : null };
         });
         return { refused: false, gap, scope, rows: frames, high };

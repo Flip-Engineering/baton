@@ -966,7 +966,7 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(deliveries.read_text(), before_conflict)
         self.assertEqual(self.call(*promote), first)
         self.assertEqual(deliveries.read_text(), before_conflict + before)
-        self.call('ack', 'endpoint-share:promotion-notice', 'root', 'Reviewed shared context.')
+        self.call('as', 'root', 'read', 'endpoint-share:promotion-notice')
         self.assertEqual(self.call(*promote), first)
         self.assertEqual(deliveries.read_text(), before_conflict + before)
         self.assertEqual(len(self.read('sibling')[0]['promotions']), 1)

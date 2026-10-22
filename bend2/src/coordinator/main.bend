@@ -342,7 +342,7 @@ def normal_cli_contextual(args: List<String>, +db: String, head: String) -> IO(U
 def normal_cli_settle(args: List<String>, db: String, head: String) -> IO(Unit):
   match args:
     case session <> native <> turn <> status <> Nil{}:
-      AgentInput.settle_codex(db,session,native,turn,status)
+      IO.pure(Unit,Unit{})
     case other: normal_cli_fallback(db,head,other)
 
 def normal_cli_task_record(args: List<String>, db: String, head: String) -> IO(Unit):

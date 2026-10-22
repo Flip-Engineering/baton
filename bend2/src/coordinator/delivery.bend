@@ -14,13 +14,13 @@ import ../context/request.bend as Req
 # The historical .root.log pathname remains the delivery log for existing databases.
 # The endpoint is an argv JSON array. The committed message ID is its last argument.
 def endpoint_sql(id: String, condition: String) -> String:
-  "SELECT coalesce((SELECT (SELECT group_concat(length(CAST(value AS BLOB)) || ':' || value,'') FROM json_each(s.endpoint)) FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' ELSE 0 END AND " ++ condition ++ "),'');"
+  "SELECT coalesce((SELECT (SELECT group_concat(length(CAST(value AS BLOB)) || ':' || value,'') FROM json_each(s.endpoint)) FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("m") ++ " AND CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' ELSE 0 END AND " ++ condition ++ "),'');"
 
 def native_receiver_sql() -> String:
   "CASE WHEN json_valid(s.endpoint) THEN s.harness IN ('codex','omp','muse','claude-code','dsh') AND json_extract(s.endpoint,'$[#-7]')='receive' AND json_extract(s.endpoint,'$[#-6]')=s.id ELSE 0 END"
 
 def codex_inbox_endpoint_sql(id: String, condition: String) -> String:
-  "SELECT EXISTS(SELECT 1 FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND " ++ condition ++ " AND s.harness='codex' AND CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)=7 AND json_extract(s.endpoint,'$[1]') LIKE '%/codex-inbox-wake.mjs' AND json_extract(s.endpoint,'$[2]')='--session' AND json_extract(s.endpoint,'$[5]')=s.id AND json_extract(s.endpoint,'$[6]')=s.native ELSE 0 END);"
+  "SELECT EXISTS(SELECT 1 FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("m") ++ " AND " ++ condition ++ " AND s.harness='codex' AND CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)=7 AND json_extract(s.endpoint,'$[1]') LIKE '%/codex-inbox-wake.mjs' AND json_extract(s.endpoint,'$[2]')='--session' AND json_extract(s.endpoint,'$[5]')=s.id AND json_extract(s.endpoint,'$[6]')=s.native ELSE 0 END);"
 
 def result(saved: String, log: String, run: T.RunRes) -> Result<&1,&1,U32 & String,String>:
   match run:
@@ -57,14 +57,14 @@ def launch(db: String, id: String, saved: String, argv: String) -> IO(Result<&1,
     run : Result<&1,&1,U32 & String,String> <- Process.Process.run(argv ++ Tx.enc_argv(Con{id,Nil{}}),".")
     completed(db,saved,run)
 
-# A stopped recipient retains its original message and receipt. Its parent gets
+# A stopped recipient retains its original message and read state. Its parent gets
 # one ordinary report naming the retained input and work.
 def stopped_kind_sql(id: String, condition: String) -> String:
-  "SELECT coalesce((SELECT m.kind FROM messages m JOIN session_stops st ON st.session=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND " ++ condition ++ "),'');"
+  "SELECT coalesce((SELECT m.kind FROM messages m JOIN session_stops st ON st.session=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("m") ++ " AND " ++ condition ++ "),'');"
 
 def handoff_sql(+id: String) -> String:
-  "BEGIN IMMEDIATE;INSERT INTO messages(id,sender,recipient,kind,body) SELECT 'stopped-input:' || lower(hex(m.id)),s.id," ++ C.report_recipient("s.id") ++ ",'report',json_object('type','stopped-recipient-input','recipient',s.id,'stopId',st.id,'originalMessage',m.id,'originalSender',m.sender,'originalKind',m.kind,'originalBody',m.body,'retainedWorkSession',m.sender,'disposition','The original message and work remain available. The stopped recipient has not accepted or reviewed this input.') FROM messages m JOIN sessions s ON s.id=m.recipient JOIN session_stops st ON st.session=s.id WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL" ++ C.message_upsert()
-  ++ "SELECT coalesce((SELECT n.id FROM messages n WHERE n.id='stopped-input:' || lower(hex(" ++ C.q(id) ++ ")) AND (n.receipt IS NOT NULL OR EXISTS(SELECT 1 FROM sessions p WHERE p.id=n.recipient AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=p.id) AND (CASE WHEN json_valid(p.endpoint) THEN json_type(p.endpoint)='array' AND json_array_length(p.endpoint)>0 ELSE 0 END OR p.harness='codex')))),'');COMMIT;"
+  "BEGIN IMMEDIATE;INSERT INTO messages(id,sender,recipient,kind,body) SELECT 'stopped-input:' || lower(hex(m.id)),s.id," ++ C.report_recipient("s.id") ++ ",'report',json_object('type','stopped-recipient-input','recipient',s.id,'stopId',st.id,'originalMessage',m.id,'originalSender',m.sender,'originalKind',m.kind,'originalBody',m.body,'retainedWorkSession',m.sender,'disposition','The original message and work remain available. The stopped recipient has not accepted or reviewed this input.') FROM messages m JOIN sessions s ON s.id=m.recipient JOIN session_stops st ON st.session=s.id WHERE m.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("m") ++ " AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL" ++ C.message_upsert()
+  ++ "SELECT coalesce((SELECT n.id FROM messages n WHERE n.id='stopped-input:' || lower(hex(" ++ C.q(id) ++ ")) AND (" ++ C.read_sql("n") ++ " OR EXISTS(SELECT 1 FROM sessions p WHERE p.id=n.recipient AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=p.id) AND (CASE WHEN json_valid(p.endpoint) THEN json_type(p.endpoint)='array' AND json_array_length(p.endpoint)>0 ELSE 0 END OR p.harness='codex')))),'');COMMIT;"
 
 def handoff_selected(id: String, notification: String, next: String -> IO(Result<&1,&1,U32 & String,String>), empty: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match empty:
@@ -83,13 +83,13 @@ def stopped_delivery(db: String, id: String, next: String -> IO(Result<&1,&1,U32
     case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"Session is terminally stopped; the retained input will not execute. Inspect its session and inbox.")})
 
 def endpointless_harness_sql(id: String, condition: String) -> String:
-  "SELECT coalesce((SELECT s.harness FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND " ++ condition ++ "),'');"
+  "SELECT coalesce((SELECT s.harness FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("m") ++ " AND " ++ condition ++ "),'');"
 
 def endpointless_native_sql(id: String, condition: String) -> String:
-  "SELECT coalesce((SELECT s.native FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND " ++ condition ++ "),'');"
+  "SELECT coalesce((SELECT s.native FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("m") ++ " AND " ++ condition ++ "),'');"
 
 def endpointless_recipient_sql(id: String, condition: String) -> String:
-  "SELECT coalesce((SELECT m.recipient FROM messages m WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND " ++ condition ++ "),'');"
+  "SELECT coalesce((SELECT m.recipient FROM messages m WHERE m.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("m") ++ " AND " ++ condition ++ "),'');"
 
 # The claim retains admission custody for the whole inbox. Recipient progress
 # and newer coordinator control input permit another notification.
@@ -104,15 +104,15 @@ def queue_retry_sql(recipient: String, retry: Bool) -> String:
 def queue_claim_sql(+id: String, +condition: String, +recipient: String, +native: String, retry: Bool) -> String:
   "BEGIN IMMEDIATE;"
   ++ "CREATE TABLE IF NOT EXISTS codex_inbox_wakes(session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id),native TEXT NOT NULL,token TEXT NOT NULL,cause TEXT NOT NULL DEFAULT '');"
-  ++ "CREATE TRIGGER IF NOT EXISTS codex_inbox_wake_receipt AFTER UPDATE OF receipt ON messages WHEN OLD.receipt IS NULL AND NEW.receipt IS NOT NULL BEGIN DELETE FROM codex_inbox_wakes WHERE session=NEW.recipient;END;"
+  ++ "CREATE TRIGGER IF NOT EXISTS codex_inbox_wake_read AFTER INSERT ON message_reads BEGIN DELETE FROM codex_inbox_wakes WHERE session=NEW.recipient;END;"
   ++ "DELETE FROM codex_inbox_wakes WHERE session=" ++ C.q(recipient) ++ " AND native<>" ++ C.q(native) ++ ";"
   ++ queue_retry_sql(recipient,retry)
-  ++ "DELETE FROM codex_inbox_wakes WHERE session=" ++ C.q(recipient) ++ " AND EXISTS(SELECT 1 FROM messages m WHERE m.id=" ++ C.q(id) ++ " AND m.recipient=codex_inbox_wakes.session AND m.receipt IS NULL AND " ++ condition ++ " AND (m.kind IN ('task','guidance','recovery','task-assignment','task-continuation','completion-confirmed','question') OR EXISTS(SELECT 1 FROM session_roles r WHERE r.session=m.sender AND r.role='operator') OR CASE WHEN " ++ queue_metadata_sql("codex_inbox_wakes.cause") ++ " THEN json_type(codex_inbox_wakes.cause,'$.cause') IS NOT NULL ELSE codex_inbox_wakes.cause<>'' END) AND m.seq>CASE WHEN " ++ queue_metadata_sql("codex_inbox_wakes.cause") ++ " THEN json_extract(codex_inbox_wakes.cause,'$.inputSeq') ELSE (SELECT max(seq) FROM messages WHERE recipient=codex_inbox_wakes.session AND seq<m.seq) END);"
-  ++ "INSERT INTO codex_inbox_wakes(session,native,token,cause) SELECT s.id,s.native,lower(hex(randomblob(16))),json_object('inputSeq',(SELECT max(seq) FROM messages WHERE recipient=s.id)) FROM sessions s WHERE s.id=" ++ C.q(recipient) ++ " AND s.harness='codex' AND s.native=" ++ C.q(native) ++ " AND NOT " ++ C.stopped_session_sql("s.id") ++ " AND EXISTS(SELECT 1 FROM messages m WHERE m.id=" ++ C.q(id) ++ " AND m.recipient=s.id AND m.receipt IS NULL AND " ++ condition ++ ") ON CONFLICT(session) DO NOTHING;"
+  ++ "DELETE FROM codex_inbox_wakes WHERE session=" ++ C.q(recipient) ++ " AND EXISTS(SELECT 1 FROM messages m WHERE m.id=" ++ C.q(id) ++ " AND m.recipient=codex_inbox_wakes.session AND " ++ C.owed_sql("m") ++ " AND " ++ condition ++ " AND (m.kind IN ('task','guidance','recovery','task-assignment','task-continuation','completion-confirmed','question') OR EXISTS(SELECT 1 FROM session_roles r WHERE r.session=m.sender AND r.role='operator') OR CASE WHEN " ++ queue_metadata_sql("codex_inbox_wakes.cause") ++ " THEN json_type(codex_inbox_wakes.cause,'$.cause') IS NOT NULL ELSE codex_inbox_wakes.cause<>'' END) AND m.seq>CASE WHEN " ++ queue_metadata_sql("codex_inbox_wakes.cause") ++ " THEN json_extract(codex_inbox_wakes.cause,'$.inputSeq') ELSE (SELECT max(seq) FROM messages WHERE recipient=codex_inbox_wakes.session AND seq<m.seq) END);"
+  ++ "INSERT INTO codex_inbox_wakes(session,native,token,cause) SELECT s.id,s.native,lower(hex(randomblob(16))),json_object('inputSeq',(SELECT max(seq) FROM messages WHERE recipient=s.id)) FROM sessions s WHERE s.id=" ++ C.q(recipient) ++ " AND s.harness='codex' AND s.native=" ++ C.q(native) ++ " AND NOT " ++ C.stopped_session_sql("s.id") ++ " AND EXISTS(SELECT 1 FROM messages m WHERE m.id=" ++ C.q(id) ++ " AND m.recipient=s.id AND " ++ C.owed_sql("m") ++ " AND " ++ condition ++ ") ON CONFLICT(session) DO NOTHING;"
   ++ "SELECT CASE WHEN changes()=1 THEN (SELECT token FROM codex_inbox_wakes WHERE session=" ++ C.q(recipient) ++ ") ELSE '' END;COMMIT;"
 
 def queue_pointer(db: String, id: String, recipient: String, pending: String, token: String) -> String:
-  "Baton input is pending.\n{\"database\":" ++ J.string_literal(db) ++ ",\"message\":" ++ J.string_literal(id) ++ ",\"recipient\":" ++ J.string_literal(recipient) ++ ",\"pendingCount\":" ++ pending ++ ",\"claimToken\":" ++ J.string_literal(token) ++ "}\nUse baton inbox for complete owed input and baton read MESSAGE_ID... for selected complete bodies. Use baton send TARGET --kind KIND --text TEXT and TARGET --kind KIND --file PATH for independent messages. baton help ACTION explains named arguments and context overrides. Select an explicit context with baton DATABASE as RECIPIENT ACTION. Successful recipient turns record handling of their complete inputs. Use baton acknowledge for explicit handling; Baton selects the current turn's complete owned reads and creates their receipts, with a separate result for each message. Direct operator instructions and explicit stops remain effective."
+  "Baton input is pending.\n{\"database\":" ++ J.string_literal(db) ++ ",\"message\":" ++ J.string_literal(id) ++ ",\"recipient\":" ++ J.string_literal(recipient) ++ ",\"pendingCount\":" ++ pending ++ ",\"claimToken\":" ++ J.string_literal(token) ++ "}\nUse baton inbox for complete owed input and baton read MESSAGE_ID... for selected complete bodies. Use baton send TARGET --kind KIND --text TEXT and TARGET --kind KIND --file PATH for independent messages. baton help ACTION explains named arguments and context overrides. Select an explicit context with baton DATABASE as RECIPIENT ACTION. Successful recipient turns record complete reads internally. Direct operator instructions and explicit stops remain effective."
 
 def queue_waited(output: String, result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,String>:
   match result:
@@ -171,7 +171,7 @@ def queue_recorded(+db: String, recipient: String, token: String, result: Result
 # admissions share the notification; explicit resume retries a failed attempt.
 def queue_launch(+db: String, id: String, saved: String, native: String, +recipient: String, +token: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    pending : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE recipient=" ++ C.q(recipient) ++ " AND receipt IS NULL;"))
+    pending : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE recipient=" ++ C.q(recipient) ++ " AND " ++ C.owed_sql("messages") ++ ";"))
     pointer : String <- IO.pure(String,queue_pointer(db,id,recipient,Tx.trim_nl(pending),token))
     +stderr : String <- IO.pure(String,db ++ ".queue-" ++ token ++ ".stderr")
     executable : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.executable()
@@ -194,7 +194,7 @@ def queue_coalesced(+db: String, id: String, saved: String, +recipient: String, 
   match failed:
     case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(1,cause)})
     case False{}: do IO<Result<&1,&1,U32 & String,String>>:
-      row : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT w.token FROM codex_inbox_wakes w JOIN messages m ON m.recipient=w.session WHERE w.session=" ++ C.q(recipient) ++ " AND m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND CASE WHEN " ++ queue_metadata_sql("w.cause") ++ " THEN json_type(w.cause,'$.turnId')='text' AND m.seq>json_extract(w.cause,'$.inputSeq') ELSE 0 END),'');"))
+      row : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT w.token FROM codex_inbox_wakes w JOIN messages m ON m.recipient=w.session WHERE w.session=" ++ C.q(recipient) ++ " AND m.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("m") ++ " AND CASE WHEN " ++ queue_metadata_sql("w.cause") ++ " THEN json_type(w.cause,'$.turnId')='text' AND m.seq>json_extract(w.cause,'$.inputSeq') ELSE 0 END),'');"))
       +token : String <- IO.pure(String,Tx.trim_nl(row))
       queue_refresh(saved,token,next,Bool.not(String.is_empty(token)))
 
@@ -293,7 +293,7 @@ def wake_result(result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 &
 # The first unacknowledged message for a session after the cursor, in the order
 # the store accepted them. The wake reads this one message and nothing else.
 def wake_sql(+session: String, cursor: String) -> String:
-  "SELECT coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " ORDER BY seq LIMIT 1),'');"
+  "SELECT coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " ORDER BY seq LIMIT 1),'');"
 
 # The completed native owner has released its session lock before this read.
 def wake_pending(+db: String, session: String, cursor: String) -> IO(Result<&1,&1,U32 & String,Unit>):

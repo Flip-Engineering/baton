@@ -18,9 +18,9 @@ def admitted_message_id(command: C.Command) -> String:
     case other: ""
 
 # The recipient owed by one admitted message. Empty when the message is
-# unknown, already acknowledged, or never committed.
+# unknown, already read, or never committed.
 def wake_recipient_sql(+id: String) -> String:
-  "SELECT coalesce((SELECT recipient FROM messages WHERE id=" ++ C.q(id) ++ " AND receipt IS NULL),'');"
+  "SELECT coalesce((SELECT recipient FROM messages WHERE id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("messages") ++ "),'');"
 
 # Short endpoints return their public input admission result.
 def deliver_wake_target(db: String, target: String) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -31,7 +31,7 @@ def deliver_wake_target(db: String, target: String) -> IO(Result<&1,&1,U32 & Str
 # Generated receiver arguments end with the same nine arguments, including
 # receive and the Player ID, after any configured Git identity prefix.
 def receiver_turn_sql(id: String) -> String:
-  "SELECT EXISTS(SELECT 1 FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND json_extract(" ++ C.endpoint_argv("s.endpoint") ++ ",'$[#-7]')='receive' AND json_extract(" ++ C.endpoint_argv("s.endpoint") ++ ",'$[#-6]')=s.id);"
+  "SELECT EXISTS(SELECT 1 FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("m") ++ " AND json_extract(" ++ C.endpoint_argv("s.endpoint") ++ ",'$[#-7]')='receive' AND json_extract(" ++ C.endpoint_argv("s.endpoint") ++ ",'$[#-6]')=s.id);"
 
 # A generated Receive endpoint runs through the existing detached delivery
 # entry. Its recipient records the native turn and any execution failure.
@@ -52,7 +52,7 @@ def drive_session(+db: String, +session: String, id: String) -> IO(Result<&1,&1,
   drive_session_empty(db,session,id,String.is_empty(session))
 
 def stopped_recipient_sql(id: String) -> String:
-  "SELECT EXISTS(SELECT 1 FROM messages m JOIN session_stops st ON st.session=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL);"
+  "SELECT EXISTS(SELECT 1 FROM messages m JOIN session_stops st ON st.session=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("m") ++ ");"
 
 # Reports addressed to a stopped session go through its parent handoff.
 def drive_recipient(db: String, id: String, session: String, stopped: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -73,7 +73,7 @@ def drive_id(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
 
 # A post-reset continuation re-enters this wake driver, so the usage gate is
 # evaluated again when it fires: a still-held window reports and reschedules,
-# an elapsed one admits the owed input, and a handled message is a no-op.
+# an elapsed one admits the owed input, and a read message is a no-op.
 def message_cli(+db: String, +id: String) -> IO(Unit):
   IO.try(Unit,drive_id(db,id))
 

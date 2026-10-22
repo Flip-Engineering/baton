@@ -56,18 +56,18 @@ original native request ID. Native output and the retained child's eventual repo
 whether it consumed and acted on that frame. The observer continues to track native work
 after the write.
 
-## Accept the question and wait for the report
+## Read the question and wait for the report
 
 ```sh
-baton2 state.db ack QUESTION_ID parent parent-received
+baton2 state.db inbox parent
 baton2 state.db delivery QUESTION_ID
 ```
 
-An acknowledgement binds to the message ID and the named recipient and keeps the first
-receipt, so `delivery` reads back the stored row:
+The parent's inbox read records the complete read internally, so `delivery`
+reads back the stored row with its read state:
 
 ```json
-{"id":"...","sender":"child-id","recipient":"parent","kind":"question","receipt":"parent-received"}
+{"id":"...","sender":"child-id","recipient":"parent","kind":"question","receipt":null}
 ```
 
 The coordinator retains the child's message and wakes the parent's registered endpoint

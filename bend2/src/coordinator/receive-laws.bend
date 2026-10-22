@@ -529,7 +529,7 @@ def direct_turn_refuses_unreleased_receive(args):
   {==}
 
 # An adopted attempt with no retained wait, result or observation error replays
-# all unacknowledged input after the existing completion and owner release.
+# all unread input after the existing completion and owner release.
 # The native birth and output observations remain host obligations.
 law adopted_unknown_attempt_replays_the_retained_inbox:
   for cursor: String

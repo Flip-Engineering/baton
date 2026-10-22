@@ -1,7 +1,7 @@
 """Exercise default report delivery and input committed during a live turn.
 
 The coordinator launches generated receiver delivery asynchronously and returns public
-App admission results. Fixtures cover receipt ownership, parent reports and continued
+App admission results. Fixtures cover read ownership, parent reports and continued
 input through recorded receivers and the public managed Codex lifecycle.
 """
 import importlib.util
@@ -62,7 +62,7 @@ with record.open('a') as output:
                              'native':native,'resume':resume,'frame':frame})+chr(10))
 turn=len([line for line in record.read_text().splitlines() if line.strip()])
 for ident in re.findall(r'\\[id: (.*?)\\]:',prompt):
-    accepted=subprocess.run([EXE,DB,'ack',ident,session,'fixture reviewed'],capture_output=True,text=True)
+    accepted=subprocess.run([EXE,DB,'read',ident],capture_output=True,text=True,env=os.environ)
     assert accepted.returncode==0, accepted.stderr
 if omp:
     print(json.dumps({'type':'response','command':'get_state','success':True,'id':state['id'],
@@ -204,8 +204,8 @@ class RootWake(unittest.TestCase):
                                      session + '-branch', str(self.checkouts / session), self.base))
 
     def accepted(self, ident):
-        return self.eventually(lambda: json.loads(self.coord('delivery', ident))['receipt'],
-                               f'{ident} was never accepted by its recipient')
+        return self.eventually(lambda: receive.read_recorded(self.db, ident),
+                               f'{ident} was never read by its recipient')
 
     def completed(self, session, turn):
         body = f'Fixture turn {turn} for {session} completed.'
@@ -218,8 +218,11 @@ class RootWake(unittest.TestCase):
         seen = [ident for session in sessions for call in self.calls(session)
                 for ident in self.prompt_ids(call)]
         self.assertEqual(len(seen), len(set(seen)), f'an input was consumed twice: {seen}')
-        stored = {row['id']: row for row in self.rows('SELECT id,recipient,receipt FROM messages')}
-        self.assertEqual(set(seen), {ident for ident, row in stored.items() if row['receipt']})
+        stored = {row['id']: row for row in self.rows('SELECT id,recipient FROM messages')}
+        read = {row['id'] for row in self.rows(
+            'SELECT m.id FROM messages m WHERE EXISTS(SELECT 1 FROM message_reads r '
+            'WHERE r.message=m.id AND r.recipient=m.recipient)')}
+        self.assertEqual(set(seen), read)
         for session in sessions:
             own = {ident for call in self.calls(session) for ident in self.prompt_ids(call)}
             self.assertTrue(all(stored[ident]['recipient'] == session for ident in own),
@@ -408,13 +411,12 @@ while True:
         self.assertEqual((root['native'], root['endpoint']), ('native-app-root', ''))
 
         accepted = next(iter(owed))
-        self.coord('ack', accepted, 'root', 'root reviewed this input')
+        self.coord('as', 'root', 'read', accepted)
         self.coord('report', 'app-root-after-progress', 'child', 'Continue after root progress.')
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
         self.assertEqual(len(calls), 2, calls)
         self.assertEqual(json.loads(calls[1]['params']['input'][0]['text'].splitlines()[1])['pendingCount'], len(owed))
-        self.assertEqual(json.loads(self.coord('delivery', accepted))['receipt'],
-                         'root reviewed this input')
+        self.assertTrue(receive.read_recorded(self.db, accepted, 'root'))
         for ident in set(owed) - {accepted}:
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
 
@@ -471,7 +473,7 @@ while True:
         self.coord('resume', 'root')
         self.assertEqual(len(queued.read_text().splitlines()), 5)
 
-        self.coord('ack', 'refused-app-input', 'root', 'root reviewed the retained report')
+        self.coord('as', 'root', 'read', 'refused-app-input')
         self.coord('report', 'retry-after-root-progress', 'child', 'Read the remaining inbox.')
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
         self.assertEqual(len(calls), 6, calls)
@@ -916,8 +918,8 @@ while True:
         self.assertEqual(retained['body'], body)
         self.assertIsNone(retained['receipt'])
 
-    def test_stop_or_receipt_during_native_metadata_read_prevents_admission(self):
-        for disposition in ('stop', 'receipt'):
+    def test_stop_or_read_during_native_metadata_read_prevents_admission(self):
+        for disposition in ('stop', 'read'):
             with self.subTest(disposition=disposition):
                 queued, _ = self.public_proxy()
                 self.admission_barrier.unlink(missing_ok=True)
@@ -940,7 +942,7 @@ while True:
                 if disposition == 'stop':
                     self.coord('stop', disposition, 'in-flight-stop', 'Keep the original input.')
                 else:
-                    self.coord('ack', ident, disposition, 'Recipient handled this complete input.')
+                    self.coord('as', disposition, 'read', ident)
                 self.admission_release.write_text('Release the native response.\n')
                 output, diagnostic = delivery.communicate()
                 self.assertEqual(delivery.returncode, 0, diagnostic)
@@ -950,8 +952,9 @@ while True:
                 self.assertEqual(retained['stopped'], disposition == 'stop')
                 saved = json.loads(self.coord('delivery', ident))
                 self.assertEqual(saved['body'], body)
-                self.assertEqual(saved['receipt'], None if disposition == 'stop'
-                                 else 'Recipient handled this complete input.')
+                self.assertEqual(saved['receipt'], None)
+                self.assertEqual(receive.read_recorded(self.db, ident, disposition),
+                                 disposition != 'stop')
 
     def test_codex_root_endpoint_wakes_the_root_and_routes_to_the_operator(self):
         self.release('root', 1)

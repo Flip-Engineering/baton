@@ -235,7 +235,6 @@ class McpCommand(unittest.TestCase):
     def test_inferred_mutation_schemas_keep_explicit_compatibility_fields(self):
         self.command()
         selectors = {
-            'baton2_ack': ('id', 'receipt'),
             'baton2_guide': ('id', 'request'),
             'baton2_context_query_file': ('query',),
             'baton2_context_result': ('query',),
@@ -251,7 +250,6 @@ class McpCommand(unittest.TestCase):
                 for field in fields:
                     self.assertNotIn(field, schema.get('required', []))
                     self.assertEqual(schema['properties'][field]['type'], 'string')
-        self.assertEqual(self.tools['baton2_ack']['inputSchema'].get('required', []), [])
         self.assertEqual(self.tools['baton2_guide']['inputSchema']['required'], ['player'])
         link = self.tools['baton2_knowledge_record']['inputSchema']['properties']['links']['items']
         self.assertNotIn('id', link['required'])
@@ -260,8 +258,6 @@ class McpCommand(unittest.TestCase):
     def test_inferred_actions_delegate_current_authority_to_attached_native_context(self):
         body = '\ufeffComplete authored input.\nλ🙂\nTrailing spaces  '
         cases = (
-            ('baton2_ack', None, ['acknowledge']),
-            ('baton2_ack', {'id': 'selected input'}, ['acknowledge', 'selected input']),
             ('baton2_guide', {'player': 'worker', 'body': body},
              ['send', 'worker', '--kind', 'guidance', '--text', body]),
             ('baton2_guide', {'player': 'worker', 'kind': 'completion-confirmed'},
@@ -299,15 +295,6 @@ class McpCommand(unittest.TestCase):
                 self.assertEqual(result['content'],
                                  [{'type': 'text', 'text': '{"retained":"native decision λ"}'}])
                 self.assertNotIn('isError', result)
-        self.command(tool='baton2_ack', arguments={'id': 'selected input',
-                     'receipt': 'First complete handling.'}, session='attached-λ',
-                     expected_args=['ack', 'selected input', 'attached-λ', 'First complete handling.'])
-
-    def test_inferred_handling_keeps_native_refusal_and_complete_diagnostic(self):
-        diagnostic = json.dumps({'error': 'handling-context',
-                                 'condition': 'No live owned input context.\nλ🙂'}) + '\n'
-        self.failure('', diagnostic, code=2, tool='baton2_ack', session='attached-λ',
-                     expected_context=['acknowledge'])
 
     def test_semantic_report_evidence_uses_native_context_with_an_explicit_record_id(self):
         body = '\ufeffComplete source fact.\nλ🙂\nTrailing spaces  '
@@ -693,9 +680,9 @@ class McpCommand(unittest.TestCase):
              ['inbox', '', '--index', '--sender', '--index', '--kind', '--pretty',
               '--state', 'all', '--after-seq', wide, '--through-seq', '9007199254740994', '--pretty']),
             ('baton2_pending', {'recipient': 'root', 'sender': '', 'kind': "report's λ",
-                                'state': 'acknowledged', 'afterSeq': wide},
+                                'state': 'read', 'afterSeq': wide},
              ['pending', '--index', '--recipient', 'root', '--sender', '', '--kind', "report's λ",
-              '--state', 'acknowledged', '--after-seq', wide]),
+              '--state', 'read', '--after-seq', wide]),
         ]
         for tool, arguments, argv in cases:
             with self.subTest(tool=tool, arguments=arguments):

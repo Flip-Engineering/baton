@@ -2,13 +2,15 @@
 # Test self for the usage-window post-reset continuation. The scheduler runs
 # the self as: SELF --wake-message DB MESSAGE. This stands in for the
 # coordinator wake driver: it re-checks the message and the gate when it fires.
-# A message with a receipt is a no-op; a still-held window records a check and
-# delivers nothing; an admitted window records one delivery and one report and
-# sets the message receipt, so a repeated continuation changes nothing.
+# A message the recipient already read is a no-op; a still-held window records a
+# check and delivers nothing; an admitted window records one delivery and one
+# report, so a repeated continuation changes nothing. The recipient-owned read
+# row is recorded by the coordinator when the recipient reads the input; this
+# marker writes no messaging state.
 db=$2
 msg=$3
 recipient=$(sqlite3 "$db" "SELECT coalesce((SELECT recipient FROM messages WHERE id='$msg'),'');")
-pending=$(sqlite3 "$db" "SELECT count(*) FROM messages WHERE id='$msg' AND receipt IS NULL;")
+pending=$(sqlite3 "$db" "SELECT count(*) FROM messages WHERE id='$msg' AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient);")
 [ "$pending" = "1" ] || exit 0
 held=$(sqlite3 "$db" "SELECT CASE WHEN EXISTS(SELECT 1 FROM usage_windows l WHERE l.account='$recipient' AND l.id=(SELECT l2.id FROM usage_windows l2 WHERE l2.account='$recipient' AND l2.window=l.window ORDER BY l2.recorded_at DESC,l2.id DESC LIMIT 1) AND l.window IN (SELECT p.window FROM usage_windows p WHERE p.account='$recipient' AND p.reset_source IN ('provider-message','provider-report') AND p.id=(SELECT p2.id FROM usage_windows p2 WHERE p2.account='$recipient' AND p2.reset_source IN ('provider-message','provider-report') AND p2.window=p.window ORDER BY p2.recorded_at DESC,p2.id DESC LIMIT 1) AND ((p.used_fraction IS NOT NULL AND p.used_fraction >= 1) OR p.reset_source='provider-message')) AND l.resets_at IS NOT NULL AND l.resets_at > CAST(strftime('%s','now') AS INTEGER)*1000) THEN 1 ELSE 0 END;")
 if [ "$held" = "1" ]; then
@@ -17,4 +19,3 @@ if [ "$held" = "1" ]; then
 fi
 sqlite3 "$db" "INSERT OR IGNORE INTO wake_deliveries(message,receipt) VALUES('$msg','delivered');"
 sqlite3 "$db" "INSERT OR IGNORE INTO wake_reports(id) VALUES('$msg:usage-window-held-report');"
-sqlite3 "$db" "UPDATE messages SET receipt='delivered' WHERE id='$msg' AND receipt IS NULL;"

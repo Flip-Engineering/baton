@@ -27,7 +27,7 @@ class NativeObservation(RECEIVE.Receive):
             "    if 'review_input' in action:\n"
             "        ident=action['review_input']\n"
             "        assert ident in re.findall(r'^Message \\([^\\n]*\\) from [^\\n]* \\[id: (.*?)\\]:$',prompt,re.M),ident\n"
-            "        subprocess.run([config['exe'],config['db'],'ack',ident,model,'native-reviewed'],check=True,stdout=subprocess.DEVNULL)\n"
+            "        subprocess.run([config['exe'],config['db'],'as',model,'read',ident],check=True,stdout=subprocess.DEVNULL)\n"
             "        reply({'reviewed_input':ident})\n"
             "        continue\n"
             "    if 'native_line' in action:\n"
@@ -44,7 +44,7 @@ class NativeObservation(RECEIVE.Receive):
     def review_input(self, stream, ident):
         self.action(stream, review_input=ident)
         self.assertEqual(json.loads(stream.readline()), {'reviewed_input': ident})
-        self.assertEqual(self.coord('delivery', ident)['receipt'], 'native-reviewed')
+        self.assertTrue(RECEIVE.read_recorded(self.db, ident))
 
     def eventually_slow_case(self, observation, description):
         while True:
@@ -226,7 +226,7 @@ class NativeObservation(RECEIVE.Receive):
                         + RECEIVE.COMPLETION_EXCHANGE
                         + 'task=coordinator("delivery","muse-observation-turn:task-input")\n'
                         + 'assert task["body"]=="Review this report."\n'
-                        + 'coordinator("ack",task["id"],model,"Fixture worker handled its Direct task.")\n'
+                        + 'coordinator("as",model,"read",task["id"])\n'
                         + 'confirm_finished_fixture_task("Completed the controlled Muse observation task.")\n')
         fake.chmod(0o755)
         result = subprocess.run([str(RECEIVE.EXE), str(self.db), 'turn', 'parent',
@@ -533,7 +533,7 @@ class NativeObservation(RECEIVE.Receive):
         self.assertTrue((pathlib.Path(directory) / 'acknowledged').exists())
         self.assertEqual([row['reportBody'] for row in self.coord('turns','parent')],
                          [turns[0]['reportBody'],'The original task completed after the rate refusal.'])
-        self.assertEqual(self.coord('delivery','observed-later-failure')['receipt'],'native-reviewed')
+        self.assertTrue(RECEIVE.read_recorded(self.db, 'observed-later-failure'))
         self.shutdown_idle_database_owner('fixture database owner did not exit')
 
     def test_observed_success_supersedes_an_earlier_error_in_an_elided_terminal(self):
@@ -580,8 +580,7 @@ class NativeObservation(RECEIVE.Receive):
         player = self.coord('player', 'parent')
         self.assertEqual(player['native'], started['native'])
         self.assertEqual(player['blockedCause'], 'endpoint-absent')
-        self.assertEqual(self.coord('delivery', 'observed-later-success')['receipt'],
-                         'native-reviewed')
+        self.assertTrue(RECEIVE.read_recorded(self.db, 'observed-later-success'))
         self.shutdown_idle_database_owner('fixture database owner did not exit')
 
     def test_omp_late_failure_keeps_the_sealed_result_and_reports_failure(self):
@@ -655,7 +654,7 @@ class NativeObservation(RECEIVE.Receive):
         log = self.output_log('parent').read_text()
         self.assertIn('Stale success text.', log)
         self.assertIn('stopReason', log)
-        self.assertIsNotNone(self.coord('delivery', 'stale-success-task')['receipt'])
+        self.assertTrue(RECEIVE.read_recorded(self.db, 'stale-success-task'))
         with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
             sealed = json.loads(database.execute(
                 'SELECT event FROM turns WHERE id=?', (turns[0]['id'],)).fetchone()[0])
