@@ -237,17 +237,19 @@ class OmpRootAdapter(unittest.TestCase):
                 return result
             time.sleep(0.05)
 
-    def accepted(self, ident, receipt):
+    def accepted_count(self, ident):
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            return database.execute(
+                'SELECT count(*) FROM message_reads WHERE message=?', (ident,)).fetchone()[0]
+
+    def accepted(self, ident):
         def observation():
-            stored = subprocess.run([str(EXE), str(self.db), 'delivery', ident],
-                                    text=True, capture_output=True)
-            if (stored.returncode == 1 and stored.stdout == ''
-                    and stored.stderr == 'No matching session or message; inspect status and the requested ID.\n'):
-                return None
-            self.assertEqual(stored.returncode, 0, stored.stderr)
-            return json.loads(stored.stdout)['receipt']
+            with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+                count = database.execute(
+                    'SELECT count(*) FROM message_reads WHERE message=?', (ident,)).fetchone()[0]
+            return count if count else None
         observed = self.eventually(observation)
-        self.assertEqual(observed, receipt)
+        self.assertGreater(observed, 0)
 
     def exited(self, session, status='exit 0'):
         def observation():
@@ -300,10 +302,10 @@ class OmpRootAdapter(unittest.TestCase):
             attached = subprocess.run(args, text=True, capture_output=True)
             self.assertEqual(attached.returncode, 0, attached.stderr)
             self.coord('report', ident, 'child', 'Child completed ' + ident)
-            self.accepted(ident, 'lead reviewed child')
+            self.accepted(ident)
             turns = self.completed('lead', ['Reviewed and landed ' + item
                                            for item in ['first', 'second'][:number]])
-            self.accepted(turns[-1]['id'], 'root reviewed lead')
+            self.accepted(turns[-1]['id'])
         lead = json.loads(self.coord('player', 'lead'))
         root = json.loads(self.coord('player', 'root'))
         self.assertEqual((lead['parent'], lead['branch'], lead['base'], lead['workspace']),
@@ -354,7 +356,7 @@ class OmpRootAdapter(unittest.TestCase):
         self.assertEqual(attached.returncode, 0, attached.stderr)
         self.assertFalse(calls.exists())
         self.coord('report', 'selected-report', 'child', 'Selected child report')
-        self.accepted('selected-report', 'selected-reviewed')
+        self.accepted('selected-report')
         self.completed(associate, ['Selected Associate reviewed.'])
         observed = json.loads(calls.read_text())
         self.assertEqual(observed['cwd'], str(self.checkouts / associate))
@@ -415,7 +417,7 @@ class OmpRootAdapter(unittest.TestCase):
             'native_id="native-root"\n' + RPC_INPUT +
             f'pathlib.Path({str(received)!r}).write_text(prompt)\n' +
             f'pathlib.Path({str(argv_file)!r}).write_text(json.dumps(sys.argv[1:]))\n' +
-            f'subprocess.run({[str(EXE), str(self.db), "ack", "finished", conductor, "native-reviewed"]!r},check=True,stdout=subprocess.DEVNULL)\n' +
+            f'subprocess.run({[str(EXE), str(self.db), "as", conductor, "read", "finished"]!r},check=True,stdout=subprocess.DEVNULL)\n' +
             'print(json.dumps({"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Reviewed."}]}}))\n' +
             'print(json.dumps({"type":"agent_end","isTerminal":True,"messages":[{"role":"assistant","content":[{"type":"text","text":"Reviewed."}]}]}),flush=True)\n' +
             'sys.stdin.read()\n')
@@ -437,10 +439,10 @@ class OmpRootAdapter(unittest.TestCase):
         report = temp / 'report.txt'
         report.write_text('Completed task with full report.')
         self.coord('report', 'finished', 'w1', report.read_text())
-        self.accepted('finished', 'native-reviewed')
+        self.accepted('finished')
         self.exited(conductor)
         self.assertIn(report.read_text(), received.read_text())
-        self.assertEqual(json.loads(self.coord('delivery', 'finished'))['receipt'], 'native-reviewed')
+        self.assertGreater(self.accepted_count('finished'), 0)
         selected = json.loads(self.coord('player', conductor))
         endpoint = json.loads(selected['endpoint'])
         self.assertEqual(endpoint[2:4], ['receive', conductor])
@@ -474,16 +476,16 @@ class OmpRootAdapter(unittest.TestCase):
             if message == 'first':
                 self.register('sender', 'root', 'fixture', 'model', 'low')
             self.coord('report', message, 'sender', 'Review this message.')
-            self.accepted(message, 'reviewed')
+            self.accepted(message)
             if message == 'first':
-                self.accepted('during-turn', 'reviewed')
+                self.accepted('during-turn')
             self.exited('root')
             self.assertEqual(len(calls.read_text().splitlines()), 2 if message == 'first' else 3)
             self.assertEqual(json.loads(self.coord('player', 'root'))['native'], 'native-root')
         observed = [json.loads(line) for line in calls.read_text().splitlines()]
         self.assertEqual(len(observed), 3)
         self.assertIn('Later report during the live turn.', observed[1]['prompt'])
-        self.assertEqual(json.loads(self.coord('delivery', 'during-turn'))['receipt'], 'reviewed')
+        self.assertGreater(self.accepted_count('during-turn'), 0)
         self.assertEqual(json.loads(self.coord('inbox', 'root')), [])
         for call in observed[1:]:
             self.assertEqual(call['argv'][call['argv'].index('--resume') + 1], 'native-root')
@@ -617,7 +619,7 @@ class OmpRootAdapter(unittest.TestCase):
         p = self.once(native)
         self.assertEqual(p.returncode, 0, p.stderr)
         observed = json.loads(observed_path.read_text())
-        for action in ['acknowledge', 'completion-request --text', 'dispatch --to',
+        for action in ['completion-request --text', 'dispatch --to',
                        'knowledge record --kind', 'players', 'land --session']:
             self.assertIn(action, observed['prompt'])
         self.assertNotIn('ack ID', observed['prompt'])

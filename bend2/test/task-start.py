@@ -877,13 +877,7 @@ class TaskStart(unittest.TestCase):
                 self.assertEqual((owned['recipient'], owned['native']), ('root', 'saved-root'))
                 self.assertTrue(owned['attempt'].startswith('claude-mcp:'), owned)
                 self.assertIsNone(owned['handled'])
-                handled = invoke('baton2_ack', {})
-                acknowledged = next(row for row in handled if row['id'] == reports[0]['id'])
-                receipt = 'native-turn:' + owned['attempt']
-                self.assertEqual(acknowledged['acknowledgement']['receipt'], receipt)
-                self.assertEqual(self.call('delivery', reports[0]['id'])['receipt'], receipt)
-                invoke('baton2_ack', {})
-                self.assertEqual(self.call('delivery', reports[0]['id'])['receipt'], receipt)
+                self.assertIsNone(self.call('delivery', reports[0]['id'])['receipt'])
                 child.stdin.close()
                 child.stdin = None
                 graceful = True
