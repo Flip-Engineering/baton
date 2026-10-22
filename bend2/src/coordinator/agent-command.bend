@@ -226,6 +226,8 @@ def confirmation_target(+db: String, +session: String, +recipient: String,
       "The supplied message is not a completion-request.")
     case "wrong-coordinator": confirmation_refused(session,recipient,id,
       "The completion-request is addressed to another coordinator.")
+    case "stale-request": confirmation_refused(session,recipient,id,
+      "The completion-request belongs to an older assignment; request completion for the current assignment again.")
     case encoded: do IO<String>:
       +target : String = Req.scalar_value(Req.decode_scalar_utf8(Tx.hex_decode(encoded)))
       matches : Bool = Bool.or(String.is_empty(recipient),String.eq(recipient,target))
@@ -237,12 +239,16 @@ def confirmation_target(+db: String, +session: String, +recipient: String,
             A.Item{target,id,"completion-confirmed",A.Text{request}})
           IO.pure(String,"[" ++ item ++ "]")))
 
+# An explicit selector must name the current request for the worker assignment.
+# Older requests remain historical and are refused.
 def completion_confirmed_exact(+db: String, +session: String, +recipient: String,
                          +request: String, +id: String) -> IO(String):
   do IO<String>:
     row : String <- IO.try(String,DB.Sql.read(db,
       "SELECT CASE WHEN kind<>'completion-request' THEN 'wrong-kind' WHEN recipient<>" ++
-      C.q(session) ++ " THEN 'wrong-coordinator' ELSE hex(CAST(sender AS TEXT)) END FROM messages WHERE id=" ++
+      C.q(session) ++ " THEN 'wrong-coordinator' WHEN id<>coalesce(" ++
+      C.task_request_sql("(SELECT sender FROM messages current WHERE current.id=" ++ C.q(request) ++ ")") ++
+      ",'') THEN 'stale-request' ELSE hex(CAST(sender AS TEXT)) END FROM messages WHERE id=" ++
       C.q(request) ++ ";"))
     confirmation_target(db,session,recipient,request,id,Tx.trim_nl(row))
 
