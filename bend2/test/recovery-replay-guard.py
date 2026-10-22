@@ -8,6 +8,9 @@ then disconnect the observer. The keeper must not replay the captured argv:
 the completed attempt is adopted through the keeper-attested observer
 transfer path instead.
 
+A supported stop on the exited execution keeps the owed input unacknowledged
+through the observer transfer.
+
 A second attempt keeps its native alive when the observer leaves. That
 attempt has no durable status, so the keeper still spawns the recorded
 recovery argv; its marker proves active-attempt recovery is preserved.
@@ -25,7 +28,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 FIXTURE = pathlib.Path(os.environ.get(
-    'RECOVERY_REPLAY_FIXTURE', ROOT / '.scratch/bend2/monitor-fixture'))
+    'RECOVERY_REPLAY_FIXTURE', ROOT / '.scratch/bend2/recovery-replay-fixture'))
 HELPER = pathlib.Path(os.environ.get(
     'RECOVERY_REPLAY_HELPER', ROOT / '.scratch/bend2/baton-recovery-fix'))
 OWNER = pathlib.Path(os.environ.get(
@@ -105,6 +108,7 @@ class ReplayGuard(unittest.TestCase):
         self.native = self.directory / 'native.py'
         self.recovery = self.directory / 'recovery.py'
         write_recovery(self.recovery, self.recovery_marker)
+        self.fixture('init', self.db, 'omp')
         self.owner_log = self.directory / 'owner.log'
         self.owner_out = open(self.owner_log, 'w')
         self.owner = subprocess.Popen(
@@ -121,7 +125,6 @@ class ReplayGuard(unittest.TestCase):
             time.sleep(0.02)
         self.assertIsNotNone(owner_pid(self.db),
                              'instance owner did not stay live')
-        self.fixture('init', self.db, 'omp')
 
     def stop_owner(self):
         if self.owner.poll() is None:
@@ -201,13 +204,16 @@ class ReplayGuard(unittest.TestCase):
                 found.append((int(entry.name), argv))
         return found
 
-    def pending(self):
+    def owed_input(self):
         with sqlite3.connect(self.db) as database:
             return database.execute(
-                "SELECT coalesce((SELECT receipt FROM messages WHERE id='task'),'')"
-            ).fetchone()[0]
+                "SELECT sender,recipient,kind,body,receipt FROM messages "
+                "WHERE id='task'").fetchone()
 
     def test_completed_native_rejects_captured_recovery_replay(self):
+        initial = self.owed_input()
+        self.assertIsNotNone(initial, 'the fixture must seed the owed task row')
+        self.assertIsNone(initial[4], 'the owed task must start unacknowledged')
         process, gate, first = self.launch(self.native, 0)
         self.assertTrue(self.wait_path(self.attempt / 'native.pid'),
                         'native.pid was not written')
@@ -236,17 +242,68 @@ class ReplayGuard(unittest.TestCase):
                          'the durable native status must be preserved')
         self.assertEqual((self.attempt / 'stdout').stat().st_size, spool,
                          'the retained stdout must be preserved')
-        self.assertEqual(self.pending(), '',
-                         'the pending input stays unacknowledged')
+        self.assertEqual(self.owed_input(), initial,
+                         'the completed-native probes must leave the owed row '
+                         'unacknowledged and unmodified')
+        identity = self.execution_identity()
+        native_pid = (self.attempt / 'native.pid').read_text().strip()
+        self.fixture('stop', self.db, SESSION, 'operator-stop',
+                     'Preserve owed input')
+        self.assertEqual(self.stop_row('operator-stop'), ('', '', 'stopped'),
+                         'the completed stop records an empty attempt and '
+                         'stopped outcome')
+        self.assertEqual(self.execution_identity(), identity,
+                         'the stop must not replace the recorded execution')
+        self.assertEqual(self.execution_row(), ('exited', 'exit 0'),
+                         'the completed execution stays exited under the stop')
+        self.assertEqual(self.owed_input(), initial,
+                         'the supported stop must leave the owed row '
+                         'unacknowledged and unmodified')
         result = subprocess.run(
             [str(HELPER), '--recover-observer', str(self.db), SESSION,
              str(observer_pid)],
             text=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, env=self.environment, timeout=120)
         self.assertEqual(result.returncode, 0,
-                         'the completed observer transfer must succeed: ' + result.stdout)
+                         'the stopped observer transfer must succeed: ' + result.stdout)
+        self.assertEqual(self.execution_identity(), identity,
+                         'the transfer must not replace the recorded execution')
+        self.assertEqual(self.execution_row(), ('exited', 'exit 0'),
+                         'the transfer must preserve the completed status')
+        self.assertEqual((self.attempt / 'native.pid').read_text().strip(),
+                         native_pid,
+                         'the transfer must not start another native execution')
+        self.assertEqual(self.owed_input(), initial,
+                         'the transfer must leave the complete owed tuple '
+                         'unacknowledged and unmodified')
+        self.assertIsNone(self.owed_input()[4],
+                          'the owed input must stay unacknowledged')
+        self.assertEqual((self.attempt / 'status').read_text().strip(), '0',
+                         'the durable native status must be preserved')
+        self.assertFalse((self.attempt / 'stdout').exists(),
+                         'successful retirement must remove the retained stdout')
         self.assertFalse(self.recovery_marker.exists(),
                          'the transfer path must not replay the captured recovery')
+        self.assertEqual(self.recovery_children(), [],
+                         'the transfer path must not run the captured recovery')
+
+    def stop_row(self, stop_id):
+        with sqlite3.connect(self.db) as database:
+            return database.execute(
+                "SELECT attempt,directory,outcome FROM session_stops "
+                "WHERE session='parent' AND id=?", (stop_id,)).fetchone()
+
+    def execution_row(self):
+        with sqlite3.connect(self.db) as database:
+            return database.execute(
+                "SELECT phase,status FROM executions WHERE session='parent'"
+            ).fetchone()
+
+    def execution_identity(self):
+        with sqlite3.connect(self.db) as database:
+            return database.execute(
+                "SELECT id,mode,directory FROM executions WHERE session='parent'"
+            ).fetchone()
 
     def test_active_attempt_still_recovers(self):
         process, gate, first = self.launch(self.native, 2)
