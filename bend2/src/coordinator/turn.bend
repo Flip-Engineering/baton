@@ -1246,15 +1246,10 @@ def observed_result(monitor: Bool, observation: Outcome & List<Chan(Result<&1,&1
 
 # The retained process sends its initial input once. Reattachment reads the same
 # attempt from its first frame so native completion can be reconstructed.
-@unsafe
-def retained_output(+db: String, +player: String, +id: String, +log: String, +harness: String, +attempt: String, +directory: String, +handle: U32, +supplied_requested: String) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def retained_output_state(+db: String, +player: String, +id: String, +log: String, +harness: String, +attempt: String, +directory: String, +handle: U32, +supplied_requested: String, +generation: String, +monitor: Bool, +checkpoint_state: Observer.State) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
-    +generation : String <- IO.pure(String,generation_log(log,id))
-    +monitor : Bool <- Observer.monitor_handle(db,handle)
     +policy : Logs.Policy <- Logs.open_attempt(db,player,log,id)
     sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
-    output_present : Bool <- Logs.prepare_retained_output(generation)
-    +checkpoint_state : Observer.State <- Bool.pick(IO(Observer.State),Bool.or(monitor,output_present),Observer.restore(db,handle,monitor),Observer.reset_empty(db,handle,monitor))
     +resumed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,NativeRequests.resume(db,player,id,attempt,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(attempt)),String.is_empty(Observer.terminal(checkpoint_state))))))
     +resume_error : String <- IO.pure(String,append_write_error("",unshared_result(Unit,resumed)))
     +resume_failed : Bool <- IO.pure(Bool,checkpoint_write_failed(unshared_result(Unit,resumed)))
@@ -1276,6 +1271,20 @@ def retained_output(+db: String, +player: String, +id: String, +log: String, +ha
     held : String <- IO.pure(String,Observer.held(checkpoint_state))
     observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,generation,policy,held,False{},handle,harness,spool,spanned,cursor,last_message,primary,current,terminal,filter,requested,codex_log,resume_error,sender,attempt,checkpoint_state,resume_failed,monitor,wake_sub,wake_on,Nil{},first)
     observed_result(monitor,observation)
+
+def retained_output_restored(+db: String, +player: String, +id: String, +log: String, +harness: String, +attempt: String, +directory: String, +handle: U32, +supplied_requested: String, +generation: String, +monitor: Bool, restored: Observer.RestoreOutcome) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+  match restored:
+    case Observer.Restored{+state}: retained_output_state(db,player,id,log,harness,attempt,directory,handle,supplied_requested,generation,monitor,state)
+    case Observer.Rejected{+reason}: IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{"checkpoint rejected","",reason,True{}},Nil{}))
+
+@unsafe
+def retained_output(+db: String, +player: String, +id: String, +log: String, +harness: String, +attempt: String, +directory: String, +handle: U32, +supplied_requested: String) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+  do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
+    +generation : String <- IO.pure(String,generation_log(log,id))
+    +monitor : Bool <- Observer.monitor_handle(db,handle)
+    output_present : Bool <- Logs.prepare_retained_output(generation)
+    restored : Observer.RestoreOutcome <- Bool.pick(IO(Observer.RestoreOutcome),Bool.or(monitor,output_present),Observer.restore(db,handle,monitor),Observer.empty_checkpoint_outcome(db,handle,monitor))
+    retained_output_restored(db,player,id,log,harness,attempt,directory,handle,supplied_requested,generation,monitor,restored)
 
 def muse_retained_arguments(cmd: String, model: String, effort: String, prompt_file: String, +session: String) -> List<String>:
   Muse.resume_arguments(cmd,model,effort,prompt_file,session)
