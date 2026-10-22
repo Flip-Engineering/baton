@@ -1,4 +1,8 @@
 import Base
+import ./clear-stop-focused.bend as ClearStop
+import ./stop.bend as Stop
+import ./store.bend as Store
+import ../host/session-lock.bend as Lock
 import ./receive.bend as Receive
 import ../host/instance.bend as Custody
 import ../host/process.bend as P
@@ -26,6 +30,15 @@ def dispatch_instance(owner: Bool, shutdown: Bool, +db: String) -> IO(Unit):
       match shutdown:
         case True{}: IO.try(Unit,Custody.Instance.shutdown(db))
         case False{}: IO.die(Unit,2,"expected instance lifecycle command")
+
+# Package maintenance installs the same schema preflight used by coordinator writes.
+def dispatch_schema(selected: Bool, +flag: String, +db: String) -> IO(Unit):
+  match selected:
+    case True{}: do IO<Unit>:
+      canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+      ensured : Unit <- Store.ensure_before_begin(canonical)
+      IO.write("{\"schema\":\"baton2-schema-ensure-v1\",\"status\":\"ready\"}\n")
+    case False{}: dispatch_instance(String.eq(flag,"--instance-owner"),String.eq(flag,"--instance-shutdown"),db)
 
 def dispatch_observer(selected: Bool, +db: String, +session: String, +observer: String) -> IO(Unit):
   match selected:
@@ -122,10 +135,11 @@ def focused_native_args(+full: String, +db: String, args: List<String>) -> IO(Un
     case +verb <> +session <> +observer <> Nil{}:
       focused_native_observer(String.eq(verb,"recover-observer"),full,db,verb,session,observer)
     case +verb <> +session <> Nil{}:
-      Bool.pick(IO(Unit), String.eq(verb,"storage-preview"), StoragePolicy.run_preview(db,session),
+      Bool.pick(IO(Unit), String.eq(verb,"clear-stop"), Stop.clear(db,session),
+        Bool.pick(IO(Unit), String.eq(verb,"storage-preview"), StoragePolicy.run_preview(db,session),
         Bool.pick(IO(Unit), String.eq(verb,"storage-apply"), StoragePolicy.run_apply(db,session),
           Bool.pick(IO(Unit), String.eq(verb,"storage-collect"), StoragePolicy.run_collect(db,session),
-            focused_fallback(full,db,Con{verb,Con{session,Nil{}}}))))
+            focused_fallback(full,db,Con{verb,Con{session,Nil{}}})))))
     case +verb <> Nil{}:
       Bool.pick(IO(Unit), String.eq(verb,"storage-policy"), StoragePolicy.run_policy(db),
         focused_fallback(full,db,Con{verb,Nil{}}))
@@ -156,7 +170,7 @@ def dispatch(args: List<String>) -> IO(Unit):
   match args:
     case +db <> +verb <> Nil{}:
       Bool.pick(IO(Unit), String.eq(verb,"storage-policy"), StoragePolicy.run_policy(db),
-        dispatch_instance(String.eq(db,"--instance-owner"),String.eq(db,"--instance-shutdown"),verb))
+        dispatch_schema(String.eq(db,"--ensure-schema"),db,verb))
     case +db <> +verb <> +third <> Nil{}:
       Bool.pick(IO(Unit), String.eq(verb,"storage-preview"), StoragePolicy.run_preview(db,third),
         Bool.pick(IO(Unit), String.eq(verb,"storage-apply"), StoragePolicy.run_apply(db,third),
@@ -178,7 +192,18 @@ def dispatch(args: List<String>) -> IO(Unit):
       dispatch_recover(String.eq(flag,"--recover-receive"),db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,inputs)
     case other: IO.die(Unit,2,"unsupported focused receive command")
 
+def focused_entry_route(selected: Bool, flag: String, rest: List<String>) -> IO(Unit):
+  match selected:
+    case True{}: ClearStop.run(rest)
+    case False{}: dispatch(Con{flag,rest})
+
+def focused_entry(args: List<String>) -> IO(Unit):
+  match args:
+    case +flag <> rest:
+      focused_entry_route(String.eq(flag,"--focused-clear-stop"),flag,rest)
+    case Nil{}: dispatch(Nil{})
+
 def main() -> IO(Unit):
   do IO<Unit>:
     args : List<String> <- IO.args()
-    dispatch(args)
+    focused_entry(args)

@@ -68,6 +68,7 @@ type Command is Data:
   HarnessInventory{}
   UsageWindows{session: String}
   UsageWindowObserve{session: String, window: String, resets: String, source: String}
+  UsageWindowReset{session: String, resets: String, source: String}
   UsageWindowRefresh{session: String}
   Logs{session: String, level: String}
   LogsStorage{}
@@ -89,6 +90,7 @@ type Command is Data:
   Project{path: String}
   ProjectSessions{path: String}
   Resume{session: String, lift_stop: Bool}
+  ClearStop{session: String}
   KnowledgeRecord{id: String, author: String, claim: String, evidence: String, limits: String}
   KnowledgeRecordTyped{id: String, author: String, kind: String, claim: String, evidence: String, limits: String}
   KnowledgeRecordLinked{id: String, author: String, kind: String, claim: String, evidence: String, limits: String, links: String}
@@ -618,6 +620,7 @@ def sql(command: Command) -> String:
     case Project{path}: ""
     case ProjectSessions{path}: ""
     case Resume{session,lift_stop}: ""
+    case ClearStop{session}: ""
     case ObserveFile{id,player,path}: ""
     case ReportFile{id,sender,path}: ""
     case MessageFile{id,sender,recipient,kind,path}: ""
@@ -655,6 +658,7 @@ def sql(command: Command) -> String:
     case HarnessInventory{}: ""
     case UsageWindows{session}: ""
     case UsageWindowObserve{session,window,resets,source}: ""
+    case UsageWindowReset{session,resets,source}: ""
     case UsageWindowRefresh{session}: ""
     case Logs{session,level}: ""
     case LogsStorage{}: ""
@@ -752,6 +756,7 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
     case "project": Project{id}
     case "project-sessions": ProjectSessions{id}
     case "resume": Resume{id,False{}}
+    case "clear-stop": ClearStop{id}
     case "knowledge": KnowledgeRead{id}
     case "knowledge-relations": KnowledgeRelations{id,"worker",id}
     case "observed-usage": ObservedUsage{id}
@@ -769,6 +774,10 @@ def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Comma
     case "pending": Bool.pick(Command,Bool.or(Bool.and(String.eq(session,"--index"),String.eq(id,"--pretty")),Bool.and(String.eq(session,"--pretty"),String.eq(id,"--index"))),Pretty{PendingIndex{}},Invalid{})
     case "resume": match id:
       case "--lift-stop": Resume{session,True{}}
+      case "--clear-stop": ClearStop{session}
+      case _: Invalid{}
+    case "stop": match id:
+      case "--clear": ClearStop{session}
       case _: Invalid{}
     case "models": match id:
       case "--all": ModelsAll{session}
@@ -829,6 +838,7 @@ def parse_verb_three_args(+verb: String, +id: String, +one: String, +two: String
     case "ensemble": Ensemble{id,one,two}
     case "native-reply": NativeReply{id,one,two}
     case "native-reply-file": NativeReplyFile{id,one,two}
+    case "usage-window-reset": UsageWindowReset{id,one,two}
     case "stop": Stop{id,one,two}
     case "report": Report{id,one,two}
     case "report-file": ReportFile{id,one,two}

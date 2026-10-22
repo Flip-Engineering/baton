@@ -4,7 +4,8 @@
 # provider report with a future reset is admitted and visible; exhaustion is a
 # provider limit message or a used fraction at or above 1; multiple windows are
 # evaluated per window; a limit message without a reset stays unknown and does
-# not hold.
+# not hold; an unknown observation recorded after a future reset keeps that
+# hold until an actual reset observation.
 #
 # usage: usage-windows-store DB HARNESS_SCRIPT
 # HARNESS_SCRIPT is an executable that prints the OMP usage report JSON and
@@ -84,7 +85,9 @@ def observe_cases(+db: String) -> IO(Unit):
     expect_gate(db,"leaf","","unknown","limit-then-operator-unknown")
     observed_held : Unit <- UW.observe(db,"leaf","5-hour","2999-01-01T00:00:00Z","kimi console web ui","")
     expect_gate(db,"leaf","","held","operator-observed-reset-holds")
-    held_row : Unit <- expect_read(db,"SELECT window || ':' || reset_source || ':' || (resets_at IS NOT NULL) FROM usage_windows ORDER BY id DESC LIMIT 1;","5-hour:operator-observation:1\n","operator-observation-row")
+    observed_unknown_after_hold : Unit <- UW.observe(db,"leaf","5-hour","unknown","kimi console shows none","")
+    expect_gate(db,"leaf","","held","unknown-observation-keeps-observed-hold")
+    held_row : Unit <- expect_read(db,"SELECT (SELECT count(*) FROM usage_windows WHERE window='5-hour' AND reset_source='operator-observation' AND resets_at IS NOT NULL)||':'||(SELECT count(*) FROM usage_windows WHERE window='5-hour' AND reset_source='operator-observation' AND resets_at IS NULL);","1:2\n","unknown-observation-retained-without-replacing-reset")
     observed_elapsed : Unit <- UW.observe(db,"leaf","5-hour","2020-01-01T00:00:00Z","kimi console web ui","")
     expect_gate(db,"leaf","","elapsed","operator-observed-reset-elapsed")
     IO.pure(Unit,Unit{})

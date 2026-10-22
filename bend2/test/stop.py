@@ -366,6 +366,64 @@ class Stop(unittest.TestCase):
         self.shutdown_idle_database_owner('refused native reply left the fixture database owner active')
         self.assertEqual(self.owned_processes(), [])
 
+    def test_clear_only_removes_terminal_stop_preserves_state_and_keeps_quota_hold(self):
+        observer, stream, started = self.begin(harness='omp')
+        self.connect('parent')
+        self.message('queued', 'parent', 'This retained input must not execute.')
+        self.stop()
+        self.finish(observer, ok=False)
+        self.assertEqual(self.completed()['nativeStatus'], 'signal 15')
+        with sqlite3.connect(self.db) as database:
+            database.execute("UPDATE sessions SET model='kimi-code/kimi-for-coding' WHERE id='parent'")
+            database.execute(
+                "INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) "
+                "VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','','5-hour',NULL,'provider-message',NULL,'limit message','')")
+            database.execute(
+                "INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) "
+                "VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','','5-hour',32472144000000,'operator-observation',NULL,'operator-observation: console','')")
+        before = {table: self.rows('SELECT * FROM ' + table)
+                  for table in ('sessions', 'messages', 'executions', 'usage_windows')}
+        launches = (self.directory / 'native-launches.jsonl').read_text().splitlines()
+        windows = {row['window']: row for row in self.coord('usage-windows', 'parent')['windows']}
+        self.assertEqual(windows['5-hour']['state'], 'held')
+        cleared = self.coord('clear-stop', 'parent')
+        self.assertTrue(cleared['cleared'])
+        self.assertEqual((cleared['session'], cleared['native'], cleared['preserved']['native']),
+                         ('parent', started['native'], started['native']))
+        self.assertEqual(cleared['preserved']['retainedInputs'], 1)
+        self.assertEqual(self.rows('SELECT * FROM session_stops'), [])
+        self.assertEqual({table: self.rows('SELECT * FROM ' + table)
+                          for table in ('sessions', 'messages', 'executions', 'usage_windows')}, before)
+        windows = {row['window']: row for row in self.coord('usage-windows', 'parent')['windows']}
+        self.assertEqual(windows['5-hour']['state'], 'held')
+        self.assertEqual((self.directory / 'native-launches.jsonl').read_text().splitlines(), launches)
+        observed = self.coord('usage-window-observe', 'parent', '5-hour',
+                             '2020-01-01T00:00:00Z', 'operator console')
+        self.assertEqual(observed['resetsAt'], 1577836800000)
+        windows = {row['window']: row for row in self.coord('usage-windows', 'parent')['windows']}
+        self.assertEqual(windows['5-hour']['state'], 'elapsed')
+        self.assertEqual(windows['5-hour']['exhaustionSource'], 'provider-message')
+        self.assertEqual(self.rows('SELECT * FROM executions'), before['executions'])
+        self.assertEqual((self.directory / 'native-launches.jsonl').read_text().splitlines(), launches)
+        with sqlite3.connect(self.db) as database:
+            rows_before = database.execute('SELECT count(*) FROM usage_windows').fetchone()[0]
+        refused_reset = self.coord('usage-window-observe', 'parent', '5-hour',
+                                  'next monday maybe', 'console', ok=False)
+        self.assertIn('did not parse', refused_reset.stderr)
+        with sqlite3.connect(self.db) as database:
+            self.assertEqual(database.execute('SELECT count(*) FROM usage_windows').fetchone()[0], rows_before)
+        missing = self.coord('clear-stop', 'missing', ok=False)
+        self.assertIn('session-not-registered', missing.stderr)
+        absent = self.coord('clear-stop', 'parent', ok=False)
+        self.assertIn('no-terminal-stop', absent.stderr)
+        self.stop()
+        alias = self.coord('resume', 'parent', '--clear-stop')
+        self.assertTrue(alias['cleared'])
+        self.assertEqual(self.rows('SELECT * FROM session_stops'), [])
+        self.assertEqual((self.directory / 'native-launches.jsonl').read_text().splitlines(), launches)
+        self.assertEqual(self.rows('SELECT * FROM messages'), before['messages'])
+        self.shutdown_idle_database_owner('clear-only stop left the fixture database owner active')
+
 
 if __name__ == '__main__':
     unittest.main()

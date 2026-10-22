@@ -167,13 +167,16 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.HarnessInventory{}:
       Subscription.inventory(db)
     case C.UsageWindows{+session}: do IO<Unit>:
-      label : String <- Subscription.profile_label_io(db,session)
+      label : String <- Accounts.handoff_label_io(db,session)
       UsageWindows.query(db,session,label)
     case C.UsageWindowObserve{+session,window,resets,source}: do IO<Unit>:
-      label : String <- Subscription.profile_label_io(db,session)
+      label : String <- Accounts.handoff_label_io(db,session)
       UsageWindows.observe(db,session,window,resets,source,label)
+    case C.UsageWindowReset{+session,resets,source}: do IO<Unit>:
+      label : String <- Accounts.handoff_label_io(db,session)
+      UsageWindows.reset_exhausted(db,session,resets,source,label)
     case C.UsageWindowRefresh{+session}: do IO<Unit>:
-      label : String <- Subscription.profile_label_io(db,session)
+      label : String <- Accounts.handoff_label_io(db,session)
       UsageWindows.refresh(db,session,label)
     case C.Logs{session,level}: do IO<Unit>:
       saved : String <- Logs.apply(db,session,level)
@@ -225,6 +228,7 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.Project{path}: Project.describe(db,path)
     case C.ProjectSessions{path}: Project.sessions(db,path)
     case C.Resume{session,lift_stop}: Project.resume(db,session,lift_stop)
+    case C.ClearStop{session}: Stop.clear(db,session)
     case C.View{subject,reader,port}: UiView.run(db,subject,reader,port)
     case C.UiSubscribe{after_cursor,generation}:
       UISubscription.run(db,after_cursor,generation)
