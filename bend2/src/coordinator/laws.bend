@@ -7,6 +7,7 @@ import ./knowledge-laws.bend as KnowledgeLaws
 import ./observation-laws.bend as ObservationLaws
 import ./observer-checkpoint-laws.bend as ObserverCheckpointLaws
 import ./instance-laws.bend as InstanceLaws
+import ./storage-policy-laws.bend as StoragePolicyLaws
 import ./messaging-laws.bend as MessagingLaws
 import ./connect-laws.bend as ConnectLaws
 import ./naming-laws.bend as NamingLaws

@@ -8,6 +8,7 @@ import ../git/text.bend as Tx
 import ../host/session-lock.bend as Lock
 import ../json/canonical.bend as J
 import ./../coordinator/frame-span.bend as Frame
+import ./storage-policy.bend as Policy
 
 # Baton2-owned log classification, storage inspection and cleanup.
 #
@@ -966,7 +967,8 @@ def storage_json(db: String, database: U32, root: U32, logs: String, attempts: S
   ++ ",\"defaults\":{\"level\":" ++ J.string_literal(default_level()) ++ "}"
   ++ ",\"logs\":[" ++ logs ++ "]"
   ++ ",\"attempts\":[" ++ attempts ++ "]"
-  ++ ",\"stderrRuns\":[" ++ stderr_runs ++ "]}"
+  ++ ",\"stderrRuns\":[" ++ stderr_runs ++ "]"
+  ++ ",\"policy\":" ++ Policy.policy_json("current", ".") ++ "}"
 
 # Inspects registered artifact paths and cleanup candidates.
 def storage(+db: String) -> IO(String):
@@ -1324,6 +1326,58 @@ def clean_owned(+db: String, +session: String, lock: Maybe<U32>) -> IO(String):
 def clean_started(+db: String, +session: String) -> IO(String):
   Lock.SessionLock.acquire_session(String,db,session, +database => lock => clean_owned(database,session,lock))
 
+def storage_policy() -> String:
+  Policy.policy_json("current", ".")
+
+def attempt_decision_reason(decision: AttemptDecision) -> String:
+  match decision:
+    case AttemptDecision{reason, eligible}: reason
+
+def preview_fields(+db: String, fields: List<String>) -> IO(String):
+  match fields:
+    case session <> attempt <> mode <> phase <> status <> +directory <> pending <> level <> reported <> path <> terminal <> event_chars <> event_messages <> rest: do IO<String>:
+      stdout : U32 <- IO.try(U32,F.Files.size(directory ++ "/stdout"))
+      stderr : U32 <- IO.try(U32,F.Files.size(directory ++ "/native.stderr"))
+      stderr_full : U32 <- IO.try(U32,F.Files.size(directory ++ "/stderr.full"))
+      stderr_meta_bytes : U32 <- IO.try(U32,F.Files.size(directory ++ "/stderr.meta"))
+      stderr_error_bytes : U32 <- IO.try(U32,F.Files.size(directory ++ "/stderr-processing-error"))
+      observer : U32 <- IO.try(U32,F.Files.size(directory ++ "/observer.log"))
+      keeper : U32 <- IO.try(U32,F.Files.size(directory ++ "/keeper.log"))
+      link : String <- IO.try(String,F.Files.link(directory))
+      +bytes : U32 = U32.add(stdout,U32.add(stderr,U32.add(stderr_full,U32.add(stderr_meta_bytes,U32.add(stderr_error_bytes,U32.add(observer,keeper))))))
+      +stderr_meta : String <- stderr_meta_json(db,directory)
+      health : String <- stderr_health(db,directory,stderr_meta)
+      released_file : String <- IO.try(String,F.Files.regular(directory ++ "/released"))
+      acknowledged_file : String <- IO.try(String,F.Files.regular(directory ++ "/acknowledged"))
+      +base : AttemptDecision = attempt_decision(health,phase,status,Bool.pick(String,String.eq(released_file,"1"),"1","0"),Bool.pick(String,String.eq(acknowledged_file,"1"),"1","0"),reported,pending,level,path,bytes)
+      +decision : Policy.Decision <- IO.pure(Policy.Decision, Bool.pick(Policy.Decision, String.eq(link,"1"), Policy.Decision{"symlink-path", False{}}, Policy.Decision{attempt_decision_reason(base), attempt_decision_eligible(base)}))
+      IO.pure(String,Policy.item_json(directory, Policy.logs_evidence(), decision, bytes))
+    case other: IO.pure(String,"")
+
+def preview_row(db: String, row: String) -> IO(String):
+  preview_fields(db,Tx.split_tabs(row))
+
+def preview_rows(+db: String, rows: List<String>, acc: String) -> IO(String):
+  match rows:
+    case Nil{}: IO.pure(String,acc)
+    case head <> tail: do IO<String>:
+      item : String <- preview_row(db,head)
+      deeper : String <- preview_rows(db,tail,items_join(acc,item))
+      IO.pure(String,deeper)
+
+# Preview reads the recorded attempt state and names each item that apply
+# would remove. Preview performs reads only. Apply re-reads state under
+# the session lock, so a turn that starts first keeps its files.
+def storage_preview(+db: String, +session: String) -> IO(String):
+  do IO<String>:
+    ensured : Unit <- Schema.ensure(db)
+    +present : String <- IO.try(String,DB.Sql.query(db,schema() ++ "SELECT count(*) FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    answer : String <- Bool.pick(IO(String),String.eq(Tx.trim_nl(present),"1"),do IO<String>:
+      rows : String <- IO.try(String,DB.Sql.query(db,attempt_rows_sql(db,session)))
+      items : String <- preview_rows(db,Tx.split_lines(rows),"")
+      IO.pure(String,Policy.receipt_json("preview",session,items,"")),IO.pure(String,unknown_session(session)))
+    IO.pure(String,answer)
+
 # Explicit cleanup removes eligible completed attempt artifacts for the named
 # session. Public log files and historical numbered segments remain intact.
 def clean(+db: String, +session: String) -> IO(String):
@@ -1332,3 +1386,11 @@ def clean(+db: String, +session: String) -> IO(String):
     +present : String <- IO.try(String,DB.Sql.query(db,schema() ++ "SELECT count(*) FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     answer : String <- Bool.pick(IO(String),String.eq(Tx.trim_nl(present),"1"),clean_started(db,session),IO.pure(String,unknown_session(session)))
     IO.pure(String,answer)
+
+# Apply runs the existing locked cleanup and wraps its result in the shared
+# receipt shape. A second apply finds the files absent and records no new
+# removals.
+def storage_apply(+db: String, +session: String) -> IO(String):
+  do IO<String>:
+    cleaned : String <- clean(db,session)
+    IO.pure(String,"{\"mode\":\"apply\",\"session\":" ++ J.string_literal(session) ++ ",\"ageOnlyDeletion\":false,\"result\":" ++ cleaned ++ "}")

@@ -355,6 +355,31 @@ static Term baton_regular_file_run(Env e,Term *f,IoWork *w) {
 static void __attribute__((constructor)) baton_regular_file_use(void) {io_eff(CID_FILES_REGULAR,baton_regular_file_run,0);}
 #endif
 
+typedef struct { char *path; char answer[2]; int error; } BatonLinkFile;
+static void baton_link_file_call(IoWork *w) {
+  BatonLinkFile *call=(BatonLinkFile *)w->data;
+  struct stat info;
+  if(!lstat(call->path,&info))call->answer[0]=S_ISLNK(info.st_mode)?'1':'0';
+  else if(errno==ENOENT)call->answer[0]='0';
+  else call->error=errno;
+  call->answer[1]=0;
+}
+static Term baton_link_file_pack(Env e,IoWork *w) {
+  BatonLinkFile *call=(BatonLinkFile *)w->data;
+  Term result=call->error?io_fail(e,call->error,NULL):io_done(e,io_str(e,call->answer,1));
+  free(call->path);free(call);w->data=NULL;return result;
+}
+#ifdef CID_FILES_LINK
+static Term baton_link_file_run(Env e,Term *f,IoWork *w) {
+  BatonLinkFile *call=calloc(1,sizeof(*call));
+  if(!call)return io_fail(e,ENOMEM,NULL);
+  u64 length=0;call->path=io_cstr(e,f[0],&length);
+  if(!call->path || strlen(call->path)!=length) {free(call->path);free(call);return io_fail(e,EINVAL,"path contains NUL");}
+  w->data=(char *)call;return io_work(w,baton_link_file_call,baton_link_file_pack);
+}
+static void __attribute__((constructor)) baton_link_file_use(void) {io_eff(CID_FILES_LINK,baton_link_file_run,0);}
+#endif
+
 /* The numbered segments beside one log: directory entries whose name is the
    log's basename followed by "." and a positive decimal number, answered
    sorted by number, one per line. A log whose directory is absent answers

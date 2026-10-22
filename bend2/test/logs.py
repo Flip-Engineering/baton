@@ -516,6 +516,62 @@ sys.exit(%d)
         self.assertTrue(evidence.is_symlink())
         self.assertEqual(outside.read_text(), 'must remain')
 
+    def test_storage_policy_names_durable_classes(self):
+        policy = json.loads(self.call('storage-policy'))
+        self.assertFalse(policy['ageOnlyDeletion'])
+        classes = {item['class']: item for item in policy['classes']}
+        self.assertEqual(set(classes), {'scratch-build', 'checkout-worktree',
+                                        'shared-immutable', 'git-objects',
+                                        'logs-evidence', 'durable-state', 'unknown'})
+        self.assertTrue(classes['scratch-build']['deletable'])
+        self.assertTrue(classes['logs-evidence']['deletable'])
+        for name in ('checkout-worktree', 'shared-immutable', 'git-objects',
+                     'durable-state', 'unknown'):
+            self.assertFalse(classes[name]['deletable'], name)
+        storage = json.loads(self.call('logs-storage'))
+        self.assertIn('policy', storage)
+        self.assertFalse(storage['policy']['ageOnlyDeletion'])
+
+    def test_storage_preview_and_apply_receipts_are_idempotent(self):
+        self.stream([self.terminal()])
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        for name in ('stdout', 'native.stderr', 'observer.log', 'keeper.log'):
+            (attempt_dir / name).write_text('diagnostic data for ' + name)
+        preview = json.loads(self.call('storage-preview', 'omp-worker'))
+        self.assertEqual(preview['mode'], 'preview')
+        self.assertFalse(preview['ageOnlyDeletion'])
+        item = next(row for row in preview['items'] if row['path'] == str(attempt_dir))
+        self.assertEqual(item['class'], 'logs-evidence')
+        self.assertTrue(item['wouldRemove'], item)
+        self.assertTrue((attempt_dir / 'stdout').is_file())
+        applied = json.loads(self.call('storage-apply', 'omp-worker'))
+        self.assertEqual(applied['mode'], 'apply')
+        self.assertFalse(applied['ageOnlyDeletion'])
+        removed = {row['file'] for row in applied['result']['attemptFiles']
+                   if row.get('removed') and 'file' in row}
+        self.assertIn('stdout', removed)
+        self.assertFalse((attempt_dir / 'stdout').exists())
+        second = json.loads(self.call('storage-apply', 'omp-worker'))
+        self.assertEqual(second['mode'], 'apply')
+        second_removed = {row['file'] for row in second['result']['attemptFiles']
+                          if row.get('removed') and 'file' in row}
+        self.assertEqual(second_removed, set())
+
+    def test_storage_preview_keeps_pending_attempt(self):
+        self.stream([self.terminal()])
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        evidence = attempt_dir / 'observer.log'
+        evidence.write_text('observer evidence')
+        with sqlite3.connect(self.db) as connection:
+            connection.execute(
+                'INSERT INTO messages(id,sender,recipient,kind,body) VALUES (?,?,?,?,?)',
+                ('pending-storage-preview', 'root', 'omp-worker', 'guidance', 'Review this first.'))
+        preview = json.loads(self.call('storage-preview', 'omp-worker'))
+        item = next(row for row in preview['items'] if row['path'] == str(attempt_dir))
+        self.assertFalse(item['wouldRemove'], item)
+        self.assertEqual(item['reason'], 'pending-input')
+        self.assertEqual(evidence.read_text(), 'observer evidence')
+
     def test_cleanup_during_a_live_turn_keeps_the_live_log(self):
         self.call('logs', 'omp-worker', 'default')
         frames = [json.dumps({'type': 'response', 'id': 'r%d' % i, 'command': 'probe', 'pad': 'y' * 20000}) for i in range(6)]
