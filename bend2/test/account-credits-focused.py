@@ -275,11 +275,13 @@ class FocusedAccountCredits(unittest.TestCase):
         if balance is not None:
             self.import_credit('claude-api', 'org-fixture', balance)
 
+    def reservation_tables(self):
+        return self.query("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='credit_reservations'")[0][0]
 
     def test_gate_holds_an_eligible_credit_account_and_records_no_reservation(self):
         self.credit_account()
         self.assertIn('credit-only routing is not proven', self.gate('attempt-1'))
-        self.assertEqual(self.query("SELECT count(*) FROM credit_reservations"), [(0,)])
+        self.assertEqual(self.reservation_tables(), 0)
 
     def test_gate_refuses_a_reported_zero_balance(self):
         self.credit_account(balance='0.00')
@@ -657,7 +659,6 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(self.price('claude-unknown'), 'refused|creditModelUnpriced')
         self.assertEqual(self.price('claude-sonnet-5-5', fast='1'), 'refused|creditFastModeUnpriced')
         self.assertEqual(self.price('claude-opus-5-5', geo='eu'), 'refused|creditResidencyUnpriced')
-
     def authorize(self, attempt, session='leaf'):
         completed = self.entry('authorize', session, 'claude-code', attempt)
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -674,6 +675,17 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(self.authorize('attempt-1'), 'not-authorized')
         self.assertEqual(self.query("SELECT count(*) FROM credit_authorizations"), [(0,)])
 
+    def test_a_credit_reading_records_expiry_and_authorizes_its_cycle(self):
+        self.record('claude-api', funding='api_key', secret='file:/fixture/api')
+        self.bind('claude-api', 'leaf')
+        self.observe('claude-api', 'org-fixture')
+        saved = self.import_credit('claude-api', 'org-fixture', '200.00',
+                                   expires='2026-11-01', cycle='2026-10')
+        self.assertEqual((saved['observation']['expires'], saved['observation']['cycle']),
+                         ('2026-11-01', '2026-10'))
+        self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        self.assertEqual(self.query("SELECT cycle,balance,unit FROM credit_authorizations WHERE attempt='attempt-1'"),
+                         [('2026-10', '200.00', 'USD')])
     def test_helper_runs_only_with_marker_and_durable_authorization(self):
         helper = os.environ.get('BATON2_API_KEY_EXEC')
         if not helper:
@@ -740,7 +752,127 @@ class FocusedAccountCredits(unittest.TestCase):
         refused = [error for code, (out, error) in zip([first.returncode, second.returncode], outputs) if code != 0]
         self.assertIn('creditAuthorizationConsumed', refused[0])
 
-    def test_a_failed_or_zero_change_consume_never_admits(self):
+    def test_an_unfunded_attempt_refuses_before_a_child_runs(self):
+        helper = os.environ.get('BATON2_API_KEY_EXEC')
+        if not helper:
+            self.skipTest('BATON2_API_KEY_EXEC not set')
+        self.credit_account(balance='0.00')
+        self.assertEqual(self.authorize('attempt-1'), 'not-authorized')
+        directory = self.directory
+        secret = directory / 'secret'
+        secret.write_text('fixture-secret\n')
+        secret.chmod(0o600)
+        marker = directory / 'child-started'
+        child = directory / 'child.sh'
+        child.write_text('#!/bin/sh\nprintf started > "' + str(marker) + '"\n')
+        child.chmod(0o755)
+        refused = subprocess.run([helper, 'file:' + str(secret), str(child)],
+                                 capture_output=True, text=True,
+                                 env={'BATON2_CREDIT_RESERVATION': 'attempt-1',
+                                      'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+                                      'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']})
+        self.assertEqual(refused.returncode, 2, refused.stdout)
+        self.assertIn('creditAdmissionUnavailable', refused.stderr)
+        self.assertFalse(marker.exists())
+
+    def test_a_zero_change_consume_refuses_and_starts_no_child(self):
+        helper = os.environ.get('BATON2_API_KEY_EXEC')
+        if not helper:
+            self.skipTest('BATON2_API_KEY_EXEC not set')
+        directory = self.directory
+        secret = directory / 'secret'
+        secret.write_text('fixture-secret\n')
+        secret.chmod(0o600)
+        self.record('claude-api', funding='api_key', secret='file:' + str(secret))
+        self.bind('claude-api', 'leaf')
+        self.observe('claude-api', 'org-fixture')
+        self.import_credit('claude-api', 'org-fixture', '200.00')
+        self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        marker = directory / 'child-started'
+        child = directory / 'child.sh'
+        child.write_text('#!/bin/sh\nprintf started > "' + str(marker) + '"\n')
+        child.chmod(0o755)
+        # The trigger aborts the guarded UPDATE without changing the row, so
+        # changes() is zero while the row still reads authorized. Admission
+        # must follow changes(), never the post-failure read.
+        self.execute("CREATE TRIGGER ignore_consume BEFORE UPDATE ON credit_authorizations "
+                     "WHEN OLD.attempt='attempt-1' AND OLD.state='authorized' "
+                     "BEGIN SELECT RAISE(IGNORE); END")
+        refused = subprocess.run([helper, 'file:' + str(secret), str(child)],
+                                 capture_output=True, text=True,
+                                 env={'BATON2_CREDIT_RESERVATION': 'attempt-1',
+                                      'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+                                      'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']})
+        self.assertEqual(refused.returncode, 2, refused.stdout)
+        self.assertIn('creditAdmissionUnavailable', refused.stderr)
+        self.assertFalse(marker.exists())
+        self.assertEqual(self.query("SELECT state,consumed FROM credit_authorizations WHERE attempt='attempt-1'"),
+                         [('authorized', '')])
+
+    def test_an_aborted_consume_refuses_and_starts_no_child(self):
+        helper = os.environ.get('BATON2_API_KEY_EXEC')
+        if not helper:
+            self.skipTest('BATON2_API_KEY_EXEC not set')
+        directory = self.directory
+        secret = directory / 'secret'
+        secret.write_text('fixture-secret\n')
+        secret.chmod(0o600)
+        self.record('claude-api', funding='api_key', secret='file:' + str(secret))
+        self.bind('claude-api', 'leaf')
+        self.observe('claude-api', 'org-fixture')
+        self.import_credit('claude-api', 'org-fixture', '200.00')
+        self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        marker = directory / 'child-started'
+        child = directory / 'child.sh'
+        child.write_text('#!/bin/sh\nprintf started > "' + str(marker) + '"\n')
+        child.chmod(0o755)
+        # The update itself fails rather than changing zero rows. A failed
+        # consume must refuse and must not admit from the post-failure read.
+        self.execute("CREATE TRIGGER abort_consume BEFORE UPDATE ON credit_authorizations "
+                     "WHEN OLD.attempt='attempt-1' AND OLD.state='authorized' "
+                     "BEGIN SELECT RAISE(ABORT,'fixture abort'); END")
+        refused = subprocess.run([helper, 'file:' + str(secret), str(child)],
+                                 capture_output=True, text=True,
+                                 env={'BATON2_CREDIT_RESERVATION': 'attempt-1',
+                                      'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+                                      'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']})
+        self.assertEqual(refused.returncode, 2, refused.stdout)
+        self.assertIn('creditAdmissionUnavailable', refused.stderr)
+        self.assertFalse(marker.exists())
+        self.assertEqual(self.query("SELECT state,consumed FROM credit_authorizations WHERE attempt='attempt-1'"),
+                         [('authorized', '')])
+
+    def test_a_fresh_wrong_reference_refuses_and_leaves_the_row_authorized(self):
+        helper = os.environ.get('BATON2_API_KEY_EXEC')
+        if not helper:
+            self.skipTest('BATON2_API_KEY_EXEC not set')
+        directory = self.directory
+        secret = directory / 'secret'
+        secret.write_text('fixture-secret\n')
+        secret.chmod(0o600)
+        self.record('claude-api', funding='api_key', secret='file:' + str(secret))
+        self.bind('claude-api', 'leaf')
+        self.observe('claude-api', 'org-fixture')
+        self.import_credit('claude-api', 'org-fixture', '200.00')
+        self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        marker = directory / 'child-started'
+        child = directory / 'child.sh'
+        child.write_text('#!/bin/sh\nprintf started > "' + str(marker) + '"\n')
+        child.chmod(0o755)
+        # A different reference against an unconsumed row names the mismatch and
+        # leaves the authorization available for the account it was written for.
+        refused = subprocess.run([helper, 'file:/fixture/other-secret', str(child)],
+                                 capture_output=True, text=True,
+                                 env={'BATON2_CREDIT_RESERVATION': 'attempt-1',
+                                      'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+                                      'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']})
+        self.assertEqual(refused.returncode, 2, refused.stdout)
+        self.assertIn('creditAuthorizationMismatch', refused.stderr)
+        self.assertFalse(marker.exists())
+        self.assertEqual(self.query("SELECT state,consumed FROM credit_authorizations WHERE attempt='attempt-1'"),
+                         [('authorized', '')])
+
+    def test_an_aborted_child_keeps_the_authorization_consumed(self):
         helper = os.environ.get('BATON2_API_KEY_EXEC')
         if not helper:
             self.skipTest('BATON2_API_KEY_EXEC not set')
@@ -754,30 +886,71 @@ class FocusedAccountCredits(unittest.TestCase):
         self.import_credit('claude-api', 'org-fixture', '200.00')
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
         child = directory / 'child.sh'
-        child.write_text('#!/bin/sh\nprintf "KEY=${ANTHROPIC_API_KEY:+set}\\n"\n')
+        child.write_text('#!/bin/sh\nexit 7\n')
         child.chmod(0o755)
         environment = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
                        'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']}
-        commands = [helper, 'file:' + str(secret), str(child)]
-        # RAISE(IGNORE) leaves the row authorized and reports changes()=0.
-        self.execute("CREATE TRIGGER block_consume BEFORE UPDATE ON credit_authorizations "
-                     "BEGIN SELECT RAISE(IGNORE); END")
-        ignored = subprocess.run(commands, capture_output=True, text=True, env=environment)
-        self.assertEqual(ignored.returncode, 2, ignored.stderr)
-        self.assertIn('creditAdmissionUnavailable', ignored.stderr)
-        self.assertEqual(ignored.stdout.strip(), '')
+        aborted = subprocess.run([helper, 'file:' + str(secret), str(child)],
+                                 capture_output=True, text=True, env=environment)
+        self.assertEqual(aborted.returncode, 7, aborted.stderr)
+        replay = subprocess.run([helper, 'file:' + str(secret), str(child)],
+                                capture_output=True, text=True, env=environment)
+        self.assertEqual(replay.returncode, 2, replay.stdout)
+        self.assertIn('creditAuthorizationConsumed', replay.stderr)
         self.assertEqual(self.query("SELECT state FROM credit_authorizations WHERE attempt='attempt-1'"),
-                         [('authorized',)])
-        # RAISE(ABORT) makes the guarded update itself fail.
-        self.execute("DROP TRIGGER block_consume")
-        self.execute("CREATE TRIGGER abort_consume BEFORE UPDATE ON credit_authorizations "
-                     "BEGIN SELECT RAISE(ABORT,'fixture abort'); END")
-        aborted = subprocess.run(commands, capture_output=True, text=True, env=environment)
-        self.assertEqual(aborted.returncode, 2, aborted.stderr)
-        self.assertIn('creditAdmissionUnavailable', aborted.stderr)
-        self.assertEqual(aborted.stdout.strip(), '')
+                         [('consumed',)])
+
+    def test_a_long_secret_reference_consumes_once(self):
+        helper = os.environ.get('BATON2_API_KEY_EXEC')
+        if not helper:
+            self.skipTest('BATON2_API_KEY_EXEC not set')
+        directory = self.directory
+        secret = directory / ('secret-' + 'a' * 120)
+        secret.write_text('fixture-secret\n')
+        secret.chmod(0o600)
+        self.record('claude-api', funding='api_key', secret='file:' + str(secret))
+        self.bind('claude-api', 'leaf')
+        self.observe('claude-api', 'org-fixture')
+        self.import_credit('claude-api', 'org-fixture', '200.00')
+        self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        child = directory / 'child.sh'
+        child.write_text('#!/bin/sh\nprintf "KEY=${ANTHROPIC_API_KEY:+set}\n"\n')
+        child.chmod(0o755)
+        environment = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+                       'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']}
+        admitted = subprocess.run([helper, 'file:' + str(secret), str(child)],
+                                  capture_output=True, text=True, env=environment)
+        self.assertEqual((admitted.returncode, admitted.stdout.strip()), (0, 'KEY=set'), admitted.stderr)
         self.assertEqual(self.query("SELECT state FROM credit_authorizations WHERE attempt='attempt-1'"),
-                         [('authorized',)])
+                         [('consumed',)])
+
+    def test_a_quoted_secret_reference_is_escaped(self):
+        helper = os.environ.get('BATON2_API_KEY_EXEC')
+        if not helper:
+            self.skipTest('BATON2_API_KEY_EXEC not set')
+        directory = self.directory
+        secret = directory / "sec'ret"
+        secret.write_text('fixture-secret\n')
+        secret.chmod(0o600)
+        self.record('claude-api', funding='api_key', secret='file:' + str(secret))
+        self.bind('claude-api', 'leaf')
+        self.observe('claude-api', 'org-fixture')
+        self.import_credit('claude-api', 'org-fixture', '200.00')
+        self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        child = directory / 'child.sh'
+        child.write_text('#!/bin/sh\nprintf "KEY=${ANTHROPIC_API_KEY:+set}\n"\n')
+        child.chmod(0o755)
+        environment = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+                       'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']}
+        admitted = subprocess.run([helper, 'file:' + str(secret), str(child)],
+                                  capture_output=True, text=True, env=environment)
+        self.assertEqual((admitted.returncode, admitted.stdout.strip()), (0, 'KEY=set'), admitted.stderr)
+        replay = subprocess.run([helper, 'file:' + str(secret), str(child)],
+                                capture_output=True, text=True, env=environment)
+        self.assertEqual(replay.returncode, 2, replay.stdout)
+        self.assertIn('creditAuthorizationConsumed', replay.stderr)
+        self.assertEqual(self.query("SELECT state FROM credit_authorizations WHERE attempt='attempt-1'"),
+                         [('consumed',)])
 
     def test_gate_keeps_the_subscription_binding(self):
         self.record('claude-max')

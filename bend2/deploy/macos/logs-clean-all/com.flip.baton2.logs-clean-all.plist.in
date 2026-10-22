@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.flip.baton2.logs-clean-all.@JOB_ID@</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@HOME@/.local/share/baton2/releases/@RELEASE_NAME@/bin/cleanup-registered-logs</string>
+    <string>@DATABASE_PATH@</string>
+    <string>@JOB_ID@</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>@HOUR@</integer><key>Minute</key><integer>@MINUTE@</integer></dict>
+  <key>RunAtLoad</key><false/>
+  <key>ProcessType</key><string>Background</string>
+  <key>Nice</key><integer>10</integer>
+  <key>LowPriorityIO</key><true/>
+  <key>ThrottleInterval</key><integer>3600</integer>
+  <key>StandardOutPath</key><string>/dev/null</string>
+  <key>StandardErrorPath</key><string>/dev/null</string>
+</dict>
+</plist>

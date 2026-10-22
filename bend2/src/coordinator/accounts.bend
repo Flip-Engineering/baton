@@ -14,6 +14,7 @@
 import Base
 import ../coordinator/commands.bend as C
 import ./subscription-fallback.bend as Subs
+import ./usage-windows.bend as UW
 import ../json/canonical.bend as J
 import ../git/text.bend as Tx
 import ../host/sqlite.bend as DB
@@ -1168,11 +1169,36 @@ def next_account_after(accounts: List<&2,AccountRecord>, +harness: String, +curr
         case True{}: Bool.pick(Maybe<&2,AccountRecord>,account_matches(harness,"",account),Some{account},next_account_after(rest,harness,current,True{}))
         case False{}: Bool.pick(Maybe<&2,AccountRecord>,String.eq(account_id(account),current),next_account_after(rest,harness,current,True{}),next_account_after(rest,harness,current,False{}))
 
+# Continue past an account whose provider has already reported a current quota
+# hold. Unknown and elapsed observations leave the configured account selectable.
+def gate_held(gate: UW.Gate) -> Bool:
+  match gate:
+    case UW.GateHeld{window,resets_at,source,receipt}: True{}
+    case other: False{}
+
+def account_candidates_after(accounts: List<&2,AccountRecord>, +harness: String, +current: String, seen: Bool) -> List<&2,AccountRecord>:
+  match accounts:
+    case Nil{}: Nil{}
+    case +account <> +rest:
+      match seen:
+        case True{}: Bool.pick(List<&2,AccountRecord>,account_matches(harness,"",account),Con{account,account_candidates_after(rest,harness,current,True{})},account_candidates_after(rest,harness,current,True{}))
+        case False{}: account_candidates_after(rest,harness,current,String.eq(account_id(account),current))
+
+def first_account_available(+db: String, +session: String, accounts: List<&2,AccountRecord>) -> IO(Maybe<&2,AccountRecord>):
+  match accounts:
+    case Nil{}: IO.pure(Maybe<&2,AccountRecord>,None{})
+    case +account <> +rest: do IO<Maybe<&2,AccountRecord>>:
+      gate : UW.Gate <- UW.window_gate(db,session,account_id(account))
+      Bool.pick(IO(Maybe<&2,AccountRecord>),gate_held(gate),first_account_available(db,session,rest),IO.pure(Maybe<&2,AccountRecord>,Some{account}))
+
+def next_account_available(db: String, session: String, accounts: List<&2,AccountRecord>, harness: String, current: String) -> IO(Maybe<&2,AccountRecord>):
+  first_account_available(db,session,account_candidates_after(accounts,harness,current,False{}))
+
 def account_handoff_body(+harness: String, +refused: String, +bound: String, +cause: String) -> String:
   "account handoff: harness=" ++ harness ++ "; refused account=" ++ refused ++ "; bound account=" ++ bound ++ "; original cause: " ++ cause
 
 def account_exhausted_body(+harness: String, +refused: String, +cause: String) -> String:
-  "accounts exhausted: harness=" ++ harness ++ "; account=" ++ refused ++ " was the last operator-recorded account for this harness and the provider reported usage exhaustion; cause: " ++ cause
+  "accounts exhausted: harness=" ++ harness ++ "; account=" ++ refused ++ " reported usage exhaustion and no later selectable operator-recorded account remains for this harness; cause: " ++ cause
 
 def account_history_needed(+refused: AccountRecord, +next: AccountRecord) -> Bool:
   Bool.and(String.eq(account_funding(refused),"subscription"),Bool.and(String.eq(account_funding(next),"subscription"),Bool.not(String.eq(account_secret_ref(refused),account_secret_ref(next)))))
@@ -1195,7 +1221,7 @@ def advance_account_append(+db: String, +session: String, +id: String, +harness:
 def advance_account_decided(+db: String, +session: String, +id: String, +harness: String, +refused: AccountRecord, +cause: String, native: String, cmd: String, cwd: String, decided: Maybe<&2,AccountRecord>) -> IO(Bool):
   match decided:
     case None{}: do IO<Bool>:
-      noted : Unit <- Subs.report_body(db,session,id,"account-exhausted",account_exhausted_body(harness,account_id(refused),cause))
+      noted : Unit <- Subs.report_account_exhausted(db,session,id,account_id(refused),account_exhausted_body(harness,account_id(refused),cause))
       IO.pure(Bool,False{})
     case Some{+next}: do IO<Bool>:
       prepared : Bool <- Bool.pick(IO(Bool),account_history_needed(refused,next),Subs.prepare_account_history(db,session,id,harness,account_secret_ref(refused),account_secret_ref(next),cmd,cwd,native),IO.pure(Bool,True{}))
@@ -1205,7 +1231,7 @@ def advance_account(+db: String, +session: String, +id: String, +harness: String
   do IO<Bool>:
     rows : String <- IO.try(String,DB.Sql.read(db,account_row_sql()))
     +accounts : List<&2,AccountRecord> <- IO.pure(List<&2,AccountRecord>,account_lines(Tx.split_lines(rows),Nil{}))
-    +decided : Maybe<&2,AccountRecord> <- IO.pure(Maybe<&2,AccountRecord>,next_account_after(accounts,harness,account_id(refused),False{}))
+    +decided : Maybe<&2,AccountRecord> <- next_account_available(db,session,accounts,harness,account_id(refused))
     advanced : Bool <- advance_account_decided(db,session,id,harness,refused,cause,native,cmd,cwd,decided)
     IO.pure(Bool,advanced)
 
@@ -1214,20 +1240,45 @@ def handoff_decided(+db: String, +session: String, +id: String, +event: String, 
     case None{}: Subs.profile_handoff(db,session,id,event,native,cmd,cwd)
     case Some{+refused}: Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),advance_account(db,session,id,harness,refused,cause,native,cmd,cwd))
 
+# The account label in force: the bound account's own label, or the operator's
+# profile label when no account record exists. The handoff's usage-window record
+# and the wake gate both read this one value, so the reported reset and the
+# refusal to retry before it name the same account.
+def label_for_bound(+db: String, +session: String, +bound: Maybe<&2,AccountRecord>) -> IO(String):
+  match bound:
+    case Some{+account}: IO.pure(String,account_id(account))
+    case None{}: Subs.profile_label_io(db,session)
+
+def handoff_label_io(+db: String, +session: String) -> IO(String):
+  do IO<String>:
+    +harness_text : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +harness : String <- IO.pure(String,Tx.trim_nl(harness_text))
+    bound : Maybe<&2,AccountRecord> <- bound_account(db,session,harness)
+    label : String <- label_for_bound(db,session,bound)
+    IO.pure(String,label)
+
 # Provider-reported exhaustion advances the account in force when a binding
-# put one in force, and the operator's profile list otherwise. For two
+# put one in force, and the operator's profile list otherwise. The usage-window
+# observation is recorded before any advance, under the refused account label,
+# so the provider reset survives even when the advance fails. For two
 # subscription accounts with distinct credential stores, the native-history
 # helper materializes the next store before the sidecar records the advance.
 # The advance is recorded before the caller relaunches, so the next attempt
-# records the next account beside its own attempt identity.
+# records the next account beside its own attempt identity. An empty cause
+# records nothing.
 def handoff(+db: String, +session: String, +id: String, +event: String, native: String, cmd: String, cwd: String) -> IO(Bool):
   do IO<Bool>:
     +cause : String <- Subs.exhaustion_cause(db,event)
     +harness_text : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +harness : String <- IO.pure(String,Tx.trim_nl(harness_text))
-    bound : Maybe<&2,AccountRecord> <- bound_account(db,session,harness)
+    +bound : Maybe<&2,AccountRecord> <- bound_account(db,session,harness)
+    +label : String <- label_for_bound(db,session,bound)
+    recorded : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.record_cause(db,session,id,label,cause))
     advanced : Bool <- handoff_decided(db,session,id,event,native,cmd,cwd,cause,harness,bound)
-    IO.pure(Bool,advanced)
+    +next_label : String <- handoff_label_io(db,session)
+    gate : UW.Gate <- UW.window_gate(db,session,next_label)
+    held : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(cause)),gate_held(gate)))
+    IO.pure(Bool,Bool.and(advanced,Bool.not(held)))
 
 # --- the account selected for each attempt -----------------------------------
 
@@ -1530,9 +1581,9 @@ def record_current_attempt(+db: String, +session: String, +attempt: String, +pre
 # Eligibility reads actual recorded facts: the Anthropic claude-code api_key
 # route, a verified organization, and the newest promotional_credit
 # observation for that organization with its reported balance and unit. A
-# reported zero balance is the provider-reported exhausted state. The provider
-# enforces the balance on each request; a retained launch contains an
-# unbounded number of provider requests, so no launch-level charge bound is
+# reported zero balance is the provider-reported exhausted state. A retained
+# launch contains an unbounded number of provider requests. A reported balance
+# does not prove that the provider will refuse billed usage. No charge bound is
 # derived and no reservation or settled amount is recorded from a launch.
 # Actual provider cost enters through external_spend observations from the
 # Admin cost report. Credit-only routing stays held until a per-request

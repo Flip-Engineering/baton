@@ -222,9 +222,9 @@ def run(+reference: String, +command: String, args: List<String>) -> IO(Unit):
 # Bool.pick evaluates both of its value arguments, so calling sql_escaped on
 # the tail inside each branch escapes every tail twice and grows exponentially
 # with the string length. Escape the tail once and choose the head here.
-def sql_escape_char(head: Char, tail: String, quote: Bool) -> String:
+def sql_escape_char(+head: Char, tail: String, quote: Bool) -> String:
   match quote:
-    case True{}: "''" ++ tail
+    case True{}: SCon{head,SCon{head,tail}}
     case False{}: SCon{head,tail}
 
 def sql_escaped(+text: String) -> String:
@@ -251,33 +251,38 @@ def state_read(read: Result<&1,&1,U32 & String,String>) -> String:
     case Fail{(code,detail)}: "absent"
     case Done{+value}: Tx.trim_nl(value)
 
-# A failed consume never dies and never admits: only the guarded transition's
-# changes()=1 returns the admitted tag. Every other outcome is classified from
-# the row, and a row still authorized after a failed or zero-change update
-# refuses as unavailable rather than reusing the admitted path.
-def refused_state(+db: String, +attempt: String, +reference: String) -> IO(String):
-  do IO<String>:
-    read : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,authorization_state_sql(attempt,reference))
-    state : String <- IO.pure(String,state_read(read))
-    IO.pure(String,state)
+# A zero-change consume that still reads authorized did not transition, so it
+# refuses through the unavailable cause. The state is matched once.
+def zero_change_state(state: String) -> String:
+  match state:
+    case "authorized": "unavailable"
+    case other: other
 
-def consume_state(+db: String, +attempt: String, +reference: String, changed: Bool) -> IO(String):
+# Admission requires the guarded UPDATE to change exactly one row. A failed or
+# zero-change consume never admits: when the row is still authorized, the
+# transition did not happen, so the caller reports creditAdmissionUnavailable
+# and leaves the owed input for a later attempt. Consumed and mismatched rows
+# keep their named causes.
+def refused_state(+db: String, +attempt: String, +reference: String, changed: Bool) -> IO(String):
   match changed:
-    case True{}: IO.pure(String,"admitted")
-    case False{}: refused_state(db,attempt,reference)
+    case True{}: IO.pure(String,"authorized")
+    case False{}: do IO<String>:
+      read : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,authorization_state_sql(attempt,reference))
+      observed : String <- IO.pure(String,state_read(read))
+      IO.pure(String,zero_change_state(observed))
 
 def authorization_consume(+db: String, +attempt: String, +reference: String) -> IO(String):
   do IO<String>:
     consumed : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,authorization_consume_sql(attempt,reference))
-    state : String <- consume_state(db,attempt,reference,consume_changed(consumed))
+    state : String <- refused_state(db,attempt,reference,consume_changed(consumed))
     IO.pure(String,state)
 
 def admitted_decided(state: String, +reference: String, +command: String, args: List<String>) -> IO(Unit):
   match state:
-    case "admitted": run(reference,command,args)
+    case "authorized": run(reference,command,args)
     case "consumed": IO.die(Unit,2,refusal_json(reference,"creditAuthorizationConsumed","The promotional-credit authorization for this attempt was already used. One authorization admits one launch; a new attempt requires a new authorization."))
     case "mismatch": IO.die(Unit,2,refusal_json(reference,"creditAuthorizationMismatch","The recorded authorization for this attempt names a different secret reference."))
-    case other: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit authorization for this attempt, and a failed or zero-change consume does not admit one."))
+    case other: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit authorization for this attempt."))
 
 def marker_matches_decided(matches: Bool, +db: String, +attempt: String, +reference: String, +command: String, args: List<String>) -> IO(Unit):
   match matches:

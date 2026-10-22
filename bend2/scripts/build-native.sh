@@ -136,12 +136,8 @@ if [ "$recovery" = 1 ] && { [ "$focused" = 1 ] || [ "$router" = 1 ]; }; then
   printf '{"error":"build-mode-conflict","condition":"recovery-helper-with-other-native-entry","entry":"%s"}\n' "$entry_path" >&2
   exit 78
 fi
-if [ -n "${BEND_GENERATED_C:-}" ]; then
-  echo 'BEND_GENERATED_C is unsupported; use the verified main-C reuse inputs.' >&2
-  exit 1
-fi
-generated=
-if [ -n "${BATON2_MAIN_GENERATED_C:-}" ] &&
+generated=${BEND_GENERATED_C:-}
+if [ -z "$generated" ] && [ -n "${BATON2_MAIN_GENERATED_C:-}" ] &&
    [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
   generated=$(python3 "${BATON2_MAIN_C_VERIFIER:?}" select \
     --source "$root" --compiler "$compiler" \

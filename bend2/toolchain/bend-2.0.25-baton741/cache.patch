@@ -1,0 +1,412 @@
+From d37af25dd358adb0e718e559cc73ddacc3b17233 Mon Sep 17 00:00:00 2001
+From: Bend2Compile <bend2compile@campaign.local>
+Date: Sun, 18 Oct 2026 21:58:25 -0700
+Subject: [PATCH] Cache emitted C by proven inputs, default on
+
+---
+ bend2/cache.ts | 365 +++++++++++++++++++++++++++++++++++++++++++++++++
+ bend2/main.ts  |   9 +-
+ 2 files changed, 373 insertions(+), 1 deletion(-)
+ create mode 100755 bend2/cache.ts
+
+diff --git a/bend2/cache.ts b/bend2/cache.ts
+new file mode 100755
+index 00000000..69d8448a
+--- /dev/null
++++ b/bend2/cache.ts
+@@ -0,0 +1,365 @@
++#!/usr/bin/env bun
++// CgenCache: a fail-closed cache of the C text compile_book produces.
++//
++// A hit serves bytes this compiler wrote earlier for exactly the same inputs:
++// the entry, every loaded file (path, namespace and content, in load order),
++// Base, the foreign fragments, and the compiler's own identity. Anything
++// uncertain (unreadable input, missing or corrupt receipt, unreadable
++// compiler) is a miss, and a miss runs the ordinary compiler. The cache never
++// serves bytes it cannot account for.
++//
++// The input key is computed first, so a cold build pays nothing extra: the
++// compiler identity (the executable's hash for a compiled Bend, the source
++// files' hashes under Bun) is hashed on a worker thread while the ordinary
++// compiler runs, and only a warm lookup waits for it.
++//
++// BEND_CGEN_CACHE=0 disables the cache. BEND_CGEN_CACHE_DIR relocates it.
++import * as crypto from "node:crypto";
++import * as fs from "node:fs";
++import * as os from "node:os";
++import * as path from "node:path";
++import * as url from "node:url";
++import * as thr from "node:worker_threads";
++import { BASE_BEND } from "./bend.ts";
++import type * as Bend from "./bend.ts";
++
++export const KEY_SCHEMA = "bend-cgen-input-v1";
++export const RECEIPT_SCHEMA = "bend-cgen-receipt-v1";
++const MAX_ENTRIES = 32;
++const MAX_BYTES = 256 * 1024 * 1024;
++
++const HERE = path.dirname(url.fileURLToPath(import.meta.url));
++const COMPILED = import.meta.url.startsWith("file:///$bunfs/");
++// In the compiled Bend these live inside the executable; the executable's own
++// hash covers them, and Base is the external copy it reads.
++const SOURCES = ["main.ts", "bend.ts", "comp.ts", "base.bend", "cache.ts"];
++
++export function enabled(): boolean {
++  const v = process.env.BEND_CGEN_CACHE;
++  return v === undefined || (v !== "0" && v !== "false" && v !== "off");
++}
++
++export function cache_dir(): string {
++  const override = process.env.BEND_CGEN_CACHE_DIR;
++  if (override !== undefined && override !== "") {
++    return override;
++  }
++  const base = process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), ".cache");
++  return path.join(base, "bend", "cgen");
++}
++
++function sha_bytes(data: Buffer | string): string {
++  return crypto.createHash("sha256").update(data).digest("hex");
++}
++
++function sha_file(file: string): string | null {
++  try {
++    return sha_bytes(fs.readFileSync(file));
++  } catch {
++    return null;
++  }
++}
++
++function real_file(file: string): string | null {
++  try {
++    const real = fs.realpathSync(file);
++    return fs.statSync(real).isFile() ? real : null;
++  } catch {
++    return null;
++  }
++}
++
++function canon(value: unknown): string {
++  if (value === null || typeof value !== "object") {
++    return JSON.stringify(value) ?? "null";
++  }
++  if (Array.isArray(value)) {
++    return "[" + value.map(canon).join(",") + "]";
++  }
++  return "{" + Object.keys(value as Record<string, unknown>).sort()
++    .map((k) => JSON.stringify(k) + ":" + canon(
++      (value as Record<string, unknown>)[k])).join(",") + "}";
++}
++
++interface Row {
++  path: string;
++  sha256: string;
++}
++
++function rows_of(files: string[]): Row[] | null {
++  const rows: Row[] = [];
++  for (const file of files) {
++    const real = real_file(file);
++    const sha = real === null ? null : sha_file(real);
++    if (real === null || sha === null) {
++      return null;
++    }
++    rows.push({ path: real, sha256: sha });
++  }
++  return rows;
++}
++
++// The input manifest excludes the compiler: identity is checked separately,
++// so a cold build does not have to wait for it before compiling.
++function input_manifest(book: Bend.Book,
++  seen: Map<string, string | null>,
++  entry: string): Record<string, unknown> | null {
++  const entryReal = real_file(entry);
++  const entrySha = entryReal === null ? null : sha_file(entryReal);
++  if (entryReal === null || entrySha === null) {
++    return null;
++  }
++  const closure: [string, string, string][] = [];
++  for (const [real, namespace] of seen) {
++    const sha = namespace === null ? null : sha_file(real);
++    if (namespace === null || sha === null) {
++      return null;
++    }
++    closure.push([real, namespace, sha]);
++  }
++  const base = rows_of([BASE_BEND]);
++  if (base === null) {
++    return null;
++  }
++  const foreign: string[] = [];
++  for (const tld of Object.values(book.tlds)) {
++    const def = tld as Bend.Def & { i?: string[] };
++    if (def.$ === "Def" && def.i !== undefined && def.b !== true) {
++      foreign.push(...def.i);
++    }
++  }
++  const effs = rows_of([...new Set(foreign)].sort());
++  if (effs === null) {
++    return null;
++  }
++  return {
++    schema: KEY_SCHEMA,
++    entry: { path: entryReal, sha256: entrySha },
++    closure,
++    order: book.order,
++    base: base[0],
++    effs,
++    emit: "c",
++    platform: process.platform,
++    arch: process.arch,
++  };
++}
++
++// The compiler identity: the source files under Bun, the executable's bytes
++// for a compiled Bend. The hash runs on a worker so a cold build overlaps it
++// with the ordinary compile.
++const HASH_JS = `
++const crypto = require("node:crypto");
++const fs = require("node:fs");
++const { parentPort, workerData } = require("node:worker_threads");
++const hash = crypto.createHash("sha256");
++const stream = fs.createReadStream(workerData.path);
++stream.on("data", (chunk) => hash.update(chunk));
++stream.on("end", () => parentPort.postMessage(hash.digest("hex")));
++stream.on("error", () => parentPort.postMessage(null));
++`;
++
++class Identity {
++  private readonly value: Promise<string | null>;
++
++  constructor() {
++    const bun = (globalThis as { Bun?: { version?: string } }).Bun?.version
++      ?? "nobun";
++    if (!COMPILED) {
++      const rows = rows_of(SOURCES.map((f) => path.join(HERE, f)));
++      this.value = Promise.resolve(rows === null ? null : sha_bytes(canon({
++        mode: "source", bun, files: rows,
++      })));
++      return;
++    }
++    const { promise, resolve } = Promise.withResolvers<string | null>();
++    this.value = promise;
++    let settled = false;
++    const done = (id: string | null): void => {
++      if (!settled) {
++        settled = true;
++        resolve(id);
++      }
++    };
++    try {
++      const real = real_file(process.execPath);
++      if (real === null) {
++        done(null);
++        return;
++      }
++      const before = fs.statSync(real);
++      const worker = new thr.Worker(HASH_JS, {
++        eval: true,
++        workerData: { path: real },
++      });
++      worker.on("message", (digest: string | null) => {
++        void worker.terminate();
++        let after: fs.Stats;
++        try {
++          after = fs.statSync(real);
++        } catch {
++          return done(null);
++        }
++        const same = before.size === after.size && before.mtimeMs === after.mtimeMs
++          && before.ino === after.ino;
++        done(digest === null || !same ? null : sha_bytes(canon({
++          mode: "compiled",
++          bun,
++          exe: real,
++          sha256: digest,
++        })));
++      });
++      worker.on("error", () => done(null));
++      worker.on("exit", () => done(null));
++    } catch {
++      done(null);
++    }
++  }
++
++  get(): Promise<string | null> {
++    return this.value;
++  }
++}
++
++function receipt_path(dir: string, input: string): string {
++  return path.join(dir, input, "receipt.json");
++}
++
++function artifact_path(dir: string, input: string, compiler: string): string {
++  return path.join(dir, input, compiler + ".c");
++}
++
++interface Receipt {
++  schema: string;
++  input: string;
++  compiler: string;
++  artifact_sha256: string;
++  manifest: Record<string, unknown>;
++}
++
++function valid(dir: string, input: string, compiler: string,
++  manifest: Record<string, unknown>): string | null {
++  try {
++    const receipt = JSON.parse(fs.readFileSync(
++      receipt_path(dir, input), "utf8")) as Receipt;
++    if (receipt.schema !== RECEIPT_SCHEMA || receipt.input !== input
++      || receipt.compiler !== compiler) {
++      return null;
++    }
++    if (canon(receipt.manifest) !== canon(manifest)) {
++      return null;
++    }
++    const text = fs.readFileSync(
++      artifact_path(dir, input, compiler), "utf8");
++    return sha_bytes(text) === receipt.artifact_sha256 ? text : null;
++  } catch {
++    return null;
++  }
++}
++
++function atomic_write(file: string, text: string): void {
++  // No fsync: a torn file fails the receipt or artifact hash on the next
++  // read and is recompiled, so crash durability is not needed for a cache.
++  const tmp = file + ".tmp-" + process.pid;
++  fs.writeFileSync(tmp, text);
++  fs.renameSync(tmp, file);
++}
++
++function store(dir: string, input: string, compiler: string,
++  manifest: Record<string, unknown>, text: string): void {
++  try {
++    const at = artifact_path(dir, input, compiler);
++    fs.mkdirSync(path.dirname(at), { recursive: true });
++    atomic_write(at, text);
++    const receipt: Receipt = {
++      schema: RECEIPT_SCHEMA,
++      input,
++      compiler,
++      artifact_sha256: sha_bytes(text),
++      manifest,
++    };
++    atomic_write(receipt_path(dir, input),
++      JSON.stringify(receipt, null, 2) + "\n");
++    if (fs.readdirSync(dir).length > MAX_ENTRIES) {
++      trim(dir);
++    }
++  } catch {
++    // A cache that cannot store is still a correct compiler.
++  }
++}
++
++// Bounded retention: the oldest input entries go first.
++function trim(dir: string): void {
++  try {
++    const entries = fs.readdirSync(dir, { withFileTypes: true })
++      .filter((d) => d.isDirectory())
++      .map((d) => {
++        const at = path.join(dir, d.name);
++        let bytes = 0;
++        let mtime = 0;
++        for (const f of fs.readdirSync(at)) {
++          const st = fs.statSync(path.join(at, f));
++          bytes += st.size;
++          mtime = Math.max(mtime, st.mtimeMs);
++        }
++        return { at, bytes, mtime };
++      })
++      .sort((a, b) => a.mtime - b.mtime);
++    let total = entries.reduce((n, e) => n + e.bytes, 0);
++    let count = entries.length;
++    for (const e of entries) {
++      if (count <= MAX_ENTRIES && total <= MAX_BYTES) {
++        break;
++      }
++      fs.rmSync(e.at, { recursive: true, force: true });
++      count -= 1;
++      total -= e.bytes;
++    }
++  } catch {
++    // Retention is housekeeping only.
++  }
++}
++
++export interface Emit {
++  c: string;
++  hit: boolean;
++}
++
++// emit_c serves the C for these inputs, compiling only when no exact cached
++// artifact exists. The caller writes the returned text.
++export async function emit_c(book: Bend.Book,
++  seen: Map<string, string | null>, entry: string,
++  compile: () => string): Promise<Emit> {
++  if (!enabled()) {
++    return { c: compile(), hit: false };
++  }
++  const manifest = input_manifest(book, seen, entry);
++  if (manifest === null) {
++    return { c: compile(), hit: false };
++  }
++  const dir = cache_dir();
++  const input = sha_bytes(canon(manifest));
++  const identity = new Identity();
++  let present = false;
++  try {
++    present = fs.existsSync(path.join(dir, input));
++  } catch {
++    present = false;
++  }
++  if (present) {
++    const compiler = await identity.get();
++    if (compiler === null) {
++      return { c: compile(), hit: false };
++    }
++    const text = valid(dir, input, compiler, manifest);
++    if (text !== null) {
++      return { c: text, hit: true };
++    }
++  }
++  const c = compile();
++  const compiler = await identity.get();
++  if (compiler !== null) {
++    store(dir, input, compiler, manifest, c);
++  }
++  return { c, hit: false };
++}
+diff --git a/bend2/main.ts b/bend2/main.ts
+index bfd3fa86..7d5abc68 100755
+--- a/bend2/main.ts
++++ b/bend2/main.ts
+@@ -22,6 +22,7 @@ import type { BunPlugin } from "bun";
+ 
+ import * as Bend from "./bend.ts";
+ import * as Comp from "./comp.ts";
++import * as Cache from "./cache.ts";
+ 
+ // Main
+ // ====
+@@ -248,7 +249,13 @@ async function cli_file(args: string[]): Promise<void> {
+       if (ins.has(at) || (fs.existsSync(at) && fs.statSync(at).isDirectory())) {
+         cli_fail("-o " + out + " is a file the program reads, or a directory");
+       }
+-      cli_emit(book, out);
++      if (out.endsWith(".c")) {
++        const emit = await Cache.emit_c(book, seen, file,
++          () => Comp.compile_book(book));
++        fs.writeFileSync(out, emit.c);
++      } else {
++        cli_emit(book, out);
++      }
+     }
+   } catch (e) {
+     cli_say(2, book_err(e) + "\n");
+-- 
+2.43.0
+
