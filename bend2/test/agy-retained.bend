@@ -63,7 +63,7 @@ def launch_mode(directory: String, cmd: String, model: String, effort: String, n
     launch : Result<&1,&1,U32 & String,Turn.RetainedLaunch> <- Turn.retained_launch_checked(unused_prepared(),False{},True{},"","",cmd,model,effort,native,False{},"",initial,False{},False{},"default",False{})
     launch_value(launch)
 
-def admit(+db: String, +directory: String, +cmd: String, model: String, effort: String, native: String, initial: String) -> IO(Unit):
+def admit(+db: String, +directory: String, +cmd: String, model: String, effort: String, native: String, +initial: String) -> IO(Unit):
   do IO<Unit>:
     +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
     launch : Turn.RetainedLaunch <- IO.try(Turn.RetainedLaunch,Turn.retained_launch_checked(unused_prepared(),False{},True{},"","",cmd,model,effort,native,False{},"",initial,False{},False{},"default",False{}))

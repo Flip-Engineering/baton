@@ -34,8 +34,8 @@ def lines(+db: String, +mode: String, +handle: U32, next: Maybe<String>) -> IO(U
   match next:
     case None{}: IO.pure(Unit,Unit{})
     case Some{text}: do IO<Unit>:
-      line : String <- IO.pure(String,Tx.trim_nl(text))
-      kind : String <- IO.pure(String,Agy.kind(line))
+      +line : String <- IO.pure(String,Tx.trim_nl(text))
+      +kind : String <- IO.pure(String,Agy.kind(line))
       IO.print("kind\t" ++ kind)
       admit : Bool <- IO.pure(Bool,Agy.admitted(kind))
       observed : Unit <- admitted_line(db,mode ++ "-" ++ kind,line,admit)
@@ -54,7 +54,7 @@ def launched(+db: String, mode: String, text: String, result: Result<&1,&1,U32 &
     case Fail{error}: IO.die(Unit,2,"agy launch failed")
     case Done{+handle}: sent(db,mode,handle,text)
 
-def start(+db: String, mode: String, cmd: String, text: String) -> IO(Unit):
+def start(+db: String, +mode: String, cmd: String, text: String) -> IO(Unit):
   match mode:
     case "fresh": do IO<Unit>:
       setup(db)
@@ -77,7 +77,7 @@ def report(+db: String, +id: String) -> IO(Unit):
 
 def run(args: List<String>) -> IO(Unit):
   match args:
-    case +db <> cmd <> mode <> text <> Nil{}: do IO<Unit>:
+    case +db <> cmd <> +mode <> text <> Nil{}: do IO<Unit>:
       start(db,mode,cmd,text)
       native : String <- IO.try(String,DB.Sql.read(db,"SELECT native FROM sessions WHERE id='agy-player';"))
       IO.print("native\t" ++ Tx.trim_nl(native))
