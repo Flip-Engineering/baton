@@ -4,9 +4,24 @@
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+root=$(CDPATH= cd -- "$here/../.." && pwd -P)
 guard="$here/../scripts/bend-launch-guard.sh"
-temp=$(mktemp -d)
+# The temp tree is under the ignored .scratch/ of the root: the compile queue
+# refuses C inputs outside its root, and build-native.sh passes its C output to
+# the queue as a cc input.
+mkdir -p "$root/.scratch"
+temp=$(mktemp -d "$root/.scratch/launch-guard.XXXXXX")
 trap 'rm -rf "$temp"' EXIT HUP INT TERM
+# build-native.sh compiles through the compile queue. The caller supplies the
+# built queue executable; this test uses a private queue state root so the stub
+# builds do not wait on the shared heavy lock.
+: "${BATON2_COMPILE_QUEUE_BIN:?set BATON2_COMPILE_QUEUE_BIN to the built Bend2 queue executable}"
+export BATON2_COMPILE_QUEUE_BIN
+export BATON_COMPILE_QUEUE_ROOT="$temp/queue-state"
+# On this host a state root with the default mode (0755) made the queue fail
+# with "Permission denied"; mode 2770 works. build-native.sh creates a missing
+# root with the default mode, so the test creates its root first.
+mkdir -m 2770 "$BATON_COMPILE_QUEUE_ROOT"
 
 mkdir -p "$temp/bin" "$temp/bend2"
 cp "$guard" "$temp/bin/bend"
@@ -99,6 +114,7 @@ BEND
 cat > "$temp/tmp-cc" <<'CC'
 #!/bin/sh
 if [ "$1" = --version ]; then printf 'clang version 19.1.7\n'; exit 0; fi
+if [ "$1" = -print-prog-name=ld ]; then printf '/usr/bin/ld\n'; exit 0; fi
 [ -d "$TMPDIR" ] || { echo "missing isolated TMPDIR=$TMPDIR" >&2; exit 10; }
 [ "$TMP" = "$TMPDIR" ] && [ "$TEMP" = "$TMPDIR" ] || exit 12
 : > "$TMPDIR/cc-tmp-probe"
@@ -170,12 +186,16 @@ failed_scratch=$(cat "$temp/failed-scratch.path")
 [ -f "$failed_scratch/cc-tmp-probe" ] || { echo "FAIL failed build scratch receipt content"; exit 1; }
 echo "PASS failed_build_scratch_preserved_for_cleanup_review"
 status=0
+# The queue caches completed results by request content. The held request uses
+# a stub with different bytes, so it cannot join an earlier cached result.
+{ cat "$temp/tmp-bend"; printf '# held fixture\n'; } > "$temp/tmp-bend-held"
+chmod 0755 "$temp/tmp-bend-held"
 TMPDIR="$temp/tmp-alias" BEND_HOLD=1 BEND_CHILD_PID="$temp/hold-child.pid" \
-  TMPDIR_RECEIPT="$temp/hold-scratch.path" BEND="$temp/tmp-bend" CC="$temp/tmp-cc" \
+  TMPDIR_RECEIPT="$temp/hold-scratch.path" BEND="$temp/tmp-bend-held" CC="$temp/tmp-cc" \
   sh "$here/../scripts/build-native.sh" bend2/tests/land.bend "$temp/tmp-build-held" \
   >"$temp/tmp-build-held.out" 2>"$temp/tmp-build-held.err" &
 wrapper_pid=$!
-for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+for attempt in $(seq 1 300); do
   [ -s "$temp/hold-child.pid" ] && [ -s "$temp/hold-scratch.path" ] && break
   sleep 0.1
 done
