@@ -483,11 +483,13 @@ def wake_starting(db: String, session: String) -> IO(Bool):
 def wake_if_kept(db: String, session: String, cursor: String, superseded: Bool, finished: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match superseded:
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,finished)
-    case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      starting : Bool <- wake_starting(db,session)
-      Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),starting,
-        IO.pure(Result<&1,&1,U32 & String,Unit>,finished),
-        completed_wake(db,session,cursor,finished))
+    case False{}: match finished:
+      case Done{unit}: completed_wake(db,session,cursor,finished)
+      case Fail{error}: do IO<Result<&1,&1,U32 & String,Unit>>:
+        starting : Bool <- wake_starting(db,session)
+        Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),starting,
+          IO.pure(Result<&1,&1,U32 & String,Unit>,finished),
+          completed_wake(db,session,cursor,finished))
 
 # Record an ended adopted attempt with unknown status, preserve its stdout,
 # and retire its capability before continuing with the pending inbox.
