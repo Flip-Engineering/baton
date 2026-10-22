@@ -246,11 +246,22 @@ def external_record(+db: String, +session: String, +saved: String, +read: Bool) 
     +context : String <- environment("BATON_MCP_INPUT")
     external_record_if(String.is_empty(context),db,session,saved,read,context)
 
+def cli_read(+db: String, +session: String, +saved: String) -> IO(Unit):
+  do IO<Unit>:
+    ensured : Unit <- Store.ensure_before_begin(db)
+    stored : String <- IO.try(String,Store.transact_sql(db,Status.cli_read_sql(session,saved)))
+    IO.pure(Unit,Unit{})
+
+def external_read(+db: String, +session: String, +saved: String, +read: Bool) -> IO(Unit):
+  do IO<Unit>:
+    external : Unit <- external_record(db,session,saved,read)
+    Bool.pick(IO(Unit),read,cli_read(db,session,saved),IO.pure(Unit,Unit{}))
+
 def after_output(+db: String, +session: String, +directory: String, +saved: String, +read: Bool, output: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   match output:
     case Fail{error}: IO.pass(Unit,Fail{error})
     case Done{unit}:
-      Bool.pick(IO(Unit),String.is_empty(directory),external_record(db,session,saved,read),record(db,session,directory,saved,read))
+      Bool.pick(IO(Unit),String.is_empty(directory),external_read(db,session,saved,read),record(db,session,directory,saved,read))
 
 def output(+db: String, +session: String, +saved: String, +read: Bool) -> IO(Unit):
   do IO<Unit>:
