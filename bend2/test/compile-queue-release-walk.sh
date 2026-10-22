@@ -21,6 +21,12 @@ printf 'child\n' > "$T/release/bend2/sub/child.txt"
 printf '#!/bin/sh\nexit 0\n' > "$T/release/bin/bend"
 printf '#!/bin/sh\nexit 0\n' > "$T/release/bin/bun"
 chmod 0755 "$T/release/bin/bend" "$T/release/bin/bun"
+# Nontrivial sibling breadth; each listing ends with a newline.
+i=1
+while [ "$i" -le 64 ]; do
+  printf 'sibling %s\n' "$i" > "$T/release/bend2/sibling-$i.txt"
+  i=$((i + 1))
+done
 
 cat > "$T/bend-wrapper" <<EOF
 #!/bin/sh
@@ -46,3 +52,20 @@ esac
 [ ${#first} -eq 64 ] || { printf 'bad key length: %s\n' "$first" >&2; exit 1; }
 [ "$first" = "$second" ] || { printf 'unstable key: %s vs %s\n' "$first" "$second" >&2; exit 1; }
 printf 'pass release walk terminates: %s\n' "$first"
+
+if [ -n "${BATON2_RELEASE_WALK_COMPILER:-}" ]; then
+  installed_once() {
+    "$QUEUE" -- key --kind cgen --state-root "$T/state" --cwd "$T/src" \
+      --root "$T/src" --source-root "$T/src" \
+      --entry bend2/src/fixture.bend --compiler "$BATON2_RELEASE_WALK_COMPILER" \
+      --artifact "c.c=$T/installed.c" -- "$BATON2_RELEASE_WALK_COMPILER" bend2/src/fixture.bend -o "$T/installed.c"
+  }
+  installed_first=$(installed_once)
+  installed_second=$(installed_once)
+  case "$installed_first" in
+    *[!0-9a-f]*|'') printf 'bad installed-release key: %s\n' "$installed_first" >&2; exit 1 ;;
+  esac
+  [ ${#installed_first} -eq 64 ] || { printf 'bad installed-release key length: %s\n' "$installed_first" >&2; exit 1; }
+  [ "$installed_first" = "$installed_second" ] || { printf 'unstable installed-release key: %s vs %s\n' "$installed_first" "$installed_second" >&2; exit 1; }
+  printf 'pass installed release walk terminates: %s\n' "$installed_first"
+fi
