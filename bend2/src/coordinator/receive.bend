@@ -950,7 +950,7 @@ def prior_resolved_state(+db: String, +hexid: String, +directory: String, state:
   match state:
     case PriorLive{}: IO.pure(PriorNative,PriorLive{})
     case PriorDead{}: IO.pure(PriorNative,PriorDead{})
-    case PriorUncertain{}: Bool.pick(IO<PriorNative>,String.eq(directory,db ++ ".attempt-" ++ hexid),IO.pure(PriorNative,PriorUncertain{}),prior_state_at(db ++ ".attempt-" ++ hexid))
+    case PriorUncertain{}: Bool.pick(IO(PriorNative),String.eq(directory,db ++ ".attempt-" ++ hexid),IO.pure(PriorNative,PriorUncertain{}),prior_state_at(db ++ ".attempt-" ++ hexid))
     case PriorNone{}: prior_state_at(db ++ ".attempt-" ++ hexid)
 
 def prior_row_state(+db: String, +hexid: String, +directory: String) -> IO(PriorNative):
