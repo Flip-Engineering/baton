@@ -482,7 +482,9 @@ def CompileQueueIdentity.release_items(names: List<&2,String>, +directory: Strin
   match names:
     case Nil{}: Nil{}
     case +name <> +rest:
-      CompileQueueReleaseItem{directory ++ "/" ++ name, prefix ++ "/" ++ name} <> CompileQueueIdentity.release_items(rest, directory, prefix)
+      Bool.pick(List<&2,CompileQueueReleaseItem>, String.is_empty(name),
+        CompileQueueIdentity.release_items(rest, directory, prefix),
+        CompileQueueReleaseItem{directory ++ "/" ++ name, prefix ++ "/" ++ name} <> CompileQueueIdentity.release_items(rest, directory, prefix))
 
 def CompileQueueIdentity.release_step_items(step: CompileQueueReleaseStep) -> List<&2,CompileQueueReleaseItem>:
   match step:
