@@ -8,6 +8,7 @@ import ../git/text.bend as Tx
 import ../host/session-lock.bend as Lock
 import ../json/canonical.bend as J
 import ./../coordinator/frame-span.bend as Frame
+import ../storage/lifecycle.bend as StoragePolicy
 
 # Baton2-owned log classification, storage inspection and cleanup.
 #
@@ -959,14 +960,15 @@ def stderr_run_items(rows: List<String>, acc: String) -> IO(String):
 def stderr_run_rows_sql() -> String:
   "SELECT session,attempt,run,generation,stderr FROM log_stderr_runs ORDER BY session,attempt,run;"
 
-def storage_json(db: String, database: U32, root: U32, logs: String, attempts: String, stderr_runs: String) -> String:
+def storage_json(db: String, database: U32, root: U32, logs: String, attempts: String, stderr_runs: String, artifacts: String) -> String:
   "{\"database\":" ++ J.string_literal(db)
   ++ ",\"databaseBytes\":" ++ U32.show(database)
   ++ ",\"rootLogBytes\":" ++ U32.show(root)
   ++ ",\"defaults\":{\"level\":" ++ J.string_literal(default_level()) ++ "}"
   ++ ",\"logs\":[" ++ logs ++ "]"
   ++ ",\"attempts\":[" ++ attempts ++ "]"
-  ++ ",\"stderrRuns\":[" ++ stderr_runs ++ "]}"
+  ++ ",\"stderrRuns\":[" ++ stderr_runs ++ "]"
+  ++ ",\"artifacts\":" ++ artifacts ++ "}"
 
 # Inspects registered artifact paths and cleanup candidates.
 def storage(+db: String) -> IO(String):
@@ -979,7 +981,8 @@ def storage(+db: String) -> IO(String):
     stderr_runs : String <- stderr_run_items(Tx.split_lines(run_text),"")
     database : U32 <- IO.try(U32,F.Files.size(db))
     root : U32 <- IO.try(U32,F.Files.size(db ++ ".root.log"))
-    IO.pure(String,storage_json(db,database,root,logs,attempts,stderr_runs))
+    artifacts : String <- StoragePolicy.preview_json(db,"")
+    IO.pure(String,storage_json(db,database,root,logs,attempts,stderr_runs,artifacts))
 
 def clean_json(session: String, removed: String, attempt_files: String, attempt_logs: String) -> String:
   "{\"session\":" ++ J.string_literal(session) ++ ",\"removed\":[" ++ removed ++ "],\"attemptFiles\":[" ++ attempt_files ++ "],\"attemptLogs\":[" ++ attempt_logs ++ "]}"

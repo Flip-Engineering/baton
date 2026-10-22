@@ -144,19 +144,30 @@ def unproven_roots(specs: List<&2,RootSpec>, +exclusive: List<&2,String>, +acc: 
       Bool.pick(String, exclusive_member(path, exclusive), unproven_roots(tail, exclusive, acc),
         Bool.pick(String, String.is_empty(acc), path, acc))
 
-# Storage cleanup is admitted only for roots whose managed writer paths hold
-# the cooperative lease. The managed writer paths are retained output and its
-# attempt spool/checkpoint, so the covered class is `log-evidence`. Absolute
-# configuration is required because the recorded writer paths are canonical.
+# Storage cleanup is admitted for roots whose class is either managed by the
+# cooperative writer lease (log evidence) or whose transient owner has settled.
+# Absolute configuration is required because the recorded paths are canonical.
 def covered_class(+cls: T.StorageClass) -> Bool:
   match cls:
     case T.LogEvidence{}: True{}
+    case T.Scratch{}: True{}
+    case T.BuildOutput{}: True{}
+    case T.Export{}: True{}
+    case T.Checkout{}: True{}
     case other: False{}
 
 def covered_root(+spec: RootSpec) -> Bool:
   match spec:
     case RootSpec{cls, path, source}:
       Bool.and(covered_class(cls), String.starts_with(path, "/"))
+
+
+def workspace_rows_under(rows: List<&2,S.SessionRow>, +root: String) -> Bool:
+  match rows:
+    case Nil{}: False{}
+    case Con{head, tail}:
+      match head:
+        case S.SessionRow{id, workspace, branch, base}: Bool.or(S.path_under(workspace, root), workspace_rows_under(tail, root))
 
 def log_rows_under(rows: List<&2,S.LogRow>, +root: String) -> Bool:
   match rows:
@@ -186,9 +197,12 @@ def referenced_root(+spec: RootSpec, +state: S.State) -> Bool:
     case RootSpec{cls, path, source}:
       match state:
         case S.State{sessions, executions, logs, pending, databases, retained, valid}:
+          +transient = Bool.and(P.transient_class(cls),
+            Bool.or(workspace_rows_under(sessions, path), execution_rows_under(executions, path)))
           Bool.and(covered_root(spec),
-            Bool.or(log_rows_under(logs, path),
-              Bool.or(execution_rows_under(executions, path), retained_rows_under(retained, path))))
+            Bool.or(transient,
+              Bool.or(log_rows_under(logs, path),
+                Bool.or(execution_rows_under(executions, path), retained_rows_under(retained, path)))))
 
 def uncovered_roots_state(specs: List<&2,RootSpec>, +state: S.State, +acc: String) -> String:
   match specs:
@@ -425,14 +439,20 @@ def root_preview_items(items: List<RootPreview>, +acc: String) -> String:
 def previews_json(items: List<RootPreview>) -> String:
   "{\"roots\":[" ++ root_preview_items(items, "") ++ "]}"
 
-def run_preview(+db: String, +session: String) -> IO(Unit):
-  do IO<Unit>:
+def preview_json(+db: String, +session: String) -> IO(String):
+  do IO<String>:
     specs : List<&2,RootSpec> <- configured_roots()
     +state : S.State <- S.load(db)
+    previews : List<RootPreview> <- preview_roots(session, specs, state, Nil{})
+    IO.pure(String, previews_json(previews))
+
+def run_preview(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    state : S.State <- S.load(db)
     Bool.pick(IO(Unit), S.session_known(state, session),
       do IO<Unit>:
-        previews : List<RootPreview> <- preview_roots(session, specs, state, Nil{})
-        IO.write(previews_json(previews)),
+        text : String <- preview_json(db, session)
+        IO.write(text),
       IO.die(Unit, 2, "unknown session: " ++ session))
 
 
@@ -667,6 +687,85 @@ def run_apply(+db: String, +session: String) -> IO(Unit):
     state : S.State <- S.load(db)
     Bool.pick(IO(Unit), S.session_known(state, session),
       run_apply_known(db, session),
+      IO.die(Unit, 2, "unknown session: " ++ session))
+
+# Triggered collection. A settled session has no non-exited execution and no
+# pending input; an unknown or unsettled session collects nothing. An apply
+# that a trigger cannot complete (busy lease, overlapping or uncovered roots)
+# contributes no receipt, so the trigger never changes the event that asked
+# for it.
+def collect_receipts(result: Result<&1,&1,U32 & String,List<T.Receipt>>) -> List<T.Receipt>:
+  match result:
+    case Done{receipts}: receipts
+    case Fail{error}: Nil{}
+
+# Triggered and deployment collection scans only the classes whose entries the
+# policy can remove: scratch, build output, export and log evidence. Checkout
+# roots stay for an explicit operator preview/apply, and the preserve-only
+# shared-immutable, git-object and unclassified classes never participate.
+def collectable_root(+spec: RootSpec) -> Bool:
+  match spec:
+    case RootSpec{cls, path, source}:
+      match cls:
+        case T.Scratch{}: True{}
+        case T.BuildOutput{}: True{}
+        case T.Export{}: True{}
+        case T.LogEvidence{}: True{}
+        case other: False{}
+
+def collectable_roots(specs: List<&2,RootSpec>, +acc: List<&2,RootSpec>) -> List<&2,RootSpec>:
+  match specs:
+    case Nil{}: List.reverse(&2, RootSpec, acc)
+    case Con{+head, tail}:
+      +next = Bool.pick(List<&2,RootSpec>, collectable_root(head), Con{head, acc}, acc)
+      collectable_roots(tail, next)
+
+def collect_settled_roots(+db: String, +session: String, +specs: List<&2,RootSpec>) -> IO(List<T.Receipt>):
+  do IO<List<T.Receipt>>:
+    state : S.State <- S.load(db)
+    +known : Bool = S.session_known(state, session)
+    settled_state : S.State <- S.load(db)
+    +reason : String = S.session_settled_reason(settled_state, session)
+    Bool.pick(IO(List<T.Receipt>), Bool.and(known, String.is_empty(reason)),
+      do IO<List<T.Receipt>>:
+        result : Result<&1,&1,U32 & String,List<T.Receipt>> <- apply_session_roots(db, session, collectable_roots(specs, Nil{}))
+        IO.pure(List<T.Receipt>, collect_receipts(result)),
+      IO.pure(List<T.Receipt>, Nil{}))
+
+def collect_settled(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    specs : List<&2,RootSpec> <- configured_roots()
+    _receipts : List<T.Receipt> <- collect_settled_roots(db, session, specs)
+    IO.pure(Unit, Unit{})
+
+def collect_skipped_json(session: String, reason: String) -> String:
+  "{\"session\":" ++ J.string_literal(session) ++ ",\"skipped\":" ++ J.string_literal(reason) ++ ",\"receipts\":[]}"
+
+def collect_refused_json(session: String, code: U32, detail: String) -> String:
+  "{\"session\":" ++ J.string_literal(session) ++ ",\"refused\":" ++ J.string_literal(U32.show(code) ++ ": " ++ detail) ++ ",\"receipts\":[]}"
+
+def run_collect_result(session: String, result: Result<&1,&1,U32 & String,List<T.Receipt>>) -> IO(Unit):
+  match result:
+    case Done{receipts}: IO.write(receipts_json(receipts))
+    case Fail{(+code, +detail)}:
+      IO.die(Unit, code, collect_refused_json(session, code, detail))
+
+# Explicit collection for deployment and qualification: the same settled gate,
+# with a typed skip for an unsettled session and a typed refusal for an apply
+# that cannot run.
+def run_collect(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    state : S.State <- S.load(db)
+    Bool.pick(IO(Unit), S.session_known(state, session),
+      do IO<Unit>:
+        settled_state : S.State <- S.load(db)
+        +reason : String = S.session_settled_reason(settled_state, session)
+        Bool.pick(IO(Unit), String.is_empty(reason),
+          do IO<Unit>:
+            specs : List<&2,RootSpec> <- configured_roots()
+            result : Result<&1,&1,U32 & String,List<T.Receipt>> <- apply_session_roots(db, session, collectable_roots(specs, Nil{}))
+            run_collect_result(session, result),
+          IO.write(collect_skipped_json(session, reason))),
       IO.die(Unit, 2, "unknown session: " ++ session))
 
 def bool_json(+value: Bool) -> String:

@@ -314,6 +314,20 @@ def active_execution(rows: List<&2,ExecutionRow>, +path: String) -> String:
             Bool.pick(String, String.is_empty(id), "execution", "execution:" ++ id),
             active_execution(tail, path))
 
+# The first non-exited execution recorded for OWNER, independent of any path.
+# This is the owner-completion gate for transient storage classes: a session
+# with a running or queued attempt has not settled its scratch, build, export
+# or checkout tree.
+def owner_execution(rows: List<&2,ExecutionRow>, +owner: String) -> String:
+  match rows:
+    case Nil{}: ""
+    case Con{head, tail}:
+      match head:
+        case ExecutionRow{session, +id, directory, phase, status}:
+          Bool.pick(String, Bool.and(String.eq(session, owner), Bool.not(String.eq(phase, "exited"))),
+            Bool.pick(String, String.is_empty(id), "execution", "execution:" ++ id),
+            owner_execution(tail, owner))
+
 def retained_log_under(rows: List<&2,String>, +path: String) -> Bool:
   match rows:
     case Nil{}: False{}
@@ -342,6 +356,27 @@ def pending_fact(+state: State, +owner: String) -> T.Presence:
     case State{sessions, executions, logs, pending, databases, retained, valid}:
       +count = pending_count(pending, owner)
       Bool.pick(T.Presence, U32.is_eq(count, 0), T.Absent{}, T.Present{U32.show(count)})
+
+# The execution fact for the transient completion gate. Non-transient classes
+# ignore it. A missing owner is unknown, so the candidate is preserved.
+def execution_fact(+cls: T.StorageClass, +state: State, +owner: String) -> T.Presence:
+  match state:
+    case State{sessions, executions, logs, pending, databases, retained, valid}:
+      +active = owner_execution(executions, owner)
+      Bool.pick(T.Presence, Bool.not(T.is_transient(cls)), T.Absent{},
+        Bool.pick(T.Presence, String.is_empty(owner), T.Unknown{},
+          Bool.pick(T.Presence, String.is_empty(active), T.Absent{}, T.Present{active})))
+
+# The explicit completion trigger used by `storage-collect SESSION`. It names
+# the first unsettled condition for the session: a non-exited execution or
+# pending input. An empty answer means the session has settled.
+def session_settled_reason(+state: State, +session: String) -> String:
+  match state:
+    case State{sessions, executions, logs, pending, databases, retained, valid}:
+      +active = owner_execution(executions, session)
+      +waiting = pending_count(pending, session)
+      Bool.pick(String, Bool.not(String.is_empty(active)), active,
+        Bool.pick(String, U32.is_eq(waiting, 0), "", "pending-input:" ++ U32.show(waiting)))
 
 def database_path_hit(rows: List<&2,String>, +path: String) -> Bool:
   match rows:
@@ -542,11 +577,12 @@ def facts_choice(+cls: T.StorageClass, +source: String, +path: String, +state: S
         ref : T.Presence <- ref_fact(cls, source, path)
         database : T.Presence <- database_fact(state, path)
         lease : T.Presence = lease_fact(state, path)
+        execution : T.Presence = execution_fact(cls, state, owner)
         pending_input : T.Presence = pending_fact(state, owner)
-        IO.pure(T.Facts, T.Facts{fact, database, lease, process, dirty, unpublished, runtime, ref, pending_input})
+        IO.pure(T.Facts, T.Facts{fact, execution, database, lease, process, dirty, unpublished, runtime, ref, pending_input})
 
 def invalid_facts() -> T.Facts:
-  T.Facts{T.OwnerUnknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}}
+  T.Facts{T.OwnerUnknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}}
 
 def facts_valid(valid: Bool, +cls: T.StorageClass, +source: String, +path: String, +state: State) -> IO(T.Facts):
   match valid:

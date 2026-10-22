@@ -193,6 +193,7 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.StoragePolicy{}: StoragePolicy.run_policy(db)
     case C.StoragePreview{session}: StoragePolicy.run_preview(db,session)
     case C.StorageApply{session}: StoragePolicy.run_apply(db,session)
+    case C.StorageCollect{session}: StoragePolicy.run_collect(db,session)
     case C.Worktree{id}: Recruit.inspect(db,id)
     case C.KnowledgeRecord{id,author,claim,evidence,limits}:
       Knowledge.record(db,id,author,claim,evidence,limits)
@@ -247,11 +248,15 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       IO.try(Unit,Instance.owner_status(db))
     case C.Receive{+session,cmd,model,effort,cwd,log,+message}: do IO<Unit>:
       result : Result<&1,&1,U32 & String,Unit> & String <- Receive.run(db,session,cmd,model,effort,cwd,log,message)
-      Receive.report_result(db,session,message,result)
+      reported : Unit <- Receive.report_result(db,session,message,result)
+      collected : Unit <- StoragePolicy.collect_settled(db,session)
+      IO.pure(Unit, collected)
     case C.RecoverObserver{session,observer}:
       IO.try(Unit,Receive.recover_observer(db,session,observer))
-    case C.RunTurn{player,id,cmd,model,effort,cwd,task,log,session}:
-      Turn.run(db,player,id,cmd,model,effort,cwd,task,log,session)
+    case C.RunTurn{player,id,cmd,model,effort,cwd,task,log,+session}: do IO<Unit>:
+      ran : Unit <- Turn.run(db,player,id,cmd,model,effort,cwd,task,log,session)
+      collected : Unit <- StoragePolicy.collect_settled(db,session)
+      IO.pure(Unit, collected)
     case C.ObserveFile{id,player,path}:
       do IO<Unit>:
         event : String <- IO.try(String,T.Text.read(path))
@@ -321,8 +326,10 @@ def normal_cli_fallback(+db: String, head: String, tail: List<String>) -> IO(Uni
 
 def normal_native_args(+db: String, args: List<String>) -> IO(Unit):
   match args:
-    case "turn-text" <> player <> id <> cmd <> model <> effort <> cwd <> body <> log <> session <> Nil{}:
-      Turn.run_text(db,player,id,cmd,model,effort,cwd,body,log,session)
+    case "turn-text" <> player <> id <> cmd <> model <> effort <> cwd <> body <> log <> +session <> Nil{}: do IO<Unit>:
+      ran : Unit <- Turn.run_text(db,player,id,cmd,model,effort,cwd,body,log,session)
+      collected : Unit <- StoragePolicy.collect_settled(db,session)
+      IO.pure(Unit, collected)
     case other: execute(db,C.parse(other))
 
 def normal_cli_native(args: List<String>, +db: String, head: String) -> IO(Unit):
