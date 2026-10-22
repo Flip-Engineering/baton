@@ -98,7 +98,7 @@ def snapshot_result(result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U
     case Done{value}: snapshot_value(value)
 
 def snapshot_sql(+id: String) -> String:
-  "SELECT hex(CAST(CASE WHEN m.receipt IS NOT NULL OR EXISTS(SELECT 1 FROM message_reads r WHERE r.message=m.id AND r.recipient=m.recipient) THEN 'read' ELSE 'pending' END AS TEXT)) || char(9) || hex(CAST(" ++ C.delivery_row() ++ " AS TEXT)) FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ ";"
+  "SELECT hex(CAST(CASE WHEN " ++ C.read_sql("m") ++ " THEN 'read' ELSE 'pending' END AS TEXT)) || char(9) || hex(CAST(" ++ C.delivery_row() ++ " AS TEXT)) FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ ";"
 
 def snapshot(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String & String>):
   do IO<Result<&1,&1,U32 & String,String & String>>:

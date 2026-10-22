@@ -171,7 +171,7 @@ def read_sql(+reader: String) -> String:
 # carries literal argv for the complete finding and, when the evidence names a
 # retained message, for that message's complete delivery record.
 def evidence_index() -> String:
-  "(SELECT json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'readState',CASE WHEN receipt IS NOT NULL OR EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient) THEN 'read' ELSE 'unread' END,'bodyBytes',length(CAST(body AS BLOB)),'deliveryRead',json_array('delivery',id)) FROM messages WHERE substr(k.evidence,1,8)='message:' AND id=substr(k.evidence,9))"
+  "(SELECT json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'readState',CASE WHEN EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient) THEN 'read' ELSE 'unread' END,'bodyBytes',length(CAST(body AS BLOB)),'deliveryRead',json_array('delivery',id)) FROM messages WHERE substr(k.evidence,1,8)='message:' AND id=substr(k.evidence,9))"
 
 def detail_read(+reader: String, +scope: String, +subject: String, +scoped: Bool) -> String:
   Bool.pick(String,scoped,

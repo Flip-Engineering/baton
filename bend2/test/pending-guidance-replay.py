@@ -8,7 +8,7 @@ again (the live Chasm associate attempt carried 10,639 copies of one 922-byte
 guidance body). The probe seeds a scratch database, records that this attempt
 already forwarded guidance seq 2, then replays from cursor 0 and asserts the
 forwarded message is never selected again, the next owed message is, and the
-pending queue still keeps every message (all receipts stay NULL).
+pending queue still keeps every message (no read row is recorded).
 """
 import json
 import pathlib

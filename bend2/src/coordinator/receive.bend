@@ -563,8 +563,8 @@ def handoff_guidance(db: String, +session: String, id: String, attempt: String) 
 # After a successful cleanup and a recorded handoff the same actor continues on the binding
 # the advance recorded. The guidance belongs only when the whole inbox holds nothing for this
 # session, which the zero cursor asks for: the attempt cursor excludes the input that attempt
-# already read, so a task the attempt never acknowledged would read as empty there and the
-# continuation would run without it. No receipt is reset and no operator task is repeated.
+# already read, so a task the attempt never read would look empty there and the
+# continuation would run without it. No read row is removed and no operator task is repeated.
 def continue_after_advance(+db: String, +session: String, id: String, +attempt: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     owed : Bool <- wake_owed(db,session,"0")
@@ -575,7 +575,7 @@ def continue_after_advance(+db: String, +session: String, id: String, +attempt: 
 # provider error interrupted its accepted task: the failed turn stays recorded with
 # the provider's own cause, and the same actor continues the unfinished task
 # on the same conversation. The task message that started it is already
-# acknowledged.
+# read.
 def transient_guidance(db: String, +session: String, id: String, attempt: String) -> IO(Unit):
   do IO<Unit>:
     noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":transient-guidance") ++ ",id,id,'guidance'," ++ C.q("The attempt ended with a transient provider error. Continue the unfinished task on the retained attempt " ++ attempt ++ " in the same conversation and account; the failed turn stays recorded with the provider cause.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"))

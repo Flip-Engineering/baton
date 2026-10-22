@@ -2,7 +2,7 @@
 # schedules one detached single-shot continuation that sleeps until the
 # recorded reset and then re-enters the wake driver, which re-checks the gate.
 # The fixture proves: the continuation names the wake entry, not the direct
-# delivery entry; a handled message is a no-op; a still-held window records a
+# delivery entry; a read message is a no-op; a still-held window records a
 # check and delivers nothing; an admitted window delivers once; duplicate
 # continuations leave one delivery and one held report; and the delay is
 # capped at one day with the next segment still capped while held.
@@ -62,8 +62,12 @@ def window(+db: String, +session: String, +message: String, +ms_offset: String) 
     window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code'," ++ C.q(session) ++ ",'5-hour'," ++ Tx.trim_nl(reset) ++ ",'provider-message',NULL,'window'," ++ C.q(message) ++ ");")
     IO.pure(String,Tx.trim_nl(reset))
 
-def message(+db: String, +session: String, +message: String, +receipt: String) -> IO(Unit):
-  query(db,"INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(" ++ C.q(message) ++ ",'root'," ++ C.q(session) ++ ",'guidance','owed',nullif(" ++ C.q(receipt) ++ ",''));")
+def message(+db: String, +session: String, +message: String, +receipt: String) -> IO<Unit>:
+  do IO<Unit>:
+    saved : Unit <- query(db,"INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(" ++ C.q(message) ++ ",'root'," ++ C.q(session) ++ ",'guidance','owed',nullif(" ++ C.q(receipt) ++ ",''));")
+    read : Unit <- Bool.pick(IO(Unit),String.is_empty(receipt),IO.pure(Unit,Unit{}),
+      query(db,"INSERT OR IGNORE INTO message_reads(attempt,message,recipient,native,identity) VALUES('legacy'," ++ C.q(message) ++ "," ++ C.q(session) ++ ",'','receipt');"))
+    IO.pure(Unit,Unit{})
 
 def session(+db: String, +id: String) -> IO(Unit):
   # The window rows bind provider 'kimi-code'; the session model must name that
@@ -100,7 +104,7 @@ def stale_case(+db: String, +self: String) -> IO(Unit):
     admitted : Unit <- expect_gate(db,"ws","ws","elapsed","stale-case-elapsed")
     rerun : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv([self,"--wake-message",db,"m-ws"]),".")
     delivered : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-ws';","1\n","elapsed-delivery-once")
-    receipt : Unit <- expect_read(db,"SELECT receipt FROM messages WHERE id='m-ws';","delivered\n","elapsed-sets-receipt")
+    receipt : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id='m-ws' AND receipt IS NOT NULL;","0\n","elapsed-keeps-stored-receipt-empty")
     IO.pure(Unit,Unit{})
 
 def far_case(+db: String, +self: String) -> IO(Unit):

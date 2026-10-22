@@ -796,7 +796,7 @@ function pendingConductorMessages(messageId = null) {
       `SELECT m.seq, m.id, m.sender, m.kind, m.body
        FROM messages m
        JOIN sessions s ON s.id = m.recipient
-       WHERE s.id = ? AND m.receipt IS NULL
+       WHERE s.id = ?
          AND NOT EXISTS(SELECT 1 FROM message_reads mr WHERE mr.message=m.id AND mr.recipient=m.recipient)
          AND (? IS NULL OR m.id = ?)
        ORDER BY m.seq`

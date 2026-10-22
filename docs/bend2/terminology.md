@@ -38,8 +38,8 @@ recorded session, and `worktree ID` reads its current Git state.
 A logical session ID associates messages, parentage and workspaces. A native
 session ID identifies the harness conversation. Session IDs are chosen by the
 caller; existing identifiers such as `root`, `lead` and `worker` remain valid.
-Saved native identities, pending messages and acceptance receipts keep their
-original values. The input spelling `workers` retains its previous subordinate
+Saved native identities, pending messages and historical receipt values keep
+their original values. The input spelling `workers` retains its previous subordinate
 roster for existing callers; first-party help and tools use `players`.
 
 ## Ensembles and Sections
