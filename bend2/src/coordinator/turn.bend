@@ -111,10 +111,12 @@ def result_missing(db: String, player: String, id: String, log: String, stderr: 
     case True{}: IO.pure(Unit,Unit{})
     case False{}: report(db,player,id,"Player process ended without a native result (" ++ status ++ "). Output: " ++ log ++ ". Stderr: " ++ stderr)
 
-def exit_failure(db: String, player: String, id: String, status: String, success: Bool) -> IO(Unit):
+def exit_failure(+db: String, +player: String, id: String, status: String, success: Bool, event: String) -> IO(Unit):
   match success:
     case True{}: IO.pure(Unit,Unit{})
-    case False{}: report(db,player,id ++ ":exit","Player process ended with " ++ status)
+    case False{}: do IO<Unit>:
+      +message_id : String <- Subs.exit_report_id(db,player,id,event)
+      report(db,player,message_id,"Player process ended with " ++ status)
 
 def failed(+status: String, +event: String, error: String) -> Bool:
   Bool.or(Bool.not(String.eq(status,"exit 0")),Bool.or(String.is_empty(event),Bool.not(String.is_empty(error))))
@@ -151,7 +153,7 @@ def prepare_finished(+db: String, +player: String, +id: String, log: String, std
     result : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM turns WHERE id=" ++ C.q(id) ++ ";"))
     noted : Unit <- diagnostic(db,player,id,error,event,String.is_empty(error))
     missing : Unit <- result_missing(db,player,id,log,stderr,status,String.eq(result,"1\n"))
-    exit_failure(db,player,id,status,String.eq(status,"exit 0"))
+    exit_failure(db,player,id,status,String.eq(status,"exit 0"),event)
 
 def prepare_player(db: String, player: String, id: String, log: String, stderr: String, error: String, status: String, event: String, early: Bool) -> IO(Unit):
   match early:
@@ -201,6 +203,22 @@ def direct_wake(+db: String, +player: String, id: String, outcome: Outcome) -> I
     next : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),success,Delivery.wake_pending(db,player,"0"),direct_wake_gated(db,player,Tx.trim_nl(cursor)))
     IO.pure(Result<&1,&1,U32 & String,Unit>,next)
 
+def direct_window_gate(+db: String, +player: String) -> IO(UW.Gate):
+  do IO<UW.Gate>:
+    +label : String <- Accounts.handoff_label_io(db,player)
+    gate : UW.Gate <- UW.window_gate(db,player,Tx.trim_nl(label))
+    IO.pure(UW.Gate,gate)
+
+def direct_gate_held(gate: UW.Gate) -> Bool:
+  match gate:
+    case UW.GateHeld{window,resets_at,source,receipt}: True{}
+    case other: False{}
+
+def direct_gate_refusal(gate: UW.Gate) -> String:
+  match gate:
+    case UW.GateHeld{window,resets_at,source,receipt}: "Provider usage window held: window=" ++ window ++ "; resetsAt=" ++ resets_at ++ "; source=" ++ source ++ "; the direct task remains retained."
+    case other: "Provider usage window held; the direct task remains retained."
+
 def task_instructions() -> String:
   "Carry out the coordinator-authorized assignment. Keep unfinished work and outstanding qualification in your reports and project state. Direct operator instructions and explicit stops remain effective.\n"
 
@@ -231,12 +249,13 @@ def record_exit(db: String, player: String, +id: String, log: String, outcome: O
   match outcome:
     case Ended{status,event,error,incomplete}: Stop.exited(db,player,id,status,event,error,generation_log(log,id))
 
-def player_finished(+db: String, player: String, +id: String, quiet: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def player_finished(+db: String, +player: String, +id: String, quiet: Bool, failed: Bool, event: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
+    exit_id : String <- Bool.pick(IO(String),failed,Subs.exit_report_id(db,player,id,event),IO.pure(String,id ++ ":exit"))
     diagnostic_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":observation","1","")
     delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id,"1",saved)
-    exit_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":exit","1","")
+    exit_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,exit_id,"1","")
     stopped : Result<&1,&1,U32 & String,Unit> <- Stop.deliver(db,player,id)
     written : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),quiet,
       IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),T.Text.control_output(saved))
@@ -246,7 +265,7 @@ def finish_parent(db: String, player: String, id: String, log: String, outcome: 
   match outcome:
     case Ended{+status,+event,error,incomplete}:
       match parent:
-        case True{}: player_finished(db,player,id,quiet)
+        case True{}: player_finished(db,player,id,quiet,Bool.not(String.eq(status,"exit 0")),event)
         case False{}: Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),quiet,
           IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
           do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -1305,7 +1324,11 @@ def direct_setup_failure(-A: Type, +db: String, +player: String, +id: String, lo
 
 def direct_retained_prepared(+db: String, +player: String, +directory: String, +cwd: String, +prompt: String, +lock: U32, +recovery: String, prepared: Result<&1,&1,U32 & String,RetainedLaunch>) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   match prepared:
-    case Done{launch}: retained_admit(db,directory,cwd,prompt,lock,recovery,launch)
+    case Done{launch}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
+      +gate : UW.Gate <- direct_window_gate(db,player)
+      Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),direct_gate_held(gate),
+        IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Done{P.Unstarted{direct_gate_refusal(gate)}}),
+        retained_admit(db,directory,cwd,prompt,lock,recovery,launch))
     case Fail{error}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
       id : String <- IO.try(String,DB.Sql.query(db,"SELECT id FROM executions WHERE session=" ++ C.q(player) ++ " AND mode='direct';"))
       log : String <- IO.try(String,DB.Sql.query(db,"SELECT r.output FROM direct_turn_requests r JOIN executions e ON e.id=r.id AND e.session=r.session WHERE e.session=" ++ C.q(player) ++ " AND e.mode='direct';"))
@@ -1590,7 +1613,7 @@ def route_reported(+db: String, +player: String, +id: String, event: String, err
   match error_clear:
     case True{}: do IO<Bool>:
       closed : Bool <- Stop.stopped(db,player)
-      triggered : Bool <- Subs.route_trigger(db,id,event)
+      triggered : Bool <- Subs.route_trigger(db,player,id,event)
       IO.pure(Bool,Bool.and(Bool.not(closed),triggered))
     case False{}: IO.pure(Bool,False{})
 
