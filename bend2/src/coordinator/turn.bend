@@ -1263,15 +1263,74 @@ def retained_prepare(+db: String, +player: String, +directory: String, +cmd: Str
     checked : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),omp,Omp.preflight(),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
     retained_prepare_checked(db,player,directory,cmd,model,effort,session,harness,sessions,prompt,level,seal_prompt,predecessor,checked)
 
-def retained_admit(+db: String, +directory: String, +cwd: String, +prompt: String, +lock: U32, +recovery: String, launch: RetainedLaunch) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
-  match launch:
-    case Prepared{+arguments,+input,+initial,+keep_stdin,file_input}:
+# A receive inside a cgroup with a finite memory maximum starts its native
+# under a keeper that is a child of this process. The keeper, the native and
+# later descendants inherit that cgroup. The shared database owner keeps its
+# own cgroup and custody for every launch without that admission.
+def after_cgroup_prefix(s: String) -> String:
+  match s:
+    case SCon{a, SCon{b, SCon{c, rest}}}: rest
+    case other: ""
+
+def cgroup_v2_line(lines: List<String>) -> String:
+  match lines:
+    case Nil{}: ""
+    case +line <> rest:
+      Bool.pick(String, Tx.starts_with(line, "0::"), after_cgroup_prefix(line), cgroup_v2_line(rest))
+
+def bounded_scope_text(text: String, path: String) -> IO(Maybe<String>):
+  match text:
+    case "": IO.pure(Maybe<String>,None{})
+    case "max": IO.pure(Maybe<String>,None{})
+    case other: IO.pure(Maybe<String>,Some{path})
+
+def bounded_scope_maximum(maximum: Result<&1,&1,U32 & String,String>, path: String) -> IO(Maybe<String>):
+  match maximum:
+    case Fail{error}: IO.pure(Maybe<String>,None{})
+    case Done{value}: bounded_scope_text(Tx.trim_nl(value),path)
+
+def bounded_scope_selected(path: String) -> IO(Maybe<String>):
+  match path:
+    case "": IO.pure(Maybe<String>,None{})
+    case +other: do IO<Maybe<String>>:
+      maximum : Result<&1,&1,U32 & String,String> <- T.Text.read("/sys/fs/cgroup" ++ other ++ "/memory.max")
+      bounded_scope_maximum(maximum,other)
+
+def bounded_scope_lines(lines: List<String>) -> IO(Maybe<String>):
+  bounded_scope_selected(cgroup_v2_line(lines))
+
+def bounded_scope_read(membership: Result<&1,&1,U32 & String,String>) -> IO(Maybe<String>):
+  match membership:
+    case Fail{error}: IO.pure(Maybe<String>,None{})
+    case Done{text}: bounded_scope_lines(Tx.split_lines(text))
+
+def bounded_scope_path() -> IO(Maybe<String>):
+  do IO<Maybe<String>>:
+    membership : Result<&1,&1,U32 & String,String> <- T.Text.read("/proc/self/cgroup")
+    bounded_scope_read(membership)
+
+def scope_selected(scope: Maybe<String>) -> Bool:
+  match scope:
+    case None{}: False{}
+    case Some{value}: True{}
+
+
+def retained_admit_scoped(+db: String, +directory: String, +cwd: String, +lock: U32, +recovery: String, scoped: Bool, +arguments: String, +input: String, +initial: String, +keep_stdin: U32, file_input: Bool) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
+  match scoped:
+    case True{}:
+      Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),file_input,P.ProcessChild.retain_with_file(directory,arguments,cwd,directory ++ "/native.stderr","prompt.txt",initial,input,keep_stdin,lock,recovery),P.ProcessChild.retain(directory,arguments,cwd,directory ++ "/native.stderr",input,keep_stdin,lock,recovery))
+    case False{}:
       Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),file_input,Custody.Instance.admit_with_file(db,directory,arguments,cwd,directory ++ "/native.stderr","prompt.txt",initial,input,keep_stdin,Some{lock},recovery),Custody.Instance.admit(db,directory,arguments,cwd,directory ++ "/native.stderr",input,keep_stdin,Some{lock},recovery))
+
+def retained_admit(+db: String, +directory: String, +cwd: String, +prompt: String, +lock: U32, +recovery: String, scoped: Bool, launch: RetainedLaunch) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
+  match launch:
+    case Prepared{+arguments,+input,+initial,+keep_stdin,file_input}: retained_admit_scoped(db,directory,cwd,lock,recovery,scoped,arguments,input,initial,keep_stdin,file_input)
 
 def retained_mode(+db: String, player: String, +directory: String, cmd: String, model: String, effort: String, cwd: String, session: String, harness: String, sessions: String, +prompt: String, lock: U32, recovery: String, level: String, seal_prompt: Bool, predecessor: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
+    scope : Maybe<String> <- bounded_scope_path()
     launch : RetainedLaunch <- IO.try(RetainedLaunch,retained_prepare(db,player,directory,cmd,model,effort,session,harness,sessions,prompt,level,seal_prompt,predecessor))
-    retained_admit(db,directory,cwd,prompt,lock,recovery,launch)
+    retained_admit(db,directory,cwd,prompt,lock,recovery,scope_selected(scope),launch)
 
 def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, +lock: U32, +recovery: String, +level: String, predecessor: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   retained_mode(db,player,directory,cmd,model,effort,cwd,session,harness,sessions,prompt,lock,recovery,level,True{},predecessor)
@@ -1294,7 +1353,7 @@ def direct_setup_failure(-A: Type, +db: String, +player: String, +id: String, lo
 
 def direct_retained_prepared(+db: String, +player: String, +directory: String, +cwd: String, +prompt: String, +lock: U32, +recovery: String, prepared: Result<&1,&1,U32 & String,RetainedLaunch>) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   match prepared:
-    case Done{launch}: retained_admit(db,directory,cwd,prompt,lock,recovery,launch)
+    case Done{launch}: retained_admit(db,directory,cwd,prompt,lock,recovery,False{},launch)
     case Fail{error}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
       id : String <- IO.try(String,DB.Sql.query(db,"SELECT id FROM executions WHERE session=" ++ C.q(player) ++ " AND mode='direct';"))
       log : String <- IO.try(String,DB.Sql.query(db,"SELECT r.output FROM direct_turn_requests r JOIN executions e ON e.id=r.id AND e.session=r.session WHERE e.session=" ++ C.q(player) ++ " AND e.mode='direct';"))
@@ -1826,7 +1885,7 @@ def direct_setup_result(+db: String, +player: String, +id: String, +cmd: String,
   match setup:
     case Fail{error}: direct_setup_failure(Unit,db,player,id,log,lock,error)
     case Done{Ready{launch,recovery,+level}}: do IO<Unit>:
-      start : P.RetainedStart <- IO.try(P.RetainedStart,retained_admit(db,directory,cwd,prompt,lock,recovery,launch))
+      start : P.RetainedStart <- IO.try(P.RetainedStart,retained_admit(db,directory,cwd,prompt,lock,recovery,False{},launch))
       direct_first_started(db,player,id,cmd,model,effort,cwd,task,log,harness,directory,session,prompt,Omp.filter_events(level),Some{lock},start)
 
 def choose(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String, +harness: String, +directory: String, +prompt: String, +lock: U32, replay: Bool) -> IO(Unit):

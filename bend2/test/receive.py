@@ -443,6 +443,10 @@ while True:
         with pathlib.Path(name).open('a') as target: target.write(text)
         reply({'appended':name})
         continue
+    if action.get('spawn_child'):
+        child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(600)',str(home)])
+        reply({'child_pid':child.pid})
+        continue
     if action.get('stdout_fragment'):
         print(action['stdout_fragment'],end='',flush=True)
         reply({'fragment_written':action['stdout_fragment']})
