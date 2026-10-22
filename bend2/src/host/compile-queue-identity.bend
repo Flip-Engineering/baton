@@ -478,15 +478,15 @@ type CompileQueueReleaseItem is Data:
 type CompileQueueReleaseStep is Data:
   CompileQueueReleaseStep{items: List<&2,CompileQueueReleaseItem>, acc: List<&2,String>}
 
+def CompileQueueIdentity.release_items_step(name: String, remaining: List<&2,CompileQueueReleaseItem>, +directory: String, +prefix: String) -> List<&2,CompileQueueReleaseItem>:
+  Bool.pick(List<&2,CompileQueueReleaseItem>, String.is_empty(name), remaining,
+    CompileQueueReleaseItem{directory ++ "/" ++ name, prefix ++ "/" ++ name} <> remaining)
+
 def CompileQueueIdentity.release_items(names: List<&2,String>, +directory: String, +prefix: String) -> List<&2,CompileQueueReleaseItem>:
   match names:
     case Nil{}: Nil{}
     case +name <> +rest:
       CompileQueueIdentity.release_items_step(name, CompileQueueIdentity.release_items(rest, directory, prefix), directory, prefix)
-
-def CompileQueueIdentity.release_items_step(name: String, remaining: List<&2,CompileQueueReleaseItem>, +directory: String, +prefix: String) -> List<&2,CompileQueueReleaseItem>:
-  Bool.pick(List<&2,CompileQueueReleaseItem>, String.is_empty(name), remaining,
-    CompileQueueReleaseItem{directory ++ "/" ++ name, prefix ++ "/" ++ name} <> remaining)
 
 def CompileQueueIdentity.release_step_items(step: CompileQueueReleaseStep) -> List<&2,CompileQueueReleaseItem>:
   match step:
