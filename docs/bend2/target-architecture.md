@@ -101,7 +101,7 @@ starts for those sessions. Muse and Claude Code workers run under the direct
 input remains readable with `inbox`. The parent sends guidance, requests further
 work and reviews completed work for landing. After the native process exits,
 `receive` releases session ownership and checks for new pending input.
-`stop` ends a retained OMP or Codex session and prevents queued execution.
+`stop` ends a retained OMP, Codex, Muse, Claude Code or DSH session and prevents queued execution.
 `force-stop` explicitly signals the same still-owned attempt. Active direct
 `turn` execution returns an unsupported-stop refusal. The retained observer
 records actual exit and delivers a stop report to the parent while preserving
