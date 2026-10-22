@@ -90,9 +90,9 @@ class NativeStatus(unittest.TestCase):
                 actual = tuple(stored[key] for key in ('id', 'sender', 'recipient', 'kind', 'body', 'receipt'))
                 if actual != expected:
                     raise AssertionError((actual, expected))
-        cls.before_ack = cls.call('status')
-        cls.call('ack', 'alpha-report-1', 'root', 'Reviewed first report')
-        cls.call('ack', 'alpha-guide', 'alpha', 'Accepted guidance')
+        cls.before_read = cls.call('status')
+        cls.call('as', 'root', 'read', 'alpha-report-1')
+        cls.call('as', 'alpha', 'read', 'alpha-guide')
         for ident in cls.expected:
             endpoint = json.dumps(['/usr/bin/true', ident])
             cls.call('connect', ident, cls.expected[ident]['native'], endpoint)
@@ -114,7 +114,7 @@ class NativeStatus(unittest.TestCase):
         for row in before_metadata.values():
             row['endpoint'] = ''
             row['endpointArgv'] = None
-        DRIVER.assert_bend_status(self.before_ack, before_metadata,
+        DRIVER.assert_bend_status(self.before_read, before_metadata,
                                   {'root': 2, 'alpha': 2, 'beta': 2})
         DRIVER.assert_bend_status(self.valid, self.expected, self.pending)
         before = hashlib.sha256(self.db.read_bytes()).hexdigest()
