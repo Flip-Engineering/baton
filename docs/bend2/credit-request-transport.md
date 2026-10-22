@@ -113,6 +113,28 @@ None of these exist in the host today. Each needs a C implementation in
 - The guard stays false until the installed release passes this test and the
   root qualifies it.
 
+## Implementation state
+
+Written, not validated:
+
+- `bend2/src/coordinator/credit-transport.bend` maps a request's admission to a reply.
+  An admitted request is forwarded with its reserved total. A balance refusal
+  (`promotionalCreditInsufficient` or `promotionalCreditExhausted`) is answered with the
+  provider's credit-stop body. Any other refusal is answered with its reason, and never
+  with the stop body.
+- `bend2/test/credit-transport.bend` checks that mapping with exact string comparisons.
+
+Not written:
+
+- The loopback listener and the streaming forward (native host effects). The effect
+  table and the streaming interface have not been read, so no native code is in the tree.
+- The per-request I/O that builds the admission. It needs a request identity for each
+  reservation row, because `credit_reservations.request` is the primary key, and the
+  request charge from `credit_request_price`. Neither is decided here.
+
+Validation: no check-only or build result exists for either file. The queue records for
+the earlier check-only runs have no terminal result (see the report to the coordinator).
+
 ## Not in this change
 
 - No change to `credit_guard_qualified`.
