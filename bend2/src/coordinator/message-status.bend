@@ -7,7 +7,8 @@ import ../context/request.bend as Req
 # never writes it. The backfill gives legacy receipted messages their read row
 # once, so every read derivation consults message_reads alone.
 def schema() -> String:
-  "CREATE TABLE IF NOT EXISTS message_reads(attempt TEXT NOT NULL, message TEXT NOT NULL REFERENCES messages(id), recipient TEXT NOT NULL REFERENCES sessions(id), native TEXT NOT NULL, identity TEXT NOT NULL, handled TEXT, PRIMARY KEY(attempt,identity,message));CREATE INDEX IF NOT EXISTS message_reads_by_message ON message_reads(message);"
+  "CREATE TABLE IF NOT EXISTS message_reads(attempt TEXT NOT NULL, message TEXT NOT NULL REFERENCES messages(id), recipient TEXT NOT NULL REFERENCES sessions(id), native TEXT NOT NULL, identity TEXT NOT NULL, handled TEXT, PRIMARY KEY(attempt,identity,message));"
+  ++ "CREATE INDEX IF NOT EXISTS message_reads_by_message ON message_reads(message);"
   ++ "CREATE INDEX IF NOT EXISTS message_reads_message ON message_reads(message,recipient);"
   ++ "INSERT INTO message_reads(attempt,message,recipient,native,identity) SELECT 'legacy',m.id,m.recipient,'','receipt' FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NOT NULL AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=m.id AND r.recipient=m.recipient) ON CONFLICT(attempt,identity,message) DO NOTHING;"
 
