@@ -655,6 +655,34 @@ static int br_exists(const char *directory,const char *name) {
   int result=path?stat(path,&info):-1;free(path);
   return result==0;
 }
+/* Keep the first checkpoint an observer rejects before a replay replaces it,
+   so the original record and its spool cursor remain available. An existing
+   sidecar is never overwritten. */
+static int br_preserve_rejected_checkpoint(const char *directory) {
+  char *source=br_path(directory,"checkpoint");
+  char *target=br_path(directory,"checkpoint.rejected");
+  int error=0;
+  if(!source || !target) {free(source);free(target);return ENOMEM;}
+  int in=open(source,O_RDONLY|O_CLOEXEC);
+  if(in<0) {error=errno==ENOENT?0:errno;goto done;}
+  int out=open(target,O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,0600);
+  if(out<0) {error=errno==EEXIST?0:errno;close(in);goto done;}
+  char buffer[8192];
+  for(;;) {
+    ssize_t count=read(in,buffer,sizeof(buffer));
+    if(count<0 && errno==EINTR) continue;
+    if(count<0) {error=errno;break;}
+    if(count==0) break;
+    error=br_write_all(out,buffer,(size_t)count);
+    if(error) break;
+  }
+  if(!error && fsync(out)) error=errno;
+  if(close(out) && !error) error=errno;
+  close(in);
+done:
+  free(source);free(target);
+  return error;
+}
 static int br_birth(pid_t pid,BrBirth *birth) {
   memset(birth,0,sizeof(*birth));birth->pid=pid;
 #ifdef __APPLE__
@@ -1335,7 +1363,11 @@ static void baton_retained_call(BatonProcessCall *call) {
   if(call->kind==BP_INSTANCE_REPLAY) {
     /* Rewinds this admitted reader to the beginning after its own decode of the
        restored state was rejected. The child, its spool and its custody are
-       untouched; only the observation position changes. */
+       untouched; only the observation position changes. Keep the first
+       rejected checkpoint before a replay replaces it, and refuse the replay
+       when that record cannot be preserved. */
+    call->error=br_preserve_rejected_checkpoint(retained->directory);
+    if(call->error) return;
     pthread_mutex_lock(&retained->reader);
     retained->offset=0;retained->offset_stored=0;
     pthread_mutex_unlock(&retained->reader);

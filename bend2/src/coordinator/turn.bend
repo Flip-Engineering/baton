@@ -995,6 +995,10 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
       wake_closed : Result<&1,&1,U32 & String,Unit> <- wake_close(wake_sub,wake_on)
       closed : Result<&1,&1,U32 & String,Unit> <- close_input(handle,Bool.not(monitor))
       sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
+      # A failed observation leaves the retained reader on the frame it could
+      # not accept. Rewind it to the durable checkpoint so a NUL or otherwise
+      # rejected frame is re-read from the same cursor and never skipped.
+      +restored : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- Bool.pick(IO(Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String>),String.is_empty(attempt),IO.pure(Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String>,Done{""}),shared_result_io(String,Custody.Instance.restore(handle,Observer.schema_version())))
       +waited : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,P.ProcessChild.wait(handle))
       +positioned : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,Logs.write_positioned(log,Logs.flush(held),Observer.output(checkpoint_state),log_failed,Bool.not(String.is_empty(attempt)),False{}))
       +flushed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.position_write(log,unshared_result(String,positioned))))
@@ -1005,7 +1009,8 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
       read_error : String <- IO.pure(String,append_error(first_error,"Native output read failed: " ++ error_text(error)))
       sent_error : String <- IO.pure(String,append_write_error(append_write_error(append_write_error(read_error,wake_closed),closed),sent))
       waited_error : String <- IO.pure(String,append_store_error(sent_error,unshared_result(String,waited)))
-      error : String <- IO.pure(String,append_write_error(append_write_error(append_write_error(waited_error,unshared_result(Unit,flushed)),checkpoint_done),named))
+      restored_error : String <- IO.pure(String,append_store_error(waited_error,unshared_result(String,restored)))
+      error : String <- IO.pure(String,append_write_error(append_write_error(append_write_error(restored_error,unshared_result(Unit,flushed)),checkpoint_done),named))
       IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(unshared_result(String,waited)),terminal,error,True{}},deliveries))
     case Done{Again{policy,held,log_failed,cursor,last_message,primary,current,terminal,filter,codex_log,first_error,checkpoint_state,incomplete,alive,deliveries,next}}: consume(db,player,id,log,policy,held,log_failed,handle,harness,spool,spanned,cursor,last_message,primary,current,terminal,filter,requested,codex_log,first_error,sender,attempt,checkpoint_state,incomplete,monitor,wake_sub,alive,deliveries,next)
     case Done{AwakeEnd{+notice,+alive}}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:

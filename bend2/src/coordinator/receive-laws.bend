@@ -145,7 +145,7 @@ law busy_receive_defers_to_the_invocation_result:
   for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
   for predecessor: String
   for -updates: Chan(String)
-  {Receive.acquired(db,session,cmd,model,effort,cwd,log,None{},again,predecessor,updates) == Receive.receive_silent("queued") : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.acquired(db,session,cmd,model,effort,cwd,log,None{},again,predecessor,False{},updates) == Receive.receive_silent("queued") : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def busy_receive_defers_to_the_invocation_result(db,session,cmd,model,effort,cwd,log,again,predecessor,updates):
   {==}
@@ -385,10 +385,35 @@ law acquired_native_owner_resolves_recorded_attempt:
   for predecessor: String
   for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
   for -updates: Chan(String)
-  {Receive.acquired(db,session,cmd,model,effort,cwd,log,Some{lock},again,predecessor,updates) == acquired_recorded_with_setup(db,session,cmd,model,effort,cwd,log,lock,predecessor,again,updates) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.acquired(db,session,cmd,model,effort,cwd,log,Some{lock},again,predecessor,False{},updates) == acquired_recorded_with_setup(db,session,cmd,model,effort,cwd,log,lock,predecessor,again,updates) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 
 def acquired_native_owner_resolves_recorded_attempt(db,session,cmd,model,effort,cwd,log,lock,predecessor,again,updates):
+  {==}
+
+def fresh_admission_pending(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, +lock: U32, predecessor: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>), +updates: Chan(String)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    ensured : Unit <- Store.ensure_before_begin(db)
+    Receive.acquired_pending(db,session,cmd,model,effort,cwd,log,lock,again,predecessor,updates)
+
+# #971: the explicit fresh admission skips the recorded attempt binding, so a
+# retained spool that cannot be replayed stays on disk while pending input
+# continues in a new attempt.
+law fresh_admission_skips_the_recorded_attempt:
+  for db: String
+  for session: String
+  for cmd: String
+  for model: String
+  for effort: String
+  for cwd: String
+  for log: String
+  for lock: U32
+  for predecessor: String
+  for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  for -updates: Chan(String)
+  {Receive.acquired(db,session,cmd,model,effort,cwd,log,Some{lock},again,predecessor,True{},updates) == fresh_admission_pending(db,session,cmd,model,effort,cwd,log,lock,predecessor,again,updates) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def fresh_admission_skips_the_recorded_attempt(db,session,cmd,model,effort,cwd,log,lock,predecessor,again,updates):
   {==}
 
 def recorded_attempt_before_pending(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, +lock: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
