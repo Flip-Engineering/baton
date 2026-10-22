@@ -1264,7 +1264,7 @@ def retained_launch_arguments(omp: Bool, claude: Bool, muse: Bool, cmd: String, 
 def retained_identity_result(identity: Result<&1,&1,U32 & String,String & String>, next: String & String -> IO(Result<&1,&1,U32 & String,RetainedLaunch>)) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   match identity:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Fail{error})
-    case Done{+value}: next(value)
+    case Done{value}: next(value)
 
 def retained_identity(executable: String, next: String & String -> IO(Result<&1,&1,U32 & String,RetainedLaunch>)) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
