@@ -275,13 +275,13 @@ async function openInbox(executable, database, session, threadId) {
   const db = new DatabaseSync(database);
   const query = `SELECT s.native,s.parent,
     EXISTS(SELECT 1 FROM session_stops WHERE session=s.id) AS stopped,
-    (SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient)) AS pendingCount,
+    (SELECT count(*) FROM messages WHERE recipient=s.id AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient)) AS pendingCount,
     (SELECT max(seq) FROM messages WHERE recipient=s.id) AS inputSeq,
-    (SELECT count(*) FROM messages WHERE recipient=s.id AND (receipt IS NOT NULL OR EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient))) AS readCount,
+    (SELECT count(*) FROM messages WHERE recipient=s.id AND EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient)) AS readCount,
     (SELECT max(m.seq) FROM messages m WHERE m.recipient=s.id AND
       (m.kind IN ('task','guidance','recovery','task-assignment','task-continuation','completion-confirmed','question') OR
        EXISTS(SELECT 1 FROM session_roles r WHERE r.session=m.sender AND r.role='operator'))) AS controlSeq,
-    (SELECT id FROM messages WHERE recipient=s.id AND receipt IS NULL AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient) ORDER BY seq LIMIT 1) AS message
+    (SELECT id FROM messages WHERE recipient=s.id AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient) ORDER BY seq LIMIT 1) AS message
     FROM sessions s WHERE s.id=?`;
   let state;
   return {

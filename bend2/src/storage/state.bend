@@ -190,7 +190,7 @@ def load(+db: String) -> IO(State):
     sessions_text : String <- IO.try(String, DB.Sql.read(db, "SELECT CASE WHEN id='' THEN '~' ELSE hex(id) END,CASE WHEN workspace='' THEN '~' ELSE hex(workspace) END,CASE WHEN branch='' THEN '~' ELSE hex(branch) END,CASE WHEN base='' THEN '~' ELSE hex(base) END FROM sessions ORDER BY id;"))
     executions_text : String <- IO.try(String, DB.Sql.read(db, "SELECT CASE WHEN session='' THEN '~' ELSE hex(session) END,CASE WHEN id='' THEN '~' ELSE hex(id) END,CASE WHEN directory='' THEN '~' ELSE hex(directory) END,CASE WHEN phase='' THEN '~' ELSE hex(phase) END,CASE WHEN status='' THEN '~' ELSE hex(status) END FROM executions ORDER BY session;"))
     logs_text : String <- IO.try(String, DB.Sql.read(db, "SELECT CASE WHEN session='' THEN '~' ELSE hex(session) END,CASE WHEN log='' THEN '~' ELSE hex(log) END FROM log_files ORDER BY session,log;"))
-    pending_text : String <- IO.try(String, DB.Sql.read(db, "SELECT CASE WHEN recipient='' THEN '~' ELSE hex(recipient) END,count(*) FROM messages WHERE receipt IS NULL AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient) GROUP BY recipient ORDER BY recipient;"))
+    pending_text : String <- IO.try(String, DB.Sql.read(db, "SELECT CASE WHEN recipient='' THEN '~' ELSE hex(recipient) END,count(*) FROM messages WHERE NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient) GROUP BY recipient ORDER BY recipient;"))
     +sessions : List<&2,SessionRow> = sessions_walk(Tx.split_lines(sessions_text), Nil{})
     +executions : List<&2,ExecutionRow> = executions_walk(Tx.split_lines(executions_text), Nil{})
     +logs : List<&2,LogRow> = logs_walk(Tx.split_lines(logs_text), Nil{})

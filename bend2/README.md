@@ -630,7 +630,7 @@ is adopted under its existing session lock. Recovery restores the recorded
 observation checkpoint, retains the original report and inbox cutoff, and
 continues pending input in the recorded conversation.
 Explicit stops remain in effect. The retained native process, manifest, output,
-messages and receipts remain recorded. Older keepers use ordinary attachment
+messages and read state remain recorded. Older keepers use ordinary attachment
 after observer exit. If another recovery process attaches first, the command
 reports that the attempt has an observer.
 
@@ -682,7 +682,7 @@ command records a terminal stop, prevents further queued execution and submits
 TERM to its current native process group. `baton force-stop --session PLAYER` explicitly
 submits KILL to the same still-owned attempt. Baton generates or selects the
 recorded stop identity. `session`, `inbox` and `pending`
-retain the work, messages, receipts and stop state. The stop answer distinguishes
+retain the work, messages, read state and stop state. The stop answer distinguishes
 signal submission from actual exit; the observer reports completion to the
 parent. Active direct `turn` execution returns an unsupported-stop refusal.
 See [session stop behavior](../docs/bend2/native-interactions.md#terminal-session-stop).
@@ -705,7 +705,7 @@ measures isolated native sessions:
 starts a Codex Conductor and two OMP source reviewers in an isolated clone. The route
 file supplies each harness's executable, model and effort. The driver builds
 the selected committed revision in the clone; `BEND` can select an installed
-compiler. It verifies retained report text, acknowledgment, native session reuse
+compiler. It verifies retained report text, complete reads, native session reuse
 and unchanged source checkouts.
 It retains the database, native logs, process records and source and binary hashes
 under the output directory. The command starts real model sessions.

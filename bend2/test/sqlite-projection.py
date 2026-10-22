@@ -258,7 +258,7 @@ class SqliteProjection(unittest.TestCase):
         self.assertIn('read_rc=0', out)
         self.assertIn('settle_rc=0', out)
         self.assertEqual(
-            self.query("SELECT receipt FROM messages WHERE id='m1'"), 'accepted')
+            self.query("SELECT count(*) FROM message_reads WHERE message='m1' AND recipient='root'"), 1)
 
     def test_missing_application_table_is_repaired(self):
         self.assertEqual(self.install().returncode, 0)

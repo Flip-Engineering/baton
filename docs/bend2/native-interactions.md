@@ -75,7 +75,7 @@ baton2 state.db force-stop PLAYER stop-review-1
 
 `stop` records a terminal state for a retained OMP or Codex session. Current
 execution receives TERM through its recorded keeper and native process group.
-Queued task, guidance and recovery input keeps its original body and receipt,
+Queued task, guidance and recovery input keeps its original body and read state,
 with a stopped execution disposition. New execution input is refused. An exact
 stop retry reads the recorded operation; a different stop ID or reason refuses.
 There is no reopen command. Recruit a new session for new work.
@@ -99,7 +99,7 @@ Preexisting unacknowledged reports and questions remain in a stopped session's
 inbox; `pendingReports` names their count in the stop result. A new or retried
 report or question creates one ordinary notice for that session's recorded
 parent. The notice identifies the original recipient, message and retained work.
-The original body and receipt stay unchanged. With no higher parent, the
+The original body and read state stay unchanged. With no higher parent, the
 original input remains pending. If the higher parent is stopped or has no usable
 endpoint, its notice remains pending too. Both cases expose an explicit delivery
 condition. Endpoint failure is reported through ordinary delivery.

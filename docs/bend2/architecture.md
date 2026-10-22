@@ -56,7 +56,7 @@ The core session and message records are:
 | Table | Meaning |
 | --- | --- |
 | `sessions` | A logical session, parent, requested route, observed route, native session ID, delivery endpoint, workspace, branch and resolved base commit. |
-| `messages` | Ordered messages with caller-supplied unique IDs, sender, recipient, kind, full body and optional native acceptance receipt. |
+| `messages` | Ordered messages with caller-supplied unique IDs, sender, recipient, kind, full body and the stored recipient read rows. |
 | `turns` | A completed turn's report ID, Player and native terminal event. |
 | `session_roles` | An explicit Player, Conductor or operator assignment; an unassigned session is a Player. |
 | `ensembles` | A declared Conductor owner and loose or tight coupling. |
@@ -361,8 +361,9 @@ Recovery retains SQLite, native conversation storage, output files and Git
 worktrees. The caller reads a Player's native ID and starts a new turn using it
 in the same workspace. A Codex, OMP, Muse or Claude Code Conductor reattaches and resumes its recorded
 native session. Claude resumes its interactive session and reloads the channel;
-pending messages replay after discovery. A crash before acknowledgment can
-produce repeated input. Messages awaiting receipts are derived from SQLite.
+pending messages replay after discovery. A crash before the read is recorded
+can produce repeated input. Pending messages are derived from stored read rows
+in SQLite.
 
 The real recovery runs killed the owned coordinator, adapter and native
 processes and resumed every tested session with pending work. They did not

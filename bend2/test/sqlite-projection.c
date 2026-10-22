@@ -14,7 +14,9 @@ static const char *SCHEMA =
   "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT, harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');"
   "CREATE TABLE IF NOT EXISTS session_roles (session TEXT NOT NULL, role TEXT NOT NULL);"
   "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL, recipient TEXT NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);"
-  "CREATE INDEX IF NOT EXISTS messages_pending ON messages(recipient,seq) WHERE receipt IS NULL;"
+  "DROP INDEX IF EXISTS messages_pending;CREATE INDEX IF NOT EXISTS messages_recipient_seq ON messages(recipient,seq,id);"
+  "CREATE TABLE IF NOT EXISTS message_reads(attempt TEXT NOT NULL, message TEXT NOT NULL, recipient TEXT NOT NULL, native TEXT NOT NULL, identity TEXT NOT NULL, handled TEXT, PRIMARY KEY(attempt,identity,message));"
+  "CREATE INDEX IF NOT EXISTS message_reads_message ON message_reads(message,recipient);"
   "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL, worker TEXT NOT NULL, event TEXT NOT NULL);"
   "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL, id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
   "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL, id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');"
@@ -96,7 +98,7 @@ int main(int argc, char **argv) {
     double started = now_ms();
     rc = sqlite3_exec(db,
       "SELECT 'status=' || phase || '/' || status FROM executions WHERE session='root';"
-      "SELECT 'input=' || id || ':' || body FROM messages WHERE recipient='root' AND receipt IS NULL LIMIT 1;",
+      "SELECT 'input=' || id || ':' || body FROM messages WHERE recipient='root' AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient) LIMIT 1;",
       print_row, NULL, &error);
     printf("read_rc=%d ms=%.1f%s%s\n", rc, now_ms() - started,
            error ? " err=" : "", error ? error : "");
@@ -104,7 +106,7 @@ int main(int argc, char **argv) {
     if (rc == SQLITE_OK) {
       error = NULL;
       started = now_ms();
-      rc = sqlite3_exec(db, "BEGIN IMMEDIATE; UPDATE messages SET receipt='accepted' WHERE id='m1'; COMMIT;", NULL, NULL, &error);
+      rc = sqlite3_exec(db, "BEGIN IMMEDIATE; INSERT INTO message_reads(attempt,message,recipient,native,identity) SELECT 'probe','m1','root','','probe' WHERE NOT EXISTS(SELECT 1 FROM message_reads WHERE message='m1' AND recipient='root'); COMMIT;", NULL, NULL, &error);
       printf("settle_rc=%d ms=%.1f%s%s\n", rc, now_ms() - started,
              error ? " err=" : "", error ? error : "");
       sqlite3_free(error);

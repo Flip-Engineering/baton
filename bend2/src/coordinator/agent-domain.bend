@@ -273,7 +273,7 @@ def help(action: String) -> String:
     case "section-member": "section-member --ensemble ID --id SECTION --player SESSION --action add|remove [--owner SESSION]\nChange Section membership through the native Ensemble owner and membership rules. Omitted owner selects the current actor.\n"
     case "attempt": "attempt [--session SESSION] [--id INPUT_ID]\nRead the current session execution, or relate one complete stored input to its attempt and task state.\n"
     case "attempts": "attempts [--session SESSION]\nRead full native turn history for the selected session.\n"
-    case "outbox": "outbox [--session SESSION]\nRead complete authored messages and their current recipient receipts.\n"
+    case "outbox": "outbox [--session SESSION]\nRead complete authored messages and their current recipient read state.\n"
     case "receiver": "receiver --command EXECUTABLE --output-log PATH [--session SESSION] [--cwd PATH]\nRegister the ordinary receiver. Omitted session selects the current actor; omitted cwd preserves the recorded workspace.\n"
     case "configure": "configure [--session SESSION] [--harness NAME] [--model MODEL] [--effort EFFORT] [--command EXECUTABLE] [--output-log PATH] [--expected-harness NAME] [--expected-model MODEL] [--expected-effort EFFORT]\nOmitted route and expected fields use the selected recorded session. Recorded receiver command and log supply omitted executable arguments. Native configure preserves its expected-route and current-attempt rules.\n"
     case "resume": "resume [--session SESSION] [--lift-stop]\nResume the same recorded conversation. --lift-stop explicitly lifts its current stop.\n"

@@ -270,8 +270,8 @@ The parent reviews the result with `completion-confirmed --to PLAYER`, or sends
 `guide --to PLAYER --text TEXT` for remaining work. Baton resolves the current
 request addressed to that coordinator. The worker's current request remains
 available while the parent reviews it. New
-tasks and guidance begin further work. Message receipts record the worker's
-handling of retained input. Explicit operator stops remain effective.
+tasks and guidance begin further work. Stored read rows record the worker's
+complete read of retained input. Explicit operator stops remain effective.
 Parentless Principal Conductors follow their operator input.
 
 Codex, OMP, Muse, DeepSeek Harness and Claude native receivers preserve the

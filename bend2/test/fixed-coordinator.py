@@ -770,7 +770,7 @@ finally:
         self.assertFalse(any('w1 held turn' in body for body in bodies),
                          'the held task reported before its release')
         self.await_inbox('root', lambda messages: (
-            messages if self.query("SELECT count(*) FROM messages WHERE id IN ('c1','c2') AND receipt IS NULL")[0][0] == 0
+            messages if self.query("SELECT count(*) FROM messages WHERE id IN ('c1','c2') AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient)")[0][0] == 0
             else None), 'the second late input never completed while the first session was held')
         self.release('w1')
         self.await_inbox('root', lambda messages: (
@@ -778,8 +778,8 @@ finally:
             if any('w1 held turn' in m['body'] for m in messages) else None),
             'held turn report never reached the root inbox')
         for ident in ('t1', 't2'):
-            row = self.query(f"SELECT receipt FROM messages WHERE id='{ident}'")
-            self.assertNotEqual(row, [(None,)], f'{ident} was not acknowledged')
+            row = self.query(f"SELECT count(*) FROM message_reads WHERE message='{ident}'")
+            self.assertGreater(row[0][0], 0, f'{ident} has no recorded read')
         self.shutdown()
 
     def test_08_second_serve_on_alias_is_refused_short(self):

@@ -204,7 +204,7 @@ function playerSupport(db, sessionIds) {
   // Read the newest assignment's first-line preview for each recipient.
   // The selected work read returns the complete recorded body.
   for (const row of rows(db, `SELECT recipient, id, receipt,
-                                    (receipt IS NOT NULL OR EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient)) AS read,
+                                    (EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient)) AS read,
                                     substr(ltrim(body, char(9) || char(10) || char(13) || ' '), 1, 161) AS preview
                                FROM messages WHERE seq IN (
                                  SELECT max(seq) FROM messages
@@ -224,7 +224,7 @@ function playerSupport(db, sessionIds) {
     support.executionInput.set(row.session, row);
   }
   for (const row of rows(db, `SELECT recipient, count(*) AS n FROM messages
-                               WHERE recipient IN (${placeholders}) AND receipt IS NULL
+                               WHERE recipient IN (${placeholders})
                                AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient)
                                GROUP BY recipient`, ...ids)) {
     support.unread.set(row.recipient, row.n);
@@ -243,7 +243,7 @@ function playerSupport(db, sessionIds) {
   // The pending badge counts stored task, guidance and recovery messages
   // awaiting a recipient read on a session with no recorded stop.
   for (const row of rows(db, `SELECT recipient, count(*) AS n FROM messages
-                               WHERE recipient IN (${placeholders}) AND receipt IS NULL
+                               WHERE recipient IN (${placeholders})
                                AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient)
                                  AND kind IN ('task', 'guidance', 'recovery')
                                GROUP BY recipient`, ...ids)) {
@@ -252,7 +252,7 @@ function playerSupport(db, sessionIds) {
   // Awaiting input and report metadata, newest first per recipient. Reports
   // remain readable when the recipient has a recorded stop.
   for (const row of rows(db, `SELECT recipient, id, sender, kind FROM messages
-                               WHERE recipient IN (${placeholders}) AND receipt IS NULL
+                               WHERE recipient IN (${placeholders})
                                AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient)
                                  AND kind IN ('task', 'guidance', 'recovery', 'report')
                                ORDER BY seq DESC`, ...ids)) {

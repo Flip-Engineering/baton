@@ -15,13 +15,14 @@ def q(value: String) -> String:
   Req.sql_quote(value)
 
 # Message lifecycle is delivered/read. A message is owed while the recipient
-# has no recorded complete read and no legacy receipt. Historical receipt
-# values stay stored and count as read, so legacy rows never gate delivery.
+# has no recorded complete read, and read state derives from message_reads
+# alone. The backfill above translates each historical receipt into a read row
+# once, so a stored receipt value never gates delivery or read state.
 def owed_sql(+row: String) -> String:
-  row ++ ".receipt IS NULL AND NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=" ++ row ++ ".id AND owed_read.recipient=" ++ row ++ ".recipient)"
+  "NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=" ++ row ++ ".id AND owed_read.recipient=" ++ row ++ ".recipient)"
 
 def read_sql(+row: String) -> String:
-  "(" ++ row ++ ".receipt IS NOT NULL OR EXISTS(SELECT 1 FROM message_reads has_read WHERE has_read.message=" ++ row ++ ".id AND has_read.recipient=" ++ row ++ ".recipient))"
+  "EXISTS(SELECT 1 FROM message_reads has_read WHERE has_read.message=" ++ row ++ ".id AND has_read.recipient=" ++ row ++ ".recipient)"
 
 def present_sql() -> String:
   "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='message_reads';"

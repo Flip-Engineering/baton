@@ -57,7 +57,7 @@ def launch(db: String, id: String, saved: String, argv: String) -> IO(Result<&1,
     run : Result<&1,&1,U32 & String,String> <- Process.Process.run(argv ++ Tx.enc_argv(Con{id,Nil{}}),".")
     completed(db,saved,run)
 
-# A stopped recipient retains its original message and receipt. Its parent gets
+# A stopped recipient retains its original message and read state. Its parent gets
 # one ordinary report naming the retained input and work.
 def stopped_kind_sql(id: String, condition: String) -> String:
   "SELECT coalesce((SELECT m.kind FROM messages m JOIN session_stops st ON st.session=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("m") ++ " AND " ++ condition ++ "),'');"

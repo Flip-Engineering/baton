@@ -24,7 +24,7 @@ baton send parent --kind report --text 'Result.' \
 
 Each clause has a recipient, kind and text or file body. `--id` applies to that
 clause; an omitted ID is generated and returned. Explicit IDs use Baton's existing
-exact retry and conflict rules. Each item reports admission, wake and receipt
+exact retry and conflict rules. Each item reports admission, wake and read state
 separately. File, admission and wake failures retain their individual causes and
 the results of other items. A malformed command returns before message admission.
 `--file -` reads standard input.
@@ -125,7 +125,7 @@ baton continue-task --session worker
 `attempt` reads the selected session's execution and assignment state.
 `attempt --id INPUT_ID` reads the stored input and its related attempt. `attempts`
 reads complete turn history, and `outbox` reads authored messages and their
-recipient receipts. These reads retain the existing task and receipt state.
+recipient read state. These reads retain the existing task and read state.
 
 `status` and `orchestra` read their existing database projections. `pending`
 reads complete pending input. `pending --index` enables native metadata filters:

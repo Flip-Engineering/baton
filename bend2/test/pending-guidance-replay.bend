@@ -9,7 +9,7 @@ import ../src/git/text.bend as Tx
 # reset, so the caller restarts the guidance cursor at "0". The replay must
 # resume at the forwarded position (never seq 2 again) while the still-owed
 # seq 3 stays selectable, and a fresh attempt (no journal) must still receive
-# every pending message. The queue is never consumed: all receipts stay NULL.
+# every pending message. The queue is never consumed: no read row is recorded.
 def check(+name: String, +expected: String, +actual: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.eq(expected,actual),
     IO.print(name ++ ":ok"),
@@ -52,7 +52,7 @@ def run(+db: String, +attempt: String, +fresh: String) -> IO(Unit):
     check("fresh attempt cursor", "0", fresh_start)
     +first : String <- select(db,fresh_start)
     check("fresh attempt first pending", "1", first)
-    +owed : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE recipient='player' AND kind='guidance' AND receipt IS NULL;"))
+    +owed : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE recipient='player' AND kind='guidance' AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient);"))
     check("pending queue preserved", "3\n", owed)
     IO.pure(Unit,Unit{})
 
