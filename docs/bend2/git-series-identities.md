@@ -13,10 +13,18 @@ host. A source checkout uses `bend2/harness/git-series.mjs`. The Python source
 remains a legacy reference. The immutable 1.0 archive carries the earlier Python
 helper; its version-specific payload is described in [installation](installation.md).
 
-The selected identity's `github.repositoryFullName` names the repository the
-helper scopes. Its App installation and issued token must match that repository
-ID and the `contents:write`, `pull_requests:write`, `metadata:read` permissions
-below. A registry may route a series to an identity for another repository.
+The helper has no repository allowlist. For a credential request to
+`github.com/OWNER/NAME`, the helper looks up the App installation of the account
+`OWNER` with `GET /repos/OWNER/NAME/installation`, using the App JWT. It then
+mints an installation access token for that installation. The token has
+`contents:write`, `pull_requests:write` and `metadata:read` permissions and no
+repository restriction, so it carries the repositories that the account granted
+the App. Each account owner has its own installation. Adding the App to another
+owner requires no change to the registry or the helper.
+
+If the App is not installed for `OWNER`, the helper refuses with a message that
+names the App slug and the owner. The helper does not fall back to another
+installation.
 
 ## Configuration
 
@@ -47,24 +55,9 @@ The registry has explicit exact-model mappings and series directories:
 }
 ```
 
-A repository entry routes the named series to repository-specific identities:
-
-```json
-{
-  "repositories": {
-    "flip-engineer/flip": {
-      "series": {
-        "gpt": "/ABSOLUTE/CONFIG/DIRECTORY/flip/gpt",
-        "kimi": "/ABSOLUTE/CONFIG/DIRECTORY/flip/kimi"
-      }
-    }
-  }
-}
-```
-
-A repository entry must name every series it serves. Without an entry, the
-default `series` directories serve the repository their identities name. A
-selected identity that names another repository than the selection refuses.
+The registry has no per-repository routes. Each series directory serves every
+repository that its App is installed on. A `repositories` key in a registry file
+is not read.
 
 Both Kimi keys route to the same Kimi series.
 `kimi-code/kimi-for-coding` is the provider-qualified OMP selector for Kimi
@@ -91,11 +84,11 @@ selected series. Registry attribution takes precedence over a selected
 `identity-series.json` `authorEmail`. The helper uses that per-series email
 when no shared attribution is configured, and the verified App bot email when
 the identity has no `authorEmail`. Its default name is `Flip Baton - SERIES`.
-The `github` identity selects the App installation, signing key and token
-permissions.
+The `github` identity selects the App, its signing key and the token
+permissions. The helper finds the installation for each repository owner.
 
 Each public identity has this shape. Replace the unset GitHub values with
-verified App, bot, installation and repository metadata before launch:
+verified App and bot metadata before launch:
 
 ```json
 {
@@ -108,9 +101,6 @@ verified App, bot, installation and repository metadata before launch:
     "botLogin": null,
     "botId": null,
     "commitEmail": null,
-    "installationId": null,
-    "repositoryFullName": "Flip-Engineering/baton",
-    "repositoryId": null,
     "permissions": {
       "contents": "write",
       "pull_requests": "write",
@@ -135,7 +125,9 @@ views can therefore display the bot login while the commit retains its author
 name. See [App naming](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app)
 and [Bot fields](https://docs.github.com/en/graphql/reference/apps#bot).
 The helper reads the fixed public filename and uses the adjacent key to sign
-an RS256 App JWT with Node's built-in cryptography library.
+an RS256 App JWT with Node's built-in cryptography library. A file may still
+carry `installationId`, `repositoryFullName` or `repositoryId`. The helper
+ignores those fields, because the installation is looked up for each request.
 
 ## Native launch selection
 
@@ -148,8 +140,11 @@ an endpoint using the installed Node helper and the recipient's recorded model.
 `receiver`, `configure`, `start` and `dispatch-turn` read the assignment's
 origin remote and pass its GitHub repository to the helper as `--repository`.
 A nested worker registered from another worker's environment uses its own
-assignment workspace, so it receives that assignment's route. A workspace whose
-origin is not a GitHub URL passes no repository selection.
+assignment workspace, so it receives that assignment's repository. A workspace whose
+origin is not a GitHub URL passes no repository selection. With a selection,
+the helper accepts credential requests only for that repository. With no
+selection, each request names its own repository and the helper uses that
+repository's owner installation.
 
 ```sh
 baton2 /absolute/path/state.db receiver lead /absolute/path/omp \
@@ -234,8 +229,8 @@ baton2 DATABASE push REPOSITORY BRANCH https://github.com/Flip-Engineering/baton
 The helper accepts unique HTTPS protocol, host, repository path and optional
 `x-access-token` username fields. It validates and ignores repeated `[]`
 credential extension fields, including `capability[]`. It verifies the App,
-installation, permissions and token repository access before returning a
-credential through Git's private helper pipe. JWTs and tokens remain in
+the owner's installation and the permissions before returning a credential
+through Git's private helper pipe. JWTs and tokens remain in
 process memory and are excluded from arguments, URLs, files and diagnostics.
 
 Commit author and committer are editable commit metadata. The installation
@@ -256,7 +251,7 @@ repository protection provide review authority.
 Run the controlled fixtures with `node --test bend2/test/git-series.mjs`. They
 use invented public metadata, a generated signing key, API response doubles and
 a controlled Node child. Fixtures remain under `.scratch/git-series-node-fixtures/`.
-The checks cover identity selection, repository routes, credential
-restrictions, askpass execution, signature verification and PID, stream and
+The checks cover identity selection, per-owner installations for two accounts, the
+missing-installation refusal, credential restrictions, askpass execution, signature verification and PID, stream and
 exit preservation. Real App authentication, native tool inheritance, commit
 attribution and remote actor verification require separate qualification.
