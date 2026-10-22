@@ -47,6 +47,15 @@ class Messaging(unittest.TestCase):
                 self.call('role', name, role)
             self.call('connect', name, '', self.endpoint)
 
+    def read_count(self, ident, recipient=None):
+        with closing(sqlite3.connect(self.db)) as database:
+            if recipient is None:
+                return database.execute(
+                    'SELECT count(*) FROM message_reads WHERE message=?', (ident,)).fetchone()[0]
+            return database.execute(
+                'SELECT count(*) FROM message_reads WHERE message=? AND recipient=?',
+                (ident, recipient)).fetchone()[0]
+
     def call(self, *args, success=True, stdin=None):
         result = subprocess.run([str(EXE), str(self.db), *args], input=stdin,
                                 text=True, capture_output=True)
@@ -271,9 +280,10 @@ class Messaging(unittest.TestCase):
         self.assertEqual(self.endpoint_output(), b'retained\nretained\n')
         self.assertEqual(self.call('inbox', 'leaf-b')[0]['id'], 'retained')
         self.refused('new-message', 'leaf-a', 'leaf-b')
-        self.call('ack', 'retained', 'leaf-b', 'native accepted')
+        self.call('as', 'leaf-b', 'read', 'retained')
         delivered = self.endpoint_output()
-        self.assertEqual(self.send('retained', 'leaf-a', 'leaf-b')['receipt'], 'native accepted')
+        self.assertIsNone(self.send('retained', 'leaf-a', 'leaf-b')['receipt'])
+        self.assertGreater(self.read_count('retained', 'leaf-b'), 0)
         self.assertEqual(self.endpoint_output(), delivered)
 
     def test_batch_send_and_selected_reads_keep_item_results_and_complete_records(self):
@@ -319,7 +329,7 @@ class Messaging(unittest.TestCase):
         self.assertEqual(outbox[0]['body'], first_body)
         self.assertEqual(outbox[0]['detailRead'], ['delivery', 'batch-first'])
         self.assertTrue(all(row['sender'] == 'root' for row in outbox))
-        self.call('ack', 'batch-first', 'leaf-a', 'handled by fixture actor')
+        self.call('as', 'leaf-a', 'read', 'batch-first')
         ids = ['batch-second', 'batch-first', 'missing-batch', 'batch-first']
         selected = self.call('delivery-batch-file', '-',
                              stdin=json.dumps(ids, separators=(',', ':')))
@@ -327,9 +337,9 @@ class Messaging(unittest.TestCase):
         self.assertEqual([row['status'] for row in selected],
                          ['found', 'found', 'absent', 'found'])
         self.assertEqual([row.get('receiptStatus') for row in selected],
-                         ['pending', 'acknowledged', None, 'acknowledged'])
+                         ['pending', 'read', None, 'read'])
         self.assertIsNone(selected[0]['delivery']['receipt'])
-        self.assertEqual(selected[1]['delivery']['receipt'], 'handled by fixture actor')
+        self.assertIsNone(selected[1]['delivery']['receipt'])
         self.assertEqual(selected[1]['delivery']['body'], first_body)
         self.assertEqual(selected[2]['detailRead'], ['delivery', 'missing-batch'])
 
@@ -372,11 +382,10 @@ class Messaging(unittest.TestCase):
             'inbox': ['inbox', 'leaf-a', '--index', '--state', 'all'],
         })
 
-        self.call('ack', 'input-detail', 'leaf-a', 'handled by leaf-a')
+        self.call('as', 'leaf-a', 'read', 'input-detail')
         settled = self.call('input', 'input-detail')
         self.assertEqual(settled['handling'], {
-            'status': 'acknowledged', 'owner': 'leaf-a',
-            'receipt': 'handled by leaf-a',
+            'status': 'read', 'owner': 'leaf-a', 'receipt': None,
         })
         self.assertEqual(settled['wake']['current']['pending'], 0)
         self.assertEqual(settled['attemptRelation']['status'], 'unrecorded')

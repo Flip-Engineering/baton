@@ -78,7 +78,7 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         reports = [report for report in self.coord('inbox', 'root')
                    if report['id'] == turns[1]['id']]
         self.assertEqual([report['body'] for report in reports], ['Aborted episode body.'])
-        self.assertEqual(self.coord('delivery', 'boundary-guidance')['receipt'], 'native-reviewed')
+        self.assertTrue(RECEIVE.read_recorded(self.db, 'boundary-guidance'))
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.shutdown_idle_database_owner('boundary fixtures did not exit')
@@ -137,7 +137,7 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.assertNotIn('[id: replay-guidance]', event['prompt'])
         self.action(stream)
         self.assertEqual(stream.readline(), b'')
-        self.eventually(lambda: self.coord('delivery', 'replay-guidance')['receipt'] is not None,
+        self.eventually(lambda: RECEIVE.read_recorded(self.db, 'replay-guidance'),
                         'the fixture handling receipt was not retained')
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
@@ -184,7 +184,7 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
                    if report['id'] == turns[1]['id']]
         self.assertEqual([report['body'] for report in reports],
                          ['Later episode with the recorded guidance pending.'])
-        self.assertEqual(self.coord('delivery', 'recorded')['receipt'], 'native-reviewed')
+        self.assertTrue(RECEIVE.read_recorded(self.db, 'recorded'))
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.shutdown_idle_database_owner('boundary fixtures did not exit')
 

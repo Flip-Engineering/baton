@@ -117,6 +117,15 @@ class Case:
             process.stdin.close()
         return process
 
+    def read_count(self, ident, recipient=None):
+        with sqlite3.connect(self.db) as db:
+            if recipient is None:
+                return db.execute(
+                    'SELECT count(*) FROM message_reads WHERE message=?', (ident,)).fetchone()[0]
+            return db.execute(
+                'SELECT count(*) FROM message_reads WHERE message=? AND recipient=?',
+                (ident, recipient)).fetchone()[0]
+
     def row(self, table, ident):
         with sqlite3.connect(self.db) as db:
             db.row_factory = sqlite3.Row
@@ -414,14 +423,14 @@ sys.exit(p.wait())
             c.processes.append(terminal)
             return terminal
         terminal = start(False)
-        observe(terminal, lambda: c.row('messages', 'root-setup')['receipt'], 'Claude root setup receipt')
+        observe(terminal, lambda: c.read_count('root-setup'), 'Claude root setup read')
         c.recruit('omp')
         before = c.sequence()
         p = c.turn('omp', 'Do not use tools or change files. Reply exactly: Player report live-channel.', 'live')
         c.completed(p, 'live')
-        observe(terminal, lambda: c.row('messages', 'live')['receipt'], 'live channel acceptance')
+        observe(terminal, lambda: c.read_count('live'), 'live channel acceptance')
         live = c.coord('delivery', 'live')
-        assert live['receipt'], live
+        assert c.read_count('live') > 0, live
         live_reports = c.root_reports(before, marker, live['body'])
         kill_tree(terminal, c.path / 'crash.json')
         native = c.coord('player', 'w1')['native']
@@ -432,10 +441,10 @@ sys.exit(p.wait())
         pending = c.coord('delivery', 'pending')
         assert pending['receipt'] is None and 'recovered-channel' in pending['body'], pending
         terminal = start(True)
-        observe(terminal, lambda: c.row('messages', 'pending')['receipt'], 'resumed channel acceptance')
-        observe(terminal, lambda: not c.coord('inbox', 'root'), 'all pending root receipts')
+        observe(terminal, lambda: c.read_count('pending'), 'resumed channel acceptance')
+        observe(terminal, lambda: not c.coord('inbox', 'root'), 'all pending root input is read')
         resumed = c.coord('delivery', 'pending')
-        assert resumed['receipt'], resumed
+        assert c.read_count('pending') > 0, resumed
         resumed_reports = c.root_reports(before, marker, resumed['body'])
         terminal.send('/exit\r')
         terminal.wait()

@@ -699,6 +699,8 @@ def verify(out, state, run, helpers):
     repo = out / 'repo'
     sessions = {row['id']: row for row in state['sessions']}
     messages = {row['id']: row for row in state['messages']}
+    with sqlite3.connect('file:' + quote(str(out / 'state.db'), safe='/') + '?mode=ro', uri=True) as connection:
+        read_ids = {row[0] for row in connection.execute('SELECT message FROM message_reads')}
     processes = records(out)
     assert successful_receipts(processes), processes
     for seat, parent, harness, route_key in [('root', None, 'codex', 'codex'),
@@ -714,10 +716,10 @@ def verify(out, state, run, helpers):
         seen.discard(None)
         assert seen == {session['native']}, (seat, seen, session['native'])
     assert len(records(out, 'root')) > 1 and len(records(out, 'lead')) > 1
-    assert all(row['receipt'] for row in state['messages'] if row['recipient'] != 'operator')
+    assert {row['id'] for row in state['messages'] if row['recipient'] != 'operator'} <= read_ids, state['messages']
     for seat in PLAYERS:
         report = messages[f'{seat}-turn']
-        assert report['sender'] == seat and report['recipient'] == 'lead' and report['receipt']
+        assert report['sender'] == seat and report['recipient'] == 'lead' and report['id'] in read_ids
         assert report['body'] and any(row['id'] == report['id'] for row in state['turns'])
     deepseek_text = list(helpers.omp_reports(Path(records(out, 'deepseek')[0]['frames'])))
     assert deepseek_text == [messages['deepseek-turn']['body']]
@@ -726,16 +728,19 @@ def verify(out, state, run, helpers):
     assert muse_terminal and muse_terminal[-1]['payload']['terminal'] == 'completed'
     assert muse_terminal[-1]['payload']['text'] == messages['muse-turn']['body']
     assert any(row['sender'] == 'lead' and row['recipient'] == 'root' and row['kind'] == 'report'
-               and row['receipt'] for row in state['messages'])
+               and row['id'] in read_ids for row in state['messages'])
     selected_guidance = [row for row in state['messages'] if row['sender'] == 'lead'
                         and row['recipient'] == 'deepseek' and row['kind'] == 'guidance'
                         and row['body'] == run['tasks']['guidance']]
     assert len(selected_guidance) == 1, selected_guidance
     guidance = selected_guidance[0]
-    receipt = json.loads(guidance['receipt'])
     assert guidance['sender'] == 'lead' and guidance['recipient'] == 'deepseek'
-    assert guidance['body'] == run['tasks']['guidance']
-    assert receipt['command'] == 'steer' and receipt['success'] is True
+    assert guidance['body'] == run['tasks']['guidance'] and guidance['id'] in read_ids
+    assert guidance['receipt'] is None
+    assert any(frame.get('type') == 'response' and frame.get('command') == 'steer'
+               and frame.get('success') is True
+               for record in records(out, 'deepseek')
+               for frame in frames(Path(record['frames'])))
     player_runs = {seat: records(out, seat) for seat in PLAYERS}
     assert all(player_runs.values()), player_runs
     deepseek, muse = (player_runs[seat][0] for seat in PLAYERS)
