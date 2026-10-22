@@ -262,6 +262,37 @@ provider and model and sets `reasoningEffort`. Inspect the composed tree with
 `--dump-config`; the model row, the tool-fs switches and the inserted shell
 rows are visible there.
 
+## Antigravity CLI
+
+Install the Google Antigravity CLI for the account that runs the coordinator.
+Google's installer downloads a release for the platform, checks its SHA-512
+against the release manifest and copies `agy` to `~/.local/bin`:
+
+```sh
+curl -fsSL https://antigravity.google/cli/install.sh | bash
+agy --version
+```
+
+The installer ends with `agy install`, which edits shell profile files. To
+avoid that, download the manifest at
+`https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json`,
+fetch the `url` it names, compare the file with its `sha512`, and copy the
+`antigravity` member of the archive to `~/.local/bin/agy`.
+
+Sign in once as the coordinator's account, in a terminal: run `agy`, choose
+`Google OAuth`, open the printed URL in a browser on any machine, sign in and
+paste the authorization code back. The Antigravity documentation states that
+the token is kept in the operating system keyring (Secret Service on Linux). A
+headless account needs a keyring that stays unlocked. The alternative route is
+`{"modelProvider": "gemini"}` in `~/.gemini/antigravity-cli/settings.json` with
+`GEMINI_API_KEY` in the environment; it reaches only Gemini models. After
+signing in, `agy models` lists the models the account can use.
+
+Record the route with `--harness antigravity`, `--model MODEL_ID` and the tier word of
+that id as `--effort`, for example `claude-sonnet-5-5-high` and `high`. The
+[Antigravity CLI adapter](agy-adapter.md) lists the protocol facts and the
+unverified items.
+
 ## Status and report inspection
 
 A worker's assignment remains open across successful native turns. When its
@@ -274,7 +305,7 @@ tasks and guidance begin further work. Message receipts record the worker's
 handling of retained input. Explicit operator stops remain effective.
 Parentless Principal Conductors follow their operator input.
 
-Codex, OMP, Muse, DeepSeek Harness and Claude native receivers preserve the
+Codex, OMP, Muse, DeepSeek Harness, Antigravity CLI and Claude native receivers preserve the
 recorded conversation when further input arrives. Native settlement delivers the turn report to the
 recorded coordinator, which decides whether further work is needed. The
 managed Codex App watcher observes public turn settlement and delivers owed

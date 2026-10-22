@@ -573,6 +573,10 @@ test('check resolves a configured exact model and refuses an unmapped one withou
   assert.equal(model.check({ registry, model_key: 'gpt-6-astra' }), undefined);
   assert.throws(() => model.check({ registry, model_key: 'zai/glm-5.3-flash' }),
     /Select an explicitly configured model mapping or registered series/);
+  const no_series = join(directory, 'no-series.json');
+  save(no_series, { models: { ...models, 'fixture/no-series-model': null }, series });
+  assert.throws(() => model.check({ registry: no_series, model_key: 'fixture/no-series-model' }),
+    /The model fixture\/no-series-model is registered without a GitHub identity series\./);
   const resolved = await child([SOURCE, 'check', '--registry', registry, '--model-key', 'gpt-6-astra']);
   assert.equal(resolved.code, 0, resolved.stderr);
   assert.equal(resolved.stdout + resolved.stderr, '');

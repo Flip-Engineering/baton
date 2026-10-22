@@ -17,7 +17,7 @@ def endpoint_sql(id: String, condition: String) -> String:
   "SELECT coalesce((SELECT (SELECT group_concat(length(CAST(value AS BLOB)) || ':' || value,'') FROM json_each(s.endpoint)) FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' ELSE 0 END AND " ++ condition ++ "),'');"
 
 def native_receiver_sql() -> String:
-  "CASE WHEN json_valid(s.endpoint) THEN s.harness IN ('codex','omp','muse','claude-code','dsh') AND json_extract(s.endpoint,'$[#-7]')='receive' AND json_extract(s.endpoint,'$[#-6]')=s.id ELSE 0 END"
+  "CASE WHEN json_valid(s.endpoint) THEN s.harness IN ('codex','omp','muse','claude-code','dsh','antigravity') AND json_extract(s.endpoint,'$[#-7]')='receive' AND json_extract(s.endpoint,'$[#-6]')=s.id ELSE 0 END"
 
 def codex_inbox_endpoint_sql(id: String, condition: String) -> String:
   "SELECT EXISTS(SELECT 1 FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND " ++ condition ++ " AND s.harness='codex' AND CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)=7 AND json_extract(s.endpoint,'$[1]') LIKE '%/codex-inbox-wake.mjs' AND json_extract(s.endpoint,'$[2]')='--session' AND json_extract(s.endpoint,'$[5]')=s.id AND json_extract(s.endpoint,'$[6]')=s.native ELSE 0 END);"

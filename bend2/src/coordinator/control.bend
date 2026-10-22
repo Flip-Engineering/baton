@@ -162,7 +162,7 @@ def receiver_model(+session: String) -> String:
   "(SELECT length(coalesce(model,''))>0 FROM sessions WHERE id=" ++ C.q(session) ++ ")"
 
 def receiver_admitted(+session: String, +endpoint: String, +cwd: String) -> String:
-  "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code','dsh')) AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ receiver_model(session) ++ " AND " ++ receiver_directory(session,cwd) ++ ")"
+  "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code','dsh','antigravity')) AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ receiver_model(session) ++ " AND " ++ receiver_directory(session,cwd) ++ ")"
 
 def receiver_update_sql(+session: String, +endpoint: String, +cwd: String, +admitted: String) -> String:
   "UPDATE sessions SET workspace=CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN " ++ C.q(cwd) ++ " ELSE workspace END,endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
@@ -214,7 +214,7 @@ def receiver(+db: String, +session: String, cmd: String, log: String, +cwd: Stri
 # resolved through the configured series registry while the operator is present.
 def configure_endpoint(+db: String, +id: String, +harness: String, +cmd: String, +log: String, +model: String) -> IO(String):
   do IO<String>:
-    receiver_harness : Bool <- IO.pure(Bool,Bool.or(String.eq(harness,"codex"),Bool.or(String.eq(harness,"omp"),Bool.or(String.eq(harness,"muse"),Bool.or(String.eq(harness,"claude-code"),String.eq(harness,"dsh"))))))
+    receiver_harness : Bool <- IO.pure(Bool,Bool.or(String.eq(harness,"codex"),Bool.or(String.eq(harness,"omp"),Bool.or(String.eq(harness,"muse"),Bool.or(String.eq(harness,"claude-code"),Bool.or(String.eq(harness,"dsh"),String.eq(harness,"antigravity")))))))
     Bool.pick(IO(String),receiver_harness,configured_endpoint(db,id,cmd,log,model,""),IO.pure(String,""))
 
 def configure_result(saved: String, denied: Bool) -> IO(String):
@@ -234,7 +234,7 @@ def principal_matches(+session: String, +harness: String, +model: String, +effor
   "(id=" ++ C.q(session) ++ " AND parent IS NULL AND harness=" ++ C.q(harness) ++ " AND (model='' OR model=" ++ C.q(model) ++ ") AND (effort='' OR effort=" ++ C.q(effort) ++ ") AND (workspace='' OR workspace=" ++ C.q(cwd) ++ ") AND " ++ C.assigned_role("sessions.id") ++ "<>'operator' AND NOT " ++ C.stopped_session_sql("sessions.id") ++ ")"
 
 def start_admission(+session: String, +harness: String, model: String, effort: String, cwd: String) -> String:
-  "(" ++ C.q(session) ++ "<>'operator' AND " ++ C.q(session) ++ "<>'' AND " ++ C.q(harness) ++ " IN ('codex','omp','muse','claude-code','dsh') AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ") OR EXISTS(SELECT 1 FROM sessions WHERE " ++ principal_matches(session,harness,model,effort,cwd) ++ ")) AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id='operator') OR EXISTS(SELECT 1 FROM sessions WHERE id='operator' AND parent IS NULL AND ((harness='operator' AND NOT EXISTS(SELECT 1 FROM session_roles WHERE session='operator')) OR " ++ C.assigned_role("sessions.id") ++ "='operator'))))"
+  "(" ++ C.q(session) ++ "<>'operator' AND " ++ C.q(session) ++ "<>'' AND " ++ C.q(harness) ++ " IN ('codex','omp','muse','claude-code','dsh','antigravity') AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ") OR EXISTS(SELECT 1 FROM sessions WHERE " ++ principal_matches(session,harness,model,effort,cwd) ++ ")) AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id='operator') OR EXISTS(SELECT 1 FROM sessions WHERE id='operator' AND parent IS NULL AND ((harness='operator' AND NOT EXISTS(SELECT 1 FROM session_roles WHERE session='operator')) OR " ++ C.assigned_role("sessions.id") ++ "='operator'))))"
 
 def principal_assignment_sql(+session: String, +harness: String, +model: String, +effort: String, +cwd: String, +endpoint: String, +admitted: String) -> String:
   "INSERT INTO sessions(id,harness,model,effort,workspace) SELECT " ++ C.q(session) ++ "," ++ C.q(harness) ++ "," ++ C.q(model) ++ "," ++ C.q(effort) ++ "," ++ C.q(cwd) ++ " WHERE " ++ admitted ++ " ON CONFLICT(id) DO NOTHING;"
@@ -316,7 +316,7 @@ def deliver(db: String, id: String) -> IO(Unit):
     IO.pure(Unit,Unit{})
 
 def turn_admission_sql(+player: String) -> String:
-  "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(player) ++ " AND parent IS NOT NULL AND workspace<>'' AND harness IN ('codex','omp','muse','claude-code','dsh') AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ ");"
+  "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(player) ++ " AND parent IS NOT NULL AND workspace<>'' AND harness IN ('codex','omp','muse','claude-code','dsh','antigravity') AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ ");"
 
 def turn_admitted(allowed: Bool) -> IO(Unit):
   match allowed:

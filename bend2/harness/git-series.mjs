@@ -57,6 +57,8 @@ export function selected_identity(registry_path, model_key = null, series_key = 
     'The exact model key is invalid.');
   const configured = model_key !== null && Object.hasOwn(registry.models, model_key);
   const mapped = configured ? registry.models[model_key] : null;
+  if (configured && mapped === null) require(false,
+    'The model ' + model_key + ' is registered without a GitHub identity series.');
   if (configured) require(SERIES.includes(mapped),
     'The exact-model mapping names an invalid series.');
   series_key ??= mapped;
