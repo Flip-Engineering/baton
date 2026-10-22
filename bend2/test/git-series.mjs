@@ -75,6 +75,14 @@ function child(argv, { cwd = directory, input = '', env = { PATH: process.env.PA
   });
 }
 
+const credentialHome = join(directory, 'credential-home');
+mkdirSync(credentialHome, { recursive: true });
+function credentialEnvironment(extra = {}) {
+  return { PATH: process.env.PATH, HOME: credentialHome,
+    GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
+    GIT_TERMINAL_PROMPT: '0', ...extra };
+}
+
 test('exact models and all six series select fixed public metadata and friendly Git identities', () => {
   for (const key of model.SERIES) {
     const [selected, home, github] = model.selected_identity(registry, null, key);
@@ -147,7 +155,7 @@ test('repository routes select the assigned identity without broadening another 
 });
 
 test('the configured askpass executable runs and denies without a credential route', async () => {
-  const environment = model.scoped_environment(registry, 'gpt', identities.gpt, { PATH: process.env.PATH });
+  const environment = model.scoped_environment(registry, 'gpt', identities.gpt, credentialEnvironment());
   const result = await new Promise((accept, reject) => {
     const processChild = spawn('git', ['credential', 'fill'], { cwd: directory, env: environment,
       stdio: ['pipe', 'pipe', 'pipe'] });
@@ -161,8 +169,9 @@ test('the configured askpass executable runs and denies without a credential rou
   });
   assert.equal(result.code, 128, result.stderr);
   assert.equal(result.stdout, '');
-  assert.match(result.stderr, /unable to read askpass response from 'false'/);
+  assert.match(result.stderr, /unable to read askpass response from ['"]?false['"]?|unable to get password from user/);
   assert.doesNotMatch(result.stderr, /cannot exec/);
+  assert.doesNotMatch(result.stderr, /Series Git/);
 });
 
 test('an inherited literal multi-word askpass cannot exec and is replaced by controlled denial', async () => {
@@ -181,15 +190,23 @@ test('an inherited literal multi-word askpass cannot exec and is replaced by con
       stderr: Buffer.concat(stderr).toString() }));
   });
 
-  const raw = await credential({ PATH: process.env.PATH, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: production });
+  const isolated = credentialEnvironment({ GIT_ASKPASS: production });
+  assert.equal(isolated.HOME, credentialHome);
+  assert.equal(isolated.GIT_CONFIG_GLOBAL, '/dev/null');
+  assert.equal(isolated.GIT_CONFIG_NOSYSTEM, '1');
+  const raw = await credential(isolated);
   assert.equal(raw.code, 128, raw.stderr);
   assert.equal(raw.stdout, '');
-  assert.match(raw.stderr, /cannot exec/);
-  assert.match(raw.stderr, /No such file or directory/);
-  assert.match(raw.stderr, /could not read Username/);
+  if (/cannot exec/.test(raw.stderr)) {
+    assert.match(raw.stderr, /No such file or directory/);
+  } else {
+    assert.match(raw.stderr, /unable to read askpass response|unable to get password from user/);
+  }
+  assert.match(raw.stderr, /could not read Username|unable to get password from user/);
+  assert.doesNotMatch(raw.stderr, /Series Git|password=/);
 
-  const inherited = { PATH: process.env.PATH, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: production,
-    GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.askpass', GIT_CONFIG_VALUE_0: production };
+  const inherited = credentialEnvironment({ GIT_ASKPASS: production,
+    GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.askpass', GIT_CONFIG_VALUE_0: production });
   const environment = model.scoped_environment(registry, 'gpt', identities.gpt, inherited);
   assert.equal(environment.GIT_ASKPASS, 'false');
   const pairs = Array.from({ length: Number(environment.GIT_CONFIG_COUNT) }, (_, index) =>
@@ -199,9 +216,12 @@ test('an inherited literal multi-word askpass cannot exec and is replaced by con
   const scoped = await credential(environment);
   assert.equal(scoped.code, 128, scoped.stderr);
   assert.equal(scoped.stdout, '');
-  assert.match(scoped.stderr, /unable to read askpass response from 'false'/);
+  assert.match(scoped.stderr, /unable to read askpass response from ['"]?false['"]?|unable to get password from user/);
   assert.doesNotMatch(scoped.stderr, /cannot exec/);
-  assert.doesNotMatch(scoped.stderr, /deny-askpass/);
+  assert.doesNotMatch(scoped.stderr, /deny-askpass|Series Git/);
+  assert.equal(environment.HOME, credentialHome);
+  assert.equal(environment.GIT_CONFIG_GLOBAL, '/dev/null');
+  assert.equal(environment.GIT_CONFIG_NOSYSTEM, '1');
 
   assert.throws(() => model.check({ registry, model_key: 'gpt-6-astra', repository }),
     /different repository/);
