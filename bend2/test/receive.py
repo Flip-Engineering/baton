@@ -1146,9 +1146,13 @@ class Receive(unittest.TestCase):
                     self.assertEqual(state['assignmentId'], assignment)
                     self.assertIsNone(state['requestId'])
                     self.assertFalse(state['confirmed'])
+                    self.eventually(lambda: len(self.coord('turns', name)) == 1,
+                                    'the first turn was not recorded')
                     report, = self.coord('turns', name)
                     self.assertEqual(report['reportBody'], 'Intermediate work is retained.')
-                    self.assertEqual(report['receipt'], 'parent-received')
+                    self.eventually(
+                        lambda: self.coord('delivery', report['id'])['receipt'] == 'parent-received',
+                        'the first report was not delivered')
                     delivered = [json.loads(line) for line in
                                  (self.directory / 'parent-deliveries.jsonl').read_text().splitlines()]
                     self.assertIn(self.coord('delivery', report['id'])['id'],

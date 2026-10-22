@@ -401,15 +401,15 @@ def observation_clear(outcome: Turn.Outcome) -> Bool:
   match outcome:
     case Turn.Ended{status,event,error,incomplete}: Bool.and(Bool.not(incomplete),String.is_empty(error))
 
-def finish_pending_known(finished: Result<&1,&1,U32 & String,Unit>, questions: Result<&1,&1,U32 & String,Unit>, ack: Result<&1,&1,U32 & String,Unit>, failed: Bool, superseded: Bool, +outcome: Turn.Outcome, transient: Bool, owed: Bool, next_ok: Bool, next: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def finish_pending_known(finished: Result<&1,&1,U32 & String,Unit>, questions: Result<&1,&1,U32 & String,Unit>, ack: Result<&1,&1,U32 & String,Unit>, failed: Bool, superseded: Bool, +outcome: Turn.Outcome, transient: Bool, owed: Bool, next_ok: Bool, next: Result<&1,&1,U32 & String,Unit>, reminder: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     status : Result<&1,&1,U32 & String,Unit> <- exit_status(Bool.and(failed,Bool.not(Bool.or(superseding(superseded,outcome),Bool.and(transient,Bool.and(observation_clear(outcome),Bool.and(owed,next_ok)))))))
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,Turn.combine(questions,Turn.combine(next,Turn.combine(ack,status)))))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(reminder,Turn.combine(finished,Turn.combine(questions,Turn.combine(next,Turn.combine(ack,status))))))
 
-def finish_pending_result(finished: Result<&1,&1,U32 & String,Unit>, questions: Result<&1,&1,U32 & String,Unit>, ack: Result<&1,&1,U32 & String,Unit>, failed: Bool, superseded: Bool, outcome: Turn.Outcome, transient: Bool, owed: Bool, next: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def finish_pending_result(finished: Result<&1,&1,U32 & String,Unit>, questions: Result<&1,&1,U32 & String,Unit>, ack: Result<&1,&1,U32 & String,Unit>, failed: Bool, superseded: Bool, outcome: Turn.Outcome, transient: Bool, owed: Bool, next: Result<&1,&1,U32 & String,Unit>, reminder: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match next:
-    case Fail{error}: finish_pending_known(finished,questions,ack,failed,superseded,outcome,transient,owed,False{},Fail{error})
-    case Done{unit}: finish_pending_known(finished,questions,ack,failed,superseded,outcome,transient,owed,True{},Done{unit})
+    case Fail{error}: finish_pending_known(finished,questions,ack,failed,superseded,outcome,transient,owed,False{},Fail{error},reminder)
+    case Done{unit}: finish_pending_known(finished,questions,ack,failed,superseded,outcome,transient,owed,True{},Done{unit},reminder)
 
 # A failed continuation is reported to the recorded conductor; the turn
 # settlement still returns the failure and retained cause unchanged.
@@ -418,6 +418,12 @@ def report_continuation_failure(db: String, session: String, id: String, attempt
     case Done{unit}: IO.pure(Unit,Unit{})
     case Fail{(code,text)}: Delivery.failure_report(db,session,id ++ ":continuation-failure",
       "Continuation of retained attempt " ++ attempt ++ " failed: " ++ U32.show(code) ++ ": " ++ text)
+
+def report_reminder_failure(db: String, session: String, id: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Done{output}: IO.pure(Unit,Unit{})
+    case Fail{(code,text)}: Delivery.failure_report(db,session,id ++ ":reminder-failure",
+      "Completion reminder for attempt " ++ id ++ " failed: " ++ U32.show(code) ++ ": " ++ text)
 
 # The exit-status synthesis suppresses only the provider failure a complete observation
 # superseded, or a classified complete provider failure whose owed continuation succeeded;
@@ -430,11 +436,11 @@ def finish_pending(+db: String, +session: String, id: String, attempt: String, l
     +exhaustion : String <- Subs.exhaustion_cause(db,terminal_event(outcome))
     +exhausted : Bool = Bool.not(String.is_empty(exhaustion))
     +normal : Bool = Bool.and(Bool.not(failed),Bool.and(Bool.not(transient),Bool.not(Bool.or(superseded,exhausted))))
-    reminded : Unit <- Bool.pick(IO(Unit),normal,
-      do IO<Unit>:
-        saved : String <- IO.try(String,DB.Sql.query(db,C.task_continuation_sql(session,id)))
-        IO.pure(Unit,Unit{}),
-      IO.pure(Unit,Unit{}))
+    reminder : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>),normal,
+      DB.Sql.query(db,C.task_continuation_sql(session,id)),
+      IO.pure(Result<&1,&1,U32 & String,String>,Done{""}))
+    +reminder_unit : Result<&1,&1,U32 & String,Unit> = Delivery.wake_result(reminder)
+    reminder_report : Unit <- report_reminder_failure(db,session,id,reminder)
     owed : Bool <- wake_owed(db,session,cursor)
     delivery_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Turn.finish(db,session,id,log,outcome,True{}))
     continued_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),Bool.or(superseded,exhausted),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),continue_pending(db,session,cursor,previous => again(Bool.pick(String,Bool.and(failed,transient),attempt,previous)))))
@@ -444,7 +450,7 @@ def finish_pending(+db: String, +session: String, id: String, attempt: String, l
     ack : Result<&1,&1,U32 & String,Unit> <- acknowledge_if_observed(Bool.and(native_observation_failed(outcome),Bool.not(stopped)),acknowledge)
     next : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
     reported : Unit <- report_continuation_failure(db,session,id,attempt,next)
-    finish_pending_result(finished,questions,ack,failed,superseded,outcome,transient,owed,next)
+    finish_pending_result(finished,questions,ack,failed,superseded,outcome,transient,owed,next,reminder_unit)
 
 # Retirement follows acknowledgment on the same attempt handle: the shared
 # owner frees the attempt slot and advances its generation once the attempt

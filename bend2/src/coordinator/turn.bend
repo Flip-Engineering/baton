@@ -1666,14 +1666,14 @@ def direct_settled_wake(+db: String, +player: String, +id: String, +log: String,
     case Done{unit}: do IO<Result<&1,&1,U32 & String,Unit>>:
       routed : Bool <- direct_route_decided(db,player,id,outcome)
       normal : Bool <- settlement_success(db,outcome)
-      reminded : Unit <- Bool.pick(IO(Unit),Bool.and(normal,Bool.not(routed)),
-        do IO<Unit>:
-          saved : String <- IO.try(String,DB.Sql.query(db,C.task_continuation_sql(player,id)))
-          IO.pure(Unit,Unit{}),
-        IO.pure(Unit,Unit{}))
+      reminder : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>),Bool.and(normal,Bool.not(routed)),
+        DB.Sql.query(db,C.task_continuation_sql(player,id)),
+        IO.pure(Result<&1,&1,U32 & String,String>,Done{""}))
+      +reminder_unit : Result<&1,&1,U32 & String,Unit> = Delivery.wake_result(reminder)
+      reminder_report : Unit <- direct_failure_report(db,player,id,"reminder",reminder_unit)
       wake : Result<&1,&1,U32 & String,Unit> <- direct_route_wake(db,player,id,log,outcome,routed)
       wake_report : Unit <- direct_failure_report(db,player,id,"wake",wake)
-      IO.pure(Result<&1,&1,U32 & String,Unit>,combine(Done{unit},wake))
+      IO.pure(Result<&1,&1,U32 & String,Unit>,combine(reminder_unit,combine(Done{unit},wake)))
 
 def direct_completed(+db: String, +player: String, +id: String, +log: String, +directory: String, +handle: U32, lock: Maybe<U32>, observation: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> IO(Unit):
   (+outcome,deliveries)=observation

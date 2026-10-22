@@ -285,14 +285,33 @@ def deliver(+db: String, +id: String, +condition: String, saved: String) -> IO(R
     +kind : String <- IO.pure(String,Tx.trim_nl(value))
     routed(db,id,condition,saved,kind,String.is_empty(kind))
 
-# A failure report is inserted and delivered through the ordinary message path.
-# Its insert and delivery results are ignored so the caller keeps its original
-# recovery or continuation failure.
+def deliver_kind(kind_result: Result<&1,&1,U32 & String,String>, +db: String, +id: String, +condition: String, +saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match kind_result:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{output}: do IO<Result<&1,&1,U32 & String,String>>:
+      +kind : String = Tx.trim_nl(output)
+      routed(db,id,condition,saved,kind,String.is_empty(kind))
+
+def deliver_existing(+db: String, +id: String, +condition: String, +saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    kind_result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,stopped_kind_sql(id,condition))
+    deliver_kind(kind_result,db,id,condition,saved)
+
+def failure_report_result(saved: Result<&1,&1,U32 & String,String>, +db: String, +id: String) -> IO(Unit):
+  match saved:
+    case Fail{error}: IO.pure(Unit,Unit{})
+    case Done{output}: do IO<Unit>:
+      delivered : Result<&1,&1,U32 & String,String> <- deliver_existing(db,id,"1","")
+      IO.pure(Unit,Unit{})
+
+# A failure report is inserted first. Dispatch runs only after a successful
+# insert, and the returned dispatch Result is ignored so the caller keeps its
+# original recovery or continuation failure. An unavailable database never
+# reaches dispatch.
 def failure_report(+db: String, +session: String, +id: String, +body: String) -> IO(Unit):
   do IO<Unit>:
     saved : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id) ++ ",s.id," ++ C.report_recipient("s.id") ++ ",'report'," ++ C.q(body) ++ " FROM sessions s WHERE s.id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL;")
-    delivered : Result<&1,&1,U32 & String,String> <- deliver(db,id,"1","")
-    IO.pure(Unit,Unit{})
+    failure_report_result(saved,db,id)
 
 def wake_result(result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,Unit>:
   match result:
