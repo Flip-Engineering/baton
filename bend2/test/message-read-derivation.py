@@ -62,12 +62,14 @@ class SourceDerivation(unittest.TestCase):
             self.assertNotIn('receipt', body,
                              f'{name}:{function} derives state from a receipt')
 
-    def test_wake_drivers_name_no_receipt_state(self):
-        for name in ('codex-conductor.mjs', 'mcp-conductor.mjs',
-                     'omp-conductor.mjs', 'codex-inbox-wake.mjs'):
-            text = (ROOT / 'bend2/scripts' / name).read_text()
-            self.assertNotIn('receipt IS NULL', text, name)
-            self.assertNotIn('receipt IS NOT NULL', text, name)
+    def test_no_coordinator_or_driver_source_tests_a_receipt(self):
+        # message-status.bend holds the one backfill that reads historical receipts.
+        sources = [path for path in COORD.glob('*.bend') if path != STATUS]
+        sources += sorted((ROOT / 'bend2/scripts').glob('*.mjs'))
+        for path in sources:
+            text = path.read_text()
+            self.assertNotIn('receipt IS NULL', text, path.name)
+            self.assertNotIn('receipt IS NOT NULL', text, path.name)
 
     def test_read_recording_is_not_success_gated(self):
         for name in ('record_sql', 'forwarded_read_sql', 'prompt_record_sql',
