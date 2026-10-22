@@ -742,5 +742,79 @@ class Process(unittest.TestCase):
             if observer.stderr:
                 observer.stderr.close()
 
+    def test_retained_line_span_reads_eight_mib_without_bend_string(self):
+        db = self.cwd / 'session.db'
+        db.touch()
+        attempt = self.cwd / 'attempt'
+        payload = self.cwd / 'input'
+        payload.write_text('')
+        script = 'import sys; sys.stdout.write("x"*8388608+"\\n")'
+        p = subprocess.run([str(EXE), 'retain', str(db), str(attempt), str(self.cwd),
+                            str(payload), 'span', sys.executable, '-c', script],
+                           text=True, capture_output=True, timeout=90)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn('0\t8388608\n', p.stdout)
+        self.assertIn('native-exit 0\nretained-complete\n', p.stdout)
+
+    def test_retained_line_spans_preserve_empty_and_unterminated_lines(self):
+        db = self.cwd / 'session.db'
+        db.touch()
+        attempt = self.cwd / 'attempt'
+        payload = self.cwd / 'input'
+        payload.write_text('')
+        script = 'import sys; sys.stdout.write("a\\n\\nlast")'
+        p = subprocess.run([str(EXE), 'retain', str(db), str(attempt), str(self.cwd),
+                            str(payload), 'span', sys.executable, '-c', script],
+                           text=True, capture_output=True, timeout=30)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn('0\t1\n2\t0\n3\t4\n', p.stdout)
+        self.assertIn('native-exit 0\nretained-complete\n', p.stdout)
+
+    def test_retained_line_span_waits_for_split_line_and_preserves_nul_bytes(self):
+        db = self.cwd / 'session.db'
+        db.touch()
+        attempt = self.cwd / 'attempt'
+        payload = self.cwd / 'input'
+        payload.write_text('')
+        script = ('import sys,time; sys.stdout.buffer.write(b"left\\x00mid"); '
+                  'sys.stdout.flush(); time.sleep(0.05); '
+                  'sys.stdout.buffer.write(b"right\\n"); sys.stdout.flush()')
+        p = subprocess.Popen([str(EXE), 'retain', str(db), str(attempt), str(self.cwd),
+                              str(payload), 'span', sys.executable, '-c', script],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
+        observed = []
+        while not any(line.startswith('native-exit ') for line in observed):
+            line = p.stdout.readline()
+            self.assertNotEqual(line, '', 'native span reader exited before the checkpoint gate')
+            observed.append(line)
+        self.assertEqual((attempt / 'stdout').read_bytes(), b'left\x00midright\n')
+        p.stdin.write('\n')
+        p.stdin.flush()
+        p.stdin.close()
+        p.stdin = None
+        remaining, error = p.communicate(timeout=30)
+        output = ''.join(observed) + remaining
+        self.assertEqual(p.returncode, 0, error)
+        self.assertIn('0\t13\n', output)
+        self.assertIn('native-exit 0\nretained-complete\n', output)
+
+    def test_retained_span_recovery_replays_after_last_durable_checkpoint(self):
+        db = self.cwd / 'session.db'
+        db.touch()
+        attempt = self.cwd / 'attempt'
+        payload = self.cwd / 'input'
+        payload.write_text('')
+        script = 'import sys; sys.stdout.write("durable\\nnext\\n")'
+        p = subprocess.run([str(EXE), 'retain', str(db), str(attempt), str(self.cwd),
+                            str(payload), 'checkpoint-span', sys.executable, '-c', script],
+                           text=True, capture_output=True, timeout=30)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn('durable:0\t7\n', p.stdout)
+        self.assertIn('uncommitted:8\t4\n', p.stdout)
+        self.assertIn('restored:durable\n', p.stdout)
+        self.assertIn('replay:8\t4\n', p.stdout)
+        self.assertIn('native-exit 0\nretained-complete\n', p.stdout)
+
 if __name__ == '__main__':
     unittest.main()
