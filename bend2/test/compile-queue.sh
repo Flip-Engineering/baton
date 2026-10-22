@@ -67,6 +67,7 @@ if [ "$fail" = 1 ]; then
   exit 3
 fi
 [ "$sleep_s" = 0 ] || sleep "$sleep_s"
+[ -n "$log" ] && [ -n "$out" ] && printf 'out %s\n' "$out" >> "$log"
 if [ "$gpu" = 1 ]; then
   printf 'gpu-artifact-%s' "$tag" > "$0.gpu"
 elif [ "$suffix_sensitive" = 1 ] && [ -n "$out" ]; then
@@ -269,27 +270,43 @@ sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --
 [ "$(count_starts)" = 1 ] && pass 'GPU sidecar fake command ran once' || bad 'GPU sidecar fake command count differs'
 
 # A producer selects its output format from the staged filename suffix.
-# The suffixless artifact emits ELF and must fail before a completed cache row;
-# preserving .c through staging emits text C and may complete.
+# Staging preserves the declared destination suffix: identifier c with a .c
+# destination reaches the producer as a staged .c path (issue #989). An
+# extensionless declared destination still fails before generation.
 : > "$LOG"
-wrong_c_key=$(sh "$QUEUE" key --kind cgen --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
-  --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$FAKE" \
-  --artifact "c=$T/suffixless.c" --option 'test=suffix-sensitive' \
-  --token tok-suffixless -- "$FAKE" --tag suffix-sensitive --log "$LOG" --suffix-sensitive -o "$T/suffixless.c")
-wrong_c_rc=0
 sh "$QUEUE" run --kind cgen --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
   --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$FAKE" \
-  --artifact "c=$T/suffixless.c" --option 'test=suffix-sensitive' \
-  --token tok-suffixless -- "$FAKE" --tag suffix-sensitive --log "$LOG" --suffix-sensitive -o "$T/suffixless.c" \
-  >"$T/suffixless.out" 2>"$T/suffixless.err" || wrong_c_rc=$?
-[ "$wrong_c_rc" != 0 ] && pass 'binary cgen output rejected' || bad 'binary cgen output was accepted'
-grep -Fq 'compile-queue: cgen artifact c must be nonempty text C with a .c suffix' "$T/suffixless.err" \
-  && pass 'binary cgen failure kept its diagnostic' || bad 'binary cgen failure diagnostic missing'
-[ ! -f "$STATE/keys/$wrong_c_key/completed/result" ] && pass 'binary cgen output not cached as completed' || bad 'binary cgen output entered completed cache'
+  --artifact "c=$T/preserved.c" --option 'test=suffix-sensitive' \
+  --token tok-suffix-preserved -- "$FAKE" --tag suffix-sensitive --log "$LOG" --suffix-sensitive -o "$T/preserved.c" \
+  >"$T/preserved.out" 2>"$T/preserved.err" \
+  && pass 'identifier c with .c destination completed' || bad 'identifier c with .c destination failed'
+grep -Fxq '/* textual C generated for suffix-sensitive */' "$T/preserved.c" \
+  && pass 'declared .c suffix preserved through staging' || bad 'declared .c suffix lost in staging'
+staged_out=$(grep '^out ' "$LOG" | tail -1 | sed 's/^out //')
+case "$staged_out" in
+  */work/preserved.c) pass 'staged path carries the declared .c suffix' ;;
+  *) bad "staged path lost the suffix: $staged_out" ;;
+esac
+: > "$LOG"
+elf_rc=0
+sh "$QUEUE" run --kind cgen --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
+  --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$FAKE" \
+  --artifact "c=$T/plain-elf" --option 'test=suffix-sensitive' \
+  --token tok-suffix-elf -- "$FAKE" --tag suffix-sensitive --log "$LOG" --suffix-sensitive -o "$T/plain-elf" \
+  >"$T/plain-elf.out" 2>"$T/plain-elf.err" || elf_rc=$?
+[ "$elf_rc" != 0 ] && pass 'extensionless cgen destination refused before generation' \
+  || bad 'extensionless cgen destination was admitted'
+grep -Fq 'compile-queue: staged artifact names must be nonempty and, for cgen, end in .c' "$T/plain-elf.err" \
+  && pass 'extensionless refusal names its diagnostic' || bad 'extensionless refusal diagnostic missing'
 : > "$LOG"
 run_cgen suffix-sensitive "$T/suffix-good.c" --suffix-sensitive || bad 'suffix-preserving cgen request failed'
 grep -Fxq '/* textual C generated for suffix-sensitive */' "$T/suffix-good.c" \
   && pass 'artifact .c suffix reached suffix-sensitive producer' || bad 'producer did not emit C for staged .c suffix'
+staged_c=$(grep '^out ' "$LOG" | tail -1 | sed 's/^out //')
+case "$staged_c" in
+  */work/suffix-good.c) pass 'explicit .c artifact stays .c' ;;
+  *) bad "explicit .c artifact lost its suffix: $staged_c" ;;
+esac
 "$QUEUE" status --state-root "$STATE" --key "$(cgen_key suffix-sensitive "$T/suffix-good.c" --suffix-sensitive)" >/dev/null 2>&1 \
   && pass 'text C cgen result is queryable' || bad 'text C cgen result missing'
 

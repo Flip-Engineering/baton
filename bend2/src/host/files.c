@@ -197,6 +197,48 @@ static Term baton_private_write_run(Env e,Term *f,IoWork *w) {
 static void __attribute__((constructor)) baton_private_write_use(void) {io_eff(CID_FILES_WRITE_PRIVATE,baton_private_write_run,0);}
 #endif
 
+#ifdef CID_FILES_WRITE_SHARED
+typedef struct { char *path,*text; size_t length; int error; } BatonSharedWrite;
+static void baton_shared_write_call(IoWork *w) {
+  BatonSharedWrite *call=(BatonSharedWrite *)w->data;
+  int flags=O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC;
+#ifdef O_NOFOLLOW
+  flags|=O_NOFOLLOW;
+#endif
+  int fd=open(call->path,flags,0660);
+  if(fd<0) {call->error=errno;return;}
+  if(fchmod(fd,0660)) {call->error=errno;close(fd);return;}
+  size_t offset=0;
+  while(offset<call->length) {
+    ssize_t count=write(fd,call->text+offset,call->length-offset);
+    if(count>0) {offset+=(size_t)count;continue;}
+    if(count<0 && errno==EINTR) continue;
+    call->error=count<0?errno:EIO;
+    break;
+  }
+  if(close(fd) && !call->error) call->error=errno;
+}
+static Term baton_shared_write_pack(Env e,IoWork *w) {
+  BatonSharedWrite *call=(BatonSharedWrite *)w->data;
+  Term result=call->error?io_fail(e,call->error,NULL):io_done(e,term_pak(CID_UNIT,0));
+  free(call->path);free(call->text);free(call);w->data=NULL;
+  return result;
+}
+static Term baton_shared_write_run(Env e,Term *f,IoWork *w) {
+  BatonSharedWrite *call=calloc(1,sizeof(*call));
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  u64 path_length=0,text_length=0;
+  call->path=io_cstr(e,f[0],&path_length);
+  call->text=io_cstr(e,f[1],&text_length);
+  call->length=text_length;
+  if(!call->path || strlen(call->path)!=path_length) call->error=EINVAL;
+  w->data=(char *)call;
+  if(call->error) return baton_shared_write_pack(e,w);
+  return io_work(w,baton_shared_write_call,baton_shared_write_pack);
+}
+static void __attribute__((constructor)) baton_shared_write_use(void) {io_eff(CID_FILES_WRITE_SHARED,baton_shared_write_run,0);}
+#endif
+
 #ifdef CID_FILES_MKDIR
 static Term baton_file_mkdir_run(Env e,Term *f,IoWork *w) {
   BatonFileOp *call=baton_file_op(e,f,w,1);

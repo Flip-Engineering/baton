@@ -83,6 +83,63 @@ def basename_go(s: String, acc: String) -> String:
 def basename(s: String) -> String:
   basename_go(s, "")
 
+# Staged artifact file names preserve the declared output suffix: the staged
+# name is the declared destination basename, which carries the suffix the
+# command uses to select its output format. An identifier alone can drop that
+# suffix (identifier c with destination clear-stop-quota.c staged extensionless
+# work/c, issue #989). When the declared basename is already taken by another
+# artifact, the identifier is prepended so staged names stay unique.
+def staged_base_name(+name: String, +path: String) -> String:
+  +base = basename(path)
+  Bool.pick(String, String.is_empty(base), name, base)
+
+def staged_names_go(artifacts: List<&2,Artifact>, used: List<&2,String>, acc: List<&2,String>) -> List<&2,String>:
+  match artifacts:
+    case Nil{}: List.reverse(&2, String, acc)
+    case Con{Artifact{+name, +path}, rest}:
+      +base = staged_base_name(name, path)
+      +staged = Bool.pick(String, member_string(base, used), name ++ "__" ++ base, base)
+      staged_names_go(rest, Con{staged, used}, Con{staged, acc})
+
+def staged_artifact_names(artifacts: List<&2,Artifact>) -> List<&2,String>:
+  staged_names_go(artifacts, Nil{}, Nil{})
+
+def artifact_stage_pair_go(names: List<&2,String>, staged: List<&2,String>) -> String:
+  match names:
+    case Nil{}: ""
+    case Con{+name, nrest}:
+      match staged:
+        case Nil{}: ""
+        case Con{+one, srest}:
+          name ++ "\t" ++ one ++ "\n" ++ artifact_stage_pair_go(nrest, srest)
+
+def artifact_stage_pairs_text(names: List<&2,String>, staged: List<&2,String>) -> String:
+  artifact_stage_pair_go(names, staged)
+
+# Preflight validation before expensive generation: staged names must pair
+# with the declared artifacts, and every cgen staged artifact must end in .c
+# so the command cannot select the wrong output mode (issue #989).
+def staged_preflight_ok(kind: String, artifacts: List<&2,Artifact>, staged: List<&2,String>) -> Bool:
+  Bool.and(U32.is_eq(list_count_go(artifacts, 0), list_count_go(staged, 0)),
+    Bool.pick(Bool, Tx.str_eq(kind, "cgen"),
+      staged_all_c_suffix(staged),
+      staged_all_nonempty(staged)))
+
+def staged_all_c_suffix(staged: List<&2,String>) -> Bool:
+  match staged:
+    case Nil{}: True{}
+    case Con{+name, rest}: Bool.and(String.ends_with(name, ".c"), staged_all_c_suffix(rest))
+
+def staged_all_nonempty(staged: List<&2,String>) -> Bool:
+  match staged:
+    case Nil{}: True{}
+    case Con{+name, rest}: Bool.and(non_empty(name), staged_all_nonempty(rest))
+
+def list_count_go(values: List<&2,Artifact>, acc: U32) -> U32:
+  match values:
+    case Nil{}: acc
+    case Con{head, rest}: list_count_go(rest, U32.add(1, acc))
+
 def token_char(c: Char) -> Bool:
   +code = Char.to_u32(c)
   +digit = Bool.and(U32.is_lt(47, code), U32.is_lt(code, 58))
@@ -203,17 +260,6 @@ def artifact_names(artifacts: List<&2,Artifact>) -> List<&2,String>:
   match artifacts:
     case Nil{}: Nil{}
     case Con{Artifact{name, path}, rest}: Con{name, artifact_names(rest)}
-
-def names_text(names: List<&2,String>) -> String:
-  match names:
-    case Nil{}: ""
-    case Con{+name, rest}: "artifact_name=" ++ name ++ "\n" ++ names_text(rest)
-
-def artifact_paths_text(names: List<&2,String>) -> String:
-  match names:
-    case Nil{}: ""
-    case Con{+name, Nil{}}: name
-    case Con{+name, +rest}: name ++ "\n" ++ artifact_paths_text(rest)
 
 def member_string(+value: String, values: List<&2,String>) -> Bool:
   match values:
@@ -514,12 +560,15 @@ def copy_inputs(+work: String, inputs: List<&2,Input>) -> IO(Unit):
           copy_inputs(work, rest),
           IO.die(Unit, 1, "compile-queue: input changed while staging"))
 
-def artifact_match(+token: String, +work: String, artifacts: List<&2,Artifact>) -> Maybe<&2, String>:
+def artifact_match(+token: String, +work: String, artifacts: List<&2,Artifact>, staged: List<&2,String>) -> Maybe<&2, String>:
   match artifacts:
     case Nil{}: None{}
-    case Con{Artifact{name, path}, rest}:
-      Bool.pick(Maybe<&2, String>, Tx.str_eq(token, path), Some{work ++ "/" ++ name},
-        artifact_match(token, work, rest))
+    case Con{Artifact{+name, +path}, arest}:
+      match staged:
+        case Nil{}: None{}
+        case Con{+one, srest}:
+          Bool.pick(Maybe<&2, String>, Tx.str_eq(token, path), Some{work ++ "/" ++ one},
+            artifact_match(token, work, arest, srest))
 
 def input_match(+token: String, +work: String, inputs: List<&2,Input>) -> Maybe<&2, String>:
   match inputs:
@@ -538,28 +587,29 @@ def replace_after_artifact(result: Maybe<&2, String>, +token: String, +work: Str
     case Some{value}: value
     case None{}: replace_after_input(input_match(token, work, inputs), token)
 
-def replace_token(+token: String, +work: String, inputs: List<&2,Input>, artifacts: List<&2,Artifact>) -> String:
-  replace_after_artifact(artifact_match(token, work, artifacts), token, work, inputs)
+def replace_token(+token: String, +work: String, inputs: List<&2,Input>, artifacts: List<&2,Artifact>, staged: List<&2,String>) -> String:
+  replace_after_artifact(artifact_match(token, work, artifacts, staged), token, work, inputs)
 
-def command_text(args: List<&2,String>, +work: String, +inputs: List<&2,Input>, +artifacts: List<&2,Artifact>) -> String:
+def command_text(args: List<&2,String>, +work: String, +inputs: List<&2,Input>, +artifacts: List<&2,Artifact>, +staged: List<&2,String>) -> String:
   match args:
     case Nil{}: ""
     case Con{token, rest}:
-      +value = replace_token(token, work, inputs, artifacts)
-      +tail = command_text(rest, work, inputs, artifacts)
+      +value = replace_token(token, work, inputs, artifacts, staged)
+      +tail = command_text(rest, work, inputs, artifacts, staged)
       value ++ "\n" ++ tail
 
 def meta_text(config: Config, key: String, keydir: String, attempt: String, artifacts: List<&2,Artifact>) -> String:
   match config:
     case Config{+text, command}:
       "kind=" ++ field(text, "kind") ++ "\n"
+      ++ "state_root=" ++ field(text, "state_root") ++ "\n"
       ++ "cwd=" ++ field(text, "cwd") ++ "\n"
       ++ "source_root=" ++ field(text, "source_root") ++ "\n"
       ++ "entry=" ++ field(text, "entry") ++ "\n"
       ++ "key=" ++ key ++ "\n"
       ++ "keydir=" ++ keydir ++ "\n"
       ++ "attempt=" ++ attempt ++ "\n"
-      ++ names_text(artifact_names(artifacts))
+      ++ artifact_pairs_text(artifacts)
 
 def write_attempt_digest(attempt: String, +text: String) -> IO(Unit):
   do IO<Unit>:
@@ -575,12 +625,16 @@ def write_attempt_files(+config: Config, +key: String, keydir: String, +attempt:
         +work : String <- IO.pure(String, attempt ++ "/work")
         +inputs : List<&2,Input> <- IO.pure(List<&2,Input>, input_rows(text))
         +artifacts : List<&2,Artifact> <- IO.pure(List<&2,Artifact>, artifact_rows(text))
+        +staged : List<&2,String> <- IO.pure(List<&2,String>, staged_artifact_names(artifacts))
+        +kind : String <- IO.pure(String, field(text, "kind"))
         made : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(work ++ "/inputs"))
-        staged : Unit <- copy_inputs(work, inputs)
+        copied : Unit <- copy_inputs(work, inputs)
+        validated : Unit <- Bool.pick(IO(Unit), staged_preflight_ok(kind, artifacts, staged), IO.pure(Unit, Unit{}),
+          IO.die(Unit, 2, "compile-queue: staged artifact names must be nonempty and, for cgen, end in .c"))
         rechecked : String <- identity_key(config)
         checked : Unit <- Bool.pick(IO(Unit), Tx.str_eq(rechecked, key), IO.pure(Unit, Unit{}),
           IO.die(Unit, 1, "compile-queue: inputs changed before execution"))
-        wrote_command : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/command", command_text(command, work, inputs, artifacts)))
+        wrote_command : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/command", command_text(command, work, inputs, artifacts, staged)))
         wrote_meta : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/meta", meta_text(config, key, keydir, attempt, artifacts)))
         digest_written : Unit <- Bool.pick(IO(Unit), Tx.str_eq(field(text, "kind"), "cgen"),
           write_attempt_digest(attempt, text), IO.pure(Unit, Unit{}))
@@ -682,26 +736,26 @@ def clean_stale_active(keydir: String) -> IO(Unit):
 
 def write_failure(+attempt: String, +keydir: String, status: String, code: U32,
                   kind: String, key: String, started: String, detail: String,
-                  +names: List<&2,String>) -> IO(Unit):
+                  +names: List<&2,String>, +staged: List<&2,String>) -> IO(Unit):
   do IO<Unit>:
     finished : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
     wrote : Unit <- IO.try(Unit, Result.CompileQueueResult.write(attempt ++ "/result", status, U32.show(code), kind, key, started,
       finished, attempt, attempt ++ "/work", attempt ++ "/stdout", attempt ++ "/stderr",
-      detail, artifact_paths_text(names)))
+      detail, artifact_stage_pairs_text(names, staged)))
     removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(keydir ++ "/active"))
     IO.pure(Unit, Unit{})
 
 def finish_success(+attempt: String, +keydir: String, +kind: String, +key: String,
-                    +started: String, +names: List<&2,String>) -> IO(Unit):
+                    +started: String, +names: List<&2,String>, +staged: List<&2,String>) -> IO(Unit):
   do IO<Unit>:
     +pid : U32 <- IO.try(U32, L.CompileQueueLifecycle.pid())
     +work : String <- IO.pure(String, attempt ++ "/work")
     +cache : String <- IO.pure(String, keydir ++ "/completed.tmp." ++ U32.show(pid))
     made : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(cache ++ "/artifacts"))
-    retained : Unit <- IO.try(Unit, Result.CompileQueueResult.retain_artifacts(work, cache ++ "/artifacts", artifact_paths_text(names)))
+    retained : Unit <- IO.try(Unit, Result.CompileQueueResult.retain_artifacts(work, cache ++ "/artifacts", artifact_stage_pairs_text(names, staged)))
     finished : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
     wrote : Unit <- IO.try(Unit, Result.CompileQueueResult.write(cache ++ "/result", "completed", "0", kind, key, started,
-      finished, attempt, work, attempt ++ "/stdout", attempt ++ "/stderr", "", artifact_paths_text(names)))
+      finished, attempt, work, attempt ++ "/stdout", attempt ++ "/stderr", "", artifact_stage_pairs_text(names, staged)))
     copied_out : Unit <- IO.try(Unit, L.CompileQueueLifecycle.copy_file(attempt ++ "/stdout", cache ++ "/stdout"))
     copied_err : Unit <- IO.try(Unit, L.CompileQueueLifecycle.copy_file(attempt ++ "/stderr", cache ++ "/stderr"))
     renamed : Unit <- IO.try(Unit, F.Files.rename(cache, keydir ++ "/completed"))
@@ -728,37 +782,45 @@ def cgen_artifact_valid(+name: String, path: String) -> IO(Bool):
     named : Bool <- IO.pure(Bool, String.ends_with(name, ".c"))
     IO.pure(Bool, cgen_artifact_valid_kind(named, content))
 
-def invalid_cgen_name(names: List<&2,String>, +work: String) -> IO(String):
+def invalid_cgen_name_go(+name: String, +staged: String, +work: String) -> IO(String):
+  do IO<String>:
+    valid : Bool <- cgen_artifact_valid(staged, work ++ "/" ++ staged)
+    Bool.pick(IO(String), valid, IO.pure(String, ""), IO.pure(String, name))
+
+def invalid_cgen_name(names: List<&2,String>, staged: List<&2,String>, +work: String) -> IO(String):
   match names:
     case Nil{}: IO.pure(String, "")
-    case Con{+name, rest}:
-      do IO<String>:
-        valid : Bool <- cgen_artifact_valid(name, work ++ "/" ++ name)
-        Bool.pick(IO(String), valid, invalid_cgen_name(rest, work), IO.pure(String, name))
+    case Con{+name, nrest}:
+      match staged:
+        case Nil{}: IO.pure(String, "")
+        case Con{+one, srest}:
+          do IO<String>:
+            invalid : String <- invalid_cgen_name_go(name, one, work)
+            Bool.pick(IO(String), String.is_empty(invalid), invalid_cgen_name(nrest, srest, work), IO.pure(String, invalid))
 
-def invalid_artifact_name(kind: String, names: List<&2,String>, +work: String) -> IO(String):
+def invalid_artifact_name(kind: String, names: List<&2,String>, staged: List<&2,String>, +work: String) -> IO(String):
   match kind:
-    case "cgen": invalid_cgen_name(names, work)
+    case "cgen": invalid_cgen_name(names, staged, work)
     case _: IO.pure(String, "")
 
 def finish_cgen_validation(invalid: String, +attempt: String, +keydir: String,
                            +kind: String, +key: String, +started: String,
-                           +names: List<&2,String>) -> IO(Unit):
+                           +names: List<&2,String>, +staged: List<&2,String>) -> IO(Unit):
   match invalid:
-    case SNil{}: finish_success(attempt, keydir, kind, key, started, names)
+    case SNil{}: finish_success(attempt, keydir, kind, key, started, names, staged)
     case name:
       write_failure(attempt, keydir, "failed", 1, kind, key, started,
-        "compile-queue: cgen artifact " ++ name ++ " must be nonempty text C with a .c suffix", names)
+        "compile-queue: cgen artifact " ++ name ++ " must be nonempty text C with a .c suffix", names, staged)
 
 def finish_validated_artifacts(kind: String, invalid: String, +attempt: String,
                                +keydir: String, +key: String, +started: String,
-                               +names: List<&2,String>) -> IO(Unit):
+                               +names: List<&2,String>, +staged: List<&2,String>) -> IO(Unit):
   match kind:
-    case "cgen": finish_cgen_validation(invalid, attempt, keydir, kind, key, started, names)
-    case _: finish_success(attempt, keydir, kind, key, started, names)
+    case "cgen": finish_cgen_validation(invalid, attempt, keydir, kind, key, started, names, staged)
+    case _: finish_success(attempt, keydir, kind, key, started, names, staged)
 
-def verify_artifacts(+work: String, names: List<&2,String>) -> IO(Unit):
-  match names:
+def verify_artifacts(+work: String, staged: List<&2,String>) -> IO(Unit):
+  match staged:
     case Nil{}: IO.pure(Unit, Unit{})
     case Con{+name, rest}:
       do IO<Unit>:
@@ -767,96 +829,106 @@ def verify_artifacts(+work: String, names: List<&2,String>) -> IO(Unit):
         verify_artifacts(work, rest)
 
 def verify_and_finish(+attempt: String, +keydir: String, +kind: String, +key: String,
-                       +started: String, +names: List<&2,String>) -> IO(Unit):
+                       +started: String, +names: List<&2,String>, +staged: List<&2,String>) -> IO(Unit):
   do IO<Unit>:
-    checked : Unit <- verify_artifacts(attempt ++ "/work", names)
-    invalid : String <- invalid_artifact_name(kind, names, attempt ++ "/work")
-    finish_validated_artifacts(kind, invalid, attempt, keydir, key, started, names)
+    checked : Unit <- verify_artifacts(attempt ++ "/work", staged)
+    invalid : String <- invalid_artifact_name(kind, names, staged, attempt ++ "/work")
+    finish_validated_artifacts(kind, invalid, attempt, keydir, key, started, names, staged)
 
 def supervised_completion(canceled: Bool, failed: Bool, +code: U32, disposition: String,
                           +attempt: String, +keydir: String, +kind: String, +key: String,
-                           +started: String, +names: List<&2,String>) -> IO(Unit):
+                           +started: String, +names: List<&2,String>, +staged: List<&2,String>) -> IO(Unit):
   Bool.pick(IO(Unit), canceled,
     write_failure(attempt, keydir, "canceled", 130, kind, key, started,
-      "execution canceled", names),
+      "execution canceled", names, staged),
     Bool.pick(IO(Unit), failed,
       write_failure(attempt, keydir, "failed", code, kind, key, started,
-        "command " ++ disposition ++ " " ++ U32.show(code), names),
-      verify_and_finish(attempt, keydir, kind, key, started, names)))
+        "command " ++ disposition ++ " " ++ U32.show(code), names, staged),
+      verify_and_finish(attempt, keydir, kind, key, started, names, staged)))
 
 def supervised_result(outcome: Result<&1,&1,U32 & String,U32 & String>, attempt: String,
                       keydir: String, kind: String, key: String, started: String,
-                      names: List<&2,String>, cwd: String) -> IO(Unit):
+                      names: List<&2,String>, staged: List<&2,String>, cwd: String) -> IO(Unit):
   match outcome:
     case Fail{error}:
       write_failure(attempt, keydir, "failed", 1, kind, key, started,
-        "command could not start", names)
+        "command could not start", names, staged)
     case Done{(+code, +disposition)}:
       +canceled = Tx.str_eq(disposition, "canceled")
       +failed = Bool.and(Bool.not(canceled), Bool.not(U32.is_eq(code, 0)))
-      supervised_completion(canceled, failed, code, disposition, attempt, keydir, kind, key, started, names)
+      supervised_completion(canceled, failed, code, disposition, attempt, keydir, kind, key, started, names, staged)
 
 def run_supervised(+attempt: String, +keydir: String, +kind: String, +key: String,
-                   started: String, names: List<&2,String>, +cwd: String) -> IO(Unit):
+                   started: String, names: List<&2,String>, staged: List<&2,String>, +cwd: String) -> IO(Unit):
   do IO<Unit>:
     text : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/command"))
     argv : String <- IO.pure(String, P.argv(Tx.split_lines(text)))
     outcome : Result<&1,&1,U32 & String,U32 & String> <- L.CompileQueueLifecycle.run_command(
       argv, cwd, attempt ++ "/stdout", attempt ++ "/stderr")
-    supervised_result(outcome, attempt, keydir, kind, key, started, names, cwd)
+    supervised_result(outcome, attempt, keydir, kind, key, started, names, staged, cwd)
 
 def supervise_kind(+kind: String, source_root: String, entry: String, +attempt: String,
-                    +keydir: String, +key: String, +started: String, +names: List<&2,String>, +cwd: String) -> IO(Unit):
+                    +keydir: String, +key: String, +started: String, +names: List<&2,String>,
+                    +staged: List<&2,String>, +cwd: String) -> IO(Unit):
   Bool.pick(IO(Unit), Tx.str_eq(kind, "cgen"),
     do IO<Unit>:
       before : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/source-digest"))
       before_digest : String <- IO.pure(String, field(before, "digest"))
       after : String <- IO.try(String, Identity.CompileQueueIdentity.source_digest(source_root, entry))
       Bool.pick(IO(Unit), Tx.str_eq(before_digest, after),
-        run_supervised(attempt, keydir, kind, key, started, names, cwd),
+        run_supervised(attempt, keydir, kind, key, started, names, staged, cwd),
         write_failure(attempt, keydir, "failed", 1, kind, key, started,
-          "source changed before execution", names)),
-    run_supervised(attempt, keydir, kind, key, started, names, cwd))
+          "source changed before execution", names, staged)),
+    run_supervised(attempt, keydir, kind, key, started, names, staged, cwd))
 
+# The supervisor holds the heavy lock (descriptor 8) for the attempt. It also
+# takes the legacy cgen.lock lane so a legacy reference wrapper running the
+# same state root cannot admit a concurrent heavy job: every supported
+# entrypoint contends on one heavy-lane domain (issue #970).
 def supervise_owned(+attempt: String, +keydir: String, +kind: String, source_root: String,
                     entry: String, key: String, +started: String, names: List<&2,String>,
-                    cwd: String, pid: U32, start: String, +gate: U32) -> IO(Unit):
+                    staged: List<&2,String>, cwd: String, pid: U32, start: String,
+                    +gate: U32, +state: String) -> IO(Unit):
   do IO<Unit>:
     active_text : String <- IO.pure(String, "pid=" ++ U32.show(pid)
       ++ "\nstarttime=" ++ start ++ "\nkind=" ++ kind ++ "\nsetsid=1\nstarted_ns=" ++ started ++ "\n")
     active : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(keydir ++ "/active", active_text))
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
     locked : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_fd_acquire(8))
-    supervise_kind(kind, source_root, entry, attempt, keydir, key, started, names, cwd)
+    legacy : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(state ++ "/cgen.lock"))
+    supervise_kind(kind, source_root, entry, attempt, keydir, key, started, names, staged, cwd)
 
 def supervise_owner_count(owners: U32, +attempt: String, +keydir: String, +kind: String,
                           source_root: String, entry: String, +key: String, +started: String,
-                          +names: List<&2,String>, cwd: String, pid: U32, start: String,
-                          +gate: U32) -> IO(Unit):
+                          +names: List<&2,String>, staged: List<&2,String>, cwd: String,
+                          pid: U32, start: String, +gate: U32, +state: String) -> IO(Unit):
   Bool.pick(IO(Unit), U32.is_eq(owners, 0),
     do IO<Unit>:
       released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
       write_failure(attempt, keydir, "canceled", 130, kind, key, started,
-        "all requesters canceled before execution", names),
-    supervise_owned(attempt, keydir, kind, source_root, entry, key, started, names, cwd, pid, start, gate))
+        "all requesters canceled before execution", names, staged),
+    supervise_owned(attempt, keydir, kind, source_root, entry, key, started, names, staged, cwd, pid, start, gate, state))
 
 def supervise(+attempt: String) -> IO(Unit):
   do IO<Unit>:
     +meta : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/meta"))
     kind : String <- IO.pure(String, field(meta, "kind"))
+    state : String <- IO.pure(String, field(meta, "state_root"))
     cwd : String <- IO.pure(String, field(meta, "cwd"))
     source_root : String <- IO.pure(String, field(meta, "source_root"))
     entry : String <- IO.pure(String, field(meta, "entry"))
     key : String <- IO.pure(String, field(meta, "key"))
     +keydir : String <- IO.pure(String, field(meta, "keydir"))
-    names : List<&2,String> <- IO.pure(List<&2,String>, fields_all(meta, "artifact_name"))
+    +artifacts : List<&2,Artifact> <- IO.pure(List<&2,Artifact>, artifact_rows(meta))
+    +names : List<&2,String> <- IO.pure(List<&2,String>, artifact_names(artifacts))
+    +staged : List<&2,String> <- IO.pure(List<&2,String>, staged_artifact_names(artifacts))
     started : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
     +pid : U32 <- IO.try(U32, L.CompileQueueLifecycle.pid())
     start : String <- IO.try(String, L.CompileQueueLifecycle.starttime(pid))
     gate : U32 <- owner_lock(keydir)
     owners : U32 <- owner_count(keydir)
     supervise_owner_count(owners, attempt, keydir, kind, source_root, entry, key,
-      started, names, cwd, pid, start, gate)
+      started, names, staged, cwd, pid, start, gate, state)
 
 def start_attempt_result_exists(exists: Bool, +text: String, +key: String, +keydir: String,
                                 +attempt: String, +owner: String, now: String) -> IO(Unit):
@@ -867,13 +939,15 @@ def start_attempt_result_exists(exists: Bool, +text: String, +key: String, +keyd
     do IO<Unit>:
       left : U32 <- owner_count(keydir)
       +was_canceled : Bool <- IO.pure(Bool, U32.is_eq(left, 0))
+      +fail_names : List<&2,String> <- IO.pure(List<&2,String>, artifact_names(artifact_rows(text)))
+      +fail_staged : List<&2,String> <- IO.pure(List<&2,String>, staged_artifact_names(artifact_rows(text)))
       wrote : Unit <- write_failure(attempt, keydir,
         Bool.pick(String, was_canceled, "canceled", "failed"),
         Bool.pick(U32, was_canceled, 130, 1), field(text, "kind"), key, now,
         Bool.pick(String, was_canceled,
           "all requesters canceled before a terminal result",
           "supervisor exited before publishing a terminal result"),
-        artifact_names(artifact_rows(text)))
+        fail_names, fail_staged)
       removed : Unit <- remove_token(keydir, owner)
       Result.CompileQueueResult.report_failure(attempt ++ "/result"))
 
@@ -1388,6 +1462,11 @@ def guard_pid_result(parsed: Maybe<&2,U32>, +keydir: String, pid_text: String, s
       do IO<Unit>:
         locked_key : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_fd_acquire(9))
         locked_cgen : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_fd_acquire(8))
+        # Admitted external C generation also takes the legacy cgen.lock lane,
+        # so adoption contends with the legacy wrapper on the same heavy lane
+        # as supervised requests (issue #970).
+        legacy : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(
+          Result.CompileQueueResult.dirname(Result.CompileQueueResult.dirname(keydir)) ++ "/cgen.lock"))
         present : Bool <- regular(keydir ++ "/completed/result")
         guard_existing_result(present, keydir, pid, pid_text, start, name, path)
 
