@@ -8,6 +8,11 @@ def write_command(db: String, command: C.Command) -> IO(Unit):
     saved : String <- IO.try(String,Store.apply(db,command))
     IO.write(saved)
 
+def ensure(db: String) -> IO(Unit):
+  do IO<Unit>:
+    ready : Unit <- Store.ensure_before_begin(db)
+    IO.write("{}\n")
+
 def run(args: List<String>) -> IO(Unit):
   match args:
     case +flag <> +db <> Nil{}:
@@ -27,11 +32,6 @@ def run(args: List<String>) -> IO(Unit):
     case db <> verb <> id <> parent <> harness <> model <> effort <> path <> Nil{}:
       Control.join(db,id,parent,harness,model,effort,path)
     case other: IO.die(Unit,2,"Unsupported recruitment fixture command.")
-
-def ensure(db: String) -> IO(Unit):
-  do IO<Unit>:
-    ready : Unit <- Store.ensure_before_begin(db)
-    IO.write("{}\n")
 
 def main() -> IO(Unit):
   do IO<Unit>:
