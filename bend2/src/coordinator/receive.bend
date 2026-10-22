@@ -436,7 +436,7 @@ def finish_pending(+db: String, +session: String, id: String, attempt: String, l
     +exhaustion : String <- Subs.exhaustion_cause(db,terminal_event(outcome))
     +exhausted : Bool = Bool.not(String.is_empty(exhaustion))
     +normal : Bool = Bool.and(Bool.not(failed),Bool.and(Bool.not(transient),Bool.not(Bool.or(superseded,exhausted))))
-    reminder : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>),normal,
+    +reminder : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>),normal,
       DB.Sql.query(db,C.task_continuation_sql(session,id)),
       IO.pure(Result<&1,&1,U32 & String,String>,Done{""}))
     +reminder_unit : Result<&1,&1,U32 & String,Unit> = Delivery.wake_result(reminder)
@@ -448,7 +448,7 @@ def finish_pending(+db: String, +session: String, id: String, attempt: String, l
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     stopped : Bool <- Stop.stopped(db,session)
     ack : Result<&1,&1,U32 & String,Unit> <- acknowledge_if_observed(Bool.and(native_observation_failed(outcome),Bool.not(stopped)),acknowledge)
-    next : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
+    +next : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
     reported : Unit <- report_continuation_failure(db,session,id,attempt,next)
     finish_pending_result(finished,questions,ack,failed,superseded,outcome,transient,owed,next,reminder_unit)
 
@@ -932,7 +932,7 @@ def recover_owned_attached(+db: String, +session: String, id: String, cursor: St
       reported : Unit <- report_recovery_failure(db,session,id,directory,failed)
       IO.pure(Result<&1,&1,U32 & String,Unit>,failed)
     case Done{+handle}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      result : Result<&1,&1,U32 & String,Unit> <- observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},again,True{})
+      +result : Result<&1,&1,U32 & String,Unit> <- observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},again,True{})
       reported : Unit <- report_recovery_failure(db,session,id,directory,result)
       IO.pure(Result<&1,&1,U32 & String,Unit>,result)
 
@@ -1147,7 +1147,7 @@ def recover(+db: String, +session: String, id: String, cursor: String, +cmd: Str
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +updates : Chan(String) <- Chan.new(String,1)
     +drainer : Chan(Unit) <- IO.fork(Unit,discard_admitted_start(updates))
-    result : Result<&1,&1,U32 & String,Unit> <- attach_recorded(db,directory,handle => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,previous => continue_receiver(db,session,cmd,model,effort,cwd,log,"explicit",previous,updates)))
+    +result : Result<&1,&1,U32 & String,Unit> <- attach_recorded(db,directory,handle => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,previous => continue_receiver(db,session,cmd,model,effort,cwd,log,"explicit",previous,updates)))
     reported : Unit <- report_recovery_failure(db,session,id,directory,result)
     ended : Unit <- Chan.close(String,updates)
     drained : Unit <- IO.join(Unit,drainer)
