@@ -34,6 +34,7 @@ if [ "$("$compiler" version)" != 'bend 2.0.25' ]; then
   echo 'This queue bootstrap requires Bend 2.0.25.' >&2
   exit 1
 fi
+sh "$root/bend2/scripts/bend-lineage-guard.sh" "$compiler"
 cc=${CC:-clang}
 command -v "$cc" >/dev/null 2>&1 || {
   echo "The C compiler is unavailable: $cc" >&2
