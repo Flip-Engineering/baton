@@ -501,6 +501,11 @@ def wake_starting(db: String, session: String) -> IO(Bool):
     phase : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT phase FROM executions WHERE session=" ++ C.q(session) ++ ";")
     wake_starting_result(phase)
 
+def failed_wake(starting: Bool, db: String, session: String, cursor: String, error: U32 & String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match starting:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+    case False{}: completed_wake(db,session,cursor,Fail{error})
+
 def wake_if_kept(db: String, session: String, cursor: String, superseded: Bool, finished: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match superseded:
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,finished)
@@ -508,9 +513,7 @@ def wake_if_kept(db: String, session: String, cursor: String, superseded: Bool, 
       case Done{unit}: completed_wake(db,session,cursor,finished)
       case Fail{error}: do IO<Result<&1,&1,U32 & String,Unit>>:
         starting : Bool <- wake_starting(db,session)
-        match starting:
-          case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
-          case False{}: completed_wake(db,session,cursor,Fail{error})
+        failed_wake(starting,db,session,cursor,error)
 
 # Record an ended adopted attempt with unknown status, preserve its stdout,
 # and retire its capability before continuing with the pending inbox.
