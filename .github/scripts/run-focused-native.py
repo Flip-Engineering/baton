@@ -216,26 +216,33 @@ def inside(args):
             'host_mem_available_after': mem_available()})
 
 
-def stop_process_group(pid):
+def group_gone(process):
+    # An unreaped leader keeps its process group visible to killpg, so the
+    # leader is reaped first.
+    process.poll()
     try:
-        os.killpg(pid, signal.SIGTERM)
+        os.killpg(process.pid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+def stop_process_group(process):
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
         return
     end = time.monotonic() + 3
     while time.monotonic() < end:
-        try:
-            os.killpg(pid, 0)
-        except ProcessLookupError:
+        if group_gone(process):
             return
         time.sleep(0.1)
     try:
-        os.killpg(pid, signal.SIGKILL)
+        os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
         return
     for _ in range(20):
-        try:
-            os.killpg(pid, 0)
-        except ProcessLookupError:
+        if group_gone(process):
             return
         time.sleep(0.1)
 
@@ -279,14 +286,14 @@ def launch(args):
     try:
         code = process.wait()
     except BaseException:
-        stop_process_group(process.pid)
+        stop_process_group(process)
         raise
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
         stdout.close()
         stderr.close()
-        stop_process_group(process.pid)
+        stop_process_group(process)
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
