@@ -106,7 +106,7 @@ class AgyPlayer(unittest.TestCase):
         self.assertEqual(self.event(init), {
             'type': 'session',
             'id': 'c622d4e6-ea22-4a9d-b6be-b365ab31d87f',
-            'cwd': '/Users/wahargis/Development/Experiments/baton'})
+            'cwd': '/work/baton'})
 
     def test_success_result_becomes_a_successful_result(self):
         result = self.event(fixture_lines('success-1.3.5.jsonl')[-1])

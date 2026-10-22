@@ -16,8 +16,8 @@ agy --input-format stream-json --output-format stream-json \
 
 Baton writes one `user` frame on stdin and closes stdin. The process runs that
 turn and exits. A later input to the same seat starts a new process with
-`--conversation` set to the recorded native identity. `-p` is not passed: with
-stream-json input the CLI drops a prompt given by `-p`.
+`--conversation` set to the recorded native identity. The task text travels only
+on stdin, because with stream-json input the CLI drops a prompt given by `-p`.
 
 ## Model and effort
 

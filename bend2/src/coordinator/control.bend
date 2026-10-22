@@ -23,47 +23,92 @@ def strings(args: List<String>) -> String:
     case Nil{}: ""
     case arg <> rest: J.string_literal(arg) ++ string_tail(rest)
 
+# The repository an assigned workspace publishes to, read from its origin
+# remote. A workspace with no GitHub origin has no repository selection.
+def after_prefix(s: String, prefix: String) -> String:
+  match s prefix:
+    case SNil{} SNil{}: ""
+    case SNil{} SCon{pc, pr}: ""
+    case SCon{c, rest} SNil{}: s
+    case SCon{c, rest} SCon{pc, pr}:
+      Bool.pick(String, Char.is_eq(c, pc), after_prefix(rest, pr), "")
+
+def drop_four(s: String, n: U32) -> String:
+  match s:
+    case SNil{}: SNil{}
+    case SCon{_, rest}:
+      +next = U32.add(n, 1)
+      +r2 = rest
+      Bool.pick(String, U32.is_eq(next, 4), r2, drop_four(r2, next))
+
+def without_git_suffix(+name: String) -> String:
+  +reversed = Tx.str_rev(name)
+  Bool.pick(String, Tx.starts_with(reversed, Tx.str_rev(".git")), Tx.str_rev(drop_four(reversed, 0)), name)
+
+def repository_url(+url: String) -> String:
+  +https : String = "https://github.com/"
+  +ssh : String = "ssh://git@github.com/"
+  +scp : String = "git@github.com:"
+  Bool.pick(String, Tx.starts_with(url, https), after_prefix(url, https),
+    Bool.pick(String, Tx.starts_with(url, ssh), after_prefix(url, ssh),
+      Bool.pick(String, Tx.starts_with(url, scp), after_prefix(url, scp), "")))
+
+def repository_remote(result: T.GitOut) -> String:
+  match result:
+    case T.GRun{code, out}:
+      Bool.pick(String, U32.is_eq(code, 0), without_git_suffix(repository_url(Tx.trim_nl(out))), "")
+    case T.GBroken{detail}: ""
+
+def workspace_repository(workspace: String) -> IO(String):
+  match workspace:
+    case SNil{}: IO.pure(String,"")
+    case SCon{head, tail}: do IO<String>:
+      result : T.GitOut <- Process.runGit(SCon{head, tail}, ["remote","get-url","origin"])
+      IO.pure(String, repository_remote(result))
+
 def receiver_args(executable: String, db: String, session: String, cmd: String, log: String) -> List<String>:
   [executable,db,"receive",session,cmd,"","","",log]
 
 def receiver_endpoint(executable: String, db: String, session: String, cmd: String, log: String) -> String:
   "[" ++ strings(receiver_args(executable,db,session,cmd,log)) ++ "]"
 
-def identity_args(args: List<String>, model: String, identity: String & String) -> List<String>:
+def identity_args(args: List<String>, model: String, identity: String & String, repository: String) -> List<String>:
   (registry,helper)=identity
   +configured=registry
-  List.append(&1,String,Bool.pick(List<String>,String.is_empty(configured),Nil{},["node",helper,"launch","--registry",configured,"--model-key",model,"--"]),args)
+  +selected=repository
+  List.append(&1,String,Bool.pick(List<String>,String.is_empty(configured),Nil{},List.append(&1,String,List.append(&1,String,["node",helper,"launch","--registry",configured,"--model-key",model],Bool.pick(List<String>,String.is_empty(selected),Nil{},["--repository",selected])),["--"])),args)
 
-def identity_endpoint(executable: String, db: String, session: String, cmd: String, log: String, model: String, identity: String & String) -> String:
-  "[" ++ strings(identity_args(receiver_args(executable,db,session,cmd,log),model,identity)) ++ "]"
+def identity_endpoint(executable: String, db: String, session: String, cmd: String, log: String, model: String, identity: String & String, repository: String) -> String:
+  "[" ++ strings(identity_args(receiver_args(executable,db,session,cmd,log),model,identity,repository)) ++ "]"
 
 # A configured registry maps the recipient's recorded model key to a series
 # identity. An endpoint and a native turn embed that key, and the helper refuses
 # an unmapped one at delivery, so resolve the key while the operator is present
 # and report its refusal at the configuration command.
-def identity_check_args(+registry: String, +helper: String, +model: String) -> List<String>:
-  ["node", helper, "check", "--registry", registry, "--model-key", model]
+def identity_check_args(+registry: String, +helper: String, +model: String, +repository: String) -> List<String>:
+  List.append(&1,String,["node",helper,"check","--registry",registry,"--model-key",model],Bool.pick(List<String>,String.is_empty(repository),Nil{},["--repository",repository]))
 
-def identity_check_refusal(+model: String, result: T.RunRes) -> IO(Unit):
+def identity_check_refusal(+model: String, +repository: String, result: T.RunRes) -> IO(Unit):
   match result:
     case T.RRun{T.SExit{0}, out}: IO.pure(Unit,Unit{})
-    case other: IO.die(Unit,2,"The configured series registry does not resolve the recorded model " ++ model ++ "; the endpoint would refuse at delivery. Correct the registry mapping or record a mapped model, then retry.")
+    case other: IO.die(Unit,2,"The configured series registry does not resolve the recorded model " ++ model ++ Bool.pick(String,String.is_empty(repository),""," for repository " ++ repository) ++ "; the endpoint would refuse at delivery. Correct the registry mapping or record a mapped model, then retry.")
 
-def identity_check_body(+registry: String, +helper: String, +model: String, absent: Bool) -> IO(Unit):
+def identity_check_body(+registry: String, +helper: String, +model: String, +repository: String, absent: Bool) -> IO(Unit):
   match absent:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
-      run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(identity_check_args(registry,helper,model)),".")
-      identity_check_refusal(model,Tx.run_res(run))
+      run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(identity_check_args(registry,helper,model,repository)),".")
+      identity_check_refusal(model,repository,Tx.run_res(run))
 
 # The helper is consulted only when the host resolved a registry for the
 # executable; an absent registry embeds no identity and needs no model mapping.
-def identity_checked(identity: String & String, model: String) -> IO(String & String):
+def identity_checked(identity: String & String, model: String, repository: String) -> IO(String & String):
   (registry,helper)=identity
   +configured=registry
   +kept=helper
+  +selected=repository
   do IO<String & String>:
-    checked : Unit <- identity_check_body(configured,kept,model,String.is_empty(configured))
+    checked : Unit <- identity_check_body(configured,kept,model,selected,String.is_empty(configured))
     IO.pure(String & String,(configured,kept))
 
 law native_receiver_leaves_the_wake_argument_to_delivery:
@@ -87,16 +132,25 @@ def command_present(empty: Bool) -> IO(Unit):
     case True{}: IO.die(Unit,2,"The native harness command is empty; select its executable before startup.")
     case False{}: IO.pure(Unit,Unit{})
 
-def configured_endpoint(+db: String, session: String, +cmd: String, log: String, +model: String) -> IO(String):
+def endpoint_workspace(+db: String, +session: String, +workspace: String) -> IO(String):
+  match workspace:
+    case SNil{}: do IO<String>:
+      value : String <- IO.try(String,DB.Sql.read(db,"SELECT workspace FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+      IO.pure(String,Tx.trim_nl(value))
+    case SCon{head,tail}: IO.pure(String,workspace)
+
+def configured_endpoint(+db: String, +session: String, +cmd: String, log: String, +model: String, +workspace: String) -> IO(String):
   do IO<String>:
     present : Unit <- command_present(String.is_empty(cmd))
+    +selected_workspace : String <- endpoint_workspace(db,session,workspace)
+    +repository : String <- workspace_repository(selected_workspace)
     native : String <- IO.try(String,Host.Control.command(cmd))
     +executable : String <- IO.try(String,Lock.SessionLock.executable())
     database : String <- IO.try(String,Lock.SessionLock.canonical(db))
     output : String <- IO.try(String,Host.Control.output(log))
     identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-    checked : String & String <- identity_checked(identity,model)
-    IO.pure(String,identity_endpoint(executable,database,session,native,output,model,checked))
+    checked : String & String <- identity_checked(identity,model,repository)
+    IO.pure(String,identity_endpoint(executable,database,session,native,output,model,checked,repository))
 
 # A receiver records the adapter argv and working directory for later delivery.
 # A supplied directory updates the assignment; an empty value keeps the recorded one.
@@ -151,7 +205,7 @@ def receiver(+db: String, +session: String, cmd: String, log: String, +cwd: Stri
     model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +workspace : String <- Bool.pick(IO(String),String.is_empty(cwd),IO.pure(String,""),IO.try(String,Host.Control.workspace(cwd)))
     branch : Maybe<String> <- receiver_branch(workspace)
-    +endpoint : String <- configured_endpoint(db,session,cmd,log,Tx.trim_nl(model))
+    +endpoint : String <- configured_endpoint(db,session,cmd,log,Tx.trim_nl(model),workspace)
     +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ receiver_branch_sql(session,endpoint,workspace,branch) ++ receiver_sql(session,endpoint,workspace) ++ "COMMIT;"))
     receiver_result(saved,Tx.starts_with(saved,"{\"error\":\"receiver-refused\""))
 
@@ -161,7 +215,7 @@ def receiver(+db: String, +session: String, cmd: String, log: String, +cwd: Stri
 def configure_endpoint(+db: String, +id: String, +harness: String, +cmd: String, +log: String, +model: String) -> IO(String):
   do IO<String>:
     receiver_harness : Bool <- IO.pure(Bool,Bool.or(String.eq(harness,"codex"),Bool.or(String.eq(harness,"omp"),Bool.or(String.eq(harness,"muse"),Bool.or(String.eq(harness,"claude-code"),Bool.or(String.eq(harness,"dsh"),String.eq(harness,"antigravity")))))))
-    Bool.pick(IO(String),receiver_harness,configured_endpoint(db,id,cmd,log,model),IO.pure(String,""))
+    Bool.pick(IO(String),receiver_harness,configured_endpoint(db,id,cmd,log,model,""),IO.pure(String,""))
 
 def configure_result(saved: String, denied: Bool) -> IO(String):
   match denied:
@@ -221,13 +275,12 @@ def dispatch_file(+db: String, +id: String, sender: String, recipient: String, k
 
 def start_setup(+db: String, +session: String, harness: String, cmd: String, +model: String, effort: String, cwd: String, log: String) -> IO(String):
   do IO<String>:
-    workspace : String <- IO.try(String,Host.Control.workspace(cwd))
+    +workspace : String <- IO.try(String,Host.Control.workspace(cwd))
     schema : String <- IO.try(String,Store.commit(db,C.Session{session}))
-    endpoint : String <- configured_endpoint(db,session,cmd,log,model)
+    endpoint : String <- configured_endpoint(db,session,cmd,log,model,workspace)
     configured : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ start_sql(session,harness,model,effort,workspace,endpoint) ++ "COMMIT;"))
     allowed : Unit <- startup_refused(Tx.trim_nl(configured))
     IO.try(String,Store.read(db,C.Session{session}))
-
 def start(+db: String, +session: String, harness: String, cmd: String, +model: String, effort: String, cwd: String, log: String, id: String, task: String) -> IO(String):
   do IO<String>:
     body : String <- IO.try(String,Text.Text.read(task))
@@ -283,7 +336,7 @@ def recorded_field(db: String, player: String, column: String) -> IO(String):
 # A direct turn records its launch arguments as the default wake route.
 # Replaying a completed turn repairs an absent route. Existing routes and
 # terminal stops keep their recorded state.
-def default_receiver_absent(+db: String, +player: String, cmd: String, +model: String, effort: String, cwd: String, log: String, absent: Bool) -> IO(Unit):
+def default_receiver_absent(+db: String, +player: String, cmd: String, +model: String, effort: String, +cwd: String, log: String, absent: Bool) -> IO(Unit):
   match absent:
     case False{}: IO.pure(Unit,Unit{})
     case True{}: do IO<Unit>:
@@ -291,7 +344,8 @@ def default_receiver_absent(+db: String, +player: String, cmd: String, +model: S
       database : String <- IO.try(String,Lock.SessionLock.canonical(db))
       output : String <- IO.try(String,Host.Control.output(log))
       identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-      endpoint : String <- IO.pure(String,"[" ++ strings(identity_args([executable,database,"receive",player,cmd,model,effort,cwd,output],model,identity)) ++ "]")
+      +repository : String <- workspace_repository(cwd)
+      endpoint : String <- IO.pure(String,"[" ++ strings(identity_args([executable,database,"receive",player,cmd,model,effort,cwd,output],model,identity,repository)) ++ "]")
       saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE sessions SET endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(player) ++ " AND coalesce(endpoint,'')='' AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ ";"))
       IO.pure(Unit,Unit{})
 
@@ -315,11 +369,12 @@ def dispatch_turn(+db: String, +player: String, +id: String, +cmd: String, log: 
     +database : String <- IO.try(String,Lock.SessionLock.canonical(db))
     +model : String <- recorded_field(db,player,"model")
     effort : String <- recorded_field(db,player,"effort")
-    cwd : String <- recorded_field(db,player,"workspace")
+    +cwd : String <- recorded_field(db,player,"workspace")
     native : String <- recorded_field(db,player,"native")
     identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-    checked : String & String <- identity_checked(identity,model)
-    IO.try(String,Host.Control.launch(Tx.enc_argv(identity_args([executable,database,"turn",player,id,harness_cmd,model,effort,cwd,path,output,native],model,checked)),database,id))
+    +repository : String <- workspace_repository(cwd)
+    checked : String & String <- identity_checked(identity,model,repository)
+    IO.try(String,Host.Control.launch(Tx.enc_argv(identity_args([executable,database,"turn",player,id,harness_cmd,model,effort,cwd,path,output,native],model,checked,repository)),database,id))
 
 def status_pretty(+db: String) -> IO(String):
   do IO<String>:
