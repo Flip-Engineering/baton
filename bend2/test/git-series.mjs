@@ -74,6 +74,79 @@ function installation_api(github, installed, tamper = {}, permissions = model.PE
   };
   return { calls, request };
 }
+
+function renamed_api({ lookup = 404, missing = false, wrong_account = false, repository_status = 301,
+  location = model.API_ROOT + '/repositories/7000' } = {}) {
+  const github = identities.gpt, calls = [];
+  const installation = (owner, id) => ({ id, app_id: github.appId, app_slug: github.slug,
+    account: { login: owner }, suspended_at: null, permissions: { ...model.PERMISSIONS } });
+  const transport = (url, options, received) => {
+    const outgoing = new EventEmitter();
+    outgoing.end = body => {
+      const parsed = new URL(url), path = parsed.pathname + parsed.search;
+      calls.push({ path, authorization: options.headers.Authorization, body });
+      let status = 200, value, redirect;
+      if (path === '/app') value = { id: github.appId, slug: github.slug, client_id: github.clientId };
+      else if (path === '/repos/Old-Owner/project/installation') {
+        status = lookup; redirect = model.API_ROOT + '/repositories/7000/installation';
+      } else if (path === '/app/installations?per_page=100&page=1') {
+        value = [installation('Other-Owner', 5100), installation('New-Owner', 5200)];
+      } else if (/^\/app\/installations\/[0-9]+\/access_tokens$/.test(path)) {
+        const id = path.split('/')[3];
+        value = { token: 'fixture-' + id, permissions: { ...model.PERMISSIONS },
+          repository_selection: 'all', expires_at: new Date(Date.now() + 3600000).toISOString() };
+      } else if (path === '/repos/Old-Owner/project') {
+        status = missing || options.headers.Authorization.endsWith('5100') ? 404 : repository_status;
+        redirect = location;
+        if (status === 200) value = { id: 7000, full_name: 'New-Owner/project', owner: { login: 'New-Owner' } };
+      } else if (path === '/repositories/7000') {
+        value = { id: 7000, full_name: 'New-Owner/project', owner: { login: 'New-Owner' } };
+      } else if (path === '/repositories/7000/installation') {
+        value = installation(wrong_account ? 'Wrong-Owner' : 'New-Owner', 5200);
+      } else assert.fail('Unexpected fixture path ' + path);
+      const incoming = new PassThrough(); incoming.statusCode = status;
+      incoming.headers = redirect ? { location: redirect } : {};
+      queueMicrotask(() => { received(incoming); incoming.end(JSON.stringify(value ?? {})); });
+    };
+    return outgoing;
+  };
+  return { calls, request: (path, authorization, body = null) => model.api(path, authorization, body, transport) };
+}
+
+test('renamed private repositories resolve through an App installation and canonical metadata', async () => {
+  for (const options of [{ lookup: 404 }, { lookup: 301 }]) {
+    const fixture = renamed_api(options);
+    const token = await model.installation_token(series.gpt, identities.gpt, 'Old-Owner/project',
+      () => 'fixture-jwt', fixture.request);
+    assert.equal(token, 'fixture-5200');
+    assert.ok(fixture.calls.some(call => call.path === '/repositories/7000'));
+    assert.ok(fixture.calls.some(call => call.path === '/repositories/7000/installation'));
+    assert.ok(fixture.calls.some(call => call.path === '/app/installations/5100/access_tokens'));
+    assert.ok(fixture.calls.some(call => call.path === '/app/installations/5200/access_tokens'));
+  }
+  const fixture = renamed_api();
+  let output = '';
+  const issue = (home, github, repository) => model.installation_token(home, github, repository,
+    () => 'fixture-jwt', fixture.request);
+  await model.helper({ registry, series_key: 'gpt', operation: 'get' },
+    Readable.from(['protocol=https\nhost=github.com\npath=Old-Owner/project.git\n\n']),
+    { write(value) { output += value; } }, issue);
+  assert.equal(output, 'username=x-access-token\npassword=fixture-5200\n\n');
+});
+
+test('renamed repository resolution verifies the canonical owner and rejects unresolved resources', async () => {
+  for (const options of [{ lookup: 404, wrong_account: true }, { lookup: 301, wrong_account: true }]) {
+    const fixture = renamed_api(options);
+    await assert.rejects(model.installation_token(series.gpt, identities.gpt, 'Old-Owner/project',
+      () => 'fixture-jwt', fixture.request), /installation account is incorrect/);
+  }
+  const missing = renamed_api({ missing: true });
+  await assert.rejects(model.installation_token(series.gpt, identities.gpt, 'Old-Owner/project',
+    () => 'fixture-jwt', missing.request), /cannot access Old-Owner\/project/);
+  const unexpected = renamed_api({ location: 'https://example.invalid/repositories/7000' });
+  await assert.rejects(model.installation_token(series.gpt, identities.gpt, 'Old-Owner/project',
+    () => 'fixture-jwt', unexpected.request), /must not redirect/);
+});
 function child(argv, { cwd = directory, input = '', env = { PATH: process.env.PATH } } = {}) {
   return new Promise((accept, reject) => {
     const processChild = spawn(process.execPath, argv, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -434,7 +507,7 @@ test('a retained repositories map is not read and the series directory serves ev
   assert.equal(home, series.gpt);
 });
 
-test('scoped environment names the assigned repository only when one is assigned', async () => {
+test('Git credential requests select repositories by request path', async () => {
   const pairsOf = environment => Object.fromEntries(Array.from({ length: Number(environment.GIT_CONFIG_COUNT) },
     (_, index) => [environment[`GIT_CONFIG_KEY_${index}`], environment[`GIT_CONFIG_VALUE_${index}`]]));
   const unscoped = pairsOf(model.scoped_environment(registry, 'gpt', identities.gpt, {}));
@@ -443,12 +516,41 @@ test('scoped environment names the assigned repository only when one is assigned
   assert.equal(unscoped['credential.https://github.com.useHttpPath'], 'true');
   assert.ok(!Object.keys(unscoped).some(key => key.startsWith('credential.https://github.com/')));
   const scoped = pairsOf(model.scoped_environment(registry, 'gpt', identities.gpt, {}, undefined, undefined, REPOSITORY));
-  assert.deepEqual(model.shell_split(scoped[`credential.https://github.com/${REPOSITORY}.helper`].slice(1)),
+  assert.deepEqual(model.shell_split(scoped['credential.https://github.com.helper'].slice(1)),
     [process.execPath, SOURCE, 'helper', '--registry', registry, '--series-key', 'gpt', '--repository', REPOSITORY]);
-  assert.ok(!('credential.https://github.com.helper' in scoped));
-  await assert.rejects(model.helper({ registry, series_key: 'gpt', repository: 'flip-engineer/flip', operation: 'get' },
-    Readable.from(['protocol=https\nhost=github.com\npath=Flip-Engineering/baton.git\n\n']),
-    { write() { assert.fail('unexpected credential'); } }, () => assert.fail('unexpected authentication')), model.Refusal);
+  assert.ok(!Object.keys(scoped).some(key => key.startsWith('credential.https://github.com/')));
+  const environment = model.scoped_environment(registry, 'gpt', identities.gpt,
+    { BATON_SESSION: 'recorded-session' }, undefined, undefined, REPOSITORY);
+  assert.equal(environment.BATON_SESSION, 'recorded-session');
+  let credential = '';
+  await model.helper({ registry, series_key: 'gpt', repository: REPOSITORY, operation: 'get' },
+    Readable.from(['protocol=https\nhost=github.com\npath=flip-engineer/flip.git\n\n']),
+    { write(value) { credential += value; } }, async (_home, _github, repository) => {
+      assert.equal(repository, 'flip-engineer/flip');
+      return 'request-repository-token';
+    });
+  assert.equal(credential, 'username=x-access-token\npassword=request-repository-token\n\n');
+});
+
+test('a Baton session credential request follows its request repository outside the workspace', async () => {
+  const workspace = 'Flip-Engineering/baton';
+  const request_repository = 'Flip-Developers/automation';
+  const environment = model.scoped_environment(registry, 'gpt', identities.gpt,
+    credentialEnvironment({ BATON_SESSION: 'recorded-session' }), undefined, undefined, workspace);
+  assert.equal(environment.BATON_SESSION, 'recorded-session');
+  const pairs = Object.fromEntries(Array.from({ length: Number(environment.GIT_CONFIG_COUNT) }, (_, index) =>
+    [environment[`GIT_CONFIG_KEY_${index}`], environment[`GIT_CONFIG_VALUE_${index}`]]));
+  const helper = model.shell_split(pairs['credential.https://github.com.helper'].slice(1));
+  const selected = model.parse(helper.slice(2).concat('get'));
+  assert.equal(selected.repository, workspace);
+  let repository;
+  await model.helper({ ...selected, operation: 'get' },
+    Readable.from([`protocol=https\nhost=github.com\npath=${request_repository}.git\n\n`]),
+    { write() {} }, async (_directory, _github, requested) => {
+      repository = requested;
+      return 'request-repository-token';
+    });
+  assert.equal(repository, request_repository);
 });
 
 test('the configured askpass executable runs and denies without a credential route', async () => {
@@ -520,7 +622,7 @@ test('an inherited literal multi-word askpass cannot exec and is replaced by con
   assert.equal(environment.GIT_CONFIG_GLOBAL, '/dev/null');
   assert.equal(environment.GIT_CONFIG_NOSYSTEM, '1');
 
-  assert.throws(() => model.credential_context(request, 'Flip-Engineering/baton'), model.Refusal);
+  assert.doesNotThrow(() => model.credential_context(request, 'Flip-Engineering/baton'));
 });
 
 test('shared registry attribution changes Git headers and leaves selected App identities intact', async () => {
@@ -704,7 +806,7 @@ test('metadata requires owned regular non-writable files and verified numeric id
 test('credential requests validate repeated extensions and unique scalar authority before authentication', async () => {
   const good = `protocol=https\nhost=github.com\npath=${REPOSITORY}.git\n`;
   for (const invalid of [good + 'host=github.com\n', good.replace('https', 'http'),
-    good.replace('github.com', 'other.example'), good.replace(REPOSITORY, 'Flip-Engineering/other'),
+    good.replace('github.com', 'other.example'),
     good + 'username=operator\n', 'protocol[]=https\nhost[]=github.com\npath[]=' + REPOSITORY + '\n',
     'capability[]=bad\0value\n' + good, 'capability[]=bad\rvalue\n' + good]) {
     let authenticated = false;
@@ -726,7 +828,7 @@ test('credential requests validate repeated extensions and unique scalar authori
   assert.equal(input.readableEnded, false);
   input.end();
   for (const path of [REPOSITORY, REPOSITORY + '.git']) model.credential_context(good.replace(REPOSITORY + '.git', path) + '\n', REPOSITORY);
-  assert.throws(() => model.credential_context(good, 'flip-engineer/flip'), model.Refusal);
+  assert.doesNotThrow(() => model.credential_context(good, 'flip-engineer/flip'));
 });
 
 test('store and erase perform no reads, signing, persistence or authentication', async () => {
@@ -972,7 +1074,8 @@ test('workflow-write refuses mismatched credential paths and tokens with broader
   await assert.rejects(model.helper({ registry: fixture.registry, series_key: 'gpt', operation: 'get',
     repository: 'Flip-Engineering/riff', profile: 'workflow-write' },
   Readable.from(['protocol=https\nhost=github.com\npath=Flip-Engineering/baton.git\n\n']),
-  { write() { assert.fail('credential returned'); } }, () => assert.fail('authenticated')), /assigned HTTPS repository/);
+  { write() { assert.fail('credential returned'); } }, () => assert.fail('authenticated')),
+  /Workflow-write credentials are restricted to the assigned HTTPS repository/);
 });
 
 test('workflow-write executable launch supplies only a scoped Git credential with unchanged authorship', async () => {
