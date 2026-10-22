@@ -1222,7 +1222,7 @@ check('message body remains open and focused after its asynchronous read', await
 await evalJs(`document.activeElement.blur(); document.dispatchEvent(new KeyboardEvent('keydown', {key:'/', bubbles:true, cancelable:true}))`);
 check('keyboard find shortcut focuses the visible query', await evalJs(
   `document.activeElement === document.getElementById('doc-find')`));
-baton('ack', 'qa-aide-receipt', 'aide', 'fixture-ui-read');
+baton('as', 'aide', 'read', 'qa-aide-receipt');
 committed();
 const longPendingBody = '  Retain this complete quotation and every recorded line. Review the remaining evidence without changing the stored text, its spaces, or its punctuation.\n\nRetain this complete evidence with its blank line and exact trailing spaces for the full-body quotation check.  ';
 const longPreview = 'Retain this complete quotation and every recorded line.\u2026 continues \u00b7 ' + longPendingBody.length + ' characters';
@@ -1282,7 +1282,7 @@ let aideOwed;
 {
   const db = new DatabaseSync(DB);
   db.exec('PRAGMA busy_timeout = 250');
-  aideOwed = Number(db.prepare("SELECT count(*) AS count FROM messages WHERE recipient='aide' AND receipt IS NULL").get().count) + 1;
+  aideOwed = Number(db.prepare("SELECT count(*) AS count FROM messages m WHERE m.recipient='aide' AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=m.id AND r.recipient=m.recipient)").get().count) + 1;
   db.prepare("INSERT INTO messages(id,sender,recipient,kind,body) VALUES ('qa-report-owed','worker','aide','report','Owed report probe.')").run();
   db.close();
 }
