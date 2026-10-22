@@ -285,6 +285,40 @@ def deliver(+db: String, +id: String, +condition: String, saved: String) -> IO(R
     +kind : String <- IO.pure(String,Tx.trim_nl(value))
     routed(db,id,condition,saved,kind,String.is_empty(kind))
 
+def dispatch_canonical(executable: String, canonical_result: Result<&1,&1,U32 & String,String>, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match canonical_result:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{+canonical}: Process.Process.run(Tx.enc_argv([executable,"--dispatch-message",canonical,id]),".")
+
+def dispatch_argv(executable_result: Result<&1,&1,U32 & String,String>, canonical_result: Result<&1,&1,U32 & String,String>, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match executable_result:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{+executable}: dispatch_canonical(executable,canonical_result,id)
+
+def dispatch_existing(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    executable_result : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.executable()
+    canonical_result : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(db)
+    dispatch_argv(executable_result,canonical_result,id)
+
+def failure_report_result(saved: Result<&1,&1,U32 & String,String>, +db: String, +id: String) -> IO(Unit):
+  match saved:
+    case Fail{error}: IO.pure(Unit,Unit{})
+    case Done{output}: do IO<Unit>:
+      dispatched : Result<&1,&1,U32 & String,String> <- dispatch_existing(db,id)
+      IO.pure(Unit,Unit{})
+
+# A failure report is inserted first. Dispatch runs the existing self
+# --dispatch-message entry only after a successful insert; that subprocess keeps
+# the complete delivery route and returns a process Result. The insert and
+# process Results are ignored so the caller keeps its original recovery or
+# continuation failure.
+
+def failure_report(+db: String, +session: String, +id: String, +body: String) -> IO(Unit):
+  do IO<Unit>:
+    saved : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id) ++ ",s.id," ++ C.report_recipient("s.id") ++ ",'report'," ++ C.q(body) ++ " FROM sessions s WHERE s.id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL;")
+    failure_report_result(saved,db,id)
+
 def wake_result(result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,Unit>:
   match result:
     case Fail{error}: Fail{error}
