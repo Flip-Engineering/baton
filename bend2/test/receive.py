@@ -88,7 +88,7 @@ def install_public_queue_codex(testcase, directory):
 def _session_lock_path(db, session):
     info = os.stat(db)
     key = 'owner-%x-%x' % (info.st_dev, info.st_ino)
-    return os.path.join(os.environ['XDG_RUNTIME_DIR'], 'baton2', key + '.lock-' + session.encode().hex())
+    return os.path.join('/tmp', 'baton2-%d' % os.geteuid(), key + '.lock-' + session.encode().hex())
 
 COMPLETION_EXCHANGE = r'''import pathlib,sqlite3
 session=os.environ.get('BATON_SESSION',model)
@@ -395,7 +395,7 @@ def progress(action):
 def session_lock_path(db,session):
     info=os.stat(db)
     key='owner-%x-%x'%(info.st_dev,info.st_ino)
-    return os.environ['XDG_RUNTIME_DIR']+'/baton2/'+key+'.lock-'+session.encode().hex()
+    return '/tmp/baton2-%d/'%os.geteuid()+key+'.lock-'+session.encode().hex()
 guard_descriptors=None
 if config.get('inspect_session_guard'):
     guard=os.stat(session_lock_path(config['db'],session))

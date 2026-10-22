@@ -264,14 +264,7 @@ class ReplCritiqueFixtures(unittest.TestCase):
         if row is None:
             return None
         suffix = '.lock-' + ('repl:' + row[0]).encode().hex()
-        runtime = os.environ.get('XDG_RUNTIME_DIR') or ''
-        candidates = [self.runtime / 'baton2']
-        if runtime:
-            candidates.append(pathlib.Path(runtime) / 'baton2')
-        candidates.append(pathlib.Path('/tmp/baton2-%u' % os.geteuid()))
-        candidates.append(pathlib.Path.home() / '.local/state/baton2')
-        directory = next((item for item in candidates if item.exists()),
-                         candidates[1])
+        directory = pathlib.Path('/tmp/baton2-%u' % os.geteuid())
         directory.mkdir(mode=0o700, exist_ok=True, parents=True)
         handle = open(directory / (key + suffix), 'a+')
         try:
