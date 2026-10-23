@@ -3,6 +3,7 @@
 #include <spawn.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "persistent-path.h"
 
 extern char **environ;
 
@@ -55,6 +56,7 @@ static void baton_control_identity(BatonControl *call) {
   } else {
     call->path=realpath(candidate,NULL);free(candidate);
     if(!call->path) {call->error=errno;return;}
+    if((call->error=BATON_REMAP_RESOLVED(&call->path))) {free(call->path);call->path=NULL;return;}
   }
   char *directory=strdup(call->input);
   if(!directory) {call->error=ENOMEM;return;}
@@ -72,7 +74,8 @@ static void baton_control_identity(BatonControl *call) {
   free(directory);
   if(!call->helper && !*call->path) {call->helper=installed;installed=NULL;}
   free(installed);
-  if(!call->helper) call->error=ENOENT;
+  if(call->helper && (call->error=BATON_REMAP_RESOLVED(&call->helper))) {free(call->helper);call->helper=NULL;}
+  if(!call->helper && !call->error) call->error=ENOENT;
 }
 
 static void baton_control_free_argv(char **argv) {
@@ -183,6 +186,7 @@ static void baton_control_call(IoWork *w) {
     }
     free(directory);
     if(!call->path) call->error=error;
+    else if((call->error=BATON_REMAP_RESOLVED(&call->path))) {free(call->path);call->path=NULL;}
     return;
   }
   if(call->kind==5) {
@@ -206,6 +210,7 @@ static void baton_control_call(IoWork *w) {
       }
       free(path);
     }
+    if(call->path && !call->error && (call->error=BATON_REMAP_RESOLVED(&call->path))) {free(call->path);call->path=NULL;}
     if(!call->path && !call->error) call->error=ENOENT;
     struct stat info;
     if(call->path && (stat(call->path,&info) || !S_ISREG(info.st_mode) || access(call->path,X_OK))) call->error=EACCES;
@@ -223,7 +228,9 @@ static void baton_control_call(IoWork *w) {
     char *directory=realpath(slash?(*copy?copy:"/"):".",NULL);
     if(!directory) call->error=errno;
     else {
+      int remap=BATON_REMAP_RESOLVED(&directory);
       struct stat info;
+      if(remap) {call->error=remap;free(directory);free(base);free(copy);return;}
       if(stat(directory,&info) || !S_ISDIR(info.st_mode)) {call->error=ENOTDIR;free(directory);free(base);free(copy);return;}
       char *prefix=baton_control_join(directory,"/");
       if(prefix) call->path=baton_control_join(prefix,base);
@@ -234,6 +241,7 @@ static void baton_control_call(IoWork *w) {
   }
   call->path=realpath(call->input,NULL);
   if(!call->path) {call->error=errno;return;}
+  if((call->error=BATON_REMAP_RESOLVED(&call->path))) {free(call->path);call->path=NULL;return;}
   struct stat info;
   if(stat(call->path,&info)) call->error=errno;
   else if(!S_ISDIR(info.st_mode)) call->error=ENOTDIR;
