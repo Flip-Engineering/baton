@@ -1165,13 +1165,14 @@ law deferred_reporting_reads_presence_guidance_and_failure:
   for +id: String
   for +event: String
   for report_id: String
-  {Turn.publish_deferred(db,player,id,event,report_id,False{}) == (do IO<Unit>:
+  for +harness: String
+  {Turn.publish_deferred(db,player,id,event,report_id,False{},harness) == (do IO<Unit>:
     presence : String <- IO.try(String,DB.Sql.query(db,Turn.deferred_recorded_sql(id)))
     pending : String <- IO.try(String,DB.Sql.query(db,Turn.deferred_pending_sql(player)))
     failure : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(" ++ C.omp_terminal_error_text_sql(event) ++ ",'');"))
     Turn.write_deferred(db,player,id,Tx.trim_nl(failure),Tx.trim_nl(pending),String.eq(presence,"1\n"))) : IO(Unit)}
 
-def deferred_reporting_reads_presence_guidance_and_failure(db,player,id,event,report_id):
+def deferred_reporting_reads_presence_guidance_and_failure(db,player,id,event,report_id,harness):
   {==}
 
 law completion_preparation_checks_the_upstream_recipient:
@@ -1185,8 +1186,7 @@ law completion_preparation_checks_the_upstream_recipient:
     +generation : String <- IO.pure(String,Turn.generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     reported : Unit <- Turn.prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
-    success : Bool <- Turn.settlement_success(db,outcome)
-    AgentInput.settle_if(db,player,id,success)) : IO(Unit)}
+    AgentInput.record_initial_reads(db,player,id)) : IO(Unit)}
 
 def completion_preparation_checks_the_upstream_recipient(db,player,id,log,stderr,outcome):
   {==}
