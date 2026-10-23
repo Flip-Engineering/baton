@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""Fake `agy` executable for the Antigravity harness tests.
+
+It stands in for `agy` on the stream-json protocol. It records its argv and its
+stdin, checks the argv flags and the stdin frame, then replays one fixture on
+stdout. No model provider is contacted.
+
+Environment:
+  FAKE_AGY_FIXTURE  path of the JSON Lines fixture to replay (required).
+  FAKE_AGY_ARGV     file that receives argv as NUL-separated arguments.
+  FAKE_AGY_STDIN    file that receives the raw stdin bytes.
+  FAKE_AGY_EXIT     exit status after the replay. The default is 1 for a fixture
+                    whose name starts with auth-failure, and 0 otherwise.
+
+A fixture with a sibling .stderr file writes that file to stderr. A run with
+--conversation ID replays the fixture with each non-empty conversation_id value
+replaced by ID. The replay keeps the compact separators that agy writes.
+
+The run exits 1 with a message on stderr when argv lacks
+`--input-format stream-json` or `--output-format stream-json`, or when stdin is
+not exactly one JSON object with event "user".
+"""
+import json
+import os
+import pathlib
+import sys
+
+
+REQUIRED_FLAGS = (('--input-format', 'stream-json'), ('--output-format', 'stream-json'))
+
+
+def fail(message):
+    print('fake-agy: ' + message, file=sys.stderr)
+    sys.exit(1)
+
+
+def record(name, data):
+    path = os.environ.get(name)
+    if path:
+        pathlib.Path(path).write_bytes(data)
+
+
+def flag_value(argv, flag):
+    if flag not in argv or argv.index(flag) + 1 >= len(argv):
+        return None
+    return argv[argv.index(flag) + 1]
+
+
+def user_frames(raw):
+    try:
+        text = raw.decode('utf-8')
+    except UnicodeDecodeError:
+        fail('stdin is not UTF-8')
+    lines = text[:-1].split('\n') if text.endswith('\n') else text.split('\n')
+    if len(lines) != 1:
+        fail('stdin must carry exactly one user frame, found %d lines' % len(lines))
+    try:
+        frame = json.loads(lines[0])
+    except ValueError:
+        fail('stdin line is not JSON')
+    if not isinstance(frame, dict) or frame.get('event') != 'user':
+        fail('stdin line is not a user frame')
+    return frame
+
+
+def with_conversation(value, conversation):
+    if isinstance(value, dict):
+        return {key: (conversation if key == 'conversation_id' and item else with_conversation(item, conversation))
+                for key, item in value.items()}
+    if isinstance(value, list):
+        return [with_conversation(item, conversation) for item in value]
+    return value
+
+
+def replay(fixture, conversation):
+    if conversation is None:
+        sys.stdout.buffer.write(fixture.read_bytes())
+        return
+    for line in fixture.read_text(encoding='utf-8').splitlines():
+        frame = with_conversation(json.loads(line), conversation)
+        sys.stdout.write(json.dumps(frame, ensure_ascii=False, separators=(',', ':')) + '\n')
+
+
+def main(argv):
+    record('FAKE_AGY_ARGV', b'\0'.join(os.fsencode(arg) for arg in argv))
+    raw = sys.stdin.buffer.read()
+    record('FAKE_AGY_STDIN', raw)
+    for flag, value in REQUIRED_FLAGS:
+        if flag_value(argv, flag) != value:
+            fail('argv lacks %s %s' % (flag, value))
+    user_frames(raw)
+    fixture_name = os.environ.get('FAKE_AGY_FIXTURE')
+    if not fixture_name:
+        fail('FAKE_AGY_FIXTURE is not set')
+    fixture = pathlib.Path(fixture_name)
+    status = int(os.environ.get('FAKE_AGY_EXIT',
+                                '1' if fixture.name.startswith('auth-failure') else '0'))
+    replay(fixture, flag_value(argv, '--conversation'))
+    sidecar = fixture.with_suffix('.stderr')
+    if sidecar.is_file():
+        sys.stderr.buffer.write(sidecar.read_bytes())
+    sys.stdout.flush()
+    sys.stderr.flush()
+    sys.exit(status)
+
+
+if __name__ == '__main__':
+    main(sys.argv)

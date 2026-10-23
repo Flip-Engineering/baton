@@ -33,7 +33,7 @@ law principal_startup_checks_assignment_and_operator_scope:
   for +model: String
   for +effort: String
   for +cwd: String
-  {Control.start_admission(session,harness,model,effort,cwd) == ("(" ++ C.q(session) ++ "<>'operator' AND " ++ C.q(session) ++ "<>'' AND " ++ C.q(harness) ++ " IN ('codex','omp','muse','claude-code','dsh') AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ") OR EXISTS(SELECT 1 FROM sessions WHERE " ++ Control.principal_matches(session,harness,model,effort,cwd) ++ ")) AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id='operator') OR EXISTS(SELECT 1 FROM sessions WHERE id='operator' AND parent IS NULL AND ((harness='operator' AND NOT EXISTS(SELECT 1 FROM session_roles WHERE session='operator')) OR " ++ C.assigned_role("sessions.id") ++ "='operator'))))") : String}
+  {Control.start_admission(session,harness,model,effort,cwd) == ("(" ++ C.q(session) ++ "<>'operator' AND " ++ C.q(session) ++ "<>'' AND " ++ C.q(harness) ++ " IN ('codex','omp','muse','claude-code','dsh','antigravity') AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ") OR EXISTS(SELECT 1 FROM sessions WHERE " ++ Control.principal_matches(session,harness,model,effort,cwd) ++ ")) AND (NOT EXISTS(SELECT 1 FROM sessions WHERE id='operator') OR EXISTS(SELECT 1 FROM sessions WHERE id='operator' AND parent IS NULL AND ((harness='operator' AND NOT EXISTS(SELECT 1 FROM session_roles WHERE session='operator')) OR " ++ C.assigned_role("sessions.id") ++ "='operator'))))") : String}
 
 def principal_startup_checks_assignment_and_operator_scope(session,harness,model,effort,cwd):
   {==}
@@ -42,7 +42,7 @@ law native_receiver_checks_harness_and_endpoint_admission:
   for +session: String
   for +endpoint: String
   for +cwd: String
-  {Control.receiver_admitted(session,endpoint,cwd) == ("(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code','dsh')) AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ Control.receiver_model(session) ++ " AND " ++ Control.receiver_directory(session,cwd) ++ ")") : String}
+  {Control.receiver_admitted(session,endpoint,cwd) == ("(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code','dsh','antigravity')) AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ Control.receiver_model(session) ++ " AND " ++ Control.receiver_directory(session,cwd) ++ ")") : String}
 
 def native_receiver_checks_harness_and_endpoint_admission(session,endpoint,cwd):
   {==}
@@ -90,9 +90,9 @@ law principal_startup_validates_before_assignment_and_dispatch:
   for +task: String
   {Control.start(db,session,harness,cmd,model,effort,cwd,log,id,task) == (do IO<String>:
   body : String <- IO.try(String,Text.Text.read(task))
-  workspace : String <- IO.try(String,Host.Control.workspace(cwd))
+  +workspace : String <- IO.try(String,Host.Control.workspace(cwd))
   schema : String <- IO.try(String,Store.commit(db,C.Session{session}))
-  endpoint : String <- Control.configured_endpoint(db,session,cmd,log,model)
+  endpoint : String <- Control.configured_endpoint(db,session,cmd,log,model,workspace)
   configured : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ Control.start_sql(session,harness,model,effort,workspace,endpoint) ++ "COMMIT;"))
   allowed : Unit <- Control.startup_refused(Tx.trim_nl(configured))
   session_read : String <- IO.try(String,Store.read(db,C.Session{session}))
@@ -103,7 +103,7 @@ def principal_startup_validates_before_assignment_and_dispatch(db,session,harnes
 
 law detached_turn_requires_a_recruited_active_supported_player:
   for +player: String
-  {Control.turn_admission_sql(player) == ("SELECT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(player) ++ " AND parent IS NOT NULL AND workspace<>'' AND harness IN ('codex','omp','muse','claude-code','dsh') AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ ");") : String}
+  {Control.turn_admission_sql(player) == ("SELECT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(player) ++ " AND parent IS NOT NULL AND workspace<>'' AND harness IN ('codex','omp','muse','claude-code','dsh','antigravity') AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ ");") : String}
 
 def detached_turn_requires_a_recruited_active_supported_player(player):
   {==}
@@ -129,11 +129,12 @@ law detached_turn_uses_the_recorded_assignment_and_native_identity:
   +database : String <- IO.try(String,Lock.SessionLock.canonical(db))
   +model : String <- Control.recorded_field(db,player,"model")
   effort : String <- Control.recorded_field(db,player,"effort")
-  cwd : String <- Control.recorded_field(db,player,"workspace")
+  +cwd : String <- Control.recorded_field(db,player,"workspace")
   native : String <- Control.recorded_field(db,player,"native")
   identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-  checked : String & String <- Control.identity_checked(identity,model)
-  IO.try(String,Host.Control.launch(Tx.enc_argv(Control.identity_args([executable,database,"turn",player,id,harness_cmd,model,effort,cwd,path,output,native],model,checked)),database,id))) : IO(String)}
+  +repository : String <- Control.workspace_repository(cwd)
+  checked : String & String <- Control.identity_checked(identity,model,repository)
+  IO.try(String,Host.Control.launch(Tx.enc_argv(Control.identity_args([executable,database,"turn",player,id,harness_cmd,model,effort,cwd,path,output,native],model,checked,repository)),database,id))) : IO(String)}
 
 def detached_turn_uses_the_recorded_assignment_and_native_identity(db,player,id,cmd,log,task):
   {==}
@@ -260,18 +261,20 @@ law configured_identity_wraps_the_actual_receiver_arguments:
   for log: String
   for model: String
   for identity: String & String
-  {Control.identity_endpoint(executable,db,session,cmd,log,model,identity) == "[" ++ Control.strings(Control.identity_args(Control.receiver_args(executable,db,session,cmd,log),model,identity)) ++ "]" : String}
+  for repository: String
+  {Control.identity_endpoint(executable,db,session,cmd,log,model,identity,repository) == "[" ++ Control.strings(Control.identity_args(Control.receiver_args(executable,db,session,cmd,log),model,identity,repository)) ++ "]" : String}
 
-def configured_identity_wraps_the_actual_receiver_arguments(executable,db,session,cmd,log,model,identity):
+def configured_identity_wraps_the_actual_receiver_arguments(executable,db,session,cmd,log,model,identity,repository):
   {==}
 
 law absent_identity_registry_preserves_the_native_argv:
   for args: List<String>
   for model: String
   for helper: String
-  {Control.identity_args(args,model,("",helper)) == args : List<String>}
+  for repository: String
+  {Control.identity_args(args,model,("",helper),repository) == args : List<String>}
 
-def absent_identity_registry_preserves_the_native_argv(args,model,helper):
+def absent_identity_registry_preserves_the_native_argv(args,model,helper,repository):
   {==}
 
 law configured_model_identity_precedes_the_native_command:
@@ -279,9 +282,10 @@ law configured_model_identity_precedes_the_native_command:
   for +model: String
   for +registry: String
   for +helper: String
-  {Control.identity_args(args,model,(registry,helper)) == List.append(&1,String,Bool.pick(List<String>,String.is_empty(registry),Nil{},["node",helper,"launch","--registry",registry,"--model-key",model,"--"]),args) : List<String>}
+  for +repository: String
+  {Control.identity_args(args,model,(registry,helper),repository) == List.append(&1,String,Bool.pick(List<String>,String.is_empty(registry),Nil{},List.append(&1,String,List.append(&1,String,["node",helper,"launch","--registry",registry,"--model-key",model],Bool.pick(List<String>,String.is_empty(repository),Nil{},["--repository",repository])),["--"])),args) : List<String>}
 
-def configured_model_identity_precedes_the_native_command(args,model,registry,helper):
+def configured_model_identity_precedes_the_native_command(args,model,registry,helper,repository):
   {==}
 
 law readable_snapshot_formats_all_stored_fields:
@@ -361,17 +365,20 @@ law receiver_setup_resolves_native_paths_and_model_identity:
   for +cmd: String
   for +log: String
   for +model: String
-  {Control.configured_endpoint(db,session,cmd,log,model) == (do IO<String>:
+  for +workspace: String
+  {Control.configured_endpoint(db,session,cmd,log,model,workspace) == (do IO<String>:
   present : Unit <- Control.command_present(String.is_empty(cmd))
+  +selected_workspace : String <- Control.endpoint_workspace(db,session,workspace)
+  +repository : String <- Control.workspace_repository(selected_workspace)
   native : String <- IO.try(String,Host.Control.command(cmd))
   +executable : String <- IO.try(String,Lock.SessionLock.executable())
   database : String <- IO.try(String,Lock.SessionLock.canonical(db))
   output : String <- IO.try(String,Host.Control.output(log))
   identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-  checked : String & String <- Control.identity_checked(identity,model)
-  IO.pure(String,Control.identity_endpoint(executable,database,session,native,output,model,checked))) : IO(String)}
+  checked : String & String <- Control.identity_checked(identity,model,repository)
+  IO.pure(String,Control.identity_endpoint(executable,database,session,native,output,model,checked,repository))) : IO(String)}
 
-def receiver_setup_resolves_native_paths_and_model_identity(db,session,cmd,log,model):
+def receiver_setup_resolves_native_paths_and_model_identity(db,session,cmd,log,model,workspace):
   {==}
 
 law detached_self_entry_delivers_the_committed_message:
@@ -519,62 +526,69 @@ law configured_identity_check_runs_the_installed_helper:
   for +registry: String
   for +helper: String
   for +model: String
-  {Control.identity_check_args(registry,helper,model) == ["node",helper,"check","--registry",registry,"--model-key",model] : List<String>}
+  for +repository: String
+  {Control.identity_check_args(registry,helper,model,repository) == List.append(&1,String,["node",helper,"check","--registry",registry,"--model-key",model],Bool.pick(List<String>,String.is_empty(repository),Nil{},["--repository",repository])) : List<String>}
 
-def configured_identity_check_runs_the_installed_helper(registry,helper,model):
+def configured_identity_check_runs_the_installed_helper(registry,helper,model,repository):
   {==}
 
 law configured_model_identity_is_checked_before_the_endpoint_is_built:
   for +registry: String
   for +helper: String
   for +model: String
-  {Control.identity_checked((registry,helper),model) == (do IO<String & String>:
-    checked : Unit <- Control.identity_check_body(registry,helper,model,String.is_empty(registry))
-    IO.pure(String & String,(registry,helper))) : IO(String & String)}
+  for +repository: String
+  {Control.identity_checked((registry,helper),model,repository) == (do IO<String & String>:
+  checked : Unit <- Control.identity_check_body(registry,helper,model,repository,String.is_empty(registry))
+  IO.pure(String & String,(registry,helper))) : IO(String & String)}
 
-def configured_model_identity_is_checked_before_the_endpoint_is_built(registry,helper,model):
+def configured_model_identity_is_checked_before_the_endpoint_is_built(registry,helper,model,repository):
   {==}
 
 law an_absent_registry_leaves_the_identity_unchecked:
   for +registry: String
   for +helper: String
   for +model: String
-  {Control.identity_check_body(registry,helper,model,True{}) == IO.pure(Unit,Unit{}) : IO(Unit)}
+  for +repository: String
+  {Control.identity_check_body(registry,helper,model,repository,True{}) == IO.pure(Unit,Unit{}) : IO(Unit)}
 
-def an_absent_registry_leaves_the_identity_unchecked(registry,helper,model):
+def an_absent_registry_leaves_the_identity_unchecked(registry,helper,model,repository):
   {==}
 
 law a_present_registry_resolves_the_recorded_model:
   for +registry: String
   for +helper: String
   for +model: String
-  {Control.identity_check_body(registry,helper,model,False{}) == (do IO<Unit>:
-  run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(Control.identity_check_args(registry,helper,model)),".")
-  Control.identity_check_refusal(model,Tx.run_res(run))) : IO(Unit)}
+  for +repository: String
+  {Control.identity_check_body(registry,helper,model,repository,False{}) == (do IO<Unit>:
+  run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(Control.identity_check_args(registry,helper,model,repository)),".")
+  Control.identity_check_refusal(model,repository,Tx.run_res(run))) : IO(Unit)}
 
-def a_present_registry_resolves_the_recorded_model(registry,helper,model):
+def a_present_registry_resolves_the_recorded_model(registry,helper,model,repository):
   {==}
 
 law a_resolved_configured_identity_passes_the_configuration:
   for +model: String
+  for +repository: String
   for out: String
-  {Control.identity_check_refusal(model,G.RRun{G.SExit{0},out}) == IO.pure(Unit,Unit{}) : IO(Unit)}
+  {Control.identity_check_refusal(model,repository,G.RRun{G.SExit{0},out}) == IO.pure(Unit,Unit{}) : IO(Unit)}
 
-def a_resolved_configured_identity_passes_the_configuration(model,out):
+def a_resolved_configured_identity_passes_the_configuration(model,repository,out):
   {==}
 
 law a_refused_configured_identity_names_the_recorded_model:
   for +model: String
+  for +repository: String
   for out: String
-  {Control.identity_check_refusal(model,G.RRun{G.SExit{1},out}) == IO.die(Unit,2,"The configured series registry does not resolve the recorded model " ++ model ++ "; the endpoint would refuse at delivery. Correct the registry mapping or record a mapped model, then retry.") : IO(Unit)}
+  {Control.identity_check_refusal(model,repository,G.RRun{G.SExit{1},out}) == IO.die(Unit,2,"The configured series registry does not resolve the recorded model " ++ model ++ Bool.pick(String,String.is_empty(repository),""," for repository " ++ repository) ++ "; the endpoint would refuse at delivery. Correct the registry mapping or record a mapped model, then retry.") : IO(Unit)}
 
-def a_refused_configured_identity_names_the_recorded_model(model,out):
+def a_refused_configured_identity_names_the_recorded_model(model,repository,out):
   {==}
 
 law a_failed_configured_identity_spawn_refuses_the_configuration:
   for +model: String
+  for +repository: String
   for detail: String
-  {Control.identity_check_refusal(model,G.RSpawn{detail}) == IO.die(Unit,2,"The configured series registry does not resolve the recorded model " ++ model ++ "; the endpoint would refuse at delivery. Correct the registry mapping or record a mapped model, then retry.") : IO(Unit)}
+  {Control.identity_check_refusal(model,repository,G.RSpawn{detail}) == IO.die(Unit,2,"The configured series registry does not resolve the recorded model " ++ model ++ Bool.pick(String,String.is_empty(repository),""," for repository " ++ repository) ++ "; the endpoint would refuse at delivery. Correct the registry mapping or record a mapped model, then retry.") : IO(Unit)}
 
-def a_failed_configured_identity_spawn_refuses_the_configuration(model,detail):
+def a_failed_configured_identity_spawn_refuses_the_configuration(model,repository,detail):
   {==}

@@ -14,6 +14,7 @@ import ./codex-player.bend as Codex
 import ./omp-player.bend as Omp
 import ./claude-player.bend as Claude
 import ./muse-player.bend as Muse
+import ./agy-player.bend as Agy
 
 # ---------------------------------------------------------------------------
 # M-2: an unresolved external attempt stays unresolved until justified. A fresh
@@ -54,6 +55,17 @@ law m2_claude_start_is_the_spawn_attempt:
   {Claude.start_player(cmd, model, effort, cwd, stderr) == P.ProcessChild.spawn(P.argv(Claude.arguments(cmd,model,effort)),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m2_claude_start_is_the_spawn_attempt(cmd, model, effort, cwd, stderr):
+  {==}
+
+law m2_agy_start_is_the_spawn_attempt:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
+  for +stderr: String
+  {Agy.start_player(cmd, model, effort, cwd, stderr) == P.ProcessChild.spawn(P.argv(Agy.arguments(cmd,model,effort)),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+
+def m2_agy_start_is_the_spawn_attempt(cmd, model, effort, cwd, stderr):
   {==}
 
 law m2_muse_start_is_the_spawn_attempt:
@@ -152,6 +164,38 @@ law m5_claude_resume_carries_the_accepted_session:
 def m5_claude_resume_carries_the_accepted_session(cmd, model, effort, cwd, stderr, session):
   {==}
 
+law m5_agy_argv_carries_the_accepted_conversation:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +session: String
+  {Agy.argv(cmd, model, effort, session, False{}) == P.argv(List.append(&1,String,Agy.arguments(cmd,model,effort),["--conversation",session])) : String}
+
+def m5_agy_argv_carries_the_accepted_conversation(cmd, model, effort, session):
+  {==}
+
+law m2_agy_argv_starts_a_fresh_conversation:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +session: String
+  {Agy.argv(cmd, model, effort, session, True{}) == P.argv(Agy.arguments(cmd,model,effort)) : String}
+
+def m2_agy_argv_starts_a_fresh_conversation(cmd, model, effort, session):
+  {==}
+
+law m5_agy_resume_carries_the_accepted_conversation:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
+  for +stderr: String
+  for +session: String
+  {Agy.resume_player(cmd, model, effort, cwd, stderr, session) == P.ProcessChild.spawn(P.argv(List.append(&1,String,Agy.arguments(cmd,model,effort),["--conversation",session])),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+
+def m5_agy_resume_carries_the_accepted_conversation(cmd, model, effort, cwd, stderr, session):
+  {==}
+
 law m5_muse_resume_carries_the_accepted_session:
   for +cmd: String
   for +model: String
@@ -195,6 +239,13 @@ law m11_claude_user_frame_carries_the_text_as_a_literal:
 def m11_claude_user_frame_carries_the_text_as_a_literal(text):
   {==}
 
+law m11_agy_user_frame_carries_the_text_as_a_literal:
+  for +text: String
+  {Agy.user_frame(text) == "{\"event\":\"user\",\"message\":{\"content\":" ++ J.string_literal(text) ++ "}}\n" : String}
+
+def m11_agy_user_frame_carries_the_text_as_a_literal(text):
+  {==}
+
 law m11_muse_arguments_keep_the_task_one_element:
   for +cmd: String
   for +model: String
@@ -226,6 +277,14 @@ law m13_claude_input_writes_the_user_frame:
   {Claude.input(handle, text) == P.ProcessChild.write(handle, Claude.user_frame(text)) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def m13_claude_input_writes_the_user_frame(handle, text):
+  {==}
+
+law m13_agy_input_writes_the_user_frame:
+  for +handle: U32
+  for +text: String
+  {Agy.input(handle, text) == P.ProcessChild.write(handle, Agy.user_frame(text)) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def m13_agy_input_writes_the_user_frame(handle, text):
   {==}
 
 law m13_muse_input_writes_no_bytes:
