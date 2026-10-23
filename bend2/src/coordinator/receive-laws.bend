@@ -478,18 +478,21 @@ def incomplete_observation_skips_acknowledgement(acknowledge):
 
 # Retirement follows acknowledgment on the same attempt handle: the shared
 # owner frees the attempt slot and advances its generation. The combined
-# result keeps an acknowledgment failure first.
-def retired_after_acknowledgement(+handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+# result keeps an acknowledgment failure first, and the admission ticket is
+# removed only after the acknowledgment succeeded (Receive.ack_retire_ticket).
+def retired_after_acknowledgement(+db: String, +session: String, +attempt: String, +handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     acked : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.acknowledge(handle)
-    retired : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.retire(handle)
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(acked,retired))
+    Receive.ack_retire_ticket(db,session,attempt,handle,acked)
 
 law retired_slot_advances_only_after_acknowledgement:
+  for +db: String
+  for +session: String
+  for +attempt: String
   for +handle: U32
-  {Receive.ack_then_retire(handle) == retired_after_acknowledgement(handle) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.ack_then_retire(db,session,attempt,handle) == retired_after_acknowledgement(db,session,attempt,handle) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def retired_slot_advances_only_after_acknowledgement(handle):
+def retired_slot_advances_only_after_acknowledgement(db,session,attempt,handle):
   {==}
 
 # Direct turns share the guard and check the retained attempt before Stop.admit
