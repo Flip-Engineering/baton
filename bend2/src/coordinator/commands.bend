@@ -35,7 +35,7 @@ type Command is Data:
   MessageBatch{sender: String, input: String}
   MessageBatchFile{sender: String, path: String}
   TaskContinue{session: String, id: String}
-  Observe{id: String, player: String, event: String, sealed: Bool}
+  Observe{id: String, player: String, event: String, sealed: Bool, harness: String}
   ObserveFile{id: String, player: String, path: String}
   Report{id: String, sender: String, body: String}
   ReportFile{id: String, sender: String, path: String}
@@ -411,8 +411,11 @@ def assistant_text_sql_expr(+event: String) -> String:
 def terminal_body_expr(+event: String) -> String:
   "coalesce(" ++ omp_terminal_error_text_sql_expr(event) ++ ",CASE WHEN json_extract(" ++ event ++ ",'$.is_error')=1 OR (json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ event ++ ",'$.payload.terminal')<>'completed') THEN " ++ event ++ " ELSE coalesce(json_extract(" ++ event ++ ",'$.result'),CASE WHEN json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ event ++ ",'$.payload.text') END," ++ assistant_text_sql_expr(event) ++ "," ++ event ++ ") END)"
 
-def observe_identity_sql_expr(+player: String, +event: String) -> String:
-  "UPDATE sessions SET native=coalesce(CASE WHEN json_extract(" ++ event ++ ",'$.type')='response' AND json_extract(" ++ event ++ ",'$.command')='get_state' AND json_extract(" ++ event ++ ",'$.success')=1 THEN json_extract(" ++ event ++ ",'$.data.sessionId') END,CASE WHEN json_extract(" ++ event ++ ",'$.type')='thread.started' THEN json_extract(" ++ event ++ ",'$.thread_id') END,json_extract(" ++ event ++ ",'$.session_id'),CASE WHEN json_extract(" ++ event ++ ",'$.type')='session' THEN json_extract(" ++ event ++ ",'$.id') END,CASE WHEN json_extract(" ++ event ++ ",'$.stream.kind')='session' THEN json_extract(" ++ event ++ ",'$.stream.id') END,native),observed_model=coalesce(CASE WHEN json_extract(" ++ event ++ ",'$.type')='response' AND json_extract(" ++ event ++ ",'$.command')='get_state' AND json_extract(" ++ event ++ ",'$.success')=1 THEN json_extract(" ++ event ++ ",'$.data.model.provider') || '/' || json_extract(" ++ event ++ ",'$.data.model.id') END,CASE WHEN json_extract(" ++ event ++ ",'$.payload_type')='run.model.configured' THEN json_extract(" ++ event ++ ",'$.payload.model_id') END,CASE WHEN json_extract(" ++ event ++ ",'$.message.provider') IS NOT NULL AND json_extract(" ++ event ++ ",'$.message.model') IS NOT NULL THEN json_extract(" ++ event ++ ",'$.message.provider') || '/' || json_extract(" ++ event ++ ",'$.message.model') END,json_extract(" ++ event ++ ",'$.message.model'),json_extract(" ++ event ++ ",'$.model'),observed_model) WHERE id=" ++ q(player) ++ ";"
+# Identity and model frames update the session only when the attempt ran under the
+# session's configured harness. A replayed frame of an earlier harness, after a route
+# change, matches no row, so it cannot write its conversation id back to the session.
+def observe_identity_sql_expr(+player: String, +event: String, +harness: String) -> String:
+  "UPDATE sessions SET native=coalesce(CASE WHEN json_extract(" ++ event ++ ",'$.type')='response' AND json_extract(" ++ event ++ ",'$.command')='get_state' AND json_extract(" ++ event ++ ",'$.success')=1 THEN json_extract(" ++ event ++ ",'$.data.sessionId') END,CASE WHEN json_extract(" ++ event ++ ",'$.type')='thread.started' THEN json_extract(" ++ event ++ ",'$.thread_id') END,json_extract(" ++ event ++ ",'$.session_id'),CASE WHEN json_extract(" ++ event ++ ",'$.type')='session' THEN json_extract(" ++ event ++ ",'$.id') END,CASE WHEN json_extract(" ++ event ++ ",'$.stream.kind')='session' THEN json_extract(" ++ event ++ ",'$.stream.id') END,native),observed_model=coalesce(CASE WHEN json_extract(" ++ event ++ ",'$.type')='response' AND json_extract(" ++ event ++ ",'$.command')='get_state' AND json_extract(" ++ event ++ ",'$.success')=1 THEN json_extract(" ++ event ++ ",'$.data.model.provider') || '/' || json_extract(" ++ event ++ ",'$.data.model.id') END,CASE WHEN json_extract(" ++ event ++ ",'$.payload_type')='run.model.configured' THEN json_extract(" ++ event ++ ",'$.payload.model_id') END,CASE WHEN json_extract(" ++ event ++ ",'$.message.provider') IS NOT NULL AND json_extract(" ++ event ++ ",'$.message.model') IS NOT NULL THEN json_extract(" ++ event ++ ",'$.message.provider') || '/' || json_extract(" ++ event ++ ",'$.message.model') END,json_extract(" ++ event ++ ",'$.message.model'),json_extract(" ++ event ++ ",'$.model'),observed_model) WHERE id=" ++ q(player) ++ " AND harness=" ++ q(harness) ++ ";"
 
 # Completion record for issue #685. Every terminal observation records its
 # completion report and turn row. The answer carries the pending-input
@@ -443,9 +446,9 @@ def completion_sql(+id: String, +player: String, +event: String) -> String:
 def observe_completion_sql(+id: String, +player: String, +event: String, sealed: Bool) -> String:
   Bool.pick(String,sealed,"",completion_sql(id,player,event))
 
-def observe_sql(+id: String, +player: String, +event: String, sealed: Bool) -> String:
+def observe_sql(+id: String, +player: String, +event: String, sealed: Bool, +harness: String) -> String:
   observation_frame_sql(event)
-  ++ observe_identity_sql_expr(player,observation_frame())
+  ++ observe_identity_sql_expr(player,observation_frame(),harness)
   ++ Bool.pick(String,sealed,"",completion_sql_expr(id,player,observation_frame()))
   ++ "DROP TABLE temp.baton_observation_frame;"
 
@@ -576,7 +579,7 @@ def sql(command: Command) -> String:
   match command:
     case TaskContinue{+session,+id}:
       task_continuation_sql(session,id) ++ "SELECT json_object('session',id,'continuationId',(SELECT id FROM messages WHERE id=" ++ q(id ++ ":task-continuation") ++ " AND recipient=" ++ q(session) ++ " AND " ++ owed_sql("messages") ++ "),'taskCompletion'," ++ task_state_sql("sessions.id") ++ ") FROM sessions WHERE id=" ++ q(session) ++ ";"
-    case Observe{id,player,event,sealed}: observe_sql(id,player,event,sealed)
+    case Observe{id,player,event,sealed,harness}: observe_sql(id,player,event,sealed,harness)
     case Attach{+id, harness, native, endpoint}:
       "INSERT INTO sessions(id,harness,native,endpoint) VALUES(" ++ q(id) ++ "," ++ q(harness) ++ "," ++ q(native) ++ "," ++ q(endpoint) ++ ") ON CONFLICT(id) DO UPDATE SET harness=excluded.harness,native=excluded.native,endpoint=excluded.endpoint WHERE sessions.parent IS NULL;"
       ++ "SELECT json_object('error','attach-parent-conflict','session',id,'parent',parent,'condition','The session is already registered with a parent.','next','Read session ID and use connect or receiver to update its native endpoint.') FROM sessions WHERE id=" ++ q(id) ++ " AND parent IS NOT NULL;"

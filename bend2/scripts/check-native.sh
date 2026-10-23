@@ -93,6 +93,9 @@ rm -f .scratch/bend2/usage-windows-wake.db
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-wake-path.bend .scratch/bend2/usage-windows-wake-path-test
 rm -f .scratch/bend2/usage-windows-wake-path.db
 .scratch/bend2/usage-windows-wake-path-test .scratch/bend2/usage-windows-wake-path.db
+sh bend2/scripts/build-native.sh bend2/test/route-change-identity.bend .scratch/bend2/route-change-identity-test
+rm -f .scratch/bend2/route-change-identity.db
+.scratch/bend2/route-change-identity-test .scratch/bend2/route-change-identity.db
 sh bend2/scripts/build-native.sh bend2/test/quota-exhaustion-reset.bend .scratch/bend2/quota-exhaustion-reset-test
 rm -f .scratch/bend2/quota-exhaustion-reset.db
 .scratch/bend2/quota-exhaustion-reset-test .scratch/bend2/quota-exhaustion-reset.db

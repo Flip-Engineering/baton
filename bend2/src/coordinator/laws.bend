@@ -1078,7 +1078,8 @@ law observations_update_identity_before_recording_completion:
   for +player: String
   for +event: String
   for sealed: Bool
-  {C.observe_sql(id,player,event,sealed) == C.observation_frame_sql(event) ++ C.observe_identity_sql_expr(player,C.observation_frame()) ++ Bool.pick(String,sealed,"",C.completion_sql_expr(id,player,C.observation_frame())) ++ "DROP TABLE temp.baton_observation_frame;" : String}
+  for +harness: String
+  {C.observe_sql(id,player,event,sealed,harness) == C.observation_frame_sql(event) ++ C.observe_identity_sql_expr(player,C.observation_frame(),harness) ++ Bool.pick(String,sealed,"",C.completion_sql_expr(id,player,C.observation_frame())) ++ "DROP TABLE temp.baton_observation_frame;" : String}
 
 def observations_update_identity_before_recording_completion(id,player,event,sealed):
   {==}
