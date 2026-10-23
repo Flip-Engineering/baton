@@ -36,6 +36,7 @@ class TrialStartTests(unittest.TestCase):
         harness.mkdir(parents=True)
         for name in ('task-start.mjs', 'project-settings.mjs', 'git-series.mjs', 'native-history.mjs'):
             shutil.copy2(ROOT / 'bend2/harness' / name, harness / name)
+        shutil.copytree(ROOT / 'bend2/harness/git-series-bin', harness / 'git-series-bin')
         self.check = scripts / 'check-unittest.sh'
         shutil.copytree(ROOT / 'bend2/trial', self.source / 'bend2/trial')
         # The suite already built EXE. Reuse it while exercising the launcher's

@@ -159,6 +159,7 @@ class PackageLicenses(unittest.TestCase):
         harness.mkdir(parents=True)
         for name in ('git-series.mjs', 'native-history.mjs', 'project-settings.mjs', 'task-start.mjs'):
             shutil.copyfile(ROOT / 'bend2/harness' / name, harness / name)
+        shutil.copytree(ROOT / 'bend2/harness/git-series-bin', harness / 'git-series-bin')
         shutil.copytree(ROOT / 'bend2/ui/orchestra', self.source / 'bend2/ui/orchestra')
         PACKAGE.stage_adapters(self.payload)
         return names
@@ -182,6 +183,9 @@ class PackageLicenses(unittest.TestCase):
         installed = prefix / 'libexec/baton2/git-series.mjs'
         self.assertFalse((prefix / 'libexec/baton2/git-series.py').exists())
         self.assertEqual(installed.read_bytes(), data)
+        wrapper = prefix / 'libexec/baton2/git-series-bin/gh'
+        self.assertEqual(wrapper.read_bytes(), (ROOT / 'bend2/harness/git-series-bin/gh').read_bytes())
+        self.assertTrue(os.access(wrapper, os.X_OK))
         self.assertEqual(manifest['source']['directory'], str(self.source))
 
         public = self.home / 'public series λ'

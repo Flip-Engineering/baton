@@ -198,6 +198,7 @@ def stage_adapters(payload):
             name = harness + '-' + suffix + '.mjs'
             shutil.copyfile(ROOT / 'bend2/scripts' / name, directory / name)
     shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', directory / 'git-series.mjs')
+    shutil.copytree(ROOT / 'bend2/harness/git-series-bin', directory / 'git-series-bin')
     shutil.copyfile(ROOT / 'bend2/harness/native-history.mjs', directory / 'native-history.mjs')
     shutil.copyfile(ROOT / 'bend2/harness/project-settings.mjs', directory / 'project-settings.mjs')
     native_observe = ROOT / '.scratch/bend2/claude-credit-observe'
