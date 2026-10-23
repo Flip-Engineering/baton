@@ -7,7 +7,10 @@
 # usage: route-change-identity DB
 import Base
 import ../src/coordinator/commands.bend as C
+import ../src/coordinator/receive.bend as Receive
+import ../src/host/process.bend as P
 import ../src/host/sqlite.bend as DB
+import ../src/git/text.bend as Tx
 
 def expect(+label: String, is_ok: Bool) -> IO(Unit):
   Bool.pick(IO(Unit),is_ok,IO.print("fixture-route-change-identity " ++ label ++ ": ok"),IO.die(Unit,1,"fixture-route-change-identity " ++ label ++ ": refused"))
@@ -67,12 +70,38 @@ def codex_to_claude(+db: String) -> IO(Unit):
     none : Unit <- expect_read(db,"SELECT '[' || native || ']' FROM sessions WHERE id='seat-b';","[]\n","codex-replay-leaves-native-empty")
     IO.pure(Unit,Unit{})
 
+# The argv a retained attempt records when it launches (receive.bend selected). The
+# launch-time harness sits where recovery_arguments reads it.
+def launch_argv(+session: String, +id: String, +attempt: String, +harness: String) -> String:
+  P.argv(["/usr/bin/baton","--recover-receive","route.db",session,id,"0","cmd","model","high","/ws","route.log",harness,attempt,"native-id",""])
+
+# The same split and parse as acquired_attempt -> recover_owned -> observe_guarded.
+def recorded_harness(args: List<&2,String>) -> String:
+  match args:
+    case executable <> flag <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> +harness <> directory <> native <> Nil{}: harness
+    case other: ""
+
+def argv_harness(+argv: String) -> String:
+  Receive.recovered_harness(recorded_harness(Receive.recovery_arguments(String.split(argv,Char.from_u32(0)))))
+
+# The replayed attempt takes its harness from its recorded argv, not from the session row.
+def recorded_case(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    made : Unit <- seat(db,"argv-film","omp","kimi-code/kimi-for-coding","OLD-OMP-ID")
+    +launched : String <- IO.pure(String,launch_argv("argv-film","attempt-argv","attempt-argv-dir","omp\n"))
+    moved : Unit <- route_change(db,"argv-film","codex","gpt-6.1-sol","omp","kimi-code/kimi-for-coding")
+    +replayed : String <- IO.pure(String,Tx.trim_nl(argv_harness(launched)))
+    stale : Unit <- replay(db,"argv-film","attempt-argv",replayed,"{\"type\":\"response\",\"command\":\"get_state\",\"success\":true,\"data\":{\"sessionId\":\"OLD-OMP-ID\",\"model\":{\"provider\":\"kimi-code\",\"id\":\"kimi-for-coding\"}}}")
+    none : Unit <- expect_read(db,"SELECT '[' || native || ']' FROM sessions WHERE id='argv-film';","[]\n","recorded-argv-replay-leaves-native-empty")
+    IO.pure(Unit,Unit{})
+
 def main_args(args: List<String>) -> IO(Unit):
   match args:
     case +db <> Nil{}: do IO<Unit>:
       setup(db)
       omp_to_codex(db)
       codex_to_claude(db)
+      recorded_case(db)
       IO.print("fixture-route-change-identity-ok")
     case other: IO.die(Unit,2,"usage")
 
