@@ -20,6 +20,7 @@ A storage root declares one class:
 | --- | --- | --- |
 | `scratch` | Scratch | Per-attempt temporary files. |
 | `build-output` | Build output | Build products and checkouts derived from source. |
+| `export` | Export | Completed export trees and generated deliverables. |
 | `checkout` | Checkout | A Git worktree or working checkout. |
 | `shared-immutable` | Shared immutable | Reusable assets and caches. |
 | `git-object` | Git objects | A loose-object prefix store. |
@@ -48,16 +49,17 @@ homelab path or relocate existing files.
 
 storage-policy reports each configured root, its class and whether it appears
 in BATON_STORAGE_EXCLUSIVE_ROOTS. That setting records an operator declaration;
-it does not prove that writers coordinate with cleanup. A root is covered only
-when its class is `log-evidence` and the coordinator database records a
-registered log, a retained generation (`log` or `base`), or an execution
-directory under it. An absolute log-evidence root with no such reference is an
-arbitrary root and is refused. The policy reports `covered` per root,
-`apply:"lease-gated"` when every configured root is covered, `apply:"refused"`
-when any root is not covered, and `apply:"ready"` when the root list is empty.
-storage-apply SESSION acquires the per-root writer lease described below. An
-empty root list returns an empty receipt. Preview and policy commands remain
-available.
+it does not prove that writers coordinate with cleanup. A `log-evidence` root
+is covered when the coordinator database records a registered log, a retained
+generation (`log` or `base`), or an execution directory under it. A transient
+`scratch`, `build-output`, `export` or `checkout` root is covered when a
+session workspace or execution directory is recorded under it. An absolute root
+with no such reference is arbitrary and is refused. The policy reports
+`covered` per root, `apply:"lease-gated"` when every configured root is covered,
+`apply:"refused"` when any root is not covered, and `apply:"ready"` when the
+root list is empty. storage-apply SESSION acquires the per-root writer lease
+described below. An empty root list returns an empty receipt. Preview and
+policy commands remain available.
 
 ## Preservation evidence
 
@@ -67,6 +69,7 @@ Each candidate carries the measured byte count, the host identity
 - active coordinator database path or an ancestor of one;
 - owner match against the recorded session or execution;
 - live lease;
+- settled owner execution (transient classes only);
 - live process reference;
 - runtime input (open descriptor or mapped file);
 - dirty worktree;
@@ -116,6 +119,7 @@ tree. Processes of other users cannot be inspected on a host with restricted
 storage-policy                  # JSON: roots, classes, exclusivity, apply readiness
 storage-preview SESSION         # JSON: roots and entries owned by SESSION
 storage-apply SESSION           # JSON: receipts for SESSION's admitted entries
+storage-collect SESSION         # JSON: receipts for a settled SESSION
 ```
 
 Preview selects candidates whose recorded owner is exactly `SESSION`;
@@ -128,6 +132,27 @@ them after. If any root lease is unavailable it releases the leases it already
 holds and exits with status 3 naming that root. Overlapping configured roots
 are refused before any lease is acquired. Discovery skips the lease file name,
 so cleanup never proposes the lease file as a candidate.
+
+`storage-collect SESSION` runs the apply plan for a session with no non-exited
+execution and no pending input. Only scratch, build-output, export and
+log-evidence roots participate. A checkout root is excluded because the
+session row still records its workspace; removing the current workspace needs
+an explicit `storage-preview` and `storage-apply` by an operator. The receive
+and direct-turn completion paths and the landing wrapper call the settled
+collector after custody retirement and after a successful landing; the
+receiver endpoint replacement calls it after recording the new endpoint. A
+triggered run that cannot acquire a lease or a covered root contributes no
+receipt and does not change the event that asked for collection.
+
+The explicit `storage-collect` command reports a typed `skipped` value naming
+the unsettled execution or pending input, and a typed `refused` value naming
+the lease or root failure with its exit code. An unknown session exits 2.
+
+The same evidence preserves a selected runtime and its rollback copy. A tree
+that no recorded session workspace or execution names has no owner, and an
+unknown owner preserves the candidate. A running selected runtime is also a
+process and runtime reference. Only a tree owned by a settled session with no
+dirty worktree, no unpublished commits and no live evidence is admitted.
 
 ## Writer lease protocol
 

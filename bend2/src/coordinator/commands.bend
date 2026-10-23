@@ -76,6 +76,7 @@ type Command is Data:
   StoragePolicy{}
   StoragePreview{session: String}
   StorageApply{session: String}
+  StorageCollect{session: String}
   Status{}
   Players{}
   LegacySubordinates{}
@@ -674,6 +675,7 @@ def sql(command: Command) -> String:
     case StoragePolicy{}: ""
     case StoragePreview{session}: ""
     case StorageApply{session}: ""
+    case StorageCollect{session}: ""
     case LogsClean{session}: ""
     case LogsCleanAll{}: ""
     case Recruit{id,parent,harness,model,effort,repo,branch,path,base}: ""
@@ -736,6 +738,7 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
     case "logs-clean": LogsClean{id}
     case "storage-preview": StoragePreview{id}
     case "storage-apply": StorageApply{id}
+    case "storage-collect": StorageCollect{id}
     case "players": match id:
       case "--pretty": Pretty{Players{}}
       case _: Invalid{}

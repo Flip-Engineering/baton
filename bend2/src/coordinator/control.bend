@@ -12,6 +12,7 @@ import ../json/canonical.bend as J
 import ../git/text.bend as Tx
 import ../git/process.bend as Process
 import ../git/types.bend as T
+import ../storage/lifecycle.bend as StoragePolicy
 
 def string_tail(args: List<String>) -> String:
   match args:
@@ -172,6 +173,12 @@ def receiver_update_sql(+session: String, +endpoint: String, +cwd: String, +admi
 def receiver_sql(+session: String, +endpoint: String, +cwd: String) -> String:
   receiver_update_sql(session,endpoint,cwd,receiver_admitted(session,endpoint,cwd))
 
+# The refusal answer begins with this exact prefix. The JSON object carries
+# session, condition and next fields after it, so the closing brace is not part
+# of the marker.
+def receiver_denied(saved: String) -> Bool:
+  Tx.starts_with(saved,"{\"error\":\"receiver-refused\"")
+
 def receiver_result(saved: String, denied: Bool) -> IO(String):
   match denied:
     case True{}: IO.die(String,2,saved)
@@ -207,7 +214,9 @@ def receiver(+db: String, +session: String, cmd: String, log: String, +cwd: Stri
     branch : Maybe<String> <- receiver_branch(workspace)
     +endpoint : String <- configured_endpoint(db,session,cmd,log,Tx.trim_nl(model),workspace)
     +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ receiver_branch_sql(session,endpoint,workspace,branch) ++ receiver_sql(session,endpoint,workspace) ++ "COMMIT;"))
-    receiver_result(saved,Tx.starts_with(saved,"{\"error\":\"receiver-refused\""))
+    answer : String <- receiver_result(saved,receiver_denied(saved))
+    collected : Unit <- StoragePolicy.collect_settled(db,session)
+    IO.pure(String,answer)
 
 # An existing Player changes its configured provider route in place. The stored
 # endpoint launches the selected adapter through receive. The model key is

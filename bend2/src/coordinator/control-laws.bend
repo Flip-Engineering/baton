@@ -62,6 +62,20 @@ law receiver_model_requires_a_recorded_model:
 def receiver_model_requires_a_recorded_model(session):
   {==}
 
+# The refusal object carries session, condition and next after the error field,
+# so the marker is the opening prefix and not a complete object.
+law receiver_refusal_with_fields_is_denied:
+  {Control.receiver_denied("{\"error\":\"receiver-refused\",\"session\":\"s\",\"condition\":\"c\",\"next\":\"n\"}") == True{} : Bool}
+
+def receiver_refusal_with_fields_is_denied():
+  {==}
+
+law receiver_update_answer_is_not_denied:
+  {Control.receiver_denied("{\"session\":\"s\",\"endpoint\":[],\"workspace\":\"/w\"}") == False{} : Bool}
+
+def receiver_update_answer_is_not_denied():
+  {==}
+
 law detached_delivery_commits_before_launch_and_checks_refusals:
   for +db: String
   for +id: String
