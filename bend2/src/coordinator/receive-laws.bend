@@ -300,6 +300,7 @@ def restart_records_before_releasing_and_waking(+db: String, +session: String, +
     delivered : Result<&1,&1,U32 & String,String> <- IO.join(Result<&1,&1,U32 & String,String>,delivery_task)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     acknowledged : Unit <- IO.try(Unit,P.ProcessChild.acknowledge(handle))
+    cleaned : Unit <- Store.delete_ticket(db,session,attempt)
     retired : Unit <- IO.try(Unit,Custody.Instance.retire(handle))
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(Delivery.wake_result(delivered),Turn.combine(questions,Turn.combine(next,woken))))
 
