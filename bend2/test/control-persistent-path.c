@@ -6,6 +6,8 @@
    directories under /tmp and inject the prefix pair, so no bind mount is needed.
    Exit status 0 means that every check passed. */
 
+#define _XOPEN_SOURCE 700
+
 #include <errno.h>
 #include <ftw.h>
 #include <limits.h>
