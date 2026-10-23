@@ -103,6 +103,15 @@ try:
     assert taken.stdout.count('taken-over ') == 2, (taken.stdout, T)
     print('PASS takeover replaced both waiting supervisors')
 
+    # The older executable records no growth of memory used outside the queue, so
+    # the rule starts one job at a time and the holder of heavy.lock counts as
+    # that job. The operator records a growth before installing the new
+    # executable; the test writes one.
+    time.sleep(2)
+    assert not any(line.startswith('start queued') for line in log_lines()), log_lines()
+    (STATE / 'outside-growth').write_text('growth_kb=0\n')
+    print('PASS taken-over jobs wait while no growth of outside memory use is recorded')
+
     for process in waiting:
         try:
             process.wait(timeout=60)
