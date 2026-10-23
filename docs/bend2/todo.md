@@ -523,6 +523,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#703](https://github.com/Flip-Engineering/baton/issues/703),
   [#713](https://github.com/Flip-Engineering/baton/issues/713) and
   [#715](https://github.com/Flip-Engineering/baton/issues/715).
+  The [adapter](agy-adapter.md) implements the `agy` harness; a live call after
+  sign-in, packaging and installed use remain open.
 
 - [#716: Dispatch task text and retain it in the database](https://github.com/Flip-Engineering/baton/issues/716).
   The [dispatch interface](task-start-716.md) uses `baton dispatch "task text"`

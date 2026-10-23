@@ -111,6 +111,12 @@ sh bend2/scripts/build-native.sh bend2/test/dsh-retained.bend .scratch/bend2/dsh
 BATON2_EXE="$root/.scratch/bend2/dsh-retained-test" "$PYTHON3" bend2/test/dsh-retained.py
 sh bend2/scripts/build-native.sh bend2/test/dsh-turn.bend .scratch/bend2/dsh-turn-test
 BATON2_EXE="$root/.scratch/bend2/dsh-turn-test" "$PYTHON3" bend2/test/dsh-turn.py
+sh bend2/scripts/build-native.sh bend2/test/agy-player.bend .scratch/bend2/agy-player-test
+BATON2_EXE="$root/.scratch/bend2/agy-player-test" "$PYTHON3" bend2/test/agy-player.py
+sh bend2/scripts/build-native.sh bend2/test/agy-retained.bend .scratch/bend2/agy-retained-test
+BATON2_EXE="$root/.scratch/bend2/agy-retained-test" "$PYTHON3" bend2/test/agy-retained.py
+sh bend2/scripts/build-native.sh bend2/test/agy-turn.bend .scratch/bend2/agy-turn-test
+BATON2_EXE="$root/.scratch/bend2/agy-turn-test" "$PYTHON3" bend2/test/agy-turn.py
 sh bend2/scripts/build-native.sh bend2/test/account-retained.bend .scratch/bend2/account-retained-test
 BATON2_EXE="$root/.scratch/bend2/account-retained-test" "$PYTHON3" bend2/test/account-retained.py
 sh bend2/scripts/build-native.sh bend2/test/account-credits.bend .scratch/bend2/account-credits-test
