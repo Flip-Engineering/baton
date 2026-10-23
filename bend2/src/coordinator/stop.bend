@@ -185,6 +185,21 @@ def observing(+db: String, +session: String, +attempt: String, +directory: Strin
     saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE executions SET phase='running',status='' WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ " AND directory=" ++ C.q(directory) ++ ";"))
     reconcile(db,session,attempt,directory)
 
+# The same observation resume, with the first database failure returned as a
+# result. The recovery path uses it so SQLITE_BUSY reaches its typed cause
+# handler instead of aborting the executing call with the database code.
+def observing_after_query(+db: String, +session: String, +attempt: String, +directory: String, saved: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match saved:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+    case Done{unit}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      reconciled : Unit <- reconcile(db,session,attempt,directory)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+
+def observing_result(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    saved : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"UPDATE executions SET phase='running',status='' WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ " AND directory=" ++ C.q(directory) ++ ";")
+    observing_after_query(db,session,attempt,directory,saved)
+
 # Completion preserves the native event and status. Its stop report is committed
 # before the owner releases custody; native acceptance receipts are unchanged.
 def exited_sql(+session: String, +attempt: String, +status: String, +event: String, +error: String, +log: String) -> String:

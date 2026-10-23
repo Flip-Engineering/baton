@@ -39,8 +39,43 @@ static int print_row(void *context, int count, char **values, char **columns) {
 
 int main(int argc, char **argv) {
   if (argc < 3) {
-    fprintf(stderr, "usage: hold|hold-read|install|install-busy|state|recover|bad DB [N]\n");
+    fprintf(stderr, "usage: hold|hold-read|read-call|install|install-busy|state|recover|bad DB [N]\n");
     return 2;
+  }
+  if (!strcmp(argv[1], "read-call")) {
+    BatonSql call;
+    memset(&call, 0, sizeof(call));
+    IoWork work;
+    work.data = &call;
+    char sql[] = "BEGIN; SELECT count(*) FROM messages;";
+    call.path = argv[2];
+    call.sql = sql;
+    baton_sql_read_call(&work);
+    printf("read_call=1 code=%d output=%s error=%s\n",
+           call.code, call.output ? call.output : "",
+           call.error ? call.error : "");
+    int code = call.code;
+    free(call.output);
+    free(call.error);
+    if (code != SQLITE_OK)
+      return 1;
+    sqlite3 *writer = NULL;
+    int writer_code = sqlite3_open(argv[2], &writer);
+    if (writer_code != SQLITE_OK) {
+      printf("writer_commit=failed err=open:%d\n", writer_code);
+      if (writer) sqlite3_close(writer);
+      return 1;
+    }
+    sqlite3_busy_timeout(writer, 0);
+    char *writer_error = NULL;
+    writer_code = sqlite3_exec(writer,
+      "BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS read_call_release_probe(x); COMMIT;",
+      NULL, NULL, &writer_error);
+    printf("writer_commit=%s%s%s\n", writer_code == SQLITE_OK ? "ok" : "failed",
+           writer_error ? " err=" : "", writer_error ? writer_error : "");
+    sqlite3_free(writer_error);
+    sqlite3_close(writer);
+    return writer_code == SQLITE_OK ? 0 : 1;
   }
   sqlite3 *db = NULL;
   int rc = sqlite3_open(argv[2], &db);

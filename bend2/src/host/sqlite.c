@@ -1403,10 +1403,14 @@ static void baton_sql_read_call(IoWork *w) {
     }
     if (call->code == SQLITE_OK)
       call->code = sqlite3_exec(db, call->sql, baton_sql_row, call, &error);
-    if (call->code != SQLITE_OK) {
+    if (call->code != SQLITE_OK)
       call->error = strdup(error ? error : sqlite3_errmsg(db));
-      sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
-    }
+    /* A caller SQL text can leave a transaction open. A read-only connection
+       that keeps it holds SHARED and blocks every writer's commit, including a
+       writer in this same process. Roll back unconditionally before close so
+       the read lock is released at the call boundary, not at process exit.
+       SQLite reports no transaction as a harmless error here. */
+    sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
     sqlite3_free(error);
   }
   if (db) sqlite3_close(db);
