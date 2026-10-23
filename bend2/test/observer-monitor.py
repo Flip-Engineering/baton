@@ -182,7 +182,7 @@ class ObserverMonitor(unittest.TestCase):
     def start_attempt(self, stderr_text='', native_uuid=NATIVE_UUID, attempt_id='attempt1',
                       stdout_text='monitor-line\n', sleep_seconds=8,
                       later_stdout_text='', stdout_file=None, later_stdout_file=None,
-                      stdout_fixture=None, harness='codex', spool_timeout=10, hold=False):
+                      stdout_fixture=None, harness='codex', spool_timeout=10, hold=False, reporter=False):
         native_lines = [
             '#!' + sys.executable,
             'import pathlib,sys,time',
@@ -245,6 +245,10 @@ class ObserverMonitor(unittest.TestCase):
         self.fixture('init', self.db, harness)
         with sqlite3.connect(self.db) as database:
             database.execute("UPDATE sessions SET native=? WHERE id='parent'", (native_uuid,))
+            if reporter:
+                # A completion report needs a recipient: the session's parent.
+                database.execute("INSERT INTO sessions(id,parent,harness,model,effort) VALUES('reporter',NULL,'codex','controlled-model','low')")
+                database.execute("UPDATE sessions SET parent='reporter' WHERE id='parent'")
         start = subprocess.Popen(
             [str(FIXTURE), 'start', str(self.db), attempt_id, str(self.attempt),
             str(self.workspace), str(self.log), native_uuid, str(COORDINATOR), harness,
@@ -362,7 +366,7 @@ class ObserverMonitor(unittest.TestCase):
 
         observer, birth, manifest = self.start_attempt(
             stdout_text='', stdout_file=output_file, sleep_seconds=15,
-            later_stdout_text=terminal.decode())
+            later_stdout_text=terminal.decode(), reporter=True)
         argv = [str(COORDINATOR), '--recover-observer', str(self.db),
                 'parent', str(observer)]
         monitor = subprocess.Popen(
@@ -400,7 +404,7 @@ class ObserverMonitor(unittest.TestCase):
                          hashlib.sha256(output_file.read_bytes()).digest())
         self.assert_unknown_pending()
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
-        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (0,))
+        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent' AND id NOT LIKE '%:exit'"), (0,))
         self.assertFalse((self.attempt / 'acknowledged').exists())
         self.assertFalse((self.attempt / 'released').exists())
 
@@ -417,7 +421,7 @@ class ObserverMonitor(unittest.TestCase):
         self.assertIsNone(second_monitor.poll(), 'reopened monitor exited before native completion')
         self.assertEqual(checkpoint_offset(self.attempt), expected_offset)
         self.assertEqual(custody_offset(self.attempt), expected_offset)
-        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (0,))
+        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent' AND id NOT LIKE '%:exit'"), (0,))
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
         self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
         self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
@@ -449,11 +453,11 @@ class ObserverMonitor(unittest.TestCase):
         self.assertEqual(checkpoint_offset(self.attempt), expected_offset)
         self.assertEqual(custody_offset(self.attempt), expected_offset)
         self.assert_unknown_pending(native_exited=True)
-        report = self.row("SELECT body FROM messages WHERE kind='report' AND sender='parent' LIMIT 1")
+        report = self.row("SELECT body FROM messages WHERE kind='report' AND sender='parent' AND id NOT LIKE '%:exit' LIMIT 1")
         self.assertIsNotNone(report, 'completed Codex result report was not persisted')
         self.assertEqual(len(report[0].encode()), text_bytes)
         self.assertEqual(hashlib.sha256(report[0].encode()).digest(), digest.digest())
-        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (1,))
+        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent' AND id NOT LIKE '%:exit'"), (1,))
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
         turn_event = self.row("SELECT event FROM turns WHERE worker='parent' LIMIT 1")
         self.assertIsNotNone(turn_event)
@@ -487,7 +491,7 @@ class ObserverMonitor(unittest.TestCase):
         legacy = ('{"type":"item.completed","item":{"id":"legacy","type":"agent_message",'
                   '"text":"prior assistant result"}}\n')
         observer, birth, manifest = self.start_attempt(
-            stdout_text=legacy, later_stdout_file=output_file, sleep_seconds=5)
+            stdout_text=legacy, later_stdout_file=output_file, sleep_seconds=5, reporter=True)
         argv = [str(COORDINATOR), '--recover-observer', str(self.db),
                 'parent', str(observer)]
         monitor = subprocess.Popen(
@@ -521,7 +525,7 @@ class ObserverMonitor(unittest.TestCase):
         self.assertIsNone(monitor.poll(), 'reopened monitor exited before failed frame')
         self.assertEqual(checkpoint_offset(self.attempt), legacy_offset)
         self.assertEqual(custody_offset(self.attempt), legacy_offset)
-        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (0,))
+        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent' AND id NOT LIKE '%:exit'"), (0,))
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
 
         self.release_marker.touch()
@@ -542,19 +546,17 @@ class ObserverMonitor(unittest.TestCase):
         out, err = monitor.communicate(timeout=20)
         self.assertNotEqual(monitor.returncode, 0, out + err)
         self.assert_unknown_pending(native_exited=True)
-        report = self.row("SELECT body FROM messages WHERE kind='report' AND sender='parent' LIMIT 1")
+        report = self.row("SELECT body FROM messages WHERE kind='report' AND sender='parent' AND id NOT LIKE '%:exit' LIMIT 1")
         self.assertIsNotNone(report, 'failed Codex result report was not persisted')
-        self.assertEqual(len(report[0].encode()), text_bytes)
-        self.assertEqual(hashlib.sha256(report[0].encode()).digest(), digest.digest())
-        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (1,))
+        result_body = json.loads(report[0])
+        self.assertEqual(result_body['type'], 'result')
+        self.assertEqual(result_body['is_error'], 1)
+        self.assertEqual(len(result_body['result'].encode()), text_bytes)
+        self.assertEqual(hashlib.sha256(result_body['result'].encode()).digest(), digest.digest())
+        self.assertEqual(result_body['nativeEvent']['type'], 'turn.failed')
+        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent' AND id NOT LIKE '%:exit'"), (1,))
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
-        turn_event = self.row("SELECT event FROM turns WHERE worker='parent' LIMIT 1")
-        self.assertIsNotNone(turn_event)
-        result_event = json.loads(turn_event[0])
-        self.assertEqual(result_event['type'], 'result')
-        self.assertEqual(result_event['is_error'], 1)
-        self.assertEqual(result_event['result'], report[0])
-        self.assertEqual(result_event['nativeEvent']['type'], 'turn.failed')
+        self.assertEqual(self.row("SELECT event FROM turns WHERE worker='parent' LIMIT 1"), report)
         self.assertFalse((self.attempt / 'acknowledged').exists())
         self.assertFalse((self.attempt / 'released').exists())
         self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
@@ -583,7 +585,7 @@ class ObserverMonitor(unittest.TestCase):
         expected_offset = output_file.stat().st_size
 
         observer, birth, manifest = self.start_attempt(
-            stdout_text='', stdout_file=output_file, sleep_seconds=30)
+            stdout_text='', stdout_file=output_file, sleep_seconds=30, reporter=True)
         argv = [str(COORDINATOR), '--recover-observer', str(self.db),
                 'parent', str(observer)]
         monitor = subprocess.Popen(
@@ -619,7 +621,7 @@ class ObserverMonitor(unittest.TestCase):
         self.assertEqual((self.attempt / 'stdout').stat().st_size, expected_offset)
         self.assertEqual(hashlib.sha256((self.attempt / 'stdout').read_bytes()).digest(),
                          hashlib.sha256(output_file.read_bytes()).digest())
-        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (0,))
+        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent' AND id NOT LIKE '%:exit'"), (0,))
         self.assert_unknown_pending()
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
         self.assertFalse((self.attempt / 'acknowledged').exists())
@@ -635,7 +637,7 @@ class ObserverMonitor(unittest.TestCase):
         self.assertIsNone(second_monitor.poll(), 'reopened monitor exited before native completion')
         self.assertEqual(checkpoint_offset(self.attempt), expected_offset)
         self.assertEqual(custody_offset(self.attempt), expected_offset)
-        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (0,))
+        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent' AND id NOT LIKE '%:exit'"), (0,))
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
         self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
         self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
@@ -654,7 +656,7 @@ class ObserverMonitor(unittest.TestCase):
         self.assertEqual(checkpoint_offset(self.attempt), expected_offset)
         self.assertEqual(custody_offset(self.attempt), expected_offset)
         self.assert_unknown_pending(native_exited=True)
-        report = self.row("SELECT body FROM messages WHERE kind='report' AND sender='parent' LIMIT 1")
+        report = self.row("SELECT body FROM messages WHERE kind='report' AND sender='parent' AND id NOT LIKE '%:exit' LIMIT 1")
         self.assertIsNotNone(report, 'failed Codex result report was not persisted')
         result_body = json.loads(report[0])
         self.assertEqual(result_body['type'], 'result')
@@ -665,7 +667,7 @@ class ObserverMonitor(unittest.TestCase):
         self.assertEqual(result_body['nativeEvent']['error']['message'], result_body['result'])
         turn_event = self.row("SELECT event FROM turns WHERE worker='parent' LIMIT 1")
         self.assertEqual(turn_event, report)
-        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (1,))
+        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent' AND id NOT LIKE '%:exit'"), (1,))
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
 
     def test_protected_spool_replays_to_normal_eof_with_unknown_monitor_custody(self):
@@ -901,7 +903,7 @@ class ObserverMonitor(unittest.TestCase):
         self.assertFalse((self.attempt / 'acknowledged').exists())
         self.assertFalse((self.attempt / 'released').exists())
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
-        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (0,))
+        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent' AND id NOT LIKE '%:exit'"), (0,))
 
     def test_concurrent_observers_advance_the_cursor_once(self):
         observer, birth, manifest = self.start_attempt(sleep_seconds=30)

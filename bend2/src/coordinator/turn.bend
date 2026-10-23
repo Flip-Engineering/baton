@@ -871,10 +871,30 @@ def codex_frames_span_role(previous: String, decoded: Frame.FrameDecoded, spool:
       IO.pure(String,codex_state_replace_terminal(codex_state_parts(previous),frame_text))
     case other: IO.pure(String,previous)
 
-def codex_frames_text(db: String, +previous: String, +line: String) -> IO(String):
+# A small frame that follows a span state replaces the message or the terminal
+# slot of that state. The legacy form appends the frame to the previous value,
+# which would turn the three-line span state into an undecodable value.
+def codex_text_span_role(previous: String, +line: String, role: String) -> String:
+  match role:
+    case "assistant": line
+    case "terminal-error": codex_state_encode("",line)
+    case "terminal": codex_state_replace_terminal(codex_state_parts(previous),line)
+    case other: previous
+
+def codex_frames_text_legacy(db: String, +previous: String, +line: String) -> IO(String):
   do IO<String>:
     value : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")), prior(value) AS (VALUES(" ++ C.q(previous) ++ ")) SELECT CASE WHEN json_valid(frame.value) THEN CASE WHEN json_extract(frame.value,'$.type')='item.completed' AND json_extract(frame.value,'$.item.type')='agent_message' THEN frame.value WHEN json_extract(frame.value,'$.type') IN ('turn.completed','turn.failed') THEN CASE WHEN prior.value='' THEN frame.value ELSE prior.value || char(10) || frame.value END ELSE prior.value END ELSE prior.value END FROM frame,prior;"))
     IO.pure(String,Tx.trim_nl(value))
+
+def codex_frames_text_state(db: String, +previous: String, +line: String, state: CodexState) -> IO(String):
+  match state:
+    case CodexSpanState{message,terminal}: do IO<String>:
+      role : String <- IO.try(String,DB.Sql.query(db,codex_frame_role_sql(C.q(line))))
+      IO.pure(String,codex_text_span_role(previous,line,Tx.trim_nl(role)))
+    case CodexLegacyState{value}: codex_frames_text_legacy(db,previous,line)
+
+def codex_frames_text(db: String, +previous: String, +line: String) -> IO(String):
+  codex_frames_text_state(db,previous,line,codex_state_parts(previous))
 
 def codex_frames_span_branch(+db: String, +previous: String, +decoded: Frame.FrameDecoded, +spool: String, +offset: String, +length: String, small: Bool) -> IO(String):
   match small:
