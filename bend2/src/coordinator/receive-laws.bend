@@ -157,12 +157,20 @@ def busy_receive_defers_to_the_invocation_result(db,session,cmd,model,effort,cwd
 # The recovery attachment boundary opens the supplied attempt directory and
 # passes the returned handle to its continuation. Receive.recover supplies its
 # retained-output observation continuation.
+# The attach result carries its own code and detail; a failure is returned to
+# the caller instead of being raised, so a SQLITE_BUSY attach is recorded as a
+# typed cause.
+def attached_handle(attached: Result<&1,&1,U32 & String,U32>, next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match attached:
+    case Done{+handle}: next(handle)
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+
 def attached_recovery(+db: String, +directory: String, +log: String, next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   Storage.with_writer_leases(Result<&1,&1,U32 & String,Unit>, log, directory,
     error => IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error}),
     unit => do IO<Result<&1,&1,U32 & String,Unit>>:
-      handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
-      next(handle))
+      attached : Result<&1,&1,U32 & String,U32> <- Custody.Instance.attach(db,directory)
+      attached_handle(attached, next))
 
 law recovery_attaches_recorded_attempt:
   for +db: String
