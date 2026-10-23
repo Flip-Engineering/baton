@@ -1102,7 +1102,8 @@ static void cq_observe(const char *state, CqAdmission *view) {
   char path[PATH_MAX], text[16384];
   unsigned long long now = cq_clock_ns(CLOCK_REALTIME);
   int fresh = 0;
-  if (cq_path(path, "%s/admission/observed", state)) return;
+  /* One cache per user: what a process sees in /proc depends on its user. */
+  if (cq_path(path, "%s/admission/observed.%u", state, (unsigned)getuid())) return;
   if (!cq_read_small(path, text, sizeof(text))) {
     unsigned long long stamp = (unsigned long long)cq_field_number(text, "ts_ns", 0);
     fresh = stamp && now >= stamp && now - stamp < CQ_OBSERVE_AGE_NS
