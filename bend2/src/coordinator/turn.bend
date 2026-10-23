@@ -26,6 +26,7 @@ import ../harness/omp-player.bend as Omp
 import ../harness/muse-player.bend as Muse
 import ../harness/codex-player.bend as Codex
 import ../harness/dsh-player.bend as Dsh
+import ../harness/agy-player.bend as Agy
 import ../git/process.bend as GitProc
 import ../git/types.bend as G
 import ../context/request.bend as Req
@@ -299,7 +300,9 @@ def input(+handle: U32, +prompt: String, +harness: String, level: String) -> IO(
     Codex.input(handle,prompt),
   Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.eq(harness,"dsh\n"),
     Dsh.input(handle,prompt),
-    Claude.input(handle,prompt)))))
+  Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.eq(harness,"antigravity\n"),
+    Agy.input(handle,prompt),
+    Claude.input(handle,prompt))))))
 
 def stdin_kept_open(+harness: String) -> Bool:
   String.eq(harness,"omp\n")
@@ -464,6 +467,12 @@ def omp_terminal_span(+db: String, +spool: String, +offset: String, +length: Str
 def dsh_event(+db: String, +line: String, enabled: Bool, event: String) -> IO(String):
   match enabled:
     case True{}: Dsh.event(db,line)
+    case False{}: IO.pure(String,event)
+
+# agy `init` and `result` frames are projected the same way.
+def agy_event(+db: String, +line: String, enabled: Bool, event: String) -> IO(String):
+  match enabled:
+    case True{}: Agy.event(db,line)
     case False{}: IO.pure(String,event)
 
 
@@ -693,9 +702,13 @@ def codex_frame_kind(db: String, line: String) -> IO(String):
 def dsh_frame_kind(line: String) -> IO(String):
   IO.pure(String,Dsh.kind(line))
 
+def agy_frame_kind(line: String) -> IO(String):
+  IO.pure(String,Agy.kind(line))
+
 def frame_kind_other(+db: String, decoded: Frame.FrameDecoded, +line: String, +harness: String) -> IO(String):
   match harness:
     case "dsh\n": dsh_frame_kind(line)
+    case "antigravity\n": agy_frame_kind(line)
     case other: omp_frame_kind(db,decoded,String.eq(harness,"omp\n"))
 
 def frame_kind_selected(+db: String, decoded: Frame.FrameDecoded, +line: String, harness: String, codex: Bool) -> IO(String):
@@ -934,6 +947,7 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
     +decode_error : String <- IO.pure(String,Bool.pick(String,invalid,Frame.invalid_error(),""))
     +kind : String <- frame_kind(db,decoded,line,harness)
     +dsh : Bool <- IO.pure(Bool,String.eq(harness,"dsh\n"))
+    +agy : Bool <- IO.pure(Bool,String.eq(harness,"antigravity\n"))
     +frame_key_raw : String <- Logs.frame_identity(db,decoded,line,Tx.trim_nl(kind),String.eq(harness,"omp\n"))
     +frame_key : String <- IO.pure(String,Tx.trim_nl(frame_key_raw))
     +message_frame : Bool <- IO.pure(Bool,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"message_end")))
@@ -941,7 +955,8 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
     +activity_frame : Bool <- IO.pure(Bool,Bool.and(String.eq(harness,"omp\n"),Bool.or(String.eq(Tx.trim_nl(kind),"message_start"),String.eq(Tx.trim_nl(kind),"message_end"))))
     +activity : String <- omp_activity(db,decoded,Observer.omp_activity(checkpoint_state),activity_frame)
     +raw_event : String <- omp_terminal(db,decoded,message,activity,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"agent_end")),Guidance.relevant(kind,String.eq(harness,"omp\n")))
-    +event : String <- dsh_event(db,line,Bool.and(dsh,Dsh.admitted(Tx.trim_nl(kind))),raw_event)
+    +dsh_projected : String <- dsh_event(db,line,Bool.and(dsh,Dsh.admitted(Tx.trim_nl(kind))),raw_event)
+    +event : String <- agy_event(db,line,Bool.and(agy,Agy.admitted(Tx.trim_nl(kind))),dsh_projected)
     +kept : String <- Logs.retained(db,policy,Tx.trim_nl(kind),decoded,event,log)
     step : List<String> & String <- IO.pure(List<String> & String,Logs.frame_step(policy,Tx.trim_nl(kind),frame_key,kept,held))
     with_frame_step(WakeRead,step,lines => next_held_value => do IO<WakeRead>:
@@ -1242,13 +1257,13 @@ def retained_launch_result(checked: Result<&1,&1,U32 & String,Unit>, arguments: 
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Fail{error})
     case Done{made}: IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Done{Prepared{arguments,input,initial,keep_stdin,file_input}})
 
-def retained_launch_checked(prepared: Result<&1,&1,U32 & String,Dsh.Prepared>, +dsh: Bool, +prefix: String, +home: String, +cmd: String, +model: String, +effort: String, +native: String, +muse: Bool, +args: String, +initial: String, +omp: Bool, +claude: Bool, +level: String, seal_prompt: Bool) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
+def retained_launch_checked(prepared: Result<&1,&1,U32 & String,Dsh.Prepared>, +dsh: Bool, +agy: Bool, +prefix: String, +home: String, +cmd: String, +model: String, +effort: String, +native: String, +muse: Bool, +args: String, +initial: String, +omp: Bool, +claude: Bool, +level: String, seal_prompt: Bool) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   match prepared:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Fail{error})
     case Done{Dsh.Prepared{tools, model_patch}}: do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
-      +arguments : String = Bool.pick(String,dsh,prefix ++ Dsh.argv(home,cmd,model,effort,tools,model_patch,native,String.is_empty(native)),args)
+      +arguments : String = Bool.pick(String,dsh,prefix ++ Dsh.argv(home,cmd,model,effort,tools,model_patch,native,String.is_empty(native)),Bool.pick(String,agy,prefix ++ Agy.argv(cmd,model,effort,native,String.is_empty(native)),args))
       checked : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),omp,Omp.preflight_arguments(arguments),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
-      retained_launch_result(checked,arguments,retained_input(muse,omp,claude,initial,level),initial,retained_keep_stdin(muse,omp,claude),Bool.or(muse,seal_prompt))
+      retained_launch_result(checked,arguments,Bool.pick(String,agy,Agy.user_frame(initial),retained_input(muse,omp,claude,initial,level)),initial,retained_keep_stdin(muse,omp,claude),Bool.or(muse,seal_prompt))
 
 def retained_launch_plain(omp: Bool, claude: Bool, muse: Bool, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +prefix: String, account: Maybe<&2,Accounts.AccountRecord>, +credit_refusal: String) -> Result<&1,&1,U32 & String,String>:
   match account:
@@ -1274,6 +1289,7 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
       +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
       +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
       +dsh : Bool <- IO.pure(Bool,String.eq(harness,"dsh\n"))
+      +agy : Bool <- IO.pure(Bool,String.eq(harness,"antigravity\n"))
       +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
       home : String <- dsh_home_if(dsh,db,absolute_db,player)
       prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort)
@@ -1285,7 +1301,7 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
       binding : Maybe<List<String>> <- Accounts.credit_launch_binding(db,player,directory,Tx.trim_nl(harness),account,identity_resolver(parts),store)
       recorded : Unit <- Accounts.record_current_attempt(db,player,directory,predecessor,account)
       +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,history,Tx.trim_nl(harness),account,binding,credit_refusal)))
-      launch : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_launch_checked(prepared,dsh,prefix,home,cmd,model,effort,native,muse,args,initial,omp,claude,level,seal_prompt)
+      launch : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_launch_checked(prepared,dsh,agy,prefix,home,cmd,model,effort,native,muse,args,initial,omp,claude,level,seal_prompt)
       IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,launch)
 
 def retained_prepare(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool, predecessor: String) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
@@ -1382,6 +1398,11 @@ def muse_launch_configured(+db: String, +player: String, cmd: String, model: Str
     binding : Maybe<List<String>> <- direct_binding(db,player,"muse\n")
     Muse.start_player_profile(binding_list(binding),cmd,model,effort,cwd,stderr,task,session,String.is_empty(session))
 
+def agy_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
+  match fresh:
+    case True{}: Agy.start_player(cmd,model,effort,cwd,stderr)
+    case False{}: Agy.resume_player(cmd,model,effort,cwd,stderr,session)
+
 def dsh_launch_prepared(prepared: Result<&1,&1,U32 & String,Dsh.Prepared>, +home: String, +cmd: String, +model: String, +effort: String, +cwd: String, +stderr: String, +session: String) -> IO(Result<&1,&1,U32 & String,U32>):
   match prepared:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})
@@ -1405,9 +1426,11 @@ def launch(+db: String, +player: String, sessions: String, +cmd: String, +model:
     muse_launch_configured(db,player,cmd,model,effort,cwd,stderr,session,task),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"dsh\n"),
     dsh_launch(db,player,log,cmd,model,effort,cwd,stderr,session),
+  Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"antigravity\n"),
+    agy_launch(cmd,model,effort,cwd,stderr,session,String.is_empty(session)),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"codex\n"),
     Codex.start_player(cmd,model,effort,cwd,stderr,session,String.is_empty(session)),
-    claude_launch(cmd,model,effort,cwd,stderr,session,String.is_empty(session))))))
+    claude_launch(cmd,model,effort,cwd,stderr,session,String.is_empty(session)))))))
 
 # The state the workspace holds when a turn restarts: the work an interrupted
 # turn had already written.
@@ -1929,7 +1952,7 @@ def player_checked(+db: String, +player: String, +id: String, +cmd: String, +mod
     case True{}: IO.die(Unit,2,"Player is not registered; register it before starting a turn.")
     case False{}:
       do IO<Unit>:
-        supported : Unit <- supported_harness(Bool.or(String.eq(harness,"omp\n"),Bool.or(String.eq(harness,"codex\n"),Bool.or(String.eq(harness,"claude-code\n"),Bool.or(String.eq(harness,"muse\n"),String.eq(harness,"dsh\n"))))))
+        supported : Unit <- supported_harness(Bool.or(String.eq(harness,"omp\n"),Bool.or(String.eq(harness,"codex\n"),Bool.or(String.eq(harness,"claude-code\n"),Bool.or(String.eq(harness,"muse\n"),Bool.or(String.eq(harness,"dsh\n"),String.eq(harness,"antigravity\n")))))))
         foreign : String <- IO.try(String,DB.Sql.query(db,id_owner_sql(id,player)))
         identity : Unit <- matching_turn(String.eq(foreign,"0\n"))
         +prompt : String <- supplied_task(task,supplied)

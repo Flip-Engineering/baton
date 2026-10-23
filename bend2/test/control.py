@@ -160,6 +160,14 @@ while True:
         print('fixture diagnostic',file=sys.stderr,flush=True)
         reply({'output_written':len(text)})
         continue
+    if action.get('git_commit'):
+        name,body=action['git_commit']
+        pathlib.Path(name).write_text(body)
+        run=subprocess.run(['git','add',name],capture_output=True,text=True)
+        if run.returncode==0:
+            run=subprocess.run(['git','commit','-q','-m','fixture worker commit'],capture_output=True,text=True)
+        reply({'git_commit':{'code':run.returncode,'stdout':run.stdout,'stderr':run.stderr}})
+        continue
     acknowledge()
     body=action['finish']
     failure=action.get('fail',False)
@@ -201,6 +209,7 @@ class Control(unittest.TestCase):
         self.home = self.directory / 'isolated-home'
         self.home.mkdir()
         self.environment = dict(os.environ, HOME=str(self.home),
+                                GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1',
                                 OPENAI_API_KEY='fixture-unused', CODEX_API_KEY='fixture-unused')
         self.environment.pop('BATON2_GIT_REGISTRY', None)
         self.repo = self.directory / 'repository'
@@ -233,10 +242,10 @@ class Control(unittest.TestCase):
         return subprocess.run(['git', '-C', str(self.repo), *args], env=self.environment,
                               check=True, capture_output=True, text=True)
 
-    def call(self, *args, ok=True, raw=False):
+    def call(self, *args, ok=True, raw=False, env=None):
         child = subprocess.Popen([str(EXE), str(self.db), *map(str, args)],
-                                 env=self.environment, stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE, text=True)
+                                 env=self.environment if env is None else env,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = child.communicate()
         record = {'argv': list(map(str, args)), 'pid': child.pid, 'code': child.returncode,
                   'stdout': stdout, 'stderr': stderr, 'direct_wait_completed': True}

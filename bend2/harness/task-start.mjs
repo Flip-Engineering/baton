@@ -33,7 +33,7 @@ New sessions use the named saved route and explicit overrides. An existing
 session supplies its recorded route; --route explicitly selects saved values
 for configuration. Explicit harness, model and effort override those values.
 An existing receiver remains selected until an explicit command changes it.
-New sessions resolve codex, omp, muse, dsh or claude through the current PATH.
+New sessions resolve codex, omp, muse, dsh, antigravity or claude through the current PATH.
 Full input and setup results are stored in the database and returned with inspect commands.
 An existing open assignment receives continuation input automatically. Baton
 resolves the sending agent from its recorded launch context. Stops remain
@@ -128,7 +128,7 @@ function projectResolution(path) {
 }
 
 function executableInPath(harness) {
-  const name = { codex: 'codex', omp: 'omp', muse: 'muse', dsh: 'dsh', 'claude-code': 'claude' }[harness];
+  const name = { codex: 'codex', omp: 'omp', muse: 'muse', dsh: 'dsh', antigravity: 'agy', 'claude-code': 'claude' }[harness];
   for (const directory of (process.env.PATH ?? '/usr/bin:/bin').split(':')) {
     try {
       const path = realpathSync(resolve(directory || '.', name));
@@ -304,7 +304,7 @@ export function startTask(executable, database, argv) {
     result.route = { ...route, settingsPath: named ? settingsPath : null, name: options.route ?? null,
       sources: Object.fromEntries(['harness', 'model', 'effort'].map((field) => [field,
         options[field] !== undefined ? 'explicit' : named ? 'named-project-route' : 'recorded-session'])) };
-    if (!['codex', 'omp', 'muse', 'claude-code', 'dsh'].includes(route.harness) || !route.model || !route.effort) {
+    if (!['codex', 'omp', 'muse', 'claude-code', 'dsh', 'antigravity'].includes(route.harness) || !route.model || !route.effort) {
       fail('taskRouteIncomplete', 'A supported harness, model and effort must be configured.',
         'Pass --route NAME for a saved project route, or supply --harness, --model and --effort.');
     }
