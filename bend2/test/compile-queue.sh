@@ -86,6 +86,13 @@ mkdir -p "$T/src/bend2/src"
 printf 'import Base\ndef main() -> IO(Unit): IO.die(Unit,0,"fixture")\n' > "$T/src/bend2/src/fixture.bend"
 printf 'int main(void){return 0;}\n' > "$T/input.c"
 
+# A queue job whose key, entry and compiler have no recorded peak runs only when
+# no other such job runs. A compiler of its own gives a test a group of its own.
+fresh_fake() {
+  [ -x "$T/fake-$1" ] || { cp "$FAKE" "$T/fake-$1"; printf '# %s\n' "$1" >> "$T/fake-$1"; chmod +x "$T/fake-$1"; }
+  printf '%s\n' "$T/fake-$1"
+}
+
 fail=0
 pass() { printf 'PASS %s\n' "$1"; }
 bad() { printf 'FAIL %s\n' "$1" >&2; fail=1; }
@@ -95,19 +102,19 @@ run_cc() { # tag output extra...
   tag=$1
   out=$2
   shift 2
-  sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+  sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "${CQ_FAKE:-$FAKE}" --linker "${CQ_FAKE:-$FAKE}" --version fake-version \
     --input "$T/input.c" --artifact "binary=$out" --receipt "$out.receipt" --option "test=$tag" \
     --token "tok-$(basename "$out")" \
-    -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$T/input.c" "$@" >"$T/$(basename "$out").out" 2>"$T/$(basename "$out").err"
+    -- "${CQ_FAKE:-$FAKE}" --tag "$tag" --log "$LOG" -o "$out" "$T/input.c" "$@" >"$T/$(basename "$out").out" 2>"$T/$(basename "$out").err"
 }
 
 cc_key() { # tag output extra...
   tag=$1
   out=$2
   shift 2
-  sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+  sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "${CQ_FAKE:-$FAKE}" --linker "${CQ_FAKE:-$FAKE}" --version fake-version \
     --input "$T/input.c" --artifact "binary=$out" --option "test=$tag" \
-    -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$T/input.c" "$@"
+    -- "${CQ_FAKE:-$FAKE}" --tag "$tag" --log "$LOG" -o "$out" "$T/input.c" "$@"
 }
 
 run_cgen() { # tag output extra...
@@ -115,10 +122,10 @@ run_cgen() { # tag output extra...
   out=$2
   shift 2
   sh "$QUEUE" run --kind cgen --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
-    --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$FAKE" \
+    --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "${CQ_FAKE:-$FAKE}" \
     --artifact "c.c=$out" --option "test=$tag" \
     --token "tok-$(basename "$out")" \
-    -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$@" >"$T/$(basename "$out").out" 2>"$T/$(basename "$out").err"
+    -- "${CQ_FAKE:-$FAKE}" --tag "$tag" --log "$LOG" -o "$out" "$@" >"$T/$(basename "$out").out" 2>"$T/$(basename "$out").err"
 }
 
 cgen_key() { # tag output extra...
@@ -126,10 +133,10 @@ cgen_key() { # tag output extra...
   out=$2
   shift 2
   sh "$QUEUE" key --kind cgen --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
-    --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$FAKE" \
+    --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "${CQ_FAKE:-$FAKE}" \
     --artifact "c.c=$out" --option "test=$tag" \
     --token "tok-$(basename "$out")" \
-    -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$@"
+    -- "${CQ_FAKE:-$FAKE}" --tag "$tag" --log "$LOG" -o "$out" "$@"
 }
 
 # A quoted include that names a directory fails during closure reads before execution.
@@ -302,13 +309,13 @@ wait "$c2" || bad 'identical cgen second requester failed'
 [ "$(count_starts)" = 1 ] && pass 'identical cgen shared one execution' || bad "identical cgen starts=$(count_starts)"
 [ "$(cat "$T/cgen1")" = "$(cat "$T/cgen2")" ] && pass 'identical cgen artifacts match' || bad 'identical cgen artifacts differ'
 
-# Distinct cgen requests serialize.
+# Distinct cgen requests without a recorded peak run one at a time.
 : > "$LOG"
-run_cgen serial1 "$T/serial1" --sleep 1 & s1=$!
-run_cgen serial2 "$T/serial2" --sleep 1 & s2=$!
+( CQ_FAKE=$(fresh_fake serial); run_cgen serial1 "$T/serial1" --sleep 1 ) & s1=$!
+( CQ_FAKE=$(fresh_fake serial); run_cgen serial2 "$T/serial2" --sleep 1 ) & s2=$!
 wait "$s1" || bad 'serial first requester failed'
 wait "$s2" || bad 'serial second requester failed'
-python3 - "$LOG" <<'PY' && pass 'distinct cgen serialized' || bad 'distinct cgen intervals overlap'
+python3 - "$LOG" <<'PY' && pass 'distinct cgen without history serialized' || bad 'distinct cgen intervals overlap'
 import sys
 rows=[]
 for line in open(sys.argv[1]):
@@ -346,37 +353,39 @@ for i in range(len(values)):
 PY
 }
 
-# Distinct cc requests serialize under the host lock.
+# Distinct cc requests without a recorded peak run one at a time.
 : > "$LOG"
-run_cc cc1 "$T/cc1" --sleep 1 & q1=$!
-run_cc cc2 "$T/cc2" --sleep 1 & q2=$!
+( CQ_FAKE=$(fresh_fake cc-serial); run_cc cc1 "$T/cc1" --sleep 1 ) & q1=$!
+( CQ_FAKE=$(fresh_fake cc-serial); run_cc cc2 "$T/cc2" --sleep 1 ) & q2=$!
 wait "$q1" || bad 'first cc requester failed'
 wait "$q2" || bad 'second cc requester failed'
-assert_serialized && pass 'distinct cc serialized' || bad 'distinct cc intervals overlap'
+assert_serialized && pass 'distinct cc without history serialized' || bad 'distinct cc intervals overlap'
 
-# C generation and native C compilation share the same host lock.
+# A cgen job and a cc job without a recorded peak share the one slot for jobs
+# without history.
 : > "$LOG"
-run_cgen mixed-cgen "$T/mixed.c" --sleep 1 & m1=$!
-run_cc mixed-cc "$T/mixed-bin" --sleep 1 & m2=$!
+( CQ_FAKE=$(fresh_fake mixed); run_cgen mixed-cgen "$T/mixed.c" --sleep 1 ) & m1=$!
+( CQ_FAKE=$(fresh_fake mixed); run_cc mixed-cc "$T/mixed-bin" --sleep 1 ) & m2=$!
 wait "$m1" || bad 'mixed cgen requester failed'
 wait "$m2" || bad 'mixed cc requester failed'
 assert_serialized && pass 'cgen and cc serialized together' || bad 'cgen and cc intervals overlap'
 
 # The retained reference launcher and the installed native queue share the
-# heavy execution custody. Run their distinct cgen requests concurrently and
-# assert the compiler intervals do not overlap.
+# admission rule. Run their distinct cgen requests, which have no recorded
+# peak, concurrently and assert the compiler intervals do not overlap.
 REFERENCE=${BATON_COMPILE_QUEUE_REFERENCE:-}
 if [ -n "$REFERENCE" ] && [ -x "$REFERENCE" ]; then
   : > "$LOG"
-  run_cgen cross-native "$T/cross-native.c" --sleep 1 & n1=$!
+  CROSS_FAKE=$(fresh_fake cross)
+  ( CQ_FAKE=$CROSS_FAKE; run_cgen cross-native "$T/cross-native.c" --sleep 1 ) & n1=$!
   "$REFERENCE" run --kind cgen --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
-    --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$FAKE" \
-    --artifact "c=$T/cross-reference.c" --option test=cross-reference \
-    -- "$FAKE" --tag cross-reference --log "$LOG" -o "$T/cross-reference.c" --sleep 1 \
+    --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$CROSS_FAKE" \
+    --artifact "c.c=$T/cross-reference.c" --option test=cross-reference \
+    -- "$CROSS_FAKE" --tag cross-reference --log "$LOG" -o "$T/cross-reference.c" --sleep 1 \
     >"$T/cross-reference.out" 2>"$T/cross-reference.err" & n2=$!
   wait "$n1" || bad 'native cross-launcher requester failed'
   wait "$n2" || bad 'reference cross-launcher requester failed'
-  assert_serialized && pass 'native and reference heavy custody serialized' \
+  assert_serialized && pass 'native and reference jobs without history serialized' \
     || bad 'native and reference compiler intervals overlap'
 else
   printf 'SKIP reference launcher not configured: set BATON_COMPILE_QUEUE_REFERENCE\n'
@@ -472,17 +481,18 @@ wait "$k" || krc=$?
 # Cancel the final requester while its supervisor waits behind another key.
 # The supervisor must publish a terminal result without starting the command.
 : > "$LOG"
-run_cc occupies-queue "$T/occupies-queue" --sleep 3 & blocker=$!
+CANCEL_FAKE=$(fresh_fake queued-cancel)
+( CQ_FAKE=$CANCEL_FAKE; run_cc occupies-queue "$T/occupies-queue" --sleep 3 ) & blocker=$!
 i=0
 while [ "$i" -lt 200 ]; do
   (grep -q '^start' "$LOG" 2>/dev/null) && break
   i=$((i + 1))
   sleep 0.05
 done
-qkey=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+qkey=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$CANCEL_FAKE" --linker "$CANCEL_FAKE" --version fake-version \
   --input "$T/input.c" --artifact "binary=$T/queued-cancel" --option 'test=queued-cancel' \
-  -- "$FAKE" --tag queued-cancel --log "$LOG" -o "$T/queued-cancel" "$T/input.c")
-run_cc queued-cancel "$T/queued-cancel" & queued=$!
+  -- "$CANCEL_FAKE" --tag queued-cancel --log "$LOG" -o "$T/queued-cancel" "$T/input.c")
+( CQ_FAKE=$CANCEL_FAKE; run_cc queued-cancel "$T/queued-cancel" ) & queued=$!
 i=0
 while [ "$i" -lt 200 ]; do
   [ -f "$STATE/keys/$qkey/active" ] && break
@@ -686,7 +696,7 @@ cmp -s "$expected" "$T/runtime-argv.tail" \
   && pass 'argv recorder published its declared binary' || bad 'argv recorder output missing'
 
 # Adoption spawns the guard through the runtime delimiter. A run request is
-# held at its key lock so the heavy lane is free for adopt. The external fake
+# held at its key lock while the external process is adopted. The external fake
 # compiler stays alive briefly; the guard must dispatch with its argv intact
 # and publish the adopted result and artifact.
 adopt_artifact="$T/adopt-artifact"
@@ -780,5 +790,65 @@ else
   bad 'guard did not publish the adopted result'
 fi
 wait "$adopt_run_pid" 2>/dev/null || true
+
+# Memory admission. Peaks are recorded for every run and history is seeded
+# relative to the memory the host has now: a large job needs more than half of
+# what the rule can grant, so a second large job waits while a small job fits
+# beside the first one.
+ident_peak=$(sed -n 's/^peak_kb=//p' "$STATE/keys/$ident_key/peak" 2>/dev/null || true)
+[ -n "$ident_peak" ] && [ "$ident_peak" -gt 0 ] 2>/dev/null \
+  && pass 'run recorded the peak memory of its key' || bad 'run did not record the peak memory of its key'
+ls "$STATE"/peaks/* >/dev/null 2>&1 \
+  && pass 'run recorded the peak of its compiler and entry group' || bad 'run did not record the group peak'
+if [ -r /proc/meminfo ]; then
+  sh "$QUEUE" status --state-root "$STATE" > "$T/status.out"
+  grep -q '^memory total_kb=' "$T/status.out" \
+    && pass 'status reports the memory the rule works from' || bad 'status omits memory'
+  mem_total=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
+  mem_avail=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
+  room=$((mem_avail - mem_total / 4))
+  if [ "$room" -lt 131072 ]; then
+    printf 'SKIP memory admission: %s kB available beyond the reserve\n' "$room"
+  else
+    large=$((room * 7 / 10))
+    ADMIT_FAKE=$(fresh_fake admission)
+    for tag in adm-large1 adm-large2 adm-small; do
+      case $tag in adm-small) kb=64 ;; *) kb=$large ;; esac
+      case $tag in adm-large1) sleep_for=3 ;; *) sleep_for=1 ;; esac
+      k=$(CQ_FAKE=$ADMIT_FAKE; cc_key "$tag" "$T/$tag" --sleep "$sleep_for")
+      (umask 0007; mkdir -p -m 2770 "$STATE/keys/$k")
+      printf 'peak_kb=%s\n' "$kb" > "$STATE/keys/$k/peak"
+    done
+    : > "$LOG"
+    ( CQ_FAKE=$ADMIT_FAKE; run_cc adm-large1 "$T/adm-large1" --sleep 3 ) & a1=$!
+    i=0
+    while [ "$i" -lt 200 ] && ! grep -q 'adm-large1' "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
+    ( CQ_FAKE=$ADMIT_FAKE; run_cc adm-large2 "$T/adm-large2" --sleep 1 ) & a2=$!
+    i=0
+    while [ "$i" -lt 200 ]; do
+      sh "$QUEUE" status --state-root "$STATE" > "$T/status.out"
+      grep -q '^waiting ' "$T/status.out" && break
+      i=$((i + 1)); sleep 0.05
+    done
+    ( CQ_FAKE=$ADMIT_FAKE; run_cc adm-small "$T/adm-small" --sleep 1 ) & a3=$!
+    wait "$a1" || bad 'first large requester failed'
+    wait "$a2" || bad 'second large requester failed'
+    wait "$a3" || bad 'small requester failed'
+    python3 - "$LOG" <<'PY' && pass 'small job ran beside a large job and a second large job waited' || bad 'admission order is wrong'
+import sys
+at = {}
+for line in open(sys.argv[1]):
+    parts = line.split()
+    if len(parts) >= 4 and parts[0] in ('start', 'end'):
+        at[(parts[3], parts[0])] = int(parts[1])
+if not (at[('adm-small', 'start')] < at[('adm-large1', 'end')]):
+    sys.exit('the small job did not start while the first large job ran')
+if not (at[('adm-large2', 'start')] >= at[('adm-large1', 'end')]):
+    sys.exit('the second large job started while the first large job ran')
+PY
+  fi
+else
+  printf 'SKIP memory admission: no /proc/meminfo\n'
+fi
 
 exit "$fail"

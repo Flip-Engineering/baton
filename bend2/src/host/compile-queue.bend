@@ -487,6 +487,21 @@ def identity_key(+config: Config) -> IO(String):
         fields_join("\n", fields_all(text, "option")),
         normalize_command(command, cwd, root, compiler, inputs, artifacts)))
 
+def history_group(+config: Config) -> IO(String):
+  match config:
+    case Config{+text, command}:
+      +inputs = input_rows(text)
+      +artifacts = artifact_rows(text)
+      +cwd = field(text, "cwd")
+      +root = field(text, "root")
+      +compiler = field(text, "compiler")
+      +kind = field(text, "kind")
+      +linker = Bool.pick(String, String.eq(kind, "cc"), field(text, "linker"), "")
+      +version = Bool.pick(String, String.eq(kind, "cc"), field(text, "version"), "")
+      IO.try(String, Identity.CompileQueueIdentity.history_group(
+        kind, cwd, root, field(text, "entry"), compiler, linker, version,
+        normalize_command(command, cwd, root, compiler, inputs, artifacts)))
+
 def config_state(config: Config) -> String:
   match config:
     case Config{text, command}: field(text, "state_root")
@@ -582,6 +597,8 @@ def write_attempt_files(+config: Config, +key: String, keydir: String, +attempt:
           IO.die(Unit, 1, "compile-queue: inputs changed before execution"))
         wrote_command : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/command", command_text(command, work, inputs, artifacts)))
         wrote_meta : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/meta", meta_text(config, key, keydir, attempt, artifacts)))
+        group : String <- history_group(config)
+        wrote_group : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/group", "group=" ++ group ++ "\n"))
         digest_written : Unit <- Bool.pick(IO(Unit), Tx.str_eq(field(text, "kind"), "cgen"),
           write_attempt_digest(attempt, text), IO.pure(Unit, Unit{}))
         IO.pure(Unit, Unit{})
@@ -855,7 +872,7 @@ def supervise_owned(+attempt: String, +keydir: String, +kind: String, source_roo
       ++ "\nstarttime=" ++ start ++ "\nkind=" ++ kind ++ "\nsetsid=1\nstarted_ns=" ++ started ++ "\n")
     active : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(keydir ++ "/active", active_text))
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
-    locked : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_fd_acquire(8))
+    admitted : Unit <- IO.try(Unit, L.CompileQueueLifecycle.admit(attempt, "", 0, ""))
     signaled : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.set_env(
       "BATON_COMPILE_QUEUE_COMPILED", attempt ++ "/compiled")
     supervise_marker_result(signaled, attempt, keydir, kind, source_root, entry, key, started, names, cwd)
@@ -888,6 +905,46 @@ def supervise(+attempt: String) -> IO(Unit):
     owners : U32 <- owner_count(keydir)
     supervise_owner_count(owners, attempt, keydir, kind, source_root, entry, key,
       started, names, cwd, pid, start, gate)
+
+def takeover_finish(+old_pid: U32, +old_start: String) -> IO(Unit):
+  do IO<Unit>:
+    alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(old_pid, old_start))
+    Bool.pick(IO(Unit), U32.is_eq(alive, 1),
+      IO.try(Unit, L.CompileQueueLifecycle.signal_pid(old_pid, 9)),
+      IO.pure(Unit, Unit{}))
+
+# A successor for a supervisor of an older queue that waits for heavy.lock. The
+# older supervisor is stopped; this process waits for admission in the queue
+# position of the older one, runs the attempt, and then kills the older
+# supervisor, which lets the requester that waits for it read the result.
+def takeover_run(+attempt: String, +queued: String, +old_pid: U32, +old_start: String) -> IO(Unit):
+  do IO<Unit>:
+    +meta : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/meta"))
+    +kind : String <- IO.pure(String, field(meta, "kind"))
+    cwd : String <- IO.pure(String, field(meta, "cwd"))
+    source_root : String <- IO.pure(String, field(meta, "source_root"))
+    entry : String <- IO.pure(String, field(meta, "entry"))
+    key : String <- IO.pure(String, field(meta, "key"))
+    +keydir : String <- IO.pure(String, field(meta, "keydir"))
+    names : List<&2,String> <- IO.pure(List<&2,String>, fields_all(meta, "artifact_name"))
+    +pid : U32 <- IO.try(U32, L.CompileQueueLifecycle.pid())
+    start : String <- IO.try(String, L.CompileQueueLifecycle.starttime(pid))
+    active_text : String <- IO.pure(String, "pid=" ++ U32.show(pid)
+      ++ "\nstarttime=" ++ start ++ "\nkind=" ++ kind ++ "\nsetsid=1\nstarted_ns=" ++ queued ++ "\n")
+    active : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(keydir ++ "/active", active_text))
+    admitted : Unit <- IO.try(Unit, L.CompileQueueLifecycle.admit(attempt, queued, old_pid, old_start))
+    signaled : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.set_env(
+      "BATON_COMPILE_QUEUE_COMPILED", attempt ++ "/compiled")
+    finished : Unit <- supervise_marker_result(signaled, attempt, keydir, kind, source_root, entry, key, queued, names, cwd)
+    takeover_finish(old_pid, old_start)
+
+def takeover_pid(parsed: Maybe<&2,U32>, attempt: String, old_start: String, queued: String) -> IO(Unit):
+  match parsed:
+    case None{}: IO.die(Unit, 2, "compile-queue: takeover pid is malformed")
+    case Some{+old_pid}: takeover_run(attempt, queued, old_pid, old_start)
+
+def takeover_supervisor(attempt: String, old_pid_text: String, old_start: String, queued: String) -> IO(Unit):
+  takeover_pid(U32.read(old_pid_text), attempt, old_start, queued)
 
 def start_attempt_result_exists(exists: Bool, +text: String, +key: String, +keydir: String,
                                 +attempt: String, +owner: String, now: String) -> IO(Unit):
@@ -1257,6 +1314,8 @@ def status_state_key(parsed: StateKey) -> IO(Unit):
     case StateKey{+state, filter}:
       do IO<Unit>:
         IO.write("state_root=" ++ state ++ "\n")
+        admission : String <- IO.try(String, L.CompileQueueLifecycle.admission_status(state))
+        IO.write(admission)
         names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(state ++ "/keys"))
         status_rows(state, filter, Tx.split_lines(names))
 
@@ -1265,6 +1324,20 @@ def status_command(args: List<&2,String>) -> IO(Unit):
     state : String <- default_state_root()
     parsed : StateKey <- parse_state_key(args, state, "")
     status_state_key(parsed)
+
+def takeover_parsed(parsed: StateKey) -> IO(Unit):
+  match parsed:
+    case StateKey{+state, key}:
+      do IO<Unit>:
+        ready : Unit <- require_state_root(state)
+        report : String <- IO.try(String, L.CompileQueueLifecycle.takeover(state))
+        IO.write(report)
+
+def takeover_command(args: List<&2,String>) -> IO(Unit):
+  do IO<Unit>:
+    state : String <- default_state_root()
+    parsed : StateKey <- parse_state_key(args, state, "")
+    takeover_parsed(parsed)
 
 def output_of_argv(argv: List<&2,String>) -> String:
   match argv:
@@ -1467,7 +1540,7 @@ def adopt_heavy_result(heavy: Maybe<U32>, +key: String, +keydir: String, +lock: 
           ++ "\nguard=" ++ U32.show(guard_pid) ++ "\nartifact=" ++ path ++ "\n")
 
 def adopt_completed_result(present: Bool, state: String, +key: String, +keydir: String, +lock: U32,
-                           pid_text: String, start: String, cwd: String, output: String,
+                           +pid_text: String, start: String, cwd: String, output: String,
                            compiler: String, entry: String, argv: List<&2,String>, inputs: List<&2,Input>,
                            name: String, path: String) -> IO(Unit):
   match present:
@@ -1484,8 +1557,8 @@ def adopt_completed_result(present: Bool, state: String, +key: String, +keydir: 
             IO.die(Unit, 2, "compile-queue: completed result is not a verified adoption record"))
     case False{}:
       do IO<Unit>:
-        heavy : Maybe<U32> <- IO.try(Maybe<U32>, L.CompileQueueLifecycle.lock_try(state ++ "/heavy.lock"))
-        adopt_heavy_result(heavy, key, keydir, lock, pid_text, start, cwd, output,
+        claim : U32 <- IO.try(U32, L.CompileQueueLifecycle.admit_external(keydir, pid_text))
+        adopt_heavy_result(Some{claim}, key, keydir, lock, pid_text, start, cwd, output,
           compiler, entry, argv, inputs, name, path)
 
 def adopt_live(pid: U32, +pid_text: String, +start: String, +cwd: String,
@@ -1578,6 +1651,7 @@ def usage() -> String:
   ++ "       compile-queue.sh wait --state-root DIR --key KEY\n"
   ++ "       compile-queue.sh status --state-root DIR [--key KEY]\n"
   ++ "       compile-queue.sh adopt --pid PID --state-root DIR --artifact NAME=PATH\n"
+  ++ "       compile-queue.sh takeover --state-root DIR\n"
 
 def main_args(args: List<&2,String>) -> IO(Unit):
   match args:
@@ -1587,7 +1661,10 @@ def main_args(args: List<&2,String>) -> IO(Unit):
     case "cancel" <> rest: cancel_command(rest)
     case "status" <> rest: status_command(rest)
     case "adopt" <> rest: adopt_command(rest)
+    case "takeover" <> rest: takeover_command(rest)
     case "__supervise" <> attempt <> Nil{}: supervise(attempt)
+    case "__takeover" <> attempt <> pid_text <> start <> queued <> Nil{}:
+      takeover_supervisor(attempt, pid_text, start, queued)
     case "__watch-heavy" <> attempt <> pid_text <> start <> Nil{}:
       watch_heavy_pid(U32.read(pid_text), attempt, start)
     case "__guard" <> keydir <> pid <> start <> name <> path <> Nil{}:

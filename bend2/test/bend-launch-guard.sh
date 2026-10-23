@@ -14,7 +14,7 @@ temp=$(mktemp -d "$root/.scratch/launch-guard.XXXXXX")
 trap 'rm -rf "$temp"' EXIT HUP INT TERM
 # build-native.sh compiles through the compile queue. The caller supplies the
 # built queue executable; this test uses a private queue state root so the stub
-# builds do not wait on the shared heavy lock.
+# builds do not wait for the jobs of the shared queue.
 : "${BATON2_COMPILE_QUEUE_BIN:?set BATON2_COMPILE_QUEUE_BIN to the built Bend2 queue executable}"
 export BATON2_COMPILE_QUEUE_BIN
 export BATON_COMPILE_QUEUE_ROOT="$temp/queue-state"

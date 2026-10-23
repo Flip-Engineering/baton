@@ -129,9 +129,17 @@ class QueueOpaqueInputTests(unittest.TestCase):
 
     def waiter_rss(self, payload):
         (self.root / "output").unlink(missing_ok=True)
-        lock = (self.state / "heavy.lock").open("w")
+        # A running job without a recorded peak makes the request wait for admission.
+        running = self.state / "admission" / "running"
+        for directory in (self.state / "admission", running):
+            directory.mkdir(mode=0o2770, exist_ok=True)
+            directory.chmod(0o2770)
+        lock = (running / "00000000000000000001-0000000001").open("w")
         self.addCleanup(lock.close)
         fcntl.flock(lock, fcntl.LOCK_EX)
+        lock.write(f"pid={os.getpid()}\nstarttime=1\nroot={os.getpid()}\nmeasure=tree\nkey=held\n"
+                   "group=\nexpected_kb=0\nhistory=0\nbackfill=0\nadmitted_ns=1\n")
+        lock.flush()
         process = subprocess.Popen(self.command(self.candidate, action="run", payload=payload),
                                    env=self.environment, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, text=True)
