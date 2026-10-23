@@ -101,6 +101,12 @@ def CompileQueueIdentity.readlink(path: String) -> IO(Result<&1,&1,U32 & String,
 def CompileQueueIdentity.is_script(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./compile-queue-digest.c"
 
+# The targets of the quoted `#include` lines of a C file, one per line, in file order.
+# The host scans the file in fixed-size reads, so the size of the file does not
+# change the stack depth or the memory of the scan.
+def CompileQueueIdentity.c_includes(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./compile-queue-digest.c"
+
 def CompileQueueIdentity.resolve_command(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./compile-queue-digest.c"
 
@@ -251,42 +257,23 @@ def CompileQueueIdentity.bend_targets(lines: List<&2,String>) -> List<&2,String>
       Bool.pick(List<&2,String>, String.is_empty(target), tail,
         Bool.pick(List<&2,String>, String.eq(target, "Base"), tail, target <> tail))
 
-def CompileQueueIdentity.c_include_target(line: String) -> String:
-  +trimmed = String.trim_start(line)
-  Bool.pick(String, String.starts_with(trimmed, "#include \""),
-    CompileQueueIdentity.second(String.split(trimmed, Char.from_u32(34))),
-    "")
+def CompileQueueIdentity.bend_file_targets(+path: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
+  do IO<Result<&1,&1,U32 & String,List<&2,String>>>:
+    text : String <- IO.try(String, T.Text.read(path))
+    IO.pure(Result<&1,&1,U32 & String,List<&2,String>>, Done{CompileQueueIdentity.bend_targets(String.lines(text))})
 
-def CompileQueueIdentity.c_targets(lines: List<&2,String>) -> List<&2,String>:
-  match lines:
-    case Nil{}:
-      Nil{}
-    case line <> +rest:
-      +target = CompileQueueIdentity.c_include_target(line)
-      +tail = CompileQueueIdentity.c_targets(rest)
-      Bool.pick(List<&2,String>, String.is_empty(target), tail, target <> tail)
-
-def CompileQueueIdentity.closure_targets(path: String, +text: String) -> List<&2,String>:
-  +name = String.to_lower(CompileQueueIdentity.path_basename(path))
-  Bool.pick(List<&2,String>, String.ends_with(name, ".bend"),
-    CompileQueueIdentity.bend_targets(String.lines(text)),
-    Bool.pick(List<&2,String>, Bool.or(String.ends_with(name, ".c"), String.ends_with(name, ".h")),
-      CompileQueueIdentity.c_targets(String.lines(text)),
-      Nil{}))
-
-def CompileQueueIdentity.file_targets_go(+path: String, +relevant: Bool) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
-  match relevant:
-    case True{}:
-      do IO<Result<&1,&1,U32 & String,List<&2,String>>>:
-        text : String <- IO.try(String, T.Text.read(path))
-        IO.pure(Result<&1,&1,U32 & String,List<&2,String>>, Done{CompileQueueIdentity.closure_targets(path, text)})
-    case False{}:
-      IO.pure(Result<&1,&1,U32 & String,List<&2,String>>, Done{Nil{}})
+def CompileQueueIdentity.c_file_targets(+path: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
+  do IO<Result<&1,&1,U32 & String,List<&2,String>>>:
+    text : String <- IO.try(String, CompileQueueIdentity.c_includes(path))
+    IO.pure(Result<&1,&1,U32 & String,List<&2,String>>, Done{CompileQueueIdentity.nonempty(String.lines(text))})
 
 def CompileQueueIdentity.file_targets(+path: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
   +name = String.to_lower(CompileQueueIdentity.path_basename(path))
-  CompileQueueIdentity.file_targets_go(path, Bool.or(String.ends_with(name, ".bend"),
-    Bool.or(String.ends_with(name, ".c"), String.ends_with(name, ".h"))))
+  Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,String>>), String.ends_with(name, ".bend"),
+    CompileQueueIdentity.bend_file_targets(path),
+    Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,String>>), Bool.or(String.ends_with(name, ".c"), String.ends_with(name, ".h")),
+      CompileQueueIdentity.c_file_targets(path),
+      IO.pure(Result<&1,&1,U32 & String,List<&2,String>>, Done{Nil{}})))
 
 def CompileQueueIdentity.enqueue_targets(+importer: String, targets: List<&2,String>, queue: List<&2,String>) -> List<&2,String>:
   match targets:

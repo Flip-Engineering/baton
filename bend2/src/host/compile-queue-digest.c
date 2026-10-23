@@ -8,8 +8,10 @@
  *   - readlink
  *   - is_script (two-byte read)
  *   - PATH/realpath command resolution
+ *   - the targets of the quoted #include lines of a C file, read in fixed-size
+ *     chunks
  *
- * Import/include parsing, closure membership and ordering, wrapper and release
+ * Bend import parsing, closure membership and ordering, wrapper and release
  * layout policy, and toolchain identity composition live in
  * compile-queue-identity.bend.
  *
@@ -22,6 +24,7 @@
  *   CompileQueueIdentity.list_dir         -> CID_COMPILEQUEUEIDENTITY_LIST_DIR
  *   CompileQueueIdentity.readlink         -> CID_COMPILEQUEUEIDENTITY_READLINK
  *   CompileQueueIdentity.is_script        -> CID_COMPILEQUEUEIDENTITY_IS_SCRIPT
+ *   CompileQueueIdentity.c_includes       -> CID_COMPILEQUEUEIDENTITY_C_INCLUDES
  *   CompileQueueDigest.file               -> CID_COMPILEQUEUEDIGEST_FILE
  *   CompileQueueDigest.text               -> CID_COMPILEQUEUEDIGEST_TEXT
  *
@@ -286,7 +289,8 @@ enum {
   CQ_ID_FILE_SIZE = 5,
   CQ_ID_LIST_DIR = 6,
   CQ_ID_READLINK = 7,
-  CQ_ID_IS_SCRIPT = 8
+  CQ_ID_IS_SCRIPT = 8,
+  CQ_ID_C_INCLUDES = 9
 };
 
 typedef struct {
@@ -339,6 +343,67 @@ static int cq_id_buf_add(CqIdBuffer *buffer, const char *text, size_t length) {
 
 static int cq_id_buf_adds(CqIdBuffer *buffer, const char *text) {
   return cq_id_buf_add(buffer, text, strlen(text));
+}
+
+/* Appends the target of each line that, after leading white space, starts with
+   `#include "`: the text up to the next quote or the end of the line. The file is
+   read in fixed-size chunks with a state machine, so the scan needs constant
+   stack and memory that grows only with the longest target. White space is the
+   set of the Bend Char.is_space: space and the characters 9 to 13. */
+static int cq_id_c_includes(const char *path, CqIdBuffer *out) {
+  static const char prefix[] = "#include \"";
+  const size_t prefix_length = sizeof(prefix) - 1;
+  enum { LINE_START, MATCHING, CAPTURE, SKIP } state = LINE_START;
+  size_t matched = 0;
+  CqIdBuffer target = {0, 0, 0, 0};
+  unsigned char chunk[65536];
+  int fd = open(path, O_RDONLY);
+  if (fd < 0) return errno;
+  int error = 0;
+  for (;;) {
+    ssize_t count = read(fd, chunk, sizeof chunk);
+    if (count < 0) {
+      if (errno == EINTR) continue;
+      error = errno;
+      break;
+    }
+    if (count == 0) break;
+    for (ssize_t i = 0; i < count && !error; i++) {
+      unsigned char c = chunk[i];
+      int space = c == 32 || (c >= 9 && c <= 13);
+      if (state == CAPTURE && c != '"' && c != '\n') {
+        if (!cq_id_buf_add(&target, (const char *)&c, 1)) error = target.error;
+        continue;
+      }
+      if (state == CAPTURE) {
+        if (target.length && (!cq_id_buf_add(out, target.data, target.length) || !cq_id_buf_adds(out, "\n")))
+          error = out->error;
+        target.length = 0;
+        if (target.data) target.data[0] = '\0';
+        state = c == '\n' ? LINE_START : SKIP;
+        continue;
+      }
+      if (c == '\n') { state = LINE_START; continue; }
+      if (state == SKIP) continue;
+      if (state == LINE_START) {
+        if (space) continue;
+        matched = 0;
+        state = MATCHING;
+      }
+      if (c == (unsigned char)prefix[matched]) {
+        if (++matched == prefix_length) state = CAPTURE;
+      } else {
+        state = SKIP;
+      }
+    }
+    if (error) break;
+  }
+  if (!error && state == CAPTURE && target.length
+      && (!cq_id_buf_add(out, target.data, target.length) || !cq_id_buf_adds(out, "\n")))
+    error = out->error;
+  cq_id_buf_free(&target);
+  close(fd);
+  return error;
 }
 
 static void cq_id_call_free(CqIdCall *call) {
@@ -445,6 +510,17 @@ static void cq_id_call_work(IoWork *work) {
       char hex[65];
       cq_id_hash_bytes(call->first, call->first_length, hex);
       call->text = cq_id_strdup(hex);
+      break;
+    }
+    case CQ_ID_C_INCLUDES: {
+      CqIdBuffer found = {0, 0, 0, 0};
+      int error = cq_id_c_includes(call->first, &found);
+      if (error) {
+        call->error = error;
+        cq_id_buf_free(&found);
+        break;
+      }
+      call->text = found.data ? found.data : cq_id_strdup("");
       break;
     }
     case CQ_ID_FILE_SIZE: {
@@ -570,6 +646,15 @@ static Term cq_id_is_script_run(Env env, Term *fields, IoWork *work) {
 }
 static void __attribute__((constructor)) cq_id_is_script_use(void) {
   io_eff(CID_COMPILEQUEUEIDENTITY_IS_SCRIPT, cq_id_is_script_run, 0);
+}
+#endif
+
+#ifdef CID_COMPILEQUEUEIDENTITY_C_INCLUDES
+static Term cq_id_c_includes_run(Env env, Term *fields, IoWork *work) {
+  return cq_id_path_run(env, fields, work, CQ_ID_C_INCLUDES);
+}
+static void __attribute__((constructor)) cq_id_c_includes_use(void) {
+  io_eff(CID_COMPILEQUEUEIDENTITY_C_INCLUDES, cq_id_c_includes_run, 0);
 }
 #endif
 
