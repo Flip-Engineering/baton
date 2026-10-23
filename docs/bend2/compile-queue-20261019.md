@@ -284,6 +284,16 @@ value, or `none`).
 
 ### Custody and cleanup
 
+`admission/waiting` is created sticky and setgid (mode 3770), so a user can
+remove only the tickets of own supervisors. A supervisor that runs in the
+service of another user can have a `/proc` that hides processes of other users;
+its loader would see every foreign ticket as dead and remove it, and every
+waiter would rewrite its ticket on the next poll. When `/proc` has no entry for
+a ticket's process, the process counts as alive if a signal check
+(`kill(pid, 0)`) finds it, whether it answers or refuses with `EPERM`. A
+zombie keeps its `/proc` entry and counts as dead. A directory that exists
+without the sticky bit keeps its mode.
+
 The claim file is locked by the supervisor and inherited by the command, the
 marker watcher and anything the command starts. A claim is alive while any
 holder remains, so a command that outlives its supervisor keeps its

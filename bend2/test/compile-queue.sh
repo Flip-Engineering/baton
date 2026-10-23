@@ -862,6 +862,14 @@ else
   printf 'SKIP memory admission: no /proc/meminfo\n'
 fi
 
+# The waiting directory is sticky and setgid: a user removes only own tickets, and
+# a loader that cannot see another user's process cannot remove its ticket.
+python3 - "$STATE/admission/waiting" <<'PY_MODE' && pass 'the waiting directory is sticky and setgid' || bad 'the waiting directory lacks the sticky or setgid bit'
+import os, stat, sys
+mode = os.stat(sys.argv[1]).st_mode
+sys.exit(0 if (mode & stat.S_ISVTX) and (mode & stat.S_ISGID) else 1)
+PY_MODE
+
 # One compiler and entry with different commands, such as a type check and a full
 # C generation, need different memory and record peaks in different groups. The
 # same command with a different option and output path shares a group.

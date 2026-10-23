@@ -192,7 +192,18 @@ static int cq_alive_value(u32 pid, const char *start, u32 *alive) {
   if (!pid || !start || !*start) return 0;
   char *current = NULL;
   int error = cq_starttime_text(pid, &current);
-  if (error == ESRCH) return 0;
+  if (error == ESRCH) {
+#ifdef __linux__
+    /* The /proc of another user's service can hide processes. A signal check is
+       not hidden: a process that has no /proc entry for this caller but answers
+       it exists. Its start time cannot be compared, so it counts as alive. A
+       zombie keeps its /proc entry and is dead. */
+    char entry[64];
+    snprintf(entry, sizeof(entry), "/proc/%u", pid);
+    if (access(entry, F_OK) && errno == ENOENT && (kill((pid_t)pid, 0) == 0 || errno == EPERM)) *alive = 1;
+#endif
+    return 0;
+  }
   if (error) return error;
   *alive = strcmp(current, start) ? 0 : 1;
   free(current);
@@ -868,8 +879,18 @@ static void cq_legacy_entry(int pid, char *entry, size_t capacity) {
 static int cq_admission_dirs(const char *state) {
   char path[PATH_MAX];
   int error;
-  if ((error = cq_path(path, "%s/admission/waiting", state)) || (error = cq_mkdir_p(path))) return error;
+  /* The waiting directory is sticky: a user can remove only the tickets of own
+     supervisors. Another user's loader that cannot see a process would otherwise
+     remove its ticket. mkdir keeps the sticky bit and inherits setgid; chmod
+     would clear setgid for a caller outside the group. */
   if ((error = cq_path(path, "%s/admission/running", state)) || (error = cq_mkdir_p(path))) return error;
+  if ((error = cq_path(path, "%s/admission/waiting", state))) return error;
+  mode_t previous = umask(0007);
+  int made = mkdir(path, 01770);
+  int saved = errno;
+  umask(previous);
+  if (made && saved != EEXIST) return saved;
+  if ((error = cq_mkdir_p(path))) return error;
   if ((error = cq_path(path, "%s/peaks", state)) || (error = cq_mkdir_p(path))) return error;
   return 0;
 }
@@ -1125,7 +1146,7 @@ static int cq_admission_load(const char *state, CqAdmission *view) {
   if (running) {
     struct dirent *entry;
     while ((entry = readdir(running))) {
-      if (entry->d_name[0] == '.') continue;
+      if (entry->d_name[0] == '.' || strstr(entry->d_name, ".tmp.")) continue;
       if (cq_path(path, "%s/%s", directory, entry->d_name)) continue;
       if (!cq_claim_alive(path)) { unlink(path); continue; }
       if (cq_read_small(path, text, sizeof(text))) continue;
@@ -1142,7 +1163,7 @@ static int cq_admission_load(const char *state, CqAdmission *view) {
   if (waiting) {
     struct dirent *entry;
     while ((entry = readdir(waiting))) {
-      if (entry->d_name[0] == '.') continue;
+      if (entry->d_name[0] == '.' || strstr(entry->d_name, ".tmp.")) continue;
       if (cq_path(path, "%s/%s", directory, entry->d_name)) continue;
       if (cq_read_small(path, text, sizeof(text))) continue;
       CqTicket ticket;
