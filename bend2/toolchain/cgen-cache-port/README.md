@@ -4,6 +4,38 @@
 `pass-collect.patch` and `launcher-malloc.patch` are the #1017 changes to `bend2/comp.ts` and
 `bin/bend` of the same lineage.
 
+## Full coordinator cgen on Linux (#1017)
+
+A full `bend2/src/coordinator/main.bend` cgen on the homelab Linux runner completed with three
+parts together:
+
+1. `pass-collect.patch` in the compiler's `bend2/comp.ts`.
+2. `Malloc=1` in the compiler's environment, set by the caller. Bun then runs the compiler on its
+   system heap (glibc `malloc`) in place of libpas.
+3. `vm.max_map_count=16777216` on the host (`/etc/sysctl.d/90-bend2-max-map-count.conf`).
+
+The completed run is queue key `488a4cf1`. The caller ran this command from the source root, with
+`$1` the release's `bin/bend` and `$2` the output path:
+
+```sh
+env Malloc=1 BEND_NO_TELEMETRY=1 BEND_CGEN_CACHE=0 BEND_COMPILER_DIAGNOSTICS=1 \
+  /usr/bin/time -v -o "$2.time" "$1" bend2/src/coordinator/main.bend -o "$2"
+```
+
+`BEND_CGEN_CACHE=0` and `BEND_COMPILER_DIAGNOSTICS=1` were set for the measurement; `/usr/bin/time`
+recorded the resource use.
+
+| Queue key | Compiler | `Malloc` | `vm.max_map_count` | Result |
+| --- | --- | --- | --- | --- |
+| `041f64d9`, `a59233ec`, `1a365634` | unpatched | unset | 1048576 | exit 133 in pass 7, exit 137 in pass 3, exit 137 in pass 2 |
+| `aa519da6`, `a4403cb7` | unpatched (cgen-cache) | unset | 1048576 | exit 132, libpas compact-heap panic |
+| `9bae5ae8` | `pass-collect.patch` | unset | 1048576, raised to 16777216 during the run | stalled at the map limit, continued after the raise, then exit 133 at 122-130 GB RSS with 150,913 mappings |
+| `488a4cf1` | `pass-collect.patch` | 1 | 16777216 | exit 0, verified, 122,673,108-byte C |
+
+Not tested: `Malloc=1` without `pass-collect.patch`; `Malloc=1` with the default
+`vm.max_map_count`; libpas with the raised map limit and without the patch; a coordinator built
+with cc from the `488a4cf1` C.
+
 ## pass-collect.patch (#1017)
 
 `compile_book` repeats the emission pass over every reachable definition until the `own`, `hot`
@@ -97,17 +129,19 @@ default run took 2:01.
 
 ## launcher-malloc.patch (#1017)
 
-The patch exports `Malloc=1` from `bin/bend` before it starts Bun, so every compile uses the
-system heap.
+In the tested configuration the caller of a full-coordinator cgen sets `Malloc=1`. The patch
+exports the same variable from `bin/bend` before it starts Bun, so every compile through that
+launcher uses the system heap. No compiler release carries it.
 
-### Completed full coordinator cgen
+## Completed full coordinator cgen (queue key `488a4cf1`)
 
 A full `bend2/src/coordinator/main.bend` cgen completed on the homelab Linux runner with
 `pass-collect.patch` and `Malloc=1` (queue key `488a4cf1`, source `6070813f0`, release
 `2.0.25-f5185e38-pr967-pr968-e5c4efd-gc1017-20261022`, `vm.max_map_count=16777216`). The queue
 recorded `status=completed exit=0 verified=1`. The C is 122,673,108 bytes, sha256
 `990648d53639aa8162b52d8ce02442e38430a35d49c85d5afc4813812bd14230`. `/usr/bin/time` recorded
-2:19:10 wall time, 7310 s user, 2113 s system and 137,480,528 kB maximum RSS.
+2:19:10 wall time, 7310 s user, 2113 s system and 137,480,528 kB maximum RSS. A separate
+60-second sampler of the bun process recorded at most 136.2 GB RSS and 106,496 mappings.
 
 The emission fixed point took eight passes over 4227 definitions:
 
@@ -124,6 +158,3 @@ The emission fixed point took eight passes over 4227 definitions:
 
 Load and type check took 231 s, compared with 1068 s for the unpatched libpas run `041f64d9`.
 Each pass took about twice as long as a libpas pass.
-
-Not yet measured: `Malloc=1` without `pass-collect.patch`, `Malloc=1` with the default
-`vm.max_map_count`, and a build and test of the coordinator from this C.
