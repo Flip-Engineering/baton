@@ -15,8 +15,9 @@ On Bun 1.4.4 (queue key `09830f2b`, #1032) it completed with two parts:
 1. `pass-collect.patch` in the compiler's `bend2/comp.ts`.
 2. `vm.max_map_count=16777216` on the host (`/etc/sysctl.d/90-bend2-max-map-count.conf`).
 
-`Malloc=1` is not needed on Bun 1.4.4: the request ran the compiler with `env -u Malloc`, and the
-release's `bin/bend` does not set it.
+`Malloc=1` is not needed on Bun 1.4.4: the request ran the compiler with `env -u Malloc`, the
+release's `bin/bend` does not set it, and a reading of the bun process's `/proc/PID/environ` during
+the run found no `Malloc` variable.
 
 On Bun 1.3.14 (queue key `488a4cf1`, #1017) it completed with three parts together:
 
@@ -50,7 +51,8 @@ Not tested on Bun 1.3.14: `Malloc=1` without `pass-collect.patch`; `Malloc=1` wi
 `vm.max_map_count`; libpas with the raised map limit and without the patch.
 
 Not tested on Bun 1.4.4: a full cgen without `pass-collect.patch`; a full cgen with the default
-`vm.max_map_count`. The mapping count of the bun process was not sampled during `09830f2b`.
+`vm.max_map_count`. Spot readings of the map count during `09830f2b` stayed near 100; a continuous
+series was not taken.
 
 ## pass-collect.patch (#1017)
 
@@ -214,10 +216,23 @@ The emission fixed point took eight passes over 4227 definitions, with the same 
 Load and type check took 231 s. The heap at each pass start is about 29 GB, against 55-66 GB for
 `488a4cf1` on Bun 1.3.14 with `Malloc=1`.
 
-The mapping count of the bun process was not sampled during this run. On `five-overlap.bend` the
+Spot readings of the map count during the run, listed below, stayed near 100; a continuous series
+was not taken. The coordinator took each reading once, on bun pid 2079929, with a 3-second timeout:
+
+| Time (UTC) | Lines in `/proc/PID/maps` | RSS at the reading (GB) |
+| --- | ---: | ---: |
+| 07:31Z | 97 | 56.5 |
+| 07:41Z | 98 | 86.6 |
+| 08:03Z | 101 | 73.2 |
+| 08:28Z | 101 | 86.8 |
+| 09:56Z | 101 | 110.2 |
+
+At 07:31Z the same process's `/proc/PID/environ` had no `Malloc` variable.
+
+On `five-overlap.bend` the
 same release ran with at most 95 mappings (sampled each second), emitted the same C as the Bun
 1.3.14 runs (sha256 `b7b0b85b08e3f44d8bb2dd2309b35dacfeb616a57ae19168a4812d57d3384316`), took
 1:19.62 and used 6,778,932 kB maximum RSS. On Bun 1.3.14 the same fixture used 25,561-42,041
 mappings at pass boundaries under libpas and 167-207 under `Malloc=1`. The Bun 1.4.4 binary still
 contains the `WKFastMalloc` mapping name and the bmalloc environment switches, so the claim that it
-does not use libpas for page metadata rests on the low mapping count, not on the binary.
+does not use libpas for page metadata rests on the low mapping counts, not on the binary.
