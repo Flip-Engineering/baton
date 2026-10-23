@@ -689,7 +689,7 @@ def the_continuation_reads_the_count_before_it_locks(db,session,cursor,again):
 
 def handed_invocation_settles_the_claim_under_the_lock(+db: String, +session: String) -> IO(Unit):
   Lock.SessionLock.acquire_session(Unit,db,session,
-    +canonical => lock => Receive.settle_owned(canonical,session,lock))
+    +canonical => lock => Receive.settle_owned(canonical,session,"","","",lock))
 
 law a_handed_invocation_settles_the_claim_only_while_holding_the_lock:
   for +db: String
@@ -702,7 +702,7 @@ def a_handed_invocation_settles_the_claim_only_while_holding_the_lock(db,session
 law a_queued_invocation_without_the_lock_clears_nothing:
   for +db: String
   for +session: String
-  {Receive.settle_owned(db,session,None{}) == IO.pure(Unit,Unit{}) : IO(Unit)}
+  {Receive.settle_owned(db,session,"","","",None{}) == IO.pure(Unit,Unit{}) : IO(Unit)}
 
 def a_queued_invocation_without_the_lock_clears_nothing(db,session):
   {==}
@@ -711,14 +711,17 @@ law the_holder_releases_only_its_own_ticket:
   for +db: String
   for +session: String
   for +handle: U32
-  {Receive.settle_owned(db,session,Some{handle}) == (do IO<Unit>:
+  {Receive.settle_owned(db,session,"","","",Some{handle}) == (do IO<Unit>:
     +owner : String <- Store.claim_owner(db,session)
     +generation : String <- Store.claim_generation(db,session)
     pending : String <- IO.try(String,DB.Sql.query(db,Receive.pending_count_sql(session,"0")))
     dir : String <- IO.try(String,DB.Sql.query(db,Receive.attempt_dir_sql(session)))
     +trimmed : String <- IO.pure(String,Tx.trim_nl(dir))
     dead : Bool <- Receive.custody_dead(db,trimmed,String.is_empty(trimmed))
-    left : Unit <- Receive.release_if_ticket(db,session,Tx.trim_nl(owner),generation,Bool.and(String.eq(pending,"0\n"),dead))
+    +settled : Bool = Bool.and(String.eq(pending,"0\n"),Bool.and(dead,Receive.ticket_match("","",owner,generation)))
+    left : Unit <- Receive.release_if_ticket(db,session,Tx.trim_nl(owner),generation,settled)
+    +remove : String = Bool.pick(String,String.is_empty(""),trimmed,"")
+    cleaned : Unit <- Bool.pick(IO(Unit),settled,Store.delete_ticket(db,session,remove),IO.pure(Unit,Unit{}))
     unlocked : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
     IO.pure(Unit,Unit{})) : IO(Unit)}
 
