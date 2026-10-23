@@ -174,8 +174,9 @@ def dispatch(args: List<String>) -> IO(Unit):
     case +db <> +verb <> +third <> Nil{}:
       Bool.pick(IO(Unit), String.eq(verb,"storage-preview"), StoragePolicy.run_preview(db,third),
         Bool.pick(IO(Unit), String.eq(verb,"storage-apply"), StoragePolicy.run_apply(db,third),
-          Bool.pick(IO(Unit), String.eq(verb,"agent-native-input"), focused_native_input(db,third),
-            dispatch_three(db,verb,third))))
+          Bool.pick(IO(Unit), String.eq(verb,"storage-collect"), StoragePolicy.run_collect(db,third),
+            Bool.pick(IO(Unit), String.eq(verb,"agent-native-input"), focused_native_input(db,third),
+              dispatch_three(db,verb,third)))))
     case +db <> +route <> +session <> +cmd <> +log <> Nil{}:
       register_receiver(String.eq(route,"register-receiver"),db,session,cmd,log)
     case +db <> +route <> +session <> +cmd <> +log <> +cwd <> Nil{}:
