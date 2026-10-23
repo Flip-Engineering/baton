@@ -318,7 +318,7 @@ def help(action: String) -> String:
     case "context-engines": "context engines [--session SESSION]\nInspect selected native context modules and readiness.\n"
     case "context-install": "context install --module ID --path PATH\nInstall an existing built module through the native operation.\n"
     case "context-query": "context query --file PATH [--id QUERY] [--owner SESSION]\nSubmit the complete request file to the existing native context operation.\n"
-    case "context-eval": "context eval --session SESSION --expression EXPR [--frame HANDLE] [--id QUERY] [--owner SESSION] [--cwd PATH]\nEvaluate one expression in an already launched runtime session through the existing native runtime operation and retain the complete result. Omitted cwd uses the owner's recorded workspace, or '.' when none is recorded.\n"
+    case "context-eval": "context eval --session SESSION --expression EXPR [--frame HANDLE] [--id QUERY] [--owner SESSION] [--cwd PATH]\nEvaluate one expression in an already launched runtime session through the existing native runtime operation and retain the complete result. Omitted cwd uses the owner's recorded workspace; an owner with no recorded workspace is refused.\n"
     case "context-result": "context result [--id QUERY]\nRead the latest query owned by the current actor when its ID is omitted, or the explicitly selected retained query.\n"
     case "context": "context engines|install|query|eval|result NAMED_ARGS\nUse help with the corresponding context action name.\n"
     case "models": "models [--session SESSION] [--all]\nRead observed model capability information for the selected session. --all reads every recorded harness route.\n"

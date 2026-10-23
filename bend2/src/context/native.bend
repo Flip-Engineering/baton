@@ -2773,16 +2773,22 @@ def query_text(+db: String, +owner: String, +query: String, +text: String) -> IO
     binding : Result<&1,&1,U32 & String,String> <- DB.Sql.binding(db)
     query_binding_text(db, owner, query_id, text, binding)
 
+def recorded_workspace(+owner: String, +trimmed: String) -> IO(String):
+  match trimmed:
+    case "": IO.die(String, 3, "evalWorkspaceUnrecorded:" ++ owner)
+    case other: IO.pure(String,other)
+
 # The public evaluation action composes the existing runtime evaluate request.
-# It selects the recorded owner workspace when no cwd is supplied, or "." when the
-# owner has none recorded, and reuses the same decode, admission, submission and
-# retained-result path as a request file.
+# It selects the recorded owner workspace when no cwd is supplied. An owner with
+# no recorded workspace is refused, and the refusal names the owner session. The
+# request then reuses the same decode, admission, submission and retained-result
+# path as a request file.
 def eval_cwd(+db: String, +owner: String, +cwd: String) -> IO(String):
   match cwd:
     case "": do IO<String>:
       saved : String <- IO.try(String,DB.Sql.query(db,"SELECT workspace FROM sessions WHERE id=" ++ ContextCommands.q(owner) ++ ";"))
       +trimmed : String <- IO.pure(String,Tx.trim_nl(saved))
-      IO.pure(String,Bool.pick(String,String.is_empty(trimmed),".",trimmed))
+      recorded_workspace(owner,trimmed)
     case other: IO.pure(String,other)
 
 def eval_request_text(+session: String, +expression: String, +frame: String, +cwd: String) -> String:
