@@ -25,7 +25,7 @@ An Ensemble has a recorded owner ID, a coupling value and explicit
 members. Its owner may be a member. A session can belong to several Ensembles;
 a shared tight membership grants a peer route. The recorded owner manages
 membership; adding a member requires an existing non-operator session. Operator
-sessions use their immediate-child and top-level Conductor routes.
+sessions can message their immediate children and top-level Conductors.
 
 Roles and coupling are stored in the existing SQLite database. A session with
 no role assignment is a Player. A Conductor with no parent is displayed as a

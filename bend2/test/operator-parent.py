@@ -99,6 +99,10 @@ class OperatorParent(unittest.TestCase):
                 self.assertEqual((row['sender'], row['recipient'], row['kind'], row['body']),
                                  ('child', 'operator', kind, body))
                 self.assertIn(('child', 'operator', kind, body), self.messages())
+            addressed = self.action('child', 'dispatch', '--to', 'operator',
+                                    '--kind', 'report', '--text', 'Addressed ' + role)
+            self.assertEqual((addressed['sender'], addressed['recipient']),
+                             ('child', 'operator'))
             self.action('operator', 'dispatch', '--to', 'child', '--kind', 'guidance',
                         '--text', 'Continue ' + role)
 
