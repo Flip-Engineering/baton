@@ -1,0 +1,166 @@
+name: bend2-native-focused-qualification
+
+'on':
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact candidate commit to qualify
+        required: true
+        type: string
+      target_commit:
+        description: Exact current-main commit used as the comparison source
+        required: true
+        type: string
+      suite:
+        description: Focused production entry and fixture set
+        required: true
+        type: choice
+        options: [observer-recovery]
+      full_runtime:
+        description: Existing executable full CLI used for recovery helper delegation
+        required: true
+        type: string
+      full_runtime_sha256:
+        description: SHA256 of the selected full CLI artifact
+        required: true
+        type: string
+      retained_compiler_archive:
+        description: Optional retained Bend 2.0.25 Linux archive path on the homelab runner
+        required: false
+        default: ''
+        type: string
+      retained_compiler_archive_sha256:
+        description: SHA256 for the retained compiler archive
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: baton2-native-focused-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  observer-recovery:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      vars.BATON2_FOCUSED_VALIDATORS != '' &&
+      contains(format('|{0}|', vars.BATON2_FOCUSED_VALIDATORS), format('|{0}|', github.actor))
+    runs-on:
+      group: baton2-native-homelab
+      labels: [self-hosted, Linux, X64, baton2-native-linux-x64]
+    timeout-minutes: 360
+    env:
+      CC: /usr/bin/clang-19
+      BEND_NO_TELEMETRY: '1'
+      BUN_JSC_maxPerThreadStackUsage: '67108864'
+      BATON2_SOURCE_SHA: ${{ inputs.source_commit }}
+      BATON2_TARGET_SHA: ${{ inputs.target_commit }}
+      BATON2_FOCUSED_SUITE: ${{ inputs.suite }}
+      BATON2_FOCUSED_FULL_RUNTIME: ${{ inputs.full_runtime }}
+      BATON2_FOCUSED_FULL_RUNTIME_SHA256: ${{ inputs.full_runtime_sha256 }}
+      BATON2_FOCUSED_MEMORY_MAX_BYTES: ${{ vars.BATON2_FOCUSED_MEMORY_MAX_BYTES }}
+      BATON2_FOCUSED_MEMORY_RESERVE_BYTES: ${{ vars.BATON2_FOCUSED_MEMORY_RESERVE_BYTES }}
+      BATON2_FOCUSED_TASKS_MAX: ${{ vars.BATON2_FOCUSED_TASKS_MAX }}
+      BATON2_FOCUSED_RUNTIME_SECONDS: ${{ vars.BATON2_FOCUSED_RUNTIME_SECONDS }}
+    steps:
+      - name: Initialize evidence and validate dispatch pins
+        shell: bash
+        env:
+          BATON2_FOCUSED_MEMORY_MAX_BYTES: ${{ vars.BATON2_FOCUSED_MEMORY_MAX_BYTES }}
+          BATON2_FOCUSED_MEMORY_RESERVE_BYTES: ${{ vars.BATON2_FOCUSED_MEMORY_RESERVE_BYTES }}
+          BATON2_FOCUSED_TASKS_MAX: ${{ vars.BATON2_FOCUSED_TASKS_MAX }}
+          BATON2_FOCUSED_RUNTIME_SECONDS: ${{ vars.BATON2_FOCUSED_RUNTIME_SECONDS }}
+        run: |
+          set -euo pipefail
+          run="$RUNNER_TEMP/baton2-focused-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$run"
+          mkdir -p "$run/toolchain-home" "$run/evidence" "$run/generated"
+          printf 'BATON2_FOCUSED_RUN=%s\n' "$run" >> "$GITHUB_ENV"
+          python3 - <<'PY'
+          import json, os, pathlib, time
+          run = pathlib.Path(os.environ['RUNNER_TEMP']) / ('baton2-focused-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'])
+          (run / 'evidence' / 'dispatch.json').write_text(json.dumps({
+              'source_commit': os.environ['BATON2_SOURCE_SHA'],
+              'target_commit': os.environ['BATON2_TARGET_SHA'],
+              'suite': os.environ['BATON2_FOCUSED_SUITE'],
+              'actor': os.environ.get('GITHUB_ACTOR'),
+              'started_at': time.time()
+          }, indent=2) + '\n')
+          PY
+          [[ "$BATON2_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BATON2_TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$BATON2_FOCUSED_SUITE" = observer-recovery
+          test -n "${BATON2_FOCUSED_MEMORY_MAX_BYTES:-}"
+          test -n "${BATON2_FOCUSED_MEMORY_RESERVE_BYTES:-}"
+          test -n "${BATON2_FOCUSED_TASKS_MAX:-}"
+          test -n "${BATON2_FOCUSED_RUNTIME_SECONDS:-}"
+      - name: Checkout exact trusted target source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.target_commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout exact candidate source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.source_commit }}
+          path: candidate-source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare pinned Bend 2.0.25 toolchain
+        shell: bash
+        env:
+          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 }}
+        run: |
+          set -euo pipefail
+          run="$RUNNER_TEMP/baton2-focused-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test -d "$run/toolchain-home"
+
+          python3 "$GITHUB_WORKSPACE/.github/scripts/prepare-native-compiler.py" --run "$run" \
+            --archive "$BATON2_RETAINED_COMPILER_ARCHIVE" \
+            --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" \
+            --github-env "$GITHUB_ENV" --runner homelab \
+            > "$run/evidence/compiler-selection.stdout" \
+            2> "$run/evidence/compiler-selection.stderr"
+          raw="$run/toolchain-home/bin/bend"
+          mv "$raw" "$raw.raw"
+          install -m 0755 "$GITHUB_WORKSPACE/bend2/scripts/bend-launch-guard.sh" "$raw"
+          test -x "$run/toolchain-home/bin/bun"
+          test -f "$run/toolchain-home/bend2/main.ts"
+          printf 'BATON2_FOCUSED_COMPILER=%s\n' "$raw" >> "$GITHUB_ENV"
+          sha256sum "$raw.raw" "$raw" "$run/toolchain-home/bin/bun" \
+            "$run/toolchain-home/bend2/main.ts" > "$run/evidence/compiler-files.sha256"
+      - name: Run focused source comparison inside an admitted scope
+        shell: bash
+        env:
+          BATON2_FOCUSED_VALIDATORS: ${{ vars.BATON2_FOCUSED_VALIDATORS }}
+          BATON2_FOCUSED_MEMORY_MAX_BYTES: ${{ vars.BATON2_FOCUSED_MEMORY_MAX_BYTES }}
+          BATON2_FOCUSED_MEMORY_RESERVE_BYTES: ${{ vars.BATON2_FOCUSED_MEMORY_RESERVE_BYTES }}
+          BATON2_FOCUSED_TASKS_MAX: ${{ vars.BATON2_FOCUSED_TASKS_MAX }}
+          BATON2_FOCUSED_RUNTIME_SECONDS: ${{ vars.BATON2_FOCUSED_RUNTIME_SECONDS }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current_main=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          test "$current_main" = "$BATON2_TARGET_SHA"
+          export BATON2_FOCUSED_CURRENT_MAIN="$current_main"
+          unset GH_TOKEN
+          python3 "$GITHUB_WORKSPACE/.github/scripts/run-focused-native.py" \
+            --launch --run "$BATON2_FOCUSED_RUN" \
+            --candidate "$GITHUB_WORKSPACE/candidate-source" \
+            --source "$BATON2_SOURCE_SHA" --target "$BATON2_TARGET_SHA" \
+            --suite "$BATON2_FOCUSED_SUITE" --compiler "$BATON2_FOCUSED_COMPILER" \
+            --full-runtime "$BATON2_FOCUSED_FULL_RUNTIME" \
+            --full-runtime-sha256 "$BATON2_FOCUSED_FULL_RUNTIME_SHA256"
+      - name: Retain focused qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: baton2-focused-observer-recovery-${{ inputs.source_commit }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/baton2-focused-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          include-hidden-files: true
