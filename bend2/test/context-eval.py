@@ -207,7 +207,11 @@ class ContextEvaluation(unittest.TestCase):
 
 
 class ContextEvalWorkspace(unittest.TestCase):
-    """Omitted cwd resolves through the owner workspace; a missing workspace is refused."""
+    """Omitted cwd resolves through the owner workspace; an owner without one is refused.
+
+    The database holds only the sessions row the cwd lookup reads, so the refusal
+    is checked without an installed package or an attached runtime.
+    """
 
     @classmethod
     def setUpClass(cls):
@@ -215,11 +219,9 @@ class ContextEvalWorkspace(unittest.TestCase):
             raise unittest.SkipTest(f'compiled context entry absent at {ENTRY}')
         cls.temp = tempfile.TemporaryDirectory()
         cls.db = pathlib.Path(cls.temp.name) / 'state.db'
-        attached = cls.invoke('attach', OWNER, 'fixture', '', '')
-        if attached.returncode != 0:
-            raise RuntimeError(attached.stdout + attached.stderr)
         with sqlite3.connect(cls.db) as connection:
-            connection.execute("UPDATE sessions SET workspace='' WHERE id=?", (OWNER,))
+            connection.execute('CREATE TABLE sessions (id TEXT PRIMARY KEY, workspace TEXT)')
+            connection.execute("INSERT INTO sessions VALUES (?, '')", (OWNER,))
 
     @classmethod
     def tearDownClass(cls):
@@ -230,7 +232,7 @@ class ContextEvalWorkspace(unittest.TestCase):
     def invoke(cls, *args):
         return subprocess.run([str(ENTRY), str(cls.db), *map(str, args)],
                               cwd=cls.temp.name if getattr(cls, 'temp', None) else None,
-                              text=True, capture_output=True, timeout=180)
+                              stdin=subprocess.DEVNULL, text=True, capture_output=True, timeout=180)
 
     def test_omitted_cwd_for_owner_without_recorded_workspace_is_refused(self):
         reply = self.invoke('context-eval', OWNER, '', 'rt:absent', '1 + 1', '', '')
@@ -242,7 +244,8 @@ class ContextEvalWorkspace(unittest.TestCase):
         self.assertNotIn('evalWorkspaceUnrecorded', reply.stdout + reply.stderr)
 
     def test_help_states_the_refusal(self):
-        reply = self.invoke('help', 'context-eval')
+        reply = subprocess.run([str(ENTRY), 'help', 'context-eval'], text=True,
+                               capture_output=True, stdin=subprocess.DEVNULL, timeout=60)
         self.assertEqual(reply.returncode, 0, reply.stdout + reply.stderr)
         self.assertIn("owner's recorded workspace", reply.stdout)
         self.assertIn('is refused', reply.stdout)
