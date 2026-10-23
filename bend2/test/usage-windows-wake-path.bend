@@ -8,14 +8,19 @@
 # covers the account DB Muse shape: a model without a provider prefix and empty
 # provider/window/account rows hold before the recorded reset.
 #
+# The retained start path (#1016) admits the attempt before it checks the window.
+# A held start must leave no execution row, so a route change is admitted at once.
+#
 # usage: usage-windows-wake-path DB
 #        usage-windows-wake-path --wake-message DB MESSAGE
 #        usage-windows-wake-path --wake-check DB MESSAGE
 import Base
 import ../src/coordinator/commands.bend as C
 import ../src/coordinator/receive.bend as Receive
+import ../src/coordinator/stop.bend as Stop
 import ../src/coordinator/usage-windows.bend as UW
 import ../src/host/sqlite.bend as DB
+import ../src/host/session-lock.bend as Lock
 import ../src/git/text.bend as Tx
 import ../src/git/process.bend as Proc
 
@@ -147,6 +152,37 @@ def far_case(+db: String) -> IO(Unit):
     capped : Unit <- expect("far-segment-is-86400",String.eq(Tx.trim_nl(delay),"86400"))
     IO.pure(Unit,Unit{})
 
+# A retained start admitted under a held window: Stop.admit writes the execution
+# row, then window_held_start runs the held branch the way start_admitted does.
+def held_start(+db: String, +id: String, +attempt: String, +msg: String) -> IO(Bool):
+  do IO<Bool>:
+    created : Unit <- session(db,id)
+    win : Unit <- window(db,id,msg,"2000")
+    owed : Unit <- message(db,id,msg,"")
+    gate : UW.Gate <- UW.window_gate(db,id,"")
+    admitted : Bool <- Stop.admit(db,id,attempt,"retained",id ++ "-dir")
+    +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    lock : U32 <- IO.try(U32,Lock.SessionLock.wait_acquire(canonical,id))
+    held : Bool <- Receive.window_held_start(db,id,attempt,msg,lock,gate)
+    IO.pure(Bool,held)
+
+def held_start_case(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    held : Bool <- held_start(db,"held-start","attempt-held-start","m-held-start")
+    checked : Unit <- expect("held-start-is-held",held)
+    none : Unit <- expect_read(db,"SELECT count(*) FROM executions WHERE session='held-start';","0\n","held-start-removes-execution-row")
+    report : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id='m-held-start:usage-window-held';","1\n","held-start-reports-hold")
+    IO.pure(Unit,Unit{})
+
+# Configuration with a changed model is admitted after the held start (#1016).
+def held_route_case(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    held : Bool <- held_start(db,"held-route","attempt-held-route","m-held-route")
+    checked : Unit <- expect("held-route-is-held",held)
+    changed : Unit <- query(db,"BEGIN IMMEDIATE;" ++ C.configure_sql("held-route","omp","held-route-next","high","","omp","held-route-kimi/kimi-for-coding","high") ++ "COMMIT;")
+    model : Unit <- expect_read(db,"SELECT model FROM sessions WHERE id='held-route';","held-route-next\n","held-route-model-change-admitted")
+    IO.pure(Unit,Unit{})
+
 def main_args(args: List<String>) -> IO(Unit):
   match args:
     case "--wake-message" <> +db <> +msg <> Nil{}: do IO<Unit>:
@@ -162,6 +198,8 @@ def main_args(args: List<String>) -> IO(Unit):
       handled_case(db)
       duplicate_case(db)
       far_case(db)
+      held_start_case(db)
+      held_route_case(db)
       IO.print("fixture-window-wake-path-ok")
     case other: IO.die(Unit,2,"usage")
 
