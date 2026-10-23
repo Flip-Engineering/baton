@@ -404,7 +404,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_context_eval',
-    description: 'Evaluate one expression in an already launched native runtime session as the attached session and retain the complete result in this database. Baton submits the existing runtime evaluate request with its control and evaluation effects; no second evaluator exists. Omitted query identity is generated; omitted cwd uses the attached session recorded workspace, or "." when none is recorded.',
+    description: 'Evaluate one expression in an already launched native runtime session as the attached session and retain the complete result in this database. Baton submits the existing runtime evaluate request with its control and evaluation effects; no second evaluator exists. Omitted query identity is generated; omitted cwd uses the attached session's recorded workspace; a session with none recorded is refused.',
     inputSchema: { type: 'object', properties: {
       session: { type: 'string', description: 'Launched runtime session identity' },
       expression: { type: 'string', description: 'Expression to evaluate in the selected runtime session' },

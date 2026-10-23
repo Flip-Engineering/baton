@@ -206,5 +206,47 @@ class ContextEvaluation(unittest.TestCase):
         self.assertNotIn('baton2_context_eval', names)
 
 
+class ContextEvalWorkspace(unittest.TestCase):
+    """Omitted cwd resolves through the owner workspace; a missing workspace is refused."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not ENTRY.is_file():
+            raise unittest.SkipTest(f'compiled context entry absent at {ENTRY}')
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.db = pathlib.Path(cls.temp.name) / 'state.db'
+        attached = cls.invoke('attach', OWNER, 'fixture', '', '')
+        if attached.returncode != 0:
+            raise RuntimeError(attached.stdout + attached.stderr)
+        with sqlite3.connect(cls.db) as connection:
+            connection.execute("UPDATE sessions SET workspace='' WHERE id=?", (OWNER,))
+
+    @classmethod
+    def tearDownClass(cls):
+        if getattr(cls, 'temp', None) is not None:
+            cls.temp.cleanup()
+
+    @classmethod
+    def invoke(cls, *args):
+        return subprocess.run([str(ENTRY), str(cls.db), *map(str, args)],
+                              cwd=cls.temp.name if getattr(cls, 'temp', None) else None,
+                              text=True, capture_output=True, timeout=180)
+
+    def test_omitted_cwd_for_owner_without_recorded_workspace_is_refused(self):
+        reply = self.invoke('context-eval', OWNER, '', 'rt:absent', '1 + 1', '', '')
+        self.assertEqual(reply.returncode, 3, reply.stdout + reply.stderr)
+        self.assertIn(f'evalWorkspaceUnrecorded:{OWNER}', reply.stdout + reply.stderr)
+
+    def test_explicit_cwd_is_not_refused_for_missing_workspace(self):
+        reply = self.invoke('context-eval', OWNER, '', 'rt:absent', '1 + 1', '', self.temp.name)
+        self.assertNotIn('evalWorkspaceUnrecorded', reply.stdout + reply.stderr)
+
+    def test_help_states_the_refusal(self):
+        reply = self.invoke('help', 'context-eval')
+        self.assertEqual(reply.returncode, 0, reply.stdout + reply.stderr)
+        self.assertIn("owner's recorded workspace", reply.stdout)
+        self.assertIn('is refused', reply.stdout)
+
+
 if __name__ == '__main__':
     unittest.main()
