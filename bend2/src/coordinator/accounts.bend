@@ -823,6 +823,15 @@ def attempt_completed(+db: String, +attempt: String, +outcome: String, +error_te
     saved : String <- IO.try(String,commit_read(db,attempt_completed_sql(attempt,outcome,error_text)))
     IO.pure(Unit,Unit{})
 
+# The start time comes from the account_attempts row written at launch. An attempt
+# with no account record (a profile-bound attempt) clears nothing.
+def clear_success(+db: String, +session: String, +attempt: String) -> IO(Unit):
+  do IO<Unit>:
+    +started : String <- IO.try(String,DB.Sql.read(db,"SELECT coalesce((SELECT CAST(started_at AS INTEGER)*1000 FROM account_attempts WHERE attempt=" ++ C.q(attempt) ++ "),'');"))
+    +label : String <- handoff_label_io(db,session)
+    cleared : Unit <- Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(started)),IO.pure(Unit,Unit{}),UW.record_success(db,session,Tx.trim_nl(label),Tx.trim_nl(started),attempt))
+    IO.pure(Unit,Unit{})
+
 # The settlement of one finished attempt: its outcome is recorded, and a successful
 # attempt clears the exhausted windows of the account in force for refusals that were
 # recorded before it started.
@@ -832,14 +841,6 @@ def attempt_settled(+db: String, +session: String, +attempt: String, +failed: Bo
     cleared : Unit <- Bool.pick(IO(Unit),failed,IO.pure(Unit,Unit{}),clear_success(db,session,attempt))
     IO.pure(Unit,Unit{})
 
-# The start time comes from the account_attempts row written at launch. An attempt
-# with no account record (a profile-bound attempt) clears nothing.
-def clear_success(+db: String, +session: String, +attempt: String) -> IO(Unit):
-  do IO<Unit>:
-    +started : String <- IO.try(String,DB.Sql.read(db,"SELECT coalesce((SELECT CAST(started_at AS INTEGER)*1000 FROM account_attempts WHERE attempt=" ++ C.q(attempt) ++ "),'');"))
-    +label : String <- handoff_label_io(db,session)
-    cleared : Unit <- Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(started)),IO.pure(Unit,Unit{}),UW.record_success(db,session,Tx.trim_nl(label),Tx.trim_nl(started),attempt))
-    IO.pure(Unit,Unit{})
 
 # The launch records the selected account beside the attempt. A failed record
 # reports its own cause to the session's coordinator and leaves the launch to

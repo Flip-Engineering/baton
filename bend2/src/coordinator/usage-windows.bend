@@ -274,15 +274,15 @@ def now_ms() -> String:
 def window_match_sql(+harness: String, +provider: String, +account: String) -> String:
   "harness=" ++ C.q(harness) ++ " AND provider=" ++ C.q(provider) ++ " AND (account=" ++ C.q(account) ++ " OR account='')"
 
+def offsetless_clock_modifier_sql(+text: String) -> String:
+  "CASE WHEN length(" ++ C.q(text) ++ ")>10 AND " ++ C.q(text) ++ " NOT GLOB '*[Zz+]*' AND substr(" ++ C.q(text) ++ ",11) NOT LIKE '%-%' THEN '-8 hours' ELSE '+0 seconds' END"
+
 # A provider time with a clock and no UTC designator is China Standard Time (UTC+8,
 # no daylight saving). z.ai writes "Your limit will reset at 2026-10-23 06:54:13"
 # without an offset, so the instant is that clock minus eight hours. A time with
 # Z or an explicit offset is read as written, and a date-only text as UTC.
 def parsed_reset_sql(+reset_text: String) -> String:
   Bool.pick(String,String.is_empty(reset_text),"NULL","(SELECT CAST(strftime('%s'," ++ C.q(reset_text) ++ "," ++ offsetless_clock_modifier_sql(reset_text) ++ ") AS INTEGER)*1000)")
-
-def offsetless_clock_modifier_sql(+text: String) -> String:
-  "CASE WHEN length(" ++ C.q(text) ++ ")>10 AND " ++ C.q(text) ++ " NOT GLOB '*[Zz+]*' AND substr(" ++ C.q(text) ++ ",11) NOT LIKE '%-%' THEN '-8 hours' ELSE '+0 seconds' END"
 
 # The upper bound, in milliseconds, of a named subscription window. A rolling window
 # that started at or before a refusal ends by the refusal time plus its length. A
@@ -350,26 +350,6 @@ def record_cause(+db: String, +session: String, +id: String, account: String, +c
     saved : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,record_cause_sql(session,Tx.trim_nl(account),window_label_of(lower_ascii(cause)),reset_text_of(cause),Tx.trim_nl(cause),id))
     record_cause_result(db,session,id,cause,saved)
 
-# --- the provider success -----------------------------------------------------
-#
-# A completed attempt that did not fail clears the exhausted windows of its account
-# label and provider scope. Only refusals recorded before the attempt started clear:
-# started is the attempt start in milliseconds, so a refusal recorded inside the
-# attempt keeps its hold. The success row carries no reset and no used fraction, so
-# the latest provider row of each cleared window stops being an exhaustion.
-
-def success_windows_sql(+harness: String, +provider: String, +account: String, +started: String) -> String:
-  "SELECT DISTINCT p.window FROM (" ++ latest_provider_rows_sql(harness,provider,account) ++ ") p WHERE " ++ exhausted_sql("p") ++ " AND p.recorded_at < " ++ started
-
-def record_success_sql(+session: String, +harness: String, +provider: String, +account: String, +started: String, +attempt: String) -> String:
-  "INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) SELECT " ++ now_ms() ++ ",harness,model," ++ C.q(provider) ++ "," ++ C.q(account) ++ ",e.window,NULL,'provider-success',NULL," ++ C.q("provider-success: attempt " ++ attempt) ++ ",'' FROM sessions,(" ++ success_windows_sql(harness,provider,account,started) ++ ") e WHERE sessions.id=" ++ C.q(session) ++ ";SELECT changes();"
-
-def record_success(+db: String, +session: String, +account: String, +started: String, +attempt: String) -> IO(Unit):
-  do IO<Unit>:
-    +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
-    +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
-    saved : String <- IO.try(String,DB.Sql.query(db,record_success_sql(session,Tx.trim_nl(harness),provider_of(Tx.trim_nl(model)),Tx.trim_nl(account),Tx.trim_nl(started),attempt)))
-    IO.pure(Unit,Unit{})
 
 # --- the operator observation command ----------------------------------------
 #
@@ -428,7 +408,6 @@ def observe(+db: String, +session: String, +window: String, +resets: String, +so
     done : Unit <- Bool.pick(IO(Unit),String.eq(Tx.trim_nl(saved),"0"),IO.die(Unit,2,"The session has no recorded route; recruit or configure it before observing usage windows."),IO.pure(Unit,Unit{}))
     observed : Unit <- observe_print(session,window,value)
     IO.pure(Unit,Unit{})
-
 
 
 # --- the provider report refresh ---------------------------------------------
@@ -511,6 +490,27 @@ def exhausted_windows_sql(+harness: String, +provider: String, +account: String)
 def latest_rows_sql(+harness: String, +provider: String, +account: String) -> String:
   +exhausted = exhausted_windows_sql(harness,provider,account)
   "SELECT w.* FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY CASE WHEN w2.window IN (" ++ exhausted ++ ") AND w2.resets_at IS NULL THEN 1 ELSE 0 END,w2.recorded_at DESC,w2.id DESC LIMIT 1)"
+
+# --- the provider success -----------------------------------------------------
+#
+# A completed attempt that did not fail clears the exhausted windows of its account
+# label and provider scope. Only refusals recorded before the attempt started clear:
+# started is the attempt start in milliseconds, so a refusal recorded inside the
+# attempt keeps its hold. The success row carries no reset and no used fraction, so
+# the latest provider row of each cleared window stops being an exhaustion.
+
+def success_windows_sql(+harness: String, +provider: String, +account: String, +started: String) -> String:
+  "SELECT DISTINCT p.window FROM (" ++ latest_provider_rows_sql(harness,provider,account) ++ ") p WHERE " ++ exhausted_sql("p") ++ " AND p.recorded_at < " ++ started
+
+def record_success_sql(+session: String, +harness: String, +provider: String, +account: String, +started: String, +attempt: String) -> String:
+  "INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) SELECT " ++ now_ms() ++ ",harness,model," ++ C.q(provider) ++ "," ++ C.q(account) ++ ",e.window,NULL,'provider-success',NULL," ++ C.q("provider-success: attempt " ++ attempt) ++ ",'' FROM sessions,(" ++ success_windows_sql(harness,provider,account,started) ++ ") e WHERE sessions.id=" ++ C.q(session) ++ ";SELECT changes();"
+
+def record_success(+db: String, +session: String, +account: String, +started: String, +attempt: String) -> IO(Unit):
+  do IO<Unit>:
+    +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    saved : String <- IO.try(String,DB.Sql.query(db,record_success_sql(session,Tx.trim_nl(harness),provider_of(Tx.trim_nl(model)),Tx.trim_nl(account),Tx.trim_nl(started),attempt)))
+    IO.pure(Unit,Unit{})
 
 # --- the query ---------------------------------------------------------------
 
@@ -717,7 +717,6 @@ def report_restored(+db: String, +session: String, +message: String, gate: Gate)
       noted : Unit <- Bool.pick(IO(Unit),String.eq(Tx.trim_nl(held),"1"),report_restored_rows(db,session,message,window,resets_at,source,receipt),IO.pure(Unit,Unit{}))
       IO.pure(Unit,Unit{})
     case other: IO.pure(Unit,Unit{})
-
 
 # --- laws ---------------------------------------------------------------------
 #
