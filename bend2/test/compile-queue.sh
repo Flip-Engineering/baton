@@ -1048,7 +1048,10 @@ if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
   STATE_SHAPE=$(fresh_state shape)
   (umask 0007; mkdir -p -m 2770 "$STATE_SHAPE/peaks")
   printf 'growth_kb=0\n' > "$STATE_SHAPE/outside-growth"
-  printf 'peak_kb=%s\n' "$((room * 7 / 10))" > "$STATE_SHAPE/peaks/k.cgen"
+  # Memory that other work on the host frees during the test would let two jobs
+  # of the bound run together, so the bound is taken from the memory available now.
+  room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
+  printf 'peak_kb=%s\n' "$((room * 9 / 10))" > "$STATE_SHAPE/peaks/k.cgen"
   printf 'import Base\ndef main() -> IO(Unit): IO.die(Unit,0,"other")\n' > "$T/src/bend2/src/other.bend"
   for compiler_dir in shape-one shape-two shape-three shape-four; do
     mkdir -p "$T/$compiler_dir"
@@ -1112,10 +1115,11 @@ waiting_count() {
 if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
   FIFO_FAKE=$(fresh_fake fifo)
   fifo_sleep() { if [ "$1" = 1 ]; then printf 2; else printf 0; fi; }
+  room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
   for n in 1 2 3 4 5; do
     k=$(CQ_FAKE=$FIFO_FAKE; cc_key "fifo-$n" "$T/fifo-$n" --sleep "$(fifo_sleep $n)")
     (umask 0007; mkdir -p -m 2770 "$STATE/keys/$k")
-    printf 'peak_kb=%s\n' "$((room * 7 / 10))" > "$STATE/keys/$k/peak"
+    printf 'peak_kb=%s\n' "$((room * 9 / 10))" > "$STATE/keys/$k/peak"
   done
   : > "$LOG"
   ( CQ_FAKE=$FIFO_FAKE; run_cc fifo-1 "$T/fifo-1" --sleep 2 ) & fifo_pids=$!
