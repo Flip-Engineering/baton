@@ -63,12 +63,12 @@ name: bend2-native-development
       retained_compiler_archive:
         description: 'Pinned compiler archive on the homelab; $RUNNER_TEMP uses the selected runner namespace'
         required: false
-        default: '/var/tmp/baton2-compile-queue/toolchains/gc1017-malloc-20261023/bend-2.0.25-linux-x64.tar.gz'
+        default: '/var/tmp/baton2-compile-queue/toolchains/gc1017-bun144-20261023/bend-2.0.25-linux-x64.tar.gz'
         type: string
       retained_compiler_archive_sha256:
         description: 'Exact SHA256 of the selected pinned compiler archive'
         required: false
-        default: '6609a2de031417fe4ad149d77afd9282c76237aa0b70dfb48416f4ccfe1ad876'
+        default: 'db42e8726f9f8e8049b9651a9cedf5f9994a530ef1ad606019a2faf881136fa1'
         type: string
       retained_ccache:
         description: 'Measured private ccache wrapper on the homelab; leave blank for direct native compilation'
@@ -114,8 +114,8 @@ jobs:
       - name: Prepare candidate toolchain and TypeScript runtime
         shell: bash
         env:
-          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/gc1017-malloc-20261023/bend-2.0.25-linux-x64.tar.gz' }}
-          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '6609a2de031417fe4ad149d77afd9282c76237aa0b70dfb48416f4ccfe1ad876' }}
+          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/gc1017-bun144-20261023/bend-2.0.25-linux-x64.tar.gz' }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || 'db42e8726f9f8e8049b9651a9cedf5f9994a530ef1ad606019a2faf881136fa1' }}
           BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
           BATON2_LINUX_RUNNER: homelab
         run: |
@@ -287,8 +287,8 @@ jobs:
       BUN_JSC_maxPerThreadStackUsage: '67108864'
       BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.target_commit }}
       BATON2_TARGET_BUILD_RUN: ${{ inputs.target_build_run }}
-      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/gc1017-malloc-20261023/bend-2.0.25-linux-x64.tar.gz' }}
-      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '6609a2de031417fe4ad149d77afd9282c76237aa0b70dfb48416f4ccfe1ad876' }}
+      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/gc1017-bun144-20261023/bend-2.0.25-linux-x64.tar.gz' }}
+      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || 'db42e8726f9f8e8049b9651a9cedf5f9994a530ef1ad606019a2faf881136fa1' }}
     steps:
       - name: Validate exact source commit
         shell: bash

@@ -18,6 +18,11 @@ import traceback
 
 ARCHIVE_SHA = '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4'
 COMPILER_ARCHIVES = {
+    'db42e8726f9f8e8049b9651a9cedf5f9994a530ef1ad606019a2faf881136fa1': {
+        'name': 'Bend 2.0.25 with the Baton #1017 pass collection patch on Bun 1.4.4',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
     '6609a2de031417fe4ad149d77afd9282c76237aa0b70dfb48416f4ccfe1ad876': {
         'name': 'Bend 2.0.25 with the Baton #1017 pass collection patch and Malloc=1 launcher',
         'official_release_artifact': False,
