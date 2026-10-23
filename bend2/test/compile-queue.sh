@@ -851,6 +851,27 @@ else
   printf 'SKIP memory admission: no /proc/meminfo\n'
 fi
 
+# One compiler and entry with different commands, such as a type check and a full
+# C generation, need different memory and record peaks in different groups. The
+# same command with a different option and output path shares a group.
+GROUP_FAKE=$(fresh_fake group)
+group_run() { # name extra...
+  name=$1
+  shift
+  sh "$QUEUE" run --kind cgen --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
+    --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$GROUP_FAKE" \
+    --artifact "c.c=$T/group-$name.c" --option "test=group-$name" \
+    -- "$GROUP_FAKE" "$@" -o "$T/group-$name.c" >"$T/group-$name.out" 2>"$T/group-$name.err"
+}
+groups_before=$(ls "$STATE/peaks" | wc -l)
+group_run same-one || bad 'group request one failed'
+group_run same-two || bad 'group request two failed'
+group_run other --check-only || bad 'group request three failed'
+groups_after=$(ls "$STATE/peaks" | wc -l)
+[ $((groups_after - groups_before)) = 2 ] \
+  && pass 'commands that differ record separate group peaks; the same command shares one' \
+  || bad "group peaks added: $((groups_after - groups_before)), expected 2"
+
 # Jobs without a recorded peak start in the order of their requests.
 waiting_count() {
   sh "$QUEUE" status --state-root "$STATE" > "$T/status.out"

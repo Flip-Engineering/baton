@@ -176,9 +176,12 @@ two seconds, as the sum of `RssAnon` and `RssShmem` over the session. When the
 command ends, the peak is the larger of the samples and the `ru_maxrss` of the
 command's descendants. A run that was canceled records no peak. The peak is
 written to `runs/<attempt>/peak`, raised in `keys/<key>/peak`, and raised in
-`peaks/<group>`. The group is the SHA-256 of the kind, the entry file and the
-compiler closure digest, so a new commit of the same entry joins the group of
-earlier ones. The values are the largest peak recorded; none is removed.
+`peaks/<group>`. The group is the SHA-256 of the kind, the entry file, the
+compiler closure digest and the normalized command (the text the key uses:
+compiler, outputs and root-relative paths replaced by placeholders). A new
+commit of the same entry joins the group of earlier ones; `--check-only` and a
+full C generation of the same entry do not share a group. Options are not part
+of the group. The values are the largest peak recorded; none is removed.
 
 ### Expected peak
 
@@ -187,8 +190,9 @@ A ticket's expected peak is, in order:
 1. the recorded peak of its key;
 2. the largest recorded peak of its group;
 3. no recorded peak. The job has no history. Its memory need is then the
-   current memory of the largest running job with the same entry file, or
-   nothing when the entry is empty or no such job runs.
+   current memory of the largest running job of the same group, or nothing when
+   the entry is empty or no such job runs. A job without a group, and the
+   holder of the older lock, are matched by entry file.
 
 ### Rule
 

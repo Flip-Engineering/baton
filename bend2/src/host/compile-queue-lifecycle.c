@@ -1074,13 +1074,19 @@ static int cq_admission_load(const char *state, CqAdmission *view) {
 static long long cq_max_ll(long long a, long long b) { return a > b ? a : b; }
 
 /* The memory a ticket is expected to need: its recorded peak, otherwise the
-   current memory of a running job with the same entry file, otherwise none. */
+   current memory of a running job of its group, otherwise none. A job without
+   a group (a takeover successor) is matched by entry file, as is the holder of
+   the older lock, because their command is not known here. */
 static long long cq_need(const CqAdmission *view, const CqTicket *ticket) {
   if (ticket->history) return ticket->expected;
   if (!*ticket->entry) return 0;
   long long bound = 0;
-  for (size_t i = 0; i < view->claim_count; i++)
-    if (!strcmp(view->claims[i].entry, ticket->entry)) bound = cq_max_ll(bound, view->claims[i].current);
+  for (size_t i = 0; i < view->claim_count; i++) {
+    const CqClaim *claim = &view->claims[i];
+    int same = *ticket->group && *claim->group ? !strcmp(claim->group, ticket->group)
+                                               : !strcmp(claim->entry, ticket->entry);
+    if (same) bound = cq_max_ll(bound, claim->current);
+  }
   if (view->legacy_pid && !strcmp(view->legacy_entry, ticket->entry))
     bound = cq_max_ll(bound, view->legacy_current);
   return bound;

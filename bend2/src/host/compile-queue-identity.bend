@@ -722,11 +722,13 @@ def CompileQueueIdentity.request_key(+kind: String, +cwd: String, +root: String,
       CompileQueueIdentity.artifact_names(String.lines(artifacts)), command)
 
 # The runs whose recorded memory peaks bound each other: the kind, the entry
-# file and the compiler closure. Options, inputs and source content are not
-# part of the group, so a new commit of the same entry joins the group of the
-# earlier ones.
+# file, the compiler closure and the normalized command. The command separates
+# runs of one compiler and entry that need different memory, such as
+# `--check-only` and a full C generation. Options, inputs and source content
+# are not part of the group, so a new commit of the same entry joins the group
+# of the earlier ones.
 def CompileQueueIdentity.history_group(+kind: String, +cwd: String, +root: String, +entry: String, +compiler: String, +linker: String, +version: String, +command: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     +ccache : String <- IO.pure(String, CompileQueueIdentity.ccache_expand(CompileQueueIdentity.ccache_path(String.lines(command)), cwd, root, compiler))
     toolchain : String <- IO.try(String, CompileQueueIdentity.compiler_closure_digest(compiler, linker, version, ccache))
-    CompileQueueIdentity.text_digest("schema=baton-compile-queue-history-v1\nkind=" ++ kind ++ "\nentry=" ++ entry ++ "\ntoolchain-digest=" ++ toolchain ++ "\n")
+    CompileQueueIdentity.text_digest("schema=baton-compile-queue-history-v1\nkind=" ++ kind ++ "\nentry=" ++ entry ++ "\ntoolchain-digest=" ++ toolchain ++ "\ncommand=" ++ command ++ "\n")
