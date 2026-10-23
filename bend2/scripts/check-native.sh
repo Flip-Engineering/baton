@@ -7,6 +7,14 @@ if python3 --version 2>/dev/null; then
 else
   PYTHON3=/usr/bin/python3
 fi
+compiler=${BEND:-"$root/.bend/bin/bend"}
+if [ ! -x "$compiler" ]; then
+  compiler="$root/node_modules/.bend/bin/bend"
+fi
+(
+  ulimit -s unlimited 2>/dev/null || true
+  BEND_NO_TELEMETRY=1 BUN_JSC_maxPerThreadStackUsage="${BUN_JSC_maxPerThreadStackUsage:-67108864}" "$compiler" bend2/src/coordinator/laws.bend --check-only
+)
 sh bend2/scripts/build-native.sh
 "$PYTHON3" bend2/test/package-receiver-layout.py
 sh bend2/test/bend-launch-guard.sh

@@ -32,15 +32,17 @@ import ../git/text.bend as Tx
 import ../host/text.bend as Text
 import ../storage/lifecycle.bend as Storage
 import ./store.bend as Store
+import ./control.bend as Control
+import ./usage-windows.bend as UW
 
 law direct_replay_keeps_output_failure_for_completion:
   for +db: String
   for +player: String
   for +id: String
-  for cmd: String
-  for model: String
-  for effort: String
-  for cwd: String
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
   for +task: String
   for log: String
   for session: String
@@ -410,8 +412,8 @@ law native_admission_reads_current_attempt_before_pending_input:
   for +db: String
   for +session: String
   for +lock: U32
-  for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
-  for -pending: (String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>)
+  for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  for pending: (String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>)
   {Receive.acquired_recorded(db,session,lock,again,pending) == recorded_attempt_before_pending(db,session,lock,again,pending) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def native_admission_reads_current_attempt_before_pending_input(db,session,lock,again,pending):
@@ -422,9 +424,9 @@ law surviving_attempt_recovery_preserves_its_guard:
   for +session: String
   for +lock: U32
   for +directory: String
-  for args: String
-  for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
-  for -pending: (String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>)
+  for +args: String
+  for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  for pending: (String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>)
   {Receive.acquired_attempt(db,session,lock,directory,Some{args},again,pending) == Receive.recover_owned(db,session,directory,lock,String.split(args,Char.from_u32(0)),again) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def surviving_attempt_recovery_preserves_its_guard(db,session,lock,directory,args,again,pending):
@@ -586,7 +588,7 @@ law retained_observation_uses_the_reconciled_input_cursor:
   for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
   for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
   for adopted: Bool
-  for superseded: Bool
+  for +superseded: Bool
   {Receive.observed_output(db,session,id,log,cursor,native,cwd,attempt,handle,lock,(outcome,deliveries),again,adopted,superseded) == Receive.observed(db,session,id,log,Receive.reconciled_cursor(cursor,adopted,outcome),native,cwd,attempt,handle,lock,outcome,deliveries,again,superseded) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def retained_observation_uses_the_reconciled_input_cursor(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again,adopted,superseded):
@@ -753,7 +755,7 @@ def fenced_admission_reads_claim_and_custody(+db: String, +session: String, +cur
     +trimmed : String <- IO.pure(String,Tx.trim_nl(dir))
     +dead : Bool <- Receive.custody_dead(db,trimmed,String.is_empty(trimmed))
     recovered : Unit <- Receive.recover_if_dead(db,session,dead)
-    +replay_cursor : String = Bool.pick(String,Bool.and(dead,Bool.not(String.is_empty(trimmed))),"0",cursor)
+    replay_cursor : String = Bool.pick(String,Bool.and(dead,Bool.not(String.is_empty(trimmed))),"0",cursor)
     Receive.wake_admit(db,session,replay_cursor,launch,lock,state,dead)
 
 law the_wake_admits_on_claim_and_custody:
