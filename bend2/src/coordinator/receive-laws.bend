@@ -607,9 +607,8 @@ def guarded_attempt_observation(+db: String, +session: String, +id: String, curs
   Storage.with_writer_leases(Result<&1,&1,U32 & String,Unit>, log, directory,
     error => IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error}),
     unit => do IO<Result<&1,&1,U32 & String,Unit>>:
-      reconciled : Unit <- Stop.observing(db,session,id,directory)
-      gone : Bool <- Receive.orphan_native_gone(db,handle)
-      Receive.observe_guarded_state(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,lock,again,adopted,gone))
+      reconciled : Result<&1,&1,U32 & String,Unit> <- Stop.observing_result(db,session,id,directory)
+      Receive.observe_guarded_reconciled(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,lock,again,adopted,reconciled))
 
 law guarded_observation_preserves_its_adopted_origin:
   for +db: String
