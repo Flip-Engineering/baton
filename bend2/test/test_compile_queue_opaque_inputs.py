@@ -127,6 +127,43 @@ class QueueOpaqueInputTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("outside root", result.stderr)
 
+    def write_c_file(self, path, megabytes, lines_per_megabyte_filler=b"int filler_value_0123456789 = 0;\n"):
+        """A C file of the given size with quoted includes at the start, the middle and the end."""
+        filler = lines_per_megabyte_filler * ((1 << 20) // len(lines_per_megabyte_filler))
+        with path.open("wb") as stream:
+            stream.write(b'  \t#include "first.h"\n')
+            for index in range(megabytes):
+                stream.write(filler)
+                if index == megabytes // 2:
+                    stream.write(b'#include "middle.h" // trailing text\n')
+                    stream.write(b'#include <system.h>\n// #include "commented.h"\n# include "spaced.h"\n')
+            stream.write(b'#include "last.h"')
+        for name in ("first", "middle", "last"):
+            (self.root / (name + ".h")).write_text("#define %s 1\n" % name.upper())
+
+    def test_c_include_scan_matches_deployed_queue_on_small_file(self):
+        if not self.baseline:
+            self.skipTest("BATON2_COMPILE_QUEUE_BASELINE is required for comparison")
+        big = self.root / "scan.c"
+        self.write_c_file(big, 2)
+        self.assertEqual(self.key(self.candidate, payload=big), self.key(self.baseline, payload=big))
+
+    def test_large_c_file_is_keyed_and_its_includes_affect_identity(self):
+        # A C file is scanned for quoted includes. Reading it as one text and splitting that
+        # text recursed once per character and line and overflowed the stack above 90 MB.
+        big = self.root / "large.c"
+        self.write_c_file(big, 130)
+        self.assertGreater(big.stat().st_size, 100 * 1024 * 1024)
+        before = self.key(self.candidate, payload=big)
+        self.assertRegex(before.strip().splitlines()[-1], r"^[0-9a-f]{64}$")
+        for name in ("first", "middle", "last"):
+            with self.subTest(include=name):
+                target = self.root / (name + ".h")
+                target.write_text(target.read_text() + "#define CHANGED 1\n")
+                changed = self.key(self.candidate, payload=big)
+                self.assertNotEqual(before, changed)
+                before = changed
+
     def waiter_rss(self, payload):
         (self.root / "output").unlink(missing_ok=True)
         # A running job without a recorded peak makes the request wait for admission.
