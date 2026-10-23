@@ -95,7 +95,7 @@ function planRow(candidate, from, to) {
         row.adminMissing = probe.adminMissing;
       }
     }
-    if (candidate.endpoint !== null) {
+    if (candidate.endpoint !== null && candidate.endpoint !== '') {
       const argv = JSON.parse(candidate.endpoint);
       if (JSON.stringify(argv) !== candidate.endpoint) {
         row.skip ??= 'endpoint-not-canonical-json';
@@ -158,6 +158,9 @@ export function applyRecovery(database, plan) {
   const db = new DatabaseSync(database);
   let begun = false;
   try {
+    // The coordinator holds the live database. Without a busy timeout, COMMIT fails at once
+    // while a reader holds the database, which rolls back a complete apply.
+    db.exec('PRAGMA busy_timeout = 60000');
     db.exec('BEGIN IMMEDIATE');
     begun = true;
     const update = db.prepare(
