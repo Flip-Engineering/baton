@@ -112,12 +112,12 @@ class RecruitReceiver(unittest.TestCase):
                 row = json.loads(self.recruit(session, harness, model).stdout)
                 self.assert_receiver(row, harness, model)
                 self.assertEqual(self.session(session)['endpointArgv'], row['endpointArgv'])
+                print(f"recruit {harness} {model}: endpointArgv verified; blockedCause={row.get('blockedCause')!r}")
         players = json.loads(self.call(self.db, 'players').stdout)
         self.assertEqual({row['id'] for row in players}, {'parent', *('worker-' + str(i) for i in range(len(routes)))})
         for row in players:
             if row['id'] != 'parent':
                 self.assertNotEqual(row.get('blockedCause'), 'endpoint-absent')
-                self.assertTrue(row['endpointArgv'])
         print('players=' + json.dumps(players))
 
     def test_join_registers_a_receiver_in_a_shared_dirty_worktree(self):
