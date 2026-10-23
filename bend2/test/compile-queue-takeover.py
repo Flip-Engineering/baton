@@ -25,9 +25,9 @@ import time
 LEGACY = os.environ.get('BATON2_LEGACY_QUEUE_BIN')
 PRIOR = os.environ.get('BATON2_PRIOR_QUEUE_BIN')
 BINARY = os.environ.get('BATON2_COMPILE_QUEUE_BIN')
-if not LEGACY and not PRIOR:
-    print('SKIP takeover: set BATON2_LEGACY_QUEUE_BIN (uses heavy.lock) or BATON2_PRIOR_QUEUE_BIN (earlier admission build)')
-    sys.exit(0)
+if not BINARY:
+    print('Set BATON2_COMPILE_QUEUE_BIN to the built Bend2 queue executable', file=sys.stderr)
+    sys.exit(2)
 if not BINARY:
     print('Set BATON2_COMPILE_QUEUE_BIN to the built Bend2 queue executable', file=sys.stderr)
     sys.exit(2)
@@ -47,6 +47,7 @@ for arg in "$@"; do
   prev=$arg
 done
 printf 'start %s\\n' "$tag" >> "@LOG@"
+printf 'mark %s %s\\n' "$tag" "${QUEUE_TEST_MARK:-none}" >> "@LOG@"
 if [ -n "$hold" ]; then
   i=0
   while [ ! -e "$hold" ] && [ "$i" -lt 600 ]; do sleep 0.1; i=$((i + 1)); done
@@ -60,9 +61,11 @@ ENV = dict(os.environ, BATON_COMPILE_QUEUE_ROOT=str(STATE))
 ENV.pop('BATON_COMPILE_QUEUE_TELEMETRY', None)
 
 
-def request(binary, tag, *extra, state=None):
+def request(binary, tag, *extra, state=None, mark=None):
     state = state or STATE
     env = dict(ENV, BATON_COMPILE_QUEUE_ROOT=str(state))
+    if mark:
+        env['QUEUE_TEST_MARK'] = mark
     out = T / (tag + '.artifact')
     args = [binary, '--', 'run', '--kind', 'cc', '--state-root', str(state), '--cwd', str(T),
             '--source-root', str(T), '--compiler', str(FAKE), '--linker', str(FAKE),
@@ -151,11 +154,12 @@ def scenario_prior():
     state2.chmod(0o2770)
     (state2 / 'outside-growth').write_text('growth_kb=0\n')
     env2 = dict(ENV, BATON_COMPILE_QUEUE_ROOT=str(state2))
+    env_takeover = dict(env2, QUEUE_TEST_MARK='takeover-environment')
     hold2 = T / 'hold-prior'
     holder2 = request(PRIOR, 'prior-holder', '--hold', str(hold2), state=state2)
     procs.append(holder2)
     until('earlier build started the job that holds a claim', lambda: 'start prior-holder' in log_lines())
-    waiter2 = request(PRIOR, 'prior-waiter', state=state2)
+    waiter2 = request(PRIOR, 'prior-waiter', state=state2, mark='client-environment')
     procs.append(waiter2)
 
     def waiting_rows():
@@ -173,9 +177,30 @@ def scenario_prior():
     (state2 / 'peaks' / 'k.cc').write_text('peak_kb=64\n')
     time.sleep(1)
     assert 'start prior-waiter' not in log_lines(), ('earlier build applied the new rule', log_lines())
-    taken2 = subprocess.run([BINARY, '--', 'takeover', '--state-root', str(state2)], env=env2,
-                            capture_output=True, text=True, timeout=60)
-    assert taken2.returncode == 0 and taken2.stdout.count('retaken ') == 1, (taken2.stdout, taken2.stderr, T)
+    # takeover takes the admission lock before it stops a supervisor, so a
+    # supervisor cannot be stopped while it holds that lock. Hold the lock here: no
+    # supervisor may be stopped until it is released.
+    import fcntl
+    waiting_pid = None
+    for ticket in (state2 / 'admission' / 'waiting').iterdir():
+        for line in ticket.read_text().splitlines():
+            if line.startswith('pid='):
+                waiting_pid = int(line[4:])
+    assert waiting_pid, ('no ticket', T)
+
+    def stopped(pid):
+        return pathlib.Path('/proc/%d/stat' % pid).read_text().rsplit(')', 1)[1].split()[0] == 'T'
+    with (state2 / 'admission' / 'lock').open('r+') as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        takeover2 = subprocess.Popen([BINARY, '--', 'takeover', '--state-root', str(state2)], env=env_takeover,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        time.sleep(1.5)
+        assert takeover2.poll() is None, 'takeover finished while the admission lock was held'
+        assert not stopped(waiting_pid), 'a supervisor was stopped while the admission lock was held'
+        fcntl.flock(lock_file, fcntl.LOCK_UN)
+    out2, err2 = takeover2.communicate(timeout=60)
+    assert takeover2.returncode == 0 and out2.count('retaken ') == 1, (out2, err2, T)
+    print('PASS takeover waited for the admission lock before it stopped a supervisor')
     print('PASS takeover replaced the waiting supervisor of the earlier build')
     try:
         waiter2.wait(timeout=60)
@@ -184,6 +209,8 @@ def scenario_prior():
     assert waiter2.returncode == 0, (waiter2.returncode, T)
     assert (T / 'prior-waiter.artifact').read_text() == 'artifact-prior-waiter'
     assert log_lines().count('start prior-waiter') == 1 and log_lines().count('end prior-waiter') == 1, log_lines()
+    assert 'mark prior-waiter client-environment' in log_lines(), ('the successor did not keep the environment of the requester', log_lines())
+    print('PASS the successor ran the command with the environment of the replaced supervisor')
     assert holder2.poll() is None and 'end prior-holder' not in log_lines(), log_lines()
     print('PASS the replaced job ran once, beside the first job, and its requester got the result')
     hold2.touch()
@@ -192,7 +219,62 @@ def scenario_prior():
     print('PASS the first job of the earlier build finished intact')
 
 
+FAKE_SUPERVISOR = '''
+import fcntl, os, sys, time
+state, attempt = sys.argv[1], sys.argv[-1]
+key = attempt.split('/keys/')[1].split('/')[0]
+stat = open('/proc/self/stat').read().rsplit(')', 1)[1].split()
+queued = int(time.time_ns())
+ticket = '%020d-%010d' % (queued, os.getpid())
+open(state + '/admission/waiting/' + ticket, 'w').write(
+    'pid=%d\\nstarttime=%s\\nkey=%s\\ngroup=\\nentry=\\ncompiler=\\nkind=cc\\nqueued_ns=%d\\n'
+    % (os.getpid(), stat[19], key, queued))
+lock = open(state + '/admission/lock', 'a+')
+while True:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    time.sleep(0.3)
+    fcntl.flock(lock, fcntl.LOCK_UN)
+    time.sleep(0.05)
+'''
+
+
+def scenario_lock_holder():
+    """A supervisor that holds the admission lock most of the time is replaced without a stall.
+
+    Stopping such a supervisor while it holds the lock would keep the lock and block
+    takeover and every other waiter."""
+    state3 = T / 'queue-lock'
+    for sub in ('', 'admission', 'admission/waiting', 'admission/running'):
+        directory = state3 / sub if sub else state3
+        directory.mkdir(exist_ok=True)
+        directory.chmod(0o2770)
+    script = T / 'fake-supervisor.py'
+    script.write_text(FAKE_SUPERVISOR)
+    fakes = []
+    for number in range(3):
+        key = ('%064x' % (number + 1))
+        attempt = state3 / 'keys' / key / 'runs' / ('1000000000000000%d-1' % number)
+        attempt.mkdir(parents=True)
+        for directory in (attempt.parent.parent, attempt.parent, attempt):
+            directory.chmod(0o2770)
+        (attempt / 'meta').write_text('kind=cc\nkey=%s\n' % key)
+        (attempt.parent.parent / 'lock').write_text('')
+        process = subprocess.Popen(['python3', '-I', str(script), str(state3), '__supervise', str(attempt)])
+        fakes.append(process)
+        procs.append(process)
+    until('fake supervisors wrote their tickets', lambda: len(list((state3 / 'admission' / 'waiting').iterdir())) == 3)
+    env3 = dict(ENV, BATON_COMPILE_QUEUE_ROOT=str(state3))
+    try:
+        taken3 = subprocess.run([BINARY, '--', 'takeover', '--state-root', str(state3)], env=env3,
+                                capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired as error:
+        raise AssertionError(('takeover stalled on the admission lock of a stopped supervisor', T)) from error
+    assert taken3.returncode == 0 and taken3.stdout.count('retaken ') == 3, (taken3.stdout, taken3.stderr, T)
+    print('PASS takeover replaced supervisors that hold the admission lock most of the time, without a stall')
+
+
 try:
+    scenario_lock_holder()
     if LEGACY:
         scenario_legacy()
     if PRIOR:

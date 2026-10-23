@@ -287,6 +287,10 @@ current memory as a running job, with the entry file of its attempt, and does
 not count it as a job without history. Jobs with the holder's entry file are
 bounded by the holder's current memory.
 
+A successor runs the command with the environment of the supervisor it replaces
+(read from `/proc/PID/environ`; the replaced supervisor of an earlier takeover is
+the original one), not the environment of the process that runs `takeover`.
+
 `takeover --state-root DIR` replaces the supervisors of an older executable
 that wait for the lock. For each one it stops the supervisor (a stopped
 process leaves the lock queue and cannot start its command), then starts a
@@ -301,9 +305,10 @@ namespace (its working directory and command may not exist in the namespace of
 `takeover` also replaces supervisors that wait for admission under another
 executable file than its own, so a change of the rule reaches jobs that are
 already queued. A waiting supervisor of an earlier build, or the successor of an
-earlier takeover, is stopped. Under the admission lock `takeover` checks that the
-job was not admitted and removes its ticket; then it starts a successor with the
-same queue time. A stopped successor is killed once its replacement runs. A
+earlier takeover, is stopped. `takeover` takes the admission lock first, because a
+supervisor that is stopped while it holds that lock would keep it and block every
+other waiter. With the lock held it checks that the job was not admitted and
+removes its ticket; then it starts a successor with the same queue time. A stopped successor is killed once its replacement runs. A
 stopped supervisor is killed when the new successor finishes, as for the older
 lock. A job that was admitted first is left running. `status` lists the memory the rule works from, the legacy holder,
 each running job and each waiting ticket.

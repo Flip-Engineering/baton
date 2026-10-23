@@ -510,7 +510,7 @@ static int cq_setup_child_fds(int key_lock, int cgen_lock, int status_write,
 }
 
 static int cq_spawn_detached(const char *argv_text, size_t argv_length,
-                             u32 key_lock, u32 cgen_lock, pid_t *pid_out) {
+                             u32 key_lock, u32 cgen_lock, char *const *envp, pid_t *pid_out) {
   char **parsed = NULL; int count = 0;
   int error = cq_parse_argv(argv_text, argv_length, &parsed, &count);
   if (error) return error;
@@ -550,7 +550,7 @@ static int cq_spawn_detached(const char *argv_text, size_t argv_length,
       write(status_fd >= 0 ? status_fd : status[1], &child_error, sizeof(child_error));
       _exit(127);
     }
-    execve(exec, argv, environ);
+    execve(exec, argv, envp ? envp : environ);
     child_error = errno;
     write(status_fd >= 0 ? status_fd : status[1], &child_error, sizeof(child_error));
     _exit(127);
@@ -1690,6 +1690,30 @@ static int cq_legacy_waiters(const char *state, int **pids, size_t *count) {
   return 0;
 }
 
+/* The environment of another process of the same user, as an envp array. The
+   caller frees both the array and the block. Answers NULL when it cannot be read. */
+static char **cq_read_environ(int pid, char **block) {
+  char path[64];
+  char *text = NULL; size_t length = 0;
+  snprintf(path, sizeof(path), "/proc/%d/environ", pid);
+  if (cq_read_path(path, &text, &length) || !length) { free(text); return NULL; }
+  size_t entries = 0;
+  for (size_t i = 0; i < length; i++) if (!text[i]) entries++;
+  if (text[length - 1]) entries++;
+  char **envp = calloc(entries + 2, sizeof(*envp));
+  char *copy = realloc(text, length + 1);
+  if (!envp || !copy) { free(envp); free(copy ? copy : text); return NULL; }
+  copy[length] = 0;
+  size_t count = 0;
+  for (size_t at = 0; at < length; ) {
+    if (copy[at]) envp[count++] = copy + at;
+    at += strlen(copy + at) + 1;
+  }
+  envp[count] = NULL;
+  *block = copy;
+  return envp;
+}
+
 /* Starts a successor that takes the place of a waiting supervisor. old_pid and
    old_start name the supervisor that the requester waits for; the successor kills
    it when the attempt has a result. */
@@ -1709,7 +1733,12 @@ static int cq_spawn_successor(const char *state, const char *keydir, const char 
   if (!error) error = cq_path(heavy_lock, "%s/heavy.lock", state);
   if (!error) error = cq_lock_open(key_lock, &key_fd);
   if (!error) error = cq_lock_open(heavy_lock, &heavy_fd);
-  if (!error) error = cq_spawn_detached(args, at, key_fd, heavy_fd, successor);
+  /* The successor runs the command with the environment of the supervisor that
+     it replaces, which is the environment of the requester. */
+  char *block = NULL;
+  char **envp = cq_read_environ(atoi(old_pid), &block);
+  if (!error) error = cq_spawn_detached(args, at, key_fd, heavy_fd, envp, successor);
+  free(envp); free(block);
   if (key_fd) close((int)key_fd);
   if (heavy_fd) close((int)heavy_fd);
   return error;
@@ -1775,15 +1804,21 @@ static int cq_retake_waiting(const char *state, char **text, size_t *used, size_
       error = cq_text_append(text, used, capacity, "skipped pid=%d reason=other-mount-namespace attempt=%s\n", pid, attempt);
       continue;
     }
+    /* Take the admission lock first. A supervisor that is stopped while it holds
+       the lock would keep it and block every other waiter. With the lock held
+       here the target either waits for it or sleeps. */
+    int locked = !cq_admission_lock(state, &fd);
+    if (!locked) { error = cq_text_append(text, used, capacity, "skipped pid=%d reason=no-lock attempt=%s\n", pid, attempt); continue; }
     if (kill((pid_t)pid, SIGSTOP)) {
+      cq_admission_unlock(fd);
       error = cq_text_append(text, used, capacity, "skipped pid=%d reason=not-permitted attempt=%s\n", pid, attempt);
       continue;
     }
     for (int wait = 0; wait < 100 && !cq_stopped(pid); wait++) cq_sleep_ns(20000000L);
-    /* A stopped supervisor cannot start its command. Check under the lock that it
-       was not admitted before it stopped, then remove its ticket. */
+    /* A stopped supervisor cannot start its command. Check that it was not
+       admitted before it stopped, then remove its ticket. */
     int still_waiting = 0;
-    if (cq_stopped(pid) && !cq_admission_lock(state, &fd)) {
+    if (cq_stopped(pid)) {
       CqAdmission now;
       if (!cq_admission_load(state, &now)) {
         int claimed = 0, listed = 0;
@@ -1796,8 +1831,8 @@ static int cq_retake_waiting(const char *state, char **text, size_t *used, size_
         }
       }
       cq_admission_free(&now);
-      cq_admission_unlock(fd);
     }
+    cq_admission_unlock(fd);
     if (!still_waiting) {
       kill((pid_t)pid, SIGCONT);
       error = cq_text_append(text, used, capacity, "skipped pid=%d reason=not-waiting attempt=%s\n", pid, attempt);
@@ -1924,7 +1959,7 @@ static int cq_watch_command(const char *stdout_path) {
   memcpy(at, pid, strlen(pid) + 1); at += strlen(pid) + 1;
   memcpy(at, start, strlen(start) + 1);
   pid_t watcher = 0;
-  error = cq_spawn_detached(args, length, 9, 8, &watcher);
+  error = cq_spawn_detached(args, length, 9, 8, NULL, &watcher);
   free(args); free(start);
   return error;
 }
@@ -2232,7 +2267,7 @@ static void cq_call_spawn_detached(IoWork *work) {
   CqCall *call = (CqCall *)work->data;
   pid_t pid = 0;
   call->error = cq_spawn_detached(call->argv, call->argv_length, call->key_lock,
-                                  call->cgen_lock, &pid);
+                                  call->cgen_lock, NULL, &pid);
   call->code = (int)pid;
 }
 
