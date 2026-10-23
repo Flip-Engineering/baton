@@ -11,7 +11,8 @@ import subprocess
 import tempfile
 import unittest
 
-EXE = Path(os.environ['BATON2_EXE']).resolve()
+ROOT = Path(__file__).resolve().parents[2]
+EXE = Path(os.environ.get('BATON2_EXE', ROOT / '.scratch/bend2/baton2')).resolve()
 
 
 class OperatorParent(unittest.TestCase):
