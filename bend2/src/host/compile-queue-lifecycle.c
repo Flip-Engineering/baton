@@ -1375,6 +1375,19 @@ static int cq_admission_status(const char *state, char **out, size_t *length) {
 }
 
 #ifdef __linux__
+/* Whether pid sees the same mount namespace as this process. A successor runs
+   in this namespace, so it cannot start an attempt whose cwd or command exists
+   only in another one. */
+static int cq_same_mount_namespace(int pid) {
+  char path[64], mine[128], theirs[128];
+  snprintf(path, sizeof(path), "/proc/%d/ns/mnt", pid);
+  ssize_t a = readlink("/proc/self/ns/mnt", mine, sizeof(mine) - 1);
+  ssize_t b = readlink(path, theirs, sizeof(theirs) - 1);
+  if (a < 0 || b < 0) return 1;
+  mine[a] = 0; theirs[b] = 0;
+  return !strcmp(mine, theirs);
+}
+
 static int cq_stopped(int pid) {
   char path[64], line[1024];
   snprintf(path, sizeof(path), "/proc/%d/stat", pid);
@@ -1446,6 +1459,11 @@ static int cq_takeover(const char *state, char **out, size_t *length) {
     if (cq_attempt_parts(attempt, parsed_state, keydir, key) || strcmp(parsed_state, state)) { free(start); continue; }
     if (cq_path(marker, "%s/takeover", attempt)) { free(start); continue; }
     if (access(marker, F_OK) == 0) { free(start); continue; }
+    if (!cq_same_mount_namespace(pid)) {
+      error = cq_text_append(&text, &used, &capacity, "skipped pid=%d reason=other-mount-namespace attempt=%s\n", pid, attempt);
+      free(start);
+      continue;
+    }
     if (kill((pid_t)pid, SIGSTOP)) {
       error = cq_text_append(&text, &used, &capacity, "skipped pid=%d reason=not-permitted attempt=%s\n", pid, attempt);
       free(start);

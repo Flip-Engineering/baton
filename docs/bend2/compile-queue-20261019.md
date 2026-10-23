@@ -256,7 +256,9 @@ successor with `__takeover`. The successor takes the queue position of the
 stopped supervisor, waits for admission, runs the same attempt, and kills the
 stopped supervisor when the attempt has a result. The requester that waited
 for the stopped supervisor then reads that result. The holder of the lock is
-not touched. `status` lists the memory the rule works from, the legacy holder,
+not touched. A supervisor of another user, and a supervisor in another mount
+namespace (its working directory and command may not exist in the namespace of
+`takeover`), are reported as skipped and keep waiting. `status` lists the memory the rule works from, the legacy holder,
 each running job and each waiting ticket.
 
 ## State root
