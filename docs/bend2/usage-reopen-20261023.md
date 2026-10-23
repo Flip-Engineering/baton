@@ -24,9 +24,10 @@ a banked reset would have restored the allowance earlier.
 - The provider's answer to a spend decides the result. Baton does not treat a
   spend as successful until the provider confirms it or a later usage read shows
   the window reopened.
-- A spend is recorded before the provider is called, and its result is recorded
-  after. A spend is never repeated automatically after a crash, because each
-  successful spend consumes a banked reset.
+- A spend is recorded before the provider is called, with an idempotency key,
+  and its result is recorded after. A replay after a crash reuses that key, so the
+  provider does not spend a second reset for the same attempt (Codex, verified
+  above). A provider without a key-based replay is never replayed.
 - A spend is attempted only when all three conditions hold: the account's setting
   is on, held work is waiting on that account, and the 7-day window is exhausted.
 
@@ -39,29 +40,32 @@ implemented.
 
 | Provider | Spend action in the provider's product | Route verified | Confirmation source | Notes |
 |---|---|---|---|---|
-| Codex / ChatGPT | "Redeem reset" in Codex CLI `/usage`, and in the desktop or web Settings > Usage & billing | CLI route is documented as an interactive menu selection. No non-interactive command or API is documented. | Codex rollout `rate_limits` (`primary.used_percent` for the weekly window, `resets_at`), read after the spend | Paid "instant reset" is a separate offer and is excluded. A banked reset is used only when it restores at least one allowance below 100%. |
-| z.ai GLM Coding Plan | Quota reset card (weekly type). The FAQ does not state where a card is used. | No | Quota progress on the z.ai subscription page. No API is documented. | The weekly card also restores the 5-hour quota. Card count and expiry are not readable from public docs. |
-| Claude Max | "Reset for free" in Settings > Usage (web and Claude Desktop) | No. Not available in Claude Code in a terminal or IDE, or on Claude Mobile. | Settings > Usage only | Expiry is shown in the same settings area. |
+| Codex / ChatGPT | Codex app-server methods `account/rateLimits/read` (count and state) and `account/rateLimitResetCredit/consume` (spend). The CLI `/usage` "Redeem reset" uses the same backend. | Verified in codex-cli 0.163.0: both methods and their types are in the binary's generated schema (`codex app-server generate-json-schema`). Transport is JSON-RPC over stdio after `initialize`. The read was run once on the operator account and returned `availableCount: 0` and a weekly window (`windowDurationMins` 10080). | `account/rateLimits/read` result: `rateLimitResetCredits.availableCount`, `credits[]` (`id`, `resetType`, `status`, `expiresAt`), and `rateLimits.primary` (`usedPercent`, `resetsAt`, `windowDurationMins`) | Paid "instant reset" is a separate offer and is excluded: Baton consumes only credits in `rateLimitResetCredits`. Consume outcomes: `reset`, `nothingToReset`, `noCredit`, `alreadyRedeemed`. `ordinaryUsageAllowed` null means unavailable and is never inferred from percent or time. |
+| z.ai GLM Coding Plan | Quota reset card (weekly type). The FAQ does not state where a card is used. | No | None readable. No API is documented. | Count and state recorded as not readable; no operator-entered count. |
+| Claude Max | "Reset for free" in Settings > Usage (web and Claude Desktop) | No. Not available in Claude Code in a terminal or IDE, or on Claude Mobile. | Settings > Usage only | Count and state are not readable by any source found. Recorded as not readable; no operator-entered count. |
 | Kimi Code | None documented | Not applicable | Not applicable | Legacy weekly limit resets every 7 days from subscription start. That is a fixed schedule, not a banked reset. |
 | DeepSeek | None. Billing is balance-based and has no 7-day window. | Not applicable | Not applicable | Balance exhaustion is covered by #1013. |
 | Muse | Unknown | Unknown | Unknown | Usage data is an SSE frame on live turns (third-party report, not Meta documentation). |
 
-Result: no provider has a spend action that Baton can verify end to end today.
-The Codex CLI menu is the only documented spend route, and it is interactive.
-Implementation therefore waits for a verified route for each provider. The design
-below applies to any provider with one.
+Result: Codex is the only provider with a verified read and spend route. Claude
+Max and z.ai have no readable count and no verified spend route, so they stay
+unimplemented and are recorded as not readable. The design below applies to any
+provider with a verified route.
 
 ## Operator setting
 
-- One setting per account: `reset_spend` with values `off` (default) and `on`.
-- The setting is stored in the account record of the coordination database, next
-  to the account label. The operator sets it through the operator command surface.
-  Baton never changes it.
-- Turning the setting on does not spend a reset. It only allows the spend path
-  described below.
+- One setting per account: `reset_spend` with values `on` and `off`.
+- The setting is stored on the account record of the coordination database, next
+  to the account's provider and label.
+- Default: `on` for an account whose provider has a verified route (currently
+  Codex). The operator asked that banked resets be spent on exhausted 7-day
+  windows, so the default follows that request.
+- The operator can set `off` for any account. Baton never sets `on` or `off`
+  itself, and it does not change the setting after a spend.
+- Turning the setting on does not spend a reset by itself. It only allows the
+  spend path described below.
 
-Open question for the root: whether the setting belongs on the account record or
-on the provider and account pair, since one account may serve several providers.
+The setting scope is per account, as the root decided.
 
 ## Spend path
 
@@ -86,17 +90,21 @@ refusal is reported to the root and the conductors holding seats on the account.
 
 ## Crash and replay
 
-A spend record that is `requested` with no result after a restart means the
-provider call may or may not have happened. Baton does not call the provider
-again for that record. The next step is a usage read:
+A spend record that is `requested` with no result after a restart is replayed
+with the same `idempotencyKey` for providers that document key-based replay
+(Codex: `account/rateLimitResetCredit/consume` takes `idempotencyKey`, and the
+"reuse the same value when retrying that attempt" rule is in the generated
+schema). The replay outcome decides the record:
 
-- If the usage read shows the window reopened, the record becomes `confirmed`.
-- If it does not, the record becomes `unknown`, and the root is told. No further
-  spend runs for that refusal.
+- `reset` on replay: the spend completed in this replay. Record `confirmed`.
+- `alreadyRedeemed` on replay: the earlier call completed. Record `confirmed`.
+- `nothingToReset` or `noCredit`: record `refused`.
+- No answer or a transport error: record `unknown`, report to root, and do not
+  replay again for that event without a new decision.
 
-This differs from the general rule that a repeated operation is an acceptable
-crash result. A repeated spend consumes another banked reset, so it is not
-acceptable here.
+A provider with no key-based replay keeps the rule that a `requested` record is
+never replayed. Its record is resolved by a usage read, or it is reported to root
+as `unknown`.
 
 ## Record
 
@@ -133,28 +141,31 @@ is the trigger on `confirmed` and the event row.
 | Setting off | No spend | Held work waits for the recorded reset |
 | No held work on the account | No spend | None |
 | Window not exhausted | No spend | None |
-| Provider refuses the spend | `refused`, receipt kept | Reported to root; no retry for that event |
+| Provider returns `nothingToReset` | `refused` | Reported; no retry for that event |
+| Provider returns `noCredit` | `refused` | Reported; no retry for that event |
+| Provider returns `alreadyRedeemed` on a replay | `confirmed` | The earlier call completed |
 | Provider response not parsed | `unknown` | Reported to root; no automatic retry |
-| Crash after `requested` | Usage read decides | See "Crash and replay" |
+| Crash after `requested` (Codex) | Replay the consume with the same key | See "Crash and replay" |
+| Crash after `requested` (no keyed replay) | Usage read decides; no replay | Reported to root if unresolved |
 | Confirmation read fails | `unknown` | Reported to root |
 
 ## Evidence needed before implementation
 
-1. A verified spend route for at least one provider, with a command or endpoint
-   and a sample response. For Codex this means a non-interactive form of
-   `Redeem reset`, or a documented API.
-2. Evidence that a 7-day exhaustion occurred for that provider while the banked
-   reset could restore it. Nothing in the four orchestra databases records a
-   banked reset, so this is not yet established.
-3. The root's decision on the setting's scope and on whether the step 2 count
-   source is needed for the spend decision. The spend decision above does not
-   read the count.
+1. Done for Codex: a verified read route (`account/rateLimits/read`) and a
+   verified spend route (`account/rateLimitResetCredit/consume`), both in the
+   installed binary's generated schema. A live consume has not been run, so the
+   response shape and idempotent replay are verified from the schema only.
+2. Evidence that a 7-day exhaustion occurred for Codex while `availableCount`
+   was above 0. The read shows 0 on the account checked. The four orchestra
+   databases do not record `availableCount`.
+3. The root's decision on whether the banked count, read per cycle, goes into
+   `usage_windows` or into a new column beside the account.
 
 ## Limits
 
-- The count of banked resets is not readable from any source found so far (see
-  #1036). The design does not depend on it: a spend is attempted, and the
-  provider's answer decides.
+- For Codex the count is readable (`availableCount`). For the other providers no
+  count is readable, so the design does not depend on a count there: a spend is
+  attempted only where a route is verified, and the provider's answer decides.
 - Spend availability and expiry are provider decisions. This design does not
   assume a reset is available when a spend is attempted.
 - Confirmation through rollouts reads the provider's own usage fields. It does
