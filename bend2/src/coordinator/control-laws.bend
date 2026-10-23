@@ -228,7 +228,7 @@ law principal_assignment_mutates_only_configuration_under_admission:
 ++ "INSERT INTO sessions(id,harness) SELECT 'operator','operator' WHERE " ++ admitted ++ " ON CONFLICT(id) DO NOTHING;"
 ++ "INSERT INTO session_roles(session,role) SELECT 'operator','operator' WHERE " ++ admitted ++ " ON CONFLICT(session) DO NOTHING;"
 ++ "INSERT INTO session_roles(session,role) SELECT " ++ C.q(session) ++ ",'conductor' WHERE " ++ admitted ++ " ON CONFLICT(session) DO UPDATE SET role=excluded.role;"
-++ "UPDATE sessions SET endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ " AND 1;"
+++ "UPDATE sessions SET endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
 ++ "SELECT CASE WHEN " ++ admitted ++ " THEN '' ELSE json_object('error','principal-assignment-conflict','session'," ++ C.q(session) ++ ",'condition','Principal startup requires a compatible parentless Codex, OMP, Muse or Claude Code session and the operator role.','next','Inspect the existing session, role and pending input. Retain its work and use the recorded assignment or a new session ID.') END;") : String}
 
 def principal_assignment_mutates_only_configuration_under_admission(session,harness,model,effort,cwd,endpoint,admitted):
