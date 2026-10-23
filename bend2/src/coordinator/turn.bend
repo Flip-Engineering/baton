@@ -1728,11 +1728,18 @@ def direct_settled_wake(+db: String, +player: String, +id: String, +log: String,
       wake : Result<&1,&1,U32 & String,Unit> <- direct_failure_pass(db,player,id,"wake",wake0)
       IO.pure(Result<&1,&1,U32 & String,Unit>,combine(reminder,combine(Done{unit},wake)))
 
+def outcome_event(outcome: Outcome) -> String:
+  match outcome:
+    case Ended{status,+event,error,incomplete}: event
+    case other: ""
+
 def direct_completed(+db: String, +player: String, +id: String, +log: String, +directory: String, +handle: U32, lock: Maybe<U32>, observation: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> IO(Unit):
   (+outcome,deliveries)=observation
   do IO<Unit>:
     exited : Unit <- record_exit(db,player,id,log,outcome)
     prepared : Unit <- prepare(db,player,id,log,directory ++ "/native.stderr",outcome)
+    success : Bool <- settlement_success(db,outcome)
+    settled : Unit <- Accounts.attempt_settled(db,player,directory,Bool.not(success),outcome_event(outcome))
     observer_released : Unit <- direct_release_lock(lock)
     native_released : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.release(handle)
     finished : Result<&1,&1,U32 & String,Unit> <- finish(db,player,id,log,outcome,False{})

@@ -561,10 +561,11 @@ def release_native(db: String, +handle: U32) -> IO(Unit):
 
 def completed(+db: String, +session: String, +id: String, +log: String, +attempt: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    failed : Bool <- outcome_failed(db,outcome)
+    +failed : Bool <- outcome_failed(db,outcome)
     transient : Bool <- transient_provider_error(db,outcome)
     +pending_cursor : String <- IO.pure(String,Bool.pick(String,Bool.and(failed,Bool.not(Bool.and(transient,observation_clear(outcome)))),cursor,"0"))
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
+    settled : Unit <- Accounts.attempt_settled(db,session,attempt,failed,terminal_event(outcome))
     observer_released : Unit <- release_observer(lock)
     native_released : Unit <- release_native(db,handle)
     finished : Result<&1,&1,U32 & String,Unit> <- finish_pending(db,session,id,attempt,log,pending_cursor,outcome,deliveries,again,u => ack_then_retire(db,session,attempt,handle),superseded)
