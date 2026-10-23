@@ -90,7 +90,7 @@ printf 'int main(void){return 0;}\n' > "$T/input.c"
 # no other such job runs. A compiler of its own gives a test a group of its own.
 # A state root of its own for a test that needs nothing recorded.
 fresh_state() {
-  [ -d "$T/state-$1" ] || (umask 0007; mkdir -m 2770 "$T/state-$1")
+  (umask 0007; mkdir -p -m 2770 "$T/state-$1")
   printf '%s\n' "$T/state-$1"
 }
 
@@ -825,13 +825,13 @@ if [ -r /proc/meminfo ]; then
     ADMIT_FAKE=$(fresh_fake admission)
     for tag in adm-large1 adm-large2 adm-small; do
       case $tag in adm-small) kb=64 ;; *) kb=$large ;; esac
-      case $tag in adm-large1) sleep_for=3 ;; *) sleep_for=1 ;; esac
+      case $tag in adm-large1) sleep_for=8 ;; *) sleep_for=1 ;; esac
       k=$(CQ_FAKE=$ADMIT_FAKE; cc_key "$tag" "$T/$tag" --sleep "$sleep_for")
       (umask 0007; mkdir -p -m 2770 "$STATE/keys/$k")
       printf 'peak_kb=%s\n' "$kb" > "$STATE/keys/$k/peak"
     done
     : > "$LOG"
-    ( CQ_FAKE=$ADMIT_FAKE; run_cc adm-large1 "$T/adm-large1" --sleep 3 ) & a1=$!
+    ( CQ_FAKE=$ADMIT_FAKE; run_cc adm-large1 "$T/adm-large1" --sleep 8 ) & a1=$!
     i=0
     while [ "$i" -lt 200 ] && ! grep -q 'adm-large1' "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
     ( CQ_FAKE=$ADMIT_FAKE; run_cc adm-large2 "$T/adm-large2" --sleep 1 ) & a2=$!
@@ -905,7 +905,8 @@ if [ -r /proc/meminfo ]; then
       -- "$OG_FAKE" --tag "$1" --log "$LOG" -o "$T/$1" "$T/input.c" --sleep "$2"
   }
   for tag in og-a og-b og-c og-d; do
-    k=$(og_key "$tag" 3)
+    case $tag in og-a|og-b) og_sleep=3 ;; *) og_sleep=8 ;; esac
+    k=$(og_key "$tag" "$og_sleep")
     (umask 0007; mkdir -p -m 2770 "$STATE_OG/keys/$k")
     printf 'peak_kb=64\n' > "$STATE_OG/keys/$k/peak"
   done
@@ -922,10 +923,10 @@ if [ -r /proc/meminfo ]; then
     && pass 'a run longer than one sample interval recorded the growth of outside use' \
     || bad 'no growth recorded'
   : > "$LOG"
-  og_run og-c 3 & o3=$!
+  og_run og-c 8 & o3=$!
   i=0
   while [ "$i" -lt 200 ] && ! grep -q 'og-c' "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
-  og_run og-d 3 & o4=$!
+  og_run og-d 8 & o4=$!
   wait "$o3" || bad 'outside growth: third requester failed'
   wait "$o4" || bad 'outside growth: fourth requester failed'
   assert_serialized && bad 'jobs with recorded peaks stayed serialized after a growth was recorded' \
@@ -994,10 +995,10 @@ if [ -r /proc/meminfo ]; then
   done
   printf 'peak_kb=64\n' > "$STATE_recorded/peaks/k.cgen"
   : > "$LOG"
-  kind_run "$STATE_recorded" kind-a 3 & k1=$!
+  kind_run "$STATE_recorded" kind-a 8 & k1=$!
   i=0
   while [ "$i" -lt 200 ] && ! grep -q 'kind-a' "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
-  kind_run "$STATE_recorded" kind-b 3 & k2=$!
+  kind_run "$STATE_recorded" kind-b 8 & k2=$!
   wait "$k1" || bad 'kind bound: first requester failed'
   wait "$k2" || bad 'kind bound: second requester failed'
   assert_serialized && bad 'jobs bounded by the peak of their kind ran one at a time' \
@@ -1033,7 +1034,7 @@ if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
     BATON_COMPILE_QUEUE_ROOT="$STATE_SHAPE" sh "$QUEUE" run --kind cgen --state-root "$STATE_SHAPE" --cwd "$T/src" --root "$T/src" \
       --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$T/$1/compiler" \
       --artifact "c.c=$T/$2.c" --option "test=$2" \
-      -- "$T/$1/compiler" --tag "$3" --log "$LOG" -o "$T/$2.c" --sleep 3 >"$T/$2.out" 2>"$T/$2.err"
+      -- "$T/$1/compiler" --tag "$3" --log "$LOG" -o "$T/$2.c" --sleep 8 >"$T/$2.out" 2>"$T/$2.err"
   }
   # The first run on the first compiler records a small peak for its shape; the
   # large kind peak bounds it, so it runs alone.
