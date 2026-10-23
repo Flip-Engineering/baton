@@ -8,16 +8,23 @@ import sys
 import tempfile
 import unittest
 
+import receive as receive_fixture
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
 
 
 class Messaging(unittest.TestCase):
+    owned_processes = receive_fixture.Receive.owned_processes
+    eventually = receive_fixture.Receive.eventually
+    shutdown_idle_database_owner = receive_fixture.Receive.shutdown_idle_database_owner
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
         self.addCleanup(self.temp.cleanup)
         self.directory = pathlib.Path(self.temp.name)
         self.db = self.directory / 'state.db'
+        self.addCleanup(self.shutdown_idle_database_owner, 'Messaging fixture endpoints did not settle.')
         self.repo = self.directory / 'repo'
         self.repo.mkdir()
         for args in [('init', '-q'), ('config', 'user.name', 'Messaging fixture'),
@@ -59,11 +66,17 @@ class Messaging(unittest.TestCase):
     def call(self, *args, success=True, stdin=None):
         result = subprocess.run([str(EXE), str(self.db), *args], input=stdin,
                                 text=True, capture_output=True)
+        self.wait_endpoint_completion()
         if success:
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             return json.loads(result.stdout)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
+
+    def wait_endpoint_completion(self):
+        owner = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        self.eventually(lambda: all(process['command'] == owner for process in self.owned_processes()),
+                        'The fixture endpoint did not finish its detached delivery.')
 
     def state(self):
         with closing(sqlite3.connect(self.db)) as db:
@@ -302,7 +315,7 @@ class Messaging(unittest.TestCase):
         result = self.call('message-batch', 'root',
                            json.dumps(messages, ensure_ascii=False, separators=(',', ':')))
         self.assertEqual([row['status'] for row in result],
-                         ['admitted', 'refused', 'pending', 'refused'])
+                         ['admitted', 'refused', 'admitted', 'refused'])
         self.assertEqual(result[0]['admission']['status'], 'admitted')
         self.assertEqual(result[0]['wake']['status'], 'accepted')
         self.assertEqual(result[0]['receiptStatus'], 'pending')
@@ -310,8 +323,11 @@ class Messaging(unittest.TestCase):
         self.assertEqual(result[0]['detailRead'], ['delivery', 'batch-first'])
         self.assertIn('message-route-denied', result[1]['admission']['cause'])
         self.assertEqual(result[2]['admission']['status'], 'admitted')
-        self.assertEqual(result[2]['wake']['status'], 'refused')
-        self.assertIn('exit 7', result[2]['wake']['cause'])
+        self.assertEqual(result[2]['wake']['status'], 'accepted')
+        failure = pathlib.Path(str(self.db) + '.dispatch-' + 'batch-second'.encode().hex() + '.stderr')
+        self.assertIn('session delivery failed', failure.read_text())
+        self.assertIn('exit 7', failure.read_text())
+        self.assertIsNone(result[2]['delivery']['receipt'])
         self.assertEqual(result[2]['delivery']['body'], "Second recipient's body.")
         self.assertEqual(result[3]['admission']['cause'], 'batchItem:itemNotObject')
         self.assertEqual(self.endpoint_output().splitlines(), [b'batch-first'])
@@ -320,7 +336,7 @@ class Messaging(unittest.TestCase):
         replay = self.call('message-batch', 'root',
                            json.dumps(messages, ensure_ascii=False, separators=(',', ':')))
         self.assertEqual([row['status'] for row in replay],
-                         ['admitted', 'refused', 'pending', 'refused'])
+                         ['admitted', 'refused', 'admitted', 'refused'])
         with closing(sqlite3.connect(self.db)) as db:
             after = db.execute("SELECT count(*) FROM messages WHERE id LIKE 'batch-%'").fetchone()[0]
         self.assertEqual((before, after), (2, 2))

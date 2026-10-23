@@ -267,11 +267,12 @@ class AgentInput(unittest.TestCase):
         self.fx.coord('connect', 'parent', 'replacement-native', '')
         self.fx.action(stream, body='Controlled native result.', ack=False,
                        complete_task=False)
-        successor, resumed = self.fx.accept_child(child, 'parent')
-        self.assertEqual(resumed['native'], 'replacement-native')
-        self.fx.action(successor, body='Controlled replacement native failure.',
-                       ack=False, complete_task=False, fail=True)
-        self.fx.finish(child, ok=False)
+        self.fx.finish_without_start(child)
+        calls = [json.loads(line) for line in self.fx.codex_calls.read_text().splitlines()]
+        replacement = [call for call in calls
+                       if call['params']['threadId'] == 'replacement-native']
+        self.assertEqual(len(replacement), 1, calls)
+        self.assertEqual(replacement[0]['method'], 'turn/steer')
         self.assertEqual(self.fx.coord('session', 'parent')['native'], 'replacement-native')
         self.assertEqual([row for row in self.reads() if row['attempt'] == before[0]['attempt']], before)
         self.assertIsNone(self.fx.coord('delivery', 'owned-input')['receipt'])

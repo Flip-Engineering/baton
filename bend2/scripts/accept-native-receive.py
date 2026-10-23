@@ -345,7 +345,7 @@ Work only in your assigned clone/worktree below {out}. Read source and Git diffs
 Keep all tracked and untracked source files unchanged. Do not run the repository
 test suites, build toolchains, recruit more agents, install anything, change
 credentials or global configuration, or push. Use the existing native login.
-Coordinator acknowledgment commands may write this run's database at {db}.
+Coordinator input reads and automatic handling write this run's database at {db}.
 Do not send a separate report command: native receive forwards your final text.
 Do not send guidance during report delivery. End your turn after your review.
 """

@@ -256,9 +256,11 @@ class NativeFailureOutput(unittest.TestCase):
         started, request = fixture.accept_child(original, 'parent')
         task_body = task.read_text()
         prompt = request['prompt']
-        self.assertIn(str(fixture.db), prompt)
-        self.assertIn('Recorded parent: root.', prompt)
-        self.assertIn('knowledge search --query TEXT', prompt)
+        self.assertNotIn(str(fixture.db), prompt)
+        self.assertIn('baton report \"text\"', prompt)
+        self.assertIn('baton finish \"summary\"', prompt)
+        self.assertIn('Use baton knowledge', prompt)
+        self.assertNotIn('Use baton acknowledge', prompt)
         self.assertIn('Message (task-assignment) from parent [id: completed-direct:task-input]:',
                       prompt)
         self.assertTrue(prompt.endswith(task_body))

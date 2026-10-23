@@ -202,6 +202,49 @@ class McpRoot(unittest.TestCase):
         self.activate(proc)
         return proc
 
+    def native_event(self, event, prompt, **fields):
+        result = subprocess.run(['node', str(MCP_SCRIPT), str(self.db), str(EXE),
+            '--session', 'root', '--native-event'], input=json.dumps({
+                'hook_event_name': event, 'session_id': 'retained-claude-native',
+                'prompt_id': prompt, **fields}), capture_output=True, text=True)
+        return result
+
+    def test_native_claude_stop_events_leave_recorded_reads_unchanged(self):
+        proc = self.connected_claude()
+        self.assertEqual(self.native_event('PreToolUse', 'failed-prompt').returncode, 0)
+        self.tool(proc, 'baton2_inbox')
+        failed = self.native_reads()[0]
+        failure = self.native_event('StopFailure', 'failed-prompt', error='rate_limit',
+            error_details='Complete native failure.\nλ🙂\nFinal spaces  ',
+            last_assistant_message='API Error: rate limit')
+        self.assertEqual(failure.returncode, 0, failure.stderr)
+        stopped = self.native_event('Stop', 'failed-prompt', last_assistant_message='Complete.')
+        self.assertEqual(stopped.returncode, 0, stopped.stderr)
+        self.assertEqual(self.native_reads()[0], failed)
+        self.assertTrue(failed['attempt'].endswith(':failed-prompt'), failed)
+        self.assertIsNone(json.loads(self.coord('delivery', 'connected-owned'))['receipt'])
+        proc.terminate()
+        proc.wait()
+        stderr = proc.stderr.read()
+        observed = [json.loads(line)['event'] for line in stderr.decode().splitlines()
+                    if line.startswith('{') and json.loads(line).get('type') == 'claudeNativeTurn']
+        self.assertEqual(next(event for event in observed if event['hook_event_name'] == 'StopFailure'),
+            {'hook_event_name': 'StopFailure', 'session_id': 'retained-claude-native',
+             'prompt_id': 'failed-prompt', 'error': 'rate_limit',
+             'error_details': 'Complete native failure.\nλ🙂\nFinal spaces  ',
+             'last_assistant_message': 'API Error: rate limit'})
+
+    def test_native_claude_events_keep_the_connection_fence(self):
+        proc = self.connected_claude()
+        self.assertEqual(self.native_event('PreToolUse', 'fenced-prompt').returncode, 0)
+        self.tool(proc, 'baton2_inbox')
+        original = self.native_reads()
+        selected = json.loads(self.coord('session', 'root'))
+        self.coord('connect', 'root', 'changed-native', selected['endpoint'])
+        changed = self.native_event('Stop', 'fenced-prompt')
+        self.assertNotEqual(changed.returncode, 0, changed)
+        self.assertEqual(self.native_reads(), original)
+
     def test_connected_claude_records_only_its_complete_read_set(self):
         proc = self.connected_claude()
         self.assertEqual(self.native_reads(), [])
@@ -313,6 +356,8 @@ class McpRoot(unittest.TestCase):
         self.initialize(proc)
         send_mcp(proc, {'jsonrpc': '2.0', 'id': 'schemas', 'method': 'tools/list'})
         tools = {item['name']: item for item in read_mcp(proc)['result']['tools']}
+        for name in ['baton2_action', 'baton2_outbox', 'baton2_delivery_batch', 'baton2_message_batch']:
+            self.assertIn(name, tools)
         self.assertIn('baton2_players', tools)
         self.assertIn('baton2_player_status', tools)
         self.assertNotIn('baton2_workers', tools)

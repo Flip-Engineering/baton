@@ -116,10 +116,11 @@ You are the OMP Associate Conductor named lead, parent root. Your workspace is S
 registered branch is hierarchy-lead. Deliver the two text-summary utilities through
 two child Players. You review and land their commits; do not implement their files.
 The native adapter automatically sends your final response to root after each turn.
-Do not send a duplicate report manually. Read each message addressed to lead completely.
+Do not send a duplicate report manually. Read complete messages addressed to lead.
+Baton records each complete read internally.
 
 First turn:
-Read the complete pending input; Baton records the read internally.
+Read the complete pending input with `B2 inbox`; Baton records the read internally.
 1. Recruit child-a and child-b, both parent lead, harness omp, OMP_MODEL/OMP_EFFORT,
    repository REPO, branches hierarchy-a and hierarchy-b, workspaces STATE/child-a
    and STATE/child-b, base hierarchy-lead. Use `B2 DB recruit ID PARENT HARNESS MODEL

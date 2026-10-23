@@ -619,9 +619,12 @@ class OmpRootAdapter(unittest.TestCase):
         p = self.once(native)
         self.assertEqual(p.returncode, 0, p.stderr)
         observed = json.loads(observed_path.read_text())
-        for action in ['completion-request --text', 'dispatch --to',
-                       'knowledge record --kind', 'players', 'land --session']:
+        for action in ['baton inbox', 'baton report "text"', 'baton ask "question"',
+                       'baton send PLAYER "text"', 'baton guide PLAYER "text"',
+                       'baton finish "summary"', 'baton confirm PLAYER', 'Use baton knowledge']:
             self.assertIn(action, observed['prompt'])
+        self.assertIn('Baton records delivery and complete reads internally.', observed['prompt'])
+        self.assertNotIn('acknowledge', observed['prompt'])
         self.assertNotIn('ack ID', observed['prompt'])
         self.assertNotIn('--system-prompt', observed['argv'])
 

@@ -6,20 +6,27 @@ database and native conversation ID.
 
 ```sh
 baton inbox
+baton report 'The checks passed.'
+baton ask 'Which target should receive the change?'
+baton send reviewer 'The change is ready for review.'
+baton guide worker 'Check the remaining failure.'
+baton finish 'The assigned work is complete.'
+baton confirm worker
 baton read message-one message-two
 ```
 
-`read` returns complete stored deliveries in argument order, including messages
-that were already read. Each ID has its own result. Baton records a real read
-event internally when the recipient reads the input; the read persists even if
-the turn later fails or is interrupted. Pending input means delivered but not
-yet read. Reading settles the pending state without a separate command.
+`inbox` returns complete pending bodies. `read` returns complete stored
+deliveries in argument order, including messages that were already read. Each ID
+has its own result. Baton records a real read event internally when the recipient
+reads the input; the read persists even if the turn later fails or is
+interrupted. Pending input means delivered but not yet read.
 
-Send several independent messages with `and` or `--and` between complete clauses:
+`report` and `ask` address the recorded coordinator. `send PLAYER TEXT` sends a
+report; `guide PLAYER TEXT` sends guidance. Baton creates the action identities.
+The named forms retain explicit kinds and independent message clauses:
 
 ```sh
-baton send parent --kind report --text 'Result.' \
-  and parent --kind report --file result.txt
+baton send parent --text 'Result.' and reviewer --kind guidance --text 'Review this result.'
 ```
 
 Each clause has a recipient, kind and text or file body. `--id` applies to that
@@ -63,20 +70,45 @@ Workers send a completion request with a complete report body. A coordinator
 confirms the selected worker's current owned request:
 
 ```sh
-baton completion-request --text 'The assigned work is complete.'
-baton completion-confirmed --to worker
-baton guide --to worker --text 'Continue the assigned work and report the result.'
+baton finish 'The assigned work is complete.'
+baton confirm worker
+baton guide worker 'Continue the assigned work and report the result.'
 ```
 
 The completion request uses the current session's recorded parent. A parentless
 session receives a structured refusal. The coordinator can use `guide` to send
 further work. Each decision action uses the ordinary message admission result,
 wake result and retained delivery. Baton selects the current request addressed
-to the coordinator and constructs its confirmation. Use `--to PLAYER` when
-selecting a worker; an explicit `--request ID` must name a retained completion request
-from that worker addressed to the current coordinator. An omitted recipient selects the current eligible owned request scope.
-Use `--file PATH` for a complete report body. Mutation IDs are generated internally;
-explicit `--id ID` retains exact retry and conflict compatibility.
+to the coordinator and constructs its confirmation. The compatibility command
+`completion-confirmed --request ID --to PLAYER` selects an exact retained request
+from that worker addressed to the current coordinator. `confirm` without a Player
+selects the sole current request.
+The named completion commands retain explicit body and identity options.
+
+## Teams and branching
+
+A Principal Conductor coordinates the whole assignment; an Associate Conductor
+coordinates a delegated subtask. An Ensemble records a team owner and members.
+Configure loose coupling for parent-child and Conductor-descendant messaging.
+Tight coupling additionally permits non-operator peers sharing the Ensemble to
+exchange messages, including peers with different parents. Peers have no ancestor
+relationship; operators use the top-level Conductor route. The recorded Ensemble
+owner manages membership. A Section supplies capability labels and member subsets
+for work organization; routing, knowledge visibility and branching use Ensemble
+and session records.
+
+Branching compares alternatives on a team with either coupling: snapshot a
+settled agent's workspace, start fresh conversations in separate worktrees, evaluate,
+select, then continue the selected conversation. Omit `--ensemble` only for a
+Conductor's sole owned Ensemble. `--from SESSION` defaults to the latest selected
+Player in that Ensemble, or the current Conductor before any selection; the
+source needs a recorded Git workspace and settled native custody. `evaluate`
+records evidence; `select` without `--player` chooses the unique accepted best
+score after every branch settles successfully. Direction defaults to `max`.
+
+Use `baton help role`, `baton help ensemble`, `baton help section` and
+`baton help branch` for usage. `baton branch --help` also shows branch usage.
+The [branching guide](branching-ensembles.md) describes selection and recovery.
 
 ## Named action batches
 
@@ -110,7 +142,13 @@ single forms. They resolve the recorded parent or retained request author and
 enforce the current coordinator and explicit recipient checks. Complete bodies
 travel to the child command through UTF-8 JSON standard input. Multiple explicit
 stdin file references share the invocation's complete captured text. MCP contextual
-arguments travel directly as a complete JSON array over standard input.
+arguments travel directly as a complete JSON array over standard input. One
+`baton2_action` call names one top-level contextual CLI action. Its `arguments`
+can contain the named batch grammar above; compact positional forms use their
+own grammar. A branch operation uses one `branch` call with subcommand arguments.
+The tool supports contextual inspections, dispatch, knowledge and team controls
+as well as messaging. `action: "help", arguments: []` discovers the surface;
+`action: "help", arguments: ["branch"]` reads complete branch usage.
 
 ## Native operations
 
@@ -270,9 +308,12 @@ baton section-member --ensemble review-team --id review --player worker --action
 baton ensemble --id review-team --and orchestra
 ```
 
-`role` reads the selected session role; `--role` invokes native role assignment.
-`ensemble --id ID` reads a group. `--owner SESSION` ensures it for the named
-owner, and `--coupling loose|tight` creates or configures its coupling. An omitted
+`role` reads the selected session role; `--role` assigns an existing session.
+Principal Conductor and operator require no parent; Associate Conductor requires
+a parent. Assignment updates the responsibility used by message routing and
+Conductor operations. Parentage, Ensemble ownership, live work and accepted input
+remain retained. `ensemble --id ID` reads a group. `--owner SESSION` ensures it
+for the named owner, and `--coupling loose|tight` creates or configures its coupling. An omitted
 configuration owner selects the current actor. `section` reads the named Section;
 `--capability TEXT` creates or configures it for `--owner`, which also defaults
 to the current actor. Membership actions require `--player` and `--action add|remove`.
