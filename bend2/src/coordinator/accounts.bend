@@ -466,6 +466,12 @@ def schema() -> String:
   ++ "CREATE UNIQUE INDEX IF NOT EXISTS credit_reservations_active ON credit_reservations(organization,cycle,cap_period) WHERE state='reserved';"
   ++ "CREATE INDEX IF NOT EXISTS credit_reservations_org ON credit_reservations(organization,cap_period,state);"
   ++ "CREATE INDEX IF NOT EXISTS account_attempts_session ON account_attempts(session,recorded);"
+  ++ "INSERT OR IGNORE INTO accounts(id,provider,harness,funding,secret_ref,organization,verified_at) SELECT 'claude-credit-primary',provider,harness,funding,secret_ref,organization,verified_at FROM accounts WHERE id='claude-credit-normal';"
+  ++ "UPDATE account_attempts SET account='claude-credit-primary' WHERE account='claude-credit-normal';"
+  ++ "UPDATE credit_reservations SET account='claude-credit-primary' WHERE account='claude-credit-normal';"
+  ++ "UPDATE credit_authorizations SET account='claude-credit-primary' WHERE account='claude-credit-normal';"
+  ++ "UPDATE OR IGNORE credit_observations SET id='claude-credit-primary:'||substr(id,length('claude-credit-normal:')+1) WHERE substr(id,1,length('claude-credit-normal:'))='claude-credit-normal:';"
+  ++ "DELETE FROM accounts WHERE id='claude-credit-normal' AND NOT EXISTS(SELECT 1 FROM account_attempts WHERE account='claude-credit-normal');"
 
 # One transaction that installs the collaboration schema and this module's tables
 # before its own statements run. Writes use it; reads use the ordinary read-only
