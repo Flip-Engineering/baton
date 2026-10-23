@@ -1251,6 +1251,7 @@ def recover_tail(+db: String, +session: String, +id: String, +directory: String,
           ended : Unit <- Chan.close(String,updates)
           drained : Unit <- IO.join(Unit,drainer)
           settled : Unit <- settle_recovery_ticket(db,session,directory)
+          reported : Unit <- report_recovery_text(db,session,id,directory,code,text)
           IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
         do IO<Result<&1,&1,U32 & String,Unit>>:
           ended : Unit <- Chan.close(String,updates)
