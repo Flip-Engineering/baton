@@ -152,27 +152,25 @@ operation uses the retained message identity and body already in the database.
 
 A repeated message ID with identical sender, recipient, kind, and body preserves
 the original message fields and returns the stored message with its current
-receipt. `Commands.matching_message_result` in
+read state. `Commands.matching_message_result` in
 [commands.bend](../../../bend2/src/coordinator/commands.bend) selects the
-stored row with its current receipt, so the same message reads with receipt
-null before acknowledgment and with its retained handling receipt afterward.
+stored row with its current read state, so the same message reads as unread
+before the recipient reads it and as read afterward.
 A repeated ID with different input fails the transaction. An accepted retry causes no second
 endpoint invocation: the endpoint log still holds one delivery line.
 
-## Acknowledgment and accepted retry
+## Read and accepted retry
 
-Within the Associate Conductor's native turn, read complete input and acknowledge
-it after handling:
+Within the Associate Conductor's native turn, read complete input:
 
 ```sh
 "$B2" "$DB" inbox
-"$B2" "$DB" acknowledge
 ```
 
-`acknowledge` selects complete owned reads from the current native turn and
-derives each handling receipt. It preserves the first receipt. In an intentional
-accepted-message replay, the endpoint log keeps its original delivery line,
-the delivery row retains that receipt, and the recipient inbox omits the message.
+Baton records the complete owned reads of the current native turn internally. In
+an intentional accepted-message replay, the endpoint log keeps its original
+delivery line, the delivery row retains its read state, and the recipient inbox
+omits the message.
 
 An empty endpoint disconnects delivery. A well-formed endpoint can still name
 an unavailable executable; delivery then fails and the input stays pending.

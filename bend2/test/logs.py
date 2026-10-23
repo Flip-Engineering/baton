@@ -129,8 +129,7 @@ if message['kind']=='completion-request':
     assert completion['requestId']==expected_request and completion['assignmentId']==expected_assignment,completion
     assignment=coordinator('delivery',completion['assignmentId'])
     assert (assignment['recipient'],assignment['kind'],assignment['body'])==(worker,'task-assignment',expected_task),assignment
-    assert assignment['receipt']=='Fixture native reviewed its log task.',assignment
-    coordinator('ack',expected_request,parent,'Fixture parent reviewed the complete scripted log result.')
+    coordinator('as',parent,'read',expected_request)
     coordinator('message',expected_request+':confirmed',parent,worker,'completion-confirmed',expected_request)
 """)
         self.call('connect', parent, parent_state['native'],
@@ -150,15 +149,14 @@ assert state['parent']==parent and state['taskCompletion']['assignmentId']==expe
 for pending in coordinator('inbox',worker):
     message=coordinator('delivery',pending['id'])
     assert (message['sender'],message['recipient'],message['kind'],message['body'])==(worker,worker,'task-assignment',expected_task),message
-    coordinator('ack',message['id'],worker,'Fixture native reviewed its log task.')
+    coordinator('as',worker,'read',message['id'])
 assert coordinator('inbox',worker)==[]
 coordinator('message',request,worker,parent,'completion-request',result_body)
 reviewed=coordinator('delivery',request)
 assert (reviewed['sender'],reviewed['recipient'],reviewed['kind'],reviewed['body'])==(worker,parent,'completion-request',result_body),reviewed
-assert reviewed['receipt']=='Fixture parent reviewed the complete scripted log result.',reviewed
 confirmation=coordinator('delivery',request+':confirmed')
 assert (confirmation['sender'],confirmation['recipient'],confirmation['kind'],confirmation['body'])==(parent,worker,'completion-confirmed',request),confirmation
-coordinator('ack',confirmation['id'],worker,'Fixture native handled parent completion confirmation.')
+coordinator('as',worker,'read',confirmation['id'])
 completion=coordinator('session',worker)['taskCompletion']
 assert completion['assignmentId']==expected_assignment and completion['requestId']==request and completion['confirmed'] and not completion['open'],completion
 """)
@@ -169,10 +167,18 @@ assert completion['assignmentId']==expected_assignment and completion['requestId
         self.assertEqual(state['taskCompletion'], {
             'assignmentId': turn + ':task-input', 'coordinator': parent_state['id'],
             'requestId': turn + ':completion-request', 'confirmed': True, 'open': False})
-        confirmation = json.loads(self.call('delivery', turn + ':completion-request:confirmed'))
-        self.assertEqual(confirmation['receipt'], 'Fixture native handled parent completion confirmation.')
+        self.assertGreater(self.read_count(turn + ':completion-request:confirmed'), 0)
         self.assertEqual(json.loads(self.call('inbox', player)), [])
         self.call('connect', parent_state['id'], parent_state['native'], parent_state['endpoint'])
+
+    def read_count(self, ident, recipient=None):
+        with closing(sqlite3.connect(self.db)) as database:
+            if recipient is None:
+                return database.execute(
+                    'SELECT count(*) FROM message_reads WHERE message=?', (ident,)).fetchone()[0]
+            return database.execute(
+                'SELECT count(*) FROM message_reads WHERE message=? AND recipient=?',
+                (ident, recipient)).fetchone()[0]
 
     def stream(self, frames, player='omp-worker', turn='turn-1', exit_code=0):
         """Write one native OMP stream, then run the turn over it."""

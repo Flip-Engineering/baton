@@ -275,13 +275,13 @@ async function openInbox(executable, database, session, threadId) {
   const db = new DatabaseSync(database);
   const query = `SELECT s.native,s.parent,
     EXISTS(SELECT 1 FROM session_stops WHERE session=s.id) AS stopped,
-    (SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL) AS pendingCount,
+    (SELECT count(*) FROM messages WHERE recipient=s.id AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient)) AS pendingCount,
     (SELECT max(seq) FROM messages WHERE recipient=s.id) AS inputSeq,
-    (SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NOT NULL) AS handledCount,
+    (SELECT count(*) FROM messages WHERE recipient=s.id AND EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient)) AS readCount,
     (SELECT max(m.seq) FROM messages m WHERE m.recipient=s.id AND
       (m.kind IN ('task','guidance','recovery','task-assignment','task-continuation','completion-confirmed','question') OR
        EXISTS(SELECT 1 FROM session_roles r WHERE r.session=m.sender AND r.role='operator'))) AS controlSeq,
-    (SELECT id FROM messages WHERE recipient=s.id AND receipt IS NULL ORDER BY seq LIMIT 1) AS message
+    (SELECT id FROM messages WHERE recipient=s.id AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient) ORDER BY seq LIMIT 1) AS message
     FROM sessions s WHERE s.id=?`;
   let state;
   return {
@@ -308,9 +308,8 @@ async function openInbox(executable, database, session, threadId) {
       try {
         db.exec(`CREATE TABLE IF NOT EXISTS codex_inbox_wakes(session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id),
           native TEXT NOT NULL,token TEXT NOT NULL,cause TEXT NOT NULL DEFAULT '');
-          CREATE TRIGGER IF NOT EXISTS codex_inbox_wake_receipt AFTER UPDATE OF receipt ON messages
-          WHEN OLD.receipt IS NULL AND NEW.receipt IS NOT NULL BEGIN
-          DELETE FROM codex_inbox_wakes WHERE session=NEW.recipient;END;`);
+          CREATE TRIGGER IF NOT EXISTS codex_inbox_wake_read AFTER INSERT ON message_reads
+          BEGIN DELETE FROM codex_inbox_wakes WHERE session=NEW.recipient;END;`);
         const current = this.read();
         if (current.stopped || !current.pendingCount || this.claimed(current)) {
           db.exec('COMMIT');
@@ -381,8 +380,7 @@ async function openInbox(executable, database, session, threadId) {
       return 'Baton input is pending.\n' + JSON.stringify({ database, recipient: session, message: row.message, pendingCount: row.pendingCount }) +
         '\nUse baton inbox to read all complete owed input. Use baton read MESSAGE_ID... for selected complete bodies and ' +
         'baton send TARGET --kind KIND --text TEXT and TARGET --kind KIND --file PATH for independent messages. ' +
-        'Use baton help ACTION for named arguments and context overrides. Successful recipient turns record handling of their complete inputs. ' +
-        'Use baton acknowledge to record handling of the current turn\'s complete owned reads; Baton resolves the messages and creates the receipt. ' +
+        'Use baton help ACTION for named arguments and context overrides. Baton records delivery and each complete read internally, whatever the turn outcome. ' +
         'Use baton completion-request --text SUMMARY when the assignment is ready, and baton completion-confirmed --to PLAYER to confirm a child\'s current request. ' +
         'Select an explicit context with baton DATABASE as RECIPIENT ACTION. Coordinator executable/database argv: ' +
         JSON.stringify([executable, database]) + '. ' +
@@ -547,8 +545,6 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
         if (!reportedTurns.has(turn.id)) {
           const items = [...(completedItems.get(turn.id)?.values() ?? [])];
           await reportTurn(executable, database, session, threadId, turn, items);
-          await coordinatorCommand(executable, database,
-            ['settle-agent-input', session, threadId, turn.id, turn.status]);
           reportedTurns.add(turn.id);
           completedItems.delete(turn.id);
         }
@@ -566,7 +562,7 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
         record({ type: 'codexInboxReleased', session, threadId, stopped: false, pendingCount: 0 });
         return;
       }
-      const recipientProgress = row.handledCount !== previous.handledCount;
+      const recipientProgress = row.readCount !== previous.readCount;
       const coordinatorInput = row.controlSeq !== previous.controlSeq;
       previous = row;
       let freshThread = false;

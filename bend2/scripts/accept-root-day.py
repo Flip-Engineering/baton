@@ -117,6 +117,15 @@ class Case:
             process.stdin.close()
         return process
 
+    def read_count(self, ident, recipient=None):
+        with sqlite3.connect(self.db) as db:
+            if recipient is None:
+                return db.execute(
+                    'SELECT count(*) FROM message_reads WHERE message=?', (ident,)).fetchone()[0]
+            return db.execute(
+                'SELECT count(*) FROM message_reads WHERE message=? AND recipient=?',
+                (ident, recipient)).fetchone()[0]
+
     def row(self, table, ident):
         with sqlite3.connect(self.db) as db:
             db.row_factory = sqlite3.Row
@@ -295,7 +304,7 @@ class Acceptance:
                 'Focus on just one documentation improvement. Start the final report with ' + marker)
         report = c.completed(p, 'guided')
         delivery = c.coord('delivery', 'guide')
-        assert delivery['receipt'] and marker in report['body'], (delivery, report)
+        assert delivery['nativeInputStatus']['read'] == 'recorded' and marker in report['body'], (delivery, report)
         c.evidence({'guidance': delivery, 'guidance_origin': 'acceptance-driver', 'report': report})
 
     def root_tap(self, c, kind):
@@ -338,13 +347,13 @@ sys.exit(p.wait())
             before = c.sequence()
             p = c.turn('omp', 'Do not use tools or edit files. Reply exactly with this report: '
                        f'Root: remember review label {marker} for later turns. Include it in your '
-                       'authored response and use the acknowledge action after reviewing this '
+                       'authored response after reviewing this '
                        'complete input. Do not edit, land, push or start Players.',
                        'root-report')
             report = c.completed(p, 'root-report')
             starts = list(events(c.path / 'starts.jsonl'))
             assert starts[0]['writerPid'] == p.pid, starts
-            assert report['receipt'], report
+            assert report.get('nativeInputStatus', {}).get('read') == 'recorded', report
             initial_reports = c.root_reports(before, marker)
             original = c.coord('player', 'root')['native']
             assert original
@@ -352,8 +361,8 @@ sys.exit(p.wait())
             before = c.sequence()
             task = ('Read bend2/scripts/mcp-conductor.mjs and bend2/src/coordinator/delivery.bend '
                     'completely and review recovery. Give a source finding and the review label '
-                    'remembered from our earlier turn in your authored response. Use the acknowledge '
-                    'action after handling the complete input. Do not search for the label, edit '
+                    'remembered from our earlier turn in your authored response. Read the '
+                    'complete input; Baton records the read internally. Do not search for the label, edit '
                     'files or launch agents.')
             p = c.start(c.command('agent-native-input'), 'root-interrupted', input=json.dumps(
                 ['message', 'root-interrupted', 'operator', 'root', 'guidance', task], ensure_ascii=False))
@@ -365,7 +374,7 @@ sys.exit(p.wait())
             resumed = run(attach, env=self.env)
             (c.path / 'resumed.out').write_text(resumed)
             report = c.coord('delivery', 'root-interrupted')
-            assert report['receipt'], report
+            assert report.get('nativeInputStatus', {}).get('read') == 'recorded', report
             resumed_reports = c.root_reports(before, marker)
             assert original == c.coord('player', 'root')['native']
             assert c.coord('inbox', 'root') == []
@@ -384,8 +393,8 @@ sys.exit(p.wait())
                 f'Remember root review label {marker}. Use baton2_inbox to read complete input. '
                 'When Player reports arrive, use baton2_action with action report and --text '
                 'to publish your remembered review label and the complete text of that Player '
-                'report to operator. Then use baton2_ack with no arguments after handling the input. '
-                'Acknowledge this setup after reading it. Do not poll, edit files, '
+                'report to operator. Baton records your complete reads internally. '
+                'Do not poll, edit files, '
                 'land, push or launch Players.')
         config = c.path / 'mcp.json'
         save(config, {'mcpServers': {'baton-conductor': {'command': 'node', 'args': [
@@ -414,14 +423,14 @@ sys.exit(p.wait())
             c.processes.append(terminal)
             return terminal
         terminal = start(False)
-        observe(terminal, lambda: c.row('messages', 'root-setup')['receipt'], 'Claude root setup receipt')
+        observe(terminal, lambda: c.read_count('root-setup'), 'Claude root setup read')
         c.recruit('omp')
         before = c.sequence()
         p = c.turn('omp', 'Do not use tools or change files. Reply exactly: Player report live-channel.', 'live')
         c.completed(p, 'live')
-        observe(terminal, lambda: c.row('messages', 'live')['receipt'], 'live channel acceptance')
+        observe(terminal, lambda: c.read_count('live'), 'live channel acceptance')
         live = c.coord('delivery', 'live')
-        assert live['receipt'], live
+        assert c.read_count('live') > 0, live
         live_reports = c.root_reports(before, marker, live['body'])
         kill_tree(terminal, c.path / 'crash.json')
         native = c.coord('player', 'w1')['native']
@@ -432,10 +441,10 @@ sys.exit(p.wait())
         pending = c.coord('delivery', 'pending')
         assert pending['receipt'] is None and 'recovered-channel' in pending['body'], pending
         terminal = start(True)
-        observe(terminal, lambda: c.row('messages', 'pending')['receipt'], 'resumed channel acceptance')
-        observe(terminal, lambda: not c.coord('inbox', 'root'), 'all pending root receipts')
+        observe(terminal, lambda: c.read_count('pending'), 'resumed channel acceptance')
+        observe(terminal, lambda: not c.coord('inbox', 'root'), 'all pending root input is read')
         resumed = c.coord('delivery', 'pending')
-        assert resumed['receipt'], resumed
+        assert c.read_count('pending') > 0, resumed
         resumed_reports = c.root_reports(before, marker, resumed['body'])
         terminal.send('/exit\r')
         terminal.wait()

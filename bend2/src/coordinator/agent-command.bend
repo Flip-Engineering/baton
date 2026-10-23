@@ -26,38 +26,20 @@ type ParsedRequest is Type:
 type PreparedRequest is Type:
   Prepared{db: String, session: String, action: A.Action}
 
-def ack_result(+index: String, +id: String, result: Result<&1,&1,U32 & String,String>) -> String:
-  match result:
-    case Fail{(code,cause)}: Batch.read_failed(index,id,code,cause)
-    case Done{+saved}:
-      Bool.pick(String,String.is_empty(saved),
-        Batch.item_prefix(index,id) ++ ",\"status\":\"absent\",\"cause\":\"No matching message owned by SESSION.\"}",
-        Batch.item_prefix(index,id) ++ ",\"status\":\"acknowledged\",\"acknowledgement\":" ++ Tx.trim_nl(saved) ++ "}")
-
-def read_or_ack(+db: String, +session: String, +id: String, +index: U32,
-                receipt: String, ack: Bool) -> IO(String):
-  match ack:
-    case False{}: Batch.read_one(db,U32.show(index),id)
-    case True{}: do IO<String>:
-      result : Result<&1,&1,U32 & String,String> <- Store.apply(db,C.Ack{id,session,receipt})
-      IO.pure(String,ack_result(U32.show(index),id,result))
-
-def ids_tail(+db: String, +session: String, ids: List<String>, +index: U32,
-             +receipt: String, +ack: Bool) -> IO(String):
+def ids_tail(+db: String, +session: String, ids: List<String>, +index: U32) -> IO(String):
   match ids:
     case Nil{}: IO.pure(String,"]")
     case id <> rest: do IO<String>:
-      item : String <- read_or_ack(db,session,id,index,receipt,ack)
-      tail : String <- ids_tail(db,session,rest,U32.add(index,1),receipt,ack)
+      item : String <- Batch.read_one(db,U32.show(index),id)
+      tail : String <- ids_tail(db,session,rest,U32.add(index,1))
       IO.pure(String,"," ++ item ++ tail)
 
-def ids_json(+db: String, +session: String, ids: List<String>,
-             +receipt: String, +ack: Bool) -> IO(String):
+def ids_json(+db: String, +session: String, ids: List<String>) -> IO(String):
   match ids:
     case Nil{}: IO.pure(String,"[]")
     case id <> rest: do IO<String>:
-      item : String <- read_or_ack(db,session,id,0,receipt,ack)
-      tail : String <- ids_tail(db,session,rest,1,receipt,ack)
+      item : String <- Batch.read_one(db,"0",id)
+      tail : String <- ids_tail(db,session,rest,1)
       IO.pure(String,"[" ++ item ++ tail)
 
 def generated_id(+session: String, result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,String>:
@@ -71,50 +53,6 @@ def message_id(+db: String, +session: String, +id: String) -> IO(Result<&1,&1,U3
       random : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT lower(hex(randomblob(16)));")
       IO.pure(Result<&1,&1,U32 & String,String>,generated_id(session,random))),
     IO.pure(Result<&1,&1,U32 & String,String>,Done{id}))
-
-def handling_condition(+session: String, +attempt: String, +native: String, identity: String, current: String) -> String:
-  "r.recipient=" ++ C.q(session) ++ " AND r.attempt=" ++ C.q(attempt) ++ " AND r.native=" ++ C.q(native) ++ " AND r.identity=" ++ C.q(identity)
-  ++ " AND EXISTS(SELECT 1 FROM sessions s WHERE s.id=r.recipient AND s.native=r.native) AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ") AND " ++ current
-
-def handling_sql(+session: String, +condition: String, +receipt: String) -> String:
-  "BEGIN IMMEDIATE;UPDATE message_reads AS r SET handled=coalesce(handled," ++ C.q(receipt) ++ ") WHERE " ++ condition ++ ";"
-  ++ "UPDATE messages SET receipt=coalesce(receipt," ++ C.q(receipt) ++ ") WHERE recipient=" ++ C.q(session) ++ " AND id IN(SELECT r.message FROM message_reads r WHERE " ++ condition ++ ");"
-  ++ "DELETE FROM wake_claims WHERE session=" ++ C.q(session) ++ " AND EXISTS(SELECT 1 FROM message_reads r WHERE " ++ condition ++ ") AND NOT EXISTS(SELECT 1 FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL);"
-  ++ "SELECT coalesce(json_group_array(json(item)),'[]') FROM (SELECT json_object('index',row_number() OVER (ORDER BY m.seq)-1,'id',m.id,'status','acknowledged','acknowledgement',json_object('id',m.id,'receipt',m.receipt)) AS item FROM message_reads r JOIN messages m ON m.id=r.message WHERE " ++ condition ++ " ORDER BY m.seq);COMMIT;"
-
-def acknowledge_scope(scope: AgentInput.HandlingScope, +db: String, +session: String, +receipt: String) -> IO(String):
-  match scope:
-    case AgentInput.NoHandling{}:
-      IO.die(String,2,"{\"error\":\"handling-context\",\"condition\":\"No live recipient-owned native read context is available. Select the handled message explicitly for an administrative acknowledgement.\"}")
-    case AgentInput.Handling{+attempt,native,identity,current}: do IO<String>:
-      actual : String = Bool.pick(String,String.is_empty(receipt),"native-turn:" ++ attempt,receipt)
-      saved : String <- IO.try(String,Store.transact_sql(db,handling_sql(session,handling_condition(session,attempt,native,identity,current),actual)))
-      IO.pure(String,Tx.trim_nl(saved))
-
-def selected_receipt(scope: AgentInput.HandlingScope, +db: String, session: String) -> IO(String):
-  match scope:
-    case AgentInput.Handling{attempt,native,identity,current}: IO.pure(String,"native-turn:" ++ attempt)
-    case AgentInput.NoHandling{}: do IO<String>:
-      id : String <- IO.try(String,message_id(db,session,""))
-      IO.pure(String,"handled:" ++ id)
-
-def acknowledge_selected_if(empty: Bool, +db: String, +session: String, ids: List<String>, receipt: String) -> IO(String):
-  match empty:
-    case True{}: do IO<String>:
-      scope : AgentInput.HandlingScope <- AgentInput.handling_scope(db,session)
-      generated : String <- selected_receipt(scope,db,session)
-      ids_json(db,session,ids,generated,True{})
-    case False{}: ids_json(db,session,ids,receipt,True{})
-
-def acknowledge_selected(+db: String, +session: String, ids: List<String>, +receipt: String) -> IO(String):
-  acknowledge_selected_if(String.is_empty(receipt),db,session,ids,receipt)
-
-def acknowledge(+db: String, +session: String, ids: List<String>, receipt: String) -> IO(String):
-  match ids:
-    case Nil{}: do IO<String>:
-      scope : AgentInput.HandlingScope <- AgentInput.handling_scope(db,session)
-      acknowledge_scope(scope,db,session,receipt)
-    case selected: acknowledge_selected(db,session,selected,receipt)
 
 def raw_body(read: Raw.RawRead) -> Result<&1,&1,U32 & String,String>:
   match read:
@@ -274,11 +212,8 @@ def execute(+db: String, +session: String, action: A.Action) -> IO(Unit):
       saved : String <- IO.try(String,Store.read(db,C.Inbox{session}))
       AgentInput.output(db,session,saved,False{})
     case A.Read{ids}: do IO<Unit>:
-      saved : String <- ids_json(db,session,ids,"",False{})
+      saved : String <- ids_json(db,session,ids)
       AgentInput.output(db,session,saved,True{})
-    case A.Acknowledge{ids,receipt}: do IO<Unit>:
-      saved : String <- acknowledge(db,session,ids,receipt)
-      IO.write(saved)
     case A.CompletionRequest{id,body}: do IO<Unit>:
       saved : String <- completion_request(db,session,id,body)
       IO.write(saved)

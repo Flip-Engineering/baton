@@ -1,9 +1,10 @@
 # Production wake-path fixture for #797. It drives Receive.wake_due, the gate
 # path the coordinator uses, with a test launch callback that records one
-# delivery and sets the message receipt. A held window reports and schedules a
-# continuation; the continuation re-enters this path, so a reset moved later is
-# re-evaluated and does not deliver at the old time, a reset moved earlier
-# delivers once, and a handled message is a no-op. The unqualified case
+# delivery and writes no messaging state; the recipient's read row is recorded
+# by the coordinator when the recipient reads the input. A held window reports
+# and schedules a continuation; the continuation re-enters this path, so a
+# reset moved later is re-evaluated and does not deliver at the old time, a
+# reset moved earlier delivers once, and a read message is a no-op. The unqualified case
 # covers the account DB Muse shape: a model without a provider prefix and empty
 # provider/window/account rows hold before the recorded reset.
 #
@@ -36,8 +37,8 @@ def expect_read(+db: String, +text: String, +expected: String, +label: String) -
 
 def deliver_record(+db: String, +target: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    pending : String <- read(db,"SELECT count(*) FROM messages WHERE id=" ++ C.q(target) ++ " AND receipt IS NULL;")
-    delivered : Unit <- Bool.pick(IO(Unit),String.eq(pending,"1\n"),query(db,"INSERT OR IGNORE INTO wake_deliveries(message,receipt) VALUES(" ++ C.q(target) ++ ",'delivered');UPDATE messages SET receipt='delivered' WHERE id=" ++ C.q(target) ++ " AND receipt IS NULL;"),IO.pure(Unit,Unit{}))
+    pending : String <- read(db,"SELECT count(*) FROM messages WHERE id=" ++ C.q(target) ++ " AND " ++ C.owed_sql("messages") ++ ";")
+    delivered : Unit <- Bool.pick(IO(Unit),String.eq(pending,"1\n"),query(db,"INSERT OR IGNORE INTO wake_deliveries(message,receipt) VALUES(" ++ C.q(target) ++ ",'delivered');"),IO.pure(Unit,Unit{}))
     IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
 
 def deliver_test(+db: String) -> String -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -61,7 +62,11 @@ def window(+db: String, +session: String, +message: String, +ms_offset: String) 
   query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp'," ++ C.q(session ++ "-kimi/kimi-for-coding") ++ "," ++ C.q(session ++ "-kimi") ++ ",'', '5-hour',CAST(strftime('%s','now') AS INTEGER)*1000+" ++ ms_offset ++ ",'provider-message',NULL,'window'," ++ C.q(message) ++ ");")
 
 def message(+db: String, +session: String, +message: String, +receipt: String) -> IO(Unit):
-  query(db,"INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(" ++ C.q(message) ++ ",'root'," ++ C.q(session) ++ ",'guidance','owed',nullif(" ++ C.q(receipt) ++ ",''));")
+  do IO<Unit>:
+    saved : Unit <- query(db,"INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(" ++ C.q(message) ++ ",'root'," ++ C.q(session) ++ ",'guidance','owed',nullif(" ++ C.q(receipt) ++ ",''));")
+    marked : Unit <- Bool.pick(IO(Unit),String.is_empty(receipt),IO.pure(Unit,Unit{}),
+      query(db,"INSERT OR IGNORE INTO message_reads(attempt,message,recipient,native,identity) VALUES('legacy'," ++ C.q(message) ++ "," ++ C.q(session) ++ ",'','receipt');"))
+    IO.pure(Unit,Unit{})
 
 def unqualified_session(+db: String, +id: String) -> IO(Unit):
   query(db,"INSERT OR IGNORE INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES(" ++ C.q(id) ++ ",'root','muse','muse-wonder-1.0','high','','');")
@@ -108,7 +113,7 @@ def earlier_case(+db: String) -> IO(Unit):
     moved : Unit <- move_reset(db,"m-early","-1000")
     waited : Unit <- sleep_ms("3")
     once : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-early';","1\n","moved-earlier-delivery-once")
-    receipt : Unit <- expect_read(db,"SELECT receipt FROM messages WHERE id='m-early';","delivered\n","moved-earlier-receipt")
+    receipt : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id='m-early' AND receipt IS NOT NULL;","0\n","moved-earlier-keeps-stored-receipt-empty")
     IO.pure(Unit,Unit{})
 
 def handled_case(+db: String) -> IO(Unit):
@@ -129,7 +134,7 @@ def duplicate_case(+db: String) -> IO(Unit):
     first : Result<&1,&1,U32 & String,Unit> <- drive(db,"dup")
     second : Result<&1,&1,U32 & String,Unit> <- drive(db,"dup")
     once : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-dup';","1\n","duplicate-delivery-once")
-    receipt : Unit <- expect_read(db,"SELECT receipt FROM messages WHERE id='m-dup';","delivered\n","duplicate-receipt")
+    receipt : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id='m-dup' AND receipt IS NOT NULL;","0\n","duplicate-keeps-stored-receipt-empty")
     IO.pure(Unit,Unit{})
 
 def far_case(+db: String) -> IO(Unit):
@@ -145,7 +150,7 @@ def far_case(+db: String) -> IO(Unit):
 def main_args(args: List<String>) -> IO(Unit):
   match args:
     case "--wake-message" <> +db <> +msg <> Nil{}: do IO<Unit>:
-      +recipient : String <- read(db,"SELECT coalesce((SELECT recipient FROM messages WHERE id=" ++ C.q(msg) ++ " AND receipt IS NULL),'');")
+      +recipient : String <- read(db,"SELECT coalesce((SELECT recipient FROM messages WHERE id=" ++ C.q(msg) ++ " AND " ++ C.owed_sql("messages") ++ "),'');")
       present : Bool = Bool.not(String.is_empty(Tx.trim_nl(recipient)))
       outcome : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),present,drive(db,Tx.trim_nl(recipient)),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
       IO.pure(Unit,Unit{})

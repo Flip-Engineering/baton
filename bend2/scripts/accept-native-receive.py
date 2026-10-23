@@ -43,7 +43,11 @@ def snapshot(db):
     with sqlite3.connect(f'{db.as_uri()}?mode=ro', uri=True) as connection:
         connection.row_factory = sqlite3.Row
         return {table: [dict(row) for row in connection.execute(f'SELECT * FROM {table}')]
-                for table in ['sessions', 'messages', 'turns', 'executions']}
+                for table in ['sessions', 'messages', 'turns', 'executions', 'message_reads']}
+
+
+def read_ids(state):
+    return {row['message'] for row in state.get('message_reads', [])}
 
 
 def process_rows():
@@ -367,17 +371,17 @@ Do not send guidance during report delivery. End your turn after your review.
     root_task = common + f"""
 You are the Codex root for a native receive acceptance run. Two OMP reviewers,
 review-native and review-validation, will independently inspect this source.
-First inspect the pinned checkout identity and receive entry point, then use
-`{coordinator_cli} acknowledge` after handling the complete assigned input.
+First inspect the pinned checkout identity and receive entry point, then read
+the complete assigned input with `{coordinator_cli} inbox`; Baton records the read internally.
 Finish this turn. Native receive will resume this same conversation when their
 reports arrive. For each report, inspect its cited source and assess its findings
-before using `{coordinator_cli} acknowledge`. Use `{coordinator_cli} inbox` to
+after reading it completely. Use `{coordinator_cli} inbox` to
 read complete pending input. Preserve each full body; handle complete text.
 Include your assessment in your authored response. Your review may identify unresolved
 defects; acceptance of a report records that you read it, not approval of a change.
 The reviewers may receive a second task in their existing native sessions.
 Do not edit code, run tests or delegate further work. On root-followup, check all
-retained reports and receipts, summarize the findings and acknowledge the follow-up.
+retained reports, summarize the findings and read the follow-up completely.
 """
     endpoint = [str(binary), str(db), 'receive', 'root', routes['codex']['executable'],
                 routes['codex']['model'], routes['codex']['effort'], str(repo), str(out / 'root.jsonl')]
@@ -394,8 +398,8 @@ retained reports and receipts, summarize the findings and acknowledge the follow
     def player_task(marker, focus):
         return (common + f'\n{focus}\n\n'
                 f'Begin your final response with {marker} and the full source revision {base}.\n'
-                'After handling the assigned complete input, use the coordinator acknowledge\n'
-                'action. Report findings or explain the specific checks that found no issue.\n'
+                'Read the assigned complete input; Baton records the read internally.\n'
+                'Report findings or explain the specific checks that found no issue.\n'
                 'Include material limitations.\n')
 
     for player, marker, focus in players:
@@ -429,7 +433,7 @@ retained reports and receipts, summarize the findings and acknowledge the follow
         save_state('bootstrap-state.json', initial)
         root_native = next(row['native'] for row in initial['sessions'] if row['id'] == 'root')
         assert root_native
-        assert next(row for row in initial['messages'] if row['id'] == 'root-bootstrap')['receipt']
+        assert 'root-bootstrap' in read_ids(initial)
         children = [start_message(f'task-{player}', player, tasks[player]) for player, _, _ in players]
         finish_all(children)
         reviewed = snapshot(db)
@@ -452,11 +456,11 @@ retained reports and receipts, summarize the findings and acknowledge the follow
                                   for text in omp_reports(generation['path'])]
                 assert len(reports) == len(native_reports) == count, reports
                 for report, text in zip(reports, native_reports):
-                    assert report['recipient'] == 'root' and report['receipt']
+                    assert report['recipient'] == 'root' and report['id'] in read_ids(state)
                     assert marker in report['body'] and base in report['body']
                     assert report['body'] == text
                 for prefix in ['task', 'followup'][:count]:
-                    assert next(row for row in state['messages'] if row['id'] == f'{prefix}-{player}')['receipt']
+                    assert f'{prefix}-{player}' in read_ids(state)
 
         check_reports(reviewed, 1)
         if has_followups:
@@ -468,18 +472,18 @@ retained reports and receipts, summarize the findings and acknowledge the follow
             save_state('worker-followup-state.json', resumed)
             check_reports(resumed, 2)
         followup = (common + '\nRead all retained reviewer reports and their handling state. '
-                    'Summarize what should be addressed next. Use the acknowledge action '
-                    'after this review, then finish your turn.\n')
+                    'Summarize what should be addressed next after this review, '
+                    'then finish your turn.\n')
         finish_all([start_message('root-followup', 'root', followup)])
         final = snapshot(db)
         assert next(row['native'] for row in final['sessions'] if row['id'] == 'root') == root_native
-        assert next(row for row in final['messages'] if row['id'] == 'root-followup')['receipt']
+        assert 'root-followup' in read_ids(final)
         root_generations = public_logs(db, 'root')
         root_events = [frame for generation in root_generations
                        for frame in frames(generation['path'])]
         native_threads = [row['thread_id'] for row in root_events if row.get('type') == 'thread.started']
         assert native_threads and set(native_threads) == {root_native}
-        assert all(row['receipt'] for row in final['messages'] if row['recipient'] != 'operator')
+        assert {row['id'] for row in final['messages'] if row['recipient'] != 'operator'} <= read_ids(final)
         operator_reports = sorted((row for row in final['messages'] if row['recipient'] == 'operator'),
                                   key=lambda row: row['seq'])
         root_native_reports = list(codex_reports(root_events))
@@ -487,7 +491,7 @@ retained reports and receipts, summarize the findings and acknowledge the follow
         turns = {row['id']: row for row in final['turns']}
         for report, text in zip(operator_reports, root_native_reports):
             assert report['sender'] == 'root' and report['kind'] == 'report', report
-            assert report['receipt'] is None and report['body'] == text, report
+            assert report['id'] not in read_ids(final) and report['body'] == text, report
             turn = turns[report['id']]
             event = json.loads(turn['event'])
             assert turn['worker'] == 'root' and event['type'] == 'result', turn
@@ -504,13 +508,13 @@ retained reports and receipts, summarize the findings and acknowledge the follow
             'player_native_sessions': player_natives, 'player_followups_verified': has_followups,
             'operator_reports_pending_review': operator_reports,
             'assertions': ['Reports match the complete native assistant text.',
-                           'Player reports and participant task inputs have recipient-owned receipts.',
+                           'Player reports and participant task inputs have recipient-owned reads.',
                            'Native root reports retain their complete text and turn lineage for operator review.',
                            'The root retained its native session through reports and follow-up.',
                            'Player parent, requested route and source revision were retained.',
                            'All cloned source workspaces remain unchanged.'],
             'limitations': ['This run does not establish overlap between root deliveries.',
-                            'The operator must review the retained native root reports and record its own receipts.',
+                            'The operator must review the retained native root reports and read them.',
                             'Provider latency and review conclusions depend on the native sessions.',
                             'No landing, publication or host-restart recovery is exercised.'],
         })

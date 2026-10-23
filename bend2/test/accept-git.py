@@ -97,7 +97,7 @@ class GitAcceptance(unittest.TestCase):
         DRIVER.git(worktree, 'add', path)
         if guided:
             DRIVER.git(worktree, 'rebase', '--continue')
-            DRIVER.coord(binary, db, 'ack', 'g1', player, 'controlled-worker-reviewed')
+            DRIVER.coord(binary, db, 'as', player, 'read', 'g1')
         else:
             DRIVER.git(worktree, 'commit', '-q', '-m', f'{player} writes {line}')
         DRIVER.coord(binary, db, 'report', turn, player, f'controlled {player} committed {line}')
@@ -126,7 +126,10 @@ class GitAcceptance(unittest.TestCase):
         repo = scenario / 'repo'
         self.assertEqual(DRIVER.git(repo, 'show', 'main:data/shared.txt'), 'three and four')
         delivery = DRIVER.coord_json(EXE, scenario / 'state.db', 'delivery', 'g1')
-        self.assertEqual(delivery['receipt'], 'controlled-worker-reviewed')
+        self.assertIsNone(delivery['receipt'])
+        with sqlite3.connect(scenario / 'state.db') as database:
+            self.assertGreater(database.execute(
+                "SELECT count(*) FROM message_reads WHERE message='g1'").fetchone()[0], 0)
         self.assertEqual(DRIVER.coord_json(EXE, scenario / 'state.db', 'player', 'w4')['native'],
                          'controlled-w4')
 

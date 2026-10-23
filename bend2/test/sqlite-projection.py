@@ -131,7 +131,7 @@ class SqliteProjection(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.query(
             "SELECT count(*) FROM sqlite_master WHERE type='trigger' "
-            "AND name LIKE 'native_changes_%'"), 37)
+            "AND name LIKE 'native_changes_%'"), 38)
         self.assertEqual(self.query(
             'SELECT count(*) FROM baton_projection_state WHERE id=1'), 1)
         self.assertEqual(
@@ -139,7 +139,7 @@ class SqliteProjection(unittest.TestCase):
             self.query('PRAGMA schema_version'))
         self.assertEqual(self.query(
             "SELECT count(*) FROM sqlite_master WHERE type='index' "
-            "AND name='messages_pending'"), 1)
+            "AND name='messages_recipient_seq'"), 1)
         state = self.install('state')
         self.assertEqual(state.returncode, 0, state.stdout + state.stderr)
         self.assertIn('current=1', state.stdout)
@@ -236,7 +236,7 @@ class SqliteProjection(unittest.TestCase):
             self.assertEqual(code, 0, out + err)
         self.assertEqual(self.query(
             "SELECT count(*) FROM sqlite_master WHERE type='trigger' "
-            "AND name LIKE 'native_changes_%'"), 37)
+            "AND name LIKE 'native_changes_%'"), 38)
         self.assertEqual(self.query(
             'SELECT count(*) FROM baton_projection_state WHERE id=1'), 1)
         self.assertEqual(
@@ -258,7 +258,7 @@ class SqliteProjection(unittest.TestCase):
         self.assertIn('read_rc=0', out)
         self.assertIn('settle_rc=0', out)
         self.assertEqual(
-            self.query("SELECT receipt FROM messages WHERE id='m1'"), 'accepted')
+            self.query("SELECT count(*) FROM message_reads WHERE message='m1' AND recipient='root'"), 1)
 
     def test_missing_application_table_is_repaired(self):
         self.assertEqual(self.install().returncode, 0)
@@ -326,7 +326,7 @@ class SqliteProjection(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.query(
             "SELECT count(*) FROM sqlite_master WHERE type='trigger' "
-            "AND name LIKE 'native_changes_%'"), 37)
+            "AND name LIKE 'native_changes_%'"), 38)
         self.assertEqual(
             self.query('SELECT schema_version FROM baton_projection_state WHERE id=1'),
             self.query('PRAGMA schema_version'))
@@ -353,7 +353,7 @@ class SqliteProjection(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.query(
             "SELECT count(*) FROM sqlite_master WHERE type='trigger' "
-            "AND name LIKE 'native_changes_%'"), 37)
+            "AND name LIKE 'native_changes_%'"), 38)
 
     def test_old_marker_table_is_migrated(self):
         self.assertEqual(self.install().returncode, 0)

@@ -43,7 +43,7 @@ native=args[args.index('--session-id')+1] if '--session-id' in args else 'native
 with CALLS.open('a') as output:
     output.write(json.dumps({'pid':os.getpid(),'args':args,'cwd':os.getcwd(),'prompt':prompt,'native':native})+chr(10))
 for ident in re.findall(r'\\[id: (.*?)\\]:',prompt):
-    accepted=subprocess.run([EXE,DB,'ack',ident,'root','muse reviewed this input'],capture_output=True,text=True)
+    accepted=subprocess.run([EXE,DB,'as','root','read',ident],capture_output=True,text=True)
     assert accepted.returncode==0, accepted.stderr
 print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'turn.input.user',
                   'payload':{'kind':'turn_input_user','command_id':'muse-primary'}}),flush=True)
@@ -193,10 +193,8 @@ class MuseConductorReceive(unittest.TestCase):
         # The drained turn ran a new native process from the same stored address.
         self.assertNotEqual(self.calls_made()[0]['pid'], self.calls_made()[1]['pid'])
         self.assertEqual(json.loads(self.coord('player', 'root'))['native'], 'native-muse-fresh')
-        self.assertEqual(json.loads(self.coord('delivery', 'late-report'))['receipt'],
-                         'muse reviewed this input')
-        self.assertEqual(json.loads(self.coord('delivery', 'start-task'))['receipt'],
-                         'muse reviewed this input')
+        self.assertTrue(receive.read_recorded(self.db, 'late-report', 'root'))
+        self.assertTrue(receive.read_recorded(self.db, 'start-task', 'root'))
 
         # Both turns reported the parentless Conductor's result to the operator.
         self.eventually(lambda: len(json.loads(self.coord('turns', 'root'))) == 2,

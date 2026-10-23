@@ -37,10 +37,9 @@ def contextual_verb(+verb: String) -> Bool:
 def action_verb(+verb: String, project: Bool) -> Bool:
   Bool.or(String.eq(verb,"read"),
     Bool.or(String.eq(verb,"send"),
-      Bool.or(String.eq(verb,"acknowledge"),
-        Bool.or(String.eq(verb,"completion-request"),
-          Bool.or(String.eq(verb,"completion-confirmed"),
-            Bool.or(String.eq(verb,"guide"),Bool.and(project,String.eq(verb,"help"))))))))
+      Bool.or(String.eq(verb,"completion-request"),
+        Bool.or(String.eq(verb,"completion-confirmed"),
+          Bool.or(String.eq(verb,"guide"),Bool.and(project,String.eq(verb,"help")))))))
 
 def classify_head(+verb: String) -> Head:
   Bool.pick(Head,String.eq(verb,"as"),CurrentHead{},

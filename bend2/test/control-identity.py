@@ -16,6 +16,7 @@ SPEC.loader.exec_module(controls)
 
 
 class ControlIdentity(unittest.TestCase):
+    read_count = controls.Control.read_count
     git = controls.Control.git
     call = controls.Control.call
     root = controls.Control.root
@@ -130,7 +131,7 @@ class ControlIdentity(unittest.TestCase):
         self.finish(stream, report)
         self.exited('recipient')
         self.eventually(lambda: any(row['reportBody'] == report for row in self.call('turns', 'recipient')))
-        self.assertEqual(self.call('delivery', 'recipient-task')['receipt'], 'fixture-native-reviewed')
+        self.assertGreater(self.read_count('recipient-task'), 0)
         saved = self.call('turns', 'recipient')[0]
         delivery = self.call('delivery', saved['id'])
         self.assertEqual((delivery['sender'], delivery['recipient'], delivery['body']),

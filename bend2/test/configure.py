@@ -22,6 +22,7 @@ identity = load('control-identity')
 
 class Configure(unittest.TestCase):
     # The shared fixture harness is reused without inheriting its own cases.
+    read_count = identity.ControlIdentity.read_count
     git = identity.ControlIdentity.git
     call = identity.ControlIdentity.call
     root = identity.ControlIdentity.root
@@ -98,7 +99,7 @@ class Configure(unittest.TestCase):
         self.assertIsNone(self.call('delivery', 'retained-task')['receipt'])
         self.finish(stream)
         self.exited('leaf')
-        self.assertEqual(self.call('delivery', 'retained-task')['receipt'], 'fixture-native-reviewed')
+        self.assertGreater(self.read_count('retained-task'), 0)
 
     def test_route_change_fences_a_delayed_expected_route_and_leaves_the_row_alone(self):
         self.root()
@@ -194,7 +195,7 @@ class Configure(unittest.TestCase):
         self.assertIn('[id: next-task]', next_native['prompt'])
         self.finish(next_stream)
         self.exited('leaf')
-        self.assertEqual(self.call('delivery', 'next-task')['receipt'], 'fixture-native-reviewed')
+        self.assertGreater(self.read_count('next-task'), 0)
 
     def test_effort_change_on_a_stopped_session_preserves_its_stop_and_pending_input(self):
         self.root()
@@ -255,7 +256,7 @@ class Configure(unittest.TestCase):
                 self.assertEqual(native['args'][native['args'].index('--model') + 1], 'gpt-6-astra')
                 self.finish(stream)
                 self.exited('leaf')
-                self.assertEqual(self.call('delivery', message)['receipt'], 'fixture-native-reviewed')
+                self.assertGreater(self.read_count(message), 0)
                 expected = (harness, 'gpt-6-astra', 'high')
 
     def test_the_configured_route_launches_its_next_receive_with_the_new_model(self):
@@ -271,12 +272,12 @@ class Configure(unittest.TestCase):
         self.assertEqual(native['args'][native['args'].index('--thinking') + 1], 'high')
         self.assertEqual(native['cwd'], changed['workspace'])
         self.assertIn('retained-task', native['prompt'])
-        self.assertEqual(self.action(stream, ack=True), {'acknowledged': True})
+        self.assertEqual(self.action(stream, read_prompt=True), {'read': True})
         body = 'The selected provider executed the retained input.'
         self.finish(stream, body)
         self.exited('leaf')
         self.eventually(lambda: any(row['reportBody'] == body for row in self.call('turns', 'leaf')))
-        self.assertEqual(self.call('delivery', 'retained-task')['receipt'], 'fixture-native-reviewed')
+        self.assertGreater(self.read_count('retained-task'), 0)
 
 
 if __name__ == '__main__':
