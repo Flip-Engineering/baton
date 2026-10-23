@@ -586,6 +586,8 @@ static int cq_spawn_detached(const char *argv_text, size_t argv_length,
                                  seen during one run
      peaks/<group>               largest recorded peak of one kind, compiler, entry
                                  and command
+     peaks/sh.<kind>.<shape>     largest recorded peak of one kind, entry and command
+                                 shape on any compiler
      peaks/kc.<kind>.<compiler>  largest recorded peak of one kind and compiler
      peaks/k.<kind>              largest recorded peak of one kind
      keys/<key>/peak             largest recorded peak of one key
@@ -611,7 +613,7 @@ typedef struct {
 
 typedef struct {
   char id[CQ_ID], start[32], key[CQ_NAME], group[CQ_NAME], entry[CQ_ENTRY];
-  char compiler[CQ_NAME], kind[16];
+  char compiler[CQ_NAME], kind[16], shape[24];
   int pid, history;
   long long expected;
   unsigned long long queued;
@@ -905,17 +907,64 @@ static int cq_peak_load(const char *path, long long *peak) {
   return cq_value_load(path, "peak_kb", peak);
 }
 
+/* The shape of an attempt: a hash of its kind, entry file and command in which
+   every absolute path is reduced to its file name. The same job with another
+   compiler release, in another checkout or with another output directory has the
+   same shape; `--check-only` and a full C generation of one entry do not. */
+static unsigned long long cq_fnv(unsigned long long hash, const char *data, size_t length) {
+  for (size_t i = 0; i < length; i++) { hash ^= (unsigned char)data[i]; hash *= 1099511628211ull; }
+  return hash;
+}
+
+static int cq_shape(const char *attempt, char *shape, size_t capacity, char *kind, size_t kind_capacity) {
+  char path[PATH_MAX], meta[2048], entry[CQ_ENTRY];
+  shape[0] = 0;
+  if (cq_path(path, "%s/meta", attempt) || cq_read_small(path, meta, sizeof(meta))) return ENOENT;
+  cq_field(meta, "kind", kind, kind_capacity);
+  cq_field(meta, "entry", entry, sizeof(entry));
+  const char *entry_name = entry[0] == '/' ? strrchr(entry, '/') + 1 : entry;
+  char head[CQ_ENTRY + 64];
+  int head_length = snprintf(head, sizeof(head), "kind=%s\nentry=%s\n", kind, entry_name);
+  unsigned long long hash = cq_fnv(14695981039346656037ull, head, (size_t)head_length);
+  char *text = NULL; size_t length = 0; int separator = 0;
+  if (!cq_path(path, "%s/argv", attempt) && !cq_read_path(path, &text, &length)) separator = 0;
+  else if (!cq_path(path, "%s/command", attempt) && !cq_read_path(path, &text, &length)) separator = '\n';
+  else return ENOENT;
+  size_t at = 0;
+  while (at < length) {
+    size_t end = at;
+    while (end < length && text[end] != (char)separator) end++;
+    const char *token = text + at; size_t size = end - at;
+    int plain = size > 0 && token[0] == '/';
+    for (size_t i = 0; plain && i < size; i++) if (token[i] == ' ' || token[i] == '\n' || token[i] == '\t') plain = 0;
+    if (plain) {
+      size_t slash = size;
+      while (slash > 0 && token[slash - 1] != '/') slash--;
+      token += slash; size -= slash;
+    }
+    hash = cq_fnv(hash, token, size);
+    hash = cq_fnv(hash, "\n", 1);
+    at = end + 1;
+  }
+  free(text);
+  snprintf(shape, capacity, "%016llx", hash);
+  return 0;
+}
+
 /* The expected peak of a key: its own recorded peak, otherwise the largest
-   recorded peak of its group, otherwise of its kind and compiler, otherwise of
-   its kind. History is false when none exists. */
+   recorded peak of its group, otherwise of its kind, entry and command shape on
+   any compiler, otherwise of its kind and compiler, otherwise of its kind.
+   History is false when none exists. */
 static void cq_expected(const char *state, const char *key, const char *group,
-                        const char *compiler, const char *kind,
+                        const char *shape, const char *compiler, const char *kind,
                         long long *expected, int *history) {
   char path[PATH_MAX];
   long long peak = -1;
   *expected = 0; *history = 0;
   if (!cq_path(path, "%s/keys/%s/peak", state, key)) cq_peak_load(path, &peak);
   if (peak < 0 && *group && !cq_path(path, "%s/peaks/%s", state, group)) cq_peak_load(path, &peak);
+  if (peak < 0 && *kind && *shape && !cq_path(path, "%s/peaks/sh.%s.%s", state, kind, shape))
+    cq_peak_load(path, &peak);
   if (peak < 0 && *kind && *compiler && !cq_path(path, "%s/peaks/kc.%s.%s", state, kind, compiler))
     cq_peak_load(path, &peak);
   if (peak < 0 && *kind && !cq_path(path, "%s/peaks/k.%s", state, kind)) cq_peak_load(path, &peak);
@@ -958,7 +1007,29 @@ static void cq_ticket_parse(const char *id, const char *text, CqTicket *ticket) 
   cq_field(text, "entry", ticket->entry, sizeof(ticket->entry));
   cq_field(text, "compiler", ticket->compiler, sizeof(ticket->compiler));
   cq_field(text, "kind", ticket->kind, sizeof(ticket->kind));
+  cq_field(text, "shape", ticket->shape, sizeof(ticket->shape));
   ticket->queued = (unsigned long long)cq_field_number(text, "queued_ns", 0);
+}
+
+static int cq_read_cmdline(int pid, char *line, size_t capacity, char **argv, int *argc);
+
+/* A ticket written by an older build has no shape, kind or compiler. They are
+   read from the attempt that the process of the ticket runs. */
+static void cq_ticket_complete(CqTicket *ticket) {
+  if (*ticket->shape && *ticket->kind) return;
+#ifdef __linux__
+  char line[8192], *argv[16], path[PATH_MAX], text[1024]; int argc = 0;
+  if (!cq_read_cmdline(ticket->pid, line, sizeof(line), argv, &argc)) return;
+  const char *attempt = NULL;
+  if (argc >= 2 && !strcmp(argv[argc - 2], "__supervise")) attempt = argv[argc - 1];
+  else if (argc >= 5 && !strcmp(argv[argc - 5], "__takeover")) attempt = argv[argc - 4];
+  if (!attempt) return;
+  char kind[16] = "";
+  if (!*ticket->shape) cq_shape(attempt, ticket->shape, sizeof(ticket->shape), kind, sizeof(kind));
+  if (!*ticket->kind) snprintf(ticket->kind, sizeof(ticket->kind), "%s", kind);
+  if (!*ticket->compiler && !cq_path(path, "%s/group", attempt) && !cq_read_small(path, text, sizeof(text)))
+    cq_field(text, "compiler", ticket->compiler, sizeof(ticket->compiler));
+#endif
 }
 
 static void cq_admission_free(CqAdmission *view) {
@@ -1078,7 +1149,8 @@ static int cq_admission_load(const char *state, CqAdmission *view) {
       cq_ticket_parse(entry->d_name, text, &ticket);
       u32 alive = 0;
       if (cq_alive_value((u32)ticket.pid, ticket.start, &alive) || !alive) { unlink(path); continue; }
-      cq_expected(state, ticket.key, ticket.group, ticket.compiler, ticket.kind, &ticket.expected, &ticket.history);
+      cq_ticket_complete(&ticket);
+      cq_expected(state, ticket.key, ticket.group, ticket.shape, ticket.compiler, ticket.kind, &ticket.expected, &ticket.history);
       CqTicket *grown = realloc(view->tickets, (view->ticket_count + 1) * sizeof(*grown));
       if (!grown) { closedir(waiting); return ENOMEM; }
       view->tickets = grown;
@@ -1187,22 +1259,23 @@ static void cq_admit_handler(int sig) { cq_admit_signal = sig; }
 
 static int cq_ticket_write(const char *state, const char *id, const char *key,
                            const char *group, const char *entry, const char *compiler, const char *kind,
-                           unsigned long long queued, const char *start) {
+                           const char *shape, unsigned long long queued, const char *start) {
   char path[PATH_MAX], body[1024];
   int error = cq_path(path, "%s/admission/waiting/%s", state, id);
   if (error) return error;
   int length = snprintf(body, sizeof(body),
-    "pid=%d\nstarttime=%s\nkey=%s\ngroup=%s\nentry=%s\ncompiler=%s\nkind=%s\nqueued_ns=%llu\n",
-    (int)getpid(), start, key, group, entry, compiler, kind, queued);
+    "pid=%d\nstarttime=%s\nkey=%s\ngroup=%s\nentry=%s\ncompiler=%s\nkind=%s\nshape=%s\nqueued_ns=%llu\n",
+    (int)getpid(), start, key, group, entry, compiler, kind, shape, queued);
   return cq_write_text(path, body, (size_t)length);
 }
 
 static int cq_wait_admission(const char *attempt, const char *queued_text,
                              u32 old_pid, const char *old_start, int *claim_fd) {
   char state[PATH_MAX], keydir[PATH_MAX], key[CQ_NAME], path[PATH_MAX], text[1024];
-  char group[CQ_NAME] = "", entry[CQ_ENTRY] = "", compiler[CQ_NAME] = "", kind[16] = "", *start = NULL;
+  char group[CQ_NAME] = "", entry[CQ_ENTRY] = "", compiler[CQ_NAME] = "", kind[16] = "", shape[24] = "", *start = NULL;
   int error = cq_attempt_parts(attempt, state, keydir, key);
   if (error) return error;
+  { char shape_kind[16]; cq_shape(attempt, shape, sizeof(shape), shape_kind, sizeof(shape_kind)); }
   if (!cq_path(path, "%s/group", attempt) && !cq_read_small(path, text, sizeof(text))) {
     cq_field(text, "group", group, sizeof(group));
     cq_field(text, "compiler", compiler, sizeof(compiler));
@@ -1219,7 +1292,7 @@ static int cq_wait_admission(const char *attempt, const char *queued_text,
   snprintf(id, sizeof(id), "%020llu-%010d", queued, (int)getpid());
   int fd = -1;
   if ((error = cq_admission_lock(state, &fd))) { free(start); return error; }
-  error = cq_ticket_write(state, id, key, group, entry, compiler, kind, queued, start);
+  error = cq_ticket_write(state, id, key, group, entry, compiler, kind, shape, queued, start);
   cq_admission_unlock(fd);
   if (error) { free(start); return error; }
   struct sigaction action, old_term, old_int, old_hup;
@@ -1242,7 +1315,7 @@ static int cq_wait_admission(const char *attempt, const char *queued_text,
     CqAdmission view;
     error = cq_admission_load(state, &view);
     int index = error ? -1 : cq_ticket_index(&view, id);
-    if (!error && index < 0) error = cq_ticket_write(state, id, key, group, entry, compiler, kind, queued, start);
+    if (!error && index < 0) error = cq_ticket_write(state, id, key, group, entry, compiler, kind, shape, queued, start);
     int backfill = 0;
     /* The oldest ticket that may start goes first, whichever supervisor polls first. */
     int go = !error && index >= 0 && cq_admit_decision(&view, (size_t)index, &backfill);
@@ -1301,10 +1374,11 @@ static int cq_history_raise(const char *path, long long peak) {
 }
 
 /* Raises the peaks of a run in the group, kind-and-compiler and kind records. */
-static void cq_raise_peaks(const char *state, const char *group, const char *compiler,
+static void cq_raise_peaks(const char *state, const char *group, const char *shape, const char *compiler,
                            const char *kind, long long peak) {
   char path[PATH_MAX];
   if (*group && !cq_path(path, "%s/peaks/%s", state, group)) cq_history_raise(path, peak);
+  if (*kind && *shape && !cq_path(path, "%s/peaks/sh.%s.%s", state, kind, shape)) cq_history_raise(path, peak);
   if (*kind && *compiler && !cq_path(path, "%s/peaks/kc.%s.%s", state, kind, compiler))
     cq_history_raise(path, peak);
   if (*kind && !cq_path(path, "%s/peaks/k.%s", state, kind)) cq_history_raise(path, peak);
@@ -1312,7 +1386,7 @@ static void cq_raise_peaks(const char *state, const char *group, const char *com
 
 static void cq_record_peak(const char *attempt, long long peak) {
   char state[PATH_MAX], keydir[PATH_MAX], key[CQ_NAME], path[PATH_MAX], text[1024];
-  char group[CQ_NAME] = "", compiler[CQ_NAME] = "", kind[16] = "";
+  char group[CQ_NAME] = "", compiler[CQ_NAME] = "", kind[16] = "", shape[24] = "";
   if (peak <= 0 || cq_attempt_parts(attempt, state, keydir, key)) return;
   int length = snprintf(text, sizeof(text), "peak_kb=%lld\n", peak);
   if (!cq_path(path, "%s/peak", attempt)) cq_write_text(path, text, (size_t)length);
@@ -1320,13 +1394,12 @@ static void cq_record_peak(const char *attempt, long long peak) {
     cq_field(text, "group", group, sizeof(group));
     cq_field(text, "compiler", compiler, sizeof(compiler));
   }
-  if (!cq_path(path, "%s/meta", attempt) && !cq_read_small(path, text, sizeof(text)))
-    cq_field(text, "kind", kind, sizeof(kind));
+  cq_shape(attempt, shape, sizeof(shape), kind, sizeof(kind));
   if (cq_admission_dirs(state)) return;
   int fd = -1;
   if (cq_admission_lock(state, &fd)) return;
   if (!cq_path(path, "%s/peak", keydir)) cq_history_raise(path, peak);
-  cq_raise_peaks(state, group, compiler, kind, peak);
+  cq_raise_peaks(state, group, shape, compiler, kind, peak);
   cq_admission_unlock(fd);
 }
 
@@ -1454,18 +1527,17 @@ static int cq_backfill(const char *state, char **out, size_t *length) {
       struct dirent *run_entry;
       while (run_dir && (run_entry = readdir(run_dir))) {
         if (run_entry->d_name[0] == '.') continue;
-        char attempt[PATH_MAX], group[CQ_NAME] = "", compiler[CQ_NAME] = "", kind[16] = "";
+        char attempt[PATH_MAX], group[CQ_NAME] = "", compiler[CQ_NAME] = "", kind[16] = "", shape[24] = "";
         if (cq_path(attempt, "%s/%s", runs_dir, run_entry->d_name)) continue;
         long long peak = -1;
         if (cq_path(path, "%s/peak", attempt) || cq_peak_load(path, &peak) || peak <= 0) continue;
-        if (!cq_path(path, "%s/meta", attempt) && !cq_read_small(path, text, sizeof(text)))
-          cq_field(text, "kind", kind, sizeof(kind));
+        cq_shape(attempt, shape, sizeof(shape), kind, sizeof(kind));
         if (!cq_path(path, "%s/group", attempt) && !cq_read_small(path, text, sizeof(text))) {
           cq_field(text, "group", group, sizeof(group));
           cq_field(text, "compiler", compiler, sizeof(compiler));
         }
         if (!cq_path(path, "%s/%s/peak", keys, key_entry->d_name)) cq_history_raise(path, peak);
-        cq_raise_peaks(state, group, compiler, kind, peak);
+        cq_raise_peaks(state, group, shape, compiler, kind, peak);
         runs++;
       }
       if (run_dir) closedir(run_dir);

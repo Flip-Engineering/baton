@@ -1013,6 +1013,53 @@ if [ -r /proc/meminfo ]; then
     || bad 'jobs ran together with nothing recorded for their kind'
 fi
 
+# A job whose group has no record is bounded by the peak recorded for the same
+# entry and command shape on any compiler, before the peaks of its kind. The
+# check of an entry and a full generation of it have different shapes, so a small
+# check does not lower the bound of the large generation and a large generation
+# does not raise the bound of the check.
+if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
+  STATE_SHAPE=$(fresh_state shape)
+  (umask 0007; mkdir -p -m 2770 "$STATE_SHAPE/peaks")
+  printf 'growth_kb=0\n' > "$STATE_SHAPE/outside-growth"
+  printf 'peak_kb=%s\n' "$((room * 7 / 10))" > "$STATE_SHAPE/peaks/k.cgen"
+  for compiler_dir in shape-one shape-two shape-three; do
+    mkdir -p "$T/$compiler_dir"
+    cp "$FAKE" "$T/$compiler_dir/compiler"
+    printf '# %s\n' "$compiler_dir" >> "$T/$compiler_dir/compiler"
+    chmod +x "$T/$compiler_dir/compiler"
+  done
+  shape_run() { # compiler_dir tag command_tag
+    BATON_COMPILE_QUEUE_ROOT="$STATE_SHAPE" sh "$QUEUE" run --kind cgen --state-root "$STATE_SHAPE" --cwd "$T/src" --root "$T/src" \
+      --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$T/$1/compiler" \
+      --artifact "c.c=$T/$2.c" --option "test=$2" \
+      -- "$T/$1/compiler" --tag "$3" --log "$LOG" -o "$T/$2.c" --sleep 3 >"$T/$2.out" 2>"$T/$2.err"
+  }
+  # The first run on the first compiler records a small peak for its shape; the
+  # large kind peak bounds it, so it runs alone.
+  shape_run shape-one shape-first shape || bad 'shape: first request failed'
+  ls "$STATE_SHAPE/peaks" | grep -q '^sh\.cgen\.' \
+    && pass 'a run records the peak of its kind, entry and command shape' || bad 'no shape peak was recorded'
+  # The same command on a second compiler, twice at once: the small shape peak
+  # bounds both and they run together. A command of another shape on a compiler
+  # without a record is bounded by the large kind peak, so two of those run one
+  # at a time.
+  : > "$LOG"
+  shape_run shape-two shape-a shape & sa=$!
+  shape_run shape-two shape-b shape & sb=$!
+  wait "$sa" || bad 'shape: second request failed'
+  wait "$sb" || bad 'shape: third request failed'
+  assert_serialized && bad 'the same command on a new compiler was bounded by the peak of the kind' \
+    || pass 'a job on a new compiler is bounded by the peak of its entry and command shape'
+  : > "$LOG"
+  shape_run shape-three shape-c control & sc=$!
+  shape_run shape-three shape-d control & sd=$!
+  wait "$sc" || bad 'shape: fourth request failed'
+  wait "$sd" || bad 'shape: fifth request failed'
+  assert_serialized && pass 'a command of another shape is bounded by the peak of its kind' \
+    || bad 'a command of another shape ran together with its peers'
+fi
+
 # backfill raises the kind and key records from the runs already recorded.
 rm -f "$STATE/peaks/k.cgen" "$STATE/peaks/k.cc"
 sh "$QUEUE" backfill --state-root "$STATE" > "$T/backfill.out" 2>"$T/backfill.err" || bad 'backfill failed'

@@ -147,6 +147,7 @@ $state/keys/<key>/peak                         largest recorded peak, kB
 $state/keys/<key>/runs/<attempt>/peak          peak of one run, kB
 $state/keys/<key>/runs/<attempt>/group         history group of the attempt
 $state/peaks/<group>                           largest recorded peak of a group, kB
+$state/peaks/sh.<kind>.<shape>                 largest recorded peak of a kind, entry and command shape, kB
 $state/peaks/kc.<kind>.<compiler>              largest recorded peak of a kind and compiler, kB
 $state/peaks/k.<kind>                          largest recorded peak of a kind, kB
 $state/outside-growth                          largest rise of outside memory use, kB
@@ -194,7 +195,15 @@ the request (`--cwd`, `--root`, `--source-root`) anywhere in that text become
 becomes `@attempt`, so the same job in two checkouts is one group. A new commit
 of the same entry joins the group of earlier ones; `--check-only` and a full C
 generation of the same entry do not share a group. Options are not part of the
-group. The compiler digest is the closure digest alone. The values are the
+group. The compiler digest is the closure digest alone.
+
+The shape of an attempt is a 64-bit FNV-1a hash of its kind, its entry file and
+its command, in which every absolute path is reduced to its file name. It is
+computed from the attempt files (`meta` and `argv`, or `command`), so the same
+job on another compiler release, in another checkout or with another output
+directory has the same shape, and a `--check-only` run and a full C generation
+of one entry have different shapes. A job of an older executable is given its
+shape from its attempt files when the rule reads its ticket. The values are the
 largest peak recorded; none is removed.
 
 ### Expected peak
@@ -203,10 +212,12 @@ A ticket's expected peak is, in order:
 
 1. the recorded peak of its key;
 2. the largest recorded peak of its group;
-3. the largest recorded peak of its kind and compiler;
-4. the largest recorded peak of its kind (`cgen` or `cc`), when the compiler
+3. the largest recorded peak of its kind, entry and command shape on any
+   compiler;
+4. the largest recorded peak of its kind and compiler;
+5. the largest recorded peak of its kind (`cgen` or `cc`), when the compiler
    has no record;
-5. no recorded peak. The job has no history. Its memory need is then the
+6. no recorded peak. The job has no history. Its memory need is then the
    current memory of the largest running job of the same group, or nothing when
    the entry is empty or no such job runs. A job without a group, and the
    holder of the older lock, are matched by entry file.
