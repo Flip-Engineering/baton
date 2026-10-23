@@ -584,7 +584,10 @@ static int cq_spawn_detached(const char *argv_text, size_t argv_length,
      admission/observed          process measurements, at most one second old
      outside-growth              largest rise of memory used outside the queue
                                  seen during one run
-     peaks/<group>               largest recorded peak of one compiler and entry
+     peaks/<group>               largest recorded peak of one kind, compiler, entry
+                                 and command
+     peaks/kc.<kind>.<compiler>  largest recorded peak of one kind and compiler
+     peaks/k.<kind>              largest recorded peak of one kind
      keys/<key>/peak             largest recorded peak of one key
      keys/<key>/runs/<run>/peak  measured peak of one run
 
@@ -608,6 +611,7 @@ typedef struct {
 
 typedef struct {
   char id[CQ_ID], start[32], key[CQ_NAME], group[CQ_NAME], entry[CQ_ENTRY];
+  char compiler[CQ_NAME], kind[16];
   int pid, history;
   long long expected;
   unsigned long long queued;
@@ -902,14 +906,19 @@ static int cq_peak_load(const char *path, long long *peak) {
 }
 
 /* The expected peak of a key: its own recorded peak, otherwise the largest
-   recorded peak of its group. History is false when neither exists. */
+   recorded peak of its group, otherwise of its kind and compiler, otherwise of
+   its kind. History is false when none exists. */
 static void cq_expected(const char *state, const char *key, const char *group,
+                        const char *compiler, const char *kind,
                         long long *expected, int *history) {
   char path[PATH_MAX];
   long long peak = -1;
   *expected = 0; *history = 0;
   if (!cq_path(path, "%s/keys/%s/peak", state, key)) cq_peak_load(path, &peak);
   if (peak < 0 && *group && !cq_path(path, "%s/peaks/%s", state, group)) cq_peak_load(path, &peak);
+  if (peak < 0 && *kind && *compiler && !cq_path(path, "%s/peaks/kc.%s.%s", state, kind, compiler))
+    cq_peak_load(path, &peak);
+  if (peak < 0 && *kind && !cq_path(path, "%s/peaks/k.%s", state, kind)) cq_peak_load(path, &peak);
   if (peak >= 0) { *expected = peak; *history = 1; }
 }
 
@@ -947,6 +956,8 @@ static void cq_ticket_parse(const char *id, const char *text, CqTicket *ticket) 
   cq_field(text, "key", ticket->key, sizeof(ticket->key));
   cq_field(text, "group", ticket->group, sizeof(ticket->group));
   cq_field(text, "entry", ticket->entry, sizeof(ticket->entry));
+  cq_field(text, "compiler", ticket->compiler, sizeof(ticket->compiler));
+  cq_field(text, "kind", ticket->kind, sizeof(ticket->kind));
   ticket->queued = (unsigned long long)cq_field_number(text, "queued_ns", 0);
 }
 
@@ -1067,7 +1078,7 @@ static int cq_admission_load(const char *state, CqAdmission *view) {
       cq_ticket_parse(entry->d_name, text, &ticket);
       u32 alive = 0;
       if (cq_alive_value((u32)ticket.pid, ticket.start, &alive) || !alive) { unlink(path); continue; }
-      cq_expected(state, ticket.key, ticket.group, &ticket.expected, &ticket.history);
+      cq_expected(state, ticket.key, ticket.group, ticket.compiler, ticket.kind, &ticket.expected, &ticket.history);
       CqTicket *grown = realloc(view->tickets, (view->ticket_count + 1) * sizeof(*grown));
       if (!grown) { closedir(waiting); return ENOMEM; }
       view->tickets = grown;
@@ -1175,26 +1186,30 @@ static char cq_my_claim[CQ_ID];
 static void cq_admit_handler(int sig) { cq_admit_signal = sig; }
 
 static int cq_ticket_write(const char *state, const char *id, const char *key,
-                           const char *group, const char *entry, unsigned long long queued, const char *start) {
+                           const char *group, const char *entry, const char *compiler, const char *kind,
+                           unsigned long long queued, const char *start) {
   char path[PATH_MAX], body[1024];
   int error = cq_path(path, "%s/admission/waiting/%s", state, id);
   if (error) return error;
   int length = snprintf(body, sizeof(body),
-    "pid=%d\nstarttime=%s\nkey=%s\ngroup=%s\nentry=%s\nqueued_ns=%llu\n", (int)getpid(), start, key, group, entry, queued);
+    "pid=%d\nstarttime=%s\nkey=%s\ngroup=%s\nentry=%s\ncompiler=%s\nkind=%s\nqueued_ns=%llu\n",
+    (int)getpid(), start, key, group, entry, compiler, kind, queued);
   return cq_write_text(path, body, (size_t)length);
 }
 
 static int cq_wait_admission(const char *attempt, const char *queued_text,
                              u32 old_pid, const char *old_start, int *claim_fd) {
   char state[PATH_MAX], keydir[PATH_MAX], key[CQ_NAME], path[PATH_MAX], text[1024];
-  char group[CQ_NAME] = "", entry[CQ_ENTRY] = "", *start = NULL;
+  char group[CQ_NAME] = "", entry[CQ_ENTRY] = "", compiler[CQ_NAME] = "", kind[16] = "", *start = NULL;
   int error = cq_attempt_parts(attempt, state, keydir, key);
   if (error) return error;
   if (!cq_path(path, "%s/group", attempt) && !cq_read_small(path, text, sizeof(text))) {
     cq_field(text, "group", group, sizeof(group));
+    cq_field(text, "compiler", compiler, sizeof(compiler));
   }
   if (!cq_path(path, "%s/meta", attempt) && !cq_read_small(path, text, sizeof(text))) {
     cq_field(text, "entry", entry, sizeof(entry));
+    cq_field(text, "kind", kind, sizeof(kind));
   }
   if ((error = cq_admission_dirs(state))) return error;
   if ((error = cq_starttime_text((u32)getpid(), &start))) return error;
@@ -1204,7 +1219,7 @@ static int cq_wait_admission(const char *attempt, const char *queued_text,
   snprintf(id, sizeof(id), "%020llu-%010d", queued, (int)getpid());
   int fd = -1;
   if ((error = cq_admission_lock(state, &fd))) { free(start); return error; }
-  error = cq_ticket_write(state, id, key, group, entry, queued, start);
+  error = cq_ticket_write(state, id, key, group, entry, compiler, kind, queued, start);
   cq_admission_unlock(fd);
   if (error) { free(start); return error; }
   struct sigaction action, old_term, old_int, old_hup;
@@ -1227,7 +1242,7 @@ static int cq_wait_admission(const char *attempt, const char *queued_text,
     CqAdmission view;
     error = cq_admission_load(state, &view);
     int index = error ? -1 : cq_ticket_index(&view, id);
-    if (!error && index < 0) error = cq_ticket_write(state, id, key, group, entry, queued, start);
+    if (!error && index < 0) error = cq_ticket_write(state, id, key, group, entry, compiler, kind, queued, start);
     int backfill = 0;
     /* The oldest ticket that may start goes first, whichever supervisor polls first. */
     int go = !error && index >= 0 && cq_admit_decision(&view, (size_t)index, &backfill);
@@ -1285,20 +1300,183 @@ static int cq_history_raise(const char *path, long long peak) {
   return cq_value_raise(path, "peak_kb", peak);
 }
 
+/* Raises the peaks of a run in the group, kind-and-compiler and kind records. */
+static void cq_raise_peaks(const char *state, const char *group, const char *compiler,
+                           const char *kind, long long peak) {
+  char path[PATH_MAX];
+  if (*group && !cq_path(path, "%s/peaks/%s", state, group)) cq_history_raise(path, peak);
+  if (*kind && *compiler && !cq_path(path, "%s/peaks/kc.%s.%s", state, kind, compiler))
+    cq_history_raise(path, peak);
+  if (*kind && !cq_path(path, "%s/peaks/k.%s", state, kind)) cq_history_raise(path, peak);
+}
+
 static void cq_record_peak(const char *attempt, long long peak) {
-  char state[PATH_MAX], keydir[PATH_MAX], key[CQ_NAME], path[PATH_MAX], text[256];
-  char group[CQ_NAME] = "";
+  char state[PATH_MAX], keydir[PATH_MAX], key[CQ_NAME], path[PATH_MAX], text[1024];
+  char group[CQ_NAME] = "", compiler[CQ_NAME] = "", kind[16] = "";
   if (peak <= 0 || cq_attempt_parts(attempt, state, keydir, key)) return;
   int length = snprintf(text, sizeof(text), "peak_kb=%lld\n", peak);
   if (!cq_path(path, "%s/peak", attempt)) cq_write_text(path, text, (size_t)length);
-  if (!cq_path(path, "%s/group", attempt) && !cq_read_small(path, text, sizeof(text)))
+  if (!cq_path(path, "%s/group", attempt) && !cq_read_small(path, text, sizeof(text))) {
     cq_field(text, "group", group, sizeof(group));
+    cq_field(text, "compiler", compiler, sizeof(compiler));
+  }
+  if (!cq_path(path, "%s/meta", attempt) && !cq_read_small(path, text, sizeof(text)))
+    cq_field(text, "kind", kind, sizeof(kind));
   if (cq_admission_dirs(state)) return;
   int fd = -1;
   if (cq_admission_lock(state, &fd)) return;
   if (!cq_path(path, "%s/peak", keydir)) cq_history_raise(path, peak);
-  if (*group && !cq_path(path, "%s/peaks/%s", state, group)) cq_history_raise(path, peak);
+  cq_raise_peaks(state, group, compiler, kind, peak);
   cq_admission_unlock(fd);
+}
+
+static int cq_text_append(char **text, size_t *used, size_t *capacity, const char *format, ...)
+  __attribute__((format(printf, 4, 5)));
+
+/* Group text: the paths that belong to one checkout or one attempt are replaced
+   by placeholders, so the same job in two worktrees has one text. */
+static int cq_path_char(char c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+    || c == '.' || c == '_' || c == '-' || c == '/' || c == '@';
+}
+
+static int cq_name_char(char c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+    || c == '.' || c == '_' || c == '-';
+}
+
+static int cq_roots_compare(const void *left, const void *right) {
+  size_t a = strlen(*(const char *const *)left), b = strlen(*(const char *const *)right);
+  return a < b ? 1 : a > b ? -1 : 0;
+}
+
+/* Replaces every root directory (newline-separated list) with @root. */
+static char *cq_replace_roots(const char *text, const char *roots) {
+  char *list = strdup(roots);
+  char **items = calloc(strlen(roots) + 2, sizeof(*items));
+  size_t count = 0;
+  if (!list || !items) { free(list); free(items); return NULL; }
+  for (char *at = strtok(list, "\n"); at; at = strtok(NULL, "\n"))
+    if (at[0] == '/' && strlen(at) > 1) items[count++] = at;
+  qsort(items, count, sizeof(*items), cq_roots_compare);
+  size_t capacity = strlen(text) + 1, used = 0;
+  char *out = malloc(capacity);
+  if (!out) { free(list); free(items); return NULL; }
+  for (size_t i = 0; text[i];) {
+    size_t matched = 0;
+    for (size_t k = 0; k < count && !matched; k++) {
+      size_t n = strlen(items[k]);
+      if (!strncmp(text + i, items[k], n) && !cq_name_char(text[i + n])) matched = n;
+    }
+    if (matched) {
+      if (used + 6 >= capacity) { capacity = capacity * 2 + 8; out = realloc(out, capacity); if (!out) break; }
+      memcpy(out + used, "@root", 5); used += 5; i += matched;
+    } else {
+      if (used + 2 >= capacity) { capacity = capacity * 2 + 8; out = realloc(out, capacity); if (!out) break; }
+      out[used++] = text[i++];
+    }
+  }
+  free(list); free(items);
+  if (out) out[used] = 0;
+  return out;
+}
+
+/* Replaces the whole path that contains a marker: the prefix before it, the
+   marker and the segments after it that belong to the pattern. */
+static char *cq_replace_pattern(const char *text, int attempt_paths) {
+  size_t capacity = strlen(text) + 16, used = 0;
+  char *out = malloc(capacity);
+  if (!out) return NULL;
+  const char *worktrees = "/worktrees/", *keys = "/keys/", *runs = "/runs/";
+  for (size_t i = 0; text[i];) {
+    size_t end = 0; const char *replacement = NULL;
+    if (!attempt_paths && !strncmp(text + i, worktrees, strlen(worktrees))) {
+      end = i + strlen(worktrees);
+      while (cq_name_char(text[end])) end++;
+      replacement = "@worktree";
+    } else if (attempt_paths && !strncmp(text + i, keys, strlen(keys))) {
+      size_t at = i + strlen(keys), hex = 0;
+      while (text[at + hex] && strchr("0123456789abcdef", text[at + hex])) hex++;
+      if (hex == 64 && !strncmp(text + at + hex, runs, strlen(runs))) {
+        end = at + hex + strlen(runs);
+        while (cq_name_char(text[end])) end++;
+        replacement = "@attempt";
+      }
+    }
+    if (replacement) {
+      size_t start = used;
+      while (start > 0 && cq_path_char(out[start - 1])) start--;
+      used = start;
+      size_t n = strlen(replacement);
+      if (used + n + 2 >= capacity) { capacity = capacity * 2 + n + 8; out = realloc(out, capacity); if (!out) return NULL; }
+      memcpy(out + used, replacement, n); used += n;
+      i = end;
+    } else {
+      if (used + 2 >= capacity) { capacity = capacity * 2 + 8; out = realloc(out, capacity); if (!out) return NULL; }
+      out[used++] = text[i++];
+    }
+  }
+  out[used] = 0;
+  return out;
+}
+
+static int cq_group_text(const char *text, const char *roots, char **out) {
+  char *first = cq_replace_roots(text, roots);
+  if (!first) return ENOMEM;
+  char *second = cq_replace_pattern(first, 0);
+  free(first);
+  if (!second) return ENOMEM;
+  char *third = cq_replace_pattern(second, 1);
+  free(second);
+  if (!third) return ENOMEM;
+  *out = third;
+  return 0;
+}
+
+/* Raises the peak records from the runs already recorded under keys/. */
+static int cq_backfill(const char *state, char **out, size_t *length) {
+  char keys[PATH_MAX], path[PATH_MAX], text[1024];
+  size_t used = 0, capacity = 256; long runs = 0;
+  char *report = malloc(capacity);
+  if (!report) return ENOMEM;
+  report[0] = 0;
+  int error = cq_admission_dirs(state);
+  int fd = -1;
+  if (!error) error = cq_admission_lock(state, &fd);
+  if (!error && !cq_path(keys, "%s/keys", state)) {
+    DIR *key_dir = opendir(keys);
+    struct dirent *key_entry;
+    while (key_dir && (key_entry = readdir(key_dir))) {
+      if (key_entry->d_name[0] == '.') continue;
+      char runs_dir[PATH_MAX];
+      if (cq_path(runs_dir, "%s/%s/runs", keys, key_entry->d_name)) continue;
+      DIR *run_dir = opendir(runs_dir);
+      struct dirent *run_entry;
+      while (run_dir && (run_entry = readdir(run_dir))) {
+        if (run_entry->d_name[0] == '.') continue;
+        char attempt[PATH_MAX], group[CQ_NAME] = "", compiler[CQ_NAME] = "", kind[16] = "";
+        if (cq_path(attempt, "%s/%s", runs_dir, run_entry->d_name)) continue;
+        long long peak = -1;
+        if (cq_path(path, "%s/peak", attempt) || cq_peak_load(path, &peak) || peak <= 0) continue;
+        if (!cq_path(path, "%s/meta", attempt) && !cq_read_small(path, text, sizeof(text)))
+          cq_field(text, "kind", kind, sizeof(kind));
+        if (!cq_path(path, "%s/group", attempt) && !cq_read_small(path, text, sizeof(text))) {
+          cq_field(text, "group", group, sizeof(group));
+          cq_field(text, "compiler", compiler, sizeof(compiler));
+        }
+        if (!cq_path(path, "%s/%s/peak", keys, key_entry->d_name)) cq_history_raise(path, peak);
+        cq_raise_peaks(state, group, compiler, kind, peak);
+        runs++;
+      }
+      if (run_dir) closedir(run_dir);
+    }
+    if (key_dir) closedir(key_dir);
+  }
+  if (fd >= 0) cq_admission_unlock(fd);
+  if (!error) error = cq_text_append(&report, &used, &capacity, "backfilled runs=%ld\n", runs);
+  if (error) { free(report); return error; }
+  *out = report; *length = used;
+  return 0;
 }
 
 /* Samples the session of the calling supervisor while its command runs. */
@@ -1512,10 +1690,143 @@ static int cq_legacy_waiters(const char *state, int **pids, size_t *count) {
   return 0;
 }
 
+/* Starts a successor that takes the place of a waiting supervisor. old_pid and
+   old_start name the supervisor that the requester waits for; the successor kills
+   it when the attempt has a result. */
+static int cq_spawn_successor(const char *state, const char *keydir, const char *attempt,
+                              const char *old_pid, const char *old_start, const char *queued,
+                              pid_t *successor) {
+  char args[PATH_MAX + 256]; size_t at = 0;
+  const char *parts[6] = {"--", "__takeover", attempt, old_pid, old_start, queued};
+  for (int part = 0; part < 6; part++) {
+    size_t size = strlen(parts[part]) + 1;
+    if (at + size >= sizeof(args)) return ENAMETOOLONG;
+    memcpy(args + at, parts[part], size); at += size;
+  }
+  u32 key_fd = 0, heavy_fd = 0;
+  char key_lock[PATH_MAX], heavy_lock[PATH_MAX];
+  int error = cq_path(key_lock, "%s/lock", keydir);
+  if (!error) error = cq_path(heavy_lock, "%s/heavy.lock", state);
+  if (!error) error = cq_lock_open(key_lock, &key_fd);
+  if (!error) error = cq_lock_open(heavy_lock, &heavy_fd);
+  if (!error) error = cq_spawn_detached(args, at, key_fd, heavy_fd, successor);
+  if (key_fd) close((int)key_fd);
+  if (heavy_fd) close((int)heavy_fd);
+  return error;
+}
+
+static int cq_read_cmdline(int pid, char *line, size_t capacity, char **argv, int *argc) {
+  char path[64];
+  snprintf(path, sizeof(path), "/proc/%d/cmdline", pid);
+  int fd = open(path, O_RDONLY);
+  ssize_t got = fd < 0 ? -1 : read(fd, line, capacity - 1);
+  if (fd >= 0) close(fd);
+  if (got <= 0) return 0;
+  line[got] = 0;
+  *argc = 0;
+  for (char *at = line; at < line + got && *argc < 16; at += strlen(at) + 1) argv[(*argc)++] = at;
+  return 1;
+}
+
+/* Whether the process runs another executable file than this process. */
+static int cq_other_executable(int pid) {
+  char path[64];
+  struct stat mine, theirs;
+  snprintf(path, sizeof(path), "/proc/%d/exe", pid);
+  if (stat("/proc/self/exe", &mine) || stat(path, &theirs)) return 0;
+  return mine.st_dev != theirs.st_dev || mine.st_ino != theirs.st_ino;
+}
+
+/* Replaces supervisors that wait for admission under an older executable
+   with successors of this executable, so changes of the rule reach waiting jobs.
+   A successor of an earlier takeover is replaced by a new successor for the same
+   stopped supervisor. */
+static int cq_retake_waiting(const char *state, char **text, size_t *used, size_t *capacity) {
+  CqAdmission view;
+  int fd = -1;
+  int error = cq_admission_lock(state, &fd);
+  if (error) return error;
+  error = cq_admission_load(state, &view);
+  cq_admission_unlock(fd);
+  if (error) return error;
+  for (size_t index = 0; !error && index < view.ticket_count; index++) {
+    const CqTicket *ticket = &view.tickets[index];
+    int pid = ticket->pid, running = 0;
+    if (pid == (int)getpid()) continue;
+    for (size_t i = 0; i < view.claim_count; i++) if (view.claims[i].pid == pid) running = 1;
+    if (running) continue;
+    char line[8192], *argv[16]; int argc = 0;
+    if (!cq_read_cmdline(pid, line, sizeof(line), argv, &argc)) continue;
+    const char *attempt = NULL, *old_pid = NULL, *old_start = NULL, *queued = NULL;
+    char own_pid[32], own_queued[32];
+    int successor_kind = 0;
+    snprintf(own_pid, sizeof(own_pid), "%d", pid);
+    snprintf(own_queued, sizeof(own_queued), "%llu", ticket->queued);
+    if (argc >= 2 && !strcmp(argv[argc - 2], "__supervise")) {
+      attempt = argv[argc - 1]; old_pid = own_pid; old_start = ticket->start; queued = own_queued;
+    } else if (argc >= 5 && !strcmp(argv[argc - 5], "__takeover")) {
+      attempt = argv[argc - 4]; old_pid = argv[argc - 3]; old_start = argv[argc - 2]; queued = argv[argc - 1];
+      successor_kind = 1;
+    } else continue;
+    if (!cq_other_executable(pid)) continue;
+    char keydir[PATH_MAX], key[CQ_NAME], parsed_state[PATH_MAX], marker[PATH_MAX];
+    if (cq_attempt_parts(attempt, parsed_state, keydir, key) || strcmp(parsed_state, state)) continue;
+    if (!cq_same_mount_namespace(pid)) {
+      error = cq_text_append(text, used, capacity, "skipped pid=%d reason=other-mount-namespace attempt=%s\n", pid, attempt);
+      continue;
+    }
+    if (kill((pid_t)pid, SIGSTOP)) {
+      error = cq_text_append(text, used, capacity, "skipped pid=%d reason=not-permitted attempt=%s\n", pid, attempt);
+      continue;
+    }
+    for (int wait = 0; wait < 100 && !cq_stopped(pid); wait++) cq_sleep_ns(20000000L);
+    /* A stopped supervisor cannot start its command. Check under the lock that it
+       was not admitted before it stopped, then remove its ticket. */
+    int still_waiting = 0;
+    if (cq_stopped(pid) && !cq_admission_lock(state, &fd)) {
+      CqAdmission now;
+      if (!cq_admission_load(state, &now)) {
+        int claimed = 0, listed = 0;
+        for (size_t i = 0; i < now.claim_count; i++) if (now.claims[i].pid == pid) claimed = 1;
+        for (size_t i = 0; i < now.ticket_count; i++) if (now.tickets[i].pid == pid) listed = 1;
+        if (!claimed && listed) {
+          char ticket_path[PATH_MAX];
+          if (!cq_path(ticket_path, "%s/admission/waiting/%s", state, ticket->id)) unlink(ticket_path);
+          still_waiting = 1;
+        }
+      }
+      cq_admission_free(&now);
+      cq_admission_unlock(fd);
+    }
+    if (!still_waiting) {
+      kill((pid_t)pid, SIGCONT);
+      error = cq_text_append(text, used, capacity, "skipped pid=%d reason=not-waiting attempt=%s\n", pid, attempt);
+      continue;
+    }
+    pid_t successor = 0;
+    error = cq_spawn_successor(state, keydir, attempt, old_pid, old_start, queued, &successor);
+    if (error) {
+      kill((pid_t)pid, SIGCONT);
+      error = cq_text_append(text, used, capacity, "failed pid=%d attempt=%s\n", pid, attempt);
+      continue;
+    }
+    if (successor_kind) kill((pid_t)pid, SIGKILL);
+    if (!cq_path(marker, "%s/takeover", attempt)) {
+      char note[160];
+      int n = snprintf(note, sizeof(note), "pid=%s\nstarttime=%s\nsuccessor=%d\n", old_pid, old_start, (int)successor);
+      cq_write_text(marker, note, (size_t)n);
+    }
+    error = cq_text_append(text, used, capacity, "retaken pid=%d successor=%d attempt=%s\n", pid, (int)successor, attempt);
+  }
+  cq_admission_free(&view);
+  return error;
+}
+
 /* Replaces every supervisor that waits for the old shared lock. The waiting
    supervisor is stopped, so it cannot start its command, and a new supervisor
    takes its place in the same queue position. The stopped one is killed when
-   the new one finishes, which releases the requester that waits for it. */
+   the new one finishes, which releases the requester that waits for it. Then
+   it replaces supervisors that wait for admission under an older executable. */
 static int cq_takeover(const char *state, char **out, size_t *length) {
   size_t used = 0, capacity = 1024;
   char *text = malloc(capacity);
@@ -1527,15 +1838,8 @@ static int cq_takeover(const char *state, char **out, size_t *length) {
     int pid = pids[index], duplicate = 0;
     for (size_t before = 0; before < index; before++) if (pids[before] == pid) duplicate = 1;
     if (duplicate) continue;
-    char path[64], line[8192];
-    snprintf(path, sizeof(path), "/proc/%d/cmdline", pid);
-    int fd = open(path, O_RDONLY);
-    ssize_t got = fd < 0 ? -1 : read(fd, line, sizeof(line) - 1);
-    if (fd >= 0) close(fd);
-    if (got <= 0) continue;
-    line[got] = 0;
-    char *argv[16]; int argc = 0;
-    for (char *at = line; at < line + got && argc < 16; at += strlen(at) + 1) argv[argc++] = at;
+    char line[8192], *argv[16]; int argc = 0;
+    if (!cq_read_cmdline(pid, line, sizeof(line), argv, &argc)) continue;
     if (argc < 2 || strcmp(argv[argc - 2], "__supervise")) continue;
     const char *attempt = argv[argc - 1];
     char *start = NULL;
@@ -1561,29 +1865,12 @@ static int cq_takeover(const char *state, char **out, size_t *length) {
       free(start);
       continue;
     }
-    char active_path[PATH_MAX], active[512], queued[32] = "";
+    char active_path[PATH_MAX], active[512], queued[32] = "", pid_text[32];
     if (!cq_path(active_path, "%s/active", keydir) && !cq_read_small(active_path, active, sizeof(active)))
       cq_field(active, "started_ns", queued, sizeof(queued));
-    char args[PATH_MAX + 256]; size_t at = 0;
-    const char *parts[6] = {"--", "__takeover", attempt, NULL, start, queued};
-    char pid_text[32];
     snprintf(pid_text, sizeof(pid_text), "%d", pid);
-    parts[3] = pid_text;
-    for (int part = 0; part < 6; part++) {
-      size_t size = strlen(parts[part]) + 1;
-      if (at + size >= sizeof(args)) { error = ENAMETOOLONG; break; }
-      memcpy(args + at, parts[part], size); at += size;
-    }
-    u32 key_fd = 0, heavy_fd = 0;
-    char key_lock[PATH_MAX], heavy_lock[PATH_MAX];
-    if (!error) error = cq_path(key_lock, "%s/lock", keydir);
-    if (!error) error = cq_path(heavy_lock, "%s/heavy.lock", state);
-    if (!error) error = cq_lock_open(key_lock, &key_fd);
-    if (!error) error = cq_lock_open(heavy_lock, &heavy_fd);
     pid_t successor = 0;
-    if (!error) error = cq_spawn_detached(args, at, key_fd, heavy_fd, &successor);
-    if (key_fd) close((int)key_fd);
-    if (heavy_fd) close((int)heavy_fd);
+    error = cq_spawn_successor(state, keydir, attempt, pid_text, start, queued, &successor);
     if (error) {
       kill((pid_t)pid, SIGCONT);
       error = cq_text_append(&text, &used, &capacity, "failed pid=%d attempt=%s\n", pid, attempt);
@@ -1598,6 +1885,7 @@ static int cq_takeover(const char *state, char **out, size_t *length) {
     free(start);
   }
   free(pids);
+  if (!error) error = cq_retake_waiting(state, &text, &used, &capacity);
   if (error) { free(text); return error; }
   *out = text; *length = used;
   return 0;
@@ -1872,6 +2160,17 @@ static void cq_call_lock_release(IoWork *work) {
 static void cq_call_write_bytes(IoWork *work) {
   CqCall *call = (CqCall *)work->data;
   call->error = cq_write_text(call->path, call->argv, call->argv_length);
+}
+
+static void cq_call_group_text(IoWork *work) {
+  CqCall *call = (CqCall *)work->data;
+  call->error = cq_group_text(call->text, call->second, &call->out);
+  if (!call->error) call->out_length = strlen(call->out);
+}
+
+static void cq_call_backfill(IoWork *work) {
+  CqCall *call = (CqCall *)work->data;
+  call->error = cq_backfill(call->path, &call->out, &call->out_length);
 }
 
 static void cq_call_mkdir_p(IoWork *work) {
@@ -2548,4 +2847,33 @@ static Term cq_write_bytes_run(Env env, Term *fields, IoWork *work) {
   return io_work(work, cq_write_bytes_call, cq_write_bytes_pack);
 }
 static void __attribute__((constructor)) cq_write_bytes_use(void) { io_eff(CID_COMPILEQUEUELIFECYCLE_WRITE_BYTES, cq_write_bytes_run, 0); }
+#endif
+
+#ifdef CID_COMPILEQUEUELIFECYCLE_GROUP_TEXT
+static void cq_group_text_call(IoWork *work) { cq_call_group_text(work); }
+static Term cq_group_text_pack(Env env, IoWork *work) { return cq_text_pack(env, work); }
+static Term cq_group_text_run(Env env, Term *fields, IoWork *work) {
+  CqCall *call = calloc(1, sizeof(*call));
+  if (!call) return io_fail(env, ENOMEM, NULL);
+  call->error = cq_text_arg(env, fields[0], &call->text);
+  if (!call->error) call->error = cq_text_arg(env, fields[1], &call->second);
+  work->data = (char *)call;
+  if (call->error) return cq_group_text_pack(env, work);
+  return io_work(work, cq_group_text_call, cq_group_text_pack);
+}
+static void __attribute__((constructor)) cq_group_text_use(void) { io_eff(CID_COMPILEQUEUELIFECYCLE_GROUP_TEXT, cq_group_text_run, 0); }
+#endif
+
+#ifdef CID_COMPILEQUEUELIFECYCLE_BACKFILL
+static void cq_backfill_call(IoWork *work) { cq_call_backfill(work); }
+static Term cq_backfill_pack(Env env, IoWork *work) { return cq_text_pack(env, work); }
+static Term cq_backfill_run(Env env, Term *fields, IoWork *work) {
+  CqCall *call = calloc(1, sizeof(*call));
+  if (!call) return io_fail(env, ENOMEM, NULL);
+  call->error = cq_text_arg(env, fields[0], &call->path);
+  work->data = (char *)call;
+  if (call->error) return cq_backfill_pack(env, work);
+  return io_work(work, cq_backfill_call, cq_backfill_pack);
+}
+static void __attribute__((constructor)) cq_backfill_use(void) { io_eff(CID_COMPILEQUEUELIFECYCLE_BACKFILL, cq_backfill_run, 0); }
 #endif

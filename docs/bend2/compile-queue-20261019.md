@@ -147,6 +147,8 @@ $state/keys/<key>/peak                         largest recorded peak, kB
 $state/keys/<key>/runs/<attempt>/peak          peak of one run, kB
 $state/keys/<key>/runs/<attempt>/group         history group of the attempt
 $state/peaks/<group>                           largest recorded peak of a group, kB
+$state/peaks/kc.<kind>.<compiler>              largest recorded peak of a kind and compiler, kB
+$state/peaks/k.<kind>                          largest recorded peak of a kind, kB
 $state/outside-growth                          largest rise of outside memory use, kB
 $state/admission/lock                          serializes the records below
 $state/admission/waiting/<queue time>-<pid>    one ticket per waiting supervisor
@@ -183,12 +185,17 @@ two seconds, as the sum of `RssAnon` and `RssShmem` over the session. When the
 command ends, the peak is the larger of the samples and the `ru_maxrss` of the
 command's descendants. A run that was canceled records no peak. The peak is
 written to `runs/<attempt>/peak`, raised in `keys/<key>/peak`, and raised in
-`peaks/<group>`. The group is the SHA-256 of the kind, the entry file, the
-compiler closure digest and the normalized command (the text the key uses:
-compiler, outputs and root-relative paths replaced by placeholders). A new
-commit of the same entry joins the group of earlier ones; `--check-only` and a
-full C generation of the same entry do not share a group. Options are not part
-of the group. The values are the largest peak recorded; none is removed.
+`peaks/<group>`, `peaks/kc.<kind>.<compiler>` and `peaks/k.<kind>`. The group is
+the SHA-256 of the kind, the entry file, the compiler closure digest and the
+normalized command (the text the key uses: compiler, outputs and root-relative
+paths replaced by placeholders). Before hashing, the checkout directories of
+the request (`--cwd`, `--root`, `--source-root`) anywhere in that text become
+`@root`, a `/worktrees/NAME` path becomes `@worktree` and a queue attempt path
+becomes `@attempt`, so the same job in two checkouts is one group. A new commit
+of the same entry joins the group of earlier ones; `--check-only` and a full C
+generation of the same entry do not share a group. Options are not part of the
+group. The compiler digest is the closure digest alone. The values are the
+largest peak recorded; none is removed.
 
 ### Expected peak
 
@@ -196,10 +203,16 @@ A ticket's expected peak is, in order:
 
 1. the recorded peak of its key;
 2. the largest recorded peak of its group;
-3. no recorded peak. The job has no history. Its memory need is then the
+3. the largest recorded peak of its kind and compiler;
+4. the largest recorded peak of its kind (`cgen` or `cc`), when the compiler
+   has no record;
+5. no recorded peak. The job has no history. Its memory need is then the
    current memory of the largest running job of the same group, or nothing when
    the entry is empty or no such job runs. A job without a group, and the
    holder of the older lock, are matched by entry file.
+
+`backfill --state-root DIR` raises the key, kind-and-compiler, group and kind
+records from the `peak`, `group` and `meta` files of the runs already recorded.
 
 ### Rule
 
@@ -219,8 +232,8 @@ ordered by queue time, so the first ticket is the head.
   memory the rule could grant if every running job ended.
 
 A ticket starts when its need is at most `free`; a ticket with no need starts
-when `free > 0`. A ticket without history also waits while a running job
-without history exists. When
+when `free > 0`. A ticket without history, that is with nothing recorded for its kind, also
+waits while a running job without history exists. When
 nothing runs, the head starts whatever its expected peak, so a job that never
 fits still runs when it is alone.
 
@@ -283,7 +296,16 @@ stopped supervisor when the attempt has a result. The requester that waited
 for the stopped supervisor then reads that result. The holder of the lock is
 not touched. A supervisor of another user, and a supervisor in another mount
 namespace (its working directory and command may not exist in the namespace of
-`takeover`), are reported as skipped and keep waiting. `status` lists the memory the rule works from, the legacy holder,
+`takeover`), are reported as skipped and keep waiting.
+
+`takeover` also replaces supervisors that wait for admission under another
+executable file than its own, so a change of the rule reaches jobs that are
+already queued. A waiting supervisor of an earlier build, or the successor of an
+earlier takeover, is stopped. Under the admission lock `takeover` checks that the
+job was not admitted and removes its ticket; then it starts a successor with the
+same queue time. A stopped successor is killed once its replacement runs. A
+stopped supervisor is killed when the new successor finishes, as for the older
+lock. A job that was admitted first is left running. `status` lists the memory the rule works from, the legacy holder,
 each running job and each waiting ticket.
 
 ## State root

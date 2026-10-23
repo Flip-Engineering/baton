@@ -100,6 +100,18 @@ def CompileQueueLifecycle.write_text(path: String, text: String) -> IO(Result<&1
 def CompileQueueLifecycle.write_bytes(path: String, bytes: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./compile-queue-lifecycle.c"
 
+# Replaces the paths that belong to one checkout or one attempt in a text:
+# every directory in the newline-separated list roots becomes @root, a
+# /worktrees/NAME path becomes @worktree and a queue attempt path becomes
+# @attempt. The same job in two worktrees then has the same text.
+def CompileQueueLifecycle.group_text(text: String, roots: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./compile-queue-lifecycle.c"
+
+# Raises the kind, kind-and-compiler, group and key peak records from the runs
+# already recorded under the state root. Answers the number of runs read.
+def CompileQueueLifecycle.backfill(state: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./compile-queue-lifecycle.c"
+
 def CompileQueueLifecycle.write_stderr(text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./compile-queue-lifecycle.c"
 

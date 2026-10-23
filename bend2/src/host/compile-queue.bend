@@ -487,9 +487,12 @@ def identity_key(+config: Config) -> IO(String):
         fields_join("\n", fields_all(text, "option")),
         normalize_command(command, cwd, root, compiler, inputs, artifacts)))
 
+# The group file of an attempt: the group digest and the compiler digest. The
+# group covers the kind, the entry file, the compiler closure and the command,
+# with checkout and attempt paths replaced by placeholders.
 def history_group(+config: Config) -> IO(String):
   match config:
-    case Config{+text, command}:
+    case Config{+text, +command}:
       +inputs = input_rows(text)
       +artifacts = artifact_rows(text)
       +cwd = field(text, "cwd")
@@ -498,9 +501,17 @@ def history_group(+config: Config) -> IO(String):
       +kind = field(text, "kind")
       +linker = Bool.pick(String, String.eq(kind, "cc"), field(text, "linker"), "")
       +version = Bool.pick(String, String.eq(kind, "cc"), field(text, "version"), "")
-      IO.try(String, Identity.CompileQueueIdentity.history_group(
-        kind, cwd, root, field(text, "entry"), compiler, linker, version,
-        normalize_command(command, cwd, root, compiler, inputs, artifacts)))
+      +normalized = normalize_command(command, cwd, root, compiler, inputs, artifacts)
+      do IO<String>:
+        +toolchain : String <- IO.try(String, Identity.CompileQueueIdentity.history_compiler(
+          cwd, root, compiler, linker, version, normalized))
+        material : String <- IO.pure(String, "kind=" ++ kind ++ "\nentry=" ++ field(text, "entry")
+          ++ "\ncompiler=" ++ toolchain ++ "\ncommand=" ++ normalized ++ "\n")
+        scrubbed : String <- IO.try(String, L.CompileQueueLifecycle.group_text(material,
+          cwd ++ "\n" ++ root ++ "\n" ++ field(text, "source_root")))
+        group : String <- IO.try(String, Identity.CompileQueueIdentity.text_digest(
+          "schema=baton-compile-queue-history-v2\n" ++ scrubbed))
+        IO.pure(String, "group=" ++ group ++ "\ncompiler=" ++ toolchain ++ "\n")
 
 def config_state(config: Config) -> String:
   match config:
@@ -605,7 +616,7 @@ def write_attempt_files(+config: Config, +key: String, keydir: String, +attempt:
         wrote_argv : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_bytes(attempt ++ "/argv", P.argv(command_tokens(command, work, inputs, artifacts))))
         wrote_meta : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/meta", meta_text(config, key, keydir, attempt, artifacts)))
         group : String <- history_group(config)
-        wrote_group : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/group", "group=" ++ group ++ "\n"))
+        wrote_group : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/group", group))
         digest_written : Unit <- Bool.pick(IO(Unit), Tx.str_eq(field(text, "kind"), "cgen"),
           write_attempt_digest(attempt, text), IO.pure(Unit, Unit{}))
         IO.pure(Unit, Unit{})
@@ -1365,6 +1376,20 @@ def takeover_command(args: List<&2,String>) -> IO(Unit):
     parsed : StateKey <- parse_state_key(args, state, "")
     takeover_parsed(parsed)
 
+def backfill_parsed(parsed: StateKey) -> IO(Unit):
+  match parsed:
+    case StateKey{+state, key}:
+      do IO<Unit>:
+        ready : Unit <- require_state_root(state)
+        report : String <- IO.try(String, L.CompileQueueLifecycle.backfill(state))
+        IO.write(report)
+
+def backfill_command(args: List<&2,String>) -> IO(Unit):
+  do IO<Unit>:
+    state : String <- default_state_root()
+    parsed : StateKey <- parse_state_key(args, state, "")
+    backfill_parsed(parsed)
+
 def output_of_argv(argv: List<&2,String>) -> String:
   match argv:
     case Nil{}: ""
@@ -1678,6 +1703,7 @@ def usage() -> String:
   ++ "       compile-queue.sh status --state-root DIR [--key KEY]\n"
   ++ "       compile-queue.sh adopt --pid PID --state-root DIR --artifact NAME=PATH\n"
   ++ "       compile-queue.sh takeover --state-root DIR\n"
+  ++ "       compile-queue.sh backfill --state-root DIR\n"
 
 def main_args(args: List<&2,String>) -> IO(Unit):
   match args:
@@ -1688,6 +1714,7 @@ def main_args(args: List<&2,String>) -> IO(Unit):
     case "status" <> rest: status_command(rest)
     case "adopt" <> rest: adopt_command(rest)
     case "takeover" <> rest: takeover_command(rest)
+    case "backfill" <> rest: backfill_command(rest)
     case "__supervise" <> attempt <> Nil{}: supervise(attempt)
     case "__takeover" <> attempt <> pid_text <> start <> queued <> Nil{}:
       takeover_supervisor(attempt, pid_text, start, queued)

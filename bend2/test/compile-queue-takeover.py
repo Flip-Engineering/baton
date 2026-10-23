@@ -8,6 +8,12 @@ the lock and two jobs that wait for it. The takeover command of the executable
 under test then replaces the two waiting supervisors. Each waiting job must
 finish with its requester's exit status 0 and its artifact, run exactly once,
 and finish while the first job still holds the lock.
+
+BATON2_PRIOR_QUEUE_BIN names an earlier build of the memory-admission queue. It
+starts a job and a second job that waits for admission. The takeover command of
+the executable under test replaces the waiting supervisor of the earlier build
+with a successor that applies the current rule: with a peak recorded for the
+kind of the waiting job, the successor runs it beside the first job.
 """
 import os
 import pathlib
@@ -17,9 +23,10 @@ import tempfile
 import time
 
 LEGACY = os.environ.get('BATON2_LEGACY_QUEUE_BIN')
+PRIOR = os.environ.get('BATON2_PRIOR_QUEUE_BIN')
 BINARY = os.environ.get('BATON2_COMPILE_QUEUE_BIN')
-if not LEGACY:
-    print('SKIP takeover: set BATON2_LEGACY_QUEUE_BIN to a queue executable that uses heavy.lock')
+if not LEGACY and not PRIOR:
+    print('SKIP takeover: set BATON2_LEGACY_QUEUE_BIN (uses heavy.lock) or BATON2_PRIOR_QUEUE_BIN (earlier admission build)')
     sys.exit(0)
 if not BINARY:
     print('Set BATON2_COMPILE_QUEUE_BIN to the built Bend2 queue executable', file=sys.stderr)
@@ -53,13 +60,15 @@ ENV = dict(os.environ, BATON_COMPILE_QUEUE_ROOT=str(STATE))
 ENV.pop('BATON_COMPILE_QUEUE_TELEMETRY', None)
 
 
-def request(binary, tag, *extra):
+def request(binary, tag, *extra, state=None):
+    state = state or STATE
+    env = dict(ENV, BATON_COMPILE_QUEUE_ROOT=str(state))
     out = T / (tag + '.artifact')
-    args = [binary, '--', 'run', '--kind', 'cc', '--state-root', str(STATE), '--cwd', str(T),
+    args = [binary, '--', 'run', '--kind', 'cc', '--state-root', str(state), '--cwd', str(T),
             '--source-root', str(T), '--compiler', str(FAKE), '--linker', str(FAKE),
             '--version', 'fake-version', '--artifact', 'result=' + str(out),
             '--option', 'tag=' + tag, '--', str(FAKE), '--tag', tag, *extra, '-o', str(out)]
-    return subprocess.Popen(args, env=ENV, stdout=open(T / (tag + '.out'), 'w'),
+    return subprocess.Popen(args, env=env, stdout=open(T / (tag + '.out'), 'w'),
                             stderr=open(T / (tag + '.err'), 'w'))
 
 
@@ -87,7 +96,9 @@ def lock_waiters():
 
 
 procs = []
-try:
+
+
+def scenario_legacy():
     holder = request(LEGACY, 'holder', '--hold', str(HOLD))
     procs.append(holder)
     until('older queue started the job that holds the lock', lambda: 'start holder' in log_lines())
@@ -132,6 +143,60 @@ try:
     assert (T / 'holder.artifact').read_text() == 'artifact-holder'
     assert lock_waiters() == 0
     print('PASS the holder finished with its lock and artifact intact')
+
+
+def scenario_prior():
+    state2 = T / 'queue-prior'
+    state2.mkdir()
+    state2.chmod(0o2770)
+    (state2 / 'outside-growth').write_text('growth_kb=0\n')
+    env2 = dict(ENV, BATON_COMPILE_QUEUE_ROOT=str(state2))
+    hold2 = T / 'hold-prior'
+    holder2 = request(PRIOR, 'prior-holder', '--hold', str(hold2), state=state2)
+    procs.append(holder2)
+    until('earlier build started the job that holds a claim', lambda: 'start prior-holder' in log_lines())
+    waiter2 = request(PRIOR, 'prior-waiter', state=state2)
+    procs.append(waiter2)
+
+    def waiting_rows():
+        shown = subprocess.run([BINARY, '--', 'status', '--state-root', str(state2)], env=env2,
+                               capture_output=True, text=True).stdout
+        return sum(1 for line in shown.splitlines() if line.startswith('waiting '))
+    until('earlier build supervisor waits for admission', lambda: waiting_rows() == 1)
+    assert 'start prior-waiter' not in log_lines(), log_lines()
+    print('PASS a job of the earlier build waits for admission behind a running job without a recorded peak')
+
+    # A peak recorded for the kind of the waiting job lets the current rule run it
+    # beside the first job. Only a supervisor of this executable applies that rule.
+    (state2 / 'peaks').mkdir(exist_ok=True)
+    (state2 / 'peaks').chmod(0o2770)
+    (state2 / 'peaks' / 'k.cc').write_text('peak_kb=64\n')
+    time.sleep(1)
+    assert 'start prior-waiter' not in log_lines(), ('earlier build applied the new rule', log_lines())
+    taken2 = subprocess.run([BINARY, '--', 'takeover', '--state-root', str(state2)], env=env2,
+                            capture_output=True, text=True, timeout=60)
+    assert taken2.returncode == 0 and taken2.stdout.count('retaken ') == 1, (taken2.stdout, taken2.stderr, T)
+    print('PASS takeover replaced the waiting supervisor of the earlier build')
+    try:
+        waiter2.wait(timeout=60)
+    except subprocess.TimeoutExpired as error:
+        raise AssertionError(('requester of a replaced job did not return', T)) from error
+    assert waiter2.returncode == 0, (waiter2.returncode, T)
+    assert (T / 'prior-waiter.artifact').read_text() == 'artifact-prior-waiter'
+    assert log_lines().count('start prior-waiter') == 1 and log_lines().count('end prior-waiter') == 1, log_lines()
+    assert holder2.poll() is None and 'end prior-holder' not in log_lines(), log_lines()
+    print('PASS the replaced job ran once, beside the first job, and its requester got the result')
+    hold2.touch()
+    holder2.wait(timeout=60)
+    assert holder2.returncode == 0
+    print('PASS the first job of the earlier build finished intact')
+
+
+try:
+    if LEGACY:
+        scenario_legacy()
+    if PRIOR:
+        scenario_prior()
     print('evidence=' + str(T))
 except BaseException:
     print('evidence=' + str(T), file=sys.stderr)
