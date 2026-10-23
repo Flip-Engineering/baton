@@ -294,6 +294,14 @@ a ticket's process, the process counts as alive if a signal check
 zombie keeps its `/proc` entry and counts as dead. A directory that exists
 without the sticky bit keeps its mode.
 
+The shared `admission/observed` measurement would otherwise record zero memory for
+every claim that the measuring process cannot see, and the measured outside use
+would include the running jobs. The supervisor of a claim measures its own session
+at each sample and writes it to `admission/usage/<claim>`; a reader uses a value
+younger than five sample intervals before its own measurement. A claim without
+a usable value whose process is hidden marks the observation unreliable, and no
+outside-growth sample is taken from it. The usage record is removed with its claim.
+
 The claim file is locked by the supervisor and inherited by the command, the
 marker watcher and anything the command starts. A claim is alive while any
 holder remains, so a command that outlives its supervisor keeps its

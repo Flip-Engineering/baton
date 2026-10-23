@@ -862,6 +862,22 @@ else
   printf 'SKIP memory admission: no /proc/meminfo\n'
 fi
 
+# A running job publishes the memory of its session. Another user's process that
+# cannot see the job in /proc reads this value instead of measuring zero.
+USAGE_FAKE=$(fresh_fake usage)
+USAGE_STATE=$(fresh_state usage)
+( CQ_FAKE=$USAGE_FAKE; CQ_STATE=$USAGE_STATE; run_cc usage-job "$T/usage-job" --sleep 6 ) & usage_pid=$!
+i=0
+while [ "$i" -lt 200 ] && [ -z "$(ls "$USAGE_STATE/admission/usage" 2>/dev/null)" ]; do i=$((i + 1)); sleep 0.1; done
+usage_file=$(ls "$USAGE_STATE/admission/usage" 2>/dev/null | head -1)
+usage_kb=$(sed -n 's/^kb=//p' "$USAGE_STATE/admission/usage/$usage_file" 2>/dev/null)
+[ -n "$usage_kb" ] && [ "$usage_kb" -gt 0 ] 2>/dev/null \
+  && pass 'a running job publishes the memory of its session' || bad 'a running job published no usage'
+wait "$usage_pid" || bad 'usage requester failed'
+[ -z "$(ls "$USAGE_STATE/admission/usage" 2>/dev/null)" ] || sh "$QUEUE" status --state-root "$USAGE_STATE" > /dev/null
+[ -z "$(ls "$USAGE_STATE/admission/usage" 2>/dev/null)" ] \
+  && pass 'the usage record of a finished job is removed' || bad 'the usage record of a finished job remained'
+
 # The waiting directory is sticky and setgid: a user removes only own tickets, and
 # a loader that cannot see another user's process cannot remove its ticket.
 python3 - "$STATE/admission/waiting" <<'PY_MODE' && pass 'the waiting directory is sticky and setgid' || bad 'the waiting directory lacks the sticky or setgid bit'

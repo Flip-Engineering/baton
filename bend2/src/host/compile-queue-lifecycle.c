@@ -639,6 +639,7 @@ typedef struct {
   long long total, available;
   long long reserve;
   int memory_known;
+  int unreliable;
 } CqAdmission;
 
 typedef struct { int pid, ppid, sid; } CqProc;
@@ -891,6 +892,7 @@ static int cq_admission_dirs(const char *state) {
   umask(previous);
   if (made && saved != EEXIST) return saved;
   if ((error = cq_mkdir_p(path))) return error;
+  if ((error = cq_path(path, "%s/admission/usage", state)) || (error = cq_mkdir_p(path))) return error;
   if ((error = cq_path(path, "%s/peaks", state)) || (error = cq_mkdir_p(path))) return error;
   return 0;
 }
@@ -1073,6 +1075,28 @@ static void cq_write_cache(const char *path, const char *text, size_t length) {
 /* Current memory of each claim and of the old lock holder. Measurements are
    shared through admission/observed so a waiting queue scans /proc about once
    a second in total. The caller holds the admission lock. */
+/* The supervisor of a claim measures its own session and publishes the value, so
+   a process that cannot see it in /proc (another user's service hides processes)
+   still reads it. A value older than five sample intervals is not used. */
+static int cq_usage_value(const char *state, const char *id, unsigned long long now, long long *kb) {
+  char path[PATH_MAX], text[64];
+  struct stat info;
+  if (cq_path(path, "%s/admission/usage/%s", state, id) || stat(path, &info)) return 0;
+  unsigned long long age = now / 1000000000ull > (unsigned long long)info.st_mtime
+    ? now / 1000000000ull - (unsigned long long)info.st_mtime : 0;
+  if (age > 5 * (CQ_SAMPLE_NS / 1000000000ull)) return 0;
+  if (cq_read_small(path, text, sizeof(text))) return 0;
+  *kb = cq_field_number(text, "kb", 0);
+  return 1;
+}
+
+/* A process that is alive but has no /proc entry for this caller. */
+static int cq_hidden(int pid) {
+  char entry[64];
+  snprintf(entry, sizeof(entry), "/proc/%d", pid);
+  return access(entry, F_OK) && errno == ENOENT && (kill((pid_t)pid, 0) == 0 || errno == EPERM);
+}
+
 static void cq_observe(const char *state, CqAdmission *view) {
 #ifdef __linux__
   char path[PATH_MAX], text[16384];
@@ -1098,27 +1122,34 @@ static void cq_observe(const char *state, CqAdmission *view) {
       view->claims[i].current = strtoll(value, NULL, 10);
     }
     view->legacy_current = cq_field_number(text, "legacy_kb", 0);
-    return;
+  } else {
+    CqProc *table = NULL; size_t count = 0;
+    if (cq_proc_table(&table, &count)) return;
+    char out[16384]; size_t used = 0;
+    used += (size_t)snprintf(out + used, sizeof(out) - used, "ts_ns=%llu\nlegacy_pid=%d\n", now, view->legacy_pid);
+    for (size_t i = 0; i < view->claim_count; i++) {
+      int members = 0;
+      view->claims[i].current = cq_measure(table, count, view->claims[i].root, view->claims[i].tree, &members);
+      if (used + CQ_ID + 40 < sizeof(out))
+        used += (size_t)snprintf(out + used, sizeof(out) - used, "c.%s=%lld\n", view->claims[i].id, view->claims[i].current);
+    }
+    if (view->legacy_pid) {
+      int members = 0, session = 0;
+      for (size_t i = 0; i < count; i++) if (table[i].pid == view->legacy_pid) session = table[i].sid == view->legacy_pid;
+      view->legacy_tree = !session;
+      view->legacy_current = cq_measure(table, count, view->legacy_pid, view->legacy_tree, &members);
+    }
+    used += (size_t)snprintf(out + used, sizeof(out) - used, "legacy_kb=%lld\n", view->legacy_current);
+    free(table);
+    cq_write_cache(path, out, used);
   }
-  CqProc *table = NULL; size_t count = 0;
-  if (cq_proc_table(&table, &count)) return;
-  char out[16384]; size_t used = 0;
-  used += (size_t)snprintf(out + used, sizeof(out) - used, "ts_ns=%llu\nlegacy_pid=%d\n", now, view->legacy_pid);
+  /* The value published by the supervisor of a claim is its own measurement. A
+     claim that nobody measured and whose process is hidden has no usable value. */
   for (size_t i = 0; i < view->claim_count; i++) {
-    int members = 0;
-    view->claims[i].current = cq_measure(table, count, view->claims[i].root, view->claims[i].tree, &members);
-    if (used + CQ_ID + 40 < sizeof(out))
-      used += (size_t)snprintf(out + used, sizeof(out) - used, "c.%s=%lld\n", view->claims[i].id, view->claims[i].current);
+    long long published = 0;
+    if (cq_usage_value(state, view->claims[i].id, now, &published)) view->claims[i].current = published;
+    else if (view->claims[i].current == 0 && cq_hidden(view->claims[i].root)) view->unreliable = 1;
   }
-  if (view->legacy_pid) {
-    int members = 0, session = 0;
-    for (size_t i = 0; i < count; i++) if (table[i].pid == view->legacy_pid) session = table[i].sid == view->legacy_pid;
-    view->legacy_tree = !session;
-    view->legacy_current = cq_measure(table, count, view->legacy_pid, view->legacy_tree, &members);
-  }
-  used += (size_t)snprintf(out + used, sizeof(out) - used, "legacy_kb=%lld\n", view->legacy_current);
-  free(table);
-  cq_write_cache(path, out, used);
 #else
   (void)state; (void)view;
 #endif
@@ -1148,7 +1179,12 @@ static int cq_admission_load(const char *state, CqAdmission *view) {
     while ((entry = readdir(running))) {
       if (entry->d_name[0] == '.' || strstr(entry->d_name, ".tmp.")) continue;
       if (cq_path(path, "%s/%s", directory, entry->d_name)) continue;
-      if (!cq_claim_alive(path)) { unlink(path); continue; }
+      if (!cq_claim_alive(path)) {
+        unlink(path);
+        char usage[PATH_MAX];
+        if (!cq_path(usage, "%s/admission/usage/%s", state, entry->d_name)) unlink(usage);
+        continue;
+      }
       if (cq_read_small(path, text, sizeof(text))) continue;
       CqClaim *grown = realloc(view->claims, (view->claim_count + 1) * sizeof(*grown));
       if (!grown) { closedir(running); return ENOMEM; }
@@ -1602,6 +1638,7 @@ static void cq_sample_outside(CqSampler *sampler, long long own_kb, unsigned lon
   CqAdmission view;
   if (!cq_admission_load(sampler->state, &view) && view.total > 0) {
     long long outside = cq_outside_use(&view);
+    if (view.unreliable) { cq_admission_free(&view); cq_admission_unlock(fd); return; }
     int listed = 0;
     for (size_t i = 0; i < view.claim_count; i++) if (!strcmp(view.claims[i].id, cq_my_claim)) listed = 1;
     /* After the compile marker the claim is released but the command still uses memory. */
@@ -1627,6 +1664,11 @@ static void cq_sample(CqSampler *sampler, int final) {
   long long kb = cq_measure(table, count, (int)getsid(0), 0, &members);
   free(table);
   if (kb > sampler->peak) sampler->peak = kb;
+  if (sampler->track && *cq_my_claim) {
+    char usage[PATH_MAX], text[48];
+    int length = snprintf(text, sizeof(text), "kb=%lld\n", kb);
+    if (!cq_path(usage, "%s/admission/usage/%s", sampler->state, cq_my_claim)) cq_write_cache(usage, text, (size_t)length);
+  }
   cq_sample_outside(sampler, kb, now);
 #else
   (void)sampler; (void)final;
