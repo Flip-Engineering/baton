@@ -39,6 +39,15 @@ each emission pass over 4171 definitions:
 Each pass emitted about 76 million code units of C. The run ended with exit 133 during pass 7 at
 169 GB RSS.
 
+Three full cgens of the unpatched compiler (`2.0.25-f5185e38-pr967-pr968-e5c4efd-20261019`) ran
+with diagnostics. Each pass covers 4171 definitions.
+
+| Queue key | Exit | Last pass | Definitions begun in it | Seconds | RSS (GB) | heapUsed (GB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `1a365634` | 137 | 2 | 2809 | 3306 | 105 | 67 |
+| `a59233ec` | 137 | 3 | 2809 | 2699 | 154 | 73 |
+| `041f64d9` | 133 | 7 | 2371 | 3730 | 169 | 97 |
+
 ### The per-pass growth is collectable garbage
 
 `five-overlap.bend` (one `match` over a list of strings, four definitions) has the same per-pass
@@ -67,7 +76,7 @@ After `vm.max_map_count` was raised to 16777216 at 23:28Z
 (`/etc/sysctl.d/90-bend2-max-map-count.conf`), the same process continued: within 15 s its user
 time rose again and its mapping count fell. It later passed 1.7 million mappings. A Linux runner
 that compiles the full coordinator needs `vm.max_map_count` of at least 16777216 while the
-compiler runs on Bun's default allocator.
+compiler runs on Bun's default allocator. #1027 tracks the unbounded retry in Bun.
 
 ### Bun system heap
 
