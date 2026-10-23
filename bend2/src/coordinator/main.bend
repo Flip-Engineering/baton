@@ -254,7 +254,7 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       IO.try(Unit,Receive.recover_observer(db,session,observer))
     case C.RunTurn{player,id,cmd,model,effort,cwd,task,log,session}:
       Turn.run(db,player,id,cmd,model,effort,cwd,task,log,session)
-    case C.ObserveFile{id,player,path}:
+    case C.ObserveFile{id,+player,path}:
       do IO<Unit>:
         event : String <- IO.try(String,T.Text.read(path))
         +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
