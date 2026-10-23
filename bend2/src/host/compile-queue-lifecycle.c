@@ -1929,7 +1929,10 @@ static int cq_other_executable(int pid) {
 static int cq_retake_waiting(const char *state, char **text, size_t *used, size_t *capacity) {
   CqAdmission view;
   int fd = -1;
-  int error = cq_admission_lock(state, &fd);
+  /* A state root that only an older executable has used has no admission directory. */
+  int error = cq_admission_dirs(state);
+  if (error) return error;
+  error = cq_admission_lock(state, &fd);
   if (error) return error;
   error = cq_admission_load(state, &view);
   cq_admission_unlock(fd);
