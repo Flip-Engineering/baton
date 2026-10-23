@@ -268,8 +268,10 @@ def task_state_sql(+session: String) -> String:
 
 # A current completion request delivers the finished work to its coordinator.
 # Further input wakes the worker; a newer assignment can generate continuation.
+# A normal terminal with no other input uses this continuation to keep an open
+# assignment active and remind the worker to request completion.
 def task_continuation_sql(+session: String, +id: String) -> String:
-  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id ++ ":task-continuation") ++ ",worker.id,worker.id,'task-continuation','Continue assignment ' || (SELECT id FROM messages WHERE seq=" ++ task_assignment_sql("worker.id") ++ ") || '. Review the complete stored assignment and current inbox, and carry out the coordinator-authorized work. Explicit operator stops remain effective.' FROM sessions worker WHERE worker.id=" ++ q(session) ++ " AND " ++ task_open_sql("worker.id") ++ " AND " ++ task_request_sql("worker.id") ++ " IS NULL AND NOT EXISTS(SELECT 1 FROM messages owed WHERE owed.recipient=worker.id AND " ++ owed_sql("owed") ++ ");"
+  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id ++ ":task-continuation") ++ ",worker.id,worker.id,'task-continuation','Continue assignment ' || (SELECT id FROM messages WHERE seq=" ++ task_assignment_sql("worker.id") ++ ") || '. Review the complete stored assignment and current inbox, and carry out the coordinator-authorized work. Before ending this turn, use completion-request --text SUMMARY to request the conductor completion decision. Explicit operator stops remain effective.' FROM sessions worker WHERE worker.id=" ++ q(session) ++ " AND " ++ task_open_sql("worker.id") ++ " AND " ++ task_request_sql("worker.id") ++ " IS NULL AND NOT EXISTS(SELECT 1 FROM messages owed WHERE owed.recipient=worker.id AND " ++ owed_sql("owed") ++ ");"
 
 def session_state_sql(+session: String) -> String:
   "json_patch(coalesce((SELECT json_object('stop',json_object('id',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''))) FROM session_stops WHERE session=" ++ session ++ "),json('{}'))"

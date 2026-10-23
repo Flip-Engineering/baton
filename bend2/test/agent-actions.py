@@ -18,6 +18,8 @@ EXE = ROOT / '.scratch/bend2/baton2'
 
 class AgentActions(unittest.TestCase):
     def setUp(self):
+        if not receive_fixture.require_candidate():
+            self.fail(f'Coordinator not built at {receive_fixture.EXE}')
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
         self.addCleanup(self.temp.cleanup)
         self.directory = pathlib.Path(self.temp.name)
@@ -638,6 +640,9 @@ class AgentActions(unittest.TestCase):
                     'task-assignment', 'Original bounded assignment.')
         older = self.action('worker-a', 'completion-request', '--text',
                             'Original bounded assignment handled.')[0]['id']
+        older_confirmation = self.action('root', 'completion-confirmed',
+                                         '--request', older)[0]
+        self.assertEqual(older_confirmation['status'], 'admitted')
         self.legacy('message', 'newer-assignment', 'root', 'worker-a',
                     'task-assignment', 'New work remains open.\nλ🙂')
         state = self.legacy('session', 'worker-a')['taskCompletion']
@@ -651,13 +656,44 @@ class AgentActions(unittest.TestCase):
                 self.assertTrue(refused['admission']['cause'])
                 self.assertEqual(self.stored_messages(), before)
                 self.assertEqual(self.legacy('session', 'worker-a')['taskCompletion'], state)
+        for arguments in (('--request', older),
+                          ('--to', 'worker-a', '--request', older)):
+            with self.subTest(arguments=arguments):
+                refused = self.action('root', 'completion-confirmed', *arguments)[0]
+                self.assertEqual(refused['status'], 'refused')
+                self.assertIn('older assignment', refused['admission']['cause'])
+                self.assertEqual(self.stored_messages(), before)
+                self.assertEqual(self.legacy('session', 'worker-a')['taskCompletion'], state)
         current = self.action('worker-a', 'completion-request', '--text',
                               'New bounded assignment handled.')[0]['id']
-        confirmed = self.action('root', 'completion-confirmed')[0]
-        self.assertEqual(confirmed['status'], 'admitted')
-        self.assertEqual(confirmed['delivery']['body'], current)
-        self.assertNotEqual(confirmed['delivery']['body'], older)
+        state = self.legacy('session', 'worker-a')['taskCompletion']
+        self.assertEqual(state['requestId'], current)
+        self.assertTrue(state['open'])
+        before = self.stored_messages()
+        for arguments in (('--request', older),
+                          ('--to', 'worker-a', '--request', older)):
+            with self.subTest(arguments=arguments):
+                refused = self.action('root', 'completion-confirmed', *arguments)[0]
+                self.assertEqual(refused['status'], 'refused')
+                self.assertIn('older assignment', refused['admission']['cause'])
+                self.assertEqual(self.stored_messages(), before)
+                self.assertEqual(self.legacy('session', 'worker-a')['taskCompletion'], state)
+        explicit = self.action('root', 'completion-confirmed', '--to', 'worker-a',
+                               '--request', current)[0]
+        self.assertEqual(explicit['status'], 'admitted')
+        self.assertEqual(explicit['delivery']['body'], current)
+        self.assertNotEqual(explicit['delivery']['body'], older)
         self.assertIsNone(self.legacy('delivery', 'newer-assignment')['receipt'])
+        state = self.legacy('session', 'worker-a')['taskCompletion']
+        self.assertEqual(state['requestId'], current)
+        self.assertTrue(state['confirmed'])
+        self.legacy('message', 'second-new-assignment', 'root', 'worker-a',
+                    'task-assignment', 'Another bounded assignment remains open.')
+        current_second = self.action('worker-a', 'completion-request', '--text',
+                                     'Second bounded assignment handled.')[0]['id']
+        semantic = self.action('root', 'completion-confirmed', '--to', 'worker-a')[0]
+        self.assertEqual(semantic['status'], 'admitted')
+        self.assertEqual(semantic['delivery']['body'], current_second)
 
     def test_mixed_confirmation_infers_current_request_and_retains_exact_native_result(self):
         self.legacy('message', 'mixed-inferred-task', 'root', 'worker-a',
