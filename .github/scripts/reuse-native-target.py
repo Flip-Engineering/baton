@@ -38,7 +38,8 @@ for filename in (record['stdout'], record['stderr']):
         path = directory / filename
         assert path.is_file() and not path.is_symlink()
         assert path.stat().st_size == entry['size_bytes'] and digest(path) == entry['sha256']
-assert manifest['compiler_archive_sha256'] == '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4'
+selection = json.loads((evidence.parent / 'generated/compiler-selection.json').read_text())
+assert manifest['compiler_archive_sha256'] == selection['compiler_archive_sha256']
 assert manifest['compiler_binary_sha256'] == digest(pathlib.Path(os.environ['BEND']))
 compiler = subprocess.check_output([os.environ['CC'], '--version'], text=True)
 assert compiler == manifest['native_compiler_version']

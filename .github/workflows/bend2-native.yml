@@ -63,12 +63,12 @@ name: bend2-native-development
       retained_compiler_archive:
         description: 'Pinned compiler archive on the homelab; $RUNNER_TEMP uses the selected runner namespace'
         required: false
-        default: ''
+        default: '/var/tmp/baton2-compile-queue/toolchains/gc1017-malloc-20261023/bend-2.0.25-linux-x64.tar.gz'
         type: string
       retained_compiler_archive_sha256:
         description: 'Exact SHA256 of the selected pinned compiler archive'
         required: false
-        default: ''
+        default: '6609a2de031417fe4ad149d77afd9282c76237aa0b70dfb48416f4ccfe1ad876'
         type: string
       retained_ccache:
         description: 'Measured private ccache wrapper on the homelab; leave blank for direct native compilation'
@@ -114,8 +114,8 @@ jobs:
       - name: Prepare candidate toolchain and TypeScript runtime
         shell: bash
         env:
-          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive }}
-          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 }}
+          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/gc1017-malloc-20261023/bend-2.0.25-linux-x64.tar.gz' }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '6609a2de031417fe4ad149d77afd9282c76237aa0b70dfb48416f4ccfe1ad876' }}
           BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
           BATON2_LINUX_RUNNER: homelab
         run: |
@@ -287,6 +287,8 @@ jobs:
       BUN_JSC_maxPerThreadStackUsage: '67108864'
       BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.target_commit }}
       BATON2_TARGET_BUILD_RUN: ${{ inputs.target_build_run }}
+      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/gc1017-malloc-20261023/bend-2.0.25-linux-x64.tar.gz' }}
+      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '6609a2de031417fe4ad149d77afd9282c76237aa0b70dfb48416f4ccfe1ad876' }}
     steps:
       - name: Validate exact source commit
         shell: bash
@@ -319,19 +321,16 @@ jobs:
           set -euo pipefail
           run="$RUNNER_TEMP/baton2-target-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           test ! -e "$run"
-          mkdir -p "$run/toolchain-home" "$run/evidence"
+          mkdir -p "$run/toolchain-home" "$run/evidence" "$run/generated"
           printf 'BATON2_TARGET_RUN=%s\n' "$run" >> "$GITHUB_ENV"
           [[ "$BATON2_TARGET_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           git clone --no-hardlinks --no-checkout "$GITHUB_WORKSPACE" "$run/source" > "$run/evidence/clone.stdout" 2> "$run/evidence/clone.stderr"
           git -C "$run/source" checkout --detach "$BATON2_TARGET_COMMIT" >> "$run/evidence/clone.stdout" 2>> "$run/evidence/clone.stderr"
           test "$(git -C "$run/source" rev-parse HEAD)" = "$BATON2_TARGET_COMMIT"
-          archive="$run/bend-2.0.25-linux-x64.tar.gz"
-          curl --proto '=https' --tlsv1.2 -fsSL \
-            https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-linux-x64.tar.gz \
-            -o "$archive" > "$run/evidence/compiler-download.stdout" 2> "$run/evidence/compiler-download.stderr"
-          printf '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4  %s\n' "$archive" | \
-            sha256sum -c - > "$run/evidence/compiler-archive-check.stdout"
-          tar -xzf "$archive" -C "$run/toolchain-home" --strip-components=1
+          python3 .github/scripts/prepare-native-compiler.py --run "$run" \
+            --archive "$BATON2_RETAINED_COMPILER_ARCHIVE" \
+            --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" --runner homelab \
+            > "$run/evidence/compiler-selection.stdout" 2> "$run/evidence/compiler-selection.stderr"
           export BEND="$run/toolchain-home/bin/bend"
           sha256sum "$BEND" > "$run/evidence/compiler.sha256"
           export BATON2_TARGET_RUN="$run"
