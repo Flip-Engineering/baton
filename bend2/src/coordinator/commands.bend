@@ -110,6 +110,7 @@ type Command is Data:
   ContextEngines{session: String}
   ContextInstall{module_id: String, source: String}
   ContextQueryFile{owner: String, query: String, path: String}
+  ContextEval{owner: String, query: String, session: String, expression: String, frame: String, cwd: String}
   ContextResult{query: String}
   Serve{}
   Stall{}
@@ -689,6 +690,7 @@ def sql(command: Command) -> String:
     case ContextEngines{session}: ""
     case ContextInstall{module_id,source}: ""
     case ContextQueryFile{owner,query,path}: ""
+    case ContextEval{owner,query,session,expression,frame,cwd}: ""
     case ContextResult{query}: ""
     case Stall{}: ""
     case StallWake{}: ""
@@ -913,6 +915,7 @@ def parse_basic_seven(+verb: String, +one: String, +two: String, +three: String,
           Pretty{KnowledgeScopeDetail{one,two,three,six}},Invalid{}))
     case "record-typed": KnowledgeRecordTyped{one,two,three,four,five,six}
     case "join": Join{one,two,three,four,five,six}
+    case "context-eval": ContextEval{one,two,three,four,five,six}
     case _: Invalid{}
 
 def parse_basic_eight(+verb: String, +one: String, +two: String, +three: String, +four: String, +five: String, +six: String, +seven: String) -> Command:
