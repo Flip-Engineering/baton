@@ -564,6 +564,12 @@ def command_text(args: List<&2,String>, +work: String, +inputs: List<&2,Input>, 
       +tail = command_text(rest, work, inputs, artifacts)
       value ++ "\n" ++ tail
 
+def command_tokens(args: List<&2,String>, +work: String, +inputs: List<&2,Input>, +artifacts: List<&2,Artifact>) -> List<&1,String>:
+  match args:
+    case Nil{}: Nil{}
+    case Con{token, rest}:
+      Con{replace_token(token, work, inputs, artifacts), command_tokens(rest, work, inputs, artifacts)}
+
 def meta_text(config: Config, key: String, keydir: String, attempt: String, artifacts: List<&2,Artifact>) -> String:
   match config:
     case Config{+text, command}:
@@ -585,7 +591,7 @@ def write_attempt_digest(attempt: String, +text: String) -> IO(Unit):
 
 def write_attempt_files(+config: Config, +key: String, keydir: String, +attempt: String) -> IO(Unit):
   match config:
-    case Config{+text, command}:
+    case Config{+text, +command}:
       do IO<Unit>:
         +work : String <- IO.pure(String, attempt ++ "/work")
         +inputs : List<&2,Input> <- IO.pure(List<&2,Input>, input_rows(text))
@@ -596,6 +602,7 @@ def write_attempt_files(+config: Config, +key: String, keydir: String, +attempt:
         checked : Unit <- Bool.pick(IO(Unit), Tx.str_eq(rechecked, key), IO.pure(Unit, Unit{}),
           IO.die(Unit, 1, "compile-queue: inputs changed before execution"))
         wrote_command : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/command", command_text(command, work, inputs, artifacts)))
+        wrote_argv : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_bytes(attempt ++ "/argv", P.argv(command_tokens(command, work, inputs, artifacts))))
         wrote_meta : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/meta", meta_text(config, key, keydir, attempt, artifacts)))
         group : String <- history_group(config)
         wrote_group : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/group", "group=" ++ group ++ "\n"))
@@ -726,11 +733,6 @@ def finish_success(+attempt: String, +keydir: String, +kind: String, +key: Strin
     removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(keydir ++ "/active"))
     IO.pure(Unit, Unit{})
 
-def artifact_mode_check(mode: Result<&1,&1,U32 & String,U32>, name: String) -> IO(Unit):
-  match mode:
-    case Done{value}: IO.pure(Unit, Unit{})
-    case Fail{error}: IO.die(Unit, 1, "compile-queue: artifact " ++ name ++ " was not written")
-
 def cgen_content_valid(path: String) -> IO(Bool):
   do IO<Bool>:
     kind : String <- IO.try(String, Artifact.CompileQueueArtifact.c_source_kind(path))
@@ -774,21 +776,36 @@ def finish_validated_artifacts(kind: String, invalid: String, +attempt: String,
     case "cgen": finish_cgen_validation(invalid, attempt, keydir, kind, key, started, names)
     case _: finish_success(attempt, keydir, kind, key, started, names)
 
-def verify_artifacts(+work: String, names: List<&2,String>) -> IO(Unit):
+def artifact_present(mode: Result<&1,&1,U32 & String,U32>) -> Bool:
+  match mode:
+    case Done{value}: True{}
+    case Fail{error}: False{}
+
+# The first declared artifact the command did not write, or "".
+def missing_artifact(+work: String, names: List<&2,String>) -> IO(String):
   match names:
-    case Nil{}: IO.pure(Unit, Unit{})
+    case Nil{}: IO.pure(String, "")
     case Con{+name, rest}:
-      do IO<Unit>:
+      do IO<String>:
         mode : Result<&1,&1,U32 & String,U32> <- F.Files.mode_of(work ++ "/" ++ name)
-        checked : Unit <- artifact_mode_check(mode, name)
-        verify_artifacts(work, rest)
+        Bool.pick(IO(String), artifact_present(mode), missing_artifact(work, rest), IO.pure(String, name))
+
+def finish_artifacts(missing: String, +attempt: String, +keydir: String, +kind: String,
+                     +key: String, +started: String, +names: List<&2,String>) -> IO(Unit):
+  match missing:
+    case SNil{}:
+      do IO<Unit>:
+        invalid : String <- invalid_artifact_name(kind, names, attempt ++ "/work")
+        finish_validated_artifacts(kind, invalid, attempt, keydir, key, started, names)
+    case name:
+      write_failure(attempt, keydir, "failed", 1, kind, key, started,
+        "compile-queue: artifact " ++ name ++ " was not written", names)
 
 def verify_and_finish(+attempt: String, +keydir: String, +kind: String, +key: String,
                        +started: String, +names: List<&2,String>) -> IO(Unit):
   do IO<Unit>:
-    checked : Unit <- verify_artifacts(attempt ++ "/work", names)
-    invalid : String <- invalid_artifact_name(kind, names, attempt ++ "/work")
-    finish_validated_artifacts(kind, invalid, attempt, keydir, key, started, names)
+    missing : String <- missing_artifact(attempt ++ "/work", names)
+    finish_artifacts(missing, attempt, keydir, kind, key, started, names)
 
 def supervised_completion(canceled: Bool, failed: Bool, +code: U32, disposition: String,
                           +attempt: String, +keydir: String, +kind: String, +key: String,
@@ -813,11 +830,20 @@ def supervised_result(outcome: Result<&1,&1,U32 & String,U32 & String>, attempt:
       +failed = Bool.and(Bool.not(canceled), Bool.not(U32.is_eq(code, 0)))
       supervised_completion(canceled, failed, code, disposition, attempt, keydir, kind, key, started, names)
 
+# The argument vector of an attempt. Attempts written by an older executable have
+# only the `command` file, one argument per line.
+def command_argv(present: Bool, +attempt: String) -> IO(String):
+  Bool.pick(IO(String), present,
+    IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/argv")),
+    do IO<String>:
+      text : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/command"))
+      IO.pure(String, P.argv(Tx.split_lines(text))))
+
 def run_supervised(+attempt: String, +keydir: String, +kind: String, +key: String,
                    started: String, names: List<&2,String>, +cwd: String) -> IO(Unit):
   do IO<Unit>:
-    text : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/command"))
-    argv : String <- IO.pure(String, P.argv(Tx.split_lines(text)))
+    present : Bool <- regular(attempt ++ "/argv")
+    argv : String <- command_argv(present, attempt)
     outcome : Result<&1,&1,U32 & String,U32 & String> <- L.CompileQueueLifecycle.run_command(
       argv, cwd, attempt ++ "/stdout", attempt ++ "/stderr")
     supervised_result(outcome, attempt, keydir, kind, key, started, names, cwd)

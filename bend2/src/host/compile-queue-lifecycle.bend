@@ -94,6 +94,12 @@ def CompileQueueLifecycle.mkdir_p(path: String) -> IO(Result<&1,&1,U32 & String,
 
 def CompileQueueLifecycle.write_text(path: String, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./compile-queue-lifecycle.c"
+# Writes the bytes of a string to a file, including NUL characters. The
+# argument vector of an attempt is stored this way, so an argument that
+# contains a newline stays one argument.
+def CompileQueueLifecycle.write_bytes(path: String, bytes: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./compile-queue-lifecycle.c"
+
 def CompileQueueLifecycle.write_stderr(text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./compile-queue-lifecycle.c"
 

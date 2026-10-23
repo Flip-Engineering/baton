@@ -582,6 +582,8 @@ static int cq_spawn_detached(const char *argv_text, size_t argv_length,
                                  is the custody lock and the supervisor and
                                  its command hold it as descriptor 8
      admission/observed          process measurements, at most one second old
+     outside-growth              largest rise of memory used outside the queue
+                                 seen during one run
      peaks/<group>               largest recorded peak of one compiler and entry
      keys/<key>/peak             largest recorded peak of one key
      keys/<key>/runs/<run>/peak  measured peak of one run
@@ -618,6 +620,7 @@ typedef struct {
   char legacy_entry[CQ_ENTRY];
   long long legacy_current;
   long long total, available;
+  long long reserve;
   int memory_known;
 } CqAdmission;
 
@@ -885,13 +888,17 @@ static void cq_admission_unlock(int fd) {
   if (fd >= 0) close(fd);
 }
 
-static int cq_peak_load(const char *path, long long *peak) {
+static int cq_value_load(const char *path, const char *name, long long *value) {
   char text[128];
-  *peak = -1;
+  *value = -1;
   int error = cq_read_small(path, text, sizeof(text));
   if (error) return error == ENOENT ? 0 : error;
-  *peak = cq_field_number(text, "peak_kb", -1);
+  *value = cq_field_number(text, name, -1);
   return 0;
+}
+
+static int cq_peak_load(const char *path, long long *peak) {
+  return cq_value_load(path, "peak_kb", peak);
 }
 
 /* The expected peak of a key: its own recorded peak, otherwise the largest
@@ -1024,6 +1031,12 @@ static int cq_admission_load(const char *state, CqAdmission *view) {
   char directory[PATH_MAX], path[PATH_MAX], text[2048];
   memset(view, 0, sizeof(*view));
   view->memory_known = !cq_meminfo(&view->total, &view->available);
+  /* The reserve is the largest rise of memory used outside the queue that a run
+     has seen. Until a run has recorded one, the rule starts one job at a time. */
+  long long growth = -1;
+  if (!cq_path(path, "%s/outside-growth", state)) cq_value_load(path, "growth_kb", &growth);
+  view->reserve = growth > 0 ? growth : 0;
+  if (growth < 0) view->memory_known = 0;
   int error = cq_path(directory, "%s/admission/running", state);
   if (error) return error;
   DIR *running = opendir(directory);
@@ -1073,6 +1086,13 @@ static int cq_admission_load(const char *state, CqAdmission *view) {
 
 static long long cq_max_ll(long long a, long long b) { return a > b ? a : b; }
 
+/* Memory in use that no running queue job accounts for. */
+static long long cq_outside_use(const CqAdmission *view) {
+  long long used = view->legacy_current;
+  for (size_t i = 0; i < view->claim_count; i++) used += view->claims[i].current;
+  return cq_max_ll(0, view->total - view->available - used);
+}
+
 /* The memory a ticket is expected to need: its recorded peak, otherwise the
    current memory of a running job of its group, otherwise none. A job without
    a group (a takeover successor) is matched by entry file, as is the holder of
@@ -1092,8 +1112,8 @@ static long long cq_need(const CqAdmission *view, const CqTicket *ticket) {
   return bound;
 }
 
-/* Whether the ticket may start now. The reserve is a quarter of total memory.
-   Running jobs keep claiming the part of their expected peak they have not
+/* Whether the ticket may start now. The reserve is the recorded growth of memory
+   used outside the queue. Running jobs keep claiming the part of their expected peak they have not
    reached yet, so a job admitted a moment ago is counted before it grows. */
 static int cq_admit_decision(const CqAdmission *view, size_t index, int *backfill) {
   const CqTicket *ticket = &view->tickets[index];
@@ -1102,7 +1122,7 @@ static int cq_admit_decision(const CqAdmission *view, size_t index, int *backfil
   if (!view->memory_known) return 0;
   if (!ticket->history)
     for (size_t i = 0; i < view->claim_count; i++) if (!view->claims[i].history) return 0;
-  long long reserve = view->total / 4;
+  long long reserve = view->reserve;
   long long unspent = 0, used = 0, backfilled = 0;
   for (size_t i = 0; i < view->claim_count; i++) {
     const CqClaim *claim = &view->claims[i];
@@ -1151,6 +1171,7 @@ static int cq_claim_create(const char *state, const char *id, const char *body, 
    supervisor it replaces); old_pid and old_start name that supervisor, which
    is killed if this process is stopped while waiting. */
 static volatile sig_atomic_t cq_admit_signal = 0;
+static char cq_my_claim[CQ_ID];
 static void cq_admit_handler(int sig) { cq_admit_signal = sig; }
 
 static int cq_ticket_write(const char *state, const char *id, const char *key,
@@ -1222,7 +1243,7 @@ static int cq_wait_admission(const char *attempt, const char *queued_text,
         "history=%d\nbackfill=%d\nadmitted_ns=%llu\n", (int)getpid(), start, (int)getsid(0), key, group, entry,
         cq_need(&view, ticket), ticket->history, backfill, cq_clock_ns(CLOCK_REALTIME));
       error = cq_claim_create(state, id, body, claim_fd);
-      if (!error) { unlink(ticket_path); admitted = 1; }
+      if (!error) { unlink(ticket_path); admitted = 1; snprintf(cq_my_claim, sizeof(cq_my_claim), "%s", id); }
     }
     cq_admission_free(&view);
     cq_admission_unlock(fd);
@@ -1251,13 +1272,17 @@ static int cq_wait_admission(const char *attempt, const char *queued_text,
 
 /* ---- peak history ------------------------------------------------------- */
 
-static int cq_history_raise(const char *path, long long peak) {
+static int cq_value_raise(const char *path, const char *name, long long value) {
   long long recorded = -1;
-  int error = cq_peak_load(path, &recorded);
-  if (error || recorded >= peak) return error;
+  int error = cq_value_load(path, name, &recorded);
+  if (error || recorded >= value) return error;
   char text[64];
-  int length = snprintf(text, sizeof(text), "peak_kb=%lld\n", peak);
+  int length = snprintf(text, sizeof(text), "%s=%lld\n", name, value);
   return cq_write_text(path, text, (size_t)length);
+}
+
+static int cq_history_raise(const char *path, long long peak) {
+  return cq_value_raise(path, "peak_kb", peak);
 }
 
 static void cq_record_peak(const char *attempt, long long peak) {
@@ -1277,12 +1302,53 @@ static void cq_record_peak(const char *attempt, long long peak) {
 }
 
 /* Samples the session of the calling supervisor while its command runs. */
-typedef struct { unsigned long long next; long long peak; } CqSampler;
+/* Samples the session of the calling supervisor while its command runs, and the
+   memory used outside the queue. The rise of outside use from the first sample
+   is raised in outside-growth when the run ends. */
+typedef struct {
+  unsigned long long next, begun, last;
+  long long peak, baseline, rise;
+  int samples, track;
+  char state[PATH_MAX];
+} CqSampler;
 
-static void cq_sample(CqSampler *sampler) {
+static void cq_sampler_start(CqSampler *sampler, const char *stdout_path) {
+  memset(sampler, 0, sizeof(*sampler));
+  sampler->baseline = -1;
+  const char *suffix = strrchr(stdout_path, '/');
+  if (!suffix || strcmp(suffix, "/stdout")) return;
+  char attempt[PATH_MAX], keydir[PATH_MAX], key[CQ_NAME];
+  size_t length = (size_t)(suffix - stdout_path);
+  if (length >= sizeof(attempt)) return;
+  memcpy(attempt, stdout_path, length); attempt[length] = 0;
+  sampler->track = !cq_attempt_parts(attempt, sampler->state, keydir, key);
+}
+
+#ifdef __linux__
+static void cq_sample_outside(CqSampler *sampler, long long own_kb, unsigned long long now) {
+  int fd = -1;
+  if (!sampler->track || cq_admission_lock(sampler->state, &fd)) return;
+  CqAdmission view;
+  if (!cq_admission_load(sampler->state, &view) && view.total > 0) {
+    long long outside = cq_outside_use(&view);
+    int listed = 0;
+    for (size_t i = 0; i < view.claim_count; i++) if (!strcmp(view.claims[i].id, cq_my_claim)) listed = 1;
+    /* After the compile marker the claim is released but the command still uses memory. */
+    if (!listed) outside = cq_max_ll(0, outside - own_kb);
+    if (sampler->baseline < 0) { sampler->baseline = outside; sampler->begun = now; }
+    else sampler->rise = cq_max_ll(sampler->rise, outside - sampler->baseline);
+    sampler->last = now;
+    sampler->samples++;
+  }
+  cq_admission_free(&view);
+  cq_admission_unlock(fd);
+}
+#endif
+
+static void cq_sample(CqSampler *sampler, int final) {
 #ifdef __linux__
   unsigned long long now = cq_clock_ns(CLOCK_MONOTONIC);
-  if (now < sampler->next) return;
+  if (!final && now < sampler->next) return;
   sampler->next = now + CQ_SAMPLE_NS;
   CqProc *table = NULL; size_t count = 0;
   if (cq_proc_table(&table, &count)) return;
@@ -1290,9 +1356,20 @@ static void cq_sample(CqSampler *sampler) {
   long long kb = cq_measure(table, count, (int)getsid(0), 0, &members);
   free(table);
   if (kb > sampler->peak) sampler->peak = kb;
+  cq_sample_outside(sampler, kb, now);
 #else
-  (void)sampler;
+  (void)sampler; (void)final;
 #endif
+}
+
+/* A run shorter than one sample interval has no measured rise to record. */
+static void cq_record_outside(const CqSampler *sampler) {
+  if (!sampler->track || sampler->samples < 2 || sampler->last - sampler->begun < CQ_SAMPLE_NS) return;
+  char path[PATH_MAX];
+  int fd = -1;
+  if (cq_path(path, "%s/outside-growth", sampler->state) || cq_admission_lock(sampler->state, &fd)) return;
+  cq_value_raise(path, "growth_kb", sampler->rise);
+  cq_admission_unlock(fd);
 }
 
 static long long cq_children_peak_kb(void) {
@@ -1358,9 +1435,11 @@ static int cq_admission_status(const char *state, char **out, size_t *length) {
   memset(&view, 0, sizeof(view));
   if (!error) error = cq_admission_load(state, &view);
   if (!error) {
-    long long reserve = view.total / 4;
+    char growth[32] = "none";
+    if (view.memory_known || view.reserve > 0) snprintf(growth, sizeof(growth), "%lld", view.reserve);
     error = cq_text_append(&text, &used, &capacity,
-      "memory total_kb=%lld available_kb=%lld reserve_kb=%lld\n", view.total, view.available, reserve);
+      "memory total_kb=%lld available_kb=%lld outside_use_kb=%lld outside_growth_kb=%s\n",
+      view.total, view.available, cq_outside_use(&view), growth);
     if (!error && view.legacy_pid)
       error = cq_text_append(&text, &used, &capacity, "legacy-holder pid=%d current_kb=%lld\n",
         view.legacy_pid, view.legacy_current);
@@ -1652,12 +1731,13 @@ static int cq_run_command(const char *argv_text, size_t argv_length, const char 
   pid_t waited;
   /* The supervisor measures the memory of its session while the command
      runs and records the peak with the key and the compiler history. */
-  CqSampler sampler = {0, 0};
+  CqSampler sampler;
+  cq_sampler_start(&sampler, stdout_path);
   long delay = 2000000L;
   for (;;) {
     waited = waitpid(child, &wait_status, WNOHANG);
     if (waited != 0 && !(waited < 0 && errno == EINTR)) break;
-    cq_sample(&sampler);
+    cq_sample(&sampler, 0);
     cq_sleep_ns(delay);
     if (delay < 100000000L) delay *= 2;
   }
@@ -1667,6 +1747,8 @@ static int cq_run_command(const char *argv_text, size_t argv_length, const char 
   close(out); close(err); free(parsed);
   if (waited < 0) return errno;
   if (!cq_cancel_signal) {
+    cq_sample(&sampler, 1);
+    cq_record_outside(&sampler);
     long long peak = cq_children_peak_kb();
     if (sampler.peak > peak) peak = sampler.peak;
     const char *suffix = strrchr(stdout_path, '/');
@@ -1785,6 +1867,11 @@ static void cq_call_lock_release(IoWork *work) {
   CqCall *call = (CqCall *)work->data;
   if (flock((int)call->pid, LOCK_UN)) call->error = errno;
   if (close((int)call->pid) && !call->error) call->error = errno;
+}
+
+static void cq_call_write_bytes(IoWork *work) {
+  CqCall *call = (CqCall *)work->data;
+  call->error = cq_write_text(call->path, call->argv, call->argv_length);
 }
 
 static void cq_call_mkdir_p(IoWork *work) {
@@ -2446,4 +2533,19 @@ static Term cq_admission_status_run(Env env, Term *fields, IoWork *work) {
   return io_work(work, cq_admission_status_call, cq_admission_status_pack);
 }
 static void __attribute__((constructor)) cq_admission_status_use(void) { io_eff(CID_COMPILEQUEUELIFECYCLE_ADMISSION_STATUS, cq_admission_status_run, 0); }
+#endif
+
+#ifdef CID_COMPILEQUEUELIFECYCLE_WRITE_BYTES
+static void cq_write_bytes_call(IoWork *work) { cq_call_write_bytes(work); }
+static Term cq_write_bytes_pack(Env env, IoWork *work) { return cq_unit_pack(env, work); }
+static Term cq_write_bytes_run(Env env, Term *fields, IoWork *work) {
+  CqCall *call = calloc(1, sizeof(*call));
+  if (!call) return io_fail(env, ENOMEM, NULL);
+  call->error = cq_text_arg(env, fields[0], &call->path);
+  if (!call->error) call->error = cq_bytes_arg(env, fields[1], &call->argv, &call->argv_length);
+  work->data = (char *)call;
+  if (call->error) return cq_write_bytes_pack(env, work);
+  return io_work(work, cq_write_bytes_call, cq_write_bytes_pack);
+}
+static void __attribute__((constructor)) cq_write_bytes_use(void) { io_eff(CID_COMPILEQUEUELIFECYCLE_WRITE_BYTES, cq_write_bytes_run, 0); }
 #endif

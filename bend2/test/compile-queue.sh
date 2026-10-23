@@ -794,7 +794,9 @@ wait "$adopt_run_pid" 2>/dev/null || true
 # Memory admission. Peaks are recorded for every run and history is seeded
 # relative to the memory the host has now: a large job needs more than half of
 # what the rule can grant, so a second large job waits while a small job fits
-# beside the first one.
+# beside the first one. A run that lasts longer than one sample interval records
+# the growth of memory used outside the queue; the tests below set it to a known
+# value.
 ident_peak=$(sed -n 's/^peak_kb=//p' "$STATE/keys/$ident_key/peak" 2>/dev/null || true)
 [ -n "$ident_peak" ] && [ "$ident_peak" -gt 0 ] 2>/dev/null \
   && pass 'run recorded the peak memory of its key' || bad 'run did not record the peak memory of its key'
@@ -804,9 +806,10 @@ if [ -r /proc/meminfo ]; then
   sh "$QUEUE" status --state-root "$STATE" > "$T/status.out"
   grep -q '^memory total_kb=' "$T/status.out" \
     && pass 'status reports the memory the rule works from' || bad 'status omits memory'
-  mem_total=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
   mem_avail=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
-  room=$((mem_avail - mem_total / 4))
+  # The rule reserves the recorded growth of memory used outside the queue.
+  printf 'growth_kb=%s\n' 1024 > "$STATE/outside-growth"
+  room=$((mem_avail - 1024))
   if [ "$room" -lt 131072 ]; then
     printf 'SKIP memory admission: %s kB available beyond the reserve\n' "$room"
   else
@@ -871,6 +874,76 @@ groups_after=$(ls "$STATE/peaks" | wc -l)
 [ $((groups_after - groups_before)) = 2 ] \
   && pass 'commands that differ record separate group peaks; the same command shares one' \
   || bad "group peaks added: $((groups_after - groups_before)), expected 2"
+
+# Without a recorded growth of memory used outside the queue the rule starts one
+# job at a time, whatever the recorded peaks. The first run longer than one
+# sample interval records the growth, and later jobs with recorded peaks run
+# together.
+if [ -r /proc/meminfo ]; then
+  STATE_OG=$T/state-outside-growth
+  (umask 0007; mkdir -m 2770 "$STATE_OG")
+  OG_FAKE=$(fresh_fake outside-growth)
+  og_run() { # tag sleep
+    BATON_COMPILE_QUEUE_ROOT=$STATE_OG sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE_OG" --cwd "$T" \
+      --compiler "$OG_FAKE" --linker "$OG_FAKE" --version fake-version --input "$T/input.c" \
+      --artifact "binary=$T/$1" --option "test=$1" \
+      -- "$OG_FAKE" --tag "$1" --log "$LOG" -o "$T/$1" "$T/input.c" --sleep "$2" >"$T/$1.out" 2>"$T/$1.err"
+  }
+  og_key() {
+    BATON_COMPILE_QUEUE_ROOT=$STATE_OG sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE_OG" --cwd "$T" \
+      --compiler "$OG_FAKE" --linker "$OG_FAKE" --version fake-version --input "$T/input.c" \
+      --artifact "binary=$T/$1" --option "test=$1" \
+      -- "$OG_FAKE" --tag "$1" --log "$LOG" -o "$T/$1" "$T/input.c" --sleep "$2"
+  }
+  for tag in og-a og-b og-c og-d; do
+    k=$(og_key "$tag" 3)
+    (umask 0007; mkdir -p -m 2770 "$STATE_OG/keys/$k")
+    printf 'peak_kb=64\n' > "$STATE_OG/keys/$k/peak"
+  done
+  : > "$LOG"
+  og_run og-a 3 & o1=$!
+  i=0
+  while [ "$i" -lt 200 ] && ! grep -q 'og-a' "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
+  og_run og-b 3 & o2=$!
+  wait "$o1" || bad 'outside growth: first requester failed'
+  wait "$o2" || bad 'outside growth: second requester failed'
+  assert_serialized && pass 'jobs with recorded peaks run one at a time until a growth is recorded' \
+    || bad 'jobs ran together without a recorded growth'
+  grep -q '^growth_kb=[0-9][0-9]*$' "$STATE_OG/outside-growth" 2>/dev/null \
+    && pass 'a run longer than one sample interval recorded the growth of outside use' \
+    || bad 'no growth recorded'
+  : > "$LOG"
+  og_run og-c 3 & o3=$!
+  i=0
+  while [ "$i" -lt 200 ] && ! grep -q 'og-c' "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
+  og_run og-d 3 & o4=$!
+  wait "$o3" || bad 'outside growth: third requester failed'
+  wait "$o4" || bad 'outside growth: fourth requester failed'
+  assert_serialized && bad 'jobs with recorded peaks stayed serialized after a growth was recorded' \
+    || pass 'jobs with recorded peaks run together once a growth is recorded'
+fi
+
+# A command that exits without writing a declared artifact ends with a failure
+# record that names the artifact.
+: > "$LOG"
+missing_status=0
+sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" \
+  --version fake-version --artifact "binary=$T/missing-output" --option test=missing-artifact \
+  -- "$FAKE" --tag missing-artifact >"$T/missing.out" 2>"$T/missing.err" || missing_status=$?
+[ "$missing_status" != 0 ] && grep -q 'artifact binary was not written' "$T/missing.err" \
+  && pass 'a missing artifact is reported with a terminal failure' \
+  || { cat "$T/missing.err" >&2; bad 'a missing artifact ended without a named failure'; }
+
+# An argument that contains newlines reaches the command as one argument.
+multi_script='printf "first line\n" > /dev/null
+printf "artifact" > "$1"'
+multi_status=0
+sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" \
+  --version fake-version --artifact "binary=$T/multiline-output" --option test=multiline-argument \
+  -- /bin/sh -c "$multi_script" _ "$T/multiline-output" >"$T/multiline.out" 2>"$T/multiline.err" || multi_status=$?
+[ "$multi_status" = 0 ] && [ "$(cat "$T/multiline-output" 2>/dev/null)" = artifact ] \
+  && pass 'a multi-line argument stayed one argument' \
+  || { cat "$T/multiline.err" >&2; bad 'a multi-line argument was split'; }
 
 # Jobs without a recorded peak start in the order of their requests.
 waiting_count() {

@@ -99,7 +99,12 @@ writes the per-attempt compile marker named by `BATON_COMPILE_QUEUE_COMPILED`
 supervisor keeps the key lock, attempt ownership and command wait. A command
 that does not write the marker keeps the claim until the command and its
 processes exit.
-It runs the command with the recorded cwd and captures stdout and stderr.
+It runs the command with the recorded cwd and captures stdout and stderr. The
+arguments are read from the attempt's `argv` file, which keeps an argument that
+contains newlines as one argument; an attempt written by an older executable
+has only the line-based `command` file, which the supervisor reads instead.
+When the command exits and a declared artifact was not written, the supervisor
+publishes a failed result that names the artifact.
 On success it copies the declared artifacts into
 `completed/artifacts/` and publishes `completed/result`. On failure it writes
 `runs/<attempt>/result` with the exit status and retained logs. A later request
@@ -133,6 +138,7 @@ $state/keys/<key>/active                       pid, starttime, kind, mode
 $state/keys/<key>/completed/result
 $state/keys/<key>/completed/artifacts/<name>
 $state/keys/<key>/runs/<attempt>/command
+$state/keys/<key>/runs/<attempt>/argv          NUL-terminated arguments
 $state/keys/<key>/runs/<attempt>/meta
 $state/keys/<key>/runs/<attempt>/stdout
 $state/keys/<key>/runs/<attempt>/stderr
@@ -141,6 +147,7 @@ $state/keys/<key>/peak                         largest recorded peak, kB
 $state/keys/<key>/runs/<attempt>/peak          peak of one run, kB
 $state/keys/<key>/runs/<attempt>/group         history group of the attempt
 $state/peaks/<group>                           largest recorded peak of a group, kB
+$state/outside-growth                          largest rise of outside memory use, kB
 $state/admission/lock                          serializes the records below
 $state/admission/waiting/<queue time>-<pid>    one ticket per waiting supervisor
 $state/admission/running/<time>-<pid>          one claim per admitted job
@@ -200,11 +207,10 @@ All records are read and written under `admission/lock`. A waiting supervisor
 polls every 200 ms and starts when its ticket passes the rule. Tickets are
 ordered by queue time, so the first ticket is the head.
 
-- `reserve` is one quarter of `MemTotal`. It is the part of memory the rule
-  never grants. Its purpose is the difference between recorded and actual
-  peaks: the 2026-10-22 04:10Z incident used 211 of 220 GB, 96% of memory.
-  Capping granted memory at 75% leaves room for a job that exceeds its record
-  and for processes outside the queue.
+- `reserve` is the recorded growth of memory used outside the queue (see
+  "Outside growth"). It is the part of memory the rule never grants, and it
+  is a measured value of the host. Until one run has recorded it, the rule
+  starts one job at a time.
 - `unspent` is the sum over running jobs of `max(0, expected - current)`.
   A job admitted a moment ago counts at its full expected peak until it grows
   to it, so two jobs cannot be admitted against the same free memory.
@@ -228,14 +234,29 @@ head is not delayed:
 
 The queue keeps no job count and no memory constant. The poll interval and the
 sample interval are the only fixed values and they do not affect which jobs
-are admitted. On a platform without `/proc/meminfo` the rule starts one job at
-a time.
+are admitted. On a platform without `/proc/meminfo`, and until a growth is
+recorded, the rule starts one job at a time.
 
-With the 220 GB host and its observed 31 GB of memory used outside the queue,
-a coordinator cgen with an expected peak of 70 GB or more leaves `free` at
-most `220 - 31 - 55 - 70 = 64` GB, whether the cgen has grown to its peak or
-not. A second cgen of 70 to 95 GB waits until the first ends. A job of 1 GB
-starts beside the first.
+Example on the 220 GB host with 31 GB used outside the queue and a recorded
+growth of `g` GB. A coordinator cgen with a recorded peak of 95 GB leaves
+`free = 220 - 31 - 95 - g` GB, which is below 95 GB for any `g`, whether or not
+the cgen has grown to its peak; a second cgen of 95 GB or more waits until the
+first ends. Two jobs of 70 GB start together when `140 + 31 + g <= 220`, that
+is when the recorded growth is at most 49 GB. A job of 1 GB starts beside the
+first.
+
+### Outside growth
+
+At each sample the supervisor computes the memory used outside the queue:
+`MemTotal - MemAvailable` minus the current memory of every running queue job
+(including the holder of the older lock). A supervisor whose claim has ended at
+its compile marker adds its own session back, so the compiler that is still
+finishing does not count as outside use. The first sample of a run is its
+baseline. At the end of the run, if it lasted longer than one sample interval,
+the largest rise above the baseline is raised in `$state/outside-growth`
+(`growth_kb=N`). The file keeps the largest value any run has recorded.
+`status` shows `outside_use_kb` (now) and `outside_growth_kb` (the recorded
+value, or `none`).
 
 ### Custody and cleanup
 
