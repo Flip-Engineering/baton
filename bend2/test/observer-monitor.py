@@ -300,6 +300,30 @@ class ObserverMonitor(unittest.TestCase):
         os.kill(self.native_process, 0)
         return observer, birth, manifest
 
+    def recover_while_advancing(self, observer, stall_seconds=300):
+        """Run recovery to completion; fail only if the checkpoint cursor stops moving."""
+        argv = [str(COORDINATOR), '--recover-observer', str(self.db), 'parent', str(observer)]
+        out_path = self.directory / 'recover.stdout'
+        err_path = self.directory / 'recover.stderr'
+        with out_path.open('wb') as out, err_path.open('wb') as err:
+            process = subprocess.Popen(argv, stdout=out, stderr=err, env=self.environment)
+            self.addCleanup(self.stop_owned_process, process)
+            last = checkpoint_offset(self.attempt)
+            moved = time.monotonic()
+            while process.poll() is None:
+                time.sleep(1)
+                now = checkpoint_offset(self.attempt)
+                if now != last:
+                    last, moved = now, time.monotonic()
+                elif time.monotonic() - moved > stall_seconds:
+                    process.kill()
+                    process.wait()
+                    self.fail('recovery made no checkpoint progress for %d s at offset %r' %
+                              (stall_seconds, last))
+        return subprocess.CompletedProcess(
+            argv, process.returncode, out_path.read_text(errors='replace'),
+            err_path.read_text(errors='replace'))
+
     def recover(self, observer, timeout=60):
         result = subprocess.run(
             [str(COORDINATOR), '--recover-observer', str(self.db), 'parent', str(observer)],
@@ -689,7 +713,7 @@ class ObserverMonitor(unittest.TestCase):
 
         self.release_marker.touch()
         self.wait_native_exit(timeout=30)
-        recovered = self.recover(observer, timeout=900)
+        recovered = self.recover_while_advancing(observer)
         self.assertNotEqual(recovered.returncode, 0,
                             recovered.stdout + recovered.stderr)
 
