@@ -55,7 +55,7 @@ def native_receiver_sql() -> String:
   Delivery.native_receiver_sql()
 
 def dirty_session_sql() -> String:
-  "SELECT DISTINCT m.recipient || '|' || s.harness || '|' || CASE WHEN (" ++ native_receiver_sql() ++ ") OR (" ++ managed_receiver_sql() ++ ") THEN 'serve' ELSE 'refuse' END FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL AND m.recipient <> '' AND NOT " ++ C.stopped_session_sql("m.recipient") ++ " AND s.harness IN ('codex','omp','muse','claude-code','dsh') ORDER BY m.recipient;"
+  "SELECT DISTINCT m.recipient || '|' || s.harness || '|' || CASE WHEN (" ++ native_receiver_sql() ++ ") OR (" ++ managed_receiver_sql() ++ ") THEN 'serve' ELSE 'refuse' END FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL AND m.recipient <> '' AND NOT " ++ C.stopped_session_sql("m.recipient") ++ " AND s.harness IN ('codex','omp','muse','claude-code','dsh','antigravity') ORDER BY m.recipient;"
 
 def split_triple_parts(parts: List<&2,String>, +line: String) -> (String & String) & String:
   match parts:
