@@ -701,7 +701,7 @@ def m2_an_unusable_git_answers_its_own_detail_for_the_read(detail, repo, branch,
 # reads the rule that refused the landing.
 law m14_git_refusal_renders_its_own_text:
   for +error: T.GitFail
-  {Land.show_checked_outcome(Fail{error}) == IO.die(Unit, 1, T.fail_text(error)) : IO(Unit)}
+  {Land.show_checked_outcome(Fail{error}) == IO.die(Bool, 1, T.fail_text(error)) : IO(Bool)}
 
 def m14_git_refusal_renders_its_own_text(error):
   {==}
@@ -709,7 +709,7 @@ def m14_git_refusal_renders_its_own_text(error):
 # M-3c: a judged landing answers the outcome the landing reached.
 law m3c_checked_landing_answers_the_outcome_it_reached:
   for +outcome: T.LandOutcome
-  {Land.show_checked_outcome(Done{outcome}) == Land.show_outcome(outcome) : IO(Unit)}
+  {Land.show_checked_outcome(Done{outcome}) == Land.show_outcome(outcome) : IO(Bool)}
 
 def m3c_checked_landing_answers_the_outcome_it_reached(outcome):
   {==}
