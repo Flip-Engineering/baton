@@ -288,7 +288,7 @@ def m17_the_observed_dispatch_is_the_refusal_it_read(db,session,id,log,cursor,na
 # and settles question deliveries before acknowledging and retiring it. The
 # written-out order is the whole obligation: a reordering of any two steps
 # breaks this proof.
-def restart_records_before_releasing_and_waking(+db: String, +session: String, +id: String, attempt: String, +cursor: String, native: String, cwd: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def restart_records_before_releasing_and_waking(+db: String, +session: String, +id: String, +attempt: String, +cursor: String, native: String, cwd: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recorded : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":recovery-input") ++ ");"))
     saved : Unit <- Receive.record_recovery(db,session,id,native,cwd,String.eq(recorded,"1\n"))
@@ -308,7 +308,7 @@ law m17_restart_records_before_releasing_and_waking:
   for +db: String
   for +session: String
   for +id: String
-  for attempt: String
+  for +attempt: String
   for +cursor: String
   for +native: String
   for +cwd: String
