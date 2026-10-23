@@ -148,13 +148,14 @@ $state/keys/<key>/runs/<attempt>/peak          peak of one run, kB
 $state/keys/<key>/runs/<attempt>/group         history group of the attempt
 $state/peaks/<group>                           largest recorded peak of a group, kB
 $state/peaks/sh.<kind>.<shape>                 largest recorded peak of a kind, entry and command shape, kB
+$state/peaks/en.<kind>.<entry>                 largest recorded peak of a kind and entry file with any command, kB
 $state/peaks/kc.<kind>.<compiler>              largest recorded peak of a kind and compiler, kB
 $state/peaks/k.<kind>                          largest recorded peak of a kind, kB
 $state/outside-growth                          largest rise of outside memory use, kB
 $state/admission/lock                          serializes the records below
 $state/admission/waiting/<queue time>-<pid>    one ticket per waiting supervisor
 $state/admission/running/<time>-<pid>          one claim per admitted job
-$state/admission/observed                      process measurements
+$state/admission/observed.<uid>                process measurements of one user
 $state/heavy.lock                              bootstrap and older queue executables
 ```
 
@@ -214,15 +215,20 @@ A ticket's expected peak is, in order:
 2. the largest recorded peak of its group;
 3. the largest recorded peak of its kind, entry and command shape on any
    compiler;
-4. the largest recorded peak of its kind and compiler;
-5. the largest recorded peak of its kind (`cgen` or `cc`), when the compiler
+4. the largest recorded peak of its kind and entry file with any command on
+   any compiler. A new wrapper command on `main.bend` takes the peak of the
+   full generation of `main.bend`; a command on `receive-focused.bend` takes
+   the peak recorded for that file. The entry is its path in the job, reduced
+   to its file name when the path is absolute;
+5. the largest recorded peak of its kind and compiler;
+6. the largest recorded peak of its kind (`cgen` or `cc`), when the compiler
    has no record;
-6. no recorded peak. The job has no history. Its memory need is then the
+7. no recorded peak. The job has no history. Its memory need is then the
    current memory of the largest running job of the same group, or nothing when
    the entry is empty or no such job runs. A job without a group, and the
    holder of the older lock, are matched by entry file.
 
-`backfill --state-root DIR` raises the key, kind-and-compiler, group and kind
+`backfill --state-root DIR` raises the key, kind-and-compiler, entry, shape, group and kind
 records from the `peak`, `group` and `meta` files of the runs already recorded.
 
 ### Rule
@@ -294,9 +300,10 @@ a ticket's process, the process counts as alive if a signal check
 zombie keeps its `/proc` entry and counts as dead. A directory that exists
 without the sticky bit keeps its mode.
 
-The shared `admission/observed` measurement would otherwise record zero memory for
-every claim that the measuring process cannot see, and the measured outside use
-would include the running jobs. The supervisor of a claim measures its own session
+A measurement of the processes that a reader cannot see records zero memory for
+them, and the measured outside use would include the running jobs. Each user
+keeps a separate cache, `admission/observed.<uid>`, so a reader never uses a
+measurement made under another user's `/proc` view. The supervisor of a claim measures its own session
 at each sample and writes it to `admission/usage/<claim>`; a reader uses a value
 younger than five sample intervals before its own measurement. A claim without
 a usable value whose process is hidden marks the observation unreliable, and no

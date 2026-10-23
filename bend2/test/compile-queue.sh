@@ -957,6 +957,97 @@ if [ -r /proc/meminfo ]; then
     || pass 'jobs with recorded peaks run together once a growth is recorded'
 fi
 
+# A run records the rise of outside memory use only from samples in which every
+# running claim has a measured value above zero and the set of running claims
+# does not change. A claim that cannot be measured, or one that starts or ends
+# between two samples, would otherwise count its memory as outside use. The test
+# allocates memory outside the queue while a job runs: with no other claim the run
+# records the rise, with a claim of value zero or with claims that change at every
+# sample it records none.
+if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 8388608 ]; then
+  cat > "$T/claims.py" <<'PY'
+import fcntl, os, sys, time
+mode, state, seconds = sys.argv[1], sys.argv[2], float(sys.argv[3])
+stat = open('/proc/self/stat').read().rsplit(')', 1)[1].split()
+directory = state + '/admission/running'
+os.makedirs(directory, exist_ok=True)
+
+def claim(root, measure):
+    name = '%020d-%010d' % (time.time_ns(), os.getpid())
+    path = directory + '/' + name
+    handle = open(path, 'w')
+    handle.write('pid=%d\nstarttime=%s\nroot=%d\nmeasure=%s\nkey=%064x\ngroup=\nentry=\nexpected_kb=1\nhistory=1\nbackfill=0\nadmitted_ns=%d\n'
+                 % (os.getpid(), stat[19], root, measure, time.time_ns(), time.time_ns()))
+    handle.flush()
+    fcntl.flock(handle, fcntl.LOCK_EX)
+    return path, handle
+
+end = time.monotonic() + seconds
+if mode == 'zero':
+    gone = 4194303
+    while os.path.exists('/proc/%d' % gone):
+        gone -= 1
+    path, handle = claim(gone, 'tree')
+    time.sleep(seconds)
+    os.unlink(path)
+elif mode == 'rotate':
+    while time.monotonic() < end:
+        path, handle = claim(os.getpid(), 'tree')
+        time.sleep(0.3)
+        os.unlink(path)
+        handle.close()
+PY
+  cat > "$T/ballast.py" <<'PY'
+import os, sys, time
+go, seconds = sys.argv[1], float(sys.argv[2])
+while not os.path.exists(go):
+    time.sleep(0.05)
+block = b'x' * (3 << 30)
+time.sleep(seconds)
+PY
+  gr_fake=$(fresh_fake growth)
+  gr_args() { printf '%s\n' --kind cc --source-root "$T" --state-root "$gr_state" --cwd "$T" \
+    --compiler "$gr_fake" --linker "$gr_fake" --version fake-version --input "$T/input.c" \
+    --artifact "binary=$T/growth-$gr_name" --option "test=growth-$gr_name"; }
+  gr_case() { # name mode; leaves the recorded growth in gr_value
+    gr_name=$1
+    gr_state=$(fresh_state "growth-$1")
+    printf 'growth_kb=0\n' > "$gr_state/outside-growth"
+    gr_key=$(BATON_COMPILE_QUEUE_ROOT=$gr_state sh "$QUEUE" key $(gr_args) \
+      -- "$gr_fake" --tag "growth-$1" --log "$LOG" -o "$T/growth-$1" "$T/input.c" --sleep 9)
+    (umask 0007; mkdir -p -m 2770 "$gr_state/keys/$gr_key")
+    printf 'peak_kb=64\n' > "$gr_state/keys/$gr_key/peak"
+    : > "$LOG"; rm -f "$T/go-$1"
+    python3 -I "$T/ballast.py" "$T/go-$1" 8 & gr_ballast=$!
+    BATON_COMPILE_QUEUE_ROOT=$gr_state sh "$QUEUE" run $(gr_args) \
+      -- "$gr_fake" --tag "growth-$1" --log "$LOG" -o "$T/growth-$1" "$T/input.c" --sleep 9 >"$T/growth-$1.out" 2>"$T/growth-$1.err" & gr_job=$!
+    i=0
+    while [ "$i" -lt 200 ] && ! grep -q "growth-$1" "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
+    gr_claims=
+    if [ "$2" != none ]; then python3 -I "$T/claims.py" "$2" "$gr_state" 9 & gr_claims=$!; fi
+    sleep 3
+    : > "$T/go-$1"
+    wait "$gr_job" || bad "growth $1: requester failed"
+    kill "$gr_ballast" 2>/dev/null; wait "$gr_ballast" 2>/dev/null
+    [ -z "$gr_claims" ] || { wait "$gr_claims" 2>/dev/null; }
+    gr_value=$(sed -n 's/^growth_kb=//p' "$gr_state/outside-growth")
+  }
+  gr_case none none; growth_none=$gr_value
+  [ "${growth_none:-0}" -ge 2000000 ] \
+    && pass 'a run records the rise of memory used outside the queue' \
+    || bad "no rise recorded with memory allocated outside the queue: ${growth_none:-none}"
+  gr_case zero zero; growth_zero=$gr_value
+  [ "${growth_zero:-x}" = 0 ] \
+    && pass 'a claim measured at zero records no outside growth' \
+    || bad "outside growth recorded beside a claim measured at zero: ${growth_zero:-none}"
+  gr_case rotate rotate; growth_rotate=$gr_value
+  [ "${growth_rotate:-x}" = 0 ] \
+    && pass 'claims that change between samples record no outside growth' \
+    || bad "outside growth recorded while claims changed: ${growth_rotate:-none}"
+else
+  printf 'SKIP outside growth samples: less than 8 GB available\n'
+fi
+
 # A command that exits without writing a declared artifact ends with a failure
 # record that names the artifact.
 : > "$LOG"
@@ -1039,24 +1130,29 @@ if [ -r /proc/meminfo ]; then
 fi
 
 # A job whose group has no record is bounded by the peak recorded for the same
-# entry and command shape on any compiler, before the peaks of its kind. The
-# check of an entry and a full generation of it have different shapes, so a small
-# check does not lower the bound of the large generation and a large generation
-# does not raise the bound of the check.
+# entry and command shape on any compiler, then by the peak recorded for the same
+# entry with any command, before the peaks of its kind. The check of an entry and
+# a full generation of it have different shapes, so a small check does not lower
+# the bound of the large generation and a large generation does not raise the
+# bound of the check.
 if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
   STATE_SHAPE=$(fresh_state shape)
   (umask 0007; mkdir -p -m 2770 "$STATE_SHAPE/peaks")
   printf 'growth_kb=0\n' > "$STATE_SHAPE/outside-growth"
-  printf 'peak_kb=%s\n' "$((room * 7 / 10))" > "$STATE_SHAPE/peaks/k.cgen"
-  for compiler_dir in shape-one shape-two shape-three; do
+  # Memory that other work on the host frees during the test would let two jobs
+  # of the bound run together, so the bound is taken from the memory available now.
+  room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
+  printf 'peak_kb=%s\n' "$((room * 9 / 10))" > "$STATE_SHAPE/peaks/k.cgen"
+  printf 'import Base\ndef main() -> IO(Unit): IO.die(Unit,0,"other")\n' > "$T/src/bend2/src/other.bend"
+  for compiler_dir in shape-one shape-two shape-three shape-four; do
     mkdir -p "$T/$compiler_dir"
     cp "$FAKE" "$T/$compiler_dir/compiler"
     printf '# %s\n' "$compiler_dir" >> "$T/$compiler_dir/compiler"
     chmod +x "$T/$compiler_dir/compiler"
   done
-  shape_run() { # compiler_dir tag command_tag
+  shape_run() { # compiler_dir tag command_tag [entry]
     BATON_COMPILE_QUEUE_ROOT="$STATE_SHAPE" sh "$QUEUE" run --kind cgen --state-root "$STATE_SHAPE" --cwd "$T/src" --root "$T/src" \
-      --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$T/$1/compiler" \
+      --source-root "$T/src" --entry "${4:-bend2/src/fixture.bend}" --compiler "$T/$1/compiler" \
       --artifact "c.c=$T/$2.c" --option "test=$2" \
       -- "$T/$1/compiler" --tag "$3" --log "$LOG" -o "$T/$2.c" --sleep 8 >"$T/$2.out" 2>"$T/$2.err"
   }
@@ -1076,13 +1172,23 @@ if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
   wait "$sb" || bad 'shape: third request failed'
   assert_serialized && bad 'the same command on a new compiler was bounded by the peak of the kind' \
     || pass 'a job on a new compiler is bounded by the peak of its entry and command shape'
+  # A command of another shape on the same entry and a new compiler is bounded by
+  # the small peak recorded for the entry, so two of those run together.
   : > "$LOG"
-  shape_run shape-three shape-c control & sc=$!
-  shape_run shape-three shape-d control & sd=$!
+  shape_run shape-four shape-e control & se=$!
+  shape_run shape-four shape-f control & sf=$!
+  wait "$se" || bad 'shape: entry request failed'
+  wait "$sf" || bad 'shape: second entry request failed'
+  assert_serialized && bad 'a command of another shape on a recorded entry was bounded by the peak of the kind' \
+    || pass 'a command of another shape is bounded by the peak recorded for its entry'
+  # An entry with no record is bounded by the large peak of its kind.
+  : > "$LOG"
+  shape_run shape-three shape-c control bend2/src/other.bend & sc=$!
+  shape_run shape-three shape-d control bend2/src/other.bend & sd=$!
   wait "$sc" || bad 'shape: fourth request failed'
   wait "$sd" || bad 'shape: fifth request failed'
-  assert_serialized && pass 'a command of another shape is bounded by the peak of its kind' \
-    || bad 'a command of another shape ran together with its peers'
+  assert_serialized && pass 'an entry with no record is bounded by the peak of its kind' \
+    || bad 'an entry with no record ran together with its peers'
 fi
 
 # backfill raises the kind and key records from the runs already recorded.
@@ -1100,10 +1206,11 @@ waiting_count() {
 if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
   FIFO_FAKE=$(fresh_fake fifo)
   fifo_sleep() { if [ "$1" = 1 ]; then printf 2; else printf 0; fi; }
+  room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
   for n in 1 2 3 4 5; do
     k=$(CQ_FAKE=$FIFO_FAKE; cc_key "fifo-$n" "$T/fifo-$n" --sleep "$(fifo_sleep $n)")
     (umask 0007; mkdir -p -m 2770 "$STATE/keys/$k")
-    printf 'peak_kb=%s\n' "$((room * 7 / 10))" > "$STATE/keys/$k/peak"
+    printf 'peak_kb=%s\n' "$((room * 9 / 10))" > "$STATE/keys/$k/peak"
   done
   : > "$LOG"
   ( CQ_FAKE=$FIFO_FAKE; run_cc fifo-1 "$T/fifo-1" --sleep 2 ) & fifo_pids=$!

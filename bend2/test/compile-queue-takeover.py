@@ -9,6 +9,12 @@ under test then replaces the two waiting supervisors. Each waiting job must
 finish with its requester's exit status 0 and its artifact, run exactly once,
 and finish while the first job still holds the lock.
 
+A waiting supervisor in another mount namespace is left alone: it cannot be
+replaced by a successor in the namespace of the takeover command, which may not
+contain its working directory. The test starts such a supervisor with
+`unshare -m` and is skipped when the host does not permit that for an ordinary
+user.
+
 BATON2_PRIOR_QUEUE_BIN names an earlier build of the memory-admission queue. It
 starts a job and a second job that waits for admission. The takeover command of
 the executable under test replaces the waiting supervisor of the earlier build
@@ -61,13 +67,13 @@ ENV = dict(os.environ, BATON_COMPILE_QUEUE_ROOT=str(STATE))
 ENV.pop('BATON_COMPILE_QUEUE_TELEMETRY', None)
 
 
-def request(binary, tag, *extra, state=None, mark=None):
+def request(binary, tag, *extra, state=None, mark=None, wrapper=()):
     state = state or STATE
     env = dict(ENV, BATON_COMPILE_QUEUE_ROOT=str(state))
     if mark:
         env['QUEUE_TEST_MARK'] = mark
     out = T / (tag + '.artifact')
-    args = [binary, '--', 'run', '--kind', 'cc', '--state-root', str(state), '--cwd', str(T),
+    args = [*wrapper, binary, '--', 'run', '--kind', 'cc', '--state-root', str(state), '--cwd', str(T),
             '--source-root', str(T), '--compiler', str(FAKE), '--linker', str(FAKE),
             '--version', 'fake-version', '--artifact', 'result=' + str(out),
             '--option', 'tag=' + tag, '--', str(FAKE), '--tag', tag, *extra, '-o', str(out)]
@@ -219,6 +225,67 @@ def scenario_prior():
     print('PASS the first job of the earlier build finished intact')
 
 
+UNSHARE = ['unshare', '-Um', '--map-current-user']
+
+
+def namespace_permitted():
+    try:
+        done = subprocess.run([*UNSHARE, 'true'], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return str(error)
+    return None if done.returncode == 0 else (done.stderr.strip() or 'exit %d' % done.returncode)
+
+
+def scenario_namespace(binary, label, state_name, ready):
+    """A waiting supervisor in another mount namespace is skipped and finishes by itself."""
+    state4 = T / state_name
+    state4.mkdir()
+    state4.chmod(0o2770)
+    (state4 / 'outside-growth').write_text('growth_kb=0\n')
+    env4 = dict(ENV, BATON_COMPILE_QUEUE_ROOT=str(state4))
+    hold4 = T / ('hold-' + state_name)
+    holder4 = request(binary, label + '-holder', '--hold', str(hold4), state=state4)
+    procs.append(holder4)
+    until('%s started the job that holds the lock' % label, lambda: 'start %s-holder' % label in log_lines())
+    waiter4 = request(binary, label + '-waiter', state=state4, wrapper=UNSHARE)
+    procs.append(waiter4)
+    until('%s supervisor in another namespace waits' % label, lambda: ready(state4, env4))
+    taken4 = subprocess.run([BINARY, '--', 'takeover', '--state-root', str(state4)], env=env4,
+                            capture_output=True, text=True, timeout=60)
+    assert taken4.returncode == 0, (taken4.stdout, taken4.stderr, T)
+    skipped = [line for line in taken4.stdout.splitlines() if line.startswith('skipped ')]
+    assert len(skipped) == 1 and 'reason=other-mount-namespace' in skipped[0], (taken4.stdout, T)
+    assert 'taken-over' not in taken4.stdout and 'retaken' not in taken4.stdout, (taken4.stdout, T)
+    pid = int(skipped[0].split()[1].split('=')[1])
+    assert os.readlink('/proc/%d/ns/mnt' % pid) != os.readlink('/proc/self/ns/mnt'), (pid, T)
+    state_letter = pathlib.Path('/proc/%d/stat' % pid).read_text().rsplit(')', 1)[1].split()[0]
+    assert state_letter != 'T', ('the skipped supervisor was stopped', T)
+    attempts = list((state4 / 'keys').glob('*/runs/*'))
+    assert attempts and not any((a / 'takeover').exists() for a in attempts), ('a successor was started', T)
+    print('PASS takeover skipped the %s supervisor in another mount namespace and reported it' % label)
+    hold4.touch()
+    for process in (holder4, waiter4):
+        try:
+            process.wait(timeout=60)
+        except subprocess.TimeoutExpired as error:
+            raise AssertionError(('%s job did not finish' % label, T)) from error
+        assert process.returncode == 0, (process.args, process.returncode, T)
+    assert (T / (label + '-waiter.artifact')).read_text() == 'artifact-' + label + '-waiter', T
+    assert log_lines().count('start ' + label + '-waiter') == 1, (log_lines(), T)
+    print('PASS the skipped %s supervisor ran its command once and returned the result' % label)
+
+
+def legacy_waiting(state, env):
+    inode = (state / 'heavy.lock').stat().st_ino
+    return any('->' in line and (':%d ' % inode) in line for line in pathlib.Path('/proc/locks').read_text().splitlines())
+
+
+def admission_waiting(state, env):
+    shown = subprocess.run([BINARY, '--', 'status', '--state-root', str(state)], env=env,
+                           capture_output=True, text=True).stdout
+    return any(line.startswith('waiting ') for line in shown.splitlines())
+
+
 FAKE_SUPERVISOR = '''
 import fcntl, os, sys, time
 state, attempt = sys.argv[1], sys.argv[-1]
@@ -236,6 +303,18 @@ while True:
     fcntl.flock(lock, fcntl.LOCK_UN)
     time.sleep(0.05)
 '''
+
+
+def scenario_empty_state():
+    """takeover on a state root that no admission build has used succeeds and reports nothing."""
+    state5 = T / 'queue-empty'
+    state5.mkdir()
+    state5.chmod(0o2770)
+    env5 = dict(ENV, BATON_COMPILE_QUEUE_ROOT=str(state5))
+    taken5 = subprocess.run([BINARY, '--', 'takeover', '--state-root', str(state5)], env=env5,
+                            capture_output=True, text=True, timeout=60)
+    assert taken5.returncode == 0 and taken5.stdout == '', (taken5.returncode, taken5.stdout, taken5.stderr, T)
+    print('PASS takeover on a state root without an admission directory succeeded')
 
 
 def scenario_lock_holder():
@@ -274,11 +353,20 @@ def scenario_lock_holder():
 
 
 try:
+    scenario_empty_state()
     scenario_lock_holder()
     if LEGACY:
         scenario_legacy()
     if PRIOR:
         scenario_prior()
+    reason = namespace_permitted() if (LEGACY or PRIOR) else 'no older executable named'
+    if reason:
+        print('SKIP mount namespace scenarios: %s' % reason)
+    else:
+        if LEGACY:
+            scenario_namespace(LEGACY, 'legacy-ns', 'queue-legacy-ns', legacy_waiting)
+        if PRIOR:
+            scenario_namespace(PRIOR, 'prior-ns', 'queue-prior-ns', admission_waiting)
     print('evidence=' + str(T))
 except BaseException:
     print('evidence=' + str(T), file=sys.stderr)
