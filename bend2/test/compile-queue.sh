@@ -1039,24 +1039,26 @@ if [ -r /proc/meminfo ]; then
 fi
 
 # A job whose group has no record is bounded by the peak recorded for the same
-# entry and command shape on any compiler, before the peaks of its kind. The
-# check of an entry and a full generation of it have different shapes, so a small
-# check does not lower the bound of the large generation and a large generation
-# does not raise the bound of the check.
+# entry and command shape on any compiler, then by the peak recorded for the same
+# entry with any command, before the peaks of its kind. The check of an entry and
+# a full generation of it have different shapes, so a small check does not lower
+# the bound of the large generation and a large generation does not raise the
+# bound of the check.
 if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
   STATE_SHAPE=$(fresh_state shape)
   (umask 0007; mkdir -p -m 2770 "$STATE_SHAPE/peaks")
   printf 'growth_kb=0\n' > "$STATE_SHAPE/outside-growth"
   printf 'peak_kb=%s\n' "$((room * 7 / 10))" > "$STATE_SHAPE/peaks/k.cgen"
-  for compiler_dir in shape-one shape-two shape-three; do
+  printf 'import Base\ndef main() -> IO(Unit): IO.die(Unit,0,"other")\n' > "$T/src/bend2/src/other.bend"
+  for compiler_dir in shape-one shape-two shape-three shape-four; do
     mkdir -p "$T/$compiler_dir"
     cp "$FAKE" "$T/$compiler_dir/compiler"
     printf '# %s\n' "$compiler_dir" >> "$T/$compiler_dir/compiler"
     chmod +x "$T/$compiler_dir/compiler"
   done
-  shape_run() { # compiler_dir tag command_tag
+  shape_run() { # compiler_dir tag command_tag [entry]
     BATON_COMPILE_QUEUE_ROOT="$STATE_SHAPE" sh "$QUEUE" run --kind cgen --state-root "$STATE_SHAPE" --cwd "$T/src" --root "$T/src" \
-      --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$T/$1/compiler" \
+      --source-root "$T/src" --entry "${4:-bend2/src/fixture.bend}" --compiler "$T/$1/compiler" \
       --artifact "c.c=$T/$2.c" --option "test=$2" \
       -- "$T/$1/compiler" --tag "$3" --log "$LOG" -o "$T/$2.c" --sleep 8 >"$T/$2.out" 2>"$T/$2.err"
   }
@@ -1076,13 +1078,23 @@ if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
   wait "$sb" || bad 'shape: third request failed'
   assert_serialized && bad 'the same command on a new compiler was bounded by the peak of the kind' \
     || pass 'a job on a new compiler is bounded by the peak of its entry and command shape'
+  # A command of another shape on the same entry and a new compiler is bounded by
+  # the small peak recorded for the entry, so two of those run together.
   : > "$LOG"
-  shape_run shape-three shape-c control & sc=$!
-  shape_run shape-three shape-d control & sd=$!
+  shape_run shape-four shape-e control & se=$!
+  shape_run shape-four shape-f control & sf=$!
+  wait "$se" || bad 'shape: entry request failed'
+  wait "$sf" || bad 'shape: second entry request failed'
+  assert_serialized && bad 'a command of another shape on a recorded entry was bounded by the peak of the kind' \
+    || pass 'a command of another shape is bounded by the peak recorded for its entry'
+  # An entry with no record is bounded by the large peak of its kind.
+  : > "$LOG"
+  shape_run shape-three shape-c control bend2/src/other.bend & sc=$!
+  shape_run shape-three shape-d control bend2/src/other.bend & sd=$!
   wait "$sc" || bad 'shape: fourth request failed'
   wait "$sd" || bad 'shape: fifth request failed'
-  assert_serialized && pass 'a command of another shape is bounded by the peak of its kind' \
-    || bad 'a command of another shape ran together with its peers'
+  assert_serialized && pass 'an entry with no record is bounded by the peak of its kind' \
+    || bad 'an entry with no record ran together with its peers'
 fi
 
 # backfill raises the kind and key records from the runs already recorded.
