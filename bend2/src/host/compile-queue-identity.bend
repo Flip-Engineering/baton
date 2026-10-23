@@ -720,3 +720,11 @@ def CompileQueueIdentity.request_key(+kind: String, +cwd: String, +root: String,
       Bool.pick(String, String.eq(kind, "cgen"), "", closure),
       toolchain, rows,
       CompileQueueIdentity.artifact_names(String.lines(artifacts)), command)
+
+# The digest of the compiler closure that decides which recorded peaks apply to
+# a request: the compiler, linker and version text, as in the request key. The
+# queue combines it with the kind, entry and command into the history group.
+def CompileQueueIdentity.history_compiler(+cwd: String, +root: String, +compiler: String, +linker: String, +version: String, +command: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    +ccache : String <- IO.pure(String, CompileQueueIdentity.ccache_expand(CompileQueueIdentity.ccache_path(String.lines(command)), cwd, root, compiler))
+    CompileQueueIdentity.compiler_closure_digest(compiler, linker, version, ccache)

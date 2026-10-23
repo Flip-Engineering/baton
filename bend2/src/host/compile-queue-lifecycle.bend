@@ -54,6 +54,28 @@ def CompileQueueLifecycle.lock_acquire(path: String) -> IO(Result<&1,&1,U32 & St
 def CompileQueueLifecycle.lock_try(path: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32>>):
   import "./compile-queue-lifecycle.c"
 
+# Memory admission. Waits until the admission rule starts this supervisor, then
+# installs the claim lock as descriptor 8, where the command inherits it. A
+# takeover passes the queue time of the supervisor it replaces, together with
+# that supervisor's pid and start time; the old supervisor is killed when the
+# takeover is stopped while it waits. A normal supervisor passes "", 0 and "".
+def CompileQueueLifecycle.admit(attempt: String, queued: String, old_pid: U32, old_start: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./compile-queue-lifecycle.c"
+
+# Registers a process that was started outside the queue as a running job and
+# returns the claim descriptor that a guard holds while the process lives.
+def CompileQueueLifecycle.admit_external(keydir: String, pid: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  import "./compile-queue-lifecycle.c"
+
+# Stops every supervisor of an older queue that waits for heavy.lock and starts
+# a successor for it. Answers one line per supervisor.
+def CompileQueueLifecycle.takeover(state: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./compile-queue-lifecycle.c"
+
+# Memory, running jobs and waiting jobs of the state root, one line each.
+def CompileQueueLifecycle.admission_status(state: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./compile-queue-lifecycle.c"
+
 # Blocking flock(LOCK_EX) on an inherited descriptor. The lock belongs to the
 # open file description, so a supervisor and its requester share it.
 def CompileQueueLifecycle.lock_fd_acquire(fd: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -72,6 +94,24 @@ def CompileQueueLifecycle.mkdir_p(path: String) -> IO(Result<&1,&1,U32 & String,
 
 def CompileQueueLifecycle.write_text(path: String, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./compile-queue-lifecycle.c"
+# Writes the bytes of a string to a file, including NUL characters. The
+# argument vector of an attempt is stored this way, so an argument that
+# contains a newline stays one argument.
+def CompileQueueLifecycle.write_bytes(path: String, bytes: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./compile-queue-lifecycle.c"
+
+# Replaces the paths that belong to one checkout or one attempt in a text:
+# every directory in the newline-separated list roots becomes @root, a
+# /worktrees/NAME path becomes @worktree and a queue attempt path becomes
+# @attempt. The same job in two worktrees then has the same text.
+def CompileQueueLifecycle.group_text(text: String, roots: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./compile-queue-lifecycle.c"
+
+# Raises the kind, kind-and-compiler, group and key peak records from the runs
+# already recorded under the state root. Answers the number of runs read.
+def CompileQueueLifecycle.backfill(state: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./compile-queue-lifecycle.c"
+
 def CompileQueueLifecycle.write_stderr(text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./compile-queue-lifecycle.c"
 

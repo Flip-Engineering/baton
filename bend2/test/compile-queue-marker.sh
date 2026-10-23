@@ -1,9 +1,11 @@
 #!/bin/sh
 # Marker case: the first command writes the compile marker and remains alive;
-# the second command runs while the first is alive and unfinished.
+# the second command, which has no recorded peak, runs while the first is alive
+# and unfinished because the marker ended the first command's admission claim.
 # No-marker case: the first command writes no marker and remains alive; the
 # second supervisor becomes active but its command cannot start until the first
-# exits. Synchronization files, not elapsed thresholds, decide both cases.
+# exits, because neither job has a recorded peak and only one such job runs at a
+# time. Synchronization files, not elapsed thresholds, decide both cases.
 # Requires the built queue executable at BATON2_COMPILE_QUEUE_BIN.
 set -u
 
@@ -106,20 +108,20 @@ run_job() { # result tag extra...
   result=$1
   tag=$2
   shift 2
-  BATON_COMPILE_QUEUE_ROOT=$STATE sh "$QUEUE" -- run --kind cc --state-root "$STATE" \
-    --cwd "$T" --source-root "$T" --compiler "$FAKE" --linker "$FAKE" \
+  BATON_COMPILE_QUEUE_ROOT=${CQ_STATE:-$STATE} sh "$QUEUE" -- run --kind cc --state-root "${CQ_STATE:-$STATE}" \
+    --cwd "$T" --source-root "$T" --compiler "${CQ_FAKE:-$FAKE}" --linker "${CQ_FAKE:-$FAKE}" \
     --version fake-version --artifact "result=$result" --option "tag=$tag" \
-    -- "$FAKE" --tag "$tag" "$@" -o "$result"
+    -- "${CQ_FAKE:-$FAKE}" --tag "$tag" "$@" -o "$result"
 }
 
 job_key() { # result tag extra...
   result=$1
   tag=$2
   shift 2
-  BATON_COMPILE_QUEUE_ROOT=$STATE sh "$QUEUE" -- key --kind cc --state-root "$STATE" \
-    --cwd "$T" --source-root "$T" --compiler "$FAKE" --linker "$FAKE" \
+  BATON_COMPILE_QUEUE_ROOT=${CQ_STATE:-$STATE} sh "$QUEUE" -- key --kind cc --state-root "${CQ_STATE:-$STATE}" \
+    --cwd "$T" --source-root "$T" --compiler "${CQ_FAKE:-$FAKE}" --linker "${CQ_FAKE:-$FAKE}" \
     --version fake-version --artifact "result=$result" --option "tag=$tag" \
-    -- "$FAKE" --tag "$tag" "$@" -o "$result"
+    -- "${CQ_FAKE:-$FAKE}" --tag "$tag" "$@" -o "$result"
 }
 
 # Marker case.
@@ -153,7 +155,11 @@ wait "$B" || bad 'marker second command failed'
 [ -s "$marker_a" ] && pass 'marker first artifact published' || bad 'marker first artifact missing'
 [ -s "$marker_b" ] && pass 'marker second artifact published' || bad 'marker second artifact missing'
 
-# No-marker case.
+# No-marker case. The state root of the marker case has recorded peaks by now;
+# a state root of its own has none.
+CQ_STATE=$T/state-no-marker
+mkdir -p "$CQ_STATE" || exit 2
+chmod 775 "$CQ_STATE" || exit 2
 plain_a=$T/no-marker-a.result
 plain_b=$T/no-marker-b.result
 run_job "$plain_a" no-marker-a --marker 0 \
@@ -171,9 +177,9 @@ fi
 run_job "$plain_b" no-marker-b --marker 0 --second-started "$T/no-marker-b.started" \
   > "$T/no-marker-b.out" 2> "$T/no-marker-b.err" &
 B=$!
-if wait_file "$STATE/keys/$key/active"; then
+if wait_file "$CQ_STATE/keys/$key/active"; then
   if [ -e "$T/no-marker-a.alive" ] && [ ! -e "$T/no-marker-a.finished" ] && [ ! -e "$T/no-marker-b.started" ]; then
-    pass 'second request was active but did not start while the first held the heavy lock'
+    pass 'second request was active but did not start while the first job without history ran'
   else
     bad 'second request started or the first completed before the check'
   fi

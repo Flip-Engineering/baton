@@ -152,13 +152,20 @@ try:
     assert not events()
     print('PASS bootstrap requires the configured absolute state root')
 
+    # Jobs without a recorded peak run one at a time. The bootstrap waits for
+    # heavy.lock and counts its memory as a running job; it runs on its own
+    # because the fixture compiler detects any overlap.
     a = launch('native')
     b = launch('retained-reference', launcher=REFERENCE)
-    c = launch('bootstrap', True)
-    for p in (a, b, c): wait(p)
+    for p in (a, b): wait(p)
+    wait(launch('bootstrap', True))
     assert all((T / name).is_file() for name in ('native.c', 'retained-reference.c', 'bootstrap'))
     assert not any(r['event'] == 'overlap' for r in events())
-    print('PASS native, maintained retained launcher and bootstrap serialize')
+    print('PASS native and maintained retained launcher serialize without recorded peaks; bootstrap completes')
+    assert list((STATE / 'peaks').glob('*')), ('no group peak recorded', T)
+    assert all((path / 'peak').is_file() for path in STATE.glob('keys/*/runs/*') if (path / 'result').is_file()
+               and 'status=completed' in (path / 'result').read_text()), ('run peak missing', T)
+    print('PASS completed runs record their peak and the compiler group peak')
 
     wait(launch('explicit-runtime-separator', separated=True))
     prefix = T / 'prefix'
@@ -191,7 +198,7 @@ try:
     wait_started('retained-child')
     os.kill(p.pid, signal.SIGKILL)
     wait(p, -signal.SIGKILL)
-    wait(launch('after-parent-exit'))
+    wait(launch('after-parent-exit', True))
     rows = events()
     end = next(r['ns'] for r in rows if r['tag'] == 'retained-child' and r['event'] == 'end')
     start = next(r['ns'] for r in rows if r['tag'] == 'after-parent-exit' and r['event'] == 'start')
@@ -233,14 +240,18 @@ try:
         release = T / 'native-retained-child.release'
         try:
             p = exit_supervisor('native-retained-child', CUSTODY_TEST_RELEASE_FILE=str(release))
-            with lock.open('r+') as probe:
-                try:
-                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except BlockingIOError:
-                    pass
-                else:
-                    raise AssertionError(('surviving fixture compiler lost heavy custody', T))
-            contender = launch('after-native-supervisor-exit', True)
+            held = 0
+            for claim in (STATE / 'admission/running').glob('*'):
+                with claim.open('r') as probe:
+                    try:
+                        fcntl.flock(probe, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        held += 1
+            if not held:
+                raise AssertionError(('surviving fixture compiler lost its admission claim', T))
+            # The killed supervisor recorded no peak, so the contender has no
+            # history to run beside the surviving compiler.
+            contender = launch('after-native-supervisor-exit')
         finally:
             release.touch()
         wait(contender)

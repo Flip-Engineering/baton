@@ -3,8 +3,8 @@
 The native build launchers share one host compilation queue. The queue key
 covers source contents, compiler/toolchain identity, entry, mode and the
 relevant options. Requests with the same key share one active execution and its
-completed C and object artifacts. One host lock serializes distinct heavy
-requests across C generation and C compilation. Each request keeps its own
+completed C and object artifacts. Distinct requests are admitted by measured
+memory (see "Admission by memory"). Each request keeps its own
 shard parallelism; `tools/cgen-clang-parallel/build_and_measure.py` runs four
 shards inside one queued compilation.
 
@@ -91,13 +91,20 @@ attempt directory, copies the declared inputs, normalizes output paths into the
 attempt work directory, and starts a supervisor.
 
 The supervisor is detached from the requester and holds the key lock through
-inherited descriptors. It takes the shared `$state/heavy.lock` before it runs
-the command, for both `cgen` and `cc`. When the command writes the per-attempt
-compile marker named by `BATON_COMPILE_QUEUE_COMPILED` (`<attempt>/compiled`),
-the supervisor releases the heavy lock and keeps the key lock, attempt
-ownership and command wait. A command that does not write the marker keeps the
-heavy lock until the command and artifact publication finish.
-It runs the command with the recorded cwd and captures stdout and stderr.
+inherited descriptors. It waits for admission (see "Admission by memory") before it runs
+the command, for both `cgen` and `cc`. Admission gives the supervisor a claim
+file whose lock is descriptor 8, inherited by the command. When the command
+writes the per-attempt compile marker named by `BATON_COMPILE_QUEUE_COMPILED`
+(`<attempt>/compiled`), the marker watcher unlocks the claim and the
+supervisor keeps the key lock, attempt ownership and command wait. A command
+that does not write the marker keeps the claim until the command and its
+processes exit.
+It runs the command with the recorded cwd and captures stdout and stderr. The
+arguments are read from the attempt's `argv` file, which keeps an argument that
+contains newlines as one argument; an attempt written by an older executable
+has only the line-based `command` file, which the supervisor reads instead.
+When the command exits and a declared artifact was not written, the supervisor
+publishes a failed result that names the artifact.
 On success it copies the declared artifacts into
 `completed/artifacts/` and publishes `completed/result`. On failure it writes
 `runs/<attempt>/result` with the exit status and retained logs. A later request
@@ -131,11 +138,24 @@ $state/keys/<key>/active                       pid, starttime, kind, mode
 $state/keys/<key>/completed/result
 $state/keys/<key>/completed/artifacts/<name>
 $state/keys/<key>/runs/<attempt>/command
+$state/keys/<key>/runs/<attempt>/argv          NUL-terminated arguments
 $state/keys/<key>/runs/<attempt>/meta
 $state/keys/<key>/runs/<attempt>/stdout
 $state/keys/<key>/runs/<attempt>/stderr
 $state/keys/<key>/runs/<attempt>/result
-$state/heavy.lock
+$state/keys/<key>/peak                         largest recorded peak, kB
+$state/keys/<key>/runs/<attempt>/peak          peak of one run, kB
+$state/keys/<key>/runs/<attempt>/group         history group of the attempt
+$state/peaks/<group>                           largest recorded peak of a group, kB
+$state/peaks/sh.<kind>.<shape>                 largest recorded peak of a kind, entry and command shape, kB
+$state/peaks/kc.<kind>.<compiler>              largest recorded peak of a kind and compiler, kB
+$state/peaks/k.<kind>                          largest recorded peak of a kind, kB
+$state/outside-growth                          largest rise of outside memory use, kB
+$state/admission/lock                          serializes the records below
+$state/admission/waiting/<queue time>-<pid>    one ticket per waiting supervisor
+$state/admission/running/<time>-<pid>          one claim per admitted job
+$state/admission/observed                      process measurements
+$state/heavy.lock                              bootstrap and older queue executables
 ```
 
 `completed/result` uses schema `baton-compile-queue-result-v1` with `status`,
@@ -148,6 +168,179 @@ files through a temporary name followed by rename.
 
 Status is derived by enumerating the key directories, reading `active` and
 verifying `completed/result`. The queue keeps no separate status ledger.
+
+## Admission by memory (#1026)
+
+Until 2026-10-22 the queue ran every job under one exclusive host lock,
+`$state/heavy.lock`. On that day one 66 GB coordinator cgen held the lock for
+more than two hours with 122 GB of memory available, and 36 jobs of 1 GB or
+less waited behind it. The lock was added after the 2026-10-22 04:10Z
+out-of-memory incident (#1010), where three Bend2 compiles of 71, 87 and 20 GB
+ran together and used 211 of 220 GB. Admission by memory also keeps such
+compiles apart, and it lets small jobs run beside a large one.
+
+### Measurement
+
+The supervisor samples the memory of its session while the command runs, every
+two seconds, as the sum of `RssAnon` and `RssShmem` over the session. When the
+command ends, the peak is the larger of the samples and the `ru_maxrss` of the
+command's descendants. A run that was canceled records no peak. The peak is
+written to `runs/<attempt>/peak`, raised in `keys/<key>/peak`, and raised in
+`peaks/<group>`, `peaks/kc.<kind>.<compiler>` and `peaks/k.<kind>`. The group is
+the SHA-256 of the kind, the entry file, the compiler closure digest and the
+normalized command (the text the key uses: compiler, outputs and root-relative
+paths replaced by placeholders). Before hashing, the checkout directories of
+the request (`--cwd`, `--root`, `--source-root`) anywhere in that text become
+`@root`, a `/worktrees/NAME` path becomes `@worktree` and a queue attempt path
+becomes `@attempt`, so the same job in two checkouts is one group. A new commit
+of the same entry joins the group of earlier ones; `--check-only` and a full C
+generation of the same entry do not share a group. Options are not part of the
+group. The compiler digest is the closure digest alone.
+
+The shape of an attempt is a 64-bit FNV-1a hash of its kind, its entry file and
+its command, in which every absolute path is reduced to its file name. It is
+computed from the attempt files (`meta` and `argv`, or `command`), so the same
+job on another compiler release, in another checkout or with another output
+directory has the same shape, and a `--check-only` run and a full C generation
+of one entry have different shapes. A job of an older executable is given its
+shape from its attempt files when the rule reads its ticket. The values are the
+largest peak recorded; none is removed.
+
+### Expected peak
+
+A ticket's expected peak is, in order:
+
+1. the recorded peak of its key;
+2. the largest recorded peak of its group;
+3. the largest recorded peak of its kind, entry and command shape on any
+   compiler;
+4. the largest recorded peak of its kind and compiler;
+5. the largest recorded peak of its kind (`cgen` or `cc`), when the compiler
+   has no record;
+6. no recorded peak. The job has no history. Its memory need is then the
+   current memory of the largest running job of the same group, or nothing when
+   the entry is empty or no such job runs. A job without a group, and the
+   holder of the older lock, are matched by entry file.
+
+`backfill --state-root DIR` raises the key, kind-and-compiler, group and kind
+records from the `peak`, `group` and `meta` files of the runs already recorded.
+
+### Rule
+
+All records are read and written under `admission/lock`. A waiting supervisor
+polls every 200 ms and starts when its ticket passes the rule. Tickets are
+ordered by queue time, so the first ticket is the head.
+
+- `reserve` is the recorded growth of memory used outside the queue (see
+  "Outside growth"). It is the part of memory the rule never grants, and it
+  is a measured value of the host. Until one run has recorded it, the rule
+  starts one job at a time.
+- `unspent` is the sum over running jobs of `max(0, expected - current)`.
+  A job admitted a moment ago counts at its full expected peak until it grows
+  to it, so two jobs cannot be admitted against the same free memory.
+- `free = MemAvailable - unspent - reserve`.
+- `idle = MemAvailable + (current memory of all running jobs) - reserve`: the
+  memory the rule could grant if every running job ended.
+
+A ticket starts when its need is at most `free`; a ticket with no need starts
+when `free > 0`. A ticket without history, that is with nothing recorded for its kind, also
+waits while a running job without history exists. When
+nothing runs, the head starts whatever its expected peak, so a job that never
+fits still runs when it is alone.
+
+A ticket that is not the head starts only when it also fits as follows, so the
+head is not delayed:
+
+- if the head fits now, the ticket and the head fit together (`expected +
+  head expected <= free`);
+- the jobs that started while they were not the head, plus this ticket and the
+  head, fit in `idle`.
+
+The queue keeps no job count and no memory constant. The poll interval and the
+sample interval are the only fixed values and they do not affect which jobs
+are admitted. On a platform without `/proc/meminfo`, and until a growth is
+recorded, the rule starts one job at a time.
+
+Example on the 220 GB host with 31 GB used outside the queue and a recorded
+growth of `g` GB. A coordinator cgen with a recorded peak of 95 GB leaves
+`free = 220 - 31 - 95 - g` GB, which is below 95 GB for any `g`, whether or not
+the cgen has grown to its peak; a second cgen of 95 GB or more waits until the
+first ends. Two jobs of 70 GB start together when `140 + 31 + g <= 220`, that
+is when the recorded growth is at most 49 GB. A job of 1 GB starts beside the
+first.
+
+### Outside growth
+
+At each sample the supervisor computes the memory used outside the queue:
+`MemTotal - MemAvailable` minus the current memory of every running queue job
+(including the holder of the older lock). A supervisor whose claim has ended at
+its compile marker adds its own session back, so the compiler that is still
+finishing does not count as outside use. The first sample of a run is its
+baseline. At the end of the run, if it lasted longer than one sample interval,
+the largest rise above the baseline is raised in `$state/outside-growth`
+(`growth_kb=N`). The file keeps the largest value any run has recorded.
+`status` shows `outside_use_kb` (now) and `outside_growth_kb` (the recorded
+value, or `none`).
+
+### Custody and cleanup
+
+`admission/waiting` is created sticky and setgid (mode 3770), so a user can
+remove only the tickets of own supervisors. A supervisor that runs in the
+service of another user can have a `/proc` that hides processes of other users;
+its loader would see every foreign ticket as dead and remove it, and every
+waiter would rewrite its ticket on the next poll. When `/proc` has no entry for
+a ticket's process, the process counts as alive if a signal check
+(`kill(pid, 0)`) finds it, whether it answers or refuses with `EPERM`. A
+zombie keeps its `/proc` entry and counts as dead. A directory that exists
+without the sticky bit keeps its mode.
+
+The shared `admission/observed` measurement would otherwise record zero memory for
+every claim that the measuring process cannot see, and the measured outside use
+would include the running jobs. The supervisor of a claim measures its own session
+at each sample and writes it to `admission/usage/<claim>`; a reader uses a value
+younger than five sample intervals before its own measurement. A claim without
+a usable value whose process is hidden marks the observation unreliable, and no
+outside-growth sample is taken from it. The usage record is removed with its claim.
+
+The claim file is locked by the supervisor and inherited by the command, the
+marker watcher and anything the command starts. A claim is alive while any
+holder remains, so a command that outlives its supervisor keeps its
+reservation. A dead claim or ticket found during a read is removed. Records are
+derived again after a crash; a repeated read or poll has no other effect.
+
+### Older queue executables
+
+An executable from before #1026 serializes jobs with `$state/heavy.lock`. When
+`/proc/locks` shows a holder of that lock, the rule counts the holder's
+current memory as a running job, with the entry file of its attempt, and does
+not count it as a job without history. Jobs with the holder's entry file are
+bounded by the holder's current memory.
+
+A successor runs the command with the environment of the supervisor it replaces
+(read from `/proc/PID/environ`; the replaced supervisor of an earlier takeover is
+the original one), not the environment of the process that runs `takeover`.
+
+`takeover --state-root DIR` replaces the supervisors of an older executable
+that wait for the lock. For each one it stops the supervisor (a stopped
+process leaves the lock queue and cannot start its command), then starts a
+successor with `__takeover`. The successor takes the queue position of the
+stopped supervisor, waits for admission, runs the same attempt, and kills the
+stopped supervisor when the attempt has a result. The requester that waited
+for the stopped supervisor then reads that result. The holder of the lock is
+not touched. A supervisor of another user, and a supervisor in another mount
+namespace (its working directory and command may not exist in the namespace of
+`takeover`), are reported as skipped and keep waiting.
+
+`takeover` also replaces supervisors that wait for admission under another
+executable file than its own, so a change of the rule reaches jobs that are
+already queued. A waiting supervisor of an earlier build, or the successor of an
+earlier takeover, is stopped. `takeover` takes the admission lock first, because a
+supervisor that is stopped while it holds that lock would keep it and block every
+other waiter. With the lock held it checks that the job was not admitted and
+removes its ticket; then it starts a successor with the same queue time. A stopped successor is killed once its replacement runs. A
+stopped supervisor is killed when the new successor finishes, as for the older
+lock. A job that was admitted first is left running. `status` lists the memory the rule works from, the legacy holder,
+each running job and each waiting ticket.
 
 ## State root
 
@@ -164,13 +357,14 @@ root fails at use instead of falling back.
 
 `adopt --pid PID` reads the running compiler's cwd, entry, `BEND` environment
 and output path, computes the same key a normal request would use, and starts a
-guard that holds the key lock and the heavy lock for the process lifetime. The
+guard that holds the key lock and an admission claim for the process lifetime.
+The adopted process is registered as a running job and is never refused. The
 guard records the live argv, cwd, options, input hashes and output path and
 publishes the artifact with those fields. The result is reusable only when the
 command, process start identity, inputs, output path and artifact hashes match
 the recorded values exactly; an unverified external result remains evidence.
-Identical requests attach to the adopted execution; distinct heavy requests
-queue behind it. The guard records the pid start time and never signals the
+Identical requests attach to the adopted execution. Distinct requests are
+admitted by the memory rule, which counts the adopted process. The guard records the pid start time and never signals the
 adopted process.
 
 ## Bootstrap boundary
@@ -253,8 +447,8 @@ linker and toolchain closure, so the reference keys are bootstrap evidence and
 are not reused as permanent cache keys.
 
 The reference shell did not serialize distinct `cc` requests. The permanent
-queue serializes every distinct heavy request through `$state/heavy.lock` and
-keeps each request's internal shard parallelism. Commit 97a95949 retains the
+queue admits distinct requests by measured memory and keeps each request's
+internal shard parallelism. Commit 97a95949 retains the
 reference shell used for these measurements; it is not a bootstrap route for
 the permanent queue.
 
@@ -326,8 +520,8 @@ other site uses the resulting executable. The installed prefix packages it as
   or failed queue execution is an error, and no direct compiler path remains.
   The staged REPL launcher exports the installed `bin/baton-compile-queue`.
   `bend2/test/compiler-arm-sharing.py` requires the same queue and root.
-  Distinct `cgen` and `cc` requests serialize on the shared heavy-build lock
-  while each request keeps its internal C-shard parallelism.
+  Distinct `cgen` and `cc` requests are admitted by measured memory while each
+  request keeps its internal C-shard parallelism.
 - `BEND_GENERATED_C` is rejected by `build-native.sh` and `package-native.py`.
   Only the verified Main-C reuse inputs (`BATON2_MAIN_GENERATED_C*`) are
   accepted.
