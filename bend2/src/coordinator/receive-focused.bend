@@ -131,7 +131,12 @@ def focused_native_args(+full: String, +db: String, args: List<String>) -> IO(Un
     case +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
       focused_native_receive(String.eq(verb,"receive"),full,db,verb,session,cmd,model,effort,cwd,log,message)
     case +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
-      focused_native_turn(String.eq(verb,"turn-text"),String.eq(verb,"turn"),full,db,verb,player,id,cmd,model,effort,cwd,task,log,session)
+      Bool.pick(IO(Unit),String.eq(verb,"recruit"),
+        Control.recruit(db,player,id,cmd,model,effort,cwd,task,log,session),
+        focused_native_turn(String.eq(verb,"turn-text"),String.eq(verb,"turn"),full,db,verb,player,id,cmd,model,effort,cwd,task,log,session))
+    case +verb <> +session <> +parent <> +harness <> +model <> +effort <> +path <> Nil{}:
+      Bool.pick(IO(Unit),String.eq(verb,"join"),Control.join(db,session,parent,harness,model,effort,path),
+        focused_fallback(full,db,[verb,session,parent,harness,model,effort,path]))
     case +verb <> +session <> +observer <> Nil{}:
       focused_native_observer(String.eq(verb,"recover-observer"),full,db,verb,session,observer)
     case +verb <> +session <> Nil{}:
@@ -183,7 +188,11 @@ def dispatch(args: List<String>) -> IO(Unit):
     case +db <> +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
       dispatch_receive(String.eq(verb,"receive"),db,session,cmd,model,effort,cwd,log,message)
     case +db <> +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
-      Bool.pick(IO(Unit),String.eq(verb,"turn-text"),Turn.run_text(db,player,id,cmd,model,effort,cwd,task,log,session),dispatch_turn(String.eq(verb,"turn"),db,player,id,cmd,model,effort,cwd,task,log,session))
+      Bool.pick(IO(Unit),String.eq(verb,"recruit"),Control.recruit(db,player,id,cmd,model,effort,cwd,task,log,session),
+        Bool.pick(IO(Unit),String.eq(verb,"turn-text"),Turn.run_text(db,player,id,cmd,model,effort,cwd,task,log,session),dispatch_turn(String.eq(verb,"turn"),db,player,id,cmd,model,effort,cwd,task,log,session)))
+    case +db <> +verb <> +session <> +parent <> +harness <> +model <> +effort <> +path <> Nil{}:
+      Bool.pick(IO(Unit),String.eq(verb,"join"),Control.join(db,session,parent,harness,model,effort,path),
+        IO.die(Unit,2,"unsupported focused receive command"))
     case +first <> +second <> +session <> +observer <> Nil{}:
       dispatch_observer_argv(String.eq(first,"--recover-observer"),first,second,session,observer)
     case +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> Nil{}:

@@ -145,9 +145,9 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.Orchestra{}: read_command(db,C.Orchestra{})
     case C.Turns{id}: read_command(db,C.Turns{id})
     case C.Recruit{id,parent,harness,model,effort,repo,branch,path,base}:
-      Recruit.recruit(db,id,parent,harness,model,effort,repo,branch,path,base)
+      Control.recruit(db,id,parent,harness,model,effort,repo,branch,path,base)
     case C.Join{id,parent,harness,model,effort,path}:
-      Recruit.join(db,id,parent,harness,model,effort,path)
+      Control.join(db,id,parent,harness,model,effort,path)
     case C.Land{player,repo,target}:
       Land.land_player(db,player,repo,target)
     case C.LandAt{player,repo,target,commit}:

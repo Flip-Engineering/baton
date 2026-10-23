@@ -165,10 +165,13 @@ def receiver_model(+session: String) -> String:
 def receiver_admitted(+session: String, +endpoint: String, +cwd: String) -> String:
   "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code','dsh','antigravity')) AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ receiver_model(session) ++ " AND " ++ receiver_directory(session,cwd) ++ ")"
 
-def receiver_update_sql(+session: String, +endpoint: String, +cwd: String, +admitted: String) -> String:
-  "UPDATE sessions SET workspace=CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN " ++ C.q(cwd) ++ " ELSE workspace END,endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
+def receiver_update_sql_when(+session: String, +endpoint: String, +cwd: String, +admitted: String, selected: String) -> String:
+  "UPDATE sessions SET workspace=CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN " ++ C.q(cwd) ++ " ELSE workspace END,endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ " AND " ++ selected ++ ";"
   ++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered Codex, OMP, Muse or Claude Code session with a recorded model, a working directory and valid text argv.','next','Record the model with configure and the working directory with receiver, then dispatch complete task text with dispatch TEXT --to SESSION. Pass the CWD argument when only the directory is missing. Inspect the session and retained inbox and retry. Receiver registration preserves an explicit stop; resume SESSION --lift-stop explicitly lifts it and continues pending work.') WHERE NOT " ++ admitted ++ ";"
   ++ "SELECT json_object('session'," ++ C.q(session) ++ ",'endpoint',json(" ++ C.q(endpoint) ++ "),'workspace',(SELECT workspace FROM sessions WHERE id=" ++ C.q(session) ++ ")) WHERE " ++ admitted ++ ";"
+
+def receiver_update_sql(session: String, endpoint: String, cwd: String, admitted: String) -> String:
+  receiver_update_sql_when(session,endpoint,cwd,admitted,"1")
 
 def receiver_sql(+session: String, +endpoint: String, +cwd: String) -> String:
   receiver_update_sql(session,endpoint,cwd,receiver_admitted(session,endpoint,cwd))
@@ -341,6 +344,59 @@ def recorded_field(db: String, player: String, column: String) -> IO(String):
   do IO<String>:
     value : String <- IO.try(String,DB.Sql.read(db,"SELECT " ++ column ++ " FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     IO.pure(String,Tx.trim_nl(value))
+
+def harness_command(harness: String) -> String:
+  match harness:
+    case "claude-code": "claude"
+    case "codex": "codex"
+    case "omp": "omp"
+    case "muse": "muse"
+    case "dsh": "dsh"
+    case other: ""
+
+def log_directory_step(+rest: String, +current: String, +last: String) -> String:
+  match rest:
+    case SNil{}: last
+    case SCon{+head,+tail}:
+      +next = current ++ SCon{head,SNil{}}
+      log_directory_step(tail,next,Bool.pick(String,Char.is_eq(head,Char.from_u32(47)),next,last))
+
+def recruitment_log(+db: String, +session: String) -> IO(String):
+  do IO<String>:
+    database : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    recorded : String <- IO.try(String,DB.Sql.read(db,"SELECT coalesce((SELECT log FROM log_files WHERE session=" ++ C.q(session) ++ " AND log<>'' ORDER BY rowid DESC LIMIT 1),(SELECT log FROM log_files WHERE session=(SELECT parent FROM sessions WHERE id=" ++ C.q(session) ++ ") AND log<>'' ORDER BY rowid DESC LIMIT 1),(SELECT CASE WHEN json_valid(endpoint) THEN json_extract(endpoint,'$[#-1]') END FROM sessions WHERE id=(SELECT parent FROM sessions WHERE id=" ++ C.q(session) ++ ")), '');"))
+    +directory : String = log_directory_step(Tx.trim_nl(recorded),"","")
+    IO.pure(String,Bool.pick(String,String.is_empty(directory),log_directory_step(database,"",""),directory) ++ session ++ ".native.jsonl")
+
+def recruitment_receiver_body(+db: String, +session: String, +command: String) -> IO(Unit):
+  match command:
+    case SNil{}: IO.pure(Unit,Unit{})
+    case other: do IO<Unit>:
+      model : String <- recorded_field(db,session,"model")
+      log : String <- recruitment_log(db,session)
+      +endpoint : String <- configured_endpoint(db,session,command,log,model)
+      +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ receiver_update_sql_when(session,endpoint,"",receiver_admitted(session,endpoint,""),"(coalesce((SELECT endpoint FROM sessions WHERE id=" ++ C.q(session) ++ "),'')='' AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ")") ++ "COMMIT;"))
+      accepted : String <- receiver_result(saved,Tx.starts_with(saved,"{\"error\":\"receiver-refused\""))
+      IO.pure(Unit,Unit{})
+
+def recruitment_receiver(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ " AND coalesce(endpoint,'')='' AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"))
+    recruitment_receiver_body(db,session,harness_command(Tx.trim_nl(harness)))
+
+def recruit(+db: String,+id: String,parent: String,harness: String,model: String,effort: String,repo: String,branch: String,path: String,base: String) -> IO(Unit):
+  do IO<Unit>:
+    registered : String <- Recruit.recruit_result(db,id,parent,harness,model,effort,repo,branch,path,base)
+    ready : Unit <- recruitment_receiver(db,id)
+    saved : String <- IO.try(String,Store.apply(db,C.Session{id}))
+    IO.write(saved)
+
+def join(+db: String,+id: String,parent: String,harness: String,model: String,effort: String,path: String) -> IO(Unit):
+  do IO<Unit>:
+    registered : String <- Recruit.join_result(db,id,parent,harness,model,effort,path)
+    ready : Unit <- recruitment_receiver(db,id)
+    saved : String <- IO.try(String,Store.apply(db,C.Session{id}))
+    IO.write(saved)
 
 # A direct turn records its launch arguments as the default wake route.
 # Replaying a completed turn repairs an absent route. Existing routes and
