@@ -14,6 +14,7 @@ admission path as `message`.
 | Subordinate agent to a more distant ancestor | Refused. |
 | Non-operator peers sharing an explicitly tight Ensemble | Allowed. |
 | Peers with loose coupling or no shared tight membership | Refused. |
+| Operator and its immediate child, in any Player role | Allowed in both directions. |
 | Operator and a top-level Conductor | Allowed in both directions. |
 
 Peer routes connect distinct non-operator agents with no ancestor relationship.
@@ -24,7 +25,7 @@ An Ensemble has a recorded owner ID, a coupling value and explicit
 members. Its owner may be a member. A session can belong to several Ensembles;
 a shared tight membership grants a peer route. The recorded owner manages
 membership; adding a member requires an existing non-operator session. Operator
-sessions use the top-level Conductor route.
+sessions use their immediate-child and top-level Conductor routes.
 
 Roles and coupling are stored in the existing SQLite database. A session with
 no role assignment is a Player. A Conductor with no parent is displayed as a
