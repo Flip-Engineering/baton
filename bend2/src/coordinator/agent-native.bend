@@ -196,7 +196,7 @@ def prepare_identity(+db: String, +session: String, +verb: String, +options: Lis
       select_identity(db,query_identity_sql(session),"--id",options,"This actor has no retained context query."),
       Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(D.member(verb,["stop","force-stop"]),Bool.and(Bool.not(D.present(options,"--id")),Bool.not(D.present(options,"--clear")))),
         select_identity(db,stop_identity_sql(D.value(options,"--session",session),String.eq(verb,"force-stop")),"--id",options,"The selected session has no existing stop to force."),
-        Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(D.member(verb,Tx.split_spaces("continue-task turn report ask dispatch knowledge-record knowledge-relate knowledge-promote context-query")),Bool.not(D.present(options,"--id"))),
+        Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(D.member(verb,Tx.split_spaces("continue-task turn report ask dispatch knowledge-record knowledge-relate knowledge-promote context-query context-eval")),Bool.not(D.present(options,"--id"))),
           select_identity(db,new_identity_sql(verb),"--id",options,"The native operation identity could not be generated."),
           IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,Done{options})))))
 
@@ -371,6 +371,7 @@ def legacy_args_selected(+session: String, verb: String, +options: List<&2,D.Opt
     case "context-engines": ["context-engines",target]
     case "context-install": ["context-install",D.value(options,"--module",""),D.value(options,"--path","")]
     case "context-query": ["context-query-file",D.value(options,"--owner",session),D.value(options,"--id",""),D.value(options,"--file","")]
+    case "context-eval": ["context-eval",D.value(options,"--owner",session),D.value(options,"--id",""),D.value(options,"--session",""),D.value(options,"--expression",""),D.value(options,"--frame",""),D.value(options,"--cwd",D.value(saved,"--cwd",""))]
     case "context-result": ["context-result",D.value(options,"--id","")]
     case "models": Bool.pick(List<String>,D.present(options,"--all"),["models",target,"--all"],["models",target])
     case "harness-inventory": ["harness-inventory"]
