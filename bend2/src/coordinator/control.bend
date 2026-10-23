@@ -389,7 +389,7 @@ def recruitment_receiver_body(+db: String, +session: String, +command: String) -
     case other: do IO<Unit>:
       model : String <- recorded_field(db,session,"model")
       log : String <- recruitment_log(db,session)
-      +endpoint : String <- configured_endpoint(db,session,command,log,model)
+      +endpoint : String <- configured_endpoint(db,session,command,log,model,"")
       +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ receiver_update_sql_when(session,endpoint,"",receiver_admitted(session,endpoint,""),"(coalesce((SELECT endpoint FROM sessions WHERE id=" ++ C.q(session) ++ "),'')='' AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ")") ++ "COMMIT;"))
       accepted : String <- receiver_result(saved,Tx.starts_with(saved,"{\"error\":\"receiver-refused\""))
       IO.pure(Unit,Unit{})
