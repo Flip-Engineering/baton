@@ -1202,7 +1202,13 @@ static int cq_wait_admission(const char *attempt, const char *queued_text,
     int index = error ? -1 : cq_ticket_index(&view, id);
     if (!error && index < 0) error = cq_ticket_write(state, id, key, group, entry, queued, start);
     int backfill = 0;
-    if (!error && index >= 0 && cq_admit_decision(&view, (size_t)index, &backfill)) {
+    /* The oldest ticket that may start goes first, whichever supervisor polls first. */
+    int go = !error && index >= 0 && cq_admit_decision(&view, (size_t)index, &backfill);
+    for (int before = 0; go && before < index; before++) {
+      int ignored = 0;
+      if (cq_admit_decision(&view, (size_t)before, &ignored)) go = 0;
+    }
+    if (go) {
       const CqTicket *ticket = &view.tickets[index];
       char body[1024];
       snprintf(body, sizeof(body),
@@ -1440,7 +1446,11 @@ static int cq_takeover(const char *state, char **out, size_t *length) {
     if (cq_attempt_parts(attempt, parsed_state, keydir, key) || strcmp(parsed_state, state)) { free(start); continue; }
     if (cq_path(marker, "%s/takeover", attempt)) { free(start); continue; }
     if (access(marker, F_OK) == 0) { free(start); continue; }
-    kill((pid_t)pid, SIGSTOP);
+    if (kill((pid_t)pid, SIGSTOP)) {
+      error = cq_text_append(&text, &used, &capacity, "skipped pid=%d reason=not-permitted attempt=%s\n", pid, attempt);
+      free(start);
+      continue;
+    }
     for (int wait = 0; wait < 100 && !cq_stopped(pid); wait++) cq_sleep_ns(20000000L);
     if (!cq_stopped(pid) || cq_legacy_holds(state, pid)) {
       kill((pid_t)pid, SIGCONT);

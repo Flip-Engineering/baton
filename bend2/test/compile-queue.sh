@@ -851,4 +851,24 @@ else
   printf 'SKIP memory admission: no /proc/meminfo\n'
 fi
 
+# Jobs without a recorded peak start in the order of their requests.
+waiting_count() {
+  sh "$QUEUE" status --state-root "$STATE" > "$T/status.out"
+  grep -c '^waiting ' "$T/status.out" || true
+}
+FIFO_FAKE=$(fresh_fake fifo)
+: > "$LOG"
+( CQ_FAKE=$FIFO_FAKE; run_cc fifo-1 "$T/fifo-1" --sleep 2 ) & fifo_pids=$!
+i=0
+while [ "$i" -lt 200 ] && ! grep -q 'fifo-1' "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
+for n in 2 3 4 5; do
+  ( CQ_FAKE=$FIFO_FAKE; run_cc "fifo-$n" "$T/fifo-$n" --sleep 0 ) & fifo_pids="$fifo_pids $!"
+  i=0
+  while [ "$i" -lt 400 ] && [ "$(waiting_count)" -lt $((n - 1)) ]; do i=$((i + 1)); sleep 0.05; done
+done
+for pid in $fifo_pids; do wait "$pid" || bad 'fifo requester failed'; done
+fifo_order=$(awk '$1 == "start" {print $4}' "$LOG" | tr '\n' ' ')
+[ "$fifo_order" = 'fifo-1 fifo-2 fifo-3 fifo-4 fifo-5 ' ] \
+  && pass 'jobs without history started in request order' || bad "start order was: $fifo_order"
+
 exit "$fail"
