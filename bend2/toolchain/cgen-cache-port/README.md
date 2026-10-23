@@ -78,6 +78,15 @@ time rose again and its mapping count fell. It later passed 1.7 million mappings
 that compiles the full coordinator needs `vm.max_map_count` of at least 16777216 while the
 compiler runs on Bun's default allocator. #1027 tracks the unbounded retry in Bun.
 
+### Result of the first full cgen with the patch
+
+The same run (`9bae5ae8`) ended with exit 133 (SIGTRAP) at 01:29Z, 4 h 28 min after it started.
+The last sample, 30 s earlier, showed 122.6 GB RSS, a 130.1 GB peak and 150,913 mappings. Bun
+prints no banner on SIGTRAP and the run had neither gdb nor compiler diagnostics, so the pass it
+reached and the code that trapped are not known. The patch and the raised map count together do
+not complete a full coordinator cgen on Linux. The next runs are the same cgen with `Malloc=1`
+and the same cgen under gdb.
+
 ### Bun system heap
 
 `Malloc=1` in the environment switches Bun's bmalloc to the system heap (glibc `malloc`). On
