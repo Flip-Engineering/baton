@@ -1,8 +1,8 @@
 # Series Git identities
 
-`bend2/harness/git-series.mjs` is an optional process launcher and HTTPS
-credential helper. It selects a GitHub App for GPT, Muse, DeepSeek, Claude,
-GLM or Kimi. Commit author and committer names use the exact format
+`bend2/harness/git-series.mjs` is an optional process launcher, HTTPS
+credential helper and GitHub CLI wrapper. It selects a GitHub App for GPT, Muse,
+DeepSeek, Claude, GLM or Kimi. Commit author and committer names use the exact format
 `Flip Baton - GPT`, `Flip Baton - Muse`, `Flip Baton - DeepSeek`,
 `Flip Baton - Claude`, `Flip Baton - GLM` or `Flip Baton - Kimi`. Native
 execution keeps its exact model identifier.
@@ -13,18 +13,67 @@ host. A source checkout uses `bend2/harness/git-series.mjs`. The Python source
 remains a legacy reference. The immutable 1.0 archive carries the earlier Python
 helper; its version-specific payload is described in [installation](installation.md).
 
-The helper has no repository allowlist. For a credential request to
-`github.com/OWNER/NAME`, the helper looks up the App installation of the account
-`OWNER` with `GET /repos/OWNER/NAME/installation`, using the App JWT. It then
-mints an installation access token for that installation. The token has
-`contents:write`, `pull_requests:write` and `metadata:read` permissions and no
-repository restriction, so it carries the repositories that the account granted
-the App. Each account owner has its own installation. Adding the App to another
-owner requires no change to the registry or the helper.
+For a Git credential request to `github.com/OWNER/NAME`, the helper looks up
+the App installation of account `OWNER` with
+`GET /repos/OWNER/NAME/installation`, using the App JWT. It mints a token for
+that installation. Each account owner has its own installation. Git credential
+requests keep the permissions body `contents:write`, `pull_requests:write`
+and `metadata:read`. The identity metadata, installation and issued token
+must each include those minimum grants. Additional grants are accepted.
+A missing or weaker permission produces a refusal naming the required grant.
 
-If the App is not installed for `OWNER`, the helper refuses with a message that
-names the App slug and the owner. The helper does not fall back to another
-installation.
+The GitHub CLI wrapper uses the same per-owner lookup and requires the Git
+grants plus `issues:write`, `actions:read`, `checks:read` and `statuses:read` on
+the installation and issued token. It sends an empty token request body.
+GitHub documents that [omitting `permissions` gives the token the installation's
+full grant](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app).
+The token covers the repositories granted to that installation. Existing
+identity files can keep the three Git grants in their public metadata.
+
+## GitHub App permissions
+
+The following Apps belong to `Flip-Engineering`. For each App, open the
+organization's **Settings > Developer settings > GitHub Apps**, select the App,
+and open **Permissions & events**.
+
+| Series | App |
+| --- | --- |
+| GPT | [Flip Baton - GPT](https://github.com/apps/flip-baton-gpt) |
+| Muse | [Flip Baton - Muse](https://github.com/apps/flip-baton-muse) |
+| DeepSeek | [Flip Baton - DeepSeek](https://github.com/apps/flip-baton-deepseek) |
+| Claude | [Flip Baton - Claude](https://github.com/apps/flip-baton-claude) |
+| GLM | [Flip Baton - GLM](https://github.com/apps/flip-baton-glm) |
+| Kimi | [Flip Baton - Kimi](https://github.com/apps/flip-baton-kimi) |
+
+Set these repository permissions on every App:
+
+| GitHub setting | Level | API key | Seat operation |
+| --- | --- | --- | --- |
+| Contents | Read and write | `contents:write` | Git and pull request branches |
+| Pull requests | Read and write | `pull_requests:write` | Read and open pull requests |
+| Metadata | Read-only | `metadata:read` | Repository metadata |
+| Issues | Read and write | `issues:write` | Read issues and post comments |
+| Actions | Read-only | `actions:read` | Read workflow runs and logs |
+| Checks | Read-only | `checks:read` | Read check runs and annotations |
+| Commit statuses | Read-only | `statuses:read` | Read commit status contexts |
+
+The required additions are Issues, Actions, Checks and Commit statuses.
+Preserve the existing Contents, Pull requests, Metadata and Workflows grants.
+The Git credential token request keeps its three existing grants.
+
+[Actions reads](https://docs.github.com/en/rest/actions/workflow-runs),
+[Checks reads](https://docs.github.com/en/rest/checks/runs) and
+[Commit statuses reads](https://docs.github.com/en/rest/commits/statuses)
+use the permissions listed above. Deploy the helper and wrapper together,
+then update the App registrations and have the installation owners approve the
+new permissions on both `Flip-Engineering` and `flip-engineer`. The
+`flip-engineer` installation supplies access to
+`flip-engineer/automated-content-pipeline`.
+[GitHub retains an installation's old permissions until its owner accepts the
+update](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app#about-changes-to-permissions).
+A seat's next `gh` command resolves that installation's current grant and
+requests a fresh token. A missing installation produces a refusal naming its
+App slug and requested owner.
 
 ## Configuration
 
@@ -84,8 +133,9 @@ selected series. Registry attribution takes precedence over a selected
 `identity-series.json` `authorEmail`. The helper uses that per-series email
 when no shared attribution is configured, and the verified App bot email when
 the identity has no `authorEmail`. Its default name is `Flip Baton - SERIES`.
-The `github` identity selects the App, its signing key and the token
-permissions. The helper finds the installation for each repository owner.
+The `github` identity selects the App and its signing key. Its `permissions`
+metadata must include the minimum grants. The helper finds the installation
+and its current grants for each repository owner.
 
 Each public identity has this shape. Replace the unset GitHub values with
 verified App and bot metadata before launch:
@@ -202,6 +252,42 @@ its native subcommand. The selected GPT series clears
 `OPENAI_API_KEY` and `CODEX_API_KEY` across exact versions. A Codex login-status
 command uses the ordinary command launch because it has no model argument.
 
+## GitHub CLI
+
+The launcher prepends `git-series-bin` beside `git-series.mjs` to the seat's
+`PATH`. Development archives install its executable wrapper at
+`PREFIX/libexec/baton2/git-series-bin/gh`. The wrapper imports the adjacent
+helper and uses `BATON2_GH_REGISTRY` and `BATON2_GH_SERIES`, set by the launcher,
+to select the seat's App. Keep the wrapper directory beside the helper when
+copying an installation.
+
+Each `gh` invocation selects its repository in this order:
+
+1. The `-R OWNER/NAME` or `--repo OWNER/NAME` argument. Attached `-ROWNER/NAME`
+   and `--repo=OWNER/NAME` forms are also accepted.
+2. `GH_REPO`, in `OWNER/NAME` form.
+3. The cwd's Git remote `origin`, using a GitHub HTTPS or SSH URL.
+
+An unresolved owner produces a refusal naming these inputs. Commands such as
+`gh auth status` and `gh api /user` need one of these inputs too. The Git
+credential helper's optional `--repository` restriction applies to Git
+credential requests; `gh` uses the repository selected by its invocation.
+
+The wrapper finds the executable `gh` on `PATH`, skipping entries that resolve
+to `git-series-bin/gh` in any source or installed prefix. It requests a fresh
+installation token through the same App and installation verification used by
+Git credentials. It validates the CLI permission set listed above and sets
+`GH_TOKEN` in the environment passed to that executable. The seat environment
+remains free of the issued token. The wrapper preserves the command arguments,
+cwd, PID, standard streams and exit status. Tokens remain in process memory.
+
+For example, from a launched seat:
+
+```sh
+gh pr checks -R flip-engineer/flip
+gh issue comment 1019 -R Flip-Engineering/baton --body 'Review complete.'
+```
+
 ## Process and publication boundaries
 
 The native controls select the recipient's series for receiver and detached
@@ -216,9 +302,9 @@ identity. Standalone coordinator calls need the same explicit binding.
 The helper sets `GIT_ASKPASS` to `false`, a program that refuses the prompt. An
 inherited askpass command line is replaced.
 
-Inherited `GH_TOKEN` and `GITHUB_TOKEN` are cleared. GitHub CLI's stored login
-and SSH push authentication have their own actors. Repository, worktree and
-global Git configuration files remain unchanged.
+Inherited `GH_TOKEN` and `GITHUB_TOKEN` are cleared. The `gh` wrapper supplies
+the selected App token for each command. SSH push authentication uses its own
+actor. Repository, worktree and global Git configuration files remain unchanged.
 
 Controlled coordinator publication supplies the explicit HTTPS remote:
 
@@ -251,7 +337,10 @@ repository protection provide review authority.
 Run the controlled fixtures with `node --test bend2/test/git-series.mjs`. They
 use invented public metadata, a generated signing key, API response doubles and
 a controlled Node child. Fixtures remain under `.scratch/git-series-node-fixtures/`.
-The checks cover identity selection, per-owner installations for two accounts, the
-missing-installation refusal, credential restrictions, askpass execution, signature verification and PID, stream and
-exit preservation. Real App authentication, native tool inheritance, commit
-attribution and remote actor verification require separate qualification.
+The checks cover identity selection, Git and CLI permission sets, minimum and
+expanded permissions, per-owner installations for two accounts, repository selection for `gh`,
+per-command token issuance, the missing-installation refusal, credential
+restrictions, askpass execution, signature verification and PID, stream and
+exit preservation for Git and `gh` launches. Real App authentication, native
+tool inheritance, commit attribution and remote actor verification require
+separate qualification.
