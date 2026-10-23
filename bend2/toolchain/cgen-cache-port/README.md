@@ -130,8 +130,9 @@ default run took 2:01.
 ## launcher-malloc.patch (#1017)
 
 In the tested configuration the caller of a full-coordinator cgen sets `Malloc=1`. The patch
-exports the same variable from `bin/bend` before it starts Bun, so every compile through that
-launcher uses the system heap. No compiler release carries it.
+starts Bun from `bin/bend` with `env Malloc=1`, so every compile through that launcher uses the
+system heap. Release `2.0.25-f5185e38-pr967-pr968-e5c4efd-gc1017-malloc-20261023` carries it; it is
+`gc1017` with only `bin/bend` changed. The `bend` selector has not been switched to it.
 
 ## Completed full coordinator cgen (queue key `488a4cf1`)
 
