@@ -1,0 +1,12 @@
+--- a/bin/bend
++++ b/bin/bend
+@@ -3,4 +3,9 @@
+ set -eu
+ 
+ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
++# Malloc=1 puts Bun's bmalloc on the system heap (glibc malloc). Under the
++# default libpas heap a full coordinator cgen exhausts libpas's fixed
++# compact-heap reservation or vm.max_map_count on Linux (Baton #1017).
++Malloc=1
++export Malloc
+ exec "$root/bin/bun" --smol "$root/bend2/main.ts" "$@"

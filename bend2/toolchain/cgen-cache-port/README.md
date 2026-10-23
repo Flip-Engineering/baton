@@ -1,7 +1,8 @@
 # Compiler patches on the f5185e38 lineage
 
 `release.json` records the emitted-C cache release built from `cache.patch` and `cache-log.patch`.
-`pass-collect.patch` is the #1017 change to `bend2/comp.ts` of the same lineage.
+`pass-collect.patch` and `launcher-malloc.patch` are the #1017 changes to `bend2/comp.ts` and
+`bin/bend` of the same lineage.
 
 ## pass-collect.patch (#1017)
 
@@ -84,8 +85,7 @@ The same run (`9bae5ae8`) ended with exit 133 (SIGTRAP) at 01:29Z, 4 h 28 min af
 The last sample, 30 s earlier, showed 122.6 GB RSS, a 130.1 GB peak and 150,913 mappings. Bun
 prints no banner on SIGTRAP and the run had neither gdb nor compiler diagnostics, so the pass it
 reached and the code that trapped are not known. The patch and the raised map count together do
-not complete a full coordinator cgen on Linux. The next runs are the same cgen with `Malloc=1`
-and the same cgen under gdb.
+not complete a full coordinator cgen on Linux.
 
 ### Bun system heap
 
@@ -93,4 +93,37 @@ and the same cgen under gdb.
 `five-overlap.bend` (queue key `6960b5c9`) the compiler then used 167-207 mappings where the
 default allocator used 25,561-42,041, emitted byte-identical C (sha256
 `b7b0b85b08e3f44d8bb2dd2309b35dacfeb616a57ae19168a4812d57d3384316`), and ran in 1:44 where the
-default run took 2:01. A full coordinator cgen with `Malloc=1` has not been run.
+default run took 2:01.
+
+## launcher-malloc.patch (#1017)
+
+The patch exports `Malloc=1` from `bin/bend` before it starts Bun, so every compile uses the
+system heap.
+
+### Completed full coordinator cgen
+
+A full `bend2/src/coordinator/main.bend` cgen completed on the homelab Linux runner with
+`pass-collect.patch` and `Malloc=1` (queue key `488a4cf1`, source `6070813f0`, release
+`2.0.25-f5185e38-pr967-pr968-e5c4efd-gc1017-20261022`, `vm.max_map_count=16777216`). The queue
+recorded `status=completed exit=0 verified=1`. The C is 122,673,108 bytes, sha256
+`990648d53639aa8162b52d8ce02442e38430a35d49c85d5afc4813812bd14230`. `/usr/bin/time` recorded
+2:19:10 wall time, 7310 s user, 2113 s system and 137,480,528 kB maximum RSS.
+
+The emission fixed point took eight passes over 4227 definitions:
+
+| Pass | `own` size | heapUsed after the collection at its start (GB) | RSS at its end (GB) | Seconds |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 9023 | 23.4 | 98.6 | 919 |
+| 2 | 10952 | 55.1 | 117.9 | 851 |
+| 3 | 11275 | 61.9 | 123.9 | 859 |
+| 4 | 11366 | 64.6 | 137.8 | 890 |
+| 5 | 11391 | 65.9 | 138.6 | 1320 |
+| 6 | 11396 | 65.9 | 128.6 | 858 |
+| 7 | 11399 | 64.5 | 139.5 | 884 |
+| 8 | 11399 | 65.9 | 138.5 | 802 |
+
+Load and type check took 231 s, compared with 1068 s for the unpatched libpas run `041f64d9`.
+Each pass took about twice as long as a libpas pass.
+
+Not yet measured: `Malloc=1` without `pass-collect.patch`, `Malloc=1` with the default
+`vm.max_map_count`, and a build and test of the coordinator from this C.
