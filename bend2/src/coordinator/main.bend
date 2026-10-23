@@ -30,6 +30,8 @@ import ./agent-input.bend as AgentInput
 import ./agent-native.bend as AgentNative
 import ./repl.bend as Repl
 import ./task-input.bend as TaskInput
+import ./codex-inbox.bend as CodexInbox
+import ./repl.bend as Repl
 import ../host/text.bend as T
 import ../host/process.bend as P
 import ./stall.bend as Stall
@@ -100,6 +102,10 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       do IO<Unit>:
         saved : String <- Control.receiver(db,session,cmd,log,cwd)
         woken : Unit <- IO.try(Unit,Receive.wake_due(db,session,"0",target => Receive.wake_launch(db,target)))
+        print_result(saved)
+    case C.Connect{id,native,endpoint}:
+      do IO<Unit>:
+        saved : String <- Control.connect(db,id,native,endpoint)
         print_result(saved)
     case C.Configure{+id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort}:
       do IO<Unit>:
@@ -291,6 +297,7 @@ type NormalCliKind is Data:
   TaskReadInput{}
   AgentCurrentInput{}
   NativeAttachmentInput{}
+  CodexInboxInput{}
   ReplObserverInput{}
   OrdinaryInput{}
 
@@ -307,6 +314,10 @@ def normal_cli_kind_existing(+head: String) -> NormalCliKind:
 def normal_cli_kind(+head: String) -> NormalCliKind:
   match head:
     case "repl-observe": ReplObserverInput{}
+    case "codex-inbox-session": CodexInboxInput{}
+    case "codex-inbox-follow": CodexInboxInput{}
+    case "codex-inbox-deliver": CodexInboxInput{}
+    case "codex-input-witness": CodexInboxInput{}
     case other: normal_cli_kind_existing(other)
 
 def normal_cli_fallback_if(project: Bool, db: String, head: String, tail: List<String>) -> IO(Unit):
@@ -372,6 +383,36 @@ def normal_cli_native_attachment(args: List<String>, db: String, head: String) -
     case session <> component <> Nil{}: NativeInitialInput.attachment(db,session,component)
     case other: normal_cli_fallback(db,head,other)
 
+def normal_cli_codex_session(args: List<String>, db: String, head: String) -> IO(Unit):
+  match args:
+    case session <> native <> message <> token <> Nil{}:
+      IO.try(Unit,CodexInbox.session(db,session,native,message,token))
+    case session <> native <> message <> Nil{}:
+      IO.try(Unit,CodexInbox.session(db,session,native,message,""))
+    case other: normal_cli_fallback(db,head,other)
+
+def normal_cli_codex_follow(args: List<String>, db: String, head: String) -> IO(Unit):
+  match args:
+    case session <> native <> Nil{}: IO.try(Unit,CodexInbox.follow(db,session,native))
+    case other: normal_cli_fallback(db,head,other)
+
+def normal_cli_codex_deliver(args: List<String>, db: String, head: String) -> IO(Unit):
+  match args:
+    case native <> pointer <> Nil{}: IO.try(Unit,CodexInbox.deliver(db,native,pointer))
+    case other: normal_cli_fallback(db,head,other)
+
+def normal_cli_codex_witness(args: List<String>, db: String, head: String) -> IO(Unit):
+  match args:
+    case native <> Nil{}: IO.try(Unit,CodexInbox.witness(db,native))
+    case other: normal_cli_fallback(db,head,other)
+
+def normal_cli_codex(args: List<String>, db: String, head: String) -> IO(Unit):
+  match head:
+    case "codex-inbox-session": normal_cli_codex_session(args,db,head)
+    case "codex-inbox-follow": normal_cli_codex_follow(args,db,head)
+    case "codex-inbox-deliver": normal_cli_codex_deliver(args,db,head)
+    case "codex-input-witness": normal_cli_codex_witness(args,db,head)
+    case other: normal_cli_fallback(db,other,args)
 def normal_cli_repl_observer(db: String, args: List<String>) -> IO(Unit):
   match args:
     case cell <> Nil{}: Repl.observe(db,cell)
@@ -387,6 +428,7 @@ def normal_cli_selected(kind: NormalCliKind, db: String, head: String, args: Lis
     case TaskReadInput{}: normal_cli_task_read(args,db,head)
     case AgentCurrentInput{}: normal_cli_agent_current(args,db,head)
     case NativeAttachmentInput{}: normal_cli_native_attachment(args,db,head)
+    case CodexInboxInput{}: normal_cli_codex(args,db,head)
     case ReplObserverInput{}: normal_cli_repl_observer(db,args)
     case OrdinaryInput{}: normal_cli_fallback(db,head,args)
 

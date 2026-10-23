@@ -3,6 +3,7 @@ import ./agent-actions.bend as A
 import ./agent-route.bend as Route
 import ./agent-native.bend as Native
 import ./agent-input.bend as AgentInput
+import ./branching.bend as Branching
 import ./repl.bend as Repl
 import ../coordinator/commands.bend as C
 import ./store.bend as Store
@@ -268,7 +269,7 @@ def completion_confirmed(+db: String, +session: String, +recipient: String, +req
 
 def execute(+db: String, +session: String, action: A.Action) -> IO(Unit):
   match action:
-    case A.Help{+action}: IO.write(Bool.pick(String,String.eq(action,"repl"),Repl.help(),A.help(action)))
+    case A.Help{+action}: IO.write(Bool.pick(String,String.eq(action,"repl"),Repl.help(),Bool.pick(String,String.eq(action,"branch"),Branching.help(),A.help(action))))
     case A.Invalid{cause}: IO.die(Unit,2,cause ++ "\n" ++ A.help(""))
     case A.Inbox{}: do IO<Unit>:
       saved : String <- IO.try(String,Store.read(db,C.Inbox{session}))
@@ -302,6 +303,7 @@ def execute(+db: String, +session: String, action: A.Action) -> IO(Unit):
     case A.Send{items}: do IO<Unit>:
       saved : String <- sends_json(db,session,items)
       IO.write(saved)
+    case A.Branch{args}: Branching.execute(db,session,args)
     case A.Repl{args}: Repl.execute(db,session,args)
     case A.Native{items}: do IO<Unit>:
       saved : String <- Native.operations(db,session,items)

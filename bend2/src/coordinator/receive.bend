@@ -1,4 +1,6 @@
 import Base
+import ./agent-guidance.bend as AgentGuidance
+import ./agent-input.bend as AgentInput
 import ../coordinator/commands.bend as C
 import ./../coordinator/logs.bend as Logs
 import ../harness/omp-player.bend as Omp
@@ -56,6 +58,7 @@ def orientation_text(db: String, session: String) -> IO(String):
 def instructions(executable: String, database: String, +session: String, orientation: String) -> String:
   "You are session " ++ session ++ " in a Baton Orchestra.\nRecorded orientation: " ++ orientation ++ "\nCoordinator executable/database argv: [" ++ J.string_literal(executable) ++ "," ++ J.string_literal(database) ++ "]\n"
   ++ "Read complete owed input with inbox. Baton resolves the database, current actor, assignment and coordinator from the launch context. Baton records delivery and complete reads internally. Read your inbox again as work continues. Explicit stops and direct operator instructions remain effective.\nUse report --text TEXT and ask --text TEXT to reach your recorded coordinator. Use completion-request --text SUMMARY when your assignment is ready. A parentless session follows its operator task. A coordinator uses completion-confirmed --to PLAYER to confirm that Player's current request. Pending delivery reports state their retained byte count; read each complete body with baton read MESSAGE_ID before acting on it. Use guide --to PLAYER --text TEXT for further instructions and native-reply --to PLAYER --text JSON for a pending native question.\nUse dispatch --to PLAYER --text TEXT to deliver a task to a recorded Player. An open assignment receives continuation input. Dispatch stores the complete text, request and setup outcome in the database. Use dispatch --stdin for standard input and dispatch --help for route selection. Independent Players can run concurrently. Their retained reports reach the recorded coordinator when their native turns end.\nUse join --session PLAYER --harness HARNESS --model MODEL --effort EFFORT --path WORKSPACE for a shared checkout. Use recruit --session PLAYER --harness HARNESS --model MODEL --effort EFFORT --repo REPO --branch BRANCH --path PATH --base COMMIT for a separate worktree. Baton records the current actor as parent. Register a receiver with receiver --session PLAYER --command EXECUTABLE --output-log PATH.\nFor source work, name the checkout, target branch and remote in the assignment. Commit completed contributions and report remaining work. The coordinating Conductor integrates and publishes contributions. Use land --session PLAYER --repo REPO --target BRANCH for a fast-forward contribution, or reconcile divergent contributions with ordinary Git operations. After the Player's owned turn finishes, receiver --session PLAYER --command EXECUTABLE --output-log PATH --cwd SHARED_CWD preserves its conversation and moves its recorded workspace. Remove a clean inactive temporary worktree and fully integrated branch with ordinary Git commands. Preserve active checkouts, unfinished changes, later unintegrated commits and explicit stops.\nUse players, orchestra, assignment, attempts and status to inspect recorded work. Use knowledge read for complete scoped findings and knowledge promote --to DESTINATION --finding FINDING to share reviewed evidence. Existing finding and message references select evidence; Baton generates identities for new records and relations. Use help ACTION for named arguments and as SESSION for an explicit actor override.\n"
+  ++ AgentGuidance.actions()
   ++ Turn.task_instructions()
   ++ Turn.knowledge_instructions()
 
@@ -453,6 +456,21 @@ def wake_if_kept(db: String, session: String, cursor: String, superseded: Bool, 
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,finished)
     case False{}: completed_wake(db,session,cursor,finished)
 
+def completion_cursor(db: String, handle: U32, fallback: String) -> IO(String):
+  do IO<String>:
+    +checkpoint_state : Observer.State <- Observer.restore(db,handle,False{})
+    value : String <- IO.pure(String,Observer.cursor(checkpoint_state))
+    +trimmed : String <- IO.pure(String,Tx.trim_nl(value))
+    IO.pure(String,Bool.pick(String,String.is_empty(trimmed),fallback,trimmed))
+
+def consume_completed(+db: String, session: String, attempt: String, native: String, +initial_cursor: String, success: Bool, handle: U32) -> IO(Unit):
+  match success:
+    case False{}: IO.pure(Unit,Unit{})
+    case True{}: do IO<Unit>:
+      delivered : String <- completion_cursor(db,handle,initial_cursor)
+      consumed : Unit <- AgentInput.consume_delivered(db,session,attempt,native,initial_cursor,delivered)
+      IO.pure(Unit,Unit{})
+
 # Record an ended adopted attempt with unknown status, preserve its stdout,
 # and retire its capability before continuing with the pending inbox.
 def completed_orphan_final(+db: String, +session: String, +id: String, +log: String, attempt: String, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), combined: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -470,7 +488,6 @@ def completed_orphan(+db: String, +session: String, +id: String, +log: String, a
     observer_released : Unit <- release_observer(lock)
     completed_orphan_final(db,session,id,log,attempt,outcome,deliveries,again,Turn.combine(acknowledged,retired))
 
-
 # Successful observations and complete recoverable provider errors resume all owed
 # input. Other failures retain the attempt cursor. A recorded profile advance runs
 # its own continuation, and completion operations preserve their results.
@@ -481,11 +498,13 @@ def release_native(db: String, +handle: U32) -> IO(Unit):
     +monitor : Bool <- Observer.monitor_handle(db,handle)
     Bool.pick(IO(Unit),monitor,IO.pure(Unit,Unit{}),IO.try(Unit,P.ProcessChild.release(handle)))
 
-def completed(+db: String, +session: String, +id: String, +log: String, attempt: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def completed(+db: String, +session: String, +id: String, +log: String, +attempt: String, native: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     failed : Bool <- outcome_failed(db,outcome)
     transient : Bool <- transient_provider_error(db,outcome)
     +pending_cursor : String <- IO.pure(String,Bool.pick(String,Bool.and(failed,Bool.not(Bool.and(transient,observation_clear(outcome)))),cursor,"0"))
+    success : Bool <- Turn.settlement_success(db,outcome)
+    consumed : Unit <- consume_completed(db,session,id,native,cursor,Bool.and(success,Bool.not(String.is_empty(attempt))),handle)
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
     observer_released : Unit <- release_observer(lock)
     native_released : Unit <- release_native(db,handle)
@@ -526,7 +545,7 @@ def restart_pending(+db: String, +session: String, +id: String, attempt: String,
 
 def complete_or_restart(db: String, session: String, id: String, log: String, stderr: String, attempt: String, cursor: String, native: String, cwd: String, handle: U32, lock: Maybe<U32>, outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), gone: Bool, superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match gone:
-    case False{}: completed(db,session,id,log,attempt,stderr,cursor,handle,lock,outcome,deliveries,again,superseded)
+    case False{}: completed(db,session,id,log,attempt,native,stderr,cursor,handle,lock,outcome,deliveries,again,superseded)
     case True{}: restart_pending(db,session,id,attempt,cursor,native,cwd,handle,lock,deliveries,again)
 
 def observed(+db: String, +session: String, +id: String, +log: String, cursor: String, +native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):

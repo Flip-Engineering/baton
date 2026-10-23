@@ -4,6 +4,7 @@ import ./store.bend as Store
 import ./recruit.bend as Recruit
 import ./knowledge.bend as Knowledge
 import ./delivery.bend as Delivery
+import ./codex-route.bend as CodexRoute
 import ../host/sqlite.bend as DB
 import ../host/text.bend as Text
 import ../host/session-lock.bend as Lock
@@ -155,6 +156,19 @@ def configured_endpoint(+db: String, +session: String, +cmd: String, log: String
 # A receiver records the adapter argv and working directory for later delivery.
 # A supplied directory updates the assignment; an empty value keeps the recorded one.
 # Registration preserves explicit stops; the wake path reads them before delivery.
+def connect_selected(+db: String, +id: String, +native: String, endpoint: String, codex: Bool) -> IO(String):
+  match codex:
+    case False{}: IO.try(String,Store.apply(db,C.Connect{id,native,endpoint}))
+    case True{}: do IO<String>:
+      executable : String <- IO.try(String,Lock.SessionLock.executable())
+      current : String <- CodexRoute.endpoint(executable,db,id,native,endpoint)
+      IO.try(String,Store.apply(db,C.Connect{id,native,current}))
+
+def connect(+db: String, +id: String, +native: String, endpoint: String) -> IO(String):
+  do IO<String>:
+    harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(id) ++ ";"))
+    connect_selected(db,id,native,endpoint,Bool.and(String.eq(harness,"codex\n"),Bool.not(String.is_empty(native))))
+
 def receiver_directory(+session: String, +cwd: String) -> String:
   "(CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN 1 ELSE (SELECT length(coalesce(workspace,''))>0 FROM sessions WHERE id=" ++ C.q(session) ++ ") END)"
 
@@ -228,6 +242,7 @@ def configure(+db: String, +id: String, +harness: String, +model: String, effort
     accepted : String <- registered(found)
     endpoint : String <- Bool.pick(IO(String),Bool.and(String.eq(harness,expected_harness),String.eq(model,expected_model)),IO.pure(String,""),configure_endpoint(db,id,harness,cmd,log,model))
     +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.configure_sql(id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort) ++ "COMMIT;"))
+    migrated : String <- Bool.pick(IO(String),Bool.and(String.eq(harness,"codex"),Bool.not(Tx.starts_with(saved,"{\"error\":\"configure-refused\""))),CodexRoute.normalize(db,id),IO.pure(String,""))
     configure_result(saved,Tx.starts_with(saved,"{\"error\":\"configure-refused\""))
 
 def principal_matches(+session: String, +harness: String, +model: String, +effort: String, +cwd: String) -> String:

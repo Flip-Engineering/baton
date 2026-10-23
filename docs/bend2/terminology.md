@@ -27,7 +27,9 @@ can also perform implementation or review work.
 derives the displayed Conductor tier from the recorded parentage. Existing
 `conductor` assignments retain that behavior. An unassigned session has the
 `player` role. `role ID operator` identifies a parentless human operator session.
-The database can contain several Principal Conductors.
+The database can contain several Principal Conductors. Assigning a role updates
+the responsibility used by routing and Conductor operations. Parentage, Ensemble
+ownership, live work and accepted input remain retained.
 
 `players` includes ordinary Players and both Conductor tiers, with their
 recorded routes, workspaces, pending input and latest reports. It excludes
@@ -48,6 +50,21 @@ An Ensemble records its owner ID, loose or tight coupling and member Players.
 The recorded owner manages membership. New Ensembles use loose coupling.
 A Player can belong to several Ensembles. [Messaging](messaging.md) defines
 hierarchy routes and peer routes through explicit tight Ensemble membership.
+Loose coupling uses parent-child and Conductor-descendant routes. Tight coupling
+also permits messages between non-operator peers sharing that Ensemble, including
+peers with different parents. Peers have no ancestor relationship. Operators use
+the top-level Conductor route.
+
+[Branching](branching-ensembles.md) adds parallel alternatives to an Ensemble with
+either coupling. It snapshots a settled agent's workspace, starts fresh
+conversations in separate worktrees, evaluates results, and continues the selected
+Player's existing conversation. `--from SESSION` defaults to the latest selected
+Player in that Ensemble, including explicit and score-based selections, or the
+current Conductor before any selection. A source needs a recorded Git workspace
+and settled native custody. Omit `--ensemble` only for a Conductor's sole owned
+Ensemble. `evaluate` records evidence; `select` without `--player` chooses the
+unique accepted best score after all branches settle successfully. Direction
+defaults to `max`. Use `help branch` for the complete usage.
 
 A Section records a capability label and members within one Ensemble. Its
 owner is the Ensemble's recorded owner. Section members must already belong
@@ -63,8 +80,8 @@ baton2 state.db section-member delivery validation principal player-a add
 baton2 state.db section delivery validation
 ```
 
-Section membership identifies capability-specific work. Messaging admission
-uses recorded parentage, Conductor responsibility and Ensemble coupling.
+Section membership supplies capability-specific labels in inspection. Message
+routes, knowledge visibility and branching use Ensemble and session records.
 
 ## Orchestra and shared knowledge
 

@@ -14,6 +14,7 @@ from receive import install_public_queue_codex
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
 CODEX_CONDUCTOR_SCRIPT = ROOT / 'bend2/scripts/codex-conductor.mjs'
+NOTICE_ENDPOINT = json.dumps(['/usr/bin/true'])
 
 
 class CodexRootAdapter(unittest.TestCase):
@@ -560,7 +561,7 @@ class CodexRootAdapter(unittest.TestCase):
 
     def test_adapter_formats_pending_report(self):
         """The adapter detects pending messages and formats them for Codex."""
-        self.coord('attach', 'root', 'codex', 'root-session', 'root-endpoint')
+        self.coord('attach', 'root', 'codex', 'root-session', NOTICE_ENDPOINT)
         self.register('w1', 'root', 'codex', 'model', 'high', '/wt', 'br', 'base')
         self.coord('report', 'turn-1', 'w1', 'Task completed successfully.')
 
@@ -602,14 +603,14 @@ class CodexRootAdapter(unittest.TestCase):
         self.assertIn('Ideate briefly', instruction)
         self.assertEqual(phase, 'exited')
         self.assertEqual((pathlib.Path(directory) / 'prompt.txt').read_text(), received)
-        self.assertEqual(json.loads(self.coord('player', 'root'))['endpoint'], 'root-endpoint')
+        self.assertEqual(json.loads(self.coord('player', 'root'))['endpoint'], NOTICE_ENDPOINT)
 
 
     def test_once_selected_associate_reports_through_retained_turn(self):
-        self.coord('attach', 'root', 'codex', 'parent-native', '')
+        self.coord('attach', 'root', 'codex', 'parent-native', NOTICE_ENDPOINT)
         self.coord('role', 'root', 'principal-conductor')
         self.register('lead', 'root', 'codex', 'stored-model', 'low')
-        self.coord('connect', 'lead', 'mock-thread', '')
+        self.coord('connect', 'lead', 'mock-thread', NOTICE_ENDPOINT)
         self.register('child', 'lead', 'fixture', 'model', 'low')
         self.coord('report', 'child-report', 'child', 'Complete child evidence. café λ🙂')
         observed_path = pathlib.Path(self.temp.name) / 'once-associate.json'
@@ -641,10 +642,10 @@ class CodexRootAdapter(unittest.TestCase):
                 'SELECT id,phase FROM executions WHERE session=?', ('lead',)).fetchone()
         self.assertEqual((report_id, worker, phase), (attempt, 'lead', 'exited'))
         lead = json.loads(self.coord('player', 'lead'))
-        self.assertEqual((lead['native'], lead['endpoint']), ('mock-thread', ''))
+        self.assertEqual((lead['native'], lead['endpoint']), ('mock-thread', NOTICE_ENDPOINT))
 
     def test_once_retains_provider_failure_and_pending_input(self):
-        self.coord('attach', 'root', 'codex', 'root-session', 'root-endpoint')
+        self.coord('attach', 'root', 'codex', 'root-session', NOTICE_ENDPOINT)
         self.register('w1', 'root', 'codex', 'model', 'high')
         self.coord('report', 'r1', 'w1', 'Keep this complete input pending on failure.')
         native = pathlib.Path(self.temp.name) / 'failed-codex.py'
@@ -667,7 +668,7 @@ class CodexRootAdapter(unittest.TestCase):
 
     def test_adapter_detects_multiple_messages(self):
         """The adapter formats multiple pending messages in one prompt."""
-        self.coord('attach', 'root', 'codex', 'root-session', 'root-endpoint')
+        self.coord('attach', 'root', 'codex', 'root-session', NOTICE_ENDPOINT)
         self.register('w1', 'root', 'codex', 'model', 'high', '/wt', 'br', 'base')
         self.register('w2', 'root', 'codex', 'model', 'high', '/wt2', 'br2', 'base')
         self.coord('report', 'r1', 'w1', 'First report.')
@@ -697,7 +698,7 @@ class CodexRootAdapter(unittest.TestCase):
 
     def test_system_instructions_contain_coordinator_commands(self):
         """The instructions piped to Codex include the coordinator CLI."""
-        self.coord('attach', 'root', 'codex', 'root-session', 'root-endpoint')
+        self.coord('attach', 'root', 'codex', 'root-session', NOTICE_ENDPOINT)
         self.register('w1', 'root', 'codex', 'model', 'high', '/wt', 'br', 'base')
         self.coord('report', 'r1', 'w1', 'done')
 
@@ -719,18 +720,17 @@ class CodexRootAdapter(unittest.TestCase):
         self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
 
         stdin_content = (pathlib.Path(self.temp.name) / 'stdin.txt').read_text()
-        self.assertIn('baton2', stdin_content)
-        self.assertIn('status', stdin_content)
-        self.assertIn('players', stdin_content)
-        self.assertIn('land', stdin_content)
-        self.assertIn('acknowledge', stdin_content)
-        self.assertIn('dispatch --to', stdin_content)
-        self.assertIn('knowledge record --kind', stdin_content)
+        for action in ['baton inbox', 'baton report "text"', 'baton ask "question"',
+                       'baton send PLAYER "text"', 'baton guide PLAYER "text"',
+                       'baton finish "summary"', 'baton confirm PLAYER', 'Use baton knowledge']:
+            self.assertIn(action, stdin_content)
+        self.assertIn('Baton records delivery and complete reads internally.', stdin_content)
+        self.assertNotIn('acknowledge', stdin_content)
         self.assertNotIn('ack ID', stdin_content)
 
     def test_adapter_passes_json_and_exec_flags(self):
         """Codex is started with exec --json flags."""
-        self.coord('attach', 'root', 'codex', 'root-session', 'root-endpoint')
+        self.coord('attach', 'root', 'codex', 'root-session', NOTICE_ENDPOINT)
         self.register('w1', 'root', 'codex', 'model', 'high', '/wt', 'br', 'base')
         self.coord('report', 'r1', 'w1', 'done')
 
@@ -758,7 +758,7 @@ class CodexRootAdapter(unittest.TestCase):
 
     def test_adapter_extracts_result_text(self):
         """The adapter extracts text from the Codex item.completed event."""
-        self.coord('attach', 'root', 'codex', 'root-session', 'root-endpoint')
+        self.coord('attach', 'root', 'codex', 'root-session', NOTICE_ENDPOINT)
         self.register('w1', 'root', 'codex', 'model', 'high', '/wt', 'br', 'base')
         self.coord('report', 'r1', 'w1', 'done')
 
@@ -826,7 +826,7 @@ class CodexRootEndToEnd(unittest.TestCase):
 
     def test_recruit_report_codex_root_processes(self):
         """Full cycle: recruit worker, worker reports, Codex root processes."""
-        self.coord('attach', 'root', 'codex', 'root-session', 'root-endpoint')
+        self.coord('attach', 'root', 'codex', 'root-session', NOTICE_ENDPOINT)
         self.coord('recruit', 'w1', 'root', 'codex', 'model', 'high',
                    self.repo, 'w1-branch', 'wt', self.base)
 
@@ -841,16 +841,16 @@ class CodexRootEndToEnd(unittest.TestCase):
         self.coord('report', 'turn-1', 'w1',
                    'Feature implemented. Committed feature.txt on w1-branch.')
 
-        mock_codex = self.directory / 'mock-codex-land.sh'
+        mock_codex = self.directory / 'mock-codex-land.py'
         mock_codex.write_text(
-            '#!/bin/sh\n'
-            'cat > /dev/null\n'
-            'echo \'{"type":"thread.started","thread_id":"mock"}\'\n'
-            'echo \'{"type":"turn.started"}\'\n'
-            f'{EXE} {self.db} ack turn-1 root codex-root-ack\n'
-            f'{EXE} {self.db} land w1 {self.repo} main\n'
-            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Acknowledged and landed."}}\'\n'
-            'echo \'{"type":"turn.completed"}\'\n'
+            '#!' + sys.executable + '\nimport json,subprocess,sys\n'
+            'sys.stdin.read()\n'
+            'print(json.dumps({"type":"thread.started","thread_id":"mock"}),flush=True)\n'
+            'print(json.dumps({"type":"turn.started"}),flush=True)\n'
+            f'subprocess.run({[str(EXE), str(self.db), "as", "root", "inbox"]!r},check=True,stdout=subprocess.DEVNULL)\n'
+            f'subprocess.run({[str(EXE), str(self.db), "land", "w1", str(self.repo), "main"]!r},check=True)\n'
+            'print(json.dumps({"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Reviewed and landed."}}),flush=True)\n'
+            'print(json.dumps({"type":"turn.completed"}),flush=True)\n'
         )
         mock_codex.chmod(0o755)
 
@@ -862,7 +862,8 @@ class CodexRootEndToEnd(unittest.TestCase):
         self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
 
         inbox = json.loads(self.coord('inbox', 'root'))
-        self.assertEqual(len(inbox), 0, 'Root inbox should be empty after ack')
+        self.assertEqual(len(inbox), 0, 'Successful native completion handles the complete inbox read')
+        self.assertTrue(json.loads(self.coord('delivery', 'turn-1'))['receipt'].startswith('native-turn:'))
 
         main_tip = self.git('rev-parse', 'main').strip()
         self.assertEqual(main_tip, player_commit)
