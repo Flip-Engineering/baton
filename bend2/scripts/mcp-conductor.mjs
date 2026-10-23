@@ -183,11 +183,18 @@ function coordinatorSurface() {
   return String(help.stdout ?? '') + String(help.stderr ?? '');
 }
 
+function contextCommandSurface() {
+  const help = spawnSync(coordinatorExe, ['help', 'context'], { encoding: 'utf8', maxBuffer: Infinity });
+  return String(help.stdout ?? '') + String(help.stderr ?? '');
+}
+
 const commandSurface = coordinatorSurface();
 const batchMessaging = ['outbox', 'delivery-batch', 'message-batch'].every((name) => commandSurface.includes(name));
 const inputDetail = commandSurface.includes('input MESSAGE_ID');
 const contextualActions = /baton2? as SESSION ACTION/.test(commandSurface);
 const replInput = contextualActions && /^Actions:.*\brepl\b/m.test(commandSurface);
+const contextSurface = contextualActions ? contextCommandSurface() : '';
+const contextEval = contextualActions && contextSurface.includes('context engines|install|query|eval|result');
 const nativeAttachmentInput = commandSurface.includes('native-attachment-input');
 const dispatchInput = commandSurface.includes('dispatch --stdin');
 const taskInput = dispatchInput || commandSurface.includes('task --stdin');
@@ -203,6 +210,7 @@ const unavailableTools = new Set([
   ...(!taskInput ? ['baton2_task'] : []),
   ...(!contextualActions ? ['baton2_action'] : []),
   ...(!replInput ? ['baton2_repl'] : []),
+  ...(!contextEval ? ['baton2_context_eval'] : []),
 ]);
 
 function messageInstructions() {
@@ -393,6 +401,16 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {
       query: { type: 'string' }, path: { type: 'string', description: 'Path to the query request JSON file' },
     }, required: ['path'], additionalProperties: false },
+  },
+  {
+    name: 'baton2_context_eval',
+    description: 'Evaluate one expression in an already launched native runtime session as the attached session and retain the complete result in this database. Baton submits the existing runtime evaluate request with its control and evaluation effects; no second evaluator exists. Omitted query identity is generated; omitted cwd uses the attached session recorded workspace, or "." when none is recorded.',
+    inputSchema: { type: 'object', properties: {
+      session: { type: 'string', description: 'Launched runtime session identity' },
+      expression: { type: 'string', description: 'Expression to evaluate in the selected runtime session' },
+      frame: { type: 'string', description: 'Optional admitted frame handle' },
+      query: { type: 'string' }, cwd: { type: 'string' },
+    }, required: ['session', 'expression'], additionalProperties: false },
   },
   {
     name: 'baton2_context_result',
@@ -1047,6 +1065,15 @@ function handleToolCall(msg) {
       case 'baton2_context_query_file':
         result = args.query !== undefined ? coord('context-query-file', sessionId, args.query, args.path)
           : contextualAction('context', ['query', '--file', args.path]);
+        break;
+      case 'baton2_context_eval':
+        result = args.query !== undefined
+          ? coord('context-eval', sessionId, args.query, args.session,
+                  args.expression, args.frame ?? '', args.cwd ?? '')
+          : contextualAction('context', ['eval', '--session', args.session,
+              '--expression', args.expression,
+              ...(args.frame !== undefined ? ['--frame', args.frame] : []),
+              ...(args.cwd !== undefined ? ['--cwd', args.cwd] : [])]);
         break;
       case 'baton2_context_result':
         result = args.query !== undefined ? coord('context-result', args.query)

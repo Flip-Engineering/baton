@@ -1133,6 +1133,20 @@ void handler(const char *dynamic) {
             self.assertEqual(observed['capture']['epoch'], observed['epoch'], json.dumps(observed))
             self.assertTrue(all(isinstance(row['response']['result'], list)
                                 for row in observed['records']), json.dumps(observed))
+            runtime_invoke('context-eval', 'validation-owner', 'installed-runtime-evaluate',
+                           runtime, '1 + 1', '', str(worktree))
+            evaluated = runtime_result('installed-runtime-evaluate')
+            self.assertEqual((evaluated['intent'], evaluated['runtime']),
+                             ('evaluate', runtime), json.dumps(evaluated))
+            self.assertIn(evaluated['state'], ('running', 'paused'), json.dumps(evaluated))
+            self.assertEqual(evaluated['result']['value'], 2, json.dumps(evaluated))
+            runtime_invoke('as', 'validation-owner', 'context', 'eval',
+                           '--session', runtime, '--expression', '2 + 2',
+                           '--id', 'installed-runtime-evaluate-context')
+            contextual_eval = runtime_result('installed-runtime-evaluate-context')
+            self.assertEqual((contextual_eval['intent'], contextual_eval['runtime']),
+                             ('evaluate', runtime), json.dumps(contextual_eval))
+            self.assertEqual(contextual_eval['result']['value'], 4, json.dumps(contextual_eval))
             source_map.unlink()
             runtime_submit('installed-runtime-missing-map',
                            {'intent': 'observe', 'session': runtime}, ['frames'], [])
