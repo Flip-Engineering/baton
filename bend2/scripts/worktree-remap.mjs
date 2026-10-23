@@ -42,29 +42,45 @@ function gitdirOf(worktree) {
   return match ? match[1].trim() : null;
 }
 
-// A repair is planned only when the worktree's .git file or the admin backlink still
-// names the run spelling. The main repository is found from the admin directory's
-// commondir file, not from the recorded paths.
+// A repair is planned when the worktree's .git file or the admin backlink still names
+// the run spelling and the admin directory exists. The main repository is found from
+// the admin directory's commondir file, not from the recorded paths. A missing admin
+// directory is reported as adminMissing; git cannot repair that state, so no repair is
+// planned for it and the workspace rewrite still applies.
 function repairFor(worktree, from, to) {
   const gitdir = gitdirOf(worktree);
-  if (gitdir === null) return null;
+  if (gitdir === null) return { repair: null, adminMissing: false };
   const admin = remapPath(gitdir, from, to);
+  if (!isDirectory(admin)) return { repair: null, adminMissing: true };
   const backlink = readOptional(join(admin, 'gitdir'));
   const namesRun = under(gitdir, from) || (backlink !== null && under(backlink.trim(), from));
-  if (!namesRun) return null;
+  if (!namesRun) return { repair: null, adminMissing: false };
   const commondir = readOptional(join(admin, 'commondir'));
-  if (commondir === null) throw new Error(`no commondir in ${admin}`);
-  return { repo: dirname(resolve(admin, commondir.trim())), worktree };
+  if (commondir === null) throw new Error(`admin directory ${admin} has no commondir`);
+  return { repair: { repo: dirname(resolve(admin, commondir.trim())), worktree }, adminMissing: false };
 }
 
 function isDirectory(path) {
   return existsSync(path) && statSync(path).isDirectory();
 }
 
-// Plans one candidate row. Any probe failure skips the whole row, so a row is never
-// written with a repair that was not planned.
+// Plans one candidate row. A row is rewritten only as a whole: a skip on any field
+// clears the workspace rewrite, the endpoint rewrite and the repair for that row.
+// Endpoint items are rewritten only when the stored text is exactly the canonical JSON
+// of its parsed value, so the rewrite changes nothing but the prefix.
+// An output log need not exist yet, so an endpoint item needs only an existing parent
+// directory after the mapping.
 function planRow(candidate, from, to) {
-  const row = { id: candidate.id, from: candidate.workspace, to: null, endpointFrom: candidate.endpoint, endpointTo: null, skip: null };
+  const row = {
+    id: candidate.id,
+    from: candidate.workspace,
+    to: null,
+    endpointFrom: candidate.endpoint,
+    endpointTo: null,
+    adminMissing: false,
+    changes: [],
+    skip: null,
+  };
   let repair = null;
   try {
     if (under(candidate.workspace ?? '', from)) {
@@ -73,16 +89,28 @@ function planRow(candidate, from, to) {
         row.skip = 'workspace-target-missing';
       } else {
         row.to = target;
-        repair = repairFor(target, from, to);
+        row.changes.push({ field: 'workspace', from: candidate.workspace, to: target });
+        const probe = repairFor(target, from, to);
+        repair = probe.repair;
+        row.adminMissing = probe.adminMissing;
       }
     }
     if (candidate.endpoint !== null) {
       const argv = JSON.parse(candidate.endpoint);
-      const mapped = argv.map((item) => (typeof item === 'string' ? remapPath(item, from, to) : item));
-      const changed = mapped.map((item, index) => item !== argv[index]);
-      if (changed.some(Boolean)) {
-        if (mapped.some((item, index) => changed[index] && !existsSync(item))) row.skip ??= 'endpoint-target-missing';
-        else row.endpointTo = JSON.stringify(mapped);
+      if (JSON.stringify(argv) !== candidate.endpoint) {
+        row.skip ??= 'endpoint-not-canonical-json';
+      } else {
+        const mapped = argv.map((item) => (typeof item === 'string' ? remapPath(item, from, to) : item));
+        const changed = mapped.map((item, index) => item !== argv[index]);
+        if (changed.some(Boolean)) {
+          if (mapped.some((item, index) => changed[index] && !isDirectory(dirname(item)))) row.skip ??= 'endpoint-parent-missing';
+          else {
+            row.endpointTo = JSON.stringify(mapped);
+            argv.forEach((item, index) => {
+              if (changed[index]) row.changes.push({ field: `endpoint[${index}]`, from: item, to: mapped[index] });
+            });
+          }
+        }
       }
     }
   } catch (error) {
@@ -91,6 +119,8 @@ function planRow(candidate, from, to) {
   if (row.skip !== null) {
     row.to = null;
     row.endpointTo = null;
+    row.adminMissing = false;
+    row.changes = [];
     repair = null;
   }
   return { row, repair };

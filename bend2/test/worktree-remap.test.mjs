@@ -86,6 +86,43 @@ test('recorded run paths are rewritten after the tree moves and the worktree is 
   assert.equal(readFileSync(join(s.worktree, 'u.txt'), 'utf8'), 'untracked\n');
 });
 
+test('a worktree whose admin directory is missing is rewritten and reported, not repaired', (t) => {
+  const s = scenario(t);
+  rmSync(join(s.repo, '.git', 'worktrees', 'wt'), { recursive: true, force: true });
+
+  const plan = planRecovery(s.database, { from: s.from, to: s.to });
+  const row = plan.rows.find((item) => item.id === 'player-972');
+  assert.equal(row.skip, null);
+  assert.equal(row.to, s.worktree);
+  assert.equal(row.adminMissing, true);
+  assert.deepEqual(plan.repairs, []);
+
+  applyRecovery(s.database, plan);
+  assert.equal(readRows(s.database).find((item) => item.id === 'player-972').workspace, s.worktree);
+  assert.equal(readFileSync(join(s.worktree, 'a.txt'), 'utf8'), 'two, uncommitted\n');
+});
+
+test('an endpoint output log is rewritten when its parent directory exists, even if the log does not', (t) => {
+  const s = scenario(t);
+  const log = join(s.from, 'bin', 'receive.log');
+  const db = new DatabaseSync(s.database);
+  db.prepare('UPDATE sessions SET endpoint=? WHERE id=?').run(
+    JSON.stringify(['node', join(s.from, 'bin', 'tool'), 'receive', 'player-972', log]),
+    'player-972',
+  );
+  db.close();
+
+  const plan = planRecovery(s.database, { from: s.from, to: s.to });
+  const row = plan.rows.find((item) => item.id === 'player-972');
+  assert.equal(row.skip, null);
+  assert.deepEqual(row.changes.map((change) => change.field), ['workspace', 'endpoint[1]', 'endpoint[4]']);
+
+  applyRecovery(s.database, plan);
+  const endpoint = JSON.parse(readRows(s.database).find((item) => item.id === 'player-972').endpoint);
+  assert.equal(endpoint[4], join(s.to, 'bin', 'receive.log'));
+  assert.equal(readFileSync(join(s.to, 'bin', 'tool'), 'utf8'), 'tool\n');
+});
+
 test('a second recovery run plans nothing and changes nothing', (t) => {
   const s = scenario(t);
   applyRecovery(s.database, planRecovery(s.database, { from: s.from, to: s.to }));
