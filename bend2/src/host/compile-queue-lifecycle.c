@@ -1634,9 +1634,9 @@ static int cq_backfill(const char *state, char **out, size_t *length) {
    memory used outside the queue. The rise of outside use from the first sample
    is raised in outside-growth when the run ends. */
 typedef struct {
-  unsigned long long next, begun, last;
+  unsigned long long next, begun, last, claims;
   long long peak, baseline, rise;
-  int samples, track;
+  int samples, track, have_claims;
   char state[PATH_MAX];
 } CqSampler;
 
@@ -1653,13 +1653,34 @@ static void cq_sampler_start(CqSampler *sampler, const char *stdout_path) {
 }
 
 #ifdef __linux__
+/* An order-independent hash of the ids of the running claims. */
+static unsigned long long cq_claim_set(const CqAdmission *view) {
+  unsigned long long set = 0;
+  for (size_t i = 0; i < view->claim_count; i++)
+    set += cq_fnv(14695981039346656037ull, view->claims[i].id, strlen(view->claims[i].id));
+  return set;
+}
+
+/* A sample is taken only when every running claim has a measured value above
+   zero and the set of running claims is the same in two reads of this sample and
+   in the previous sample. A claim that started or ended in that interval has a
+   value that does not belong to the same moment as MemAvailable, and its memory
+   would count as outside use. */
 static void cq_sample_outside(CqSampler *sampler, long long own_kb, unsigned long long now) {
   int fd = -1;
   if (!sampler->track || cq_admission_lock(sampler->state, &fd)) return;
   CqAdmission view;
   if (!cq_admission_load(sampler->state, &view) && view.total > 0) {
     long long outside = cq_outside_use(&view);
-    if (view.unreliable) { cq_admission_free(&view); cq_admission_unlock(fd); return; }
+    int steady = !view.unreliable;
+    for (size_t i = 0; i < view.claim_count; i++) if (view.claims[i].current <= 0) steady = 0;
+    unsigned long long set = cq_claim_set(&view);
+    CqAdmission again;
+    if (cq_admission_load(sampler->state, &again) || cq_claim_set(&again) != set) steady = 0;
+    cq_admission_free(&again);
+    if (sampler->have_claims && sampler->claims != set) steady = 0;
+    sampler->claims = set; sampler->have_claims = 1;
+    if (!steady) { cq_admission_free(&view); cq_admission_unlock(fd); return; }
     int listed = 0;
     for (size_t i = 0; i < view.claim_count; i++) if (!strcmp(view.claims[i].id, cq_my_claim)) listed = 1;
     /* After the compile marker the claim is released but the command still uses memory. */

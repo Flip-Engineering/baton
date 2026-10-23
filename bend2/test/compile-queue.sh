@@ -957,6 +957,97 @@ if [ -r /proc/meminfo ]; then
     || pass 'jobs with recorded peaks run together once a growth is recorded'
 fi
 
+# A run records the rise of outside memory use only from samples in which every
+# running claim has a measured value above zero and the set of running claims
+# does not change. A claim that cannot be measured, or one that starts or ends
+# between two samples, would otherwise count its memory as outside use. The test
+# allocates memory outside the queue while a job runs: with no other claim the run
+# records the rise, with a claim of value zero or with claims that change at every
+# sample it records none.
+if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 8388608 ]; then
+  cat > "$T/claims.py" <<'PY'
+import fcntl, os, sys, time
+mode, state, seconds = sys.argv[1], sys.argv[2], float(sys.argv[3])
+stat = open('/proc/self/stat').read().rsplit(')', 1)[1].split()
+directory = state + '/admission/running'
+os.makedirs(directory, exist_ok=True)
+
+def claim(root, measure):
+    name = '%020d-%010d' % (time.time_ns(), os.getpid())
+    path = directory + '/' + name
+    handle = open(path, 'w')
+    handle.write('pid=%d\nstarttime=%s\nroot=%d\nmeasure=%s\nkey=%064x\ngroup=\nentry=\nexpected_kb=1\nhistory=1\nbackfill=0\nadmitted_ns=%d\n'
+                 % (os.getpid(), stat[19], root, measure, time.time_ns(), time.time_ns()))
+    handle.flush()
+    fcntl.flock(handle, fcntl.LOCK_EX)
+    return path, handle
+
+end = time.monotonic() + seconds
+if mode == 'zero':
+    gone = 4194303
+    while os.path.exists('/proc/%d' % gone):
+        gone -= 1
+    path, handle = claim(gone, 'tree')
+    time.sleep(seconds)
+    os.unlink(path)
+elif mode == 'rotate':
+    while time.monotonic() < end:
+        path, handle = claim(os.getpid(), 'tree')
+        time.sleep(0.3)
+        os.unlink(path)
+        handle.close()
+PY
+  cat > "$T/ballast.py" <<'PY'
+import os, sys, time
+go, seconds = sys.argv[1], float(sys.argv[2])
+while not os.path.exists(go):
+    time.sleep(0.05)
+block = b'x' * (3 << 30)
+time.sleep(seconds)
+PY
+  gr_fake=$(fresh_fake growth)
+  gr_args() { printf '%s\n' --kind cc --source-root "$T" --state-root "$gr_state" --cwd "$T" \
+    --compiler "$gr_fake" --linker "$gr_fake" --version fake-version --input "$T/input.c" \
+    --artifact "binary=$T/growth-$gr_name" --option "test=growth-$gr_name"; }
+  gr_case() { # name mode; leaves the recorded growth in gr_value
+    gr_name=$1
+    gr_state=$(fresh_state "growth-$1")
+    printf 'growth_kb=0\n' > "$gr_state/outside-growth"
+    gr_key=$(BATON_COMPILE_QUEUE_ROOT=$gr_state sh "$QUEUE" key $(gr_args) \
+      -- "$gr_fake" --tag "growth-$1" --log "$LOG" -o "$T/growth-$1" "$T/input.c" --sleep 9)
+    (umask 0007; mkdir -p -m 2770 "$gr_state/keys/$gr_key")
+    printf 'peak_kb=64\n' > "$gr_state/keys/$gr_key/peak"
+    : > "$LOG"; rm -f "$T/go-$1"
+    python3 -I "$T/ballast.py" "$T/go-$1" 8 & gr_ballast=$!
+    BATON_COMPILE_QUEUE_ROOT=$gr_state sh "$QUEUE" run $(gr_args) \
+      -- "$gr_fake" --tag "growth-$1" --log "$LOG" -o "$T/growth-$1" "$T/input.c" --sleep 9 >"$T/growth-$1.out" 2>"$T/growth-$1.err" & gr_job=$!
+    i=0
+    while [ "$i" -lt 200 ] && ! grep -q "growth-$1" "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
+    gr_claims=
+    if [ "$2" != none ]; then python3 -I "$T/claims.py" "$2" "$gr_state" 9 & gr_claims=$!; fi
+    sleep 3
+    : > "$T/go-$1"
+    wait "$gr_job" || bad "growth $1: requester failed"
+    kill "$gr_ballast" 2>/dev/null; wait "$gr_ballast" 2>/dev/null
+    [ -z "$gr_claims" ] || { wait "$gr_claims" 2>/dev/null; }
+    gr_value=$(sed -n 's/^growth_kb=//p' "$gr_state/outside-growth")
+  }
+  gr_case none none; growth_none=$gr_value
+  [ "${growth_none:-0}" -ge 2000000 ] \
+    && pass 'a run records the rise of memory used outside the queue' \
+    || bad "no rise recorded with memory allocated outside the queue: ${growth_none:-none}"
+  gr_case zero zero; growth_zero=$gr_value
+  [ "${growth_zero:-x}" = 0 ] \
+    && pass 'a claim measured at zero records no outside growth' \
+    || bad "outside growth recorded beside a claim measured at zero: ${growth_zero:-none}"
+  gr_case rotate rotate; growth_rotate=$gr_value
+  [ "${growth_rotate:-x}" = 0 ] \
+    && pass 'claims that change between samples record no outside growth' \
+    || bad "outside growth recorded while claims changed: ${growth_rotate:-none}"
+else
+  printf 'SKIP outside growth samples: less than 8 GB available\n'
+fi
+
 # A command that exits without writing a declared artifact ends with a failure
 # record that names the artifact.
 : > "$LOG"
