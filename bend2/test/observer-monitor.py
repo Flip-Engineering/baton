@@ -151,6 +151,7 @@ class ObserverMonitor(unittest.TestCase):
         self.log = self.directory / 'native.log'
         self.uuid_marker = self.directory / 'native-uuid.txt'
         self.release_marker = self.directory / 'release-later-output'
+        self.hold_marker = self.directory / 'let-native-exit'
         self.native = self.directory / 'native.py'
         self.native.write_text(
             '#!' + sys.executable + '\n'
@@ -181,7 +182,7 @@ class ObserverMonitor(unittest.TestCase):
     def start_attempt(self, stderr_text='', native_uuid=NATIVE_UUID, attempt_id='attempt1',
                       stdout_text='monitor-line\n', sleep_seconds=8,
                       later_stdout_text='', stdout_file=None, later_stdout_file=None,
-                      stdout_fixture=None, harness='codex', spool_timeout=10):
+                      stdout_fixture=None, harness='codex', spool_timeout=10, hold=False):
         native_lines = [
             '#!' + sys.executable,
             'import pathlib,sys,time',
@@ -226,7 +227,10 @@ class ObserverMonitor(unittest.TestCase):
                     ])
                 if later_stdout_file is not None:
                     native_lines.extend(stream(later_stdout_file))
-        native_lines.append('time.sleep(' + repr(sleep_seconds) + ')')
+        if hold:
+            native_lines.append('while not pathlib.Path(' + repr(str(self.hold_marker)) + ').exists(): time.sleep(0.02)')
+        else:
+            native_lines.append('time.sleep(' + repr(sleep_seconds) + ')')
         self.native.write_text('\n'.join(native_lines) + '\n')
         self.native.chmod(0o700)
         self.attempt_id = attempt_id
@@ -709,9 +713,10 @@ class ObserverMonitor(unittest.TestCase):
                  '"content":[{"type":"text","text":"terminal"}]}],"padding":"'
                  + ('x' * 8192) + '"}\n')
         observer, birth, manifest = self.start_attempt(
-            stdout_text=frame, sleep_seconds=3, harness='omp')
+            stdout_text=frame, hold=True, harness='omp')
         self.assertEqual(self.observer_argv[11], 'omp',
                          'the persisted receive argv must retain the bare OMP harness')
+        self.hold_marker.touch()
         self.wait_native_exit(timeout=10)
         recovered = self.recover(observer)
         self.assertNotEqual(recovered.returncode, 0,
@@ -982,14 +987,9 @@ class ObserverMonitor(unittest.TestCase):
         partial = '{"type":"tool_call","delta":"partial'
         observer, birth, manifest = self.start_attempt(
             native_uuid=uuid, attempt_id='attempt-1714',
-            stdout_text=partial, sleep_seconds=1)
-        deadline = time.monotonic() + 6
-        while time.monotonic() < deadline:
-            state = subprocess.run(['ps', '-o', 'stat=', '-p', str(self.native_process)],
-                                   text=True, capture_output=True).stdout.strip()
-            if not state or state.startswith('Z'):
-                break
-            time.sleep(0.02)
+            stdout_text=partial, hold=True)
+        self.hold_marker.touch()
+        self.wait_native_exit(timeout=10)
         result = self.recover(observer)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual((self.attempt / 'stdout').read_text(), partial)
