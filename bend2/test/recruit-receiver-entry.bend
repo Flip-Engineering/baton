@@ -2,6 +2,7 @@ import Base
 import ../src/coordinator/control.bend as Control
 import ../src/coordinator/commands.bend as C
 import ../src/coordinator/store.bend as Store
+import ../src/host/instance.bend as Custody
 
 def write_command(db: String, command: C.Command) -> IO(Unit):
   do IO<Unit>:
@@ -15,6 +16,8 @@ def ensure(db: String) -> IO(Unit):
 
 def run(args: List<String>) -> IO(Unit):
   match args:
+    case "--instance-owner" <> db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
+    case "--instance-shutdown" <> db <> Nil{}: IO.try(Unit,Custody.Instance.shutdown(db))
     case +flag <> +db <> Nil{}:
       Bool.pick(IO(Unit),String.eq(flag,"--ensure-schema"),ensure(db),
         Bool.pick(IO(Unit),String.eq(db,"players"),write_command(flag,C.Players{}),

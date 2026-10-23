@@ -62,6 +62,7 @@ class RecruitReceiver(unittest.TestCase):
                  'commit', '-qm', 'Initial fixture', '--allow-empty')
         self.base = self.git('rev-parse', 'HEAD').strip()
         self.call('--ensure-schema', self.db)
+        self.addCleanup(self.call, '--instance-shutdown', self.db)
         self.call(self.db, 'attach', 'parent', 'codex', 'fixture-native', '[]')
 
     def save(self, path, value):
