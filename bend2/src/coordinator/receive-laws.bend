@@ -16,6 +16,7 @@
 # receive tests.
 import Base
 import ./receive.bend as Receive
+import ./accounts.bend as Accounts
 import ./usage-windows.bend as UW
 import ./stop.bend as Stop
 import ../host/process.bend as P
@@ -438,13 +439,14 @@ def surviving_attempt_recovery_preserves_its_guard(db,session,lock,directory,arg
 
 def completion_prepares_before_owner_release(+db: String, +session: String, +id: String, +log: String, attempt: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    failed : Bool <- Receive.outcome_failed(db,outcome)
+    +failed : Bool <- Receive.outcome_failed(db,outcome)
     transient : Bool <- Receive.transient_provider_error(db,outcome)
     +pending_cursor : String <- IO.pure(String,Bool.pick(String,Bool.and(failed,Bool.not(Bool.and(transient,Receive.observation_clear(outcome)))),cursor,"0"))
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
+    settled : Unit <- Accounts.attempt_settled(db,session,attempt,failed,Receive.terminal_event(outcome))
     observer_released : Unit <- Receive.release_observer(lock)
     native_released : Unit <- Receive.release_native(db,handle)
-    finished : Result<&1,&1,U32 & String,Unit> <- Receive.finish_pending(db,session,id,attempt,log,pending_cursor,outcome,deliveries,again,u => Receive.ack_then_retire(handle),superseded)
+    finished : Result<&1,&1,U32 & String,Unit> <- Receive.finish_pending(db,session,id,attempt,log,pending_cursor,outcome,deliveries,again,u => Receive.ack_then_retire(db,session,attempt,handle),superseded)
     Receive.wake_if_kept(db,session,pending_cursor,superseded,finished)
 
 law native_completion_is_committed_before_owner_release:
