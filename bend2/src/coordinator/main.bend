@@ -30,7 +30,11 @@ import ./agent-input.bend as AgentInput
 import ./agent-native.bend as AgentNative
 import ./repl.bend as Repl
 import ./task-input.bend as TaskInput
+import ./codex-inbox.bend as CodexInbox
+import ./repl.bend as Repl
 import ../host/text.bend as T
+import ../host/sqlite.bend as DB
+import ../git/text.bend as Tx
 import ../host/process.bend as P
 import ./stall.bend as Stall
 import ../host/instance.bend as Custody
@@ -101,6 +105,10 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
         saved : String <- Control.receiver(db,session,cmd,log,cwd)
         woken : Unit <- IO.try(Unit,Receive.wake_due(db,session,"0",target => Receive.wake_launch(db,target)))
         print_result(saved)
+    case C.Connect{id,native,endpoint}:
+      do IO<Unit>:
+        saved : String <- Control.connect(db,id,native,endpoint)
+        print_result(saved)
     case C.Configure{+id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort}:
       do IO<Unit>:
         saved : String <- Control.configure(db,id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort)
@@ -143,9 +151,9 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.Orchestra{}: read_command(db,C.Orchestra{})
     case C.Turns{id}: read_command(db,C.Turns{id})
     case C.Recruit{id,parent,harness,model,effort,repo,branch,path,base}:
-      Recruit.recruit(db,id,parent,harness,model,effort,repo,branch,path,base)
+      Control.recruit(db,id,parent,harness,model,effort,repo,branch,path,base)
     case C.Join{id,parent,harness,model,effort,path}:
-      Recruit.join(db,id,parent,harness,model,effort,path)
+      Control.join(db,id,parent,harness,model,effort,path)
     case C.Land{player,repo,target}:
       Land.land_player(db,player,repo,target)
     case C.LandAt{player,repo,target,commit}:
@@ -193,6 +201,7 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.StoragePolicy{}: StoragePolicy.run_policy(db)
     case C.StoragePreview{session}: StoragePolicy.run_preview(db,session)
     case C.StorageApply{session}: StoragePolicy.run_apply(db,session)
+    case C.StorageCollect{session}: StoragePolicy.run_collect(db,session)
     case C.Worktree{id}: Recruit.inspect(db,id)
     case C.KnowledgeRecord{id,author,claim,evidence,limits}:
       Knowledge.record(db,id,author,claim,evidence,limits)
@@ -237,6 +246,8 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       ContextNative.install_module(module_id,source)
     case C.ContextQueryFile{owner,query,path}:
       ContextNative.query_file(db,owner,query,path)
+    case C.ContextEval{owner,query,session,expression,frame,cwd}:
+      ContextNative.eval(db,owner,query,session,expression,frame,cwd)
     case C.ContextResult{query}:
       ContextNative.result(db,query)
     case C.Stall{}: Stall.report(db)
@@ -247,15 +258,20 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       IO.try(Unit,Instance.owner_status(db))
     case C.Receive{+session,cmd,model,effort,cwd,log,+message}: do IO<Unit>:
       result : Result<&1,&1,U32 & String,Unit> & String <- Receive.run(db,session,cmd,model,effort,cwd,log,message)
-      Receive.report_result(db,session,message,result)
+      reported : Unit <- Receive.report_result(db,session,message,result)
+      collected : Unit <- StoragePolicy.collect_settled(db,session)
+      IO.pure(Unit, collected)
     case C.RecoverObserver{session,observer}:
       IO.try(Unit,Receive.recover_observer(db,session,observer))
-    case C.RunTurn{player,id,cmd,model,effort,cwd,task,log,session}:
-      Turn.run(db,player,id,cmd,model,effort,cwd,task,log,session)
-    case C.ObserveFile{id,player,path}:
+    case C.RunTurn{player,id,cmd,model,effort,cwd,task,log,+session}: do IO<Unit>:
+      ran : Unit <- Turn.run(db,player,id,cmd,model,effort,cwd,task,log,session)
+      collected : Unit <- StoragePolicy.collect_settled(db,session)
+      IO.pure(Unit, collected)
+    case C.ObserveFile{id,+player,path}:
       do IO<Unit>:
         event : String <- IO.try(String,T.Text.read(path))
-        run(db,C.Observe{id,player,event,False{}})
+        +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+        run(db,C.Observe{id,player,event,False{},Tx.trim_nl(harness)})
     case C.NativeReply{parent,id,response}: NativeRequests.reply(db,parent,id,response)
     case C.NativeReplyFile{parent,id,path}:
       do IO<Unit>:
@@ -291,6 +307,7 @@ type NormalCliKind is Data:
   TaskReadInput{}
   AgentCurrentInput{}
   NativeAttachmentInput{}
+  CodexInboxInput{}
   ReplObserverInput{}
   OrdinaryInput{}
 
@@ -307,6 +324,10 @@ def normal_cli_kind_existing(+head: String) -> NormalCliKind:
 def normal_cli_kind(+head: String) -> NormalCliKind:
   match head:
     case "repl-observe": ReplObserverInput{}
+    case "codex-inbox-session": CodexInboxInput{}
+    case "codex-inbox-follow": CodexInboxInput{}
+    case "codex-inbox-deliver": CodexInboxInput{}
+    case "codex-input-witness": CodexInboxInput{}
     case other: normal_cli_kind_existing(other)
 
 def normal_cli_fallback_if(project: Bool, db: String, head: String, tail: List<String>) -> IO(Unit):
@@ -321,8 +342,10 @@ def normal_cli_fallback(+db: String, head: String, tail: List<String>) -> IO(Uni
 
 def normal_native_args(+db: String, args: List<String>) -> IO(Unit):
   match args:
-    case "turn-text" <> player <> id <> cmd <> model <> effort <> cwd <> body <> log <> session <> Nil{}:
-      Turn.run_text(db,player,id,cmd,model,effort,cwd,body,log,session)
+    case "turn-text" <> player <> id <> cmd <> model <> effort <> cwd <> body <> log <> +session <> Nil{}: do IO<Unit>:
+      ran : Unit <- Turn.run_text(db,player,id,cmd,model,effort,cwd,body,log,session)
+      collected : Unit <- StoragePolicy.collect_settled(db,session)
+      IO.pure(Unit, collected)
     case other: execute(db,C.parse(other))
 
 def normal_cli_native(args: List<String>, +db: String, head: String) -> IO(Unit):
@@ -342,7 +365,7 @@ def normal_cli_contextual(args: List<String>, +db: String, head: String) -> IO(U
 def normal_cli_settle(args: List<String>, db: String, head: String) -> IO(Unit):
   match args:
     case session <> native <> turn <> status <> Nil{}:
-      AgentInput.settle_codex(db,session,native,turn,status)
+      IO.pure(Unit,Unit{})
     case other: normal_cli_fallback(db,head,other)
 
 def normal_cli_task_record(args: List<String>, db: String, head: String) -> IO(Unit):
@@ -372,6 +395,36 @@ def normal_cli_native_attachment(args: List<String>, db: String, head: String) -
     case session <> component <> Nil{}: NativeInitialInput.attachment(db,session,component)
     case other: normal_cli_fallback(db,head,other)
 
+def normal_cli_codex_session(args: List<String>, db: String, head: String) -> IO(Unit):
+  match args:
+    case session <> native <> message <> token <> Nil{}:
+      IO.try(Unit,CodexInbox.session(db,session,native,message,token))
+    case session <> native <> message <> Nil{}:
+      IO.try(Unit,CodexInbox.session(db,session,native,message,""))
+    case other: normal_cli_fallback(db,head,other)
+
+def normal_cli_codex_follow(args: List<String>, db: String, head: String) -> IO(Unit):
+  match args:
+    case session <> native <> Nil{}: IO.try(Unit,CodexInbox.follow(db,session,native))
+    case other: normal_cli_fallback(db,head,other)
+
+def normal_cli_codex_deliver(args: List<String>, db: String, head: String) -> IO(Unit):
+  match args:
+    case native <> pointer <> Nil{}: IO.try(Unit,CodexInbox.deliver(db,native,pointer))
+    case other: normal_cli_fallback(db,head,other)
+
+def normal_cli_codex_witness(args: List<String>, db: String, head: String) -> IO(Unit):
+  match args:
+    case native <> Nil{}: IO.try(Unit,CodexInbox.witness(db,native))
+    case other: normal_cli_fallback(db,head,other)
+
+def normal_cli_codex(args: List<String>, db: String, head: String) -> IO(Unit):
+  match head:
+    case "codex-inbox-session": normal_cli_codex_session(args,db,head)
+    case "codex-inbox-follow": normal_cli_codex_follow(args,db,head)
+    case "codex-inbox-deliver": normal_cli_codex_deliver(args,db,head)
+    case "codex-input-witness": normal_cli_codex_witness(args,db,head)
+    case other: normal_cli_fallback(db,other,args)
 def normal_cli_repl_observer(db: String, args: List<String>) -> IO(Unit):
   match args:
     case cell <> Nil{}: Repl.observe(db,cell)
@@ -387,6 +440,7 @@ def normal_cli_selected(kind: NormalCliKind, db: String, head: String, args: Lis
     case TaskReadInput{}: normal_cli_task_read(args,db,head)
     case AgentCurrentInput{}: normal_cli_agent_current(args,db,head)
     case NativeAttachmentInput{}: normal_cli_native_attachment(args,db,head)
+    case CodexInboxInput{}: normal_cli_codex(args,db,head)
     case ReplObserverInput{}: normal_cli_repl_observer(db,args)
     case OrdinaryInput{}: normal_cli_fallback(db,head,args)
 

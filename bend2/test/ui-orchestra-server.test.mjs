@@ -26,6 +26,8 @@ function fixture() {
     CREATE TABLE turns (id TEXT PRIMARY KEY, worker TEXT, event TEXT);
     CREATE TABLE messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT, sender TEXT, recipient TEXT,
       kind TEXT, body TEXT, receipt TEXT);
+    CREATE TABLE message_reads (attempt TEXT, message TEXT, recipient TEXT, native TEXT, identity TEXT,
+      handled TEXT, PRIMARY KEY(attempt,identity,message));
     CREATE TABLE session_stops (session TEXT PRIMARY KEY, id TEXT, outcome TEXT, attempt TEXT, report_id TEXT);
     CREATE TABLE ensembles (id TEXT PRIMARY KEY, owner TEXT, coupling TEXT);
     CREATE TABLE ensemble_members (ensemble TEXT, session TEXT);
@@ -73,12 +75,11 @@ function fixture() {
       VALUES (strftime('%Y-%m-%dT%H:%M:%fZ','now'),'message',NEW.id,NEW.recipient,'insert',
         'message:' || NEW.kind,NEW.kind || ' from ' || NEW.sender);
     END;
-    CREATE TRIGGER ui_receipt_change AFTER UPDATE OF receipt ON messages
-    WHEN OLD.receipt IS NOT NEW.receipt
+    CREATE TRIGGER ui_read_change AFTER INSERT ON message_reads
     BEGIN
       INSERT INTO native_changes(recorded_at,entity,entity_id,session_id,operation,kind,summary)
-      VALUES (strftime('%Y-%m-%dT%H:%M:%fZ','now'),'message',NEW.id,NEW.recipient,'update',
-        'receipt','acknowledged');
+      VALUES (strftime('%Y-%m-%dT%H:%M:%fZ','now'),'message',NEW.message,NEW.recipient,'update',
+        'read','read');
     END;
     CREATE TRIGGER ui_ensemble_update AFTER UPDATE OF coupling ON ensembles
     WHEN OLD.coupling IS NOT NEW.coupling
@@ -640,19 +641,19 @@ test('SSE pumps committed rows from owner hints and replays by durable cursor af
     messageEvents += decoder.decode(chunk.value);
   }
   assert.match(messageEvents, /event: pending/);
-  assert.match(messageEvents, /"unacknowledgedCount":2/);
+  assert.match(messageEvents, /"unreadCount":2/);
   assert.match(messageEvents, /"at":"\d{4}-\d\d-\d\dT/);
   assert.match(messageEvents, /guidance from root/);
-  writer.exec("UPDATE messages SET receipt='accepted' WHERE id='pending-2';");
+  writer.exec("INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES('fixture','pending-2','child','native','fixture');");
   notifications.committed();
   let receiptEvents = '';
-  while (!receiptEvents.includes('"unacknowledgedCount":1')) {
+  while (!receiptEvents.includes('"unreadCount":1')) {
     const chunk = await reader.read();
     if (chunk.done) break;
     receiptEvents += decoder.decode(chunk.value);
   }
   assert.match(receiptEvents, /event: pending/);
-  assert.match(receiptEvents, /"unacknowledgedCount":1/);
+  assert.match(receiptEvents, /"unreadCount":1/);
   const beforeRollback = await fetch(`${base}/orchestra/snapshot?subject=root&since=0`);
   const beforeRollbackCursor = (await beforeRollback.json()).cursor;
   writer.exec("BEGIN; UPDATE executions SET phase='exited', status='exit 1' WHERE session='child'; ROLLBACK;");
@@ -1046,7 +1047,7 @@ test('view CLI streams native commits and returns to the original project sessio
   writeFileSync(receiver, `import { execFileSync } from 'node:child_process';
 const command = ${JSON.stringify([binary, databasePath])};
 const message = process.argv.at(-1);
-execFileSync(command[0], [...command.slice(1), 'ack', message, 'child', 'project-resume-handled']);
+execFileSync(command[0], [...command.slice(1), 'as', 'child', 'read', message]);
 `);
   native('connect', 'child', 'saved-project-native', JSON.stringify([process.execPath, receiver]));
   native('attach', 'previous-root', 'muse', 'saved-previous-project-native', '');
@@ -1061,6 +1062,10 @@ execFileSync(command[0], [...command.slice(1), 'ack', message, 'child', 'project
     .run('project-prior-report', 'child', 'root', 'report', 'Original project report.', 'reviewed');
   seeded.prepare('INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(?,?,?,?,?,?)')
     .run('previous-root-report', 'previous-root', 'root', 'report', 'Previous project conversation report.', 'reviewed');
+  for (const ident of ('project-prior-report', 'previous-root-report')) {
+    seeded.prepare('INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES(?,?,?,?,?)')
+      .run('legacy', ident, 'root', '', 'receipt');
+  }
   seeded.close();
 
   const priorResponse = await fetch(`${base}orchestra/project-sessions?actor=child`);
@@ -1088,7 +1093,10 @@ execFileSync(command[0], [...command.slice(1), 'ack', message, 'child', 'project
   assert.equal(resumeResponse.status, 200);
   const resumed = await resumeResponse.json();
   assert.equal(resumed.message, messageId);
-  assert.equal(resumed.delivery.receipt, 'project-resume-handled');
+  assert.equal(resumed.delivery.receipt, null);
+  { const check = new DatabaseSync(databasePath);
+    assert.equal(check.prepare('SELECT count(*) AS n FROM message_reads WHERE message=?').get(messageId).n, 1);
+    check.close(); }
   assert.equal(resumed.latestReportId, 'project-prior-report');
   assert.equal(resumed.latestReport, 'Original project report.');
   const retained = JSON.parse(native('session', 'child'));
@@ -1114,7 +1122,10 @@ execFileSync(command[0], [...command.slice(1), 'ack', message, 'child', 'project
     body: JSON.stringify({ session: 'child', liftStop: true }),
   });
   assert.equal(liftedResponse.status, 200);
-  assert.equal((await liftedResponse.json()).delivery.receipt, 'project-resume-handled');
+  assert.equal((await liftedResponse.json()).delivery.receipt, null);
+  { const check = new DatabaseSync(databasePath);
+    assert.equal(check.prepare('SELECT count(*) AS n FROM message_reads WHERE message=?').get(messageId).n, 1);
+    check.close(); }
   assert.equal(JSON.parse(native('session', 'child')).native, retained.native);
   execFileSync(binary, ['--instance-shutdown', databasePath]);
   let shutdownEvents = '';
@@ -1344,10 +1355,11 @@ test('selected work reads the recorded cursors and complete bodies', async (t) =
   assert.equal(grandchildWork.request.written, 0);
   assert.equal(grandchildWork.request.closed, null);
 
-  // Acknowledging the task flips its receipt state without rewriting history.
-  db.prepare(`UPDATE messages SET receipt = 'fixture-read' WHERE id = 'pending-1'`).run();
+  // A recorded read flips the task handling state without rewriting history.
+  db.prepare(`INSERT INTO message_reads(attempt,message,recipient,native,identity)
+    VALUES ('fixture','pending-1','child','native','fixture')`).run();
   const after = await (await fetch(`${base}/orchestra/snapshot?subject=child`)).json();
-  assert.equal(after.tasks.child.status, 'acknowledged');
+  assert.equal(after.tasks.child.status, 'read');
   assert.ok(!after.players.find((player) => player.id === 'child')
     .pendingSample.some((row) => row.id === 'pending-1'));
 });
@@ -1370,14 +1382,14 @@ test('awaiting report metadata keeps input counts and complete message bodies re
   const snapshot = await (await fetch(`${base}/orchestra/snapshot?subject=root`)).json();
   const child = snapshot.players.find((player) => player.id === 'child');
   assert.equal(child.pendingCount, 1);
-  assert.equal(child.unacknowledgedCount, 2);
+  assert.equal(child.unreadCount, 2);
   assert.deepEqual(child.pendingSample.map((message) => [message.id, message.sender, message.kind]),
     [['qa-report-owed', 'grandchild', 'report'], ['pending-1', 'root', 'task']]);
   assert.match(child.pendingSample[0].at, /^\d{4}-\d{2}-\d{2}T/);
   assert.equal(Object.hasOwn(child.pendingSample[0], 'body'), false);
   const root = snapshot.players.find((player) => player.id === 'root');
   assert.equal(root.pendingCount, 0);
-  assert.equal(root.unacknowledgedCount, 2);
+  assert.equal(root.unreadCount, 2);
   assert.deepEqual(root.pendingSample.map((message) => message.id), ['empty-1', 'support-1']);
 
   const found = await (await fetch(`${base}/orchestra/message?id=support-1`)).json();
@@ -1400,7 +1412,7 @@ test('awaiting report metadata keeps input counts and complete message bodies re
   const stoppedSnapshot = await (await fetch(`${base}/orchestra/snapshot?subject=child`)).json();
   const stopped = stoppedSnapshot.players.find((player) => player.id === 'child');
   assert.equal(stopped.pendingCount, 0);
-  assert.equal(stopped.unacknowledgedCount, 2);
+  assert.equal(stopped.unreadCount, 2);
   assert.deepEqual(stopped.pendingSample.map((message) => [message.id, message.sender, message.kind]),
     [['qa-report-owed', 'grandchild', 'report']]);
 

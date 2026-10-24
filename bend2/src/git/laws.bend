@@ -311,7 +311,7 @@ def m11_tx_signal_reads_the_observed_status():
 
 # M-2: a process that answered nothing stays unresolved until justified.
 law m2_tx_empty_answer_stays_unresolved:
-  {Tx.run_res(Done{""}) == T.RSpawn{"process answered nothing"} : T.RunRes}
+  {Tx.run_res(Done{""}) == T.RSpawn{"process answered no status line"} : T.RunRes}
 
 def m2_tx_empty_answer_stays_unresolved():
   {==}

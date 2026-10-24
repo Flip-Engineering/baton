@@ -1307,7 +1307,26 @@ def attempt_completed(+db: String, +attempt: String, +outcome: String, +error_te
   do IO<Unit>:
     saved : String <- IO.try(String,commit_read(db,attempt_completed_sql(attempt,outcome,error_text)))
     settled : String <- credit_settle_for(db,attempt,outcome,"",False{})
-    IO.print(Tx.trim_nl(saved))
+    IO.pure(Unit,Unit{})
+
+# The start time comes from the account_attempts row written at launch. An attempt
+# with no account record (a profile-bound attempt) clears nothing.
+def clear_success(+db: String, +session: String, +attempt: String) -> IO(Unit):
+  do IO<Unit>:
+    +started : String <- IO.try(String,DB.Sql.read(db,"SELECT coalesce((SELECT CAST(started_at AS INTEGER)*1000 FROM account_attempts WHERE attempt=" ++ C.q(attempt) ++ "),'');"))
+    +label : String <- handoff_label_io(db,session)
+    cleared : Unit <- Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(started)),IO.pure(Unit,Unit{}),UW.record_success(db,session,Tx.trim_nl(label),Tx.trim_nl(started),attempt))
+    IO.pure(Unit,Unit{})
+
+# The settlement of one finished attempt: its outcome is recorded, and a successful
+# attempt clears the exhausted windows of the account in force for refusals that were
+# recorded before it started.
+def attempt_settled(+db: String, +session: String, +attempt: String, +failed: Bool, +error_text: String) -> IO(Unit):
+  do IO<Unit>:
+    recorded : Unit <- attempt_completed(db,attempt,Bool.pick(String,failed,"failed","completed"),error_text)
+    cleared : Unit <- Bool.pick(IO(Unit),failed,IO.pure(Unit,Unit{}),clear_success(db,session,attempt))
+    IO.pure(Unit,Unit{})
+
 
 # The cumulative total_cost_usd is read from a valid Claude result frame at the
 # root object. The raw text is scanned at object depth to find the one root

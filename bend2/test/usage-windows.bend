@@ -54,6 +54,6 @@ def main():
     reset_clock : Unit <- expect("reset-clock-alone-none",String.eq(UW.reset_text_of("resets at 07:12:52"),""))
     match_binding : Unit <- expect("match-binding",Tx.starts_with(UW.window_match_sql("omp","kimi-code","main"),"harness='omp' AND provider='kimi-code' AND (account='main' OR account='')"))
     unknown_reset : Unit <- expect("record-null-reset",String.eq(UW.parsed_reset_sql(""),"NULL"))
-    dated_reset : Unit <- expect("record-parsed-reset",Tx.starts_with(UW.parsed_reset_sql("2026-10-06 07:12:52"),"(SELECT CAST(strftime('%s','2026-10-06 07:12:52')"))
+    dated_reset : Unit <- expect("record-parsed-reset",Tx.starts_with(UW.parsed_reset_sql("2026-10-06 07:12:52"),"(SELECT CAST(strftime('%s','2026-10-06 07:12:52',"))
     printed : Unit <- IO.print("fixture-windows-ok")
     IO.pure(Unit,Unit{})

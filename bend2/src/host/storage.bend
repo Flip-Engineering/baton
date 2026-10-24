@@ -44,3 +44,19 @@ def StorageHost.process_refs(path: String) -> IO(Result<&1,&1,U32 & String,Strin
 # 1 while the PID exists or belongs to another user, 0 when it is gone.
 def StorageHost.pid_alive(pid: U32) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./storage.c"
+
+# A shared lease on ROOT/.baton-writer-lease held for the duration of a writer
+# operation. The answer is `handle:<fd>` or `none` on contention or any open or
+# flock error; the Bend wrapper turns it into a handle value.
+def StorageHost.writer_try_acquire(root: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./storage.c"
+
+# An exclusive lease on the same file. Cleanup acquires it for every configured
+# root before it removes a candidate. The answer is `handle:<fd>` or `none` on
+# contention or any open or flock error, and the caller refuses the apply.
+def StorageHost.cleanup_try_acquire(root: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./storage.c"
+
+# Releases a lease descriptor. Process exit releases it as well.
+def StorageHost.lease_release(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./storage.c"

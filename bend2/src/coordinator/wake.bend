@@ -2,6 +2,7 @@ import Base
 import ../coordinator/commands.bend as C
 import ./receive.bend as Receive
 import ./delivery.bend as Delivery
+import ./codex-route.bend as CodexRoute
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
 
@@ -13,14 +14,14 @@ def admitted_message_id(command: C.Command) -> String:
     case C.Message{id,sender,recipient,kind,body}: id
     case C.Report{id,sender,body}: id
     case C.Ask{id,player,body}: id
-    case C.Observe{id,player,event,sealed}: id
+    case C.Observe{id,player,event,sealed,harness}: id
     case C.TaskContinue{session,id}: id ++ ":task-continuation"
     case other: ""
 
 # The recipient owed by one admitted message. Empty when the message is
-# unknown, already acknowledged, or never committed.
+# unknown, already read, or never committed.
 def wake_recipient_sql(+id: String) -> String:
-  "SELECT coalesce((SELECT recipient FROM messages WHERE id=" ++ C.q(id) ++ " AND receipt IS NULL),'');"
+  "SELECT coalesce((SELECT recipient FROM messages WHERE id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("messages") ++ "),'');"
 
 # Short endpoints return their public input admission result.
 def deliver_wake_target(db: String, target: String) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -28,18 +29,39 @@ def deliver_wake_target(db: String, target: String) -> IO(Result<&1,&1,U32 & Str
     delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,target,"1","")
     IO.pure(Result<&1,&1,U32 & String,Unit>,Delivery.wake_result(delivered))
 
-# Generated receiver arguments end with the same nine arguments, including
-# receive and the Player ID, after any configured Git identity prefix.
-def receiver_turn_sql(id: String) -> String:
-  "SELECT EXISTS(SELECT 1 FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND json_extract(" ++ C.endpoint_argv("s.endpoint") ++ ",'$[#-7]')='receive' AND json_extract(" ++ C.endpoint_argv("s.endpoint") ++ ",'$[#-6]')=s.id);"
+# Explicit receiver argv can carry the whole native lifetime. A stopped
+# recipient's report or question follows its recorded parent handoff.
+def detached_endpoint_sql(id: String) -> String:
+  "SELECT EXISTS(SELECT 1 FROM messages m JOIN sessions s ON s.id=CASE WHEN " ++ C.stopped_session_sql("m.recipient") ++ " AND m.kind IN ('report','question') THEN " ++ C.report_recipient("m.recipient") ++ " ELSE m.recipient END WHERE m.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("m") ++ " AND NOT " ++ C.stopped_session_sql("s.id") ++ " AND CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 ELSE 0 END AND NOT (s.harness='codex' AND " ++ CodexRoute.managed_sql("s.endpoint","s.id","s.native") ++ "));"
 
-# A generated Receive endpoint runs through the existing detached delivery
-# entry. Its recipient records the native turn and any execution failure.
+# Public resume and direct delivery retain their attached endpoint behavior.
+# Managed Codex endpoints return their native input admission result here.
+def endpoint_selected(db: String, target: String, detached: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match detached:
+    case True{}: Receive.wake_launch(db,target)
+    case False{}: deliver_wake_target(db,target)
+
+law explicit_endpoint_admission_hands_over_delivery:
+  for db: String
+  for target: String
+  {endpoint_selected(db,target,True{}) == Receive.wake_launch(db,target) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def explicit_endpoint_admission_hands_over_delivery(db,target):
+  {==}
+
+law short_endpoint_admission_returns_its_result:
+  for db: String
+  for target: String
+  {endpoint_selected(db,target,False{}) == deliver_wake_target(db,target) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def short_endpoint_admission_returns_its_result(db,target):
+  {==}
+
+# Ordinary admissions hand explicit argv to the retained detached self entry.
 def launch_wake_target(+db: String, +target: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    receiver : String <- IO.try(String,DB.Sql.query(db,receiver_turn_sql(target)))
-    Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.eq(receiver,"1\n"),
-      Receive.wake_launch(db,target),deliver_wake_target(db,target))
+    detached : String <- IO.try(String,DB.Sql.query(db,detached_endpoint_sql(target)))
+    endpoint_selected(db,target,String.eq(detached,"1\n"))
 
 def drive_session_empty(+db: String, session: String, id: String, empty: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match empty:
@@ -52,12 +74,12 @@ def drive_session(+db: String, +session: String, id: String) -> IO(Result<&1,&1,
   drive_session_empty(db,session,id,String.is_empty(session))
 
 def stopped_recipient_sql(id: String) -> String:
-  "SELECT EXISTS(SELECT 1 FROM messages m JOIN session_stops st ON st.session=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL);"
+  "SELECT EXISTS(SELECT 1 FROM messages m JOIN session_stops st ON st.session=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("m") ++ ");"
 
 # Reports addressed to a stopped session go through its parent handoff.
 def drive_recipient(db: String, id: String, session: String, stopped: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match stopped:
-    case True{}: deliver_wake_target(db,id)
+    case True{}: launch_wake_target(db,id)
     case False{}: drive_session(db,session,id)
 
 def drive_id_found(+db: String, +id: String, empty: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -73,7 +95,7 @@ def drive_id(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
 
 # A post-reset continuation re-enters this wake driver, so the usage gate is
 # evaluated again when it fires: a still-held window reports and reschedules,
-# an elapsed one admits the owed input, and a handled message is a no-op.
+# an elapsed one admits the owed input, and a read message is a no-op.
 def message_cli(+db: String, +id: String) -> IO(Unit):
   IO.try(Unit,drive_id(db,id))
 

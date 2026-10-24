@@ -4,17 +4,17 @@
 function needRank(p) {
   if (!p) return 99;
   if (p.status === "failed") return 0;
-  if (p.status === "stopped" && Math.max(p.pendingCount || 0, p.unacknowledgedCount || 0) > 0) return 1;
+  if (p.status === "stopped" && Math.max(p.pendingCount || 0, p.unreadCount || 0) > 0) return 1;
   if (p.status === "running") return 2;
   if (p.status === "waiting") return 3;
-  if (Math.max(p.pendingCount || 0, p.unacknowledgedCount || 0) > 0 || p.status === "pending") return 4;
+  if (Math.max(p.pendingCount || 0, p.unreadCount || 0) > 0 || p.status === "pending") return 4;
   return 5;
 }
 
 // Explicit stops retain their state and owed-input counts in recorded views.
 function stateMark(p) {
   const status = (p && p.status) || "unknown";
-  const owed = p && Math.max(p.pendingCount || 0, p.unacknowledgedCount || 0) > 0;
+  const owed = p && Math.max(p.pendingCount || 0, p.unreadCount || 0) > 0;
   let tone = "unknown";
   if (status === "stopped") {
     tone = "stopped";
@@ -38,7 +38,7 @@ function stateMark(p) {
 function orderPlayers(players) {
   const list = Array.isArray(players) ? players.slice() : Array.from(players || []);
   list.sort((a, b) => (needRank(a) - needRank(b))
-    || (Math.max((b && b.pendingCount) || 0, (b && b.unacknowledgedCount) || 0) - Math.max((a && a.pendingCount) || 0, (a && a.unacknowledgedCount) || 0))
+    || (Math.max((b && b.pendingCount) || 0, (b && b.unreadCount) || 0) - Math.max((a && a.pendingCount) || 0, (a && a.unreadCount) || 0))
     || (String((a && a.id) || "") < String((b && b.id) || "") ? -1 : 1));
   return list;
 }

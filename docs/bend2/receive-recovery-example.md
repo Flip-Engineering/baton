@@ -34,17 +34,16 @@ as `HARNESS_CMD` for the lower-level
 `receive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID` command.
 Its interface and qualification retain that version's source scope.
 
-Within the Player turn, read complete pending messages and acknowledge the
-handled inputs through the recorded launch context:
+Within the Player turn, read complete pending messages through the recorded
+launch context:
 
 ```sh
 "$BATON" "$DATABASE" inbox
-"$BATON" "$DATABASE" acknowledge
 ```
 
-`inbox` returns unacknowledged messages in sequence order. `acknowledge` selects
-the current actor's complete owned reads and derives their native handling
-receipts. Each message preserves its first recorded receipt.
+`inbox` returns unread messages in sequence order. Baton records each complete
+owned read internally; the read record persists when the turn later fails or is
+interrupted.
 
 If the receive observer exits, the retained process keeper invokes recovery
 with the original attempt and inbox cutoff. Recovery attaches to that attempt
@@ -66,8 +65,8 @@ records the selected process-loss measurements and their boundaries.
 When the session lock is busy, `acquired` in
 `bend2/src/coordinator/receive.bend` returns successfully with
 `{"session":"worker","status":"queued"}`. This reports lock contention;
-message acceptance is recorded by `ack`. The active receive checks for
-unacknowledged input beyond its original inbox cutoff when finishing the turn.
+the read is recorded internally. The active receive checks for
+unread input beyond its original inbox cutoff when finishing the turn.
 
 For retained Codex and OMP receive attempts, the keeper's `br_disconnected`
 function in `bend2/src/host/process-spawn.c` starts the saved recovery command
