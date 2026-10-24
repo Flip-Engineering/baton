@@ -286,6 +286,19 @@ def codex_finish(+handle: U32) -> IO(Unit):
     waited : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
     IO.pure(Unit,Unit{})
 
+def wait_text(waited: Result<&1,&1,U32 & String,String>) -> String:
+  match waited:
+    case Done{+status}: Tx.trim_nl(status)
+    case Fail{(code,detail)}: "status unavailable: " ++ detail
+
+# The child's own status names why it ended: a missing codex executable on PATH is
+# env's exit 127.
+def codex_ended(+handle: U32, +observed: String) -> IO(Unit):
+  do IO<Unit>:
+    closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
+    waited : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
+    print_unreadable("codex",Codex.codex_source(),observed,"codex app-server ended before it answered account/rateLimits/read (" ++ wait_text(waited) ++ ")")
+
 def codex_result(+observed: String, +result: String) -> IO(Unit):
   do IO<Unit>:
     problem : Result<&1,&1,U32 & String,String> <- DB.Sql.query(":memory:",Codex.codex_problem_sql(result))
@@ -314,9 +327,7 @@ def codex_lines(+handle: U32, +observed: String, line: Result<&1,&1,U32 & String
       print_unreadable("codex",Codex.codex_source(),observed,"reading codex app-server failed: " ++ detail)
     case Done{value}:
       match value:
-        case None{}: do IO<Unit>:
-          finished : Unit <- codex_finish(handle)
-          print_unreadable("codex",Codex.codex_source(),observed,"codex app-server ended before it answered account/rateLimits/read")
+        case None{}: codex_ended(handle,observed)
         case Some{+text}: do IO<Unit>:
           +role : String <- IO.try(String,DB.Sql.query(":memory:",codex_line_sql(Tx.trim_nl(text))))
           +done : Bool <- codex_classified(handle,observed,String.split(Tx.trim_nl(role),Char.from_u32(31)))
