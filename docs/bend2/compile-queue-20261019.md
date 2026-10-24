@@ -153,11 +153,11 @@ $state/peaks/em.<kind>.<entry>.<mode>          largest recorded peak of a kind a
 $state/peaks/en.<kind>.<entry>                 largest recorded peak of a kind and entry file with any command, kB
 $state/peaks/kc.<kind>.<compiler>              largest recorded peak of a kind and compiler, kB
 $state/peaks/k.<kind>                          largest recorded peak of a kind, kB
-$state/outside-growth                          largest rise of outside memory use, kB
 $state/admission/lock                          serializes the records below
 $state/admission/waiting/<queue time>-<pid>    one ticket per waiting supervisor
 $state/admission/running/<time>-<pid>          one claim per admitted job
 $state/admission/observed.<uid>                process measurements of one user
+$state/admission/usage/<claim>                 memory and outside growth measured by the supervisor of a claim
 $state/heavy.lock                              bootstrap and older queue executables
 ```
 
@@ -230,7 +230,7 @@ A ticket's expected peak is, in order:
 6. the largest recorded peak of its kind and compiler;
 7. the largest recorded peak of its kind (`cgen` or `cc`), when the compiler
    has no record;
-7. no recorded peak. The job has no history. Its memory need is then the
+8. no recorded peak. The job has no history. Its memory need is then the
    current memory of the largest running job of the same group, or nothing when
    the entry is empty or no such job runs. A job without a group, and the
    holder of the older lock, are matched by entry file.
@@ -245,10 +245,10 @@ polls every 200 ms and starts when its ticket passes the rule. Tickets are
 ordered by priority class (see "Priority"), then by queue time, so the first
 ticket is the head.
 
-- `reserve` is the recorded growth of memory used outside the queue (see
-  "Outside growth"). It is the part of memory the rule never grants, and it
-  is a measured value of the host. Until one run has recorded it, the rule
-  starts one job at a time.
+- `reserve` is the growth of memory used outside the queue that the running
+  supervisors measure now (see "Outside growth"). It is the part of memory
+  the rule never grants. It is 0 when no running supervisor has measured a
+  growth, and it ends with the runs that measured it.
 - `unspent` is the sum over running jobs of `max(0, expected - current)`.
   A job admitted a moment ago counts at its full expected peak until it grows
   to it, so two jobs cannot be admitted against the same free memory.
@@ -272,15 +272,15 @@ head is not delayed:
 
 The queue keeps no job count and no memory constant. The poll interval and the
 sample interval are the only fixed values and they do not affect which jobs
-are admitted. On a platform without `/proc/meminfo`, and until a growth is
-recorded, the rule starts one job at a time.
+are admitted. On a platform without `/proc/meminfo` the rule starts one job
+at a time.
 
-Example on the 220 GB host with 31 GB used outside the queue and a recorded
+Example on the 220 GB host with 31 GB used outside the queue and a measured
 growth of `g` GB. A coordinator cgen with a recorded peak of 95 GB leaves
 `free = 220 - 31 - 95 - g` GB, which is below 95 GB for any `g`, whether or not
 the cgen has grown to its peak; a second cgen of 95 GB or more waits until the
 first ends. Two jobs of 70 GB start together when `140 + 31 + g <= 220`, that
-is when the recorded growth is at most 49 GB. A job of 1 GB starts beside the
+is when the measured growth is at most 49 GB. A job of 1 GB starts beside the
 first.
 
 ### Priority
@@ -307,12 +307,22 @@ At each sample the supervisor computes the memory used outside the queue:
 `MemTotal - MemAvailable` minus the current memory of every running queue job
 (including the holder of the older lock). A supervisor whose claim has ended at
 its compile marker adds its own session back, so the compiler that is still
-finishing does not count as outside use. The first sample of a run is its
-baseline. At the end of the run, if it lasted longer than one sample interval,
-the largest rise above the baseline is raised in `$state/outside-growth`
-(`growth_kb=N`). The file keeps the largest value any run has recorded.
-`status` shows `outside_use_kb` (now) and `outside_growth_kb` (the recorded
-value, or `none`).
+finishing does not count as outside use. Only a steady sample counts: every
+running claim has a measured value above zero, and the set of running claims is
+the same in two reads of the sample and in the previous sample. The first steady
+sample of a run is its baseline. The growth is the outside use of the latest
+steady sample minus the baseline, at least 0. The supervisor writes it as
+`growth_kb=N` in `admission/usage/<claim>`, together with the memory of its
+session, at each sample, and the record is removed with the claim.
+
+Admission reads the records of the running claims under `admission/lock` and
+takes the largest growth that was written within the last five sample
+intervals as the reserve. A claim that publishes nothing (a supervisor of an
+older executable, or a claim whose first steady sample has not come yet)
+counts as 0. Nothing persists after a run ends, so a value written by a
+finished supervisor cannot hold an entry. The file `outside-growth` of earlier
+executables is neither read nor written. `status` shows `outside_use_kb` and
+`outside_growth_kb`, both measured now.
 
 ### Custody and cleanup
 
