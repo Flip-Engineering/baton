@@ -17,6 +17,10 @@ def finish(signum, frame):
 
 
 signal.signal(signal.SIGTERM, finish)
+# Failed native tests release their fixture consumers when the parent exits.
+assert ctypes.CDLL(None).prctl(1, signal.SIGTERM, 0, 0, 0) == 0
+if os.getppid() == 1:
+    raise SystemExit('native fixture already exited')
 entry.symlink_to(f'/proc/{os.getpid()}')
 try:
     print('ready', flush=True)
