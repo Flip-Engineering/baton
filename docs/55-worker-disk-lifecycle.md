@@ -18,10 +18,12 @@ the existing collector. The root's merge operations use this same path.
 The [October 23 incident](https://github.com/Flip-Engineering/baton/issues/1049)
 recovered about 54 GB from twelve clean, pushed worktrees created by the root,
 23 GB from three inactive Cargo targets and 18 GB from a shared target. Those
-observations select the Phase 1 scope. The incident's approximately 100 GB
-recovery figure is rounded; the three reported categories total approximately
-95 GB. The report records the Docker failure and PostgreSQL restart when the
-root filesystem reached zero available bytes.
+observations select the Phase 1 scope. The root's
+[incident report](https://github.com/Flip-Engineering/baton/issues/1049)
+says it recovered "about 100 GB in 15 minutes". Its three category estimates
+sum to approximately 95 GB (54 + 23 + 18); the rounded report and category
+estimates remain separate observations. The report records the Docker failure
+and PostgreSQL restart when the root filesystem reached zero available bytes.
 
 Automatic collection follows completed operations and verified publication.
 An unreadable, active, dirty or insufficiently documented allocation stays in
@@ -210,14 +212,54 @@ These relationships are derived again when collection runs. A derived cache
 of the observations can support display. Tooling uses current source observations
 for the removal decision.
 
-Process inspection has an explicit coverage limit.
-[`host/storage.c`](../bend2/src/host/storage.c) currently checks processes
-belonging to its effective UID; it can return unknown for inaccessible peers.
-Use the existing producer/collector account for the allocation, and inspect
-any other recorded service consumers through their existing owners. Phase 1
-requires readable evidence for that allocation's actual consumers. An unknown
-or inaccessible consumer keeps that allocation. This design adds no privilege
-change and makes no complete cross-user process-inspection claim.
+### Consumer evidence and the #1045 prerequisite
+
+[#1045](https://github.com/Flip-Engineering/baton/issues/1045) records
+`apply-removed` returning `process-unknown` in four of four runs on main on this
+host. The issue identifies access errors, process exit, directory-read errors
+and fixed scan truncation as possible causes; it has not confirmed which one
+caused those runs. [`host/storage.c`](../bend2/src/host/storage.c) currently
+limits fd and mapping enumeration to 4096 entries and also limits process and
+reference counts. Those limits can prevent a definite answer about a candidate.
+
+Resolving this failure in the consumer-check path is a Phase 1 prerequisite.
+The current generic `process-unknown` result cannot qualify the root merge
+worktrees for collection. Phase 1 uses the following candidate-specific evidence:
+
+1. Read Git's lock/prunable state for the exact registered worktree. A locked
+   worktree stays in place; a prunable record requires administration repair
+   before it can supply an ordinary checkout decision.
+2. Resolve current session/join workspaces, assignments, pending continuation
+   and owned executions against that path. A live relationship supplies a
+   definite consumer and keeps the worktree through gaps between tool calls.
+3. Under the existing operation ownership boundary, inspect cwd, executable,
+   descriptors and mapped-file references for processes owned by the collecting
+   account. Match the candidate's canonical path, descendants and file identity.
+   Recorded consumers under another account are inspected through that service's
+   existing owner; unresolved service use keeps the candidate.
+4. Return `no-consumer` only after the relevant reads complete and no reference
+   matches. A positive match returns `consumer-present`. An unresolved read
+   returns `consumer-unknown` with the candidate, PID, operation and actual
+   error; it supplies no deletion authority.
+
+The #1045 repair must read fd/maps directories to their actual end and remove
+the fixed process/reference truncation from this decision. It must identify
+the actual failing PID/read in the reproduced run, distinguish a confirmed
+exited process from a live unreadable one, and preserve actual allocation and
+I/O errors. No replacement numeric scan limit is proposed. Readability of
+unrelated disk directories is outside this process-reference check. An
+unreadable live process with unresolved candidate relevance remains unknown;
+classifying it as unrelated requires evidence.
+
+Qualification uses the affected homelab account and the twelve-root-merge-worktree
+case. The original trees were removed in recovery, so rerun their normal
+merge/push/release workflow on the same busy host and record the actual paths.
+Released, clean, remotely published worktrees must receive definite
+`no-consumer` results while a current workspace and a process actually using a
+candidate receive definite consumer results and remain present. If the selected
+path still answers `process-unknown` or `consumer-unknown`, Phase 1 qualification
+is incomplete. This prerequisite has not passed in the evidence available to
+this design; a baseline failure on main does not establish working collection.
 
 ## Phase 1 retention and removal
 
@@ -233,9 +275,10 @@ source and execution state:
    preserve the worktree and appear in its report.
 3. HEAD and every source ref needed by the completed operation are available
    from the project's declared off-host publish remote.
-4. Current session, assignment, process and operation observations show no local
-   consumer. Preserve current workspaces and unfinished operations through
-   quiet gaps between their tool calls.
+4. Git lock state and current session, assignment, process and operation
+   observations produce a definite `no-consumer` answer through the qualified
+   #1045 consumer path above. Preserve current workspaces and unfinished
+   operations through quiet gaps between their tool calls.
 5. The exact path and filesystem object still match the inspected allocation.
 
 Read the actual publish endpoint. Query the relevant remote refs and verify
@@ -270,13 +313,19 @@ source and toolchain provenance establish its generated contents, source is
 retained on the actual off-host Git remote, and current readers/writers and
 runtime references have released it.
 
-Keep source, toolchain records, full validation output, process completion and
-required review results outside the generated target directory. Publish the
-required review evidence through the project's existing Git publication route,
-using source/preservation or evidence commits as appropriate. Verify those
-objects at the actual remote before removing the local target.
-An actual Git publication failure leaves the affected evidence and target in
-place. Phase 1 requires no new bulk artifact-store service.
+Keep source and toolchain provenance and completed process evidence in their
+existing execution records. Validation output already resides in attempt
+outputs outside the target directory, where its existing retention continues.
+Phase 1 removes known generated Cargo state after source publication,
+producer completion and consumer release. Log publication is a separate
+evidence-lifecycle operation and is excluded from Cargo eligibility.
+
+The October 23 recovery identifies regenerable targets and reports that Cargo
+was inactive. It names no target-internal review artifact whose loss required
+publishing attempt output before removal. This design therefore requires no
+new Git evidence commit or bulk-log upload to collect those targets. Existing
+selected runtime binaries and any actual unresolved file remain live artifacts
+under their observed use; their retention follows that file's role.
 
 Generated object files and incremental compilation state can then be rebuilt
 from the retained inputs. Their removal releases local cache capacity.
@@ -297,8 +346,7 @@ for the October 23 Cargo recovery.
 | --- | --- |
 | Verified Git publication or completed merge/review | Reconsider that operation's worktree and known child outputs |
 | Task completion, seat stop or retirement | Inspect its released worktree/target allocations and associated project Git worktrees |
-| Native turn completion | Refresh the affected project's Git listing; collect allocations whose operations or assignments have released them |
-| Build exit and final output retention | Reconsider that exact target; shared targets wait for the remaining derived consumers |
+| Build exit and completed process evidence | Reconsider that exact target; shared targets wait for the remaining derived consumers |
 | Coordinator restart or remote reconnect | Recompute outstanding decisions for known project worktrees and exact recorded targets |
 | Storage write failure or explicit collection request | Visit known projects and target allocations on the affected filesystem |
 
@@ -307,6 +355,11 @@ during an owned pass cause it to inspect current state before it finishes.
 A later pass derives remaining work again. A background pass retains its
 existing execution handle through completion. There is no filesystem-wide scan,
 per-seat traversal, polling cadence or fixed space threshold in Phase 1.
+
+A native turn ending supplies no operation or assignment release. It triggers
+no worktree listing, dirt inspection or remote verification. Those inspections
+run at the release/recovery events in the table. Their per-allocation cost
+remains unmeasured and must be reported by the corresponding qualification run.
 
 Collection acquires the existing operation/session boundary without making a
 live writer wait for cleanup. An allocation that is busy stays in place.
@@ -405,7 +458,8 @@ blocks and physical available-byte changes distinct.
 | Ignored or unregistered source omitted | #620's first patch deleted an unpreserved tracked edit; #644 retained unattested files | Inspect the complete candidate content; retain unresolved files and report them. A known Cargo child uses its producing-source proof. |
 | Local integration mistaken for off-host retention | #558's local landing; October 23 clone with local `origin` | Verify the declared actual remote and required source objects. Failed or absent publication keeps the allocation. |
 | Squash merge omits original review history | #558 establishes publication of the actual artifact; #594 preserves source commits | Keep the original source/preserve refs used by review and verify their remote reachability. |
-| Generated target contains required output | #988 and October 23 Cargo recoveries concern generated outputs | Retain exact source/toolchain, full validation output and completed process evidence remotely outside the removed target; keep selected binaries and unresolved contents. |
+| Consumer answer never reaches a decision | #1045 reproduces `process-unknown` on this homelab host | Resolve the candidate-specific process-check failure before Phase 1 acceptance; report candidate/PID/read errors and require definite no-consumer results for released root merge trees. |
+| Generated target confused with evidence | #988 and October 23 recoveries concern regenerable Cargo outputs; no target-internal review file is named | Keep attempt outputs in their existing external locations, record producer provenance/completion, and collect the known generated target after source verification and consumer release. Log publication supplies no Cargo eligibility condition. |
 | Raw log report extraction omits diagnostic evidence | #686 and the October 23 observer-log samples | Keep raw unique evidence until its specific Phase 2 publisher verifies remote retention. |
 | Active coordinator database or ancestor removed | #912's database-path protection and related #920 evidence | Active control databases, their ancestors and continuation paths stay outside Phase 1 candidates. |
 | Child writer survives parent completion | #988 found direct Cargo execution outside wrapper records | Follow the owned execution and derived child/service references through actual exit; retain an active or uninspectable target. |
@@ -415,8 +469,8 @@ blocks and physical available-byte changes distinct.
 
 | Producer path | Phase and failed run | Required completed evidence |
 | --- | --- | --- |
-| Root merge worktree created outside registered seat worktrees | Phase 1; October 23 approximately 54 GB retained after push | Run the normal root merge/publication path. Its released clean worktree is discovered and removed automatically after verification against the real remote. Preserve current workspaces and an unfinished merge. |
-| Private and shared Cargo targets | Phase 1; October 23 approximately 23 GB plus 18 GB; #988 direct-wrapper bypass | Capture actual target/source/toolchain and full output. After completed runs and reference release, collect generated targets automatically. Keep an active shared writer, selected binary and unknown-provenance target. |
+| Root merge worktree created outside registered seat worktrees | Phase 1; October 23 approximately 54 GB retained after push; #1045 consumer-check failure | Resolve #1045 in the selected path first. Rerun the twelve-worktree root merge/publication/release case on the affected busy host, obtaining definite no-consumer results and automatic removal for eligible trees. A run returning `process-unknown` cannot pass Phase 1. Preserve current workspaces and an unfinished merge. |
+| Private and shared Cargo targets | Phase 1; October 23 approximately 23 GB plus 18 GB; #988 direct-wrapper bypass | Capture actual target/source/toolchain and completed process evidence. After source verification, producer exit and definite reference release, collect generated targets automatically while external attempt outputs stay retained. Perform collection with log publication absent. Keep an active shared writer and unknown-provenance target. |
 | Dirty shell clone | Phase 2 source; October 23 `/tmp/acp261` | Recreate staged/working differences from verified remote preservation refs after local collection. |
 | Clone with local origin | Phase 2 clone producer; October 23 `/tmp/acp261-dsh-flash-1` | Resolve the actual off-host publish destination; preserve the clone until that source is verified there. |
 | Export with unusable Git metadata | Phase 2 export producer; October 23 `/tmp/acp-0022acae` | Identify creation/provenance and verify the selected retention mechanism; keep an unresolved export. |
