@@ -1,10 +1,12 @@
-# Focused fixture for #907: provider hard-quota terminals are classified from
-# the structured terminal, the provider reset is recorded against the account
-# in force, and the gate keeps the owed input held before that reset. The
-# fixture drives the real classification, reset extraction, usage-window store,
-# gate, held report and account handoff over a temporary database. It records
-# two attempts in one exhaustion episode and proves the second is still held,
-# so no retry is admitted before the known reset.
+# Focused fixture for #907 and #1025: provider hard-quota terminals are classified
+# from the structured terminal, the refusal is recorded as evidence against the
+# account in force with the window it names and no reset time, and a live read of
+# the provider's usage decides the hold. The fixture drives the real
+# classification, evidence store, gate, hold announcement and account handoff over
+# a temporary database. Two attempts in one exhaustion episode are both recorded
+# and the seat stays held while the newest readable read is exhausted, so no retry
+# is admitted before a read reports the window open. The handoff's own read is
+# unreadable in this binary (no usage-read helper is installed) and keeps the hold.
 #
 # usage: quota-exhaustion-reset DB
 import Base
@@ -36,7 +38,7 @@ def gate_class(gate: UW.Gate) -> String:
   match gate:
     case UW.GateNone{}: "none"
     case UW.GateHeld{window,resets_at,source,receipt}: "held"
-    case UW.GateElapsed{window,resets_at,source,receipt}: "elapsed"
+    case UW.GateUnknown{source,reason,receipt}: "unknown"
 
 def muse_reason() -> String:
   "context compaction failed at the hard threshold; summarizer API 429; Subscription quota exhausted. Your usage window resets at 2026-10-19T06:38:50Z."
@@ -65,14 +67,19 @@ def glm_frame() -> String:
 def kimi_frame() -> String:
   "{\"type\":\"turn.failed\",\"error\":{\"message\":\"You've reached your 5-hour usage limit. Your quota will reset when the current 5-hour window ends.\"}}"
 
+# One live read of the muse provider's 5-hour window for an account.
+def read_row_sql(+account: String, +percent: String, +exhausted: String) -> String:
+  "INSERT INTO usage_reads(observed_at,provider,account,session,trigger,state,source,reason,document) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'muse'," ++ C.q(account) ++ ",'','fixture','read','fixture','',json_object('schema','baton2-usage-read-v1','provider','muse','source','fixture','observedAt',1,'state','read','windows',json_array(json_object('window','5-hour','usedPercent'," ++ percent ++ ",'resetsAt',CAST(strftime('%s','now') AS INTEGER)*1000+3600000,'exhausted',json(" ++ C.q(exhausted) ++ ")))));"
+
 def setup(+db: String) -> IO(Unit):
   do IO<Unit>:
     made : Unit <- query(db,C.schema())
     sessions : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES"
+      ++ "('root',NULL,'omp','','','',''),"
       ++ "('muse',NULL,'muse','muse/muse-wonder-1.0','high','native-muse',''),"
-      ++ "('gate',NULL,'muse','muse/muse-wonder-1.0','high','',''),"
+      ++ "('gate','root','muse','muse/muse-wonder-1.0','high','',''),"
       ++ "('bound',NULL,'muse','muse/muse-wonder-1.0','high','native-bound',''),"
-      ++ "('elapsed',NULL,'muse','muse/muse-wonder-1.0','high','',''),"
+      ++ "('reopened',NULL,'muse','muse/muse-wonder-1.0','high','',''),"
       ++ "('fallback',NULL,'omp','omp/gpt-5','high','native-fallback','');")
     ready : Unit <- Accounts.ensure(db)
     accounts : Unit <- query(db,"INSERT INTO accounts(id,provider,harness,funding,secret_ref,organization,verified_at) VALUES"
@@ -98,47 +105,45 @@ def classification_cases(+db: String) -> IO(Unit):
     expect("kimi-window-wording-still-classified",String.contains(kimi,"provider-reported usage exhaustion: "))
     IO.pure(Unit,Unit{})
 
-def reset_cases(+db: String) -> IO(Unit):
+# The window kind named in refusal text is recorded as evidence; a reset time in
+# that text is not.
+def label_cases(+db: String) -> IO(Unit):
   do IO<Unit>:
-    +muse_reset : String = UW.reset_text_of(muse_reason())
-    expect("muse-reset-extracted",String.eq(muse_reset,"2026-10-19T06:38:50Z"))
-    trailing : String <- IO.pure(String,UW.reset_text_of("Subscription quota exhausted. Your usage window resets at 2026-10-12T23:25:59Z. (rate_limit_error)"))
-    expect("sentence-period-after-reset",String.eq(trailing,"2026-10-12T23:25:59Z"))
-    glm_reset : String <- IO.pure(String,UW.reset_text_of("provider error 1310: Weekly/Monthly Limit Exhausted. Limit resets at 2026-10-21T05:11:25"))
-    expect("glm-reset-extracted",String.eq(glm_reset,"2026-10-21T05:11:25"))
     unknown_window : String <- IO.pure(String,UW.window_label_of(UW.lower_ascii(muse_reason())))
     expect("muse-window-unknown",String.eq(unknown_window,""))
     five_hour : String <- IO.pure(String,UW.window_label_of(UW.lower_ascii("Subscription quota exhausted for the 5-hour window. Your usage window resets at 2026-10-19T06:38:50Z.")))
     expect("five-hour-window-named",String.eq(five_hour,"5-hour"))
-    parsed : String <- IO.pure(String,UW.parsed_reset_sql(muse_reset))
-    expect("recorded-reset-parses",Tx.starts_with(parsed,"(SELECT CAST(strftime('%s','2026-10-19T06:38:50Z',"))
     IO.pure(Unit,Unit{})
 
 def held_cases(+db: String) -> IO(Unit):
   do IO<Unit>:
     first : Unit <- UW.record_cause(db,"gate","attempt-1","acct-a",future_reason())
     second : Unit <- UW.record_cause(db,"gate","attempt-2","acct-a",future_reason())
-    future : String <- read(db,"SELECT CASE WHEN resets_at > CAST(strftime('%s','now') AS INTEGER)*1000 THEN '1' ELSE '0' END FROM usage_windows WHERE message='attempt-1';")
-    expect("recorded-reset-is-future",String.eq(future,"1\n"))
+    no_reset : String <- read(db,"SELECT count(*) FROM usage_windows WHERE account='acct-a' AND resets_at IS NULL;")
+    expect("refusal-reset-text-not-recorded",String.eq(no_reset,"2\n"))
     provider_rows : String <- read(db,"SELECT count(*) FROM usage_windows WHERE reset_source='provider-message' AND account='acct-a';")
     expect("two-attempts-recorded",String.eq(provider_rows,"2\n"))
+    text_only : UW.Gate <- UW.window_gate(db,"gate","acct-a")
+    expect("refusal-text-alone-does-not-hold",String.eq(gate_class(text_only),"none"))
+    exhausted : Unit <- query(db,read_row_sql("acct-a","100","true"))
     +held : UW.Gate <- UW.window_gate(db,"gate","acct-a")
-    expect("future-reset-holds",String.eq(gate_class(held),"held"))
-    reported : Unit <- UW.report_held(db,"gate","message-1",held)
-    replayed : Unit <- UW.report_held(db,"gate","message-1",held)
-    reports : String <- read(db,"SELECT count(*) FROM messages WHERE id='message-1:usage-window-held';")
-    expect("one-held-report-per-message",String.eq(reports,"1\n"))
+    expect("exhausted-read-holds",String.eq(gate_class(held),"held"))
+    replayed : UW.Gate <- UW.window_gate(db,"gate","acct-a")
+    reports : String <- read(db,"SELECT count(*) FROM messages WHERE id GLOB 'usage-read:*:hold:gate' AND recipient='root';")
+    expect("one-hold-report-per-episode",String.eq(reports,"1\n"))
     after : UW.Gate <- UW.window_gate(db,"gate","acct-a")
     expect("second-attempt-still-held",String.eq(gate_class(after),"held"))
     IO.pure(Unit,Unit{})
 
-def elapsed_cases(+db: String) -> IO(Unit):
+# A later read that reports every window open admits the account.
+def open_cases(+db: String) -> IO(Unit):
   do IO<Unit>:
     reason : String <- IO.pure(String,"Subscription quota exhausted for the 5-hour window. Your usage window resets at 2026-10-19T06:38:50Z.")
-    recorded : Unit <- UW.record_cause(db,"elapsed","attempt-e","acct-b",reason)
-    observed : Unit <- UW.observe(db,"elapsed","5-hour","2020-01-01T00:00:00Z","fixture observation","acct-b")
-    gate : UW.Gate <- UW.window_gate(db,"elapsed","acct-b")
-    expect("elapsed-reset-admits",String.eq(gate_class(gate),"elapsed"))
+    recorded : Unit <- UW.record_cause(db,"reopened","attempt-e","acct-b",reason)
+    exhausted : Unit <- query(db,read_row_sql("acct-b","100","true"))
+    opened : Unit <- query(db,read_row_sql("acct-b","4","false"))
+    gate : UW.Gate <- UW.window_gate(db,"reopened","acct-b")
+    expect("open-read-admits",String.eq(gate_class(gate),"none"))
     IO.pure(Unit,Unit{})
 
 def handoff_cases(+db: String) -> IO(Unit):
@@ -150,9 +155,10 @@ def handoff_cases(+db: String) -> IO(Unit):
     label : String <- Accounts.handoff_label_io(db,"bound")
     expect("gate-label-is-bound-account",String.eq(label,"acct-a"))
     expect_read(db,"SELECT account FROM usage_windows WHERE message='attempt-bound';","acct-a\n","handoff-records-refused-account")
-    expect_read(db,"SELECT CASE WHEN resets_at = CAST(strftime('%s','2999-01-01T00:00:00Z') AS INTEGER)*1000 THEN '1' ELSE '0' END FROM usage_windows WHERE message='attempt-bound';","1\n","handoff-records-provider-reset")
+    expect_read(db,"SELECT count(*) FROM usage_windows WHERE message='attempt-bound' AND resets_at IS NULL;","1\n","handoff-records-no-reset-from-text")
+    expect_read(db,"SELECT provider||'|'||account||'|'||state FROM usage_reads WHERE trigger='provider-refusal:attempt-bound';","muse|acct-a|unreadable\n","handoff-reads-the-refused-account")
     held : UW.Gate <- UW.window_gate(db,"bound","acct-a")
-    expect("handoff-window-holds",String.eq(gate_class(held),"held"))
+    expect("unreadable-handoff-read-keeps-hold",String.eq(gate_class(held),"held"))
     IO.pure(Unit,Unit{})
 
 def fallback_cases(+db: String) -> IO(Unit):
@@ -173,9 +179,9 @@ def main_args(args: List<String>) -> IO(Unit):
     case +path <> Nil{}: do IO<Unit>:
       setup(path)
       classification_cases(path)
-      reset_cases(path)
+      label_cases(path)
       held_cases(path)
-      elapsed_cases(path)
+      open_cases(path)
       handoff_cases(path)
       fallback_cases(path)
       IO.print("quota-exhaustion-reset-ok")

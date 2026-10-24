@@ -67,7 +67,10 @@ A reader has two parts.
    table `auth_credentials`, opened read-only; a disabled row answers its
    `disabled_cause`), `claude-oauth:PATH` (`claudeAiOauth.accessToken` of a Claude Code
    credentials file, `~/.claude/.credentials.json` when `PATH` is empty; an expired
-   token is reported and never refreshed), `file:PATH` (the first line of `PATH`) and
+   token is reported and never refreshed, because a refresh writes the account's
+   credentials. The account's own Claude Code login renews the token, and the
+   unreadable report names it. Until then the read is unknown and the seat is not
+   held), `file:PATH` (the first line of `PATH`) and
    `codex-home:PATH` (Codex app-server
    `account/rateLimits/read` with that `CODEX_HOME`; an empty `PATH` inherits the
    environment). The coordinator chooses the reference: an `accounts` row with
@@ -83,8 +86,9 @@ A reader has two parts.
    (whose value is NULL for a response it cannot read) and `problem_sql(response)`.
    `read_http` in the helper resolves the credential, makes the request, checks the
    HTTP status and builds the document. The helper answers unreadable for an
-   Anthropic API-credit account (no endpoint reports the remaining credit) and for
-   Muse (its configured credential is an API key with no documented usage endpoint). A transport failure, an HTTP status other than 2xx, or a
+   Anthropic API-credit account (no documented endpoint for the remaining API credit
+   balance was found) and for Muse (no authenticated usage endpoint was identified
+   for the configured API key). A transport failure, an HTTP status other than 2xx, or a
    response the parser cannot read prints `state:"unreadable"` with the exact
    reason. The helper exits 0 for both states and exits 2 only for a bad
    invocation.
@@ -170,4 +174,8 @@ owed input starts a new turn.
 |---|---|---|
 | z.ai | `GET https://api.z.ai/api/monitor/usage/quota/limit`, Bearer key. `data.limits[]` with `type` `TOKENS_LIMIT`, `unit` 3 (5-hour, `number` 5) and 6 (weekly), `percentage`, `nextResetTime` (UTC ms). Also `TIME_LIMIT` unit 5 for tool calls (`usage`, `currentValue`, `remaining`). `data.level` names the plan. | lead |
 | Codex | `codex app-server` JSON-RPC `account/rateLimits/read` after `initialize`. `rateLimits.primary` and `secondary` carry `usedPercent`, `windowDurationMins` (10080 = 7-day, 300 = 5-hour) and `resetsAt` (Unix seconds). Also `rateLimitReachedType`, `ordinaryUsageAllowed`, `credits` and `rateLimitResetCredits.availableCount`. | lead |
-| DeepSeek, Kimi, Claude Max, Claude API credit, Muse | Researched and probed by the provider seat. | provider seat |
+| DeepSeek | `GET https://api.deepseek.com/user/balance`, Bearer key from `omp-auth:deepseek`. `is_available` and `balance_infos[].total_balance`; one `balance` window, exhausted when unavailable or every balance is zero. | provider seat |
+| Kimi Code | `GET https://api.kimi.com/coding/v1/usages`, Bearer key from `omp-models:kimi-code`. `usages.limit_5h` and `usages.limit_7d` with `used_ratio` and `reset_time`. | provider seat |
+| Claude Max | `GET https://api.anthropic.com/api/oauth/usage` with the OAuth access token and `anthropic-beta: oauth-2025-04-20`. `five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet` with `utilization` and `resets_at`. | provider seat |
+| Claude API credit | No documented endpoint for the remaining API credit balance was found; unreadable. | helper |
+| Muse | No authenticated usage endpoint was identified for the configured API key; unreadable. | helper |
