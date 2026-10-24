@@ -40,15 +40,13 @@ type RootPreview is Type:
 def split_pipe(+text: String) -> List<&2,String>:
   String.split(text, Char.from_u32(124))
 
-def source_after_first(tail: List<&2,String>) -> String:
-  match tail:
-    case Nil{}: ""
-    case Con{source, rest}: source
-
 def source_of(parts: List<&2,String>) -> String:
   match parts:
     case Nil{}: ""
-    case Con{head, tail}: source_after_first(tail)
+    case Con{head, tail}:
+      match tail:
+        case Nil{}: ""
+        case Con{source, rest}: source
 
 def first_part(parts: List<&2,String>) -> String:
   match parts:
@@ -81,8 +79,13 @@ def root_source_of(+spec: RootSpec) -> String:
   match spec:
     case RootSpec{cls, path, source}: source
 
-def roots_add_line(+line: String, +acc: List<&2,RootSpec>, empty: Bool, comment: Bool) -> List<&2,RootSpec>:
-  Bool.pick(List<&2,RootSpec>, Bool.or(empty, comment), acc, Con{root_spec(line), acc})
+def roots_add_line(+line: String, acc: List<&2,RootSpec>, empty: Bool, comment: Bool) -> List<&2,RootSpec>:
+  match empty:
+    case True{}: acc
+    case False{}:
+      match comment:
+        case True{}: acc
+        case False{}: Con{root_spec(line), acc}
 
 def roots_walk(lines: List<String>, acc: List<&2,RootSpec>) -> List<&2,RootSpec>:
   match lines:
@@ -99,8 +102,13 @@ def configured_roots() -> IO(List<&2,RootSpec>):
     text : String <- IO.try(String, IO.get_env("BATON_STORAGE_ROOTS"))
     IO.pure(List<&2,RootSpec>, parse_roots(text))
 
-def exclusive_add_line(+line: String, +acc: List<&2,String>, empty: Bool, comment: Bool) -> List<&2,String>:
-  Bool.pick(List<&2,String>, Bool.or(empty, comment), acc, Con{normalize_root(line), acc})
+def exclusive_add_line(+line: String, acc: List<&2,String>, empty: Bool, comment: Bool) -> List<&2,String>:
+  match empty:
+    case True{}: acc
+    case False{}:
+      match comment:
+        case True{}: acc
+        case False{}: Con{normalize_root(line), acc}
 
 def exclusive_walk(lines: List<String>, acc: List<&2,String>) -> List<&2,String>:
   match lines:
@@ -135,19 +143,15 @@ def unproven_roots(specs: List<&2,RootSpec>, +exclusive: List<&2,String>, +acc: 
 def join_path(+root: String, +name: String) -> String:
   Bool.pick(String, String.ends_with(root, "/"), root ++ name, root ++ "/" ++ name)
 
-def git_child_class(child: O.Child) -> T.StorageClass:
-  match child:
-    case O.Child{kind, name}:
-      Bool.pick(T.StorageClass, Bool.and(String.eq(kind, "dir"), Bool.not(String.is_empty(S.loose_prefix(name)))), T.GitObject{}, T.Unclassified{})
-
-def storage_child_class(cls: T.StorageClass, child: O.Child) -> T.StorageClass:
-  match cls:
-    case T.GitObject{}: git_child_class(child)
-    case other: other
-
-def child_class(spec: RootSpec, child: O.Child) -> T.StorageClass:
+def child_class(+spec: RootSpec, +child: O.Child) -> T.StorageClass:
   match spec:
-    case RootSpec{cls, path, source}: storage_child_class(cls, child)
+    case RootSpec{cls, path, source}:
+      match cls:
+        case T.GitObject{}:
+          match child:
+            case O.Child{kind, name}:
+              Bool.pick(T.StorageClass, Bool.and(String.eq(kind, "dir"), Bool.not(String.is_empty(S.loose_prefix(name)))), T.GitObject{}, T.Unclassified{})
+        case other: cls
 
 def candidate_path(+candidate: T.Candidate) -> String:
   match candidate:
@@ -244,31 +248,63 @@ def preview_root_generic(+session: String, +spec: RootSpec, +state: S.State) -> 
     current : RootPreview <- preview_scan(session, spec, state, observed, scan)
     IO.pure(RootPreview, current)
 
-def cargo_pending_owned(+state: S.State, choice: S.OwnerChoice) -> T.Presence:
-  match choice:
-    case S.OwnerChoice{owner, T.OwnerMatches{identity}}: S.pending_fact(state, owner)
-    case S.OwnerChoice{owner, T.OwnerUnknown{}}: T.Unknown{}
-    case other: T.Absent{}
+# Cargo consumers use canonical operation/workspace paths. Missing historical
+# owners do not add a provenance requirement to generated output collection.
+def cargo_reference_result(result: Result<&1,&1,U32 & String,String>, +path: String,
+                           detail: String, unknown: Bool, next: Bool -> IO(T.Presence)) -> IO(T.Presence):
+  match result:
+    case Fail{error}: next(True{})
+    case Done{+resolved}:
+      Bool.pick(IO(T.Presence), Bool.or(S.path_under(path, resolved), S.path_under(resolved, path)),
+        IO.pure(T.Presence, T.Present{detail}), next(unknown))
 
-def cargo_pending(+state: S.State, path: String) -> T.Presence:
-  cargo_pending_owned(state, S.owner_choice(state, path))
+def cargo_pending_sessions(rows: List<&2,S.SessionRow>, +pending: List<&2,S.PendingRow>,
+                           +path: String, unknown: Bool) -> IO(T.Presence):
+  match rows:
+    case Nil{}: IO.pure(T.Presence, Bool.pick(T.Presence, unknown, T.Unknown{}, T.Absent{}))
+    case S.SessionRow{+id, workspace, branch, base} <> +rest:
+      Bool.pick(IO(T.Presence), U32.is_eq(S.pending_count(pending, id), 0),
+        cargo_pending_sessions(rest, pending, path, unknown),
+        do IO<T.Presence>:
+          resolved : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(workspace)
+          cargo_reference_result(resolved, path, "pending:" ++ id, unknown,
+            next_unknown => cargo_pending_sessions(rest, pending, path, next_unknown)))
 
-def cargo_consumer_lease(state: S.State, path: String, lease: T.Presence) -> T.Presence:
-  match lease:
-    case T.Absent{}: cargo_pending(state, path)
-    case present: present
+def cargo_executions(rows: List<&2,S.ExecutionRow>, +sessions: List<&2,S.SessionRow>,
+                     +pending: List<&2,S.PendingRow>, +path: String, unknown: Bool) -> IO(T.Presence):
+  match rows:
+    case Nil{}: cargo_pending_sessions(sessions, pending, path, unknown)
+    case S.ExecutionRow{session, id, directory, phase, status} <> +rest:
+      Bool.pick(IO(T.Presence), String.eq(phase, "exited"),
+        cargo_executions(rest, sessions, pending, path, unknown),
+        do IO<T.Presence>:
+          resolved : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(directory)
+          cargo_reference_result(resolved, path, "execution:" ++ id, unknown,
+            next_unknown => cargo_executions(rest, sessions, pending, path, next_unknown)))
 
-def cargo_consumer_database(+state: S.State, +path: String, database: T.Presence) -> T.Presence:
+def cargo_consumer_operations(state: S.State, path: String) -> IO(T.Presence):
+  match state:
+    case S.State{sessions, executions, logs, pending, databases, valid}:
+      cargo_executions(executions, sessions, pending, path, False{})
+
+def cargo_consumer_database(state: S.State, +path: String, database: T.Presence) -> IO(T.Presence):
   match database:
-    case T.Absent{}: cargo_consumer_lease(state, path, S.lease_fact(state, path))
-    case present: present
+    case T.Absent{}: cargo_consumer_operations(state, path)
+    case present: IO.pure(T.Presence, present)
 
-def cargo_consumer_valid(+state: S.State, +path: String, valid: Bool) -> IO(T.Presence):
+def cargo_consumer_canonical(+state: S.State, canonical: Result<&1,&1,U32 & String,String>) -> IO(T.Presence):
+  match canonical:
+    case Fail{error}: IO.pure(T.Presence, T.Unknown{})
+    case Done{+path}: do IO<T.Presence>:
+      database : T.Presence <- S.database_fact(state, path)
+      cargo_consumer_database(state, path, database)
+
+def cargo_consumer_valid(+state: S.State, path: String, valid: Bool) -> IO(T.Presence):
   match valid:
     case False{}: IO.pure(T.Presence, T.Unknown{})
     case True{}: do IO<T.Presence>:
-      database : T.Presence <- S.database_fact(state, path)
-      IO.pure(T.Presence, cargo_consumer_database(state, path, database))
+      canonical : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(path)
+      cargo_consumer_canonical(state, canonical)
 
 def cargo_state_consumer(+state: S.State, +path: String) -> IO(T.Presence):
   cargo_consumer_valid(state, path, S.valid_of(state))

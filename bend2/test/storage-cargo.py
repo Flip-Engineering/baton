@@ -5,6 +5,7 @@ import json
 import os
 import pathlib
 import select
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -154,7 +155,7 @@ CREATE TABLE log_files(session TEXT,log TEXT);
         self.assertTrue(self.target.exists())
 
     @contextlib.contextmanager
-    def writer(self):
+    def writer(self, *args):
         ready, release = self.root / 'build-ready', self.root / 'build-release'
         os.mkfifo(ready)
         os.mkfifo(release)
@@ -163,7 +164,7 @@ CREATE TABLE log_files(session TEXT,log TEXT);
         env = dict(self.environment, BATON_CARGO_BUILD_READY=str(ready),
                    BATON_CARGO_BUILD_RELEASE=str(release))
         with (self.root / 'writer.stdout').open('w') as stdout, (self.root / 'writer.stderr').open('w') as stderr:
-            child = subprocess.Popen(self.cargo_argv(), cwd=self.source, env=env,
+            child = subprocess.Popen(self.cargo_argv(*args), cwd=self.source, env=env,
                                      stdout=stdout, stderr=stderr)
             exited, exit_writer, watcher = child_exit(child)
             try:
@@ -195,6 +196,8 @@ CREATE TABLE log_files(session TEXT,log TEXT);
             manifest.write('\n[profile.review]\ninherits="dev"\n')
         self.build('--target', triple, '--profile', 'review')
         self.assertTrue((self.target / triple / 'review' / '.cargo-lock').exists())
+        with self.writer('--target', triple, '--profile', 'review'):
+            self.assertIn('cargo-writer-active', self.collect())
         self.assertTrue(self.collect().startswith('removed\t'))
         self.assertFalse(self.target.exists())
 
@@ -202,6 +205,176 @@ CREATE TABLE log_files(session TEXT,log TEXT);
         build = self.root / 'build'
         self.environment['CARGO_BUILD_BUILD_DIR'] = str(build)
         self.build()
+
+    def release_preview(self, target=None):
+        return json.loads(self.call('release-preview', target or self.target, self.db,
+                                    self.commands))['entries'][0]
+
+    def test_preview_and_collection_agree_on_released_output(self):
+        entry = self.release_preview()
+        self.assertEqual(entry['decision'], 'remove', entry)
+        self.assertEqual(entry['reason'], 'cargo-output-released', entry)
+        self.assertTrue(self.collect().startswith('removed\t'))
+
+    def test_tag_alone_is_kept_and_tag_fifo_is_unreadable(self):
+        other = self.root / 'tagged'
+        other.mkdir()
+        tag = other / 'CACHEDIR.TAG'
+        tag.write_text('Signature: 8a477f597d28d172789f06886806bc55\n')
+        self.assertEqual(self.call('probe', other), 'unclassified')
+        self.assertEqual(self.release_preview(other)['reason'], 'unclassified-cargo-output')
+        self.assertIn('unclassified-cargo-output', self.collect(other))
+        tag.unlink()
+        os.mkfifo(tag)
+        self.assertTrue(self.call('probe', other).startswith('unreadable\t'))
+        self.assertTrue(tag.exists())
+
+    def test_symlinks_are_unlinked_inside_and_refused_at_the_target(self):
+        evidence = self.root / 'evidence'
+        evidence.mkdir()
+        (evidence / 'keep').write_text('keep\n')
+        (self.target / 'linked-directory').symlink_to(evidence, target_is_directory=True)
+        (self.target / 'linked-file').symlink_to(evidence / 'keep')
+        alias = self.root / 'alias'
+        alias.symlink_to(self.target, target_is_directory=True)
+        self.assertTrue(self.call('probe', alias).startswith('unreadable\t'))
+        self.assertIn('cargo-output-unreadable', self.collect(alias))
+        self.assertTrue(self.target.exists())
+        self.assertTrue(self.collect().startswith('removed\t'))
+        self.assertEqual((evidence / 'keep').read_text(), 'keep\n')
+
+    def test_foreign_owned_directory_is_unreadable(self):
+        foreign = pathlib.Path(ROOT.anchor)
+        self.assertNotEqual(foreign.stat().st_uid, os.geteuid())
+        self.assertTrue(self.call('probe', foreign).startswith('unreadable\t'))
+
+    def test_canonical_lease_and_pending_consumers_are_kept(self):
+        alias = self.root / 'target-alias'
+        alias.symlink_to(self.target, target_is_directory=True)
+        with sqlite3.connect(self.db) as db:
+            db.execute("INSERT INTO executions VALUES('owner','lease',?,'running','')", (str(alias),))
+        self.assertIn('execution:lease', self.collect())
+        relative = pathlib.Path(os.path.relpath(self.target, ROOT))
+        self.assertIn('execution:lease', self.collect(relative))
+        with sqlite3.connect(self.db) as db:
+            db.execute('DELETE FROM executions')
+            db.execute("UPDATE sessions SET workspace=? WHERE id='owner'", (str(alias),))
+            db.execute("INSERT INTO messages VALUES(1,'pending','root','owner','task','work',NULL)")
+        self.assertIn('pending:owner', self.collect())
+        self.assertTrue(self.target.exists())
+
+    def test_database_path_consumer_is_kept(self):
+        # The copied coordinator database is itself an allocation consumer.
+        resident = self.target / 'state.sqlite'
+        with sqlite3.connect(self.db) as source, sqlite3.connect(resident) as destination:
+            source.backup(destination)
+        self.db = resident
+        self.assertIn('database-path', self.collect())
+        self.assertTrue(resident.exists())
+
+    def test_live_cwd_with_recorded_operation_is_kept(self):
+        child = subprocess.Popen([sys.executable, '-c', 'import sys; sys.stdin.buffer.read(1)'],
+                                 cwd=self.target / 'debug', stdin=subprocess.PIPE)
+        try:
+            with sqlite3.connect(self.db) as db:
+                db.execute("INSERT INTO executions VALUES('owner','consumer',?,'running','')",
+                           (str(self.target / 'debug'),))
+            self.assertIn('execution:consumer', self.collect())
+            self.assertTrue(self.target.exists())
+        finally:
+            child.communicate(b'x')
+        self.assertEqual(child.returncode, 0)
+
+    @contextlib.contextmanager
+    def collector_boundary(self, boundary):
+        ready, release = self.root / 'collector-ready', self.root / 'collector-release'
+        os.mkfifo(ready)
+        os.mkfifo(release)
+        ready_fd = os.open(ready, os.O_RDWR | os.O_NONBLOCK)
+        release_fd = os.open(release, os.O_RDWR)
+        env = dict(self.environment, BATON_CARGO_TEST_BOUNDARY=boundary,
+                   BATON_CARGO_TEST_RENAMED=str(ready), BATON_CARGO_TEST_RELEASE=str(release))
+        child = subprocess.Popen([str(BINARY), 'collect', str(self.target), '', str(self.db), str(self.commands)],
+                                 cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        exited, exit_writer, watcher = child_exit(child)
+        result = {}
+        try:
+            readable, _, _ = select.select([ready_fd, exited], [], [])
+            self.assertIn(ready_fd, readable, 'collector exited before boundary ' + boundary)
+            self.assertEqual(os.read(ready_fd, 1), b'\x01')
+            yield result
+        finally:
+            os.write(release_fd, b'x')
+            stdout, stderr = child.communicate()
+            watcher.join()
+            for descriptor in [ready_fd, release_fd, exited, exit_writer]:
+                os.close(descriptor)
+            result.update(stdout=stdout, stderr=stderr, exit=child.returncode)
+            print(stderr, end='', flush=True)
+            self.assertEqual(child.returncode, 0, stdout + stderr)
+
+    def test_replacement_after_observation_is_changed(self):
+        with self.collector_boundary('observed') as result:
+            self.target.rename(self.root / 'original')
+            self.target.mkdir()
+            (self.target / 'keep').write_text('replacement\n')
+        self.assertEqual(result['stdout'].strip(), 'changed')
+        self.assertEqual((self.target / 'keep').read_text(), 'replacement\n')
+        self.assertTrue((self.root / 'original/debug/.cargo-lock').exists())
+
+    def test_new_profile_after_locking_keeps_the_allocation(self):
+        with self.collector_boundary('locked') as result:
+            profile = self.target / 'x/triple/profile'
+            profile.mkdir(parents=True)
+            (profile / '.cargo-lock').touch()
+        self.assertIn('cargo-lock-layout-changed', result['stdout'])
+        self.assertTrue(self.target.exists())
+        with (profile / '.cargo-lock').open() as lock:
+            fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            self.assertIn('cargo-writer-active', self.collect())
+
+    def test_partial_removal_restores_the_original_path(self):
+        with socket.socket(socket.AF_UNIX) as endpoint:
+            self.bind_socket(endpoint)
+            answer = self.collect()
+            self.assertIn('partial ', answer)
+            self.assertIn('restore-error=0', answer)
+            self.assertTrue((self.target / 'retained-socket').exists())
+            self.assertEqual(list(self.root.glob('.target.baton-cargo-*')), [])
+            self.assertEqual(self.release_preview()['decision'], 'keep')
+
+    def test_failed_restore_is_reported_by_the_next_preview(self):
+        with socket.socket(socket.AF_UNIX) as endpoint:
+            self.bind_socket(endpoint)
+            with self.collector_boundary('renamed') as result:
+                boxes = list(self.root.glob('.target.baton-cargo-*'))
+                self.assertEqual(len(boxes), 1)
+                self.target.mkdir()
+                (self.target / 'keep').write_text('replacement\n')
+            self.assertIn('partial ', result['stdout'])
+            self.assertTrue((boxes[0] / 'output/retained-socket').exists())
+            self.assertEqual((self.target / 'keep').read_text(), 'replacement\n')
+            self.assertIn(str(boxes[0]), self.call('probe', self.target))
+            self.assertIn(str(boxes[0]), self.release_preview()['reason'])
+
+    def bind_socket(self, endpoint):
+        # Relative binding fits the platform's sockaddr_un path field even
+        # when the private checkout has a long absolute path.
+        previous = os.open('.', os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.chdir(self.target)
+            endpoint.bind('retained-socket')
+        finally:
+            os.fchdir(previous)
+            os.close(previous)
+
+    def test_box_cleanup_failure_preserves_the_removed_answer(self):
+        with self.collector_boundary('removed') as result:
+            box, = self.root.glob('.target.baton-cargo-*')
+            (box / 'keep').write_text('retain box\n')
+        self.assertTrue(result['stdout'].startswith('removed\t'), result)
+        self.assertIn('retained box=', result['stderr'])
+        self.assertIn(str(box), self.call('probe', self.target))
         with self.writer():
             self.assertIn('cargo-writer-active', self.collect(associated=build))
         self.assertTrue(self.collect(associated=build).startswith('removed\t'))

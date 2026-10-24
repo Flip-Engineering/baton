@@ -31,6 +31,9 @@
 #include <sys/file.h>
 #include <sys/types.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/syscall.h>
+#endif
 
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
@@ -48,7 +51,6 @@
 #define AT_REMOVEDIR 0
 #endif
 
-#define BATON_STORAGE_DEPTH 128
 #define BATON_STORAGE_PID_LIMIT 65536
 #define BATON_STORAGE_REF_LIMIT 4096
 
@@ -435,11 +437,30 @@ static int baton_storage_names_push(BatonStorageNames *names, const char *name) 
   return 0;
 }
 
-static int baton_storage_remove_children(int fd, BatonStorageCount *count);
+/* Linux mount IDs also distinguish bind mounts on the same device. */
+static int baton_storage_mount_boundary(int fd, const char *name) {
+#if defined(__linux__) && defined(STATX_MNT_ID)
+  struct statx parent, child;
+  if (statx(fd, "", AT_EMPTY_PATH, STATX_MNT_ID, &parent) ||
+      statx(fd, name, AT_SYMLINK_NOFOLLOW, STATX_MNT_ID, &child)) {
+    return errno == ENOSYS ? 0 : errno;
+  }
+  if ((parent.stx_mask & child.stx_mask & STATX_MNT_ID) && parent.stx_mnt_id != child.stx_mnt_id) return EXDEV;
+#endif
+  return 0;
+}
 
-static int baton_storage_remove_child(int fd, const char *name, BatonStorageCount *count) {
+static int baton_storage_remove_children(int fd, dev_t device, BatonStorageCount *count);
+
+static int baton_storage_remove_child(int fd, const char *name, dev_t device, BatonStorageCount *count) {
   struct stat info;
   if (fstatat(fd, name, &info, AT_SYMLINK_NOFOLLOW)) return errno == ENOENT ? 0 : errno;
+  int boundary = baton_storage_mount_boundary(fd, name);
+  if (info.st_dev != device || boundary) {
+    fprintf(stderr, "storage removal preserves mount entry=%s device=%llu root-device=%llu\n",
+            name, (baton_u64)info.st_dev, (baton_u64)device);
+    return boundary ? boundary : EXDEV;
+  }
   if (S_ISREG(info.st_mode)) {
     if (unlinkat(fd, name, 0) && errno != ENOENT) return errno;
     count->nodes++;
@@ -459,7 +480,7 @@ static int baton_storage_remove_child(int fd, const char *name, BatonStorageCoun
       close(child);
       return ESTALE;
     }
-    int error = baton_storage_remove_children(child, count);
+    int error = baton_storage_remove_children(child, device, count);
     close(child);
     if (error) return error;
     if (unlinkat(fd, name, AT_REMOVEDIR) && errno != ENOENT) return errno;
@@ -469,7 +490,7 @@ static int baton_storage_remove_child(int fd, const char *name, BatonStorageCoun
   return ENOTSUP;
 }
 
-static int baton_storage_remove_children(int fd, BatonStorageCount *count) {
+static int baton_storage_remove_children(int fd, dev_t device, BatonStorageCount *count) {
   int copy = dup(fd);
   if (copy < 0) return errno;
   DIR *directory = fdopendir(copy);
@@ -487,7 +508,7 @@ static int baton_storage_remove_children(int fd, BatonStorageCount *count) {
   }
   closedir(directory);
   for (size_t i = 0; !error && i < names.count; i++) {
-    error = baton_storage_remove_child(fd, names.names[i], count);
+    error = baton_storage_remove_child(fd, names.names[i], device, count);
   }
   baton_storage_names_free(&names);
   return error;
@@ -514,7 +535,7 @@ static int baton_storage_remove_at(int parent, const char *name, const char *kin
       return 2;
     }
     count->nodes = 1;
-    int error = baton_storage_remove_children(child, count);
+    int error = baton_storage_remove_children(child, opened.st_dev, count);
     close(child);
     if (error) { errno = error; return -1; }
     if (unlinkat(parent, name, AT_REMOVEDIR)) return errno == ENOENT ? 0 : -1;
@@ -612,8 +633,14 @@ static int baton_cargo_regular(int fd, const char *name) {
 
 static int baton_cargo_tag(int fd) {
   static const char signature[] = "Signature: 8a477f597d28d172789f06886806bc55";
-  int tag = openat(fd, "CACHEDIR.TAG", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+  int tag = openat(fd, "CACHEDIR.TAG", O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
   if (tag < 0) return errno == ENOENT ? 0 : -1;
+  struct stat info;
+  int stat_error = fstat(tag, &info) ? errno : 0;
+  if (stat_error || !S_ISREG(info.st_mode)) {
+    int error = stat_error ? stat_error : EINVAL;
+    close(tag); errno = error; return -1;
+  }
   char bytes[sizeof(signature) - 1];
   size_t used = 0;
   while (used < sizeof(bytes)) {
@@ -648,9 +675,9 @@ static int baton_cargo_profile(int fd, const char *relative, BatonStorageNames *
   return 1;
 }
 
-/* Cargo places profiles directly below the allocation, or below a target
-   triple. The traversal covers these two layout components. */
-static int baton_cargo_profiles(int fd, const char *prefix, int targets, BatonStorageNames *locks) {
+/* Find native profile locks through layout prefixes. A profile's descendants
+   are governed by the locks found at that profile. */
+static int baton_cargo_profiles(int fd, const char *prefix, dev_t device, BatonStorageNames *locks) {
   int copy = openat(fd, ".", baton_storage_read_dir_flags());
   if (copy < 0) return -1;
   DIR *directory = fdopendir(copy);
@@ -663,6 +690,16 @@ static int baton_cargo_profiles(int fd, const char *prefix, int targets, BatonSt
     if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
     struct stat info;
     if (fstatat(fd, entry->d_name, &info, AT_SYMLINK_NOFOLLOW)) { error = errno; break; }
+    if (info.st_dev != device) {
+      fprintf(stderr, "Cargo layout preserves mount entry=%s/%s device=%llu root-device=%llu\n",
+              prefix, entry->d_name, (baton_u64)info.st_dev, (baton_u64)device);
+      error = EXDEV; break;
+    }
+    error = baton_storage_mount_boundary(fd, entry->d_name);
+    if (error) {
+      fprintf(stderr, "Cargo layout preserves entry=%s/%s error=%d (%s)\n", prefix, entry->d_name, error, strerror(error));
+      break;
+    }
     if (!S_ISDIR(info.st_mode)) continue;
     int child = openat(fd, entry->d_name, baton_storage_read_dir_flags());
     if (child < 0) { error = errno; break; }
@@ -672,7 +709,7 @@ static int baton_cargo_profiles(int fd, const char *prefix, int targets, BatonSt
     }
     int profile = baton_cargo_profile(child, relative, locks);
     if (profile < 0) error = errno;
-    else if (!profile && targets && baton_cargo_profiles(child, relative, 0, locks)) error = errno;
+    else if (!profile && baton_cargo_profiles(child, relative, device, locks)) error = errno;
     free(relative);
     close(child);
     if (error) break;
@@ -688,8 +725,9 @@ static int baton_cargo_output(int fd, BatonStorageNames *locks, int *tagged) {
   int rustc = baton_cargo_regular(fd, ".rustc_info.json");
   if (rustc < 0) return -1;
   if (!*tagged && !rustc) return 0;
-  if (baton_cargo_profiles(fd, "", 1, locks)) return -1;
-  return *tagged || locks->count > 0;
+  struct stat info;
+  if (fstat(fd, &info) || baton_cargo_profiles(fd, "", info.st_dev, locks)) return -1;
+  return locks->count > 0;
 }
 
 static int baton_cargo_open(const char *path) {
@@ -705,10 +743,37 @@ static int baton_cargo_open(const char *path) {
   return fd;
 }
 
-typedef struct { char *path, *identity, *associated, *answer; int error; } BatonCargo;
+typedef struct { char *path, *identity, *associated, *answer, *detail; int error; } BatonCargo;
+
+/* A failed restore leaves a sibling named for this allocation. Subsequent
+   observations report that retained output before considering a new target. */
+static int baton_cargo_retained(BatonCargo *call) {
+  char *parent = NULL, *name = NULL, *prefix = NULL;
+  if (baton_storage_split(call->path, &parent, &name)) return errno;
+  int fd = baton_storage_open_dir(parent), error = 0;
+  if (fd < 0) { error = errno; goto done; }
+  if (asprintf(&prefix, ".%s.baton-cargo-", name) < 0) { error = ENOMEM; close(fd); goto done; }
+  DIR *directory = fdopendir(fd);
+  if (!directory) { error = errno; close(fd); goto done; }
+  for (;;) {
+    errno = 0;
+    struct dirent *entry = readdir(directory);
+    if (!entry) { error = errno; break; }
+    if (strncmp(entry->d_name, prefix, strlen(prefix))) continue;
+    error = EINPROGRESS;
+    if (asprintf(&call->detail, "Cargo output retained at %s/%s", parent, entry->d_name) < 0) error = ENOMEM;
+    break;
+  }
+  closedir(directory);
+done:
+  free(parent); free(name); free(prefix);
+  return error;
+}
 
 static void baton_cargo_probe_call(IoWork *w) {
   BatonCargo *call = (BatonCargo *)w->data;
+  call->error = baton_cargo_retained(call);
+  if (call->error) return;
   int fd = baton_cargo_open(call->path);
   if (fd < 0) { call->error = errno; return; }
   BatonStorageNames locks = {NULL, 0, 0};
@@ -732,11 +797,17 @@ static int baton_cargo_lock(int fd, const BatonStorageNames *names, int **held, 
     char *parent = NULL, *name = NULL;
     if (baton_storage_split(names->names[i], &parent, &name)) return -1;
     int directory = baton_storage_open_dir_at(fd, parent);
-    int lock = directory < 0 ? -1 : openat(directory, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    int lock = directory < 0 ? -1 : openat(directory, name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
     int error = errno;
     if (directory >= 0) close(directory);
     free(parent); free(name);
     if (lock < 0) { errno = error; return -1; }
+    struct stat info;
+    error = fstat(lock, &info) ? errno : 0;
+    if (error || !S_ISREG(info.st_mode)) {
+      if (!error) error = EINVAL;
+      close(lock); errno = error; return -1;
+    }
     int locked;
     do { locked = flock(lock, LOCK_EX | LOCK_NB); } while (locked < 0 && errno == EINTR);
     if (locked < 0) { error = errno; close(lock); errno = error; return -1; }
@@ -748,9 +819,31 @@ static int baton_cargo_lock(int fd, const BatonStorageNames *names, int **held, 
   return 0;
 }
 
+/* Re-read the complete layout after all locks are held. A new profile or a
+   replaced lock retains the allocation for a later collection pass. */
+static int baton_cargo_stable(int fd, const BatonStorageNames *names, const int *held) {
+  BatonStorageNames current = {NULL, 0, 0};
+  int tagged = 0, error = 0;
+  int found = baton_cargo_output(fd, &current, &tagged);
+  if (found < 0) error = errno;
+  else if (!found || current.count != names->count) error = ESTALE;
+  for (size_t i = 0; !error && i < names->count; i++) {
+    size_t j = 0;
+    while (j < current.count && strcmp(names->names[i], current.names[j])) j++;
+    struct stat locked, named;
+    if (j == current.count) error = ESTALE;
+    else if (fstat(held[i], &locked) || fstatat(fd, names->names[i], &named, AT_SYMLINK_NOFOLLOW)) error = errno;
+    else if (!S_ISREG(named.st_mode) || locked.st_dev != named.st_dev || locked.st_ino != named.st_ino) error = ESTALE;
+  }
+  baton_storage_names_free(&current);
+  return error;
+}
+
 #ifdef BATON_STORAGE_CARGO_TEST
 /* The functional fixture observes the held native locks after the rename. */
-static int baton_cargo_test_renamed(void) {
+static int baton_cargo_test_boundary(const char *boundary) {
+  const char *selected = getenv("BATON_CARGO_TEST_BOUNDARY");
+  if (strcmp(boundary, selected ? selected : "renamed")) return 0;
   const char *ready_path = getenv("BATON_CARGO_TEST_RENAMED");
   const char *release_path = getenv("BATON_CARGO_TEST_RELEASE");
   if (!ready_path || !release_path) return 0;
@@ -771,19 +864,36 @@ static int baton_cargo_test_renamed(void) {
 }
 #endif
 
+/* Restore only into an absent name so a concurrent replacement stays intact. */
+static int baton_cargo_restore(int box, int parent, const char *name) {
+#if defined(__linux__) && defined(SYS_renameat2)
+  return syscall(SYS_renameat2, box, "output", parent, name, 1 /* RENAME_NOREPLACE */) ? errno : 0;
+#elif defined(__APPLE__)
+  return renameatx_np(box, "output", parent, name, RENAME_EXCL) ? errno : 0;
+#else
+  return ENOTSUP;
+#endif
+}
+
 static void baton_cargo_remove_call(IoWork *w) {
   BatonCargo *call = (BatonCargo *)w->data;
   int fd = -1, other = -1, parent_fd = -1, box_fd = -1;
   int *held = NULL, error = 0, renamed = 0;
-  size_t held_count = 0;
-  char *parent = NULL, *name = NULL;
+  size_t held_count = 0, other_start = 0;
+  char *parent = NULL, *name = NULL, *box = NULL;
   BatonStorageNames locks = {NULL, 0, 0}, other_locks = {NULL, 0, 0};
   BatonStorageCount count = {0, 0, 0};
-  char kind[16], box[96] = "";
+  char kind[16];
   baton_u64 device = 0, inode = 0;
   if (baton_storage_identity_parse(call->identity, kind, sizeof(kind), &device, &inode) || strcmp(kind, "dir")) {
     call->error = EINVAL; return;
   }
+  call->error = baton_cargo_retained(call);
+  if (call->error) goto done;
+#ifdef BATON_STORAGE_CARGO_TEST
+  call->error = baton_cargo_test_boundary("observed");
+  if (call->error) goto done;
+#endif
   if (baton_storage_split(call->path, &parent, &name)) { call->error = errno; goto done; }
   parent_fd = baton_storage_open_dir(parent);
   if (parent_fd < 0) { call->error = errno; goto done; }
@@ -804,6 +914,7 @@ static void baton_cargo_remove_call(IoWork *w) {
   if (!found) { call->answer = strdup("refused\tunclassified-cargo-output"); goto done; }
   if (!locks.count) { call->answer = strdup("refused\tcargo-lock-layout-unresolved"); goto done; }
   if (baton_cargo_lock(fd, &locks, &held, &held_count)) { error = errno; goto lock_failed; }
+  other_start = held_count;
   if (call->associated[0]) {
     other = baton_cargo_open(call->associated);
     if (other < 0) { call->error = errno; goto done; }
@@ -816,6 +927,16 @@ static void baton_cargo_remove_call(IoWork *w) {
       if (baton_cargo_lock(other, &other_locks, &held, &held_count)) { error = errno; goto lock_failed; }
     }
   }
+#ifdef BATON_STORAGE_CARGO_TEST
+  call->error = baton_cargo_test_boundary("locked");
+  if (call->error) goto done;
+#endif
+  error = baton_cargo_stable(fd, &locks, held);
+  if (!error && other_locks.count) error = baton_cargo_stable(other, &other_locks, held + other_start);
+  if (error) {
+    if (asprintf(&call->answer, "refused\tcargo-lock-layout-changed error=%d", error) < 0) call->error = ENOMEM;
+    goto done;
+  }
   if (fstatat(parent_fd, name, &info, AT_SYMLINK_NOFOLLOW)) { call->error = errno; goto done; }
   if (!baton_storage_identity_match(&info, kind, device, inode)) {
     call->answer = strdup("changed\t0\t0"); goto done;
@@ -823,9 +944,10 @@ static void baton_cargo_remove_call(IoWork *w) {
   static unsigned long long sequence;
   for (;;) {
     unsigned long long serial = __sync_add_and_fetch(&sequence, 1);
-    snprintf(box, sizeof(box), ".baton-cargo-%ld-%llu", (long)getpid(), serial);
+    free(box); box = NULL;
+    if (asprintf(&box, ".%s.baton-cargo-%ld-%llu", name, (long)getpid(), serial) < 0) { call->error = ENOMEM; goto done; }
     if (!mkdirat(parent_fd, box, 0700)) break;
-    if (errno != EEXIST) { call->error = errno; box[0] = 0; goto done; }
+    if (errno != EEXIST) { call->error = errno; free(box); box = NULL; goto done; }
   }
   box_fd = openat(parent_fd, box, baton_storage_read_dir_flags());
   if (box_fd < 0) { call->error = errno; goto done; }
@@ -835,28 +957,43 @@ static void baton_cargo_remove_call(IoWork *w) {
   int moved_error = fstatat(box_fd, "output", &moved, AT_SYMLINK_NOFOLLOW) ? errno : 0;
   if (moved_error || !baton_storage_identity_match(&moved, kind, device, inode)) {
     error = moved_error ? moved_error : ESTALE;
-    if (asprintf(&call->answer, "refused\tidentity-changed error=%d retained=%s/%s/output",
-                 error, parent, box) < 0) call->error = ENOMEM;
+    int restore = baton_cargo_restore(box_fd, parent_fd, name);
+    if (!restore) { renamed = 0; call->answer = strdup("changed\t0\t0"); }
+    else if (asprintf(&call->answer, "refused\tidentity-changed error=%d restore-error=%d retained=%s/%s/output",
+                      error, restore, parent, box) < 0) call->error = ENOMEM;
     goto done;
   }
   count.nodes = 1;
 #ifdef BATON_STORAGE_CARGO_TEST
-  error = baton_cargo_test_renamed();
+  error = baton_cargo_test_boundary("renamed");
 #endif
-  if (!error) error = baton_storage_remove_children(fd, &count);
+  if (!error) error = baton_cargo_stable(fd, &locks, held);
+  if (!error && other_locks.count) error = baton_cargo_stable(other, &other_locks, held + other_start);
+  if (!error) error = baton_storage_remove_children(fd, (dev_t)device, &count);
   if (!error && unlinkat(box_fd, "output", AT_REMOVEDIR)) error = errno;
   if (error) {
-    if (asprintf(&call->answer, "refused\tpartial bytes=%llu nodes=%llu error=%d retained=%s/%s/output",
-                 count.bytes, count.nodes, error, parent, box) < 0) call->error = ENOMEM;
-  } else if (asprintf(&call->answer, "removed\t%llu\t%llu", count.bytes, count.nodes) < 0) call->error = ENOMEM;
+    int restore = baton_cargo_restore(box_fd, parent_fd, name);
+    if (!restore) renamed = 0;
+    if (asprintf(&call->answer, "refused\tpartial bytes=%llu nodes=%llu error=%d restore-error=%d retained=%s/%s%s",
+                 count.bytes, count.nodes, error, restore, parent, restore ? box : name,
+                 restore ? "/output" : "") < 0) call->error = ENOMEM;
+  } else {
+    if (asprintf(&call->answer, "removed\t%llu\t%llu", count.bytes, count.nodes) < 0) call->error = ENOMEM;
+#ifdef BATON_STORAGE_CARGO_TEST
+    int hook_error = baton_cargo_test_boundary("removed");
+    if (hook_error) fprintf(stderr, "Cargo fixture boundary failed error=%d\n", hook_error);
+#endif
+  }
   goto done;
 lock_failed:
   if (error == EWOULDBLOCK || error == EAGAIN) call->answer = strdup("refused\tcargo-writer-active");
   else call->error = error;
 done:
   if (box_fd >= 0) close(box_fd);
-  if (parent_fd >= 0 && box[0] && (!renamed || !error)) {
-    if (unlinkat(parent_fd, box, AT_REMOVEDIR) && !call->error) call->error = errno;
+  if (parent_fd >= 0 && box && (!renamed || !error)) {
+    if (unlinkat(parent_fd, box, AT_REMOVEDIR)) {
+      fprintf(stderr, "Cargo collection retained box=%s/%s error=%d (%s)\n", parent, box, errno, strerror(errno));
+    }
   }
   if (fd >= 0) close(fd);
   if (other >= 0) close(other);
@@ -865,15 +1002,15 @@ done:
   free(held);
   baton_storage_names_free(&locks);
   baton_storage_names_free(&other_locks);
-  free(parent); free(name);
+  free(parent); free(name); free(box);
   if (!call->error && !call->answer) call->error = ENOMEM;
 }
 
 static Term baton_cargo_pack(Env e, IoWork *w) {
   BatonCargo *call = (BatonCargo *)w->data;
-  Term result = call->error ? io_fail(e, call->error, "Cargo output observation or removal failed")
+  Term result = call->error ? io_fail(e, call->error, call->detail ? call->detail : "Cargo output observation or removal failed")
     : io_done(e, io_str(e, call->answer, strlen(call->answer)));
-  free(call->path); free(call->identity); free(call->associated); free(call->answer); free(call);
+  free(call->path); free(call->identity); free(call->associated); free(call->answer); free(call->detail); free(call);
   w->data = NULL;
   return result;
 }

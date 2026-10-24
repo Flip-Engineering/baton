@@ -4,6 +4,7 @@ import ../src/storage/cargo.bend as Cargo
 import ../src/storage/types.bend as T
 import ../src/storage/lifecycle.bend as Lifecycle
 import ../src/storage/observe.bend as O
+import ../src/storage/policy.bend as P
 
 def selected(+directory: String, +path: String) -> IO(T.Presence):
   Bool.pick(IO(T.Presence), String.is_empty(directory), Cargo.unknown_selection(path), Cargo.baton_selection(directory, path))
@@ -33,6 +34,10 @@ def args(arguments: List<String>) -> IO(Unit):
     case "probe" <> path <> Nil{}: do IO<Unit>:
       output : Cargo.Output <- Cargo.observe(path)
       IO.print(show_output(output))
+    case "release-preview" <> path <> db <> directory <> Nil{}: do IO<Unit>:
+      preview : T.Preview <- Cargo.preview(path, "fixture",
+        candidate => Lifecycle.cargo_consumer(db, candidate), candidate => selected(directory, candidate))
+      IO.print(P.preview_json(preview))
     case "collect" <> path <> associated <> db <> directory <> Nil{}: do IO<Unit>:
       result : Cargo.Collection <- Lifecycle.cargo_release(db, path, associated,
         candidate => selected(directory, candidate))
