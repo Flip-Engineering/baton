@@ -279,10 +279,10 @@ def cargo_release(+db: String, +path: String, +associated: String,
 
 def preview_root(+session: String, +spec: RootSpec, +state: S.State) -> IO(RootPreview):
   match spec:
-    case RootSpec{T.BuildOutput{}, path, source}: do IO<RootPreview>:
+    case RootSpec{T.BuildOutput{}, +path, source}: do IO<RootPreview>:
       planned : T.Preview <- Cargo.preview(path, session,
         candidate => cargo_state_consumer(state, candidate), candidate => Cargo.unknown_selection(candidate))
-      observed : O.Observation <- O.observe(path)
+      +observed : O.Observation <- O.observe(path)
       IO.pure(RootPreview, RootPreview{path, mount_of(observed), O.observation_identity(observed), planned})
     case other: preview_root_generic(session, spec, state)
 

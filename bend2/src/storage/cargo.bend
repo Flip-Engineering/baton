@@ -134,10 +134,10 @@ def selection_resolved(result: Result<&1,&1,U32 & String,String>, +path: String,
     case Done{target}:
       Bool.pick(IO(T.Presence), path_contains(path, target), IO.pure(T.Presence, T.Present{link}), next(unknown))
 
-def baton_links(directory: String, entries: List<&2,O.Child>, +path: String, unknown: Bool) -> IO(T.Presence):
+def baton_links(+directory: String, entries: List<&2,O.Child>, +path: String, unknown: Bool) -> IO(T.Presence):
   match entries:
     case Nil{}: IO.pure(T.Presence, Bool.pick(T.Presence, unknown, T.Unknown{}, T.Absent{}))
-    case O.Child{kind, name} <> rest:
+    case O.Child{kind, +name} <> rest:
       match baton_command(name):
         case False{}: baton_links(directory, rest, path, unknown)
         case True{}:
@@ -160,5 +160,9 @@ def baton_scanned(scan: O.Scan, +directory: String, +path: String) -> IO(T.Prese
 # Other services supply their own reader; an unknown reader keeps the target.
 def baton_selection(+directory: String, +path: String) -> IO(T.Presence):
   do IO<T.Presence>:
-    scan : O.Scan <- O.children(directory)
-    baton_scanned(scan, directory, path)
+    canonical : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(path)
+    match canonical:
+      case Fail{error}: unknown_selection(path)
+      case Done{resolved}: do IO<T.Presence>:
+        scan : O.Scan <- O.children(directory)
+        baton_scanned(scan, directory, resolved)

@@ -116,6 +116,8 @@ CREATE TABLE log_files(session TEXT,log TEXT);
             link.unlink()
             link.symlink_to(binary)
             self.assertIn('cargo-runtime-selected', self.collect())
+            relative = pathlib.Path(os.path.relpath(self.target, ROOT))
+            self.assertIn('cargo-runtime-selected', self.collect(relative))
             self.assertTrue(binary.exists())
             link.unlink()
             link.symlink_to(original)

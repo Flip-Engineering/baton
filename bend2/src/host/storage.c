@@ -831,6 +831,14 @@ static void baton_cargo_remove_call(IoWork *w) {
   if (box_fd < 0) { call->error = errno; goto done; }
   if (renameat(parent_fd, name, box_fd, "output")) { call->error = errno; goto done; }
   renamed = 1;
+  struct stat moved;
+  int moved_error = fstatat(box_fd, "output", &moved, AT_SYMLINK_NOFOLLOW) ? errno : 0;
+  if (moved_error || !baton_storage_identity_match(&moved, kind, device, inode)) {
+    error = moved_error ? moved_error : ESTALE;
+    if (asprintf(&call->answer, "refused\tidentity-changed error=%d retained=%s/%s/output",
+                 error, parent, box) < 0) call->error = ENOMEM;
+    goto done;
+  }
   count.nodes = 1;
 #ifdef BATON_STORAGE_CARGO_TEST
   error = baton_cargo_test_renamed();
