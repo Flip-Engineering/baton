@@ -7,7 +7,8 @@ import ../src/git/text.bend as Tx
 def check(+db: String, +label: String, +response: String, +predicate: String) -> IO(Unit):
   do IO<Unit>:
     +sql : String = Reader.kimi_windows_sql(response)
-    answer : String <- IO.try(String,DB.Sql.read(db,"WITH parsed(v) AS (" ++ sql ++ ") SELECT coalesce(" ++ predicate ++ ",0) FROM parsed;"))
+    +problem : String = Reader.kimi_problem_sql(response)
+    answer : String <- IO.try(String,DB.Sql.read(db,"WITH parsed(v) AS (" ++ sql ++ ") SELECT coalesce(" ++ predicate ++ ",0) AND CASE WHEN v IS NULL THEN length((" ++ problem ++ "))>0 ELSE (" ++ problem ++ ")='' END FROM parsed;"))
     Bool.pick(IO(Unit),String.eq(Tx.trim_nl(answer),"1"),IO.print(label ++ ": ok"),IO.die(Unit,1,label ++ ": failed"))
 
 def main_args(args: List<String>) -> IO(Unit):

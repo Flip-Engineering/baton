@@ -5,5 +5,11 @@
 import Base
 import ../coordinator/commands.bend as C
 
+def kimi_source() -> String:
+  "GET https://api.kimi.com/coding/v1/usages"
+
 def kimi_windows_sql(+response: String) -> String:
   "WITH doc(t) AS (SELECT CASE WHEN json_valid(" ++ C.q(response) ++ ") THEN " ++ C.q(response) ++ " ELSE '{}' END), windows(name,path) AS (VALUES('5-hour','$.usages.limit_5h'),('7-day','$.usages.limit_7d')), facts AS (SELECT name,json_extract(t,path||'.used_ratio') AS ratio,json_type(t,path||'.used_ratio') AS kind,json_extract(t,path||'.reset_time') AS reset FROM doc,windows) SELECT CASE WHEN count(*)=2 AND min(coalesce(kind IN ('integer','real') AND ratio>=0,0))=1 THEN json_group_array(json_object('window',name,'usedPercent',ratio*100.0,'resetsAt',CAST(round((julianday(reset)-2440587.5)*86400000) AS INTEGER),'exhausted',json(CASE WHEN ratio>=1 THEN 'true' ELSE 'false' END))) ELSE NULL END FROM facts"
+
+def kimi_problem_sql(+response: String) -> String:
+  "WITH parsed(windows) AS (" ++ kimi_windows_sql(response) ++ ") SELECT CASE WHEN NOT json_valid(" ++ C.q(response) ++ ") THEN 'the kimi usage response is not JSON' WHEN windows IS NULL THEN 'the Kimi Code usage response has missing or invalid used_ratio in usages.limit_5h or usages.limit_7d' ELSE '' END FROM parsed"
