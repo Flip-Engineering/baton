@@ -4,10 +4,12 @@ import ../src/host/clock.bend as Clock
 import ../src/host/http.bend as Http
 import ../src/host/text.bend as Text
 import ../src/host/sqlite.bend as DB
+import ../src/host/process.bend as P
 import ../src/json/canonical.bend as J
 import ../src/coordinator/commands.bend as C
 import ../src/coordinator/usage-reads.bend as UR
 import ../src/coordinator/zai-quota.bend as Zai
+import ../src/coordinator/codex-rate-limits.bend as Codex
 
 # usage-read PROVIDER CREDENTIAL_REF (#1025). Performs one live read of the provider's
 # usage API and prints one baton2-usage-read-v1 document: the normalized windows, or
@@ -20,7 +22,8 @@ import ../src/coordinator/zai-quota.bend as Zai
 # in $HOME/.omp/agent/models.yml; omp-auth:PROVIDER is the key field of the provider's
 # enabled row in $HOME/.omp/agent/agent.db auth_credentials; claude-oauth:PATH is the
 # Claude Code OAuth access token in PATH, $HOME/.claude/.credentials.json when PATH is
-# empty; file:PATH is the first line of PATH.
+# empty; file:PATH is the first line of PATH; codex-home:PATH runs codex app-server
+# with CODEX_HOME=PATH, or with the inherited environment when PATH is empty.
 
 def print_unreadable(+provider: String, +source: String, +observed: String, +reason: String) -> IO(Unit):
   IO.print(UR.unreadable_document(provider,source,observed,reason))
@@ -33,8 +36,9 @@ def time_value(result: Result<&1,&1,U32 & String,String>) -> String:
 def scheme_of(+reference: String) -> String:
   Bool.pick(String,Tx.starts_with(reference,"omp-models:"),"omp-models",
   Bool.pick(String,Tx.starts_with(reference,"file:"),"file",
+  Bool.pick(String,Tx.starts_with(reference,"codex-home:"),"codex-home",
   Bool.pick(String,Tx.starts_with(reference,"omp-auth:"),"omp-auth",
-  Bool.pick(String,Tx.starts_with(reference,"claude-oauth:"),"claude-oauth",""))))
+  Bool.pick(String,Tx.starts_with(reference,"claude-oauth:"),"claude-oauth","")))))
 
 def after_colon(text: String) -> String:
   match text:
@@ -256,11 +260,81 @@ def read_claude(+observed: String, +reference: String) -> IO(Unit):
 def muse_reason() -> String:
   "the configured Muse credential is an API key, and no usage or quota endpoint for it is documented"
 
+# --- Codex -------------------------------------------------------------------------
+
+def codex_requests() -> String:
+  "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"baton2-usage-read\",\"version\":\"1.0\"}}}\n{\"jsonrpc\":\"2.0\",\"method\":\"initialized\"}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"account/rateLimits/read\",\"params\":{}}\n"
+
+def codex_argv(+home: String) -> List<String>:
+  Bool.pick(List<String>,String.is_empty(home),["codex","app-server"],["env","CODEX_HOME=" ++ home,"codex","app-server"])
+
+# The response line's role: 'result' with the result object, 'error' with the
+# error message, or 'other' for any other line.
+def codex_line_sql(+line: String) -> String:
+  "SELECT CASE WHEN NOT json_valid(" ++ C.q(line) ++ ") OR coalesce(json_extract(" ++ C.q(line) ++ ",'$.id'),0)<>2 THEN 'other' WHEN json_type(" ++ C.q(line) ++ ",'$.error') IS NOT NULL THEN 'error' || char(31) || coalesce(json_extract(" ++ C.q(line) ++ ",'$.error.message'),json_extract(" ++ C.q(line) ++ ",'$.error')) ELSE 'result' || char(31) || json_extract(" ++ C.q(line) ++ ",'$.result') END;"
+
+def codex_finish(+handle: U32) -> IO(Unit):
+  do IO<Unit>:
+    closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
+    waited : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
+    IO.pure(Unit,Unit{})
+
+def codex_result(+observed: String, +result: String) -> IO(Unit):
+  do IO<Unit>:
+    problem : Result<&1,&1,U32 & String,String> <- DB.Sql.query(":memory:",Codex.codex_problem_sql(result))
+    print_parsed("codex",Codex.codex_source(),observed,Codex.codex_windows_sql(result),sql_text(problem))
+
+def codex_classified(+handle: U32, +observed: String, fields: List<&2,String>) -> IO(Bool):
+  match fields:
+    case "result" <> +result <> Nil{}: do IO<Bool>:
+      finished : Unit <- codex_finish(handle)
+      printed : Unit <- codex_result(observed,result)
+      IO.pure(Bool,True{})
+    case "error" <> +message <> Nil{}: do IO<Bool>:
+      finished : Unit <- codex_finish(handle)
+      printed : Unit <- print_unreadable("codex",Codex.codex_source(),observed,"codex app-server answered an error: " ++ message)
+      IO.pure(Bool,True{})
+    case other: IO.pure(Bool,False{})
+
+@unsafe
+def codex_lines(+handle: U32, +observed: String, line: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Unit):
+  match line:
+    case Fail{(code,detail)}: do IO<Unit>:
+      finished : Unit <- codex_finish(handle)
+      print_unreadable("codex",Codex.codex_source(),observed,"reading codex app-server failed: " ++ detail)
+    case Done{value}:
+      match value:
+        case None{}: do IO<Unit>:
+          finished : Unit <- codex_finish(handle)
+          print_unreadable("codex",Codex.codex_source(),observed,"codex app-server ended before it answered account/rateLimits/read")
+        case Some{+text}: do IO<Unit>:
+          +role : String <- IO.try(String,DB.Sql.query(":memory:",codex_line_sql(Tx.trim_nl(text))))
+          +done : Bool <- codex_classified(handle,observed,String.split(Tx.trim_nl(role),Char.from_u32(31)))
+          next : Result<&1,&1,U32 & String,Maybe<String>> <- Bool.pick(IO(Result<&1,&1,U32 & String,Maybe<String>>),done,IO.pure(Result<&1,&1,U32 & String,Maybe<String>>,Done{None{}}),P.ProcessChild.read_line(handle))
+          Bool.pick(IO(Unit),done,IO.pure(Unit,Unit{}),codex_lines(handle,observed,next))
+
+def codex_spawned(+observed: String, spawned: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
+  match spawned:
+    case Fail{(code,detail)}: print_unreadable("codex",Codex.codex_source(),observed,"codex app-server did not start: " ++ detail)
+    case Done{+handle}: do IO<Unit>:
+      wrote : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.write(handle,codex_requests())
+      first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
+      codex_lines(handle,observed,first)
+
+def codex_spawn(+observed: String, +reference: String) -> IO(Unit):
+  do IO<Unit>:
+    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(Tx.enc_argv(codex_argv(after_colon(reference))),".","/dev/null")
+    codex_spawned(observed,spawned)
+
+def read_codex(+observed: String, +reference: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(scheme_of(reference),"codex-home"),codex_spawn(observed,reference),print_unreadable("codex",Codex.codex_source(),observed,"the credential reference " ++ reference ++ " is not codex-home:PATH"))
+
 # --- dispatch ------------------------------------------------------------------------
 
 def read_provider(+provider: String, +reference: String, +observed: String) -> IO(Unit):
   match provider:
     case "zai": read_zai(observed,reference)
+    case "codex": read_codex(observed,reference)
     case "claude": read_claude(observed,reference)
     case "muse": print_unreadable("muse","",observed,muse_reason())
     case _: print_unreadable(provider,"",observed,"no usage reader for provider " ++ provider ++ " is in this build")
