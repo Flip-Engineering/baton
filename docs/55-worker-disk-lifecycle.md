@@ -1,19 +1,23 @@
 # Worker disk lifecycle
 
 Design proposal for [#1049](https://github.com/Flip-Engineering/baton/issues/1049),
-2026-10-23. Source reviewed:
+2026-10-24. Source reviewed:
 [`fdfe1c85c64d21058b4366d8f83dd669cb0022b9`](https://github.com/Flip-Engineering/baton/commit/fdfe1c85c64d21058b4366d8f83dd669cb0022b9).
 The conductor reviews this design, the root critiques it, and the conductor
-staffs the accepted implementation. This contribution changes documentation.
+staffs the accepted implementation. The
+[root critique](https://github.com/Flip-Engineering/baton/issues/1049#issuecomment-6379361378)
+approves the design with the changes specified here. This contribution changes
+documentation.
 
 ## Recommendation and scope
 
-Phase 1 automatically collects two homelab allocation classes: completed,
-clean merge/review worktrees whose source is verified on the actual shared Git
-remote, and inactive Cargo target trees with established producing-source and
-toolchain provenance. It uses project Git administration, existing execution
-and session records, build-wrapper output paths, current process references and
-the existing collector. The root's merge operations use this same path.
+Phase 1 publishes released source to exact-SHA preservation refs on the actual
+off-host Git remote, verifies those refs, and removes released checkouts through
+Git. It collects inactive Cargo targets, npm dependency trees and released
+compile-queue key directories. Project Git hooks attribute new shell-created
+worktrees and clones to their creating session. Allocation and release events
+run collection; live filesystem availability selects additional shared-cache
+collection. The root's working files use the same lifecycle.
 
 The [October 23 incident](https://github.com/Flip-Engineering/baton/issues/1049)
 recovered about 54 GB from twelve clean, pushed worktrees created by the root,
@@ -25,17 +29,17 @@ sum to approximately 95 GB (54 + 23 + 18); the rounded report and category
 estimates remain separate observations. The report records the Docker failure
 and PostgreSQL restart when the root filesystem reached zero available bytes.
 
-Automatic collection follows completed operations and verified publication.
-An unreadable, active, dirty or insufficiently documented allocation stays in
-place with its reason reported. Eligibility is evaluated for each allocation.
-Phase 1 can collect an eligible worktree while an unrelated evidence directory
-remains unreadable.
+An open assignment keeps its working paths, including dirty and unpublished
+source. Released source is published automatically before local removal.
+An unreadable allocation or unresolved consumer stays in place with its reason
+reported. Eligibility is evaluated for each allocation. Phase 1 can collect an
+eligible worktree while an unrelated evidence directory remains unreadable.
 
-The remaining #1049 coverage is explicit follow-on work: dirty source snapshots,
-non-Git evidence, exports without Git administration, independent clones outside
-known roots, and the Mac's unidentified temporary-store producer. Each has a
-named observation and acceptance condition below. Phase 1 leaves those paths
-available and reports them.
+Phase 1 also identifies and repairs the Mac temporary Git-store producer and
+reduces new ACP working copies with sparse checkouts and a shared object store.
+Phase 2 covers non-Git reviewer evidence, exports with unusable Git metadata and
+additional deployment/cache producers. Its single operator decision is the
+off-host evidence-store configuration described below.
 
 ## Evidence and measurement limits
 
@@ -126,91 +130,83 @@ establish equivalent deployment of the current native runtime.
 
 | Candidate | Decision and cost |
 | --- | --- |
-| Project paths, Git discovery and producer lifecycle | Recommended for Phase 1. Git lists auxiliary worktrees created by root shell commands; wrapper records identify actual Cargo outputs. Existing source and process observations determine eligibility per allocation. This requires collector call sites and producer-path integration. It covers the two incident classes. |
-| Registered-seat cleanup alone | Covers recorded seat workspaces. The root's twelve merge worktrees contributed about 54 GB outside that ownership path. Add project Git discovery and root operation completion to reach this observed category. |
-| Per-seat UIDs and filesystem-wide reconciliation | Removed from the recommendation. The samples establish shared account ownership, with no measured removal decision requiring a distinct UID. Account provisioning, credential migration and native launch changes have no qualifying failed run here. The measured broad scans also return incomplete results at substantial cost. |
-| Private filesystem or VM per seat | Removed from Phase 1. The two incident classes have exact Git or producer paths. VM/overlay launch integration and shared-cache handling add unmeasured implementation costs. A future proposal needs a failed path-based collection run that establishes the missing function. |
-
-Path-based attribution gives new allocations a seat-rooted NVMe working
-directory and derives the seat from the native launch context. A Linux launch
-can bind its private NVMe temporary directory at `/tmp` and use a seat-rooted
-home. Darwin launch configuration can select seat-rooted `HOME` and `TMPDIR`.
-These placement choices cover consumers of those paths and variables.
-Literal external paths require their own producer evidence. Phase 1 uses the
-existing NVMe placement repairs and qualifies any additional binding at the
-affected Linux launch path; it introduces no per-seat operating-system account.
+| Project paths, Git discovery and producer lifecycle | Recommended. Project hooks attribute allocations; Git lists root and seat worktrees. Exact remote refs retain source, native Cargo locks identify inactive targets, and producer release collects queue keys. Project listing costs were 0.038 and 0.016 seconds. Snapshot upload, dirt inspection and removal costs require measurement during implementation. |
+| Registered-seat cleanup alone | Covers registered seat workspaces. The root's twelve merge worktrees contributed about 54 GB outside that path, and shell clones contributed about 26 GB. This candidate leaves those observed producers uncovered. |
+| Per-seat UIDs and filesystem-wide reconciliation | Account provisioning, credentials and native-launch changes add work without an observed removal decision needing a distinct UID. The measured broad scans took 204.754 and 254.208 seconds and returned access errors. |
+| Private filesystem or VM per seat | Adds launch, credential, continuation and shared-cache integration. The incident allocations have Git or concrete producer paths; no failed path-based removal run establishes a need for this isolation. |
 
 ## Phase 1 allocation discovery and attribution
 
-The Phase 1 mechanisms serve these recorded failures:
+The configured project repositories and disposable roots define collection
+authority. Query `git worktree list --porcelain` for each project and resolve
+the common Git directory and exact checkout path. This finds shell-created
+linked worktrees, including the root's merge and review trees. Primary project
+checkouts remain live inputs. Branches and preservation refs remain present
+after a linked working directory is removed.
 
-| Mechanism | Failed run and changed decision |
-| --- | --- |
-| Project Git worktree discovery, including root operations | October 23: twelve pushed root merge trees retained about 54 GB. They enter the same candidate path as seat worktrees. |
-| Actual off-host source verification | #558: local landing receipts reported unpublished work. The allocation stays local until its required objects are verified at the shared remote. |
-| Resolved Cargo target and producing-input observations | #988: direct Cargo commands accumulated output outside wrapper records; most old records omitted the target. Exact producer paths distinguish generated allocations from unresolved directories. |
-| Completion/publication callbacks and restart reconciliation | October 23: completed work remained after push; #616: already-ended work survived earlier startup cleanup. Released known allocations are reconsidered automatically at these events. |
-| Current local references and existing execution/build boundaries | #988 found active producer paths outside canonical records; the October 23 recovery checked that Cargo had exited. A live or uninspectable producer keeps its target. |
-| Per-allocation content and path checks | #620's first patch lost a tracked edit. Dirty or unresolved content keeps the affected tree; an unrelated inaccessible path has its own retained result. |
+Install an executable `post-checkout` hook in each project's common Git hooks
+directory and in the Git template selected by the seat launch environment.
+Compose it with the project's existing hook and effective `core.hooksPath`.
+On creation, it records `BATON_SESSION`, inherited from native launch, in the
+new worktree's Git administration directory. Resolve that directory through
+Git so linked worktrees get separate attribution. The first creator remains
+recorded through subsequent branch checkouts. Record the actual clone path in
+the existing creation/execution outcome so discovery can revisit independent
+repositories under configured scratch roots. No agent-maintained inventory is
+required.
 
-Per-seat accounts, account retirement, filesystem-wide settlement, automatic
-archives of unknown content and a new bulk evidence-store dependency are outside
-Phase 1. Their inclusion in a later implementation requires the specific failed
-producer or retention run identified in the follow-on scope.
+[Git's hook contract](https://git-scm.com/docs/githooks#_post_checkout) covers
+`git clone` and `git worktree add` with checkout enabled. For Baton's sparse
+creation path using `--no-checkout`, the creator writes the same attribution
+before materialization. The hook is part of the clone template before clone
+runs; a hook in the source repository is insufficient for a new clone.
+Creation with missing attribution is reported, and legacy trees use current
+workspace, assignment, execution and Git-operation observations. An unresolved
+live owner retains the affected allocation. Existing worktrees discovered
+through project Git administration can be attributed to the project.
 
-The existing configured project repositories and disposable work roots define
-where collection applies. Query `git worktree list --porcelain` for each project
-repository. It includes linked checkouts created through ordinary
-`git worktree add`, including the root's integration checkouts. Resolve the Git
-common directory and exact worktree path from Git. The primary checkout stays
-a project input.
+Keep a checkout while its attributed session has an open assignment. Match
+current join/workspace paths, pending continuation and owned operations as
+well. A native turn ending supplies no assignment release. Explicit task
+completion, stop or retirement can release a path after successor and runtime
+references resolve. A stopped seat's dirty source follows the preservation
+sequence below. Root and coordinator shells inherit the same session and
+template configuration, and their merge operations report the actual scratch
+path through the existing Git operation.
 
-Associate a worktree with the current session or operation through matching
-workspace, execution-cwd and retained Git-operation records. A tree with no
-unique seat match remains attributed to its repository/project. Repository
-authority, disposable-root configuration and source durability can be known
-while the particular creating seat remains unknown. Eligibility uses the
-established project, path, source and current-reference evidence.
+New checkouts, clone staging, private indices, build scratch and queue keys use
+the configured NVMe working root on homelab. Seat launch selects its NVMe
+`TMPDIR` and Git template; managed creation commands select that root directly.
+Existing shell-created paths on `/` stay discoverable through Git and creation
+records until released. Literal paths and source exports without Git metadata
+keep an unresolved result until their concrete producer is integrated.
+Operational logs and native continuation retain their existing recorded paths
+and lifecycle. No placement change moves an active workspace.
 
-New merge/review operations use the existing repository operation path to
-allocate scratch. Baton records the actual path, source and execution outcome
-as part of that operation. The root supplies the semantic repository, source
-and target; action and allocation identities come from context. Shell-created
-linked worktrees are discovered through the project Git listing. A standalone
-clone or source export outside those roots remains follow-on work.
-
-For Cargo, record the resolved target path from the producing environment and
-wrapper invocation. The current film wrapper selects
-`/mnt/nvme4tb/ci-runners/fframes-port-20261016-build-cache/target` by default and
-records `target_dir`. It also uses existing campaign build locks.
-[#988's recovery](https://github.com/Flip-Engineering/baton/issues/988#issuecomment-6304728457)
-found direct Cargo commands outside this wrapper; most inspected old records
-omitted the target path. Integration must cover those actual entry points:
-route campaign Cargo execution through the wrapper and propagate the resolved
-target path through the existing execution record. Observe explicit overrides.
-An unidentified target remains reported with its provenance gap.
-
-The producing operation records source commit or preserved dirty-source
-generation, toolchain identity, command, environment inputs, output location
-and completed process result automatically. These are execution observations.
-Agents do not maintain allocation lists, consumer declarations or cleanup
-receipts.
+For Cargo, resolve the actual target/build path from invocation, environment
+and Cargo configuration, and inspect its `CACHEDIR.TAG`. Known legacy targets
+under service homes enter this discovery, including the measured 12.658 GB
+orphan. Wrapper records improve discovery and diagnostics; their absence does
+not make a marked inactive Cargo output ineligible. Inspect npm dependency
+roots for `node_modules/.package-lock.json`. Enumerate compile-queue keys from
+the queue's own state directory. Each producer supplies its actual allocation
+path through its functional execution outcome.
 
 ### Derived local consumers
 
 | Relationship | Source used by tooling |
 | --- | --- |
-| Seat currently uses a checkout | Session/join workspace records, current assignment and execution cwd; resolve path aliases before comparison |
-| Operation still owns scratch or a target | Existing execution handle, its process descendants and terminal/release state; retain ownership through final output |
-| Another Git checkout uses shared administration | Git's worktree listing and common-directory resolution |
-| Process currently uses the allocation | Relevant Linux cwd, executable, open descriptors and mapped files; associate descendants with their recorded executions |
-| Pending work needs a local workspace | Current assignment, pending input and native continuation context associated with that workspace |
-| Build uses a shared target | Resolved target paths in wrapper/execution records, existing build-lock ownership and current Cargo process environment/reference evidence |
-| Runtime or rollback selection uses a path | Existing deployed release selection and rollback configuration; an unresolvable selection preserves the affected path |
+| Session needs a checkout | Creator attribution in Git administration, current assignment, join/workspace records and continuation paths |
+| Operation owns scratch | Existing execution handle, terminal/release state and current descendants; retain through final output |
+| Another checkout needs shared Git objects | Git worktree listing, common-directory resolution and live refs |
+| Process uses a source or npm allocation | Candidate-specific cwd, executable, descriptors and mapped-file observations through the qualified #1045 path |
+| Cargo is writing output | Nonblocking acquisition of Cargo's native target/build lock files, held through rename and deletion |
+| Queue producer or requester needs a key | Queue key lock, live requester ownership, publication/install state and selected artifact references |
+| Runtime or rollback needs generated output | Existing deployed release and rollback selections; unresolved selection retains the affected allocation |
 
-These relationships are derived again when collection runs. A derived cache
-of the observations can support display. Tooling uses current source observations
-for the removal decision.
+Derive these relationships again on each pass. Attribution names the creator;
+current assignments and executions establish continued use. Collection uses
+the current source observations and allocation identity.
 
 ### Consumer evidence and the #1045 prerequisite
 
@@ -224,7 +220,9 @@ reference counts. Those limits can prevent a definite answer about a candidate.
 
 Resolving this failure in the consumer-check path is a Phase 1 prerequisite.
 The current generic `process-unknown` result cannot qualify the root merge
-worktrees for collection. Phase 1 uses the following candidate-specific evidence:
+worktrees for collection. Cargo writer exclusion uses its native locks;
+the #1045 process scan serves source worktrees and other allocations whose
+consumers require process references. Phase 1 uses this evidence for worktrees:
 
 1. Read Git's lock/prunable state for the exact registered worktree. A locked
    worktree stays in place; a prunable record requires administration repair
@@ -263,232 +261,345 @@ this design; a baseline failure on main does not establish working collection.
 
 ## Phase 1 retention and removal
 
-### Clean merge and review worktrees
+### Publish released source, then remove the checkout
 
-Before collecting a linked worktree, establish the following from current
-source and execution state:
+A linked worktree becomes a candidate when its assignment and operations have
+released it, Git identifies its project and disposable path, and the qualified
+consumer check returns a definite `no-consumer`. Keep active work and unresolved
+paths through quiet gaps between commands.
 
-1. Git identifies its exact project, administration and path inside a configured
-   disposable work root. The current operation has released it.
-2. Its tracked state is clean. Inspect untracked and ignored content as well.
-   Known Cargo output is handled as a child allocation; other unique files
-   preserve the worktree and appear in its report.
-3. HEAD and every source ref needed by the completed operation are available
-   from the project's declared off-host publish remote.
-4. Git lock state and current session, assignment, process and operation
-   observations produce a definite `no-consumer` answer through the qualified
-   #1045 consumer path above. Preserve current workspaces and unfinished
-   operations through quiet gaps between their tool calls.
-5. The exact path and filesystem object still match the inspected allocation.
+Read the project's actual publish URL, including Git's effective push URL and
+URL rewrite configuration. A filesystem path or `file://` URL identifies a
+same-host destination. An SSH or HTTPS endpoint must name the off-host project
+service; an endpoint resolving to this worker is local. Follow a local
+`origin` to the configured project destination. The sampled
+`/tmp/acp261-dsh-flash-1` origin on NVMe supplies no off-host copy.
+Unresolvable endpoints and failed remote reads keep the allocation.
 
-Read the actual publish endpoint. Query the relevant remote refs and verify
-the retained source commit against those objects. A source that is an ancestor
-of a verified remote target is durable; a squash landing also needs the
-original source ref retained for its review history. Use Git's object/ref
-operations to establish the relationship, with an exact preserve ref where
-needed. Local remote-tracking refs and an `integrated` field leave remote
-publication unverified.
+For each released checkout:
 
-Use the configured shared destination, including the film campaign's private
-Git repositories. The same-host NVMe `origin` in the sample requires checking
-the project's actual off-host destination. A failed query or missing source
-keeps the checkout. A successful check records the repository, ref and source
-object IDs so the reviewer can read or fetch the retained work.
+1. Capture its HEAD, source refs needed by review, real index state and visible
+   working state. Use #594's private-index capture, extended to retain a separate
+   index tree before applying working-file changes. Preserve staged/unstaged
+   differences, tracked deletions and authored untracked files. Keep sparse
+   index entries for absent files. Inspect ignored content: known generated
+   children follow their own rules; unresolved unique evidence keeps the tree.
+2. Produce commit objects for the required generations, retaining the original
+   HEAD and ancestry. Push each exact object to
+   `refs/baton/preserve/<full-object-id>` on the actual off-host project remote.
+   An existing ref must already name that object. Publication creates refs
+   without force updates; the collector never deletes branches or preserve refs.
+3. Run `git ls-remote <publish-url> <exact-preserve-ref>` and require that exact
+   ref at the captured SHA for every required generation. A moving development
+   branch is insufficient. Record the destination, refs and object IDs in the
+   existing operation outcome for reviewer fetches and recovery.
+4. Reread assignment/operation release, allocation identity and content under
+   the existing ownership boundary. Keep anything changed since capture.
+   After all required generations are verified remotely, normalize only the
+   captured tracked/index state and remove only the captured authored untracked
+   paths. This normalization is a destructive part of collection and has the
+   same publication and release requirements. It preserves branch tips.
+   Collect eligible generated children separately. Unresolved files remain.
+5. Run `git worktree remove <exact-path>` without `--force`. A refusal keeps
+   the tree with Git's error. Settle its runtime/Git administration through the
+   owning operation and keep its branch and preservation refs.
 
-After the observations pass under the existing operation/session ownership
-boundary, remove the linked worktree through Git and settle its administration.
-Keep the branch/preserve refs. Reuse the existing descriptor-relative identity
-checks for filesystem removal. Record actual results in the operation outcome.
+Historical #594 captures the visible working version and leaves the real
+index unchanged. Capturing both index and working generations is required for
+the measured `MM` file in `/tmp/acp261`. Qualification reconstructs both
+generations by fetching the exact preserve refs from the off-host remote.
+Partial publication keeps the remaining local state and reports the failed ref.
 
-The root's managed merge operation releases its scratch after actual remote
-publication and terminal output. Raw shell-created worktrees remain pinned
-while their producing assignment or continuation needs them; completion of
-that assignment triggers the same project sweep. A published branch alone
-does not end an active operation.
+Independent clones created through the seat template follow the same
+attribution, release and publication sequence. Their primary directory remains
+while the assignment is open. A released disposable clone can be removed through
+the existing identity-checked filesystem primitive after its unique refs,
+index, working content and other consumers are accounted for. Git's
+`worktree remove` applies to linked trees. Keep any independent Git object
+store used by another checkout.
 
-### Known Cargo output
+A live seat can publish snapshots while keeping its working path. An ended
+seat with no successor is preserved and collected through this sequence.
+Explicit stops and unresolved continuation ownership remain effective.
 
-A Cargo target becomes eligible when the producing runs have completed,
-source and toolchain provenance establish its generated contents, source is
-retained on the actual off-host Git remote, and current readers/writers and
-runtime references have released it.
+### Cargo targets
 
-Keep source and toolchain provenance and completed process evidence in their
-existing execution records. Validation output already resides in attempt
-outputs outside the target directory, where its existing retention continues.
-Phase 1 removes known generated Cargo state after source publication,
-producer completion and consumer release. Log publication is a separate
-evidence-lifecycle operation and is excluded from Cargo eligibility.
+Inspect the actual `CACHEDIR.TAG` contents and Cargo output layout at the
+resolved allocation. This identifies generated Cargo state, including targets
+whose old execution records lack provenance. A directory name alone supplies
+no classification. Source and toolchain records remain execution diagnostics;
+source publication, provenance completeness and log upload are excluded from
+Cargo collection eligibility. The source stays on disk and rebuilds the target.
 
-The October 23 recovery identifies regenerable targets and reports that Cargo
-was inactive. It names no target-internal review artifact whose loss required
-publishing attempt output before removal. This design therefore requires no
-new Git evidence commit or bulk-log upload to collect those targets. Existing
-selected runtime binaries and any actual unresolved file remain live artifacts
-under their observed use; their retention follows that file's role.
+Acquire Cargo's actual `.cargo-lock` files with nonblocking exclusive locks,
+covering the target's profiles and target triples and the effective build
+directory. Use the installed toolchain's lock semantics and retain the open
+descriptors through same-filesystem rename and deletion. Acquire all required
+locks before renaming; a busy lock or unreadable lock directory keeps the
+allocation and collection proceeds to other candidates. Cargo writer exclusion
+uses these locks and requires no `/proc` traversal.
 
-Generated object files and incremental compilation state can then be rebuilt
-from the retained inputs. Their removal releases local cache capacity.
-A binary selected by a runtime, rollback or review result remains a live
-artifact. A file with unresolved purpose stays in place. A directory named
-`target` alone supplies no producer provenance.
+Cargo's [lock compatibility change](https://github.com/rust-lang/cargo/pull/16886)
+retains a shared `.cargo-lock` while newer layouts also use build/artifact
+locks. Resolve the effective layout for the deployed toolchain and include
+its associated locks and build path. The
+[Cargo output contract](https://doc.rust-lang.org/cargo/reference/build-cache.html)
+permits separate target and build directories. Qualification covers the actual
+host toolchains and direct Cargo invocations that bypassed wrapper records.
 
-Keep the existing shared build locks and execution ownership through child
-exit and final output. Inspect direct-Cargo references as required by the #988
-producer bypass. Legacy shared targets with missing provenance remain separate
-reported allocations. For targets whose producing source/toolchain and inactive
-use are established, the collector applies the same decision the operator used
-for the October 23 Cargo recovery.
+Read existing deployment and rollback selections before collection. A selected
+binary or unresolved selection keeps the affected allocation. The producer
+boundary covers build launch through child exit, and live assignment/execution
+state keeps output needed by a pending test or review operation. After release,
+take the native locks, rename the target aside within its parent filesystem,
+and delete that exact directory while holding the locks. New managed builds
+use the producer's existing allocation boundary and resolve the current target
+path. A busy boundary skips collection and allows work to continue. Acceptance
+must show a build already using a target stays intact and a later build can
+recreate the target after collection.
 
-### Lifecycle triggers and recovery
+Attempt outputs remain at their existing paths outside the target, with their
+existing retention. The October 23 recovery named no unique target-internal
+review evidence. Actual selected artifacts and unique files identified by a
+producer remain protected through their existing references. No new source
+push or log-publication operation is required to reclaim the observed 23 GB,
+18 GB shared target or 12.658 GB orphan target.
 
-| Event | Targeted work |
+### npm dependency trees
+
+Treat `node_modules` identified by npm's hidden
+`node_modules/.package-lock.json` as generated package output. Preserve the
+project manifest and source lockfile with source. npm's
+[hidden lockfile contract](https://docs.npmjs.com/cli/v11/configuring-npm/package-lock-json/#hidden-lockfiles)
+describes the generated dependency tree; that file supplies classification,
+and supplies no writer lock.
+
+Use current assignment, npm execution, test/server process and deployment
+references to decide release. Reuse the qualified #1045 path for actual process
+readers. An active install, test, server or selected deployment keeps its tree.
+After release, rename the dependency directory aside and delete it through its
+producer boundary. Package installation recreates it from the project inputs.
+Keep workspace/link dependencies outside the allocation and resolve them as
+source. The root and seat paths receive the same treatment. This covers the
+`npm ci` producer named in #1049; measured savings for this class remain unknown.
+
+### Compile-queue keys
+
+Collect `$state/keys/<key>` when its producer and current requesters release it.
+The retained
+[queue implementation at f6dd0667](https://github.com/Flip-Engineering/baton/blob/f6dd066762140fa2e58e3bac14350eef198cd15d/bend2/src/host/compile-queue.bend)
+holds the key lock through detached supervisor execution and publication, and
+tracks requester ownership. It stores completed artifacts and failed-run output
+under that key. Integrate collection at producer release, after requesters have
+received their results and artifacts have been installed at their destination.
+
+Acquire the existing key boundary without waiting. A live supervisor,
+requester, artifact install or selected runtime result keeps the key. Released
+generated C/object/cache contents can be removed; a later request rebuilds them.
+Required failure output follows existing attempt-output retention. If the key
+contains the only copy of required diagnostic evidence, retain it until that
+specific evidence is preserved. Keep outputs already installed in selected
+release directories through their own selection references. Restart derives
+unfinished key release from current queue state, key locks and result paths.
+
+### Mac temporary Git-store producer
+
+Phase 1 traces the producer of #912's 216 temporary Git stores, whose October
+21 recovery released 37,515,296,768 physical APFS bytes with three duplicate
+checkouts. The current evidence leaves the creator unidentified. Obtain a real
+store's path/stat, index/object contents and producing execution or temporary-path
+record from the Mac owner. Match it to the actual invocation; directory naming
+alone leaves attribution unresolved.
+
+Repair the identified producer's success, failure and restart cleanup at that
+entry point. A private index/staging store is released after its snapshots have
+verified exact off-host refs and its operation has finished using it. Source
+or diagnostic content with unresolved retention keeps that store. This trace
+and repair are Phase 1 acceptance work. The design seat has requested the
+measurements through the conductor and has no Mac access. Validate the real
+producer on a remote Darwin runner and retain its completed execution evidence.
+
+### Lifecycle triggers and space pressure
+
+| Event | Targeted collection |
 | --- | --- |
-| Verified Git publication or completed merge/review | Reconsider that operation's worktree and known child outputs |
-| Task completion, seat stop or retirement | Inspect its released worktree/target allocations and associated project Git worktrees |
-| Build exit and completed process evidence | Reconsider that exact target; shared targets wait for the remaining derived consumers |
-| Coordinator restart or remote reconnect | Recompute outstanding decisions for known project worktrees and exact recorded targets |
-| Storage write failure or explicit collection request | Visit known projects and target allocations on the affected filesystem |
+| Controlled checkout/clone allocation | Run the released-allocation pass for that project and filesystem |
+| Build start or compile-queue key allocation | Run the release pass for known targets, dependency trees and queue keys on that filesystem |
+| Verified publication or completed merge/review | Publish any remaining released source and reconsider that operation's checkout |
+| Task completion, seat stop or retirement | Reconsider released attributed allocations and project Git worktrees |
+| Build/queue producer release | Reconsider its exact generated allocation after consumers settle |
+| Restart or remote reconnect | Recompute known project, producer and staging-store decisions |
+| Write failure or explicit collection request | Run the affected filesystem's known-allocation pass and retain the actual write failure |
 
-Each lifecycle notification schedules one targeted pass. Notifications arriving
-during an owned pass cause it to inspect current state before it finishes.
-A later pass derives remaining work again. A background pass retains its
-existing execution handle through completion. There is no filesystem-wide scan,
-per-seat traversal, polling cadence or fixed space threshold in Phase 1.
+At each controlled allocation, read `statvfs` on its actual filesystem.
+Available bytes are `f_bavail * f_frsize`. Compare them with the bytes measured
+for that allocation kind's real previous output or current materialization
+inputs. A checkout can derive its selected file bytes from Git/source
+observations; a build or key can use its previous measured allocated footprint.
+If available bytes are below that measured allocation size, also collect
+released shared caches on that filesystem. Record the observation, derivation
+and available measurement coverage. An unmeasured kind still runs its ordinary
+release pass and reports that its additional pressure comparison is unavailable.
 
-A native turn ending supplies no operation or assignment release. It triggers
-no worktree listing, dirt inspection or remote verification. Those inspections
-run at the release/recovery events in the table. Their per-allocation cost
-remains unmeasured and must be reported by the corresponding qualification run.
+This comparison selects collection work. It never refuses, pauses or truncates
+an allocation or agent. Start a pass through the existing owned execution path;
+work continues while eligible released allocations are collected. No fixed
+age, percentage, capacity or periodic timer controls collection. The physical
+filesystem and measured allocation supply the comparison. Actual allocation
+failures retain their errors and unfinished work.
 
-Collection acquires the existing operation/session boundary without making a
-live writer wait for cleanup. An allocation that is busy stays in place.
-Where a producer currently bypasses that boundary, integration and its
-qualification are part of the corresponding producer repair. The generic
-`storage-apply` route remains disabled for unrelated configured roots.
+Notifications arriving during an owned pass cause a current-state recheck.
+Derive remaining work from source records, Git administration and path
+existence after interruption. Settle remaining administration for an already
+absent path. Native turn completion supplies no release and schedules no pass.
+No filesystem-wide traversal is part of these triggers; the measured broad
+scans remain explicit diagnostics.
 
-An unreadable path or uninspectable required reference makes that allocation
-ineligible. Report its exact path, failed operation and error. Other allocations
-receive their own decisions. The measured broad-scan access failures establish
-why collection needs allocation-local observations.
-
-Use source records, Git administration and path existence to recover an
-interrupted pass. An already absent path receives an observed absent result;
-the runtime still settles any remaining Git administration. A separate durable
-cleanup queue is unnecessary. Pending messages and completion reports retain
-their existing database semantics.
-
-At the next disk-full event, these passes can remove verified released Git
-worktrees and qualified generated Cargo outputs using existing Git remotes.
-Dirty source, unknown paths and unique unretained evidence remain local.
-Available recovery is the measured eligible subset at that event. Current
-recovery capacity requires that pass's allocation observations.
-Allocation/filesystem failures keep their actual cause and unfinished work.
-Collection outcomes do not control agent admission, continuation or completion.
-
-## Remaining coverage and its entry conditions
-
-| Work | Observed run or path | Next work and acceptance |
-| --- | --- | --- |
-| Phase 2: dirty-source preservation | #594's local-only snapshots; October 23 `/tmp/acp261` has published HEAD with different staged/working content | Use private-index snapshots retaining both states, deletions and authored untracked files. Verify a remotely fetched generation before local removal. Keep the live working path while its seat needs it. |
-| Phase 2: independent clones and exports | October 23 `/tmp/acp261-dsh-flash-1` uses a local origin; `/tmp/acp-0022acae` has broken/missing Git metadata | Identify the concrete creation commands and their actual scratch path selection. Integrate those producers with seat/project roots. A broken export remains local until a specific preservation route is verified. |
-| Phase 2: non-Git reviewer evidence | October 23 readable observer logs allocate 1.933 GB; film evidence directory allocates 15.489 GB | Identify the exact logs/results reviewers or recovery need, their producer and remote destination. Verify remote reads of those files before collecting their local copies. |
-| Phase 2: deployment exports and shared caches | #988 names superseded deployment copies; the measured NVMe film cache allocates 75.809 GB | Derive selected runtime, rollback and active build references from existing source. Extend collection to the identified producer paths after those references resolve. Measure reuse and rebuild cost for any cache policy. |
-| Darwin producer repair | #912's October 21 Mac incident: 216 inactive temporary Git stores, creator unidentified | Trace a real store to the producing invocation using retained indices, execution records and process/temporary-path evidence. Fix that producer's success, failure and recovery cleanup, preserving source and diagnostic state first. Validate on a remote Darwin runner. |
-| Further isolation or host-wide discovery | No removal decision in this investigation required per-seat UIDs or a filesystem-wide ownership sweep | Reconsider only after a real failed path-based run identifies the exact missed allocation, missing attribution and changed removal decision. No implementation is assigned under this entry. |
-
-A per-seat private NVMe root, Linux private `/tmp` backing and seat-rooted
-`HOME`/`TMPDIR` can be integrated at the measured producer launch paths as the
-clone/export work proceeds. The root receives the same path defaults as other
-seats. Existing active paths remain in place until their local consumers settle.
-
-For non-Git evidence, the single operator decision is: select an off-host
-destination, state its available capacity, and identify the reviewer/recovery
-identities that can read it and the publisher that can write it. The conductor
-records that choice in deployment configuration. The Phase 2 implementation
-then verifies the destination against the selected evidence workload. Phase 1
-can ship using existing Git remotes while that decision remains unresolved.
-
-Unclassified content stays local and is surfaced to its project/seat owner.
-The film workspace's measured 119.618 GB includes tracked checkouts, generated outputs, caches, logs and
-evidence. The unclassified subset and transmitted archive size were never
-measured. Publishing the whole tree would visit at least that allocated
-footprint while duplicating already retained and regenerable content.
-No wholesale upload or review assignment is proposed. A specific evidence
-publisher requires an identified reviewer/recovery use and a verified destination.
+Collection takes each producer/operation boundary without waiting on live
+work. Report an unreadable candidate's path, operation and error, then decide
+other candidates independently. The generic `storage-apply` route remains
+disabled for unrelated configured roots. Pending input and completion handling
+retain their current database semantics.
 
 ## Working footprint and visibility
 
-New merge/review scratch uses the configured NVMe working root and the project's
-Git objects. Blobless checkouts and sparse review views can reduce fetched and
-checked-out content for tools that support them. Git's common directory and
-alternates remain live inputs to their checkouts. Object-store collection
-requires its own Git reference proof; Phase 1 removes worktrees and generated
-Cargo outputs.
+The [October 23 footprint report](https://github.com/Flip-Engineering/baton/issues/1049#issuecomment-6376863192)
+records about 110 GB of new working files between 06:00Z and 23:40Z, mostly
+ACP checkouts of about 4.8 GB for four new ensembles. It also records a fall in
+NVMe free space from about 720 GB to 500 GB and 35 GB of farm output.
+These concurrent observations do not establish a complete accounting equality.
 
-Use the existing repository/toolchain shared build wrapper and its actual
-target path. Independent current builds share the service's derived writer
-lifetime and locks. Releasing the last consumer makes regenerable outputs
-collectible after producing-source verification; later work may pay a rebuild
-cost. Attempt-output retention continues independently of target collection.
-Cache-hit and rebuild-time savings remain unmeasured. Shared compiler caches
-and immutable package reuse receive measured policies through the Phase 2
-cache work above.
+A [read-only sample](https://github.com/Flip-Engineering/baton/issues/1049#issuecomment-6379422782)
+on October 24 at 03:35:18–03:35:20Z measured
+`acp-ax-fresh-haiku2-20261023` at source
+`f7bbf9b21fa0d036e713e79277407e81ea4b56d8`:
 
-Extend `logs-storage` and storage inspection into `swarm view` or `doctor` with
-current filesystem capacity/available bytes, each discovered worktree or known
-target, producing project/seat when established, measured bytes, remote
-source/evidence links and a current eligible/retained reason. Display scan
-errors next to the affected allocation. Derive seat/path views from current
-session and Git records when read.
+| Measurement | Bytes |
+| --- | ---: |
+| Complete linked working directory, allocated blocks | 4,850,827,264 |
+| Tracked files, allocated blocks from lstat | 4,837,810,176 |
+| Tracked files, logical lengths | 4,771,223,542 |
+| Tracked files under videos, allocated blocks | 4,765,257,728 |
+| Tracked files under farm, allocated blocks | 9,412,608 |
+| Tracked files under homelab, allocated blocks | 6,410,240 |
+| Shared common Git objects, allocated blocks | 4,032,225,280 |
 
-Host-wide totals remain qualified by the visibility scan's actual coverage.
-Whole-filesystem measurements can be requested for diagnosis; their measured
-multi-minute cost and access failures are visible in the result. They supply
-no prerequisite for targeted collection. Keep logical file lengths, allocated
-blocks and physical available-byte changes distinct.
+All commands and file-stat reads completed successfully. The common directory
+was `acp-concept-content-base-20261023/.git`; its objects are shared inputs
+outside the measured linked working directory. Complete commands, timestamps,
+stdout/stderr, exit statuses and tracked-path measurements are retained in
+`acp-footprint-revision.json` beside the earlier measurement evidence. These
+numbers are a concurrent read-only sample, with no sparse checkout or deletion
+performed.
+
+Adopt a project common object store and linked worktrees on NVMe, with sparse
+working views for ACP assignments. This sample already shares objects;
+`videos` accounts for 98.5% of tracked allocated bytes. A seat limited to
+`farm`, `homelab` and top-level files would materialize approximately
+16.1 MB of tracked allocated file data under this sample's sizes, before
+directory/index metadata and generated output. The illustrative saving is
+about 4.82 GB per such view. This is a selected-path calculation, with no
+claim that every seat has those dependencies.
+
+At creation, derive the initial path set from the actual task and tool imports;
+expand the sparse view as work needs other directories. Git's
+[sparse checkout mechanism](https://git-scm.com/docs/git-sparse-checkout)
+retains the full commit identity. Review, snapshot, status and remote-runner
+flows must preserve absent skip-worktree entries and materialize required
+validation inputs. Full-tree work expands its view through the same interface.
+Measure actual selected path sets, object fetching, checkout bytes and expansion
+cost in the real ACP seat workflows. No numeric footprint limit restricts work.
+
+Share Git objects across seats and review/merge scratch; keep the common store
+while refs and checkouts use it. Blobless fetching can reduce the initial
+object transfer where the host supports it. Existing stores remain intact
+through active use. Compiler output uses the existing repository/toolchain
+shared target and producer locks. Releasing the last consumer makes its
+regenerable contents collectible; the next build can pay a rebuild cost.
+Cache-hit savings and rebuild time remain unmeasured.
+
+Extend `logs-storage` inspection into `swarm view` or `doctor` with current
+filesystem capacity and available bytes, each discovered allocation, attributed
+session/project, measured bytes, remote source/evidence refs, live references
+and the current collection/retention reason. Show measurement time, unmeasured
+allocation kinds and scan errors. Derive views from session state, Git
+administration and producer paths. No checked-in seat census supplies decisions.
+
+Host-wide totals state their actual coverage. Explicit diagnostic traversals
+can measure broad roots; their multi-minute cost and access failures remain in
+the result. Keep file lengths, allocated blocks and physical available-byte
+changes separate.
+
+## Phase 2 evidence and remaining coverage
+
+| Work | Observed allocation | Implementation and acceptance |
+| --- | --- | --- |
+| Non-Git reviewer evidence | Readable observer logs allocate 1.933 GB; film evidence allocates 15.489 GB | Identify the specific reviewer/recovery files and publisher. Verify full remote reads before removing those local copies. |
+| Exports with unusable Git metadata | October 23 /tmp/acp-0022acae | Trace its concrete creator and preserve unique content through the chosen evidence destination; unresolved exports remain local. |
+| Additional deployment exports and shared caches | #988 superseded deployments; film cache root measured 75.809 GB | Integrate each producer and existing selected runtime/rollback references. Collect released generated content, retaining required diagnostic evidence; measure reuse and rebuild cost. |
+
+The single operator decision is the off-host evidence-store configuration:
+destination, available capacity, publisher write identity and reviewer/recovery
+read identities. The conductor records that choice in deployment configuration.
+The Phase 2 publisher verifies it with the identified evidence workload.
+Phase 1 uses existing project Git destinations for source.
+
+Unclassified unique content stays local and is surfaced to its project/session
+owner with its observed path and reason. The 119.618 GB film workspace includes
+source, generated output, logs and evidence; its unclassified subset and archive
+transfer size are unmeasured. A specific evidence publisher requires an
+identified reviewer/recovery use and a verified destination.
 
 ## Loss boundaries
 
 | Boundary | Named evidence | Required behavior |
 | --- | --- | --- |
-| Wrong path or foreign worktree selected | #568's external removals left runtime owner administration inconsistent | Use configured disposable roots, exact Git paths and current operation authority; settle Git/runtime administration through its owner. |
-| Incomplete allocation inspection | Every broad October 23 inventory returned access errors; eight attempt directories were inaccessible | An unreadable candidate is ineligible. Name that path and error. Decide other allocations independently. |
-| Active work during a quiet gap | #912's writer review identifies missing native entry-point participation | Retain the recorded operation/assignment through final output and release; a gap between commands supplies no release evidence. |
-| Dirty state omitted from a commit | October 23 `/tmp/acp261` has staged and unstaged changes despite remote HEAD equality | Phase 1 keeps it. Phase 2 preserves and verifies both generations before removal. |
-| Ignored or unregistered source omitted | #620's first patch deleted an unpreserved tracked edit; #644 retained unattested files | Inspect the complete candidate content; retain unresolved files and report them. A known Cargo child uses its producing-source proof. |
-| Local integration mistaken for off-host retention | #558's local landing; October 23 clone with local `origin` | Verify the declared actual remote and required source objects. Failed or absent publication keeps the allocation. |
-| Squash merge omits original review history | #558 establishes publication of the actual artifact; #594 preserves source commits | Keep the original source/preserve refs used by review and verify their remote reachability. |
-| Consumer answer never reaches a decision | #1045 reproduces `process-unknown` on this homelab host | Resolve the candidate-specific process-check failure before Phase 1 acceptance; report candidate/PID/read errors and require definite no-consumer results for released root merge trees. |
-| Generated target confused with evidence | #988 and October 23 recoveries concern regenerable Cargo outputs; no target-internal review file is named | Keep attempt outputs in their existing external locations, record producer provenance/completion, and collect the known generated target after source verification and consumer release. Log publication supplies no Cargo eligibility condition. |
-| Raw log report extraction omits diagnostic evidence | #686 and the October 23 observer-log samples | Keep raw unique evidence until its specific Phase 2 publisher verifies remote retention. |
-| Active coordinator database or ancestor removed | #912's database-path protection and related #920 evidence | Active control databases, their ancestors and continuation paths stay outside Phase 1 candidates. |
-| Child writer survives parent completion | #988 found direct Cargo execution outside wrapper records | Follow the owned execution and derived child/service references through actual exit; retain an active or uninspectable target. |
-| Interrupted publication or collection | #594's failed-push retry; #616's missed terminal cleanup | Keep unverified source; rederive unfinished collection from current durable source and Git state after restart. |
+| Wrong or foreign path selected | #568 external removals left owner administration inconsistent | Resolve configured authority, exact Git path and filesystem identity; settle administration through its owner. |
+| Incomplete allocation inspection | October 23 broad inventories returned access errors; eight attempt directories were inaccessible | Keep that candidate and report its path/read/error. Decide other allocations independently. |
+| Open assignment between commands | #912 writer-entry-point review and shell-created paths in #1049 | Keep creator-attributed checkouts while the assignment remains open, plus current execution and continuation references. |
+| Staged or working changes omitted | /tmp/acp261 has an MM file despite remote HEAD equality | Preserve separate index and working generations at verified exact-SHA remote refs before local normalization/removal. |
+| Unique ignored or unregistered source omitted | #620 first patch lost a tracked edit; #644 retained unresolved files | Inspect the complete candidate. Collect classified generated children separately; retain unresolved unique files. |
+| Moving branch ceases to retain work | #558 unpublished landing and root critique of the October 23 hand review | Verify exact refs/baton/preserve object IDs and retain those refs; development branch movement cannot change that reference. |
+| Same-host origin mistaken for off-host retention | /tmp/acp261-dsh-flash-1 origin points to NVMe on this worker | Resolve the effective publish URL to the actual off-host project destination; keep an unresolved allocation. |
+| Squash merge loses original review history | #558 publication requirement and #594 source snapshots | Retain original source ancestry and snapshot generations through exact remote preservation refs. |
+| Consumer result remains unknown | #1045 process-unknown reproduction on this host | Repair and qualify the candidate-specific consumer path before Phase 1 acceptance; unresolved reads keep the candidate. |
+| Cargo collection requires missing old records | #988 omitted target paths; October 23 orphan target is 12.658 GB | Identify Cargo output from its marker/layout and acquire native locks; source/provenance records supply no extra eligibility condition. |
+| Build is active during target collection | #988 direct Cargo bypass and October 23 inactive-process check | Hold native Cargo locks through rename/delete and retain active operations plus runtime/rollback selections. |
+| Dependency output still serves live work | #1049 npm ci creates unregistered output | Use hidden-lockfile classification and current install/test/server/deployment references; retain active consumers. |
+| Queue producer outlives requester | Retained compile-queue implementation keeps a detached supervisor/key lock | Release the key only after producer publication, requester artifact delivery and selected result references settle. |
+| Diagnostic evidence is only local | #686 observer logs and queue failed-run output | Keep required raw evidence until its existing retention or verified Phase 2 publication permits removal. |
+| Active control database or ancestor selected | #912 database-path protection and #920 | Keep active databases, ancestors and continuation paths outside disposable candidates. |
+| Temporary snapshot store survives operation | #912 Mac recovery of 216 stores | Trace and repair the actual producer in Phase 1; release stores after source publication and operation completion. |
+| Interrupted publication or collection | #594 failed-push retry; #616 missed terminal cleanup | Keep unverified generations; derive unfinished decisions from current durable source, Git and producer state after restart. |
 
-## Acceptance by phase
+## Acceptance by producer
 
-| Producer path | Phase and failed run | Required completed evidence |
+| Producer path | Failed run | Required completed evidence |
 | --- | --- | --- |
-| Root merge worktree created outside registered seat worktrees | Phase 1; October 23 approximately 54 GB retained after push; #1045 consumer-check failure | Resolve #1045 in the selected path first. Rerun the twelve-worktree root merge/publication/release case on the affected busy host, obtaining definite no-consumer results and automatic removal for eligible trees. A run returning `process-unknown` cannot pass Phase 1. Preserve current workspaces and an unfinished merge. |
-| Private and shared Cargo targets | Phase 1; October 23 approximately 23 GB plus 18 GB; #988 direct-wrapper bypass | Capture actual target/source/toolchain and completed process evidence. After source verification, producer exit and definite reference release, collect generated targets automatically while external attempt outputs stay retained. Perform collection with log publication absent. Keep an active shared writer and unknown-provenance target. |
-| Dirty shell clone | Phase 2 source; October 23 `/tmp/acp261` | Recreate staged/working differences from verified remote preservation refs after local collection. |
-| Clone with local origin | Phase 2 clone producer; October 23 `/tmp/acp261-dsh-flash-1` | Resolve the actual off-host publish destination; preserve the clone until that source is verified there. |
-| Export with unusable Git metadata | Phase 2 export producer; October 23 `/tmp/acp-0022acae` | Identify creation/provenance and verify the selected retention mechanism; keep an unresolved export. |
-| Large attempt observer log | Phase 2 evidence; #686 and October 23 samples | Reviewer/recovery reads the complete required remote file after eligible local collection. |
-| Interrupted private Git staging store | Darwin producer work; #912 October 21 recovery | Identify its actual creator. Repeated producer success/failure/recovery releases unused stores while current source/snapshots survive. |
-| Superseded release/export or reusable cache | Phase 2 producer work; #988 | Derive active/rollback/build references and show collection after actual release, with retained evidence and measured reuse cost. |
+| Root merge/review linked worktrees | October 23 twelve trees, about 54 GB; #1045 unknown results | Repair #1045 first. Repeat the normal twelve-tree merge/publication/release case on the busy host with definite no-consumer results and automatic non-force Git removal. Keep current workspaces, unfinished operations and an open creator assignment. |
+| Released unpublished or dirty source | Root critique's 115 hand-reviewed checkouts; /tmp/acp261 staged/working changes | Push exact-SHA refs and fetch them from the off-host remote to reconstruct HEAD, index, working generations and authored untracked files. Keep source on failed publication or changed content. Verify review history after ordinary branch movement. |
+| Shell-created worktree and clone | About 26 GB in /tmp and root-created merge trees | Actual git worktree add and clone record BATON_SESSION via installed hook/template. Show separate linked admin attribution, discovery and open-assignment retention; qualify sparse no-checkout creation through its creator path. |
+| Private/shared/orphan Cargo targets | October 23 23 GB plus 18 GB; 12.658 GB orphan | Use actual markers/locks with missing historical provenance. Keep an active direct Cargo writer and selected binary, collect released targets without source/log publication, and rebuild after collection. Cover deployed Cargo lock layouts. |
+| npm dependency tree | npm ci named in #1049 | Classify a real hidden-lockfile tree; keep an active install/test/server, then collect on release and reinstall from retained source inputs. |
+| Compile-queue key | Released key directories named in root critique; existing detached supervisor | Keep live producer/requesters and incomplete artifact delivery; collect generated key content after release. Keep required failure output through its evidence lifecycle. |
+| Allocation pressure pass | October 23 Docker/PostgreSQL failures at zero free bytes | Show collection at checkout, build-start and queue-key allocation; record actual statvfs availability and measured-kind derivation for shared-cache selection. Work continues regardless of collection outcome. |
+| ACP sparse view/shared objects | October 23 about 110 GB checkout growth; 4.851 GB sample | Exercise real narrow seat and review/merge workflows, expand for actual dependencies, preserve snapshot semantics, and measure resulting working/object bytes and validation identity. |
+| Mac temporary Git store | #912 October 21 recovery | Identify the real producer from Mac evidence; repeated success/failure/restart releases unused stores while current source, snapshots and diagnostics survive. Validate on a remote Darwin runner. |
+| Non-Git evidence/export | Observer logs, film evidence and broken export | Phase 2 reviewer/recovery reads complete required remote content after eligible local collection using the configured evidence destination. |
 
-Phase 1 acceptance repeats the real root merge and Cargo workflows. Compare
-target and candidate behavior for every selected test file, recording the
-same file/test/failure-type verdicts and completed process results. Measure
-allocated bytes, actual filesystem available-byte change, remotely reviewable
-source/evidence and the paths retained for current work. The old incident
-sizes motivate the selection; they are not expected-byte assertions.
+Phase 1 acceptance requires completed runs of these real producer workflows,
+including #1045 and the Mac producer repair. Existing baseline failures and
+missing Mac attribution remain unfinished qualification; this document claims
+no implementation acceptance.
+
+Compare target and candidate for each selected test file, preserving file,
+test, failure type and completed process evidence. Measure allocated bytes,
+physical available-byte changes, remote review/reconstruction and retained
+active paths. Historical incident sizes motivate coverage and supply no
+expected-byte assertion.
 
 Compilation, compiler checks, builds and tests execute on the appropriate
-remote runners. Preserve exact source/toolchain identity and complete output.
-Continue every running validation through its existing execution handle.
-Collection failures report unfinished allocations while agents continue their
-work. Fixed age, size, percentage, duration and usage limits supply no work
-admission or continuation decisions.
+remote runners with exact source/toolchain identity and full output. Continue
+every active validation through its existing handle. Collection reports
+unfinished allocations while agents continue their work. No numeric budget
+controls admission, continuation, completion or input acceptance.
