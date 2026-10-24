@@ -1696,7 +1696,7 @@ static int cq_backfill(const char *state, char **out, size_t *length) {
 typedef struct {
   unsigned long long next, claims;
   long long peak, baseline, growth;
-  int samples, track, have_claims;
+  int samples, track, have_claims, unsteady;
   char state[PATH_MAX];
 } CqSampler;
 
@@ -1740,7 +1740,14 @@ static void cq_sample_outside(CqSampler *sampler, long long own_kb) {
     cq_admission_free(&again);
     if (sampler->have_claims && sampler->claims != set) steady = 0;
     sampler->claims = set; sampler->have_claims = 1;
-    if (!steady) { cq_admission_free(&view); cq_admission_unlock(fd); return; }
+    /* A run whose samples stay unsteady for five intervals has no current measure,
+       and publishes 0 until a steady sample comes. */
+    if (!steady) {
+      if (++sampler->unsteady >= 5) sampler->growth = 0;
+      cq_admission_free(&view); cq_admission_unlock(fd);
+      return;
+    }
+    sampler->unsteady = 0;
     int listed = 0;
     for (size_t i = 0; i < view.claim_count; i++) if (!strcmp(view.claims[i].id, cq_my_claim)) listed = 1;
     /* After the compile marker the claim is released but the command still uses memory. */
