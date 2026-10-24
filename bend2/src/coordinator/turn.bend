@@ -594,7 +594,7 @@ def observed_initial(db: String, player: String, id: String, line: String, resul
 def observe_event(+db: String, +player: String, +id: String, +event: String, relevant: Bool, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match relevant:
     case True{}: do IO<Result<&1,&1,U32 & String,String>>:
-      stored : Result<&1,&1,U32 & String,String> <- Store.apply(db,C.Observe{id,player,event,sealed})
+      stored : Result<&1,&1,U32 & String,String> <- Store.apply_through_busy(db,C.Observe{id,player,event,sealed})
       observed_initial(db,player,id,event,stored)
     case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
 

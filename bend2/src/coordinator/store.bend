@@ -157,6 +157,28 @@ def apply(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, Str
     result : Result<&1,&1,U32 & String,String> <- commit(db,command)
     committed(result)
 
+# SQLITE_BUSY (5) and SQLITE_LOCKED (6) mean the connection's busy handler gave
+# up on a lock another connection held; the transaction committed nothing.
+def busy(+code: U32) -> Bool:
+  Bool.or(U32.is_eq(code,5),U32.is_eq(code,6))
+
+def busy_again(result: Result<&1,&1,U32 & String,String>, again: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Result<&1,&1,U32 & String,String>):
+  match result:
+    case Fail{(+code,+text)}: Bool.pick(IO(Result<&1,&1,U32 & String,String>),busy(code),again(Unit{}),IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,text)}))
+    case Done{saved}: IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
+
+# Applies a command whose statements are idempotent, again after each busy
+# answer, until the store commits it or reports another failure. Each attempt
+# waits in the busy handler first. The native observer records frames through
+# it: a busy write had stopped the span read, and turn 225958 of
+# compiler-crash-1017-opus-20261022 ended 'without a native result' although
+# its native turn finished (#1054, instance B2).
+@unsafe
+def apply_through_busy(+db: String, +command: C.Command) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    result : Result<&1,&1,U32 & String,String> <- apply(db,command)
+    busy_again(result,unit => apply_through_busy(db,command))
+
 
 # Wake-claim transitions for issue #685. The table is owned by this module:
 # every writer ensures it with the canonical definition first, so a fresh
