@@ -249,6 +249,10 @@ def record_exit(db: String, player: String, +id: String, log: String, outcome: O
   match outcome:
     case Ended{status,event,error,incomplete}: Stop.exited(db,player,id,status,event,error,generation_log(log,id))
 
+def settle_account_attempt(+db: String, +attempt: String, +outcome: Outcome) -> IO(Unit):
+  match outcome:
+    case Ended{status,event,error,incomplete}: Accounts.attempt_completed_event(db,attempt,status,error,event)
+
 def player_finished(+db: String, +player: String, +id: String, quiet: Bool, failed: Bool, event: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
@@ -1270,7 +1274,8 @@ def retained_launch_plain(omp: Bool, claude: Bool, muse: Bool, cmd: String, mode
     case None{}: Done{prefix ++ retained_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native)}
     case Some{+refused}: Fail{(2,Bool.pick(String,String.is_empty(credit_refusal),Accounts.credit_api_key_refusal(refused),credit_refusal))}
 
-def retained_launch_arguments(omp: Bool, claude: Bool, muse: Bool, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +prefix: String, +history: String, harness: String, account: Maybe<&2,Accounts.AccountRecord>, binding: Maybe<List<String>>, +credit_refusal: String) -> Result<&1,&1,U32 & String,String>:
+def retained_launch_arguments(omp: Bool, claude: Bool, muse: Bool, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +prefix: String, +history: String, harness: String, account: Maybe<&2,Accounts.AccountRecord>, launch_credit: Maybe<List<String>> & String) -> Result<&1,&1,U32 & String,String>:
+  (binding,credit_refusal)=launch_credit
   match binding:
     case Some{bound}: Done{prefix ++ retained_profile_arguments(omp,claude,muse,bound,Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,prompt_file,native)}
     case None{}: retained_launch_plain(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,account,credit_refusal)
@@ -1308,10 +1313,9 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
         +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
         store : String <- current_store(db,player,harness)
         history : String <- current_history(db,player)
-        credit_refusal : String <- Accounts.credit_launch_refusal_for(db,account)
-        binding : Maybe<List<String>> <- Accounts.credit_launch_binding(db,player,directory,Tx.trim_nl(harness),account,identity_resolver(parts),store)
+        launch_credit : Maybe<List<String>> & String <- Accounts.credit_launch_gate(db,player,directory,Tx.trim_nl(harness),account,identity_resolver(parts),store,Accounts.credit_guard_qualified())
         recorded : Unit <- Accounts.record_current_attempt(db,player,directory,predecessor,account)
-        +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,history,Tx.trim_nl(harness),account,binding,credit_refusal)))
+        +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,history,Tx.trim_nl(harness),account,launch_credit)))
         launch : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_launch_checked(prepared,dsh,agy,prefix,home,cmd,model,effort,native,muse,args,initial,omp,claude,level,seal_prompt)
         IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,launch))
 
@@ -1736,6 +1740,7 @@ def direct_completed(+db: String, +player: String, +id: String, +log: String, +d
   (+outcome,deliveries)=observation
   do IO<Unit>:
     exited : Unit <- record_exit(db,player,id,log,outcome)
+    account_settled : Unit <- settle_account_attempt(db,directory,outcome)
     prepared : Unit <- prepare(db,player,id,log,directory ++ "/native.stderr",outcome)
     success : Bool <- settlement_success(db,outcome)
     settled : Unit <- Accounts.attempt_settled(db,player,directory,Bool.not(success),outcome_event(outcome))
@@ -1748,10 +1753,11 @@ def direct_completed(+db: String, +player: String, +id: String, +log: String, +d
     wake : Result<&1,&1,U32 & String,Unit> <- direct_settled_wake(db,player,id,log,outcome,settled)
     IO.pass(Unit,wake)
 
-def direct_unstarted(+db: String, +player: String, +id: String, +log: String, +directory: String, lock: Maybe<U32>, error: String) -> IO(Unit):
+def direct_unstarted(+db: String, +player: String, +id: String, +log: String, +directory: String, lock: Maybe<U32>, +error: String) -> IO(Unit):
   do IO<Unit>:
     +outcome : Outcome <- IO.pure(Outcome,Ended{"start failed","","Player process could not start: " ++ error,True{}})
     exited : Unit <- record_exit(db,player,id,log,outcome)
+    account_settled : Unit <- Accounts.attempt_completed_event(db,directory,"start failed","Player process could not start: " ++ error,"")
     prepared : Unit <- prepare(db,player,id,log,directory ++ "/native.stderr",outcome)
     released : Unit <- direct_release_lock(lock)
     finished : Result<&1,&1,U32 & String,Unit> <- finish(db,player,id,log,outcome,False{})
