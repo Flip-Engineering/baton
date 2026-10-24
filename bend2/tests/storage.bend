@@ -12,6 +12,7 @@ import ../src/storage/state.bend as S
 import ../src/host/process.bend as Proc
 import ../src/host/files.bend as F
 import ../src/host/sqlite.bend as DB
+import ../src/host/storage.bend as Host
 import ../src/git/process.bend as Git
 import ../src/git/types.bend as G
 import ../src/git/text.bend as Tx
@@ -226,7 +227,7 @@ def presence_detail(presence: T.Presence) -> String:
     case T.Unknown{}: "unknown"
 
 def held_file_script(+file: String) -> String:
-  "exec 3<" ++ file ++ "; sleep 30"
+  "exec 3<" ++ file ++ "; exec /usr/bin/env python3 -c 'import signal; signal.pause()'"
 
 def spawned_holder(result: Result<&1,&1,U32 & String,U32>, +dir: String) -> IO(Unit):
   match result:
@@ -259,7 +260,7 @@ def process_checks(+root: String) -> IO(Unit):
   do IO<Unit>:
     +dir : String = root ++ "/proc-parent"
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
-    spawned : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sleep", "30"]), dir, dir ++ "/stderr")
+    spawned : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/usr/bin/env", "python3", "-c", "import signal; signal.pause()"]), dir, dir ++ "/stderr")
     unit : Unit <- spawned_process(spawned, dir)
     +held : String = dir ++ "/held"
     wrote : Unit <- write_file(held, "x")
@@ -363,7 +364,7 @@ def database_malformed_check(+db: String, +root: String) -> IO(Unit):
     IO.pure(Unit, Unit{})
 
 def unknown_peer_script() -> String:
-  "import ctypes,time; getattr(ctypes.CDLL(None),'prctl',lambda *args: 0)(4,0,0,0,0); time.sleep(30)"
+  "import ctypes,signal; getattr(ctypes.CDLL(None),'prctl',lambda *args: 0)(4,0,0,0,0); signal.pause()"
 
 def check_unknown_presence(presence: T.Presence) -> IO(Unit):
   match presence:
@@ -403,7 +404,7 @@ def spawned_presence_precedence(result: Result<&1,&1,U32 & String,U32>, +dir: St
     case Done{+unknown_handle}:
       do IO<Unit>:
         slept : Unit <- IO.sleep(100)
-        holder : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sleep", "30"]), dir, dir ++ ".cwd-holder.stderr")
+        holder : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/usr/bin/env", "python3", "-c", "import signal; signal.pause()"]), dir, dir ++ ".cwd-holder.stderr")
         spawned_positive_holder(holder, unknown_handle, dir)
 
 def positive_precedence_check(+root: String) -> IO(Unit):
@@ -580,7 +581,7 @@ def busy_check(+db: String, +root: String) -> IO(Unit):
     a : Unit <- check("lock-busy-refused", Result.is_fail(&1,&1,U32 & String,List<T.Receipt>,result), "busy returned success")
     IO.pure(Unit, Unit{})
 
-def main() -> IO(Unit):
+def storage_checks() -> IO(Unit):
   do IO<Unit>:
     +root : String = ".scratch/bend2-storage-test"
     +db : String <- command_output(["/usr/bin/realpath", "-m", ".scratch/bend2-storage-test.db"])
@@ -605,3 +606,26 @@ def main() -> IO(Unit):
     malformed_db : Unit <- malformed_db_check(db, root)
     malformed_endpoint : Unit <- database_malformed_check(db, root)
     IO.print("storage checks: all green")
+
+def reference_scan(mode: String, +path: String) -> IO(Unit):
+  match mode:
+    case "process-refs":
+      do IO<Unit>:
+        result : String <- IO.try(String, Host.StorageHost.process_refs(path))
+        IO.print(result)
+    case "runtime-refs":
+      do IO<Unit>:
+        result : String <- IO.try(String, Host.StorageHost.runtime_refs(path))
+        IO.print(result)
+    case other: IO.die(Unit, 2, "storage-test [process-refs|runtime-refs PATH]")
+
+def main_args(args: List<String>) -> IO(Unit):
+  match args:
+    case Nil{}: storage_checks()
+    case mode <> path <> Nil{}: reference_scan(mode, path)
+    case other: IO.die(Unit, 2, "storage-test [process-refs|runtime-refs PATH]")
+
+def main() -> IO(Unit):
+  do IO<Unit>:
+    args : List<String> <- IO.args()
+    main_args(args)
