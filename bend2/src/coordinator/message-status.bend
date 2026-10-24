@@ -49,6 +49,15 @@ def settle_sql(+session: String, +attempt: String, +identity: String) -> String:
   ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ q(session) ++ ");"
   ++ "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE recipient=" ++ q(session) ++ " AND id IN(SELECT r.message FROM message_reads r JOIN executions e ON e.id=r.attempt AND e.session=r.recipient JOIN sessions s ON s.id=r.recipient WHERE r.recipient=" ++ q(session) ++ " AND r.attempt=" ++ q(attempt) ++ " AND r.identity=" ++ q(identity) ++ " AND s.native=r.native AND r.handled IS NOT NULL) AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ q(session) ++ ");COMMIT;"
 
+# Turn-start input. Tasks, task assignments and completion confirmations carry
+# their complete stored body, so the admitted prompt records them as read and
+# the turn's settlement acknowledges them. Other kinds carry a pointer to the
+# stored body. A completion confirmation delivered as a pointer stayed
+# unacknowledged when the agent did not read it, and each successful turn end
+# started another turn for it (#1054, consol-788-sonnet-20261022).
+def prompt_selection_sql(+session: String, +cursor: String) -> String:
+  "SELECT json_object('ids',json_group_array(id),'text',coalesce(group_concat(input,char(10)||char(10)),'')) FROM (SELECT id,CASE WHEN kind IN ('task','task-assignment','completion-confirmed') THEN 'Message (' || kind || ') from ' || sender || ' [id: ' || id || ']:' || char(10) || body ELSE 'Message (' || kind || ') from ' || sender || ' [id: ' || id || '] retained ' || CAST(length(CAST(body AS BLOB)) AS TEXT) || ' bytes; read the complete body with baton read ' || id || '.' END AS input FROM messages WHERE recipient=" ++ q(session) ++ " AND receipt IS NULL AND seq<=CAST(" ++ q(cursor) ++ " AS INTEGER) ORDER BY seq);"
+
 # The admitted complete prompt supplies the exact stored header and body.
 def prompt_record_sql(+session: String, +attempt: String, +native: String, identity: String, +input: String) -> String:
   "BEGIN IMMEDIATE;INSERT INTO message_reads(attempt,message,recipient,native,identity) SELECT " ++ q(attempt) ++ ",m.id,m.recipient," ++ q(native) ++ "," ++ q(identity)
