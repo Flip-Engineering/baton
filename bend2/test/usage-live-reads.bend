@@ -196,6 +196,18 @@ def malformed_case(+db: String, +helper: String, +path: String) -> IO(Unit):
     +third : String <- last_reason(db)
     expect("provider-mismatch-unreadable",String.eq(third,"unreadable|the usage-read document is not a baton2-usage-read-v1 read for provider codex"))
 
+# The Codex read passes the codex command recorded in a Codex seat's receiver endpoint;
+# another seat records none.
+def recorded_codex_case(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    seats : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('kx','coord','codex','gpt-6-astra','high','','[\"receive\",\"db\",\"kx\",\"x\",\"/opt/codex/0.163.0/codex\",\"\",\"\",\"\",\"log\"]');")
+    +codex : String <- UW.read_executable(db,"kx","codex")
+    one : Unit <- expect("codex-seat-passes-recorded-command",String.eq(codex,"/opt/codex/0.163.0/codex"))
+    +other : String <- UW.read_executable(db,"a","codex")
+    two : Unit <- expect("other-harness-records-no-codex-command",String.is_empty(other))
+    +zai : String <- UW.read_executable(db,"kx","zai")
+    expect("non-codex-read-passes-nothing",String.is_empty(zai))
+
 def run(+db: String, +helper: String) -> IO(Unit):
   do IO<Unit>:
     +path : String <- IO.pure(String,db ++ ".answer")
@@ -211,6 +223,7 @@ def run(+db: String, +helper: String) -> IO(Unit):
     seven : Unit <- unknown_case(db,helper,path)
     eight : Unit <- malformed_case(db,helper,path)
     nine : Unit <- model_scope_case(db,helper,path)
+    ten : Unit <- recorded_codex_case(db)
     IO.print("fixture-usage-live-reads-ok")
 
 def main_args(args: List<String>) -> IO(Unit):
