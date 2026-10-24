@@ -394,7 +394,8 @@ elif dsh:
             recorded.write(json.dumps({'native':native,'resume':resume,'home':os.environ['DSH_HOME'],'content':prior,'origin':''})+'\n')
     conversations.mkdir(parents=True,exist_ok=True)
     with (conversations/native).open('a') as conversation: conversation.write(json.dumps({'role':'user','content':prompt})+'\n')
-    print(json.dumps({'type':'session','sessionId':native,'cwd':os.getcwd()}),flush=True)
+    # DSH writes compact frames; Baton classifies them by their leading bytes.
+    print(json.dumps({'type':'session','sessionId':native,'cwd':os.getcwd()},separators=(',',':')),flush=True)
 elif muse:
     prompt=pathlib.Path(args[args.index('--prompt-file')+1]).read_text()
     native=resume or native
@@ -590,7 +591,7 @@ while True:
                           'result':action.get('fail_message','fixture provider failed') if failure else body}),flush=True)
     elif dsh:
         print(json.dumps({'type':'error','message':action.get('fail_message','fixture provider failed')} if failure else
-                         {'type':'final','text':body}),flush=True)
+                         {'type':'final','text':body},separators=(',',':')),flush=True)
     elif muse:
         payload={'kind':'run_terminal','terminal':'failed' if failure else 'completed',
                  'command_id':'fixture-primary',
@@ -4632,7 +4633,7 @@ class Receive(unittest.TestCase):
         self.player(harness='dsh')
         config_path = self.directory / 'fixture.json'
         config = json.loads(config_path.read_text())
-        config['record_launches'] = True
+        config.update(record_launches=True, ack_root=False)
         config_path.write_text(json.dumps(config))
         self.prepare_input('first', 'parent', 'Complete the original input.', kind='task')
         self.connect('parent')
@@ -4671,9 +4672,12 @@ class Receive(unittest.TestCase):
         self.assertIn('Complete the original input.', history[1]['content'])
 
         body = 'The resumed DSH conversation completed both inputs.'
-        self.action(resumed, body=body, complete_task=False)
+        self.action(resumed, body=body, read=['first', 'second'], ack=False, complete_task=False)
         self.assertEqual(resumed.readline(), b'')
-        self.finish(resume)
+        # The recovering receive reports the ended attempt's unknown outcome in
+        # its exit status after the continuation completes, as the #986 recovery
+        # test records. The completed turn is read from the database.
+        self.child_communication(resume)
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.assertIn(body, [row['reportBody'] for row in self.coord('turns', 'parent')])
         with sqlite3.connect(self.db) as database:
@@ -4696,7 +4700,7 @@ class Receive(unittest.TestCase):
         self.player(harness='dsh')
         config_path = self.directory / 'fixture.json'
         config = json.loads(config_path.read_text())
-        config['record_launches'] = True
+        config.update(record_launches=True, ack_root=False)
         config_path.write_text(json.dumps(config))
         self.prepare_input('assignment', 'parent', 'Complete the assignment.', kind='task')
         self.prepare_input('note', 'parent', 'Use the shared worktree.')
@@ -4725,7 +4729,7 @@ class Receive(unittest.TestCase):
                          ['dsh-model.patch.yml', 'dsh-tools.patch.yml'])
 
         body = 'A fresh DSH conversation completed the assignment.'
-        self.action(control, body=body, read=['note'], complete_task=False)
+        self.action(control, body=body, read=['assignment', 'note'], ack=False, complete_task=False)
         self.assertEqual(control.readline(), b'')
         self.finish(resume)
         self.assertEqual(self.coord('inbox', 'parent'), [])
