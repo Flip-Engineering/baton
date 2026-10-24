@@ -48,8 +48,6 @@
 #endif
 
 #define BATON_STORAGE_DEPTH 128
-#define BATON_STORAGE_PID_LIMIT 65536
-#define BATON_STORAGE_REF_LIMIT 4096
 
 typedef unsigned long long baton_u64;
 
@@ -598,14 +596,22 @@ static Term baton_storage_remove_pack(Env e, IoWork *w) {
 
 /* ---------- process references ---------- */
 
+/* The storage test supplies a proc view containing its own fixture peers.
+   The production build always reads the host proc filesystem. */
+static const char *baton_storage_proc_root(void) {
+#ifdef BATON_STORAGE_TEST_PROC
+  return getenv("BATON_STORAGE_TEST_PROC");
+#else
+  return "/proc";
+#endif
+}
+
 typedef struct { pid_t *items; size_t count, capacity; } BatonStoragePids;
 
 static int baton_storage_pid_push(BatonStoragePids *pids, pid_t pid) {
   for (size_t i = 0; i < pids->count; i++) if (pids->items[i] == pid) return 0;
-  if (pids->count >= BATON_STORAGE_REF_LIMIT) return 0;
   if (pids->count == pids->capacity) {
     size_t next = pids->capacity ? pids->capacity * 2 : 16;
-    if (next > BATON_STORAGE_REF_LIMIT) next = BATON_STORAGE_REF_LIMIT;
     pid_t *grown = realloc(pids->items, next * sizeof(pid_t));
     if (!grown) return ENOMEM;
     pids->items = grown;
@@ -624,16 +630,61 @@ static int baton_storage_numeric(const char *text) {
   return 1;
 }
 
-static int baton_storage_access_unknown(int error) {
-  return error == EACCES || error == EPERM;
+static void baton_storage_refs_unknown(pid_t pid, const char *operation,
+                                       const char *path, int error, int *unknown) {
+  *unknown = 1;
+  fprintf(stderr, "storage process scan: pid=%ld operation=%s path=%s error=%d (%s)\n",
+          (long)pid, operation, path, error, strerror(error));
 }
 
-/* Answers 1 on a match, 0 otherwise, and marks UNKNOWN on an access error. */
-static int baton_storage_path_hit(const char *path, baton_u64 device, baton_u64 inode, int *unknown) {
+static int baton_storage_gone(int error) {
+  return error == ENOENT || error == ESRCH || error == ENOTDIR;
+}
+
+/* The effective UID and exit state come from the process's status record.
+   proc inode ownership can change when a process disables dumping. */
+static int baton_storage_process_current(const char *proc_root, pid_t pid, uid_t *owner, int *unknown) {
+  char path[PATH_MAX];
+  snprintf(path, sizeof(path), "%s/%ld/status", proc_root, (long)pid);
+  FILE *status = fopen(path, "r");
+  if (!status) {
+    int error = errno;
+    if (!baton_storage_gone(error)) baton_storage_refs_unknown(pid, "fopen", path, error, unknown);
+    return 0;
+  }
+  char *line = NULL, state = 0;
+  size_t capacity = 0;
+  unsigned long real_uid = 0, effective_uid = 0;
+  int have_uid = 0, error = 0;
+  while (!state || !have_uid) {
+    errno = 0;
+    if (getline(&line, &capacity, status) < 0) {
+      error = ferror(status) ? (errno ? errno : EIO) : EPROTO;
+      break;
+    }
+    if (!strncmp(line, "State:", 6)) sscanf(line + 6, " %c", &state);
+    if (!strncmp(line, "Uid:", 4)) have_uid = sscanf(line + 4, "%lu %lu", &real_uid, &effective_uid) == 2;
+  }
+  free(line);
+  fclose(status);
+  if (state == 'Z' || state == 'X') return 0;
+  if (error) {
+    struct stat current;
+    if (stat(path, &current) && baton_storage_gone(errno)) return 0;
+    if (!baton_storage_gone(error)) baton_storage_refs_unknown(pid, "getline", path, error, unknown);
+    return 0;
+  }
+  *owner = (uid_t)effective_uid;
+  return 1;
+}
+
+/* proc entries and descriptors can disappear while they are being read. */
+static int baton_storage_path_hit(pid_t pid, const char *path, baton_u64 device,
+                                  baton_u64 inode, int *unknown) {
   struct stat info;
   if (!stat(path, &info)) return (baton_u64)info.st_dev == device && (baton_u64)info.st_ino == inode;
-  if (errno == ENOENT || errno == ESRCH || errno == ENOTDIR) return 0;
-  if (baton_storage_access_unknown(errno)) *unknown = 1;
+  int error = errno;
+  if (!baton_storage_gone(error)) baton_storage_refs_unknown(pid, "stat", path, error, unknown);
   return 0;
 }
 
@@ -644,11 +695,12 @@ static int baton_storage_prefix(const char *root, const char *path) {
 }
 
 /* A proc link target under the canonical candidate directory. */
-static int baton_storage_link_hit(const char *link, const char *root, int *unknown) {
+static int baton_storage_link_hit(pid_t pid, const char *link, const char *root, int *unknown) {
   char buffer[PATH_MAX];
   ssize_t length = readlink(link, buffer, sizeof(buffer) - 1);
   if (length < 0) {
-    if (baton_storage_access_unknown(errno)) *unknown = 1;
+    int error = errno;
+    if (!baton_storage_gone(error)) baton_storage_refs_unknown(pid, "readlink", link, error, unknown);
     return 0;
   }
   buffer[length] = 0;
@@ -677,54 +729,61 @@ static char *baton_storage_maps_path(char *line) {
 }
 
 /* Answers 1 when PID references the inode through cwd, exe, a descriptor or a
- * mapped file. Access errors and scan truncation set their flag. */
-static int baton_storage_pid_hit(pid_t pid, baton_u64 device, baton_u64 inode, const char *root, int is_dir, int *unknown, int *truncated) {
-  char path[64];
-  snprintf(path, sizeof(path), "/proc/%ld/cwd", (long)pid);
-  if (baton_storage_path_hit(path, device, inode, unknown)) return 1;
-  if (is_dir && baton_storage_link_hit(path, root, unknown)) return 1;
-  snprintf(path, sizeof(path), "/proc/%ld/exe", (long)pid);
-  if (baton_storage_path_hit(path, device, inode, unknown)) return 1;
-  if (is_dir && baton_storage_link_hit(path, root, unknown)) return 1;
+ * mapped file. Every directory and maps stream is read to its actual end. */
+static int baton_storage_pid_hit(const char *proc_root, pid_t pid, baton_u64 device, baton_u64 inode,
+                                 const char *root, int is_dir, int *unknown) {
+  char path[PATH_MAX];
+  snprintf(path, sizeof(path), "%s/%ld/cwd", proc_root, (long)pid);
+  if (baton_storage_path_hit(pid, path, device, inode, unknown)) return 1;
+  if (is_dir && baton_storage_link_hit(pid, path, root, unknown)) return 1;
+  snprintf(path, sizeof(path), "%s/%ld/exe", proc_root, (long)pid);
+  if (baton_storage_path_hit(pid, path, device, inode, unknown)) return 1;
+  if (is_dir && baton_storage_link_hit(pid, path, root, unknown)) return 1;
 
-  snprintf(path, sizeof(path), "/proc/%ld/fd", (long)pid);
+  snprintf(path, sizeof(path), "%s/%ld/fd", proc_root, (long)pid);
   DIR *fds = opendir(path);
   if (!fds) {
-    if (baton_storage_access_unknown(errno)) *unknown = 1;
+    int error = errno;
+    if (!baton_storage_gone(error)) baton_storage_refs_unknown(pid, "opendir", path, error, unknown);
   } else {
-    struct dirent *entry;
-    size_t seen = 0;
     for (;;) {
       errno = 0;
-      entry = readdir(fds);
-      if (!entry) break;
+      struct dirent *entry = readdir(fds);
+      if (!entry) {
+        int error = errno;
+        if (error && !baton_storage_gone(error)) baton_storage_refs_unknown(pid, "readdir", path, error, unknown);
+        break;
+      }
       if (!baton_storage_numeric(entry->d_name)) continue;
-      if (++seen > BATON_STORAGE_REF_LIMIT) { *truncated = 1; break; }
-      char target_path[128];
-      snprintf(target_path, sizeof(target_path), "/proc/%ld/fd/%s", (long)pid, entry->d_name);
-      if (baton_storage_path_hit(target_path, device, inode, unknown)) { closedir(fds); return 1; }
-      if (is_dir && baton_storage_link_hit(target_path, root, unknown)) { closedir(fds); return 1; }
+      char target_path[sizeof(path) + sizeof(entry->d_name)];
+      snprintf(target_path, sizeof(target_path), "%s/%ld/fd/%s", proc_root, (long)pid, entry->d_name);
+      if (baton_storage_path_hit(pid, target_path, device, inode, unknown)) { closedir(fds); return 1; }
+      if (is_dir && baton_storage_link_hit(pid, target_path, root, unknown)) { closedir(fds); return 1; }
     }
-    if (entry == NULL && errno) *unknown = 1;
     closedir(fds);
   }
 
-  snprintf(path, sizeof(path), "/proc/%ld/maps", (long)pid);
+  snprintf(path, sizeof(path), "%s/%ld/maps", proc_root, (long)pid);
   FILE *maps = fopen(path, "r");
   if (!maps) {
-    if (baton_storage_access_unknown(errno)) *unknown = 1;
+    int error = errno;
+    if (!baton_storage_gone(error)) baton_storage_refs_unknown(pid, "fopen", path, error, unknown);
   } else {
     char *line = NULL;
     size_t capacity = 0;
-    size_t seen = 0;
-    while (getline(&line, &capacity, maps) >= 0) {
-      if (++seen > BATON_STORAGE_REF_LIMIT) { *truncated = 1; break; }
+    for (;;) {
+      errno = 0;
+      ssize_t length = getline(&line, &capacity, maps);
+      if (length < 0) {
+        int error = errno;
+        if (!feof(maps) && !baton_storage_gone(error)) baton_storage_refs_unknown(pid, "getline", path, error ? error : EIO, unknown);
+        break;
+      }
       char *mapped = baton_storage_maps_path(line);
       if (!mapped || mapped[0] != '/') continue;
-      if (baton_storage_path_hit(mapped, device, inode, unknown)) { free(line); fclose(maps); return 1; }
+      if (baton_storage_path_hit(pid, mapped, device, inode, unknown)) { free(line); fclose(maps); return 1; }
       if (is_dir && baton_storage_prefix(root, mapped)) { free(line); fclose(maps); return 1; }
     }
-    if (ferror(maps)) *unknown = 1;
     free(line);
     fclose(maps);
   }
@@ -767,44 +826,66 @@ static void baton_storage_refs_call(IoWork *w) {
   struct stat target;
   if (lstat(call->path, &target)) {
     if (errno == ENOENT) call->answer = strdup("absent");
-    else call->error = errno;
+    else {
+      call->error = errno;
+      int unknown = 0;
+      baton_storage_refs_unknown(0, "lstat", call->path, call->error, &unknown);
+    }
     return;
   }
   baton_u64 device = (baton_u64)target.st_dev, inode = (baton_u64)target.st_ino;
   int is_dir = S_ISDIR(target.st_mode);
   char *root = is_dir ? realpath(call->path, NULL) : NULL;
-  if (is_dir && !root) { call->answer = strdup("unknown:root-unresolved"); return; }
-  DIR *proc = opendir("/proc");
+  if (is_dir && !root) {
+    int unknown = 0;
+    baton_storage_refs_unknown(0, "realpath", call->path, errno, &unknown);
+    call->answer = strdup("unknown:root-unresolved");
+    return;
+  }
+  const char *proc_root = baton_storage_proc_root();
+  if (!proc_root || !*proc_root) {
+    free(root);
+    call->error = EINVAL;
+    return;
+  }
+  DIR *proc = opendir(proc_root);
   if (!proc) {
-    call->answer = strdup(errno == ENOENT || errno == ENOTDIR ? "unknown:non-linux" : "unknown:access");
+    int error = errno;
+    int unknown = 0;
+    baton_storage_refs_unknown(0, "opendir", proc_root, error, &unknown);
+    call->answer = strdup(error == ENOENT || error == ENOTDIR ? "unknown:non-linux" : "unknown:access");
+    free(root);
     return;
   }
   BatonStoragePids pids = {NULL, 0, 0};
-  int unknown = 0, truncated = 0;
-  struct dirent *entry;
-  size_t seen = 0;
+  int unknown = 0;
   for (;;) {
     errno = 0;
-    entry = readdir(proc);
-    if (!entry) { if (errno) unknown = 1; break; }
-    if (!baton_storage_numeric(entry->d_name)) continue;
-    if (++seen > BATON_STORAGE_PID_LIMIT) { truncated = 1; break; }
-    pid_t pid = (pid_t)strtol(entry->d_name, NULL, 10);
-    char process_path[64];
-    snprintf(process_path, sizeof(process_path), "/proc/%ld", (long)pid);
-    struct stat process_info;
-    if (stat(process_path, &process_info)) continue;
-    if (process_info.st_uid != geteuid()) continue;
-    if (baton_storage_pid_hit(pid, device, inode, root, is_dir, &unknown, &truncated)) {
-      if (baton_storage_pid_push(&pids, pid)) { call->error = ENOMEM; break; }
-      if (pids.count >= BATON_STORAGE_REF_LIMIT) { truncated = 1; break; }
+    struct dirent *entry = readdir(proc);
+    if (!entry) {
+      int error = errno;
+      if (error) baton_storage_refs_unknown(0, "readdir", proc_root, error, &unknown);
+      break;
     }
-    if (truncated) break;
+    if (!baton_storage_numeric(entry->d_name)) continue;
+    pid_t pid = (pid_t)strtol(entry->d_name, NULL, 10);
+    uid_t owner;
+    if (!baton_storage_process_current(proc_root, pid, &owner, &unknown) || owner != geteuid()) continue;
+    int pid_unknown = 0;
+    if (baton_storage_pid_hit(proc_root, pid, device, inode, root, is_dir, &pid_unknown)) {
+      if (baton_storage_pid_push(&pids, pid)) { call->error = ENOMEM; break; }
+    } else if (pid_unknown) {
+      /* An exited process has released its references. A process that changed
+         user is outside this account's scan; its service retains its own use. */
+      if (baton_storage_process_current(proc_root, pid, &owner, &unknown) && owner == geteuid()) {
+        unknown = 1;
+      }
+    }
   }
   closedir(proc);
   free(root);
   if (call->error) { free(pids.items); return; }
-  const char *reason = unknown ? "access" : (truncated ? "scan-truncated" : "");
+  const char *reason = unknown ? "read-failed" : "";
   call->answer = baton_storage_refs_answer(&pids, reason);
   free(pids.items);
   if (!call->answer) call->error = ENOMEM;

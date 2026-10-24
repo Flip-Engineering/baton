@@ -137,9 +137,11 @@ elif [ "$recovery" = 1 ]; then
   build_native_shards -DBATON2_RECOVERY_HELPER
 else
   extra_libs=
+  storage_test_flag=
   case "$entry_path" in
+    */bend2/tests/storage.bend) storage_test_flag=-DBATON_STORAGE_TEST_PROC ;;
     */bend2/harness/claude-credit-observe.bend) extra_libs=-lcurl ;;
   esac
-  native_compile cc "${CC:-clang}" -O1 -pthread "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
+  native_compile cc "${CC:-clang}" -O1 -pthread $storage_test_flag "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
 fi
 printf '%s\n' "$output"
