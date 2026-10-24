@@ -8,6 +8,7 @@ import ../src/json/canonical.bend as J
 import ../src/coordinator/commands.bend as C
 import ../src/coordinator/usage-reads.bend as UR
 import ../src/coordinator/zai-quota.bend as Zai
+import ../src/coordinator/deepseek-usage.bend as Deepseek
 import ../src/coordinator/kimi-usage.bend as Kimi
 
 # usage-read PROVIDER CREDENTIAL_REF (#1025). Performs one live read of the provider's
@@ -240,6 +241,14 @@ def zai_request(+key: String) -> IO(Result<&1,&1,U32 & String,String & String>):
 def read_zai(+observed: String, +reference: String) -> IO(Unit):
   read_http("zai",Zai.zai_source(),observed,reference,key => zai_request(key),response => Zai.zai_windows_sql(response),response => Zai.zai_problem_sql(response))
 
+# --- DeepSeek ---------------------------------------------------------------------
+
+def deepseek_request(+key: String) -> IO(Result<&1,&1,U32 & String,String & String>):
+  Http.Http.request("GET","https://api.deepseek.com/user/balance","Authorization: Bearer " ++ key ++ "\nAccept: application/json\nUser-Agent: baton2-usage-read/1.0\n","")
+
+def read_deepseek(+observed: String, +reference: String) -> IO(Unit):
+  read_http("deepseek",Deepseek.deepseek_source(),observed,reference,key => deepseek_request(key),response => Deepseek.deepseek_windows_sql(response),response => Deepseek.deepseek_problem_sql(response))
+
 # --- Kimi Code ----------------------------------------------------------------------
 
 def kimi_request(+key: String) -> IO(Result<&1,&1,U32 & String,String & String>):
@@ -270,6 +279,7 @@ def muse_reason() -> String:
 def read_provider(+provider: String, +reference: String, +observed: String) -> IO(Unit):
   match provider:
     case "zai": read_zai(observed,reference)
+    case "deepseek": read_deepseek(observed,reference)
     case "kimi-code": read_kimi(observed,reference)
     case "claude": read_claude(observed,reference)
     case "muse": print_unreadable("muse","",observed,muse_reason())
