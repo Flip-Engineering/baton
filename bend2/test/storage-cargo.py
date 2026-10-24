@@ -94,6 +94,7 @@ CREATE TABLE log_files(session TEXT,log TEXT);
     def call(self, *args, environment=None):
         run = subprocess.run([str(BINARY), *map(str, args)], cwd=ROOT,
                              env=environment or self.environment, text=True, capture_output=True)
+        print(run.stderr, end='', flush=True)
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         return run.stdout.strip()
 
@@ -205,6 +206,11 @@ CREATE TABLE log_files(session TEXT,log TEXT);
         build = self.root / 'build'
         self.environment['CARGO_BUILD_BUILD_DIR'] = str(build)
         self.build()
+        with self.writer():
+            self.assertIn('cargo-writer-active', self.collect(associated=build))
+        self.assertTrue(self.collect(associated=build).startswith('removed\t'))
+        self.assertTrue(build.exists())
+        self.build()
 
     def release_preview(self, target=None):
         return json.loads(self.call('release-preview', target or self.target, self.db,
@@ -284,6 +290,31 @@ CREATE TABLE log_files(session TEXT,log TEXT);
         finally:
             child.communicate(b'x')
         self.assertEqual(child.returncode, 0)
+
+    def test_cwd_only_process_leaves_release_eligible(self):
+        child = subprocess.Popen([sys.executable, '-c', 'import sys; sys.stdin.buffer.read(1)'],
+                                 cwd=self.target / 'debug', stdin=subprocess.PIPE)
+        try:
+            self.assertEqual(self.release_preview()['decision'], 'remove')
+            self.assertTrue(self.collect().startswith('removed\t'))
+            self.assertFalse(self.target.exists())
+        finally:
+            child.communicate(b'x')
+        self.assertEqual(child.returncode, 0)
+
+    def test_device_mismatch_preserves_the_child_subtree(self):
+        mounted = self.target / 'debug/mount-fixture'
+        mounted.mkdir()
+        (mounted / 'keep').write_text('retained subtree\n')
+        env = dict(self.environment, BATON_CARGO_TEST_DEVICE_MISMATCH=mounted.name)
+        run = subprocess.run([str(BINARY), 'collect', str(self.target), '', str(self.db), str(self.commands)],
+                             cwd=ROOT, env=env, text=True, capture_output=True)
+        print(run.stdout + run.stderr, end='', flush=True)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertIn('partial ', run.stdout)
+        self.assertIn('restore-error=0', run.stdout)
+        self.assertIn('preserves mount entry=mount-fixture', run.stderr)
+        self.assertEqual((mounted / 'keep').read_text(), 'retained subtree\n')
 
     @contextlib.contextmanager
     def collector_boundary(self, boundary):
@@ -375,11 +406,6 @@ CREATE TABLE log_files(session TEXT,log TEXT);
         self.assertTrue(result['stdout'].startswith('removed\t'), result)
         self.assertIn('retained box=', result['stderr'])
         self.assertIn(str(box), self.call('probe', self.target))
-        with self.writer():
-            self.assertIn('cargo-writer-active', self.collect(associated=build))
-        self.assertTrue(self.collect(associated=build).startswith('removed\t'))
-        self.assertTrue(build.exists())
-        self.build()
 
     def test_lock_is_held_after_rename_and_through_removal(self):
         ready, release = self.root / 'renamed', self.root / 'release'

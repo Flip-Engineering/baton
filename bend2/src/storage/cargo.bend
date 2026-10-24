@@ -1,6 +1,9 @@
 # Cargo output release for #1049. Service owners supply current consumer and
 # deployment/rollback evidence from their existing authorities. Unknown
 # evidence preserves the output. Native Cargo locks exclude active writers.
+# Current operations and runtime/rollback selections establish continued use.
+# A cwd-only process leaves Cargo release eligibility unchanged. Source dirt,
+# publication and missing historical owners add no Cargo eligibility condition.
 
 import Base
 import ./types.bend as T

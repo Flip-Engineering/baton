@@ -455,6 +455,12 @@ static int baton_storage_remove_children(int fd, dev_t device, BatonStorageCount
 static int baton_storage_remove_child(int fd, const char *name, dev_t device, BatonStorageCount *count) {
   struct stat info;
   if (fstatat(fd, name, &info, AT_SYMLINK_NOFOLLOW)) return errno == ENOENT ? 0 : errno;
+#ifdef BATON_STORAGE_CARGO_TEST
+  /* The runner cannot mount a private filesystem. Exercise the device
+     boundary with the same observed child metadata comparison. */
+  const char *different_device = getenv("BATON_CARGO_TEST_DEVICE_MISMATCH");
+  if (different_device && !strcmp(name, different_device)) info.st_dev = device ^ 1;
+#endif
   int boundary = baton_storage_mount_boundary(fd, name);
   if (info.st_dev != device || boundary) {
     fprintf(stderr, "storage removal preserves mount entry=%s device=%llu root-device=%llu\n",
