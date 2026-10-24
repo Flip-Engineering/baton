@@ -863,22 +863,43 @@ def entry_chosen(+kind: String, +last: Bool) -> Bool:
 def last_note(+kind: String, +last: Bool) -> String:
   Bool.pick(String,Bool.and(String.eq(kind,"unknown"),last)," (the last entry is taken only on an open live read)","")
 
-def scan_decided(+db: String, +session: String, +provider: String, +model: String, +helper: String, +read: Bool, +refused: String, +refused_detail: String, +rest: List<&2,AccountRecord>, +position: U32, +states: String, +held: String, +receipts: String, +account: AccountRecord, state: EntryState) -> IO(Scan):
+# One scanned entry's outcome: whether the seat takes it, and the states, held labels
+# and hold reads accumulated through it.
+type Step is Data:
+  St{taken: Bool, states: String, held: String, receipts: String}
+
+def step_taken(step: Step) -> Bool:
+  match step:
+    case St{taken,states,held,receipts}: taken
+
+def step_states(step: Step) -> String:
+  match step:
+    case St{taken,states,held,receipts}: states
+
+def step_held(step: Step) -> String:
+  match step:
+    case St{taken,states,held,receipts}: held
+
+def step_receipts(step: Step) -> String:
+  match step:
+    case St{taken,states,held,receipts}: receipts
+
+def scan_step(+account: AccountRecord, +position: U32, +states: String, +held: String, +receipts: String, +last: Bool, state: EntryState) -> Step:
   match state:
     case Es{+kind,+detail,+receipt}:
-      +last = accounts_empty(rest)
       +line = U32.show(position) ++ " " ++ account_id(account) ++ " " ++ detail ++ last_note(kind,last)
       +is_held = String.eq(kind,"held")
-      Bool.pick(IO(Scan),entry_chosen(kind,last),
-        IO.pure(Scan,Found{account,position,states_joined(states,line,"; ")}),
-        order_scan(db,session,provider,model,helper,read,refused,refused_detail,rest,U32.add(position,1),states_joined(states,line,"; "),Bool.pick(String,is_held,held ++ account_id(account) ++ "\n",held),Bool.pick(String,is_held,states_joined(receipts,receipt,","),receipts)))
+      St{entry_chosen(kind,last),states_joined(states,line,"; "),Bool.pick(String,is_held,held ++ account_id(account) ++ "\n",held),Bool.pick(String,is_held,states_joined(receipts,receipt,","),receipts)}
 
 def order_scan(+db: String, +session: String, +provider: String, +model: String, +helper: String, +read: Bool, +refused: String, +refused_detail: String, accounts: List<&2,AccountRecord>, +position: U32, +states: String, +held: String, +receipts: String) -> IO(Scan):
   match accounts:
     case Nil{}: IO.pure(Scan,Missing{states,held,receipts})
     case +account <> +rest: do IO<Scan>:
       state : EntryState <- account_state(db,session,provider,model,helper,read,refused,refused_detail,account)
-      scan_decided(db,session,provider,model,helper,read,refused,refused_detail,rest,position,states,held,receipts,account,state)
+      +step : Step <- IO.pure(Step,scan_step(account,position,states,held,receipts,accounts_empty(rest),state))
+      Bool.pick(IO(Scan),step_taken(step),
+        IO.pure(Scan,Found{account,position,step_states(step)}),
+        order_scan(db,session,provider,model,helper,read,refused,refused_detail,rest,U32.add(position,1),step_states(step),step_held(step),step_receipts(step)))
 
 def scan_order(+db: String, +session: String, +helper: String, +read: Bool, +refused: String, +refused_detail: String, ordered: List<&2,AccountRecord>) -> IO(Scan):
   do IO<Scan>:
