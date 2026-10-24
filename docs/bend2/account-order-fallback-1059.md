@@ -34,7 +34,7 @@ The operator's Claude order is:
 | 1 | `claude-credit-primary` | `api_key` (promotional credit) |
 | 2 | `claude-credit-incognito` | `api_key`, used only after its auto-reload is confirmed off |
 | 3 | `claude-max-incognito` | `subscription` |
-| 4 | `claude-max-primary` | `subscription`; the root uses it, so it is last |
+| 4 | `claude-max-primary` | `subscription`; the root uses it, so it is last. It is not recorded while the operator's rule binds no seat to it |
 
 Credit expiry dates are recorded as information. They are not an input to the
 order or to admission.
@@ -96,24 +96,28 @@ different session.
 ## One-time account rows
 
 The Riff, render-fframes and flip orchestra databases record only the two
-`api_key` credit accounts. The fallback needs one row for each Max account in the
-order, with its priority. These rows are operator data, recorded once per
-orchestra database at deploy:
+`api_key` credit accounts. The operator's standing host rule is that Claude seats
+run on `claude-max-incognito` and that no seat is bound to `claude-max-primary`.
+
+At deploy, one row is recorded in each orchestra database:
 
 | id | provider | harness | funding | secret_ref | priority |
 | --- | --- | --- | --- | --- | --- |
 | `claude-max-incognito` | `anthropic` | `claude-code` | `subscription` | `/mnt/nvme4tb/ci-runners/baton2-native-homelab/home/.claude-max-incognito` | 3 |
-| `claude-max-primary` | `anthropic` | `claude-code` | `subscription` | `/mnt/nvme4tb/ci-runners/baton2-native-homelab/home/.claude` | 4 |
 
 ```
 account --action record --id claude-max-incognito --provider anthropic --harness claude-code --funding subscription --secret-ref /mnt/nvme4tb/ci-runners/baton2-native-homelab/home/.claude-max-incognito
-account --action record --id claude-max-primary --provider anthropic --harness claude-code --funding subscription --secret-ref /mnt/nvme4tb/ci-runners/baton2-native-homelab/home/.claude
 ```
 
-`accounts_priority_ensured` from #1011 writes priorities 1 to 4 to these ids where
-the priority is still empty. After the rows exist, a seat move needs no further
-configuration. The fixtures in `bend2/test/account-order-fallback.py` record the
-same four accounts in the same order.
+`accounts_priority_ensured` from #1011 writes priority 3 to this id where the
+priority is still empty. With this row the order ends at `claude-max-incognito`: a
+seat refused there holds, and a live read that opens the account resumes it.
+
+The `claude-max-primary` row (priority 4, `secret_ref`
+`/mnt/nvme4tb/ci-runners/baton2-native-homelab/home/.claude`) is recorded only after the
+operator withdraws the rule. Until then no row names it, so the scan never reaches
+it. The fixtures in `bend2/test/account-order-fallback.py` record all four accounts
+so that the moves to and the holds on the last entry are covered.
 
 ## Limits
 
