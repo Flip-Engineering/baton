@@ -3,6 +3,7 @@
 #include <spawn.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "persistent-path.h"
 
 extern char **environ;
 
@@ -55,6 +56,7 @@ static void baton_control_identity(BatonControl *call) {
   } else {
     call->path=realpath(candidate,NULL);free(candidate);
     if(!call->path) {call->error=errno;return;}
+    if((call->error=BATON_REMAP_RESOLVED(&call->path))) {free(call->path);call->path=NULL;return;}
   }
   char *directory=strdup(call->input);
   if(!directory) {call->error=ENOMEM;return;}
@@ -72,7 +74,8 @@ static void baton_control_identity(BatonControl *call) {
   free(directory);
   if(!call->helper && !*call->path) {call->helper=installed;installed=NULL;}
   free(installed);
-  if(!call->helper) call->error=ENOENT;
+  if(call->helper && (call->error=BATON_REMAP_RESOLVED(&call->helper))) {free(call->helper);call->helper=NULL;}
+  if(!call->helper && !call->error) call->error=ENOENT;
 }
 
 static void baton_control_free_argv(char **argv) {
@@ -163,28 +166,6 @@ static void baton_control_call(IoWork *w) {
   BatonControl *call=(BatonControl *)w->data;
   if(call->kind==2) {baton_control_identity(call);return;}
   if(call->kind==3) {baton_control_launch(call);return;}
-  if(call->kind==6) {
-    char *directory=realpath(call->input,NULL);
-    if(!directory) {call->error=errno;return;}
-    char *slash=strrchr(directory,'/');
-    if(!slash) {free(directory);call->error=EINVAL;return;}
-    *slash=0;
-    char *candidate=baton_control_join(directory,"/../libexec/baton2/codex-inbox-wake.mjs");
-    if(!candidate) {free(directory);call->error=ENOMEM;return;}
-    call->path=realpath(candidate,NULL);
-    int error=call->path?0:errno;
-    free(candidate);
-    if(!call->path && error==ENOENT) {
-      candidate=baton_control_join(directory,"/../../bend2/scripts/codex-inbox-wake.mjs");
-      if(!candidate) {free(directory);call->error=ENOMEM;return;}
-      call->path=realpath(candidate,NULL);
-      error=call->path?0:errno;
-      free(candidate);
-    }
-    free(directory);
-    if(!call->path) call->error=error;
-    return;
-  }
   if(call->kind==5) {
     if(strchr(call->input,'/')) call->path=realpath(call->input,NULL);
     else {
@@ -206,6 +187,7 @@ static void baton_control_call(IoWork *w) {
       }
       free(path);
     }
+    if(call->path && !call->error && (call->error=BATON_REMAP_RESOLVED(&call->path))) {free(call->path);call->path=NULL;}
     if(!call->path && !call->error) call->error=ENOENT;
     struct stat info;
     if(call->path && (stat(call->path,&info) || !S_ISREG(info.st_mode) || access(call->path,X_OK))) call->error=EACCES;
@@ -223,7 +205,9 @@ static void baton_control_call(IoWork *w) {
     char *directory=realpath(slash?(*copy?copy:"/"):".",NULL);
     if(!directory) call->error=errno;
     else {
+      int remap=BATON_REMAP_RESOLVED(&directory);
       struct stat info;
+      if(remap) {call->error=remap;free(directory);free(base);free(copy);return;}
       if(stat(directory,&info) || !S_ISDIR(info.st_mode)) {call->error=ENOTDIR;free(directory);free(base);free(copy);return;}
       char *prefix=baton_control_join(directory,"/");
       if(prefix) call->path=baton_control_join(prefix,base);
@@ -234,6 +218,7 @@ static void baton_control_call(IoWork *w) {
   }
   call->path=realpath(call->input,NULL);
   if(!call->path) {call->error=errno;return;}
+  if((call->error=BATON_REMAP_RESOLVED(&call->path))) {free(call->path);call->path=NULL;return;}
   struct stat info;
   if(stat(call->path,&info)) call->error=errno;
   else if(!S_ISDIR(info.st_mode)) call->error=ENOTDIR;
@@ -289,8 +274,4 @@ static void __attribute__((constructor)) baton_control_use_command(void) {io_eff
 #ifdef CID_CONTROL_LAUNCH
 static Term baton_control_spawn(Env e,Term *f,IoWork *w) {return baton_control_begin(e,f,w,3);}
 static void __attribute__((constructor)) baton_control_use_launch(void) {io_eff(CID_CONTROL_LAUNCH,baton_control_spawn,0);}
-#endif
-#ifdef CID_CONTROL_AGENT_HELPER
-static Term baton_control_agent_helper(Env e,Term *f,IoWork *w) {return baton_control_begin(e,f,w,6);}
-static void __attribute__((constructor)) baton_control_use_agent_helper(void) {io_eff(CID_CONTROL_AGENT_HELPER,baton_control_agent_helper,0);}
 #endif

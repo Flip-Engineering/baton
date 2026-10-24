@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include "persistent-path.h"
 
 extern char **environ;
 
@@ -1512,6 +1513,14 @@ static void br_recover(BrKeeper *keeper) {
   if(keeper->recovery_attempted)return;
   if(br_attempt_completed(keeper))return;
   keeper->recovery_attempted=1;
+  /* A recovery that recorded a typed blocked cause retains the attempt for an
+     explicit retry. Relaunching it from the keeper would repeat the same
+     database contention and lose the cause, so the automatic spawn stops here;
+     an operator or the next explicit recovery clears the marker. */
+  char *blocked=br_path(keeper->directory,"recovery-blocked");
+  int stopped=blocked && access(blocked,F_OK)==0;
+  free(blocked);
+  if(stopped)return;
   char **argv=br_argv(keeper->manifest.field[4],(size_t)keeper->manifest.header.lengths[4]);
   char *path=br_path(keeper->directory,"observer.log");
   int null=open("/dev/null",O_RDONLY|O_CLOEXEC),log=path?open(path,O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600):-1;
@@ -5786,7 +5795,7 @@ static void __attribute__((constructor)) baton_process_signals(void){signal(SIGP
 typedef struct {
   char *database, *session, *path, *directory;
   const char *detail;
-  int handle, error, kind, keeper, legacy_unknown, observer_life, observer_ended;
+  int handle, error, kind, keeper, legacy_unknown, observer_life, observer_ended, live_transfer;
   u32 observer;
   BatonProcessCall attempt;
 } BatonSessionLock;
@@ -5881,6 +5890,17 @@ static int br_monitor_lock(BatonRetained *retained) {
   retained->custody_lock=fd;
   return 0;
 }
+
+/* True only when the recorded native process is still alive. */
+static int br_native_live(pid_t pid) {
+  int ended=0;
+  int life=br_process_lifetime(pid,&ended);
+  if(life<0)return 0;
+  close(life);
+  return !ended;
+}
+
+static int baton_observer_transfer_supported(const char *directory);
 
 /* True only when the recorded observer process has ended. A live observer still
    owns the attempt; a second reader must not adopt beside it. */
@@ -6078,6 +6098,11 @@ static int baton_observer_completed(BatonSessionLock *call) {
     }
     }
   }
+  if(error && baton_observer_transfer_supported(call->directory)==0 &&
+     br_native_live((pid_t)native.pid)) {
+    call->live_transfer=1;
+    error=0;
+  }
   if(error) {call->detail="Observer recovery requires the original keeper to verify and retain the native exit status.";return error;}
   BrManifest manifest={0};
   if((error=br_manifest_read(call->directory,&manifest))) {
@@ -6176,6 +6201,11 @@ static int baton_observer_recover(BatonSessionLock *call) {
   call->attempt.database=call->database;
   call->attempt.directory=call->directory;
   call->attempt.lock=(u32)call->handle;
+  if(call->live_transfer && !call->observer_ended && !call->keeper) {
+    call->detail="Live observer transfer requires the keeper connection.";
+    return EBUSY;
+  }
+
   if(call->keeper) {
     error=br_instance_attach_observer(&call->attempt,call->observer,call->legacy_unknown);
     if(error==EBUSY && call->legacy_unknown) {
@@ -6263,6 +6293,7 @@ static void baton_session_lock_call(IoWork *w) {
     call->path=realpath("/proc/self/exe",NULL);
     if(!call->path) call->error=errno;
 #endif
+    if(!call->error && (call->error=BATON_REMAP_RESOLVED(&call->path))) {free(call->path);call->path=NULL;}
     return;
   }
   struct stat info;

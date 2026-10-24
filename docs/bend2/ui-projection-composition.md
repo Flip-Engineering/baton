@@ -67,7 +67,7 @@ The required shared owner source at `83b7d4fb` defines `Instance.subscribe`,
 ## Fixture pending inputs
 
 An earlier native fixture expected one pending input and observed three. The current fixture
-query selects every unreceipted `task`, `guidance`, or `recovery` message addressed to the
+query selects every unread `task`, `guidance`, or `recovery` message addressed to the
 worker while no stop record exists. Preserve all rows admitted by that query and derive the
 snapshot `pendingCount` from the same predicate. The fixture compares that count with the
 recorded rows; it does not discard rows to force a count of one.

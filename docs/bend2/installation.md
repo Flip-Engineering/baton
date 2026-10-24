@@ -155,7 +155,7 @@ arguments select another recorded context.
 
 Verify ordinary read commands against the existing database. After each actor's
 owned turn completes, refresh its receiver using the procedure below. Preserve
-the recorded native identity, parent, workspace, pending input, receipts and
+the recorded native identity, parent, workspace, pending input, read records and
 explicit stops. Record any process that continues to use an earlier prefix;
 selecting the command symlink does not reload that process.
 
@@ -356,7 +356,7 @@ returns literal commands for the request, message, session and turns. For an
 existing open assignment, use `--to SESSION`; Baton selects continuation
 automatically. In the actor context, `task-input-read --current` reads its latest
 complete dispatch input and setup outcome. Its native conversation,
-parent, workspace, pending input, receipts and explicit stops remain recorded.
+parent, workspace, pending input, read records and explicit stops remain recorded.
 Create a scratchpad deliberately when working notes need a file. Dispatch source
 is retained as database text. Native transcripts remain separate runtime files.
 The [dispatch interface](task-start-716.md) describes defaults, authority and

@@ -301,8 +301,8 @@ The parent reviews the result with `completion-confirmed --to PLAYER`, or sends
 `guide --to PLAYER --text TEXT` for remaining work. Baton resolves the current
 request addressed to that coordinator. The worker's current request remains
 available while the parent reviews it. New
-tasks and guidance begin further work. Message receipts record the worker's
-handling of retained input. Explicit operator stops remain effective.
+tasks and guidance begin further work. Stored read rows record the worker's
+complete read of retained input. Explicit operator stops remain effective.
 Parentless Principal Conductors follow their operator input.
 
 Codex, OMP, Muse, DeepSeek Harness, Antigravity CLI and Claude native receivers preserve the
@@ -327,13 +327,12 @@ baton2 /absolute/path/orchestra.db turns worker1 --pretty
 baton2 /absolute/path/orchestra.db delivery REPORT_ID --pretty
 ```
 
-`delivery` returns the complete message, receipt and recipient endpoint.
+`delivery` returns the complete message, read state and recipient endpoint.
 `turns` includes native turn history and report bodies. Inspect complete parent
-reports, native logs and handling receipts before landing work. Successful native
-turn settlement records consumed input handling, and `acknowledge` records it
-explicitly from the current native owned reads. Administrative commands retain
-explicit message and receipt selectors. Git review and landing have their own
-results. Capture complete stdout when a harness tool display truncates a long report.
+reports, native logs and read records before landing work. Baton records each
+complete recipient-owned read when the recipient reads the input; the record
+persists when the turn later fails or is interrupted. Git review and landing
+have their own results. Capture complete stdout when a harness tool display truncates a long report.
 
 ## Recovery
 

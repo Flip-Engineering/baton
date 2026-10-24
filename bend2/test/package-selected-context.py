@@ -67,7 +67,7 @@ assert modules['runtime']['enabled'] is False,inventory
 retained=tool('baton2_context_result',{'query':config['query']})
 assert retained['state']=='complete',retained
 for ident in re.findall(r'^Message \([^\n]*\) from [^\n]* \[id: (.*?)\]:$',prompt,re.M):
-    tool('baton2_ack',{'id':ident,'receipt':'native-consumed-'+config['query']})
+    subprocess.run([config['exe'],config['db'],'as',session,'read',ident],check=True,stdout=subprocess.DEVNULL)
 body=json.dumps({'session':session,'native':native,'resume':resume,'prompt':prompt,
                  'retained':retained,'discoveryScope':inventory['scope']},ensure_ascii=False)
 if resume:
@@ -80,19 +80,17 @@ if resume:
     completion=coordinator('session',session)['taskCompletion']
     assert completion['open'],completion
     assignment=coordinator('delivery',completion['assignmentId'])
-    assert assignment['receipt'] is not None,assignment
+    assert assignment['recipient']==session,assignment
     parent=completion['coordinator']
     request=completion['requestId'] or ('fixture-completion-'+str(os.getpid()))
     if not completion['requestId']:
         with sqlite3.connect(config['db']) as database:
             database.execute('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)',
                              (request,session,parent,'completion-request',body))
-            database.execute('UPDATE messages SET receipt=? WHERE id=? AND recipient=?',
-                             ('Fixture coordinator reviewed the requested result.',request,parent))
-    coordinator('ack',request,parent,'Fixture coordinator reviewed the requested result.')
+    coordinator('as',parent,'read',request)
     confirmation=request+':confirmed'
     coordinator('message',confirmation,parent,session,'completion-confirmed',request)
-    coordinator('ack',confirmation,session,'Fixture worker handled coordinator confirmation.')
+    coordinator('as',session,'read',confirmation)
 print(json.dumps({'stream':stream,'payload_type':'run.terminal.completed',
                  'payload':{'kind':'run_terminal','terminal':'completed',
                             'command_id':'handoff','text':body}}),flush=True)
@@ -790,6 +788,15 @@ void handler(const char *dynamic) {
         handoff_task = self.root / 'handoff-task.txt'
         handoff_task.write_text('Read the complete retained source object for ' + handoff_query + '.\n')
 
+        def read_count(ident, recipient=None):
+            with sqlite3.connect(self.handoff_database) as database:
+                if recipient is None:
+                    return database.execute(
+                        'SELECT count(*) FROM message_reads WHERE message=?', (ident,)).fetchone()[0]
+                return database.execute(
+                    'SELECT count(*) FROM message_reads WHERE message=? AND recipient=?',
+                    (ident, recipient)).fetchone()[0]
+
         def checked(*args, cwd=repository):
             result = invoke(*args, cwd=cwd)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -824,7 +831,8 @@ void handler(const char *dynamic) {
                                  (producer, report['native'], report['native']))
                 self.assertIn(terminal, producer_continuation['prompt'])
                 self.assertEqual(notification['recipient'], producer)
-                self.assertEqual(notification['receipt'], 'native-consumed-' + handoff_query)
+                self.assertIsNone(notification['receipt'])
+                self.assertGreater(self.read_count(terminal, producer), 0)
                 self.assertEqual(player['pendingCount'], 0)
         shared = checked('context-result', handoff_query)
         self.assertEqual(shared['owner'], producer)
@@ -858,7 +866,8 @@ void handler(const char *dynamic) {
         answer = json.loads(actions[0]['stdout'])
         continued = json.loads(answer['latestReport'])
         self.assertEqual((answer['session'], answer['message']), (consumer, message))
-        self.assertEqual(answer['delivery']['receipt'], 'native-consumed-' + handoff_query)
+        self.assertIsNone(answer['delivery']['receipt'])
+        self.assertGreater(self.read_count(message, consumer), 0)
         self.assertEqual((continued['native'], continued['resume']),
                          (original['native'], original['native']))
         self.assertIn(body, continued['prompt'])
@@ -1124,6 +1133,20 @@ void handler(const char *dynamic) {
             self.assertEqual(observed['capture']['epoch'], observed['epoch'], json.dumps(observed))
             self.assertTrue(all(isinstance(row['response']['result'], list)
                                 for row in observed['records']), json.dumps(observed))
+            runtime_invoke('context-eval', 'validation-owner', 'installed-runtime-evaluate',
+                           runtime, '1 + 1', '', str(worktree))
+            evaluated = runtime_result('installed-runtime-evaluate')
+            self.assertEqual((evaluated['intent'], evaluated['runtime']),
+                             ('evaluate', runtime), json.dumps(evaluated))
+            self.assertIn(evaluated['state'], ('running', 'paused'), json.dumps(evaluated))
+            self.assertEqual(evaluated['result']['value'], 2, json.dumps(evaluated))
+            runtime_invoke('as', 'validation-owner', 'context', 'eval',
+                           '--session', runtime, '--expression', '2 + 2',
+                           '--id', 'installed-runtime-evaluate-context')
+            contextual_eval = runtime_result('installed-runtime-evaluate-context')
+            self.assertEqual((contextual_eval['intent'], contextual_eval['runtime']),
+                             ('evaluate', runtime), json.dumps(contextual_eval))
+            self.assertEqual(contextual_eval['result']['value'], 4, json.dumps(contextual_eval))
             source_map.unlink()
             runtime_submit('installed-runtime-missing-map',
                            {'intent': 'observe', 'session': runtime}, ['frames'], [])

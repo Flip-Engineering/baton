@@ -20,6 +20,7 @@ A storage root declares one class:
 | --- | --- | --- |
 | `scratch` | Scratch | Per-attempt temporary files. |
 | `build-output` | Build output | Build products and checkouts derived from source. |
+| `export` | Export | Completed export trees and generated deliverables. |
 | `checkout` | Checkout | A Git worktree or working checkout. |
 | `shared-immutable` | Shared immutable | Reusable assets and caches. |
 | `git-object` | Git objects | A loose-object prefix store. |
@@ -46,12 +47,19 @@ repository for a `git-object` root. Empty configuration performs no scan and
 no deletion. The process reads the configured roots; it does not adopt a
 homelab path or relocate existing files.
 
-storage-policy reports each configured root and whether it appears in
-BATON_STORAGE_EXCLUSIVE_ROOTS. That setting records an operator declaration.
-The current implementation has no cooperative root-writer lease, so
-storage-apply SESSION exits with status 3 whenever at least one root is
-configured. An empty root list returns an empty receipt. Preview and policy
-commands remain available.
+storage-policy reports each configured root, its class and whether it appears
+in BATON_STORAGE_EXCLUSIVE_ROOTS. That setting records an operator declaration;
+it does not prove that writers coordinate with cleanup. A `log-evidence` root
+is covered when the coordinator database records a registered log, a retained
+generation (`log` or `base`), or an execution directory under it. A transient
+`scratch`, `build-output`, `export` or `checkout` root is covered when a
+session workspace or execution directory is recorded under it. An absolute root
+with no such reference is arbitrary and is refused. The policy reports
+`covered` per root, `apply:"lease-gated"` when every configured root is covered,
+`apply:"refused"` when any root is not covered, and `apply:"ready"` when the
+root list is empty. storage-apply SESSION acquires the per-root writer lease
+described below. An empty root list returns an empty receipt. Preview and
+policy commands remain available.
 
 ## Preservation evidence
 
@@ -61,6 +69,7 @@ Each candidate carries the measured byte count, the host identity
 - active coordinator database path or an ancestor of one;
 - owner match against the recorded session or execution;
 - live lease;
+- settled owner execution (transient classes only);
 - live process reference;
 - runtime input (open descriptor or mapped file);
 - dirty worktree;
@@ -110,31 +119,87 @@ tree. Processes of other users cannot be inspected on a host with restricted
 storage-policy                  # JSON: roots, classes, exclusivity, apply readiness
 storage-preview SESSION         # JSON: roots and entries owned by SESSION
 storage-apply SESSION           # JSON: receipts for SESSION's admitted entries
+storage-collect SESSION         # JSON: receipts for a settled SESSION
 ```
 
 Preview selects candidates whose recorded owner is exactly `SESSION`;
 a candidate owned by another session or with missing owner evidence is outside
 that session's plan.
 
-The public `storage-apply` command currently returns a refusal because cleanup
-and root writers do not share a per-root lease. Operator-declared exclusivity
-does not establish that coordination.
+storage-apply SESSION acquires the cleanup session lock, then one exclusive
+lease per configured root, holds them across the scan and removal, and releases
+them after. If any root lease is unavailable it releases the leases it already
+holds and exits with status 3 naming that root. Overlapping configured roots
+are refused before any lease is acquired. Discovery skips the lease file name,
+so cleanup never proposes the lease file as a candidate.
+
+`storage-collect SESSION` runs the apply plan for a session with no non-exited
+execution and no pending input. Only scratch, build-output, export and
+log-evidence roots participate. A checkout root is excluded because the
+session row still records its workspace; removing the current workspace needs
+an explicit `storage-preview` and `storage-apply` by an operator. The receive
+and direct-turn completion paths and the landing wrapper call the settled
+collector after custody retirement and after a successful landing; the
+receiver endpoint replacement calls it after recording the new endpoint. A
+triggered run that cannot acquire a lease or a covered root contributes no
+receipt and does not change the event that asked for collection.
+
+The explicit `storage-collect` command reports a typed `skipped` value naming
+the unsettled execution or pending input, and a typed `refused` value naming
+the lease or root failure with its exit code. An unknown session exits 2.
+
+The same evidence preserves a selected runtime and its rollback copy. A tree
+that no recorded session workspace or execution names has no owner, and an
+unknown owner preserves the candidate. A running selected runtime is also a
+process and runtime reference. Only a tree owned by a settled session with no
+dirty worktree, no unpublished commits and no live evidence is admitted.
+
+## Writer lease protocol
+
+Each configured root contains one lease file, `.baton-writer-lease`. The
+covered managed writer paths are the retained-output receive entry, the
+recovery observer, the direct initial turn, and the direct handoff and retry
+relaunches. Each holds one shared lease on every covered root containing its
+output log or attempt directory. The lease is acquired before
+`retained_prepare` writes the DSH patch files, before the native process is
+spawned or an existing native is attached, and it is held through the final
+checkpoint, ACK and observer release. Quiet gaps between frames remain inside
+the same lease span. A path under no covered root contributes no lease.
+
+A Baton-owned writer opens the lease file and takes `flock(LOCK_SH | LOCK_NB)`
+for the duration of its writes. Cleanup opens the same file and takes
+`flock(LOCK_EX | LOCK_NB)` for every configured root before it removes
+anything. The protocol is cooperative: a process that writes the root without
+opening the lease file is not blocked, and the process-reference,
+runtime-input and other preservation facts still protect its files. An external
+holder such as `flock -s ROOT/.baton-writer-lease -c 'sleep 30'` uses the same
+file and blocks cleanup.
+
+Any open, create or flock failure answers no handle, and cleanup refuses the
+apply. Contention is never treated as permission. Closing the last descriptor
+releases the lock, so the operating system releases it after a crash; the
+protocol stores no timestamp, owner record or age. A configured root name and
+an entry in BATON_STORAGE_EXCLUSIVE_ROOTS are operator declarations, not lease
+proof. A registered retained log recorded in `log_generations` for a
+non-exited execution also preserves that log and its `base` path, including
+ancestor directories, when the lease is not observed. A `log_files` row whose
+session has a non-exited execution is the second reference source, so a
+database without the `log_generations` table still preserves its registered
+active logs.
 
 The internal removal primitive checks the approved root identity, opens the
 root and candidate by descriptor, and opens intermediate directories with
-`O_NOFOLLOW`. It revalidates `kind:device:inode` before unlinking. The public
-command does not call this primitive while the shared writer lease protocol is
-unavailable.
+`O_NOFOLLOW`. It revalidates `kind:device:inode` before unlinking.
 
 BATON_STORAGE_EXCLUSIVE_ROOTS lists operator-declared roots, one path per
-line. storage-policy reports that declaration. The storage-cleanup lock
-serializes cleanup runs. It does not coordinate with processes that write the
-root. Apply remains disabled until writers and cleanup acquire the same
-per-root lease and tests show that a concurrent writer preserves its files.
+line. storage-policy reports that declaration. The storage-cleanup session
+lock serializes cleanup runs; the per-root leases coordinate cleanup with
+writers that use the lease file.
 
 The root identity, descriptor-relative traversal and identity revalidation
-cover path replacement during an individual removal. Those checks do not
-establish writer ownership for an entire scan-and-apply operation.
+cover path replacement during an individual removal. The held per-root leases
+cover writer coordination for the whole scan-and-apply operation for writers
+that use the lease file.
 
 ## Preserve-only classes
 
@@ -154,13 +219,22 @@ sh bend2/scripts/build-native.sh bend2/tests/storage.bend .scratch/bend2/storage
 ```
 
 It covers owner, database-path, lease, process, dirty, unpublished,
-runtime-input, ref and pending-attempt preservation; descendant cwd and
+runtime-input, ref, retained-generation and pending-attempt preservation; descendant cwd and
 descriptor references under a directory candidate; an unlinked descriptor owner
 outside the cleanup process tree; non-Linux unknown evidence; symlink removal
 with an intact target; child and root replacement; unreadable paths; malformed
-host records; malformed database rows and endpoints; overlapping roots;
-exclusive-root authorization; lock contention; idempotent replay; and
-interrupted tree removal.
+host records; malformed database rows and endpoints; overlapping roots refused
+before lease acquisition; a lease-gated policy; an external shared writer that
+refuses apply and preserves its file, followed by a successful apply after the
+writer exits; shared and exclusive lease contention in process; an active
+execution's registered retained log and distinct base path preserved under the
+cleaner exclusion, including the `log_files` fallback when `log_generations` is
+absent; lock
+contention; idempotent replay; and interrupted tree removal. The Python
+integration test drives the real receive and direct entrypoints: a paused
+writer holds the lease across the quiet gap, apply refuses and retains bytes,
+the terminal frame releases it, and a cleaner-first holder prevents the
+writer from spawning.
 
 The focused native overlay exposes the same commands through
 `receive-focused.bend`:

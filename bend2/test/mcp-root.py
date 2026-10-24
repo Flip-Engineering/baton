@@ -202,9 +202,51 @@ class McpRoot(unittest.TestCase):
         self.activate(proc)
         return proc
 
-    def test_connected_claude_acknowledges_only_its_complete_read_set(self):
+    def native_event(self, event, prompt, **fields):
+        result = subprocess.run(['node', str(MCP_SCRIPT), str(self.db), str(EXE),
+            '--session', 'root', '--native-event'], input=json.dumps({
+                'hook_event_name': event, 'session_id': 'retained-claude-native',
+                'prompt_id': prompt, **fields}), capture_output=True, text=True)
+        return result
+
+    def test_native_claude_stop_events_leave_recorded_reads_unchanged(self):
         proc = self.connected_claude()
-        self.assertEqual(self.tool(proc, 'baton2_ack'), [])
+        self.assertEqual(self.native_event('PreToolUse', 'failed-prompt').returncode, 0)
+        self.tool(proc, 'baton2_inbox')
+        failed = self.native_reads()[0]
+        failure = self.native_event('StopFailure', 'failed-prompt', error='rate_limit',
+            error_details='Complete native failure.\nλ🙂\nFinal spaces  ',
+            last_assistant_message='API Error: rate limit')
+        self.assertEqual(failure.returncode, 0, failure.stderr)
+        stopped = self.native_event('Stop', 'failed-prompt', last_assistant_message='Complete.')
+        self.assertEqual(stopped.returncode, 0, stopped.stderr)
+        self.assertEqual(self.native_reads()[0], failed)
+        self.assertTrue(failed['attempt'].endswith(':failed-prompt'), failed)
+        self.assertIsNone(json.loads(self.coord('delivery', 'connected-owned'))['receipt'])
+        proc.terminate()
+        proc.wait()
+        stderr = proc.stderr.read()
+        observed = [json.loads(line)['event'] for line in stderr.decode().splitlines()
+                    if line.startswith('{') and json.loads(line).get('type') == 'claudeNativeTurn']
+        self.assertEqual(next(event for event in observed if event['hook_event_name'] == 'StopFailure'),
+            {'hook_event_name': 'StopFailure', 'session_id': 'retained-claude-native',
+             'prompt_id': 'failed-prompt', 'error': 'rate_limit',
+             'error_details': 'Complete native failure.\nλ🙂\nFinal spaces  ',
+             'last_assistant_message': 'API Error: rate limit'})
+
+    def test_native_claude_events_keep_the_connection_fence(self):
+        proc = self.connected_claude()
+        self.assertEqual(self.native_event('PreToolUse', 'fenced-prompt').returncode, 0)
+        self.tool(proc, 'baton2_inbox')
+        original = self.native_reads()
+        selected = json.loads(self.coord('session', 'root'))
+        self.coord('connect', 'root', 'changed-native', selected['endpoint'])
+        changed = self.native_event('Stop', 'fenced-prompt')
+        self.assertNotEqual(changed.returncode, 0, changed)
+        self.assertEqual(self.native_reads(), original)
+
+    def test_connected_claude_records_only_its_complete_read_set(self):
+        proc = self.connected_claude()
         self.assertEqual(self.native_reads(), [])
         self.tool(proc, 'baton2_inbox', {'index': True})
         self.tool(proc, 'baton2_delivery', {'id': 'connected-foreign'})
@@ -238,26 +280,27 @@ class McpRoot(unittest.TestCase):
                    BATON_MCP_INPUT=json.dumps(forged))
         for name in ('BATON_ATTEMPT_DIRECTORY', 'CODEX_THREAD_ID'):
             env.pop(name, None)
-        sibling = subprocess.run([str(EXE), str(self.db), 'as', 'root', 'acknowledge'],
+        sibling = subprocess.run([str(EXE), str(self.db), 'as', 'root', 'read', 'connected-owned'],
                                  env=env, capture_output=True, text=True)
         self.assertEqual(sibling.returncode, 2, sibling)
         self.assertIn('socket belongs to a different MCP process', sibling.stderr)
-        self.assertEqual(sibling.stdout, '')
         self.assertEqual(self.native_reads(), before)
         self.assertIsNone(json.loads(self.coord('delivery', 'connected-owned'))['receipt'])
         self.coord('message', 'connected-unread', 'operator', 'root', 'guidance',
                    'Arrived after the complete read.')
-        result = self.tool(proc, 'baton2_ack')
-        self.assertEqual([row['id'] for row in result], ['connected-owned'])
-        receipt = 'native-turn:' + before[0]['attempt']
-        self.assertEqual(result[0]['acknowledgement']['receipt'], receipt)
-        self.assertEqual(self.native_reads()[0]['handled'], receipt)
-        self.tool(proc, 'baton2_ack')
-        self.assertEqual(json.loads(self.coord('delivery', 'connected-owned'))['receipt'], receipt)
-        for ident in ('connected-foreign', 'connected-unread'):
-            self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
+        # The earlier inbox read already recorded the complete read; reading the
+        # late input records only it.
+        late = self.tool(proc, 'baton2_delivery', {'id': 'connected-unread'})
+        self.assertEqual(late['id'], 'connected-unread')
+        self.assertEqual({row['message'] for row in self.native_reads()},
+                         {'connected-owned', 'connected-unread'})
+        self.assertTrue(all(row['handled'] is None for row in self.native_reads()))
+        self.assertIsNone(json.loads(self.coord('delivery', 'connected-owned'))['receipt'])
+        self.assertEqual(json.loads(self.coord('delivery', 'connected-owned'))['nativeInputStatus']['read'],
+                         'recorded')
+        self.assertIsNone(json.loads(self.coord('delivery', 'connected-foreign'))['receipt'])
 
-    def test_restarted_claude_connection_rereads_before_implicit_acknowledgement(self):
+    def test_restarted_claude_connection_rereads_before_the_read_state_applies(self):
         first = self.connected_claude()
         self.tool(first, 'baton2_inbox')
         original = self.native_reads()[0]
@@ -268,19 +311,21 @@ class McpRoot(unittest.TestCase):
         self.initialize(second)
         self.activate(second)
         self.assertNotEqual(json.loads(self.coord('session', 'root'))['endpoint'], original_endpoint)
-        self.assertEqual(self.tool(second, 'baton2_ack'), [])
         self.assertIsNone(json.loads(self.coord('delivery', 'connected-owned'))['receipt'])
         pending = self.tool(second, 'baton2_pending', {'pretty': True})
-        self.assertEqual({row['id'] for row in pending}, {'connected-owned', 'connected-foreign'})
+        self.assertEqual({row['id'] for row in pending}, {'connected-foreign'})
+        # Activation re-reads the owed input under the new attempt; the earlier
+        # attempt's read row is preserved unchanged.
         reads = self.native_reads()
         self.assertEqual({row['message'] for row in reads}, {'connected-owned'})
         self.assertEqual(len(reads), 2, reads)
+        reread = self.tool(second, 'baton2_delivery', {'id': 'connected-owned'})
+        self.assertEqual(reread['id'], 'connected-owned')
+        reads = self.native_reads()
+        self.assertEqual(len(reads), 2, reads)
         current = next(row for row in reads if row['attempt'] != original['attempt'])
         self.assertNotEqual(current['identity'], original['identity'])
-        handled = self.tool(second, 'baton2_ack')
-        self.assertEqual([row['id'] for row in handled], ['connected-owned'])
-        receipt = 'native-turn:' + current['attempt']
-        self.assertEqual(handled[0]['acknowledgement']['receipt'], receipt)
+        self.assertIsNone(current['handled'])
         self.assertEqual(next(row for row in self.native_reads()
                               if row['attempt'] == original['attempt']), original)
         self.assertIsNone(json.loads(self.coord('delivery', 'connected-foreign'))['receipt'])
@@ -294,15 +339,10 @@ class McpRoot(unittest.TestCase):
                                  (original['native'], '')]:
             with self.subTest(native=native, endpoint=endpoint):
                 self.coord('connect', 'root', native, endpoint)
-                result = self.tool(proc, 'baton2_ack', ok=False)
-                self.assertTrue(result['isError'], result)
-                self.assertIn('handling', result['content'][0]['text'].lower())
                 self.assertEqual(self.native_reads(), before)
                 self.assertIsNone(json.loads(self.coord('delivery', 'connected-owned'))['receipt'])
         self.coord('connect', 'root', original['native'], original['endpoint'])
         self.coord('stop', 'root', 'connected-explicit-stop', 'Keep this operator stop.')
-        result = self.tool(proc, 'baton2_ack', ok=False)
-        self.assertTrue(result['isError'], result)
         self.assertEqual(self.native_reads(), before)
         self.assertIsNone(json.loads(self.coord('delivery', 'connected-owned'))['receipt'])
         self.assertEqual(json.loads(self.coord('session', 'root'))['stop']['id'],
@@ -316,6 +356,8 @@ class McpRoot(unittest.TestCase):
         self.initialize(proc)
         send_mcp(proc, {'jsonrpc': '2.0', 'id': 'schemas', 'method': 'tools/list'})
         tools = {item['name']: item for item in read_mcp(proc)['result']['tools']}
+        for name in ['baton2_action', 'baton2_outbox', 'baton2_delivery_batch', 'baton2_message_batch']:
+            self.assertIn(name, tools)
         self.assertIn('baton2_players', tools)
         self.assertIn('baton2_player_status', tools)
         self.assertNotIn('baton2_workers', tools)
@@ -381,7 +423,8 @@ class McpRoot(unittest.TestCase):
         notification = read_mcp(proc)
         self.assertEqual(notification['params']['meta']['recipient'], associate)
         self.assertEqual(json.loads(notification['params']['meta']['messageIds']), ['associate-report'])
-        self.tool(proc, 'baton2_ack', {'id': 'associate-report', 'receipt': 'selected-reviewed'})
+        read = self.coord('as', associate, 'read', 'associate-report')
+        self.assertEqual(read.returncode, 0, read.stderr)
         self.assertEqual(json.loads(self.coord('inbox', associate)), [])
         self.assertEqual(json.loads(self.coord('inbox', '')), [])
         self.tool(proc, 'baton2_guide',
@@ -454,18 +497,10 @@ class McpRoot(unittest.TestCase):
         notif = read_mcp(proc)
         self.assertEqual(notif['method'], 'notifications/claude/channel')
 
-        # Ack the message.
-        send_mcp(proc, {
-            'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call',
-            'params': {
-                'name': 'baton2_ack',
-                'arguments': {'id': 'turn-1', 'receipt': 'channel-delivered'},
-            },
-        })
-        resp = read_mcp(proc)
-        while 'method' in resp:
-            resp = read_mcp(proc)
-        self.assertNotIn('isError', resp['result'])
+        # The recipient reads the complete body through the public CLI; the
+        # read event records itself.
+        read = self.coord('as', 'root', 'read', 'turn-1')
+        self.assertEqual(read.returncode, 0, read.stderr)
 
         # Inbox should be empty.
         send_mcp(proc, {

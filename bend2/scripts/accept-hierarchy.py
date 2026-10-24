@@ -116,10 +116,11 @@ You are the OMP Associate Conductor named lead, parent root. Your workspace is S
 registered branch is hierarchy-lead. Deliver the two text-summary utilities through
 two child Players. You review and land their commits; do not implement their files.
 The native adapter automatically sends your final response to root after each turn.
-Do not send a duplicate report manually. Acknowledge messages addressed to lead.
+Do not send a duplicate report manually. Read complete messages addressed to lead.
+Baton records each complete read internally.
 
 First turn:
-Read the complete pending input and use `B2 DB as lead acknowledge` after handling it.
+Read the complete pending input with `B2 inbox`; Baton records the read internally.
 1. Recruit child-a and child-b, both parent lead, harness omp, OMP_MODEL/OMP_EFFORT,
    repository REPO, branches hierarchy-a and hierarchy-b, workspaces STATE/child-a
    and STATE/child-b, base hierarchy-lead. Use `B2 DB recruit ID PARENT HARNESS MODEL
@@ -144,8 +145,7 @@ Read the complete pending input and use `B2 DB as lead acknowledge` after handli
 
 On the child-a report: inspect its actual diff and tests. Verify the guidance's
 native response in child-a's registered log: the matching response has command
-steer and success true. Read its handling receipt separately. Acknowledge the
-report and land child-a onto
+steer and success true. Read the report completely. Then land child-a onto
 hierarchy-lead with land-checked and CHECK, selecting only
 bend2/examples/text-summary/test_words.py. Both selected trees must be judged:
 the target lacks this newly added test, so use the check adapter described below.
@@ -153,10 +153,10 @@ Then start child-b through the same direct turn command with --session child-b,
 its complete assignment below on stdin, --cwd STATE/child-b and
 --output-log STATE/child-b.jsonl. End with a progress report while it works.
 
-On the child-b report: inspect its actual diff and tests, acknowledge it, land it
+On the child-b report: inspect its actual diff and tests, then land it
 onto hierarchy-lead selecting only test_lines.py with the same adapter. Inspect the
 lead branch tree and run both Python files on that tree. Report LEAD_READY with both
-Player SHAs, both landing SHAs, the exact lead branch SHA and guidance receipt.
+Player SHAs, both landing SHAs and the exact lead branch SHA.
 
 For these two newly added standalone test files, write STATE/check-added.sh once:
 `set -eu; if [ -f "$1" ]; then python3 "$1"; else exit 0; fi`.
@@ -178,14 +178,14 @@ OMP_CONDUCTOR_MODEL="$OMP_MODEL" OMP_CONDUCTOR_THINKING="$OMP_EFFORT" node
 (run this as one shell command). Dispatch the decoded complete lead assignment
 through stdin to `B2 DB dispatch --to lead --stdin --command OMP`
 in the background with redirected output and a new process session. This uses
-the lead's recorded route. Read this root task, use `B2 DB as root acknowledge`
-after handling it, and end your turn while the lead works.
+the lead's recorded route. Read this root task completely and end your turn
+while the lead works.
 
-Every lead turn reports back and invokes your native session. Review and acknowledge
+Every lead turn reports back and invokes your native session. Read and review
 each progress report, then end your turn while the children work. Do not send guidance
 back during a report-delivery call or launch another turn for a working session.
-On LEAD_READY, independently inspect both Players, their parent bindings, the guidance
-receipt, the lead branch diff and selected checks. Land lead onto hierarchy-target
+On LEAD_READY, independently inspect both Players, their parent bindings, the lead
+branch diff and selected checks. Land lead onto hierarchy-target
 using land-checked, STATE/check-added.sh, and one quoted, space-separated FILES argument containing
 bend2/examples/text-summary/test_words.py bend2/examples/text-summary/test_lines.py.
 Check the landed tree equals the lead branch tree and run both tests on that tree.
@@ -232,7 +232,9 @@ End your turn. No push, no changes outside the scratch directory.
                      'token: blue-green counts as one. Add an explicit blue-green regression test.')
     guidance = next(m for m in messages if m['sender'] == 'lead' and m['recipient'] == 'child-a'
                     and m['kind'] == 'guidance' and m['body'] == guidance_body)
-    assert guidance['receipt'], guidance
+    with sqlite3.connect(f'{db.as_uri()}?mode=ro', uri=True) as connection:
+        read_ids = {row[0] for row in connection.execute('SELECT message FROM message_reads')}
+    assert guidance['id'] in read_ids, guidance
     child_turns = {turn['id'] for turn in turns if turn['worker'] == 'child-a'}
     native_steer = []
     generation_facts = []
@@ -256,8 +258,8 @@ End your turn. No push, no changes outside the scratch directory.
     for child in ['child-a', 'child-b']:
         report = next(m for m in messages if m['sender'] == child and m['kind'] == 'report'
                       and any(turn['id'] == m['id'] and turn['worker'] == child for turn in turns))
-        assert report['recipient'] == 'lead' and report['receipt']
-    assert any(m['sender'] == 'lead' and m['recipient'] == 'root' and m['receipt']
+        assert report['recipient'] == 'lead' and report['id'] in read_ids
+    assert any(m['sender'] == 'lead' and m['recipient'] == 'root' and m['id'] in read_ids
                for m in messages)
     target = run('git', '-C', repo, 'rev-parse', 'hierarchy-target')
     lead = run('git', '-C', repo, 'rev-parse', 'hierarchy-lead')

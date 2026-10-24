@@ -230,6 +230,12 @@ def read_file(+db: String, +binding: String, +path: String) -> IO(RequestDecode)
     result : Result<&1,&1,U32 & String,Raw.RawRead> <- Raw.Raw.read_utf8(path)
     read_raw_after(db, binding, result)
 
+# Decode a complete request already held as text. The same validation and
+# projection path serves file and inline requests, so an evaluation action can
+# submit the existing runtime request without a second file artifact.
+def read_text(+db: String, +binding: String, +text: String) -> IO(RequestDecode):
+  read_raw_after(db,binding,Done{Raw.RawText{text}})
+
 def decoded_subject_path(decoded: RequestDecode) -> String:
   match decoded:
     case RequestDecoded{canonical, operands, operation_chain, cwd, source_path}: source_path

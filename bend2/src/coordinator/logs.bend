@@ -1,5 +1,5 @@
 import Base
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./log-schema.bend as Schema
 import ../host/sqlite.bend as DB
 import ../host/text.bend as T
@@ -8,6 +8,7 @@ import ../git/text.bend as Tx
 import ../host/session-lock.bend as Lock
 import ../json/canonical.bend as J
 import ./../coordinator/frame-span.bend as Frame
+import ../storage/lifecycle.bend as StoragePolicy
 
 # Baton2-owned log classification, storage inspection and cleanup.
 #
@@ -46,7 +47,7 @@ def policy_row(row: String) -> Policy:
   policy_fields(Tx.split_tabs(row))
 
 def pending_sql(+session: String) -> String:
-  "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL;"
+  "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ ";"
 
 def pending_count(db: String, session: String) -> IO(String):
   do IO<String>:
@@ -818,7 +819,7 @@ def log_items(rows: List<String>, acc: String) -> IO(String):
       IO.pure(String,deeper)
 
 def attempt_rows_sql(+db: String, +session: String) -> String:
-  "SELECT e.session,e.id,e.mode,e.phase,e.status,e.directory,(SELECT count(*) FROM messages WHERE recipient=e.session AND receipt IS NULL),coalesce((SELECT level FROM log_policies WHERE session=e.session),'default'),CASE WHEN EXISTS(SELECT 1 FROM turns t JOIN messages m ON m.id=t.id AND m.sender=t.worker AND m.kind='report' WHERE t.id=e.id AND t.worker=e.session AND e.status='exit 0') OR EXISTS(SELECT 1 FROM session_stops ss JOIN messages m ON m.id=ss.report_id AND m.kind='report' AND m.sender=e.session WHERE ss.session=e.session AND ss.attempt=e.id AND ss.outcome='stopped') THEN 1 ELSE 0 END,CASE WHEN e.directory=" ++ C.q(db ++ ".attempt-") ++ " || lower(hex(e.id)) THEN 1 ELSE 0 END,coalesce((SELECT json_extract(t.event,'$.type') FROM turns t WHERE t.id=e.id),''),coalesce((SELECT length(t.event) FROM turns t WHERE t.id=e.id),'0'),coalesce((SELECT CASE WHEN json_valid(t.event) AND json_type(t.event,'$.messages')='array' THEN json_array_length(t.event,'$.messages') END FROM turns t WHERE t.id=e.id),'0') FROM executions e WHERE (" ++ C.q(session) ++ "='' OR e.session=" ++ C.q(session) ++ ") AND e.directory<>'' ORDER BY e.session,e.directory;"
+  "SELECT e.session,e.id,e.mode,e.phase,e.status,e.directory,(SELECT count(*) FROM messages WHERE recipient=e.session AND " ++ C.owed_sql("messages") ++ "),coalesce((SELECT level FROM log_policies WHERE session=e.session),'default'),CASE WHEN EXISTS(SELECT 1 FROM turns t JOIN messages m ON m.id=t.id AND m.sender=t.worker AND m.kind='report' WHERE t.id=e.id AND t.worker=e.session AND e.status='exit 0') OR EXISTS(SELECT 1 FROM session_stops ss JOIN messages m ON m.id=ss.report_id AND m.kind='report' AND m.sender=e.session WHERE ss.session=e.session AND ss.attempt=e.id AND ss.outcome='stopped') THEN 1 ELSE 0 END,CASE WHEN e.directory=" ++ C.q(db ++ ".attempt-") ++ " || lower(hex(e.id)) THEN 1 ELSE 0 END,coalesce((SELECT json_extract(t.event,'$.type') FROM turns t WHERE t.id=e.id),''),coalesce((SELECT length(t.event) FROM turns t WHERE t.id=e.id),'0'),coalesce((SELECT CASE WHEN json_valid(t.event) AND json_type(t.event,'$.messages')='array' THEN json_array_length(t.event,'$.messages') END FROM turns t WHERE t.id=e.id),'0') FROM executions e WHERE (" ++ C.q(session) ++ "='' OR e.session=" ++ C.q(session) ++ ") AND e.directory<>'' ORDER BY e.session,e.directory;"
 
 type AttemptDecision is Data:
   AttemptDecision{reason: String, eligible: Bool}
@@ -959,14 +960,15 @@ def stderr_run_items(rows: List<String>, acc: String) -> IO(String):
 def stderr_run_rows_sql() -> String:
   "SELECT session,attempt,run,generation,stderr FROM log_stderr_runs ORDER BY session,attempt,run;"
 
-def storage_json(db: String, database: U32, root: U32, logs: String, attempts: String, stderr_runs: String) -> String:
+def storage_json(db: String, database: U32, root: U32, logs: String, attempts: String, stderr_runs: String, artifacts: String) -> String:
   "{\"database\":" ++ J.string_literal(db)
   ++ ",\"databaseBytes\":" ++ U32.show(database)
   ++ ",\"rootLogBytes\":" ++ U32.show(root)
   ++ ",\"defaults\":{\"level\":" ++ J.string_literal(default_level()) ++ "}"
   ++ ",\"logs\":[" ++ logs ++ "]"
   ++ ",\"attempts\":[" ++ attempts ++ "]"
-  ++ ",\"stderrRuns\":[" ++ stderr_runs ++ "]}"
+  ++ ",\"stderrRuns\":[" ++ stderr_runs ++ "]"
+  ++ ",\"artifacts\":" ++ artifacts ++ "}"
 
 # Inspects registered artifact paths and cleanup candidates.
 def storage(+db: String) -> IO(String):
@@ -979,7 +981,8 @@ def storage(+db: String) -> IO(String):
     stderr_runs : String <- stderr_run_items(Tx.split_lines(run_text),"")
     database : U32 <- IO.try(U32,F.Files.size(db))
     root : U32 <- IO.try(U32,F.Files.size(db ++ ".root.log"))
-    IO.pure(String,storage_json(db,database,root,logs,attempts,stderr_runs))
+    artifacts : String <- StoragePolicy.preview_json(db,"")
+    IO.pure(String,storage_json(db,database,root,logs,attempts,stderr_runs,artifacts))
 
 def clean_json(session: String, removed: String, attempt_files: String, attempt_logs: String) -> String:
   "{\"session\":" ++ J.string_literal(session) ++ ",\"removed\":[" ++ removed ++ "],\"attemptFiles\":[" ++ attempt_files ++ "],\"attemptLogs\":[" ++ attempt_logs ++ "]}"
@@ -1077,7 +1080,7 @@ def superseded_reported(+session: String, +attempt: String) -> String:
   "CASE WHEN EXISTS(SELECT 1 FROM turns t JOIN messages m ON m.id=t.id AND m.sender=t.worker AND m.kind=" ++ C.q("report") ++ " WHERE t.id=" ++ C.q(attempt) ++ " AND t.worker=" ++ C.q(session) ++ ") OR EXISTS(SELECT 1 FROM session_stops ss JOIN messages m ON m.id=ss.report_id AND m.kind=" ++ C.q("report") ++ " AND m.sender=" ++ C.q(session) ++ " WHERE ss.session=" ++ C.q(session) ++ " AND ss.attempt=" ++ C.q(attempt) ++ " AND ss.outcome=" ++ C.q("stopped") ++ ") THEN 1 ELSE 0 END"
 
 def superseded_info_sql(+db: String, +session: String, +attempt: String) -> String:
-  "SELECT (SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL),coalesce((SELECT level FROM log_policies WHERE session=" ++ C.q(session) ++ ")," ++ C.q("default") ++ ")," ++ superseded_reported(session,attempt) ++ "," ++ C.q(db) ++ " || " ++ C.q(".attempt-") ++ " || lower(hex(" ++ C.q(attempt) ++ "));"
+  "SELECT (SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ "),coalesce((SELECT level FROM log_policies WHERE session=" ++ C.q(session) ++ ")," ++ C.q("default") ++ ")," ++ superseded_reported(session,attempt) ++ "," ++ C.q(db) ++ " || " ++ C.q(".attempt-") ++ " || lower(hex(" ++ C.q(attempt) ++ "));"
 
 # A superseded generation leaves under exit, report, and acknowledgement. The
 # executions row is gone with its process status, so this decision does not

@@ -18,6 +18,8 @@ EXE = ROOT / '.scratch/bend2/baton2'
 
 class AgentActions(unittest.TestCase):
     def setUp(self):
+        if not receive_fixture.require_candidate():
+            self.fail(f'Coordinator not built at {receive_fixture.EXE}')
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
         self.addCleanup(self.temp.cleanup)
         self.directory = pathlib.Path(self.temp.name)
@@ -89,15 +91,81 @@ class AgentActions(unittest.TestCase):
                               'FROM messages ORDER BY seq').fetchall()
 
     def endpoint_output(self):
+        owner = f'{EXE.resolve()} --instance-owner '
+        receive_fixture.Receive.eventually(self, lambda: all(
+            process['command'].startswith(owner)
+            for process in receive_fixture.Receive.owned_processes(self)),
+            'The fixture endpoint did not finish its detached delivery.')
         return self.deliveries.read_bytes() if self.deliveries.exists() else b''
+
+    def test_compact_actions_resolve_context_and_retained_completion(self):
+        self.legacy('project', self.repo)
+        routes = [('bare', ()), ('project', ('--project', self.repo)),
+                  ('actor', ('as', 'worker-a')), ('database', (self.db, 'as', 'worker-a'))]
+        for label, prefix in routes:
+            with self.subTest(route=label):
+                environment = {'BATON_DATABASE': str(self.db), 'BATON_SESSION': 'worker-a'}
+                for action, kind in [('report', 'report'), ('ask', 'question')]:
+                    body = label + ' complete ' + action + ': λ / 漢字 / "quotes"\n'
+                    result = self.invoke(*prefix, action, body, cwd=self.repo,
+                                         environment=environment)
+                    self.assertEqual(len(result), 1)
+                    message = self.stored_messages()[-1]
+                    self.assertEqual(message[1:5], ('worker-a', 'root', kind, body))
+                sent = self.invoke(*prefix, 'send', 'root', 'and', cwd=self.repo,
+                                   environment=environment)[0]
+                self.assertEqual(sent['status'], 'admitted')
+                self.assertEqual(sent['delivery']['body'], 'and')
+                self.assertEqual(sent['delivery']['kind'], 'report')
+                self.legacy('message', label + '-assignment', 'root', 'worker-a',
+                            'task-assignment', 'Complete this assigned work.')
+                summary = label + ' complete summary: λ / 漢字\n'
+                request = self.invoke(*prefix, 'finish', summary, cwd=self.repo,
+                                      environment=environment)[0]
+                self.assertEqual(request['status'], 'admitted')
+                self.assertEqual(request['delivery']['body'], summary)
+                self.assertEqual(request['delivery']['kind'], 'completion-request')
+                state = self.legacy('session', 'worker-a')['taskCompletion']
+                self.assertEqual(state['requestId'], request['id'])
+                self.assertFalse(state['confirmed'])
+                confirmed = self.invoke('confirm', 'worker-a', cwd=self.repo,
+                                        environment={**environment, 'BATON_SESSION': 'root'})[0]
+                self.assertEqual(confirmed['status'], 'admitted')
+                self.assertEqual(confirmed['delivery']['body'], request['id'])
+                self.assertTrue(self.legacy('session', 'worker-a')['taskCompletion']['confirmed'])
+                guided = self.invoke('guide', 'worker-a', 'Continue the next assignment.',
+                                     cwd=self.repo,
+                                     environment={**environment, 'BATON_SESSION': 'root'})[0]
+                self.assertEqual(guided['delivery']['kind'], 'guidance')
+                self.assertEqual(guided['delivery']['body'], 'Continue the next assignment.')
+
+    def test_named_sends_default_each_kind_to_report(self):
+        result = self.action('root', 'send', 'worker-a', '--text', 'First complete report.',
+                             'and', 'worker-b', '--text', 'Second complete report.')
+        self.assertEqual([row['delivery']['kind'] for row in result], ['report', 'report'])
+        self.assertEqual([row['delivery']['body'] for row in result],
+                         ['First complete report.', 'Second complete report.'])
+
+    def test_positional_guidance_preserves_batch_words_as_text_and_recipient(self):
+        self.legacy('join', 'and', 'root', 'fixture', 'model', 'low', self.repo)
+        self.legacy('connect', 'and', '', self.endpoint)
+        for recipient, body in [('worker-a', 'and'), ('worker-a', '--and'),
+                                ('and', 'Continue the complete assignment.')]:
+            with self.subTest(recipient=recipient, body=body):
+                result = self.action('root', 'guide', recipient, body)[0]
+                self.assertEqual(result['status'], 'admitted')
+                self.assertEqual((result['delivery']['recipient'],
+                                  result['delivery']['kind'], result['delivery']['body']),
+                                 (recipient, 'guidance', body))
 
     def test_help_actions_need_no_project_pointer(self):
         for args in [('help',), ('inbox', '--help'), ('read', '--help'),
-                     ('send', '--help'), ('acknowledge', '--help'),
+                     ('send', '--help'),
                      ('session', '--help'), ('player', '--help'),
                      ('players', '--help'), ('assignment', '--help'),
                      ('completion-request', '--help'),
-                     ('completion-confirmed', '--help'), ('guide', '--help')]:
+                     ('completion-confirmed', '--help'), ('finish', '--help'),
+                     ('confirm', '--help'), ('guide', '--help')]:
             with self.subTest(args=args):
                 result = subprocess.run([str(EXE), 'as', 'root', *args],
                                         cwd=self.directory, capture_output=True, text=True)
@@ -231,7 +299,7 @@ class AgentActions(unittest.TestCase):
         self.assertEqual((delivered['sender'], delivered['recipient'], delivered['kind'],
                           delivered['body']), ('root', 'worker-a', 'guidance', body))
 
-    def test_database_named_report_and_knowledge_keep_actor_body_and_receipt(self):
+    def test_database_named_report_and_knowledge_keep_actor_body_and_read(self):
         env = {'BATON_DATABASE': str(self.directory / 'absent.db'),
                'BATON_SESSION': 'worker-a'}
         self.legacy('message', 'database-named-task', 'root', 'worker-a',
@@ -245,12 +313,12 @@ class AgentActions(unittest.TestCase):
         report = self.legacy('delivery', report_id)
         self.assertEqual((report['sender'], report['recipient'], report['kind'], report['body']),
                          ('worker-a', 'root', 'report', body))
-        first_receipt = 'Root read the complete report.'
-        self.legacy('ack', report_id, 'root', first_receipt)
+        self.action('root', 'read', report_id)
+        self.assertTrue(receive_fixture.read_recorded(self.db, report_id, 'root'))
         repeated = self.invoke(self.db, 'report', '--id', report_id, '--text', body,
                                environment=env)[0]
         self.assertEqual(repeated['status'], 'completed')
-        self.assertEqual(self.legacy('delivery', report_id)['receipt'], first_receipt)
+        self.assertIsNone(self.legacy('delivery', report_id)['receipt'])
 
         claim = 'The complete report supports this finding.\nKeep λ🙂 and the final newline.\n'
         recorded = self.invoke(self.db, 'knowledge', 'record', '--kind', 'observation',
@@ -343,8 +411,8 @@ class AgentActions(unittest.TestCase):
         root_env = {**worker_env, 'BATON_SESSION': 'root'}
         self.legacy('message', 'database-decision-task', 'root', 'worker-a',
                     'task-assignment', 'Complete this bounded assignment.\nλ🙂')
-        first_receipt = 'The complete assignment was read and handled.'
-        self.legacy('ack', 'database-decision-task', 'worker-a', first_receipt)
+        self.action('worker-a', 'read', 'database-decision-task')
+        self.assertTrue(receive_fixture.read_recorded(self.db, 'database-decision-task', 'worker-a'))
         report = 'Full completion report.\nPreserve λ🙂, --and, and the final newline.\n'
         report_path = self.directory / 'complete report λ.txt'
         report_path.write_text(report)
@@ -354,13 +422,13 @@ class AgentActions(unittest.TestCase):
         self.assertEqual((request['delivery']['sender'], request['delivery']['recipient'],
                           request['delivery']['kind'], request['delivery']['body']),
                          ('worker-a', 'root', 'completion-request', report))
-        self.legacy('ack', request['id'], 'root', 'First complete report review.')
+        self.action('root', 'read', request['id'])
+        self.assertTrue(receive_fixture.read_recorded(self.db, request['id'], 'root'))
         repeated = self.invoke(self.db, 'completion-request', '--id', request['id'],
                                '--file', report_path, cwd=self.directory,
                                environment=worker_env)[0]
         self.assertEqual(repeated['id'], request['id'])
-        self.assertEqual(self.legacy('delivery', request['id'])['receipt'],
-                         'First complete report review.')
+        self.assertIsNone(self.legacy('delivery', request['id'])['receipt'])
 
         before = self.stored_messages()
         state = self.legacy('session', 'worker-a')['taskCompletion']
@@ -387,10 +455,8 @@ class AgentActions(unittest.TestCase):
         self.assertEqual(completion['requestId'], request['id'])
         self.assertTrue(completion['confirmed'])
         self.assertFalse(completion['open'])
-        self.assertEqual(self.legacy('delivery', 'database-decision-task')['receipt'],
-                         first_receipt)
-        self.assertEqual(self.legacy('delivery', request['id'])['receipt'],
-                         'First complete report review.')
+        self.assertIsNone(self.legacy('delivery', 'database-decision-task')['receipt'])
+        self.assertIsNone(self.legacy('delivery', request['id'])['receipt'])
 
         guidance = 'Continue with the next bounded task.\nFull guidance λ🙂.\n'
         guidance_path = self.directory / 'complete guidance.txt'
@@ -640,6 +706,9 @@ class AgentActions(unittest.TestCase):
                     'task-assignment', 'Original bounded assignment.')
         older = self.action('worker-a', 'completion-request', '--text',
                             'Original bounded assignment handled.')[0]['id']
+        older_confirmation = self.action('root', 'completion-confirmed',
+                                         '--request', older)[0]
+        self.assertEqual(older_confirmation['status'], 'admitted')
         self.legacy('message', 'newer-assignment', 'root', 'worker-a',
                     'task-assignment', 'New work remains open.\nλ🙂')
         state = self.legacy('session', 'worker-a')['taskCompletion']
@@ -653,13 +722,44 @@ class AgentActions(unittest.TestCase):
                 self.assertTrue(refused['admission']['cause'])
                 self.assertEqual(self.stored_messages(), before)
                 self.assertEqual(self.legacy('session', 'worker-a')['taskCompletion'], state)
+        for arguments in (('--request', older),
+                          ('--to', 'worker-a', '--request', older)):
+            with self.subTest(arguments=arguments):
+                refused = self.action('root', 'completion-confirmed', *arguments)[0]
+                self.assertEqual(refused['status'], 'refused')
+                self.assertIn('older assignment', refused['admission']['cause'])
+                self.assertEqual(self.stored_messages(), before)
+                self.assertEqual(self.legacy('session', 'worker-a')['taskCompletion'], state)
         current = self.action('worker-a', 'completion-request', '--text',
                               'New bounded assignment handled.')[0]['id']
-        confirmed = self.action('root', 'completion-confirmed')[0]
-        self.assertEqual(confirmed['status'], 'admitted')
-        self.assertEqual(confirmed['delivery']['body'], current)
-        self.assertNotEqual(confirmed['delivery']['body'], older)
+        state = self.legacy('session', 'worker-a')['taskCompletion']
+        self.assertEqual(state['requestId'], current)
+        self.assertTrue(state['open'])
+        before = self.stored_messages()
+        for arguments in (('--request', older),
+                          ('--to', 'worker-a', '--request', older)):
+            with self.subTest(arguments=arguments):
+                refused = self.action('root', 'completion-confirmed', *arguments)[0]
+                self.assertEqual(refused['status'], 'refused')
+                self.assertIn('older assignment', refused['admission']['cause'])
+                self.assertEqual(self.stored_messages(), before)
+                self.assertEqual(self.legacy('session', 'worker-a')['taskCompletion'], state)
+        explicit = self.action('root', 'completion-confirmed', '--to', 'worker-a',
+                               '--request', current)[0]
+        self.assertEqual(explicit['status'], 'admitted')
+        self.assertEqual(explicit['delivery']['body'], current)
+        self.assertNotEqual(explicit['delivery']['body'], older)
         self.assertIsNone(self.legacy('delivery', 'newer-assignment')['receipt'])
+        state = self.legacy('session', 'worker-a')['taskCompletion']
+        self.assertEqual(state['requestId'], current)
+        self.assertTrue(state['confirmed'])
+        self.legacy('message', 'second-new-assignment', 'root', 'worker-a',
+                    'task-assignment', 'Another bounded assignment remains open.')
+        current_second = self.action('worker-a', 'completion-request', '--text',
+                                     'Second bounded assignment handled.')[0]['id']
+        semantic = self.action('root', 'completion-confirmed', '--to', 'worker-a')[0]
+        self.assertEqual(semantic['status'], 'admitted')
+        self.assertEqual(semantic['delivery']['body'], current_second)
 
     def test_mixed_confirmation_infers_current_request_and_retains_exact_native_result(self):
         self.legacy('message', 'mixed-inferred-task', 'root', 'worker-a',
@@ -757,13 +857,10 @@ class AgentActions(unittest.TestCase):
                            'Sent from inferred root.', '--id', 'implicit-send',
                            cwd=self.directory, environment=env)
         self.assertEqual(sent[0]['delivery']['sender'], 'root')
-        acknowledged = self.invoke('acknowledge', 'implicit-report', '--receipt',
-                                    'Handled by inferred root.', cwd=self.directory,
-                                    environment=env)
-        self.assertEqual(acknowledged[0]['acknowledgement']['receipt'],
-                         'Handled by inferred root.')
-        self.assertEqual(self.legacy('delivery', 'implicit-report')['receipt'],
-                         'Handled by inferred root.')
+        read = self.invoke('read', 'implicit-report', cwd=self.directory, environment=env)
+        self.assertEqual(read[0]['status'], 'found')
+        self.assertTrue(receive_fixture.read_recorded(self.db, 'implicit-report', 'root'))
+        self.assertIsNone(self.legacy('delivery', 'implicit-report')['receipt'])
 
     def test_implicit_codex_native_requires_one_exact_session(self):
         receive_fixture.install_public_queue_codex(self, self.directory)
@@ -788,11 +885,11 @@ class AgentActions(unittest.TestCase):
                              'Never admitted.', cwd=self.directory, success=False,
                              environment={'BATON_DATABASE': str(self.db)})
         self.assertTrue(absent.stderr)
-        unknown = self.invoke('acknowledge', 'context-report', '--receipt', 'Never stored.',
-                              cwd=self.directory, success=False,
+        unknown = self.invoke('read', 'context-report', cwd=self.directory, success=False,
                               environment={'BATON_DATABASE': str(self.db),
                                            'CODEX_THREAD_ID': 'unknown-codex-thread'})
         self.assertTrue(unknown.stderr)
+        self.assertFalse(receive_fixture.read_recorded(self.db, 'context-report'))
         self.assertEqual(self.stored_messages(), before)
 
         self.legacy('attach', 'other-root', 'codex', native, self.endpoint)
@@ -846,7 +943,7 @@ class AgentActions(unittest.TestCase):
         self.assertEqual(rows[4]['delivery']['recipient'], 'worker-a')
         self.assertIsNone(rows[2].get('delivery'))
 
-    def test_contextual_reads_and_acknowledgements_keep_private_argv_shapes(self):
+    def test_contextual_reads_keep_private_argv_shapes(self):
         ids = [f'arity-report-{i}' for i in range(10)]
         for ident in ids:
             self.legacy('message', ident, 'worker-a', 'root', 'report',
@@ -858,78 +955,30 @@ class AgentActions(unittest.TestCase):
         self.assertEqual([row['id'] for row in explicit_database], ids[:9])
         self.assertTrue(all(row['status'] == 'found' for row in current_project))
         self.assertTrue(all(row['status'] == 'found' for row in explicit_database))
-        acknowledged = self.action('root', 'acknowledge', *ids[:7],
-                                   '--receipt', 'Handled in order.')
-        self.assertEqual([row['id'] for row in acknowledged], ids[:7])
-        for ident in ids[:7]:
-            self.assertEqual(self.legacy('delivery', ident)['receipt'],
-                             'Handled in order.')
-        for ident in ids[7:]:
+        for ident in ids:
+            self.assertTrue(receive_fixture.read_recorded(self.db, ident, 'root'))
             self.assertIsNone(self.legacy('delivery', ident)['receipt'])
 
-    def test_acknowledge_applies_each_owned_receipt_and_keeps_foreign_input(self):
+    def test_read_batch_records_each_owned_message_and_keeps_foreign_input_unread(self):
         for ident in ('ack-first', 'ack-second'):
             self.legacy('message', ident, 'worker-a', 'root', 'report', ident)
         self.legacy('message', 'ack-foreign', 'root', 'worker-a', 'guidance',
                     'worker-a owns this input')
-        rows = self.action('root', 'acknowledge', 'ack-first', 'ack-foreign',
-                           'ack-second', '--receipt', 'Read and handled.')
+        rows = self.action('root', 'read', 'ack-first', 'ack-foreign', 'ack-second')
         self.assertEqual([row['id'] for row in rows],
                          ['ack-first', 'ack-foreign', 'ack-second'])
         self.assertEqual([str(row['index']) for row in rows], ['0', '1', '2'])
-        self.assertEqual(rows[0]['acknowledgement'],
-                         {'id': 'ack-first', 'receipt': 'Read and handled.'})
-        self.assertEqual(rows[2]['acknowledgement'],
-                         {'id': 'ack-second', 'receipt': 'Read and handled.'})
-        self.assertEqual(rows[1]['status'], 'absent')
-        self.assertEqual(rows[1]['cause'],
-                         'No matching message owned by SESSION.')
-        self.assertEqual(self.legacy('delivery', 'ack-first')['receipt'],
-                         'Read and handled.')
-        self.assertEqual(self.legacy('delivery', 'ack-second')['receipt'],
-                         'Read and handled.')
+        self.assertTrue(all(row['status'] == 'found' for row in rows))
+        self.assertTrue(receive_fixture.read_recorded(self.db, 'ack-first', 'root'))
+        self.assertTrue(receive_fixture.read_recorded(self.db, 'ack-second', 'root'))
+        self.assertFalse(receive_fixture.read_recorded(self.db, 'ack-foreign', 'root'))
+        self.assertFalse(receive_fixture.read_recorded(self.db, 'ack-foreign', 'worker-a'))
+        self.assertIsNone(self.legacy('delivery', 'ack-first')['receipt'])
+        self.assertIsNone(self.legacy('delivery', 'ack-second')['receipt'])
         self.assertIsNone(self.legacy('delivery', 'ack-foreign')['receipt'])
-        repeated = self.action('root', 'acknowledge', 'ack-first', '--receipt',
-                               'A later receipt.')
-        self.assertEqual(repeated[0]['acknowledgement']['receipt'],
-                         'Read and handled.')
-        self.assertEqual(self.legacy('delivery', 'ack-first')['receipt'],
-                         'Read and handled.')
-
-    def test_acknowledge_generates_explicit_receipts_and_refuses_unscoped_default(self):
-        for ident in ('generated-ack-a', 'generated-ack-b'):
-            self.legacy('message', ident, 'worker-a', 'root', 'report',
-                        'Complete ' + ident + '.\nλ🙂')
-        self.legacy('message', 'generated-ack-foreign', 'root', 'worker-a',
-                    'guidance', 'The worker owns this complete input.')
-        self.action('root', 'read', 'generated-ack-a')
-        before = self.stored_messages()
-        delivered = self.endpoint_output()
-        refused = self.action('root', 'acknowledge', success=False)
-        self.assertEqual(refused.returncode, 2)
-        self.assertEqual(refused.stdout, '')
-        self.assertEqual(json.loads(refused.stderr.splitlines()[0])['error'],
-                         'handling-context')
-        self.assertEqual(self.stored_messages(), before)
-        self.assertEqual(self.endpoint_output(), delivered)
-        rows = self.action('root', 'acknowledge', 'generated-ack-a',
-                           'generated-ack-foreign', 'generated-ack-b')
-        self.assertEqual([row['id'] for row in rows],
-                         ['generated-ack-a', 'generated-ack-foreign', 'generated-ack-b'])
-        self.assertEqual([row['status'] for row in rows],
-                         ['acknowledged', 'absent', 'acknowledged'])
-        receipts = {row['id']: row['acknowledgement']['receipt']
-                    for row in rows if row['status'] == 'acknowledged'}
-        for ident, receipt in receipts.items():
-            self.assertIsInstance(receipt, str)
-            self.assertTrue(receipt)
-            self.assertEqual(self.legacy('delivery', ident)['receipt'], receipt)
-        repeated = self.action('root', 'acknowledge', '--message', 'generated-ack-a')[0]
-        self.assertEqual(repeated['acknowledgement']['receipt'], receipts['generated-ack-a'])
-        explicit = self.action('root', 'acknowledge', 'generated-ack-b',
-                               '--receipt', 'Later explicit handling.')[0]
-        self.assertEqual(explicit['acknowledgement']['receipt'], receipts['generated-ack-b'])
-        self.assertIsNone(self.legacy('delivery', 'generated-ack-foreign')['receipt'])
+        repeated = self.action('root', 'read', 'ack-first')
+        self.assertEqual(repeated[0]['status'], 'found')
+        self.assertTrue(receive_fixture.read_recorded(self.db, 'ack-first', 'root'))
 
     def test_send_keeps_each_clause_identity_body_and_wake_result(self):
         file_body = 'File body with λ🙂.\nSecond line.\n'
@@ -977,7 +1026,7 @@ class AgentActions(unittest.TestCase):
                            'and', 'other-root', '--kind', 'report', '--text',
                            'Denied route.', '--id', 'denied-route',
                            'and', 'worker-b', '--kind', 'guidance', '--text',
-                           'Retained after wake refusal.', '--id', 'wake-refused',
+                           'Retained after endpoint failure.', '--id', 'wake-refused',
                            'and', 'worker-a', '--kind', 'guidance', '--text',
                            'Valid body.', '--id', 'valid-after-errors')
         self.assertEqual([row['id'] for row in rows],
@@ -987,9 +1036,14 @@ class AgentActions(unittest.TestCase):
         self.assertNotEqual(rows[1]['status'], 'admitted')
         self.assertTrue(rows[0].get('error') or rows[0].get('admission'))
         self.assertEqual(rows[2]['admission']['status'], 'admitted')
-        self.assertEqual(rows[2]['wake']['status'], 'refused')
+        self.assertEqual(rows[2]['wake']['status'], 'accepted')
+        self.assertIsNone(rows[2]['delivery']['receipt'])
+        self.endpoint_output()
+        failure = pathlib.Path(str(self.db) + '.dispatch-' + 'wake-refused'.encode().hex() + '.stderr')
+        self.assertIn('session delivery failed', failure.read_text())
+        self.assertIn('exit 7', failure.read_text())
         self.assertEqual(rows[2]['delivery']['body'],
-                         'Retained after wake refusal.')
+                         'Retained after endpoint failure.')
         self.assertEqual(rows[3]['status'], 'admitted')
         self.assertEqual(rows[3]['delivery']['body'], 'Valid body.')
         stored = {row[0] for row in self.stored_messages()}
@@ -1001,7 +1055,6 @@ class AgentActions(unittest.TestCase):
     def test_invalid_whole_grammar_preserves_existing_messages(self):
         cases = [
             ('send', 'worker-a', '--kind', 'report', '--id', 'missing-body'),
-            ('send', 'worker-a', '--text', 'Missing kind.'),
             ('send', 'worker-a', '--kind', 'report', '--text', 'one', '--file',
              self.directory / 'body.txt'),
             ('send', 'worker-a', '--kind', 'report', '--text', 'one', '--text', 'two'),
@@ -1010,10 +1063,7 @@ class AgentActions(unittest.TestCase):
              '--id', 'one', '--id', 'two'),
             ('send', 'worker-a', '--kind', 'report', '--text', 'one', '--unknown'),
             ('send', 'worker-a', '--kind', 'report', '--text', 'one', 'and'),
-            ('send', 'worker-a', '--kind', 'report', '--text', 'one', 'and',
-             'worker-b', '--text', 'Missing kind in second clause.'),
             ('read',),
-            ('acknowledge', 'message-id', '--receipt'),
         ]
         for args in cases:
             with self.subTest(args=args):
@@ -1626,8 +1676,8 @@ class AgentActions(unittest.TestCase):
         self.assertEqual(self.legacy('session', 'worker-b')['harness'], 'codex')
         self.legacy('message', 'generated-control-task', 'root', 'worker-b',
                     'task-assignment', 'Original unfinished work.\nλ🙂')
-        first_receipt = 'Complete original input handled; assignment remains open.'
-        self.legacy('ack', 'generated-control-task', 'worker-b', first_receipt)
+        self.action('worker-b', 'read', 'generated-control-task')
+        self.assertTrue(receive_fixture.read_recorded(self.db, 'generated-control-task', 'worker-b'))
         reason = 'Operator stop after explicit continuation.\nλ🙂'
         rows = self.action('root', 'continue-task', '--session', 'worker-b', '--and',
                            'stop', '--session', 'worker-b', '--reason', reason)
@@ -1647,7 +1697,7 @@ class AgentActions(unittest.TestCase):
         self.assertEqual(json.loads(rows[1]['stdout'])['reason'], reason)
         self.assertEqual(self.legacy('delivery', 'generated-control-task')['body'],
                          'Original unfinished work.\nλ🙂')
-        self.assertEqual(self.legacy('delivery', 'generated-control-task')['receipt'], first_receipt)
+        self.assertIsNone(self.legacy('delivery', 'generated-control-task')['receipt'])
         before = self.stored_messages()
         replay = self.action('root', 'stop', '--session', 'worker-b',
                              '--id', stop_id, '--reason', reason)

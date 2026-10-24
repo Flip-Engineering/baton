@@ -44,24 +44,22 @@ def require_parent(found: Bool) -> IO(Unit):
     case True{}: IO.pure(Unit,Unit{})
     case False{}: IO.die(Unit,2,"The parent session is not registered.")
 
-def register(db: String, id: String, parent: String, harness: String, model: String, effort: String, made: Result<&1,&1,G.GitFail,G.WorktreeCreated>) -> IO(Unit):
+def register(db: String, id: String, parent: String, harness: String, model: String, effort: String, made: Result<&1,&1,G.GitFail,G.WorktreeCreated>) -> IO(String):
   match made:
-    case Fail{error}: IO.die(Unit,1,G.fail_text(error))
+    case Fail{error}: IO.die(String,1,G.fail_text(error))
     case Done{G.WCreated{branch,path,base}}:
-      do IO<Unit>:
-        saved : String <- IO.try(String,Store.apply(db,C.Player{id,parent,harness,model,effort,path,branch,base}))
-        IO.write(saved)
+      IO.try(String,Store.apply(db,C.Player{id,parent,harness,model,effort,path,branch,base}))
 
-def create(+db: String,id: String,parent: String,harness: String,model: String,effort: String,repo: String,branch: String,path: String,base: String,exists: Bool) -> IO(Unit):
+def create(+db: String,id: String,parent: String,harness: String,model: String,effort: String,repo: String,branch: String,path: String,base: String,exists: Bool) -> IO(String):
   match exists:
     case True{}: register(db,id,parent,harness,model,effort,Done{G.WCreated{branch,path,base}})
     case False{}:
-      do IO<Unit>:
+      do IO<String>:
         made : Result<&1,&1,G.GitFail,G.WorktreeCreated> <- CW.createWorktree(repo,branch,path,base)
         register(db,id,parent,harness,model,effort,made)
 
-def recruit(+db: String,+id: String,+parent: String,harness: String,model: String,effort: String,+repo: String,branch: String,+path: String,base: String) -> IO(Unit):
-  do IO<Unit>:
+def recruit_result(+db: String,+id: String,+parent: String,harness: String,model: String,effort: String,+repo: String,branch: String,+path: String,base: String) -> IO(String):
+  do IO<String>:
     parent_row : String <- IO.try(String,Store.apply(db,C.Session{parent}))
     present : Unit <- require_parent(Bool.not(String.is_empty(parent_row)))
     root_result : G.GitOut <- Git.runGit(repo,["rev-parse","--show-toplevel"])
@@ -69,11 +67,12 @@ def recruit(+db: String,+id: String,+parent: String,harness: String,model: Strin
     base_result : G.GitOut <- Git.runGit(repo,["rev-parse","--verify","--end-of-options",base ++ "^{commit}"])
     commit : String <- git_output("git rev-parse --verify", base_result)
     existing : String <- IO.try(String,Store.apply(db,C.Session{id}))
-    create(db,id,parent,harness,model,effort,repo,branch,absolute(line(root),path,Tx.starts_with(path,"/")),line(commit),Bool.not(String.is_empty(existing)))
+    +target : String <- IO.try(String,Host.Control.output(absolute(line(root),path,Tx.starts_with(path,"/"))))
+    create(db,id,parent,harness,model,effort,repo,branch,target,line(commit),Bool.not(String.is_empty(existing)))
 
 # Join an existing checkout. Several Players can use the same worktree.
-def join(+db: String,+id: String,+parent: String,harness: String,model: String,effort: String,+path: String) -> IO(Unit):
-  do IO<Unit>:
+def join_result(+db: String,+id: String,+parent: String,harness: String,model: String,effort: String,+path: String) -> IO(String):
+  do IO<String>:
     parent_row : String <- IO.try(String,Store.apply(db,C.Session{parent}))
     present : Unit <- require_parent(Bool.not(String.is_empty(parent_row)))
     +workspace : String <- IO.try(String,Host.Control.workspace(path))
@@ -84,6 +83,16 @@ def join(+db: String,+id: String,+parent: String,harness: String,model: String,e
     +existing : String <- IO.try(String,DB.Sql.query(db,"SELECT base FROM sessions WHERE id=" ++ C.q(id) ++ ";"))
     base : String <- IO.pure(String,Bool.pick(String,String.is_empty(existing),line(commit_raw),line(existing)))
     register(db,id,parent,harness,model,effort,Done{G.WCreated{line(branch_raw),workspace,base}})
+
+def recruit(db: String,id: String,parent: String,harness: String,model: String,effort: String,repo: String,branch: String,path: String,base: String) -> IO(Unit):
+  do IO<Unit>:
+    saved : String <- recruit_result(db,id,parent,harness,model,effort,repo,branch,path,base)
+    IO.write(saved)
+
+def join(db: String,id: String,parent: String,harness: String,model: String,effort: String,path: String) -> IO(Unit):
+  do IO<Unit>:
+    saved : String <- join_result(db,id,parent,harness,model,effort,path)
+    IO.write(saved)
 
 def status_json(id: String,path: String,branch: String,commit: String,dirty: Bool) -> String:
   "{\"id\":" ++ J.string_literal(id) ++ ",\"workspace\":" ++ J.string_literal(path) ++ ",\"branch\":" ++ J.string_literal(branch) ++ ",\"commit\":" ++ J.string_literal(commit) ++ ",\"dirty\":" ++ Bool.pick(String,dirty,"true","false") ++ "}"

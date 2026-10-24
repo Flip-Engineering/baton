@@ -5,10 +5,11 @@
 # a live credential can fetch it. Each observation binds to the session's
 # harness, the provider prefix of its recorded model, and the current
 # subscription profile label (an empty label means account-wide for that
-# harness and provider). A missing reset time stays a NULL resets_at: the
-# store never invents one. The wake gate refuses new turns for a held window
-# and admits them again after the recorded reset, so a reported reset both
-# skips doomed retries and restores eligible work on the next wake. These are
+# harness and provider). A missing reset time is the upper bound of a named window
+# (5-hour, 7-day) or NULL. The gate reads a NULL reset as the re-probe instant
+# after the latest refusal. The wake gate refuses new turns for a held window
+# and admits them again after the recorded reset or re-probe instant, and a
+# successful attempt clears the exhausted windows of its account. These are
 # subscription windows; Claude monthly promotional API credits (#793) are a
 # separate funding source and are not tracked here.
 import Base
@@ -23,7 +24,6 @@ import ./store.bend as Store
 
 type Gate is Data:
   GateNone{}
-  GateUnknown{window: String, source: String, receipt: String}
   GateHeld{window: String, resets_at: String, source: String, receipt: String}
   GateElapsed{window: String, resets_at: String, source: String, receipt: String}
 
@@ -263,7 +263,7 @@ def reset_text_of(+text: String) -> String:
 # --- the observation store ---------------------------------------------------
 #
 # The coordination database owns the observations; there is no sidecar file.
-# resets_at NULL is the explicit unknown. recorded_at is the observation time
+# resets_at NULL means no reset is recorded; the gate re-probes it. recorded_at is the observation time
 # and the receipt names what was observed and where it came from.
 
 def now_ms() -> String:
@@ -274,8 +274,49 @@ def now_ms() -> String:
 def window_match_sql(+harness: String, +provider: String, +account: String) -> String:
   "harness=" ++ C.q(harness) ++ " AND provider=" ++ C.q(provider) ++ " AND (account=" ++ C.q(account) ++ " OR account='')"
 
+def offsetless_clock_modifier_sql(+text: String) -> String:
+  "CASE WHEN length(" ++ C.q(text) ++ ")>10 AND " ++ C.q(text) ++ " NOT GLOB '*[Zz+]*' AND substr(" ++ C.q(text) ++ ",11) NOT LIKE '%-%' THEN '-8 hours' ELSE '+0 seconds' END"
+
+# A provider time with a clock and no UTC designator is China Standard Time (UTC+8,
+# no daylight saving). z.ai writes "Your limit will reset at 2026-10-23 06:54:13"
+# without an offset, so the instant is that clock minus eight hours. A time with
+# Z or an explicit offset is read as written, and a date-only text as UTC.
 def parsed_reset_sql(+reset_text: String) -> String:
-  Bool.pick(String,String.is_empty(reset_text),"NULL","(SELECT CAST(strftime('%s'," ++ C.q(reset_text) ++ ") AS INTEGER)*1000)")
+  Bool.pick(String,String.is_empty(reset_text),"NULL","(SELECT CAST(strftime('%s'," ++ C.q(reset_text) ++ "," ++ offsetless_clock_modifier_sql(reset_text) ++ ") AS INTEGER)*1000)")
+
+# The upper bound, in milliseconds, of a named subscription window. A rolling window
+# that started at or before a refusal ends by the refusal time plus its length. A
+# monthly window has no fixed length, so it has no bound.
+def window_length_ms(+window: String) -> String:
+  Bool.pick(String,String.eq(window,"5-hour"),"18000000",Bool.pick(String,String.eq(window,"7-day"),"604800000",""))
+
+# The re-probe interval for an exhausted window whose only evidence carries no reset
+# time. The gate holds until the latest refusal plus this interval; the owed input's
+# next attempt after that instant is the probe.
+def probe_interval_ms() -> String:
+  "3600000"
+
+# The reset recorded for a refusal: the provider's own time when the text names one,
+# else the upper bound of a named window, else NULL.
+# The window bound as an SQL instant, or NULL for a window with no fixed length.
+def bound_sql(+window: String) -> String:
+  Bool.pick(String,String.is_empty(window_length_ms(window)),"NULL","(" ++ now_ms() ++ "+" ++ window_length_ms(window) ++ ")")
+
+# A parsed provider reset is rejected when it lies further after the refusal than the
+# window's own length (a 5-hour window cannot reset more than 5 hours after a refusal),
+# or when it does not parse. A rejected or missing time falls back to the window bound.
+# A window with no fixed length keeps the parsed time.
+def reset_or_bound_sql(+reset_text: String, +window: String) -> String:
+  Bool.pick(String,String.is_empty(reset_text),
+    bound_sql(window),
+    Bool.pick(String,String.is_empty(window_length_ms(window)),parsed_reset_sql(reset_text),
+      "(CASE WHEN " ++ parsed_reset_sql(reset_text) ++ " IS NULL OR " ++ parsed_reset_sql(reset_text) ++ " > " ++ now_ms() ++ "+" ++ window_length_ms(window) ++ " THEN " ++ bound_sql(window) ++ " ELSE " ++ parsed_reset_sql(reset_text) ++ " END)"))
+
+# The instant the gate reads for an exhausted state row: the recorded reset, or the
+# re-probe instant when none is recorded. The alias is "w." or "" for a bare row. The
+# instant is derived in the query and never stored.
+def reset_at_sql(+alias: String) -> String:
+  "coalesce(" ++ alias ++ "resets_at," ++ alias ++ "recorded_at+" ++ probe_interval_ms() ++ ")"
 
 # The provider prefix computed in SQL from the recorded model: the text before
 # the first '/', or empty when the model is not provider-qualified.
@@ -285,9 +326,10 @@ def model_provider_sql(+model: String) -> String:
 # One observation from a provider exhaustion cause, recorded before any account
 # advance so the refusal fact survives even when the advance itself fails. The
 # window kind is extracted from the cause; an embedded ISO reset time is
-# converted to milliseconds and a missing one stays NULL.
+# converted to milliseconds. With no embedded time, a named window records its
+# upper bound and an unnamed window stays NULL.
 def record_cause_sql(+session: String, +account: String, +window: String, +reset_text: String, +cause: String, +message: String) -> String:
-  "INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) SELECT " ++ now_ms() ++ ",harness,model," ++ model_provider_sql("model") ++ "," ++ C.q(account) ++ "," ++ C.q(window) ++ "," ++ parsed_reset_sql(reset_text) ++ ",'provider-message',NULL," ++ C.q(cause) ++ "," ++ C.q(message) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ ";"
+  "INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) SELECT " ++ now_ms() ++ ",harness,model," ++ model_provider_sql("model") ++ "," ++ C.q(account) ++ "," ++ C.q(window) ++ "," ++ reset_or_bound_sql(reset_text,window) ++ ",'provider-message',NULL," ++ C.q(cause) ++ "," ++ C.q(message) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ ";"
 
 # The provider cause names the window for every exhaustion terminal this tree
 # classifies (subscription-fallback's wording matcher). A failed observation
@@ -307,6 +349,7 @@ def record_cause(+db: String, +session: String, +id: String, account: String, +c
   do IO<Unit>:
     saved : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,record_cause_sql(session,Tx.trim_nl(account),window_label_of(lower_ascii(cause)),reset_text_of(cause),Tx.trim_nl(cause),id))
     record_cause_result(db,session,id,cause,saved)
+
 
 # --- the operator observation command ----------------------------------------
 #
@@ -365,7 +408,6 @@ def observe(+db: String, +session: String, +window: String, +resets: String, +so
     done : Unit <- Bool.pick(IO(Unit),String.eq(Tx.trim_nl(saved),"0"),IO.die(Unit,2,"The session has no recorded route; recruit or configure it before observing usage windows."),IO.pure(Unit,Unit{}))
     observed : Unit <- observe_print(session,window,value)
     IO.pure(Unit,Unit{})
-
 
 
 # --- the provider report refresh ---------------------------------------------
@@ -437,7 +479,7 @@ def exhausted_sql(+alias: String) -> String:
   "((" ++ alias ++ ".used_fraction IS NOT NULL AND " ++ alias ++ ".used_fraction >= 1) OR " ++ alias ++ ".reset_source='provider-message')"
 
 def latest_provider_rows_sql(+harness: String, +provider: String, +account: String) -> String:
-  "SELECT p.* FROM usage_windows p WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p.reset_source IN ('provider-message','provider-report') AND p.id=(SELECT p2.id FROM usage_windows p2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p2.reset_source IN ('provider-message','provider-report') AND p2.window=p.window ORDER BY p2.recorded_at DESC, p2.id DESC LIMIT 1)"
+  "SELECT p.* FROM usage_windows p WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p.reset_source IN ('provider-message','provider-report','provider-success') AND p.id=(SELECT p2.id FROM usage_windows p2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p2.reset_source IN ('provider-message','provider-report','provider-success') AND p2.window=p.window ORDER BY p2.recorded_at DESC, p2.id DESC LIMIT 1)"
 
 def exhausted_windows_sql(+harness: String, +provider: String, +account: String) -> String:
   "SELECT p.window FROM (" ++ latest_provider_rows_sql(harness,provider,account) ++ ") p WHERE " ++ exhausted_sql("p")
@@ -449,6 +491,27 @@ def latest_rows_sql(+harness: String, +provider: String, +account: String) -> St
   +exhausted = exhausted_windows_sql(harness,provider,account)
   "SELECT w.* FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY CASE WHEN w2.window IN (" ++ exhausted ++ ") AND w2.resets_at IS NULL THEN 1 ELSE 0 END,w2.recorded_at DESC,w2.id DESC LIMIT 1)"
 
+# --- the provider success -----------------------------------------------------
+#
+# A completed attempt that did not fail clears the exhausted windows of its account
+# label and provider scope. Only refusals recorded before the attempt started clear:
+# started is the attempt start in milliseconds, so a refusal recorded inside the
+# attempt keeps its hold. The success row carries no reset and no used fraction, so
+# the latest provider row of each cleared window stops being an exhaustion.
+
+def success_windows_sql(+harness: String, +provider: String, +account: String, +started: String) -> String:
+  "SELECT DISTINCT p.window FROM (" ++ latest_provider_rows_sql(harness,provider,account) ++ ") p WHERE " ++ exhausted_sql("p") ++ " AND p.recorded_at < " ++ started
+
+def record_success_sql(+session: String, +harness: String, +provider: String, +account: String, +started: String, +attempt: String) -> String:
+  "INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) SELECT " ++ now_ms() ++ ",harness,model," ++ C.q(provider) ++ "," ++ C.q(account) ++ ",e.window,NULL,'provider-success',NULL," ++ C.q("provider-success: attempt " ++ attempt) ++ ",'' FROM sessions,(" ++ success_windows_sql(harness,provider,account,started) ++ ") e WHERE sessions.id=" ++ C.q(session) ++ ";SELECT changes();"
+
+def record_success(+db: String, +session: String, +account: String, +started: String, +attempt: String) -> IO(Unit):
+  do IO<Unit>:
+    +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    saved : String <- IO.try(String,DB.Sql.query(db,record_success_sql(session,Tx.trim_nl(harness),provider_of(Tx.trim_nl(model)),Tx.trim_nl(account),Tx.trim_nl(started),attempt)))
+    IO.pure(Unit,Unit{})
+
 # --- the query ---------------------------------------------------------------
 
 # The latest observation per window for the session's binding, each with its
@@ -459,7 +522,7 @@ def latest_rows_sql(+harness: String, +provider: String, +account: String) -> St
 def query_answer_sql(+session: String, +harness: String, +provider: String, +account: String) -> String:
   +exhausted = exhausted_windows_sql(harness,provider,account)
   +providers = latest_provider_rows_sql(harness,provider,account)
-  "SELECT json_object('schema','baton2-usage-windows-v1','session'," ++ C.q(session) ++ ",'account'," ++ C.q(account) ++ ",'windows',coalesce(nullif((SELECT json_group_array(json(item)) FROM (SELECT json_object('window',w.window,'state',CASE WHEN w.window NOT IN (" ++ exhausted ++ ") THEN 'open' WHEN w.resets_at IS NULL THEN 'unknown' WHEN w.resets_at > " ++ now_ms() ++ " THEN 'held' ELSE 'elapsed' END,'exhausted',json(CASE WHEN w.window IN (" ++ exhausted ++ ") THEN 'true' ELSE 'false' END),'exhaustionSource',(SELECT p.reset_source FROM (" ++ providers ++ ") p WHERE p.window=w.window),'resetsAt',w.resets_at,'resetsAtText',CASE WHEN w.resets_at IS NULL THEN NULL ELSE strftime('%Y-%m-%dT%H:%M:%SZ',w.resets_at/1000,'unixepoch') END,'usedFraction',w.used_fraction,'source',w.reset_source,'receipt',w.receipt,'recordedAt',w.recorded_at,'message',nullif(w.message,'')) AS item FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1) ORDER BY w.window)),'[]'),'none recorded')) FROM sessions WHERE id=" ++ C.q(session) ++ ";"
+  "SELECT json_object('schema','baton2-usage-windows-v1','session'," ++ C.q(session) ++ ",'account'," ++ C.q(account) ++ ",'windows',coalesce(nullif((SELECT json_group_array(json(item)) FROM (SELECT json_object('window',w.window,'state',CASE WHEN w.window NOT IN (" ++ exhausted ++ ") THEN 'open' WHEN " ++ reset_at_sql("w.") ++ " > " ++ now_ms() ++ " THEN 'held' ELSE 'elapsed' END,'exhausted',json(CASE WHEN w.window IN (" ++ exhausted ++ ") THEN 'true' ELSE 'false' END),'exhaustionSource',(SELECT p.reset_source FROM (" ++ providers ++ ") p WHERE p.window=w.window),'resetsAt',w.resets_at,'reprobeAt',CASE WHEN w.resets_at IS NULL THEN w.recorded_at+" ++ probe_interval_ms() ++ " END,'resetsAtText',CASE WHEN w.resets_at IS NULL THEN NULL ELSE strftime('%Y-%m-%dT%H:%M:%SZ',w.resets_at/1000,'unixepoch') END,'usedFraction',w.used_fraction,'source',w.reset_source,'receipt',w.receipt,'recordedAt',w.recorded_at,'message',nullif(w.message,'')) AS item FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1) ORDER BY w.window)),'[]'),'none recorded')) FROM sessions WHERE id=" ++ C.q(session) ++ ";"
 
 def query_bound(+db: String, +session: String, +harness: String, +provider: String, +account: String) -> IO(Unit):
   do IO<Unit>:
@@ -484,31 +547,28 @@ def query(+db: String, +session: String, +account: String) -> IO(Unit):
 # above 1. A partial provider report with a future reset is not exhaustion and
 # does not hold. An observed reset supplies the reset time; once observed, an
 # unknown observation does not replace it, so the hold lasts until an actual
-# reset observation or the recorded reset instant passes. The gate holds when
-# any exhausted window's reset is still in the future, is elapsed when one has
-# passed, is unknown when the only exhausted evidence carries no reset, and is
-# none otherwise.
+# reset observation or the recorded reset instant passes. An exhausted window with
+# no recorded reset reads its re-probe instant (the latest refusal plus
+# probe_interval_ms), so the gate holds until that instant and then admits the owed
+# input as the probe. The gate holds when any exhausted window's reset instant is
+# still in the future, is elapsed when one has passed, and is none otherwise.
 
 def window_state_rows_sql(+harness: String, +provider: String, +account: String) -> String:
   latest_rows_sql(harness,provider,account) ++ " AND w.window IN (" ++ exhausted_windows_sql(harness,provider,account) ++ ")"
 
 def held_rows_sql(+harness: String, +provider: String, +account: String) -> String:
-  window_state_rows_sql(harness,provider,account) ++ " AND w.resets_at IS NOT NULL AND w.resets_at > " ++ now_ms()
+  window_state_rows_sql(harness,provider,account) ++ " AND " ++ reset_at_sql("w.") ++ " > " ++ now_ms()
 
 def elapsed_rows_sql(+harness: String, +provider: String, +account: String) -> String:
-  window_state_rows_sql(harness,provider,account) ++ " AND w.resets_at IS NOT NULL AND w.resets_at <= " ++ now_ms()
-
-def unknown_rows_sql(+harness: String, +provider: String, +account: String) -> String:
-  window_state_rows_sql(harness,provider,account) ++ " AND w.resets_at IS NULL"
+  window_state_rows_sql(harness,provider,account) ++ " AND " ++ reset_at_sql("w.") ++ " <= " ++ now_ms()
 
 def gate_verdict_sql(+session: String, +harness: String, +provider: String, +account: String) -> String:
-  "SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM (" ++ exhausted_windows_sql(harness,provider,account) ++ ")) THEN 'none' WHEN EXISTS(SELECT 1 FROM (" ++ held_rows_sql(harness,provider,account) ++ ")) THEN 'held' WHEN EXISTS(SELECT 1 FROM (" ++ elapsed_rows_sql(harness,provider,account) ++ ")) THEN 'elapsed' WHEN EXISTS(SELECT 1 FROM (" ++ unknown_rows_sql(harness,provider,account) ++ ")) THEN 'unknown' ELSE 'none' END FROM sessions WHERE id=" ++ C.q(session) ++ ";"
+  "SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM (" ++ exhausted_windows_sql(harness,provider,account) ++ ")) THEN 'none' WHEN EXISTS(SELECT 1 FROM (" ++ held_rows_sql(harness,provider,account) ++ ")) THEN 'held' WHEN EXISTS(SELECT 1 FROM (" ++ elapsed_rows_sql(harness,provider,account) ++ ")) THEN 'elapsed' ELSE 'none' END FROM sessions WHERE id=" ++ C.q(session) ++ ";"
 
 def gate_detail_rows_sql(+harness: String, +provider: String, +account: String, +verdict: String) -> String:
   match verdict:
-    case "held": "SELECT * FROM (" ++ held_rows_sql(harness,provider,account) ++ ") ORDER BY resets_at ASC, recorded_at DESC, id DESC LIMIT 1"
-    case "elapsed": "SELECT * FROM (" ++ elapsed_rows_sql(harness,provider,account) ++ ") ORDER BY recorded_at DESC, id DESC LIMIT 1"
-    case _: "SELECT * FROM (" ++ unknown_rows_sql(harness,provider,account) ++ ") ORDER BY recorded_at DESC, id DESC LIMIT 1"
+    case "held": "SELECT * FROM (" ++ held_rows_sql(harness,provider,account) ++ ") ORDER BY " ++ reset_at_sql("") ++ " ASC, recorded_at DESC, id DESC LIMIT 1"
+    case _: "SELECT * FROM (" ++ elapsed_rows_sql(harness,provider,account) ++ ") ORDER BY recorded_at DESC, id DESC LIMIT 1"
 
 def gate_detail_sql(+harness: String, +provider: String, +account: String, +verdict: String, +field: String) -> String:
   "SELECT " ++ field ++ " FROM (" ++ gate_detail_rows_sql(harness,provider,account,verdict) ++ ");"
@@ -518,8 +578,8 @@ def gate_details(+db: String, +harness: String, +provider: String, +account: Str
     +window : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,verdict,"window")))
     +source : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,verdict,"reset_source")))
     +receipt : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,verdict,"receipt")))
-    +resets : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,verdict,"coalesce(CAST(resets_at AS TEXT),'-')")))
-    IO.pure(Gate,Bool.pick(Gate,String.eq(verdict,"unknown"),GateUnknown{Tx.trim_nl(window),Tx.trim_nl(source),Tx.trim_nl(receipt)},Bool.pick(Gate,String.eq(verdict,"held"),GateHeld{Tx.trim_nl(window),Tx.trim_nl(resets),Tx.trim_nl(source),Tx.trim_nl(receipt)},GateElapsed{Tx.trim_nl(window),Tx.trim_nl(resets),Tx.trim_nl(source),Tx.trim_nl(receipt)})))
+    +resets : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,verdict,"CAST(" ++ reset_at_sql("") ++ " AS TEXT)")))
+    IO.pure(Gate,Bool.pick(Gate,String.eq(verdict,"held"),GateHeld{Tx.trim_nl(window),Tx.trim_nl(resets),Tx.trim_nl(source),Tx.trim_nl(receipt)},GateElapsed{Tx.trim_nl(window),Tx.trim_nl(resets),Tx.trim_nl(source),Tx.trim_nl(receipt)}))
 
 def gate_verdicted(+db: String, +session: String, +harness: String, +provider: String, +account: String) -> IO(Gate):
   do IO<Gate>:
@@ -658,7 +718,6 @@ def report_restored(+db: String, +session: String, +message: String, gate: Gate)
       IO.pure(Unit,Unit{})
     case other: IO.pure(Unit,Unit{})
 
-
 # --- laws ---------------------------------------------------------------------
 #
 # The extraction literals the store depends on, as operative laws over the
@@ -700,4 +759,16 @@ law empty_reset_extraction_stays_unknown:
   {parsed_reset_sql("") == "NULL" : String}
 
 def empty_reset_extraction_stays_unknown():
+  {==}
+
+law five_hour_window_bound_is_five_hours:
+  {window_length_ms("5-hour") == "18000000" : String}
+
+def five_hour_window_bound_is_five_hours():
+  {==}
+
+law monthly_window_has_no_bound:
+  {reset_or_bound_sql("","monthly") == "NULL" : String}
+
+def monthly_window_has_no_bound():
   {==}

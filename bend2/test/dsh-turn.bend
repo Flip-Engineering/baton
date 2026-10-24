@@ -19,7 +19,7 @@ def observe(+db: String, +line: String, id: String) -> IO(String):
   do IO<String>:
     kind : String <- Turn.frame_kind(db,line,"dsh\n")
     +event : String <- Turn.dsh_event(db,line,True{},line)
-    result : String <- IO.try(String,DB.Sql.query(db,C.observe_sql(id,"dsh-player",event,False{})))
+    result : String <- IO.try(String,DB.Sql.query(db,C.observe_sql(id,"dsh-player",event,False{},"dsh")))
     IO.print("kind\t" ++ Tx.trim_nl(kind))
     IO.pure(String,event)
 

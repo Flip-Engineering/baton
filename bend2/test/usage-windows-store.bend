@@ -3,9 +3,10 @@
 # coordination database. The gate holds only exhausted windows: a partial
 # provider report with a future reset is admitted and visible; exhaustion is a
 # provider limit message or a used fraction at or above 1; multiple windows are
-# evaluated per window; a limit message without a reset stays unknown and does
-# not hold; an unknown observation recorded after a future reset keeps that
-# hold until an actual reset observation.
+# evaluated per window; a named window's limit message without a reset holds to
+# its window bound; an unnamed one holds to the re-probe instant; a successful
+# attempt clears refusals recorded before it started; an unknown observation
+# recorded after a future reset keeps that hold until an actual reset observation.
 #
 # usage: usage-windows-store DB HARNESS_SCRIPT
 # HARNESS_SCRIPT is an executable that prints the OMP usage report JSON and
@@ -36,7 +37,6 @@ def expect_read(+db: String, +text: String, +expected: String, +label: String) -
 def gate_class(gate: UW.Gate) -> String:
   match gate:
     case UW.GateNone{}: "none"
-    case UW.GateUnknown{window,source,receipt}: "unknown"
     case UW.GateHeld{window,resets_at,source,receipt}: "held"
     case UW.GateElapsed{window,resets_at,source,receipt}: "elapsed"
 
@@ -46,7 +46,7 @@ def expect_gate(+db: String, +session: String, +account: String, +expected: Stri
     expect(label,String.eq(gate_class(gate),expected))
 
 def state_sql(+window: String, +account: String) -> String:
-  "SELECT CASE WHEN NOT ((used_fraction IS NOT NULL AND used_fraction >= 1) OR reset_source='provider-message') THEN 'open' WHEN resets_at IS NULL THEN 'unknown' WHEN resets_at > CAST(strftime('%s','now') AS INTEGER)*1000 THEN 'held' ELSE 'elapsed' END FROM usage_windows WHERE account=" ++ C.q(account) ++ " AND window=" ++ C.q(window) ++ " ORDER BY recorded_at DESC, id DESC LIMIT 1;"
+  "SELECT CASE WHEN NOT ((used_fraction IS NOT NULL AND used_fraction >= 1) OR reset_source='provider-message') THEN 'open' WHEN coalesce(resets_at,recorded_at+3600000) > CAST(strftime('%s','now') AS INTEGER)*1000 THEN 'held' ELSE 'elapsed' END FROM usage_windows WHERE account=" ++ C.q(account) ++ " AND window=" ++ C.q(window) ++ " ORDER BY recorded_at DESC, id DESC LIMIT 1;"
 
 def kimi_cause() -> String:
   "You've reached your 5-hour usage limit. Your quota will reset when the current 5-hour window ends."
@@ -82,7 +82,7 @@ def observe_cases(+db: String) -> IO(Unit):
     expect("provider-date-only-parser-preserved",UW.iso_token("2026-10-17"))
     expect("provider-offsetless-parser-preserved",UW.iso_token("2026-10-17T03:41:00"))
     observed_unknown : Unit <- UW.observe(db,"leaf","5-hour","unknown","kimi console shows none","")
-    expect_gate(db,"leaf","","unknown","limit-then-operator-unknown")
+    expect_gate(db,"leaf","","held","limit-then-operator-unknown-keeps-window-bound")
     observed_held : Unit <- UW.observe(db,"leaf","5-hour","2999-01-01T00:00:00Z","kimi console web ui","")
     expect_gate(db,"leaf","","held","operator-observed-reset-holds")
     observed_unknown_after_hold : Unit <- UW.observe(db,"leaf","5-hour","unknown","kimi console shows none","")
@@ -140,8 +140,29 @@ def limit_case(+db: String) -> IO(Unit):
   do IO<Unit>:
     created : Unit <- session(db,"limit")
     UW.record_cause(db,"limit","m-limit","limit",kimi_cause())
-    unknown : Unit <- expect_gate(db,"limit","limit","unknown","limit-without-reset-unknown")
-    visible : Unit <- expect_read(db,state_sql("5-hour","limit"),"unknown\n","limit-row-visible-unknown")
+    bounded : Unit <- expect_gate(db,"limit","limit","held","limit-without-reset-holds-to-window-bound")
+    visible : Unit <- expect_read(db,state_sql("5-hour","limit"),"held\n","limit-row-visible-held")
+    bound_text : Unit <- expect_read(db,"SELECT CASE WHEN resets_at-recorded_at BETWEEN 18000000 AND 18000000 THEN 'five-hours' ELSE 'other' END FROM usage_windows WHERE account='limit' ORDER BY id DESC LIMIT 1;","five-hours\n","limit-bound-is-five-hours")
+    IO.pure(Unit,Unit{})
+
+# A refusal with no named window and no provider reset has no bound. The gate holds it
+# to the re-probe instant, one hour after the refusal. A success recorded for an
+# attempt that started after the refusal clears it. A refusal recorded inside the
+# attempt keeps its hold.
+def probe_cases(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    created : Unit <- session(db,"probe")
+    UW.record_cause(db,"probe","m-probe","probe","provider-reported usage exhaustion: 402 Insufficient Balance")
+    no_reset : Unit <- expect_read(db,"SELECT CASE WHEN resets_at IS NULL THEN 'null' ELSE 'bounded' END FROM usage_windows WHERE account='probe' ORDER BY id DESC LIMIT 1;","null\n","unnamed-refusal-stores-no-reset")
+    probe_held : Unit <- expect_gate(db,"probe","probe","held","unnamed-refusal-held-to-reprobe")
+    reprobe_at : Unit <- expect_read(db,"SELECT CASE WHEN (SELECT recorded_at FROM usage_windows WHERE account='probe' ORDER BY id DESC LIMIT 1)+3600000 > CAST(strftime('%s','now') AS INTEGER)*1000 THEN 'later' ELSE 'passed' END;","later\n","reprobe-instant-is-one-hour-after-refusal")
+    started_ahead : String <- read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000+1000;")
+    cleared : Unit <- UW.record_success(db,"probe","probe",Tx.trim_nl(started_ahead),"att-after-refusal")
+    expect_gate(db,"probe","probe","none","success-after-refusal-clears")
+    refused : Unit <- UW.record_cause(db,"probe","m-probe-2","probe","provider-reported usage exhaustion: 402 Insufficient Balance")
+    started_before : String <- read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000-1000;")
+    inside : Unit <- UW.record_success(db,"probe","probe",Tx.trim_nl(started_before),"att-inside-refusal")
+    expect_gate(db,"probe","probe","held","refusal-inside-attempt-keeps-hold")
     IO.pure(Unit,Unit{})
 
 def projection_field(+db: String, +session: String, +account: String, +window: String, +path: String) -> IO(String):
@@ -169,11 +190,33 @@ def projection_cases(+db: String) -> IO(Unit):
     elapsed_state : Unit <- expect_projection(db,"proj","proj","5-hour","$.state","elapsed\n","projection-elapsed-matches-gate")
     IO.pure(Unit,Unit{})
 
+def zai_message(reset: String) -> String:
+  "provider-reported usage exhaustion: 429 Usage limit reached for 5 hour. Your limit will reset at " ++ reset ++ " (type=1308)"
+
+# z.ai writes its reset time as a China Standard Time clock with no offset (#1025). The
+# parser reads that clock as UTC+8. A reset further after the refusal than the 5-hour
+# window length is rejected and falls back to the window bound.
+def zai_cases(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    created : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('zai','root','omp','zai/glm-5.3-flash','high','','');")
+    offsetless : String <- read(db,"SELECT " ++ UW.parsed_reset_sql("2026-10-23 06:54:13") ++ ";")
+    expect("zai-clock-without-offset-is-utc-plus-8",String.eq(Tx.trim_nl(offsetless),"1792709653000"))
+    designated : String <- read(db,"SELECT " ++ UW.parsed_reset_sql("2026-10-23T06:54:13Z") ++ ";")
+    expect("explicit-z-is-read-as-written",String.eq(Tx.trim_nl(designated),"1792738453000"))
+    local_text : String <- read(db,"SELECT strftime('%Y-%m-%d %H:%M:%S','now','+2 hours','+8 hours');")
+    inside : Unit <- UW.record_cause(db,"zai","zai-kept","",zai_message(Tx.trim_nl(local_text)))
+    expect_read(db,"SELECT CASE WHEN ABS(resets_at-(CAST(strftime('%s','now','+2 hours') AS INTEGER)*1000))<5000 THEN 'kept' ELSE 'other' END FROM usage_windows WHERE message='zai-kept';","kept\n","in-window-zai-reset-is-kept")
+    far : Unit <- UW.record_cause(db,"zai","zai-capped","",zai_message("2999-01-01 00:00:00"))
+    expect_read(db,"SELECT CASE WHEN resets_at <= CAST(strftime('%s','now') AS INTEGER)*1000+18000000 THEN 'bounded' ELSE 'other' END FROM usage_windows WHERE message='zai-capped';","bounded\n","far-zai-reset-falls-back-to-window-bound")
+    IO.pure(Unit,Unit{})
+
 def main_args(args: List<String>) -> IO(Unit):
   match args:
     case +path <> script <> Nil{}: do IO<Unit>:
       setup(path)
       limit_case(path)
+      probe_cases(path)
+      zai_cases(path)
       observe_cases(path)
       report_cases(path)
       refresh_cases(path,script)

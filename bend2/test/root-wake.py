@@ -1,7 +1,7 @@
 """Exercise default report delivery and input committed during a live turn.
 
 The coordinator launches generated receiver delivery asynchronously and returns public
-App admission results. Fixtures cover receipt ownership, parent reports and continued
+App admission results. Fixtures cover read ownership, parent reports and continued
 input through recorded receivers and the public managed Codex lifecycle.
 """
 import importlib.util
@@ -9,6 +9,7 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import sqlite3
 import subprocess
 import sys
@@ -18,6 +19,41 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
+
+
+class BusyObserver:
+    """Observe the real SQLite busy callback in one fixture receiver."""
+
+    def __init__(self, directory):
+        self.library = pathlib.Path(directory) / ('sqlite-busy-observer.dylib'
+                                                if sys.platform == 'darwin'
+                                                else 'sqlite-busy-observer.so')
+        command = [*shlex.split(os.environ.get('CC', 'clang')), '-std=c11', '-O1',
+                   '-pthread', '-dynamiclib' if sys.platform == 'darwin' else '-shared',
+                   '-fPIC', str(ROOT / 'bend2/test/sqlite-busy-observer.c'),
+                   '-lsqlite3', *([] if sys.platform == 'darwin' else ['-ldl']),
+                   '-o', str(self.library)]
+        result = subprocess.run(command, capture_output=True)
+        (self.library.parent / 'sqlite-busy-build.command.json').write_text(json.dumps(command) + '\n')
+        (self.library.parent / 'sqlite-busy-build.stdout').write_bytes(result.stdout)
+        (self.library.parent / 'sqlite-busy-build.stderr').write_bytes(result.stderr)
+        if result.returncode:
+            raise RuntimeError(f'{command!r}\n{result.stdout.decode()}\n{result.stderr.decode()}')
+
+    def environment(self, base, database, marker):
+        variable = 'DYLD_INSERT_LIBRARIES' if sys.platform == 'darwin' else 'LD_PRELOAD'
+        existing = base.get(variable)
+        return {**base, variable: str(self.library) + (os.pathsep + existing if existing else ''),
+                'BATON_TEST_BUSY_DATABASE': str(pathlib.Path(database).resolve()),
+                'BATON_TEST_BUSY_MARKER': str(marker)}
+
+    @staticmethod
+    def observed(marker, pid):
+        if not pathlib.Path(marker).exists():
+            return False
+        return any(int(line.split()[0]) == pid
+                   for line in pathlib.Path(marker).read_bytes().split(b'\n')[:-1])
+
 
 spec = importlib.util.spec_from_file_location('receive_fixture', pathlib.Path(__file__).with_name('receive.py'))
 receive = importlib.util.module_from_spec(spec)
@@ -62,7 +98,7 @@ with record.open('a') as output:
                              'native':native,'resume':resume,'frame':frame})+chr(10))
 turn=len([line for line in record.read_text().splitlines() if line.strip()])
 for ident in re.findall(r'\\[id: (.*?)\\]:',prompt):
-    accepted=subprocess.run([EXE,DB,'ack',ident,session,'fixture reviewed'],capture_output=True,text=True)
+    accepted=subprocess.run([EXE,DB,'read',ident],capture_output=True,text=True,env=os.environ)
     assert accepted.returncode==0, accepted.stderr
 if omp:
     print(json.dumps({'type':'response','command':'get_state','success':True,'id':state['id'],
@@ -98,6 +134,12 @@ class RootWake(unittest.TestCase):
 
     close_children = receive.Receive.close_children
     owned_processes = receive.Receive.owned_processes
+
+    @classmethod
+    def setUpClass(cls):
+        directory = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
+        cls.addClassCleanup(directory.cleanup)
+        cls.busy_observer = BusyObserver(directory.name)
 
     def setUp(self):
         if not EXE.exists():
@@ -193,6 +235,22 @@ class RootWake(unittest.TestCase):
                 return result
             time.sleep(0.05)
 
+    def busy_environment(self, name):
+        marker = self.directory / (name + '.busy')
+        return self.busy_observer.environment(self.environment, self.db, marker), marker
+
+    def waiting_on_writer(self, process, marker, output, diagnostic):
+        self.assertIsNone(process.poll(), output.read_text() + diagnostic.read_text())
+        return self.busy_observer.observed(marker, process.pid)
+
+    def assert_managed_endpoint(self, session, thread):
+        record = json.loads(self.coord('session', session))
+        self.assertEqual(record['native'], thread)
+        endpoint = json.loads(record['endpoint'])
+        self.assertEqual(endpoint[-5:],
+                         [str(EXE), str(self.db), 'codex-inbox-session', session, thread])
+        return endpoint
+
     def dispatch(self, *args):
         result = json.loads(self.coord(*args))
         self.assertEqual(result['state'], 'launched')
@@ -204,8 +262,8 @@ class RootWake(unittest.TestCase):
                                      session + '-branch', str(self.checkouts / session), self.base))
 
     def accepted(self, ident):
-        return self.eventually(lambda: json.loads(self.coord('delivery', ident))['receipt'],
-                               f'{ident} was never accepted by its recipient')
+        return self.eventually(lambda: receive.read_recorded(self.db, ident),
+                               f'{ident} was never read by its recipient')
 
     def completed(self, session, turn):
         body = f'Fixture turn {turn} for {session} completed.'
@@ -218,8 +276,11 @@ class RootWake(unittest.TestCase):
         seen = [ident for session in sessions for call in self.calls(session)
                 for ident in self.prompt_ids(call)]
         self.assertEqual(len(seen), len(set(seen)), f'an input was consumed twice: {seen}')
-        stored = {row['id']: row for row in self.rows('SELECT id,recipient,receipt FROM messages')}
-        self.assertEqual(set(seen), {ident for ident, row in stored.items() if row['receipt']})
+        stored = {row['id']: row for row in self.rows('SELECT id,recipient FROM messages')}
+        read = {row['id'] for row in self.rows(
+            'SELECT m.id FROM messages m WHERE EXISTS(SELECT 1 FROM message_reads r '
+            'WHERE r.message=m.id AND r.recipient=m.recipient)')}
+        self.assertEqual(set(seen), read)
         for session in sessions:
             own = {ident for call in self.calls(session) for ident in self.prompt_ids(call)}
             self.assertTrue(all(stored[ident]['recipient'] == session for ident in own),
@@ -235,11 +296,14 @@ class RootWake(unittest.TestCase):
         self.admitted_release = self.directory / 'public-admitted-released'
         self.terminal_barrier = self.directory / 'public-terminal-held'
         self.terminal_release = self.directory / 'public-terminal-released'
+        self.proxy_environment = self.directory / 'public-proxy-environment.jsonl'
         self.public_app_state.write_text(json.dumps({'status': 'active', 'turn': 'fixture-turn', 'number': 0}))
         command = self.directory / 'codex'
         command.write_text('#!' + sys.executable + '\n' + '''
-import base64,hashlib,json,pathlib,sqlite3,struct,sys,time
+import base64,hashlib,json,os,pathlib,sqlite3,struct,sys,time
 assert sys.argv[1:]==['app-server','proxy'], sys.argv
+with pathlib.Path(__ENVIRONMENT__).open('a') as log:
+    log.write(json.dumps({'home':os.environ.get('HOME'),'codexHome':os.environ.get('CODEX_HOME')})+'\\n')
 state=pathlib.Path(__STATE__)
 if json.loads(state.read_text()).get('exitBeforeRpc'):raise SystemExit(9)
 def exact(n):
@@ -269,7 +333,7 @@ while True:
     mask=exact(4) if b&128 else None
     data=exact(n)
     if mask:data=bytes(v^mask[i%4] for i,v in enumerate(data))
-    if a&15==8:break
+    if a&15==8:raise SystemExit(json.loads(state.read_text()).get('closeExit',0))
     request=json.loads(data)
     method=request['method']
     if 'id' not in request:continue
@@ -280,7 +344,7 @@ while True:
             pathlib.Path(__BARRIER__).write_text('Native metadata read is in flight.')
             while not pathlib.Path(__RELEASE__).exists():time.sleep(0.01)
             current=json.loads(state.read_text())
-        result={'thread':{'id':'native-app-root','status':{'type':current['status']}}}
+        result={'thread':{'id':current.get('thread','native-app-root'),'status':{'type':current['status']}}}
     elif method=='thread/turns/list':
         assert request['params']['itemsView']=='notLoaded', request
         current=json.loads(state.read_text())
@@ -309,6 +373,15 @@ while True:
             continue
     else:raise AssertionError(request)
     reply({'id':request['id'],'result':result})
+    if method=='thread/resume' and current.get('replayTerminalOnResume'):
+        reply({'method':'turn/completed','params':{'threadId':'native-app-root','turn':current['terminal']}})
+    if method in ('turn/steer','turn/start') and current.get('terminalAfterAdmission'):
+        turn=result.get('turnId') or result['turn']['id']
+        item={'id':'retained-item','type':'agentMessage','text':'Complete first result: café Ω 🙂\\nSecond line.'}
+        terminal={'id':turn,'status':'completed','items':[],'error':None}
+        state.write_text(json.dumps({**current,'status':'idle','turnStatus':'completed','terminal':terminal}))
+        reply({'method':'item/completed','params':{'threadId':'native-app-root','turnId':turn,'item':item}})
+        reply({'method':'turn/completed','params':{'threadId':'native-app-root','turn':terminal}})
     if method in ('turn/steer','turn/start') and current.get('holdTerminalWriter'):
         turn=result.get('turnId') or result['turn']['id']
         while True:
@@ -333,26 +406,105 @@ while True:
    .replace('__ADMITTED_BARRIER__', repr(str(self.admitted_barrier)))
    .replace('__ADMITTED_RELEASE__', repr(str(self.admitted_release)))
    .replace('__TERMINAL_BARRIER__', repr(str(self.terminal_barrier)))
-   .replace('__TERMINAL_RELEASE__', repr(str(self.terminal_release))))
+   .replace('__TERMINAL_RELEASE__', repr(str(self.terminal_release)))
+   .replace('__ENVIRONMENT__', repr(str(self.proxy_environment))))
         command.chmod(0o700)
         self.environment['PATH'] = str(self.directory) + os.pathsep + self.environment.get('PATH', '')
         return queued, refused
 
     def test_native_input_witness_reads_the_actual_active_turn_without_admitting_input(self):
         queued, _ = self.public_proxy()
-        helper = ROOT / 'bend2/scripts/codex-inbox-wake.mjs'
         for status, turn, expected in (
                 ('active', 'first-turn-λ', 'first-turn-λ'),
                 ('active', 'second-turn-🙂', 'second-turn-🙂'),
                 ('idle', 'second-turn-🙂', None)):
             with self.subTest(status=status, turn=turn):
                 self.public_app_state.write_text(json.dumps({'status': status, 'turn': turn, 'number': 0}))
-                result = subprocess.run(['node', str(helper), '--input-witness', 'native-app-root'],
+                result = subprocess.run([str(EXE), str(self.db), 'codex-input-witness', 'native-app-root'],
                                         env=self.environment, text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(result.stdout), {
                     'threadId': 'native-app-root', 'turnId': expected, 'active': status == 'active'})
+                self.assertEqual(len(result.stdout.splitlines()), 1, result.stdout)
+                self.assertEqual(json.loads(result.stderr), {
+                    'type': 'codexProxyExit', 'code': 0, 'signal': None, 'status': 'exit 0'})
                 self.assertFalse(queued.exists(), 'Reading a witness admitted a native input')
+
+    def test_native_input_witness_preserves_failed_proxy_cleanup(self):
+        queued, _ = self.public_proxy()
+        self.public_app_state.write_text(json.dumps({
+            'status': 'active', 'turn': 'cleanup-turn-λ', 'number': 0, 'closeExit': 7}))
+        result = subprocess.run([str(EXE), str(self.db), 'codex-input-witness', 'native-app-root'],
+                                env=self.environment, text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout), {
+            'threadId': 'native-app-root', 'turnId': 'cleanup-turn-λ', 'active': True})
+        errors = result.stderr.splitlines()
+        self.assertEqual(json.loads(errors[0]), {
+            'type': 'codexProxyExit', 'code': 7, 'signal': None, 'status': 'exit 7'})
+        self.assertIn('Public Codex proxy exit: exit 7', result.stderr)
+        self.assertFalse(queued.exists(), 'Reading a witness admitted a native input')
+
+    def test_managed_initial_prompt_survives_retry_and_changes_with_native_conversation(self):
+        queued, refused = self.public_proxy()
+        self.public_app_state.write_text(json.dumps({'status': 'idle', 'number': 0}))
+        refused.write_text('Retain the refused native input.\n')
+        self.coord('attach', 'root', 'codex', 'native-app-root', '')
+        self.recruit('child', 'root', 'omp')
+        body = 'Complete authored input: café Ω 🙂\nPreserve both lines.'
+        failed = self.coord_raw('report', 'seeded-app-input', 'child', body)
+        self.assertNotEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+        first = json.loads(queued.read_text().splitlines()[0])
+        self.assertEqual(first['method'], 'turn/start')
+        first_prompt = first['params']['input'][0]['text']
+        self.assert_contextual_notice(first_prompt)
+        first_seed = first_prompt.split('\n\n', 1)[0]
+        refused.unlink()
+        self.coord('resume', 'root')
+        calls = [json.loads(line) for line in queued.read_text().splitlines()]
+        self.assertEqual(len(calls), 2, calls)
+        self.assertEqual(calls[-1]['params']['input'][0]['text'], first_prompt)
+        self.assertEqual(json.loads(self.coord('delivery', 'seeded-app-input'))['body'], body)
+        self.assertIsNone(json.loads(self.coord('delivery', 'seeded-app-input'))['receipt'])
+
+        self.coord('connect', 'root', 'native-app-next', '')
+        self.public_app_state.write_text(json.dumps({'status': 'idle', 'number': 0,
+                                                    'thread': 'native-app-next'}))
+        self.coord('resume', 'root')
+        calls = [json.loads(line) for line in queued.read_text().splitlines()]
+        self.assertEqual(len(calls), 3, calls)
+        self.assertEqual(calls[-1]['params']['threadId'], 'native-app-next')
+        next_prompt = calls[-1]['params']['input'][0]['text']
+        self.assert_contextual_notice(next_prompt)
+        self.assertNotEqual(next_prompt.split('\n\n', 1)[0], first_seed)
+        self.assertEqual(json.loads(self.coord('delivery', 'seeded-app-input'))['body'], body)
+        self.assertIsNone(json.loads(self.coord('delivery', 'seeded-app-input'))['receipt'])
+
+    def test_initial_prompt_storage_failure_keeps_input_and_closes_the_native_proxy(self):
+        queued, _ = self.public_proxy()
+        self.coord('attach', 'root', 'codex', 'native-app-root', '')
+        self.recruit('child', 'root', 'omp')
+        self.coord('report', 'seeded-before-storage-failure', 'child', 'Keep the first report.')
+        self.assertEqual(len(queued.read_text().splitlines()), 1)
+        cause = 'Native initialization storage refused: café Ω 🙂'
+        with sqlite3.connect(self.db) as database:
+            database.execute("CREATE TRIGGER refuse_initial_input BEFORE INSERT ON native_initial_inputs "
+                             "BEGIN SELECT RAISE(ABORT, '" + cause + "'); END")
+        body = 'Complete unread control input: café Ω 🙂\nPreserve this line.'
+        failed = self.coord_raw('message', 'seed-storage-failure', 'child', 'root', 'question', body)
+        self.assertNotEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+        self.assertIn(cause, failed.stderr)
+        self.assertEqual(len(queued.read_text().splitlines()), 1,
+                         'Native input was admitted after initialization storage failed')
+        retained = json.loads(self.coord('delivery', 'seed-storage-failure'))
+        self.assertEqual(retained['body'], body)
+        self.assertIsNone(retained['receipt'])
+        log = pathlib.Path(str(self.db) + '.root.log').read_text()
+        events = [json.loads(line) for line in log.splitlines() if line.startswith('{')]
+        exits = [event for event in events if event.get('type') == 'codexProxyExit']
+        self.assertEqual(len(exits), 2, log)
+        self.assertTrue(all(event['status'] == 'exit 0' for event in exits), exits)
+
 
     def test_endpointless_codex_root_coalesces_owed_input_until_recipient_progress(self):
         queued, _ = self.public_proxy()
@@ -391,30 +543,22 @@ while True:
         self.assertEqual(request['params']['threadId'], 'native-app-root')
         self.assertEqual(request['params']['expectedTurnId'], 'fixture-turn')
         text = request['params']['input'][0]['text']
-        pointer = json.loads(text.splitlines()[1])
-        self.assertEqual(pointer, {'database': str(self.db), 'message': 'app-root-report',
-                                   'recipient': 'root', 'pendingCount': 4})
-        self.assertIn('baton inbox', text)
-        self.assertIn('baton read MESSAGE_ID...', text)
-        self.assertNotIn('completion-request', text)
-        self.assertNotIn('ack MESSAGE', text)
+        self.assert_contextual_notice(text)
         inbox = {message['id']: message for message in json.loads(self.coord('inbox', 'root'))}
         self.assertEqual(set(inbox), set(owed))
         for ident, body in owed.items():
             self.assertEqual(inbox[ident]['body'], body)
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
         self.assertEqual(json.loads(self.coord('turns', 'root')), [])
-        root = json.loads(self.coord('session', 'root'))
-        self.assertEqual((root['native'], root['endpoint']), ('native-app-root', ''))
+        self.assert_managed_endpoint('root', 'native-app-root')
 
         accepted = next(iter(owed))
-        self.coord('ack', accepted, 'root', 'root reviewed this input')
+        self.coord('as', 'root', 'read', accepted)
         self.coord('report', 'app-root-after-progress', 'child', 'Continue after root progress.')
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
         self.assertEqual(len(calls), 2, calls)
-        self.assertEqual(json.loads(calls[1]['params']['input'][0]['text'].splitlines()[1])['pendingCount'], len(owed))
-        self.assertEqual(json.loads(self.coord('delivery', accepted))['receipt'],
-                         'root reviewed this input')
+        self.assert_contextual_notice(calls[1]['params']['input'][0]['text'])
+        self.assertTrue(receive.read_recorded(self.db, accepted, 'root'))
         for ident in set(owed) - {accepted}:
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
 
@@ -434,15 +578,18 @@ while True:
         self.assertEqual(json.loads(self.coord('turns', 'root')), [])
         log = pathlib.Path(str(self.db) + '.root.log').read_text()
         self.assertIn('exit 1', log)
-        cause = '{"code":-32600,"message":"Queue is full (100 queued messages): café Ω 🙂"}'
-        self.assertIn(cause, log)
-        self.assertTrue(any(cause in path.read_text()
-                            for path in self.directory.glob('state.db.queue-*.stderr')))
+        cause = {'code': -32600, 'message': 'Queue is full (100 queued messages): café Ω 🙂'}
+        def assert_cause(text):
+            failures = [json.loads(line.split('refused input: ', 1)[1])['error']
+                        for line in text.splitlines() if 'refused input: ' in line]
+            self.assertIn(cause, failures, text)
+        assert_cause(log)
+        assert_cause(refused.stderr)
 
         for _ in range(3):
             replay = self.coord_raw('report', 'refused-app-input', 'child', 'This report remains owed.')
             self.assertNotEqual(replay.returncode, 0)
-            self.assertIn(cause, replay.stderr)
+            assert_cause(replay.stderr)
         self.assertEqual(len(queued.read_text().splitlines()), 1,
                          'unchanged failed input was retried')
 
@@ -450,32 +597,36 @@ while True:
             ident = 'refused-app-more-' + str(index)
             additional = self.coord_raw('report', ident, 'child', 'Further work remains owed.')
             self.assertNotEqual(additional.returncode, 0)
-            self.assertIn(cause, additional.stderr)
+            assert_cause(additional.stderr)
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
         self.assertEqual(len(calls), 4, calls)
         self.assertIsNone(json.loads(self.coord('delivery', 'refused-app-input'))['receipt'])
 
+        retried = self.coord_raw('resume', 'root')
+        self.assertNotEqual(retried.returncode, 0, retried.stdout)
+        assert_cause(retried.stderr)
+        self.assertEqual(len(queued.read_text().splitlines()), 5)
+        self.assertIsNone(json.loads(self.coord('delivery', 'refused-app-input'))['receipt'])
+
         refused_queue.unlink()
         self.coord('resume', 'root')
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
-        self.assertEqual(len(calls), 5, calls)
-        self.assertEqual(calls[4]['method'], 'turn/steer')
-        self.assertEqual(calls[4]['params']['threadId'], 'native-app-root')
-        self.assertEqual(json.loads(calls[4]['params']['input'][0]['text'].splitlines()[1])['message'],
-                         'refused-app-input')
-        self.assertEqual(json.loads(calls[4]['params']['input'][0]['text'].splitlines()[1])['pendingCount'], 4)
+        self.assertEqual(len(calls), 6, calls)
+        self.assertEqual(calls[-1]['method'], 'turn/steer')
+        self.assertEqual(calls[-1]['params']['threadId'], 'native-app-root')
+        self.assert_contextual_notice(calls[-1]['params']['input'][0]['text'])
         owed = ['refused-app-input'] + ['refused-app-more-' + str(index) for index in range(3)]
         for ident in owed:
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
         self.coord('resume', 'root')
-        self.assertEqual(len(queued.read_text().splitlines()), 5)
+        self.assertEqual(len(queued.read_text().splitlines()), 6)
 
-        self.coord('ack', 'refused-app-input', 'root', 'root reviewed the retained report')
+        self.coord('as', 'root', 'read', 'refused-app-input')
         self.coord('report', 'retry-after-root-progress', 'child', 'Read the remaining inbox.')
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
-        self.assertEqual(len(calls), 6, calls)
-        self.assertEqual(json.loads(calls[5]['params']['input'][0]['text'].splitlines()[1])['pendingCount'], 4)
+        self.assertEqual(len(calls), 7, calls)
+        self.assert_contextual_notice(calls[-1]['params']['input'][0]['text'])
         for ident in ['refused-app-more-' + str(index) for index in range(3)] + ['retry-after-root-progress']:
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
 
@@ -485,17 +636,15 @@ while True:
         self.recruit('child', 'root', 'omp')
         recorded = self.directory / 'recorded-helper'
         recorded.mkdir()
-        helper = recorded / 'codex-inbox-wake.mjs'
+        helper = recorded / 'receiver.py'
         invocations = recorded / 'invocations.jsonl'
-        helper.write_text("import {appendFileSync} from 'node:fs';\nimport {spawn} from 'node:child_process';\n"
-                          + 'appendFileSync(' + json.dumps(str(invocations))
-                          + ",JSON.stringify(process.argv.slice(2))+'\\n');\n"
-                          + 'const child=spawn(process.execPath,[' + json.dumps(str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'))
-                          + ",...process.argv.slice(2)],{stdio:'inherit'});\n"
-                          + "child.on('error',error=>{throw error});\nchild.on('exit',(code,signal)=>{process.exitCode=code??1});\n")
+        helper.write_text('import json,os,pathlib,sys\n'
+                          + 'with pathlib.Path(' + repr(str(invocations)) + ").open('a') as log:\n"
+                          + "    log.write(json.dumps(sys.argv[1:])+'\\n')\n"
+                          + 'os.execv(sys.argv[1],sys.argv[1:])\n')
         self.coord('connect', 'root', 'native-app-root', json.dumps([
-            'node', str(helper), '--session',
-            str(EXE), str(self.db), 'root', 'native-app-root']))
+            sys.executable, str(helper), str(EXE), str(self.db),
+            'codex-inbox-session', 'root', 'native-app-root']))
         owed = {'managed-first': 'Complete first report. café Ω 🙂\nRetain both lines.'}
         self.coord('report', 'managed-first', 'child', owed['managed-first'])
         for index in range(16):
@@ -523,7 +672,8 @@ while True:
         self.assertEqual(calls[-1]['params']['threadId'], 'native-app-root')
         recorded_calls = [json.loads(line) for line in invocations.read_text().splitlines()]
         self.assertEqual(recorded_calls[-1][:6],
-                         ['--session', str(EXE), str(self.db), 'root', 'native-app-root', 'managed-idle-report'],
+                         [str(EXE), str(self.db), 'codex-inbox-session',
+                          'root', 'native-app-root', 'managed-idle-report'],
                          'the idle recheck bypassed the recorded endpoint arguments')
         self.coord('report', 'managed-idle-report', 'child', owed['managed-idle-report'])
         self.assertEqual(len(queued.read_text().splitlines()), 3)
@@ -534,15 +684,14 @@ while True:
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
 
         direct = 'Stop the current work.\nPreserve the operator text: café Ω 🙂'
-        delivered = subprocess.run(['node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'),
+        delivered = subprocess.run([str(EXE), str(self.db), 'codex-inbox-deliver',
                                     'native-app-root', direct], env=self.environment,
                                    text=True, capture_output=True)
         self.assertEqual(delivered.returncode, 0, delivered.stderr)
         self.assertEqual(json.loads(queued.read_text().splitlines()[-1])['params']['input'][0]['text'], direct)
 
         self.coord('stop', 'root', 'operator-stop', 'Retain the inbox.')
-        stopped = subprocess.run(['node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'),
-                                  '--session', str(EXE), str(self.db), 'root', 'native-app-root',
+        stopped = subprocess.run([str(EXE), str(self.db), 'codex-inbox-session', 'root', 'native-app-root',
                                   'managed-idle-report'], env=self.environment,
                                  text=True, capture_output=True)
         self.assertEqual(stopped.returncode, 0, stopped.stderr)
@@ -567,6 +716,35 @@ while True:
         self.assertEqual(len(queued.read_text().splitlines()), 2)
         self.assertIsNone(json.loads(self.coord('delivery', 'legacy-pending'))['receipt'])
 
+    def test_legacy_codex_receiver_migrates_its_recorded_environment(self):
+        queued, _ = self.public_proxy()
+        self.coord('attach', 'root', 'codex', 'native-app-root', '')
+        self.recruit('child', 'root', 'omp')
+        home = self.directory / 'recorded home'
+        codex_home = self.directory / 'recorded codex home'
+        home.mkdir()
+        codex_home.mkdir()
+        legacy = self.directory / 'retired-helper/codex-inbox-wake.mjs'
+        self.coord('connect', 'root', 'native-app-root', json.dumps([
+            '/usr/bin/env', 'HOME=' + str(home), 'CODEX_HOME=' + str(codex_home),
+            'node', str(legacy), '--session', str(EXE), str(self.db), 'root', 'native-app-root']))
+        endpoint = self.assert_managed_endpoint('root', 'native-app-root')
+        self.assertIn('HOME=' + str(home), endpoint)
+        self.assertIn('CODEX_HOME=' + str(codex_home), endpoint)
+        self.assertNotIn(str(legacy), endpoint)
+        body = 'Complete input through the migrated receiver: café Ω 🙂\nSecond line.'
+        self.coord('report', 'migrated-receiver-input', 'child', body)
+        calls = [json.loads(line) for line in queued.read_bytes().split(b'\n')[:-1]]
+        self.assertEqual(len(calls), 1, calls)
+        self.assertEqual(calls[0]['method'], 'turn/steer')
+        environments = [json.loads(line) for line in self.proxy_environment.read_bytes().split(b'\n')[:-1]]
+        self.assertTrue(environments)
+        self.assertTrue(all(environment == {'home': str(home), 'codexHome': str(codex_home)}
+                            for environment in environments), environments)
+        retained = json.loads(self.coord('delivery', 'migrated-receiver-input'))
+        self.assertEqual(retained['body'], body)
+        self.assertIsNone(retained['receipt'])
+
     def test_direct_follower_restart_retains_emitted_input_and_accepts_fresh_report(self):
         queued, _ = self.public_proxy()
         current = json.loads(self.public_app_state.read_text())
@@ -584,15 +762,18 @@ while True:
             output = self.directory / (name + '.jsonl')
             diagnostic = self.directory / (name + '.stderr')
             with output.open('w') as stdout, diagnostic.open('w') as stderr:
-                child = subprocess.Popen(['node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'),
-                                          '--follow', str(EXE), str(self.db), 'root', 'native-app-root'],
+                child = subprocess.Popen([str(EXE), str(self.db), 'codex-inbox-follow', 'root', 'native-app-root'],
                                          env=self.environment, stdout=stdout, stderr=stderr)
             self.children.append(child)
             return child, output, diagnostic
 
         first, first_output, first_error = follower('first-follow')
-        self.eventually(lambda: any(event in first_output.read_text()
-                                    for event in ('codexInboxAdmission', 'codexInboxTurnRetained')),
+        def first_admitted():
+            self.assertIsNone(first.poll(), first_error.read_text() + first_output.read_text())
+            return any(event in first_output.read_text()
+                       for event in ('codexInboxAdmission', 'codexInboxTurnRetained'))
+
+        self.eventually(first_admitted,
                         'the direct follower did not record its admission decision')
         self.assertIn('codexInboxAdmission', first_output.read_text(), first_error.read_text())
         self.assertEqual(len(queued.read_text().splitlines()), 1)
@@ -624,6 +805,78 @@ while True:
         second.wait()
         self.assertEqual(second.returncode, 0, second_error.read_text())
 
+    def assert_contextual_notice(self, text):
+        parts = text.split('\n\n', 2)
+        self.assertEqual(len(parts), 3, text)
+        seed, instruction, guidance = parts
+        self.assertRegex(seed, r'^[0-9a-f]{128}$')
+        self.assertIn('abstract qualities of the random seed', instruction)
+        self.assertNotIn('\0', text)
+        self.assertTrue(any(row['seed'] == seed and row['instruction'] == instruction
+                            and row['guidance'] == guidance
+                            for row in self.rows('SELECT * FROM native_initial_inputs')),
+                        'The actual native prompt has no complete database initialization record')
+        self.assertIn('baton inbox', text)
+        self.assertIn('Baton records delivery and complete reads internally.', text)
+        self.assertNotIn(str(self.db), text)
+        self.assertNotIn('"claimToken"', text)
+        self.assertNotIn('"recipient"', text)
+        self.assertNotIn('baton acknowledge', text)
+
+    def test_restarted_follower_preserves_the_first_terminal_report_and_read(self):
+        queued, _ = self.public_proxy()
+        current = json.loads(self.public_app_state.read_text())
+        self.public_app_state.write_text(json.dumps({**current, 'status': 'idle',
+                                                    'terminalAfterAdmission': True}))
+        self.coord('attach', 'root', 'terminal', '', '')
+        self.coord('role', 'root', 'principal-conductor')
+        self.recruit('worker', 'root', 'codex')
+        body = 'Retain the complete unread task: café Ω 🙂\nSecond line.'
+        self.assertNotEqual(self.coord_raw(
+            'message', 'terminal-restart-input', 'root', 'worker', 'task', body).returncode, 0)
+        self.coord('connect', 'worker', 'native-app-root', '')
+
+        def follower(name):
+            output = self.directory / (name + '.jsonl')
+            diagnostic = self.directory / (name + '.stderr')
+            with output.open('w') as stdout, diagnostic.open('w') as stderr:
+                child = subprocess.Popen(
+                    [str(EXE), str(self.db), 'codex-inbox-follow', 'worker', 'native-app-root'],
+                    env=self.environment, stdout=stdout, stderr=stderr)
+            self.children.append(child)
+
+            def reported():
+                self.assertIsNone(child.poll(), diagnostic.read_text() + output.read_text())
+                return any(event.get('type') == 'codexInboxTurnReport' for event in
+                           (json.loads(line) for line in output.read_bytes().split(b'\n')[:-1]))
+
+            self.eventually(reported, 'The follower did not commit its native terminal report.')
+            return child, output, diagnostic
+
+        first, _, first_error = follower('terminal-restart-first')
+        ident = 'codex-inbox-turn:worker:native-app-root:fixture-turn-1'
+        self.coord('as', 'root', 'read', ident)
+        original = self.rows('SELECT * FROM messages WHERE id=' + repr(ident))[0]
+        report = json.loads(original['body'])
+        self.assertEqual(report['completedItems'], [{'id': 'retained-item', 'type': 'agentMessage',
+            'text': 'Complete first result: café Ω 🙂\nSecond line.'}])
+        self.assertTrue(receive.read_recorded(self.db, ident, 'root'))
+        first.terminate()
+        first.wait()
+        self.assertNotEqual(first.returncode, 0, first_error.read_text())
+        current = json.loads(self.public_app_state.read_text())
+        self.public_app_state.write_text(json.dumps({**current, 'terminalAfterAdmission': False,
+                                                    'replayTerminalOnResume': True}))
+        second, _, second_error = follower('terminal-restart-second')
+        self.assertEqual(self.rows('SELECT * FROM messages WHERE id=' + repr(ident)), [original])
+        self.assertEqual(len(queued.read_text().splitlines()), 1)
+        retained = json.loads(self.coord('delivery', 'terminal-restart-input'))
+        self.assertEqual(retained['body'], body)
+        self.assertIsNone(retained['receipt'])
+        self.coord('stop', 'worker', 'terminal-restart-stop', 'Keep the complete unread task.')
+        second.wait()
+        self.assertEqual(second.returncode, 0, second_error.read_text())
+
     def test_legacy_pointer_refresh_waits_out_a_held_database_writer(self):
         queued, _ = self.public_proxy()
         current = json.loads(self.public_app_state.read_text())
@@ -642,10 +895,11 @@ while True:
         pointer = 'Baton input is pending.\n' + json.dumps(notice) + suffix
         output = self.directory / 'legacy-busy.jsonl'
         diagnostic = self.directory / 'legacy-busy.stderr'
+        environment, busy_marker = self.busy_environment('legacy-refresh')
         with output.open('w') as stdout, diagnostic.open('w') as stderr:
             wake = subprocess.Popen(
-                ['node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), 'native-app-root', pointer],
-                env=self.environment, stdout=stdout, stderr=stderr)
+                [str(EXE), str(self.db), 'codex-inbox-deliver', 'native-app-root', pointer],
+                env=environment, stdout=stdout, stderr=stderr)
         self.children.append(wake)
 
         def metadata_held():
@@ -658,15 +912,10 @@ while True:
             self.admission_release.write_text('go\n')
 
             def refresh_busy():
-                self.assertIsNone(wake.poll(), output.read_text() + diagnostic.read_text())
                 self.assertFalse(queued.exists(), queued.read_text() if queued.exists() else '')
-                events = [event for line in output.read_text().splitlines()
-                          if (event := json.loads(line)).get('type') == 'codexInboxDatabaseBusy'
-                          and event.get('operation') == 'refresh']
-                return events[0] if events else None
+                return self.waiting_on_writer(wake, busy_marker, output, diagnostic)
 
-            busy = self.eventually(refresh_busy, 'the legacy refresh did not observe the held SQLite writer')
-            self.assertEqual(busy['errcode'] & 255, sqlite3.SQLITE_BUSY)
+            self.eventually(refresh_busy, 'the pointer refresh did not enter the SQLite busy callback')
             self.assertFalse(queued.exists(), queued.read_text() if queued.exists() else '')
             writer.commit()
         wake.wait()
@@ -676,13 +925,24 @@ while True:
         self.assertEqual(admitted[0]['method'], 'turn/steer')
         self.assertEqual(admitted[0]['params']['threadId'], 'native-app-root')
         text = admitted[0]['params']['input'][0]['text']
-        self.assertEqual(json.loads(text.split('\n')[1]), notice)
-        self.assertEqual(text[text.index('\n', text.index('\n') + 1):], suffix)
+        self.assert_contextual_notice(text)
+        self.assertTrue(text.endswith(suffix), text)
         retained = json.loads(self.coord('delivery', 'legacy-busy-input'))
         self.assertEqual(retained['body'], body)
         self.assertIsNone(retained['receipt'])
-        self.assertEqual(self.rows("SELECT native,endpoint FROM sessions WHERE id='root'"),
-                         [{'native': 'native-app-root', 'endpoint': ''}])
+        self.assert_managed_endpoint('root', 'native-app-root')
+
+        changed_suffix = '\nChanged pointer guidance: café Ω 🙂\nKeep the complete new component.'
+        changed_pointer = 'Baton input is pending.\n' + json.dumps(notice) + changed_suffix
+        changed = self.coord_raw('codex-inbox-deliver', 'native-app-root', changed_pointer)
+        self.assertEqual(changed.returncode, 0, changed.stdout + changed.stderr)
+        calls = [json.loads(line) for line in queued.read_text().splitlines()]
+        self.assertEqual(len(calls), 2, calls)
+        changed_text = calls[-1]['params']['input'][0]['text']
+        self.assert_contextual_notice(changed_text)
+        self.assertTrue(changed_text.endswith(changed_suffix), changed_text)
+        self.assertEqual(changed_text.split('\n\n', 1)[0], text.split('\n\n', 1)[0])
+        self.assertIsNone(json.loads(self.coord('delivery', 'legacy-busy-input'))['receipt'])
 
     def test_legacy_admitted_metadata_waits_out_a_held_database_writer(self):
         queued, _ = self.public_proxy()
@@ -707,26 +967,24 @@ while True:
         pointer = 'Baton input is pending.\n' + json.dumps(notice) + suffix
         output = self.directory / 'admitted-busy.jsonl'
         diagnostic = self.directory / 'admitted-busy.stderr'
+        environment, busy_marker = self.busy_environment('admitted-metadata')
         with output.open('w') as stdout, diagnostic.open('w') as stderr:
             wake = subprocess.Popen(
-                ['node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), 'native-app-root', pointer],
-                env=self.environment, stdout=stdout, stderr=stderr)
+                [str(EXE), str(self.db), 'codex-inbox-deliver', 'native-app-root', pointer],
+                env=environment, stdout=stdout, stderr=stderr)
         self.children.append(wake)
 
         def admitted_busy():
+            self.assertIsNone(wake.poll(), output.read_text() + diagnostic.read_text())
             error = diagnostic.read_text()
             self.assertNotIn('Error:', error, output.read_text() + error)
-            self.assertIsNone(wake.poll(), output.read_text() + error)
-            events = [event for line in output.read_text().splitlines()
-                      if (event := json.loads(line)).get('type') == 'codexInboxDatabaseBusy'
-                      and event.get('operation') == 'admitted']
-            return events[0] if events else None
+            admissions = [event for line in output.read_bytes().split(b'\n')[:-1]
+                          if (event := json.loads(line)).get('type') == 'codexInboxAdmission']
+            return admissions and self.waiting_on_writer(wake, busy_marker, output, diagnostic)
 
         try:
-            busy = self.eventually(admitted_busy, 'The admitted metadata update did not observe the SQLite writer')
+            self.eventually(admitted_busy, 'The admitted metadata update did not enter the SQLite busy callback')
             self.assertTrue(self.admitted_barrier.exists())
-            self.assertEqual(busy['errcode'] & 255, sqlite3.SQLITE_BUSY)
-            self.assertEqual((busy['session'], busy['threadId']), ('root', 'native-app-root'))
             self.assertEqual(len(queued.read_text().splitlines()), 1)
         finally:
             self.admitted_release.write_text('go\n')
@@ -738,9 +996,8 @@ while True:
         self.assertEqual(calls[0]['params']['threadId'], 'native-app-root')
         self.assertEqual(calls[0]['params']['expectedTurnId'], 'fixture-turn')
         text = calls[0]['params']['input'][0]['text']
-        self.assertEqual(json.loads(text.split('\n')[1]),
-                         {key: value for key, value in notice.items() if key != 'claimToken'})
-        self.assertEqual(text[text.index('\n', text.index('\n') + 1):], suffix)
+        self.assert_contextual_notice(text)
+        self.assertTrue(text.endswith(suffix), text)
         retained_claim = self.rows("SELECT native,token,cause FROM codex_inbox_wakes WHERE session='root'")[0]
         self.assertEqual((retained_claim['native'], retained_claim['token']),
                          ('native-app-root', claim['token']))
@@ -766,20 +1023,22 @@ while True:
         self.coord('connect', 'root', 'native-app-root', '')
         output = self.directory / 'empty-writer-follow.jsonl'
         diagnostic = self.directory / 'empty-writer-follow.stderr'
+        environment, busy_marker = self.busy_environment('empty-writer-claim')
         with output.open('w') as stdout, diagnostic.open('w') as stderr:
             follower = subprocess.Popen(
-                ['node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--follow',
-                 str(EXE), str(self.db), 'root', 'native-app-root'],
-                env=self.environment, stdout=stdout, stderr=stderr)
+                [str(EXE), str(self.db), 'codex-inbox-follow', 'root', 'native-app-root'],
+                env=environment, stdout=stdout, stderr=stderr)
         self.children.append(follower)
-        self.eventually(self.admission_barrier.exists, 'the native metadata read was not held')
+        def metadata_held():
+            self.assertIsNone(follower.poll(), output.read_text() + diagnostic.read_text())
+            return self.admission_barrier.exists()
+
+        self.eventually(metadata_held, 'the native metadata read was not held')
 
         def claim_waits_for_writer():
-            self.assertIsNone(follower.poll(), diagnostic.read_text() + output.read_text())
             admitted = queued.read_text() if queued.exists() else ''
             self.assertFalse(admitted, 'Native input was admitted while the SQLite writer was held:\n' + admitted)
-            return any(event.get('type') == 'codexInboxDatabaseBusy' and event.get('operation') == 'claim'
-                       for line in output.read_text().splitlines() if (event := json.loads(line)))
+            return self.waiting_on_writer(follower, busy_marker, output, diagnostic)
 
         with sqlite3.connect(self.db) as writer:
             writer.execute('BEGIN IMMEDIATE')
@@ -792,9 +1051,7 @@ while True:
         self.assertEqual(len(calls), 1, calls)
         self.assertEqual(calls[0]['method'], 'turn/start')
         self.assertEqual(calls[0]['params']['threadId'], 'native-app-root')
-        pointer = json.loads(calls[0]['params']['input'][0]['text'].split('\n')[1])
-        self.assertEqual((pointer['recipient'], pointer['message'], pointer['pendingCount']),
-                         ('root', 'claim-empty-writer-input', 1))
+        self.assert_contextual_notice(calls[0]['params']['input'][0]['text'])
         retained = json.loads(self.coord('delivery', 'claim-empty-writer-input'))
         self.assertEqual(retained['body'], body)
         self.assertIsNone(retained['receipt'])
@@ -816,17 +1073,16 @@ while True:
         self.coord('connect', 'worker', 'native-app-root', '')
         output = self.directory / 'terminal-writer-follow.jsonl'
         diagnostic = self.directory / 'terminal-writer-follow.stderr'
+        environment, busy_marker = self.busy_environment('terminal-inbox-read')
         with output.open('w') as stdout, diagnostic.open('w') as stderr:
             follower = subprocess.Popen(
-                ['node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--follow',
-                 str(EXE), str(self.db), 'worker', 'native-app-root'],
-                env=self.environment, stdout=stdout, stderr=stderr)
+                [str(EXE), str(self.db), 'codex-inbox-follow', 'worker', 'native-app-root'],
+                env=environment, stdout=stdout, stderr=stderr)
         self.children.append(follower)
 
         def events():
             self.assertIsNone(follower.poll(), diagnostic.read_text() + output.read_text())
-            return [json.loads(line) for line in output.read_text().splitlines(keepends=True)
-                    if line.endswith('\n')]
+            return [json.loads(line) for line in output.read_bytes().split(b'\n')[:-1]]
 
         def terminal_is_held():
             events()
@@ -834,9 +1090,8 @@ while True:
 
         self.eventually(terminal_is_held, 'The native terminal did not reach the held writer.')
         try:
-            self.eventually(lambda: any(event.get('type') == 'codexInboxDatabaseBusy'
-                                           and not event.get('operation') for event in events()),
-                            'The terminal did not reach the contended inbox read.')
+            self.eventually(lambda: self.waiting_on_writer(follower, busy_marker, output, diagnostic),
+                            'The terminal inbox read did not enter the SQLite busy callback.')
             calls = [json.loads(line) for line in queued.read_text().splitlines()]
             self.assertEqual(len(calls), 1, calls)
             self.assertEqual(calls[0]['method'], 'turn/start')
@@ -845,7 +1100,6 @@ while True:
         self.eventually(lambda: any(event.get('type') == 'codexInboxTurnReport'
                                     and event.get('code') == 0 for event in events()),
                         'The released writer left the native terminal unreported.')
-        self.assertTrue(any(event.get('type') == 'codexInboxDatabaseReady' for event in events()))
         reports = self.rows("SELECT body FROM messages WHERE sender='worker' AND recipient='root' AND kind='report'")
         self.assertEqual(len(reports), 1, reports)
         terminal = json.loads(reports[0]['body'])
@@ -875,20 +1129,22 @@ while True:
 
         output = self.directory / 'busy-follow.jsonl'
         diagnostic = self.directory / 'busy-follow.stderr'
+        environment, busy_marker = self.busy_environment('stopped-claim')
         with output.open('w') as stdout, diagnostic.open('w') as stderr:
             follower = subprocess.Popen(
-                ['node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--follow',
-                 str(EXE), str(self.db), 'root', 'native-app-root'],
-                env=self.environment, stdout=stdout, stderr=stderr)
+                [str(EXE), str(self.db), 'codex-inbox-follow', 'root', 'native-app-root'],
+                env=environment, stdout=stdout, stderr=stderr)
         self.children.append(follower)
-        self.eventually(self.admission_barrier.exists, 'the native metadata read was not held')
+        def metadata_held():
+            self.assertIsNone(follower.poll(), output.read_text() + diagnostic.read_text())
+            return self.admission_barrier.exists()
+
+        self.eventually(metadata_held, 'the native metadata read was not held')
 
         def claim_waits_for_writer():
-            self.assertIsNone(follower.poll(), diagnostic.read_text() + output.read_text())
             admitted = queued.read_text() if queued.exists() else ''
             self.assertFalse(admitted, 'Native input was admitted while the SQLite writer was held:\n' + admitted)
-            return any(event.get('type') == 'codexInboxDatabaseBusy' and event.get('operation') == 'claim'
-                       for line in output.read_text().splitlines() if (event := json.loads(line)))
+            return self.waiting_on_writer(follower, busy_marker, output, diagnostic)
 
         with sqlite3.connect(self.db) as writer:
             writer.execute('BEGIN IMMEDIATE')
@@ -916,8 +1172,8 @@ while True:
         self.assertEqual(retained['body'], body)
         self.assertIsNone(retained['receipt'])
 
-    def test_stop_or_receipt_during_native_metadata_read_prevents_admission(self):
-        for disposition in ('stop', 'receipt'):
+    def test_stop_or_read_during_native_metadata_read_prevents_admission(self):
+        for disposition in ('stop', 'read'):
             with self.subTest(disposition=disposition):
                 queued, _ = self.public_proxy()
                 self.admission_barrier.unlink(missing_ok=True)
@@ -930,17 +1186,23 @@ while True:
                 self.coord('connect', disposition, 'native-app-root', '')
                 current = json.loads(self.public_app_state.read_text())
                 self.public_app_state.write_text(json.dumps({**current, 'holdRead': True}))
-                delivery = subprocess.Popen(['node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'),
-                                             '--session', str(EXE), str(self.db), disposition,
+                delivery = subprocess.Popen([str(EXE), str(self.db), 'codex-inbox-session', disposition,
                                              'native-app-root', ident], env=self.environment,
                                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 self.children.append(delivery)
-                self.eventually(self.admission_barrier.exists,
+                def metadata_held():
+                    if delivery.poll() is not None:
+                        output, diagnostic = delivery.communicate()
+                        self.fail('Native delivery exited before its metadata read: '
+                                  + output + diagnostic)
+                    return self.admission_barrier.exists()
+
+                self.eventually(metadata_held,
                                 'the actual native metadata read was not held in flight')
                 if disposition == 'stop':
                     self.coord('stop', disposition, 'in-flight-stop', 'Keep the original input.')
                 else:
-                    self.coord('ack', ident, disposition, 'Recipient handled this complete input.')
+                    self.coord('as', disposition, 'read', ident)
                 self.admission_release.write_text('Release the native response.\n')
                 output, diagnostic = delivery.communicate()
                 self.assertEqual(delivery.returncode, 0, diagnostic)
@@ -950,8 +1212,9 @@ while True:
                 self.assertEqual(retained['stopped'], disposition == 'stop')
                 saved = json.loads(self.coord('delivery', ident))
                 self.assertEqual(saved['body'], body)
-                self.assertEqual(saved['receipt'], None if disposition == 'stop'
-                                 else 'Recipient handled this complete input.')
+                self.assertEqual(saved['receipt'], None)
+                self.assertEqual(receive.read_recorded(self.db, ident, disposition),
+                                 disposition != 'stop')
 
     def test_codex_root_endpoint_wakes_the_root_and_routes_to_the_operator(self):
         self.release('root', 1)

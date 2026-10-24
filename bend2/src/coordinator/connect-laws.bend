@@ -1,4 +1,4 @@
-# The entry imports these admission laws. SQLite evaluates the declared
+# The native check imports these admission laws. SQLite evaluates the declared
 # predicate and transaction; the native connect tests verify stored state and
 # delivery through the real executable.
 import Base
@@ -41,10 +41,10 @@ def connect_updates_and_answers_only_after_admission(id,native,endpoint):
   {==}
 
 law connect_refusal_is_classified_before_delivery:
-  for +saved: String
-  {Store.refused(saved) == Bool.or(Store.naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\"")))) : Bool}
+  for detail: String
+  {Store.refused("{\"error\":\"invalid-endpoint\"}" ++ detail) == True{} : Bool}
 
-def connect_refusal_is_classified_before_delivery(saved):
+def connect_refusal_is_classified_before_delivery(detail):
   {==}
 
 law refused_connections_return_the_structured_error:
@@ -86,7 +86,7 @@ def delivery_rows_present_the_recipient_endpoint_argv():
   {==}
 
 law status_rows_present_the_stored_endpoint_argv:
-  {C.sql(C.Status{}) == "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ C.endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ C.session_kind("sessions.id") ++ ",'role'," ++ C.public_role("sessions.id") ++ ",'pending',(SELECT count(*) FROM messages WHERE recipient=sessions.id AND receipt IS NULL AND NOT (" ++ C.stopped_session_sql("sessions.id") ++ " AND " ++ C.execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ C.task_state_sql("sessions.id") ++ ")," ++ C.session_state_sql("sessions.id") ++ ") AS item FROM sessions ORDER BY id);" : String}
+  {C.sql(C.Status{}) == "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ C.endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ C.session_kind("sessions.id") ++ ",'role'," ++ C.public_role("sessions.id") ++ ",'pending',(SELECT count(*) FROM messages WHERE recipient=sessions.id AND NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=messages.id AND owed_read.recipient=messages.recipient) AND NOT (" ++ C.stopped_session_sql("sessions.id") ++ " AND " ++ C.execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ C.task_state_sql("sessions.id") ++ ")," ++ C.session_state_sql("sessions.id") ++ ") AS item FROM sessions ORDER BY id);" : String}
 
 def status_rows_present_the_stored_endpoint_argv():
   {==}

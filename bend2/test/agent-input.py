@@ -1,4 +1,4 @@
-"""Owned native reads and routine handling through controlled retained turns."""
+"""Owned native reads through controlled retained turns."""
 
 import json
 import os
@@ -39,6 +39,10 @@ class AgentInput(unittest.TestCase):
         self.fx.coord('message', 'foreign-input', 'parent', 'root', 'report',
                       'Complete foreign report.\n')
 
+    def legacy_receipt(self, ident, receipt):
+        with sqlite3.connect(str(self.fx.db)) as db:
+            db.execute('UPDATE messages SET receipt=? WHERE id=?', (receipt, ident))
+
     def reads(self):
         with sqlite3.connect(f'{self.fx.db.as_uri()}?mode=ro', uri=True) as db:
             db.row_factory = sqlite3.Row
@@ -75,10 +79,10 @@ class AgentInput(unittest.TestCase):
                            complete_task=False, fail=True)
         return self.fx.finish(child, ok=not failed)
 
-    def test_success_handles_exact_owned_full_read_and_retains_first_receipt(self):
+    def test_success_records_exact_owned_full_read_and_preserves_legacy_receipt(self):
         self.fx.prepare_input('already-handled', 'parent', 'Earlier handled input.\n',
                               kind='task')
-        self.fx.coord('ack', 'already-handled', 'parent', 'earliest receipt')
+        self.legacy_receipt('already-handled', 'earliest receipt')
         child, stream, started = self.start()
         result = self.action(stream, 'read', 'owned-input', 'foreign-input',
                              'absent-input', 'already-handled')
@@ -104,13 +108,14 @@ class AgentInput(unittest.TestCase):
         # The controlled coordinator exchange explicitly confirms its task.
         self.end(child, stream, complete_task=True)
         after = self.reads()
-        receipt = 'native-turn:' + after[0]['attempt']
-        self.assertTrue(all(row['handled'] == receipt for row in after))
-        self.assertEqual(self.fx.coord('delivery', 'owned-input')['receipt'], receipt)
+        owned = [row for row in after if row['message'] == 'owned-input']
+        self.assertTrue(owned)
+        self.assertTrue(all(row['handled'] is None for row in owned))
+        self.assertIsNone(self.fx.coord('delivery', 'owned-input')['receipt'])
         self.assertEqual(self.fx.coord('delivery', 'already-handled')['receipt'],
                          'earliest receipt')
         self.assertIsNone(self.fx.coord('delivery', 'foreign-input')['receipt'])
-        self.fx.shutdown_idle_database_owner('successful input observer did not settle')
+        self.fx.shutdown_idle_database_owner('successful input observer did not record reads')
 
     def test_full_inbox_records_its_owned_items(self):
         self.fx.prepare_input('second-owned-input', 'parent', 'Second complete input.\n',
@@ -123,10 +128,14 @@ class AgentInput(unittest.TestCase):
         self.assertEqual({row['message'] for row in self.reads()},
                          {'owned-input', 'second-owned-input'})
         self.end(child, stream, complete_task=True)
-        self.assertTrue(all(row['handled'] for row in self.reads()))
-        self.fx.shutdown_idle_database_owner('full inbox observer did not settle')
+        rows = self.reads()
+        self.assertTrue(all(row['handled'] is None for row in rows))
+        self.assertEqual({row['message'] for row in rows},
+                         {'owned-input', 'second-owned-input'})
+        self.assertEqual(self.fx.coord('inbox', 'parent'), [])
+        self.fx.shutdown_idle_database_owner('full inbox observer did not record reads')
 
-    def test_native_bare_acknowledge_handles_only_current_complete_read_set(self):
+    def test_read_set_bounds_redelivery_and_legacy_receipt_is_preserved(self):
         child, stream, started = self.start()
         self.fx.coord('message', 'ack-read-owned', 'root', 'parent', 'guidance',
                       'Complete late owned input.\nλ🙂\n')
@@ -134,7 +143,7 @@ class AgentInput(unittest.TestCase):
                       'This late input has not been read.')
         self.fx.coord('message', 'ack-first-receipt', 'root', 'parent', 'guidance',
                       'Retain the first explicit receipt.')
-        self.fx.coord('ack', 'ack-first-receipt', 'parent', 'Earliest explicit handling.')
+        self.legacy_receipt('ack-first-receipt', 'Earliest explicit handling.')
         before = self.reads()
         indexed = self.action(stream, 'pending', '--index', legacy=True)
         self.assertEqual(indexed['code'], 0, indexed)
@@ -149,28 +158,25 @@ class AgentInput(unittest.TestCase):
                          {'owned-input', 'ack-read-owned', 'ack-first-receipt'})
         self.assertTrue(all(row['recipient'] == 'parent' and
                             row['native'] == started['native'] for row in read_set))
-        receipt = 'native-turn:' + read_set[0]['attempt']
         state = self.fx.coord('session', 'parent')['taskCompletion']
-        result = self.action(stream, 'acknowledge')
-        self.assertEqual(result['code'], 0, result)
-        rows = json.loads(result['stdout'])
-        self.assertTrue({'owned-input', 'ack-read-owned'} <= {row['id'] for row in rows})
-        self.assertTrue({row['id'] for row in rows} <= {row['message'] for row in read_set})
+        # The acknowledge action is removed: read recording is the read evidence.
+        refused = self.action(stream, 'acknowledge')
+        self.assertEqual(refused['code'], 2, refused)
+        self.assertIn('Choose inbox, read', refused['stderr'])
         for ident in ('owned-input', 'ack-read-owned'):
-            self.assertEqual(self.fx.coord('delivery', ident)['receipt'], receipt)
+            self.assertIsNone(self.fx.coord('delivery', ident)['receipt'])
+            self.assertEqual(self.fx.coord('delivery', ident)['nativeInputStatus']['read'],
+                             'recorded')
         self.assertEqual(self.fx.coord('delivery', 'ack-first-receipt')['receipt'],
                          'Earliest explicit handling.')
         for ident in ('foreign-input', 'ack-unread-owned'):
             self.assertIsNone(self.fx.coord('delivery', ident)['receipt'])
         self.assertEqual(self.fx.coord('session', 'parent')['taskCompletion'], state)
-        repeated = self.action(stream, 'acknowledge')
-        self.assertEqual(repeated['code'], 0, repeated)
-        self.assertEqual(self.fx.coord('delivery', 'owned-input')['receipt'], receipt)
-        self.assertEqual(self.fx.coord('delivery', 'ack-first-receipt')['receipt'],
-                         'Earliest explicit handling.')
         self.end(child, stream, failed=True,
                  successor_body='This late input has not been read.')
-        self.assertEqual(self.fx.coord('delivery', 'owned-input')['receipt'], receipt)
+        self.assertIsNone(self.fx.coord('delivery', 'owned-input')['receipt'])
+        self.assertEqual(self.fx.coord('delivery', 'owned-input')['nativeInputStatus']['read'],
+                         'recorded')
         self.assertIsNone(self.fx.coord('delivery', 'ack-unread-owned')['receipt'])
 
     def test_full_pending_records_late_owned_input_and_pretty_preserves_foreign_rows(self):
@@ -223,16 +229,14 @@ class AgentInput(unittest.TestCase):
         after = self.reads()
         self.assertEqual({row['message'] for row in after},
                          {row['message'] for row in before})
-        self.assertTrue(all(row['handled'] == 'native-turn:' + row['attempt']
-                            for row in after))
+        self.assertTrue(all(row['handled'] is None for row in after))
         for row in after:
-            self.assertEqual(self.fx.coord('delivery', row['message'])['receipt'],
-                             row['handled'])
+            self.assertIsNone(self.fx.coord('delivery', row['message'])['receipt'])
         self.assertIsNone(self.fx.coord('delivery', 'foreign-input')['receipt'])
         self.assertIsNone(self.fx.coord('delivery', 'late-pending-foreign')['receipt'])
-        self.fx.shutdown_idle_database_owner('full pending observer did not settle')
+        self.fx.shutdown_idle_database_owner('full pending observer did not record reads')
 
-    def test_failed_native_turn_retains_reads_without_handling(self):
+    def test_failed_native_turn_retains_reads(self):
         self.fx.prepare_input('open-assignment', 'parent', 'Keep this assignment open.',
                               kind='task')
         child, stream, _ = self.start()
@@ -245,7 +249,7 @@ class AgentInput(unittest.TestCase):
         self.assertIsNone(self.fx.coord('delivery', 'owned-input')['receipt'])
         self.assertTrue(self.fx.coord('session', 'parent')['taskCompletion']['open'])
 
-    def test_missing_terminal_retains_reads_without_handling(self):
+    def test_missing_terminal_retains_reads(self):
         child, stream, _ = self.start()
         self.assertEqual(self.action(stream, 'read', 'owned-input')['code'], 0)
         self.fx.action(stream, stdout_fragment='{"type":')
@@ -263,16 +267,17 @@ class AgentInput(unittest.TestCase):
         self.fx.coord('connect', 'parent', 'replacement-native', '')
         self.fx.action(stream, body='Controlled native result.', ack=False,
                        complete_task=False)
-        successor, resumed = self.fx.accept_child(child, 'parent')
-        self.assertEqual(resumed['native'], 'replacement-native')
-        self.fx.action(successor, body='Controlled replacement native failure.',
-                       ack=False, complete_task=False, fail=True)
-        self.fx.finish(child, ok=False)
+        self.fx.finish_without_start(child)
+        calls = [json.loads(line) for line in self.fx.codex_calls.read_text().splitlines()]
+        replacement = [call for call in calls
+                       if call['params']['threadId'] == 'replacement-native']
+        self.assertEqual(len(replacement), 1, calls)
+        self.assertEqual(replacement[0]['method'], 'turn/steer')
         self.assertEqual(self.fx.coord('session', 'parent')['native'], 'replacement-native')
         self.assertEqual([row for row in self.reads() if row['attempt'] == before[0]['attempt']], before)
         self.assertIsNone(self.fx.coord('delivery', 'owned-input')['receipt'])
 
-    def test_unavailable_status_preserves_successful_exposure_without_handling(self):
+    def test_unavailable_status_preserves_successful_exposure(self):
         child, stream, _ = self.start()
         with sqlite3.connect(f'{self.fx.db.as_uri()}?mode=ro', uri=True) as database:
             directory = pathlib.Path(database.execute(
@@ -297,7 +302,7 @@ class AgentInput(unittest.TestCase):
         self.assertIsNone(self.reads()[0]['handled'])
         self.assertIsNone(self.fx.coord('delivery', 'owned-input')['receipt'])
 
-    def test_operator_stop_preserves_read_with_incomplete_handling(self):
+    def test_operator_stop_preserves_read(self):
         child, stream, _ = self.start()
         self.assertEqual(self.action(stream, 'read', 'owned-input')['code'], 0)
         self.fx.coord('stop', 'parent', 'input-status-stop',
@@ -343,7 +348,7 @@ class AgentInput(unittest.TestCase):
         self.end(child, stream, failed=True)
         self.assertIsNone(self.fx.coord('delivery', 'foreign-input')['receipt'])
 
-    def test_complete_initial_prompt_handles_exact_receive_and_direct_input(self):
+    def test_complete_initial_prompt_records_exact_receive_and_direct_reads(self):
         text = 'Complete initial task with λ🙂, quotes " and a final newline.\n'
         task = self.fx.directory / 'initial task.txt'
         task.write_text(text)
@@ -381,11 +386,11 @@ class AgentInput(unittest.TestCase):
                     rows = [row for row in self.reads() if row['message'] == ident]
                     self.assertEqual(len(rows), 1, rows)
                     self.assertEqual(rows[0]['native'], started['native'])
-                    self.assertEqual(rows[0]['handled'], 'native-turn:' + rows[0]['attempt'])
+                    self.assertIsNone(rows[0]['handled'])
                     delivered = self.fx.coord('delivery', ident)
                     self.assertEqual(delivered['body'], text)
-                    self.assertEqual(delivered['receipt'], rows[0]['handled'])
-                    self.assertEqual(delivered['nativeInputStatus']['handled'], 'recorded')
+                    self.assertIsNone(delivered['receipt'])
+                    self.assertNotIn('handled', delivered['nativeInputStatus'])
                     detail = self.fx.coord('input', ident)
                     self.assertEqual(detail['message']['nativeInputStatus']['read'], 'recorded')
                     self.assertEqual(detail['attemptRelation']['attempts'][0]['native'], started['native'])
@@ -394,7 +399,7 @@ class AgentInput(unittest.TestCase):
                     self.assertTrue(state['open'])
                     self.assertFalse(state['confirmed'])
 
-    def test_failed_initial_stdin_is_read_but_unhandled_and_muse_remains_unrecorded(self):
+    def test_failed_initial_stdin_records_the_read_for_every_harness(self):
         for harness in ('codex', 'omp', 'claude-code', 'muse'):
             with self.subTest(harness=harness):
                 name = 'failed-initial-' + harness
@@ -407,19 +412,16 @@ class AgentInput(unittest.TestCase):
                                ack=False, complete_task=False)
                 self.fx.finish(child, ok=False)
                 rows = [row for row in self.reads() if row['message'] == ident]
-                if harness == 'muse':
-                    self.assertEqual(rows, [])
-                else:
-                    self.assertEqual(len(rows), 1, rows)
-                    self.assertEqual(rows[0]['native'], started['native'])
-                    self.assertIsNone(rows[0]['handled'])
+                self.assertEqual(len(rows), 1, rows)
+                self.assertEqual(rows[0]['native'], started['native'])
+                self.assertIsNone(rows[0]['handled'])
                 self.assertIsNone(self.fx.coord('delivery', ident)['receipt'])
                 self.assertTrue(self.fx.coord('session', name)['taskCompletion']['open'])
 
     def test_quoted_earlier_owned_input_is_not_a_producer_selected_message(self):
         earlier = 'Earlier complete body.\nλ🙂'
         self.fx.prepare_input('quoted-earlier', 'parent', earlier, kind='task')
-        self.fx.coord('ack', 'quoted-earlier', 'parent', 'Earlier explicit receipt.')
+        self.legacy_receipt('quoted-earlier', 'Earlier explicit receipt.')
         quote = 'Message (task) from root [id: quoted-earlier]:\n' + earlier
         self.fx.prepare_input('actual-selected', 'parent', 'Task includes an exact quotation:\n' + quote,
                               kind='task')
@@ -430,8 +432,11 @@ class AgentInput(unittest.TestCase):
                          {'owned-input', 'actual-selected'})
         self.assertEqual(self.fx.coord('delivery', 'quoted-earlier')['receipt'],
                          'Earlier explicit receipt.')
-        self.assertEqual(self.fx.coord('delivery', 'quoted-earlier')['nativeInputStatus']['read'],
-                         'unrecorded')
+        # The legacy receipt backfills a synthetic read row, so the stored message
+        # reads as read; no current-attempt row exists for it.
+        status = self.fx.coord('delivery', 'quoted-earlier')['nativeInputStatus']
+        self.assertEqual(status['read'], 'recorded')
+        self.assertTrue(all(row['identity'] == 'receipt' for row in status['attempts']))
 
     def app_action(self, *arguments, native='native-root', output=None):
         environment = os.environ.copy()
@@ -442,17 +447,7 @@ class AgentInput(unittest.TestCase):
         return subprocess.run(command, stdout=output or subprocess.PIPE,
                               stderr=subprocess.PIPE, text=True, env=environment)
 
-    def app_terminal(self, turn, status):
-        body = {'type': 'codex-inbox-turn-settled', 'session': 'root',
-                'threadId': 'native-root', 'turn': {'id': turn, 'status': status},
-                'completedItems': []}
-        report = self.fx.directory / ('terminal-' + turn + '.json')
-        report.write_text(json.dumps(body))
-        self.fx.coord('report-file', 'codex-inbox-turn:root:native-root:' + turn,
-                      'root', str(report))
-        return self.fx.coord('settle-agent-input', 'root', 'native-root', turn, status)
-
-    def test_app_full_read_handles_exact_turn_after_explicit_first_ack(self):
+    def test_app_full_read_records_exact_turn_and_preserves_legacy_receipt(self):
         self.fx.prepare_input('app-task', 'root', 'Actual App task.\nλ🙂', kind='task')
         self.fx.prepare_input('app-guidance', 'root', 'Actual App guidance.\n', kind='guidance')
         before = self.fx.coord('session', 'root')['taskCompletion']
@@ -463,20 +458,20 @@ class AgentInput(unittest.TestCase):
         self.assertEqual({row['message'] for row in rows}, {'app-task', 'app-guidance', 'foreign-input'})
         self.assertTrue(all(row['attempt'] == 'codex-turn:fixture-turn' and
                             row['native'] == 'native-root' and row['handled'] is None for row in rows))
-        self.fx.coord('ack', 'app-task', 'root', 'Explicit earliest receipt.')
-        result = self.app_terminal('fixture-turn', 'completed')
-        self.assertEqual(result['status'], 'settled')
+        self.legacy_receipt('app-task', 'Explicit earliest receipt.')
         self.assertEqual(self.fx.coord('delivery', 'app-task')['receipt'], 'Explicit earliest receipt.')
-        self.assertEqual(self.fx.coord('delivery', 'app-guidance')['receipt'],
-                         'native-turn:codex-turn:fixture-turn')
+        self.assertIsNone(self.fx.coord('delivery', 'app-guidance')['receipt'])
+        self.assertEqual(self.fx.coord('delivery', 'app-guidance')['nativeInputStatus']['read'],
+                         'recorded')
         self.assertEqual(self.fx.coord('session', 'root')['taskCompletion'], before)
         self.assertIsNone(self.fx.coord('delivery', 'owned-input')['receipt'])
+        # A repeated read of the same input adds no row and writes no receipt.
         handled = self.reads()
-        self.fx.coord('settle-agent-input', 'root', 'native-root', 'fixture-turn', 'completed')
+        self.assertEqual(self.app_action('read', 'app-guidance').returncode, 0)
         self.assertEqual(self.reads(), handled)
         self.assertEqual(self.fx.coord('delivery', 'app-task')['receipt'], 'Explicit earliest receipt.')
 
-    def test_app_bare_acknowledge_preserves_previous_attempt_and_unread_inputs(self):
+    def test_app_reads_preserve_previous_attempt_and_unread_inputs(self):
         self.fx.prepare_input('app-earlier-read', 'root', 'Earlier full native read.',
                               kind='guidance')
         result = self.app_action('read', 'app-earlier-read')
@@ -499,35 +494,25 @@ class AgentInput(unittest.TestCase):
         indexed = self.app_action('pending', '--index')
         self.assertEqual(indexed.returncode, 0, indexed.stderr)
         self.assertEqual(self.reads(), before)
-        result = self.app_action('acknowledge')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        rows = json.loads(result.stdout)
-        self.assertEqual([row['id'] for row in rows], ['app-current-read'])
-        self.assertEqual(rows[0]['acknowledgement']['receipt'],
-                         'native-turn:codex-turn:next-read-turn')
-        for ident in ('app-earlier-read', 'app-current-unread', 'owned-input', 'foreign-input'):
-            self.assertIsNone(self.fx.coord('delivery', ident)['receipt'])
-        first = self.fx.coord('delivery', 'app-current-read')['receipt']
-        self.assertEqual(self.app_action('acknowledge').returncode, 0)
-        self.assertEqual(self.fx.coord('delivery', 'app-current-read')['receipt'], first)
-        before = self.reads()
+        # The acknowledge action is removed everywhere, including foreign and
+        # rebound native contexts.
+        refused = self.app_action('acknowledge')
+        self.assertEqual(refused.returncode, 2, refused.stderr)
         foreign = self.app_action('acknowledge', native='foreign-native')
         self.assertEqual(foreign.returncode, 2, foreign.stderr)
-        self.assertEqual(foreign.stdout, '')
-        self.assertEqual(json.loads(foreign.stderr.splitlines()[0])['error'],
-                         'handling-context')
         self.assertEqual(self.reads(), before)
-        self.assertIsNone(self.fx.coord('delivery', 'app-earlier-read')['receipt'])
+        for ident in ('app-earlier-read', 'app-current-unread', 'owned-input', 'foreign-input'):
+            self.assertIsNone(self.fx.coord('delivery', ident)['receipt'])
+        self.assertEqual(self.fx.coord('delivery', 'app-current-read')['nativeInputStatus']['read'],
+                         'recorded')
         self.fx.coord('connect', 'root', 'replacement-native', '')
         replaced = self.app_action('acknowledge')
         self.assertEqual(replaced.returncode, 2, replaced.stderr)
-        self.assertEqual(replaced.stdout, '')
-        self.assertEqual(json.loads(replaced.stderr.splitlines()[0])['error'],
-                         'handling-context')
         self.assertEqual(self.reads(), before)
-        self.assertEqual(self.fx.coord('delivery', 'app-current-read')['receipt'], first)
+        self.assertEqual(self.fx.coord('delivery', 'app-current-read')['nativeInputStatus']['read'],
+                         'recorded')
 
-    def test_app_bare_acknowledge_keeps_explicit_operator_stop(self):
+    def test_app_read_keeps_explicit_operator_stop(self):
         self.fx.prepare_input('app-stopped-read', 'root', 'Complete input before stop.',
                               kind='task')
         read = self.app_action('read', 'app-stopped-read')
@@ -537,15 +522,12 @@ class AgentInput(unittest.TestCase):
         stopped = self.fx.coord('session', 'root')['stop']
         result = self.app_action('acknowledge')
         self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertEqual(result.stdout, '')
-        self.assertEqual(json.loads(result.stderr.splitlines()[0])['error'],
-                         'handling-context')
         self.assertEqual(self.reads(), before)
         self.assertEqual(self.fx.coord('session', 'root')['stop'], stopped)
         self.assertEqual(stopped['id'], 'ack-operator-stop')
         self.assertIsNone(self.fx.coord('delivery', 'app-stopped-read')['receipt'])
 
-    def test_app_foreign_context_failure_stop_and_missing_terminal_preserve_reads(self):
+    def test_app_foreign_context_and_stop_preserve_reads(self):
         self.fx.prepare_input('app-task', 'root', 'Unfinished App input.', kind='task')
         result = self.app_action('read', 'app-task', native='foreign-native')
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -555,18 +537,15 @@ class AgentInput(unittest.TestCase):
         self.assertEqual(self.reads(), [])
         result = self.app_action('read', 'app-task')
         self.assertEqual(result.returncode, 0, result.stderr)
-        missing = self.fx.coord('settle-agent-input', 'root', 'native-root',
-                                'fixture-turn', 'completed')
-        self.assertEqual(missing['status'], 'incomplete')
+        self.assertEqual([row['message'] for row in self.reads()], ['app-task'])
         self.assertIsNone(self.fx.coord('delivery', 'app-task')['receipt'])
-        result = self.app_terminal('fixture-turn', 'failed')
-        self.assertEqual(result['status'], 'incomplete')
         self.fx.coord('stop', 'root', 'app-stop', 'Keep the explicit operator stop.')
-        self.fx.coord('settle-agent-input', 'root', 'native-root', 'fixture-turn', 'completed')
         self.assertTrue(all(row['handled'] is None for row in self.reads()))
+        self.assertEqual(self.fx.coord('delivery', 'app-task')['nativeInputStatus']['read'],
+                         'recorded')
         self.assertIsNone(self.fx.coord('delivery', 'app-task')['receipt'])
 
-    def test_app_inactive_native_and_changed_binding_keep_handling_incomplete(self):
+    def test_app_inactive_native_and_changed_binding_preserve_reads(self):
         self.fx.prepare_input('app-task', 'root', 'Input whose native route changes.', kind='task')
         proxy = self.fx.directory / 'codex'
         source = proxy.read_text()
@@ -578,19 +557,12 @@ class AgentInput(unittest.TestCase):
         self.assertEqual(self.reads(), [])
         proxy.write_text(source)
         self.assertEqual(self.app_action('read', 'app-task').returncode, 0)
-        body = {'type': 'codex-inbox-turn-settled', 'session': 'root',
-                'threadId': 'native-root',
-                'turn': {'id': 'fixture-turn', 'status': 'completed'},
-                'completedItems': []}
-        report = self.fx.directory / 'completed-before-rebind.json'
-        report.write_text(json.dumps(body))
-        self.fx.coord('report-file', 'codex-inbox-turn:root:native-root:fixture-turn',
-                      'root', str(report))
+        self.assertEqual([row['message'] for row in self.reads()], ['app-task'])
         self.fx.coord('connect', 'root', 'replacement-native', '')
-        result = self.fx.coord('settle-agent-input', 'root', 'native-root',
-                               'fixture-turn', 'completed')
-        self.assertEqual(result['status'], 'incomplete')
+        # A rebound native conversation keeps the earlier turn's read evidence.
         self.assertTrue(all(row['handled'] is None for row in self.reads()))
+        self.assertEqual(self.fx.coord('delivery', 'app-task')['nativeInputStatus']['read'],
+                         'recorded')
         self.assertIsNone(self.fx.coord('delivery', 'app-task')['receipt'])
 
     @unittest.skipUnless(pathlib.Path('/dev/full').exists(), 'requires /dev/full')
@@ -625,19 +597,78 @@ class AgentInput(unittest.TestCase):
         self.end(child, successor, failed=True)
         self.assertTrue(all(row['handled'] is None for row in self.reads()))
 
-    def test_old_schema_read_is_observational_and_reports_unrecorded(self):
+    def test_old_schema_read_converges_and_reports_read_state(self):
         with sqlite3.connect(self.fx.db) as database:
             database.execute('DROP TABLE message_reads')
         body = self.fx.coord('delivery', 'owned-input')
+        # The read path installs the current schema first; with no read rows the
+        # stored message reports its delivered/unread state.
         self.assertEqual(body['nativeInputStatus'],
-                         {'delivered': 'unrecorded', 'read': 'unrecorded',
-                          'handled': 'unrecorded', 'attempts': []})
+                         {'delivered': 'recorded', 'read': 'unrecorded', 'attempts': []})
         self.assertEqual(self.fx.coord('input', 'owned-input')['attemptRelation']['status'],
                          'unrecorded')
         with sqlite3.connect(f'{self.fx.db.as_uri()}?mode=ro', uri=True) as database:
-            self.assertIsNone(database.execute(
+            self.assertIsNotNone(database.execute(
                 "SELECT name FROM sqlite_master WHERE name='message_reads'").fetchone())
 
+
+
+    def test_forwarded_guidance_records_the_read_before_a_failed_turn(self):
+        self.fx.player('omp-parent', harness='omp')
+        self.fx.prepare_input('omp-owned-input', 'omp-parent', 'Complete OMP input.\nλ🙂\n',
+                              kind='task')
+        child = self.fx.spawn(*self.fx.receive_args('omp-parent'))
+        stream, started = self.fx.accept_child(child, 'omp-parent')
+        self.fx.eventually(lambda: self.fx.coord('player', 'omp-parent')['native'] == started['native'],
+                           'The retained startup frame was not observed.')
+        self.fx.action(stream, read_steer=True, signal_steer_wait=True,
+                       check_steer_receipt=True)
+        self.assertEqual(json.loads(stream.readline()), {'waiting_for_steer': True})
+        self.fx.coord('message', 'steered-guidance', 'root', 'omp-parent', 'guidance',
+                      'Forwarded complete input.\nλ🙂\n')
+        steered = json.loads(stream.readline())['steer_received']
+        self.assertEqual((steered['type'], steered['id']), ('steer', 'steered-guidance'))
+        # The frame written to the native input stream is recorded as read at
+        # forwarding time; no turn outcome or separate action is involved.
+        self.assertEqual({row['message'] for row in self.reads()},
+                         {'omp-owned-input', 'steered-guidance'})
+        delivered = self.fx.coord('delivery', 'steered-guidance')
+        self.assertIsNone(delivered['receipt'])
+        self.assertEqual(delivered['nativeInputStatus']['read'], 'recorded')
+        # A failed turn preserves the recorded read and owes nothing again.
+        self.fx.action(stream, body='Controlled native result.', complete_task=False,
+                       fail=True)
+        self.fx.finish(child, ok=False)
+        self.assertEqual({row['message'] for row in self.reads()},
+                         {'omp-owned-input', 'steered-guidance'})
+        self.assertEqual(self.fx.coord('inbox', 'omp-parent'), [])
+        self.fx.shutdown_idle_database_owner('forwarded read observer did not exit')
+
+    def test_legacy_receipt_counts_as_read_without_gating(self):
+        # A historical database carries a receipted message with no read row.
+        self.fx.prepare_input('legacy-receipted', 'parent', 'Receipted before reads existed.\n',
+                              kind='task')
+        self.legacy_receipt('legacy-receipted', 'historical receipt')
+        # The next command converges the schema and backfills the read evidence.
+        listed = self.fx.coord('inbox', 'parent')
+        self.assertEqual([row['id'] for row in listed], ['owned-input'])
+        status = self.fx.coord('delivery', 'legacy-receipted')['nativeInputStatus']
+        self.assertEqual(status['read'], 'recorded')
+        self.assertTrue(any(row['attempt'] == 'legacy' and row['identity'] == 'receipt'
+                            for row in status['attempts']))
+        # The legacy receipt does not gate a genuine later read.
+        child, stream, _ = self.start()
+        result = self.action(stream, 'read', 'legacy-receipted')
+        self.assertEqual(result['code'], 0, result)
+        self.assertEqual(json.loads(result['stdout'])[0]['delivery']['body'],
+                         'Receipted before reads existed.\n')
+        status = self.fx.coord('delivery', 'legacy-receipted')['nativeInputStatus']
+        self.assertTrue(any(row['identity'] != 'receipt' for row in status['attempts']))
+        self.assertEqual(self.fx.coord('delivery', 'legacy-receipted')['receipt'],
+                         'historical receipt')
+        self.fx.action(stream, body='Controlled native result.', complete_task=False)
+        self.fx.finish(child)
+        self.fx.shutdown_idle_database_owner('legacy read observer did not exit')
 
 if __name__ == '__main__':
     unittest.main()
