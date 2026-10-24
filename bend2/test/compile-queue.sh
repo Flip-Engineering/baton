@@ -1229,4 +1229,106 @@ else
   printf 'SKIP start order: no /proc/meminfo or too little memory\n'
 fi
 
+# Waiting entries start by priority class (extreme, high, rest), then by arrival.
+# A running entry is never stopped, and an entry of a lower class starts only when
+# it does not delay a waiting entry of a higher class. The tests use a private
+# state root, recorded key peaks that are fractions of the memory available now, and
+# a fake compiler that sleeps.
+if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
+  STATE_PR=$(fresh_state priority)
+  PR_FAKE=$(fresh_fake priority)
+  printf 'growth_kb=0\n' > "$STATE_PR/outside-growth"
+  pr_room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
+  pr_args() { # tag class sleep
+    printf '%s\n' --kind cc --source-root "$T" --state-root "$STATE_PR" --cwd "$T" \
+      --compiler "$PR_FAKE" --linker "$PR_FAKE" --version fake-version --input "$T/input.c" \
+      --artifact "binary=$T/pr-$1" --option "test=pr-$1"
+    [ -z "$2" ] || printf '%s\n' --priority "$2"
+  }
+  pr_run() { # tag class sleep; the key is the one of the tag
+    BATON_COMPILE_QUEUE_ROOT=$STATE_PR sh "$QUEUE" run $(pr_args "$1" "$2") \
+      -- "$PR_FAKE" --tag "$1" --log "$LOG" -o "$T/pr-$1" "$T/input.c" --sleep "$3" >"$T/pr-$1.$4.out" 2>"$T/pr-$1.$4.err"
+  }
+  pr_seed() { # tag percent sleep
+    pr_key=$(BATON_COMPILE_QUEUE_ROOT=$STATE_PR sh "$QUEUE" key $(pr_args "$1" "") \
+      -- "$PR_FAKE" --tag "$1" --log "$LOG" -o "$T/pr-$1" "$T/input.c" --sleep "$3")
+    (umask 0007; mkdir -p -m 2770 "$STATE_PR/keys/$pr_key")
+    printf 'peak_kb=%s\n' "$((pr_room * $2 / 100))" > "$STATE_PR/keys/$pr_key/peak"
+  }
+  pr_waiting() {
+    BATON_COMPILE_QUEUE_ROOT=$STATE_PR sh "$QUEUE" status --state-root "$STATE_PR" > "$T/pr-status.out"
+    grep -c '^waiting ' "$T/pr-status.out" || true
+  }
+  pr_submit() { # tag class sleep n: starts a requester and waits until the n-th ticket exists
+    pr_run "$1" "$2" "$3" a & pr_pids="$pr_pids $!"
+    i=0
+    while [ "$i" -lt 600 ] && [ "$(pr_waiting)" -lt "$4" ]; do i=$((i + 1)); sleep 0.05; done
+  }
+  pr_started() { # tag: waits for the start of the tag
+    i=0
+    while [ "$i" -lt 400 ] && ! grep -q " $1\$" "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
+  }
+  pr_order() { awk '$1 == "start" {print $4}' "$LOG" | tr '\n' ' '; }
+
+  # Classes: the holder runs while a rest, a high, an extreme, a second high and a
+  # second rest entry arrive in that order; each needs most of the memory.
+  for tag in hold rest-one high-one extreme-one high-two rest-two; do
+    case $tag in hold) pr_seed hold 70 12 ;; *) pr_seed "$tag" 70 0 ;; esac
+  done
+  : > "$LOG"; pr_pids=
+  pr_run hold "" 12 a & hold_pid=$!
+  pr_started hold
+  pr_submit rest-one rest 0 1
+  pr_submit high-one high 0 2
+  pr_submit extreme-one extreme 0 3
+  pr_submit high-two high 0 4
+  pr_submit rest-two "" 0 5
+  grep -q 'priority=extreme' "$T/pr-status.out" && grep -q 'priority=high' "$T/pr-status.out" \
+    && pass 'status lists the priority class of waiting entries' || bad 'status does not list the priority classes'
+  wait "$hold_pid" || bad 'priority: the running entry did not finish'
+  for pid in $pr_pids; do wait "$pid" || bad 'priority: a requester failed'; done
+  [ "$(pr_order)" = 'hold extreme-one high-one high-two rest-one rest-two ' ] \
+    && pass 'waiting entries started by class, then by arrival' || bad "start order was: $(pr_order)"
+  grep -q "^end [0-9]* [0-9]* hold 0\$" "$LOG" && [ -s "$T/pr-hold" ] \
+    && pass 'the running entry was not stopped by a waiting entry of a higher class' || bad 'the running entry did not finish'
+
+  # An entry of a lower class that fits now does not start when it would take the
+  # memory of a waiting entry of a higher class that fits beside the running entry.
+  pr_room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
+  pr_seed hold2 45 10; pr_seed extreme-two 68 2; pr_seed high-three 40 2; pr_seed rest-three 25 0
+  : > "$LOG"; pr_pids=
+  pr_run hold2 "" 10 a & hold_pid=$!
+  pr_started hold2
+  pr_submit extreme-two extreme 2 1
+  pr_submit high-three high 2 2
+  pr_submit rest-three rest 0 3
+  sleep 1
+  [ "$(pr_order)" = 'hold2 ' ] && pass 'a lower entry that fits waits while a higher entry would lose its memory' \
+    || bad "an entry started ahead of its class: $(pr_order)"
+  wait "$hold_pid" || bad 'priority: second holder failed'
+  for pid in $pr_pids; do wait "$pid" || bad 'priority: a requester failed'; done
+  [ "$(pr_order)" = 'hold2 extreme-two high-three rest-three ' ] \
+    && pass 'entries started in class order after the holder ended' || bad "start order was: $(pr_order)"
+
+  # A requester of a higher class that joins a waiting key raises the entry.
+  pr_room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
+  pr_seed hold3 70 8; pr_seed shared 70 0; pr_seed high-four 70 0
+  : > "$LOG"; pr_pids=
+  pr_run hold3 "" 8 a & hold_pid=$!
+  pr_started hold3
+  pr_submit shared rest 0 1
+  pr_submit high-four high 0 2
+  pr_run shared extreme 0 b & pr_pids="$pr_pids $!"
+  i=0
+  while [ "$i" -lt 200 ] && ! grep -q 'priority=extreme' "$T/pr-status.out" 2>/dev/null; do
+    i=$((i + 1)); sleep 0.1; pr_waiting >/dev/null
+  done
+  wait "$hold_pid" || bad 'priority: third holder failed'
+  for pid in $pr_pids; do wait "$pid" || bad 'priority: a requester failed'; done
+  [ "$(pr_order)" = 'hold3 shared high-four ' ] \
+    && pass 'a joining requester of a higher class raised the waiting entry' || bad "start order was: $(pr_order)"
+else
+  printf 'SKIP priority classes: no /proc/meminfo or too little memory\n'
+fi
+
 exit "$fail"
