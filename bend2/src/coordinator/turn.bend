@@ -1340,7 +1340,7 @@ def direct_second_started(+db: String, +player: String, +id: String, +log: Strin
         +outcome => deliveries => direct_completed(db,player,id,log,directory,handle,None{},(outcome,deliveries)),
         +held => status => +event => +error => +incomplete => deliveries => do IO<Unit>:
           +conversation : String <- direct_conversation(db,player,session)
-          advanced : Bool <- Subs.profile_handoff(db,player,id,event,conversation,cmd,cwd)
+          advanced : Bool <- Accounts.handoff(db,player,id,event,conversation,cmd,cwd)
           direct_handoff_decided(advanced, deliveries, Some{held},
             moved_deliveries => moved_lock => do IO<Unit>:
               transient : Bool <- Subs.transient_provider_error(db,event)
@@ -1453,7 +1453,7 @@ def direct_handoff_checked(+db: String, +player: String, +id: String, +cmd: Stri
   match outcome:
     case Ended{status,+event,+error,+incomplete}: do IO<Unit>:
       +conversation : String <- direct_conversation(db,player,session)
-      advanced : Bool <- Subs.profile_handoff(db,player,id,event,conversation,cmd,cwd)
+      advanced : Bool <- Accounts.handoff(db,player,id,event,conversation,cmd,cwd)
       direct_handoff_decided(advanced, deliveries, lock,
         moved_deliveries => moved_lock => do IO<Unit>:
           transient : Bool <- Subs.transient_provider_error(db,event)

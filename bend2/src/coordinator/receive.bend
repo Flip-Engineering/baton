@@ -7,6 +7,7 @@ import ./control.bend as Control
 import ./store.bend as Store
 import ./stop.bend as Stop
 import ./subscription-fallback.bend as Subs
+import ./accounts.bend as Accounts
 import ./turn.bend as Turn
 import ./native-initial-input.bend as NativeInitialInput
 import ../json/canonical.bend as J
@@ -645,7 +646,7 @@ def completed_observation(+db: String, +session: String, +id: String, log: Strin
   (+outcome,deliveries)=observation
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +conversation : String <- Turn.direct_conversation(db,session,native)
-    +superseded : Bool <- Subs.profile_handoff(db,session,id,terminal_event(outcome),conversation,cmd,cwd)
+    +superseded : Bool <- Accounts.handoff(db,session,id,terminal_event(outcome),conversation,cmd,cwd)
     routed : Bool <- route_decided(db,session,id,outcome,superseded)
     completed_routed(db,session,id,log,cursor,conversation,cwd,attempt,handle,lock,outcome,deliveries,again,adopted,superseded,routed)
 
