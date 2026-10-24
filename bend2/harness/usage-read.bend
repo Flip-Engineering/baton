@@ -260,9 +260,9 @@ def read_kimi(+observed: String, +reference: String) -> IO(Unit):
 # --- providers without a readable usage API ----------------------------------------
 
 # Anthropic API credit (an api_key account): the Admin usage and cost API reports past
-# usage and spend; no endpoint reports the remaining credit balance.
+# usage and spend; no documented endpoint for the remaining credit balance was found.
 def claude_credit_reason() -> String:
-  "Anthropic publishes no endpoint for the remaining API credit balance; the usage and cost API reports past usage and spend only"
+  "no documented endpoint for the remaining API credit balance was found; the usage and cost API reports past usage and spend only"
 
 # Claude Max (claude-oauth): the reader of GET https://api.anthropic.com/api/oauth/usage
 # is a provider module that is not in this build yet.
@@ -272,7 +272,7 @@ def read_claude(+observed: String, +reference: String) -> IO(Unit):
     print_unreadable("claude","",observed,claude_credit_reason()))
 
 def muse_reason() -> String:
-  "the configured Muse credential is an API key, and no usage or quota endpoint for it is documented"
+  "no authenticated usage endpoint was identified for the configured API key"
 
 # --- dispatch ------------------------------------------------------------------------
 
