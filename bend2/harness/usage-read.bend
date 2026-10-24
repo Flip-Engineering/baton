@@ -262,18 +262,23 @@ def muse_reason() -> String:
 
 # --- Codex -------------------------------------------------------------------------
 
-def codex_requests() -> String:
-  "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"baton2-usage-read\",\"version\":\"1.0\"}}}\n{\"jsonrpc\":\"2.0\",\"method\":\"initialized\"}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"account/rateLimits/read\",\"params\":{}}\n"
+# The helper sends initialize, waits for its answer, and only then sends initialized and
+# the read; codex app-server ended without answering when all three arrived at once.
+def codex_initialize() -> String:
+  "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"baton2-usage-read\",\"version\":\"1.0\"}}}\n"
+
+def codex_read_request() -> String:
+  "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\"}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"account/rateLimits/read\",\"params\":{}}\n"
 
 # The spawn host runs an absolute path, so env finds codex on PATH and sets
 # CODEX_HOME when the reference names one.
 def codex_argv(+home: String) -> List<String>:
   Bool.pick(List<String>,String.is_empty(home),["/usr/bin/env","codex","app-server"],["/usr/bin/env","CODEX_HOME=" ++ home,"codex","app-server"])
 
-# The response line's role: 'result' with the result object, 'error' with the
-# error message, or 'other' for any other line.
+# The response line's role: 'initialized' for the answer to initialize, 'result' with the
+# read's result object, 'error' with an error message, or 'other' for any other line.
 def codex_line_sql(+line: String) -> String:
-  "SELECT CASE WHEN NOT json_valid(" ++ C.q(line) ++ ") OR coalesce(json_extract(" ++ C.q(line) ++ ",'$.id'),0)<>2 THEN 'other' WHEN json_type(" ++ C.q(line) ++ ",'$.error') IS NOT NULL THEN 'error' || char(31) || coalesce(json_extract(" ++ C.q(line) ++ ",'$.error.message'),json_extract(" ++ C.q(line) ++ ",'$.error')) ELSE 'result' || char(31) || json_extract(" ++ C.q(line) ++ ",'$.result') END;"
+  "SELECT CASE WHEN NOT json_valid(" ++ C.q(line) ++ ") THEN 'other' WHEN coalesce(json_extract(" ++ C.q(line) ++ ",'$.id'),0)=1 AND json_type(" ++ C.q(line) ++ ",'$.error') IS NULL THEN 'initialized' WHEN coalesce(json_extract(" ++ C.q(line) ++ ",'$.id'),0) NOT IN (1,2) THEN 'other' WHEN json_type(" ++ C.q(line) ++ ",'$.error') IS NOT NULL THEN 'error' || char(31) || coalesce(json_extract(" ++ C.q(line) ++ ",'$.error.message'),json_extract(" ++ C.q(line) ++ ",'$.error')) ELSE 'result' || char(31) || json_extract(" ++ C.q(line) ++ ",'$.result') END;"
 
 def codex_finish(+handle: U32) -> IO(Unit):
   do IO<Unit>:
@@ -292,6 +297,9 @@ def codex_classified(+handle: U32, +observed: String, fields: List<&2,String>) -
       finished : Unit <- codex_finish(handle)
       printed : Unit <- codex_result(observed,result)
       IO.pure(Bool,True{})
+    case "initialized" <> Nil{}: do IO<Bool>:
+      wrote : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.write(handle,codex_read_request())
+      IO.pure(Bool,False{})
     case "error" <> +message <> Nil{}: do IO<Bool>:
       finished : Unit <- codex_finish(handle)
       printed : Unit <- print_unreadable("codex",Codex.codex_source(),observed,"codex app-server answered an error: " ++ message)
@@ -319,7 +327,7 @@ def codex_spawned(+observed: String, spawned: Result<&1,&1,U32 & String,U32>) ->
   match spawned:
     case Fail{(code,detail)}: print_unreadable("codex",Codex.codex_source(),observed,"codex app-server did not start: " ++ detail)
     case Done{+handle}: do IO<Unit>:
-      wrote : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.write(handle,codex_requests())
+      wrote : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.write(handle,codex_initialize())
       first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
       codex_lines(handle,observed,first)
 
