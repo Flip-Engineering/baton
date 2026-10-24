@@ -68,7 +68,7 @@ class StorageProcessRefs(unittest.TestCase):
         self.assertEqual(self.scan().stdout.strip(), 'absent')
 
     def test_exiting_processes_release_their_references(self):
-        script = "import select,subprocess,sys\nprint('ready')\nwhile not select.select([sys.stdin],[],[],0)[0]: subprocess.run(['/bin/true'],check=True)"
+        script = "import subprocess,sys; print('ready'); [subprocess.run(['/bin/true'],check=True) for _ in range(1000)]; sys.stdin.read()"
         with peer(script, self.root):
             for _ in range(8):
                 run = self.scan()
