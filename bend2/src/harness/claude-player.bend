@@ -2,8 +2,19 @@ import Base
 import ../host/process.bend as P
 import ../json/canonical.bend as J
 
+# The Stop hook runs the Baton executable named in BATON_STOP_HOOK, which the
+# retained launch sets; without it the hook does nothing (#1054). The hook
+# hands owed input to the running turn and reminds the agent of an open
+# assignment, so input that arrives during a turn is not left until the next
+# one.
+def stop_hook_command() -> String:
+  "[ -z \"$BATON_STOP_HOOK\" ] || exec \"$BATON_STOP_HOOK\" --stop-hook"
+
+def settings() -> String:
+  "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":" ++ J.string_literal(stop_hook_command()) ++ "}]}]}}"
+
 def arguments(cmd: String, model: String, effort: String) -> List<String>:
-  [cmd,"--print","--input-format","stream-json","--output-format","stream-json","--verbose","--permission-mode","bypassPermissions","--model",model,"--effort",effort]
+  [cmd,"--print","--input-format","stream-json","--output-format","stream-json","--verbose","--permission-mode","bypassPermissions","--settings",settings(),"--model",model,"--effort",effort]
 
 # The retained receive path builds the same argv the direct turn path spawns. A
 # recorded session continues that conversation and an empty one starts fresh.
