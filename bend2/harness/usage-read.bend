@@ -24,6 +24,10 @@ import ../src/coordinator/codex-rate-limits.bend as Codex
 # Claude Code OAuth access token in PATH, $HOME/.claude/.credentials.json when PATH is
 # empty; file:PATH is the first line of PATH; codex-home:PATH runs codex app-server
 # with CODEX_HOME=PATH, or with the inherited environment when PATH is empty.
+#
+# The optional third argument is the codex executable the coordinator recorded for the
+# reading seat. The Codex read runs BATON_CODEX_BIN when it is set, else that recorded
+# executable, else codex found on PATH.
 
 def print_unreadable(+provider: String, +source: String, +observed: String, +reason: String) -> IO(Unit):
   IO.print(UR.unreadable_document(provider,source,observed,reason))
@@ -270,10 +274,6 @@ def codex_initialize() -> String:
 def codex_read_request() -> String:
   "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\"}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"account/rateLimits/read\",\"params\":{}}\n"
 
-# The spawn host runs an absolute path, so env finds codex on PATH and sets
-# CODEX_HOME when the reference names one.
-def codex_argv(+home: String) -> List<String>:
-  Bool.pick(List<String>,String.is_empty(home),["/usr/bin/env","codex","app-server"],["/usr/bin/env","CODEX_HOME=" ++ home,"codex","app-server"])
 
 # The response line's role: 'initialized' for the answer to initialize, 'result' with the
 # read's result object, 'error' with an error message, or 'other' for any other line.
@@ -342,20 +342,28 @@ def codex_spawned(+observed: String, spawned: Result<&1,&1,U32 & String,U32>) ->
       first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
       codex_lines(handle,observed,first)
 
-def codex_spawn(+observed: String, +reference: String) -> IO(Unit):
+def env_value(found: Result<&1,&1,U32 & String,String>) -> String:
+  match found:
+    case Fail{error}: ""
+    case Done{+value}: Tx.trim_nl(value)
+
+def codex_spawn(+observed: String, +reference: String, +recorded: String) -> IO(Unit):
   do IO<Unit>:
-    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv(codex_argv(after_colon(reference))),".","/dev/null")
+    configured : Result<&1,&1,U32 & String,String> <- IO.get_env("BATON_CODEX_BIN")
+    +executable : String <- IO.pure(String,Codex.codex_executable(env_value(configured),recorded))
+    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv(Codex.codex_app_server_argv(after_colon(reference),executable)),".","/dev/null")
     codex_spawned(observed,spawned)
 
-def read_codex(+observed: String, +reference: String) -> IO(Unit):
-  Bool.pick(IO(Unit),String.eq(scheme_of(reference),"codex-home"),codex_spawn(observed,reference),print_unreadable("codex",Codex.codex_source(),observed,"the credential reference " ++ reference ++ " is not codex-home:PATH"))
+def read_codex(+observed: String, +reference: String, +recorded: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(scheme_of(reference),"codex-home"),codex_spawn(observed,reference,recorded),print_unreadable("codex",Codex.codex_source(),observed,"the credential reference " ++ reference ++ " is not codex-home:PATH"))
 
 # --- dispatch ------------------------------------------------------------------------
 
-def read_provider(+provider: String, +reference: String, +observed: String) -> IO(Unit):
+# recorded is the codex executable the coordinator recorded for the reading seat, or ''.
+def read_provider(+provider: String, +reference: String, +observed: String, +recorded: String) -> IO(Unit):
   match provider:
     case "zai": read_zai(observed,reference)
-    case "codex": read_codex(observed,reference)
+    case "codex": read_codex(observed,reference,recorded)
     case "claude": read_claude(observed,reference)
     case "muse": print_unreadable("muse","",observed,muse_reason())
     case _: print_unreadable(provider,"",observed,"no usage reader for provider " ++ provider ++ " is in this build")
@@ -364,8 +372,11 @@ def main_arguments(arguments: List<String>) -> IO(Unit):
   match arguments:
     case +provider <> +reference <> Nil{}: do IO<Unit>:
       now : Result<&1,&1,U32 & String,String> <- Clock.Clock.millis()
-      read_provider(provider,reference,time_value(now))
-    case other: IO.die(Unit,2,"usage: usage-read PROVIDER CREDENTIAL_REF")
+      read_provider(provider,reference,time_value(now),"")
+    case +provider <> +reference <> +recorded <> Nil{}: do IO<Unit>:
+      now : Result<&1,&1,U32 & String,String> <- Clock.Clock.millis()
+      read_provider(provider,reference,time_value(now),recorded)
+    case other: IO.die(Unit,2,"usage: usage-read PROVIDER CREDENTIAL_REF [CODEX_EXECUTABLE]")
 
 def main() -> IO(Unit):
   do IO<Unit>:

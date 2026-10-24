@@ -2,10 +2,12 @@
 # SQL from src/coordinator/codex-rate-limits.bend through the sqlite host over the
 # account/rateLimits/read result read live on 2026-10-23 (weekly window 15%,
 # ordinaryUsageAllowed true) and over variants of the same shape: ordinary usage
-# refused, the permission unavailable with a full 5-hour window, and no window.
+# refused, the permission unavailable with a full 5-hour window, and no window. It also
+# checks the order in which the Codex read chooses its executable and the app-server argv.
 #
 # usage: codex-rate-limits
 import Base
+import ../src/coordinator/commands.bend as C
 import ../src/coordinator/codex-rate-limits.bend as Codex
 import ../src/host/sqlite.bend as DB
 import ../src/git/text.bend as Tx
@@ -33,4 +35,11 @@ def main() -> IO(Unit):
     four : Unit <- expect("live-shape-readable",String.is_empty(readable))
     +windowless : String <- run(Codex.codex_problem_sql("{\"ordinaryUsageAllowed\":true,\"rateLimits\":{\"primary\":null,\"secondary\":null}}"))
     five : Unit <- expect("no-window-reason",String.eq(windowless,"the Codex rate-limit result has no primary or secondary window"))
+    six : Unit <- expect("configured-executable-first",String.eq(Codex.codex_executable("/opt/codex/bin/codex","/recorded/codex"),"/opt/codex/bin/codex"))
+    seven : Unit <- expect("recorded-executable-second",String.eq(Codex.codex_executable("","/recorded/codex"),"/recorded/codex"))
+    eight : Unit <- expect("path-codex-last",String.eq(Codex.codex_executable("",""),"codex"))
+    +argv : String <- run("SELECT " ++ C.q(Tx.join("|",Codex.codex_app_server_argv("/store","/recorded/codex"))) ++ ";")
+    nine : Unit <- expect("store-argv-sets-codex-home",String.eq(argv,"/usr/bin/env|CODEX_HOME=/store|/recorded/codex|app-server"))
+    +plain : String <- run("SELECT " ++ C.q(Tx.join("|",Codex.codex_app_server_argv("","codex"))) ++ ";")
+    ten : Unit <- expect("default-argv-uses-env",String.eq(plain,"/usr/bin/env|codex|app-server"))
     IO.print("fixture-codex-rate-limits-ok")

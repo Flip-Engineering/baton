@@ -22,6 +22,17 @@ import ../coordinator/commands.bend as C
 def codex_source() -> String:
   "codex app-server account/rateLimits/read"
 
+# The codex executable for a read: the configured BATON_CODEX_BIN value when it is set,
+# else the codex command recorded for the reading seat, else codex found on PATH. A
+# coordinator started without codex on PATH still reads through the first two.
+def codex_executable(+configured: String, +recorded: String) -> String:
+  Bool.pick(String,Bool.not(String.is_empty(configured)),configured,Bool.pick(String,Bool.not(String.is_empty(recorded)),recorded,"codex"))
+
+# The app-server argv: /usr/bin/env runs the executable, finds a bare codex on PATH,
+# and sets CODEX_HOME when the reference names a store.
+def codex_app_server_argv(+home: String, +executable: String) -> List<String>:
+  Bool.pick(List<String>,String.is_empty(home),["/usr/bin/env",executable,"app-server"],["/usr/bin/env","CODEX_HOME=" ++ home,executable,"app-server"])
+
 def codex_window_name_sql(+minutes: String) -> String:
   "CASE " ++ minutes ++ " WHEN 300 THEN '5-hour' WHEN 10080 THEN '7-day' ELSE CASE WHEN " ++ minutes ++ " IS NULL THEN 'unnamed' ELSE " ++ minutes ++ " || '-minute' END END"
 
