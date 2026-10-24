@@ -1237,7 +1237,7 @@ if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
   mode_room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
   mode_key=$(python3 -I - <<'PY'
 h = 14695981039346656037
-for c in b'mode.bend':
+for c in b'bend2/src/mode.bend':
     h ^= c
     h = (h * 1099511628211) & 0xFFFFFFFFFFFFFFFF
 print('%016x' % h)
