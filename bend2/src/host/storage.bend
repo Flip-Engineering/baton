@@ -31,6 +31,18 @@ def StorageHost.entries(path: String) -> IO(Result<&1,&1,U32 & String,String>):
 def StorageHost.remove(path: String, identity: String, root: String, root_identity: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./storage.c"
 
+# Cargo cache-tag and native lock-layout observation:
+# `cargo<TAB>dir:device:inode<TAB>tag|layout`, or `unclassified`.
+def StorageHost.cargo_probe(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./storage.c"
+
+# Revalidates Cargo output and its identity, acquires every native profile
+# lock without waiting, and holds the locks through rename and removal.
+# Associated names the effective build directory when it differs from path.
+# The caller holds its producer boundary and resolves current selections.
+def StorageHost.cargo_remove(path: String, identity: String, associated: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./storage.c"
+
 # Live process descriptor references to a path, comma-separated PIDs. This is
 # the open-file half of runtime input; process_refs covers cwd.
 def StorageHost.runtime_refs(path: String) -> IO(Result<&1,&1,U32 & String,String>):
