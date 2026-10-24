@@ -350,14 +350,15 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return json.loads(completed.stdout)
 
-    def test_reservation_reserves_the_lower_bound_and_serializes(self):
+    def test_reservation_reserves_the_lower_bound_and_admits_concurrent_requests(self):
         self.credit_account('200.00')
         first = self.reserve('attempt-1')
         self.assertEqual(first[:3], ['admitted', 'org-fixture', 'grant:2026-10-11'])
         self.assertEqual(first[3:], ['200', '0', '0'])
-        self.assertEqual(self.reserve('attempt-2'), ['refused', 'creditReservationInFlight'])
-        self.assertEqual(self.query("SELECT request,state,max_charge FROM credit_reservations"),
-                         [('attempt-1', 'reserved', '200')])
+        second = self.reserve('attempt-2')
+        self.assertEqual(second[:3], ['admitted', 'org-fixture', 'grant:2026-10-11'])
+        self.assertEqual(sorted(state for _, state, _ in self.query(
+            "SELECT request,state,max_charge FROM credit_reservations")), ['reserved', 'reserved'])
 
     def test_reservation_uses_the_observed_balance_when_lower(self):
         self.credit_account('150.00')
@@ -382,8 +383,7 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(self.query("SELECT request,state,max_charge FROM credit_reservations"),
                          [('attempt-1', 'reserved', '0.000024000')])
         again = self.gate_priced('attempt-2')
-        self.assertEqual(again[0], 'refused')
-        self.assertIn('creditReservationInFlight', again[1])
+        self.assertEqual(again[0], 'binding')
 
     def test_the_priced_gate_refuses_an_unpriced_request(self):
         self.credit_account('200.00')
