@@ -750,8 +750,12 @@ typedef struct { char *path, *identity, *associated, *answer, *detail; int error
 static int baton_cargo_retained(BatonCargo *call) {
   char *parent = NULL, *name = NULL, *prefix = NULL;
   if (baton_storage_split(call->path, &parent, &name)) return errno;
-  int fd = baton_storage_open_dir(parent), error = 0;
-  if (fd < 0) { error = errno; goto done; }
+  int directory_fd = baton_storage_open_dir(parent), error = 0;
+  if (directory_fd < 0) { error = errno; goto done; }
+  int fd = openat(directory_fd, ".", baton_storage_read_dir_flags());
+  error = fd < 0 ? errno : 0;
+  close(directory_fd);
+  if (error) goto done;
   if (asprintf(&prefix, ".%s.baton-cargo-", name) < 0) { error = ENOMEM; close(fd); goto done; }
   DIR *directory = fdopendir(fd);
   if (!directory) { error = errno; close(fd); goto done; }

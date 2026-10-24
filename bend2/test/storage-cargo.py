@@ -244,7 +244,7 @@ CREATE TABLE log_files(session TEXT,log TEXT);
         self.assertEqual((evidence / 'keep').read_text(), 'keep\n')
 
     def test_foreign_owned_directory_is_unreadable(self):
-        foreign = pathlib.Path(ROOT.anchor)
+        foreign = pathlib.Path(ROOT.anchor) / 'usr'
         self.assertNotEqual(foreign.stat().st_uid, os.geteuid())
         self.assertTrue(self.call('probe', foreign).startswith('unreadable\t'))
 
