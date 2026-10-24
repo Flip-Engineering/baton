@@ -56,33 +56,44 @@ def wake_message(+db: String, +message: String) -> IO(Unit):
     appended : Unit <- IO.try(Unit,Text.Text.append(db ++ ".wake-mark",message ++ " " ++ line ++ "\n"))
     IO.pure(Unit,Unit{})
 
-def dispatch(arguments: List<String>) -> IO(Unit):
+# The command word is matched in the first column only; the release wake's flag is
+# tested before the database argument is read.
+def command(+db: String, arguments: List<String>) -> IO(Unit):
   match arguments:
-    case "--wake-message" <> +db <> +message <> Nil{}: wake_message(db,message)
-    case +db <> "account" <> +action <> +id <> +provider <> +harness <> +funding <> +secret <> +organization <> +detail <> +session <> Nil{}:
+    case "account" <> +action <> +id <> +provider <> +harness <> +funding <> +secret <> +organization <> +detail <> +session <> Nil{}:
       A.run(db,action,id,provider,harness,funding,secret,organization,detail,session)
-    case +db <> "handoff" <> +session <> +id <> +event <> Nil{}:
+    case "handoff" <> +session <> +id <> +event <> Nil{}:
       do IO<Unit>:
         advanced : Bool <- A.handoff(db,session,id,event,"","","")
         IO.print(Bool.pick(String,advanced,"advanced","exhausted"))
-    case +db <> "handoff-with" <> +session <> +id <> +event <> +helper <> Nil{}:
+    case "handoff-with" <> +session <> +id <> +event <> +helper <> Nil{}:
       do IO<Unit>:
         advanced : Bool <- A.handoff_with(db,session,id,event,"","","",helper)
         IO.print(Bool.pick(String,advanced,"advanced","exhausted"))
-    case +db <> "current" <> +session <> +harness <> Nil{}:
+    case "current" <> +session <> +harness <> Nil{}:
       do IO<Unit>:
         account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
         IO.print(current_label(account))
-    case +db <> "read" <> +session <> +account <> +helper <> Nil{}:
+    case "read" <> +session <> +account <> +helper <> Nil{}:
       do IO<Unit>:
         +provider : String <- UW.seat_provider_io(db,session)
         read : Unit <- UW.read_with(db,session,provider,account,helper,"usage-window-refresh")
         IO.print("read")
-    case +db <> "wake" <> +session <> +helper <> Nil{}:
+    case "wake" <> +session <> +helper <> Nil{}:
       do IO<Unit>:
         line : String <- wake(db,session,helper)
         IO.print(line)
     case other: IO.die(Unit,2,"account-order-entry: account|handoff|handoff-with|current|read|wake|--wake-message")
+
+def wake_args(arguments: List<String>) -> IO(Unit):
+  match arguments:
+    case +db <> +message <> Nil{}: wake_message(db,message)
+    case other: IO.die(Unit,2,"account-order-entry --wake-message DB MESSAGE")
+
+def dispatch(arguments: List<String>) -> IO(Unit):
+  match arguments:
+    case +first <> +rest: Bool.pick(IO(Unit),String.eq(first,"--wake-message"),wake_args(rest),command(first,rest))
+    case Nil{}: IO.die(Unit,2,"account-order-entry: DB COMMAND ARGS")
 
 def main() -> IO(Unit):
   do IO<Unit>:
