@@ -1307,8 +1307,13 @@ if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
     || bad "an entry started ahead of its class: $(pr_order)"
   wait "$hold_pid" || bad 'priority: second holder failed'
   for pid in $pr_pids; do wait "$pid" || bad 'priority: a requester failed'; done
-  [ "$(pr_order)" = 'hold2 extreme-two high-three rest-three ' ] \
-    && pass 'entries started in class order after the holder ended' || bad "start order was: $(pr_order)"
+  # After the holder ended the extreme entry starts first. The rest entry may start
+  # beside it, because it leaves the memory that the high entry needs once the
+  # extreme entry ends; the high entry never waits for the rest entry.
+  case "$(pr_order)" in
+    'hold2 extreme-two high-three rest-three '|'hold2 extreme-two rest-three high-three ') pass 'the extreme entry started first after the holder ended' ;;
+    *) bad "start order was: $(pr_order)" ;;
+  esac
 
   # A requester of a higher class that joins a waiting key raises the entry.
   pr_room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
