@@ -47,8 +47,8 @@ def decision(output: Output, consumer: T.Presence, selection: T.Presence) -> T.D
     case Unclassified{}: T.Keep{"unclassified-cargo-output"}
     case Unreadable{detail}: T.Keep{"cargo-output-unreadable: " ++ detail}
     case Cargo{identity, origin}:
-      +active = presence_reason(consumer, "cargo-consumer-present", "cargo-consumer-unknown")
-      +selected = presence_reason(selection, "cargo-runtime-selected", "cargo-selection-unknown")
+      +active : String = presence_reason(consumer, "cargo-consumer-present", "cargo-consumer-unknown")
+      +selected : String = presence_reason(selection, "cargo-runtime-selected", "cargo-selection-unknown")
       Bool.pick(T.Decision, Bool.not(String.is_empty(active)), T.Keep{active},
         Bool.pick(T.Decision, Bool.not(String.is_empty(selected)), T.Keep{selected}, T.Remove{"cargo-output-released"}))
 
@@ -88,10 +88,11 @@ def output_identity(output: Output) -> String:
     case Cargo{identity, origin}: identity
     case other: "unresolved"
 
-def preview_entry(+path: String, owner: String, +output: Output,
+def preview_entry(+path: String, owner: String, output: Output,
                   bytes: Nat, decided: T.Decision) -> T.Preview:
-  +entry = T.Entry{path, T.BuildOutput{}, owner, "cargo-output", bytes, output_identity(output), decided}
-  T.Preview{path, "", output_identity(output), True{}, P.entry_plan_line(entry), Con{entry, Nil{}}}
+  +identity : String = output_identity(output)
+  +entry : T.Entry = T.Entry{path, T.BuildOutput{}, owner, "cargo-output", bytes, identity, decided}
+  T.Preview{path, "", identity, True{}, P.entry_plan_line(entry), Con{entry, Nil{}}}
 
 def preview_measured(measured: Maybe<Nat>, +path: String, +owner: String, +output: Output,
                      active: T.Presence, selected: T.Presence) -> T.Preview:
@@ -112,7 +113,8 @@ def preview(+path: String, +owner: String,
 def receipt_decided(+path: String, associated: String, owner: String, +output: Output,
                     bytes: Nat, +plan_decision: T.Decision) -> IO(T.Receipt):
   do IO<T.Receipt>:
-    +entry : T.Entry = T.Entry{path, T.BuildOutput{}, owner, "cargo-output", bytes, output_identity(output), plan_decision}
+    identity : String = output_identity(output)
+    +entry : T.Entry = T.Entry{path, T.BuildOutput{}, owner, "cargo-output", bytes, identity, plan_decision}
     collection : Collection <- collect_decided(plan_decision, output, path, associated)
     +outcome : T.Outcome = collection_outcome(collection)
     row : T.Removal = A.removal(entry, outcome)
