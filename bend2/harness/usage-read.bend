@@ -9,6 +9,7 @@ import ../src/coordinator/commands.bend as C
 import ../src/coordinator/usage-reads.bend as UR
 import ../src/coordinator/zai-quota.bend as Zai
 import ../src/coordinator/deepseek-usage.bend as Deepseek
+import ../src/coordinator/kimi-usage.bend as Kimi
 
 # usage-read PROVIDER CREDENTIAL_REF (#1025). Performs one live read of the provider's
 # usage API and prints one baton2-usage-read-v1 document: the normalized windows, or
@@ -248,6 +249,14 @@ def deepseek_request(+key: String) -> IO(Result<&1,&1,U32 & String,String & Stri
 def read_deepseek(+observed: String, +reference: String) -> IO(Unit):
   read_http("deepseek",Deepseek.deepseek_source(),observed,reference,key => deepseek_request(key),response => Deepseek.deepseek_windows_sql(response),response => Deepseek.deepseek_problem_sql(response))
 
+# --- Kimi Code ----------------------------------------------------------------------
+
+def kimi_request(+key: String) -> IO(Result<&1,&1,U32 & String,String & String>):
+  Http.Http.request("GET","https://api.kimi.com/coding/v1/usages","Authorization: Bearer " ++ key ++ "\nAccept: application/json\nUser-Agent: baton2-usage-read/1.0\n","")
+
+def read_kimi(+observed: String, +reference: String) -> IO(Unit):
+  read_http("kimi-code",Kimi.kimi_source(),observed,reference,key => kimi_request(key),response => Kimi.kimi_windows_sql(response),response => Kimi.kimi_problem_sql(response))
+
 # --- providers without a readable usage API ----------------------------------------
 
 # Anthropic API credit (an api_key account): the Admin usage and cost API reports past
@@ -271,6 +280,7 @@ def read_provider(+provider: String, +reference: String, +observed: String) -> I
   match provider:
     case "zai": read_zai(observed,reference)
     case "deepseek": read_deepseek(observed,reference)
+    case "kimi-code": read_kimi(observed,reference)
     case "claude": read_claude(observed,reference)
     case "muse": print_unreadable("muse","",observed,muse_reason())
     case _: print_unreadable(provider,"",observed,"no usage reader for provider " ++ provider ++ " is in this build")
