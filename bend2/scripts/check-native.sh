@@ -21,6 +21,8 @@ sh bend2/scripts/build-native.sh bend2/tests/land.bend .scratch/bend2/land-test
 .scratch/bend2/land-test
 sh bend2/scripts/build-native.sh bend2/tests/storage.bend .scratch/bend2/storage-test
 .scratch/bend2/storage-test
+sh bend2/scripts/build-native.sh bend2/tests/storage-cargo.bend .scratch/bend2/storage-cargo-test
+BATON2_STORAGE_CARGO_TEST="$root/.scratch/bend2/storage-cargo-test" BATON2_TEST_CARGO="${BATON2_TEST_CARGO:-$(command -v cargo || printf '%s/.cargo/bin/cargo' "$HOME")}" BATON2_TEST_RUSTC="${BATON2_TEST_RUSTC:-$(command -v rustc || printf '%s/.cargo/bin/rustc' "$HOME")}" "$PYTHON3" bend2/test/storage-cargo.py
 sh bend2/scripts/build-native.sh bend2/test/subscription-profiles.bend .scratch/bend2/subscription-profiles-test
 .scratch/bend2/subscription-profiles-test
 sh bend2/scripts/build-native.sh bend2/test/focused-reads.bend .scratch/bend2/focused-reads

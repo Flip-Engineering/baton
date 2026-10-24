@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -230,9 +231,9 @@ static Term baton_storage_observe_pack(Env e, IoWork *w) {
 
 typedef struct { baton_u64 bytes, nodes, other; } BatonStorageCount;
 
-static int baton_storage_measure_walk(int fd, BatonStorageCount *count, int depth);
+static int baton_storage_measure_walk(int fd, BatonStorageCount *count);
 
-static int baton_storage_measure_entry(int fd, const char *name, BatonStorageCount *count, int depth) {
+static int baton_storage_measure_entry(int fd, const char *name, BatonStorageCount *count) {
   struct stat info;
   if (fstatat(fd, name, &info, AT_SYMLINK_NOFOLLOW)) return errno == ENOENT ? 0 : errno;
   if (S_ISREG(info.st_mode)) {
@@ -250,7 +251,7 @@ static int baton_storage_measure_entry(int fd, const char *name, BatonStorageCou
       return ESTALE;
     }
     count->nodes++;
-    int error = baton_storage_measure_walk(child, count, depth + 1);
+    int error = baton_storage_measure_walk(child, count);
     close(child);
     return error;
   }
@@ -258,8 +259,7 @@ static int baton_storage_measure_entry(int fd, const char *name, BatonStorageCou
   return 0;
 }
 
-static int baton_storage_measure_walk(int fd, BatonStorageCount *count, int depth) {
-  if (depth > BATON_STORAGE_DEPTH) return ELOOP;
+static int baton_storage_measure_walk(int fd, BatonStorageCount *count) {
   int copy = dup(fd);
   if (copy < 0) return errno;
   DIR *directory = fdopendir(copy);
@@ -271,7 +271,7 @@ static int baton_storage_measure_walk(int fd, BatonStorageCount *count, int dept
     entry = readdir(directory);
     if (!entry) { if (errno) error = errno; break; }
     if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-    error = baton_storage_measure_entry(fd, entry->d_name, count, depth);
+    error = baton_storage_measure_entry(fd, entry->d_name, count);
     if (error) break;
   }
   closedir(directory);
@@ -307,7 +307,7 @@ static void baton_storage_measure_call(IoWork *w) {
     else {
       struct stat opened;
       if (fstat(child, &opened) || opened.st_dev != info.st_dev || opened.st_ino != info.st_ino) call->error = ESTALE;
-      else call->error = baton_storage_measure_walk(child, &count, 0);
+      else call->error = baton_storage_measure_walk(child, &count);
       close(child);
     }
   } else {
@@ -435,9 +435,9 @@ static int baton_storage_names_push(BatonStorageNames *names, const char *name) 
   return 0;
 }
 
-static int baton_storage_remove_children(int fd, BatonStorageCount *count, int depth);
+static int baton_storage_remove_children(int fd, BatonStorageCount *count);
 
-static int baton_storage_remove_child(int fd, const char *name, BatonStorageCount *count, int depth) {
+static int baton_storage_remove_child(int fd, const char *name, BatonStorageCount *count) {
   struct stat info;
   if (fstatat(fd, name, &info, AT_SYMLINK_NOFOLLOW)) return errno == ENOENT ? 0 : errno;
   if (S_ISREG(info.st_mode)) {
@@ -459,7 +459,7 @@ static int baton_storage_remove_child(int fd, const char *name, BatonStorageCoun
       close(child);
       return ESTALE;
     }
-    int error = baton_storage_remove_children(child, count, depth + 1);
+    int error = baton_storage_remove_children(child, count);
     close(child);
     if (error) return error;
     if (unlinkat(fd, name, AT_REMOVEDIR) && errno != ENOENT) return errno;
@@ -469,8 +469,7 @@ static int baton_storage_remove_child(int fd, const char *name, BatonStorageCoun
   return ENOTSUP;
 }
 
-static int baton_storage_remove_children(int fd, BatonStorageCount *count, int depth) {
-  if (depth > BATON_STORAGE_DEPTH) return ELOOP;
+static int baton_storage_remove_children(int fd, BatonStorageCount *count) {
   int copy = dup(fd);
   if (copy < 0) return errno;
   DIR *directory = fdopendir(copy);
@@ -488,7 +487,7 @@ static int baton_storage_remove_children(int fd, BatonStorageCount *count, int d
   }
   closedir(directory);
   for (size_t i = 0; !error && i < names.count; i++) {
-    error = baton_storage_remove_child(fd, names.names[i], count, depth);
+    error = baton_storage_remove_child(fd, names.names[i], count);
   }
   baton_storage_names_free(&names);
   return error;
@@ -515,7 +514,7 @@ static int baton_storage_remove_at(int parent, const char *name, const char *kin
       return 2;
     }
     count->nodes = 1;
-    int error = baton_storage_remove_children(child, count, 0);
+    int error = baton_storage_remove_children(child, count);
     close(child);
     if (error) { errno = error; return -1; }
     if (unlinkat(parent, name, AT_REMOVEDIR)) return errno == ENOENT ? 0 : -1;
@@ -595,6 +594,313 @@ static Term baton_storage_remove_pack(Env e, IoWork *w) {
   w->data = NULL;
   return result;
 }
+
+/* ---------- Cargo output ---------- */
+
+/* Cargo 5f94df478 src/compiler/layout.rs takes a shared .cargo-lock for
+   compatibility and uses build/artifact locks for newer layouts. */
+static const char *baton_cargo_locks[] = {
+  ".cargo-lock", ".cargo-build-lock", ".cargo-artifact-lock"
+};
+
+static int baton_cargo_regular(int fd, const char *name) {
+  struct stat info;
+  if (fstatat(fd, name, &info, AT_SYMLINK_NOFOLLOW)) return errno == ENOENT ? 0 : -1;
+  if (!S_ISREG(info.st_mode)) { errno = EINVAL; return -1; }
+  return 1;
+}
+
+static int baton_cargo_tag(int fd) {
+  static const char signature[] = "Signature: 8a477f597d28d172789f06886806bc55";
+  int tag = openat(fd, "CACHEDIR.TAG", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+  if (tag < 0) return errno == ENOENT ? 0 : -1;
+  char bytes[sizeof(signature) - 1];
+  size_t used = 0;
+  while (used < sizeof(bytes)) {
+    ssize_t count = read(tag, bytes + used, sizeof(bytes) - used);
+    if (count < 0 && errno == EINTR) continue;
+    if (count < 0) { int error = errno; close(tag); errno = error; return -1; }
+    if (!count) break;
+    used += (size_t)count;
+  }
+  close(tag);
+  return used == sizeof(bytes) && !memcmp(bytes, signature, sizeof(bytes));
+}
+
+/* A profile has Cargo's compatibility lock or its separate build lock.
+   Relative lock paths refer to the opened allocation directory. */
+static int baton_cargo_profile(int fd, const char *relative, BatonStorageNames *locks) {
+  int profile = baton_cargo_regular(fd, ".cargo-lock");
+  if (profile < 0) return -1;
+  int build = baton_cargo_regular(fd, ".cargo-build-lock");
+  if (build < 0) return -1;
+  if (!profile && !build) return 0;
+  for (size_t i = 0; i < sizeof(baton_cargo_locks) / sizeof(baton_cargo_locks[0]); i++) {
+    int found = baton_cargo_regular(fd, baton_cargo_locks[i]);
+    if (found < 0) return -1;
+    if (!found) continue;
+    char *name = NULL;
+    if (asprintf(&name, "%s/%s", relative, baton_cargo_locks[i]) < 0) { errno = ENOMEM; return -1; }
+    int error = baton_storage_names_push(locks, name);
+    free(name);
+    if (error) { errno = error; return -1; }
+  }
+  return 1;
+}
+
+/* Cargo places profiles directly below the allocation, or below a target
+   triple. The traversal covers these two layout components. */
+static int baton_cargo_profiles(int fd, const char *prefix, int targets, BatonStorageNames *locks) {
+  int copy = openat(fd, ".", baton_storage_read_dir_flags());
+  if (copy < 0) return -1;
+  DIR *directory = fdopendir(copy);
+  if (!directory) { int error = errno; close(copy); errno = error; return -1; }
+  int error = 0;
+  for (;;) {
+    errno = 0;
+    struct dirent *entry = readdir(directory);
+    if (!entry) { error = errno; break; }
+    if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+    struct stat info;
+    if (fstatat(fd, entry->d_name, &info, AT_SYMLINK_NOFOLLOW)) { error = errno; break; }
+    if (!S_ISDIR(info.st_mode)) continue;
+    int child = openat(fd, entry->d_name, baton_storage_read_dir_flags());
+    if (child < 0) { error = errno; break; }
+    char *relative = NULL;
+    if (asprintf(&relative, "%s%s%s", prefix, *prefix ? "/" : "", entry->d_name) < 0) {
+      close(child); error = ENOMEM; break;
+    }
+    int profile = baton_cargo_profile(child, relative, locks);
+    if (profile < 0) error = errno;
+    else if (!profile && targets && baton_cargo_profiles(child, relative, 0, locks)) error = errno;
+    free(relative);
+    close(child);
+    if (error) break;
+  }
+  closedir(directory);
+  if (error) { errno = error; return -1; }
+  return 0;
+}
+
+static int baton_cargo_output(int fd, BatonStorageNames *locks, int *tagged) {
+  *tagged = baton_cargo_tag(fd);
+  if (*tagged < 0) return -1;
+  int rustc = baton_cargo_regular(fd, ".rustc_info.json");
+  if (rustc < 0) return -1;
+  if (!*tagged && !rustc) return 0;
+  if (baton_cargo_profiles(fd, "", 1, locks)) return -1;
+  return *tagged || locks->count > 0;
+}
+
+static int baton_cargo_open(const char *path) {
+  int directory = baton_storage_open_dir(path);
+  if (directory < 0) return -1;
+  int fd = openat(directory, ".", baton_storage_read_dir_flags());
+  int error = errno;
+  close(directory);
+  if (fd < 0) { errno = error; return -1; }
+  struct stat info;
+  if (fstat(fd, &info)) { error = errno; close(fd); errno = error; return -1; }
+  if (info.st_uid != geteuid()) { close(fd); errno = EPERM; return -1; }
+  return fd;
+}
+
+typedef struct { char *path, *identity, *associated, *answer; int error; } BatonCargo;
+
+static void baton_cargo_probe_call(IoWork *w) {
+  BatonCargo *call = (BatonCargo *)w->data;
+  int fd = baton_cargo_open(call->path);
+  if (fd < 0) { call->error = errno; return; }
+  BatonStorageNames locks = {NULL, 0, 0};
+  int tagged = 0;
+  int found = baton_cargo_output(fd, &locks, &tagged);
+  if (found < 0) call->error = errno;
+  else if (!found) call->answer = strdup("unclassified");
+  else {
+    struct stat info;
+    if (fstat(fd, &info)) call->error = errno;
+    else if (asprintf(&call->answer, "cargo\tdir:%llu:%llu\t%s", (baton_u64)info.st_dev,
+                     (baton_u64)info.st_ino, tagged ? "tag" : "layout") < 0) call->error = ENOMEM;
+  }
+  baton_storage_names_free(&locks);
+  close(fd);
+  if (!call->error && !call->answer) call->error = ENOMEM;
+}
+
+static int baton_cargo_lock(int fd, const BatonStorageNames *names, int **held, size_t *count) {
+  for (size_t i = 0; i < names->count; i++) {
+    char *parent = NULL, *name = NULL;
+    if (baton_storage_split(names->names[i], &parent, &name)) return -1;
+    int directory = baton_storage_open_dir_at(fd, parent);
+    int lock = directory < 0 ? -1 : openat(directory, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    int error = errno;
+    if (directory >= 0) close(directory);
+    free(parent); free(name);
+    if (lock < 0) { errno = error; return -1; }
+    int locked;
+    do { locked = flock(lock, LOCK_EX | LOCK_NB); } while (locked < 0 && errno == EINTR);
+    if (locked < 0) { error = errno; close(lock); errno = error; return -1; }
+    int *grown = realloc(*held, (*count + 1) * sizeof(int));
+    if (!grown) { close(lock); errno = ENOMEM; return -1; }
+    *held = grown;
+    (*held)[(*count)++] = lock;
+  }
+  return 0;
+}
+
+#ifdef BATON_STORAGE_CARGO_TEST
+/* The functional fixture observes the held native locks after the rename. */
+static int baton_cargo_test_renamed(void) {
+  const char *ready_path = getenv("BATON_CARGO_TEST_RENAMED");
+  const char *release_path = getenv("BATON_CARGO_TEST_RELEASE");
+  if (!ready_path || !release_path) return 0;
+  int ready = open(ready_path, O_WRONLY | O_CLOEXEC);
+  if (ready < 0) return errno;
+  char byte = 1;
+  ssize_t result;
+  do { result = write(ready, &byte, 1); } while (result < 0 && errno == EINTR);
+  int error = result == 1 ? 0 : (errno ? errno : EIO);
+  close(ready);
+  if (error) return error;
+  int release = open(release_path, O_RDONLY | O_CLOEXEC);
+  if (release < 0) return errno;
+  do { result = read(release, &byte, 1); } while (result < 0 && errno == EINTR);
+  error = result == 1 ? 0 : (errno ? errno : EIO);
+  close(release);
+  return error;
+}
+#endif
+
+static void baton_cargo_remove_call(IoWork *w) {
+  BatonCargo *call = (BatonCargo *)w->data;
+  int fd = -1, other = -1, parent_fd = -1, box_fd = -1;
+  int *held = NULL, error = 0, renamed = 0;
+  size_t held_count = 0;
+  char *parent = NULL, *name = NULL;
+  BatonStorageNames locks = {NULL, 0, 0}, other_locks = {NULL, 0, 0};
+  BatonStorageCount count = {0, 0, 0};
+  char kind[16], box[96] = "";
+  baton_u64 device = 0, inode = 0;
+  if (baton_storage_identity_parse(call->identity, kind, sizeof(kind), &device, &inode) || strcmp(kind, "dir")) {
+    call->error = EINVAL; return;
+  }
+  if (baton_storage_split(call->path, &parent, &name)) { call->error = errno; goto done; }
+  parent_fd = baton_storage_open_dir(parent);
+  if (parent_fd < 0) { call->error = errno; goto done; }
+  fd = openat(parent_fd, name, baton_storage_read_dir_flags());
+  if (fd < 0) {
+    if (errno == ENOENT) call->answer = strdup("already-absent\t0\t0");
+    else call->error = errno;
+    goto done;
+  }
+  struct stat info;
+  if (fstat(fd, &info)) { call->error = errno; goto done; }
+  if (!baton_storage_identity_match(&info, kind, device, inode)) {
+    call->answer = strdup("changed\t0\t0"); goto done;
+  }
+  if (info.st_uid != geteuid()) { call->error = EPERM; goto done; }
+  int tagged = 0, found = baton_cargo_output(fd, &locks, &tagged);
+  if (found < 0) { call->error = errno; goto done; }
+  if (!found) { call->answer = strdup("refused\tunclassified-cargo-output"); goto done; }
+  if (!locks.count) { call->answer = strdup("refused\tcargo-lock-layout-unresolved"); goto done; }
+  if (baton_cargo_lock(fd, &locks, &held, &held_count)) { error = errno; goto lock_failed; }
+  if (call->associated[0]) {
+    other = baton_cargo_open(call->associated);
+    if (other < 0) { call->error = errno; goto done; }
+    struct stat associated;
+    if (fstat(other, &associated)) { call->error = errno; goto done; }
+    if (associated.st_dev != info.st_dev || associated.st_ino != info.st_ino) {
+      found = baton_cargo_output(other, &other_locks, &tagged);
+      if (found < 0) { call->error = errno; goto done; }
+      if (!found || !other_locks.count) { call->answer = strdup("refused\tcargo-build-layout-unresolved"); goto done; }
+      if (baton_cargo_lock(other, &other_locks, &held, &held_count)) { error = errno; goto lock_failed; }
+    }
+  }
+  if (fstatat(parent_fd, name, &info, AT_SYMLINK_NOFOLLOW)) { call->error = errno; goto done; }
+  if (!baton_storage_identity_match(&info, kind, device, inode)) {
+    call->answer = strdup("changed\t0\t0"); goto done;
+  }
+  static unsigned long long sequence;
+  for (;;) {
+    unsigned long long serial = __sync_add_and_fetch(&sequence, 1);
+    snprintf(box, sizeof(box), ".baton-cargo-%ld-%llu", (long)getpid(), serial);
+    if (!mkdirat(parent_fd, box, 0700)) break;
+    if (errno != EEXIST) { call->error = errno; box[0] = 0; goto done; }
+  }
+  box_fd = openat(parent_fd, box, baton_storage_read_dir_flags());
+  if (box_fd < 0) { call->error = errno; goto done; }
+  if (renameat(parent_fd, name, box_fd, "output")) { call->error = errno; goto done; }
+  renamed = 1;
+  count.nodes = 1;
+#ifdef BATON_STORAGE_CARGO_TEST
+  error = baton_cargo_test_renamed();
+#endif
+  if (!error) error = baton_storage_remove_children(fd, &count);
+  if (!error && unlinkat(box_fd, "output", AT_REMOVEDIR)) error = errno;
+  if (error) {
+    if (asprintf(&call->answer, "refused\tpartial bytes=%llu nodes=%llu error=%d retained=%s/%s/output",
+                 count.bytes, count.nodes, error, parent, box) < 0) call->error = ENOMEM;
+  } else if (asprintf(&call->answer, "removed\t%llu\t%llu", count.bytes, count.nodes) < 0) call->error = ENOMEM;
+  goto done;
+lock_failed:
+  if (error == EWOULDBLOCK || error == EAGAIN) call->answer = strdup("refused\tcargo-writer-active");
+  else call->error = error;
+done:
+  if (box_fd >= 0) close(box_fd);
+  if (parent_fd >= 0 && box[0] && (!renamed || !error)) {
+    if (unlinkat(parent_fd, box, AT_REMOVEDIR) && !call->error) call->error = errno;
+  }
+  if (fd >= 0) close(fd);
+  if (other >= 0) close(other);
+  if (parent_fd >= 0) close(parent_fd);
+  for (size_t i = 0; i < held_count; i++) close(held[i]);
+  free(held);
+  baton_storage_names_free(&locks);
+  baton_storage_names_free(&other_locks);
+  free(parent); free(name);
+  if (!call->error && !call->answer) call->error = ENOMEM;
+}
+
+static Term baton_cargo_pack(Env e, IoWork *w) {
+  BatonCargo *call = (BatonCargo *)w->data;
+  Term result = call->error ? io_fail(e, call->error, "Cargo output observation or removal failed")
+    : io_done(e, io_str(e, call->answer, strlen(call->answer)));
+  free(call->path); free(call->identity); free(call->associated); free(call->answer); free(call);
+  w->data = NULL;
+  return result;
+}
+
+#ifdef CID_STORAGEHOST_CARGO_PROBE
+static Term baton_cargo_probe_run(Env e, Term *f, IoWork *w) {
+  BatonCargo *call = calloc(1, sizeof(*call));
+  if (!call) return io_fail(e, ENOMEM, NULL);
+  u64 length = 0;
+  call->path = io_cstr(e, f[0], &length);
+  if (!call->path || strlen(call->path) != length) { free(call->path); free(call); return io_fail(e, EINVAL, "path contains NUL"); }
+  w->data = (char *)call;
+  return io_work(w, baton_cargo_probe_call, baton_cargo_pack);
+}
+static void __attribute__((constructor)) baton_cargo_probe_use(void) {io_eff(CID_STORAGEHOST_CARGO_PROBE, baton_cargo_probe_run, 0);}
+#endif
+
+#ifdef CID_STORAGEHOST_CARGO_REMOVE
+static Term baton_cargo_remove_run(Env e, Term *f, IoWork *w) {
+  BatonCargo *call = calloc(1, sizeof(*call));
+  if (!call) return io_fail(e, ENOMEM, NULL);
+  char **fields[] = {&call->path, &call->identity, &call->associated};
+  for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); i++) {
+    u64 length = 0;
+    *fields[i] = io_cstr(e, f[i], &length);
+    if (!*fields[i] || strlen(*fields[i]) != length) {
+      free(call->path); free(call->identity); free(call->associated); free(call);
+      return io_fail(e, EINVAL, "Cargo output argument contains NUL");
+    }
+  }
+  w->data = (char *)call;
+  return io_work(w, baton_cargo_remove_call, baton_cargo_pack);
+}
+static void __attribute__((constructor)) baton_cargo_remove_use(void) {io_eff(CID_STORAGEHOST_CARGO_REMOVE, baton_cargo_remove_run, 0);}
+#endif
 
 /* ---------- process references ---------- */
 
