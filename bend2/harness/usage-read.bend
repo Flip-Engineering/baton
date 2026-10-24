@@ -265,8 +265,10 @@ def muse_reason() -> String:
 def codex_requests() -> String:
   "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"baton2-usage-read\",\"version\":\"1.0\"}}}\n{\"jsonrpc\":\"2.0\",\"method\":\"initialized\"}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"account/rateLimits/read\",\"params\":{}}\n"
 
+# The spawn host runs an absolute path, so env finds codex on PATH and sets
+# CODEX_HOME when the reference names one.
 def codex_argv(+home: String) -> List<String>:
-  Bool.pick(List<String>,String.is_empty(home),["codex","app-server"],["env","CODEX_HOME=" ++ home,"codex","app-server"])
+  Bool.pick(List<String>,String.is_empty(home),["/usr/bin/env","codex","app-server"],["/usr/bin/env","CODEX_HOME=" ++ home,"codex","app-server"])
 
 # The response line's role: 'result' with the result object, 'error' with the
 # error message, or 'other' for any other line.
