@@ -1227,6 +1227,57 @@ if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
     && pass 'jobs that cannot run together started in request order' || bad "start order was: $fifo_order"
 else
   printf 'SKIP start order: no /proc/meminfo or too little memory\n'
+# A check and a full generation of one entry have separate records. A new command
+# that has no record of its own is bounded by the peak recorded for its entry in
+# the same mode, so a new wrapper of a check of a large entry is not bounded by the
+# generation of the entry.
+if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
+  STATE_MODE=$(fresh_state mode)
+  printf 'import Base\ndef main() -> IO(Unit): IO.die(Unit,0,"mode")\n' > "$T/src/bend2/src/mode.bend"
+  mode_room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
+  mode_key=$(python3 -I - <<'PY'
+h = 14695981039346656037
+for c in b'mode.bend':
+    h ^= c
+    h = (h * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+print('%016x' % h)
+PY
+)
+  (umask 0007; mkdir -p -m 2770 "$STATE_MODE/peaks")
+  printf 'peak_kb=%s\n' "$((mode_room * 9 / 10))" > "$STATE_MODE/peaks/k.cgen"
+  printf 'peak_kb=%s\n' "$((mode_room * 7 / 10))" > "$STATE_MODE/peaks/en.cgen.$mode_key"
+  printf 'peak_kb=%s\n' "$((mode_room * 7 / 10))" > "$STATE_MODE/peaks/em.cgen.$mode_key.full"
+  printf 'peak_kb=64\n' > "$STATE_MODE/peaks/em.cgen.$mode_key.check"
+  for compiler_dir in mode-one mode-two mode-three mode-four; do
+    mkdir -p "$T/$compiler_dir"
+    cp "$FAKE" "$T/$compiler_dir/compiler"
+    printf '# %s\n' "$compiler_dir" >> "$T/$compiler_dir/compiler"
+    chmod +x "$T/$compiler_dir/compiler"
+  done
+  mode_run() { # compiler_dir tag option
+    BATON_COMPILE_QUEUE_ROOT="$STATE_MODE" sh "$QUEUE" run --kind cgen --state-root "$STATE_MODE" --cwd "$T/src" --root "$T/src" \
+      --source-root "$T/src" --entry bend2/src/mode.bend --compiler "$T/$1/compiler" \
+      --artifact "c.c=$T/$2.c" --option "test=$2" \
+      -- "$T/$1/compiler" --tag "$2" --log "$LOG" -o "$T/$2.c" --sleep 6 $3 >"$T/$2.out" 2>"$T/$2.err"
+  }
+  : > "$LOG"
+  mode_run mode-one mode-check-a --check-only & ma=$!
+  mode_run mode-two mode-check-b --check-only & mb=$!
+  wait "$ma" || bad 'mode: first check failed'
+  wait "$mb" || bad 'mode: second check failed'
+  assert_serialized && bad 'new checks of an entry were bounded by the generation of the entry' \
+    || pass 'a new check of an entry is bounded by the peak recorded for checks of the entry'
+  : > "$LOG"
+  mode_run mode-three mode-full-a "" & mc=$!
+  mode_run mode-four mode-full-b "" & md=$!
+  wait "$mc" || bad 'mode: first generation failed'
+  wait "$md" || bad 'mode: second generation failed'
+  assert_serialized && pass 'a new generation of an entry is bounded by the peak recorded for generations of the entry' \
+    || bad 'new generations of an entry ran together although each needs most of the memory'
+else
+  printf 'SKIP check and generation records: no /proc/meminfo or too little memory\n'
+fi
+
 fi
 
 # Waiting entries start by priority class (extreme, high, rest), then by arrival.

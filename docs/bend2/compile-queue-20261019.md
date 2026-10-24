@@ -149,6 +149,7 @@ $state/keys/<key>/runs/<attempt>/peak          peak of one run, kB
 $state/keys/<key>/runs/<attempt>/group         history group of the attempt
 $state/peaks/<group>                           largest recorded peak of a group, kB
 $state/peaks/sh.<kind>.<shape>                 largest recorded peak of a kind, entry and command shape, kB
+$state/peaks/em.<kind>.<entry>.<mode>          largest recorded peak of a kind and entry file in check or full mode, kB
 $state/peaks/en.<kind>.<entry>                 largest recorded peak of a kind and entry file with any command, kB
 $state/peaks/kc.<kind>.<compiler>              largest recorded peak of a kind and compiler, kB
 $state/peaks/k.<kind>                          largest recorded peak of a kind, kB
@@ -216,13 +217,18 @@ A ticket's expected peak is, in order:
 2. the largest recorded peak of its group;
 3. the largest recorded peak of its kind, entry and command shape on any
    compiler;
-4. the largest recorded peak of its kind and entry file with any command on
-   any compiler. A new wrapper command on `main.bend` takes the peak of the
-   full generation of `main.bend`; a command on `receive-focused.bend` takes
-   the peak recorded for that file. The entry is its path in the job, reduced
-   to its file name when the path is absolute;
-5. the largest recorded peak of its kind and compiler;
-6. the largest recorded peak of its kind (`cgen` or `cc`), when the compiler
+4. the largest recorded peak of its kind and entry file in the same mode on
+   any compiler. The mode is `check` when any token of the command contains
+   `--check-only` (the wrapper scripts carry it inside an `sh -c` argument), and
+   `full` otherwise. A new wrapper of a check of `main.bend` takes the peak of
+   earlier checks of `main.bend` (about 38 GB), not the peak of its full
+   generation (about 137 GB);
+5. the largest recorded peak of its kind and entry file with any command on
+   any compiler. A command on `receive-focused.bend` takes the peak recorded
+   for that file. The entry is its path in the job, reduced to its file name
+   when the path is absolute;
+6. the largest recorded peak of its kind and compiler;
+7. the largest recorded peak of its kind (`cgen` or `cc`), when the compiler
    has no record;
 7. no recorded peak. The job has no history. Its memory need is then the
    current memory of the largest running job of the same group, or nothing when
