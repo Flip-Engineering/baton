@@ -22,6 +22,7 @@ import ./ui-view.bend as UiView
 import ./control.bend as Control
 import ./stop-hook.bend as StopHook
 import ./wake.bend as Wake
+import ../coordinator/root-channel.bend as RootChannel
 import ./message-batch.bend as MessageBatch
 import ./subscription-fallback.bend as Subscription
 import ./accounts.bend as Accounts
@@ -56,6 +57,13 @@ def read_command(+db: String, +command: C.Command) -> IO(Unit):
   do IO<Unit>:
     result : String <- IO.try(String,Store.read(db,command))
     AgentInput.command_output(db,command,result)
+
+# status, session and orchestra name every root with owed input and no
+# attached channel on stderr.
+def read_checked(+db: String, +command: C.Command) -> IO(Unit):
+  do IO<Unit>:
+    warned : Unit <- RootChannel.warn(db)
+    read_command(db,command)
 
 def task_usage() -> String:
   "dispatch TEXT [OPTIONS]\ndispatch --stdin [OPTIONS]\ndispatch --help shows project, saved routes, overrides and continuation options.\ntask-input-read --current returns the current actor's latest complete request and setup result.\ntask-input-read --session PLAYER selects that actor's latest dispatch to the Player.\n"
@@ -118,6 +126,7 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.StatusPretty{}:
       do IO<Unit>:
         saved : String <- Control.status_pretty(db)
+        warned : Unit <- RootChannel.warn(db)
         print_result(saved)
     case C.Pretty{+read}:
       do IO<Unit>:
@@ -125,7 +134,7 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
         AgentInput.command_output(db,C.Pretty{read},saved)
     case C.RoleRead{session}: read_command(db,C.RoleRead{session})
     case C.EnsembleRead{id}: read_command(db,C.EnsembleRead{id})
-    case C.Session{id}: read_command(db,C.Session{id})
+    case C.Session{id}: read_checked(db,C.Session{id})
     case C.Delivery{id}: read_command(db,C.Delivery{id})
     case C.InputDetail{id}: read_command(db,C.InputDetail{id})
     case C.DeliveryBatch{input}: MessageBatch.read_text(db,input)
@@ -136,12 +145,12 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.InboxIndex{id}: read_command(db,C.InboxIndex{id})
     case C.Outbox{id}: read_command(db,C.Outbox{id})
     case C.MessageIndex{inbox,condition,state}: read_command(db,C.MessageIndex{inbox,condition,state})
-    case C.Status{}: read_command(db,C.Status{})
+    case C.Status{}: read_checked(db,C.Status{})
     case C.Players{}: read_command(db,C.Players{})
     case C.LegacySubordinates{}: read_command(db,C.LegacySubordinates{})
     case C.PlayerRead{id}: read_command(db,C.PlayerRead{id})
     case C.SectionRead{ensemble,id}: read_command(db,C.SectionRead{ensemble,id})
-    case C.Orchestra{}: read_command(db,C.Orchestra{})
+    case C.Orchestra{}: read_checked(db,C.Orchestra{})
     case C.Turns{id}: read_command(db,C.Turns{id})
     case C.Recruit{id,parent,harness,model,effort,repo,branch,path,base}:
       Recruit.recruit(db,id,parent,harness,model,effort,repo,branch,path,base)

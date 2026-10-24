@@ -747,6 +747,80 @@ branch with `remote-tip`, and land and publish reviewed work with `land`,
 `land-checked` and `push`. Report receipts retain input handling; completion
 decisions retain the coordinator's task review.
 
+### Root on another host
+
+The conductor server runs on the host that holds the orchestra database. Its
+delivery socket is created beside that database, and report writers on that
+host connect to it. A Claude Code session on another machine reaches the
+server through an SSH stdio stream: the MCP server command is `ssh`, and the
+remote command starts `mcp-conductor.mjs` on the database host.
+
+`bend2/scripts/root-channel-config.mjs` prints the configuration. Run it on the
+database host. It resolves the database, the coordinator executable and
+`mcp-conductor.mjs` to absolute paths and refuses a path that does not exist:
+
+```sh
+node bend2/scripts/root-channel-config.mjs /data/orchestra.db /opt/baton/bin/baton --session operator --ssh homelab --name baton-homelab
+```
+
+It writes the server entry to stdout and the launch command to stderr:
+
+```json
+{"mcpServers":{"baton-homelab":{"command":"ssh","args":["-T","homelab","'exec' 'node' '/opt/baton/bend2/scripts/mcp-conductor.mjs' '/data/orchestra.db' '/opt/baton/bin/baton' '--session' 'operator'"]}}}
+```
+
+```sh
+claude --mcp-config FILE --dangerously-load-development-channels server:baton-homelab
+```
+
+Save the entry as `FILE` on the machine that runs Claude Code. `ssh homelab`
+must log in without a prompt. `--node PATH` selects the Node executable on the
+database host. Each orchestra database has its own server entry and its own
+server name. `--dangerously-load-development-channels` takes several values;
+pass one `server:NAME` value for each orchestra.
+
+The root attaches as the `operator` session. The operator keeps its operator
+role, so reports and questions from parentless Conductors still select it as
+their recipient. When the channel becomes ready, the server sends all of the
+operator's unacknowledged input in one notification. An operator that has run
+without a channel can hold a large backlog; one orchestra held 7136
+unacknowledged operator inputs (7.9 MB of bodies) when its root was found
+unattached.
+
+Acknowledge stale reports before the first attach. Baton has no single command
+that acknowledges messages by age. `pending --index` selects them by sequence
+number, and `acknowledge` accepts several message IDs. On the database host:
+
+```sh
+baton DATABASE pending --index --recipient operator --kind report --through-seq SEQ \
+  | jq -r '.[].id' | xargs baton DATABASE as operator acknowledge
+```
+
+`SEQ` is the last message sequence number to acknowledge; `pending --index`
+prints each message's `seq`. Omit `--kind report` to include questions.
+
+The JavaScript resident `impl/scripts/mcp-web.mjs` has been removed. A Claude
+Code configuration that still names it starts no server and receives no
+Baton notifications. Replace that entry with the conductor entry above.
+
+### Unattached root error
+
+A root is a parentless session with the operator role, or one whose endpoint
+runs `mcp-conductor.mjs`. A root with unacknowledged input is unattached when
+its endpoint is not a conductor `--deliver` endpoint or when the socket file
+that endpoint names does not exist beside the database. Baton derives this
+from the session row, its messages and the socket path each time it checks.
+
+`status`, `session` and `orchestra` print one line on stderr for each
+unattached root:
+
+```text
+Baton error: root session operator has 7136 owed inputs and no attached channel: no channel endpoint is registered. Attach a Claude Code channel with bend2/scripts/mcp-conductor.mjs as described in bend2/README.md, section "Root on another host".
+```
+
+A message, report or question committed to an unattached root prints the same
+line on its sender's stderr and appends it to the database's `.root.log`.
+
 ## OMP Associate Conductors and Players
 
 A recruited OMP Player assigned as an Associate Conductor can receive reports
