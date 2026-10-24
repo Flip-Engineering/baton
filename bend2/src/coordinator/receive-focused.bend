@@ -7,6 +7,7 @@ import ./receive.bend as Receive
 import ../host/instance.bend as Custody
 import ../host/process.bend as P
 import ./control.bend as Control
+import ./stop-hook.bend as StopHook
 import ./turn.bend as Turn
 import ./native-input.bend as NativeInput
 import ../git/process.bend as GitProcess
@@ -188,15 +189,20 @@ def dispatch(args: List<String>) -> IO(Unit):
       dispatch_recover(String.eq(flag,"--recover-receive"),db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,inputs)
     case other: IO.die(Unit,2,"unsupported focused receive command")
 
-def focused_entry_route(selected: Bool, flag: String, rest: List<String>) -> IO(Unit):
+def focused_entry_hook(hook: Bool, flag: String, rest: List<String>) -> IO(Unit):
+  match hook:
+    case True{}: StopHook.run()
+    case False{}: dispatch(Con{flag,rest})
+
+def focused_entry_route(selected: Bool, hook: Bool, flag: String, rest: List<String>) -> IO(Unit):
   match selected:
     case True{}: ClearStop.run(rest)
-    case False{}: dispatch(Con{flag,rest})
+    case False{}: focused_entry_hook(hook,flag,rest)
 
 def focused_entry(args: List<String>) -> IO(Unit):
   match args:
     case +flag <> rest:
-      focused_entry_route(String.eq(flag,"--focused-clear-stop"),flag,rest)
+      focused_entry_route(String.eq(flag,"--focused-clear-stop"),String.eq(flag,"--stop-hook"),flag,rest)
     case Nil{}: dispatch(Nil{})
 
 def main() -> IO(Unit):

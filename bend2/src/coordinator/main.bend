@@ -20,6 +20,7 @@ import ../context/native.bend as ContextNative
 import ../context/native-runtime.bend as ContextRuntime
 import ./ui-view.bend as UiView
 import ./control.bend as Control
+import ./stop-hook.bend as StopHook
 import ./wake.bend as Wake
 import ./message-batch.bend as MessageBatch
 import ./subscription-fallback.bend as Subscription
@@ -459,6 +460,7 @@ def observe_context_runtime_cli(+flag: String, +db: String, +owner: String,
 
 def legacy_cli_arity(args: List<String>) -> IO(Unit):
   match args:
+    case "--stop-hook" <> Nil{}: StopHook.run()
     case flag <> database <> Nil{}: instance_owner_cli(database,flag)
     case flag <> db <> owner <> launch_query <> target_dir <> adapter_dir <> Nil{}:
       observe_context_runtime_cli(flag, db, owner, launch_query, target_dir, adapter_dir)
