@@ -67,7 +67,10 @@ A reader has two parts.
    table `auth_credentials`, opened read-only; a disabled row answers its
    `disabled_cause`), `claude-oauth:PATH` (`claudeAiOauth.accessToken` of a Claude Code
    credentials file, `~/.claude/.credentials.json` when `PATH` is empty; an expired
-   token is reported and never refreshed), `file:PATH` (the first line of `PATH`) and
+   token is reported and never refreshed, because a refresh writes the account's
+   credentials. The account's own Claude Code login renews the token, and the
+   unreadable report names it. Until then the read is unknown and the seat is not
+   held), `file:PATH` (the first line of `PATH`) and
    `codex-home:PATH` (Codex app-server
    `account/rateLimits/read` with that `CODEX_HOME`; an empty `PATH` inherits the
    environment). The coordinator chooses the reference: an `accounts` row with
