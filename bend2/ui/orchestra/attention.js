@@ -138,7 +138,7 @@
   }
 
   // Everything the seat owes, and the one read behind the unit marks: queued input it has
-  // not acknowledged, and reports it sent that were never acknowledged. The shell states
+  // not read, and reports it sent that were never read. The shell states
   // the total as owedTotal, so pendingCount alone is never the read; it misses reports. No
   // payload carries a read fact for a delivery: a message node's deliveryRead is a pointer
   // naming where the delivery lives, and the delivery's own read is in no payload, so the
@@ -151,7 +151,7 @@
     if (!player) return 0;
     var total = count(player.owedTotal);
     if (total > 0) return total;
-    return Math.max(count(player.pendingCount), count(player.unacknowledgedCount));
+    return Math.max(count(player.pendingCount), count(player.unreadCount));
   }
 
   // The recorded terminal of the current attempt: null when the attempt ended
@@ -820,7 +820,7 @@
     }
 
     // What the seat owes, as units: one mark per item its own record states - queued input
-    // it has not acknowledged, and reports it sent that were never acknowledged. The band
+    // it has not read, and reports it sent that were never read. The band
     // is the one the queue bar took (top radius + 3, bottom radius + 5.5, a tick 2px wide
     // and 2.5px tall with its round caps), so the room the next row's mark and an
     // under-label need is unchanged. Counting marks in a row answers how much is waiting

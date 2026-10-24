@@ -114,10 +114,9 @@ definition. IO stdout and process outcomes are observable results.
 selects a declaration message delivered to the current actor and checks its
 complete declaration snapshot in that actor's notebook. It prints the complete
 original message through the existing recipient-owned read operation, followed
-by each checked declaration's cell result. Successful native turn settlement
-records handling of that complete read. A compiler refusal retains its cell and
-the complete source message; failed or interrupted native turns leave the read
-pending. Ordinary routing, recipient identity and explicit stops continue to
+by each checked declaration's cell result. Baton records that complete read
+internally, and the read persists if the turn later fails or is interrupted. A
+compiler refusal retains its cell and the complete source message. Ordinary routing, recipient identity and explicit stops continue to
 govern these operations.
 
 ## Bundled compiler

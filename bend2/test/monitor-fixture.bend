@@ -7,7 +7,7 @@ import ../src/host/instance.bend as Custody
 import ../src/host/session-lock.bend as Lock
 
 # Seeds the isolated coordinator database with one registered session and one
-# unacknowledged task message. The message sequence is the attempt's input
+# unread task message. The message sequence is the attempt's input
 # cursor, so a later observation that reads no further input retains it.
 def init_cli(+db: String, +harness: String) -> IO(Unit):
   do IO<Unit>:

@@ -35,7 +35,6 @@ def expect_read(+db: String, +text: String, +expected: String, +label: String) -
 def gate_class(gate: UW.Gate) -> String:
   match gate:
     case UW.GateNone{}: "none"
-    case UW.GateUnknown{window,source,receipt}: "unknown"
     case UW.GateHeld{window,resets_at,source,receipt}: "held"
     case UW.GateElapsed{window,resets_at,source,receipt}: "elapsed"
 
@@ -112,7 +111,7 @@ def reset_cases(+db: String) -> IO(Unit):
     five_hour : String <- IO.pure(String,UW.window_label_of(UW.lower_ascii("Subscription quota exhausted for the 5-hour window. Your usage window resets at 2026-10-19T06:38:50Z.")))
     expect("five-hour-window-named",String.eq(five_hour,"5-hour"))
     parsed : String <- IO.pure(String,UW.parsed_reset_sql(muse_reset))
-    expect("recorded-reset-parses",Tx.starts_with(parsed,"(SELECT CAST(strftime('%s','2026-10-19T06:38:50Z')"))
+    expect("recorded-reset-parses",Tx.starts_with(parsed,"(SELECT CAST(strftime('%s','2026-10-19T06:38:50Z',"))
     IO.pure(Unit,Unit{})
 
 def held_cases(+db: String) -> IO(Unit):

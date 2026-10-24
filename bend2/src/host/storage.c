@@ -27,7 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
+#include <sys/file.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -50,6 +50,9 @@
 #define BATON_STORAGE_DEPTH 128
 #define BATON_STORAGE_PID_LIMIT 65536
 #define BATON_STORAGE_REF_LIMIT 4096
+/* A process may map or open many entries. Inspect up to this many; the
+   matched-reference limit bounds the answer and the PID limit bounds the walk. */
+#define BATON_STORAGE_SCAN_LIMIT 65536
 
 typedef unsigned long long baton_u64;
 
@@ -699,7 +702,7 @@ static int baton_storage_pid_hit(pid_t pid, baton_u64 device, baton_u64 inode, c
       entry = readdir(fds);
       if (!entry) break;
       if (!baton_storage_numeric(entry->d_name)) continue;
-      if (++seen > BATON_STORAGE_REF_LIMIT) { *truncated = 1; break; }
+      if (++seen > BATON_STORAGE_SCAN_LIMIT) { *truncated = 1; break; }
       char target_path[128];
       snprintf(target_path, sizeof(target_path), "/proc/%ld/fd/%s", (long)pid, entry->d_name);
       if (baton_storage_path_hit(target_path, device, inode, unknown)) { closedir(fds); return 1; }
@@ -718,7 +721,7 @@ static int baton_storage_pid_hit(pid_t pid, baton_u64 device, baton_u64 inode, c
     size_t capacity = 0;
     size_t seen = 0;
     while (getline(&line, &capacity, maps) >= 0) {
-      if (++seen > BATON_STORAGE_REF_LIMIT) { *truncated = 1; break; }
+      if (++seen > BATON_STORAGE_SCAN_LIMIT) { *truncated = 1; break; }
       char *mapped = baton_storage_maps_path(line);
       if (!mapped || mapped[0] != '/') continue;
       if (baton_storage_path_hit(mapped, device, inode, unknown)) { free(line); fclose(maps); return 1; }
@@ -799,7 +802,8 @@ static void baton_storage_refs_call(IoWork *w) {
       if (baton_storage_pid_push(&pids, pid)) { call->error = ENOMEM; break; }
       if (pids.count >= BATON_STORAGE_REF_LIMIT) { truncated = 1; break; }
     }
-    if (truncated) break;
+    /* A process over the per-process inspection limit leaves the scan
+       unknown, but later processes can still hold a reference. */
   }
   closedir(proc);
   free(root);
@@ -836,6 +840,96 @@ static Term baton_storage_pid_pack(Env e, IoWork *w) {
   free(call);
   w->data = NULL;
   return result;
+}
+/* ---------- cooperative root writer lease ---------- */
+
+/* A configured root carries one lease file. Baton-owned writers open it and
+ * take a shared flock for the duration of their writes. Cleanup takes an
+ * exclusive flock before it removes anything. The kernel releases the lock
+ * when the last descriptor for the open file description closes, so a crash
+ * needs no timestamp, age or stale-lock recovery. The flock API is
+ * cooperative: a process that writes the root without opening this file is
+ * not blocked, and the process and runtime-reference evidence still preserves
+ * its files. An external `flock -s ROOT/.baton-writer-lease` holder uses the
+ * same file and blocks cleanup the same way a Baton writer does.
+ *
+ * Contention and every open or flock error answer `none`. Cleanup treats that
+ * answer as a refusal rather than proceeding without ownership. */
+
+#define BATON_STORAGE_LEASE ".baton-writer-lease"
+
+typedef struct { char *root; int kind, handle; } BatonStorageLease;
+
+static void baton_storage_lease_call(IoWork *w) {
+  BatonStorageLease *call = (BatonStorageLease *)w->data;
+  int root_fd = baton_storage_open_dir(call->root);
+  if (root_fd < 0) return;
+  int fd = openat(root_fd, BATON_STORAGE_LEASE,
+                  O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
+  int saved = errno;
+  close(root_fd);
+  if (fd < 0) { errno = saved; return; }
+  int operation = call->kind == 0 ? LOCK_SH : LOCK_EX;
+  int held;
+  do { held = flock(fd, operation | LOCK_NB); } while (held < 0 && errno == EINTR);
+  if (held < 0) { close(fd); return; }
+  call->handle = fd;
+}
+
+static Term baton_storage_lease_pack(Env e, IoWork *w) {
+  BatonStorageLease *call = (BatonStorageLease *)w->data;
+  char text[64];
+  size_t length;
+  if (call->handle < 0) {
+    memcpy(text, "none", 4);
+    length = 4;
+  } else {
+    int written = snprintf(text, sizeof(text), "handle:%d", call->handle);
+    length = written > 0 ? (size_t)written : 0;
+  }
+  Term result = io_done(e, io_str(e, text, length));
+  free(call->root);
+  free(call);
+  w->data = NULL;
+  return result;
+}
+
+static Term baton_storage_lease_begin(Env e, Term *f, IoWork *w, int kind) {
+  BatonStorageLease *call = calloc(1, sizeof(*call));
+  if (!call) return io_fail(e, ENOMEM, NULL);
+  call->kind = kind;
+  call->handle = -1;
+  u64 length = 0;
+  call->root = io_cstr(e, f[0], &length);
+  if (!call->root || strlen(call->root) != length) {
+    free(call->root);
+    free(call);
+    return io_done(e, io_str(e, "none", 4));
+  }
+  w->data = (char *)call;
+  return io_work(w, baton_storage_lease_call, baton_storage_lease_pack);
+}
+
+typedef struct { u32 handle; } BatonStorageLeaseRelease;
+
+static void baton_storage_lease_release_call(IoWork *w) {
+  BatonStorageLeaseRelease *call = (BatonStorageLeaseRelease *)w->data;
+  close((int)call->handle);
+}
+
+static Term baton_storage_lease_release_pack(Env e, IoWork *w) {
+  BatonStorageLeaseRelease *call = (BatonStorageLeaseRelease *)w->data;
+  free(call);
+  w->data = NULL;
+  return io_done(e, term_pak(CID_UNIT, 0));
+}
+
+static Term baton_storage_lease_release_run(Env e, Term *f, IoWork *w) {
+  BatonStorageLeaseRelease *call = calloc(1, sizeof(*call));
+  if (!call) return io_fail(e, ENOMEM, NULL);
+  call->handle = (u32)f[0];
+  w->data = (char *)call;
+  return io_work(w, baton_storage_lease_release_call, baton_storage_lease_release_pack);
 }
 
 /* ---------- effect wrappers ---------- */
@@ -935,4 +1029,22 @@ static Term baton_storage_pid_run(Env e, Term *f, IoWork *w) {
   return io_work(w, baton_storage_pid_call, baton_storage_pid_pack);
 }
 static void __attribute__((constructor)) baton_storage_pid_use(void) {io_eff(CID_STORAGEHOST_PID_ALIVE, baton_storage_pid_run, 0);}
+#endif
+
+#ifdef CID_STORAGEHOST_WRITER_TRY_ACQUIRE
+static Term baton_storage_writer_try_acquire_run(Env e, Term *f, IoWork *w) {
+  return baton_storage_lease_begin(e, f, w, 0);
+}
+static void __attribute__((constructor)) baton_storage_writer_try_acquire_use(void) {io_eff(CID_STORAGEHOST_WRITER_TRY_ACQUIRE, baton_storage_writer_try_acquire_run, 0);}
+#endif
+
+#ifdef CID_STORAGEHOST_CLEANUP_TRY_ACQUIRE
+static Term baton_storage_cleanup_try_acquire_run(Env e, Term *f, IoWork *w) {
+  return baton_storage_lease_begin(e, f, w, 1);
+}
+static void __attribute__((constructor)) baton_storage_cleanup_try_acquire_use(void) {io_eff(CID_STORAGEHOST_CLEANUP_TRY_ACQUIRE, baton_storage_cleanup_try_acquire_run, 0);}
+#endif
+
+#ifdef CID_STORAGEHOST_LEASE_RELEASE
+static void __attribute__((constructor)) baton_storage_lease_release_use(void) {io_eff(CID_STORAGEHOST_LEASE_RELEASE, baton_storage_lease_release_run, 0);}
 #endif

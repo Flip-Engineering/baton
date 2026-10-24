@@ -38,13 +38,13 @@ law principal_startup_checks_assignment_and_operator_scope:
 def principal_startup_checks_assignment_and_operator_scope(session,harness,model,effort,cwd):
   {==}
 
-law native_receiver_checks_harness_stop_and_endpoint_admission:
+law native_receiver_checks_harness_and_endpoint_admission:
   for +session: String
   for +endpoint: String
   for +cwd: String
-  {Control.receiver_admitted(session,endpoint,cwd) == ("(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code','dsh','antigravity')) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ Control.receiver_model(session) ++ " AND " ++ Control.receiver_directory(session,cwd) ++ ")") : String}
+  {Control.receiver_admitted(session,endpoint,cwd) == ("(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code','dsh','antigravity')) AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ Control.receiver_model(session) ++ " AND " ++ Control.receiver_directory(session,cwd) ++ ")") : String}
 
-def native_receiver_checks_harness_stop_and_endpoint_admission(session,endpoint,cwd):
+def native_receiver_checks_harness_and_endpoint_admission(session,endpoint,cwd):
   {==}
 
 law receiver_directory_reads_the_supplied_or_recorded_path:
@@ -62,6 +62,20 @@ law receiver_model_requires_a_recorded_model:
 def receiver_model_requires_a_recorded_model(session):
   {==}
 
+# The refusal object carries session, condition and next after the error field,
+# so the marker is the opening prefix and not a complete object.
+law receiver_refusal_with_fields_is_denied:
+  {Control.receiver_denied("{\"error\":\"receiver-refused\",\"session\":\"s\",\"condition\":\"c\",\"next\":\"n\"}") == True{} : Bool}
+
+def receiver_refusal_with_fields_is_denied():
+  {==}
+
+law receiver_update_answer_is_not_denied:
+  {Control.receiver_denied("{\"session\":\"s\",\"endpoint\":[],\"workspace\":\"/w\"}") == False{} : Bool}
+
+def receiver_update_answer_is_not_denied():
+  {==}
+
 law detached_delivery_commits_before_launch_and_checks_refusals:
   for +db: String
   for +id: String
@@ -72,7 +86,6 @@ law detached_delivery_commits_before_launch_and_checks_refusals:
   {Control.dispatch_body(db,id,sender,recipient,kind,body) == (do IO<String>:
   +saved : String <- IO.try(String,Store.commit(db,C.Message{id,sender,recipient,kind,body}))
   launched : String <- Control.dispatch_admitted(db,id,saved,Bool.or(Store.refused(saved),Tx.starts_with(saved,"{\"error\":\"session-stopped\"")))
-  woken : Result<&1,&1,U32 & String,Unit> <- Wake.drive_id(db,id)
   IO.pure(String,launched)) : IO(String)}
 
 def detached_delivery_commits_before_launch_and_checks_refusals(db,id,sender,recipient,kind,body):
@@ -96,6 +109,7 @@ law principal_startup_validates_before_assignment_and_dispatch:
   endpoint : String <- Control.configured_endpoint(db,session,cmd,log,model,workspace)
   configured : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ Control.start_sql(session,harness,model,effort,workspace,endpoint) ++ "COMMIT;"))
   allowed : Unit <- Control.startup_refused(Tx.trim_nl(configured))
+  session_read : String <- IO.try(String,Store.read(db,C.Session{session}))
   Control.dispatch_body(db,id,"operator",session,"task",body)) : IO(String)}
 
 def principal_startup_validates_before_assignment_and_dispatch(db,session,harness,cmd,model,effort,cwd,log,id,task):
@@ -118,7 +132,7 @@ law detached_turn_uses_the_recorded_assignment_and_native_identity:
   {Control.dispatch_turn(db,player,id,cmd,log,task) == (do IO<String>:
   found : String <- IO.try(String,Store.commit(db,C.Session{player}))
   present : String <- Control.registered(found)
-  allowed : String <- IO.try(String,DB.Sql.query(db,Control.turn_admission_sql(player)))
+  allowed : String <- IO.try(String,DB.Sql.read(db,Control.turn_admission_sql(player)))
   admitted : Unit <- Control.turn_admitted(String.eq(allowed,"1\n"))
   command : Unit <- Control.command_present(String.is_empty(cmd))
   harness_cmd : String <- IO.try(String,Host.Control.command(cmd))
@@ -237,8 +251,8 @@ law receiver_update_changes_only_an_admitted_endpoint:
   for +endpoint: String
   for +cwd: String
   for +admitted: String
-  {Control.receiver_update_sql(session,endpoint,cwd,admitted) == ("UPDATE sessions SET workspace=CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN " ++ C.q(cwd) ++ " ELSE workspace END,endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
-++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered, active Codex, OMP, Muse or Claude Code session with a recorded model, a working directory and valid text argv.','next','Record the model with configure and the working directory with receiver, then dispatch complete task text with dispatch TEXT --to SESSION. Pass the CWD argument when only the directory is missing. Then inspect the session and retained inbox and retry; recruit a new session after a terminal stop.') WHERE NOT " ++ admitted ++ ";"
+  {Control.receiver_update_sql(session,endpoint,cwd,admitted) == ("UPDATE sessions SET workspace=CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN " ++ C.q(cwd) ++ " ELSE workspace END,endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ " AND 1;"
+++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered Codex, OMP, Muse or Claude Code session with a recorded model, a working directory and valid text argv.','next','Record the model with configure and the working directory with receiver, then dispatch complete task text with dispatch TEXT --to SESSION. Pass the CWD argument when only the directory is missing. Inspect the session and retained inbox and retry. Receiver registration preserves an explicit stop; resume SESSION --lift-stop explicitly lifts it and continues pending work.') WHERE NOT " ++ admitted ++ ";"
 ++ "SELECT json_object('session'," ++ C.q(session) ++ ",'endpoint',json(" ++ C.q(endpoint) ++ "),'workspace',(SELECT workspace FROM sessions WHERE id=" ++ C.q(session) ++ ")) WHERE " ++ admitted ++ ";") : String}
 
 def receiver_update_changes_only_an_admitted_endpoint(session,endpoint,cwd,admitted):

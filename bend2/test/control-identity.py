@@ -16,6 +16,7 @@ SPEC.loader.exec_module(controls)
 
 
 class ControlIdentity(unittest.TestCase):
+    read_count = controls.Control.read_count
     git = controls.Control.git
     call = controls.Control.call
     root = controls.Control.root
@@ -42,17 +43,13 @@ class ControlIdentity(unittest.TestCase):
         self.prefix = self.directory / 'installed-prefix'
         self.binary = self.prefix / 'bin/baton2'
         self.helper = self.prefix / 'libexec/baton2/git-series.mjs'
-        self.inbox_helper = self.prefix / 'libexec/baton2/codex-inbox-wake.mjs'
         self.binary.parent.mkdir(parents=True)
         self.helper.parent.mkdir(parents=True)
         original_helper = controls.ROOT / 'bend2/harness/git-series.mjs'
-        original_inbox_helper = controls.ROOT / 'bend2/scripts/codex-inbox-wake.mjs'
         shutil.copy2(previous, self.binary)
         shutil.copy2(original_helper, self.helper)
-        shutil.copy2(original_inbox_helper, self.inbox_helper)
         self.pins = []
-        for source, copy in ((previous, self.binary), (original_helper, self.helper),
-                             (original_inbox_helper, self.inbox_helper)):
+        for source, copy in ((previous, self.binary), (original_helper, self.helper)):
             digest = hashlib.sha256(source.read_bytes()).hexdigest()
             self.assertEqual(hashlib.sha256(copy.read_bytes()).hexdigest(), digest)
             self.pins.append({'source': str(source), 'copy': str(copy), 'sha256': digest})
@@ -130,7 +127,7 @@ class ControlIdentity(unittest.TestCase):
         self.finish(stream, report)
         self.exited('recipient')
         self.eventually(lambda: any(row['reportBody'] == report for row in self.call('turns', 'recipient')))
-        self.assertEqual(self.call('delivery', 'recipient-task')['receipt'], 'fixture-native-reviewed')
+        self.assertGreater(self.read_count('recipient-task'), 0)
         saved = self.call('turns', 'recipient')[0]
         delivery = self.call('delivery', saved['id'])
         self.assertEqual((delivery['sender'], delivery['recipient'], delivery['body']),

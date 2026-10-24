@@ -1,11 +1,15 @@
 # Production wake-path fixture for #797. It drives Receive.wake_due, the gate
 # path the coordinator uses, with a test launch callback that records one
-# delivery and sets the message receipt. A held window reports and schedules a
-# continuation; the continuation re-enters this path, so a reset moved later is
-# re-evaluated and does not deliver at the old time, a reset moved earlier
-# delivers once, and a handled message is a no-op. The unqualified case
+# delivery and writes no messaging state; the recipient's read row is recorded
+# by the coordinator when the recipient reads the input. A held window reports
+# and schedules a continuation; the continuation re-enters this path, so a
+# reset moved later is re-evaluated and does not deliver at the old time, a
+# reset moved earlier delivers once, and a read message is a no-op. The unqualified case
 # covers the account DB Muse shape: a model without a provider prefix and empty
 # provider/window/account rows hold before the recorded reset.
+#
+# The retained start path (#1016) admits the attempt before it checks the window.
+# A held start must leave no execution row, so a route change is admitted at once.
 #
 # usage: usage-windows-wake-path DB
 #        usage-windows-wake-path --wake-message DB MESSAGE
@@ -13,8 +17,10 @@
 import Base
 import ../src/coordinator/commands.bend as C
 import ../src/coordinator/receive.bend as Receive
+import ../src/coordinator/stop.bend as Stop
 import ../src/coordinator/usage-windows.bend as UW
 import ../src/host/sqlite.bend as DB
+import ../src/host/session-lock.bend as Lock
 import ../src/git/text.bend as Tx
 import ../src/git/process.bend as Proc
 
@@ -36,8 +42,8 @@ def expect_read(+db: String, +text: String, +expected: String, +label: String) -
 
 def deliver_record(+db: String, +target: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    pending : String <- read(db,"SELECT count(*) FROM messages WHERE id=" ++ C.q(target) ++ " AND receipt IS NULL;")
-    delivered : Unit <- Bool.pick(IO(Unit),String.eq(pending,"1\n"),query(db,"INSERT OR IGNORE INTO wake_deliveries(message,receipt) VALUES(" ++ C.q(target) ++ ",'delivered');UPDATE messages SET receipt='delivered' WHERE id=" ++ C.q(target) ++ " AND receipt IS NULL;"),IO.pure(Unit,Unit{}))
+    pending : String <- read(db,"SELECT count(*) FROM messages WHERE id=" ++ C.q(target) ++ " AND " ++ C.owed_sql("messages") ++ ";")
+    delivered : Unit <- Bool.pick(IO(Unit),String.eq(pending,"1\n"),query(db,"INSERT OR IGNORE INTO wake_deliveries(message,receipt) VALUES(" ++ C.q(target) ++ ",'delivered');"),IO.pure(Unit,Unit{}))
     IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
 
 def deliver_test(+db: String) -> String -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -61,7 +67,11 @@ def window(+db: String, +session: String, +message: String, +ms_offset: String) 
   query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp'," ++ C.q(session ++ "-kimi/kimi-for-coding") ++ "," ++ C.q(session ++ "-kimi") ++ ",'', '5-hour',CAST(strftime('%s','now') AS INTEGER)*1000+" ++ ms_offset ++ ",'provider-message',NULL,'window'," ++ C.q(message) ++ ");")
 
 def message(+db: String, +session: String, +message: String, +receipt: String) -> IO(Unit):
-  query(db,"INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(" ++ C.q(message) ++ ",'root'," ++ C.q(session) ++ ",'guidance','owed',nullif(" ++ C.q(receipt) ++ ",''));")
+  do IO<Unit>:
+    saved : Unit <- query(db,"INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(" ++ C.q(message) ++ ",'root'," ++ C.q(session) ++ ",'guidance','owed',nullif(" ++ C.q(receipt) ++ ",''));")
+    marked : Unit <- Bool.pick(IO(Unit),String.is_empty(receipt),IO.pure(Unit,Unit{}),
+      query(db,"INSERT OR IGNORE INTO message_reads(attempt,message,recipient,native,identity) VALUES('legacy'," ++ C.q(message) ++ "," ++ C.q(session) ++ ",'','receipt');"))
+    IO.pure(Unit,Unit{})
 
 def unqualified_session(+db: String, +id: String) -> IO(Unit):
   query(db,"INSERT OR IGNORE INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES(" ++ C.q(id) ++ ",'root','muse','muse-wonder-1.0','high','','');")
@@ -108,7 +118,7 @@ def earlier_case(+db: String) -> IO(Unit):
     moved : Unit <- move_reset(db,"m-early","-1000")
     waited : Unit <- sleep_ms("3")
     once : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-early';","1\n","moved-earlier-delivery-once")
-    receipt : Unit <- expect_read(db,"SELECT receipt FROM messages WHERE id='m-early';","delivered\n","moved-earlier-receipt")
+    receipt : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id='m-early' AND receipt IS NOT NULL;","0\n","moved-earlier-keeps-stored-receipt-empty")
     IO.pure(Unit,Unit{})
 
 def handled_case(+db: String) -> IO(Unit):
@@ -129,7 +139,7 @@ def duplicate_case(+db: String) -> IO(Unit):
     first : Result<&1,&1,U32 & String,Unit> <- drive(db,"dup")
     second : Result<&1,&1,U32 & String,Unit> <- drive(db,"dup")
     once : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-dup';","1\n","duplicate-delivery-once")
-    receipt : Unit <- expect_read(db,"SELECT receipt FROM messages WHERE id='m-dup';","delivered\n","duplicate-receipt")
+    receipt : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id='m-dup' AND receipt IS NOT NULL;","0\n","duplicate-keeps-stored-receipt-empty")
     IO.pure(Unit,Unit{})
 
 def far_case(+db: String) -> IO(Unit):
@@ -142,10 +152,41 @@ def far_case(+db: String) -> IO(Unit):
     capped : Unit <- expect("far-segment-is-86400",String.eq(Tx.trim_nl(delay),"86400"))
     IO.pure(Unit,Unit{})
 
+# A retained start admitted under a held window: Stop.admit writes the execution
+# row, then window_held_start runs the held branch the way start_admitted does.
+def held_start(+db: String, +id: String, +attempt: String, +msg: String) -> IO(Bool):
+  do IO<Bool>:
+    created : Unit <- session(db,id)
+    win : Unit <- window(db,id,msg,"2000")
+    owed : Unit <- message(db,id,msg,"")
+    gate : UW.Gate <- UW.window_gate(db,id,"")
+    admitted : Bool <- Stop.admit(db,id,attempt,"retained",id ++ "-dir")
+    +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    lock : U32 <- IO.try(U32,Lock.SessionLock.wait_acquire(canonical,id))
+    held : Bool <- Receive.window_held_start(db,id,attempt,msg,lock,gate)
+    IO.pure(Bool,held)
+
+def held_start_case(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    held : Bool <- held_start(db,"held-start","attempt-held-start","m-held-start")
+    checked : Unit <- expect("held-start-is-held",held)
+    none : Unit <- expect_read(db,"SELECT count(*) FROM executions WHERE session='held-start';","0\n","held-start-removes-execution-row")
+    report : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id='m-held-start:usage-window-held';","1\n","held-start-reports-hold")
+    IO.pure(Unit,Unit{})
+
+# Configuration with a changed model is admitted after the held start (#1016).
+def held_route_case(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    held : Bool <- held_start(db,"held-route","attempt-held-route","m-held-route")
+    checked : Unit <- expect("held-route-is-held",held)
+    changed : Unit <- query(db,"BEGIN IMMEDIATE;" ++ C.configure_sql("held-route","omp","held-route-next","high","","omp","held-route-kimi/kimi-for-coding","high") ++ "COMMIT;")
+    model : Unit <- expect_read(db,"SELECT model FROM sessions WHERE id='held-route';","held-route-next\n","held-route-model-change-admitted")
+    IO.pure(Unit,Unit{})
+
 def main_args(args: List<String>) -> IO(Unit):
   match args:
     case "--wake-message" <> +db <> +msg <> Nil{}: do IO<Unit>:
-      +recipient : String <- read(db,"SELECT coalesce((SELECT recipient FROM messages WHERE id=" ++ C.q(msg) ++ " AND receipt IS NULL),'');")
+      +recipient : String <- read(db,"SELECT coalesce((SELECT recipient FROM messages WHERE id=" ++ C.q(msg) ++ " AND " ++ C.owed_sql("messages") ++ "),'');")
       present : Bool = Bool.not(String.is_empty(Tx.trim_nl(recipient)))
       outcome : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),present,drive(db,Tx.trim_nl(recipient)),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
       IO.pure(Unit,Unit{})
@@ -157,6 +198,8 @@ def main_args(args: List<String>) -> IO(Unit):
       handled_case(db)
       duplicate_case(db)
       far_case(db)
+      held_start_case(db)
+      held_route_case(db)
       IO.print("fixture-window-wake-path-ok")
     case other: IO.die(Unit,2,"usage")
 

@@ -22,6 +22,9 @@ def projection_sql():
     return "SELECT coalesce(json_group_array(json(item)),'[]') FROM (SELECT json_patch(j.value,json_object('nativeInputStatus'," + expr + ")) AS item FROM json_each(?) j ORDER BY CAST(j.key AS INTEGER));"
 
 def seed(connection):
+    connection.executescript(
+        "CREATE TABLE sessions(id TEXT PRIMARY KEY);"
+        "CREATE TABLE messages(id TEXT PRIMARY KEY, recipient TEXT NOT NULL, receipt TEXT);")
     connection.executescript(LEGACY)
     connection.executemany('INSERT INTO message_reads VALUES(?,?,?,?,?,?)', [
         (str(i), 'history-' + str(i), 'actor', 'native', 'identity', None) for i in range(2000)])
@@ -53,8 +56,8 @@ class MessageReadIndex(unittest.TestCase):
             self.assertEqual(before, after)
             records = json.loads(after)
             self.assertEqual([row['body'] for row in json.loads(payload())], [row['body'] for row in records])
-            self.assertEqual('incomplete', records[0]['nativeInputStatus']['handled'])
-            self.assertEqual('recorded', records[1]['nativeInputStatus']['handled'])
+            self.assertEqual('recorded', records[0]['nativeInputStatus']['read'])
+            self.assertEqual('recorded', records[1]['nativeInputStatus']['read'])
             self.assertEqual(['native-b', 'native-c'], [row['native'] for row in records[1]['nativeInputStatus']['attempts']])
             self.assertEqual('unrecorded', records[2]['nativeInputStatus']['read'])
 
@@ -64,8 +67,8 @@ class MessageReadIndex(unittest.TestCase):
             db.executescript(expression('schema('))
             plan = [row[3] for row in db.execute('EXPLAIN QUERY PLAN ' + projection_sql(), (payload(),))]
             lookups = [row for row in plan if row.startswith(('SCAN r', 'SEARCH r'))]
-            self.assertEqual(5, len(lookups))
-            self.assertTrue(all(row.startswith('SEARCH r USING') and 'message_reads_by_message' in row for row in lookups), plan)
+            self.assertEqual(2, len(lookups))
+            self.assertTrue(all(row.startswith('SEARCH r USING') and ('message_reads_by_message' in row or 'message_reads_message' in row) for row in lookups), plan)
 
     def test_reader_finishes_and_writer_commits_without_cancelling_either(self):
         import tempfile
