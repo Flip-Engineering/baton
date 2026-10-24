@@ -429,7 +429,8 @@ Cargo outputs.
 Use the existing repository/toolchain shared build wrapper and its actual
 target path. Independent current builds share the service's derived writer
 lifetime and locks. Releasing the last consumer makes regenerable outputs
-collectible after evidence publication; later work may pay a rebuild cost.
+collectible after producing-source verification; later work may pay a rebuild
+cost. Attempt-output retention continues independently of target collection.
 Cache-hit and rebuild-time savings remain unmeasured. Shared compiler caches
 and immutable package reuse receive measured policies through the Phase 2
 cache work above.
