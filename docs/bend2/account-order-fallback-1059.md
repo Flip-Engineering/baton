@@ -49,7 +49,16 @@ On a refusal, Baton scans the order from its head and gives each entry one state
 | not launchable | an Anthropic `api_key` account while the promotional-credit guard is false | skipped |
 | held | the account's usage gate is held | skipped |
 | open | no hold | the seat moves here |
-| unknown | the usage read could not be read and no hold stands | the seat moves here |
+| unknown | the usage read could not be read and no hold stands | the seat moves here, unless the entry is the last in the order |
+
+The last entry of the order is taken only when its live read says open. The
+operator's last entry is `claude-max-primary`, which the root uses, so no seat is
+moved onto it on an unreadable read.
+
+A provider refusal for a Max account's extra-usage limit ("You've hit your monthly
+spend limit") is usage exhaustion of that account. The scan treats the account as
+refused, and its live read decides whether it is held. Baton never raises the limit,
+enables extra usage or buys credit.
 
 The scan starts at the head. A seat whose current label is not a recorded account
 still reaches the listed accounts, and an account that a usage read reopens regains
@@ -87,22 +96,31 @@ different session.
 ## One-time account rows
 
 The Riff, render-fframes and flip orchestra databases record only the two
-`api_key` credit accounts. The fallback needs one row for each account in the
-order, with its priority:
+`api_key` credit accounts. The fallback needs one row for each Max account in the
+order, with its priority. These rows are operator data, recorded once per
+orchestra database at deploy:
+
+| id | provider | harness | funding | secret_ref | priority |
+| --- | --- | --- | --- | --- | --- |
+| `claude-max-incognito` | `anthropic` | `claude-code` | `subscription` | `/mnt/nvme4tb/ci-runners/baton2-native-homelab/home/.claude-max-incognito` | 3 |
+| `claude-max-primary` | `anthropic` | `claude-code` | `subscription` | `/mnt/nvme4tb/ci-runners/baton2-native-homelab/home/.claude` | 4 |
 
 ```
-account --action record --id claude-max-incognito --provider anthropic --harness claude-code --funding subscription --secret-ref STORE
-account --action record --id claude-max-primary --provider anthropic --harness claude-code --funding subscription --secret-ref STORE
+account --action record --id claude-max-incognito --provider anthropic --harness claude-code --funding subscription --secret-ref /mnt/nvme4tb/ci-runners/baton2-native-homelab/home/.claude-max-incognito
+account --action record --id claude-max-primary --provider anthropic --harness claude-code --funding subscription --secret-ref /mnt/nvme4tb/ci-runners/baton2-native-homelab/home/.claude
 ```
 
-The `priority` value for each row is written as #1011 defines it.
-
-The store is the `CLAUDE_CONFIG_DIR` directory already named for that label in the
-orchestra's `.profiles` file. These rows are operator data. They are recorded once
-per orchestra database, and a seat move needs no further configuration.
+`accounts_priority_ensured` from #1011 writes priorities 1 to 4 to these ids where
+the priority is still empty. After the rows exist, a seat move needs no further
+configuration. The fixtures in `bend2/test/account-order-fallback.py` record the
+same four accounts in the same order.
 
 ## Limits
 
 - The credit accounts stay unlaunchable while the promotional-credit guard is
   false. This change does not alter the guard.
 - Native history is not prepared for a seat with no native conversation.
+- The #1025 core has no Claude usage reader. Until that reader is in the stack, a Max
+  account's read is unreadable: the seat moves to `claude-max-incognito` on an
+  unknown read, holds before `claude-max-primary`, and an unreadable current account
+  records no #1025 hold, so only a held entry's release or new input wakes the seat.

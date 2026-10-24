@@ -142,6 +142,16 @@ class AccountOrderFallback(unittest.TestCase):
                      '3 claude-max-incognito refused', '4 claude-max-primary open'):
             self.assertIn(text, moves[0][1])
 
+    def test_the_last_entry_is_not_taken_on_an_unreadable_read(self):
+        self.record_order()
+        self.bind('claude-max-incognito')
+        self.windows('max-incognito', EXHAUSTED)
+        self.assertEqual(self.handoff_with(LIMIT_EVENT), 'exhausted')
+        self.assertEqual(self.current('leaf'), 'claude-max-incognito')
+        holds = self.query("SELECT body FROM messages WHERE kind='report' AND body LIKE 'account order held:%'")
+        self.assertIn('4 claude-max-primary usage unreadable', holds[0][0])
+        self.assertIn('the last entry is taken only on an open live read', holds[0][0])
+
     def all_held(self):
         self.record_order()
         self.bind('claude-max-incognito')

@@ -854,12 +854,22 @@ type Scan is Data:
 def states_joined(+states: String, +line: String, +separator: String) -> String:
   Bool.pick(String,String.is_empty(states),line,states ++ separator ++ line)
 
-def scan_decided(+db: String, +session: String, +provider: String, +model: String, +helper: String, +read: Bool, +refused: String, +refused_detail: String, rest: List<&2,AccountRecord>, +position: U32, +states: String, +held: String, +receipts: String, +account: AccountRecord, state: EntryState) -> IO(Scan):
+# The last entry of the order is taken only on an open live read; an unknown read
+# moves a seat to any earlier entry. The operator's last entry is the root's own
+# account (claude-max-primary), which no seat takes without a read that says open.
+def entry_chosen(+kind: String, +last: Bool) -> Bool:
+  Bool.or(String.eq(kind,"open"),Bool.and(String.eq(kind,"unknown"),Bool.not(last)))
+
+def last_note(+kind: String, +last: Bool) -> String:
+  Bool.pick(String,Bool.and(String.eq(kind,"unknown"),last)," (the last entry is taken only on an open live read)","")
+
+def scan_decided(+db: String, +session: String, +provider: String, +model: String, +helper: String, +read: Bool, +refused: String, +refused_detail: String, +rest: List<&2,AccountRecord>, +position: U32, +states: String, +held: String, +receipts: String, +account: AccountRecord, state: EntryState) -> IO(Scan):
   match state:
     case Es{+kind,+detail,+receipt}:
-      +line = U32.show(position) ++ " " ++ account_id(account) ++ " " ++ detail
+      +last = accounts_empty(rest)
+      +line = U32.show(position) ++ " " ++ account_id(account) ++ " " ++ detail ++ last_note(kind,last)
       +is_held = String.eq(kind,"held")
-      Bool.pick(IO(Scan),Bool.or(String.eq(kind,"open"),String.eq(kind,"unknown")),
+      Bool.pick(IO(Scan),entry_chosen(kind,last),
         IO.pure(Scan,Found{account,position,states_joined(states,line,"; ")}),
         order_scan(db,session,provider,model,helper,read,refused,refused_detail,rest,U32.add(position,1),states_joined(states,line,"; "),Bool.pick(String,is_held,held ++ account_id(account) ++ "\n",held),Bool.pick(String,is_held,states_joined(receipts,receipt,","),receipts)))
 
