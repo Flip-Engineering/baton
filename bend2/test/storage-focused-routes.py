@@ -47,6 +47,9 @@ class StorageFocusedRoutes(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="baton-storage-route-") as name:
             db = pathlib.Path(name) / "fixture.sqlite"
             sqlite3.connect(db).close()
+            schema = subprocess.run([str(BINARY), "--ensure-schema", str(db)],
+                                    text=True, capture_output=True, check=False)
+            self.assertEqual(schema.returncode, 0, schema.stdout + schema.stderr)
             run = subprocess.run(
                 [str(BINARY), str(db), "storage-collect", "fixture-session"],
                 text=True, capture_output=True, check=False)
