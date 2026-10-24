@@ -1,10 +1,11 @@
 # Focused fixture for the clear-only terminal stop and the durable quota hold.
 # It drives the real Stop.clear and UsageWindows functions over a temporary
 # database: the stop row is removed while the session, native identity,
-# workspace, messages and executions stay unchanged; a held provider window
-# stays held after the clear and after an unknown observation; a past reset
-# observation makes the window selectable without starting an execution. The
-# stop.py and usage-windows.py suites cover operator-facing refusal responses.
+# workspace, messages, executions, refusal evidence and live reads stay
+# unchanged; a seat held by an exhausted live read stays held after the clear and
+# after an unreadable read; a later open read makes the seat selectable without
+# starting an execution. The stop.py and usage-windows.py suites cover the
+# operator-facing command answers.
 # Store publishes committed changes through the database owner. This executable
 # handles the owner and shutdown modes so the host can start and stop that owner.
 #
@@ -38,12 +39,20 @@ def gate_class(gate: UW.Gate) -> String:
   match gate:
     case UW.GateNone{}: "none"
     case UW.GateHeld{window,resets_at,source,receipt}: "held"
-    case UW.GateElapsed{window,resets_at,source,receipt}: "elapsed"
+    case UW.GateUnknown{source,reason,receipt}: "unknown"
 
-def expect_gate(+db: String, +session: String, +account: String, +expected: String, +label: String) -> IO(Unit):
+# The hold from the recorded reads; window_state performs no read.
+def expect_state(+db: String, +session: String, +account: String, +expected: String, +label: String) -> IO(Unit):
   do IO<Unit>:
-    gate : UW.Gate <- UW.window_gate(db,session,account)
+    gate : UW.Gate <- UW.window_state(db,session,account)
     expect(label,String.eq(gate_class(gate),expected))
+
+# One readable live read of the kimi-code 5-hour window for account acct.
+def read_row_sql(+percent: String, +exhausted: String) -> String:
+  "INSERT INTO usage_reads(observed_at,provider,account,session,trigger,state,source,reason,document) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'kimi-code','acct','leaf','fixture','read','fixture','',json_object('schema','baton2-usage-read-v1','provider','kimi-code','source','fixture','observedAt',1,'state','read','windows',json_array(json_object('window','5-hour','usedPercent'," ++ percent ++ ",'resetsAt',32472144000000,'exhausted',json(" ++ C.q(exhausted) ++ ")))));"
+
+def unreadable_row_sql() -> String:
+  "INSERT INTO usage_reads(observed_at,provider,account,session,trigger,state,source,reason,document) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'kimi-code','acct','leaf','fixture','unreadable','fixture','HTTP 503 from the provider',json_object('schema','baton2-usage-read-v1','provider','kimi-code','source','fixture','observedAt',1,'state','unreadable','reason','HTTP 503 from the provider'));"
 
 def kimi_cause() -> String:
   "You've reached your 5-hour usage limit. Your quota will reset when the current 5-hour window ends."
@@ -95,11 +104,12 @@ def clear_cases(+db: String) -> IO(Unit):
     messages_before : String <- read(db,messages_state_sql("leaf"))
     executions_before : Unit <- expect_read(db,"SELECT count(*) FROM executions WHERE session='leaf';","1\n","executions-before")
     limit : Unit <- UW.record_cause(db,"leaf","m-leaf","acct",kimi_cause())
-    observed : Unit <- UW.observe(db,"leaf","5-hour","2999-01-01T00:00:00Z","kimi console web ui","acct")
-    held_before : Unit <- expect_gate(db,"leaf","acct","held","held-before-clear")
-    windows_before : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE account='acct';","2\n","windows-before")
-    unknown_after_hold : Unit <- UW.observe(db,"leaf","5-hour","unknown","kimi console shows none","acct")
-    held_after_unknown : Unit <- expect_gate(db,"leaf","acct","held","unknown-observation-keeps-hold")
+    exhausted : Unit <- query(db,read_row_sql("100","true"))
+    held_before : Unit <- expect_state(db,"leaf","acct","held","held-before-clear")
+    windows_before : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE account='acct';","1\n","windows-before")
+    unreadable : Unit <- query(db,unreadable_row_sql())
+    held_after_unknown : Unit <- expect_state(db,"leaf","acct","held","unreadable-read-keeps-hold")
+    +reads_before : String <- read(db,"SELECT group_concat(id||':'||state,',') FROM usage_reads;")
     cleared : Unit <- Stop.clear(db,"leaf")
     gone : Unit <- expect_read(db,"SELECT count(*) FROM session_stops WHERE session='leaf';","0\n","stop-removed")
     native_after : Unit <- expect_read(db,"SELECT native FROM sessions WHERE id='leaf';","01a15437-e5d7-7301-b994-51623c8a339c\n","native-preserved")
@@ -108,23 +118,21 @@ def clear_cases(+db: String) -> IO(Unit):
     expect("messages-preserved",String.eq(messages_after,messages_before))
     executions_after : Unit <- expect_read(db,"SELECT count(*) FROM executions WHERE session='leaf';","1\n","no-execution-created")
     executions_exited : Unit <- expect_read(db,"SELECT phase FROM executions WHERE session='leaf';","exited\n","execution-unchanged")
-    windows_after : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE account='acct';","3\n","usage-windows-untouched")
-    held_after_clear : Unit <- expect_gate(db,"leaf","acct","held","held-after-clear")
+    windows_after : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE account='acct';","1\n","usage-windows-untouched")
+    +reads_after : String <- read(db,"SELECT group_concat(id||':'||state,',') FROM usage_reads;")
+    expect("usage-reads-untouched",String.eq(reads_after,reads_before))
+    held_after_clear : Unit <- expect_state(db,"leaf","acct","held","held-after-clear")
     IO.pure(Unit,Unit{})
 
 def reset_cases(+db: String) -> IO(Unit):
   do IO<Unit>:
     provider_rows : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE reset_source='provider-message' AND account='acct';","1\n","provider-exhaustion-retained")
     executions_before : Unit <- expect_read(db,"SELECT count(*) FROM executions WHERE session='leaf';","1\n","executions-before-reset")
-    elapsed : Unit <- UW.observe(db,"leaf","5-hour","2020-01-01T00:00:00Z","kimi console web ui","acct")
-    selectable : Unit <- expect_gate(db,"leaf","acct","elapsed","actual-reset-selectable")
-    executions_after : Unit <- expect_read(db,"SELECT count(*) FROM executions WHERE session='leaf';","1\n","reset-creates-no-execution")
-    latest_source : Unit <- expect_read(db,"SELECT reset_source FROM usage_windows WHERE account='acct' ORDER BY id DESC LIMIT 1;","operator-observation\n","reset-evidence-recorded")
-    provider_still : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE reset_source='provider-message' AND account='acct';","1\n","no-provider-success-fabricated")
-    rows : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE account='acct';","4\n","one-reset-observation-recorded")
-    expect("invalid-reset-parser-refuses",Bool.not(UW.operator_reset_token("next monday maybe")))
-    unchanged : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE account='acct';","4\n","invalid-reset-records-nothing")
-    IO.pure(Unit,Unit{})
+    opened : Unit <- query(db,read_row_sql("3","false"))
+    selectable : Unit <- expect_state(db,"leaf","acct","none","open-read-selectable")
+    executions_after : Unit <- expect_read(db,"SELECT count(*) FROM executions WHERE session='leaf';","1\n","open-read-creates-no-execution")
+    provider_still : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE account='acct';","1\n","open-read-adds-no-usage-window-row")
+    expect_read(db,"SELECT count(*) FROM messages WHERE id GLOB 'usage-read:*:release:leaf' AND recipient='root';","1\n","open-read-release-reported")
 
 def expect_clear_stop(+label: String, parsed: C.Command, expected_session: String) -> IO(Unit):
   match parsed:

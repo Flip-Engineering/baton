@@ -49,13 +49,15 @@ sh bend2/scripts/build-native.sh bend2/test/zai-quota.bend .scratch/bend2/zai-qu
 .scratch/bend2/zai-quota-test
 sh bend2/scripts/build-native.sh bend2/test/codex-rate-limits.bend .scratch/bend2/codex-rate-limits-test
 .scratch/bend2/codex-rate-limits-test
-sh bend2/scripts/build-native.sh bend2/test/usage-windows.bend .scratch/bend2/usage-windows-test
-.scratch/bend2/usage-windows-test
-sh bend2/scripts/build-native.sh bend2/test/usage-windows-long.bend .scratch/bend2/usage-windows-long-test
-.scratch/bend2/usage-windows-long-test
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-store.bend .scratch/bend2/usage-windows-store-test
 rm -f .scratch/bend2/usage-windows-store.db
-.scratch/bend2/usage-windows-store-test .scratch/bend2/usage-windows-store.db bend2/test/fake-omp-usage
+.scratch/bend2/usage-windows-store-test .scratch/bend2/usage-windows-store.db
+sh bend2/scripts/build-native.sh bend2/test/usage-hold-error-text.bend .scratch/bend2/usage-hold-error-text-test
+rm -f .scratch/bend2/usage-hold-error-text.db
+.scratch/bend2/usage-hold-error-text-test .scratch/bend2/usage-hold-error-text.db
+sh bend2/scripts/build-native.sh bend2/test/usage-live-reads.bend .scratch/bend2/usage-live-reads-test
+rm -f .scratch/bend2/usage-live-reads.db .scratch/bend2/usage-live-reads.db.answer
+.scratch/bend2/usage-live-reads-test .scratch/bend2/usage-live-reads.db bend2/test/fake-usage-read
 sh bend2/scripts/build-native.sh bend2/test/clear-stop-quota.bend .scratch/bend2/clear-stop-quota-test
 clear_stop_quota_db=$(mktemp "$root/.scratch/bend2/clear-stop-quota.XXXXXXXX")
 rm -f "$clear_stop_quota_db"
