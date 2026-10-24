@@ -90,9 +90,14 @@ def wake_args(arguments: List<String>) -> IO(Unit):
     case +db <> +message <> Nil{}: wake_message(db,message)
     case other: IO.die(Unit,2,"account-order-entry --wake-message DB MESSAGE")
 
+def dispatch_first(flag: Bool, +first: String, rest: List<String>) -> IO(Unit):
+  match flag:
+    case True{}: wake_args(rest)
+    case False{}: command(first,rest)
+
 def dispatch(arguments: List<String>) -> IO(Unit):
   match arguments:
-    case +first <> +rest: Bool.pick(IO(Unit),String.eq(first,"--wake-message"),wake_args(rest),command(first,rest))
+    case +first <> rest: dispatch_first(String.eq(first,"--wake-message"),first,rest)
     case Nil{}: IO.die(Unit,2,"account-order-entry: DB COMMAND ARGS")
 
 def main() -> IO(Unit):
