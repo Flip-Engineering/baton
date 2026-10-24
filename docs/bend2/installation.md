@@ -25,14 +25,20 @@ The check refuses before command links change.
 A source installation from the receiver layout contains four executable paths
 across three roles. `bin/baton` is the focused receiver, `bin/baton2` is the
 full router, `bin/baton-full` is the general CLI sibling, and
-`bin/baton-recovery` is the recovery helper. The focused receiver sends
+`bin/baton-recovery` is the recovery helper. `bin/baton-compile-queue` is the shared host compile queue executable. Its
+source commit/tree, executable hash and shared-state contract are recorded
+separately from the three receiver roles. Set `BATON_COMPILE_QUEUE_ROOT` to an
+absolute shared directory outside the install prefix, owned by the queue callers' shared group and created with mode `2770`. The queue requires setgid and
+group-write access on its state directories. The focused receiver sends
 general and help actions to `bin/baton-full`. The full router is relinked with
 `BATON2_NATIVE_RECEIVER_ROUTER` and forwards internal receiver actions to
 `bin/baton` and recovery actions to `bin/baton-recovery`. A missing or
 non-executable sibling makes the operation refuse with exit status 78.
 
-Stage the layout from three already-built binaries. Each binary needs its exact
-source commit and either its source tree object or a source manifest SHA256.
+Stage the layout from three already-built receiver binaries and the qualified
+native compile queue executable. Each executable needs its exact source commit
+and tree. The compile queue remains a separate package record and does not add
+a receiver role.
 The full router also records its current native-entry wrapper source separately
 from the retained full source or C identity. `bend2/scripts/stage-native-install.py` also requires the current REPL
 compiler source, Bun runtime, runtime SHA256 and complete runtime notices.
@@ -43,6 +49,9 @@ python3 "$BATON2_SOURCE/bend2/scripts/stage-native-install.py" \
   --focused-binary "$BATON2_FOCUSED" \
   --full-binary "$BATON2_FULL" \
   --recovery-binary "$BATON2_RECOVERY" \
+  --compile-queue-binary "$BATON2_COMPILE_QUEUE" \
+  --compile-queue-source-commit "$BATON2_COMPILE_QUEUE_COMMIT" \
+  --compile-queue-source-tree "$BATON2_COMPILE_QUEUE_TREE" \
   --focused-source-commit "$BATON2_FOCUSED_COMMIT" \
   --focused-source-tree "$BATON2_FOCUSED_TREE" \
   --full-source-commit "$BATON2_FULL_COMMIT" \
@@ -65,11 +74,15 @@ and install receipt record both pins while the focused receiver keeps its curren
 pin. The earlier binary's own features remain limited to its retained source pin.
 
 The staging manifest uses schema `baton2-native-install-v2` and records each
-binary's role, installed path, SHA256, source pin, entry and build mode.
-`SHA256SUMS` covers the four executable paths, the manifest and the install
+receiver binary's role, installed path, SHA256, source pin, entry and build mode.
+It records the compile queue executable and its exact source pin separately.
+`SHA256SUMS` covers all five executable paths, the manifest and the install
 receipt. `install-receipt.json` binds the manifest hash and binary pins.
 `libexec/baton2/check-install.py` verifies those files, the full general CLI
-sibling and all three role binaries, and the required REPL payload. It refuses a missing, non-executable, altered or
+sibling, all three receiver roles, the compile queue executable and the required
+REPL payload. Set `BATON_COMPILE_QUEUE_ROOT` to an absolute writable directory
+shared by queue callers and outside the installation prefix. The check reports
+refused until this state path is configured. It refuses a missing, non-executable, altered or
 unrecorded binary and reports the verified binary pins in its result.
 
 ## Upgrade an existing coordination schema

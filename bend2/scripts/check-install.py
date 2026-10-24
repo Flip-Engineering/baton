@@ -17,6 +17,12 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
+def queue_executable(prefix):
+    candidate = Path(prefix) / 'bin' / 'baton-compile-queue'
+    if candidate.is_file() and not candidate.is_symlink() and os.access(candidate, os.X_OK):
+        return str(candidate)
+    raise RuntimeError('The installed native host compilation queue executable is missing or not executable')
+
 def archive_digest(path):
     digest = hashlib.sha256()
     with path.open('rb') as stream:
@@ -146,6 +152,38 @@ def verify_payload_checksums(prefix, checksums):
     for name, digest in checksums.items():
         require(archive_digest(prefix / name) == digest, 'Payload checksum differs: ' + name)
 
+def verify_compile_queue(prefix, manifest, checksums):
+    record = manifest.get('compile_queue')
+    require(isinstance(record, dict), 'The installation manifest lacks its compile queue record')
+    path_name = 'bin/baton-compile-queue'
+    require(record.get('path') == path_name,
+            'The compile queue is installed at an unexpected path')
+    path = prefix / path_name
+    require(path.is_file() and not path.is_symlink() and os.access(path, os.X_OK),
+            'The installed compile queue binary is missing or not executable')
+    digest = archive_digest(path)
+    require(digest == record.get('sha256') and checksums.get(path_name) == digest,
+            'The installed compile queue binary differs from its manifest or checksum')
+    source = record.get('source')
+    require(isinstance(source, dict) and isinstance(source.get('status'), str),
+            'The installed compile queue binary lacks a source pin')
+    commit_tree = (isinstance(source.get('commit'), str)
+                   and re.fullmatch(r'[0-9a-f]{40}', source['commit']) is not None
+                   and isinstance(source.get('tree'), str)
+                   and re.fullmatch(r'[0-9a-f]{40}', source['tree']) is not None)
+    manifest_pin = (isinstance(source.get('manifest_sha256'), str)
+                    and re.fullmatch(r'[0-9a-f]{64}', source['manifest_sha256']) is not None)
+    require(commit_tree or manifest_pin,
+            'The compile queue binary lacks an exact source commit/tree or manifest pin')
+    require(record.get('state_root_environment') == 'BATON_COMPILE_QUEUE_ROOT'
+            and record.get('state_root_contract') ==
+            'absolute writable shared directory outside the install prefix',
+            'The compile queue state-root contract is missing or unsupported')
+    return {'path': path_name, 'sha256': digest, 'source': source,
+            'state_root_environment': record['state_root_environment'],
+            'state_root_contract': record['state_root_contract']}
+
+
 def verify_binaries(prefix, manifest, checksums):
     require(manifest.get('schema') in ('baton2-native-install-v2', 'baton2-native-artifact-v2'),
             'The installation manifest does not declare the receiver layout')
@@ -228,6 +266,8 @@ def verify_binaries(prefix, manifest, checksums):
     require(isinstance(source_manifest, dict)
             and source_manifest.get('schema') == 'baton2-source-manifest-v1',
             'The installation is missing its composite source manifest')
+    require(source_manifest.get('compile_queue') == manifest.get('compile_queue'),
+            'The composite source manifest compile queue pin differs from the manifest')
     source_manifest_path = prefix / 'source-manifest.json'
     require(source_manifest_path.is_file() and not source_manifest_path.is_symlink()
             and json.loads(source_manifest_path.read_text()) == source_manifest,
@@ -302,6 +342,8 @@ def verify_binaries(prefix, manifest, checksums):
             'The installation receipt schema is unsupported')
     require(receipt.get('manifest', {}).get('sha256') == archive_digest(prefix / 'manifest.json'),
             'The installation receipt differs from the manifest')
+    require(receipt.get('compile_queue') == manifest.get('compile_queue'),
+            'The installation receipt compile queue pin differs from the manifest')
     require(receipt.get('binaries') == manifest.get('binaries'),
             'The installation receipt binary pins differ from the manifest')
     require(receipt.get('source') == manifest.get('source')
@@ -318,6 +360,7 @@ def check(prefix, output):
     checksums = verify_checksums(prefix)
     verify_payload_checksums(prefix, checksums)
     binaries = verify_binaries(prefix, manifest, checksums)
+    compile_queue = verify_compile_queue(prefix, manifest, checksums)
     dependency = verify_repl(prefix, manifest)
     verify_dispatch_runtime(prefix)
     system = platform.system()
@@ -343,6 +386,21 @@ def check(prefix, output):
         require(result.returncode == 0, 'Installation prerequisite command failed: ' + str(argv))
         return result.stdout.strip()
 
+    def compile_with_queue(args, input_file, options, cwd, compiler_name, linker, version_text):
+        state = os.environ.get('BATON_COMPILE_QUEUE_ROOT')
+        require(state is not None and Path(state).is_absolute(),
+                'Set BATON_COMPILE_QUEUE_ROOT to the shared absolute compile-queue state directory')
+        output_path = args[args.index('-o') + 1]
+        command = [queue_executable(prefix), '--', 'run', '--kind', 'cc',
+                   '--state-root', state, '--cwd', cwd, '--source-root', cwd,
+                   '--compiler', compiler_name,
+                   '--linker', linker, '--version', ' '.join(version_text.split()),
+                   '--input', input_file, '--artifact', 'binary=' + str(output_path)]
+        for option in options:
+            command += ['--option', option]
+        command += ['--', *args]
+        run(command)
+
     run([prefix / 'bin/baton', '--help'])
     run([prefix / 'bin/baton-full', '--help'])
     runtime_version = run([prefix / dependency['path'] / 'bun', '--version'])
@@ -358,6 +416,8 @@ def check(prefix, output):
         require(compiler is not None, 'Install Clang 14 or later and the SQLite development package')
         sdk, flags = None, []
     version = run([compiler, '--version'])
+    linker = run([compiler, '-print-prog-name=ld'])
+    require(bool(linker), 'The selected Clang did not report its linker')
     match = re.search(r'clang version (\d+)', version)
     require(match is not None and int(match[1]) >= 14,
             'REPL native evaluation requires Clang 14 or later')
@@ -369,9 +429,11 @@ def check(prefix, output):
                       'if (sqlite3_exec(db, "SELECT 1", 0, 0, 0) != SQLITE_OK) return 2; '
                       'if (sqlite3_close(db) != SQLITE_OK) return 3; '
                       'puts(sqlite3_libversion()); return 0; }\n')
-    run([compiler, '-std=c11', *flags, source, '-lsqlite3', '-o', program])
+    compile_with_queue([compiler, '-std=c11', *flags, str(source), '-lsqlite3', '-o', str(program)],
+                       str(source), ['-std=c11', *flags], str(output), compiler, linker, version)
     sqlite_version = run([program])
     return {'status': 'ready', 'prefix': str(prefix), 'manifest_sha256': archive_digest(manifest_path),
+            'compile_queue': compile_queue,
             'install_receipt_sha256': archive_digest(prefix / 'install-receipt.json'),
             'checksums_sha256': archive_digest(prefix / 'SHA256SUMS'),
             'binaries': binaries,
