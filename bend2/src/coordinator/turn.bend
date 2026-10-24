@@ -177,16 +177,15 @@ def settlement_success(db: String, outcome: Outcome) -> IO(Bool):
 
 # A failed Direct turn retains its original input for supported recovery.
 # Later input still reaches the current receiver through the ordinary wake.
-# A held provider window keeps that wake owed and schedules its post-reset
-# continuation, so the same account is not retried before its reported reset.
+# A seat held by a live read keeps that wake owed and starts the reset-time
+# continuation; the continuation's wake reads the provider again.
 def direct_wake_gate(+db: String, +player: String, +message: String, gate: UW.Gate) -> IO(Result<&1,&1,U32 & String,Unit>):
   match gate:
     case UW.GateHeld{+window,+resets_at,+source,+receipt}:
       Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.is_empty(message),
         IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
         do IO<Result<&1,&1,U32 & String,Unit>>:
-          reported : Unit <- UW.report_held(db,player,message,UW.GateHeld{window,resets_at,source,receipt})
-          scheduled : Unit <- UW.schedule_held(db,message,resets_at)
+          held : Unit <- UW.held(db,player,message,UW.GateHeld{window,resets_at,source,receipt})
           IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
     case other: Delivery.wake_pending(db,player,message)
 
@@ -218,7 +217,7 @@ def direct_gate_held(gate: UW.Gate) -> Bool:
 
 def direct_gate_refusal(gate: UW.Gate) -> String:
   match gate:
-    case UW.GateHeld{window,resets_at,source,receipt}: "Provider usage window held: window=" ++ window ++ "; resetsAt=" ++ resets_at ++ "; source=" ++ source ++ "; the direct task remains retained."
+    case UW.GateHeld{window,resets_at,source,receipt}: "Provider usage held by a live read: window=" ++ window ++ "; provider resetsAt=" ++ resets_at ++ "; source=" ++ source ++ "; the direct task remains retained."
     case other: "Provider usage window held; the direct task remains retained."
 
 def task_instructions() -> String:

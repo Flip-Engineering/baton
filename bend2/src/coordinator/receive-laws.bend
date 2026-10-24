@@ -757,10 +757,8 @@ law an_owned_wake_admits_through_the_fence:
 def an_owned_wake_admits_through_the_fence(db,session,cursor,launch,lock):
   {==}
 
-def fenced_admission_reads_claim_and_custody(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), +lock: U32, gate: UW.Gate) -> IO(Result<&1,&1,U32 & String,Unit>):
+def fenced_admission_reads_claim_and_custody(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), +lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    +found : String <- Receive.wake_found(db,session,cursor)
-    restored : Unit <- UW.report_restored(db,session,Tx.trim_nl(found),gate)
     state : String <- Store.claim_state(db,session)
     dir : String <- IO.try(String,DB.Sql.query(db,Receive.attempt_dir_sql(session)))
     +trimmed : String <- IO.pure(String,Tx.trim_nl(dir))
@@ -775,10 +773,9 @@ law the_wake_admits_on_claim_and_custody:
   for +cursor: String
   for launch: String -> IO(Result<&1,&1,U32 & String,Unit>)
   for +lock: U32
-  for gate: UW.Gate
-  {Receive.wake_fenced_owed(db,session,cursor,launch,lock,gate) == fenced_admission_reads_claim_and_custody(db,session,cursor,launch,lock,gate) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.wake_fenced_owed(db,session,cursor,launch,lock) == fenced_admission_reads_claim_and_custody(db,session,cursor,launch,lock) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def the_wake_admits_on_claim_and_custody(db,session,cursor,launch,lock,gate):
+def the_wake_admits_on_claim_and_custody(db,session,cursor,launch,lock):
   {==}
 
 law a_claimed_obligation_with_ambiguous_custody_is_held:

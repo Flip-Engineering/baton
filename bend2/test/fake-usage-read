@@ -1,0 +1,8 @@
+#!/bin/sh
+# Test usage-read helper for test/usage-live-reads.bend. The core runs it as
+# HELPER PROVIDER CREDENTIAL_REF. The fixture gives each account the reference
+# file:PATH and writes the next read document to PATH; this prints that document.
+case "$2" in
+  file:*) cat "${2#file:}" ;;
+  *) echo "unexpected reference" >&2; exit 2 ;;
+esac

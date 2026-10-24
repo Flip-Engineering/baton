@@ -366,26 +366,34 @@ class Stop(unittest.TestCase):
         self.shutdown_idle_database_owner('refused native reply left the fixture database owner active')
         self.assertEqual(self.owned_processes(), [])
 
-    def test_clear_only_removes_terminal_stop_preserves_state_and_keeps_quota_hold(self):
+    def test_clear_only_removes_terminal_stop_preserves_state_and_keeps_usage_hold(self):
         observer, stream, started = self.begin(harness='omp')
         self.connect('parent')
         self.message('queued', 'parent', 'This retained input must not execute.')
         self.stop()
         self.finish(observer, ok=False)
         self.assertEqual(self.completed()['nativeStatus'], 'signal 15')
+        held_document = json.dumps({
+            'schema': 'baton2-usage-read-v1', 'provider': 'kimi-code', 'source': 'fixture',
+            'observedAt': 1, 'state': 'read',
+            'windows': [{'window': '5-hour', 'usedPercent': 100, 'resetsAt': 32472144000000, 'exhausted': True}]})
+        open_document = json.dumps({
+            'schema': 'baton2-usage-read-v1', 'provider': 'kimi-code', 'source': 'fixture',
+            'observedAt': 1, 'state': 'read',
+            'windows': [{'window': '5-hour', 'usedPercent': 3, 'resetsAt': 32472144000000, 'exhausted': False}]})
+        read_insert = ("INSERT INTO usage_reads(observed_at,provider,account,session,trigger,state,source,reason,document) "
+                       "VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'kimi-code','','parent','fixture','read','fixture','',?)")
         with sqlite3.connect(self.db) as database:
             database.execute("UPDATE sessions SET model='kimi-code/kimi-for-coding' WHERE id='parent'")
             database.execute(
                 "INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) "
                 "VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','','5-hour',NULL,'provider-message',NULL,'limit message','')")
-            database.execute(
-                "INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) "
-                "VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','','5-hour',32472144000000,'operator-observation',NULL,'operator-observation: console','')")
-        before = {table: self.rows('SELECT * FROM ' + table)
-                  for table in ('sessions', 'messages', 'executions', 'usage_windows')}
+            database.execute(read_insert, (held_document,))
         launches = (self.directory / 'native-launches.jsonl').read_text().splitlines()
-        windows = {row['window']: row for row in self.coord('usage-windows', 'parent')['windows']}
-        self.assertEqual(windows['5-hour']['state'], 'held')
+        self.assertEqual(self.coord('usage-windows', 'parent')['hold'], 'held')
+        self.assertEqual(len(self.rows("SELECT id FROM messages WHERE id GLOB 'usage-read:*:hold:parent'")), 1)
+        before = {table: self.rows('SELECT * FROM ' + table)
+                  for table in ('sessions', 'messages', 'executions', 'usage_windows', 'usage_reads')}
         cleared = self.coord('clear-stop', 'parent')
         self.assertTrue(cleared['cleared'])
         self.assertEqual((cleared['session'], cleared['native'], cleared['preserved']['native']),
@@ -393,25 +401,18 @@ class Stop(unittest.TestCase):
         self.assertEqual(cleared['preserved']['retainedInputs'], 1)
         self.assertEqual(self.rows('SELECT * FROM session_stops'), [])
         self.assertEqual({table: self.rows('SELECT * FROM ' + table)
-                          for table in ('sessions', 'messages', 'executions', 'usage_windows')}, before)
-        windows = {row['window']: row for row in self.coord('usage-windows', 'parent')['windows']}
-        self.assertEqual(windows['5-hour']['state'], 'held')
+                          for table in ('sessions', 'messages', 'executions', 'usage_windows', 'usage_reads')}, before)
+        self.assertEqual(self.coord('usage-windows', 'parent')['hold'], 'held')
         self.assertEqual((self.directory / 'native-launches.jsonl').read_text().splitlines(), launches)
-        observed = self.coord('usage-window-observe', 'parent', '5-hour',
-                             '2020-01-01T00:00:00Z', 'operator console')
-        self.assertEqual(observed['resetsAt'], 1577836800000)
-        windows = {row['window']: row for row in self.coord('usage-windows', 'parent')['windows']}
-        self.assertEqual(windows['5-hour']['state'], 'elapsed')
-        self.assertEqual(windows['5-hour']['exhaustionSource'], 'provider-message')
+        with sqlite3.connect(self.db) as database:
+            database.execute(read_insert, (open_document,))
+        answer = self.coord('usage-windows', 'parent')
+        self.assertEqual(answer['hold'], 'open')
+        self.assertEqual(answer['refusals'][0]['source'], 'provider-message')
+        self.assertEqual(len(self.rows("SELECT id FROM messages WHERE id GLOB 'usage-read:*:release:parent'")), 1)
         self.assertEqual(self.rows('SELECT * FROM executions'), before['executions'])
         self.assertEqual((self.directory / 'native-launches.jsonl').read_text().splitlines(), launches)
-        with sqlite3.connect(self.db) as database:
-            rows_before = database.execute('SELECT count(*) FROM usage_windows').fetchone()[0]
-        refused_reset = self.coord('usage-window-observe', 'parent', '5-hour',
-                                  'next monday maybe', 'console', ok=False)
-        self.assertIn('did not parse', refused_reset.stderr)
-        with sqlite3.connect(self.db) as database:
-            self.assertEqual(database.execute('SELECT count(*) FROM usage_windows').fetchone()[0], rows_before)
+        before['messages'] = self.rows('SELECT * FROM messages')
         missing = self.coord('clear-stop', 'missing', ok=False)
         self.assertIn('session-not-registered', missing.stderr)
         absent = self.coord('clear-stop', 'parent', ok=False)

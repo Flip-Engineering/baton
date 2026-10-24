@@ -66,8 +66,6 @@ type Command is Data:
   ModelsAll{session: String}
   HarnessInventory{}
   UsageWindows{session: String}
-  UsageWindowObserve{session: String, window: String, resets: String, source: String}
-  UsageWindowReset{session: String, resets: String, source: String}
   UsageWindowRefresh{session: String}
   Logs{session: String, level: String}
   LogsStorage{}
@@ -163,13 +161,15 @@ def wake_claim_schema() -> String:
 def task_input_schema() -> String:
   "CREATE TABLE IF NOT EXISTS task_input_requests (id TEXT PRIMARY KEY NOT NULL,request TEXT NOT NULL CHECK(json_valid(request) AND json_type(request)='object'),result TEXT CHECK(result IS NULL OR (json_valid(result) AND json_type(result)='object')));"
 
-# Usage window observations (#797): one row per observed provider window
-# event, bound to the session's harness, the provider prefix of its model, and
-# the subscription profile label in force (an empty label is account-wide).
-# resets_at NULL is the explicit unknown; the store never invents a reset.
+# Provider refusal evidence (#797): one row per provider exhaustion terminal,
+# bound to the session's harness, the provider prefix of its model, and the
+# account label in force. usage_reads (#1025) keeps one row per live read of a
+# provider's usage API; the seat's hold derives from those rows only.
 def usage_windows_schema() -> String:
   "CREATE TABLE IF NOT EXISTS usage_windows (id INTEGER PRIMARY KEY AUTOINCREMENT, recorded_at INTEGER NOT NULL, harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', account TEXT NOT NULL DEFAULT '', window TEXT NOT NULL, resets_at INTEGER, reset_source TEXT NOT NULL, used_fraction REAL, receipt TEXT NOT NULL, message TEXT NOT NULL DEFAULT '');"
   ++ "CREATE INDEX IF NOT EXISTS idx_usage_windows_match ON usage_windows(harness, provider, account, recorded_at);"
+  ++ "CREATE TABLE IF NOT EXISTS usage_reads (id INTEGER PRIMARY KEY AUTOINCREMENT, observed_at INTEGER NOT NULL, provider TEXT NOT NULL, account TEXT NOT NULL DEFAULT '', session TEXT NOT NULL DEFAULT '', trigger TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('read','unreadable')), source TEXT NOT NULL DEFAULT '', reason TEXT NOT NULL DEFAULT '', document TEXT NOT NULL CHECK(json_valid(document)));"
+  ++ "CREATE INDEX IF NOT EXISTS idx_usage_reads_scope ON usage_reads(provider, account, id);"
 
 def schema() -> String:
   wake_claim_schema()
@@ -670,8 +670,6 @@ def sql(command: Command) -> String:
     case ModelsAll{session}: ""
     case HarnessInventory{}: ""
     case UsageWindows{session}: ""
-    case UsageWindowObserve{session,window,resets,source}: ""
-    case UsageWindowReset{session,resets,source}: ""
     case UsageWindowRefresh{session}: ""
     case Logs{session,level}: ""
     case LogsStorage{}: ""
@@ -852,7 +850,6 @@ def parse_verb_three_args(+verb: String, +id: String, +one: String, +two: String
     case "ensemble": Ensemble{id,one,two}
     case "native-reply": NativeReply{id,one,two}
     case "native-reply-file": NativeReplyFile{id,one,two}
-    case "usage-window-reset": UsageWindowReset{id,one,two}
     case "stop": Stop{id,one,two}
     case "report": Report{id,one,two}
     case "report-file": ReportFile{id,one,two}
@@ -869,7 +866,6 @@ def parse_verb_three_args(+verb: String, +id: String, +one: String, +two: String
 def parse_verb_four_args(+verb: String, +id: String, +one: String, +two: String, +three: String) -> Command:
   match verb:
     case "profile-bind": ProfileBind{id,one,two,three}
-    case "usage-window-observe": UsageWindowObserve{id,one,two,three}
     case "knowledge-search": KnowledgeSearch{id,one,two,three}
     case "knowledge":
       Bool.pick(Command,Bool.and(String.eq(one,"--id"),String.eq(three,"--pretty")),Pretty{KnowledgeDetail{id,two}},

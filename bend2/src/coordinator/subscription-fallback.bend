@@ -514,12 +514,11 @@ def exit_report_cause(+db: String, +session: String, +id: String, cause: String)
       model : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";")
       +harness_text : String <- IO.pure(String,exit_result_text(harness))
       +model_text : String <- IO.pure(String,exit_result_text(model))
-      +reset : String <- IO.pure(String,UW.reset_text_of(other))
       +window : String <- IO.pure(String,UW.window_label_of(UW.lower_ascii(other)))
       account_result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT account FROM account_attempts WHERE session=" ++ C.q(session) ++ " AND turn=" ++ C.q(id) ++ " ORDER BY recorded DESC,rowid DESC LIMIT 1;")
       +account_row : String <- IO.pure(String,exit_result_text(account_result))
       +account : String <- Bool.pick(IO(String),String.is_empty(account_row),profile_label_io(db,session),IO.pure(String,account_row))
-      identity : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT " ++ C.q(session) ++ " || char(31) || " ++ C.q(harness_text) ++ " || char(31) || " ++ C.q(UW.provider_of(model_text)) ++ " || char(31) || " ++ C.q(account) ++ " || char(31) || " ++ C.q(window) ++ " || char(31) || " ++ C.q(reset) ++ ";")
+      identity : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT " ++ C.q(session) ++ " || char(31) || " ++ C.q(harness_text) ++ " || char(31) || " ++ C.q(UW.provider_of(model_text)) ++ " || char(31) || " ++ C.q(account) ++ " || char(31) || " ++ C.q(window) ++ ";")
       exit_report_encoded(db,id,exit_result_text(identity))
 
 def exit_report_id(+db: String, session: String, id: String, event: String) -> IO(String):

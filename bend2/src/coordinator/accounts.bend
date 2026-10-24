@@ -1178,8 +1178,8 @@ def next_account_after(accounts: List<&2,AccountRecord>, +harness: String, +curr
         case True{}: Bool.pick(Maybe<&2,AccountRecord>,account_matches(harness,"",account),Some{account},next_account_after(rest,harness,current,True{}))
         case False{}: Bool.pick(Maybe<&2,AccountRecord>,String.eq(account_id(account),current),next_account_after(rest,harness,current,True{}),next_account_after(rest,harness,current,False{}))
 
-# Continue past an account whose provider has already reported a current quota
-# hold. Unknown and elapsed observations leave the configured account selectable.
+# Continue past an account that a live read holds. An open or unknown read leaves
+# the configured account selectable.
 def gate_held(gate: UW.Gate) -> Bool:
   match gate:
     case UW.GateHeld{window,resets_at,source,receipt}: True{}
@@ -1267,9 +1267,10 @@ def handoff_label_io(+db: String, +session: String) -> IO(String):
     IO.pure(String,label)
 
 # Provider-reported exhaustion advances the account in force when a binding
-# put one in force, and the operator's profile list otherwise. The usage-window
-# observation is recorded before any advance, under the refused account label,
-# so the provider reset survives even when the advance fails. For two
+# put one in force, and the operator's profile list otherwise. The refusal
+# evidence is recorded before any advance, under the refused account label, and
+# the refusal starts a live read of that account's provider usage (#1025); the
+# read, not the refusal text, decides whether the account is held. For two
 # subscription accounts with distinct credential stores, the native-history
 # helper materializes the next store before the sidecar records the advance.
 # The advance is recorded before the caller relaunches, so the next attempt
@@ -1283,9 +1284,10 @@ def handoff(+db: String, +session: String, +id: String, +event: String, native: 
     +bound : Maybe<&2,AccountRecord> <- bound_account(db,session,harness)
     +label : String <- label_for_bound(db,session,bound)
     recorded : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.record_cause(db,session,id,label,cause))
+    read : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.read_refused(db,session,label,id))
     advanced : Bool <- handoff_decided(db,session,id,event,native,cmd,cwd,cause,harness,bound)
     +next_label : String <- handoff_label_io(db,session)
-    gate : UW.Gate <- UW.window_gate(db,session,next_label)
+    gate : UW.Gate <- UW.window_state(db,session,next_label)
     held : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(cause)),gate_held(gate)))
     IO.pure(Bool,Bool.and(advanced,Bool.not(held)))
 
@@ -1309,22 +1311,11 @@ def attempt_completed(+db: String, +attempt: String, +outcome: String, +error_te
     settled : String <- credit_settle_for(db,attempt,outcome,"",False{})
     IO.pure(Unit,Unit{})
 
-# The start time comes from the account_attempts row written at launch. An attempt
-# with no account record (a profile-bound attempt) clears nothing.
-def clear_success(+db: String, +session: String, +attempt: String) -> IO(Unit):
-  do IO<Unit>:
-    +started : String <- IO.try(String,DB.Sql.read(db,"SELECT coalesce((SELECT CAST(started_at AS INTEGER)*1000 FROM account_attempts WHERE attempt=" ++ C.q(attempt) ++ "),'');"))
-    +label : String <- handoff_label_io(db,session)
-    cleared : Unit <- Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(started)),IO.pure(Unit,Unit{}),UW.record_success(db,session,Tx.trim_nl(label),Tx.trim_nl(started),attempt))
-    IO.pure(Unit,Unit{})
-
-# The settlement of one finished attempt: its outcome is recorded, and a successful
-# attempt clears the exhausted windows of the account in force for refusals that were
-# recorded before it started.
+# The settlement of one finished attempt records its outcome. A successful attempt
+# does not release a usage hold; only a live read does (#1025).
 def attempt_settled(+db: String, +session: String, +attempt: String, +failed: Bool, +error_text: String) -> IO(Unit):
   do IO<Unit>:
     recorded : Unit <- attempt_completed(db,attempt,Bool.pick(String,failed,"failed","completed"),error_text)
-    cleared : Unit <- Bool.pick(IO(Unit),failed,IO.pure(Unit,Unit{}),clear_success(db,session,attempt))
     IO.pure(Unit,Unit{})
 
 
