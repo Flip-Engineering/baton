@@ -1368,6 +1368,11 @@ def direct_retained_prepared(+db: String, +player: String, +directory: String, +
       log : String <- IO.try(String,DB.Sql.query(db,"SELECT r.output FROM direct_turn_requests r JOIN executions e ON e.id=r.id AND e.session=r.session WHERE e.session=" ++ C.q(player) ++ " AND e.mode='direct';"))
       direct_setup_failure(Result<&1,&1,U32 & String,P.RetainedStart>,db,player,Tx.trim_nl(id),Tx.trim_nl(log),lock,error)
 
+def direct_conversation(+db: String, +player: String, +session: String) -> IO(String):
+  do IO<String>:
+    recorded : String <- IO.try(String,DB.Sql.query(db,"SELECT native FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+    IO.pure(String,Bool.pick(String,String.is_empty(Tx.trim_nl(session)),Tx.trim_nl(recorded),Tx.trim_nl(session)))
+
 def direct_retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, +lock: U32, +recovery: String, +level: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
     +conversation : String <- direct_conversation(db,player,session)
@@ -1578,11 +1583,6 @@ def direct_recovery_checked(+db: String, +player: String, +id: String, +harness:
     Stop.error_result("Recorded direct recovery arguments differ from the retained request; preserve the attempt and inspect its manifest.",String.eq(found,"1\n"))
 
 # Continue the requested conversation or the conversation recorded by the attempt.
-def direct_conversation(+db: String, +player: String, +session: String) -> IO(String):
-  do IO<String>:
-    recorded : String <- IO.try(String,DB.Sql.query(db,"SELECT native FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
-    IO.pure(String,Bool.pick(String,String.is_empty(Tx.trim_nl(session)),Tx.trim_nl(recorded),Tx.trim_nl(session)))
-
 # Each account continuation uses a separate retained attempt directory.
 def direct_continued_directory(+db: String, +player: String, +directory: String) -> IO(String):
   do IO<String>:
