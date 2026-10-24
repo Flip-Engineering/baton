@@ -259,7 +259,7 @@ def cargo_reference_result(result: Result<&1,&1,U32 & String,String>, +path: Str
         IO.pure(T.Presence, T.Present{detail}), next(unknown))
 
 def cargo_pending_sessions(rows: List<&2,S.SessionRow>, +pending: List<&2,S.PendingRow>,
-                           +path: String, unknown: Bool) -> IO(T.Presence):
+                           +path: String, +unknown: Bool) -> IO(T.Presence):
   match rows:
     case Nil{}: IO.pure(T.Presence, Bool.pick(T.Presence, unknown, T.Unknown{}, T.Absent{}))
     case S.SessionRow{+id, workspace, branch, base} <> +rest:
@@ -271,7 +271,7 @@ def cargo_pending_sessions(rows: List<&2,S.SessionRow>, +pending: List<&2,S.Pend
             next_unknown => cargo_pending_sessions(rest, pending, path, next_unknown)))
 
 def cargo_executions(rows: List<&2,S.ExecutionRow>, +sessions: List<&2,S.SessionRow>,
-                     +pending: List<&2,S.PendingRow>, +path: String, unknown: Bool) -> IO(T.Presence):
+                     +pending: List<&2,S.PendingRow>, +path: String, +unknown: Bool) -> IO(T.Presence):
   match rows:
     case Nil{}: cargo_pending_sessions(sessions, pending, path, unknown)
     case S.ExecutionRow{session, id, directory, phase, status} <> +rest:
