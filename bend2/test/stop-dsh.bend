@@ -42,7 +42,7 @@ def request_error(+db: String, +session: String, +id: String, +reason: String, f
 def session_row(+id: String, harness: String, native: String, workspace: String) -> String:
   "INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint,workspace,branch,base) VALUES("
   ++ C.q(id) ++ ",NULL," ++ C.q(harness) ++ ",'deepseek/deepseek-flash','high'," ++ C.q(native)
-  ++ ",''," ++ C.q(workspace) ++ "," ++ C.q(id) ++ "-branch,'base-sha');"
+  ++ ",''," ++ C.q(workspace) ++ "," ++ C.q(id ++ "-branch") ++ ",'base-sha');"
 
 def exec_row(session: String, attempt: String, directory: String, phase: String, status: String) -> String:
   "INSERT INTO executions(session,id,mode,directory,phase,status) VALUES("
