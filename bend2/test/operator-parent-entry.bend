@@ -1,52 +1,32 @@
 import Base
 import ../src/coordinator/commands.bend as C
 import ../src/coordinator/store.bend as Store
-import ../src/coordinator/recruit.bend as Recruit
-import ../src/coordinator/agent-command.bend as Agent
-import ../src/coordinator/agent-actions.bend as A
-import ../src/coordinator/agent-native.bend as Native
-import ../src/coordinator/agent-route.bend as Route
-import ../src/host/instance.bend as Custody
+import ../src/host/sqlite.bend as DB
+import ../src/git/text.bend as Tx
 
-# Exercise command preparation and stored admission with delivery left pending.
-def execute(+db: String, command: C.Command) -> IO(Unit):
-  match command:
-    case C.Recruit{id,parent,harness,model,effort,repo,branch,path,base}:
-      Recruit.recruit(db,id,parent,harness,model,effort,repo,branch,path,base)
-    case C.Join{id,parent,harness,model,effort,path}:
-      Recruit.join(db,id,parent,harness,model,effort,path)
-    case other: do IO<Unit>:
-      saved : String <- IO.try(String,Store.apply(db,other))
-      IO.write(saved)
+# The full CLI creates the sessions; this entry exercises message admission.
+def admit(+db: String, sql: String) -> IO(Unit):
+  do IO<Unit>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.schema() ++ sql ++ "COMMIT;")
+    accepted : String <- IO.try(String,Store.committed(result))
+    IO.write(accepted)
 
-def prepared(request: Agent.PreparedRequest) -> IO(Unit):
-  match request:
-    case Agent.Prepared{db,session,action}:
-      match action:
-        case A.Native{items}: do IO<Unit>:
-          saved : String <- Native.operations(db,session,items)
-          IO.write(saved)
-        case A.Invalid{cause}: IO.die(Unit,2,cause)
-        case other: IO.die(Unit,2,"unsupported focused messaging action")
+def message(db: String, verb: String, id: String, sender: String,
+            recipient: String, kind: String, body: String) -> IO(Unit):
+  match verb:
+    case "dispatch": admit(db,C.message_sql(id,sender,recipient,kind,body))
+    case "report": admit(db,C.parent_message_sql(id,sender,"report",body))
+    case "ask": admit(db,C.parent_message_sql(id,sender,"question",body))
+    case other: IO.die(Unit,2,"expected dispatch, report or ask")
 
-def legacy(args: List<String>) -> IO(Unit):
+def run(args: List<String>) -> IO(Unit):
   match args:
-    case "--instance-owner" <> db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
-    case "--instance-shutdown" <> db <> Nil{}: IO.try(Unit,Custody.Instance.shutdown(db))
-    case +db <> "agent-native-input" <> Nil{}: do IO<Unit>:
-      args : List<String> <- Native.input(db)
-      execute(db,C.parse(args))
-    case db <> args: execute(db,C.parse(args))
-    case other: IO.die(Unit,2,"expected database and messaging command")
-
-def route(request: Route.Route) -> IO(Unit):
-  match request:
-    case Route.Action{context}: do IO<Unit>:
-      request : Agent.PreparedRequest <- Agent.prepare_request(context)
-      prepared(request)
-    case Route.Legacy{args}: legacy(args)
+    case +db <> verb <> sender <> recipient <> kind <> body <> Nil{}: do IO<Unit>:
+      random : String <- IO.try(String,DB.Sql.read(db,"SELECT lower(hex(randomblob(16)));"))
+      message(db,verb,Tx.trim_nl(random),sender,recipient,kind,body)
+    case other: IO.die(Unit,2,"expected DB VERB SENDER RECIPIENT KIND BODY")
 
 def main() -> IO(Unit):
   do IO<Unit>:
     args : List<String> <- IO.args()
-    route(Route.parse(args))
+    run(args)

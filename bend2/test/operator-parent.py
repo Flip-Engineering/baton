@@ -1,7 +1,8 @@
-"""Operator child command admission through the focused messaging entry.
+"""Operator child command admission through the native coordinator.
 
-BATON2_EXE selects the focused entry or a full coordinator. Delivery remains
-pending in the focused entry; these tests assert stored command outcomes.
+BATON2_EXE selects the full coordinator. BATON2_MESSAGE_EXE optionally selects
+the focused admission entry for dispatch, report and ask. Setup still uses the
+full coordinator. Focused admission leaves delivery pending.
 """
 import json
 import os
@@ -13,6 +14,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 EXE = Path(os.environ.get('BATON2_EXE', ROOT / '.scratch/bend2/baton2')).resolve()
+MESSAGE_EXE = os.environ.get('BATON2_MESSAGE_EXE')
 
 
 class OperatorParent(unittest.TestCase):
@@ -54,6 +56,18 @@ class OperatorParent(unittest.TestCase):
         return result
 
     def action(self, actor, *args, ok=True):
+        if MESSAGE_EXE and args[0] in ('dispatch', 'report', 'ask'):
+            options = dict(zip(args[1::2], args[2::2]))
+            result = subprocess.run(
+                [MESSAGE_EXE, str(self.db), args[0], actor, options.get('--to', ''),
+                 options.get('--kind', 'task'), options['--text']],
+                env=self.env, capture_output=True, text=True)
+            with (self.directory / 'commands.jsonl').open('a') as log:
+                log.write(json.dumps({'argv': result.args, 'exit': result.returncode,
+                                      'stdout': result.stdout, 'stderr': result.stderr}) + '\n')
+            self.assertEqual(result.returncode, 0 if ok else 2,
+                             result.stdout + result.stderr)
+            return json.loads(result.stdout) if ok else {'stderr': result.stderr}
         outcomes = self.call('as', actor, *args)
         self.assertEqual(len(outcomes), 1)
         outcome = outcomes[0]
