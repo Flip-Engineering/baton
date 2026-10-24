@@ -68,16 +68,21 @@ def dispatch_message(selected: Bool, +db: String, +id: String) -> IO(Unit):
     case True{}: Control.deliver(db,id)
     case False{}: IO.die(Unit,2,"expected dispatch message")
 
-def dispatch_three_route(host_keeper: Bool, message: Bool, +first: String, +second: String) -> IO(Unit):
+def dispatch_redelivery(selected: Bool, +db: String, +id: String) -> IO(Unit):
+  match selected:
+    case True{}: Control.redeliver(db,id)
+    case False{}: IO.die(Unit,2,"unsupported focused receive command")
+
+def dispatch_three_route(host_keeper: Bool, message: Bool, redelivery: Bool, +first: String, +second: String) -> IO(Unit):
   match host_keeper:
     case True{}: dispatch_host_keeper(True{},first,second)
     case False{}:
       match message:
         case True{}: dispatch_message(True{},first,second)
-        case False{}: IO.die(Unit,2,"unsupported focused receive command")
+        case False{}: dispatch_redelivery(redelivery,first,second)
 
 def dispatch_three(+flag: String, +first: String, +second: String) -> IO(Unit):
-  dispatch_three_route(String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"),first,second)
+  dispatch_three_route(String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"),String.eq(flag,"--redeliver-message"),first,second)
 
 def dispatch_turn(selected: Bool, +db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String) -> IO(Unit):
   match selected:
