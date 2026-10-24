@@ -1472,7 +1472,7 @@ def move_recorded(+db: String, +session: String, +id: String, +account: AccountR
 # session with no native conversation has no history to carry.
 def move_to(+db: String, +session: String, +id: String, +harness: String, +from: String, +from_store: String, +native: String, cmd: String, cwd: String, +account: AccountRecord, +position: U32, +total: U32, +states: String) -> IO(Bool):
   do IO<Bool>:
-    prepared : Bool <- Bool.pick(IO(Bool),Bool.or(String.is_empty(native),String.eq(from_store,account_secret_ref(account))),IO.pure(Bool,True{}),Subs.prepare_history(db,session,id,harness,from_store,cmd,cwd,native,Some{Subs.Pr{harness,account_id(account),account_secret_ref(account)}}))
+    prepared : Bool <- Bool.pick(IO(Bool),Bool.or(String.is_empty(native),String.eq(from_store,account_secret_ref(account))),IO.pure(Bool,True{}),Subs.prepare_account_history(db,session,id,harness,from_store,account_secret_ref(account),cmd,cwd,native))
     move_recorded(db,session,id,account,move_body(session,harness,from,account_id(account),position,total,states),prepared)
 
 def order_decided(+db: String, +session: String, +id: String, +harness: String, +from: String, +from_store: String, native: String, cmd: String, cwd: String, +total: U32, scan: Scan) -> IO(Bool):
