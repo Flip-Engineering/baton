@@ -40,13 +40,15 @@ type RootPreview is Type:
 def split_pipe(+text: String) -> List<&2,String>:
   String.split(text, Char.from_u32(124))
 
+def source_after_first(tail: List<&2,String>) -> String:
+  match tail:
+    case Nil{}: ""
+    case Con{source, rest}: source
+
 def source_of(parts: List<&2,String>) -> String:
   match parts:
     case Nil{}: ""
-    case Con{head, tail}:
-      match tail:
-        case Nil{}: ""
-        case Con{source, rest}: source
+    case Con{head, tail}: source_after_first(tail)
 
 def first_part(parts: List<&2,String>) -> String:
   match parts:
@@ -79,13 +81,8 @@ def root_source_of(+spec: RootSpec) -> String:
   match spec:
     case RootSpec{cls, path, source}: source
 
-def roots_add_line(+line: String, acc: List<&2,RootSpec>, empty: Bool, comment: Bool) -> List<&2,RootSpec>:
-  match empty:
-    case True{}: acc
-    case False{}:
-      match comment:
-        case True{}: acc
-        case False{}: Con{root_spec(line), acc}
+def roots_add_line(+line: String, +acc: List<&2,RootSpec>, empty: Bool, comment: Bool) -> List<&2,RootSpec>:
+  Bool.pick(List<&2,RootSpec>, Bool.or(empty, comment), acc, Con{root_spec(line), acc})
 
 def roots_walk(lines: List<String>, acc: List<&2,RootSpec>) -> List<&2,RootSpec>:
   match lines:
@@ -102,13 +99,8 @@ def configured_roots() -> IO(List<&2,RootSpec>):
     text : String <- IO.try(String, IO.get_env("BATON_STORAGE_ROOTS"))
     IO.pure(List<&2,RootSpec>, parse_roots(text))
 
-def exclusive_add_line(+line: String, acc: List<&2,String>, empty: Bool, comment: Bool) -> List<&2,String>:
-  match empty:
-    case True{}: acc
-    case False{}:
-      match comment:
-        case True{}: acc
-        case False{}: Con{normalize_root(line), acc}
+def exclusive_add_line(+line: String, +acc: List<&2,String>, empty: Bool, comment: Bool) -> List<&2,String>:
+  Bool.pick(List<&2,String>, Bool.or(empty, comment), acc, Con{normalize_root(line), acc})
 
 def exclusive_walk(lines: List<String>, acc: List<&2,String>) -> List<&2,String>:
   match lines:
@@ -143,15 +135,19 @@ def unproven_roots(specs: List<&2,RootSpec>, +exclusive: List<&2,String>, +acc: 
 def join_path(+root: String, +name: String) -> String:
   Bool.pick(String, String.ends_with(root, "/"), root ++ name, root ++ "/" ++ name)
 
-def child_class(+spec: RootSpec, +child: O.Child) -> T.StorageClass:
+def git_child_class(child: O.Child) -> T.StorageClass:
+  match child:
+    case O.Child{kind, name}:
+      Bool.pick(T.StorageClass, Bool.and(String.eq(kind, "dir"), Bool.not(String.is_empty(S.loose_prefix(name)))), T.GitObject{}, T.Unclassified{})
+
+def storage_child_class(cls: T.StorageClass, child: O.Child) -> T.StorageClass:
+  match cls:
+    case T.GitObject{}: git_child_class(child)
+    case other: other
+
+def child_class(spec: RootSpec, child: O.Child) -> T.StorageClass:
   match spec:
-    case RootSpec{cls, path, source}:
-      match cls:
-        case T.GitObject{}:
-          match child:
-            case O.Child{kind, name}:
-              Bool.pick(T.StorageClass, Bool.and(String.eq(kind, "dir"), Bool.not(String.is_empty(S.loose_prefix(name)))), T.GitObject{}, T.Unclassified{})
-        case other: cls
+    case RootSpec{cls, path, source}: storage_child_class(cls, child)
 
 def candidate_path(+candidate: T.Candidate) -> String:
   match candidate:

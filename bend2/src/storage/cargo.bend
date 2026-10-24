@@ -52,15 +52,17 @@ def decision(output: Output, consumer: T.Presence, selection: T.Presence) -> T.D
       Bool.pick(T.Decision, Bool.not(String.is_empty(active)), T.Keep{active},
         Bool.pick(T.Decision, Bool.not(String.is_empty(selected)), T.Keep{selected}, T.Remove{"cargo-output-released"}))
 
-def collect_decided(decision: T.Decision, output: Output, +path: String, +associated: String) -> IO(Collection):
+def collect_output(output: Output, path: String, associated: String) -> IO(Collection):
+  match output:
+    case Cargo{identity, origin}: do IO<Collection>:
+      result : Result<&1,&1,U32 & String,String> <- H.StorageHost.cargo_remove(path, identity, associated)
+      IO.pure(Collection, Applied{O.removal_result(result)})
+    case other: IO.pure(Collection, Kept{"cargo-output-unresolved"})
+
+def collect_decided(decision: T.Decision, output: Output, path: String, associated: String) -> IO(Collection):
   match decision:
     case T.Keep{reason}: IO.pure(Collection, Kept{reason})
-    case T.Remove{reason}:
-      match output:
-        case Cargo{identity, origin}: do IO<Collection>:
-          result : Result<&1,&1,U32 & String,String> <- H.StorageHost.cargo_remove(path, identity, associated)
-          IO.pure(Collection, Applied{O.removal_result(result)})
-        case other: IO.pure(Collection, Kept{"cargo-output-unresolved"})
+    case T.Remove{reason}: collect_output(output, path, associated)
 
 # The caller retains its existing producer ownership boundary through this
 # operation. Both readers run after classification and before native locking.
@@ -162,14 +164,18 @@ def baton_scanned(scan: O.Scan, +directory: String, +path: String) -> IO(T.Prese
     case O.Scan{True{}, Nil{}}: unknown_selection(path)
     case O.Scan{True{}, entries}: baton_links(directory, entries, path, False{})
 
+def baton_selection_result(+directory: String, path: String,
+                           canonical: Result<&1,&1,U32 & String,String>) -> IO(T.Presence):
+  match canonical:
+    case Fail{error}: unknown_selection(path)
+    case Done{resolved}: do IO<T.Presence>:
+      scan : O.Scan <- O.children(directory)
+      baton_scanned(scan, directory, resolved)
+
 # Baton's installed command symlinks select the current and rollback releases.
 # The owning service supplies this directory from its recorded installation.
 # Other services supply their own reader; an unknown reader keeps the target.
 def baton_selection(+directory: String, +path: String) -> IO(T.Presence):
   do IO<T.Presence>:
     canonical : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(path)
-    match canonical:
-      case Fail{error}: unknown_selection(path)
-      case Done{resolved}: do IO<T.Presence>:
-        scan : O.Scan <- O.children(directory)
-        baton_scanned(scan, directory, resolved)
+    baton_selection_result(directory, path, canonical)
