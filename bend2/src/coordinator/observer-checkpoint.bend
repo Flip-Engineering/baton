@@ -194,23 +194,15 @@ def decode_valid(db: String, value: String) -> IO(State):
     row : String <- IO.try(String,DB.Sql.query(db,decode_fields_sql(value)))
     decode_fields(ContextText.split_tabs(without_query_newline(row)))
 
-def commit(db: String, handle: U32, +state: State, enabled: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match enabled:
-    case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
-    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      saved : String <- IO.try(String,DB.Sql.query(db,encode_sql(state)))
-      Custody.Instance.commit(handle,schema_version(),Tx.trim_nl(saved))
-
-def reset_empty(db: String, +handle: U32) -> IO(State):
+def reset_empty(handle: U32) -> IO(State):
   do IO<State>:
     reset : Unit <- IO.try(Unit,Custody.Instance.replay(handle))
-    committed : Unit <- IO.try(Unit,commit(db,handle,empty(),True{}))
     IO.pure(State,empty())
 
 def decode_nonempty(+db: String, handle: U32, +value: String) -> IO(State):
   do IO<State>:
     valid : String <- IO.try(String,DB.Sql.query(db,valid_sql(value)))
-    Bool.pick(IO(State),String.eq(Tx.trim_nl(valid),"1"),decode_valid(db,value),reset_empty(db,handle))
+    Bool.pick(IO(State),String.eq(Tx.trim_nl(valid),"1"),decode_valid(db,value),reset_empty(handle))
 
 def decode(db: String, handle: U32, +value: String) -> IO(State):
   Bool.pick(IO(State),String.is_empty(value),IO.pure(State,empty()),decode_nonempty(db,handle,value))
@@ -219,6 +211,13 @@ def restore(db: String, +handle: U32) -> IO(State):
   do IO<State>:
     saved : String <- IO.try(String,Custody.Instance.restore(handle,schema_version()))
     decode(db,handle,without_query_newline(saved))
+
+def commit(db: String, handle: U32, +state: State, enabled: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match enabled:
+    case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      saved : String <- IO.try(String,DB.Sql.query(db,encode_sql(state)))
+      Custody.Instance.commit(handle,schema_version(),Tx.trim_nl(saved))
 
 def after_observation(db: String, handle: U32, +state: State, enabled: Bool, observed: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match observed:

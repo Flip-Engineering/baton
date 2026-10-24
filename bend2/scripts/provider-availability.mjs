@@ -49,8 +49,23 @@ export function parseCatalog(jsonText) {
     id: String(entry.id || modelIdOf(entry.selector || '')),
     name: String(entry.name || ''),
     kind: String(entry.kind || ''),
-    thinking: Array.isArray(entry.thinking) ? entry.thinking.map(String) : null,
-    contextWindow: typeof entry.contextWindow === 'number' ? entry.contextWindow : null,
+    thinking: Array.isArray(entry.thinking)
+      ? entry.thinking.map(String)
+      : Array.isArray(entry.effort?.supported_levels) ? entry.effort.supported_levels.map(String) : null,
+    defaultEffort: typeof entry.effort?.default_level === 'string' ? entry.effort.default_level : null,
+    contextWindow: typeof entry.contextWindow === 'number'
+      ? entry.contextWindow
+      : typeof entry.context_window === 'number' ? entry.context_window : null,
+    maxOutputTokens: typeof entry.maxOutputTokens === 'number'
+      ? entry.maxOutputTokens
+      : typeof entry.max_output_tokens === 'number' ? entry.max_output_tokens : null,
+    inputModalities: Array.isArray(entry.inputModalities)
+      ? entry.inputModalities.map(String)
+      : Array.isArray(entry.input_modalities) ? entry.input_modalities.map(String) : null,
+    outputModalities: Array.isArray(entry.outputModalities)
+      ? entry.outputModalities.map(String)
+      : Array.isArray(entry.output_modalities) ? entry.output_modalities.map(String) : null,
+    apiCapabilities: entry.apiCapabilities || entry.api_capabilities || null,
   })).filter((model) => model.selector !== '');
 }
 

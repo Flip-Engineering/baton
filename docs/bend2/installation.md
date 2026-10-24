@@ -1,16 +1,24 @@
 # Native installation
 
 Baton is developed on `main`. The Darwin arm64 archive contains the native
-executable, packaged Conductor adapters, Git identity helper, Bend2 REPL compiler
-and Bun runtime, selected context providers, notices and source/build manifest. Build logs are retained in the
-package output directory. Hosted CI also retains the smoke logs.
+executable, packaged Conductor adapters, Git identity helper, required Bend2
+REPL compiler and Bun runtime, selected context providers, notices and
+source/build manifest. Build logs are retained in the package output directory.
+Self-hosted validation runners also retain the smoke logs.
 The [historical 1.0 scope](release-1.0.md)
 records the supported platform and qualifications of that archive.
-A source installation stages the compiled executable and its required runtime
-payload for other hosts and architectures. The original npm package and its smoke checks
+A source build produces a native executable and remains the procedure
+for other hosts and architectures. The original npm package and its smoke checks
 are retained with the original implementation in Git history.
 [Native development artifacts](native-artifacts.md) describe archive packaging,
-the extracted smoke procedure and hosted CI.
+the extracted smoke procedure and self-hosted validation.
+
+The standard archive carries one required `bend2-repl-compiler` dependency.
+`check-install.py` verifies its complete file inventory and recorded hashes,
+runs the packaged Bun, and checks the C compiler and SQLite headers and
+library. Darwin requires Apple Command Line Tools and a macOS SDK; Linux
+source installations require Clang 14 or later and SQLite development files.
+The check refuses before command links change.
 
 ## Install or update a published release
 
@@ -80,13 +88,6 @@ owned turn completes, refresh its receiver using the procedure below. Preserve
 the recorded native identity, parent, workspace, pending input, receipts and
 explicit stops. Record any process that continues to use an earlier prefix;
 selecting the command symlink does not reload that process.
-
-The preactivation check verifies the required REPL files and recorded hashes.
-It also compiles and runs a SQLite probe using Apple Command Line Tools and the
-macOS SDK. If those prerequisites are absent, install them with
-`xcode-select --install`, select a valid macOS SDK and repeat the check before
-changing command symlinks. The complete [REPL compiler payload](repl.md#bundled-compiler)
-is part of the standard installation.
 
 ## Install the historical 1.0 archive
 
@@ -182,26 +183,18 @@ BATON2_SOURCE='<qualified-commit>'
 BATON2_ARCHIVE="$BATON2_PACKAGE/baton2-development-darwin-arm64-$BATON2_SOURCE.tar.gz"
 BATON2_PREFIX="$HOME/.local/share/baton2/releases/development-$BATON2_SOURCE"
 BATON2_COMMAND="$HOME/.local/bin/baton2"
-(
-  cd "$BATON2_PACKAGE"
-  shasum -a 256 -c SHA256SUMS
-)
 mkdir -p "$HOME/.local/share/baton2/releases" "$HOME/.local/bin"
 mkdir "$BATON2_PREFIX"
 tar -xzpf "$BATON2_ARCHIVE" -C "$BATON2_PREFIX" --strip-components=1
 chmod 755 "$BATON2_PREFIX"
-cmp "$BATON2_PREFIX/manifest.json" "$BATON2_PACKAGE/manifest.json"
-python3 "$BATON2_PREFIX/libexec/baton2/check-install.py" \
-  --output "$BATON2_PACKAGE/installation-check"
 ln -s "$BATON2_PREFIX/bin/baton2" "$BATON2_COMMAND.next"
 mv -f "$BATON2_COMMAND.next" "$BATON2_COMMAND"
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
 Keep the complete extracted prefix, including `lib/context/modules` and
-`libexec/baton2`. The executable resolves its Conductor adapters and selected
-context providers there. The compiled coordinator manages Codex inbox delivery
-through the native proxy transport. Keep the earlier prefix available
+`libexec/baton2`. The executable resolves its Codex inbox helper, Conductor
+adapters and selected context providers there. Keep the earlier prefix available
 for receivers and recovery commands that still reference it.
 
 The command symlink selects the executable for subsequent CLI invocations.
@@ -228,42 +221,6 @@ source path was unavailable during use. The
 released archive above carries the complete payload. The executable
 linked system SQLite and libSystem on the qualified host. Other operating
 systems and architectures need their own build and execution qualification.
-
-## Install a source build
-
-Run the native build on the qualified host with the recorded Bend compiler.
-Then stage its installation prefix with the exact platform Bun runtime and its
-verified SHA256 and complete distribution notices. The checked-in compiler
-source under `bend2/compiler/upstream` is required and verified against its lock.
-
-```sh
-set -eu
-sh bend2/scripts/build-native.sh
-BATON2_PREFIX=/absolute/path/to/new/native-prefix
-BATON2_REPL_RUNTIME=/absolute/path/to/verified/platform/bun
-BATON2_REPL_RUNTIME_SHA256='<verified-platform-runtime-sha256>'
-BATON2_REPL_NOTICES=/absolute/path/to/complete/Bun-NOTICES
-python3 bend2/scripts/stage-native-install.py \
-  --binary .scratch/bend2/baton2 --prefix "$BATON2_PREFIX" \
-  --repl-runtime "$BATON2_REPL_RUNTIME" \
-  --repl-runtime-sha256 "$BATON2_REPL_RUNTIME_SHA256" \
-  --repl-runtime-notices "$BATON2_REPL_NOTICES"
-python3 "$BATON2_PREFIX/libexec/baton2/check-install.py" \
-  --output "$BATON2_PREFIX.installation-check"
-mkdir -p "$HOME/.local/bin"
-ln -s "$BATON2_PREFIX/bin/baton2" "$HOME/.local/bin/baton2.next"
-mv -f "$HOME/.local/bin/baton2.next" "$HOME/.local/bin/baton2"
-ln -s "$BATON2_PREFIX/bin/baton" "$HOME/.local/bin/baton.next"
-mv -f "$HOME/.local/bin/baton.next" "$HOME/.local/bin/baton"
-```
-
-The staging command records the executable, required REPL dependency, context
-modules, system prerequisites and notices. Keep the complete prefix. The native
-build output is an intermediate executable; source installation requires the
-staged payload. The installed REPL resolves its compiler under
-`libexec/baton2/repl/compiler` in that prefix. Linux installations require Clang
-14 or later and SQLite development headers and library. The preactivation check
-reports the missing prerequisite and its remedy.
 
 ## Install a context module
 

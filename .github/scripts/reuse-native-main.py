@@ -24,11 +24,6 @@ COMPILER_ARCHIVES = {
         'official_release_artifact': False,
         'binary_sha256': 'b929035652cba78ba1b034b7214a14bbc2f64f0e6c27265c64c53895d24890c0',
     },
-    '2df30208da307f7922fefc5517563ad1ee484bc60227f60d88994aad57e4779e': {
-        'name': 'Bend 2.0.25 with Baton memoization and Bun small heap',
-        'official_release_artifact': False,
-        'binary_sha256': 'a36231553ac8e1ed447a5d413e5a6787e24ac86ffe7188bb9c96f3fb26e1b554',
-    },
 }
 ENTRY = 'bend2/src/coordinator/main.bend'
 HOST_SOURCE = 'bend2/src/host/process-spawn.c'
@@ -301,15 +296,6 @@ def artifact_identity(handoff):
 def handoff_binding(path, expected_sha):
     handoff = json.loads(path.read_text())
     selected_sha = digest(path)
-    if handoff.get('schema') == 'baton2-combined-main-ci-reference-v1':
-        require(selected_sha == expected_sha, 'The combined Main CI reference digest differs.')
-        original_path = verify_file(handoff['original_handoff'])
-        original = json.loads(original_path.read_text())
-        require(original.get('schema') == 'baton2-combined-main-handoff-v1',
-                'The CI reference requires an original combined Main handoff.')
-        return original, {'kind': 'combined-main-ci-reference', 'selected_sha256': selected_sha,
-                          'requested_sha256': expected_sha, 'original_handoff': handoff['original_handoff'],
-                          'path_maps': handoff['path_maps']}
     if selected_sha == expected_sha:
         return handoff, {'kind': 'selected-handoff', 'selected_sha256': selected_sha,
                          'requested_sha256': expected_sha}
@@ -326,152 +312,6 @@ def handoff_binding(path, expected_sha):
     return handoff, {'kind': 'mapped-handoff', 'selected_sha256': selected_sha,
                      'requested_sha256': expected_sha, 'original_handoff': handoff['origin_handoff'],
                      'original_seed': original['source_seed_manifest']}
-
-
-def legacy_evidence(handoff, binding, origin):
-    for key, name in (('source_seed_manifest', 'seed.json'),
-                      ('build_stdout_as_of_boundary', 'build.stdout'),
-                      ('build_stderr_as_of_boundary', 'build.stderr')):
-        copy_record(handoff[key], origin / name)
-    require(b'.scratch/bend2/baton2\n' in (origin / 'build.stdout').read_bytes().splitlines(keepends=True),
-            'Retained build output lacks the completed Main marker.')
-    seed = json.loads((origin / 'seed.json').read_text())
-    require(seed['schema'] == 'baton2-early-main-source-seed-v1' and seed['source_clean'] is True
-            and seed['source_commit'] == handoff['source_commit'] and seed['source_tree'] == handoff['source_tree'],
-            'Retained source seed differs from the Main handoff.')
-    copy_record(seed['file_manifest'], origin / 'seed-files.json')
-    if handoff.get('origin_handoff'):
-        copy_record(handoff['origin_handoff'], origin / 'original-handoff.json')
-    if seed.get('original_seed_manifest'):
-        copy_record(seed['original_seed_manifest'], origin / 'original-seed.json')
-    if binding['kind'] == 'mapped-handoff':
-        require(seed['original_seed_manifest']['sha256'] == binding['original_seed']['sha256'],
-                'Mapped seed does not bind the original Main seed.')
-        original_seed = json.loads((origin / 'original-seed.json').read_text())
-        for key in ('source_commit', 'source_tree', 'source_clean', 'original_native'):
-            require(seed[key] == original_seed[key], 'Mapped seed changes original compiler/source identity: ' + key)
-        require(seed['file_manifest']['sha256'] == original_seed['file_manifest']['sha256'],
-                'Mapped seed changes the original source/toolchain file manifest.')
-    return seed
-
-
-def combined_evidence(handoff, binding, origin, compiler_archive):
-    require(handoff['main_build_completed'] is True and handoff['qualification'] is False,
-            'Combined handoff does not record a completed Main build.')
-    mappings = []
-    for item in binding.get('path_maps', []):
-        require(set(item) == {'original', 'copy'}, 'Unexpected combined path mapping fields.')
-        old, new = pathlib.Path(item['original']), pathlib.Path(item['copy'])
-        require(old.is_absolute() and new.is_absolute() and '..' not in old.parts and '..' not in new.parts,
-                'Combined path mappings require normalized absolute paths.')
-        require(new.is_dir() and new.resolve() == new, 'Combined evidence mapping requires a real directory.')
-        mappings.append((old, new))
-    require(len({str(old) for old, _ in mappings}) == len(mappings), 'Duplicate combined path mappings.')
-
-    def mapped(value):
-        path = pathlib.Path(value)
-        require(path.is_absolute() and '..' not in path.parts, 'Combined evidence path is not absolute.')
-        matches = [(old, new) for old, new in mappings if path.is_relative_to(old)]
-        if not matches:
-            require(not mappings, 'Combined evidence path lacks a CI mapping: ' + str(path))
-            return path
-        old, new = max(matches, key=lambda pair: len(pair[0].parts))
-        result = new / path.relative_to(old)
-        require(result.resolve().is_relative_to(new), 'Combined mapped evidence leaves its copy root.')
-        return result
-
-    def retained(row):
-        require(set(row) == {'path', 'bytes', 'sha256'}, 'Unexpected combined file fact fields.')
-        actual = fact(mapped(row['path']))
-        require(actual['size_bytes'] == row['bytes'] and actual['sha256'] == row['sha256'],
-                'Combined retained bytes differ: ' + row['path'])
-        return actual
-
-    source = mapped(handoff['source']).resolve()
-    commit = git(source, 'rev-parse', 'HEAD').decode().rstrip('\n')
-    source_rows = source_files(source, commit, handoff['source_tree'])
-    manifest = retained(handoff['source_manifest'])
-    recorded_rows = json.loads(pathlib.Path(manifest['path']).read_text())
-    expected_rows = [{'path': row['path'], 'kind': 'symlink' if row['mode'] == '120000' else 'file',
-                      'bytes': row['size_bytes'], 'sha256': row['sha256'],
-                      'mode': row['mode'], 'git_blob': row['git_blob']} for row in source_rows]
-    require(sorted(recorded_rows, key=lambda row: row['path']) == sorted(expected_rows, key=lambda row: row['path']),
-            'Combined source manifest differs from the clean Git snapshot.')
-    copy_record(manifest, origin / 'combined-source-files.json')
-    copy_record(retained(handoff['input_manifest']), origin / 'combined-input-manifest.json')
-    check_fact = retained(handoff['source_check_proof'])
-    copy_record(check_fact, origin / 'combined-source-check-proof.json')
-    check = json.loads(pathlib.Path(check_fact['path']).read_text())
-    check_result = retained(check['result'])
-    copy_record(check_result, origin / 'combined-source-check-result.json')
-    checked = json.loads(pathlib.Path(check_result['path']).read_text())
-    require(check['source_tree'] == handoff['source_tree'] and check['natural_check_success_verified'] is True
-            and checked['source_tree'] == handoff['source_tree'] and checked['success'] is True
-            and len(checked['records']) == 1, 'Combined full source check differs.')
-    checked_record = checked['records'][0]
-    require(checked_record['returncode'] == 0 and checked_record['natural_exit'] is True
-            and checked_record['original_wait_completed'] is True, 'Combined source check was incomplete.')
-    compiler = retained(handoff['compiler'])
-    logical_compiler = pathlib.Path(handoff['compiler']['path'])
-    require(logical_compiler.name == 'bend' and logical_compiler.parent.name == 'bin',
-            'Combined compiler layout differs.')
-    native = None
-    for phase in ('c-generation', 'main-object', 'native-link'):
-        matches = [row for row in handoff['records'] if pathlib.Path(row['stdout']['path']).parent.name == phase]
-        require(len(matches) == 1, 'Combined Main phase record is missing or repeated: ' + phase)
-        row = matches[0]
-        require(row['returncode'] == 0 and row['wait_status'] == 0 and row['natural_exit'] is True
-                and row['original_wait'] is True and row['original_wait_completed'] is True,
-                'Combined Main phase did not finish naturally: ' + phase)
-        require(row['source_tree'] == handoff['source_tree'] and row['cwd'] == handoff['source'],
-                'Combined Main phase source differs: ' + phase)
-        stat_pid, stat_tail = row['stat_after_spawn'].split(' (', 1)
-        require(int(stat_pid) == row['pid'] and stat_tail.rsplit(')', 1)[1].split()[19] == row['birth'],
-                'Combined Main phase birth record differs: ' + phase)
-        stdout, stderr = retained(row['stdout']), retained(row['stderr'])
-        require(pathlib.Path(row['stderr']['path']).parent == pathlib.Path(row['stdout']['path']).parent,
-                'Combined Main phase streams differ: ' + phase)
-        result_path = pathlib.Path(stdout['path']).parent / 'result.json'
-        require(json.loads(result_path.read_text()) == row, 'Combined phase differs from its retained result: ' + phase)
-        copy_record(stdout, origin / (phase + '.stdout'))
-        copy_record(stderr, origin / (phase + '.stderr'))
-        shutil.copyfile(result_path, origin / (phase + '.json'))
-        if phase == 'c-generation':
-            require(row['argv'] == [str(logical_compiler), ENTRY, '-o', '.scratch/bend2/baton2.c'],
-                    'Combined Main compiler invocation differs.')
-            native = {'exe': compiler['path'],
-                      'cmdline': ' '.join([compiler['path'], ENTRY, '-o', '.scratch/bend2/baton2.c']),
-                      'environment': row['environment'], 'original_record': row}
-        elif phase == 'main-object':
-            argv = row['argv']
-            if pathlib.Path(argv[0]).name == 'ccache-private':
-                argv = argv[1:]
-            require(argv == ['/usr/bin/clang-19', '-O1', '-pthread', '-Dmain=baton2_runtime_main',
-                             '-c', '.scratch/bend2/baton2.c', '-o', '.scratch/bend2/baton2.o'],
-                    'Combined Main object invocation differs.')
-        else:
-            require(row['argv'] == ['/usr/bin/clang-19', '-O1', '-pthread', 'bend2/src/host/native-entry.c',
-                                    '.scratch/bend2/baton2.o', '-lsqlite3', '-lm', '-o', '.scratch/bend2/baton2'],
-                    'Combined Main native link invocation differs.')
-    artifacts = []
-    for item in handoff['build_artifacts']:
-        require(item['stable_during_copy'] is True, 'Combined Main artifact copy was unstable.')
-        old, copy = retained(item['original']), retained(item['copy'])
-        require(all(old[key] == copy[key] for key in ('size_bytes', 'sha256')),
-                'Combined artifact copy differs from its original.')
-        name = pathlib.Path(old['path']).name
-        require(pathlib.Path(item['original']['path']) == pathlib.Path(handoff['source']) / '.scratch/bend2' / name
-                and pathlib.Path(copy['path']).name == name, 'Combined artifact path differs.')
-        artifacts.append({'original': old, 'copy': copy, 'stable_during_copy': True})
-    base = fact(mapped(logical_compiler.parent.parent / 'bend2/base.bend'))
-    archive = fact(compiler_archive.resolve())
-    save(origin / 'combined-evidence-validation.json', {
-        'schema': 'baton2-combined-main-reuse-validation-v1', 'source_snapshot_commit': commit,
-        'source_tree': handoff['source_tree'], 'compiler_archive_verified_during_reuse': archive,
-        'original_compiler_fact': handoff['compiler'], 'binding': binding,
-        'original_compiler_invocation': native['original_record']})
-    return {**handoff, 'source': str(source), 'source_commit': commit, 'compiler': compiler,
-            'compiler_archive': archive, 'base': base, 'build_artifacts': artifacts}, {'original_native': native}
 
 
 def prepare(args, result):
@@ -497,21 +337,36 @@ def prepare(args, result):
     handoff_path = pathlib.Path(paths[0]).resolve()
     handoff, binding = handoff_binding(handoff_path, args.handoff_sha256)
     result['handoff_binding'] = binding
-    combined = handoff['schema'] == 'baton2-combined-main-handoff-v1'
-    require(combined or (handoff['schema'] == 'baton2-early-main-review-payload-v1'
-            and handoff['main_build_completed'] is True and handoff['source_clean_at_seed'] is True),
+    require(handoff['schema'] == 'baton2-early-main-review-payload-v1'
+            and handoff['main_build_completed'] is True and handoff['source_clean_at_seed'] is True,
             'Retained handoff does not record a completed clean Main build.')
-    if not combined:
-        require(handoff['actual_main_success_marker'] == '.scratch/bend2/baton2', 'Unexpected Main completion marker.')
+    require(handoff['actual_main_success_marker'] == '.scratch/bend2/baton2', 'Unexpected Main completion marker.')
     origin = generated / 'main-c-origin'
     origin.mkdir()
     shutil.copyfile(handoff_path, origin / 'handoff.json')
-    if combined:
-        if binding['kind'] == 'combined-main-ci-reference':
-            copy_record(binding['original_handoff'], origin / 'original-combined-handoff.json')
-        handoff, seed = combined_evidence(handoff, binding, origin, args.compiler_archive)
-    else:
-        seed = legacy_evidence(handoff, binding, origin)
+    for key, name in (('source_seed_manifest', 'seed.json'),
+                      ('build_stdout_as_of_boundary', 'build.stdout'),
+                      ('build_stderr_as_of_boundary', 'build.stderr')):
+        copy_record(handoff[key], origin / name)
+    require(b'.scratch/bend2/baton2\n' in (origin / 'build.stdout').read_bytes().splitlines(keepends=True),
+            'Retained build output lacks the completed Main marker.')
+    seed = json.loads((origin / 'seed.json').read_text())
+    require(seed['schema'] == 'baton2-early-main-source-seed-v1' and seed['source_clean'] is True
+            and seed['source_commit'] == handoff['source_commit'] and seed['source_tree'] == handoff['source_tree'],
+            'Retained source seed differs from the Main handoff.')
+    copy_record(seed['file_manifest'], origin / 'seed-files.json')
+    if handoff.get('origin_handoff'):
+        copy_record(handoff['origin_handoff'], origin / 'original-handoff.json')
+    if seed.get('original_seed_manifest'):
+        copy_record(seed['original_seed_manifest'], origin / 'original-seed.json')
+    if binding['kind'] == 'mapped-handoff':
+        require(seed['original_seed_manifest']['sha256'] == binding['original_seed']['sha256'],
+                'Mapped seed does not bind the original Main seed.')
+        original_seed = json.loads((origin / 'original-seed.json').read_text())
+        for key in ('source_commit', 'source_tree', 'source_clean', 'original_native'):
+            require(seed[key] == original_seed[key], 'Mapped seed changes original compiler/source identity: ' + key)
+        require(seed['file_manifest']['sha256'] == original_seed['file_manifest']['sha256'],
+                'Mapped seed changes the original source/toolchain file manifest.')
     artifacts = []
     c_record = None
     for item in handoff['build_artifacts']:

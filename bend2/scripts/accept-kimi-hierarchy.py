@@ -526,7 +526,7 @@ def common_task(out):
 Use the supplied native launchers and existing login. Keep credentials, global
 configuration, historical trials and other checkouts unchanged. Preserve this
 run's sessions, branches and worktrees. Do not push. Read complete incoming input
-with `"$B2" inbox`. Baton automatically records handling after a successful native turn.
+with `"$B2" "$DB" inbox`, then use `"$B2" "$DB" acknowledge` after handling it.
 Baton resolves the actor and handling state. Supply complete task and report
 text directly to Baton. Run only the selected Python checks.
 If a task cannot be completed, explain the concrete failure in your parent report.
@@ -548,7 +548,7 @@ def lead_task(out, run):
 You are the Kimi Associate Conductor, session lead under Principal Conductor root.
 Deliver the two assigned changes through DeepSeek and Muse. Review their actual
 diffs and tests, then land them. Your native final response reports to root.
-Read complete tasks and reports. Do not issue a duplicate manual report.
+Acknowledge each handled task/report. Do not issue a duplicate manual report.
 
 Recruit the two Players with these commands:
 "$B2" "$DB" recruit --session deepseek --harness omp --model "$DEEPSEEK_MODEL" --effort "$DEEPSEEK_EFFORT" --repo "$REPO" --branch hierarchy-deepseek --path "$STATE/deepseek" --base hierarchy-lead
@@ -577,10 +577,10 @@ checks that the retained native processes and current execution custody ended,
 and preserves the supplied wrapper through primary dispatch. Baton stores the
 complete correction and continues the existing assignment. Use no task-source
 file or correction suffix.
-Tell the Player to read its complete inbox and finish its native turn after handling it.
+Tell the Player to read its complete inbox and acknowledge its handled input.
 End your turn while its correction runs; its native response resumes you.
 
-For each Player report, inspect its actual diff and check output,
+For each Player report, inspect its actual diff and check output, acknowledge it,
 and run `"$PYTHON" "$STATE/acceptance.py" land-reviewed "$STATE" PLAYER`.
 The helper invokes checked landing onto hierarchy-lead with the assigned checks
 and retains each complete result under an automatically generated evidence name.
@@ -604,9 +604,9 @@ and assign its role with these commands:
 "$B2" "$DB" recruit --session lead --harness omp --model "$ASSOCIATE_MODEL" --effort "$ASSOCIATE_EFFORT" --repo "$REPO" --branch hierarchy-lead --path "$STATE/lead" --base bend2-trial
 "$B2" "$DB" role --session lead --role associate-conductor
 Run `"$PYTHON" "$STATE/acceptance.py" dispatch-lead "$STATE"` once. It dispatches
-the full task and configures the supplied lead wrapper. Read and handle the complete
-input, then finish this native turn. Each Associate Conductor report resumes this same
-Principal Conductor conversation. Read and review complete progress reports.
+the full task and configures the supplied lead wrapper. Acknowledge your handled
+input, then finish this turn. Each Associate Conductor report resumes this same
+Principal Conductor conversation. Read and acknowledge progress reports.
 
 On LEAD_READY, independently inspect both Player diffs, their bindings, guidance
 receipt, the lead branch diff and all selected checks. Run

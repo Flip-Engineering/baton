@@ -36,6 +36,13 @@ function diagnostic_join(site: string, values: (string | number)[],
   return result;
 }
 
+// Facts-only passes are OFF by default on this lineage. They converge
+// own/hot/stat before emitting C, but on the large fixtures they measured
+// 22-24% slower than the two full passes they replace, with identical output
+// (paired interleaved A/B, 8 pairs per fixture, receipts in the round record).
+// Set BEND_FACTS_ONLY_FIRST=1 to enable them; the code path is unchanged.
+const FACTS_ONLY_FIRST = process.env.BEND_FACTS_ONLY_FIRST === "1";
+
 // Comp
 // ====
 
@@ -120,6 +127,9 @@ type File = Carb & {
   consts: Map<string, Map<HTerm, Val>>;
   reqs: string;
   fuel: number;
+  dry: boolean;
+  dry_lines: number;
+  dry_units: number;
 };
 
 type Gen = string | ((xs: string[]) => string);
@@ -716,8 +726,12 @@ function weak_memo<K extends object, V>(m: WeakMap<K, V>, k: K, f: () => V): V {
   return out;
 }
 
+// Clear term-keyed caches after each definition is emitted.
+// TELES retains telescope type terms from definitions and fixed-point passes.
+// Reset probe indices with these caches; index 0 retains DUMMY.
 function memo_gc(): void {
-  [OPENS, USES, FOLDS, SPINES, CONSTS].forEach((m) => m.clear());
+  [OPENS, USES, FOLDS, SPINES, CONSTS, TELES].forEach((m) => m.clear());
+  PROBES.length = 1;
 }
 
 // Probe
@@ -1594,10 +1608,18 @@ function file_new(cb: Carb, decl: string): File {
     cids: new Map(), tabs: new Map(), spins: [], spun: new Map(), clos: new Set(),
     img: [], lits: new Map(), consts: new Map(), reqs: "", fuel: 0,
     fresh: new Map(), spares: [],
-    uses: new Map(), brwl: new Map(), rest: [], def: "" };
+    uses: new Map(), brwl: new Map(), rest: [], def: "",
+    dry: false, dry_lines: 0, dry_units: 0 };
 }
 
 function file_push(fl: File, line: string): void {
+  // Facts-only passes use the same compiler decisions while counting output
+  // lines without retaining their strings.
+  if (fl.dry) {
+    fl.dry_lines += 1;
+    fl.dry_units += line.length + fl.tab * 2;
+    return;
+  }
   fl.seg.lines.push("  ".repeat(fl.tab) + line);
 }
 
@@ -2249,14 +2271,18 @@ function emit_native(fl: File, ck: Call, ers: HTerm[]): string {
   seg.fid = name;
   const dst = val_new(seg.ret.ks.map(() => name_local(fl, "v")), seg.ret);
   emit_body(fl, tld.h as HTerm, tld.T, ers, vals, dst);
-  fl.spins.push([name, [`${seg.lines.length < SPIN_FAR ? "INLINE" : "FAR"} Term ${name}(Env e, THR Term* o${
-    seg.ks.map((k, i) => `, ${lay_c(k)} r${i}`).join("")}) {`,
-  "  u32 wpoll = 0;",
-  ...dst.ws.map((v, j) => `  ${lay_c(seg.ret.ks[j])} ${v} = 0;`),
-  ...seg_take(seg).map((l) => "  " + l),
-  "  WL_SPIN", ...seg.lines, "  break;", "  }",
-  ...dst.ws.map((v, j) => `  o[${j}] = ${v};`),
-  "  return 1;", "}"].join("\n"), seg.refs]);
+  // A dry pass keeps the spin memo, reference, and emitted-body facts, but
+  // discards the joined spin source (the INLINE/FAR read is output-only).
+  if (!fl.dry) {
+    fl.spins.push([name, [`${seg.lines.length < SPIN_FAR ? "INLINE" : "FAR"} Term ${name}(Env e, THR Term* o${
+      seg.ks.map((k, i) => `, ${lay_c(k)} r${i}`).join("")}) {`,
+    "  u32 wpoll = 0;",
+    ...dst.ws.map((v, j) => `  ${lay_c(seg.ret.ks[j])} ${v} = 0;`),
+    ...seg_take(seg).map((l) => "  " + l),
+    "  WL_SPIN", ...seg.lines, "  break;", "  }",
+    ...dst.ws.map((v, j) => `  o[${j}] = ${v};`),
+    "  return 1;", "}"].join("\n"), seg.refs]);
+  }
   Object.assign(fl, outer);
   return name;
 }
@@ -2905,10 +2931,10 @@ function compile_def(fl: File, k: Bend.Name, tld: Def): void {
       clos: fl.clos.size, lits: fl.lits.size, consts: fl.consts.size } });
 }
 
-function compile_reqs(fl: File): void {
+function compile_reqs(fl: File, defs: [Bend.Name, Def][]): void {
   const seen = new Set<string>();
   fl.spares = [];
-  for (const [k, tld] of done_defs(fl, def_foreign)) {
+  for (const [k, tld] of defs) {
     const ns = k.slice(0, k.length - LOCAL.get(k)!.length);
     const own = ns === "" ? []
       : Object.keys(fl.book.ctrs).filter((c) => c.startsWith(ns));
@@ -3037,14 +3063,20 @@ export function compile_book(book: Bend.Book): string {
   diagnostic("carb.end", { sources: SRCS.size });
   const show = show_main(book);
   diagnostic("show.end");
+  // SRCS and TLD liveness are fixed after carb_book; reuse both ordered lists
+  // through the emission fixed point instead of rebuilding them each pass.
+  const stable_defs = done_defs(cb);
+  const emission_defs = [...stable_defs].reverse();
+  const foreign_defs = done_defs(cb, def_foreign);
   const facts = () => cb.own.size + cb.hot.size + cb.stat.size;
   let diagnostic_pass = 0;
-  const pass = (defs: [Bend.Name, Def][]): File => {
+  const pass = (defs: [Bend.Name, Def][], dry = false): File => {
     const pass_number = ++diagnostic_pass;
     diagnostic("pass.begin", { pass: pass_number, definitions: defs.length,
-      own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size });
+      own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size, dry });
     [cb.lend, BRWS].forEach((m) => m.clear());
     const fl = file_new(cb, "Term");
+    fl.dry = dry;
     for (const k of SRCS.keys()) {
       for (const c of (cb.book.tlds[k] as Bend.ADT).c ?? []) {
         fl.cids.set(c.k, lay_node(fl.book, c.k).ks.length);
@@ -3053,9 +3085,6 @@ export function compile_book(book: Bend.Book): string {
     for (const [k, tld] of defs) {
       compile_def(fl, k, tld);
     }
-    diagnostic("requests.begin", { pass: pass_number, segments: fl.segs.length });
-    compile_reqs(fl);
-    diagnostic("requests.end", { pass: pass_number, code_units: fl.reqs.length });
     facts_lend(cb);
     let constant_entries = 0;
     for (const values of fl.consts.values()) constant_entries += values.size;
@@ -3065,25 +3094,71 @@ export function compile_book(book: Bend.Book): string {
       for (const line of seg.lines) line_code_units += line.length;
     }
     for (const spin of fl.spins) spin_code_units += spin[1].length;
+    // A dry pass retains no lines: report the counted (not retained) units.
+    if (dry) {
+      lines = fl.dry_lines;
+      line_code_units = fl.dry_units;
+    }
     diagnostic("pass.end", { pass: pass_number, segments: fl.segs.length,
       spins: fl.spins.length, tables: fl.tabs.size, image_words: fl.img.length,
       constant_entries, lines, line_code_units, spin_code_units,
-      own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size });
+      own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size, dry });
     return fl;
   };
   // Emitted callees first until a pass changes nothing (own, hot and stat
   // only grow): that pass is kept.
   let fl: File;
   let was: number;
+  if (FACTS_ONLY_FIRST) {
+    // These passes compute the same monotone facts as emission while
+    // file_push avoids retaining generated C lines. The regular loop then
+    // emits and retains the stable pass from the converged fact sets.
+    do {
+      was = facts();
+      pass(done_defs(cb).reverse(), true);
+    } while (was !== facts());
+  }
   do {
     was = facts();
-    fl = pass(done_defs(cb).reverse());
+    fl = pass(emission_defs, false);
   } while (was !== facts());
+  // Foreign source text and request stubs do not contribute to own/hot/stat/lend facts.
+  // Emit them once after the fixed point reaches its stable pass.
+  diagnostic("requests.begin", { pass: diagnostic_pass, segments: fl.segs.length });
+  compile_reqs(fl, foreign_defs);
+  diagnostic("requests.end", { pass: diagnostic_pass, code_units: fl.reqs.length });
+  // Index each id once; segments keep the precedence of the earlier find.
+  const refs_by_fid = new Map<string, Set<string>>();
+  for (const seg of fl.segs) {
+    if (!refs_by_fid.has(seg.fid)) refs_by_fid.set(seg.fid, seg.refs);
+  }
+  for (const spin of fl.spins) {
+    if (!refs_by_fid.has(spin[0])) refs_by_fid.set(spin[0], spin[2]);
+  }
   const reach = (from: string[], set = new Set<string>()): Set<string> => {
-    const grab = (fid: string) => set.has(fid) || (set.add(fid)
-      && (fl.segs.find((s) => s.fid === fid)?.refs
-        ?? fl.spins.find((s) => s[0] === fid)?.[2])?.forEach(grab));
-    from.forEach(grab);
+    // An explicit iterator stack preserves the recursive DFS visitation order
+    // while avoiding repeated linear searches and JavaScript call-stack growth.
+    const stack: [string, Iterator<string> | null][] =
+      from.slice().reverse().map((fid) => [fid, null]);
+    while (stack.length > 0) {
+      const top = stack[stack.length - 1];
+      if (top[1] === null) {
+        if (set.has(top[0])) {
+          stack.pop();
+          continue;
+        }
+        set.add(top[0]);
+        const refs = refs_by_fid.get(top[0]);
+        if (refs === undefined) {
+          stack.pop();
+          continue;
+        }
+        top[1] = refs[Symbol.iterator]();
+      }
+      const next = top[1]!.next();
+      if (next.done) stack.pop();
+      else stack.push([next.value, null]);
+    }
     return set;
   };
   diagnostic("reach.begin", { segments: fl.segs.length, spins: fl.spins.length });

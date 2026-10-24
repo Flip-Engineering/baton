@@ -9,18 +9,6 @@
 #include <errno.h>
 #include <unistd.h>
 
-#ifdef CID_REPLHOST_LINE
-typedef struct { char *bytes; size_t length; int error, eof; } BatonReplLine;
-static void baton_repl_line_call(IoWork *work) {
-  BatonReplLine *call=(BatonReplLine *)work->data;
-  size_t capacity=0;
-  errno=0;
-  ssize_t length=getline(&call->bytes,&capacity,stdin);
-  if(length<0) {call->eof=feof(stdin);if(!call->eof)call->error=errno?errno:EIO;}
-  else call->length=(size_t)length;
-}
-#endif
-
 typedef struct {
   char *path, *bytes;
   size_t length;
@@ -71,30 +59,6 @@ static int baton_raw_first_nul(const unsigned char *b, size_t n, size_t *found) 
   }
   return 0;
 }
-
-#ifdef CID_REPLHOST_LINE
-static Term baton_repl_line_pack(Env e, IoWork *work) {
-  BatonReplLine *call=(BatonReplLine *)work->data;
-  size_t invalid=0;
-  if(!call->error && !call->eof &&
-     (baton_raw_utf8_bad((unsigned char *)call->bytes,call->length,&invalid) ||
-      baton_raw_first_nul((unsigned char *)call->bytes,call->length,&invalid))) call->error=EILSEQ;
-  Term result=call->error?io_fail(e,call->error,"Interactive source requires complete UTF-8 without NUL."):
-    io_done(e,call->eof?term_pak(CID_NONE,0):io_box(e,CID_SOME,io_str(e,call->bytes,call->length)));
-  free(call->bytes);free(call);work->data=NULL;
-  return result;
-}
-static Term baton_repl_line_run(Env e, Term *fields, IoWork *work) {
-  (void)fields;
-  BatonReplLine *call=calloc(1,sizeof(*call));
-  if(!call)return io_fail(e,ENOMEM,NULL);
-  work->data=(char *)call;
-  return io_work(work,baton_repl_line_call,baton_repl_line_pack);
-}
-static void __attribute__((constructor)) baton_repl_line_use(void) {
-  io_eff(CID_REPLHOST_LINE,baton_repl_line_run,0);
-}
-#endif
 
 static int baton_raw_bom(const unsigned char *b, size_t n) {
   return n >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF;

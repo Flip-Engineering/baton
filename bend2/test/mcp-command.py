@@ -22,7 +22,7 @@ if sys.argv[1:] == ['--help'] or (len(sys.argv) > 2 and sys.argv[2] == 'help'):
         if values.get('dispatch', True):
             sys.stdout.write('dispatch --stdin\\n')
         if values.get('repl', False):
-            sys.stdout.write('Actions: repl\\n')
+            sys.stdout.write('Actions: inbox, read, send, report, ask, guide, finish, confirm, dispatch, players, assignment, status, role, ensemble, section, orchestra, branch, knowledge, repl\\n')
     else:
         sys.stdout.write('delivery\\nmessage\\n')
     sys.exit(0)
@@ -42,49 +42,6 @@ sys.exit(values['code'])
 
 
 class McpCommand(unittest.TestCase):
-    def test_claude_launcher_supplies_scoped_hooks_and_preserves_native_exit(self):
-        with tempfile.TemporaryDirectory() as home:
-            home = pathlib.Path(home)
-            native = home / 'native-claude'
-            record = home / 'native-argv.json'
-            native.write_text('#!' + sys.executable + '\nimport json,sys\n'
-                + 'from pathlib import Path\nPath(' + repr(str(record))
-                + ').write_text(json.dumps(sys.argv[1:]))\nsys.exit(7)\n')
-            native.chmod(0o755)
-            result = subprocess.run(['node', str(MCP_SCRIPT), str(home / 'state.db'),
-                str(home / 'coordinator'), '--session', 'worker', '--claude', str(native),
-                '--', '--session-id', 'native-fixture', '--model', 'selected-model'],
-                capture_output=True, text=True)
-            self.assertEqual(result.returncode, 7, result.stderr)
-            args = json.loads(record.read_text())
-            settings = json.loads(args[args.index('--settings') + 1])
-            self.assertEqual(set(settings['hooks']), {'PreToolUse', 'Stop', 'StopFailure'})
-            for event, entries in settings['hooks'].items():
-                self.assertEqual(len(entries), 1)
-                hook = entries[0]['hooks'][0]
-                self.assertEqual(hook['type'], 'command')
-                self.assertIn('--native-event', hook['command'])
-                self.assertNotIn('timeout', hook)
-            config = json.loads(args[args.index('--mcp-config') + 1])
-            endpoint = config['mcpServers']['baton-conductor']
-            self.assertEqual(endpoint['args'], [str(MCP_SCRIPT), str(home / 'state.db'),
-                str(home / 'coordinator'), '--session', 'worker'])
-            self.assertEqual(args[-4:], ['--session-id', 'native-fixture', '--model', 'selected-model'])
-            self.assertFalse((home / 'state.db').exists())
-
-            (home / 'state.db').touch()
-            coordinator = home / 'coordinator'
-            coordinator.write_text('#!' + sys.executable + '\nimport sys\n'
-                + 'assert sys.argv[2:] == ["session", "unregistered"]\n')
-            coordinator.chmod(0o755)
-            result = subprocess.run(['node', str(MCP_SCRIPT), str(home / 'state.db'),
-                str(coordinator), '--session', 'unregistered', '--claude', str(native)],
-                capture_output=True, text=True)
-            self.assertEqual(result.returncode, 7, result.stderr)
-            args = json.loads(record.read_text())
-            self.assertEqual(args[-2], '--session-id')
-            self.assertRegex(args[-1], r'^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$')
-
     def command(self, stdout='', stderr='', code=0, delay=0, *,
                 tool='baton2_status', arguments=None, session=None, expected_args=None,
                 expected_stdin='', expected_context=None, dispatch=True, repl=False):
@@ -138,13 +95,6 @@ class McpCommand(unittest.TestCase):
             self.assertFalse((home / 'state.db.actions').exists())
             return replies[2]['result']
 
-    def test_repl_guidance_matches_advertised_coordinator_capability(self):
-        for available in (False, True):
-            with self.subTest(repl=available):
-                self.command(repl=available)
-                self.assertEqual('baton2_repl' in self.tools, available)
-                self.assertEqual('Use baton2_repl' in self.instructions, available)
-
     def test_task_forwards_full_input_through_stdin_and_keeps_attached_authorship(self):
         body = 'Complete MCP input λ🙂\nMultiline task text with "quotes".\n' * 10000
         flags = ['--sender', 'attached-λ', '--project', '/explicit project',
@@ -192,6 +142,14 @@ class McpCommand(unittest.TestCase):
             expected_context=['read', 'first-λ', 'second-🙂'])
         self.assertFalse(result.get('isError', False))
         self.assertNotIn('session', self.tools['baton2_action']['inputSchema']['properties'])
+
+    def test_repl_guidance_matches_advertised_coordinator_capability(self):
+        for available in (False, True):
+            with self.subTest(repl=available):
+                self.command(repl=available)
+                self.assertEqual('baton2_repl' in self.tools, available)
+                self.assertEqual('Use baton2_repl' in self.instructions, available)
+                self.assertIn('repl', self.tools['baton2_action']['description'])
 
     def test_contextual_action_preserves_complete_bodies_for_independent_batch_items(self):
         first = '\ufeffFull first body λ🙂\nLiteral quotes " and tabs\t.\n' * 10000

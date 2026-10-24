@@ -344,8 +344,9 @@ Read AGENTS.md. Change only {DOCUMENT}. Do not alter runtime source, run the
 full test suites, build, recruit agents, install tools, change authentication,
 change global configuration, or push. Use the existing Git identity.
 Do not send a report command: receive forwards your final assistant text.
-Read and handle only the complete task assigned in this turn. End your native
-turn after your task and report; Baton automatically records complete input handling.
+Acknowledge only the task assigned in this turn, using the coordinator CLI
+provided in the receive prompt: use the acknowledge action after handling its
+complete text. End the turn after your task and report.
 '''
     initial_task = common + f'''
 Your first tool command must be exactly:
@@ -353,10 +354,10 @@ Your first tool command must be exactly:
 This local tool completes the driver's observer-loss injection and returns.
 After it returns, inspect bend2/src/coordinator/receive.bend and main.bend.
 Create {DOCUMENT} as a short useful usage example covering a registered Codex
-Player's receive command, pending inbox inspection and automatic input handling.
+Player's receive command, pending inbox inspection and message acknowledgment.
 Use shell placeholders for paths. Check every documented command against the
-current parser. Commit this one document with a clear commit message, then return
-a final response beginning RECOVERY_INITIAL_DONE with the
+current parser. Commit this one document with a clear commit message, acknowledge
+the assigned input, then return a final response beginning RECOVERY_INITIAL_DONE with the
 commit hash, the commands checked, and any limitation. Leave any later incoming
 message for the next native turn; this turn handles the initial assignment.
 '''
@@ -365,8 +366,8 @@ Continue your existing conversation and inspect your previous committed example.
 Extend {DOCUMENT} with a brief contributor note explaining what a busy receive
 returns and how an observer recovery uses the retained attempt. Cite the relevant
 source paths, and state the implemented recovery scope precisely. Verify the
-claims against the runtime source, then commit the document update and return
-a final response beginning RECOVERY_FOLLOWUP_DONE with
+claims against the runtime source, then commit the document update. Acknowledge
+the assigned input, then return a final response beginning RECOVERY_FOLLOWUP_DONE with
 both your previous commit hash and the new one. Do not repeat the checkpoint tool.
 '''
     receive = ['receive', 'worker', str(wrapper), args.model, args.effort,

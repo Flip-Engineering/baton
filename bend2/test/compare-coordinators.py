@@ -10,7 +10,6 @@ import json
 import os
 import pathlib
 import shutil
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -91,11 +90,6 @@ class NativeStatus(unittest.TestCase):
                 actual = tuple(stored[key] for key in ('id', 'sender', 'recipient', 'kind', 'body', 'receipt'))
                 if actual != expected:
                     raise AssertionError((actual, expected))
-        cls.before_metadata = copy.deepcopy(cls.expected)
-        with sqlite3.connect(cls.db) as database:
-            for ident, endpoint in database.execute('SELECT id,endpoint FROM sessions'):
-                cls.before_metadata[ident]['endpoint'] = endpoint
-                cls.before_metadata[ident]['endpointArgv'] = json.loads(endpoint) if endpoint else None
         cls.before_ack = cls.call('status')
         cls.call('ack', 'alpha-report-1', 'root', 'Reviewed first report')
         cls.call('ack', 'alpha-guide', 'alpha', 'Accepted guidance')
@@ -116,7 +110,11 @@ class NativeStatus(unittest.TestCase):
         return json.loads(result.stdout)
 
     def test_production_status_keeps_metadata_and_counts_only_unaccepted_input(self):
-        DRIVER.assert_bend_status(self.before_ack, self.before_metadata,
+        before_metadata = copy.deepcopy(self.expected)
+        for row in before_metadata.values():
+            row['endpoint'] = ''
+            row['endpointArgv'] = None
+        DRIVER.assert_bend_status(self.before_ack, before_metadata,
                                   {'root': 2, 'alpha': 2, 'beta': 2})
         DRIVER.assert_bend_status(self.valid, self.expected, self.pending)
         before = hashlib.sha256(self.db.read_bytes()).hexdigest()

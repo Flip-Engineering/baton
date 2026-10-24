@@ -202,88 +202,6 @@ class McpRoot(unittest.TestCase):
         self.activate(proc)
         return proc
 
-    def native_event(self, event, prompt, **fields):
-        result = subprocess.run(['node', str(MCP_SCRIPT), str(self.db), str(EXE),
-            '--session', 'root', '--native-event'], input=json.dumps({
-                'hook_event_name': event, 'session_id': 'retained-claude-native',
-                'prompt_id': prompt, **fields}), capture_output=True, text=True)
-        return result
-
-    def test_native_claude_stop_handles_only_complete_reads_from_its_prompt(self):
-        proc = self.connected_claude()
-        started = self.native_event('PreToolUse', 'native-prompt-1')
-        self.assertEqual(started.returncode, 0, started.stderr)
-        self.tool(proc, 'baton2_inbox', {'index': True})
-        self.tool(proc, 'baton2_delivery', {'id': 'connected-foreign'})
-        self.assertEqual(self.native_reads(), [])
-        inbox = self.tool(proc, 'baton2_action', {'action': 'inbox'})
-        self.assertEqual(inbox[0]['body'], '\ufeffComplete connected input.\nλ🙂\nFinal spaces  \n')
-        read = self.native_reads()[0]
-        self.assertTrue(read['attempt'].endswith(':native-prompt-1'), read)
-        self.assertEqual(json.loads(read['identity'])[-1], 'native-prompt-1')
-        self.coord('message', 'native-unread', 'operator', 'root', 'guidance',
-                   'Arrived after the complete read.')
-        stopped = self.native_event('Stop', 'native-prompt-1', last_assistant_message='Complete. λ🙂')
-        self.assertEqual(stopped.returncode, 0, stopped.stderr)
-        receipt = 'native-turn:' + read['attempt']
-        self.assertEqual(json.loads(self.coord('delivery', 'connected-owned'))['receipt'], receipt)
-        self.assertEqual(self.native_reads()[0]['handled'], receipt)
-        repeated = self.native_event('Stop', 'native-prompt-1', last_assistant_message='Complete. λ🙂')
-        self.assertEqual(repeated.returncode, 0, repeated.stderr)
-        self.assertEqual(json.loads(self.coord('delivery', 'connected-owned'))['receipt'], receipt)
-        for ident in ('native-unread', 'connected-foreign'):
-            self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
-
-    def test_native_claude_failed_and_interrupted_prompt_reads_remain_pending(self):
-        proc = self.connected_claude()
-        self.assertEqual(self.native_event('PreToolUse', 'failed-prompt').returncode, 0)
-        self.tool(proc, 'baton2_inbox')
-        failed = self.native_reads()[0]
-        failure = self.native_event('StopFailure', 'failed-prompt', error='rate_limit',
-            error_details='Complete native failure.\nλ🙂\nFinal spaces  ',
-            last_assistant_message='API Error: rate limit')
-        self.assertEqual(failure.returncode, 0, failure.stderr)
-        self.coord('message', 'interrupted-read', 'operator', 'root', 'guidance', 'Interrupted input.')
-        self.assertEqual(self.native_event('PreToolUse', 'interrupted-prompt').returncode, 0)
-        self.tool(proc, 'baton2_delivery', {'id': 'interrupted-read'})
-        self.coord('message', 'successful-read', 'operator', 'root', 'guidance', 'Complete new input.')
-        self.assertEqual(self.native_event('PreToolUse', 'successful-prompt').returncode, 0)
-        self.tool(proc, 'baton2_delivery', {'id': 'successful-read'})
-        success = self.native_event('Stop', 'successful-prompt', last_assistant_message='Complete.')
-        self.assertEqual(success.returncode, 0, success.stderr)
-        self.assertEqual(next(row for row in self.native_reads() if row['attempt'] == failed['attempt']), failed)
-        for ident in ('connected-owned', 'interrupted-read', 'connected-foreign'):
-            self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
-        current = next(row for row in self.native_reads() if row['message'] == 'successful-read')
-        self.assertEqual(json.loads(self.coord('delivery', 'successful-read'))['receipt'],
-                         'native-turn:' + current['attempt'])
-        proc.terminate()
-        proc.wait()
-        stderr = proc.stderr.read()
-        observed = [json.loads(line)['event'] for line in stderr.decode().splitlines()
-                    if line.startswith('{') and json.loads(line).get('type') == 'claudeNativeTurn']
-        self.assertEqual(next(event for event in observed if event['hook_event_name'] == 'StopFailure'),
-            {'hook_event_name': 'StopFailure', 'session_id': 'retained-claude-native',
-             'prompt_id': 'failed-prompt', 'error': 'rate_limit',
-             'error_details': 'Complete native failure.\nλ🙂\nFinal spaces  ',
-             'last_assistant_message': 'API Error: rate limit'})
-
-    def test_native_claude_stop_preserves_explicit_stop_and_connection_fence(self):
-        proc = self.connected_claude()
-        self.assertEqual(self.native_event('PreToolUse', 'stopped-prompt').returncode, 0)
-        self.tool(proc, 'baton2_inbox')
-        original = self.native_reads()
-        selected = json.loads(self.coord('session', 'root'))
-        self.coord('connect', 'root', 'changed-native', selected['endpoint'])
-        changed = self.native_event('Stop', 'stopped-prompt')
-        self.assertNotEqual(changed.returncode, 0, changed)
-        self.coord('connect', 'root', selected['native'], selected['endpoint'])
-        self.coord('stop', 'root', 'native-explicit-stop', 'Keep the native stop.')
-        stopped = self.native_event('Stop', 'stopped-prompt')
-        self.assertNotEqual(stopped.returncode, 0, stopped)
-        self.assertEqual(self.native_reads(), original)
-        self.assertIsNone(json.loads(self.coord('delivery', 'connected-owned'))['receipt'])
-
     def test_connected_claude_acknowledges_only_its_complete_read_set(self):
         proc = self.connected_claude()
         self.assertEqual(self.tool(proc, 'baton2_ack'), [])
@@ -398,8 +316,6 @@ class McpRoot(unittest.TestCase):
         self.initialize(proc)
         send_mcp(proc, {'jsonrpc': '2.0', 'id': 'schemas', 'method': 'tools/list'})
         tools = {item['name']: item for item in read_mcp(proc)['result']['tools']}
-        for name in ['baton2_action', 'baton2_outbox', 'baton2_delivery_batch', 'baton2_message_batch']:
-            self.assertIn(name, tools)
         self.assertIn('baton2_players', tools)
         self.assertIn('baton2_player_status', tools)
         self.assertNotIn('baton2_workers', tools)

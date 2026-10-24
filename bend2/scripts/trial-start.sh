@@ -56,6 +56,7 @@ helpers = state / 'libexec/baton2'
 helpers.mkdir(parents=True, exist_ok=True)
 for name in ('task-start.mjs', 'project-settings.mjs', 'git-series.mjs', 'native-history.mjs'):
     shutil.copy2(source / 'bend2/harness' / name, helpers / name)
+shutil.copy2(source / 'bend2/scripts/codex-inbox-wake.mjs', helpers / 'codex-inbox-wake.mjs')
 link = state / 'baton2.next'
 link.symlink_to(pathlib.Path('bin/baton2'))
 os.replace(link, coord)

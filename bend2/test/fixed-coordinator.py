@@ -11,7 +11,6 @@ fixture database, serve and owner outputs, and source pins under /tmp.
 """
 import fcntl
 import hashlib
-import importlib.util
 import json
 import os
 import pathlib
@@ -34,11 +33,6 @@ MCP = ROOT / 'bend2/scripts/mcp-conductor.mjs'
 
 sys.path.insert(0, str(TESTDIR))
 from receive import FIXTURE, write_public_queue_codex
-
-_root_wake_spec = importlib.util.spec_from_file_location('root_wake_fixture', TESTDIR / 'root-wake.py')
-_root_wake = importlib.util.module_from_spec(_root_wake_spec)
-_root_wake_spec.loader.exec_module(_root_wake)
-BusyObserver = _root_wake.BusyObserver
 
 
 class FixedCoordinator(unittest.TestCase):
@@ -242,14 +236,6 @@ class FixedCoordinator(unittest.TestCase):
             return json.loads(result.stdout) if result.stdout.strip().startswith(('[', '{')) else result.stdout
         return result
 
-    def assert_managed_prompt(self, text, session):
-        prompts = self.query(
-            'SELECT seed,instruction,guidance FROM native_initial_inputs WHERE session='
-            + repr(session))
-        self.assertTrue(any(text == seed + '\n\n' + instruction + '\n\n' + guidance
-                            for seed, instruction, guidance in prompts),
-                        'The actual App input has no complete native initialization record')
-
     def query(self, sql):
         while True:
             try:
@@ -338,11 +324,11 @@ class FixedCoordinator(unittest.TestCase):
                    for line in self.app_follow_events.read_text().splitlines(keepends=True)
                    if line.endswith('\n')] if self.app_follow_events.exists() else [])
         for event in events:
-            if event.get('type') == 'codexInboxTaskContinuation' and event['turnId'] == turn_id:
+            if event['type'] == 'codexInboxTaskContinuation' and event['turnId'] == turn_id:
                 return event
-            if event.get('type') == 'codex-inbox-continuation-failed':
+            if event['type'] == 'codex-inbox-continuation-failed':
                 return event
-            if (event.get('type') == 'codexInboxTurnRetained'
+            if (event['type'] == 'codexInboxTurnRetained'
                     and event['turn']['id'] == turn_id and event['turn']['status'] != status):
                 return event
         calls = ([json.loads(line)
@@ -361,10 +347,9 @@ class FixedCoordinator(unittest.TestCase):
         self.assertEqual(len(owners), 1, owners)
         self.owner_pid = owners[0]['pid']
 
-    def start_serve(self, db=None, environment=None):
+    def start_serve(self, db=None):
         self.serve_proc = subprocess.Popen([str(EXE), str(db or self.db), 'serve'],
-                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                           env=environment)
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.children.append(self.serve_proc)
 
         def first_line():
@@ -384,30 +369,18 @@ class FixedCoordinator(unittest.TestCase):
             self.assertEqual(self.serve_proc.returncode, expect_serve, stderr)
             return stderr
 
-    def app_endpoint(self, session, native):
-        return ['/usr/bin/env', 'HOME=' + os.environ['HOME'],
-                'CODEX_HOME=' + os.environ.get('CODEX_HOME', os.path.join(os.environ['HOME'], '.codex')),
-                sys.executable, str(self.app_receiver), str(EXE), str(self.db),
-                'codex-inbox-session', session, native]
-
-    def assert_managed_endpoint(self, session, native):
-        [(recorded_native, endpoint)] = self.query(
-            "SELECT native,endpoint FROM sessions WHERE id='" + session.replace("'", "''") + "'")
-        self.assertEqual(recorded_native, native)
-        argv = json.loads(endpoint)
-        self.assertEqual(argv[-5:], [str(EXE), str(self.db), 'codex-inbox-session', session, native])
-        self.assertIn('HOME=' + os.environ['HOME'], argv)
-        self.assertIn('CODEX_HOME=' + os.environ.get('CODEX_HOME', os.path.join(os.environ['HOME'], '.codex')), argv)
-
     def managed_app_proxy(self):
+        real_node = shutil.which('node')
+        self.assertIsNotNone(real_node, 'the managed App fixture requires Node')
         self.app_follow_events = self.directory / 'app-follow-events.jsonl'
-        self.app_receiver = self.directory / 'app-receiver'
-        self.app_receiver.write_text('#!' + sys.executable + '\n' + r'''
+        node = self.directory / 'node'
+        node.write_text('#!' + sys.executable + '\n' + r'''
 import os,pathlib,signal,subprocess,sys
+real_node=__NODE__
 argv=sys.argv[1:]
-if len(argv)<3 or argv[2]!='codex-inbox-follow':
-    os.execv(argv[0],argv)
-child=subprocess.Popen(argv,stdout=subprocess.PIPE)
+if len(argv)<2 or pathlib.Path(argv[0]).name!='codex-inbox-wake.mjs' or argv[1]!='--follow':
+    os.execv(real_node,[real_node,*argv])
+child=subprocess.Popen([real_node,*argv],stdout=subprocess.PIPE)
 for signum in (signal.SIGINT,signal.SIGTERM,signal.SIGHUP):
     signal.signal(signum,lambda signum,frame:child.send_signal(signum))
 with pathlib.Path(__EVENTS__).open('ab',buffering=0) as events:
@@ -420,11 +393,9 @@ if code<0:
     signal.signal(-code,signal.SIG_DFL)
     os.kill(os.getpid(),-code)
 sys.exit(code)
-'''.replace('__EVENTS__', repr(str(self.app_follow_events))))
-        self.app_receiver.chmod(0o700)
-        for session, native, endpoint in self.query("SELECT id,native,endpoint FROM sessions WHERE harness='codex' AND native<>''"):
-            if not endpoint or json.loads(endpoint)[-3:] == ['codex-inbox-session', session, native]:
-                self.coord('connect', session, native, json.dumps(self.app_endpoint(session, native)))
+'''.replace('__NODE__', repr(real_node))
+           .replace('__EVENTS__', repr(str(self.app_follow_events))))
+        node.chmod(0o700)
         state = self.directory / 'managed-app.json'
         state.write_text(json.dumps({'status': 'active', 'turn': 'app-initial', 'number': 0}))
         command = self.directory / 'codex'
@@ -573,6 +544,8 @@ finally:
         helper.parent.mkdir(parents=True)
         shutil.copy2(EXE, binary)
         shutil.copy2(ROOT / 'bend2/harness/git-series.mjs', helper)
+        shutil.copy2(ROOT / 'bend2/scripts/codex-inbox-wake.mjs',
+                     helper.parent / 'codex-inbox-wake.mjs')
         profile = self.directory / 'gpt'
         profile.mkdir()
         slug = 'fixture-series-gpt'
@@ -904,12 +877,8 @@ finally:
         self.dispatch('t1', 'w1', 'First task.')
         self.receiver('w1')
         self.start_owner()
-        observer_directory = tempfile.TemporaryDirectory(prefix='b2-busy-')
-        self.addCleanup(observer_directory.cleanup)
-        observer = BusyObserver(observer_directory.name)
-        busy_marker = self.directory / 'settlement-sqlite-busy'
         phase('starting the shared subscription')
-        self.start_serve(environment=observer.environment(os.environ, self.db, busy_marker))
+        self.start_serve()
         phase('waiting for the first native terminal')
         first_w1, _ = self.stream_for('w1')
         self.assertEqual(json.loads(first_w1.readline()), {'terminal_written': True})
@@ -932,7 +901,9 @@ finally:
         self.managed_app_proxy()
         previous_calls = len(self.codex_calls.read_text().splitlines()) if self.codex_calls.exists() else 0
         self.queue('w1-app', {'controlReady': True})
-        self.coord('connect', 'w1', 'native-w1', json.dumps(self.app_endpoint('w1', 'native-w1')))
+        self.coord('connect', 'w1', 'native-w1', json.dumps([
+            'node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--session',
+            str(EXE), str(self.db), 'w1', 'native-w1']))
 
         def app_calls(method):
             lines = self.codex_calls.read_text().splitlines(keepends=True)
@@ -973,7 +944,7 @@ finally:
             if not self.app_follow_events.exists():
                 return []
             return [row for line in self.app_follow_events.read_text().splitlines(keepends=True)
-                    if line.endswith('\n') and (row := json.loads(line)).get('type') == kind]
+                    if line.endswith('\n') and (row := json.loads(line))['type'] == kind]
 
         self.eventually(lambda: follow_events('codexInboxSubscribed'),
                         'the managed follower never subscribed to the active App thread')
@@ -982,10 +953,9 @@ finally:
         try:
             writer.execute('BEGIN EXCLUSIVE')
             self.release('w1-app', settle=True)
-            self.eventually(lambda: any(observer.observed(busy_marker, process['pid'])
-                                       for process in self.owned_processes()
-                                       if 'codex-inbox-follow' in process['command']),
-                            'the held writer did not reach the follower SQLite busy callback')
+            busy = self.eventually(lambda: follow_events('codexInboxDatabaseBusy'),
+                                   'the held writer did not reach the follower read')
+            self.assertEqual(busy[0]['errcode'] & 255, sqlite3.SQLITE_BUSY)
             self.assertEqual(app_calls('turn/start'), [],
                              'the follower continued before its pending-input read succeeded')
             writer.commit()
@@ -994,6 +964,8 @@ finally:
         self.coord('report', 'app-writer-released', 'w1',
                    'The fixture writer released after the App settled with input still owed.')
         phase('retaining the actual terminal after the writer committed')
+        self.eventually(lambda: follow_events('codexInboxDatabaseReady'),
+                        'the ordinary commit did not resume the held follower read')
         self.await_inbox('root', lambda messages: next((message for message in messages
             if 'codex-inbox-turn-settled' in message['body'] and 'app-initial' in message['body']), None),
             'the actual App terminal did not reach its coordinator',
@@ -1006,7 +978,7 @@ finally:
         self.dispatch('g3', 'w1', 'New coordinator work after the actual terminal.', kind='guidance')
         self.eventually(lambda: len(app_calls('turn/start')) == 1,
                         'the coordinator guidance did not start the next native turn')
-        self.assert_managed_prompt(app_calls('turn/start')[0]['params']['input'][0]['text'], 'w1')
+        self.assertIn('"recipient":"w1"', app_calls('turn/start')[0]['params']['input'][0]['text'])
         self.coord('ack', 't3', 'w1', 'w1-app-handled-t3')
         self.dispatch('g4', 'w1', 'Later guidance after the recipient handled its earlier input.', kind='guidance')
         guidance_seq = self.query("SELECT seq FROM messages WHERE id='g4'")[0][0]
@@ -1016,11 +988,9 @@ finally:
                 rows = self.query("SELECT cause FROM codex_inbox_wakes WHERE session='w1' AND native='native-w1'")
                 if not rows or json.loads(rows[0][0]) != {'inputSeq': guidance_seq, 'turnId': 'app-turn-1'}:
                     return False
-            admitted = [call for call in app_calls('turn/steer')
-                        if call['params'].get('expectedTurnId') == 'app-turn-1']
-            for call in admitted:
-                self.assert_managed_prompt(call['params']['input'][0]['text'], 'w1')
-            return admitted
+            return any(call['params'].get('expectedTurnId') == 'app-turn-1'
+                       and json.loads(call['params']['input'][0]['text'].splitlines()[1])['pendingCount'] == 2
+                       for call in app_calls('turn/steer'))
 
         self.eventually(guidance_admitted, 'the later guidance did not enter the active App turn',
                         contradiction=self.completed_managed_failure)
@@ -1084,7 +1054,7 @@ finally:
         self.assertEqual(len(self.connections('w1-app')), 1)
         self.coord('stop', 'w1', 'app-operator-stop', 'Retain the remaining App guidance.')
         phase('waiting for the explicitly stopped watcher to exit')
-        self.eventually(lambda: not any('codex-inbox-follow' in process['command'] and str(self.db) in process['command']
+        self.eventually(lambda: not any('--follow' in process['command'] and str(self.db) in process['command']
                                        for process in self.owned_processes()),
                         'the managed watcher remained live after the explicit stop')
         self.assertEqual([message['id'] for message in self.inbox('w1')], ['g3', 'g4', 'g5', 'fresh-app-report'])
@@ -1099,7 +1069,9 @@ finally:
                    json.dumps([str(self.fixture), 'parent_endpoint']))
         self.managed_app_proxy()
         self.queue('w1-app', {'controlReady': True})
-        self.coord('connect', 'w1', 'native-w1', json.dumps(self.app_endpoint('w1', 'native-w1')))
+        self.coord('connect', 'w1', 'native-w1', json.dumps([
+            'node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--session',
+            str(EXE), str(self.db), 'w1', 'native-w1']))
         task = 'Complete this assigned work and retain its source qualification.'
         self.dispatch('managed-task', 'w1', task)
         self.start_owner()
@@ -1109,7 +1081,7 @@ finally:
         def events(kind):
             if not self.app_follow_events.exists(): return []
             return [event for line in self.app_follow_events.read_text().splitlines(keepends=True)
-                    if line.endswith('\n') and (event := json.loads(line)).get('type') == kind]
+                    if line.endswith('\n') and (event := json.loads(line))['type'] == kind]
 
         def starts():
             if not self.codex_calls.exists(): return []
@@ -1121,14 +1093,14 @@ finally:
         self.coord('ack', 'managed-task', 'w1', 'The worker handled its original task input.')
         self.assertEqual(self.inbox('w1'), [])
         self.assertTrue(self.coord('session', 'w1')['taskCompletion']['open'])
-        self.assertTrue(any('codex-inbox-follow' in process['command'] for process in self.owned_processes()))
+        self.assertTrue(any('--follow' in process['command'] for process in self.owned_processes()))
         items = [{'type': 'agentMessage', 'id': 'app-result',
                   'text': 'The retained result is ready.\nSource qualification remains open. λ🙂.'}]
         self.release('w1-app', settle=True, completed_items=items, idle_first=True)
         self.eventually(lambda: events('codexInboxReleased'),
                         'The settled App watcher did not release its completed observation.',
                         contradiction=lambda: self.app_settlement_contradiction('app-initial', 0))
-        self.eventually(lambda: not any('codex-inbox-follow' in process['command']
+        self.eventually(lambda: not any('--follow' in process['command']
                                        for process in self.owned_processes()),
                         'The settled App follower remained active after releasing its observation.')
         report_id = 'codex-inbox-turn:w1:native-w1:app-initial'
@@ -1159,7 +1131,8 @@ finally:
         self.stream_for('w1-app', 1, contradiction=self.completed_managed_failure)
         self.eventually(lambda: len(starts()) == 1, 'The coordinator nudge did not reach the native thread.')
         pointer = starts()[0]['params']['input'][0]['text']
-        self.assert_managed_prompt(pointer, 'w1')
+        self.assertIn('"recipient":"w1"', pointer)
+        self.assertIn('"message":"managed-next"', pointer)
         self.assertEqual(starts()[0]['params']['threadId'], 'native-w1')
         self.assertEqual(self.coord('delivery', 'managed-next')['body'], guidance)
         self.assertIsNone(self.coord('delivery', 'managed-next')['receipt'])
@@ -1384,7 +1357,8 @@ finally:
                     for row in [json.loads(line)] if row['method'] == method
                     and row.get('params', {}).get('threadId') == 'native-w1']
 
-        self.assert_managed_endpoint('w1', 'native-w1')
+        self.assertEqual(self.query("SELECT native,endpoint FROM sessions WHERE id='w1'"),
+                         [('native-w1', '')])
         self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='endpointless-task'"),
                          [(None,)])
         self.assertTrue(app_calls('turn/steer'), 'the public sender did not admit the original input')
@@ -1405,7 +1379,7 @@ finally:
             contradiction=lambda: self.app_settlement_contradiction('app-turn-1', 1))
         self.assertEqual(len(app_calls('turn/start')), 1, 'the follower retried unchanged guidance')
         pointer = app_calls('turn/start')[-1]['params']['input'][0]['text']
-        self.assert_managed_prompt(pointer, 'w1')
+        self.assertIn('"pendingCount":2', pointer)
         self.assertEqual(self.query("SELECT receipt FROM messages WHERE recipient='w1' ORDER BY seq"),
                          [(None,), (None,)])
         self.assertEqual(len(self.connections('w1-app')), 1,
@@ -1413,12 +1387,13 @@ finally:
         self.assertEqual(len(self.connections('w1')), 0,
                          'the endpointless App session launched a native CLI receiver')
         self.coord('stop', 'w1', 'endpointless-operator-stop', 'Retain the remaining App input.')
-        self.eventually(lambda: not any('codex-inbox-follow' in process['command'] and str(self.db) in process['command']
+        self.eventually(lambda: not any('--follow' in process['command'] and str(self.db) in process['command']
                                        for process in self.owned_processes()),
                         'the endpointless follower remained live after the explicit stop')
         self.assertEqual([message['id'] for message in self.inbox('w1')],
                          ['endpointless-task', 'endpointless-guidance'])
-        self.assert_managed_endpoint('w1', 'native-w1')
+        self.assertEqual(self.query("SELECT native,endpoint FROM sessions WHERE id='w1'"),
+                         [('native-w1', '')])
         self.shutdown()
 
     def test_14_one_shot_session_read_waits_out_a_held_database_writer(self):
@@ -1428,7 +1403,9 @@ finally:
         self.recruit('w1', 'codex')
         self.managed_app_proxy()
         self.queue('w1-app', {'controlReady': True})
-        self.coord('connect', 'w1', 'native-w1', json.dumps(self.app_endpoint('w1', 'native-w1')))
+        self.coord('connect', 'w1', 'native-w1', json.dumps([
+            'node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--session',
+            str(EXE), str(self.db), 'w1', 'native-w1']))
         self.dispatch('busy-task', 'w1', 'Admit this input once the held writer releases.')
         self.start_owner()
         self.start_serve()
@@ -1451,15 +1428,10 @@ finally:
             except (OSError, ValueError):
                 pass
 
-        observer_directory = tempfile.TemporaryDirectory(prefix='b2-busy-')
-        self.addCleanup(observer_directory.cleanup)
-        observer = BusyObserver(observer_directory.name)
-        busy_marker = self.directory / 'one-shot-sqlite-busy'
-
         def spawn_session_wake(thread):
             wake = subprocess.Popen([
-                str(EXE), str(self.db), 'codex-inbox-session', 'w1', thread, 'busy-task'],
-                env=observer.environment(os.environ, self.db, busy_marker),
+                'node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--session',
+                str(EXE), str(self.db), 'w1', thread, 'busy-task'],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             self.children.append(wake)
             threading.Thread(target=drain, args=(wake.stdout,), daemon=True).start()
@@ -1469,11 +1441,15 @@ finally:
         writer = sqlite3.connect(str(self.db))
         try:
             writer.execute('BEGIN EXCLUSIVE')
-            # An external empty commit publishes no committed-change notice.
-            # Observe the actual busy callback before releasing this writer.
+            # Readiness needs no database read and an external empty commit
+            # publishes no committed-change notification, so the one-shot
+            # reread relies on the native busy handler waiting through the
+            # held lock itself.
             wake = spawn_session_wake('native-w1')
-            self.eventually(lambda: observer.observed(busy_marker, wake.pid),
-                            'the held writer did not reach the one-shot SQLite busy callback')
+            busy = self.eventually(lambda: [event for event in wake_events
+                                            if event['type'] == 'codexInboxDatabaseBusy'],
+                                   'the held writer did not reach the one-shot session read')
+            self.assertEqual(busy[0]['errcode'] & 255, sqlite3.SQLITE_BUSY)
             self.assertEqual(len(app_calls('turn/steer')), 1,
                              'the one-shot delivery continued before its committed read succeeded')
             self.assertIsNone(wake.poll(), 'the one-shot delivery exited while the writer was still held')
@@ -1481,6 +1457,9 @@ finally:
         finally:
             writer.close()
         phase('waiting for the committed read after the writer released')
+        self.eventually(lambda: [event for event in wake_events
+                                 if event['type'] == 'codexInboxDatabaseReady'],
+                        'the released writer did not resume the one-shot committed read')
         self.eventually(lambda: wake.poll() is not None,
                         'the one-shot delivery did not settle after its committed read')
         self.assertEqual(wake.returncode, 0, ''.join(wake.stderr.readlines()))
@@ -1490,9 +1469,12 @@ finally:
                          [(None,)], 'the one-shot wake acknowledged the input')
 
         phase('changing the recorded native conversation before another one-shot read')
-        self.coord('connect', 'w1', 'native-w2', json.dumps(self.app_endpoint('w1', 'native-w2')))
+        self.coord('connect', 'w1', 'native-w2', json.dumps([
+            'node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--session',
+            str(EXE), str(self.db), 'w1', 'native-w2']))
         changed = subprocess.run([
-            str(EXE), str(self.db), 'codex-inbox-session', 'w1', 'native-w1', 'busy-task'],
+            'node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--session',
+            str(EXE), str(self.db), 'w1', 'native-w1', 'busy-task'],
             capture_output=True, text=True)
         self.assertEqual(changed.returncode, 1, 'a superseded native identity did not fail the one-shot delivery')
         self.assertIn('another native conversation', changed.stderr)
@@ -1500,7 +1482,8 @@ finally:
         phase('stopping the session before another one-shot read')
         self.coord('stop', 'w1', 'one-shot-operator-stop', 'Retain the remaining one-shot input.')
         retained = subprocess.run([
-            str(EXE), str(self.db), 'codex-inbox-session', 'w1', 'native-w2', 'busy-task'],
+            'node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--session',
+            str(EXE), str(self.db), 'w1', 'native-w2', 'busy-task'],
             capture_output=True, text=True)
         self.assertEqual(retained.returncode, 0, retained.stderr)
         retained_events = [json.loads(line) for line in retained.stdout.splitlines()]

@@ -341,7 +341,7 @@ Work only in your assigned clone/worktree below {out}. Read source and Git diffs
 Keep all tracked and untracked source files unchanged. Do not run the repository
 test suites, build toolchains, recruit more agents, install anything, change
 credentials or global configuration, or push. Use the existing native login.
-Coordinator input reads and automatic handling write this run's database at {db}.
+Coordinator acknowledgment commands may write this run's database at {db}.
 Do not send a separate report command: native receive forwards your final text.
 Do not send guidance during report delivery. End your turn after your review.
 """
@@ -367,17 +367,17 @@ Do not send guidance during report delivery. End your turn after your review.
     root_task = common + f"""
 You are the Codex root for a native receive acceptance run. Two OMP reviewers,
 review-native and review-validation, will independently inspect this source.
-First inspect the pinned checkout identity and receive entry point and handle
-the complete assigned input. Finish this native turn; Baton records handling
-automatically. Native receive will resume this same conversation when their
+First inspect the pinned checkout identity and receive entry point, then use
+`{coordinator_cli} acknowledge` after handling the complete assigned input.
+Finish this turn. Native receive will resume this same conversation when their
 reports arrive. For each report, inspect its cited source and assess its findings
-and finish your native turn. Use `{coordinator_cli} inbox` to
+before using `{coordinator_cli} acknowledge`. Use `{coordinator_cli} inbox` to
 read complete pending input. Preserve each full body; handle complete text.
 Include your assessment in your authored response. Your review may identify unresolved
 defects; acceptance of a report records that you read it, not approval of a change.
 The reviewers may receive a second task in their existing native sessions.
 Do not edit code, run tests or delegate further work. On root-followup, check all
-retained reports and receipts, summarize the findings and finish the follow-up turn.
+retained reports and receipts, summarize the findings and acknowledge the follow-up.
 """
     endpoint = [str(binary), str(db), 'receive', 'root', routes['codex']['executable'],
                 routes['codex']['model'], routes['codex']['effort'], str(repo), str(out / 'root.jsonl')]
@@ -394,8 +394,8 @@ retained reports and receipts, summarize the findings and finish the follow-up t
     def player_task(marker, focus):
         return (common + f'\n{focus}\n\n'
                 f'Begin your final response with {marker} and the full source revision {base}.\n'
-                'Report findings or explain the specific checks that found no issue, then finish\n'
-                'your native turn. Baton automatically records complete input handling.\n'
+                'After handling the assigned complete input, use the coordinator acknowledge\n'
+                'action. Report findings or explain the specific checks that found no issue.\n'
                 'Include material limitations.\n')
 
     for player, marker, focus in players:
@@ -468,8 +468,8 @@ retained reports and receipts, summarize the findings and finish the follow-up t
             save_state('worker-followup-state.json', resumed)
             check_reports(resumed, 2)
         followup = (common + '\nRead all retained reviewer reports and their handling state. '
-                    'Summarize what should be addressed next, then finish your native turn. '
-                    'Baton automatically records complete input handling.\n')
+                    'Summarize what should be addressed next. Use the acknowledge action '
+                    'after this review, then finish your turn.\n')
         finish_all([start_message('root-followup', 'root', followup)])
         final = snapshot(db)
         assert next(row['native'] for row in final['sessions'] if row['id'] == 'root') == root_native

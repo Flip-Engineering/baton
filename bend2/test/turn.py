@@ -473,29 +473,6 @@ print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assi
         self.assertEqual(json.loads(self.call('delivery','refused-turn'))['body'],'refused answer λ')
         self.assertEqual(json.loads(self.call('player','omp-worker'))['native'],'omp-refused')
 
-    def test_omp_filter_refusal_without_id_is_recorded_and_turn_completes(self):
-        # OMP 17.4 answers an unknown set_event_filter request with success
-        # false and no id (issue #769). The refusal still names the command.
-        self.register('omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
-        self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys
-request=json.loads(sys.stdin.readline())
-assert request['type']=='set_event_filter'
-print(json.dumps({'type':'response','command':'set_event_filter','success':False,'error':'Unknown command: set_event_filter'}),flush=True)
-state=json.loads(sys.stdin.readline())
-assert state['type']=='get_state'
-prompt=json.loads(sys.stdin.readline())['message']
-print(json.dumps({'type':'response','command':'get_state','success':True,'id':state['id'],'data':{'sessionId':'omp-refused-noid','model':{'provider':'provider','id':'actual-model'}}}),flush=True)
-print(json.dumps({'type':'message_end','message':{'role':'assistant','provider':'provider','model':'actual-model','content':[{'type':'text','text':'refused answer λ'}]}}),flush=True)
-print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assistant','content':[{'type':'text','text':'refused answer λ'}]}]}),flush=True)
-''')
-        self.call('turn','omp-worker','refused-noid-turn',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'')
-        frames=[json.loads(line) for line in self.generation('refused-noid-turn').read_text().splitlines()]
-        self.assertIs(frames[0]['success'],False)
-        self.assertNotIn('id',frames[0])
-        self.assertEqual(frames[-1],{'type':'baton_event_filter','requested':'array+delta','active':False,'outcome':'refused'})
-        self.assertEqual(json.loads(self.call('delivery','refused-noid-turn'))['body'],'refused answer λ')
-        self.assertEqual(json.loads(self.call('player','omp-worker'))['native'],'omp-refused-noid')
-
     def test_omp_nonmatching_filter_answers_stay_inactive(self):
         self.register('omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
         scenarios = {

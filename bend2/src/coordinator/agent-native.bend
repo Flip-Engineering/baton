@@ -345,7 +345,6 @@ def legacy_args_selected(+session: String, verb: String, +options: List<&2,D.Opt
       ["turn",target,D.value(options,"--id",""),actual(options,saved,"--command"),actual(options,saved,"--model"),actual(options,saved,"--effort"),actual(options,saved,"--cwd"),D.value(options,"--file",""),actual(options,saved,"--output-log"),actual(options,saved,"--native")])
     case "receive": ["receive",target,actual(options,saved,"--command"),D.value(options,"--model",""),D.value(options,"--effort",""),D.value(options,"--cwd",""),actual(options,saved,"--output-log"),D.value(options,"--message","")]
     case "profile-bind": ["profile-bind",target,actual(options,saved,"--harness"),D.value(options,"--profile",""),D.value(options,"--store","")]
-    case "account": ["account",D.value(options,"--action",""),D.value(options,"--id",""),D.value(options,"--provider",""),D.value(options,"--harness",""),D.value(options,"--funding",""),D.value(options,"--secret-ref",""),D.value(options,"--organization",""),D.value(options,"--detail",""),target]
     case "connect": ["connect",target,actual(options,saved,"--native"),D.value(options,"--endpoint","")]
     case "bind": ["bind",target,actual(options,saved,"--native"),D.value(options,"--harness",""),D.value(options,"--model",""),D.value(options,"--effort","")]
     case "report": ["report",D.value(options,"--id",""),session,D.value(options,"--text","")]
@@ -378,8 +377,8 @@ def legacy_args_selected(+session: String, verb: String, +options: List<&2,D.Opt
     case "context-install": ["context-install",D.value(options,"--module",""),D.value(options,"--path","")]
     case "context-query": ["context-query-file",D.value(options,"--owner",session),D.value(options,"--id",""),D.value(options,"--file","")]
     case "context-result": ["context-result",D.value(options,"--id","")]
-    case "models": ["models",target]
-    case "models-all": ["models-all"]
+    case "models": Bool.pick(List<String>,D.present(options,"--all"),["models",target,"--all"],["models",target])
+    case "harness-inventory": ["harness-inventory"]
     case "observed-usage": ["observed-usage",target]
     case "logs": Bool.pick(List<String>,D.present(options,"--level"),["logs",target,D.value(options,"--level","")],["logs",target])
     case other: Nil{}

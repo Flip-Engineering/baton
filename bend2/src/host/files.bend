@@ -4,6 +4,11 @@ import Base
 def Files.mkdir(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./files.c"
 
+# Reports whether this process can write the path. The check opens no file and
+# writes no probe, so it leaves existing contents and symlinks untouched.
+def Files.writable(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./files.c"
+
 def Files.find_suffix(directory: String, suffix: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./files.c"
 
@@ -30,8 +35,4 @@ def Files.remove_attempt_file(database: String, directory: String, name: String)
 
 # Reports whether a path names a regular file without following a symlink.
 def Files.regular(path: String) -> IO(Result<&1,&1,U32 & String,String>):
-  import "./files.c"
-
-# Reports whether a directory entry exists. Filesystem failures retain their cause.
-def Files.exists(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./files.c"

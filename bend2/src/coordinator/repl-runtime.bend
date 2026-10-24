@@ -8,7 +8,9 @@ import ../host/instance.bend as Custody
 import ../host/session-lock.bend as Lock
 import ../host/files.bend as Files
 import ../host/repl.bend as Host
+import ./repl-source.bend as Source
 import ../host/text.bend as Text
+import ../git/text.bend as Tx
 import ../context/raw.bend as Raw
 
 def append_cause(+left: String, right: String) -> String:
@@ -19,9 +21,9 @@ def outcome(+db: String, +cell: String, +stage: String, result: Native.Outcome) 
     case Native.Finished{stdout,stderr,wait,cause}:
       M.write(db,"UPDATE repl_attempts SET stdout=" ++ C.q(stdout) ++ ",stderr=" ++ C.q(stderr) ++ ",wait_status=" ++ C.q(wait) ++ ",cause=" ++ C.q(cause) ++ " WHERE cell=" ++ C.q(cell) ++ " AND stage=" ++ C.q(stage) ++ " AND wait_status IS NULL;")
 
-def cleanup(+db: String, +cell: String, +stage: String, released: Result<&1,&1,U32 & String,Unit>, acknowledged: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+def cleanup(+db: String, +cell: String, +stage: String, fresh: Bool, released: Result<&1,&1,U32 & String,Unit>, acknowledged: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   +cause = append_cause(Native.unit_cause(released),Native.unit_cause(acknowledged))
-  Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),
+  Bool.pick(IO(Unit),Bool.or(Bool.not(fresh),String.is_empty(cause)),IO.pure(Unit,Unit{}),
     M.write(db,"UPDATE repl_attempts SET cause=CASE WHEN cause='' THEN " ++ C.q(cause) ++ " ELSE cause||char(10)||" ++ C.q(cause) ++ " END WHERE cell=" ++ C.q(cell) ++ " AND stage=" ++ C.q(stage) ++ ";"))
 
 def acknowledge(handle: U32, preserved: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -89,8 +91,14 @@ def retire(handle: U32, acknowledged: Result<&1,&1,U32 & String,Unit>) -> IO(Res
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
     case Done{value}: Custody.Instance.retire(handle)
 
+def attempt_unsettled(+db: String, +cell: String, +stage: String) -> IO(Bool):
+  do IO<Bool>:
+    found : String <- M.scalar(db,"EXISTS(SELECT 1 FROM repl_attempts WHERE cell=" ++ C.q(cell) ++ " AND stage=" ++ C.q(stage) ++ " AND wait_status IS NULL)")
+    IO.pure(Bool,String.eq(found,"1"))
+
 def completed_observation(+db: String, +cell: String, +stage: String, +directory: String, +handle: U32, drained: Result<&1,&1,U32 & String,Unit>, unsubscribed: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   do IO<Unit>:
+    fresh : Bool <- attempt_unsettled(db,cell,stage)
     read : Unit <- IO.pass(Unit,drained)
     waited : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
     output : Result<&1,&1,U32 & String,Raw.RawRead> <- Raw.Raw.read_text_utf8(directory ++ "/stdout")
@@ -100,8 +108,7 @@ def completed_observation(+db: String, +cell: String, +stage: String, +directory
     released : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.release(handle)
     acknowledged : Result<&1,&1,U32 & String,Unit> <- acknowledge(handle,preserved)
     retired : Result<&1,&1,U32 & String,Unit> <- retire(handle,acknowledged)
-    cleanup(db,cell,stage,released,retired)
-
+    cleanup(db,cell,stage,fresh,released,retired)
 def observed_subscription(+db: String, +cell: String, +stage: String, +directory: String, +handle: U32, +actor: String, subscribed: U32 & String) -> IO(Unit):
   match subscribed:
     case (+subscription,ready): do IO<Unit>:
@@ -161,15 +168,15 @@ def compiler_stage(+db: String, +notebook: String, +cell: String, +root: String,
     +source : String <- M.field(db,cell,"source")
     snapshot : String <- M.field(db,cell,"snapshot")
     expected : String <- M.field(db,cell,"expected_type")
-    +directory : String = root ++ "/compiler"
-    argv : List<&2,String> = D.shared_strings([compiler,operation,directory ++ "/source.bend",".",root ++ "/program",expected])
+    +directory : String = root ++ ".compiler"
+    argv : List<&2,String> = D.shared_strings([compiler,operation,directory ++ "/source.bend",".",root ++ ".program",expected])
     stage(db,cell,"compiler",workspace,directory,argv,snapshot,source,lock)
 
 def native_stage(+db: String, +notebook: String, +cell: String, +root: String, lock: U32) -> IO(Unit):
   do IO<Unit>:
     +workspace : String <- M.notebook_field(db,notebook,"workspace")
     source : String <- M.field(db,cell,"source")
-    stage(db,cell,"native",workspace,root ++ "/native",D.shared_strings([root ++ "/program"]),"",source,lock)
+    stage(db,cell,"native",workspace,root ++ ".native",D.shared_strings([root ++ ".program"]),"",source,lock)
 
 def native_ready(+db: String, +actor: String, +notebook: String, +cell: String, +root: String, lock: U32) -> IO(Unit):
   do IO<Unit>:
@@ -184,7 +191,6 @@ def after_compiler(+db: String, +actor: String, +notebook: String, +cell: String
 def execute_locked(+db: String, +actor: String, +notebook: String, +cell: String, +lock: U32) -> IO(Unit):
   do IO<Unit>:
     +root : String = db ++ "." ++ cell
-    directory : Unit <- IO.try(Unit,Files.Files.mkdir(root))
     checked : Unit <- compiler_stage(db,notebook,cell,root,lock)
     evaluated : Unit <- after_compiler(db,actor,notebook,cell,root,lock)
     released : Result<&1,&1,U32 & String,Unit> <- Lock.SessionLock.release(lock)
@@ -222,11 +228,31 @@ def attach_original(+db: String, +notebook: String, +cell: String, +stage: Strin
       attached : Result<&1,&1,U32 & String,U32> <- Custody.Instance.attach(db,directory)
       attach_result(db,notebook,cell,stage,directory,attached)
 
+def stage_present(+db: String, +cell: String, +stage: String) -> IO(Bool):
+  do IO<Bool>:
+    found : String <- M.scalar(db,"EXISTS(SELECT 1 FROM repl_attempts WHERE cell=" ++ C.q(cell) ++ " AND stage=" ++ C.q(stage) ++ ")")
+    IO.pure(Bool,String.eq(found,"1"))
+
+def stage_settled(+db: String, +cell: String, +stage: String) -> IO(Bool):
+  do IO<Bool>:
+    found : String <- M.scalar(db,"EXISTS(SELECT 1 FROM repl_attempts WHERE cell=" ++ C.q(cell) ++ " AND stage=" ++ C.q(stage) ++ " AND wait_status IS NOT NULL)")
+    IO.pure(Bool,String.eq(found,"1"))
+
+# A recorded outcome is durable. Recovery observes only an unfinished attempt;
+# a settled attempt keeps its native identity, birth, output, wait status and
+# cause unchanged. Attempts with no row are not observed and cannot be replayed.
 def recover_stage(+db: String, +notebook: String, +cell: String, +stage: String) -> IO(Unit):
   do IO<Unit>:
-    +directory : String <- M.attempt_field(db,cell,stage,"directory")
-    recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.observer_recovery_argv(directory))
-    attach_original(db,notebook,cell,stage,directory,recovery)
+    present : Bool <- stage_present(db,cell,stage)
+    settled : Bool <- stage_settled(db,cell,stage)
+    Bool.pick(IO(Unit),Bool.or(Bool.not(present),settled),IO.pure(Unit,Unit{}),
+      (do IO<Unit>:
+        +directory : String <- M.attempt_field(db,cell,stage,"directory")
+        Bool.pick(IO(Unit),String.eq(Source.parent_reversed(Tx.str_rev(directory)),Source.parent_reversed(Tx.str_rev(db))),
+          (do IO<Unit>:
+            recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.observer_recovery_argv(directory))
+            attach_original(db,notebook,cell,stage,directory,recovery)),
+          IO.die(Unit,2,"The retained REPL attempt uses the legacy nested directory layout. Its complete outcome remains recorded; start a new REPL cell."))))
 
 # Attachment carries the original physical guard. A new guard is acquired only
 # after that original stage has been completely observed and released.

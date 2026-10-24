@@ -1,4 +1,4 @@
-# The native check imports these admission laws. SQLite evaluates the declared
+# The entry imports these admission laws. SQLite evaluates the declared
 # predicate and transaction; the native connect tests verify stored state and
 # delivery through the real executable.
 import Base
@@ -41,10 +41,10 @@ def connect_updates_and_answers_only_after_admission(id,native,endpoint):
   {==}
 
 law connect_refusal_is_classified_before_delivery:
-  for detail: String
-  {Store.refused("{\"error\":\"invalid-endpoint\"}" ++ detail) == True{} : Bool}
+  for +saved: String
+  {Store.refused(saved) == Bool.or(Store.naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\"")))) : Bool}
 
-def connect_refusal_is_classified_before_delivery(detail):
+def connect_refusal_is_classified_before_delivery(saved):
   {==}
 
 law refused_connections_return_the_structured_error:

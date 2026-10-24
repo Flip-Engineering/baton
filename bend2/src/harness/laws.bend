@@ -37,6 +37,7 @@ law m2_omp_fresh_start_is_the_spawn_attempt:
   for +model: String
   for +effort: String
   for +cwd: String
+  for +log: String
   for +sessions: String
   for session: String
   for +stderr: String
@@ -112,6 +113,7 @@ law m5_omp_resume_carries_the_accepted_session:
   for +model: String
   for +effort: String
   for +cwd: String
+  for +log: String
   for +sessions: String
   for +session: String
   for +stderr: String
@@ -160,7 +162,7 @@ law m5_muse_resume_carries_the_accepted_session:
   for +stderr: String
   for +session: String
   for +task: String
-  {Muse.resume_player(cmd, model, effort, cwd, stderr, session, task) == P.ProcessChild.spawn(P.argv(List.append(&1,String,Muse.arguments(cmd,model,effort,task),Bool.pick(List<String>,String.is_empty(session),Nil{},["--session-id",session,"--allow-workspace-switch"]))),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Muse.resume_player(cmd, model, effort, cwd, stderr, session, task) == P.ProcessChild.spawn(P.argv(List.append(&1,String,Muse.arguments(cmd,model,effort,task),["--session-id",session])),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m5_muse_resume_carries_the_accepted_session(cmd, model, effort, cwd, stderr, session, task):
   {==}
@@ -200,7 +202,7 @@ law m11_muse_arguments_keep_the_task_one_element:
   for +model: String
   for +effort: String
   for +task: String
-  {Muse.arguments(cmd, model, effort, task) == List.append(&1,String,[cmd,"exec","--json","--prompt-file",task,"--model",model,"--reasoning-effort",effort,"--yolo"],Bool.pick(List<String>,String.eq(model,"muse-spark-1.3-contributor"),["--contributor-mode","on"],Nil{})) : List<String>}
+  {Muse.arguments(cmd, model, effort, task) == [cmd,"exec","--json","--prompt-file",task,"--model",model,"--reasoning-effort",effort,"--yolo"] : List<String>}
 
 def m11_muse_arguments_keep_the_task_one_element(cmd, model, effort, task):
   {==}

@@ -196,16 +196,8 @@ def close_kind(+kind: String) -> Bool:
 def codex_kind(+kind: String) -> Bool:
   Bool.or(String.eq(kind,"codex_command_start"),String.eq(kind,"codex_command_end"))
 
-# OMP 17.4 message frames carry no message-scoped identity: the measured
-# frames in issue #769 have no toolCallId, messageId or message.id, and the
-# client's stream keeps one partial message open at a time, resending its
-# cumulative snapshot as message_update until message_end. The identity of a
-# message lifecycle frame is that open message, so lifecycle frames without
-# an explicit identity share one slot: each update replaces the held one,
-# message_end drops the slot, and an interrupted stream flushes the newest
-# snapshot it held. Explicit identities keep their own keys.
 def frame_id_sql(+line: String) -> String:
-  "WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT coalesce(json_extract(value,'$.toolCallId'),json_extract(value,'$.messageId'),json_extract(value,'$.message.id'),CASE WHEN json_extract(value,'$.type') IN ('message_start','message_update','message_end') THEN 'omp-open-message' END,json_extract(value,'$.message.responseId'),json_extract(value,'$.assistantMessageEvent.partial.responseId'),'') FROM frame;"
+  "WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT coalesce(json_extract(value,'$.toolCallId'),json_extract(value,'$.messageId'),json_extract(value,'$.message.id'),'') FROM frame;"
 
 def frame_id(db: String, line: String, omp: Bool) -> IO(String):
   match omp:
@@ -510,30 +502,6 @@ def write_positioned_retained(log: String, lines: List<String>, +position: Strin
   match lines:
     case Nil{}: Bool.pick(IO(Result<&1,&1,U32 & String,String>),finish,T.Text.write_at(log,position,"",1),IO.pure(Result<&1,&1,U32 & String,String>,Done{position}))
     case other: T.Text.write_at(log,position,lines_text(other),Bool.pick(U32,finish,1,0))
-
-def output_parent_path(+prefix: String, +part: String) -> String:
-  Bool.pick(String,String.is_empty(prefix),Bool.pick(String,String.is_empty(part),"/",part),
-    Bool.pick(String,String.eq(prefix,"/"),prefix ++ part,prefix ++ "/" ++ part))
-
-def prepare_output_parents(parts: List<&2,String>, prefix: String) -> IO(Unit):
-  match parts:
-    case part <> next <> rest: do IO<Unit>:
-      +directory : String <- IO.pure(String,output_parent_path(prefix,part))
-      made : Unit <- IO.try(Unit,F.Files.mkdir(directory))
-      prepare_output_parents(Con{next,rest},directory)
-    case other: IO.pure(Unit,Unit{})
-
-# A missing generation is reconstructed from the retained native spool. Its
-# former output position belongs to the lost file, so the observer replays it.
-def prepare_retained_output_named(+log: String) -> IO(Bool):
-  do IO<Bool>:
-    present : String <- IO.try(String,F.Files.exists(log))
-    +exists : Bool <- IO.pure(Bool,String.eq(present,"1"))
-    prepared : Unit <- Bool.pick(IO(Unit),exists,IO.pure(Unit,Unit{}),prepare_output_parents(String.split(log,Char.from_u32(47)),""))
-    IO.pure(Bool,exists)
-
-def prepare_retained_output(+log: String) -> IO(Bool):
-  Bool.pick(IO(Bool),String.is_empty(log),IO.pure(Bool,True{}),prepare_retained_output_named(log))
 
 # Retained observers write each batch at the output cursor in their checkpoint.
 # Equal bytes already present stay in place, including a partial replayed batch.

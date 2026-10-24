@@ -1,5 +1,4 @@
 """Native control commands with retained fixture processes and real Git worktrees."""
-import errno
 import json
 import os
 import pathlib
@@ -11,7 +10,6 @@ import stat
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import traceback
 import unittest
@@ -251,7 +249,7 @@ class Control(unittest.TestCase):
         return record if raw or not ok else json.loads(stdout)
 
     def root(self):
-        self.call('attach', 'root', 'codex', 'saved-root', json.dumps(['/usr/bin/true']))
+        self.call('attach', 'root', 'codex', 'saved-root', '')
         self.call('role', 'root', 'principal-conductor')
         self.call('attach', 'operator', 'operator', '', '')
         self.call('role', 'operator', 'operator')
@@ -421,102 +419,10 @@ class Control(unittest.TestCase):
         self.server.close()
         configured = json.loads((self.directory / 'fixture.json').read_text())['exe']
         owner = f'{pathlib.Path(configured).resolve()} --instance-owner {self.db.resolve()}'
-        def settled_processes():
-            rows = self.process_rows()
-            if [row.split(None, 3)[3] for row in rows] in ([], [owner]):
-                return {'rows': rows}
-        settled = self.eventually(settled_processes)['rows']
-        if settled:
-            selected = receive_fixture.Receive.selected_process(self, int(settled[0].split()[0]))
-            self.assertIsNotNone(selected)
-            self.assertEqual(selected['command'], owner)
-            argv = [configured, str(self.db), 'owner-status']
-            result = subprocess.run(argv, env=self.environment, capture_output=True, text=True)
-            current = receive_fixture.Receive.selected_process(self, selected['pid'])
-            with (self.directory / 'commands.jsonl').open('a') as output:
-                output.write(json.dumps({'argv': argv, 'code': result.returncode,
-                    'stdout': result.stdout, 'stderr': result.stderr,
-                    'selected_owner': selected, 'owner_after_readiness': current,
-                    'direct_wait_completed': True}) + '\n')
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIsNotNone(current)
-            self.assertFalse(current['state'].startswith('Z'))
-            for field in ('pid', 'start', 'command'):
-                self.assertEqual(current[field], selected[field])
+        self.eventually(lambda: [row.split(None, 3)[3] for row in self.process_rows()]
+                        in ([], [owner]))
         shutdown_fixture_owner(self)
         self.eventually(lambda: not self.process_rows())
-
-    def test_cleanup_waits_for_owner_publication(self):
-        self.db.touch()
-        with tempfile.TemporaryDirectory(prefix='b758-', dir='/tmp') as runtime:
-            self.environment['XDG_RUNTIME_DIR'] = runtime
-            ipc = pathlib.Path(runtime) / 'baton2'
-            ipc.mkdir(mode=0o700)
-            info = self.db.stat()
-            generation = ipc / f'owner-{info.st_dev:x}-{info.st_ino:x}.generation'
-            record = generation.with_suffix('.record')
-            os.mkfifo(generation, 0o600)
-            owner = subprocess.Popen([str(EXE), '--instance-owner', str(self.db)],
-                env=self.environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            writer = None
-            cleanup = None
-            failures = []
-            try:
-                def waiting_for_generation():
-                    self.assertIsNone(owner.poll(), 'The fixture owner exited before publication.')
-                    try:
-                        return {'fd': os.open(generation, os.O_WRONLY | os.O_NONBLOCK)}
-                    except OSError as error:
-                        if error.errno != errno.ENXIO:
-                            raise
-                writer = self.eventually(waiting_for_generation)['fd']
-                selected = receive_fixture.Receive.selected_process(self, owner.pid)
-                self.assertIsNotNone(selected)
-                self.assertFalse(record.exists())
-                shutdown_fixture_owner(self)
-                self.assertIsNone(owner.poll())
-                self.assertFalse(record.exists())
-                def close():
-                    try:
-                        self.close_fixtures()
-                    except BaseException:
-                        failures.append(traceback.format_exc())
-                cleanup = threading.Thread(target=close)
-                cleanup.start()
-                def readiness_started():
-                    self.assertFalse(failures, '\n'.join(failures))
-                    self.assertTrue(cleanup.is_alive())
-                    command = f'{EXE} {self.db} owner-status'
-                    return next((row for row in self.process_rows()
-                                 if row.split(None, 3)[3] == command), None)
-                waiting = self.eventually(readiness_started)
-                self.assertFalse(record.exists())
-                (self.directory / 'owner-publication-boundary.json').write_text(json.dumps({
-                    'selected_owner': selected, 'generation_fifo': str(generation),
-                    'readiness_process': waiting, 'record_published': False}, indent=2) + '\n')
-            finally:
-                if writer is not None:
-                    os.write(writer, b'0\n')
-                    os.close(writer)
-                if cleanup is not None:
-                    cleanup.join()
-                else:
-                    self.close_fixtures()
-                stdout, stderr = owner.communicate()
-                (self.directory / 'publication-owner.stdout').write_text(stdout)
-                (self.directory / 'publication-owner.stderr').write_text(stderr)
-                (self.directory / 'publication-owner-execution.json').write_text(json.dumps({
-                    'argv': owner.args, 'pid': owner.pid, 'code': owner.returncode,
-                    'direct_wait_completed': True, 'natural_wait_completed': True}, indent=2) + '\n')
-            self.assertEqual(failures, [])
-            self.assertEqual(owner.returncode, 0, stderr)
-            self.assertEqual(self.process_rows(), [])
-            commands = [json.loads(line) for line in
-                        (self.directory / 'commands.jsonl').read_text().splitlines()]
-            readiness = next(item for item in commands if item['argv'][-1] == 'owner-status')
-            self.assertGreater(json.loads(readiness['stdout'])['generation'], 0)
-            for field in ('pid', 'start', 'command'):
-                self.assertEqual(readiness['selected_owner'][field], readiness['owner_after_readiness'][field])
 
     def test_start_detaches_native_subscription_and_operator_report(self):
         for harness in ('codex', 'omp'):
@@ -1394,7 +1300,6 @@ else:
 
     def test_direct_turn_delivers_pending_input_after_native_exit(self):
         self.root()
-        root_endpoint = self.call('session', 'root')['endpoint']
         for launch in ('dispatch-turn', 'turn'):
             for harness in ('muse', 'omp', 'claude-code', 'codex'):
                 with self.subTest(launch=launch, harness=harness):
@@ -1402,9 +1307,6 @@ else:
                     assignment = self.recruit(session, harness)
                     native = 'saved-' + session
                     self.call('connect', session, native, '')
-                    if harness == 'codex':
-                        self.receiver(session)
-                        configured_endpoint = self.call('session', session)['endpointArgv']
                     ident = session + '-initial'
                     log = self.directory / (ident + '.jsonl')
                     child = None
@@ -1419,12 +1321,9 @@ else:
                     stream, start = self.accept(session)
                     self.assertEqual(start['resume'], native)
                     endpoint = self.call('session', session)['endpointArgv']
-                    if harness == 'codex':
-                        self.assertEqual(endpoint, configured_endpoint)
-                    else:
-                        self.assertEqual(endpoint, [str(EXE.resolve()), str(self.db.resolve()),
-                                                   'receive', session, str(self.fixture), session,
-                                                   'low', assignment['workspace'], str(log.resolve())])
+                    self.assertEqual(endpoint, [str(EXE.resolve()), str(self.db.resolve()),
+                                               'receive', session, str(self.fixture), session,
+                                               'low', assignment['workspace'], str(log.resolve())])
                     messages = [(session + '-pending-first', 'Finish the first pending task λ.'),
                                 (session + '-pending-second', 'Finish the second pending task 🙂.')]
                     for message, body in messages:
@@ -1445,7 +1344,7 @@ else:
                                          'fixture-native-reviewed')
                     self.assertEqual(self.call('inbox', session), [])
                     self.assertEqual(self.call('session', session)['endpointArgv'], endpoint)
-                    self.assertEqual(self.call('session', 'root')['endpoint'], root_endpoint)
+                    self.assertEqual(self.call('session', 'root')['endpoint'], '')
                     if child is not None:
                         stdout, stderr = child.communicate()
                         self.assertEqual(child.returncode, 0, stderr)
@@ -1563,10 +1462,10 @@ else:
         event.write_text(json.dumps({'type': 'result', 'session_id': 'native-pretty',
                                      'result': body, 'is_error': False}))
         self.call('observe-file', 'review-report', 'leaf', event)
-        retained = next(row for row in self.call('inbox', 'root') if row['id'] == 'review-report')
-        self.assertEqual((retained['sender'], retained['recipient'], retained['kind'], retained['body']),
-                         ('leaf', 'root', 'report', body))
-        self.assertEqual(self.call('session', 'root')['endpointArgv'], ['/usr/bin/true'])
+        queued = [json.loads(line) for line in self.public_queue_calls.read_text().splitlines()]
+        self.assertTrue(any(request['method'] == 'turn/steer'
+                            and request['params']['threadId'] == 'saved-root'
+                            for request in queued))
         for args in (('status',), ('players',), ('orchestra',), ('pending',), ('player', 'leaf'),
                      ('session', 'leaf'), ('inbox', 'root'), ('delivery', 'review-report'), ('turns', 'leaf')):
             with self.subTest(args=args):
@@ -1596,10 +1495,10 @@ else:
         self.assertEqual(session['endpoint'], endpoint)
         self.assertEqual(session['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
         self.assertEqual(self.call('player', 'leaf')['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
-        self.assertEqual(self.call('session', 'root')['endpointArgv'], ['/usr/bin/true'])
+        self.assertIsNone(self.call('session', 'root')['endpointArgv'])
         rows = {row['id']: row for row in self.call('status')}
         self.assertEqual(rows['leaf']['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
-        self.assertEqual(rows['root']['endpointArgv'], ['/usr/bin/true'])
+        self.assertIsNone(rows['root']['endpointArgv'])
         self.assertEqual(self.call('delivery', 'leaf-guide')['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
         pending = {row['id']: row for row in self.call('pending')}
         self.assertEqual(pending['leaf-guide']['endpointArgv'], ['/usr/bin/true', 'leaf', ''])

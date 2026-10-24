@@ -40,7 +40,7 @@ def member(+value: String, values: List<String>) -> Bool:
     case +head <> rest: Bool.or(String.eq(value,head),member(value,rest))
 
 def known(verb: String) -> Bool:
-  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide acknowledge status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure account resume stop force-stop recover-observer continue-task turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models models-all observed-usage logs"))
+  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide acknowledge status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure resume stop force-stop recover-observer continue-task turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs harness-inventory"))
 
 def names_lookup(entries: List<NameSet>, +verb: String) -> List<String>:
   match entries:
@@ -71,7 +71,6 @@ def names(verb: String) -> List<String>:
     Names{"outbox","--session"},
     Names{"receiver","--session --command --output-log --cwd"},
     Names{"configure","--session --harness --model --effort --command --output-log --expected-harness --expected-model --expected-effort"},
-    Names{"account","--session --action --id --provider --harness --funding --secret-ref --organization --detail"},
     Names{"resume","--session --lift-stop"},
     Names{"stop","--session --id --reason --reason-file"},
     Names{"force-stop","--session --id"},
@@ -106,9 +105,9 @@ def names(verb: String) -> List<String>:
     Names{"context-install","--module --path"},
     Names{"context-query","--owner --id --file"},
     Names{"context-result","--id"},
-    Names{"models","--session"},
-    Names{"models-all",""},
+    Names{"models","--session --all"},
     Names{"observed-usage","--session"},
+    Names{"harness-inventory",""},
     Names{"logs","--session --level"}
   ],verb)
 
@@ -267,10 +266,10 @@ def help(action: String) -> String:
     case "status": "status [--pretty]\nRead the existing database status projection.\n"
     case "pending": "pending [--index] [--pretty] [--sender SESSION] [--recipient SESSION] [--kind KIND] [--state pending|acknowledged|all] [--after-seq INTEGER] [--through-seq INTEGER]\nRead complete pending input; --index enables the native metadata filters.\n"
     case "orchestra": "orchestra [--pretty]\nRead the existing Orchestra projection, including Players, operators, Ensembles and Sections.\n"
-    case "role": "role [--session SESSION] [--role player|principal-conductor|associate-conductor|operator]\nA Principal Conductor coordinates the whole assignment; an Associate Conductor coordinates a delegated subtask. Players perform work; operators represent human control. Assign an existing session: Principal Conductor and operator require no parent, Associate Conductor requires a parent. Assignment updates the responsibility used by message routing and Conductor operations; parentage, Ensemble ownership, live work and accepted input remain retained. Omit --role to read it; omitted session selects the current actor.\n"
-    case "ensemble": "ensemble --id ID [--owner SESSION] [--coupling loose|tight]\nAn Ensemble records a team owner, coupling and member agents. Loose teams use parent-child and Conductor-descendant routes. Tight coupling additionally permits messages between non-operator peers sharing that Ensemble, including peers with different parents; peers have no ancestor relationship. Operators use the top-level Conductor route. Omit configuration options to read it. --owner ensures it for that owner; --coupling creates or configures coupling. New teams default to loose; omitted configuration owner selects the current actor. The recorded owner manages membership. Use help branch to compare alternatives on a team with either coupling.\n"
+    case "role": "role [--session SESSION] [--role player|principal-conductor|associate-conductor|operator]\nRead the selected role. --role invokes the existing role assignment operation. Omitted session selects the current actor.\n"
+    case "ensemble": "ensemble --id ID [--owner SESSION] [--coupling loose|tight]\nRead the Ensemble. --owner ensures it for that owner; --coupling creates or configures it through the existing ownership operation. Omitted owner for configuration selects the current actor.\n"
     case "ensemble-member": "ensemble-member --id ID --player SESSION --action add|remove [--owner SESSION]\nChange membership through the native recorded-owner operation. Omitted owner selects the current actor.\n"
-    case "section": "section --ensemble ID --id SECTION [--capability TEXT] [--owner SESSION]\nA Section records a capability label and a subset of an Ensemble's members for inspection and work organization. Routing, knowledge visibility and branching use Ensemble and session records. Omit --capability to read it; --capability creates or configures it for the recorded Ensemble owner. Omitted owner selects the current actor.\n"
+    case "section": "section --ensemble ID --id SECTION [--capability TEXT] [--owner SESSION]\nRead the Section. --capability creates or configures it through the native ownership operation; omitted owner selects the current actor.\n"
     case "section-member": "section-member --ensemble ID --id SECTION --player SESSION --action add|remove [--owner SESSION]\nChange Section membership through the native Ensemble owner and membership rules. Omitted owner selects the current actor.\n"
     case "attempt": "attempt [--session SESSION] [--id INPUT_ID]\nRead the current session execution, or relate one complete stored input to its attempt and task state.\n"
     case "attempts": "attempts [--session SESSION]\nRead full native turn history for the selected session.\n"
@@ -285,11 +284,10 @@ def help(action: String) -> String:
     case "turn": "turn [--id TURN_ID] --command EXECUTABLE --file TASK_PATH --output-log PATH [--session SESSION] [--model MODEL] [--effort EFFORT] [--cwd PATH] [--native ID]\nStart the existing managed direct turn. Omitted route, workspace and native identity use the selected session. PATH - reads stdin.\n"
     case "receive": "receive [--session SESSION] [--command EXECUTABLE] [--output-log PATH] [--model MODEL] [--effort EFFORT] [--cwd PATH] [--message ID]\nUse the recorded receiver and native retained receive operation.\n"
     case "profile-bind": "profile-bind --profile LABEL --store PATH [--session SESSION] [--harness NAME]\nBind the named existing account through the native profile operation. Omitted harness uses the selected session.\n"
-    case "account": "account --action record|read|bind|attempts|select|pool|observe|import-credit [--session SESSION] [--id LABEL] [--provider NAME] [--harness NAME] [--funding subscription|api_key] [--secret-ref REFERENCE] [--organization ID] [--detail JSON]\nrecord stores a provider identity, its funding route and a secret-store reference; api_key funding launches only on the claude-code harness, and re-recording a label with different fields is refused. The organization is written only by an observation that verified it. read prints the recorded accounts. bind records the account in force for the session's next attempts. attempts prints the account and funding route recorded for each attempt. select prints the operator-ordered account for a harness and funding route, preferring one whose organization is not recorded credit-unavailable, with the selection's credit eligibility and observation state. pool prints one entry per organization with its accounts, newest readings, conflicts and observation state. observe records a provider organization, usage or cost document with its source and observed time. import-credit records a promotional or purchased credit balance and expiry the operator read from the provider's billing display.\n"
     case "connect": "connect --endpoint JSON_ARGV [--session SESSION] [--native ID]\nRecord the ordinary endpoint through the existing operation. Omitted native ID preserves the selected session's identity. An empty endpoint explicitly disconnects it.\n"
     case "bind": "bind --harness NAME --model MODEL --effort EFFORT [--session SESSION] [--native ID]\nRecord the native route through the existing binding operation. Omitted native ID preserves the selected session's identity.\n"
-    case "report": "report TEXT\nreport [--id ID] (--text TEXT | --file PATH)\nSend a complete report to your recorded coordinator. Baton generates the operation identity.\n"
-    case "ask": "ask TEXT\nask [--id ID] (--text TEXT | --file PATH)\nSend a complete question to your recorded coordinator.\n"
+    case "report": "report [--id ID] (--text TEXT | --file PATH)\nSend a complete report to the current actor's recorded coordinator. Baton generates the operation identity when omitted.\n"
+    case "ask": "ask [--id ID] (--text TEXT | --file PATH)\nSend a complete question to the current actor's recorded coordinator through the native ask operation.\n"
     case "native-reply": "native-reply (--text JSON | --file PATH) [--to WORKER] [--request ID]\nAnswer the unique pending native request addressed to the current coordinator. --to selects a worker when several requests exist. Baton refuses absent or ambiguous requests.\n"
     case "dispatch": "dispatch [--id ID] --to SESSION (--text TEXT | --file PATH) [--kind KIND]\nAdmit the complete input as the current actor and wake its recorded recipient. Omitted kind is task.\n"
     case "recruit": "recruit --session PLAYER --harness NAME --model MODEL --effort EFFORT --repo PATH --branch BRANCH --path PATH --base COMMIT [--parent SESSION]\nCreate the recorded Player worktree. Omitted parent selects the current actor.\n"
@@ -315,8 +313,8 @@ def help(action: String) -> String:
     case "context-query": "context query --file PATH [--id QUERY] [--owner SESSION]\nSubmit the complete request file to the existing native context operation.\n"
     case "context-result": "context result [--id QUERY]\nRead the latest query owned by the current actor when its ID is omitted, or the explicitly selected retained query.\n"
     case "context": "context engines|install|query|result NAMED_ARGS\nUse help with the corresponding context action name.\n"
-    case "models": "models [--session SESSION]\nRead observed model capability information for the selected session.\n"
-    case "models-all": "models-all\nRead the model discovery set for every configured harness and account source in the project database. Each source answer carries its state and observation time; unsupported or failed sources read unknown with their cause. Accounts appear by label with provider, harness, funding route and organization state. Capability assessments list recorded sources with their dates; the set names noRecordedAssessmentSource when none is recorded.\n"
+    case "models": "models [--session SESSION] [--all]\nRead observed model capability information for the selected session. --all reads every recorded harness route.\n"
+    case "harness-inventory": "harness-inventory\nRead recorded harness/model/effort identities across sessions with operator account profiles and limits. Runs no harness command and decides nothing.\n"
     case "observed-usage": "observed-usage [--session SESSION]\nRead the selected session's actual usage observations.\n"
     case "logs": "logs [--session SESSION] [--level LEVEL]\nInspect or configure existing native log capture through its ordinary operation.\n"
     case other: ""

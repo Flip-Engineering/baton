@@ -1,6 +1,6 @@
 # Native artifacts
 
-`bend2/scripts/package-native.py` builds the production coordinator and packages a Darwin arm64 development or release archive. The package contains the native executable, harness adapters, Git helper, Orchestra UI, required Bend2 REPL compiler and Bun runtime, selected context providers, notices, and a manifest. The manifest records the source commit, target platform, selected module identities, required REPL file hashes, system prerequisites, build command and log paths, and compiler archive used for license notices. `SHA256SUMS` records the archive checksum.
+`bend2/scripts/package-native.py` builds the production coordinator and packages a Darwin arm64 development or release archive. The package contains the native executable, harness adapters, Git helper, Orchestra UI, required Bend2 REPL compiler and Bun runtime, selected context providers, notices, and a manifest. The manifest records the source commit, target platform, selected module identities, required REPL dependency hashes, system prerequisites, build command and log paths, and compiler archive used for license notices. `SHA256SUMS` records the archive checksum.
 
 ## Build and package
 
@@ -34,9 +34,9 @@ python3 "$BATON2_SOURCE/bend2/scripts/package-native.py" \
 
 The checked-in REPL compiler source is verified against
 `bend2/compiler/repl-upstream.lock.json`. The platform Bun executable and its
-complete distribution notices are required build inputs. The native workflow
-retrieves the pinned runtime. A package operation with absent or invalid REPL
-inputs fails and retains its output directory.
+complete distribution notices are required build inputs; packaging fails when
+they are absent or invalid. The manifest records the required
+`bend2-repl-compiler` dependency and the host system prerequisites.
 
 The package command runs [build-native.sh](../../bend2/scripts/build-native.sh) once. `--generated-c /path/to/baton2.c` compiles an existing production C translation unit with the package host's compiler and links its native entry point. The build record includes the supplied C path, command, status, and stdout and stderr paths.
 
@@ -50,7 +50,7 @@ sh bend2/scripts/check-native.sh
 
 ## Exercise the extracted artifact
 
-The native workflow moves its owned build source directory, then runs [smoke-native-artifact.py](../../bend2/scripts/smoke-native-artifact.py) against the archive and manifest. The smoke checks the archive checksum, member paths and required REPL file inventory, then starts the extracted coordinator from a separate working directory with the source path unavailable. It verifies the installed C/SQLite prerequisites and evaluates a Bend2 expression through the bundled compiler. A controlled OMP fixture exercises recruitment, receive-owner reexecution, report delivery and acknowledgment, repository commit and public landing.
+The native workflow moves its owned build source directory, then runs [smoke-native-artifact.py](../../bend2/scripts/smoke-native-artifact.py) against the archive and manifest. The smoke checks the archive checksum and member paths, then starts the extracted coordinator from a separate working directory with the source path unavailable. A controlled OMP fixture exercises recruitment, receive-owner reexecution, report delivery and acknowledgment, repository commit and public landing. The workflow then runs [repl-package.py](../../.github/scripts/repl-package.py) `smoke` against the extracted prefix. That check verifies the required REPL dependency, evaluates Bend2 definitions and expressions through the bundled compiler, exercises interactive input and native IO, and retains each command's stdout, stderr and wait status.
 
 For a manual smoke, use the archive filename, SHA256 from SHA256SUMS, and manifest produced by packaging:
 
@@ -69,7 +69,7 @@ The archive root is `baton2-development-darwin-arm64` by default. `--release-ver
 
 ## Package contents and distribution terms
 
-The archive contains identical executable entries at `bin/baton` and `bin/baton2`, manifest.json, notices/, and libexec/baton2/. The Conductor adapters, task input and project settings helpers are included in `libexec/baton2`. Codex inbox coordination and proxy transport are compiled into the executable. The adapters select the archive's executable by default. The output directory also contains build logs, generated C when available, the manifest, archive, and archive checksum.
+The archive contains identical executable entries at `bin/baton` and `bin/baton2`, manifest.json, notices/, and libexec/baton2/. The task input, project settings and managed Codex inbox helpers are included in libexec/baton2/. The adapters select the archive's executable by default. The output directory also contains build logs, generated C when available, the manifest, archive, and archive checksum.
 
 Packaging copies the project LICENSE and NOTICE when present, and retains the pinned Bend compiler/runtime license, reference license, and license or notice files in the verified compiler archive. The manifest records the notice paths and their sources. A source snapshot without a root license is marked as unresolved for public distribution.
 

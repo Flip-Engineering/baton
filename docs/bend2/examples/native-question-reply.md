@@ -1,25 +1,20 @@
 # Answering a native question from a retained OMP child
 
-A retained OMP child receiver routes native `input`, `select`, `confirm` and
-`editor` requests to its registered parent. The coordinator retains the request
-row and places a `question` message in the parent's inbox. The message body holds
-the native request frame, the coordinator request ID, the reply command and the
-expected response shape.
+A retained OMP child receiver routes native `input`, `select`, `confirm` and `editor`
+requests to its registered parent. The coordinator retains the request row and places a
+`question` message in the parent's inbox. The message body holds the native request
+frame, the coordinator request ID, the reply command and the expected response shape.
 
 `parent` below is the session recorded as the question's recipient.
 
 ## Read the question
 
 ```sh
-baton2 state.db as parent inbox
+baton2 state.db inbox parent
 ```
 
-The agent `inbox` action returns the parent's pending complete messages. Baton
-records each complete owned read against the current native turn, and a successful
-completed turn records handling and creates the first receipt automatically.
-Failed turns and unread input remain pending.
-
-A question body is a JSON object:
+The inbox returns unacknowledged messages in store order. A question body is a JSON
+object:
 
 ```json
 {"nativeRequest":{"type":"extension_ui_request","id":"input request Ω","method":"input","title":"Which work should continue?"},
@@ -31,85 +26,73 @@ A question body is a JSON object:
 
 ## Answer
 
-The agent `native-reply` action answers the unique pending native request addressed
-to the parent. `--to WORKER` selects a worker when several requests are pending. An
-explicit `--request ID` remains available.
+Choose one response form for the request:
 
 ```sh
-baton2 state.db as parent native-reply --text '{"value":"Keep the existing work.\nUse the selected branch."}'
-baton2 state.db as parent native-reply --file answer.json
-printf '%s' '{"value":"one line"}' | baton2 state.db as parent native-reply --file -
-baton2 state.db as parent native-reply --to worker --text '{"confirmed":true}'
+baton2 state.db native-reply parent REQUEST_ID '{"value":"Keep the existing work.\nUse the selected branch."}'
+baton2 state.db native-reply-file parent REQUEST_ID answer.json
+printf '%s' '{"value":"one line"}' | baton2 state.db native-reply-file parent REQUEST_ID -
 ```
 
-`input` and `editor` take one string `value`; `select` takes one `value` that names
-a supplied option; `confirm` takes one boolean `confirmed`. Every method also
-accepts `{"cancelled":true}`. `--file` reads the file it names, and `--file -` reads
-standard input, which keeps a multiline answer intact.
-
-## What a successful answer reports
+`input` and `editor` take one string `value`; `select` takes one `value` that names a
+supplied option; `confirm` takes one boolean `confirmed`. Every method also accepts
+`{"cancelled":true}`. `native-reply-file` reads the file it names, and `-` reads standard
+input, which keeps a multiline answer intact.
 
 A first successful answer writes
 `{"request":"REQUEST_ID","status":"stdin-written"}` to standard output and exits 0.
 An identical retry while the request remains open after a completed write returns
 `{"status":"stdin-written"}`.
+The coordinator checks the recorded parent and the recorded method before it retains one
+immutable response. An identical retry with a pending write attempts that original write;
+a different answer for the same request fails. The frame goes to the attempt directory
+stored in the request row.
 
-`stdin-written` reports that the coordinator handed the response frame to the
-retained process's stdin pipe: `send` dispatched the stored frame and `written`
-marked `written=1`. The frame is one JSON line, `extension_ui_response`, carrying
-the original native request ID. Native progress is reported separately: the
-retained child's later output and report establish that it consumed the frame, and
-the observer continues to track native work after the write. Waiting for that
-report is the parent's own decision.
+## What a successful answer reports
 
-## Parent message acceptance
+`stdin-written` reports that the coordinator handed the response frame to the retained
+process's stdin pipe. The frame is one JSON line, `extension_ui_response`, carrying the
+original native request ID. Native output and the retained child's eventual report establish
+whether it consumed and acted on that frame. The observer continues to track native work
+after the write.
 
-The coordinator retains one immutable response for the request. `response_sql`
-admits the supplied value only when it is a single-key object of the request
-method's type, or an explicit `{"cancelled":true}`, on a non-closed request whose
-worker is not stopped. The stored reply uses `coalesce(reply,...)`, so an identical
-retry is idempotent and a different answer for the same request is refused.
-
-Acceptance of the question message is a separate record from the reply. The current
-runtime records handling for the parent's complete owned reads after a successful
-native turn, so the parent's inbox read and reply in that turn produce the stored
-handling receipt.
-
-The focused receive test
-(`bend2/test/receive.py`,
-`test_native_question_parent_answers_and_waits_for_full_report`) observes a fixture
-rather than a native turn. Its `answering_parent` fixture acknowledges the question
-message explicitly with the administrative command
-`baton2 state.db ack QUESTION_ID RECIPIENT parent-received`, and the test reads the
-stored receipt `parent-received`. That explicit acknowledgement belongs to the
-fixture.
-
-The coordinator wakes the parent's registered endpoint with the retained question.
-The child's later report arrives as an ordinary message in the same inbox:
+## Accept the question and wait for the report
 
 ```sh
-baton2 state.db as parent inbox
+baton2 state.db ack QUESTION_ID parent parent-received
+baton2 state.db delivery QUESTION_ID
 ```
+
+An acknowledgement binds to the message ID and the named recipient and keeps the first
+receipt, so `delivery` reads back the stored row:
+
+```json
+{"id":"...","sender":"child-id","recipient":"parent","kind":"question","receipt":"parent-received"}
+```
+
+The coordinator retains the child's message and wakes the parent's registered endpoint
+with it. The child's later report arrives as an ordinary message in the same inbox:
+
+```sh
+baton2 state.db inbox parent
+```
+
+The keeper retains the native process and the observer while the reply commands use its
+input queue; a parent wake proceeds alongside native observation, and the receiver
+settles that wake after the outcome report is delivered.
 
 ## Refusals
 
-With no pending unanswered request addressed to the parent, or several without a
-`--to` worker, `native-reply` refuses and asks for `--to WORKER`; an absent or
-ambiguous request is never answered.
-
-`native-reply` exits non-zero and writes a `Native reply refused.` line to standard
-error when the request is unknown, the caller is not the recorded parent, the
-response shape does not match the method, the request is closed by native
-cancellation or native exit, or the Player session is terminally stopped. A `stop`
-on the Player refuses later native replies for that session.
+`native-reply` exits non-zero and writes a `Native reply refused.` line to standard error
+when the request is unknown, the caller is not the recorded parent, the response shape
+does not match the method, the request is closed by native cancellation or native exit,
+or the Player session is terminally stopped. A `stop` on the Player refuses later native
+replies for that session.
 
 ## Source
 
-- `bend2/src/coordinator/agent-domain.bend` — the `native-reply` action and its automatic request selection.
-- `bend2/src/coordinator/agent-native.bend` — `reply_identity_sql` and `prepare_identity` resolve the request.
-- `bend2/src/coordinator/agent-command.bend`, `bend2/src/coordinator/agent-input.bend` — the `inbox` read and automatic handling.
-- `bend2/src/coordinator/native-requests.bend` — `response_sql`, `reply`, `send`, `written`.
-- `bend2/src/coordinator/native-request-laws.bend` — dispatch and admission laws.
-- `bend2/src/coordinator/commands.bend` — `ack` receipt binding.
-- `docs/bend2/native-interactions.md` — operator-facing description.
+- `bend2/src/coordinator/native-requests.bend` — `request_sql`, `response_sql`, `reply`, `send`, `written`.
+- `bend2/src/host/text.c` — `-` reads standard input.
+- `bend2/src/coordinator/main.bend` — `native-reply` and `native-reply-file` dispatch.
+- `bend2/src/coordinator/commands.bend` — acknowledgment receipt binding.
 - `bend2/test/receive.py` — `test_native_question_parent_answers_and_waits_for_full_report`.

@@ -31,6 +31,7 @@ class TrialStartTests(unittest.TestCase):
         scripts = self.source / 'bend2/scripts'
         scripts.mkdir(parents=True)
         shutil.copy2(ROOT / 'bend2/scripts/check-unittest.sh', scripts / 'check-unittest.sh')
+        shutil.copy2(ROOT / 'bend2/scripts/codex-inbox-wake.mjs', scripts / 'codex-inbox-wake.mjs')
         harness = self.source / 'bend2/harness'
         harness.mkdir(parents=True)
         for name in ('task-start.mjs', 'project-settings.mjs', 'git-series.mjs', 'native-history.mjs'):
@@ -150,8 +151,8 @@ class TrialStartTests(unittest.TestCase):
         helpers = self.state / 'libexec/baton2'
         for name in ('task-start.mjs', 'project-settings.mjs', 'git-series.mjs', 'native-history.mjs'):
             self.assertEqual((helpers / name).read_bytes(), (ROOT / 'bend2/harness' / name).read_bytes())
-        self.assertEqual((self.state / 'bin/baton2').read_bytes(), EXE.read_bytes())
-        self.assertFalse((helpers / 'codex-inbox-wake.mjs').exists())
+        self.assertEqual((helpers / 'codex-inbox-wake.mjs').read_bytes(),
+                         (ROOT / 'bend2/scripts/codex-inbox-wake.mjs').read_bytes())
         help_result = self.trial_command('sh', '-c', 'exec "$B2" "$DB" dispatch --help')
         self.assertEqual(help_result.returncode, 0, help_result.stdout + help_result.stderr)
         self.assertIn('dispatch', help_result.stdout)

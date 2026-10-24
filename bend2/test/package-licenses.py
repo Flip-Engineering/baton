@@ -10,7 +10,6 @@ import sys
 import tarfile
 import tempfile
 import time
-from types import SimpleNamespace
 import unittest
 
 
@@ -21,9 +20,6 @@ SPEC.loader.exec_module(PACKAGE)
 SMOKE_SPEC = importlib.util.spec_from_file_location('smoke_native_artifact', ROOT / 'bend2/scripts/smoke-native-artifact.py')
 SMOKE = importlib.util.module_from_spec(SMOKE_SPEC)
 SMOKE_SPEC.loader.exec_module(SMOKE)
-CHECK_SPEC = importlib.util.spec_from_file_location('check_install', ROOT / 'bend2/scripts/check-install.py')
-CHECK = importlib.util.module_from_spec(CHECK_SPEC)
-CHECK_SPEC.loader.exec_module(CHECK)
 
 
 class PackageLicenses(unittest.TestCase):
@@ -49,39 +45,7 @@ class PackageLicenses(unittest.TestCase):
         self.assertEqual(terms[field], expected)
         self.assertEqual((self.payload / expected['path']).read_bytes(), data)
 
-    def repl_fixture(self):
-        directory = self.payload / 'libexec/baton2/repl'
-        contents = {'compiler': b'#!/bin/sh\nexit 1\n', 'bun': b'File-only Bun fixture\n',
-                    'upstream/repl.ts': b'File-only frontend fixture\n',
-                    'upstream/base.bend': b'File-only Base fixture\n',
-                    'notices/Bend-LICENSE': b'Bend license fixture\n',
-                    'notices/Bun-NOTICES': b'Bun distribution notices fixture\n'}
-        lock = {'upstream': 'file-only compiler fixture', 'compiler_archive_sha256': '1' * 64,
-                'license': {'sha256': hashlib.sha256(contents['notices/Bend-LICENSE']).hexdigest()},
-                'files': [{'path': 'base.bend'}]}
-        contents['upstream.lock.json'] = (json.dumps(lock) + '\n').encode()
-        provenance = {'schema': 'baton2-repl-vendored-source-v1',
-                      'lock_sha256': hashlib.sha256(contents['upstream.lock.json']).hexdigest(),
-                      **{key: lock[key] for key in ('compiler_archive_sha256', 'files', 'license')}}
-        contents['upstream.provenance.json'] = (json.dumps(provenance) + '\n').encode()
-        files = []
-        for name, data in sorted(contents.items()):
-            path = directory / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(data)
-            path.chmod(0o755 if name in ('compiler', 'bun') else 0o644)
-            files.append({'path': name, 'sha256': hashlib.sha256(data).hexdigest(),
-                          'bytes': len(data), 'mode': oct(path.stat().st_mode & 0o777)})
-        compiler = {'protocol': 1, 'language': 'Bend2', 'upstream': lock['upstream'],
-                    'compilerArchiveSha256': lock['compiler_archive_sha256'],
-                    'runtimeSha256': hashlib.sha256(contents['bun']).hexdigest(),
-                    'frontend': 'upstream/repl.ts', 'nativeLibraries': ['sqlite3'], 'files': files}
-        manifest = directory / 'upstream/compiler.json'
-        manifest.write_text(json.dumps(compiler) + '\n')
-        return {'id': 'bend2-repl-compiler', 'required': True, 'path': 'libexec/baton2/repl',
-                'manifest': 'upstream/compiler.json', 'sha256': PACKAGE.sha256(manifest), 'files': files}
-
-    def archive_fixture(self, release_version=None, include_repl=True, changed_runtime=False):
+    def archive_fixture(self, release_version=None):
         self.document('LICENSE', b'Project license fixture\r\n')
         self.document('NOTICE', b'Project notice fixture\n')
         identity = PACKAGE.artifact_identity(release_version)
@@ -96,10 +60,6 @@ class PackageLicenses(unittest.TestCase):
                     'source': {'directory': str(self.source)},
                     'binary': {'path': 'bin/baton2', 'alias': 'bin/baton'},
                     'terms': terms}
-        if include_repl:
-            manifest['selected_dependencies'] = [self.repl_fixture()]
-        if changed_runtime:
-            (self.payload / 'libexec/baton2/repl/bun').write_bytes(b'Changed runtime fixture\n')
         provenance = self.home / 'manifest.json'
         provenance.write_text(json.dumps(manifest) + '\n')
         shutil.copyfile(provenance, self.payload / 'manifest.json')
@@ -107,38 +67,6 @@ class PackageLicenses(unittest.TestCase):
         with tarfile.open(archive, 'x:gz') as packed:
             packed.add(self.payload, arcname=identity['archive_root'])
         return archive, provenance
-
-    def test_native_package_refuses_missing_repl_inputs(self):
-        args = SimpleNamespace(repl_compiler_source=None, repl_runtime=None,
-                               repl_runtime_sha256=None, repl_runtime_notices=None)
-        with self.assertRaisesRegex(RuntimeError, 'Native packages require the REPL compiler'):
-            PACKAGE.stage_repl(self.payload, args)
-
-    def test_archive_without_required_repl_dependency_refuses(self):
-        archive, provenance = self.archive_fixture(include_repl=False)
-        with self.assertRaisesRegex(RuntimeError, 'requires one bundled Bend2 REPL compiler'):
-            SMOKE.extract(archive, provenance, self.home / 'incomplete-extraction')
-
-    def test_archive_with_changed_bundled_runtime_refuses(self):
-        archive, provenance = self.archive_fixture(changed_runtime=True)
-        with self.assertRaisesRegex(RuntimeError, 'file differs from its manifest: bun'):
-            SMOKE.extract(archive, provenance, self.home / 'changed-runtime-extraction')
-
-    def test_installation_refuses_unusable_bundled_runtime(self):
-        self.archive_fixture()
-        path = self.payload / 'manifest.json'
-        manifest = json.loads(path.read_text())
-        manifest['binary']['sha256'] = PACKAGE.sha256(self.payload / 'bin/baton2')
-        manifest['required_system_dependencies'] = CHECK.system_dependencies(CHECK.platform.system())
-        path.write_text(json.dumps(manifest) + '\n')
-        output = self.home / 'unusable-runtime-check'
-        output.mkdir()
-        with self.assertRaisesRegex(RuntimeError, 'command could not start'):
-            CHECK.check(self.payload, output)
-        records = json.loads((output / 'commands.json').read_text())
-        self.assertEqual(records[0]['argv'], [str(self.payload / 'libexec/baton2/repl/bun'), '--version'])
-        self.assertIsNone(records[0]['returncode'])
-        self.assertTrue(records[0]['error'])
 
     def test_project_and_upstream_documents_keep_separate_bytes_and_metadata(self):
         license_data = b'Project license fixture\r\n'
@@ -200,8 +128,9 @@ class PackageLicenses(unittest.TestCase):
         scripts.mkdir(parents=True)
         names = [harness + '-' + suffix + '.mjs'
                  for harness in ('codex', 'omp', 'mcp') for suffix in ('conductor', 'root')]
-        names.extend(('check-install.py', 'context-provider.mjs', 'context-project-policy.mjs',
-                      'context-query-artifact.mjs', 'context-worktree-capture.mjs'))
+        names.extend(('context-provider.mjs', 'context-project-policy.mjs',
+                      'context-query-artifact.mjs', 'context-worktree-capture.mjs',
+                      'codex-inbox-wake.mjs'))
         for name in names:
             shutil.copyfile(ROOT / 'bend2/scripts' / name, scripts / name)
         harness = self.source / 'bend2/harness'

@@ -12,7 +12,7 @@
 // delivers them as notifications/claude/channel. Tool calls delegate to the
 // coordinator executable for mutations. No npm dependencies; node stdlib only.
 
-import { execFileSync, spawnSync, spawn } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { resolve, dirname } from 'node:path';
@@ -30,20 +30,9 @@ const positional = [];
 let sessionId = 'root';
 let delivery = null;
 let inputWitness = null;
-let nativeEvent = false;
-let claude = null;
-let claudeArgs = [];
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
-  if (arg === '--claude') {
-    claude = process.argv[++i];
-    if (!claude) throw new Error('--claude requires the native Claude executable');
-    claudeArgs = process.argv.slice(i + 1);
-    if (claudeArgs[0] === '--') claudeArgs.shift();
-    break;
-  } else if (arg === '--native-event') {
-    nativeEvent = true;
-  } else if (arg === '--session') {
+  if (arg === '--session') {
     sessionId = process.argv[++i];
     if (sessionId === undefined) throw new Error('--session requires a session ID');
   } else if (arg === '--deliver') {
@@ -158,9 +147,9 @@ async function connectedInputWitness(encoded) {
       throw new Error('The registered endpoint does not identify this exact connected MCP helper.');
     }
     process.stdout.write(JSON.stringify({ active: true, session: sessionId, native: selected.native,
-      endpoint: selected.endpoint, attempt: `claude-mcp:${context.connection}${context.prompt ? `:${context.prompt}` : ''}`,
+      endpoint: selected.endpoint, attempt: `claude-mcp:${context.connection}`,
       identity: JSON.stringify(['claude-mcp', selected.native, context.connection,
-        bridge.pid, bridge.birth, client.pid, client.birth, ...(context.prompt ? [context.prompt] : [])]) }) + '\n');
+        bridge.pid, bridge.birth, client.pid, client.birth]) }) + '\n');
   } finally { connection.close(); }
 }
 
@@ -170,89 +159,6 @@ if (inputWitness !== null) {
     process.stderr.write(JSON.stringify({ error: 'handling-context', condition: error.message }) + '\n');
     process.exitCode = 2;
   }
-  process.exit(process.exitCode ?? 0);
-}
-
-function quoteShell(value) {
-  return "'" + value.replaceAll("'", "'\\''") + "'";
-}
-
-function claudeSettings() {
-  const command = 'exec ' + [process.execPath, fileURLToPath(import.meta.url), dbPath,
-    coordinatorExe, '--session', sessionId, '--native-event'].map(quoteShell).join(' ');
-  const hook = { type: 'command', command };
-  return { hooks: {
-    PreToolUse: [{ matcher: 'mcp__baton-conductor__.*', hooks: [hook] }],
-    Stop: [{ hooks: [hook] }],
-    StopFailure: [{ hooks: [hook] }],
-  } };
-}
-
-function registeredSession() {
-  const output = execFileSync(coordinatorExe, [dbPath, 'session', sessionId],
-    { encoding: 'utf8', maxBuffer: Infinity });
-  return output.trim() ? JSON.parse(output) : null;
-}
-
-async function launchClaude() {
-  const selected = existsSync(dbPath) ? registeredSession() : null;
-  const args = [...claudeArgs];
-  if (nativeSelector({ argv: [claude, ...args] }) === null) {
-    args.unshift(selected?.native ? '--resume' : '--session-id', selected?.native || randomUUID());
-  }
-  const config = { mcpServers: { 'baton-conductor': { command: process.execPath,
-    args: [fileURLToPath(import.meta.url), dbPath, coordinatorExe, '--session', sessionId] } } };
-  args.unshift('--settings', JSON.stringify(claudeSettings()), '--mcp-config', JSON.stringify(config),
-    '--dangerously-load-development-channels', 'server:baton-conductor');
-  const child = spawn(claude, args, { stdio: 'inherit' });
-  const forward = signal => child.kill(signal);
-  const interrupt = () => forward('SIGINT');
-  const terminate = () => forward('SIGTERM');
-  process.on('SIGINT', interrupt);
-  process.on('SIGTERM', terminate);
-  const result = await new Promise((done, fail) => {
-    child.once('error', fail);
-    child.once('exit', (code, signal) => done({ code, signal }));
-  });
-  process.removeListener('SIGINT', interrupt);
-  process.removeListener('SIGTERM', terminate);
-  if (result.signal) process.kill(process.pid, result.signal);
-  else process.exitCode = result.code;
-}
-
-async function forwardNativeEvent() {
-  let input = '';
-  for await (const chunk of process.stdin) input += chunk;
-  const event = JSON.parse(input);
-  if (!['PreToolUse', 'Stop', 'StopFailure'].includes(event.hook_event_name)
-      || typeof event.prompt_id !== 'string' || !event.prompt_id
-      || typeof event.session_id !== 'string' || !event.session_id) {
-    throw new Error('The native Claude lifecycle event has no matching prompt and session identity.');
-  }
-  const selected = registeredSession();
-  const endpoint = JSON.parse(selected?.endpoint || 'null');
-  if (selected?.native !== event.session_id || !Array.isArray(endpoint)
-      || endpoint[0] !== process.execPath || endpoint[1] !== fileURLToPath(import.meta.url)
-      || endpoint[2] !== realpathSync(dbPath) || endpoint[3] !== realpathSync(coordinatorExe)
-      || endpoint[4] !== '--session' || endpoint[5] !== sessionId || endpoint[6] !== '--deliver'
-      || typeof endpoint[7] !== 'string') {
-    throw new Error('The native lifecycle event does not belong to the registered Claude MCP endpoint.');
-  }
-  process.chdir(dirname(realpathSync(dbPath)));
-  await new Promise((done, fail) => {
-    const socket = createConnection(endpoint[7]);
-    let answer = '';
-    socket.on('connect', () => socket.end(JSON.stringify({ nativeEvent: event,
-      caller: processIdentity(processFacts(process.pid)) }) + '\n'));
-    socket.on('data', chunk => { answer += chunk; });
-    socket.on('error', fail);
-    socket.on('end', () => answer === 'ok\n' ? done() : fail(new Error(answer)));
-  });
-}
-
-if (claude !== null || nativeEvent) {
-  try { await (claude !== null ? launchClaude() : forwardNativeEvent()); }
-  catch (error) { process.stderr.write(error.stack + '\n'); process.exitCode = 1; }
   process.exit(process.exitCode ?? 0);
 }
 
@@ -272,24 +178,19 @@ if (delivery) {
   process.exit(0);
 }
 
-function coordinatorSurface(action) {
-  const help = spawnSync(coordinatorExe, action === undefined ? ['--help'] : ['help', action],
-    { encoding: 'utf8', maxBuffer: Infinity });
+function coordinatorSurface() {
+  const help = spawnSync(coordinatorExe, ['--help'], { encoding: 'utf8', maxBuffer: Infinity });
   return String(help.stdout ?? '') + String(help.stderr ?? '');
 }
 
 const commandSurface = coordinatorSurface();
-const contextualActions = /baton2? as SESSION ACTION/.test(commandSurface)
-  || /^Actions: inbox, read, send,/m.test(commandSurface);
-const outboxSurface = commandSurface.includes('outbox') ? commandSurface
-  : contextualActions ? coordinatorSurface('outbox') : '';
-const batchMessaging = outboxSurface.includes('outbox')
-  && ['delivery-batch', 'message-batch'].every((name) => commandSurface.includes(name));
+const batchMessaging = ['outbox', 'delivery-batch', 'message-batch'].every((name) => commandSurface.includes(name));
 const inputDetail = commandSurface.includes('input MESSAGE_ID');
+const contextualActions = /baton2? as SESSION ACTION/.test(commandSurface);
+const replInput = contextualActions && /^Actions:.*\brepl\b/m.test(commandSurface);
 const nativeAttachmentInput = commandSurface.includes('native-attachment-input');
 const dispatchInput = commandSurface.includes('dispatch --stdin');
 const taskInput = dispatchInput || commandSurface.includes('task --stdin');
-const replInput = contextualActions && /^Actions:.*\brepl\b/m.test(commandSurface);
 const batchMessageTools = new Set([
   'baton2_delivery_batch',
   'baton2_outbox',
@@ -306,11 +207,12 @@ const unavailableTools = new Set([
 
 function messageInstructions() {
   if (contextualActions) {
-    return `Use ${dispatchInput ? 'baton2_dispatch' : 'baton2_task'} for complete task text or an existing UTF-8 file; to or session selects an existing conversation. Baton stores complete dispatch input and setup outcomes and preserves the assignment. Use baton2_action with action inbox to read pending input, report or ask with one text argument to reach your coordinator, send or guide with Player and text arguments, finish with one summary argument, and confirm with the selected Player. The attached session supplies actor identity. One baton2_action call supplies a top-level action. Use action help with the action name in arguments for usage; named arguments support and or --and batch clauses. Branch and REPL operations use their own subcommand arguments in a separate call. ${replInput ? 'Use baton2_repl for Bend2 expressions, checked definitions and retained results; help repl describes multiline interactive input and the bundled compiler.' : ''} Successful native turns automatically record handling of their complete owned reads; failed turns and unread input remain pending. Baton generates action identities and selects the current assignment, coordinator and completion request. Continue the assignment until your coordinator confirms completion. Explicit stops remain effective.`;
+    return `Use ${dispatchInput ? 'baton2_dispatch' : 'baton2_task'} for complete task text or a UTF-8 file, with to or session selecting an existing conversation. Baton preserves its current assignment automatically. Dispatch input and setup outcomes are stored in the database. Use baton2_action for the contextual native actions: inbox, read, send, completion-request, completion-confirmed, guide, acknowledge and domain help. The attached session supplies actor identity. Pass action and its named argument tokens; use action:help with the domain name for usage. Complete action argument strings travel directly through JSON standard input to native admission. Multi-message reads, independent sends and explicit acknowledgements return each item outcome. Successful recipient turns record handling of complete inputs; failed turns retain unfinished handling. Baton generates mutation identities and selects current owned input, receipts and completion requests. Use acknowledge without identifiers after handling input, and completion-confirmed with an optional recipient. Task completion and coordinator decisions remain separate recorded actions.` +
+      (replInput ? ' Use baton2_repl for Bend2 define, eval, bind, read, recover, share, import and interactive operations; the packaged compiler checks types and affine use and each result retains complete output and process outcomes.' : '');
   }
   const messaging = batchMessaging
-    ? 'Use baton2_inbox or baton2_pending to read complete pending input, and baton2_outbox to inspect authored messages and receipts. Their optional index:true argument returns metadata; baton2_delivery and baton2_delivery_batch read selected complete messages. Successful native turns automatically record handling of complete owned reads; failed turns and unread input remain pending. Use baton2_guide or baton2_message_batch to direct recipients. Each batch item retains its admission, wake, message and receipt.'
-    : 'Use baton2_inbox or baton2_pending to read complete pending input. Their optional index:true argument returns metadata. baton2_delivery reads one complete stored message and its receipt. Successful native turns automatically record handling of complete owned reads; failed turns and unread input remain pending. Use baton2_guide to direct one recipient.';
+    ? 'Use baton2_inbox or baton2_pending to see pending messages, and baton2_outbox to inspect authored messages and receipts. Their optional index:true argument returns metadata; baton2_delivery and baton2_delivery_batch read selected complete messages. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide or baton2_message_batch to direct recipients. Each batch item keeps its own admission, wake, retained message and receipt facts.'
+    : 'Use baton2_inbox or baton2_pending to see pending messages. Their optional index:true argument returns metadata. baton2_delivery reads one complete stored message and its receipt. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide to direct one recipient.';
   return messaging + (inputDetail
     ? ' baton2_input relates one stored message to its admission, recipient-owned receipt, current recipient state and available attempt evidence.'
     : '');
@@ -377,7 +279,7 @@ function coordInputRaw(input, ...args) {
       encoding: 'utf8', input, maxBuffer: Infinity,
       env: { ...process.env, BATON_SESSION: sessionId, BATON_DATABASE: dbPath,
         BATON_MCP_INPUT: channelReady && connectionCustody
-          ? JSON.stringify({ ...connectionCustody, ...(nativePrompt ? { prompt: nativePrompt } : {}), ready: true }) : '' },
+          ? JSON.stringify({ ...connectionCustody, ready: true }) : '' },
     });
   } catch (error) {
     const status = Number.isInteger(error.status) ? `\nexit code: ${error.status}` : '';
@@ -422,7 +324,7 @@ const dispatchInputSchema = { type: 'object', properties: {
 const TOOLS = [
   {
     name: 'baton2_repl',
-    description: 'Evaluate actual Bend2 source or retain checked definitions in the attached actor\'s notebook. The packaged canonical compiler infers types and checks affine use. IO runs in the recorded workspace through native custody. Read returns complete source, results, diagnostics and process outcomes; recover observes the original attempt. Bind checks a named definition from a pure result for later expressions. Labels select saved result records. Share sends a complete cell through ordinary message routing; import displays the complete received message through the owned-read path and checks its declaration snapshot. Standard installations include the Bend2 REPL compiler and runtime. Use baton2_action with action help and arguments ["repl"] for CLI and multiline interactive usage.',
+    description: 'Evaluate actual Bend2 source or retain checked definitions in the attached actor\'s notebook. The packaged canonical compiler infers types and checks affine use. IO runs in the recorded workspace through native custody. Read returns complete source, results, diagnostics and process outcomes; recover observes the original attempt. Bind checks a named definition from a pure result for later expressions. Labels select saved result records. Share sends a complete cell through ordinary message routing; import displays the complete received message through the owned-read path and checks its declaration snapshot. Standard installations include the Bend2 REPL compiler and runtime. Use baton2_action with action help and arguments ["repl"] for usage.',
     inputSchema: { type: 'object', properties: {
       operation: { enum: ['define', 'eval', 'bind', 'read', 'recover', 'share', 'import'] },
       source: { type: 'string', description: 'Complete Bend2 declarations or expression for define or eval.' },
@@ -435,7 +337,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_action',
-    description: 'Run any contextual CLI action as the attached session, including inbox, read, send, report, ask, guide, finish, confirm, dispatch, players, assignment, status, knowledge, role, ensemble, section, branch and repl. One call supplies one top-level action; its named arguments can include and or --and batch clauses. Compact positional forms, branch subcommands and REPL source use their own grammar. Use action help with [] for discovery or ["ACTION"] for usage, including ["branch"]. Branch compares alternatives on the selected Ensemble, evaluates evidence, selects a Player and continues that conversation. Complete argument strings travel through JSON standard input. Each batch clause retains its actual result and failure cause.',
+    description: 'Run a contextual native action as the attached session. Use inbox, read, send, completion-request, completion-confirmed, guide, acknowledge, repl or help with a command domain. Named arguments and independent batch clauses use the same native grammar as baton. Complete argument strings travel through JSON standard input. Each item retains its outcome and actual failure cause.',
     inputSchema: { type: 'object', properties: {
       action: { type: 'string' }, arguments: { type: 'array', items: { type: 'string' } },
     }, required: ['action'], additionalProperties: false },
@@ -655,7 +557,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_role',
-    description: 'Read or assign an existing session responsibility used by routing and Conductor operations. Principal Conductors coordinate the whole assignment and require no parent; Associate Conductors coordinate delegated work and require a parent. Players perform work; operators represent parentless human control. Assignment retains parentage, Ensemble ownership, live work and accepted input.',
+    description: 'Read or assign a session responsibility.',
     inputSchema: { type: 'object', properties: {
       session: { type: 'string' },
       role: { type: 'string', enum: ['player', 'principal-conductor', 'associate-conductor', 'operator'] },
@@ -663,10 +565,10 @@ const TOOLS = [
   },
   {
     name: 'baton2_ensemble',
-    description: 'Organize agents as a team with a recorded owner and coupling, or inspect that configuration. The owner manages membership. Choose coupling when configuring the Ensemble. Branching compares alternative solutions on a team with either coupling; use baton2_action with action help and arguments ["branch"] for start, evaluate, select and continue.',
+    description: 'Inspect an Ensemble or configure its owner and coupling.',
     inputSchema: { type: 'object', properties: {
       ensemble: { type: 'string' }, owner: { type: 'string' },
-      coupling: { type: 'string', enum: ['loose', 'tight'], description: 'Loose teams use parent-child and Conductor-descendant routes. Tight additionally permits non-operator peers sharing this Ensemble to exchange messages, including peers with different parents; peers have no ancestor relationship. Operators use the top-level Conductor route. Omission preserves existing coupling; new teams default to loose.' },
+      coupling: { type: 'string', enum: ['loose', 'tight'], description: 'Omitting coupling preserves an existing Ensemble; new Ensembles default to loose.' },
     }, required: ['ensemble'], additionalProperties: false },
   },
   {
@@ -679,7 +581,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_section',
-    description: 'Inspect a capability label and member subset within an Ensemble, or configure that organizational group through the recorded Ensemble owner. Routing, knowledge visibility and branching use Ensemble and session records.',
+    description: 'Inspect a Section or declare its capability within an Ensemble.',
     inputSchema: { type: 'object', properties: {
       ensemble: { type: 'string' }, section: { type: 'string' },
       owner: { type: 'string' }, capability: { type: 'string' },
@@ -748,7 +650,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_ack',
-    description: 'Compatibility action for explicit administrative handling. Successful native turns automatically record handling of complete owned reads.',
+    description: 'Acknowledge the attached Conductor’s fully read and handled input. Record unfinished work in reports and project state.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -886,7 +788,6 @@ const AVAILABLE_TOOLS = TOOLS.filter((tool) => !unavailableTools.has(tool.name))
 let deliveryReady = null;
 let channelReady = false;
 let connectionCustody = null;
-let nativePrompt = null;
 let notifiedSeqs = new Set();
 let deliveryServer = null;
 let db = null;
@@ -937,36 +838,6 @@ function notifyPending(messageId = null) {
   });
 }
 
-function observeNativeEvent(event, caller) {
-  if (!connectionCustody || !channelReady || event.session_id !== connectionCustody.native
-      || typeof event.prompt_id !== 'string' || !event.prompt_id
-      || !['PreToolUse', 'Stop', 'StopFailure'].includes(event.hook_event_name)) {
-    throw new Error('The native lifecycle event does not match the live Claude connection.');
-  }
-  let actual = processFacts(caller.pid);
-  if (!sameProcess(actual, caller)) throw new Error('The native hook process birth changed.');
-  while (actual.pid !== connectionCustody.client.pid && actual.parent > 1) {
-    actual = processFacts(actual.parent);
-  }
-  if (!sameProcess(actual, connectionCustody.client)) {
-    throw new Error('The native hook belongs to a different Claude process.');
-  }
-  if (event.hook_event_name === 'PreToolUse') {
-    nativePrompt = event.prompt_id;
-    return;
-  }
-  process.stderr.write(JSON.stringify({ type: 'claudeNativeTurn', event }) + '\n');
-  const previous = nativePrompt;
-  nativePrompt = event.prompt_id;
-  try {
-    if (event.hook_event_name === 'Stop') {
-      coord('as', sessionId, 'acknowledge');
-    }
-  } finally {
-    nativePrompt = previous === event.prompt_id ? null : previous;
-  }
-}
-
 async function startDelivery() {
   const database = realpathSync(dbPath);
   const coordinator = realpathSync(coordinatorExe);
@@ -979,10 +850,7 @@ async function startDelivery() {
     client.on('data', (chunk) => { input += chunk; });
     client.on('end', () => {
       try {
-        const request = JSON.parse(input);
-        if (request && typeof request === 'object' && request.nativeEvent) {
-          observeNativeEvent(request.nativeEvent, request.caller);
-        } else notifyPending(request);
+        notifyPending(JSON.parse(input));
         client.end('ok\n');
       } catch (error) {
         client.end(error.message + '\n');
@@ -1013,7 +881,7 @@ function selectedSession() {
 }
 
 function initialInstructions() {
-  const guidance = `Baton ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_join for shared-checkout work and baton2_recruit when a separate worktree is needed. Name the target branch, remote and integration Conductor in the assignment. Commit completed changes. The integration Conductor lands or reconciles contributions and pushes the integrated target with baton2_push. After publication and turn completion, relocate the same Player with baton2_receiver to the shared checkout and retire clean unused merged task worktrees and branches through ordinary Git. Preserve active or unfinished work, explicit stops and receiver/toolchain dependencies. Use the advertised task dispatch tool for complete task text or an existing UTF-8 file. Baton retains task input and setup outcomes in its database, resolves the recorded route and preserves an existing assignment. Scratchpads contain deliberately authored working notes. Baton stores complete task text in the database. Use baton2_receiver to configure an ordinary receive endpoint where needed. Use baton2_configure to save future effort on the same harness and model during active or stopped sessions, keeping the receiver, current turn and stop. Change harness or model after the current attempt ends and any stop is lifted. Configuration keeps the Player's identity, work, native conversation and pending input. Use baton2_context_engines to discover installed context modules; scope:"session" includes the attached project settings. Use baton2_context_install to acquire a module from a supplied built module directory or extracted distribution. Use baton2_context_query_file for request files and baton2_context_result for retained query results. Use baton2_knowledge_search to find a topic in selected holdings and baton2_knowledge_traverse to follow authored links and citations. Follow returned detailRead commands for complete findings and deliveryRead commands for cited messages. Finding references outside selected holdings carry an explicit all-scope detail read; reading preserves their holdings. Use baton2_knowledge for exact findings or metadata and baton2_knowledge_relations for directed links, including links between retained messages or external references. ${messageInstructions()} The optional kind supports authored completion-request and completion-confirmed messages. Workers ask their immediate parent to confirm task completion and continue useful work until its reply. The parent uses completion-confirmed with the recipient when the task is complete; Baton selects that recipient's current request. Guidance carries further work. Baton generates mutation IDs and records recipient handling from actual native evidence. Agents can inspect current state without copying control IDs or receipts. Native turn settlement and inbox receipts do not finish the task. The coordinator CLI ask and ask-file send questions as your recorded session to its parent; a parentless Principal Conductor reaches the registered operator. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. ${replInput ? 'Use baton2_repl to evaluate Bend2 source and retain checked definitions in the attached actor\'s notebook; action help with arguments ["repl"] describes source composition and the bundled compiler.' : ''} Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`;
+  const guidance = `Baton ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_join for shared-checkout work and baton2_recruit when a separate worktree is needed. Name the target branch, remote and integration Conductor in the assignment. Commit completed changes. The integration Conductor lands or reconciles contributions and pushes the integrated target with baton2_push. After publication and turn completion, relocate the same Player with baton2_receiver to the shared checkout and retire clean unused merged task worktrees and branches through ordinary Git. Preserve active or unfinished work, explicit stops and receiver/toolchain dependencies. Use the advertised task dispatch tool for complete task text or an existing UTF-8 file. Baton retains task input and setup outcomes in its database, resolves the recorded route and preserves an existing assignment. Scratchpads contain deliberately authored working notes. Baton stores complete task text in the database. Use baton2_receiver to configure an ordinary receive endpoint where needed. Use baton2_configure to save future effort on the same harness and model during active or stopped sessions, keeping the receiver, current turn and stop. Change harness or model after the current attempt ends and any stop is lifted. Configuration keeps the Player's identity, work, native conversation and pending input. Use baton2_context_engines to discover installed context modules; scope:"session" includes the attached project settings. Use baton2_context_install to acquire a module from a supplied built module directory or extracted distribution. Use baton2_context_query_file for request files and baton2_context_result for retained query results. Use baton2_knowledge_search to find a topic in selected holdings and baton2_knowledge_traverse to follow authored links and citations. Follow returned detailRead commands for complete findings and deliveryRead commands for cited messages. Finding references outside selected holdings carry an explicit all-scope detail read; reading preserves their holdings. Use baton2_knowledge for exact findings or metadata and baton2_knowledge_relations for directed links, including links between retained messages or external references. ${messageInstructions()} The optional kind supports authored completion-request and completion-confirmed messages. Workers ask their immediate parent to confirm task completion and continue useful work until its reply. The parent uses completion-confirmed with the recipient when the task is complete; Baton selects that recipient's current request. Guidance carries further work. Baton generates mutation IDs and records recipient handling from actual native evidence. Agents can inspect current state without copying control IDs or receipts. Native turn settlement and inbox receipts do not finish the task. The coordinator CLI ask and ask-file send questions as your recorded session to its parent; a parentless Principal Conductor reaches the registered operator. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`;
   if (!nativeAttachmentInput) return guidance;
   const selected = selectedSession();
   const native = nativeSelector(processFacts(process.ppid));
