@@ -1,18 +1,33 @@
-"""Offline Cargo target release in private NVMe fixtures."""
+"""Offline Cargo target release in private test directories."""
 import contextlib
 import fcntl
+import json
 import os
 import pathlib
 import select
 import sqlite3
 import subprocess
+import sys
 import tempfile
+import threading
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 BINARY = pathlib.Path(os.environ['BATON2_STORAGE_CARGO_TEST']).resolve()
 CARGO = pathlib.Path(os.environ['BATON2_TEST_CARGO']).absolute()
 RUSTC = pathlib.Path(os.environ['BATON2_TEST_RUSTC']).absolute()
+
+
+def child_exit(child):
+    readable, writable = os.pipe()
+
+    def wait():
+        child.wait()
+        os.write(writable, b'x')
+
+    watcher = threading.Thread(target=wait)
+    watcher.start()
+    return readable, writable, watcher
 
 
 class CargoRelease(unittest.TestCase):
@@ -63,7 +78,10 @@ CREATE TABLE log_files(session TEXT,log TEXT);
         self.build()
 
     def cargo_argv(self, *args):
-        return ['nice', '-n', '19', 'ionice', '-c3', str(CARGO), 'build', '--offline', '-j1', *args]
+        priority = ['nice', '-n', '19']
+        if sys.platform == 'linux':
+            priority += ['ionice', '-c3']
+        return [*priority, str(CARGO), 'build', '--offline', '-j1', *args]
 
     def build(self, *args, environment=None):
         run = subprocess.run(self.cargo_argv(*args), cwd=self.source,
@@ -84,6 +102,11 @@ CREATE TABLE log_files(session TEXT,log TEXT);
 
     def test_generic_apply_keeps_an_unknown_service_selection(self):
         env = dict(self.environment, BATON_STORAGE_ROOTS=f'build-output={self.target}')
+        preview = json.loads(self.call('preview', self.db, 'owner', environment=env))
+        entry = preview['roots'][0]['preview']['entries'][0]
+        self.assertEqual(entry['path'], str(self.target))
+        self.assertEqual(entry['decision'], 'keep')
+        self.assertEqual(entry['reason'], 'cargo-selection-unknown')
         answer = self.call('apply', self.db, 'owner', environment=env)
         self.assertIn('cargo-selection-unknown', answer)
         self.assertTrue(self.target.exists())
@@ -142,16 +165,17 @@ CREATE TABLE log_files(session TEXT,log TEXT);
         with (self.root / 'writer.stdout').open('w') as stdout, (self.root / 'writer.stderr').open('w') as stderr:
             child = subprocess.Popen(self.cargo_argv(), cwd=self.source, env=env,
                                      stdout=stdout, stderr=stderr)
-            pidfd = os.pidfd_open(child.pid)
+            exited, exit_writer, watcher = child_exit(child)
             try:
-                readable, _, _ = select.select([ready_fd, pidfd], [], [])
+                readable, _, _ = select.select([ready_fd, exited], [], [])
                 self.assertIn(ready_fd, readable, 'Cargo exited before its build script was ready')
                 self.assertEqual(os.read(ready_fd, 1), b'r')
                 yield child
             finally:
                 os.write(release_fd, b'x')
                 child.wait()
-                for descriptor in [ready_fd, release_fd, pidfd]:
+                watcher.join()
+                for descriptor in [ready_fd, release_fd, exited, exit_writer]:
                     os.close(descriptor)
                 output = (self.root / 'writer.stdout').read_text() + (self.root / 'writer.stderr').read_text()
                 print(output, end='', flush=True)
@@ -195,9 +219,9 @@ CREATE TABLE log_files(session TEXT,log TEXT);
                    BATON_CARGO_TEST_RELEASE=str(release))
         child = subprocess.Popen([str(BINARY), 'collect', str(self.target), '', str(self.db), str(self.commands)],
                                  cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        pidfd = os.pidfd_open(child.pid)
+        exited, exit_writer, watcher = child_exit(child)
         try:
-            readable, _, _ = select.select([ready_fd, pidfd], [], [])
+            readable, _, _ = select.select([ready_fd, exited], [], [])
             self.assertIn(ready_fd, readable, 'collector exited before rename: ' + str(child.poll()))
             self.assertEqual(os.read(ready_fd, 1), b'\x01')
             self.assertFalse(self.target.exists())
@@ -206,7 +230,8 @@ CREATE TABLE log_files(session TEXT,log TEXT);
         finally:
             os.write(release_fd, b'x')
             stdout, stderr = child.communicate()
-            for descriptor in [ready_fd, release_fd, pidfd]:
+            watcher.join()
+            for descriptor in [ready_fd, release_fd, exited, exit_writer]:
                 os.close(descriptor)
         try:
             self.assertEqual(child.returncode, 0, stdout + stderr)
