@@ -323,7 +323,7 @@ def codex_spawned(+observed: String, spawned: Result<&1,&1,U32 & String,U32>) ->
 
 def codex_spawn(+observed: String, +reference: String) -> IO(Unit):
   do IO<Unit>:
-    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(Tx.enc_argv(codex_argv(after_colon(reference))),".","/dev/null")
+    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv(codex_argv(after_colon(reference))),".","/dev/null")
     codex_spawned(observed,spawned)
 
 def read_codex(+observed: String, +reference: String) -> IO(Unit):
