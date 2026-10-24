@@ -123,15 +123,6 @@ def scenario_legacy():
     assert taken.stdout.count('taken-over ') == 2, (taken.stdout, T)
     print('PASS takeover replaced both waiting supervisors')
 
-    # The older executable records no growth of memory used outside the queue, so
-    # the rule starts one job at a time and the holder of heavy.lock counts as
-    # that job. The operator records a growth before installing the new
-    # executable; the test writes one.
-    time.sleep(2)
-    assert not any(line.startswith('start queued') for line in log_lines()), log_lines()
-    (STATE / 'outside-growth').write_text('growth_kb=0\n')
-    print('PASS taken-over jobs wait while no growth of outside memory use is recorded')
-
     for process in waiting:
         try:
             process.wait(timeout=60)
@@ -158,7 +149,6 @@ def scenario_prior():
     state2 = T / 'queue-prior'
     state2.mkdir()
     state2.chmod(0o2770)
-    (state2 / 'outside-growth').write_text('growth_kb=0\n')
     env2 = dict(ENV, BATON_COMPILE_QUEUE_ROOT=str(state2))
     env_takeover = dict(env2, QUEUE_TEST_MARK='takeover-environment')
     hold2 = T / 'hold-prior'
@@ -241,7 +231,6 @@ def scenario_namespace(binary, label, state_name, ready):
     state4 = T / state_name
     state4.mkdir()
     state4.chmod(0o2770)
-    (state4 / 'outside-growth').write_text('growth_kb=0\n')
     env4 = dict(ENV, BATON_COMPILE_QUEUE_ROOT=str(state4))
     hold4 = T / ('hold-' + state_name)
     holder4 = request(binary, label + '-holder', '--hold', str(hold4), state=state4)

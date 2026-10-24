@@ -802,9 +802,7 @@ wait "$adopt_run_pid" 2>/dev/null || true
 # Memory admission. Peaks are recorded for every run and history is seeded
 # relative to the memory the host has now: a large job needs more than half of
 # what the rule can grant, so a second large job waits while a small job fits
-# beside the first one. A run that lasts longer than one sample interval records
-# the growth of memory used outside the queue; the tests below set it to a known
-# value.
+# beside the first one.
 ident_peak=$(sed -n 's/^peak_kb=//p' "$STATE/keys/$ident_key/peak" 2>/dev/null || true)
 [ -n "$ident_peak" ] && [ "$ident_peak" -gt 0 ] 2>/dev/null \
   && pass 'run recorded the peak memory of its key' || bad 'run did not record the peak memory of its key'
@@ -815,8 +813,6 @@ if [ -r /proc/meminfo ]; then
   grep -q '^memory total_kb=' "$T/status.out" \
     && pass 'status reports the memory the rule works from' || bad 'status omits memory'
   mem_avail=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
-  # The rule reserves the recorded growth of memory used outside the queue.
-  printf 'growth_kb=%s\n' 1024 > "$STATE/outside-growth"
   room=$((mem_avail - 1024))
   if [ "$room" -lt 131072 ]; then
     printf 'SKIP memory admission: %s kB available beyond the reserve\n' "$room"
@@ -908,10 +904,10 @@ groups_after=$(group_files)
   && pass 'commands that differ record separate group peaks; the same command shares one' \
   || bad "group peaks added: $((groups_after - groups_before)), expected 2"
 
-# Without a recorded growth of memory used outside the queue the rule starts one
-# job at a time, whatever the recorded peaks. The first run longer than one
-# sample interval records the growth, and later jobs with recorded peaks run
-# together.
+# The reserve is the growth of outside memory use that the running supervisors
+# measure now. A value that an earlier executable left in outside-growth is not
+# read: two jobs with recorded peaks run together although the file holds four
+# times the memory of the host.
 if [ -r /proc/meminfo ]; then
   STATE_OG=$T/state-outside-growth
   (umask 0007; mkdir -m 2770 "$STATE_OG")
@@ -928,36 +924,78 @@ if [ -r /proc/meminfo ]; then
       --artifact "binary=$T/$1" --option "test=$1" \
       -- "$OG_FAKE" --tag "$1" --log "$LOG" -o "$T/$1" "$T/input.c" --sleep "$2"
   }
-  for tag in og-a og-b og-c og-d; do
-    case $tag in og-a|og-b) og_sleep=3 ;; *) og_sleep=8 ;; esac
+  for tag in og-a og-b; do
+    case $tag in og-a) og_sleep=6 ;; *) og_sleep=1 ;; esac
     k=$(og_key "$tag" "$og_sleep")
     (umask 0007; mkdir -p -m 2770 "$STATE_OG/keys/$k")
     printf 'peak_kb=64\n' > "$STATE_OG/keys/$k/peak"
   done
+  printf 'growth_kb=%s\n' "$((room * 4))" > "$STATE_OG/outside-growth"
   : > "$LOG"
-  og_run og-a 3 & o1=$!
+  og_run og-a 6 & o1=$!
   i=0
   while [ "$i" -lt 200 ] && ! grep -q 'og-a' "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
-  og_run og-b 3 & o2=$!
+  og_run og-b 1 & o2=$!
   wait "$o1" || bad 'outside growth: first requester failed'
   wait "$o2" || bad 'outside growth: second requester failed'
-  assert_serialized && pass 'jobs with recorded peaks run one at a time until a growth is recorded' \
-    || bad 'jobs ran together without a recorded growth'
-  grep -q '^growth_kb=[0-9][0-9]*$' "$STATE_OG/outside-growth" 2>/dev/null \
-    && pass 'a run longer than one sample interval recorded the growth of outside use' \
-    || bad 'no growth recorded'
+  assert_serialized && bad 'a value left in the outside-growth file held an entry in admission' \
+    || pass 'a stale value in the outside-growth file does not hold an entry'
+  grep -q '^memory .*outside_growth_kb=[0-9]' "$T/status.out" \
+    && pass 'status reports the growth of outside use measured now' || bad 'status omits the measured growth'
+
+  # Growth that a running supervisor measures reduces admission while it lasts: a
+  # helper holds a claim and publishes a growth of 60% of the memory available now,
+  # and an entry that needs half of it waits until the claim ends.
+  RS_STATE=$(fresh_state reserve)
+  RS_FAKE=$(fresh_fake reserve)
+  sh "$QUEUE" status --state-root "$RS_STATE" > /dev/null
+  rs_room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
+  rs_args() { printf '%s\n' --kind cc --source-root "$T" --state-root "$RS_STATE" --cwd "$T" \
+    --compiler "$RS_FAKE" --linker "$RS_FAKE" --version fake-version --input "$T/input.c" \
+    --artifact "binary=$T/reserve-wait" --option "test=reserve-wait"; }
+  rs_key=$(BATON_COMPILE_QUEUE_ROOT=$RS_STATE sh "$QUEUE" key $(rs_args) \
+    -- "$RS_FAKE" --tag reserve-wait --log "$LOG" -o "$T/reserve-wait" "$T/input.c" --sleep 0)
+  (umask 0007; mkdir -p -m 2770 "$RS_STATE/keys/$rs_key")
+  printf 'peak_kb=%s\n' "$((rs_room * 50 / 100))" > "$RS_STATE/keys/$rs_key/peak"
+  cat > "$T/reserve-claim.py" <<'PY'
+import fcntl, os, sys, time
+state, seconds, growth = sys.argv[1], float(sys.argv[2]), sys.argv[3]
+stat = open('/proc/self/stat').read().rsplit(')', 1)[1].split()
+name = '%020d-%010d' % (time.time_ns(), os.getpid())
+path = state + '/admission/running/' + name
+usage = state + '/admission/usage/' + name
+handle = open(path, 'w')
+handle.write('pid=%d\nstarttime=%s\nroot=%d\nmeasure=tree\nkey=%064x\ngroup=\nentry=\nexpected_kb=1\nhistory=1\nbackfill=0\nadmitted_ns=%d\n'
+             % (os.getpid(), stat[19], os.getpid(), os.getpid(), time.time_ns()))
+handle.flush()
+fcntl.flock(handle, fcntl.LOCK_EX)
+end = time.monotonic() + seconds
+while time.monotonic() < end:
+    with open(usage + '.tmp', 'w') as record:
+        record.write('kb=1000\ngrowth_kb=%s\n' % growth)
+    os.rename(usage + '.tmp', usage)
+    time.sleep(0.5)
+os.unlink(path)
+os.unlink(usage)
+PY
   : > "$LOG"
-  og_run og-c 8 & o3=$!
-  i=0
-  while [ "$i" -lt 200 ] && ! grep -q 'og-c' "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
-  og_run og-d 8 & o4=$!
-  wait "$o3" || bad 'outside growth: third requester failed'
-  wait "$o4" || bad 'outside growth: fourth requester failed'
-  assert_serialized && bad 'jobs with recorded peaks stayed serialized after a growth was recorded' \
-    || pass 'jobs with recorded peaks run together once a growth is recorded'
+  python3 -I "$T/reserve-claim.py" "$RS_STATE" 9 "$((rs_room * 60 / 100))" & rs_claim=$!
+  sleep 2
+  BATON_COMPILE_QUEUE_ROOT=$RS_STATE sh "$QUEUE" run $(rs_args) \
+    -- "$RS_FAKE" --tag reserve-wait --log "$LOG" -o "$T/reserve-wait" "$T/input.c" --sleep 0 >"$T/reserve-wait.out" 2>"$T/reserve-wait.err" & rs_wait=$!
+  sleep 4
+  sh "$QUEUE" status --state-root "$RS_STATE" > "$T/reserve-status.out"
+  ! grep -q ' reserve-wait$' "$LOG" && grep -q "outside_growth_kb=$((rs_room * 60 / 100))" "$T/reserve-status.out" \
+    && pass 'a growth measured by a running supervisor holds an entry that no longer fits' \
+    || bad 'an entry started in spite of the growth measured by a running supervisor'
+  wait "$rs_claim" 2>/dev/null
+  wait "$rs_wait" || bad 'reserve: the entry did not run after the claim ended'
+  grep -q ' reserve-wait$' "$LOG" \
+    && pass 'the entry started when the supervisor that measured the growth ended' \
+    || bad 'the entry did not start after the claim ended'
 fi
 
-# A run records the rise of outside memory use only from samples in which every
+# A supervisor publishes the growth of outside memory use only from samples in which every
 # running claim has a measured value above zero and the set of running claims
 # does not change. A claim that cannot be measured, or one that starts or ends
 # between two samples, would otherwise count its memory as outside use. The test
@@ -1012,38 +1050,38 @@ PY
   gr_case() { # name mode; leaves the recorded growth in gr_value
     gr_name=$1
     gr_state=$(fresh_state "growth-$1")
-    printf 'growth_kb=0\n' > "$gr_state/outside-growth"
     gr_key=$(BATON_COMPILE_QUEUE_ROOT=$gr_state sh "$QUEUE" key $(gr_args) \
-      -- "$gr_fake" --tag "growth-$1" --log "$LOG" -o "$T/growth-$1" "$T/input.c" --sleep 9)
+      -- "$gr_fake" --tag "growth-$1" --log "$LOG" -o "$T/growth-$1" "$T/input.c" --sleep 14)
     (umask 0007; mkdir -p -m 2770 "$gr_state/keys/$gr_key")
     printf 'peak_kb=64\n' > "$gr_state/keys/$gr_key/peak"
     : > "$LOG"; rm -f "$T/go-$1"
-    python3 -I "$T/ballast.py" "$T/go-$1" 8 & gr_ballast=$!
+    python3 -I "$T/ballast.py" "$T/go-$1" 12 & gr_ballast=$!
     BATON_COMPILE_QUEUE_ROOT=$gr_state sh "$QUEUE" run $(gr_args) \
-      -- "$gr_fake" --tag "growth-$1" --log "$LOG" -o "$T/growth-$1" "$T/input.c" --sleep 9 >"$T/growth-$1.out" 2>"$T/growth-$1.err" & gr_job=$!
+      -- "$gr_fake" --tag "growth-$1" --log "$LOG" -o "$T/growth-$1" "$T/input.c" --sleep 14 >"$T/growth-$1.out" 2>"$T/growth-$1.err" & gr_job=$!
     i=0
     while [ "$i" -lt 200 ] && ! grep -q "growth-$1" "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
     gr_claims=
-    if [ "$2" != none ]; then python3 -I "$T/claims.py" "$2" "$gr_state" 9 & gr_claims=$!; fi
+    if [ "$2" != none ]; then python3 -I "$T/claims.py" "$2" "$gr_state" 14 & gr_claims=$!; fi
     sleep 3
     : > "$T/go-$1"
+    sleep 6
+    gr_value=$(cat "$gr_state"/admission/usage/* 2>/dev/null | sed -n 's/^growth_kb=//p' | sort -n | tail -1)
     wait "$gr_job" || bad "growth $1: requester failed"
     kill "$gr_ballast" 2>/dev/null; wait "$gr_ballast" 2>/dev/null
     [ -z "$gr_claims" ] || { wait "$gr_claims" 2>/dev/null; }
-    gr_value=$(sed -n 's/^growth_kb=//p' "$gr_state/outside-growth")
   }
   gr_case none none; growth_none=$gr_value
   [ "${growth_none:-0}" -ge 2000000 ] \
-    && pass 'a run records the rise of memory used outside the queue' \
-    || bad "no rise recorded with memory allocated outside the queue: ${growth_none:-none}"
+    && pass 'a supervisor publishes the rise of memory used outside the queue' \
+    || bad "no growth published with memory allocated outside the queue: ${growth_none:-none}"
   gr_case zero zero; growth_zero=$gr_value
   [ "${growth_zero:-x}" = 0 ] \
-    && pass 'a claim measured at zero records no outside growth' \
-    || bad "outside growth recorded beside a claim measured at zero: ${growth_zero:-none}"
+    && pass 'a claim measured at zero keeps the growth at zero' \
+    || bad "outside growth published beside a claim measured at zero: ${growth_zero:-none}"
   gr_case rotate rotate; growth_rotate=$gr_value
   [ "${growth_rotate:-x}" = 0 ] \
-    && pass 'claims that change between samples record no outside growth' \
-    || bad "outside growth recorded while claims changed: ${growth_rotate:-none}"
+    && pass 'claims that change between samples keep the growth at zero' \
+    || bad "outside growth published while claims changed: ${growth_rotate:-none}"
 else
   printf 'SKIP outside growth samples: less than 8 GB available\n'
 fi
@@ -1106,7 +1144,6 @@ if [ -r /proc/meminfo ]; then
   for variant in recorded unrecorded; do
     eval "STATE_$variant=\$T/state-kind-$variant"
     (umask 0007; mkdir -m 2770 "$T/state-kind-$variant" "$T/state-kind-$variant/peaks")
-    printf 'growth_kb=0\n' > "$T/state-kind-$variant/outside-growth"
   done
   printf 'peak_kb=64\n' > "$STATE_recorded/peaks/k.cgen"
   : > "$LOG"
@@ -1138,7 +1175,6 @@ fi
 if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
   STATE_SHAPE=$(fresh_state shape)
   (umask 0007; mkdir -p -m 2770 "$STATE_SHAPE/peaks")
-  printf 'growth_kb=0\n' > "$STATE_SHAPE/outside-growth"
   # Memory that other work on the host frees during the test would let two jobs
   # of the bound run together, so the bound is taken from the memory available now.
   room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
@@ -1191,6 +1227,57 @@ if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
     || bad 'an entry with no record ran together with its peers'
 fi
 
+# A check and a full generation of one entry have separate records. A new command
+# that has no record of its own is bounded by the peak recorded for its entry in
+# the same mode, so a new wrapper of a check of a large entry is not bounded by the
+# generation of the entry.
+if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
+  STATE_MODE=$(fresh_state mode)
+  printf 'import Base\ndef main() -> IO(Unit): IO.die(Unit,0,"mode")\n' > "$T/src/bend2/src/mode.bend"
+  mode_room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
+  mode_key=$(python3 -I - <<'PY'
+h = 14695981039346656037
+for c in b'bend2/src/mode.bend':
+    h ^= c
+    h = (h * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+print('%016x' % h)
+PY
+)
+  (umask 0007; mkdir -p -m 2770 "$STATE_MODE/peaks")
+  printf 'peak_kb=%s\n' "$((mode_room * 9 / 10))" > "$STATE_MODE/peaks/k.cgen"
+  printf 'peak_kb=%s\n' "$((mode_room * 7 / 10))" > "$STATE_MODE/peaks/en.cgen.$mode_key"
+  printf 'peak_kb=%s\n' "$((mode_room * 7 / 10))" > "$STATE_MODE/peaks/em.cgen.$mode_key.full"
+  printf 'peak_kb=64\n' > "$STATE_MODE/peaks/em.cgen.$mode_key.check"
+  for compiler_dir in mode-one mode-two mode-three mode-four; do
+    mkdir -p "$T/$compiler_dir"
+    cp "$FAKE" "$T/$compiler_dir/compiler"
+    printf '# %s\n' "$compiler_dir" >> "$T/$compiler_dir/compiler"
+    chmod +x "$T/$compiler_dir/compiler"
+  done
+  mode_run() { # compiler_dir tag option
+    BATON_COMPILE_QUEUE_ROOT="$STATE_MODE" sh "$QUEUE" run --kind cgen --state-root "$STATE_MODE" --cwd "$T/src" --root "$T/src" \
+      --source-root "$T/src" --entry bend2/src/mode.bend --compiler "$T/$1/compiler" \
+      --artifact "c.c=$T/$2.c" --option "test=$2" \
+      -- "$T/$1/compiler" --tag "$2" --log "$LOG" -o "$T/$2.c" --sleep 6 $3 >"$T/$2.out" 2>"$T/$2.err"
+  }
+  : > "$LOG"
+  mode_run mode-one mode-check-a --check-only & ma=$!
+  mode_run mode-two mode-check-b --check-only & mb=$!
+  wait "$ma" || bad 'mode: first check failed'
+  wait "$mb" || bad 'mode: second check failed'
+  assert_serialized && bad 'new checks of an entry were bounded by the generation of the entry' \
+    || pass 'a new check of an entry is bounded by the peak recorded for checks of the entry'
+  : > "$LOG"
+  mode_run mode-three mode-full-a "" & mc=$!
+  mode_run mode-four mode-full-b "" & md=$!
+  wait "$mc" || bad 'mode: first generation failed'
+  wait "$md" || bad 'mode: second generation failed'
+  assert_serialized && pass 'a new generation of an entry is bounded by the peak recorded for generations of the entry' \
+    || bad 'new generations of an entry ran together although each needs most of the memory'
+else
+  printf 'SKIP check and generation records: no /proc/meminfo or too little memory\n'
+fi
+
 # backfill raises the kind and key records from the runs already recorded.
 rm -f "$STATE/peaks/k.cgen" "$STATE/peaks/k.cc"
 sh "$QUEUE" backfill --state-root "$STATE" > "$T/backfill.out" 2>"$T/backfill.err" || bad 'backfill failed'
@@ -1227,6 +1314,118 @@ if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
     && pass 'jobs that cannot run together started in request order' || bad "start order was: $fifo_order"
 else
   printf 'SKIP start order: no /proc/meminfo or too little memory\n'
+fi
+
+# Waiting entries start by priority class (extreme, high, rest), then by arrival.
+# A running entry is never stopped, and an entry of a lower class starts only when
+# it does not delay a waiting entry of a higher class. The tests use a private
+# state root, recorded key peaks that are fractions of the memory available now, and
+# a fake compiler that sleeps.
+if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
+  STATE_PR=$(fresh_state priority)
+  PR_FAKE=$(fresh_fake priority)
+  pr_room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
+  pr_args() { # tag class [output suffix]
+    printf '%s\n' --kind cc --source-root "$T" --state-root "$STATE_PR" --cwd "$T" \
+      --compiler "$PR_FAKE" --linker "$PR_FAKE" --version fake-version --input "$T/input.c" \
+      --artifact "binary=$T/pr-$1${3:-}" --option "test=pr-$1"
+    [ -z "$2" ] || printf '%s\n' --priority "$2"
+  }
+  pr_run() { # tag class sleep requester; the key is the one of the tag, a second requester has its own output
+    suffix=; [ "$4" = a ] || suffix=-$4
+    BATON_COMPILE_QUEUE_ROOT=$STATE_PR sh "$QUEUE" run $(pr_args "$1" "$2" "$suffix") \
+      -- "$PR_FAKE" --tag "$1" --log "$LOG" -o "$T/pr-$1$suffix" "$T/input.c" --sleep "$3" >"$T/pr-$1.$4.out" 2>"$T/pr-$1.$4.err"
+  }
+  pr_seed() { # tag percent sleep
+    pr_key=$(BATON_COMPILE_QUEUE_ROOT=$STATE_PR sh "$QUEUE" key $(pr_args "$1" "") \
+      -- "$PR_FAKE" --tag "$1" --log "$LOG" -o "$T/pr-$1" "$T/input.c" --sleep "$3")
+    (umask 0007; mkdir -p -m 2770 "$STATE_PR/keys/$pr_key")
+    printf 'peak_kb=%s\n' "$((pr_room * $2 / 100))" > "$STATE_PR/keys/$pr_key/peak"
+  }
+  pr_waiting() {
+    BATON_COMPILE_QUEUE_ROOT=$STATE_PR sh "$QUEUE" status --state-root "$STATE_PR" > "$T/pr-status.out"
+    grep -c '^waiting ' "$T/pr-status.out" || true
+  }
+  pr_submit() { # tag class sleep n: starts a requester and waits until the n-th ticket exists
+    pr_run "$1" "$2" "$3" a & pr_pids="$pr_pids $!"
+    i=0
+    while [ "$i" -lt 600 ] && [ "$(pr_waiting)" -lt "$4" ]; do i=$((i + 1)); sleep 0.05; done
+  }
+  pr_started() { # tag: waits for the start of the tag
+    i=0
+    while [ "$i" -lt 400 ] && ! grep -q " $1\$" "$LOG" 2>/dev/null; do i=$((i + 1)); sleep 0.05; done
+  }
+  pr_order() { awk '$1 == "start" {print $4}' "$LOG" | tr '\n' ' '; }
+
+  # Classes: the holder runs while a rest, a high, an extreme, a second high and a
+  # second rest entry arrive in that order; each needs most of the memory.
+  for tag in hold rest-one high-one extreme-one high-two rest-two; do
+    case $tag in hold) pr_seed hold 70 12 ;; *) pr_seed "$tag" 70 0 ;; esac
+  done
+  : > "$LOG"; pr_pids=
+  pr_run hold "" 12 a & hold_pid=$!
+  pr_started hold
+  pr_submit rest-one rest 0 1
+  pr_submit high-one high 0 2
+  pr_submit extreme-one extreme 0 3
+  pr_submit high-two high 0 4
+  pr_submit rest-two "" 0 5
+  grep -q 'priority=extreme' "$T/pr-status.out" && grep -q 'priority=high' "$T/pr-status.out" \
+    && pass 'status lists the priority class of waiting entries' || bad 'status does not list the priority classes'
+  wait "$hold_pid" || bad 'priority: the running entry did not finish'
+  for pid in $pr_pids; do wait "$pid" || bad 'priority: a requester failed'; done
+  [ "$(pr_order)" = 'hold extreme-one high-one high-two rest-one rest-two ' ] \
+    && pass 'waiting entries started by class, then by arrival' || bad "start order was: $(pr_order)"
+  grep -q "^end [0-9]* [0-9]* hold 0\$" "$LOG" && [ -s "$T/pr-hold" ] \
+    && pass 'the running entry was not stopped by a waiting entry of a higher class' || bad 'the running entry did not finish'
+
+  # An entry of a lower class that fits now does not start when it would take the
+  # memory of a waiting entry of a higher class that fits beside the running entry.
+  pr_room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
+  pr_seed hold2 45 10; pr_seed extreme-two 63 2; pr_seed high-three 45 2; pr_seed rest-three 30 0
+  : > "$LOG"; pr_pids=
+  pr_run hold2 "" 10 a & hold_pid=$!
+  pr_started hold2
+  pr_submit extreme-two extreme 2 1
+  pr_submit high-three high 2 2
+  pr_submit rest-three rest 0 3
+  sleep 1
+  pr_after=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
+  # The sizes leave a margin of 7 percent of the memory available; when other work on
+  # the host changed the available memory by more than 5 percent, the check does not apply.
+  if [ $(( (pr_after - pr_room - 1024 > 0 ? pr_after - pr_room - 1024 : pr_room + 1024 - pr_after) * 100 )) -gt $((pr_room * 5)) ]; then
+    printf 'SKIP lower entry beside a waiting higher entry: available memory changed by more than 5 percent\n'
+  else
+    [ "$(pr_order)" = 'hold2 ' ] && pass 'a lower entry that fits waits while a higher entry would lose its memory' \
+      || bad "an entry started ahead of its class: $(pr_order)"
+  fi
+  wait "$hold_pid" || bad 'priority: second holder failed'
+  for pid in $pr_pids; do wait "$pid" || bad 'priority: a requester failed'; done
+  # After the holder ended the extreme entry starts first, whatever starts beside it.
+  case "$(pr_order)" in
+    'hold2 extreme-two '*) pass 'the extreme entry started first after the holder ended' ;;
+    *) bad "start order was: $(pr_order)" ;;
+  esac
+
+  # A requester of a higher class that joins a waiting key raises the entry.
+  pr_room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
+  pr_seed hold3 70 8; pr_seed shared 70 0; pr_seed high-four 70 0
+  : > "$LOG"; pr_pids=
+  pr_run hold3 "" 8 a & hold_pid=$!
+  pr_started hold3
+  pr_submit shared rest 0 1
+  pr_submit high-four high 0 2
+  pr_run shared extreme 0 b & pr_pids="$pr_pids $!"
+  i=0
+  while [ "$i" -lt 200 ] && ! grep -q 'priority=extreme' "$T/pr-status.out" 2>/dev/null; do
+    i=$((i + 1)); sleep 0.1; pr_waiting >/dev/null
+  done
+  wait "$hold_pid" || bad 'priority: third holder failed'
+  for pid in $pr_pids; do wait "$pid" || bad 'priority: a requester failed'; done
+  [ "$(pr_order)" = 'hold3 shared high-four ' ] \
+    && pass 'a joining requester of a higher class raised the waiting entry' || bad "start order was: $(pr_order)"
+else
+  printf 'SKIP priority classes: no /proc/meminfo or too little memory\n'
 fi
 
 exit "$fail"
