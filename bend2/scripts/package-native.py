@@ -208,6 +208,10 @@ def stage_adapters(payload):
     require(native_key_exec.is_file(), 'native api-key-exec helper is missing; build bend2/harness/api-key-exec.bend before packaging')
     shutil.copyfile(native_key_exec, directory / 'api-key-exec')
     (directory / 'api-key-exec').chmod(0o755)
+    native_usage_read = ROOT / '.scratch/bend2/usage-read'
+    require(native_usage_read.is_file(), 'native usage-read helper is missing; build bend2/harness/usage-read.bend before packaging')
+    shutil.copyfile(native_usage_read, directory / 'usage-read')
+    (directory / 'usage-read').chmod(0o755)
     shutil.copyfile(ROOT / 'bend2/harness/task-start.mjs', directory / 'task-start.mjs')
     shutil.copytree(ROOT / 'bend2/ui/orchestra', directory / 'ui')
     shutil.copyfile(ROOT / 'bend2/scripts/context-provider.mjs', directory / 'context-provider.mjs')
