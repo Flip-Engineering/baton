@@ -248,23 +248,34 @@ def preview_root_generic(+session: String, +spec: RootSpec, +state: S.State) -> 
     current : RootPreview <- preview_scan(session, spec, state, observed, scan)
     IO.pure(RootPreview, current)
 
-def cargo_pending(+state: S.State, +path: String) -> T.Presence:
-  match S.owner_choice(state, path):
+def cargo_pending_owned(+state: S.State, choice: S.OwnerChoice) -> T.Presence:
+  match choice:
     case S.OwnerChoice{owner, T.OwnerMatches{identity}}: S.pending_fact(state, owner)
     case S.OwnerChoice{owner, T.OwnerUnknown{}}: T.Unknown{}
     case other: T.Absent{}
 
-def cargo_state_consumer(+state: S.State, +path: String) -> IO(T.Presence):
-  match S.valid_of(state):
+def cargo_pending(+state: S.State, path: String) -> T.Presence:
+  cargo_pending_owned(state, S.owner_choice(state, path))
+
+def cargo_consumer_lease(state: S.State, path: String, lease: T.Presence) -> T.Presence:
+  match lease:
+    case T.Absent{}: cargo_pending(state, path)
+    case present: present
+
+def cargo_consumer_database(+state: S.State, +path: String, database: T.Presence) -> T.Presence:
+  match database:
+    case T.Absent{}: cargo_consumer_lease(state, path, S.lease_fact(state, path))
+    case present: present
+
+def cargo_consumer_valid(+state: S.State, +path: String, valid: Bool) -> IO(T.Presence):
+  match valid:
     case False{}: IO.pure(T.Presence, T.Unknown{})
     case True{}: do IO<T.Presence>:
       database : T.Presence <- S.database_fact(state, path)
-      match database:
-        case T.Absent{}:
-          match S.lease_fact(state, path):
-            case T.Absent{}: IO.pure(T.Presence, cargo_pending(state, path))
-            case present: IO.pure(T.Presence, present)
-        case present: IO.pure(T.Presence, present)
+      IO.pure(T.Presence, cargo_consumer_database(state, path, database))
+
+def cargo_state_consumer(+state: S.State, +path: String) -> IO(T.Presence):
+  cargo_consumer_valid(state, path, S.valid_of(state))
 
 def cargo_consumer(+db: String, +path: String) -> IO(T.Presence):
   do IO<T.Presence>:
