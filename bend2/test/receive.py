@@ -85,6 +85,44 @@ def install_public_queue_codex(testcase, directory):
     return calls
 
 
+def process_table(pid=None, names=None):
+    """Every process, or the selected one, as pid, ppid, status, start and
+    command. On Linux it reads /proc because ps stalls on a loaded host. The
+    command line of another process is read only when its owner is this user
+    and its name is in NAMES, since that read waits on the process's memory
+    lock. A zombie reports its command as ps does. Other platforms run ps."""
+    if not sys.platform.startswith('linux'):
+        selection = ['-p', str(pid)] if pid is not None else ['-ax']
+        result = subprocess.run(['ps', *selection, '-o', 'pid=,ppid=,lstart=,stat=,command='],
+                                capture_output=True, text=True)
+        found = []
+        for line in result.stdout.splitlines():
+            fields = line.strip().split(None, 8)
+            if len(fields) >= 8:
+                found.append({'pid': int(fields[0]), 'ppid': int(fields[1]),
+                              'start': ' '.join(fields[2:7]), 'status': fields[7],
+                              'command': fields[8] if len(fields) == 9 else ''})
+        return found
+    found = []
+    for entry in [str(pid)] if pid is not None else os.listdir('/proc'):
+        if not entry.isdigit():
+            continue
+        try:
+            record = pathlib.Path('/proc', entry, 'stat').read_text()
+            name = record[record.index('(') + 1:record.rindex(')')]
+            if pid is None and (os.stat(pathlib.Path('/proc', entry)).st_uid != os.getuid()
+                                or name not in names):
+                continue
+            command = pathlib.Path('/proc', entry, 'cmdline').read_bytes()
+        except OSError:
+            continue
+        fields = record[record.rindex(')') + 1:].split()
+        text = command.rstrip(b'\0').replace(b'\0', b' ').decode(errors='replace')
+        found.append({'pid': int(entry), 'ppid': int(fields[1]), 'start': fields[19], 'status': fields[0],
+                      'command': text if text else '[' + name + '] <defunct>' if fields[0] == 'Z' else ''})
+    return found
+
+
 def _session_lock_path(db, session):
     info = os.stat(db)
     key = 'owner-%x-%x' % (info.st_dev, info.st_ino)
@@ -649,16 +687,15 @@ class Receive(unittest.TestCase):
                 child.terminate()
             child.communicate()
 
+    def process_names(self):
+        """Process names of this run: the coordinator, its sibling entries and
+        the executables the run writes."""
+        return {path.name[:15] for path in [*EXE.parent.iterdir(), *self.directory.iterdir()]}
+
     def owned_processes(self):
-        result = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
-                                capture_output=True, text=True, check=True)
-        found = []
-        for line in result.stdout.splitlines():
-            fields = line.strip().split(None, 3)
-            if len(fields) == 4 and str(self.directory) in fields[3] and not fields[2].startswith('Z'):
-                found.append({'pid': int(fields[0]), 'ppid': int(fields[1]),
-                              'status': fields[2], 'command': fields[3]})
-        return found
+        return [{key: process[key] for key in ('pid', 'ppid', 'status', 'command')}
+                for process in process_table(names=self.process_names())
+                if str(self.directory) in process['command'] and not process['status'].startswith('Z')]
 
     def eventually(self, observation, description):
         while True:
@@ -2208,17 +2245,12 @@ class Receive(unittest.TestCase):
         self.assertTrue(self.session_guard_available('parent'))
 
     def selected_process(self, pid):
-        result = subprocess.run(['ps', '-p', str(pid), '-o', 'pid=,ppid=,lstart=,stat=,command='],
-                                capture_output=True, text=True)
-        self.assertEqual(result.stderr, '')
-        if not result.stdout.strip():
-            self.assertIn(result.returncode, (0, 1))
+        found = process_table(pid)
+        if not found:
             return None
-        self.assertEqual(result.returncode, 0, result.stderr)
-        fields = result.stdout.strip().split(None, 8)
-        self.assertIn(len(fields), (8, 9), result.stdout)
-        return {'pid': int(fields[0]), 'ppid': int(fields[1]), 'start': ' '.join(fields[2:7]),
-                'state': fields[7], 'command': fields[8] if len(fields) == 9 else ''}
+        process, = found
+        return {'pid': process['pid'], 'ppid': process['ppid'], 'start': process['start'],
+                'state': process['status'], 'command': process['command']}
 
     def signal_selected(self, selected, action):
         current = self.selected_process(selected['pid'])
@@ -4284,14 +4316,10 @@ class Receive(unittest.TestCase):
 
     def kill_fixture(self):
         """Kill the fixture native processes of this run, leaving keepers."""
-        result = subprocess.run(['ps', '-axo', 'pid=,command='], capture_output=True,
-                                text=True, check=True)
-        for line in result.stdout.splitlines():
-            fields = line.strip().split(None, 1)
-            if (len(fields) == 2 and str(self.directory) in fields[1]
-                    and 'native fixture' in fields[1]):
+        for process in process_table(names=self.process_names()):
+            if str(self.directory) in process['command'] and 'native fixture' in process['command']:
                 try:
-                    os.kill(int(fields[0]), signal.SIGKILL)
+                    os.kill(process['pid'], signal.SIGKILL)
                 except ProcessLookupError:
                     pass
 
@@ -4364,26 +4392,14 @@ class Receive(unittest.TestCase):
 
     def run_processes(self):
         """Every process of this run, including unreaped zombies."""
-        result = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
-                                capture_output=True, text=True, check=True)
-        found = []
-        for line in result.stdout.splitlines():
-            fields = line.strip().split(None, 3)
-            if len(fields) == 4 and str(self.directory) in fields[3]:
-                found.append({'pid': int(fields[0]), 'ppid': int(fields[1]),
-                              'status': fields[2], 'command': fields[3]})
-        return found
+        return [{key: process[key] for key in ('pid', 'ppid', 'status', 'command')}
+                for process in process_table(names=self.process_names()) if str(self.directory) in process['command']]
 
     def kill_keeper(self, leader):
         """Kill the keeper processes of this run, freeing an inherited
         session lock. The leader driver is already dead; fixtures stay."""
-        result = subprocess.run(['ps', '-axo', 'pid=,command='], capture_output=True,
-                                text=True, check=True)
-        for line in result.stdout.splitlines():
-            fields = line.strip().split(None, 1)
-            if len(fields) != 2:
-                continue
-            pid, command = int(fields[0]), fields[1]
+        for process in process_table(names=self.process_names()):
+            pid, command = process['pid'], process['command']
             if pid == leader.pid or 'native fixture' in command:
                 continue
             if str(self.directory) in command:
