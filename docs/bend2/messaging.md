@@ -45,6 +45,18 @@ baton2 state.db role operator operator
 baton2 state.db role lead
 ```
 
+The administration command `start-setup` records a parentless Principal
+Conductor and its receiver. Bind a selected subscription profile before
+dispatching its first task:
+
+```sh
+baton state.db start-setup principal claude-code CLAUDE_EXECUTABLE MODEL EFFORT WORKSPACE OUTPUT_LOG
+baton state.db as operator profile-bind --session principal --profile PROFILE --store EXTERNAL_STORE
+baton state.db as operator dispatch --to principal --text 'Review the project.'
+```
+
+With a configured series registry, `MODEL` selects a registered model mapping.
+
 Create an Ensemble with loose coupling:
 
 ```sh
