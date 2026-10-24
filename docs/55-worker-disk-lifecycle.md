@@ -38,8 +38,8 @@ eligible worktree while an unrelated evidence directory remains unreadable.
 Phase 1 also identifies and repairs the Mac temporary Git-store producer and
 reduces new ACP working copies with sparse checkouts and a shared object store.
 Phase 2 covers non-Git reviewer evidence, exports with unusable Git metadata and
-additional deployment/cache producers. Its single operator decision is the
-off-host evidence-store configuration described below.
+additional deployment/cache producers. Non-Git work products stay local until
+the recorded decision permitting their removal is complete, then are removed.
 
 ## Evidence and measurement limits
 
@@ -398,7 +398,8 @@ requester, artifact install or selected runtime result keeps the key. Released
 generated C/object/cache contents can be removed; a later request rebuilds them.
 Required failure output follows existing attempt-output retention. If the key
 contains the only copy of required diagnostic evidence, retain it until that
-specific evidence is preserved. Keep outputs already installed in selected
+producing assignment's review is accepted or its completion is confirmed,
+according to the assignment's required decision. Keep outputs installed in selected
 release directories through their own selection references. Restart derives
 unfinished key release from current queue state, key locks and result paths.
 
@@ -413,8 +414,8 @@ alone leaves attribution unresolved.
 
 Repair the identified producer's success, failure and restart cleanup at that
 entry point. A private index/staging store is released after its snapshots have
-verified exact off-host refs and its operation has finished using it. Source
-or diagnostic content with unresolved retention keeps that store. This trace
+verified exact off-host refs and its operation has finished using it. Unpublished
+source or a pending diagnostic-review decision keeps that store. This trace
 and repair are Phase 1 acceptance work. The design seat has requested the
 measurements through the conductor and has no Mac access. Validate the real
 producer on a remote Darwin runner and retain its completed execution evidence.
@@ -520,7 +521,7 @@ Cache-hit savings and rebuild time remain unmeasured.
 
 Extend `logs-storage` inspection into `swarm view` or `doctor` with current
 filesystem capacity and available bytes, each discovered allocation, attributed
-session/project, measured bytes, remote source/evidence refs, live references
+session/project, measured bytes, remote Git refs, pending review/acceptance decisions, live references
 and the current collection/retention reason. Show measurement time, unmeasured
 allocation kinds and scan errors. Derive views from session state, Git
 administration and producer paths. No checked-in seat census supplies decisions.
@@ -532,23 +533,31 @@ changes separate.
 
 ## Phase 2 evidence and remaining coverage
 
+The [operator ruling](https://github.com/Flip-Engineering/baton/issues/1049#issuecomment-6379583091)
+sets the removal condition for non-Git work products: the decision that permits
+removal is complete. Tooling derives that decision from the producing assignment's
+recorded completion confirmation or accepted review for the associated output.
+Keep the product while its required decision or producer association is unresolved.
+A native turn ending, a producer exiting or a seat stopping supplies no review
+acceptance by itself. After the required decision completes and local consumers
+release the allocation, remove its work files through the owning producer.
+Git source and snapshots remain subject to verified remote preservation refs.
+
+| Non-Git allocation | Recorded decision permitting removal |
+| --- | --- |
+| Attempt stdout/stderr, observer logs and validation results | Producing assignment's completion confirmed, or its required validation review accepted |
+| Renders, publication outputs and other large work products | Review/acceptance of the producing assignment's output generation completed |
+| Compile-queue failed-run diagnostics and Mac staging diagnostics | Producing assignment's diagnostic review accepted or completion confirmed, after its current execution releases the path |
+| Deployment/export copies selected for runtime or rollback | Producing review accepted and the recorded runtime/rollback selections released |
+
 | Work | Observed allocation | Implementation and acceptance |
 | --- | --- | --- |
-| Non-Git reviewer evidence | Readable observer logs allocate 1.933 GB; film evidence allocates 15.489 GB | Identify the specific reviewer/recovery files and publisher. Verify full remote reads before removing those local copies. |
-| Exports with unusable Git metadata | October 23 /tmp/acp-0022acae | Trace its concrete creator and preserve unique content through the chosen evidence destination; unresolved exports remain local. |
+| Non-Git reviewer evidence | Readable observer logs allocate 1.933 GB; film evidence allocates 15.489 GB | Associate each allocation with its producing assignment and required decision. Keep it until that review/acceptance is complete, then remove released files. |
+| Exports with unusable Git metadata | October 23 /tmp/acp-0022acae | Trace its creator and distinguish Git source from generated work products. Publish recovered Git source; remove non-Git products after their recorded review/acceptance decision. Unresolved exports stay local. |
 | Additional deployment exports and shared caches | #988 superseded deployments; film cache root measured 75.809 GB | Integrate each producer and existing selected runtime/rollback references. Collect released generated content, retaining required diagnostic evidence; measure reuse and rebuild cost. |
 
-The single operator decision is the off-host evidence-store configuration:
-destination, available capacity, publisher write identity and reviewer/recovery
-read identities. The conductor records that choice in deployment configuration.
-The Phase 2 publisher verifies it with the identified evidence workload.
-Phase 1 uses existing project Git destinations for source.
-
 Unclassified unique content stays local and is surfaced to its project/session
-owner with its observed path and reason. The 119.618 GB film workspace includes
-source, generated output, logs and evidence; its unclassified subset and archive
-transfer size are unmeasured. A specific evidence publisher requires an
-identified reviewer/recovery use and a verified destination.
+owner with its observed path and unresolved producer, decision or consumer.
 
 ## Loss boundaries
 
@@ -567,7 +576,7 @@ identified reviewer/recovery use and a verified destination.
 | Build is active during target collection | #988 direct Cargo bypass and October 23 inactive-process check | Hold native Cargo locks through rename/delete and retain active operations plus runtime/rollback selections. |
 | Dependency output still serves live work | #1049 npm ci creates unregistered output | Use hidden-lockfile classification and current install/test/server/deployment references; retain active consumers. |
 | Queue producer outlives requester | Retained compile-queue implementation keeps a detached supervisor/key lock | Release the key only after producer publication, requester artifact delivery and selected result references settle. |
-| Diagnostic evidence is only local | #686 observer logs and queue failed-run output | Keep required raw evidence until its existing retention or verified Phase 2 publication permits removal. |
+| Review/acceptance decision is incomplete | #686 observer logs and queue failed-run output | Keep the work product until the producing assignment's required review is accepted or completion confirmed; collect it after that decision and consumer release. |
 | Active control database or ancestor selected | #912 database-path protection and #920 | Keep active databases, ancestors and continuation paths outside disposable candidates. |
 | Temporary snapshot store survives operation | #912 Mac recovery of 216 stores | Trace and repair the actual producer in Phase 1; release stores after source publication and operation completion. |
 | Interrupted publication or collection | #594 failed-push retry; #616 missed terminal cleanup | Keep unverified generations; derive unfinished decisions from current durable source, Git and producer state after restart. |
@@ -585,7 +594,7 @@ identified reviewer/recovery use and a verified destination.
 | Allocation pressure pass | October 23 Docker/PostgreSQL failures at zero free bytes | Show collection at checkout, build-start and queue-key allocation; record actual statvfs availability and measured-kind derivation for shared-cache selection. Work continues regardless of collection outcome. |
 | ACP sparse view/shared objects | October 23 about 110 GB checkout growth; 4.851 GB sample | Exercise real narrow seat and review/merge workflows, expand for actual dependencies, preserve snapshot semantics, and measure resulting working/object bytes and validation identity. |
 | Mac temporary Git store | #912 October 21 recovery | Identify the real producer from Mac evidence; repeated success/failure/restart releases unused stores while current source, snapshots and diagnostics survive. Validate on a remote Darwin runner. |
-| Non-Git evidence/export | Observer logs, film evidence and broken export | Phase 2 reviewer/recovery reads complete required remote content after eligible local collection using the configured evidence destination. |
+| Non-Git work product/export | Observer logs, film evidence and broken export | Phase 2 preserves local work files before their recorded review/acceptance decision, then removes them after that decision and consumer release. Git source remains remotely published. |
 
 Phase 1 acceptance requires completed runs of these real producer workflows,
 including #1045 and the Mac producer repair. Existing baseline failures and
