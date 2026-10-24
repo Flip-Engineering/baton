@@ -409,6 +409,11 @@ def credit_admission_cap_after(admission: CreditAdmission) -> String:
 # the reservation totals the caller records; it does not start a request. The
 # launch hold stays in account_binding until a caller wires this decision into
 # the request path and that wiring is qualified.
+# A local estimate of what is left after a charge. It floors at zero and is never a
+# gate: admission follows the provider's response, and this value is recorded only.
+def estimate_left(+available: String, +spent: String) -> String:
+  Bool.pick(String,decimal_is_gt(spent,available),"0",decimal_sub(available,spent))
+
 def credit_request_admission(+account: AccountRecord, +meter: CreditMeter, +current_cycle: String, +current_cap_period: String, +max_charge: String) -> CreditAdmission:
   Bool.pick(CreditAdmission,Bool.not(Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key")))),CRefused{"notPromotionalCreditRoute"},
   Bool.pick(CreditAdmission,Bool.or(String.is_empty(account_organization(account)),Bool.not(String.eq(account_organization(account),meter_organization(meter)))),CRefused{"organizationUnverified"},
@@ -417,9 +422,7 @@ def credit_request_admission(+account: AccountRecord, +meter: CreditMeter, +curr
   Bool.pick(CreditAdmission,Bool.or(String.is_empty(meter_cap_period(meter)),Bool.not(String.eq(meter_cap_period(meter),current_cap_period))),CRefused{"monthlyCapPeriodMismatch"},
   Bool.pick(CreditAdmission,Bool.not(Bool.and(decimal_text(meter_balance(meter)),Bool.and(decimal_text(meter_monthly_cap(meter)),Bool.and(decimal_text(meter_cycle_spent(meter)),Bool.and(decimal_text(meter_reserved(meter)),Bool.and(decimal_text(max_charge),Bool.not(String.is_empty(meter_unit(meter))))))))),CRefused{"creditAmountMalformed"},
   Bool.pick(CreditAdmission,decimal_is_zero(max_charge),CRefused{"requestChargeUnbounded"},
-  Bool.pick(CreditAdmission,decimal_is_gt(decimal_add(meter_reserved(meter),max_charge),meter_balance(meter)),CRefused{"promotionalCreditInsufficient"},
-  Bool.pick(CreditAdmission,decimal_is_gt(decimal_add(decimal_add(meter_cycle_spent(meter),meter_reserved(meter)),max_charge),meter_monthly_cap(meter)),CRefused{"monthlyCapInsufficient"},
-  CAdmitted{meter_organization(meter),meter_cycle(meter),decimal_add(meter_reserved(meter),max_charge),decimal_sub(meter_balance(meter),decimal_add(meter_reserved(meter),max_charge)),decimal_sub(meter_monthly_cap(meter),decimal_add(decimal_add(meter_cycle_spent(meter),meter_reserved(meter)),max_charge))})))))))))
+  CAdmitted{meter_organization(meter),meter_cycle(meter),decimal_add(meter_reserved(meter),max_charge),estimate_left(meter_balance(meter),decimal_add(meter_reserved(meter),max_charge)),estimate_left(meter_monthly_cap(meter),decimal_add(decimal_add(meter_cycle_spent(meter),meter_reserved(meter)),max_charge))})))))))
 
 def launch_binding(+harness: String, +funding: String, +secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
   Bool.pick(Maybe<List<String>>,Bool.and(String.eq(funding,"api_key"),Bool.not(String.eq(harness,"claude-code"))),None{},Bool.pick(Maybe<List<String>>,String.eq(funding,"api_key"),api_key_binding(secret_ref,helper),Some{Subs.store_binding(harness,secret_ref)}))
@@ -553,11 +556,37 @@ def ensure_schema(+db: String, present: Bool) -> IO(Unit):
       made : String <- IO.try(String,commit_read(db,""))
       IO.pure(Unit,Unit{})
 
+# The stored account order (operator decision 2026-10-24). The priority column is the
+# single stored order: lower sorts first, and an empty priority sorts after every set one.
+# The four values are written only where the priority is still empty, so an operator
+# change is never overwritten. credit-incognito's position takes effect only after its
+# auto-reload is confirmed off; that fact is an operator check, not enforced here.
+def accounts_priority_order() -> String:
+  "UPDATE accounts SET priority='1' WHERE id='claude-credit-primary' AND priority='';"
+  ++ "UPDATE accounts SET priority='2' WHERE id='claude-credit-incognito' AND priority='';"
+  ++ "UPDATE accounts SET priority='3' WHERE id='claude-max-incognito' AND priority='';"
+  ++ "UPDATE accounts SET priority='4' WHERE id='claude-max-primary' AND priority='';"
+
+def accounts_priority_added(+db: String, missing: Bool) -> IO(Unit):
+  match missing:
+    case False{}: IO.pure(Unit,Unit{})
+    case True{}: do IO<Unit>:
+      added : String <- IO.try(String,DB.Sql.query(db,"ALTER TABLE accounts ADD COLUMN priority TEXT NOT NULL DEFAULT '';"))
+      IO.pure(Unit,Unit{})
+
+def accounts_priority_ensured(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    found : String <- IO.try(String,DB.Sql.read(db,"SELECT EXISTS(SELECT 1 FROM pragma_table_info('accounts') WHERE name='priority');"))
+    added : Unit <- accounts_priority_added(db,String.eq(Tx.trim_nl(found),"0"))
+    ordered : String <- IO.try(String,DB.Sql.query(db,accounts_priority_order()))
+    IO.pure(Unit,Unit{})
+
 def ensure(+db: String) -> IO(Unit):
   do IO<Unit>:
     present : Bool <- accounts_present(db)
     made : Unit <- ensure_schema(db,present)
     columns : Unit <- attempt_columns_ensured(db)
+    priority : Unit <- accounts_priority_ensured(db)
     IO.pure(Unit,Unit{})
 
 # --- the durable request reservation -----------------------------------------
@@ -732,17 +761,11 @@ def credit_reserve_arithmetic(+account: AccountRecord, +observation: CreditObs, 
       Bool.pick(CreditAdmission,Bool.not(String.eq(state,"reported")),CRefused{"creditObservationUnavailable"},
       Bool.pick(CreditAdmission,String.is_empty(cycle),CRefused{"creditCycleMissing"},
       Bool.pick(CreditAdmission,String.is_empty(current_cap_period),CRefused{"monthlyCapPeriodMismatch"},
-      Bool.pick(CreditAdmission,Bool.not(String.is_empty(expiry_deadline_reason(expiry_deadline,now_text))),CRefused{expiry_deadline_reason(expiry_deadline,now_text)},
       Bool.pick(CreditAdmission,Bool.not(credit_conflict_ok(conflict)),CRefused{"creditReadingsConflict"},
       Bool.pick(CreditAdmission,Bool.not(String.eq(unit,"USD")),CRefused{"creditUnitNotUSD"},
       Bool.pick(CreditAdmission,Bool.not(decimal_text(balance)),CRefused{"creditAmountMalformed"},
-      Bool.pick(CreditAdmission,decimal_is_gt(grant_spend,credit_cycle_ceiling()),CRefused{"creditGrantExhausted"},
-      Bool.pick(CreditAdmission,decimal_is_gt(monthly_spend,credit_cycle_ceiling()),CRefused{"monthlyCapExhausted"},
-      Bool.pick(CreditAdmission,decimal_is_zero(available),CRefused{"promotionalCreditExhausted"},
-      Bool.pick(CreditAdmission,decimal_is_zero(decimal_sub(credit_cycle_ceiling(),monthly_spend)),CRefused{"monthlyCapExhausted"},
-      Bool.pick(CreditAdmission,decimal_is_zero(decimal_sub(credit_cycle_ceiling(),grant_spend)),CRefused{"creditGrantExhausted"},
       Bool.pick(CreditAdmission,decimal_is_zero(bound),CRefused{"requestChargeUnbounded"},
-      credit_request_admission(account,CMeter{account_organization(account),state,cycle,available,unit,credit_cycle_ceiling(),current_cap_period,decimal_max(grant_spend,monthly_spend),"0"},cycle,current_cap_period,bound))))))))))))))))
+      credit_request_admission(account,CMeter{account_organization(account),state,cycle,available,unit,credit_cycle_ceiling(),current_cap_period,decimal_max(grant_spend,monthly_spend),"0"},cycle,current_cap_period,bound))))))))))
 
 def credit_reserve_decided(+account: AccountRecord, +observation: CreditObs, +conflict: String, +rows: List<&2,ReservationRow>, +spend_state: String, +spend_balance: String, +spend_unit: String, +current_cap_period: String, +expiry_deadline: String, +now_text: String, +request_charge: String) -> CreditAdmission:
   Bool.pick(CreditAdmission,Bool.not(reservation_rows_valid(rows)),CRefused{"creditReservationLedgerMalformed"},
@@ -1026,7 +1049,7 @@ def credit_request_facts_for(+db: String, +body: String) -> IO(CreditRequestFact
 # One row per account, fields separated by the ASCII unit separator, in operator
 # recording order.
 def account_row_sql() -> String:
-  "SELECT id||char(31)||provider||char(31)||harness||char(31)||funding||char(31)||secret_ref||char(31)||organization||char(31)||verified_at FROM accounts ORDER BY rowid;"
+  "SELECT id||char(31)||provider||char(31)||harness||char(31)||funding||char(31)||secret_ref||char(31)||organization||char(31)||verified_at FROM accounts ORDER BY CASE WHEN priority='' THEN 9999 ELSE CAST(priority AS INTEGER) END,rowid;"
 
 def account_rows_flat(fields: List<&2,String>, tail: List<&2,AccountRecord>) -> List<&2,AccountRecord>:
   match fields:
@@ -1537,6 +1560,7 @@ def select_answer(+db: String, +harness: String, +funding: String, chosen: Maybe
 
 def select(+db: String, +harness: String, +funding: String) -> IO(Unit):
   do IO<Unit>:
+    ready : Unit <- ensure(db)
     rows : String <- IO.try(String,DB.Sql.read(db,account_row_sql()))
     +accounts : List<&2,AccountRecord> <- IO.pure(List<&2,AccountRecord>,account_lines(Tx.split_lines(rows),Nil{}))
     +blocked_text : String <- IO.try(String,DB.Sql.read(db,blocked_organizations_sql()))

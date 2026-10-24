@@ -19,7 +19,7 @@ def headroom_checks() -> IO(Unit):
   do IO<Unit>:
     exact : Unit <- check("headroom-exact-fit-admitted",A.credit_admission_admitted(A.credit_request_admission(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10-cycle","50","USD","200","2026-10","0","40"},"2026-10-cycle","2026-10","10")))
     exact_left : Unit <- check("headroom-exact-fit-leaves-zero",String.eq(A.credit_admission_balance_after(A.credit_request_admission(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10-cycle","50","USD","200","2026-10","0","40"},"2026-10-cycle","2026-10","10")),"0"))
-    over : Unit <- reason_is(A.credit_request_admission(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10-cycle","50","USD","200","2026-10","0","40"},"2026-10-cycle","2026-10","11"),"promotionalCreditInsufficient","headroom-one-unit-over-refused")
+    over : Unit <- check("headroom-one-unit-over-admitted-estimate",A.credit_admission_admitted(A.credit_request_admission(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10-cycle","50","USD","200","2026-10","0","40"},"2026-10-cycle","2026-10","11")))
     summed : Unit <- check("headroom-open-reservations-summed",String.eq(A.credit_admission_reserved_total(A.credit_request_admission(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10-cycle","50","USD","200","2026-10","0","40"},"2026-10-cycle","2026-10","10")),"50"))
     unbounded : Unit <- reason_is(A.credit_request_admission(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10-cycle","50","USD","200","2026-10","0","0"},"2026-10-cycle","2026-10","0"),"requestChargeUnbounded","headroom-zero-charge-refused")
     IO.pure(Unit,Unit{})
@@ -35,9 +35,9 @@ def reserve_reason_is(grant_spend: String, balance: String, request: String, +ex
 def reserve_headroom_checks() -> IO(Unit):
   do IO<Unit>:
     fits : Unit <- reserve_fits("40","50","10","reserve-request-fits-after-open-spend","10")
-    over : Unit <- reserve_reason_is("40","50","11","promotionalCreditInsufficient","reserve-request-over-remaining-refused")
-    spent : Unit <- reserve_reason_is("50","50","1","promotionalCreditExhausted","reserve-balance-spent-by-cycle-refused")
-    past : Unit <- reserve_reason_is("60","50","1","promotionalCreditExhausted","reserve-spend-beyond-balance-refused")
+    over : Unit <- reserve_fits("40","50","11","reserve-request-over-remaining-admitted-estimate","11")
+    spent : Unit <- reserve_fits("50","50","1","reserve-balance-spent-by-cycle-admitted-estimate","1")
+    past : Unit <- reserve_fits("60","50","1","reserve-spend-beyond-balance-admitted-estimate","1")
     IO.pure(Unit,Unit{})
 
 def main() -> IO(Unit):
