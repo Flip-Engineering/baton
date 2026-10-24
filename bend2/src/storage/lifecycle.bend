@@ -353,12 +353,15 @@ def roots_empty(specs: List<&2,RootSpec>) -> Bool:
     case Nil{}: True{}
     case Con{head, tail}: False{}
 
+def apply_session_roots(+db: String, +session: String, specs: List<&2,RootSpec>) -> IO(Result<&1,&1,U32 & String,List<T.Receipt>>):
+  Bool.pick(IO(Result<&1,&1,U32 & String,List<T.Receipt>>), roots_empty(specs),
+    IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Done{Nil{}}),
+    IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Fail{(3, "storage apply refused: cooperative root writer lease protocol is unavailable")}))
+
 def apply_session(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,List<T.Receipt>>):
   do IO<Result<&1,&1,U32 & String,List<T.Receipt>>>:
     specs : List<&2,RootSpec> <- configured_roots()
-    Bool.pick(IO(Result<&1,&1,U32 & String,List<T.Receipt>>), roots_empty(specs),
-      IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Done{Nil{}}),
-      IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Fail{(3, "storage apply refused: cooperative root writer lease protocol is unavailable")}))
+    apply_session_roots(db, session, specs)
 
 def receipt_append_choice(empty: Bool, +acc: String, head: T.Receipt) -> String:
   match empty:

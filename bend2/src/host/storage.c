@@ -624,6 +624,13 @@ static int baton_storage_numeric(const char *text) {
   return 1;
 }
 
+static int baton_storage_scan_unknown(const char *operation, const char *path,
+                                      int error, size_t count, size_t limit) {
+  fprintf(stderr, "storage process scan: %s path=%s error=%d (%s) count=%zu limit=%zu\n",
+          operation, path, error, error ? strerror(error) : "none", count, limit);
+  return 1;
+}
+
 static int baton_storage_access_unknown(int error) {
   return error == EACCES || error == EPERM;
 }
@@ -633,7 +640,7 @@ static int baton_storage_path_hit(const char *path, baton_u64 device, baton_u64 
   struct stat info;
   if (!stat(path, &info)) return (baton_u64)info.st_dev == device && (baton_u64)info.st_ino == inode;
   if (errno == ENOENT || errno == ESRCH || errno == ENOTDIR) return 0;
-  if (baton_storage_access_unknown(errno)) *unknown = 1;
+  if (baton_storage_access_unknown(errno)) *unknown = baton_storage_scan_unknown("stat", path, errno, 0, 0);
   return 0;
 }
 
@@ -648,7 +655,7 @@ static int baton_storage_link_hit(const char *link, const char *root, int *unkno
   char buffer[PATH_MAX];
   ssize_t length = readlink(link, buffer, sizeof(buffer) - 1);
   if (length < 0) {
-    if (baton_storage_access_unknown(errno)) *unknown = 1;
+    if (baton_storage_access_unknown(errno)) *unknown = baton_storage_scan_unknown("readlink", link, errno, 0, 0);
     return 0;
   }
   buffer[length] = 0;
@@ -690,7 +697,7 @@ static int baton_storage_pid_hit(pid_t pid, baton_u64 device, baton_u64 inode, c
   snprintf(path, sizeof(path), "/proc/%ld/fd", (long)pid);
   DIR *fds = opendir(path);
   if (!fds) {
-    if (baton_storage_access_unknown(errno)) *unknown = 1;
+    if (baton_storage_access_unknown(errno)) *unknown = baton_storage_scan_unknown("opendir", path, errno, 0, 0);
   } else {
     struct dirent *entry;
     size_t seen = 0;
@@ -699,32 +706,32 @@ static int baton_storage_pid_hit(pid_t pid, baton_u64 device, baton_u64 inode, c
       entry = readdir(fds);
       if (!entry) break;
       if (!baton_storage_numeric(entry->d_name)) continue;
-      if (++seen > BATON_STORAGE_REF_LIMIT) { *truncated = 1; break; }
+      if (++seen > BATON_STORAGE_REF_LIMIT) { *truncated = baton_storage_scan_unknown("fd-limit", path, 0, seen, BATON_STORAGE_REF_LIMIT); break; }
       char target_path[128];
       snprintf(target_path, sizeof(target_path), "/proc/%ld/fd/%s", (long)pid, entry->d_name);
       if (baton_storage_path_hit(target_path, device, inode, unknown)) { closedir(fds); return 1; }
       if (is_dir && baton_storage_link_hit(target_path, root, unknown)) { closedir(fds); return 1; }
     }
-    if (entry == NULL && errno) *unknown = 1;
+    if (entry == NULL && errno) *unknown = baton_storage_scan_unknown("readdir", path, errno, 0, 0);
     closedir(fds);
   }
 
   snprintf(path, sizeof(path), "/proc/%ld/maps", (long)pid);
   FILE *maps = fopen(path, "r");
   if (!maps) {
-    if (baton_storage_access_unknown(errno)) *unknown = 1;
+    if (baton_storage_access_unknown(errno)) *unknown = baton_storage_scan_unknown("fopen", path, errno, 0, 0);
   } else {
     char *line = NULL;
     size_t capacity = 0;
     size_t seen = 0;
     while (getline(&line, &capacity, maps) >= 0) {
-      if (++seen > BATON_STORAGE_REF_LIMIT) { *truncated = 1; break; }
+      if (++seen > BATON_STORAGE_REF_LIMIT) { *truncated = baton_storage_scan_unknown("maps-limit", path, 0, seen, BATON_STORAGE_REF_LIMIT); break; }
       char *mapped = baton_storage_maps_path(line);
       if (!mapped || mapped[0] != '/') continue;
       if (baton_storage_path_hit(mapped, device, inode, unknown)) { free(line); fclose(maps); return 1; }
       if (is_dir && baton_storage_prefix(root, mapped)) { free(line); fclose(maps); return 1; }
     }
-    if (ferror(maps)) *unknown = 1;
+    if (ferror(maps)) *unknown = baton_storage_scan_unknown("getline", path, errno, 0, 0);
     free(line);
     fclose(maps);
   }
@@ -786,9 +793,9 @@ static void baton_storage_refs_call(IoWork *w) {
   for (;;) {
     errno = 0;
     entry = readdir(proc);
-    if (!entry) { if (errno) unknown = 1; break; }
+    if (!entry) { if (errno) unknown = baton_storage_scan_unknown("readdir", "/proc", errno, 0, 0); break; }
     if (!baton_storage_numeric(entry->d_name)) continue;
-    if (++seen > BATON_STORAGE_PID_LIMIT) { truncated = 1; break; }
+    if (++seen > BATON_STORAGE_PID_LIMIT) { truncated = baton_storage_scan_unknown("pid-limit", "/proc", 0, seen, BATON_STORAGE_PID_LIMIT); break; }
     pid_t pid = (pid_t)strtol(entry->d_name, NULL, 10);
     char process_path[64];
     snprintf(process_path, sizeof(process_path), "/proc/%ld", (long)pid);
@@ -797,7 +804,7 @@ static void baton_storage_refs_call(IoWork *w) {
     if (process_info.st_uid != geteuid()) continue;
     if (baton_storage_pid_hit(pid, device, inode, root, is_dir, &unknown, &truncated)) {
       if (baton_storage_pid_push(&pids, pid)) { call->error = ENOMEM; break; }
-      if (pids.count >= BATON_STORAGE_REF_LIMIT) { truncated = 1; break; }
+      if (pids.count >= BATON_STORAGE_REF_LIMIT) { truncated = baton_storage_scan_unknown("result-limit", process_path, 0, pids.count, BATON_STORAGE_REF_LIMIT); break; }
     }
     if (truncated) break;
   }

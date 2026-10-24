@@ -285,11 +285,11 @@ def spawned_writer_apply_refusal(result: Result<&1,&1,U32 & String,U32>, +db: St
     case Done{+handle}:
       do IO<Unit>:
         slept : Unit <- IO.sleep(100)
-        +specs : List<&2,L.RootSpec> <- L.configured_roots()
-        +exclusive : List<&2,String> <- L.configured_exclusive()
+        +specs : List<&2,L.RootSpec> = Con{L.RootSpec{T.LogEvidence{}, dir, ""}, Nil{}}
+        +exclusive : List<&2,String> = Con{dir, Nil{}}
         +unproven : String = L.unproven_roots(specs, exclusive, "")
         config : Unit <- check("writer-root-declared", String.is_empty(unproven), unproven)
-        applied : Result<&1,&1,U32 & String,List<T.Receipt>> <- L.apply_session(db, "owner")
+        applied : Result<&1,&1,U32 & String,List<T.Receipt>> <- L.apply_session_roots(db, "owner", specs)
         refused : Unit <- check("apply-refuses-with-writer", storage_apply_refused(applied), "writer lease refusal missing")
         observed : O.Observation <- O.observe(file)
         kept : Unit <- check("writer-target-preserved", O.observation_is_found(observed), "writer target was removed")
