@@ -304,16 +304,12 @@ def recover_if_dead(+db: String, +session: String, dead: Bool) -> IO(Unit):
 def wake_admit(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, state: String, +dead: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   wake_stand(db,session,cursor,launch,lock,wake_held(state,dead))
 
-# The usage window gate runs before the claim read: a held window keeps the
-# owed input unlaunched and reports the hold to the session and its conductor;
-# an elapsed window reports the restoration once and admits the owed input on
-# its retained assignment and account. An unknown or absent observation never
-# blocks the wake. The restoration report is a no-op for every gate that is not
-# a just-elapsed one.
-def wake_fenced_owed(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, gate: UW.Gate) -> IO(Result<&1,&1,U32 & String,Unit>):
+# The usage gate runs before the claim read: a seat held by a live read keeps the
+# owed input unlaunched, and the gate has announced the hold to the seat's
+# orchestrator and the root. An open or unknown read admits the owed input on its
+# retained assignment and account.
+def wake_fenced_owed(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    +found : String <- wake_found(db,session,cursor)
-    restored : Unit <- UW.report_restored(db,session,Tx.trim_nl(found),gate)
     state : String <- Store.claim_state(db,session)
     dir : String <- IO.try(String,DB.Sql.query(db,attempt_dir_sql(session)))
     +trimmed : String <- IO.pure(String,Tx.trim_nl(dir))
@@ -326,11 +322,10 @@ def wake_fenced_gate(+db: String, +session: String, +cursor: String, launch: Str
   match gate:
     case UW.GateHeld{+window,+resets_at,+source,+receipt}: do IO<Result<&1,&1,U32 & String,Unit>>:
       +found : String <- wake_found(db,session,cursor)
-      held : Unit <- UW.report_held(db,session,Tx.trim_nl(found),UW.GateHeld{window,resets_at,source,receipt})
-      scheduled : Unit <- UW.schedule_held(db,Tx.trim_nl(found),resets_at)
+      held : Unit <- UW.held(db,session,Tx.trim_nl(found),UW.GateHeld{window,resets_at,source,receipt})
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
-    case other: wake_fenced_owed(db,session,cursor,launch,lock,gate)
+    case other: wake_fenced_owed(db,session,cursor,launch,lock)
 
 def wake_fenced_gated(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -818,7 +813,7 @@ def started_result(start: Result<&1,&1,U32 & String,P.RetainedStart>, +db: Strin
 #
 # The receiver endpoint is also entered directly by retained endpoints, so the
 # usage gate is checked under this admission's held session lock before any
-# native process exists: a held window reports the hold, schedules the reset
+# native process exists: a seat held by a live read starts the reset-time
 # continuation, removes the execution row that this admission wrote, releases
 # the lock and leaves the input owed. The message is not claimed, so the next
 # wake still owns it.
@@ -828,8 +823,7 @@ def window_held_start(+db: String, +session: String, +id: String, +head: String,
       Bool.pick(IO(Bool),String.is_empty(head),
         IO.pure(Bool,False{}),
         do IO<Bool>:
-          held : Unit <- UW.report_held(db,session,head,UW.GateHeld{window,resets_at,source,receipt})
-          scheduled : Unit <- UW.schedule_held(db,head,resets_at)
+          held : Unit <- UW.held(db,session,head,UW.GateHeld{window,resets_at,source,receipt})
           cleared : Unit <- Stop.held_release(db,session,id)
           released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
           IO.pure(Bool,True{}))

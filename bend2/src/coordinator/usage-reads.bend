@@ -1,29 +1,28 @@
-# Live provider usage reads (#1025). A provider reader turns one response from the
-# provider's usage API into the normalized windows array described in
-# docs/bend2/usage-live-reads-1025.md. The core records each read in usage_reads and
-# derives the seat's hold from the newest read. Reset times in provider error text,
-# window bounds and operator-entered resets are not inputs to this decision.
+# Live provider usage reads (#1025): the document a usage-read helper prints and the
+# core records. A provider reader supplies a parser
+#
+#   def <provider>_windows_sql(+response: String) -> String
+#
+# that returns one SQL SELECT, without a trailing semicolon, whose single value is a
+# JSON array of window objects taken from the provider's response text:
+#
+#   {"window":"5-hour","usedPercent":3,"resetsAt":1792820715847,"exhausted":false}
+#
+# window is 5-hour, 7-day, monthly or balance. usedPercent is the provider's number or
+# null. resetsAt is the provider's reset instant in UTC milliseconds or null.
+# exhausted is the provider's own statement where it makes one, else usedPercent at or
+# above 100. The contract is docs/bend2/usage-live-reads-1025.md.
 import Base
+import ../coordinator/commands.bend as C
+import ../json/canonical.bend as J
 
-# One provider window as the provider reported it. used_percent and resets_at are
-# decimal texts copied from the response; an empty text means the provider did not
-# report the value. resets_at is UTC milliseconds.
-type Window is Data:
-  Window{window: String, used_percent: String, resets_at: String, exhausted: Bool}
-
-# One live read. source names the endpoint or method that was read. An unreadable
-# read carries the exact reason the provider could not be read.
-type Read is Data:
-  Readable{provider: String, source: String, observed_at: String, windows: List<&2,Window>}
-  Unreadable{provider: String, source: String, observed_at: String, reason: String}
-
-# The hold state of one seat, derived from the newest read for its provider and
-# account. read is the usage_reads row id the state was derived from.
-type Hold is Data:
-  Open{}
-  Held{window: String, used_percent: String, resets_at: String, source: String, read: String}
-  Unknown{source: String, reason: String, read: String}
-
-# The schema name of the document a usage-read helper prints.
 def read_schema() -> String:
   "baton2-usage-read-v1"
+
+# The readable document for one read. windows is a parser's SELECT.
+def read_document_sql(+provider: String, +source: String, +observed_at: String, +windows: String) -> String:
+  "SELECT json_object('schema'," ++ C.q(read_schema()) ++ ",'provider'," ++ C.q(provider) ++ ",'source'," ++ C.q(source) ++ ",'observedAt',CAST(" ++ C.q(observed_at) ++ " AS INTEGER),'state','read','windows',json(coalesce((" ++ windows ++ "),'[]')));"
+
+# The unreadable document: the exact reason the provider could not be read.
+def unreadable_document(+provider: String, +source: String, +observed_at: String, +reason: String) -> String:
+  "{\"schema\":" ++ J.string_literal(read_schema()) ++ ",\"provider\":" ++ J.string_literal(provider) ++ ",\"source\":" ++ J.string_literal(source) ++ ",\"observedAt\":" ++ observed_at ++ ",\"state\":\"unreadable\",\"reason\":" ++ J.string_literal(reason) ++ "}"
