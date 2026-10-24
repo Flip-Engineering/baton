@@ -8,6 +8,7 @@ import ../src/json/canonical.bend as J
 import ../src/coordinator/commands.bend as C
 import ../src/coordinator/usage-reads.bend as UR
 import ../src/coordinator/zai-quota.bend as Zai
+import ../src/coordinator/claude-usage.bend as Claude
 
 # usage-read PROVIDER CREDENTIAL_REF (#1025). Performs one live read of the provider's
 # usage API and prints one baton2-usage-read-v1 document: the normalized windows, or
@@ -93,7 +94,7 @@ def stored_key(+reference: String, fields: List<&2,String>) -> Result<&1,&1,Stri
   match fields:
     case "key" <> +value <> Nil{}: secret_checked(value,reference)
     case "disabled" <> +cause <> Nil{}: Fail{"the credential of " ++ reference ++ " is disabled: " ++ cause}
-    case "expired" <> +instant <> Nil{}: Fail{"the access token of " ++ reference ++ " expired at " ++ instant ++ "; Baton does not refresh it"}
+    case "expired" <> +instant <> Nil{}: Fail{"the access token of " ++ reference ++ " expired at " ++ instant ++ "; Baton does not refresh it; the account's own Claude Code login renews it"}
     case other: Fail{"no usable credential is recorded for " ++ reference}
 
 def stored_found(+reference: String, found: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,String,String>:
@@ -246,12 +247,17 @@ def read_zai(+observed: String, +reference: String) -> IO(Unit):
 def claude_credit_reason() -> String:
   "Anthropic publishes no endpoint for the remaining API credit balance; the usage and cost API reports past usage and spend only"
 
-# Claude Max (claude-oauth): the reader of GET https://api.anthropic.com/api/oauth/usage
-# is a provider module that is not in this build yet.
+# Claude Max (claude-oauth): GET https://api.anthropic.com/api/oauth/usage with the
+# account's OAuth access token and the anthropic-beta header the endpoint requires.
+def claude_request(+key: String) -> IO(Result<&1,&1,U32 & String,String & String>):
+  Http.Http.request("GET","https://api.anthropic.com/api/oauth/usage","Authorization: Bearer " ++ key ++ "\nanthropic-beta: oauth-2025-04-20\nAccept: application/json\nUser-Agent: baton2-usage-read/1.0\n","")
+
+def read_claude_max(+observed: String, +reference: String) -> IO(Unit):
+  read_http("claude",Claude.claude_source(),observed,reference,key => claude_request(key),response => Claude.claude_windows_sql(response),response => Claude.claude_problem_sql(response))
+
+# An API-key reference is an Anthropic API-credit account, which has no usage read.
 def read_claude(+observed: String, +reference: String) -> IO(Unit):
-  Bool.pick(IO(Unit),String.eq(scheme_of(reference),"claude-oauth"),
-    print_unreadable("claude","GET https://api.anthropic.com/api/oauth/usage",observed,"no usage reader for Claude Max is in this build"),
-    print_unreadable("claude","",observed,claude_credit_reason()))
+  Bool.pick(IO(Unit),String.eq(scheme_of(reference),"claude-oauth"),read_claude_max(observed,reference),print_unreadable("claude","",observed,claude_credit_reason()))
 
 def muse_reason() -> String:
   "the configured Muse credential is an API key, and no usage or quota endpoint for it is documented"
