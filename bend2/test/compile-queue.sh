@@ -1239,15 +1239,16 @@ if [ -r /proc/meminfo ] && [ "${room:-0}" -ge 131072 ]; then
   PR_FAKE=$(fresh_fake priority)
   printf 'growth_kb=0\n' > "$STATE_PR/outside-growth"
   pr_room=$(($(awk '/^MemAvailable:/{print $2}' /proc/meminfo) - 1024))
-  pr_args() { # tag class sleep
+  pr_args() { # tag class [output suffix]
     printf '%s\n' --kind cc --source-root "$T" --state-root "$STATE_PR" --cwd "$T" \
       --compiler "$PR_FAKE" --linker "$PR_FAKE" --version fake-version --input "$T/input.c" \
-      --artifact "binary=$T/pr-$1" --option "test=pr-$1"
+      --artifact "binary=$T/pr-$1${3:-}" --option "test=pr-$1"
     [ -z "$2" ] || printf '%s\n' --priority "$2"
   }
-  pr_run() { # tag class sleep; the key is the one of the tag
-    BATON_COMPILE_QUEUE_ROOT=$STATE_PR sh "$QUEUE" run $(pr_args "$1" "$2") \
-      -- "$PR_FAKE" --tag "$1" --log "$LOG" -o "$T/pr-$1" "$T/input.c" --sleep "$3" >"$T/pr-$1.$4.out" 2>"$T/pr-$1.$4.err"
+  pr_run() { # tag class sleep requester; the key is the one of the tag, a second requester has its own output
+    suffix=; [ "$4" = a ] || suffix=-$4
+    BATON_COMPILE_QUEUE_ROOT=$STATE_PR sh "$QUEUE" run $(pr_args "$1" "$2" "$suffix") \
+      -- "$PR_FAKE" --tag "$1" --log "$LOG" -o "$T/pr-$1$suffix" "$T/input.c" --sleep "$3" >"$T/pr-$1.$4.out" 2>"$T/pr-$1.$4.err"
   }
   pr_seed() { # tag percent sleep
     pr_key=$(BATON_COMPILE_QUEUE_ROOT=$STATE_PR sh "$QUEUE" key $(pr_args "$1" "") \
