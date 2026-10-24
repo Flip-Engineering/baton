@@ -88,39 +88,51 @@ def output_identity(output: Output) -> String:
     case Cargo{identity, origin}: identity
     case other: "unresolved"
 
-def measured_decision(measured: Maybe<Nat>, decided: T.Decision) -> T.Decision:
+def preview_entry(+path: String, owner: String, +output: Output,
+                  bytes: Nat, decided: T.Decision) -> T.Preview:
+  +entry = T.Entry{path, T.BuildOutput{}, owner, "cargo-output", bytes, output_identity(output), decided}
+  T.Preview{path, "", output_identity(output), True{}, P.entry_plan_line(entry), Con{entry, Nil{}}}
+
+def preview_measured(measured: Maybe<Nat>, +path: String, +owner: String, +output: Output,
+                     active: T.Presence, selected: T.Presence) -> T.Preview:
   match measured:
-    case None{}: T.Keep{"cargo-measurement-unreadable"}
-    case Some{bytes}: decided
+    case None{}: preview_entry(path, owner, output, 0n, T.Keep{"cargo-measurement-unreadable"})
+    case Some{bytes}: preview_entry(path, owner, output, bytes, decision(output, active, selected))
 
 def preview(+path: String, +owner: String,
             consumer: @+candidate: String -> IO(T.Presence),
             selection: @+candidate: String -> IO(T.Presence)) -> IO(T.Preview):
   do IO<T.Preview>:
     +output : Output <- observe(path)
-    +measured : Maybe<Nat> <- O.measure(path)
+    measured : Maybe<Nat> <- O.measure(path)
     active : T.Presence <- consumer(path)
     selected : T.Presence <- selection(path)
-    decided : T.Decision = measured_decision(measured, decision(output, active, selected))
-    +entry : T.Entry = T.Entry{path, T.BuildOutput{}, owner, "cargo-output", O.nat_or(measured, 0n), output_identity(output), decided}
-    IO.pure(T.Preview, T.Preview{path, "", output_identity(output), True{}, P.entry_plan_line(entry), Con{entry, Nil{}}})
+    IO.pure(T.Preview, preview_measured(measured, path, owner, output, active, selected))
+
+def receipt_decided(+path: String, associated: String, owner: String, +output: Output,
+                    bytes: Nat, +plan_decision: T.Decision) -> IO(T.Receipt):
+  do IO<T.Receipt>:
+    +entry : T.Entry = T.Entry{path, T.BuildOutput{}, owner, "cargo-output", bytes, output_identity(output), plan_decision}
+    collection : Collection <- collect_decided(plan_decision, output, path, associated)
+    +outcome : T.Outcome = collection_outcome(collection)
+    row : T.Removal = A.removal(entry, outcome)
+    IO.pure(T.Receipt, T.Receipt{P.entry_plan_line(entry), path, "", Con{row, Nil{}}, A.reclaimed_of(outcome), A.outcome_keeps_complete(outcome)})
+
+def receipt_measured(measured: Maybe<Nat>, +path: String, +associated: String, +owner: String,
+                     +output: Output, active: T.Presence, selected: T.Presence) -> IO(T.Receipt):
+  match measured:
+    case None{}: receipt_decided(path, associated, owner, output, 0n, T.Keep{"cargo-measurement-unreadable"})
+    case Some{bytes}: receipt_decided(path, associated, owner, output, bytes, decision(output, active, selected))
 
 def receipt(+path: String, +associated: String, +owner: String,
             consumer: @+candidate: String -> IO(T.Presence),
             selection: @+candidate: String -> IO(T.Presence)) -> IO(T.Receipt):
   do IO<T.Receipt>:
     +output : Output <- observe(path)
-    +measured : Maybe<Nat> <- O.measure(path)
+    measured : Maybe<Nat> <- O.measure(path)
     active : T.Presence <- consumer(path)
     selected : T.Presence <- selection(path)
-    +decided : T.Decision = decision(output, active, selected)
-    +plan_decision : T.Decision = measured_decision(measured, decided)
-    bytes : Nat = O.nat_or(measured, 0n)
-    +entry : T.Entry = T.Entry{path, T.BuildOutput{}, owner, "cargo-output", bytes, output_identity(output), plan_decision}
-    collection : Collection <- collect_decided(plan_decision, output, path, associated)
-    +outcome : T.Outcome = collection_outcome(collection)
-    row : T.Removal = A.removal(entry, outcome)
-    IO.pure(T.Receipt, T.Receipt{P.entry_plan_line(entry), path, "", Con{row, Nil{}}, A.reclaimed_of(outcome), A.outcome_keeps_complete(outcome)})
+    receipt_measured(measured, path, associated, owner, output, active, selected)
 
 def path_contains(+root: String, +path: String) -> Bool:
   Bool.or(String.eq(root, path), String.starts_with(path, root ++ "/"))
