@@ -226,8 +226,25 @@ def presence_detail(presence: T.Presence) -> String:
     case T.Absent{}: ""
     case T.Unknown{}: "unknown"
 
-def held_file_script(+file: String) -> String:
-  "exec 3<" ++ file ++ "; exec /usr/bin/env python3 -c 'import signal; signal.pause()'"
+# Peers register in the test proc view and report readiness after setup.
+def peer_line(value: Maybe<String>) -> String:
+  match value:
+    case Some{line}: Tx.trim_nl(line)
+    case None{}: ""
+
+def peer_ready(result: Result<&1,&1,U32 & String,U32>) -> IO(Result<&1,&1,U32 & String,U32>):
+  match result:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>, Fail{error})
+    case Done{+handle}: do IO<Result<&1,&1,U32 & String,U32>>:
+      ready : Maybe<String> <- IO.try(Maybe<String>, Proc.ProcessChild.read_line(handle))
+      checked : Unit <- check("peer-ready", String.eq(peer_line(ready), "ready"), "peer did not initialize")
+      IO.pure(Result<&1,&1,U32 & String,U32>, Done{handle})
+
+def fixture_peer(+dir: String, +stderr: String, +file: String, +unreadable: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  do IO<Result<&1,&1,U32 & String,U32>>:
+    script : String <- command_output(["/bin/realpath", "bend2/test/storage-peer.py"])
+    child : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/usr/bin/env", "python3", script, file, unreadable]), dir, stderr)
+    peer_ready(child)
 
 def spawned_holder(result: Result<&1,&1,U32 & String,U32>, +dir: String) -> IO(Unit):
   match result:
@@ -260,12 +277,12 @@ def process_checks(+root: String) -> IO(Unit):
   do IO<Unit>:
     +dir : String = root ++ "/proc-parent"
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
-    spawned : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/usr/bin/env", "python3", "-c", "import signal; signal.pause()"]), dir, dir ++ "/stderr")
+    spawned : Result<&1,&1,U32 & String,U32> <- fixture_peer(dir, dir ++ "/stderr", "", "0")
     unit : Unit <- spawned_process(spawned, dir)
     +held : String = dir ++ "/held"
     wrote : Unit <- write_file(held, "x")
     +held_path : String <- command_output(["/bin/realpath", "-m", held])
-    holder : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sh", "-c", held_file_script(held_path)]), dir, dir ++ "/holder.stderr")
+    holder : Result<&1,&1,U32 & String,U32> <- fixture_peer(dir, dir ++ "/holder.stderr", held_path, "0")
     unit2 : Unit <- spawned_holder(holder, dir)
     IO.pure(Unit, unit2)
 
@@ -285,7 +302,6 @@ def spawned_writer_apply_refusal(result: Result<&1,&1,U32 & String,U32>, +db: St
     case Fail{error}: IO.die(Unit, 1, "writer fixture spawn failed")
     case Done{+handle}:
       do IO<Unit>:
-        slept : Unit <- IO.sleep(100)
         +specs : List<&2,L.RootSpec> = Con{L.RootSpec{T.LogEvidence{}, dir, ""}, Nil{}}
         +exclusive : List<&2,String> = Con{dir, Nil{}}
         +unproven : String = L.unproven_roots(specs, exclusive, "")
@@ -304,7 +320,7 @@ def writer_lease_check(+db: String, +root: String) -> IO(Unit):
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
     +file : String = dir ++ "/writer-owned.txt"
     wrote : Unit <- write_file(file, "keep")
-    spawned : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sh", "-c", held_file_script(file), "sh", file]), ".", dir ++ "/writer.stderr")
+    spawned : Result<&1,&1,U32 & String,U32> <- fixture_peer(".", dir ++ "/writer.stderr", file, "0")
     spawned_writer_apply_refusal(spawned, db, dir, file)
 
 def database_checks(+db: String, +root: String) -> IO(Unit):
@@ -363,9 +379,6 @@ def database_malformed_check(+db: String, +root: String) -> IO(Unit):
     b : Unit <- check("malformed-endpoint-unknown", presence_unknown(facts_database_or_unknown(facts)), "malformed endpoint produced known database evidence")
     IO.pure(Unit, Unit{})
 
-def unknown_peer_script() -> String:
-  "import ctypes,signal; getattr(ctypes.CDLL(None),'prctl',lambda *args: 0)(4,0,0,0,0); signal.pause()"
-
 def check_unknown_presence(presence: T.Presence) -> IO(Unit):
   match presence:
     case T.Unknown{}: check("unknown-without-match", True{}, "unknown")
@@ -376,12 +389,11 @@ def spawned_unknown_holder(result: Result<&1,&1,U32 & String,U32>, +dir: String,
     case Fail{error}: IO.die(Unit, 1, "unknown peer spawn failed")
     case Done{+handle}:
       do IO<Unit>:
-        slept : Unit <- IO.sleep(100)
         absent : T.Presence <- O.runtime_presence(dir)
         unknown_ok : Unit <- check_unknown_presence(absent)
         signaled : Unit <- IO.try(Unit, Proc.ProcessChild.signal(handle, 15))
         waited : String <- IO.try(String, Proc.ProcessChild.wait(handle))
-        holder : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sh", "-c", held_file_script(database), "sh", database]), ".", dir ++ ".holder.stderr")
+        holder : Result<&1,&1,U32 & String,U32> <- fixture_peer(".", dir ++ ".holder.stderr", database, "0")
         held : Unit <- spawned_holder(holder, dir)
         IO.pure(Unit, held)
 
@@ -403,15 +415,14 @@ def spawned_presence_precedence(result: Result<&1,&1,U32 & String,U32>, +dir: St
     case Fail{error}: IO.die(Unit, 1, "unknown peer spawn failed")
     case Done{+unknown_handle}:
       do IO<Unit>:
-        slept : Unit <- IO.sleep(100)
-        holder : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/usr/bin/env", "python3", "-c", "import signal; signal.pause()"]), dir, dir ++ ".cwd-holder.stderr")
+        holder : Result<&1,&1,U32 & String,U32> <- fixture_peer(dir, dir ++ ".cwd-holder.stderr", "", "0")
         spawned_positive_holder(holder, unknown_handle, dir)
 
 def positive_precedence_check(+root: String) -> IO(Unit):
   do IO<Unit>:
     +dir : String = root ++ "/positive-precedence"
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
-    unknown : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/usr/bin/env", "python3", "-c", unknown_peer_script()]), ".", dir ++ ".unknown.stderr")
+    unknown : Result<&1,&1,U32 & String,U32> <- fixture_peer(".", dir ++ ".unknown.stderr", "", "1")
     spawned_presence_precedence(unknown, dir)
 
 def unlinked_holder_check(+root: String) -> IO(Unit):
@@ -421,7 +432,7 @@ def unlinked_holder_check(+root: String) -> IO(Unit):
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
     +database : String = dir ++ "/orchestra.db"
     wrote : Unit <- write_file(database, "payload")
-    spawned : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/usr/bin/env", "python3", "-c", unknown_peer_script()]), ".", dir ++ ".unknown.stderr")
+    spawned : Result<&1,&1,U32 & String,U32> <- fixture_peer(".", dir ++ ".unknown.stderr", "", "1")
     spawned_unknown_holder(spawned, dir, database)
 
 def exclusive_check() -> IO(Unit):
