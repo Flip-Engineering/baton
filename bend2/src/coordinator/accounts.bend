@@ -826,8 +826,8 @@ type EntryState is Data:
 
 def gate_state(gate: UW.Gate) -> EntryState:
   match gate:
-    case UW.GateHeld{window,resets_at,source,receipt}: Es{"held","held by live read " ++ receipt ++ ": window " ++ window ++ ", provider reset " ++ resets_at ++ ", source " ++ source,receipt}
-    case UW.GateUnknown{source,reason,receipt}: Es{"unknown","usage unreadable by live read " ++ receipt ++ ": " ++ source ++ ": " ++ reason,receipt}
+    case UW.GateHeld{window,resets_at,source,+receipt}: Es{"held","held by live read " ++ receipt ++ ": window " ++ window ++ ", provider reset " ++ resets_at ++ ", source " ++ source,receipt}
+    case UW.GateUnknown{source,reason,+receipt}: Es{"unknown","usage unreadable by live read " ++ receipt ++ ": " ++ source ++ ": " ++ reason,receipt}
     case UW.GateNone{}: Es{"open","open: no live read holds it",""}
 
 # read selects a live read of the entry before the decision. A launch that follows a
@@ -916,7 +916,7 @@ def announce_holds(+db: String, +session: String, +provider: String, +model: Str
   match labels:
     case Nil{}: IO.pure(Unit,Unit{})
     case +label <> rest: do IO<Unit>:
-      gate : UW.Gate <- Bool.pick(IO(UW.Gate),String.is_empty(label),IO.pure(UW.Gate,UW.GateNone{}),UW.decide(db,provider,label,model))
+      +gate : UW.Gate <- Bool.pick(IO(UW.Gate),String.is_empty(label),IO.pure(UW.Gate,UW.GateNone{}),UW.decide(db,provider,label,model))
       noted : Unit <- Bool.pick(IO(Unit),Bool.or(String.is_empty(label),Bool.not(UW.gate_held(gate))),IO.pure(Unit,Unit{}),UW.announce(db,session,provider,label,model,gate))
       announce_holds(db,session,provider,model,rest)
 
