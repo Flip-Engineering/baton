@@ -150,27 +150,27 @@ def selection_resolved(result: Result<&1,&1,U32 & String,String>, +path: String,
     case Done{target}:
       Bool.pick(IO(T.Presence), path_contains(path, target), IO.pure(T.Presence, T.Present{link}), next(unknown))
 
-def baton_link_kind(+directory: String, name: String, rest: List<&2,O.Child>, +path: String,
-                    unknown: Bool, symlink: Bool) -> IO(T.Presence):
+def baton_link_kind(directory: String, name: String, path: String,
+                    unknown: Bool, symlink: Bool, next: Bool -> IO(T.Presence)) -> IO(T.Presence):
   match symlink:
-    case False{}: baton_links(directory, rest, path, True{})
+    case False{}: next(True{})
     case True{}: do IO<T.Presence>:
       +link : String = directory ++ "/" ++ name
       target : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(link)
-      selection_resolved(target, path, link,
-        next_unknown => baton_links(directory, rest, path, next_unknown), unknown)
+      selection_resolved(target, path, link, next, unknown)
 
-def baton_link_named(+directory: String, kind: String, name: String, rest: List<&2,O.Child>,
-                     +path: String, unknown: Bool, named: Bool) -> IO(T.Presence):
+def baton_link_named(directory: String, kind: String, name: String,
+                     path: String, unknown: Bool, named: Bool, next: Bool -> IO(T.Presence)) -> IO(T.Presence):
   match named:
-    case False{}: baton_links(directory, rest, path, unknown)
-    case True{}: baton_link_kind(directory, name, rest, path, unknown, String.eq(kind, "symlink"))
+    case False{}: next(unknown)
+    case True{}: baton_link_kind(directory, name, path, unknown, String.eq(kind, "symlink"), next)
 
 def baton_links(+directory: String, entries: List<&2,O.Child>, +path: String, unknown: Bool) -> IO(T.Presence):
   match entries:
     case Nil{}: IO.pure(T.Presence, Bool.pick(T.Presence, unknown, T.Unknown{}, T.Absent{}))
     case O.Child{kind, +name} <> rest:
-      baton_link_named(directory, kind, name, rest, path, unknown, baton_command(name))
+      baton_link_named(directory, kind, name, path, unknown, baton_command(name),
+        next_unknown => baton_links(directory, rest, path, next_unknown))
 
 def baton_scanned(scan: O.Scan, +directory: String, +path: String) -> IO(T.Presence):
   match scan:
