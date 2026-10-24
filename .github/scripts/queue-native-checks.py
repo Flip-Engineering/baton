@@ -13,7 +13,9 @@ import sys
 import time
 import uuid
 
-CLIENT = '/mnt/nvme4tb/ci-runners/baton2-native-homelab/retained/compile-queue-398d73b9-20261021/bin/baton-compile-queue'
+# The queue installs the same client here and in its retained directory; only this path is
+# reachable from every homelab runner (each runner service binds /var/tmp/baton2-compile-queue).
+CLIENT = '/var/tmp/baton2-compile-queue/compile-queue-runner'
 STATE = '/var/tmp/baton2-compile-queue'
 SCRIPT = str(Path(__file__).resolve())
 
