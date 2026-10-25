@@ -2,7 +2,6 @@ name: bend2-native-development
 
 'on':
   pull_request:
-    branches: [bend2-rewrite, main]
     paths:
       - '.github/workflows/bend2-native.yml'
       - '.github/scripts/record-native-checks.py'
@@ -14,6 +13,7 @@ name: bend2-native-development
       - 'LICENSE'
       - 'NOTICE'
       - 'bend2/src/**'
+      - 'bend2/test/**'
       - 'bend2/scripts/build-native.sh'
       - 'bend2/scripts/package-native.py'
       - 'bend2/scripts/stage-repl-compiler.py'
