@@ -270,15 +270,13 @@ class AccountOrderFallback(unittest.TestCase):
         self.bind('claude-max-incognito')
         self.windows('max-incognito', EXHAUSTED)
         self.windows('max-primary', OPEN)
+        completed = self.entry('read', 'leaf', 'claude-max-incognito', HELPER)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_failed_account_append_aborts_launch(self):
         self.launch_failure_setup()
         sidecar = pathlib.Path(str(self.db) + '.account-' + 'leaf'.encode().hex())
-        sidecar.unlink()
-        sidecar.mkdir()
-        # The profile supplies the original label when the account file cannot be read.
-        record = pathlib.Path(str(self.db) + '.profile-' + 'leaf'.encode().hex())
-        record.write_text(' claude-code claude-max-incognito {}\n'.format(self.store('max-incognito')))
+        sidecar.chmod(0o400)
         completed = self.entry('wake', 'leaf', HELPER)
         self.assertNotEqual(completed.returncode, 0, completed.stdout)
         self.assertIn('Account move failed', completed.stderr)
@@ -323,13 +321,14 @@ class AccountOrderFallback(unittest.TestCase):
         self.execute("INSERT INTO sessions(id,parent,harness,model) VALUES('middle','root','claude-code','claude-opus-5-5')")
         self.execute("UPDATE sessions SET parent='middle' WHERE id='leaf'")
         self.windows('max-incognito', OPEN)
+        before = self.current('leaf')
         self.execute("""CREATE TRIGGER reject_root_move BEFORE INSERT ON messages
                         WHEN NEW.id LIKE '%:account-move:root'
                         BEGIN SELECT RAISE(ABORT,'fixture root announcement failed'); END""")
         completed = self.entry('handoff-with', 'leaf', 'sql-failure', CREDIT_EVENT, HELPER)
         self.assertNotEqual(completed.returncode, 0, completed.stdout)
         self.assertIn('fixture root announcement failed', completed.stderr)
-        self.assertEqual(self.current('leaf'), '')
+        self.assertEqual(self.current('leaf'), before)
         self.assertFalse(self.query("SELECT id FROM messages WHERE body LIKE 'account move:%'"))
         self.execute('DROP TRIGGER reject_root_move')
         completed = self.entry('handoff-with', 'leaf', 'sql-failure', CREDIT_EVENT, HELPER)
