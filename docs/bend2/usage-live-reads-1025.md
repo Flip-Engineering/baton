@@ -121,18 +121,21 @@ account:
 
 ## Read triggers
 
-One read serves every seat on a provider account: several seats on one z.ai plan
-share each read. A read runs on these events:
+Live admission reads run when there is input to admit or a hold to release. Each
+qualifying event performs a fresh live read of the provider account. One read
+supplies decision input for every seat on that account: several seats on one
+z.ai plan share each read. The qualifying events are:
 
 - a provider exhaustion terminal (a 429, a quota message or a balance error) reads
   the refused account at once;
-- every admission reads the seat's own provider and account;
+- an admission with input to admit or a hold to release reads the seat's own
+  provider and account;
 - a held wake starts a detached continuation when the provider reports a reset of
   the held window strictly in the future. It sleeps until that instant and enters
   the wake path, which reads the provider again. A passed or absent reset is
   reported to the orchestrator with the owed message; the orchestrator can request
   `usage-window-refresh` or deliver further input;
-- `usage-window-refresh SESSION`.
+- an explicit `usage-window-refresh SESSION`.
 
 ## Announcements and admission
 
