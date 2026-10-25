@@ -54,6 +54,21 @@ def zai_source() -> String:
 def zai_doc(+percent: String, +resets: String, +exhausted: String) -> String:
   "{\"schema\":\"baton2-usage-read-v1\",\"provider\":\"zai\",\"source\":\"" ++ zai_source() ++ "\",\"observedAt\":1,\"state\":\"read\",\"windows\":[{\"window\":\"5-hour\",\"usedPercent\":" ++ percent ++ ",\"resetsAt\":" ++ resets ++ ",\"exhausted\":" ++ exhausted ++ "},{\"window\":\"7-day\",\"usedPercent\":20,\"resetsAt\":1793386764984,\"exhausted\":false}]}"
 
+def run_ok(outcome: T.RunRes) -> Bool:
+  match outcome:
+    case T.RRun{T.SExit{0},out}: True{}
+    case _: False{}
+
+def run_text(outcome: T.RunRes) -> String:
+  match outcome:
+    case T.RRun{status,out}: out
+    case T.RSpawn{detail}: detail
+
+def wait_mark(+db: String, +message: String) -> IO(Unit):
+  do IO<Unit>:
+    ran : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","IFS= read -r frame < \"$1\" && [ \"$frame\" = \"$2\" ]","sh",db ++ ".wake-complete",message]),".")
+    expect("release-wake-completes",run_ok(Tx.run_res(ran)))
+
 def answer(+path: String, +document: String) -> IO(Unit):
   do IO<Unit>:
     ran : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","printf '%s' \"$1\" > \"$2\"","sh",document,path]),".")
@@ -66,6 +81,8 @@ def setup(+db: String, +answer_path: String) -> IO(Unit):
     accounts : Unit <- query(db,"CREATE TABLE IF NOT EXISTS accounts (id TEXT PRIMARY KEY NOT NULL,provider TEXT NOT NULL,harness TEXT NOT NULL,funding TEXT NOT NULL,secret_ref TEXT NOT NULL,organization TEXT NOT NULL DEFAULT '',verified_at TEXT NOT NULL DEFAULT '');INSERT INTO accounts(id,provider,harness,funding,secret_ref) VALUES('acct-zai','zai','omp','api_key'," ++ C.q("file:" ++ answer_path) ++ "),('acct-codex','codex','codex','api_key'," ++ C.q("file:" ++ answer_path) ++ "),('acct-claude','claude','claude-code','api_key'," ++ C.q("file:" ++ answer_path) ++ ");")
     owed : Unit <- query(db,"INSERT INTO messages(id,sender,recipient,kind,body) VALUES('m-b','coord','b','guidance','owed input for b');")
     marks : Unit <- query(db,"CREATE TABLE IF NOT EXISTS wake_marks(message TEXT NOT NULL);")
+    signal : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/usr/bin/mkfifo",db ++ ".wake-complete"]),".")
+    ready : Unit <- expect("wake-completion-channel-created",run_ok(Tx.run_res(signal)))
     IO.pure(Unit,Unit{})
 
 def state_of(+db: String, +seat: String, +account: String) -> IO(UW.Gate):
@@ -131,7 +148,7 @@ def release_case(+db: String, +helper: String, +path: String) -> IO(Unit):
     gate : UW.Gate <- UW.window_gate_with(db,"a","acct-zai",helper)
     open : Unit <- expect("open-read-releases",String.eq(gate_class(gate),"none"))
     released : Unit <- expect_read(db,"SELECT group_concat(id||'>'||recipient,',') FROM (SELECT id,recipient FROM messages WHERE id GLOB 'usage-read:2:release:*' ORDER BY id);","usage-read:2:release:a>coord,usage-read:2:release:a:root>root,usage-read:2:release:b>coord,usage-read:2:release:b:root>root\n","release-announced-for-each-held-seat")
-    waited : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","i=0; while [ $i -lt 50 ]; do [ \"$(sqlite3 \"$1\" 'SELECT count(*) FROM wake_marks;')\" = 1 ] && exit 0; sleep 0.1; i=$((i+1)); done; exit 1","sh",db]),".")
+    waited : Unit <- wait_mark(db,"m-b")
     woke : Unit <- expect_read(db,"SELECT group_concat(message) FROM wake_marks;","m-b\n","other-seat-owed-input-woken")
     b_gate : UW.Gate <- state_of(db,"b","acct-zai")
     b_open : Unit <- expect("released-seat-open",String.eq(gate_class(b_gate),"none"))
@@ -180,21 +197,6 @@ def malformed_case(+db: String, +helper: String, +path: String) -> IO(Unit):
     mismatch : Unit <- UW.read_refused_with(db,"k","acct-codex","att-o",helper)
     +third : String <- last_reason(db)
     expect("provider-mismatch-unreadable",String.eq(third,"unreadable|the usage-read document is not a baton2-usage-read-v1 read for provider codex"))
-
-def run_ok(outcome: T.RunRes) -> Bool:
-  match outcome:
-    case T.RRun{T.SExit{0},out}: True{}
-    case _: False{}
-
-def run_text(outcome: T.RunRes) -> String:
-  match outcome:
-    case T.RRun{status,out}: out
-    case T.RSpawn{detail}: detail
-
-def wait_mark(+db: String) -> IO(Unit):
-  do IO<Unit>:
-    ran : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","i=0; while [ $i -lt 100 ]; do [ \"$(sqlite3 \"$1\" 'SELECT count(*) FROM wake_marks;')\" = 1 ] && exit 0; sleep 0.05; i=$((i+1)); done; exit 1","sh",db]),".")
-    expect("release-wake-completes",run_ok(Tx.run_res(ran)))
 
 # The sample clock is supplied by the reader and may precede insertion order.
 def sample(+db: String, +account: String, +observed: String, +exhausted: String) -> IO(Unit):
@@ -251,7 +253,7 @@ def release_retry_case(+db: String) -> IO(Unit):
     pending : Unit <- expect_read(db,UW.held_seats_sql("zai","retry","a"),"b\n","failed-release-wake-remains-eligible")
     unannounced : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id GLOB 'usage-read:*:release:b*';","0\n","failed-launch-keeps-release-pending")
     retry : Unit <- UW.release_open(db,self,db,"b","zai","retry")
-    waited : Unit <- wait_mark(db)
+    waited : Unit <- wait_mark(db,"m-b")
     woke : Unit <- expect_read(db,"SELECT message FROM wake_marks;","m-b\n","retried-release-launches-owed-input")
     expect_read(db,UW.held_seats_sql("zai","retry","a"),"","successful-release-finishes-eligibility")
 
@@ -331,13 +333,19 @@ def run(+db: String, +helper: String) -> IO(Unit):
     nine : Unit <- model_scope_case(db,helper,path)
     IO.print("fixture-usage-live-reads-ok")
 
+def complete_mark(+db: String, +message: String) -> IO(Unit):
+  do IO<Unit>:
+    marked : Unit <- query(db,"INSERT INTO wake_marks(message) VALUES(" ++ C.q(message) ++ ");")
+    signaled : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","printf '%s\\n' \"$2\" > \"$1\"","sh",db ++ ".wake-complete",message]),".")
+    expect("release-wake-signaled",run_ok(Tx.run_res(signaled)))
+
 def main_args(args: List<String>) -> IO(Unit):
   match args:
     case "--case" <> +name <> +db <> +helper <> Nil{}: do IO<Unit>:
       ready : Unit <- setup(db,db ++ ".answer")
       regression(name,db,helper,db ++ ".answer")
     case "--read-account" <> +db <> +helper <> +account <> Nil{}: UW.read_with(db,"a","zai",account,helper,"fixture-child")
-    case "--wake-message" <> +db <> +message <> Nil{}: query(db,"INSERT INTO wake_marks(message) VALUES(" ++ C.q(message) ++ ");")
+    case "--wake-message" <> +db <> +message <> Nil{}: complete_mark(db,message)
     case +db <> +helper <> Nil{}: run(db,helper)
     case other: IO.die(Unit,2,"usage: usage-live-reads DB HELPER")
 

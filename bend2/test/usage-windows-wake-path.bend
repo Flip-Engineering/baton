@@ -25,6 +25,7 @@ import ../src/host/sqlite.bend as DB
 import ../src/host/session-lock.bend as Lock
 import ../src/git/text.bend as Tx
 import ../src/git/process.bend as Proc
+import ../src/git/types.bend as T
 
 def expect(+label: String, is_ok: Bool) -> IO(Unit):
   Bool.pick(IO(Unit),is_ok,IO.print("fixture-window-wake-path " ++ label ++ ": ok"),IO.die(Unit,1,"fixture-window-wake-path " ++ label ++ ": refused"))
@@ -42,10 +43,26 @@ def expect_read(+db: String, +text: String, +expected: String, +label: String) -
     value : String <- read(db,text)
     expect(label,String.eq(value,expected))
 
+def run_ok(outcome: T.RunRes) -> Bool:
+  match outcome:
+    case T.RRun{T.SExit{0},out}: True{}
+    case _: False{}
+
+def signal_delivery(+db: String, +message: String) -> IO(Unit):
+  do IO<Unit>:
+    sent : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","printf '%s\\n' \"$2\" > \"$1\"","sh",db ++ ".delivery-complete",message]),".")
+    expect("delivery-signaled",run_ok(Tx.run_res(sent)))
+
+def await_delivery(+db: String, +message: String) -> IO(Unit):
+  do IO<Unit>:
+    received : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","IFS= read -r frame < \"$1\" && [ \"$frame\" = \"$2\" ]","sh",db ++ ".delivery-complete",message]),".")
+    expect("delivery-completes",run_ok(Tx.run_res(received)))
+
 def deliver_record(+db: String, +target: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    pending : String <- read(db,"SELECT count(*) FROM messages WHERE id=" ++ C.q(target) ++ " AND " ++ C.owed_sql("messages") ++ ";")
+    +pending : String <- read(db,"SELECT count(*) FROM messages WHERE id=" ++ C.q(target) ++ " AND " ++ C.owed_sql("messages") ++ ";")
     delivered : Unit <- Bool.pick(IO(Unit),String.eq(pending,"1\n"),query(db,"INSERT OR IGNORE INTO wake_deliveries(message,receipt) VALUES(" ++ C.q(target) ++ ",'delivered');"),IO.pure(Unit,Unit{}))
+    signaled : Unit <- Bool.pick(IO(Unit),Bool.and(String.eq(pending,"1\n"),String.eq(target,"m-early")),signal_delivery(db,target),IO.pure(Unit,Unit{}))
     IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
 
 def deliver_test(+db: String) -> String -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -63,6 +80,8 @@ def setup(+db: String) -> IO(Unit):
     root : Unit <- query(db,"INSERT OR IGNORE INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('root',NULL,'omp','','','','');")
     deliveries : Unit <- query(db,"CREATE TABLE IF NOT EXISTS wake_deliveries(message TEXT PRIMARY KEY NOT NULL, receipt TEXT NOT NULL);")
     checks : Unit <- query(db,"CREATE TABLE IF NOT EXISTS wake_held_checks(id TEXT PRIMARY KEY NOT NULL);")
+    signal : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/usr/bin/mkfifo",db ++ ".delivery-complete"]),".")
+    ready : Unit <- expect("delivery-completion-channel-created",run_ok(Tx.run_res(signal)))
     IO.pure(Unit,Unit{})
 
 # One live read of a provider's 5-hour window for the default account.
@@ -127,7 +146,7 @@ def open_case(+db: String) -> IO(Unit):
     owed : Unit <- message(db,"early","m-early","")
     held : Result<&1,&1,U32 & String,Unit> <- drive(db,"early")
     opened : Unit <- open_read(db,"early")
-    waited : Unit <- sleep_ms("3")
+    waited : Unit <- await_delivery(db,"m-early")
     once : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-early';","1\n","open-read-delivery-once")
     released : Unit <- expect_read(db,hold_reports_sql("early","release"),"1\n","open-read-release-reported")
     expect_read(db,"SELECT count(*) FROM messages WHERE id='m-early' AND receipt IS NOT NULL;","0\n","open-read-keeps-stored-receipt-empty")
