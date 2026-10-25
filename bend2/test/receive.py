@@ -5019,7 +5019,7 @@ class Receive(unittest.TestCase):
         self.player(harness='dsh')
         config_path = self.directory / 'fixture.json'
         config = json.loads(config_path.read_text())
-        config.update(record_launches=True, ack_root=False)
+        config.update(record_launches=True, read_root=False)
         config_path.write_text(json.dumps(config))
         self.prepare_input('first', 'parent', 'Complete the original input.', kind='task')
         self.connect('parent')
@@ -5066,9 +5066,12 @@ class Receive(unittest.TestCase):
         self.child_communication(resume)
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.assertIn(body, [row['reportBody'] for row in self.coord('turns', 'parent')])
+        self.assertTrue(read_recorded(self.db, 'first', 'parent'))
+        self.assertTrue(read_recorded(self.db, 'second', 'parent'))
         with sqlite3.connect(self.db) as database:
-            self.assertEqual([row[0] for row in database.execute(
-                "SELECT id FROM messages WHERE recipient='parent' AND receipt IS NULL")], [])
+            self.assertEqual(database.execute(
+                "SELECT id,receipt FROM messages WHERE recipient='parent' ORDER BY seq").fetchall(),
+                [('first', None), ('second', None)])
             ended = database.execute(
                 "SELECT count(*) FROM messages WHERE sender='parent' "
                 "AND body LIKE '%unknown after keeper loss%'").fetchone()[0]
@@ -5086,7 +5089,7 @@ class Receive(unittest.TestCase):
         self.player(harness='dsh')
         config_path = self.directory / 'fixture.json'
         config = json.loads(config_path.read_text())
-        config.update(record_launches=True, ack_root=False)
+        config.update(record_launches=True, read_root=False)
         config_path.write_text(json.dumps(config))
         self.prepare_input('assignment', 'parent', 'Complete the assignment.', kind='task')
         self.prepare_input('note', 'parent', 'Use the shared worktree.')
@@ -5120,6 +5123,8 @@ class Receive(unittest.TestCase):
         self.finish(resume)
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.assertIn(body, [row['reportBody'] for row in self.coord('turns', 'parent')])
+        self.assertTrue(read_recorded(self.db, 'assignment', 'parent'))
+        self.assertTrue(read_recorded(self.db, 'note', 'parent'))
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
 
