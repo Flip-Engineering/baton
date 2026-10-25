@@ -16,11 +16,16 @@ helper; its version-specific payload is described in [installation](installation
 The helper has no repository allowlist. For a credential request to
 `github.com/OWNER/NAME`, the helper looks up the App installation of the account
 `OWNER` with `GET /repos/OWNER/NAME/installation`, using the App JWT. It then
-mints an installation access token for that installation. The token has
-`contents:write`, `pull_requests:write` and `metadata:read` permissions and no
+mints an installation access token for that installation. The token request
+specifies `contents:write`, `pull_requests:write` and `metadata:read` permissions and no
 repository restriction, so it carries the repositories that the account granted
 the App. Each account owner has its own installation. Adding the App to another
 owner requires no change to the registry or the helper.
+
+The public identity, installation and issued token must include those three
+minimum permissions. Additional grants, including `workflows:write` and
+`actions:read`, are accepted. The token request keeps the three Git permissions.
+A missing or weaker required permission produces a refusal naming its level.
 
 If the App is not installed for `OWNER`, the helper refuses with a message that
 names the App slug and the owner. The helper does not fall back to another
