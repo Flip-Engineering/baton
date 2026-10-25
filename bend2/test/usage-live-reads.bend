@@ -228,7 +228,7 @@ def codex_limit_type_case(+db: String, +helper: String, +path: String) -> IO(Uni
   do IO<Unit>:
     initial : UW.Gate <- state_of(db,"k","acct-codex")
     unheld : Unit <- expect("codex-reported-limit-starts-unheld",Bool.not(String.eq(gate_class(initial),"held")))
-    limited : Unit <- codex_answer_raw(db,path,codex_snapshot_with_limit("null","15","\"primary\""))
+    limited : Unit <- codex_answer_raw(db,path,codex_snapshot_with_limit("null","15","\"rate_limit_reached\""))
     refused : Unit <- UW.read_refused_with(db,"k","acct-codex","att-reported-limit",helper)
     held : UW.Gate <- state_of(db,"k","acct-codex")
     exhausted : Unit <- expect("codex-null-permission-reported-limit-holds",String.eq(gate_class(held),"held"))
@@ -237,7 +237,11 @@ def codex_limit_type_case(+db: String, +helper: String, +path: String) -> IO(Uni
     reread : Unit <- UW.read_refused_with(db,"k","acct-codex","att-unknown-after-limit",helper)
     retained : UW.Gate <- state_of(db,"k","acct-codex")
     kept : Unit <- expect("codex-unreported-permission-keeps-reported-limit-hold",String.eq(gate_class(retained),"held"))
-    expect_read(db,"SELECT state FROM usage_reads ORDER BY id DESC LIMIT 1;","unreadable\n","codex-no-limit-permission-recorded-unreadable")
+    unreadable : Unit <- expect_read(db,"SELECT state FROM usage_reads ORDER BY id DESC LIMIT 1;","unreadable\n","codex-no-limit-permission-recorded-unreadable")
+    allowed : Unit <- codex_answer_raw(db,path,codex_snapshot_with_limit("true","100","\"rate_limit_reached\""))
+    permitted : Unit <- UW.read_refused_with(db,"k","acct-codex","att-permitted-with-limit",helper)
+    released : UW.Gate <- state_of(db,"k","acct-codex")
+    expect("codex-affirmative-permission-releases-with-reported-limit",String.eq(gate_class(released),"none"))
 
 def codex_unknown_permission_case(+db: String, +helper: String, +path: String) -> IO(Unit):
   do IO<Unit>:

@@ -13,8 +13,9 @@
 # resetsAt is in Unix seconds. The generated schema states that ordinaryUsageAllowed is
 # the backend's permission for ordinary included usage and that a client must not
 # infer recovery from percentages or reset times when it is null. A false value marks
-# every window exhausted. A reported rateLimitReachedType also marks every window
-# exhausted. An unavailable permission with no reached limit makes the read unreadable
+# every window exhausted. A true permission marks every window open. When permission
+# is unavailable, a reported rateLimitReachedType marks every window exhausted.
+# An unavailable permission with no reached limit makes the read unreadable
 # and preserves an existing hold. This module only extracts fields; the first parser
 # of this shape is commit 0401a13e5.
 import Base
@@ -38,7 +39,7 @@ def codex_window_name_sql(+minutes: String) -> String:
   "CASE " ++ minutes ++ " WHEN 300 THEN '5-hour' WHEN 10080 THEN '7-day' ELSE CASE WHEN " ++ minutes ++ " IS NULL THEN 'unnamed' ELSE " ++ minutes ++ " || '-minute' END END"
 
 def codex_exhausted_sql(+result: String) -> String:
-  "(json_type(" ++ result ++ ",'$.ordinaryUsageAllowed')='false' OR coalesce(json_type(" ++ result ++ ",'$.rateLimits.rateLimitReachedType'),'')='text')"
+  "(json_type(" ++ result ++ ",'$.ordinaryUsageAllowed')='false' OR (coalesce(json_type(" ++ result ++ ",'$.ordinaryUsageAllowed'),'')<>'true' AND coalesce(json_type(" ++ result ++ ",'$.rateLimits.rateLimitReachedType'),'')='text'))"
 
 # The windows array of the read contract from the primary and secondary windows.
 def codex_windows_sql(+result: String) -> String:
