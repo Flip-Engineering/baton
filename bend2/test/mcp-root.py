@@ -447,7 +447,8 @@ class McpRoot(unittest.TestCase):
         # Initialization replays the pending report.
         notification = read_mcp(proc)
         self.assertEqual(notification['method'], 'notifications/claude/channel')
-        self.assertIn('Worker completed the task.', notification['params']['content'])
+        self.assertIn('baton2_delivery', notification['params']['content'])
+        self.assertNotIn('Worker completed the task.', notification['params']['content'])
         self.assertEqual(json.loads(notification['params']['meta']['messageIds']), ['turn-1'])
         self.assertTrue(all(isinstance(value, str) for value in notification['params']['meta'].values()))
 
@@ -466,7 +467,8 @@ class McpRoot(unittest.TestCase):
             self.assertIsNone(json.loads(self.coord('delivery', row['id']))['receipt'])
         note = read_mcp(proc)
         self.assertEqual(json.loads(note['params']['meta']['messageIds']), ['after'])
-        self.assertIn('After attachment.', note['params']['content'])
+        self.assertIn('baton2_delivery', note['params']['content'])
+        self.assertNotIn('After attachment.', note['params']['content'])
 
     def test_tool_status_returns_sessions(self):
         self.coord('attach', 'root', 'claude-code', 'root-session', 'root-endpoint')

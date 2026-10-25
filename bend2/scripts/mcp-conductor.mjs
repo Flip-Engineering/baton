@@ -894,7 +894,7 @@ let deliveryReady = null;
 let channelReady = false;
 let connectionCustody = null;
 let nativePrompt = null;
-let notifiedSeqs = new Set();
+let inputNotice = null;
 let deliveryServer = null;
 let db = null;
 
@@ -905,44 +905,49 @@ function openDb() {
   return db;
 }
 
-function pendingConductorMessages(messageId = null) {
+function pendingConductorMessage(messageId = null) {
   const conn = openDb();
-  if (!conn) return [];
+  if (!conn) return null;
   try {
-    const rows = conn.prepare(
-      `SELECT m.seq, m.id, m.sender, m.kind, m.body
+    return conn.prepare(
+      `SELECT m.id, s.native
        FROM messages m
        JOIN sessions s ON s.id = m.recipient
        WHERE s.id = ?
+         AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=s.id)
          AND NOT EXISTS(SELECT 1 FROM message_reads mr WHERE mr.message=m.id AND mr.recipient=m.recipient)
-         AND (? IS NULL OR m.id = ?)
-       ORDER BY m.seq`
-    ).all(sessionId, messageId, messageId);
-    return rows;
+         AND CASE WHEN ? IS NULL THEN m.seq=(
+           SELECT min(next.seq) FROM messages next WHERE next.recipient=s.id
+             AND NOT EXISTS(SELECT 1 FROM message_reads mr WHERE mr.message=next.id AND mr.recipient=next.recipient)
+         ) ELSE m.id=? END`
+    ).get(sessionId, messageId, messageId) ?? null;
   } catch (e) {
-    return [];
+    return null;
   }
 }
 
 function notifyPending(messageId = null) {
   if (!channelReady) return;
-  const messages = pendingConductorMessages(messageId);
-  const newMessages = messages.filter((m) => !notifiedSeqs.has(m.seq));
-  if (newMessages.length === 0) return;
-
-  for (const m of newMessages) {
-    notifiedSeqs.add(m.seq);
+  const message = pendingConductorMessage(messageId);
+  if (!message) {
+    if (messageId === null) inputNotice = null;
+    return;
   }
-
-  const content = newMessages.map((m) => {
-    const prefix = m.kind === 'report' ? 'Player report' : `Message (${m.kind})`;
-    return `${prefix} from ${m.sender} [id: ${m.id}]:\n${m.body}`;
-  }).join('\n\n---\n\n');
-
+  const key = JSON.stringify([message.native, nativePrompt, message.id]);
+  if (inputNotice?.key === key) return;
+  // The notice selects a stored message. Its complete read advances delivery.
   sendNotification('notifications/claude/channel', {
-    content,
-    meta: { recipient: sessionId, messageIds: JSON.stringify(newMessages.map((m) => m.id)) },
+    content: `Baton holds unread input. Read the complete stored message with baton2_delivery ${JSON.stringify({ id: message.id })}. Baton records the read and supplies the next unread input.`,
+    meta: { recipient: sessionId, messageIds: JSON.stringify([message.id]) },
   });
+  inputNotice = { key, id: message.id, native: message.native };
+}
+
+function continuePending() {
+  if (!channelReady) return;
+  const unread = inputNotice && pendingConductorMessage(inputNotice.id);
+  if (unread && unread.native === inputNotice.native) return;
+  notifyPending();
 }
 
 function observeNativeEvent(event, caller) {
@@ -960,11 +965,17 @@ function observeNativeEvent(event, caller) {
     throw new Error('The native hook belongs to a different Claude process.');
   }
   if (event.hook_event_name === 'PreToolUse') {
-    nativePrompt = event.prompt_id;
+    if (nativePrompt !== event.prompt_id) {
+      nativePrompt = event.prompt_id;
+      notifyPending();
+    }
     return;
   }
   process.stderr.write(JSON.stringify({ type: 'claudeNativeTurn', event }) + '\n');
-  if (nativePrompt === event.prompt_id) nativePrompt = null;
+  if (nativePrompt === event.prompt_id) {
+    nativePrompt = null;
+    notifyPending();
+  }
 }
 
 async function startDelivery() {
@@ -1432,6 +1443,7 @@ function handleToolCall(msg) {
     sendResponse(msg.id, {
       content: [{ type: 'text', text: result }],
     });
+    continuePending();
   } catch (e) {
     sendResponse(msg.id, {
       content: [{ type: 'text', text: `Error: ${e.message}` }],
