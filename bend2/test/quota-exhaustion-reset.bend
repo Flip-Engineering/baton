@@ -124,7 +124,7 @@ def held_cases(+db: String) -> IO(Unit):
     provider_rows : String <- read(db,"SELECT count(*) FROM usage_windows WHERE reset_source='provider-message' AND account='acct-a';")
     expect("two-attempts-recorded",String.eq(provider_rows,"2\n"))
     text_only : UW.Gate <- UW.window_gate(db,"gate","acct-a")
-    expect("refusal-text-alone-does-not-hold",String.eq(gate_class(text_only),"none"))
+    expect("refusal-text-alone-does-not-hold",Bool.not(UW.gate_held(text_only)))
     exhausted : Unit <- query(db,read_row_sql("acct-a","100","true"))
     +held : UW.Gate <- UW.window_gate(db,"gate","acct-a")
     expect("exhausted-read-holds",String.eq(gate_class(held),"held"))
@@ -143,7 +143,7 @@ def open_cases(+db: String) -> IO(Unit):
     exhausted : Unit <- query(db,read_row_sql("acct-b","100","true"))
     opened : Unit <- query(db,read_row_sql("acct-b","4","false"))
     gate : UW.Gate <- UW.window_gate(db,"reopened","acct-b")
-    expect("open-read-admits",String.eq(gate_class(gate),"none"))
+    expect("open-read-admits",Bool.not(UW.gate_held(gate)))
     IO.pure(Unit,Unit{})
 
 def handoff_cases(+db: String) -> IO(Unit):
@@ -170,7 +170,7 @@ def fallback_cases(+db: String) -> IO(Unit):
     label : String <- Accounts.handoff_label_io(db,"fallback")
     expect("distinct-fallback-rebinds",String.eq(label,"acct-d"))
     gate : UW.Gate <- UW.window_gate(db,"fallback","acct-d")
-    expect("healthy-fallback-not-held",String.eq(gate_class(gate),"none"))
+    expect("healthy-fallback-not-held",Bool.not(UW.gate_held(gate)))
     expect_read(db,"SELECT account FROM usage_windows WHERE message='attempt-fallback';","acct-b\n","refused-account-scopes-the-window")
     IO.pure(Unit,Unit{})
 

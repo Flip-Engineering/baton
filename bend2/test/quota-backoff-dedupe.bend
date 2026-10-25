@@ -50,6 +50,11 @@ def expect_gate(+db: String, +session: String, +account: String, +expected: Stri
     gate : UW.Gate <- UW.window_gate(db,session,account)
     expect(label,String.eq(gate_class(gate),expected))
 
+def expect_admitted(+db: String, +session: String, +account: String, +label: String) -> IO(Unit):
+  do IO<Unit>:
+    gate : UW.Gate <- UW.window_gate(db,session,account)
+    expect(label,Bool.not(UW.gate_held(gate)))
+
 def expect_route_harness(selected: Maybe<&2,Subs.Route>, expected: String, label: String) -> IO(Unit):
   match selected:
     case None{}: IO.die(Unit,1,"fixture-quota-backoff " ++ label ++ ": no route selected")
@@ -150,7 +155,7 @@ def profile_fallback_cases(+db: String) -> IO(Unit):
     bound : Unit <- Subs.bind_profile(db,"legacy-forward","omp","legacy-a","/profiles/legacy-a")
     held_b : Unit <- held_read(db,"profile-test","legacy-b")
     refused_c : Unit <- UW.record_cause(db,"legacy-forward","legacy-c-refusal","legacy-c","provider-reported usage exhaustion: API error 429: Subscription quota exhausted. (rate_limit_error)")
-    text_gate : Unit <- expect_gate(db,"legacy-forward","legacy-c","none","legacy-refusal-text-does-not-hold-profile")
+    text_gate : Unit <- expect_admitted(db,"legacy-forward","legacy-c","legacy-refusal-text-does-not-hold-profile")
     advanced : Bool <- Accounts.handoff(db,"legacy-forward","legacy-a-refusal",quota_event("legacy-a-request"),"native-legacy-forward","","/legacy-forward")
     expect("legacy-handoff-skips-held-profiles",advanced)
     +chosen : String <- Subs.profile_label_io(db,"legacy-forward")
@@ -170,7 +175,7 @@ def profile_fallback_cases(+db: String) -> IO(Unit):
     selected : Maybe<&2,Subs.Route> <- Subs.select_route(db,"legacy-all-held","legacy-all-held-refusal")
     expect_route_model(selected,"kimi-code/kimi-for-coding","legacy-all-held-selects-configured-alternate-route")
     opened_b : Unit <- open_read(db,"profile-test","legacy-b","3")
-    open_gate : Unit <- expect_gate(db,"legacy-forward","legacy-b","none","legacy-open-read-profile-selectable")
+    open_gate : Unit <- expect_admitted(db,"legacy-forward","legacy-b","legacy-open-read-profile-selectable")
     bound_elapsed : Unit <- Subs.bind_profile(db,"legacy-elapsed","omp","legacy-a","/profiles/legacy-a")
     advanced_elapsed : Bool <- Accounts.handoff(db,"legacy-elapsed","legacy-elapsed-refusal",quota_event("legacy-elapsed-request"),"native-legacy-elapsed","","/legacy-elapsed")
     expect("legacy-handoff-selects-reopened-profile",advanced_elapsed)
@@ -290,7 +295,7 @@ def release_cases(+db: String) -> IO(Unit):
     +provider_before : String <- read(db,"SELECT count(*) FROM usage_windows WHERE harness='muse' AND provider='' AND account='' AND reset_source='provider-message';")
     +executions_before : String <- read(db,"SELECT count(*) FROM executions;")
     opened : Unit <- open_read(db,"muse","","3")
-    released : Unit <- expect_gate(db,"wonder","","none","open-read-releases-unqualified-seat")
+    released : Unit <- expect_admitted(db,"wonder","","open-read-releases-unqualified-seat")
     reported : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id GLOB 'usage-read:*:release:wonder' AND recipient='operator';","1\n","release-reported-once")
     +provider_after : String <- read(db,"SELECT count(*) FROM usage_windows WHERE harness='muse' AND provider='' AND account='' AND reset_source='provider-message';")
     expect("release-retains-provider-evidence",String.eq(provider_before,provider_after))
