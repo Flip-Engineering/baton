@@ -139,6 +139,7 @@ else
   extra_libs=
   case "$entry_path" in
     */bend2/harness/claude-credit-observe.bend) extra_libs=-lcurl ;;
+    */bend2/harness/usage-read.bend) extra_libs=-lcurl ;;
   esac
   native_compile cc "${CC:-clang}" -O1 -pthread -I "$root/bend2/src/host" "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
 fi
