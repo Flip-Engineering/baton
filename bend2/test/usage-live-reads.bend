@@ -215,11 +215,14 @@ def codex_snapshot_with_limit(+allowed: String, +used: String, +reached: String)
 def codex_snapshot(+allowed: String, +used: String) -> String:
   codex_snapshot_with_limit(allowed,used,"null")
 
+# The live helper timestamps each read with its observation clock.
 def codex_answer_raw(+db: String, +path: String, +raw: String) -> IO(Unit):
   do IO<Unit>:
+    +clock : String <- read(db,"SELECT " ++ UW.now_ms() ++ ";")
+    +observed : String = Tx.trim_nl(clock)
     +problem : String <- read(db,Codex.codex_problem_sql(raw))
-    +document : String <- read(db,UR.read_document_sql("codex",Codex.codex_source(),"1",Codex.codex_windows_sql(raw)))
-    answer(path,Bool.pick(String,String.is_empty(Tx.trim_nl(problem)),Tx.trim_nl(document),UR.unreadable_document("codex",Codex.codex_source(),"1",Tx.trim_nl(problem))))
+    +document : String <- read(db,UR.read_document_sql("codex",Codex.codex_source(),observed,Codex.codex_windows_sql(raw)))
+    answer(path,Bool.pick(String,String.is_empty(Tx.trim_nl(problem)),Tx.trim_nl(document),UR.unreadable_document("codex",Codex.codex_source(),observed,Tx.trim_nl(problem))))
 
 def codex_answer(+db: String, +path: String, +allowed: String, +used: String) -> IO(Unit):
   codex_answer_raw(db,path,codex_snapshot(allowed,used))
