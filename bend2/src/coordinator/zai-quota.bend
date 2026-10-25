@@ -26,7 +26,7 @@ def zai_window_sql(+limit: String) -> String:
 
 # The windows array of the read contract, 5-hour first.
 def zai_windows_sql(+response: String) -> String:
-  "SELECT json_group_array(json(item)) FROM (SELECT json_object('window'," ++ zai_window_sql("l") ++ ",'usedPercent',json_extract(l.value,'$.percentage'),'resetsAt',json_extract(l.value,'$.nextResetTime'),'exhausted',json(CASE WHEN coalesce(json_extract(l.value,'$.percentage'),0)>=100 THEN 'true' ELSE 'false' END)) AS item FROM json_each(json_extract(" ++ C.q(response) ++ ",'$.data.limits')) AS l WHERE json_extract(l.value,'$.type')='TOKENS_LIMIT' AND json_extract(l.value,'$.unit') IN (3,6) ORDER BY json_extract(l.value,'$.unit'))"
+  "SELECT json_group_array(json(item)) FROM (SELECT json_object('window'," ++ zai_window_sql("l") ++ ",'usedPercent',json_extract(l.value,'$.percentage'),'resetsAt',json_extract(l.value,'$.nextResetTime'),'exhausted',json(CASE WHEN json_extract(l.value,'$.percentage')>=100 THEN 'true' ELSE 'false' END)) AS item FROM json_each(json_extract(" ++ C.q(response) ++ ",'$.data.limits')) AS l WHERE json_extract(l.value,'$.type')='TOKENS_LIMIT' AND json_extract(l.value,'$.unit') IN (3,6) AND json_type(l.value,'$.percentage') IN ('integer','real') ORDER BY json_extract(l.value,'$.unit'))"
 
 # Why a response cannot be read, or the empty text when it can: the provider's own
 # failure code and message, or a response without a TOKENS_LIMIT window.
@@ -34,4 +34,5 @@ def zai_problem_sql(+response: String) -> String:
   "SELECT CASE WHEN NOT json_valid(" ++ C.q(response) ++ ") THEN 'the z.ai quota response is not JSON'"
   ++ " WHEN coalesce(json_extract(" ++ C.q(response) ++ ",'$.success'),0)<>1 THEN 'z.ai answered code ' || coalesce(json_extract(" ++ C.q(response) ++ ",'$.code'),'none') || ': ' || coalesce(json_extract(" ++ C.q(response) ++ ",'$.msg'),'')"
   ++ " WHEN NOT EXISTS(SELECT 1 FROM json_each(json_extract(" ++ C.q(response) ++ ",'$.data.limits')) AS l WHERE json_extract(l.value,'$.type')='TOKENS_LIMIT' AND json_extract(l.value,'$.unit') IN (3,6)) THEN 'the z.ai quota response has no TOKENS_LIMIT window for unit 3 or 6'"
+  ++ " WHEN EXISTS(SELECT 1 FROM json_each(json_extract(" ++ C.q(response) ++ ",'$.data.limits')) AS l WHERE json_extract(l.value,'$.type')='TOKENS_LIMIT' AND json_extract(l.value,'$.unit') IN (3,6) AND coalesce(json_type(l.value,'$.percentage'),'') NOT IN ('integer','real')) THEN 'the z.ai TOKENS_LIMIT window has no numeric percentage'"
   ++ " ELSE '' END;"

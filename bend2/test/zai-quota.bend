@@ -23,6 +23,14 @@ def response(+weekly: String) -> String:
 def failure() -> String:
   "{\"code\":1001,\"msg\":\"Authentication failed\",\"success\":false}"
 
+def invalid_percentage(+field: String) -> String:
+  "{\"success\":true,\"data\":{\"limits\":[{\"type\":\"TOKENS_LIMIT\",\"unit\":3" ++ field ++ "}]}}"
+
+def invalid_case(+field: String, +label: String) -> IO(Unit):
+  do IO<Unit>:
+    +problem : String <- run(Zai.zai_problem_sql(invalid_percentage(field)))
+    expect(label,String.eq(problem,"the z.ai TOKENS_LIMIT window has no numeric percentage"))
+
 def main() -> IO(Unit):
   do IO<Unit>:
     +open : String <- run(Zai.zai_windows_sql(response("20")) ++ ";")
@@ -35,4 +43,10 @@ def main() -> IO(Unit):
     four : Unit <- expect("provider-failure-reason",String.eq(refused,"z.ai answered code 1001: Authentication failed"))
     +empty : String <- run(Zai.zai_problem_sql("{\"code\":200,\"success\":true,\"data\":{\"limits\":[]}}"))
     five : Unit <- expect("no-token-window-reason",String.eq(empty,"the z.ai quota response has no TOKENS_LIMIT window for unit 3 or 6"))
+    missing : Unit <- invalid_case("","missing-percentage-unreadable")
+    text : Unit <- invalid_case(",\"percentage\":\"oops\"","text-percentage-unreadable")
+    null : Unit <- invalid_case(",\"percentage\":null","null-percentage-unreadable")
+    boolean : Unit <- invalid_case(",\"percentage\":false","boolean-percentage-unreadable")
+    +fraction : String <- run(Zai.zai_problem_sql(response("20.5")))
+    decimal : Unit <- expect("decimal-percentage-readable",String.is_empty(fraction))
     IO.print("fixture-zai-quota-ok")
