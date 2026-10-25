@@ -9,8 +9,10 @@ after the coordinator's receive process died with 22 owed inputs; nothing
 started a further turn for them.
 
 The detached delivery now derives the recipient's oldest owed input from the
-pending inbox and starts one redelivery for it. A redelivery that fails again
-is reported to the recipient's coordinator. These checks drive the delivery
+pending inbox and starts a redelivery for it. A redelivery that fails on a held
+write lock waits until the writer is gone and delivers the oldest owed input
+again, with no attempt count. A failure with another cause is reported to the
+recipient's coordinator; the report is committed through busy answers. These checks drive the delivery
 entries against fixture databases whose session endpoints are scripts that
 record each call and fail on request.
 
@@ -22,7 +24,9 @@ import os
 import pathlib
 import sqlite3
 import subprocess
+import sys
 import tempfile
+import threading
 import time
 import unittest
 
@@ -35,18 +39,36 @@ CREATE TABLE session_stops (session TEXT PRIMARY KEY NOT NULL, id TEXT UNIQUE NO
 CREATE TABLE messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL, recipient TEXT NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);
 '''
 # Records each call as one line 'ARGS' in the calls file; fails while the
-# failures file holds a positive count, as the busy receive endpoint did.
+# failures file holds a positive count, as the busy receive endpoint did: exit 5
+# with 'database is locked'. FAILURES.exit and FAILURES.cause select another
+# exit status and failure text.
 ENDPOINT = '''#!/bin/sh
 calls="$1"; failures="$2"; shift 2
 printf '%s\\n' "$*" >> "$calls"
 left=$(cat "$failures" 2>/dev/null || echo 0)
 if [ "$left" -gt 0 ]; then
   echo $((left - 1)) > "$failures"
-  echo 'database is locked' >&2
+  if [ -f "$failures.cause" ]; then cat "$failures.cause" >&2; else echo 'database is locked' >&2; fi
+  if [ -f "$failures.exit" ]; then exit "$(cat "$failures.exit")"; fi
   exit 5
 fi
 exit 0
 '''
+# The receive endpoint's own first write: fails on 'database is locked' while
+# another connection holds the write lock, after a short busy wait.
+LOCKED_ENDPOINT = '''import sqlite3, sys
+calls, database, message = sys.argv[1], sys.argv[2], sys.argv[-1]
+try:
+    db = sqlite3.connect(database, timeout=2, isolation_level=None)
+    db.execute('BEGIN IMMEDIATE')
+    db.execute('COMMIT')
+except sqlite3.OperationalError as error:
+    open(calls, 'a').write('busy ' + message + '\\n')
+    sys.stderr.write(str(error) + '\\n')
+    sys.exit(5)
+open(calls, 'a').write('ok ' + message + '\\n')
+'''
+HOLD_SECONDS = 40
 
 
 def fixture():
@@ -75,6 +97,7 @@ class DeliveryRedrive(unittest.TestCase):
         self.path = str(self.home / 'orchestra.db')
         self.db = sqlite3.connect(self.path, isolation_level=None)
         self.addCleanup(self.db.close)
+        self.db.execute('PRAGMA journal_mode=WAL')
         self.db.executescript(SCHEMA)
         script = self.home / 'endpoint.sh'
         script.write_text(ENDPOINT)
@@ -87,8 +110,12 @@ class DeliveryRedrive(unittest.TestCase):
         endpoint = json.dumps(['/bin/sh', self.endpoint, str(calls), str(failures)])
         self.db.execute('INSERT INTO sessions(id,parent,endpoint) VALUES(?,?,?)', (name, parent, endpoint))
 
-    def fail(self, name, count):
+    def fail_endpoint(self, name, count, cause=None, status=None):
         (self.home / (name + '.failures')).write_text(str(count))
+        if cause is not None:
+            (self.home / (name + '.failures.cause')).write_text(cause + '\n')
+        if status is not None:
+            (self.home / (name + '.failures.exit')).write_text(str(status))
 
     def calls(self, name):
         path = self.home / (name + '.calls')
@@ -112,7 +139,7 @@ class DeliveryRedrive(unittest.TestCase):
 
     def test_a1_busy_endpoint_is_redriven_for_the_owed_input(self):
         self.message('root-nudge', 'coordinator', 'worker', kind='task', body='Continue.')
-        self.fail('worker', 1)
+        self.fail_endpoint('worker', 1)
         first = self.dispatch('root-nudge')
         self.assertNotEqual(first.returncode, 0)
         self.assertIn('database is locked', first.stdout + first.stderr)
@@ -126,25 +153,47 @@ class DeliveryRedrive(unittest.TestCase):
         self.message('owed-1', 'worker', 'coordinator', kind='report', body='Earlier report.')
         self.message('owed-2', 'worker', 'coordinator', kind='report', body='Later report.')
         self.message('report-now', 'worker', 'coordinator', kind='report', body='Report.')
-        self.fail('coordinator', 1)
+        self.fail_endpoint('coordinator', 1)
         first = self.dispatch('report-now')
         self.assertNotEqual(first.returncode, 0)
         self.assertTrue(self.wait_for(lambda: len(self.calls('coordinator')) >= 2), self.calls('coordinator'))
         self.assertEqual(self.calls('coordinator'), ['report-now', 'owed-1'])
 
-    def test_repeated_failure_is_reported_to_the_coordinator_once(self):
+    def test_failure_with_another_cause_is_reported_to_the_coordinator_once(self):
         self.message('root-nudge', 'coordinator', 'worker', kind='task', body='Continue.')
-        self.fail('worker', 100)
+        self.fail_endpoint('worker', 100, cause='receive endpoint: no native conversation', status=2)
         self.dispatch('root-nudge')
         self.assertTrue(self.wait_for(lambda: len(self.calls('coordinator')) >= 1), self.calls('coordinator'))
         self.assertEqual(self.calls('coordinator'), ['root-nudge:undelivered'])
         row = self.db.execute("SELECT sender, recipient, kind, body FROM messages WHERE id='root-nudge:undelivered'").fetchone()
         self.assertEqual(row[:3], ('worker', 'coordinator', 'report'))
         self.assertIn('Input root-nudge for worker was not delivered', row[3])
-        self.assertIn('session delivery failed (exit 5)', row[3])
+        self.assertIn('session delivery failed (exit 2)', row[3])
         self.assertIn('1 owed inputs', row[3])
         time.sleep(2)
         self.assertEqual(self.calls('worker'), ['root-nudge', 'root-nudge'])
+
+    def test_input_is_delivered_after_a_writer_holds_the_lock_past_the_busy_waits(self):
+        script = self.home / 'locked-endpoint.py'
+        script.write_text(LOCKED_ENDPOINT)
+        calls = self.home / 'locked.calls'
+        endpoint = json.dumps([sys.executable, str(script), str(calls), self.path])
+        self.db.execute("UPDATE sessions SET endpoint=? WHERE id='worker'", (endpoint,))
+        self.message('root-nudge', 'coordinator', 'worker', kind='task', body='Continue.')
+        holder = sqlite3.connect(self.path, isolation_level=None, check_same_thread=False)
+        holder.execute('BEGIN IMMEDIATE')
+        release = threading.Timer(HOLD_SECONDS, lambda: holder.execute('ROLLBACK'))
+        release.start()
+        self.addCleanup(release.cancel)
+        self.addCleanup(holder.close)
+        first = self.dispatch('root-nudge')
+        self.assertNotEqual(first.returncode, 0)
+        lines = lambda: calls.read_text().splitlines() if calls.exists() else []
+        self.assertTrue(self.wait_for(lambda: 'ok root-nudge' in lines(), HOLD_SECONDS + 60), lines())
+        self.assertEqual(lines()[-1], 'ok root-nudge')
+        self.assertTrue(all(line == 'busy root-nudge' for line in lines()[:-1]), lines())
+        undelivered = self.db.execute("SELECT count(*) FROM messages WHERE id LIKE '%:undelivered'").fetchone()[0]
+        self.assertEqual(undelivered, 0)
 
     def test_delivered_input_starts_no_redelivery(self):
         self.message('root-nudge', 'coordinator', 'worker', kind='task', body='Continue.')

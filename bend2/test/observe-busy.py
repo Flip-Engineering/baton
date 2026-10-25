@@ -6,7 +6,9 @@ stopped reading the span after that failure, never recorded the terminal
 frame, and the turn ended 'without a native result (exit 0)', so its input was
 not settled. The observer now records the frame again after a busy answer.
 This check holds the store's write lock for longer than one busy-handler
-wait while the frame is recorded.
+wait while the frame is recorded. A second check makes the preflight
+projection install itself meet the held lock: with its marker cleared, the
+install takes BEGIN IMMEDIATE before the frame's own transaction.
 
 BATON2_OBSERVE_BUSY_FIXTURE names a built bend2/test/observe-busy binary;
 otherwise the test builds it with bend2/scripts/build-native.sh.
@@ -84,6 +86,21 @@ class ObserveBusy(unittest.TestCase):
         turns, report = self.recorded()
         self.assertEqual(turns, 1)
         self.assertEqual(report, ('coordinator', 'report', 'Turn finished.'))
+
+    def test_frame_recorded_after_the_projection_install_meets_a_held_lock(self):
+        db = sqlite3.connect(self.path, isolation_level=None)
+        db.execute('DELETE FROM baton_projection_state')
+        db.close()
+        holder = sqlite3.connect(self.path, isolation_level=None, check_same_thread=False)
+        holder.execute('BEGIN IMMEDIATE')
+        release = threading.Timer(HOLD_SECONDS, lambda: holder.execute('ROLLBACK'))
+        release.start()
+        self.addCleanup(release.cancel)
+        self.addCleanup(holder.close)
+        result = self.observe()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.strip(), 'observed')
+        self.assertEqual(self.recorded(), (1, ('coordinator', 'report', 'Turn finished.')))
 
     def test_frame_recorded_without_contention(self):
         result = self.observe()
