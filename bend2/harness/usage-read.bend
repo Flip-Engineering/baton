@@ -280,9 +280,24 @@ def codex_read_request() -> String:
 def codex_line_sql(+line: String) -> String:
   "SELECT CASE WHEN NOT json_valid(" ++ C.q(line) ++ ") THEN 'other' WHEN coalesce(json_extract(" ++ C.q(line) ++ ",'$.id'),0)=1 AND json_type(" ++ C.q(line) ++ ",'$.error') IS NULL THEN 'initialized' WHEN coalesce(json_extract(" ++ C.q(line) ++ ",'$.id'),0) NOT IN (1,2) THEN 'other' WHEN json_type(" ++ C.q(line) ++ ",'$.error') IS NOT NULL THEN 'error' || char(31) || coalesce(json_extract(" ++ C.q(line) ++ ",'$.error.message'),json_extract(" ++ C.q(line) ++ ",'$.error')) ELSE 'result' || char(31) || json_extract(" ++ C.q(line) ++ ",'$.result') END;"
 
+@unsafe
+def codex_drain_lines(+handle: U32, line: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Unit):
+  match line:
+    case Fail{error}: IO.pure(Unit,Unit{})
+    case Done{value}:
+      match value:
+        case None{}: IO.pure(Unit,Unit{})
+        case Some{text}: do IO<Unit>:
+          next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
+          codex_drain_lines(handle,next)
+
+# Closing stdin starts app-server shutdown. Consume its remaining notifications
+# while it exits so its stdout writes can complete.
 def codex_finish(+handle: U32) -> IO(Unit):
   do IO<Unit>:
     closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
+    next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
+    drained : Unit <- codex_drain_lines(handle,next)
     waited : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
     IO.pure(Unit,Unit{})
 
