@@ -11,7 +11,7 @@
 # window is 5-hour, 7-day, monthly or balance. usedPercent is the provider's number or
 # null. resetsAt is the provider's reset instant in UTC milliseconds or null.
 # exhausted is the provider's own statement where it makes one, else usedPercent at or
-# above 100. The contract is docs/bend2/usage-live-reads-1025.md.
+# above 100. The core uses this flag as the exhaustion decision. The contract is docs/bend2/usage-live-reads-1025.md.
 import Base
 import ../coordinator/commands.bend as C
 import ../json/canonical.bend as J

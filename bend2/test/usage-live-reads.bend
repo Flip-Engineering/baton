@@ -3,15 +3,9 @@
 # with HELPER standing in for the usage-read helper. Each account's credential
 # reference is file:PATH and the fixture writes the next read document to PATH.
 #
-# It proves: a refusal followed by an open read does not hold; an exhausted read
-# holds and announces the hold to the orchestrator and the root; a gate on a held seat
-# reads again once the read interval has passed; an unreadable read and a passed provider reset do not release; an open
-# read releases every seat that announced the hold and drives the other seat's owed
-# input through the wake entry; a held account is read again at most once per read
-# interval; repeated gates add no second announcement; an unreadable provider is an
-# unknown that does not hold; malformed, missing and mismatched helper answers are
-# recorded as unreadable with their reasons; and a model-scoped window holds only the
-# seats of that model.
+# It covers refusal reads, admission reads, unreadable reads, scoped windows,
+# observation ordering, account serialization, insert failure, release launch
+# failure, account changes and provider reset continuations.
 #
 # usage: usage-live-reads DB HELPER
 #        usage-live-reads --wake-message DB MESSAGE   (the release wake records a mark)
@@ -20,8 +14,10 @@ import ../src/coordinator/commands.bend as C
 import ../src/coordinator/usage-windows.bend as UW
 import ../src/coordinator/usage-reads.bend as UR
 import ../src/host/sqlite.bend as DB
+import ../src/host/session-lock.bend as Lock
 import ../src/git/text.bend as Tx
 import ../src/git/process.bend as Proc
+import ../src/git/types.bend as T
 
 def expect(+label: String, is_ok: Bool) -> IO(Unit):
   Bool.pick(IO(Unit),is_ok,IO.print("fixture-usage-live-reads " ++ label ++ ": ok"),IO.die(Unit,1,"fixture-usage-live-reads " ++ label ++ ": refused"))
@@ -58,6 +54,21 @@ def zai_source() -> String:
 def zai_doc(+percent: String, +resets: String, +exhausted: String) -> String:
   "{\"schema\":\"baton2-usage-read-v1\",\"provider\":\"zai\",\"source\":\"" ++ zai_source() ++ "\",\"observedAt\":1,\"state\":\"read\",\"windows\":[{\"window\":\"5-hour\",\"usedPercent\":" ++ percent ++ ",\"resetsAt\":" ++ resets ++ ",\"exhausted\":" ++ exhausted ++ "},{\"window\":\"7-day\",\"usedPercent\":20,\"resetsAt\":1793386764984,\"exhausted\":false}]}"
 
+def run_ok(outcome: T.RunRes) -> Bool:
+  match outcome:
+    case T.RRun{T.SExit{0},out}: True{}
+    case _: False{}
+
+def run_text(outcome: T.RunRes) -> String:
+  match outcome:
+    case T.RRun{status,out}: out
+    case T.RSpawn{detail}: detail
+
+def wait_mark(+db: String, +message: String) -> IO(Unit):
+  do IO<Unit>:
+    ran : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","IFS= read -r frame < \"$1\" && [ \"$frame\" = \"$2\" ]","sh",db ++ ".wake-complete",message]),".")
+    expect("release-wake-completes",run_ok(Tx.run_res(ran)))
+
 def answer(+path: String, +document: String) -> IO(Unit):
   do IO<Unit>:
     ran : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","printf '%s' \"$1\" > \"$2\"","sh",document,path]),".")
@@ -70,6 +81,8 @@ def setup(+db: String, +answer_path: String) -> IO(Unit):
     accounts : Unit <- query(db,"CREATE TABLE IF NOT EXISTS accounts (id TEXT PRIMARY KEY NOT NULL,provider TEXT NOT NULL,harness TEXT NOT NULL,funding TEXT NOT NULL,secret_ref TEXT NOT NULL,organization TEXT NOT NULL DEFAULT '',verified_at TEXT NOT NULL DEFAULT '');INSERT INTO accounts(id,provider,harness,funding,secret_ref) VALUES('acct-zai','zai','omp','api_key'," ++ C.q("file:" ++ answer_path) ++ "),('acct-codex','codex','codex','api_key'," ++ C.q("file:" ++ answer_path) ++ "),('acct-claude','claude','claude-code','api_key'," ++ C.q("file:" ++ answer_path) ++ ");")
     owed : Unit <- query(db,"INSERT INTO messages(id,sender,recipient,kind,body) VALUES('m-b','coord','b','guidance','owed input for b');")
     marks : Unit <- query(db,"CREATE TABLE IF NOT EXISTS wake_marks(message TEXT NOT NULL);")
+    signal : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/usr/bin/mkfifo",db ++ ".wake-complete"]),".")
+    ready : Unit <- expect("wake-completion-channel-created",run_ok(Tx.run_res(signal)))
     IO.pure(Unit,Unit{})
 
 def state_of(+db: String, +seat: String, +account: String) -> IO(UW.Gate):
@@ -99,26 +112,16 @@ def exhausted_case(+db: String, +helper: String, +path: String, +future: String)
     again : UW.Gate <- state_of(db,"a","acct-zai")
     expect_read(db,"SELECT count(*) FROM messages WHERE id GLOB 'usage-read:2:hold:a*';","2\n","repeated-gate-no-second-hold")
 
-# Moves every recorded read one read interval and a second into the past, so the next
-# gate finds the held provider account due.
-def age_reads(+db: String) -> IO(Unit):
-  query(db,"UPDATE usage_reads SET observed_at=observed_at-61000;")
-
 def held_input_case(+db: String, +helper: String) -> IO(Unit):
   do IO<Unit>:
-    fresh : UW.Gate <- UW.window_gate_with(db,"b","acct-zai",helper)
-    fresh_held : Unit <- expect("fresh-hold-still-held",String.eq(gate_class(fresh),"held"))
-    not_due : Unit <- expect_read(db,"SELECT count(*) FROM usage_reads;","2\n","fresh-hold-not-read-again-within-interval")
-    aged : Unit <- age_reads(db)
     gate : UW.Gate <- UW.window_gate_with(db,"b","acct-zai",helper)
     held : Unit <- expect("input-to-held-seat-still-held",String.eq(gate_class(gate),"held"))
-    reread : Unit <- expect_read(db,"SELECT count(*)||'|'||(SELECT trigger||'|'||session FROM usage_reads ORDER BY id DESC LIMIT 1) FROM usage_reads;","3|held-account-due|b\n","due-held-account-read-again")
+    reread : Unit <- expect_read(db,"SELECT count(*)||'|'||(SELECT trigger||'|'||session FROM usage_reads ORDER BY id DESC LIMIT 1) FROM usage_reads;","3|admission|b\n","held-account-read-at-admission")
     expect_read(db,"SELECT recipient FROM messages WHERE id='usage-read:2:hold:b';","coord\n","second-seat-hold-announced")
 
 def unreadable_held_case(+db: String, +helper: String, +path: String) -> IO(Unit):
   do IO<Unit>:
     written : Unit <- answer(path,UR.unreadable_document("zai",zai_source(),"1","HTTP 503 from the provider"))
-    aged : Unit <- age_reads(db)
     gate : UW.Gate <- UW.window_gate_with(db,"a","acct-zai",helper)
     held : Unit <- expect("unreadable-read-keeps-hold",String.eq(gate_class(gate),"held"))
     reason : Unit <- expect_read(db,"SELECT state||'|'||reason FROM usage_reads WHERE id=4;","unreadable|HTTP 503 from the provider\n","unreadable-reason-recorded")
@@ -127,14 +130,14 @@ def unreadable_held_case(+db: String, +helper: String, +path: String) -> IO(Unit
 def passed_reset_case(+db: String, +helper: String, +path: String, +past: String, +future: String) -> IO(Unit):
   do IO<Unit>:
     written : Unit <- answer(path,zai_doc("100",past,"true"))
-    aged : Unit <- age_reads(db)
     gate : UW.Gate <- UW.window_gate_with(db,"a","acct-zai",helper)
     held : Unit <- expect("passed-reset-still-exhausted-holds",String.eq(gate_class(gate),"held"))
     recorded : UW.Gate <- state_of(db,"a","acct-zai")
     kept : Unit <- expect("hold-does-not-expire-without-read",String.eq(gate_class(recorded),"held"))
-    passed : Unit <- expect_read(db,UW.schedule_delay_sql(past),"60\n","passed-reset-continuation-waits-one-read-interval")
-    far : Unit <- expect_read(db,UW.schedule_delay_sql(future),"60\n","far-reset-continuation-waits-one-read-interval")
-    unknown : Unit <- expect_read(db,UW.schedule_delay_sql(""),"60\n","unreported-reset-continuation-waits-one-read-interval")
+    passed : Unit <- expect_read(db,UW.schedule_delay_sql(past),"\n","passed-reset-has-no-continuation")
+    +far_delay : String <- read(db,UW.schedule_delay_sql(future))
+    far : Unit <- expect_read(db,"SELECT CAST(" ++ C.q(Tx.trim_nl(far_delay)) ++ " AS INTEGER)>60;","1\n","far-reset-continuation-waits-until-reset")
+    unknown : Unit <- expect_read(db,UW.schedule_delay_sql(""),"\n","unreported-reset-has-no-continuation")
     +near : String <- read(db,"SELECT CAST(CAST(strftime('%s','now') AS INTEGER)*1000+10000 AS TEXT);")
     +delay : String <- read(db,UW.schedule_delay_sql(Tx.trim_nl(near)))
     expect_read(db,"SELECT CAST(" ++ C.q(Tx.trim_nl(delay)) ++ " AS INTEGER) BETWEEN 9 AND 11;","1\n","near-reset-continuation-ends-at-reset")
@@ -142,11 +145,10 @@ def passed_reset_case(+db: String, +helper: String, +path: String, +past: String
 def release_case(+db: String, +helper: String, +path: String) -> IO(Unit):
   do IO<Unit>:
     written : Unit <- answer(path,zai_doc("3","1792820715847","false"))
-    aged : Unit <- age_reads(db)
     gate : UW.Gate <- UW.window_gate_with(db,"a","acct-zai",helper)
     open : Unit <- expect("open-read-releases",String.eq(gate_class(gate),"none"))
     released : Unit <- expect_read(db,"SELECT group_concat(id||'>'||recipient,',') FROM (SELECT id,recipient FROM messages WHERE id GLOB 'usage-read:2:release:*' ORDER BY id);","usage-read:2:release:a>coord,usage-read:2:release:a:root>root,usage-read:2:release:b>coord,usage-read:2:release:b:root>root\n","release-announced-for-each-held-seat")
-    waited : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","i=0; while [ $i -lt 50 ]; do [ \"$(sqlite3 \"$1\" 'SELECT count(*) FROM wake_marks;')\" = 1 ] && exit 0; sleep 0.1; i=$((i+1)); done; exit 1","sh",db]),".")
+    waited : Unit <- wait_mark(db,"m-b")
     woke : Unit <- expect_read(db,"SELECT group_concat(message) FROM wake_marks;","m-b\n","other-seat-owed-input-woken")
     b_gate : UW.Gate <- state_of(db,"b","acct-zai")
     b_open : Unit <- expect("released-seat-open",String.eq(gate_class(b_gate),"none"))
@@ -196,6 +198,124 @@ def malformed_case(+db: String, +helper: String, +path: String) -> IO(Unit):
     +third : String <- last_reason(db)
     expect("provider-mismatch-unreadable",String.eq(third,"unreadable|the usage-read document is not a baton2-usage-read-v1 read for provider codex"))
 
+# The sample clock is supplied by the reader and may precede insertion order.
+def sample(+db: String, +account: String, +observed: String, +exhausted: String) -> IO(Unit):
+  do IO<Unit>:
+    +doc : String <- read(db,"SELECT json_set(" ++ C.q(zai_doc(Bool.pick(String,String.eq(exhausted,"true"),"100","3"),"null",exhausted)) ++ ",'$.observedAt',CAST(" ++ C.q(observed) ++ " AS INTEGER));")
+    UW.record_pair(db,"a","zai",account,"fixture",Tx.trim_nl(doc),"")
+
+def ordering_case(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    newer : Unit <- sample(db,"clock","200","true")
+    older : Unit <- sample(db,"clock","100","false")
+    +gate : UW.Gate <- state_of(db,"a","clock")
+    held : Unit <- expect("older-open-response-keeps-newer-exhaustion",String.eq(gate_class(gate),"held"))
+    clock : Unit <- expect_read(db,"SELECT observed_at FROM usage_reads WHERE account='clock' ORDER BY id;","200\n100\n","reader-observation-clock-recorded")
+    opened : Unit <- sample(db,"clock","300","false")
+    stale : Unit <- sample(db,"clock","250","true")
+    open_gate : UW.Gate <- state_of(db,"a","clock")
+    open : Unit <- expect("older-exhaustion-keeps-newer-open",String.eq(gate_class(open_gate),"none"))
+    again : Unit <- sample(db,"clock","400","true")
+    +episode : UW.Gate <- state_of(db,"a","clock")
+    expect("episode-follows-observation-order",String.eq(gate_detail(episode),"5-hour||usage-read:5"))
+
+# Two processes start reads together. The helper records overlapping requests.
+def serialization_case(+db: String, +helper: String) -> IO(Unit):
+  do IO<Unit>:
+    +self : String <- IO.try(String,Lock.SessionLock.executable())
+    +dir : String <- IO.pure(String,db ++ ".serial")
+    made : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/mkdir",dir]),".")
+    written : Unit <- answer(dir ++ "/answer",zai_doc("100","null","true"))
+    account : Unit <- query(db,"INSERT INTO accounts(id,provider,harness,funding,secret_ref) VALUES('serial','zai','omp','api_key'," ++ C.q("serial:" ++ dir) ++ ");")
+    ran : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","\"$1\" --read-account \"$2\" \"$3\" serial & first=$!; \"$1\" --read-account \"$2\" \"$3\" serial & second=$!; wait \"$first\"; a=$?; wait \"$second\"; b=$?; [ \"$a$b\" = 00 ] && [ ! -e \"$4/overlap\" ]","sh",self,db,helper,dir]),".")
+    clean : Unit <- expect("same-account-requests-serialized",run_ok(Tx.run_res(ran)))
+    expect_read(db,"SELECT count(*) FROM usage_reads WHERE account='serial';","2\n","serialized-requests-both-recorded")
+
+def persistence_case(+db: String, +helper: String, +path: String) -> IO(Unit):
+  do IO<Unit>:
+    old : Unit <- sample(db,"acct-zai","1","false")
+    reject : Unit <- query(db,"CREATE TRIGGER reject_read BEFORE INSERT ON usage_reads BEGIN SELECT RAISE(FAIL,'fixture exhausted read insert failed'); END;")
+    written : Unit <- answer(path,zai_doc("100","null","true"))
+    +self : String <- IO.try(String,Lock.SessionLock.executable())
+    ran : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","exec \"$@\" 2>&1","sh",self,"--read-account",db,helper,"acct-zai"]),".")
+    +outcome : T.RunRes <- IO.pure(T.RunRes,Tx.run_res(ran))
+    failed : Unit <- expect("read-insert-failure-propagated",Bool.not(run_ok(outcome)))
+    cause : Unit <- expect("read-insert-failure-cause-retained",UW.has_sub("fixture exhausted read insert failed",run_text(outcome)))
+    expect_read(db,"SELECT count(*) FROM usage_reads;","1\n","failed-read-keeps-recorded-evidence")
+
+def release_retry_case(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    held : Unit <- sample(db,"retry","1","true")
+    gate : UW.Gate <- state_of(db,"b","retry")
+    opened : Unit <- sample(db,"retry","2","false")
+    +self : String <- IO.try(String,Lock.SessionLock.executable())
+    failed : Unit <- UW.release_open(db,"/missing/usage-release-fixture",db,"b","zai","retry")
+    pending : Unit <- expect_read(db,UW.held_seats_sql("zai","retry","a"),"b\n","failed-release-wake-remains-eligible")
+    unannounced : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id GLOB 'usage-read:*:release:b*';","0\n","failed-launch-keeps-release-pending")
+    retry : Unit <- UW.release_open(db,self,db,"b","zai","retry")
+    waited : Unit <- wait_mark(db,"m-b")
+    woke : Unit <- expect_read(db,"SELECT message FROM wake_marks;","m-b\n","retried-release-launches-owed-input")
+    expect_read(db,UW.held_seats_sql("zai","retry","a"),"","successful-release-finishes-eligibility")
+
+def account_switch_case(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    held : Unit <- sample(db,"account-a","1","true")
+    gate : UW.Gate <- state_of(db,"a","account-a")
+    opened : Unit <- sample(db,"account-b","2","false")
+    other : UW.Gate <- state_of(db,"a","account-b")
+    pending : Unit <- expect_read(db,UW.held_seats_sql("zai","account-a","k"),"a\n","account-switch-keeps-old-account-release-eligible")
+    kept : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id GLOB 'usage-read:*:release:a*';","0\n","open-account-does-not-release-other-account")
+    previous : UW.Gate <- state_of(db,"a","account-a")
+    expect("previous-account-stays-held",String.eq(gate_class(previous),"held"))
+
+def admission_case(+db: String, +helper: String, +path: String) -> IO(Unit):
+  do IO<Unit>:
+    old : Unit <- sample(db,"acct-zai","1","true")
+    written : Unit <- answer(path,zai_doc("3","null","false"))
+    gate : UW.Gate <- UW.window_gate_with(db,"a","acct-zai",helper)
+    open : Unit <- expect("admission-reads-fresh-held-account",String.eq(gate_class(gate),"none"))
+    next : Unit <- answer(path,zai_doc("100","null","true"))
+    held_gate : UW.Gate <- UW.window_gate_with(db,"a","acct-zai",helper)
+    held : Unit <- expect("admission-reads-open-account",String.eq(gate_class(held_gate),"held"))
+    expect_read(db,"SELECT count(*) FROM usage_reads WHERE account='acct-zai';","3\n","each-admission-reads-account")
+
+def delay_case(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    absent : Unit <- expect_read(db,UW.schedule_delay_sql(""),"\n","absent-reset-has-no-delay")
+    past : Unit <- expect_read(db,UW.schedule_delay_sql("1"),"\n","passed-reset-has-no-delay")
+    +future : String <- read(db,"SELECT CAST(CAST(strftime('%s','now') AS INTEGER)*1000+7200000 AS TEXT);")
+    +delay : String <- read(db,UW.schedule_delay_sql(Tx.trim_nl(future)))
+    expect_read(db,"SELECT CAST(" ++ C.q(Tx.trim_nl(delay)) ++ " AS INTEGER) BETWEEN 7199 AND 7200;","1\n","future-reset-sleeps-to-provider-clock")
+
+def unreadable_episode_case(+db: String, +helper: String, +path: String) -> IO(Unit):
+  do IO<Unit>:
+    written : Unit <- answer(path,UR.unreadable_document("codex","fixture","1","fixture provider unreadable"))
+    first : UW.Gate <- UW.window_gate_with(db,"k","acct-codex",helper)
+    first_unknown : Unit <- expect("first-unreadable-admission-is-unknown",String.eq(gate_class(first),"unknown"))
+    second : UW.Gate <- UW.window_gate_with(db,"k","acct-codex",helper)
+    second_unknown : Unit <- expect("second-unreadable-admission-is-unknown",String.eq(gate_class(second),"unknown"))
+    one_pair : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id GLOB 'usage-read:*:unreadable:k*';","2\n","unreadable-admissions-report-one-episode-pair")
+    +open_doc : String <- read(db,UR.read_document_sql("codex","fixture","2","SELECT json_array()"))
+    available : Unit <- answer(path,Tx.trim_nl(open_doc))
+    open_gate : UW.Gate <- UW.window_gate_with(db,"k","acct-codex",helper)
+    open : Unit <- expect("readable-admission-ends-unreadable-episode",String.eq(gate_class(open_gate),"none"))
+    again : Unit <- answer(path,UR.unreadable_document("codex","fixture","3","fixture provider unreadable again"))
+    new_gate : UW.Gate <- UW.window_gate_with(db,"k","acct-codex",helper)
+    unknown : Unit <- expect("new-unreadable-episode-is-unknown",String.eq(gate_class(new_gate),"unknown"))
+    expect_read(db,"SELECT group_concat(id,',') FROM (SELECT id FROM messages WHERE id GLOB 'usage-read:*:unreadable:k*' ORDER BY id);","usage-read:1:unreadable:k,usage-read:1:unreadable:k:root,usage-read:4:unreadable:k,usage-read:4:unreadable:k:root\n","readable-observation-separates-unreadable-episodes")
+
+def regression(+name: String, +db: String, +helper: String, +path: String) -> IO(Unit):
+  match name:
+    case "unreadable-episode": unreadable_episode_case(db,helper,path)
+    case "ordering": ordering_case(db)
+    case "serialization": serialization_case(db,helper)
+    case "persistence": persistence_case(db,helper,path)
+    case "release-retry": release_retry_case(db)
+    case "account-switch": account_switch_case(db)
+    case "admission": admission_case(db,helper,path)
+    case "delay": delay_case(db)
+    case _: IO.die(Unit,2,"unknown usage-read regression")
+
 def run(+db: String, +helper: String) -> IO(Unit):
   do IO<Unit>:
     +path : String <- IO.pure(String,db ++ ".answer")
@@ -213,9 +333,19 @@ def run(+db: String, +helper: String) -> IO(Unit):
     nine : Unit <- model_scope_case(db,helper,path)
     IO.print("fixture-usage-live-reads-ok")
 
+def complete_mark(+db: String, +message: String) -> IO(Unit):
+  do IO<Unit>:
+    marked : Unit <- query(db,"INSERT INTO wake_marks(message) VALUES(" ++ C.q(message) ++ ");")
+    signaled : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","printf '%s\\n' \"$2\" > \"$1\"","sh",db ++ ".wake-complete",message]),".")
+    expect("release-wake-signaled",run_ok(Tx.run_res(signaled)))
+
 def main_args(args: List<String>) -> IO(Unit):
   match args:
-    case "--wake-message" <> +db <> +message <> Nil{}: query(db,"INSERT INTO wake_marks(message) VALUES(" ++ C.q(message) ++ ");")
+    case "--case" <> +name <> +db <> +helper <> Nil{}: do IO<Unit>:
+      ready : Unit <- setup(db,db ++ ".answer")
+      regression(name,db,helper,db ++ ".answer")
+    case "--read-account" <> +db <> +helper <> +account <> Nil{}: UW.read_with(db,"a","zai",account,helper,"fixture-child")
+    case "--wake-message" <> +db <> +message <> Nil{}: complete_mark(db,message)
     case +db <> +helper <> Nil{}: run(db,helper)
     case other: IO.die(Unit,2,"usage: usage-live-reads DB HELPER")
 

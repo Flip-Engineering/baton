@@ -322,7 +322,7 @@ def wake_fenced_gate(+db: String, +session: String, +cursor: String, launch: Str
   match gate:
     case UW.GateHeld{+window,+resets_at,+source,+receipt}: do IO<Result<&1,&1,U32 & String,Unit>>:
       +found : String <- wake_found(db,session,cursor)
-      held : Unit <- UW.held(db,session,Tx.trim_nl(found),UW.GateHeld{window,resets_at,source,receipt})
+      held : Unit <- UW.held(db,session,Tx.trim_nl(found),"wake",UW.GateHeld{window,resets_at,source,receipt})
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case other: wake_fenced_owed(db,session,cursor,launch,lock)
@@ -825,7 +825,7 @@ def window_held_start(+db: String, +session: String, +id: String, +head: String,
       Bool.pick(IO(Bool),String.is_empty(head),
         IO.pure(Bool,False{}),
         do IO<Bool>:
-          held : Unit <- UW.held(db,session,head,UW.GateHeld{window,resets_at,source,receipt})
+          held : Unit <- UW.held(db,session,head,"start",UW.GateHeld{window,resets_at,source,receipt})
           cleared : Unit <- Stop.held_release(db,session,id)
           released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
           IO.pure(Bool,True{}))

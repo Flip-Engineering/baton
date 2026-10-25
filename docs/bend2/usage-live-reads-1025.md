@@ -44,8 +44,9 @@ A reader has two parts.
    `resetsAt` is the provider's reset instant in UTC milliseconds, or null.
    Convert seconds to milliseconds in the parser. `exhausted` is the provider's
    own statement where one exists (Codex `rateLimitReachedType`, a balance at or
-   below zero), otherwise `usedPercent >= 100`. A focused fixture runs the parser
-   through the sqlite host over a recorded response. A second function
+   below zero), otherwise `usedPercent >= 100`. The core uses `exhausted` as the
+   exhaustion decision, including an explicit `false` at 100 percent. A focused
+   fixture runs the parser through the sqlite host over a recorded response. A second function
    `<provider>_problem_sql(+response)` answers the reason a response cannot be read,
    or the empty text.
 
@@ -101,7 +102,11 @@ The schema name and the document builders are in
 Each read inserts one `usage_reads` row: the provider, the account label, the seat
 whose event started it, the trigger, the state (`read` or `unreadable`), the source,
 the reason of an unreadable read, and the helper's document. The windows stay in the
-document. A row never expires.
+document. `observed_at` records the helper's `observedAt` clock; a helper failure
+without a document records the coordinator clock. Reads are serialized per provider
+and account through the physical database lock. Each decision orders observations
+by `observed_at`, then row identity. An insert failure propagates its database
+cause and ends the admission. A row never expires.
 
 The seat's gate derives its state from these rows for the seat's provider and
 account:
@@ -116,52 +121,40 @@ account:
 
 ## Read triggers
 
-One read serves every seat on a provider account: several seats on one z.ai plan
-share each read. A read runs on these events:
+Live admission reads run when there is input to admit or a hold to release. Each
+qualifying event performs a fresh live read of the provider account. One read
+supplies decision input for every seat on that account: several seats on one
+z.ai plan share each read. The qualifying events are:
 
 - a provider exhaustion terminal (a 429, a quota message or a balance error) reads
   the refused account at once;
-- every gate (an input or wake for any seat) first reads each held provider account
-  that is due. An account is due when its newest read is one read interval old, or
-  when a provider reset of a window that holds it has passed since that read;
-- a held wake starts a detached continuation that sleeps until the provider's
-  reported reset of the held window or for one read interval, whichever is sooner,
-  and then runs the wake entry, so the gate above runs. The instant never releases
-  the seat; only the read does. A read that still holds the seat starts the next
-  continuation from the provider's new values, so the chain ends with the hold;
-- `usage-window-refresh SESSION`.
-
-The read interval is 60 seconds. It is the cadence of a provider's own client: the
-Codex TUI refreshes account rate limits every 60 seconds (openai/codex PR #6789,
-`tokio::time::interval(Duration::from_secs(60))`, merge commit 4000e26). z.ai, Kimi,
-DeepSeek and Anthropic publish no read cadence for their usage endpoints, so the same
-interval applies. The interval is a trigger for a read; it never holds or releases.
-
-The interval is needed because some restores change no Baton state: an operator
-spending a z.ai reset card, or Codex applying a reset on its own, raises no refusal,
-sends no input and does not move the old reset time. Coordinator events alone do not
-cover this. In the 24 hours to 2026-10-24T03Z the coordination database recorded
-between 0 and 651 changes per hour, with whole hours at 0 (15Z and 18Z), so a hold
-read only on events could last hours past a restore.
-
-Each held wake starts its own continuation chain, so a seat that receives k inputs
-while held runs k chains, one wake per chain per interval; the read interval keeps
-provider reads at one per account per interval. A host restart ends the chains; the
-next gate of any seat reads the held accounts that are due.
+- an admission with input to admit or a hold to release reads the seat's own
+  provider and account;
+- a held wake starts a detached continuation when the provider reports a reset of
+  the held window strictly in the future. It sleeps until that instant and enters
+  the wake path, which reads the provider again. A passed or absent reset is
+  reported to the orchestrator with the owed message; the orchestrator can request
+  `usage-window-refresh` or deliver further input;
+- an explicit `usage-window-refresh SESSION`.
 
 ## Announcements and admission
 
 A hold episode starts at the first exhausted readable read after the last open one.
 When a seat's gate finds the seat `Held`, Baton reports the hold to the seat's
 orchestrator and, as a second message, to the root of the seat's parent chain:
-`usage-read:EPISODE:hold:SEAT` and the same identity with `:root`. An unreadable read
-is reported the same way as `usage-read:READ:unreadable:SEAT`.
+`usage-read:EPISODE:hold:SEAT` and the same identity with `:root`. An unreadable
+episode starts with the first unreadable observation after the latest readable
+one. It is reported as `usage-read:EPISODE:unreadable:SEAT` and the same identity
+with `:root`. Repeated unreadable observations keep that announcement identity
+until a readable observation intervenes.
 
 A read that ends a hold reports `usage-read:EPISODE:release:SEAT` for every seat that
-reported that hold, and drives each other seat's first owed input through the wake
-entry in a detached process. The input is admitted on its retained assignment
-(#1020). A seat whose gate finds no hold also reports any of its holds that have no
-release, so a crash between the read and the announcement is repaired at the seat's
+reported that hold on the provider and account being read. It launches each other
+seat's first owed input through the wake entry in a detached process before
+recording the release. A failed launch reports its cause and leaves the hold
+eligible for another release attempt. A crash after launch can repeat the wake.
+The input is admitted on its retained assignment (#1020). A seat whose gate finds
+no hold also reports any of its holds on that account that have no release, so a crash between the read and the announcement is repaired at the seat's
 next gate. The identities derive from the read rows and the seat, so a repeated gate
 adds no second message.
 
