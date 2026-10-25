@@ -1603,12 +1603,11 @@ def order_move_scan(+db: String, +session: String, +harness: String, +label: Str
     scan : Scan <- scan_order(db,session,"",False{},label,"current account, held by live read " ++ receipt,ordered)
     order_move_decided(db,session,harness,label,native,cmd,cwd,receipt,accounts_count(ordered),from_store,scan)
 
-# Before a launch: the held accounts that are due are read, and a seat whose current
-# account a live read holds moves to the first available entry of its order. Returns
-# whether it moved. A selected move that fails exits with its retained failure.
-def order_move_with(+db: String, +session: String, +native: String, +cmd: String, +cwd: String, +helper: String) -> IO(Bool):
+# Before a launch, a seat whose current account is held moves to the first
+# available entry from the wake gate's recorded reads. Returns whether it moved.
+# A selected move that fails exits with its retained failure.
+def order_move_with(+db: String, +session: String, +native: String, +cmd: String, +cwd: String) -> IO(Bool):
   do IO<Bool>:
-    due : Unit <- UW.reread_due(db,session,helper)
     +harness_text : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +harness : String <- IO.pure(String,Tx.trim_nl(harness_text))
     +ordered : List<&2,AccountRecord> <- ordered_accounts(db,harness)
@@ -1620,8 +1619,7 @@ def order_move_with(+db: String, +session: String, +native: String, +cmd: String
 
 def order_move(+db: String, +session: String, +native: String, +cmd: String, +cwd: String) -> IO(Unit):
   do IO<Unit>:
-    +helper : String <- UW.read_helper()
-    moved : Bool <- order_move_with(db,session,native,cmd,cwd,helper)
+    moved : Bool <- order_move_with(db,session,native,cmd,cwd)
     IO.pure(Unit,Unit{})
 
 # Provider-reported exhaustion advances the account in force when a binding
