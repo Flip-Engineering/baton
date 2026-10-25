@@ -106,7 +106,7 @@ class StopHook(unittest.TestCase):
         decision = self.hook()
         self.assertEqual(decision['decision'], 'block')
         self.assertIn('Baton holds 1 owed inputs for worker', decision['reason'])
-        self.assertIn('[id: message:coordinator:mid-turn]:\nNew detail.', decision['reason'])
+        self.assertIn('[id: message:coordinator:mid-turn]:\nNew detail.\nRead the complete body with baton read message:coordinator:mid-turn.', decision['reason'])
 
     def test_stop_hook_active_keeps_blocking_owed_input(self):
         self.owe()
@@ -172,7 +172,7 @@ class StopHook(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         contexts = json.loads(result.stdout)
         self.assertEqual(contexts, [{'hookEventName': 'PostToolUse', 'additionalContext':
-            'Baton input for this turn. Handle the following complete messages:\nMessage (guidance) from coordinator [id: mid-loop]:\nNew complete body.\nλ🙂\n'}])
+            'Baton input for this turn. Handle the following complete messages:\nMessage (guidance) from coordinator [id: mid-loop]:\nNew complete body.\nλ🙂\n\nRead the complete body with baton read mid-loop.'}])
         self.assertIsNone(self.db.execute("SELECT receipt FROM messages WHERE id='mid-loop'").fetchone()[0])
         self.assertEqual(self.db.execute('SELECT * FROM message_reads').fetchall(), [])
 

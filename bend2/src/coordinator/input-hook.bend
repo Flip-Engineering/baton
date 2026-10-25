@@ -33,7 +33,7 @@ def selection_sql(+session: String, +directory: String, +witness: String) -> Str
   ++ " AND json_extract(" ++ C.q(witness) ++ ",'$.live')=1 AND r.identity=json_extract(" ++ C.q(witness) ++ ",'$.identity')) ORDER BY m.seq);"
 
 def output_sql(+saved: String) -> String:
-  "SELECT CASE WHEN json_array_length(" ++ C.q(saved) ++ ")>0 THEN json_object('hookSpecificOutput',json_object('hookEventName','PostToolUse','additionalContext','Baton input for this turn. Handle the following complete messages:' || char(10) || (SELECT group_concat('Message (' || json_extract(value,'$.kind') || ') from ' || json_extract(value,'$.sender') || ' [id: ' || json_extract(value,'$.id') || ']:' || char(10) || json_extract(value,'$.body'),char(10)||char(10)) FROM json_each(" ++ C.q(saved) ++ ")))) ELSE '' END;"
+  "SELECT CASE WHEN json_array_length(" ++ C.q(saved) ++ ")>0 THEN json_object('hookSpecificOutput',json_object('hookEventName','PostToolUse','additionalContext','Baton input for this turn. Handle the following complete messages:' || char(10) || (SELECT group_concat('Message (' || json_extract(value,'$.kind') || ') from ' || json_extract(value,'$.sender') || ' [id: ' || json_extract(value,'$.id') || ']:' || char(10) || json_extract(value,'$.body') || char(10) || 'Read the complete body with baton read ' || json_extract(value,'$.id') || '.',char(10)||char(10)) FROM json_each(" ++ C.q(saved) ++ ")))) ELSE '' END;"
 
 # The statement uses the same exact body and attempt checks as baton read.
 def record_sql(+session: String, +directory: String, +attempt: String, +native: String, identity: String, saved: String) -> String:
