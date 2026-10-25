@@ -132,6 +132,7 @@ it. The fixtures in `bend2/test/account-order-fallback.py` cover the deployed ro
 incognito as the last entry, expired OAuth credentials, primary at different
 positions, history and binding failures, and announcement transaction failures.
 The release fixture receives a completion frame through a FIFO.
+Its focused compiler entry is `bend2/test/account-order-review-entry.bend`.
 
 ## Limits
 

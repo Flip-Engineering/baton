@@ -19,7 +19,7 @@ import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-ENTRY = pathlib.Path(os.environ.get('BATON2_ACCOUNT_ENTRY', ROOT / '.scratch/bend2/account-credits-entry'))
+ENTRY = pathlib.Path(os.environ.get('BATON2_ACCOUNT_ENTRY', ROOT / '.scratch/bend2/account-order-entry'))
 # The terminal frame the Riff conductor recorded for attempt
 # receive:riff-backlog-conductor-20261019:2181.
 CREDIT_EVENT = json.dumps({'type': 'result', 'is_error': True, 'result': 'Credit balance is too low', 'errors': []})
