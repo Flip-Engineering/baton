@@ -6,7 +6,6 @@ import https from 'node:https';
 import { homedir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isDeepStrictEqual } from 'node:util';
 
 export const REPOSITORY_PATTERN = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 export const PERMISSIONS = { contents: 'write', pull_requests: 'write', metadata: 'read' };
@@ -35,6 +34,14 @@ export function same_repository(left, right) {
 
 function object(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function minimum_permissions(granted, source) {
+  for (const [permission, level] of Object.entries(PERMISSIONS)) {
+    require(object(granted) && Object.hasOwn(granted, permission)
+      && (granted[permission] === level || (level === 'read' && granted[permission] === 'write')),
+    `${source} requires ${permission}:${level} permission.`);
+  }
 }
 
 function path(value) {
@@ -86,8 +93,7 @@ export function selected_identity(registry_path, model_key = null, series_key = 
   require(github.botLogin === github.slug + '[bot]', 'The bot login differs from the App slug.');
   require(github.commitEmail === `${github.botId}+${github.botLogin}@users.noreply.github.com`,
     'The commit email differs from the verified bot identity.');
-  require(isDeepStrictEqual(github.permissions, PERMISSIONS),
-    'The App identity permissions differ from the approved permissions.');
+  minimum_permissions(github.permissions, 'The App identity');
   let author_name = 'Flip Baton - ' + SERIES_LABELS[series_key];
   let author_email = Object.hasOwn(identity, 'authorEmail') ? identity.authorEmail : github.commitEmail;
   if (Object.hasOwn(registry, 'attribution')) {
@@ -309,8 +315,7 @@ function verify_installation(installation, github, owner) {
     && same_repository(installation.account.login, owner)
     && (installation.suspended_at ?? null) === null,
     'The GitHub installation account is incorrect or suspended.');
-  require(isDeepStrictEqual(installation.permissions, PERMISSIONS),
-    'The GitHub installation permissions differ from the approved permissions.');
+  minimum_permissions(installation.permissions, 'The GitHub installation');
 }
 
 function valid_expiration(value) {
@@ -343,8 +348,7 @@ export async function installation_token(directory, github, repository, jwt = ap
   verify_installation(installation, github, owner);
   const issued = await request(`/app/installations/${installation.id}/access_tokens`, signed,
     { permissions: PERMISSIONS });
-  require(isDeepStrictEqual(issued.permissions, PERMISSIONS),
-    'The issued token permissions differ from the approved permissions.');
+  minimum_permissions(issued.permissions, 'The issued token');
   require(typeof issued.token === 'string' && issued.token && !/[\r\n\0]/.test(issued.token),
     'GitHub returned an invalid installation token.');
   require(valid_expiration(issued.expires_at), 'GitHub returned an expired installation token.');
