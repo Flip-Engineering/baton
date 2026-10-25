@@ -98,7 +98,7 @@ def hold_cases(+db: String) -> IO(Unit):
     held : Unit <- expect_state(db,"kimi","acct-k","held","exhausted-window-holds")
     window : Unit <- expect_window(db,"kimi","acct-k","5-hour|" ++ Tx.trim_nl(reset),"held-window-and-provider-reset")
     percent : Unit <- query(db,read_row_sql("zai","acct-z","json_array(" ++ window_sql("5-hour","100",now_plus("3600000"),"false") ++ ")"))
-    used : Unit <- expect_state(db,"zai","acct-z","held","used-100-percent-holds-without-flag")
+    used : Unit <- expect_state(db,"zai","acct-z","none","explicit-open-flag-at-100-percent-admits")
     partial : Unit <- query(db,read_row_sql("claude","acct-c","json_array(" ++ window_sql("5-hour","42",now_plus("3600000"),"false") ++ "," ++ window_sql("7-day","90",now_plus("86400000"),"false") ++ ")"))
     open : Unit <- expect_state(db,"claude","acct-c","none","partial-read-open")
     +later : String <- read(db,"SELECT CAST(" ++ now_plus("86400000") ++ " AS TEXT);")
