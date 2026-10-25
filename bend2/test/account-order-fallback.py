@@ -234,11 +234,29 @@ class AccountOrderFallback(unittest.TestCase):
     def test_deployed_held_incognito_retains_input(self):
         helper = self.deployed_order()
         self.claude_response(100)
+        expected_account = [('claude-credit-primary', 'file:/fixture/keys/credit-normal')]
+        self.assertEqual(self.query("SELECT secret_ref FROM accounts WHERE id='claude-credit-normal'"),
+                         [('file:/fixture/keys/credit-normal',)])
+        self.assertEqual(self.current('leaf'), 'claude-credit-primary')
+        self.assertEqual(self.query("SELECT id,secret_ref FROM accounts WHERE id='claude-credit-primary'"),
+                         expected_account)
+        profiles = pathlib.Path(str(self.db) + '.profiles')
+        profile = pathlib.Path(str(self.db) + '.profile-' + 'leaf'.encode().hex())
+        before_profiles = (profiles.read_bytes(), profile.read_bytes())
+        sidecar = pathlib.Path(str(self.db) + '.account-' + 'leaf'.encode().hex())
+        self.assertFalse(sidecar.exists())
         completed = self.entry('handoff-with', 'leaf', 'deployed-held', CREDIT_EVENT, helper)
         self.assertEqual((completed.returncode, completed.stdout.strip()), (0, 'exhausted'), completed.stderr)
-        self.assertEqual(self.current('leaf'), '')
+        self.assertEqual(self.current('leaf'), 'claude-credit-primary')
+        self.assertEqual(self.query("SELECT id,secret_ref FROM accounts WHERE id='claude-credit-primary'"),
+                         expected_account)
+        self.assertEqual((profiles.read_bytes(), profile.read_bytes()), before_profiles)
+        self.assertFalse(sidecar.exists())
+        self.assertFalse(self.query("SELECT id FROM messages WHERE body LIKE 'account move:%'"))
         self.assertTrue(self.query("SELECT id FROM messages WHERE id='task-1'"))
-        self.assertTrue(self.query("SELECT id FROM messages WHERE body LIKE 'account order held:%'"))
+        holds = self.query("SELECT body FROM messages WHERE body LIKE 'account order held:%'")
+        self.assertTrue(holds)
+        self.assertIn('claude-max-incognito held by live read', holds[0][0])
 
     def expired_deployment(self, incognito_last):
         helper = self.deployed_order(incognito_last=incognito_last)
