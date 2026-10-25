@@ -146,6 +146,63 @@ test('a repository whose owner has no App installation refuses and names the App
   assert.ok(!fixture.calls.some(call => call.api_path.includes('/access_tokens')));
 });
 
+test('Git credentials accept granted workflow and actions permissions and keep the token request subset', async () => {
+  for (const extra of [{}, { workflows: 'write' }, { workflows: 'write', actions: 'read' }]) {
+    const permissions = { contents: 'write', pull_requests: 'write', metadata: 'read', ...extra };
+    const fixture = installation_api(identities.gpt, [{ owner: 'Flip-Engineering', id: 5100 },
+      { owner: 'flip-engineer', id: 5200 }], { name: 'lookup', field: 'permissions', value: permissions });
+    const issue = (home, identity, repository) => model.installation_token(home, identity, repository,
+      () => 'fixture-jwt-no-key', fixture.request);
+    for (const repository of ['Flip-Engineering/baton', 'flip-engineer/flip']) {
+      let response = '';
+      await model.helper({ registry, series_key: 'gpt', repository, operation: 'get' },
+        Readable.from([`protocol=https\nhost=github.com\npath=${repository}.git\n\n`]),
+        { write(value) { response += value; } }, issue);
+      assert.ok(response.startsWith('username=x-access-token\npassword=fixture-token-'));
+      assert.deepEqual(fixture.calls.at(-1).body,
+        { permissions: { contents: 'write', pull_requests: 'write', metadata: 'read' } });
+    }
+  }
+});
+
+test('identity metadata and issued tokens accept additional granted permissions', async () => {
+  const permissions = { contents: 'write', pull_requests: 'write', metadata: 'read', workflows: 'write' };
+  const home = join(directory, 'expanded-grants'); mkdirSync(home);
+  save(join(home, 'identity-series.json'), { seriesKey: 'gpt', displaySeries: 'GPT',
+    github: { ...identities.gpt, permissions } });
+  const alternative = join(directory, 'expanded-registry.json');
+  save(alternative, { models, series: { ...series, gpt: home } });
+  assert.deepEqual(model.selected_identity(alternative, null, 'gpt')[2].permissions, permissions);
+  const fixture = installation_api(identities.gpt, [{ owner: 'Flip-Engineering', id: 5100 }],
+    { name: 'issue', field: 'permissions', value: permissions });
+  assert.ok(await model.installation_token(home, identities.gpt, REPOSITORY,
+    () => 'fixture-jwt-no-key', fixture.request));
+});
+
+test('missing or weaker Git permissions are refused by name in identities, installations and tokens', async () => {
+  const home = join(directory, 'insufficient-grants'); mkdirSync(home);
+  const alternative = join(directory, 'insufficient-registry.json');
+  save(alternative, { models, series: { ...series, gpt: home } });
+  for (const [permission, required] of Object.entries({ contents: 'write', pull_requests: 'write', metadata: 'read' })) {
+    for (const level of [undefined, 'none', ...(required === 'write' ? ['read'] : [])]) {
+      const permissions = { ...model.PERMISSIONS, workflows: 'write' };
+      if (level === undefined) delete permissions[permission];
+      else permissions[permission] = level;
+      const namedRefusal = error => error instanceof model.Refusal && error.message.includes(permission + ':' + required);
+      save(join(home, 'identity-series.json'), { seriesKey: 'gpt', displaySeries: 'GPT',
+        github: { ...identities.gpt, permissions } });
+      assert.throws(() => model.selected_identity(alternative, null, 'gpt'), namedRefusal);
+      for (const name of ['lookup', 'issue']) {
+        const fixture = installation_api(identities.gpt, [{ owner: 'Flip-Engineering', id: 5100 }],
+          { name, field: 'permissions', value: permissions });
+        await assert.rejects(model.installation_token(home, identities.gpt, REPOSITORY,
+          () => 'fixture-jwt-no-key', fixture.request), namedRefusal);
+        if (name === 'lookup') assert.ok(!fixture.calls.some(call => call.api_path.endsWith('/access_tokens')));
+      }
+    }
+  }
+});
+
 test('a retained repositories map is not read and the series directory serves every repository', () => {
   const retained = join(directory, 'retained-repositories.json');
   save(retained, { models, series, repositories: { 'flip-engineer/flip': { series: { gpt: join(directory, 'missing') } } } });
@@ -409,7 +466,7 @@ test('metadata requires owned regular non-writable files and verified numeric id
     value => { value.displaySeries = 'gpt'; }, value => { value.seriesKey = 'kimi'; },
     value => { value.github.botId = true; }, value => { value.github.appId = '1000'; },
     value => { value.github.commitEmail = 'someone@example.invalid'; },
-    value => { value.github.permissions.issues = 'write'; },
+    value => { value.github.permissions.contents = 'read'; },
   ].entries()) {
     const home = join(directory, 'invalid-' + index); mkdirSync(home);
     const identity = { seriesKey: 'gpt', displaySeries: 'GPT', github: structuredClone(identities.gpt) };
@@ -466,8 +523,8 @@ test('installation token validates the App, owner installation, permissions and 
   const mutations = [['app', 'id', -1], ['app', 'client_id', 'wrong'],
     ['lookup', 'id', -1], ['lookup', 'id', 5100.5], ['lookup', 'app_id', -1], ['lookup', 'app_slug', 'other-app'],
     ['lookup', 'suspended_at', 'fixture-suspended'], ['lookup', 'account', { login: 'flip-engineer' }],
-    ['lookup', 'permissions', { ...model.PERMISSIONS, issues: 'write' }],
-    ['issue', 'permissions', { ...model.PERMISSIONS, issues: 'write' }], ['issue', 'token', 'bad\nvalue'],
+    ['lookup', 'permissions', { ...model.PERMISSIONS, contents: 'read' }],
+    ['issue', 'permissions', { ...model.PERMISSIONS, pull_requests: 'read' }], ['issue', 'token', 'bad\nvalue'],
     ['issue', 'expires_at', '2000-01-01T00:00:00Z'], ['issue', 'expires_at', 9999], ['issue', 'expires_at', '9999'],
     ['issue', 'expires_at', '2099-02-30T00:00:00Z']];
   for (const [name, field, value] of mutations) {
