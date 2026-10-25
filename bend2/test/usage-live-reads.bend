@@ -199,7 +199,7 @@ def wait_mark(+db: String) -> IO(Unit):
 # The sample clock is supplied by the reader and may precede insertion order.
 def sample(+db: String, +account: String, +observed: String, +exhausted: String) -> IO(Unit):
   do IO<Unit>:
-    +doc : String <- read(db,"SELECT json_set(" ++ C.q(zai_doc("100","null",exhausted)) ++ ",'$.observedAt',CAST(" ++ C.q(observed) ++ " AS INTEGER));")
+    +doc : String <- read(db,"SELECT json_set(" ++ C.q(zai_doc(Bool.pick(String,String.eq(exhausted,"true"),"100","3"),"null",exhausted)) ++ ",'$.observedAt',CAST(" ++ C.q(observed) ++ " AS INTEGER));")
     UW.record_pair(db,"a","zai",account,"fixture",Tx.trim_nl(doc),"")
 
 def ordering_case(+db: String) -> IO(Unit):
