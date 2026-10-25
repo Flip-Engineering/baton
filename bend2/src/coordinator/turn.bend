@@ -1224,6 +1224,13 @@ def dsh_prepare_if(dsh: Bool, +directory: String, +model: String, +effort: Strin
     case True{}: Dsh.prepare(directory ++ ".dsh",model,effort)
     case False{}: IO.pure(Result<&1,&1,U32 & String,Dsh.Prepared>,Done{Dsh.Prepared{"",""}})
 
+def dsh_worker_helper(dsh: Bool, executable: String) -> IO(String):
+  match dsh:
+    case False{}: IO.pure(String,"")
+    case True{}: do IO<String>:
+      helper : String <- IO.try(String,HostControl.Control.agent_helper(executable))
+      IO.pure(String,Subs.directory_of(helper) ++ "/dsh-worker.mjs")
+
 type IdentityParts is Data:
   IdParts{prefix: String, resolver: String}
 
@@ -1293,7 +1300,8 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
       +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
       home : String <- dsh_home_if(dsh,db,absolute_db,player)
       prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort)
-      +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory]) ++ identity_prefix(parts))
+      bridge : String <- dsh_worker_helper(dsh,executable)
+      +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory,"BATON_COORDINATOR=" ++ executable,"BATON_DSH_WORKER_BRIDGE=" ++ bridge]) ++ identity_prefix(parts))
       +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
       store : String <- current_store(db,player,harness)
       history : String <- current_history(db,player)
