@@ -91,6 +91,9 @@ def endpointless_native_sql(id: String, condition: String) -> String:
 def endpointless_recipient_sql(id: String, condition: String) -> String:
   "SELECT coalesce((SELECT m.recipient FROM messages m WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND " ++ condition ++ "),'');"
 
+def endpointless_route_sql(id: String, condition: String) -> String:
+  "SELECT coalesce((SELECT json_object('recipient',s.id,'harness',s.harness,'blockedCause'," ++ C.blocked_cause_sql("s.id") ++ ") FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND " ++ condition ++ "),'');"
+
 # The claim retains admission custody for the whole inbox. Recipient progress
 # and newer coordinator control input permit another notification.
 def queue_metadata_sql(+value: String) -> String:
@@ -233,13 +236,21 @@ def codex_queue_mode(+db: String, +id: String, +condition: String, saved: String
 def codex_queue(db: String, id: String, condition: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
   codex_queue_mode(db,id,condition,saved,True{})
 
+def endpointless_unavailable(+db: String, +id: String, condition: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    row : String <- IO.try(String,DB.Sql.query(db,endpointless_route_sql(id,condition)))
+    +route : String <- IO.pure(String,Tx.trim_nl(row))
+    Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(route),
+      IO.pure(Result<&1,&1,U32 & String,String>,Done{saved}),
+      IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"Message " ++ id ++ " committed; recipient delivery route is unavailable: " ++ route ++ ". The message remains pending. Read the recipient's session and connect a reachable endpoint, then retry delivery from the pending inbox.")}))
+
 def endpointless(+db: String, +id: String, +condition: String, +saved: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     harness_row : String <- IO.try(String,DB.Sql.query(db,endpointless_harness_sql(id,condition)))
     +harness : String <- IO.pure(String,Tx.trim_nl(harness_row))
     Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.eq(harness,"codex"),
       codex_queue_mode(db,id,condition,saved,False{}),
-      IO.pure(Result<&1,&1,U32 & String,String>,Done{saved}))
+      endpointless_unavailable(db,id,condition,saved))
 
 def inbox_endpoint_launch(+db: String, id: String, saved: String, argv: String, recipient: String, +token: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
