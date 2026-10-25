@@ -312,6 +312,9 @@ class AccountOrderFallback(unittest.TestCase):
         completed = self.entry('wake', 'leaf', HELPER)
         self.assertNotEqual(completed.returncode, 0, completed.stdout)
         self.assertIn('does not match selected account', completed.stderr)
+        failures = self.reports(':account-binding-failed')
+        self.assertIn('root', [recipient for recipient, body in failures])
+        self.assertIn('does not match selected account claude-max-primary', failures[0][1])
         self.assertEqual(self.current('leaf'), 'claude-max-incognito')
 
     def test_failed_root_announcement_keeps_binding_and_rolls_back_both_notices(self):

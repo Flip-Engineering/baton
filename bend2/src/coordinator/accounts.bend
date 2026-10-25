@@ -1455,11 +1455,19 @@ def binding_matches(+label: String, bound: Maybe<&2,AccountRecord>) -> Bool:
     case None{}: False{}
     case Some{+account}: String.eq(label,account_id(account))
 
+def move_binding_verified(+db: String, +session: String, +id: String, +label: String, matches: Bool) -> IO(Bool):
+  match matches:
+    case True{}: IO.pure(Bool,True{})
+    case False{}: do IO<Bool>:
+      +detail : String <- IO.pure(String,"Account binding does not match selected account " ++ label ++ "; owed input remains retained.")
+      noted : Unit <- Subs.report_body(db,session,id,"account-binding-failed",detail)
+      IO.die(Bool,1,detail)
+
 def move_appended(+db: String, +session: String, +id: String, +harness: String, +label: String, appended: Result<&1,&1,U32 & String,Unit>) -> IO(Bool):
   match appended:
     case Done{unit}: do IO<Bool>:
       bound : Maybe<&2,AccountRecord> <- current_account(db,session,harness)
-      IO.try(Bool,IO.pure(Result<&1,&1,U32 & String,Bool>,Bool.pick(Result<&1,&1,U32 & String,Bool>,binding_matches(label,bound),Done{True{}},Fail{(1,"Account binding does not match selected account " ++ label ++ "; owed input remains retained.")})))
+      move_binding_verified(db,session,id,label,binding_matches(label,bound))
     case Fail{(code,detail)}: do IO<Bool>:
       noted : Unit <- Subs.report_body(db,session,id,"account-append-failed","account record append failed: " ++ U32.show(code) ++ ": " ++ detail ++ "; the provider cause stands and no account was advanced.")
       IO.pure(Bool,False{})
