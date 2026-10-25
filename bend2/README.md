@@ -779,10 +779,11 @@ pass one `server:NAME` value for each orchestra.
 
 The root attaches as the `operator` session. The operator keeps its operator
 role, so reports and questions from parentless Conductors still select it as
-their recipient. When the channel becomes ready, the server sends the
-operator's unread input in one notification. Complete owed input stays in the
-database. The recipient reads complete bodies through its normal inbox and
-read operations; Baton records each complete read.
+their recipient. When the channel becomes ready, the server points to the
+operator's next unread stored message. A recorded complete read advances to
+the next unread message. Unread input remains eligible on native prompt changes
+and attachment. Complete bodies stay in the database and remain available
+through the recipient's inbox and read operations.
 
 The JavaScript resident `impl/scripts/mcp-web.mjs` has been removed. A Claude
 Code configuration that still names it starts no server and receives no
