@@ -61,7 +61,7 @@ class DshPublicRead(unittest.TestCase):
     def test_public_read_records_input_delivered_after_admission(self):
         config_path = self.fx.directory / 'fixture.json'
         config = json.loads(config_path.read_text())
-        config.update(dsh_late_read='dsh-late', dsh_read_prompt=False)
+        config.update(dsh_late_read='dsh-late')
         config_path.write_text(json.dumps(config))
         child = self.fx.spawn(*self.fx.receive_args('dsh-parent'))
         ready = self.fx.directory / 'dsh-ready'
@@ -74,8 +74,8 @@ class DshPublicRead(unittest.TestCase):
         log = self.fx.directory / 'dsh-reads.jsonl'
         self.assertTrue(log.exists(), stdout + stderr)
         reads = [json.loads(line) for line in log.read_text().splitlines()]
-        self.assertEqual([row['id'] for row in reads], ['dsh-late'], stdout + stderr)
-        self.assertEqual(reads[0]['code'], 0, reads[0])
+        self.assertEqual([row['id'] for row in reads], ['dsh-input', 'dsh-late'], stdout + stderr)
+        self.assertTrue(all(row['code'] == 0 for row in reads), reads)
         rows = receive.message_reads(self.fx.db, 'dsh-late', 'dsh-parent')
         self.assertTrue(rows, 'the public read of post-admission input recorded no complete read')
         self.assertTrue(all(row['native'] and row['identity'] and row['handled'] is None
