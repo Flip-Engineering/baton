@@ -11,6 +11,7 @@ import shutil
 import signal
 import socket
 import sqlite3
+import stat
 import struct
 import subprocess
 import sys
@@ -98,6 +99,44 @@ def install_public_queue_codex(testcase, directory):
         testcase.addCleanup(os.environ.__setitem__, 'PATH', previous)
         os.environ['PATH'] = str(directory) + os.pathsep + previous
     return calls
+
+
+def process_table(pid=None, names=None):
+    """Every process, or the selected one, as pid, ppid, status, start and
+    command. On Linux it reads /proc because ps stalls on a loaded host. The
+    command line of another process is read only when its owner is this user
+    and its name is in NAMES, since that read waits on the process's memory
+    lock. A zombie reports its command as ps does. Other platforms run ps."""
+    if not sys.platform.startswith('linux'):
+        selection = ['-p', str(pid)] if pid is not None else ['-ax']
+        result = subprocess.run(['ps', *selection, '-o', 'pid=,ppid=,lstart=,stat=,command='],
+                                capture_output=True, text=True)
+        found = []
+        for line in result.stdout.splitlines():
+            fields = line.strip().split(None, 8)
+            if len(fields) >= 8:
+                found.append({'pid': int(fields[0]), 'ppid': int(fields[1]),
+                              'start': ' '.join(fields[2:7]), 'status': fields[7],
+                              'command': fields[8] if len(fields) == 9 else ''})
+        return found
+    found = []
+    for entry in [str(pid)] if pid is not None else os.listdir('/proc'):
+        if not entry.isdigit():
+            continue
+        try:
+            record = pathlib.Path('/proc', entry, 'stat').read_text()
+            name = record[record.index('(') + 1:record.rindex(')')]
+            if pid is None and (os.stat(pathlib.Path('/proc', entry)).st_uid != os.getuid()
+                                or name not in names):
+                continue
+            command = pathlib.Path('/proc', entry, 'cmdline').read_bytes()
+        except OSError:
+            continue
+        fields = record[record.rindex(')') + 1:].split()
+        text = command.rstrip(b'\0').replace(b'\0', b' ').decode(errors='replace')
+        found.append({'pid': int(entry), 'ppid': int(fields[1]), 'start': fields[19], 'status': fields[0],
+                      'command': text if text else '[' + name + '] <defunct>' if fields[0] == 'Z' else ''})
+    return found
 
 
 def _session_lock_path(db, session):
@@ -371,7 +410,13 @@ if 'app-server' in args:
 omp='--mode' in args
 claude='--input-format' in args
 muse='--prompt-file' in args
-model=args[args.index('--model')+1]
+# DSH takes its model from the second --patch overlay (harness/dsh-player.bend).
+dsh=args[:2]==['--profile','headless']
+if dsh:
+    patches=[args[index+1] for index,argument in enumerate(args[:-1]) if argument=='--patch']
+    model=re.search(r"^    model: '([^']*)'$",pathlib.Path(patches[1]).read_text(),re.M).group(1)
+else:
+    model=args[args.index('--model')+1]
 session=os.environ.get('BATON_SESSION',model)
 native_args=args[:]
 while native_args[:1]==['-c'] and len(native_args)>1: native_args=native_args[2:]
@@ -400,6 +445,23 @@ if omp:
     else:
         (storage/('2026-09-28_'+native+'.jsonl')).write_text(json.dumps({'type':'session','id':native})+'\n')
     print(json.dumps({'type':'response','command':'get_state','success':True,'id':state['id'],'data':{'sessionId':native,'model':{'provider':'fixture','id':model}}}),flush=True)
+elif dsh:
+    # DSH reads the task from stdin to EOF and keeps each conversation under
+    # DSH_HOME. A --session-id it does not hold is refused on stderr.
+    prompt=sys.stdin.read()
+    conversations=pathlib.Path(os.environ['DSH_HOME'])/'sessions'
+    native=resume or 'session-'+model
+    if resume and not (conversations/resume).exists():
+        print('dsh: session '+resume+' not found',file=sys.stderr,flush=True)
+        sys.exit(1)
+    prior=(conversations/native).read_text() if resume else ''
+    if config.get('record_launches'):
+        with (home/'native-history.jsonl').open('a') as recorded:
+            recorded.write(json.dumps({'native':native,'resume':resume,'home':os.environ['DSH_HOME'],'content':prior,'origin':''})+'\n')
+    conversations.mkdir(parents=True,exist_ok=True)
+    with (conversations/native).open('a') as conversation: conversation.write(json.dumps({'role':'user','content':prompt})+'\n')
+    # DSH writes compact frames; Baton classifies them by their leading bytes.
+    print(json.dumps({'type':'session','sessionId':native,'cwd':os.getcwd()},separators=(',',':')),flush=True)
 elif muse:
     prompt=pathlib.Path(args[args.index('--prompt-file')+1]).read_text()
     native=resume or native
@@ -594,6 +656,9 @@ while True:
         print(json.dumps({'type':'result','subtype':'error_during_execution' if failure else 'success',
                           'session_id':native,'is_error':failure,
                           'result':action.get('fail_message','fixture provider failed') if failure else body}),flush=True)
+    elif dsh:
+        print(json.dumps({'type':'error','message':action.get('fail_message','fixture provider failed')} if failure else
+                         {'type':'final','text':body},separators=(',',':')),flush=True)
     elif muse:
         payload={'kind':'run_terminal','terminal':'failed' if failure else 'completed',
                  'command_id':'fixture-primary',
@@ -717,16 +782,15 @@ class Receive(unittest.TestCase):
                 child.terminate()
             child.communicate()
 
+    def process_names(self):
+        """Process names of this run: the coordinator, its sibling entries and
+        the executables the run writes."""
+        return {path.name[:15] for path in [*EXE.parent.iterdir(), *self.directory.iterdir()]}
+
     def owned_processes(self):
-        result = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
-                                capture_output=True, text=True, check=True)
-        found = []
-        for line in result.stdout.splitlines():
-            fields = line.strip().split(None, 3)
-            if len(fields) == 4 and str(self.directory) in fields[3] and not fields[2].startswith('Z'):
-                found.append({'pid': int(fields[0]), 'ppid': int(fields[1]),
-                              'status': fields[2], 'command': fields[3]})
-        return found
+        return [{key: process[key] for key in ('pid', 'ppid', 'status', 'command')}
+                for process in process_table(names=self.process_names())
+                if str(self.directory) in process['command'] and not process['status'].startswith('Z')]
 
     def eventually(self, observation, description):
         while True:
@@ -2575,17 +2639,12 @@ class Receive(unittest.TestCase):
         self.assertTrue(self.session_guard_available('parent'))
 
     def selected_process(self, pid):
-        result = subprocess.run(['ps', '-p', str(pid), '-o', 'pid=,ppid=,lstart=,stat=,command='],
-                                capture_output=True, text=True)
-        self.assertEqual(result.stderr, '')
-        if not result.stdout.strip():
-            self.assertIn(result.returncode, (0, 1))
+        found = process_table(pid)
+        if not found:
             return None
-        self.assertEqual(result.returncode, 0, result.stderr)
-        fields = result.stdout.rstrip('\n').split(None, 8)
-        self.assertIn(len(fields), (8, 9), result.stdout)
-        return {'pid': int(fields[0]), 'ppid': int(fields[1]), 'start': ' '.join(fields[2:7]),
-                'state': fields[7], 'command': fields[8] if len(fields) == 9 else ''}
+        process, = found
+        return {'pid': process['pid'], 'ppid': process['ppid'], 'start': process['start'],
+                'state': process['status'], 'command': process['command']}
 
     def signal_selected(self, selected, action):
         current = self.selected_process(selected['pid'])
@@ -4671,14 +4730,10 @@ class Receive(unittest.TestCase):
 
     def kill_fixture(self):
         """Kill the fixture native processes of this run, leaving keepers."""
-        result = subprocess.run(['ps', '-axo', 'pid=,command='], capture_output=True,
-                                text=True, check=True)
-        for line in result.stdout.splitlines():
-            fields = line.strip().split(None, 1)
-            if (len(fields) == 2 and str(self.directory) in fields[1]
-                    and 'native fixture' in fields[1]):
+        for process in process_table(names=self.process_names()):
+            if str(self.directory) in process['command'] and 'native fixture' in process['command']:
                 try:
-                    os.kill(int(fields[0]), signal.SIGKILL)
+                    os.kill(process['pid'], signal.SIGKILL)
                 except ProcessLookupError:
                     pass
 
@@ -4751,26 +4806,14 @@ class Receive(unittest.TestCase):
 
     def run_processes(self):
         """Every process of this run, including unreaped zombies."""
-        result = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
-                                capture_output=True, text=True, check=True)
-        found = []
-        for line in result.stdout.splitlines():
-            fields = line.strip().split(None, 3)
-            if len(fields) == 4 and str(self.directory) in fields[3]:
-                found.append({'pid': int(fields[0]), 'ppid': int(fields[1]),
-                              'status': fields[2], 'command': fields[3]})
-        return found
+        return [{key: process[key] for key in ('pid', 'ppid', 'status', 'command')}
+                for process in process_table(names=self.process_names()) if str(self.directory) in process['command']]
 
     def kill_keeper(self, leader):
         """Kill the keeper processes of this run, freeing an inherited
         session lock. The leader driver is already dead; fixtures stay."""
-        result = subprocess.run(['ps', '-axo', 'pid=,command='], capture_output=True,
-                                text=True, check=True)
-        for line in result.stdout.splitlines():
-            fields = line.strip().split(None, 1)
-            if len(fields) != 2:
-                continue
-            pid, command = int(fields[0]), fields[1]
+        for process in process_table(names=self.process_names()):
+            pid, command = process['pid'], process['command']
             if pid == leader.pid or 'native fixture' in command:
                 continue
             if str(self.directory) in command:
@@ -4951,6 +4994,134 @@ class Receive(unittest.TestCase):
         self.assertEqual({row[3] for row in reads}, {None})
         self.assertEqual(receipts, [('first', None), ('second', None)])
         self.assertEqual(raw_spool.read_bytes(), preserved)
+
+    def lose_host_runtime(self, receiver):
+        """End every process of this run and remove its runtime sockets, as a
+        host reboot does. Attempt directories and the database remain."""
+        self.freeze_owned()
+        receiver.kill()
+        receiver.wait()
+        self.drain_owned()
+        removed = []
+        for directory, _, names in os.walk(self.ipc.name):
+            for name in names:
+                path = pathlib.Path(directory, name)
+                if stat.S_ISSOCK(path.lstat().st_mode):
+                    path.unlink()
+                    removed.append(path)
+        self.assertTrue(removed, 'the run left no runtime socket to remove')
+
+    def test_dsh_resume_after_keeper_loss_continues_the_recorded_conversation(self):
+        """A DSH seat whose keeper, owner and native ended with the host (#1067):
+        resume records the ended attempt and continues the recorded DSH
+        conversation with every owed input."""
+        self.coord('connect', 'root', 'native-root', json.dumps([str(self.fixture), 'parent_endpoint']))
+        self.player(harness='dsh')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config.update(record_launches=True, ack_root=False)
+        config_path.write_text(json.dumps(config))
+        self.prepare_input('first', 'parent', 'Complete the original input.', kind='task')
+        self.connect('parent')
+        original_receiver = self.spawn(*self.receive_args('parent'))
+        _, original_started = self.accept_child(
+            original_receiver, 'parent', 'original receiver exited before the dsh stub started')
+        self.assertEqual(original_started['args'][:2], ['--profile', 'headless'])
+        self.assertNotIn('--session-id', original_started['args'])
+        self.assertIn('[id: first]', original_started['prompt'])
+        original_native = original_started['native']
+        self.eventually(lambda: self.coord('player', 'parent')['native'] == original_native,
+                        'the DSH session frame was not recorded as the native identity')
+        original_attempt = pathlib.Path(self.execution('parent')[2])
+        self.coord('message', 'second', 'root', 'parent', 'report', 'The exact queued input.')
+
+        self.lose_host_runtime(original_receiver)
+        self.assertTrue((original_attempt / 'launch').exists())
+        self.assertFalse((original_attempt / 'status').exists())
+        with sqlite3.connect(self.db) as database:
+            self.assertEqual(database.execute(
+                "SELECT id,receipt FROM messages WHERE recipient='parent' ORDER BY seq").fetchall(),
+                [('first', None), ('second', None)])
+
+        resume = self.spawn('resume', 'parent')
+        resumed, recovery_started = self.accept_child(
+            resume, 'parent', 'resume exited before the new dsh process started')
+        self.assertNotEqual(recovery_started['pid'], original_started['pid'])
+        self.assertEqual(recovery_started['resume'], original_native)
+        self.assertEqual(recovery_started['native'], original_native)
+        self.assertIn('[id: first]', recovery_started['prompt'])
+        self.assertIn('[id: second]', recovery_started['prompt'])
+        history = [json.loads(line) for line in
+                   (self.directory / 'native-history.jsonl').read_text().splitlines()]
+        self.assertEqual([row['resume'] for row in history], ['', original_native])
+        self.assertEqual(history[0]['home'], history[1]['home'])
+        self.assertIn('Complete the original input.', history[1]['content'])
+
+        body = 'The resumed DSH conversation completed both inputs.'
+        self.action(resumed, body=body, read=['first', 'second'], ack=False, complete_task=False)
+        self.assertEqual(resumed.readline(), b'')
+        # The recovering receive reports the ended attempt's unknown outcome in
+        # its exit status after the continuation completes, as the #986 recovery
+        # test records. The completed turn is read from the database.
+        self.child_communication(resume)
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+        self.assertIn(body, [row['reportBody'] for row in self.coord('turns', 'parent')])
+        with sqlite3.connect(self.db) as database:
+            self.assertEqual([row[0] for row in database.execute(
+                "SELECT id FROM messages WHERE recipient='parent' AND receipt IS NULL")], [])
+            ended = database.execute(
+                "SELECT count(*) FROM messages WHERE sender='parent' "
+                "AND body LIKE '%unknown after keeper loss%'").fetchone()[0]
+        self.assertGreater(ended, 0, 'the ended attempt was not recorded')
+        self.assertEqual(self.coord('player', 'parent')['native'], original_native)
+        self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 2)
+
+    def test_dsh_resume_of_an_unstarted_attempt_starts_a_conversation_with_owed_input(self):
+        """A DSH seat that never started a conversation and holds an attempt in
+        `starting` with only DSH patch files, the state left by a receiver that
+        wrote its patches into the custody directory (#1067): resume admits a
+        new attempt, starts a fresh DSH conversation and delivers the open task
+        and the other owed input."""
+        self.coord('connect', 'root', 'native-root', json.dumps([str(self.fixture), 'parent_endpoint']))
+        self.player(harness='dsh')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config.update(record_launches=True, ack_root=False)
+        config_path.write_text(json.dumps(config))
+        self.prepare_input('assignment', 'parent', 'Complete the assignment.', kind='task')
+        self.prepare_input('note', 'parent', 'Use the shared worktree.')
+        self.connect('parent')
+        stale = 'receive:parent:2:' + '0' * 32
+        stale_directory = pathlib.Path(str(self.db.resolve()) + '.attempt-' + stale.encode().hex())
+        stale_directory.mkdir(mode=0o700)
+        for name in ('dsh-tools.patch.yml', 'dsh-model.patch.yml'):
+            (stale_directory / name).write_text('# retained patch\n')
+        with sqlite3.connect(self.db) as database:
+            database.execute("INSERT OR REPLACE INTO executions(session,id,mode,directory,phase,status) "
+                             "VALUES('parent',?,'retained',?,'starting','')", (stale, str(stale_directory)))
+        self.assertEqual(self.coord('player', 'parent')['native'], '')
+
+        resume = self.spawn('resume', 'parent')
+        control, started = self.accept_child(resume, 'parent', 'resume exited before the dsh stub started')
+        self.assertNotIn('--session-id', started['args'])
+        self.assertEqual(started['resume'], '')
+        self.assertIn('[id: assignment]', started['prompt'])
+        self.assertIn('Complete the assignment.', started['prompt'])
+        self.assertIn('[id: note]', started['prompt'])
+        current = pathlib.Path(self.execution('parent')[2])
+        self.assertNotEqual(current, stale_directory)
+        self.assertTrue((current / 'launch').exists())
+        self.assertEqual(sorted(path.name for path in stale_directory.iterdir()),
+                         ['dsh-model.patch.yml', 'dsh-tools.patch.yml'])
+
+        body = 'A fresh DSH conversation completed the assignment.'
+        self.action(control, body=body, read=['assignment', 'note'], ack=False, complete_task=False)
+        self.assertEqual(control.readline(), b'')
+        self.finish(resume)
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+        self.assertIn(body, [row['reportBody'] for row in self.coord('turns', 'parent')])
+        self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
+        self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
 
     def test_direct_receive_behind_a_live_child_starts_no_second_turn(self):
         """A live retained child outlives its dead observer with the session
