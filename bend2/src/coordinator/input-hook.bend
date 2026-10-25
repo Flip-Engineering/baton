@@ -1,8 +1,8 @@
 # PostToolUse supplies unread owed bodies at the next successful tool boundary.
 # Complete reads use the admitted attempt's existing native custody identity.
 import Base
-import ./commands.bend as C
-import ./message-status.bend as Status
+import ../coordinator/commands.bend as C
+import ../coordinator/message-status.bend as Status
 import ../host/instance.bend as Custody
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
