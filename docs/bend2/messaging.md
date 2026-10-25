@@ -15,6 +15,7 @@ admission path as `message`.
 | Subordinate agent to a more distant ancestor | Refused. |
 | Non-operator peers sharing an explicitly tight Ensemble | Allowed. |
 | Peers with loose coupling or no shared tight membership | Refused. |
+| Operator and its immediate child, in any Player role | Allowed in both directions. |
 | Operator and a top-level Conductor | Allowed in both directions. |
 
 Peer routes connect distinct non-operator agents with no ancestor relationship.
@@ -25,7 +26,7 @@ An Ensemble has a recorded owner ID, a coupling value and explicit
 members. Its owner may be a member. A session can belong to several Ensembles;
 a shared tight membership grants a peer route. The recorded owner manages
 membership; adding a member requires an existing non-operator session. Operator
-sessions use the top-level Conductor route.
+sessions can message their immediate children and top-level Conductors.
 
 Roles and coupling are stored in the existing SQLite database. A session with
 no role assignment is a Player. A Conductor with no parent is displayed as a
@@ -44,6 +45,18 @@ baton2 state.db role lead associate-conductor
 baton2 state.db role operator operator
 baton2 state.db role lead
 ```
+
+The administration command `start-setup` records a parentless Principal
+Conductor and its receiver. Bind a selected subscription profile before
+dispatching its first task:
+
+```sh
+baton state.db start-setup principal claude-code CLAUDE_EXECUTABLE MODEL EFFORT WORKSPACE OUTPUT_LOG
+baton state.db as operator profile-bind --session principal --profile PROFILE --store EXTERNAL_STORE
+baton state.db as operator dispatch --to principal --text 'Review the project.'
+```
+
+With a configured series registry, `MODEL` selects a registered model mapping.
 
 Create an Ensemble with loose coupling:
 
