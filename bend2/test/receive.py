@@ -201,7 +201,7 @@ if '--profile' in args and config.get('dsh_public_read'):
     # with the launch's BATON_DATABASE/BATON_SESSION/BATON_ATTEMPT_DIRECTORY
     # context, so the coordinator records the complete read itself.
     session=os.environ.get('BATON_SESSION','')
-    print(json.dumps({'type':'session','sessionId':'dsh-native-'+str(os.getpid()),'cwd':os.getcwd()}),flush=True)
+    print(json.dumps({'type':'session','sessionId':'dsh-native-'+str(os.getpid()),'cwd':os.getcwd()},separators=(',',':')),flush=True)
     task=sys.stdin.read()
     identifiers=list(dict.fromkeys(re.findall(r'\[id: ([^\]]+)\]',task)))
     late=config.get('dsh_late_read','')
@@ -235,7 +235,7 @@ if '--profile' in args and config.get('dsh_public_read'):
             recorded.write(json.dumps({'id':ident,'code':result.returncode,
                                        'stdout':result.stdout,'stderr':result.stderr})+'\n')
         if result.returncode: sys.exit(result.returncode)
-    print(json.dumps({'type':'final','text':'read recorded' if identifiers else 'no input'}),flush=True)
+    print(json.dumps({'type':'final','text':'read recorded' if identifiers else 'no input'},separators=(',',':')),flush=True)
     sys.exit(0)
 if args[:1]==['legacy_keeper']:
     import array,ctypes,fcntl,select,struct
