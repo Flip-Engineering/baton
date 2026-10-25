@@ -3,15 +3,9 @@
 # with HELPER standing in for the usage-read helper. Each account's credential
 # reference is file:PATH and the fixture writes the next read document to PATH.
 #
-# It proves: a refusal followed by an open read does not hold; an exhausted read
-# holds and announces the hold to the orchestrator and the root; a gate on a held seat
-# reads again once the read interval has passed; an unreadable read and a passed provider reset do not release; an open
-# read releases every seat that announced the hold and drives the other seat's owed
-# input through the wake entry; a held account is read again at most once per read
-# interval; repeated gates add no second announcement; an unreadable provider is an
-# unknown that does not hold; malformed, missing and mismatched helper answers are
-# recorded as unreadable with their reasons; and a model-scoped window holds only the
-# seats of that model.
+# It covers refusal reads, admission reads, unreadable reads, scoped windows,
+# observation ordering, account serialization, insert failure, release launch
+# failure, account changes and provider reset continuations.
 #
 # usage: usage-live-reads DB HELPER
 #        usage-live-reads --wake-message DB MESSAGE   (the release wake records a mark)
@@ -101,26 +95,16 @@ def exhausted_case(+db: String, +helper: String, +path: String, +future: String)
     again : UW.Gate <- state_of(db,"a","acct-zai")
     expect_read(db,"SELECT count(*) FROM messages WHERE id GLOB 'usage-read:2:hold:a*';","2\n","repeated-gate-no-second-hold")
 
-# Moves every recorded read one read interval and a second into the past, so the next
-# gate finds the held provider account due.
-def age_reads(+db: String) -> IO(Unit):
-  query(db,"UPDATE usage_reads SET observed_at=observed_at-61000;")
-
 def held_input_case(+db: String, +helper: String) -> IO(Unit):
   do IO<Unit>:
-    fresh : UW.Gate <- UW.window_gate_with(db,"b","acct-zai",helper)
-    fresh_held : Unit <- expect("fresh-hold-still-held",String.eq(gate_class(fresh),"held"))
-    not_due : Unit <- expect_read(db,"SELECT count(*) FROM usage_reads;","2\n","fresh-hold-not-read-again-within-interval")
-    aged : Unit <- age_reads(db)
     gate : UW.Gate <- UW.window_gate_with(db,"b","acct-zai",helper)
     held : Unit <- expect("input-to-held-seat-still-held",String.eq(gate_class(gate),"held"))
-    reread : Unit <- expect_read(db,"SELECT count(*)||'|'||(SELECT trigger||'|'||session FROM usage_reads ORDER BY id DESC LIMIT 1) FROM usage_reads;","3|held-account-due|b\n","due-held-account-read-again")
+    reread : Unit <- expect_read(db,"SELECT count(*)||'|'||(SELECT trigger||'|'||session FROM usage_reads ORDER BY id DESC LIMIT 1) FROM usage_reads;","3|admission|b\n","held-account-read-at-admission")
     expect_read(db,"SELECT recipient FROM messages WHERE id='usage-read:2:hold:b';","coord\n","second-seat-hold-announced")
 
 def unreadable_held_case(+db: String, +helper: String, +path: String) -> IO(Unit):
   do IO<Unit>:
     written : Unit <- answer(path,UR.unreadable_document("zai",zai_source(),"1","HTTP 503 from the provider"))
-    aged : Unit <- age_reads(db)
     gate : UW.Gate <- UW.window_gate_with(db,"a","acct-zai",helper)
     held : Unit <- expect("unreadable-read-keeps-hold",String.eq(gate_class(gate),"held"))
     reason : Unit <- expect_read(db,"SELECT state||'|'||reason FROM usage_reads WHERE id=4;","unreadable|HTTP 503 from the provider\n","unreadable-reason-recorded")
@@ -129,14 +113,14 @@ def unreadable_held_case(+db: String, +helper: String, +path: String) -> IO(Unit
 def passed_reset_case(+db: String, +helper: String, +path: String, +past: String, +future: String) -> IO(Unit):
   do IO<Unit>:
     written : Unit <- answer(path,zai_doc("100",past,"true"))
-    aged : Unit <- age_reads(db)
     gate : UW.Gate <- UW.window_gate_with(db,"a","acct-zai",helper)
     held : Unit <- expect("passed-reset-still-exhausted-holds",String.eq(gate_class(gate),"held"))
     recorded : UW.Gate <- state_of(db,"a","acct-zai")
     kept : Unit <- expect("hold-does-not-expire-without-read",String.eq(gate_class(recorded),"held"))
-    passed : Unit <- expect_read(db,UW.schedule_delay_sql(past),"60\n","passed-reset-continuation-waits-one-read-interval")
-    far : Unit <- expect_read(db,UW.schedule_delay_sql(future),"60\n","far-reset-continuation-waits-one-read-interval")
-    unknown : Unit <- expect_read(db,UW.schedule_delay_sql(""),"60\n","unreported-reset-continuation-waits-one-read-interval")
+    passed : Unit <- expect_read(db,UW.schedule_delay_sql(past),"\n","passed-reset-has-no-continuation")
+    +far_delay : String <- read(db,UW.schedule_delay_sql(future))
+    far : Unit <- expect_read(db,"SELECT CAST(" ++ C.q(Tx.trim_nl(far_delay)) ++ " AS INTEGER)>60;","1\n","far-reset-continuation-waits-until-reset")
+    unknown : Unit <- expect_read(db,UW.schedule_delay_sql(""),"\n","unreported-reset-has-no-continuation")
     +near : String <- read(db,"SELECT CAST(CAST(strftime('%s','now') AS INTEGER)*1000+10000 AS TEXT);")
     +delay : String <- read(db,UW.schedule_delay_sql(Tx.trim_nl(near)))
     expect_read(db,"SELECT CAST(" ++ C.q(Tx.trim_nl(delay)) ++ " AS INTEGER) BETWEEN 9 AND 11;","1\n","near-reset-continuation-ends-at-reset")
@@ -144,7 +128,6 @@ def passed_reset_case(+db: String, +helper: String, +path: String, +past: String
 def release_case(+db: String, +helper: String, +path: String) -> IO(Unit):
   do IO<Unit>:
     written : Unit <- answer(path,zai_doc("3","1792820715847","false"))
-    aged : Unit <- age_reads(db)
     gate : UW.Gate <- UW.window_gate_with(db,"a","acct-zai",helper)
     open : Unit <- expect("open-read-releases",String.eq(gate_class(gate),"none"))
     released : Unit <- expect_read(db,"SELECT group_concat(id||'>'||recipient,',') FROM (SELECT id,recipient FROM messages WHERE id GLOB 'usage-read:2:release:*' ORDER BY id);","usage-read:2:release:a>coord,usage-read:2:release:a:root>root,usage-read:2:release:b>coord,usage-read:2:release:b:root>root\n","release-announced-for-each-held-seat")
@@ -252,9 +235,10 @@ def persistence_case(+db: String, +helper: String, +path: String) -> IO(Unit):
     reject : Unit <- query(db,"CREATE TRIGGER reject_read BEFORE INSERT ON usage_reads BEGIN SELECT RAISE(FAIL,'fixture exhausted read insert failed'); END;")
     written : Unit <- answer(path,zai_doc("100","null","true"))
     +self : String <- IO.try(String,Lock.SessionLock.executable())
-    ran : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv([self,"--read-account",db,helper,"acct-zai"]),".")
-    failed : Unit <- expect("read-insert-failure-propagated",Bool.not(run_ok(Tx.run_res(ran))))
-    cause : Unit <- expect("read-insert-failure-cause-retained",UW.has_sub("fixture exhausted read insert failed",run_text(Tx.run_res(ran))))
+    ran : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","exec \"$@\" 2>&1","sh",self,"--read-account",db,helper,"acct-zai"]),".")
+    +outcome : T.RunRes <- IO.pure(T.RunRes,Tx.run_res(ran))
+    failed : Unit <- expect("read-insert-failure-propagated",Bool.not(run_ok(outcome)))
+    cause : Unit <- expect("read-insert-failure-cause-retained",UW.has_sub("fixture exhausted read insert failed",run_text(outcome)))
     expect_read(db,"SELECT count(*) FROM usage_reads;","1\n","failed-read-keeps-recorded-evidence")
 
 def release_retry_case(+db: String) -> IO(Unit):

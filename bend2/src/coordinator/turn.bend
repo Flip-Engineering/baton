@@ -185,7 +185,7 @@ def direct_wake_gate(+db: String, +player: String, +message: String, gate: UW.Ga
       Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.is_empty(message),
         IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
         do IO<Result<&1,&1,U32 & String,Unit>>:
-          held : Unit <- UW.held(db,player,message,UW.GateHeld{window,resets_at,source,receipt})
+          held : Unit <- UW.held(db,player,message,"direct wake",UW.GateHeld{window,resets_at,source,receipt})
           IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
     case other: Delivery.wake_pending(db,player,message)
 

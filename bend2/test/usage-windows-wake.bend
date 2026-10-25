@@ -1,14 +1,7 @@
-# Held-seat continuation fixture for the #1025 usage hold. A held wake starts one
-# detached single-shot continuation that sleeps until the provider's reported reset
-# of the held window or for one read interval (60 seconds), whichever is sooner, and
-# then re-enters the wake driver, which decides again from the recorded live reads.
-# The fixture proves: the continuation names the wake entry, not the direct delivery
-# entry; the gate carries the provider reset that the continuation sleeps until; a
-# read message is a no-op; a continuation that fires while the newest read is
-# exhausted records a check and delivers nothing, also when that read's reset time
-# has passed; an open read admits one delivery; duplicate continuations leave one
-# delivery and one report; and a reset two days ahead, or one already passed, sleeps
-# one read interval.
+# Held-seat continuation fixture for the #1025 usage hold. A held wake starts a
+# detached continuation at a future provider reset and enters the wake driver.
+# Passed and absent reset times produce no delay. The fixture also exercises owed
+# input, repeated continuations and the live read decision at wake.
 #
 # usage: usage-windows-wake DB SELF_SCRIPT
 import Base
@@ -126,9 +119,8 @@ def stale_case(+db: String, +self: String) -> IO(Unit):
     delivered : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-ws';","1\n","open-read-delivery-once")
     expect_read(db,"SELECT count(*) FROM messages WHERE id='m-ws' AND receipt IS NOT NULL;","0\n","open-read-keeps-stored-receipt-empty")
 
-# A continuation that fires while the read is still exhausted delivers nothing. The
-# continuation sleeps until a provider reset that is less than one read interval
-# ahead, and one read interval otherwise.
+# A continuation that fires while the read is exhausted keeps its input owed.
+# The delay is determined by a future provider reset.
 def far_case(+db: String, +self: String) -> IO(Unit):
   do IO<Unit>:
     +far : String <- held_read(db,"wf","172800000")
@@ -138,15 +130,29 @@ def far_case(+db: String, +self: String) -> IO(Unit):
     ran : Result<&1,&1,U32 & String,String> <- Proc.Process.run(argv,".")
     checked : Unit <- expect_read(db,"SELECT count(*) FROM wake_held_checks WHERE id='m-wf';","1\n","far-continuation-held-check")
     blocked : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-wf';","0\n","far-continuation-no-delivery")
-    far_delay : Unit <- expect_read(db,UW.schedule_delay_sql(far),"60\n","far-reset-sleeps-one-read-interval")
+    +far_delay : String <- read(db,UW.schedule_delay_sql(far))
+    far_reset : Unit <- expect_read(db,"SELECT CAST(" ++ C.q(Tx.trim_nl(far_delay)) ++ " AS INTEGER) BETWEEN 172799 AND 172800;","1\n","far-reset-sleeps-until-provider-reset")
     +past : String <- read(db,"SELECT CAST(CAST(strftime('%s','now') AS INTEGER)*1000-1000 AS TEXT);")
-    past_delay : Unit <- expect_read(db,UW.schedule_delay_sql(Tx.trim_nl(past)),"60\n","passed-reset-sleeps-one-read-interval")
+    past_delay : Unit <- expect_read(db,UW.schedule_delay_sql(Tx.trim_nl(past)),"\n","passed-reset-has-no-continuation")
     +near : String <- read(db,"SELECT CAST(CAST(strftime('%s','now') AS INTEGER)*1000+2000 AS TEXT);")
     +near_delay : String <- read(db,UW.schedule_delay_sql(Tx.trim_nl(near)))
     expect_read(db,"SELECT CAST(" ++ C.q(Tx.trim_nl(near_delay)) ++ " AS INTEGER) BETWEEN 1 AND 2;","1\n","near-reset-sleeps-until-reset")
 
+def mark_gate(+db: String, +message: String, gate: UW.Gate) -> IO(Unit):
+  match gate:
+    case UW.GateHeld{window,resets_at,source,receipt}: query(db,"INSERT OR IGNORE INTO wake_held_checks(id) VALUES(" ++ C.q(message) ++ ");")
+    case other: query(db,"INSERT OR IGNORE INTO wake_deliveries(message,receipt) VALUES(" ++ C.q(message) ++ ",'delivered');INSERT OR IGNORE INTO wake_reports(id) VALUES(" ++ C.q(message ++ ":wake-delivered-report") ++ ");")
+
+def mark_owed(+db: String, +message: String, +seat: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.is_empty(seat),IO.pure(Unit,Unit{}),do IO<Unit>:
+    gate : UW.Gate <- UW.window_gate(db,seat,seat)
+    mark_gate(db,message,gate))
+
 def main_args(args: List<String>) -> IO(Unit):
   match args:
+    case "--wake-message" <> +db <> +message <> Nil{}: do IO<Unit>:
+      +seat : String <- read(db,"SELECT recipient FROM messages m WHERE id=" ++ C.q(message) ++ " AND " ++ C.owed_sql("m") ++ ";")
+      mark_owed(db,message,Tx.trim_nl(seat))
     case +path <> +self <> Nil{}: do IO<Unit>:
       ready : Unit <- setup(path)
       +argv_enc : String <- IO.pure(String,Tx.enc_argv(UW.schedule_argv(self,path,"m","1")))

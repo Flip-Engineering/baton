@@ -2,6 +2,7 @@
 # Test usage-read helper for test/usage-live-reads.bend. The core runs it as
 # HELPER PROVIDER CREDENTIAL_REF. The fixture gives each account the reference
 # file:PATH and writes the next read document to PATH; this prints that document.
+# serial:DIR records overlapping requests while returning DIR/answer.
 case "$2" in
   serial:*)
     directory=${2#serial:}

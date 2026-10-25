@@ -138,10 +138,7 @@ def scope_sql(+alias: String, +provider: String, +account: String) -> String:
   alias ++ "provider=" ++ C.q(provider) ++ " AND " ++ alias ++ "account=" ++ C.q(account)
 
 def window_exhausted_sql(+w: String) -> String:
-  "(coalesce(json_extract(" ++ w ++ ".value,'$.exhausted'),0)=1 OR coalesce(json_extract(" ++ w ++ ".value,'$.usedPercent'),0)>=100)"
-
-def read_exhausted_sql(+r: String) -> String:
-  "EXISTS(SELECT 1 FROM json_each(" ++ r ++ ".document,'$.windows') w WHERE " ++ window_exhausted_sql("w") ++ ")"
+  "(coalesce(json_extract(" ++ w ++ ".value,'$.exhausted'),0)=1)"
 
 def readable_document_sql(+provider: String) -> String:
   "(json_valid(d) AND json_extract(d,'$.schema')=" ++ C.q(UR.read_schema()) ++ " AND json_extract(d,'$.state')='read' AND coalesce(json_extract(d,'$.provider'),'')=" ++ C.q(provider) ++ " AND json_type(d,'$.windows')='array')"
@@ -150,13 +147,14 @@ def read_reason_sql(+provider: String, +fallback: String) -> String:
   "CASE WHEN " ++ readable_document_sql(provider) ++ " THEN '' WHEN json_valid(d) AND json_extract(d,'$.state')='unreadable' THEN coalesce(json_extract(d,'$.reason'),'') WHEN json_valid(d) AND json_extract(d,'$.state')='read' THEN 'the usage-read document is not a " ++ UR.read_schema() ++ " read for provider " ++ C.escaped(provider) ++ "' ELSE " ++ C.q(fallback) ++ " END"
 
 def record_read_sql(+provider: String, +account: String, +session: String, +trigger: String, +document: String, +fallback: String) -> String:
-  "INSERT INTO usage_reads(observed_at,provider,account,session,trigger,state,source,reason,document) SELECT " ++ now_ms() ++ "," ++ C.q(provider) ++ "," ++ C.q(account) ++ "," ++ C.q(session) ++ "," ++ C.q(trigger) ++ ",CASE WHEN " ++ readable_document_sql(provider) ++ " THEN 'read' ELSE 'unreadable' END,CASE WHEN json_valid(d) THEN coalesce(json_extract(d,'$.source'),'') ELSE '' END,replace(replace(" ++ read_reason_sql(provider,fallback) ++ ",char(10),' '),char(31),' '),CASE WHEN json_valid(d) THEN d ELSE json_object('output',d) END FROM (SELECT " ++ C.q(document) ++ " AS d);SELECT last_insert_rowid();"
+  "INSERT INTO usage_reads(observed_at,provider,account,session,trigger,state,source,reason,document) SELECT CASE WHEN json_valid(d) AND json_type(d,'$.observedAt') IN ('integer','real') THEN CAST(json_extract(d,'$.observedAt') AS INTEGER) ELSE " ++ now_ms() ++ " END," ++ C.q(provider) ++ "," ++ C.q(account) ++ "," ++ C.q(session) ++ "," ++ C.q(trigger) ++ ",CASE WHEN " ++ readable_document_sql(provider) ++ " THEN 'read' ELSE 'unreadable' END,CASE WHEN json_valid(d) THEN coalesce(json_extract(d,'$.source'),'') ELSE '' END,replace(replace(" ++ read_reason_sql(provider,fallback) ++ ",char(10),' '),char(31),' '),CASE WHEN json_valid(d) THEN d ELSE json_object('output',d) END FROM (SELECT " ++ C.q(document) ++ " AS d);SELECT last_insert_rowid();"
 
 # --- the hold decision -----------------------------------------------------------
 #
 # A window named WINDOW:SCOPE (for example 7-day:opus) applies only to a seat whose
 # recorded model contains SCOPE; a window without a scope applies to every seat of the
-# provider and account. latest readable: the newest read with state 'read'. episode:
+# provider and account. Newest means observed_at, then row identity.
+# latest readable: the newest read with state 'read'. episode:
 # for one model, the first read that holds it after the newest readable read that did
 # not. The episode is non-NULL exactly when the latest readable read holds the model.
 
@@ -170,16 +168,16 @@ def read_holds_sql(+r: String, +model: String) -> String:
   "EXISTS(SELECT 1 FROM json_each(" ++ r ++ ".document,'$.windows') w WHERE " ++ window_holds_sql("w",model) ++ ")"
 
 def latest_readable_sql(+provider: String, +account: String) -> String:
-  "(SELECT max(id) FROM usage_reads WHERE " ++ scope_sql("",provider,account) ++ " AND state='read')"
+  "(SELECT id FROM usage_reads WHERE " ++ scope_sql("",provider,account) ++ " AND state='read' ORDER BY observed_at DESC,id DESC LIMIT 1)"
 
 def latest_read_sql(+provider: String, +account: String) -> String:
-  "(SELECT max(id) FROM usage_reads WHERE " ++ scope_sql("",provider,account) ++ ")"
+  "(SELECT id FROM usage_reads WHERE " ++ scope_sql("",provider,account) ++ " ORDER BY observed_at DESC,id DESC LIMIT 1)"
 
 def last_open_sql(+provider: String, +account: String, +model: String) -> String:
-  "(SELECT max(o.id) FROM usage_reads o WHERE " ++ scope_sql("o.",provider,account) ++ " AND o.state='read' AND NOT " ++ read_holds_sql("o",model) ++ ")"
+  "(SELECT o.id FROM usage_reads o WHERE " ++ scope_sql("o.",provider,account) ++ " AND o.state='read' AND NOT " ++ read_holds_sql("o",model) ++ " ORDER BY o.observed_at DESC,o.id DESC LIMIT 1)"
 
 def episode_sql(+provider: String, +account: String, +model: String) -> String:
-  "(SELECT min(e.id) FROM usage_reads e WHERE " ++ scope_sql("e.",provider,account) ++ " AND e.state='read' AND e.id>coalesce(" ++ last_open_sql(provider,account,model) ++ ",0) AND " ++ read_holds_sql("e",model) ++ ")"
+  "(SELECT e.id FROM usage_reads e WHERE " ++ scope_sql("e.",provider,account) ++ " AND e.state='read' AND NOT EXISTS(SELECT 1 FROM usage_reads o WHERE o.id=" ++ last_open_sql(provider,account,model) ++ " AND (o.observed_at,o.id)>=(e.observed_at,e.id)) AND " ++ read_holds_sql("e",model) ++ " ORDER BY e.observed_at,e.id LIMIT 1)"
 
 # The window of the latest readable read that holds the model and resets last; a
 # window without a reported reset sorts first, because no reset time ends it.
@@ -217,29 +215,6 @@ def gate_held(gate: Gate) -> Bool:
   match gate:
     case GateHeld{window,resets_at,source,receipt}: True{}
     case other: False{}
-
-# --- the read interval ---------------------------------------------------------------
-#
-# While a seat is held, a reset card spent by the operator or a reset the provider
-# applies on its own changes no Baton state, so Baton reads a held provider account
-# again at most once per read interval. 60 seconds is the cadence of the provider's
-# own client: the Codex TUI refreshes account rate limits every 60 seconds
-# (openai/codex PR #6789, tokio interval Duration::from_secs(60), merge commit
-# 4000e26). z.ai, Kimi, DeepSeek and Anthropic publish no read cadence for their
-# usage endpoints, so the same interval applies to them. The interval only starts a
-# read; the read decides.
-
-def read_interval_ms() -> String:
-  "60000"
-
-# A provider account is due for a read when its newest read is a read interval old,
-# or when a provider reset of the read it holds on has passed since that read.
-def due_sql(+r: String) -> String:
-  "((SELECT max(x.observed_at) FROM usage_reads x WHERE x.provider=" ++ r ++ ".provider AND x.account=" ++ r ++ ".account)<=" ++ now_ms() ++ "-" ++ read_interval_ms()
-  ++ " OR EXISTS(SELECT 1 FROM json_each(" ++ r ++ ".document,'$.windows') w WHERE " ++ window_exhausted_sql("w") ++ " AND CAST(json_extract(w.value,'$.resetsAt') AS INTEGER)<=" ++ now_ms() ++ " AND CAST(json_extract(w.value,'$.resetsAt') AS INTEGER)>(SELECT max(x.observed_at) FROM usage_reads x WHERE x.provider=" ++ r ++ ".provider AND x.account=" ++ r ++ ".account)))"
-
-def latest_readable_rows_sql() -> String:
-  "r.id IN (SELECT max(id) FROM usage_reads WHERE state='read' GROUP BY provider,account)"
 
 # --- the read effect -------------------------------------------------------------
 #
@@ -356,7 +331,7 @@ def scope_text(+provider: String, +account: String) -> String:
 def hold_sql(+seat: String, +provider: String, +account: String, +model: String) -> String:
   +episode = episode_sql(provider,account,model)
   +latest = latest_readable_sql(provider,account)
-  announce_sql("'usage-read:'||" ++ episode ++ "||':hold:'||" ++ C.q(seat),C.q(seat),"'usage hold: seat " ++ C.escaped(seat) ++ " (model " ++ C.escaped(model) ++ ") on " ++ C.escaped(scope_text(provider,account)) ++ " is held by window ' || " ++ field_sql(held_window_sql(provider,account,model,"json_extract(w.value,'$.window')")) ++ " || '. ' || " ++ read_text_sql(latest) ++ " || '. Owed input stays queued. Only a live read releases the hold; Baton reads this provider account again at the reported reset time, at most once a minute while it stays held, on input to the seat and on usage-window-refresh.'",episode ++ " IS NOT NULL")
+  announce_sql("'usage-read:'||" ++ episode ++ "||':hold:'||" ++ C.q(seat),C.q(seat),"'usage hold: seat " ++ C.escaped(seat) ++ " (model " ++ C.escaped(model) ++ ") on " ++ C.escaped(scope_text(provider,account)) ++ " is held by window ' || " ++ field_sql(held_window_sql(provider,account,model,"json_extract(w.value,'$.window')")) ++ " || '. ' || " ++ read_text_sql(latest) ++ " || '. Owed input stays queued. Only a live read releases the hold; Baton reads this provider account again at admission, at a future reported reset time and on usage-window-refresh.'",episode ++ " IS NOT NULL")
 
 def unknown_sql(+seat: String, +provider: String, +account: String) -> String:
   +latest = latest_read_sql(provider,account)
@@ -366,7 +341,7 @@ def unknown_sql(+seat: String, +provider: String, +account: String) -> String:
 # keeps the hold's recipient. The id prefix lets the read use the unique id index.
 def release_sql(+seat: String, +provider: String, +account: String) -> String:
   +latest = latest_readable_sql(provider,account)
-  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT replace(h.id,':hold:',':release:'),h.sender,h.recipient,'report','usage hold released: seat " ++ C.escaped(seat) ++ " on " ++ C.escaped(scope_text(provider,account)) ++ ". ' || coalesce(" ++ read_text_sql(latest) ++ ",'No readable read is recorded for this provider and account') || '. Owed input is admitted.' FROM messages h WHERE h.id GLOB 'usage-read:*:hold:*' AND h.sender=" ++ C.q(seat) ++ " AND h.kind='report' AND NOT EXISTS(SELECT 1 FROM messages x WHERE x.id=replace(h.id,':hold:',':release:'));SELECT changes();"
+  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT replace(h.id,':hold:',':release:'),h.sender,h.recipient,'report','usage hold released: seat " ++ C.escaped(seat) ++ " on " ++ C.escaped(scope_text(provider,account)) ++ ". ' || coalesce(" ++ read_text_sql(latest) ++ ",'No readable read is recorded for this provider and account') || '. Owed input is admitted.' FROM messages h, usage_reads e WHERE h.id GLOB 'usage-read:'||e.id||':hold:*' AND " ++ scope_sql("e.",provider,account) ++ " AND h.sender=" ++ C.q(seat) ++ " AND h.kind='report' AND NOT EXISTS(SELECT 1 FROM messages x WHERE x.id=replace(h.id,':hold:',':release:'));SELECT changes();"
 
 def announce(+db: String, +seat: String, +provider: String, +account: String, +model: String, gate: Gate) -> IO(Unit):
   match gate:
@@ -415,16 +390,24 @@ def owed_head_sql(+seat: String) -> String:
 def wake_argv(+self: String, +db: String, +message: String) -> List<String>:
   [self,"--wake-message",db,message]
 
-def wake_head(+db: String, +self: String, +canonical: String, +head: String) -> IO(Unit):
-  Bool.pick(IO(Unit),String.is_empty(head),IO.pure(Unit,Unit{}),do IO<Unit>:
+def wake_result(+db: String, +seat: String, +head: String, launched: Result<&1,&1,U32 & String,String>) -> IO(Bool):
+  match launched:
+    case Done{out}: IO.pure(Bool,True{})
+    case Fail{(code,+detail)}: do IO<Bool>:
+      reported : Unit <- window_report(db,seat,head,"usage-release-wake-failed","usage release wake failed: " ++ U32.show(code) ++ ": " ++ detail ++ "; owed input remains queued for another release attempt.")
+      IO.pure(Bool,False{})
+
+def wake_head(+db: String, +self: String, +canonical: String, +seat: String, +head: String) -> IO(Bool):
+  Bool.pick(IO(Bool),String.is_empty(head),IO.pure(Bool,True{}),do IO<Bool>:
     launched : Result<&1,&1,U32 & String,String> <- Host.Control.launch(Tx.enc_argv(wake_argv(self,canonical,head)),db,head ++ ":usage-read-release")
-    IO.pure(Unit,Unit{}))
+    wake_result(db,seat,head,launched))
 
 def release_open(+db: String, +self: String, +canonical: String, +seat: String, +provider: String, +account: String) -> IO(Unit):
   do IO<Unit>:
-    released : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,release_sql(seat,provider,account))
     +head : String <- IO.try(String,DB.Sql.read(db,owed_head_sql(seat)))
-    wake_head(db,self,canonical,Tx.trim_nl(head))
+    launched : Bool <- wake_head(db,self,canonical,seat,Tx.trim_nl(head))
+    released : String <- Bool.pick(IO(String),launched,IO.try(String,DB.Sql.query(db,release_sql(seat,provider,account))),IO.pure(String,""))
+    IO.pure(Unit,Unit{})
 
 def release_seat(+db: String, +self: String, +canonical: String, +seat: String, +provider: String, +account: String) -> IO(Unit):
   do IO<Unit>:
@@ -459,7 +442,7 @@ def release_others(+db: String, +current: String, +provider: String, +account: S
 
 def record_pair(+db: String, +session: String, +provider: String, +account: String, +trigger: String, +document: String, +fallback: String) -> IO(Unit):
   do IO<Unit>:
-    saved : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,record_read_sql(provider,account,session,trigger,document,fallback))
+    saved : String <- IO.try(String,DB.Sql.query(db,record_read_sql(provider,account,session,trigger,document,fallback)))
     IO.pure(Unit,Unit{})
 
 def record_document(+db: String, +session: String, +provider: String, +account: String, +trigger: String, answer: String & String) -> IO(Unit):
@@ -468,42 +451,17 @@ def record_document(+db: String, +session: String, +provider: String, +account: 
 
 # One live read for a provider and account, recorded, followed by the release of the
 # other seats it no longer holds. One read serves every seat on the provider account.
-# helper is the usage-read executable.
+# helper is the usage-read executable. The physical account lock covers the
+# request and insert; process exit releases the lock after an insert failure.
 def read_with(+db: String, +session: String, +provider: String, +account: String, +helper: String, +trigger: String) -> IO(Unit):
   do IO<Unit>:
-    +ref : String <- credential_ref(db,provider,account)
+    +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    lock : U32 <- IO.try(U32,Lock.SessionLock.wait_acquire(canonical,"usage-read:" ++ J.string_literal(provider) ++ ":" ++ J.string_literal(account)))
+    +ref : String <- credential_ref(canonical,provider,account)
     answer : String & String <- run_read(helper,provider,ref)
-    recorded : Unit <- record_document(db,session,provider,account,trigger,answer)
-    release_others(db,session,provider,account)
-
-# Every held provider account that is due for a read. Any gate reads these, so a
-# continuation lost with a host restart, or a quiet seat, does not keep a hold past
-# a provider restore.
-def due_scopes_sql() -> String:
-  "SELECT r.provider||char(31)||r.account FROM usage_reads r WHERE " ++ latest_readable_rows_sql() ++ " AND " ++ read_exhausted_sql("r") ++ " AND " ++ due_sql("r") ++ ";"
-
-# session is the seat whose gate starts the reads.
-def reread_scope(+db: String, +session: String, +helper: String, fields: List<&2,String>) -> IO(Unit):
-  match fields:
-    case +provider <> +account <> Nil{}: read_with(db,session,provider,account,helper,"held-account-due")
-    case other: IO.pure(Unit,Unit{})
-
-def reread_scopes(+db: String, +session: String, +helper: String, lines: List<String>) -> IO(Unit):
-  match lines:
-    case Nil{}: IO.pure(Unit,Unit{})
-    case +line <> rest: do IO<Unit>:
-      one : Unit <- reread_scope(db,session,helper,String.split(line,Char.from_u32(31)))
-      reread_scopes(db,session,helper,rest)
-
-def reread_found(+db: String, +session: String, +helper: String, found: Result<&1,&1,U32 & String,String>) -> IO(Unit):
-  match found:
-    case Fail{error}: IO.pure(Unit,Unit{})
-    case Done{+text}: reread_scopes(db,session,helper,Tx.split_lines(text))
-
-def reread_due(+db: String, +session: String, +helper: String) -> IO(Unit):
-  do IO<Unit>:
-    found : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,due_scopes_sql())
-    reread_found(db,session,helper,found)
+    recorded : Unit <- record_document(canonical,session,provider,account,trigger,answer)
+    released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+    release_others(canonical,session,provider,account)
 
 # The hold state of a seat from the recorded reads, with its announcements. No read.
 def window_state(+db: String, +session: String, account: String) -> IO(Gate):
@@ -515,12 +473,13 @@ def window_state(+db: String, +session: String, account: String) -> IO(Gate):
     noted : Unit <- Bool.pick(IO(Unit),String.is_empty(provider),IO.pure(Unit,Unit{}),announce(db,session,provider,label,model,gate))
     IO.pure(Gate,gate)
 
-# The gate an input passes before it starts a turn. Every held provider account that
-# is due is read first, the seat's own included, so the read decides.
+# Admission reads the seat's provider account before deciding from durable reads.
 def window_gate_with(+db: String, +session: String, account: String, +helper: String) -> IO(Gate):
   do IO<Gate>:
-    due : Unit <- reread_due(db,session,helper)
-    window_state(db,session,account)
+    +provider : String <- seat_provider_io(db,session)
+    +label : String <- IO.pure(String,Tx.trim_nl(account))
+    read : Unit <- Bool.pick(IO(Unit),String.is_empty(provider),IO.pure(Unit,Unit{}),read_with(db,session,provider,label,helper,"admission"))
+    window_state(db,session,label)
 
 def window_gate(+db: String, +session: String, account: String) -> IO(Gate):
   do IO<Gate>:
@@ -541,20 +500,14 @@ def read_refused(+db: String, +session: String, account: String, +attempt: Strin
 
 # --- the held-seat continuation -----------------------------------------------------
 #
-# A held wake leaves the input owed and launches one detached continuation that
-# sleeps and then runs the wake entry. The sleep ends at the provider's reported reset
-# of the held window or after one read interval, whichever is sooner. The instant
-# never releases the seat: the wake meets the gate, the gate reads the held provider
-# account when it is due, and the read decides. A seat the read still holds starts the
-# next continuation from the provider's new values, so the chain ends with the hold.
-# Each held wake starts its own chain, so a seat that receives k inputs while held runs
-# k chains; the read interval keeps provider reads at one per account per interval.
+# A held wake schedules a read at a future provider reset. A provider response
+# with a passed or absent reset leaves the hold reported to its orchestrator.
 
 def schedule_argv(+self: String, +db: String, +message: String, +delay_s: String) -> List<String>:
   ["/bin/sh","-c","sleep \"$1\"; shift; exec \"$@\"","sh",delay_s,self,"--wake-message",db,message]
 
 def schedule_delay_sql(+resets_at: String) -> String:
-  "SELECT CAST(CASE WHEN " ++ C.q(resets_at) ++ "<>'' AND CAST(" ++ C.q(resets_at) ++ " AS INTEGER)>" ++ now_ms() ++ " THEN min((CAST(" ++ C.q(resets_at) ++ " AS INTEGER)-" ++ now_ms() ++ "+999)/1000," ++ read_interval_ms() ++ "/1000) ELSE " ++ read_interval_ms() ++ "/1000 END AS TEXT);"
+  "SELECT CASE WHEN " ++ C.q(resets_at) ++ "<>'' AND CAST(" ++ C.q(resets_at) ++ " AS INTEGER)>" ++ now_ms() ++ " THEN CAST((CAST(" ++ C.q(resets_at) ++ " AS INTEGER)-" ++ now_ms() ++ "+999)/1000 AS TEXT) ELSE '' END;"
 
 def schedule_launch(+db: String, +message: String, +delay_s: String, +self: String) -> IO(Unit):
   do IO<Unit>:
@@ -564,19 +517,23 @@ def schedule_launch(+db: String, +message: String, +delay_s: String, +self: Stri
 def schedule_wake(+db: String, +message: String, +resets_at: String, +self: String) -> IO(Unit):
   do IO<Unit>:
     +delay : String <- IO.try(String,DB.Sql.read(db,schedule_delay_sql(resets_at)))
-    schedule_launch(db,message,Tx.trim_nl(delay),self)
+    Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(delay)),IO.pure(Unit,Unit{}),schedule_launch(db,message,Tx.trim_nl(delay),self))
 
-def schedule_held(+db: String, +message: String, +resets_at: String) -> IO(Unit):
+def schedule_held(+db: String, +message: String, +delay_s: String) -> IO(Unit):
   do IO<Unit>:
     +self : String <- IO.try(String,Lock.SessionLock.executable())
     +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
-    schedule_wake(canonical,message,resets_at,self)
+    schedule_launch(canonical,message,delay_s,self)
 
-# The held wake: the hold is already announced by the gate; this starts the
-# continuation for the owed message.
-def held(+db: String, +session: String, +message: String, gate: Gate) -> IO(Unit):
+# A held wake schedules a future reset read or reports the owed message and the
+# absence of a future reset to its orchestrator.
+def held(+db: String, +session: String, +message: String, +trigger: String, gate: Gate) -> IO(Unit):
   match gate:
-    case GateHeld{window,+resets_at,source,receipt}: Bool.pick(IO(Unit),String.is_empty(message),IO.pure(Unit,Unit{}),schedule_held(db,message,resets_at))
+    case GateHeld{+window,+resets_at,+source,+receipt}: Bool.pick(IO(Unit),String.is_empty(message),IO.pure(Unit,Unit{}),do IO<Unit>:
+      +delay : String <- IO.try(String,DB.Sql.read(db,schedule_delay_sql(resets_at)))
+      Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(delay)),
+        window_report(db,session,receipt ++ ":" ++ message,"usage-hold-needs-read","usage hold: " ++ trigger ++ " for seat " ++ session ++ " keeps message " ++ message ++ " owed. Window " ++ window ++ " from " ++ source ++ " has no future provider reset. Its orchestrator can request usage-window-refresh or deliver further input to read the provider again."),
+        schedule_held(db,message,Tx.trim_nl(delay))))
     case other: IO.pure(Unit,Unit{})
 
 # --- the commands ---------------------------------------------------------------------
@@ -595,7 +552,7 @@ def hold_name(gate: Gate) -> String:
 # The seat's hold state, its recent reads and its recent refusal evidence.
 def query_answer_sql(+session: String, +provider: String, +account: String, +hold: String) -> String:
   "SELECT json_object('schema','baton2-usage-windows-v2','session'," ++ C.q(session) ++ ",'provider'," ++ C.q(provider) ++ ",'account'," ++ C.q(account) ++ ",'hold'," ++ C.q(hold)
-  ++ ",'reads',coalesce((SELECT json_group_array(json(item)) FROM (SELECT json_object('read',r.id,'observedAt',r.observed_at,'trigger',r.trigger,'state',r.state,'source',r.source,'reason',nullif(r.reason,''),'windows',CASE WHEN r.state='read' THEN json_extract(r.document,'$.windows') END) AS item FROM usage_reads r WHERE " ++ scope_sql("r.",provider,account) ++ " ORDER BY r.id DESC LIMIT 10)),'[]')"
+  ++ ",'reads',coalesce((SELECT json_group_array(json(item)) FROM (SELECT json_object('read',r.id,'observedAt',r.observed_at,'trigger',r.trigger,'state',r.state,'source',r.source,'reason',nullif(r.reason,''),'windows',CASE WHEN r.state='read' THEN json_extract(r.document,'$.windows') END) AS item FROM usage_reads r WHERE " ++ scope_sql("r.",provider,account) ++ " ORDER BY r.observed_at DESC,r.id DESC LIMIT 10)),'[]')"
   ++ ",'refusals',coalesce((SELECT json_group_array(json(item)) FROM (SELECT json_object('recordedAt',u.recorded_at,'window',u.window,'source',u.reset_source,'receipt',u.receipt,'message',nullif(u.message,'')) AS item FROM usage_windows u, sessions s WHERE s.id=" ++ C.q(session) ++ " AND u.harness=s.harness AND u.provider=" ++ model_provider_sql("s.model") ++ " AND u.account=" ++ C.q(account) ++ " ORDER BY u.id DESC LIMIT 10)),'[]'));"
 
 def query_print(+db: String, +session: String, +provider: String, +account: String, gate: Gate) -> IO(Unit):

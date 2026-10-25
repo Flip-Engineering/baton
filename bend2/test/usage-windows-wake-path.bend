@@ -8,10 +8,8 @@
 # usage-read helper is installed, so that read is unreadable and the input stays
 # owed. When an open read is recorded before the continuation fires the input is
 # delivered once and the release is reported. A read message is a no-op. The
-# unqualified case covers the Muse shape: a model without a provider prefix reads
-# the harness's provider and is held by that provider's read. Held seats keep
-# starting continuations once a read interval, so the fixture ends by recording
-# every owed message read; each later continuation then finds nothing owed.
+# unqualified case covers a model without a provider prefix, which reads the
+# harness's provider. The fixture records every owed message read before exit.
 #
 # The retained start path (#1016) admits the attempt before it checks the gate.
 # A held start must leave no execution row, so a route change is admitted at once.
@@ -116,8 +114,9 @@ def passed_case(+db: String) -> IO(Unit):
     held : Result<&1,&1,U32 & String,Unit> <- drive(db,"later")
     waited : Unit <- sleep_ms("3")
     none : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-later';","0\n","passed-reset-without-open-read-no-delivery")
-    reread : Unit <- expect_read(db,"SELECT count(*)||'|'||min(state) FROM usage_reads WHERE provider='later-kimi' AND trigger='held-account-due';","1|unreadable\n","passed-reset-reads-the-provider-again")
-    expect_read(db,hold_reports_sql("later","hold"),"1\n","repeated-held-wakes-report-once")
+    reread : Unit <- expect_read(db,"SELECT count(*)||'|'||min(state) FROM usage_reads WHERE provider='later-kimi' AND trigger='admission';","2|unreadable\n","passed-reset-reads-the-provider-again")
+    reported : Unit <- expect_read(db,hold_reports_sql("later","hold"),"1\n","repeated-held-wakes-report-once")
+    expect_read(db,"SELECT count(*) FROM messages WHERE sender='later' AND instr(body,'no future provider reset')>0;","1\n","passed-reset-notifies-orchestrator")
 
 # An open read is recorded before the continuation fires: the continuation
 # delivers the owed input once and the release is reported.
