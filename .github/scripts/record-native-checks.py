@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Record selected unittest outcomes during the native suite and compare trees."""
+import ctypes
 import hashlib
 import json
 import os
@@ -13,6 +14,7 @@ import threading
 import time
 import traceback
 import unittest
+import uuid
 
 SELECTED = (
     'root-wake.py', 'coordinator.py', 'receive.py', 'turn.py',
@@ -24,6 +26,8 @@ SELECTED = (
 
 # An observed test file that shows no progress for this many seconds is treated as stalled.
 # Progress is CPU time, read or write counters, output, or a change in the set of descendant processes.
+# A stalled test is stopped in three steps, one per quiet period: stop its processes and raise Stalled
+# in the test thread, repeat for the cleanup that follows, then end the file.
 STALL_SECONDS = float(os.environ.get('BATON2_STALL_SECONDS', '900'))
 STALL_SAMPLE_SECONDS = float(os.environ.get('BATON2_STALL_SAMPLE_SECONDS', '5'))
 
@@ -67,16 +71,47 @@ def process_tree(root, watcher):
     return {pid: rows[pid][1] for pid in found}
 
 
-def stop_descendants(root, watcher):
-    victims = [pid for pid in process_tree(root, watcher) if pid != root]
+class Stalled(Exception):
+    """Raised in the test thread when the observed test made no progress."""
+
+
+def tagged_processes(tag):
+    """Processes that inherited the observer's tag, including daemons that left the process tree."""
+    needle = b'BATON2_OBSERVE_TAG=' + tag.encode() + b'\0'
+    found = {}
+    for entry in os.listdir('/proc'):
+        if not entry.isdigit() or int(entry) == os.getpid():
+            continue
+        try:
+            if needle in pathlib.Path('/proc/' + entry + '/environ').read_bytes():
+                command = pathlib.Path('/proc/' + entry + '/cmdline').read_bytes().replace(b'\0', b' ')
+                found[int(entry)] = command.decode(errors='replace').strip()
+        except OSError:
+            pass
+    return found
+
+
+def stop_processes(root, watcher, tag):
+    """Stop the descendants of root and every tagged process; return the commands that were stopped."""
+    stopped = {}
+
+    def victims():
+        found = {pid: '' for pid in process_tree(root, watcher) if pid != root}
+        found.update(tagged_processes(tag))
+        return found
+
     for sent in (signal.SIGTERM, signal.SIGKILL):
-        for pid in victims:
+        found = victims()
+        if not found:
+            break
+        for pid, command in found.items():
+            stopped.setdefault(pid, command)
             try:
                 os.kill(pid, sent)
             except OSError:
                 pass
         time.sleep(2)
-        victims = [pid for pid in victims if pid in process_tree(root, watcher)]
+    return [command for _, command in sorted(stopped.items()) if command]
 
 
 def write(path, value):
@@ -105,15 +140,20 @@ def run_row(result, expected, stalls):
 def observe(output, argv):
     if argv[:1] == ['--']:
         argv = argv[1:]
+    tests = pathlib.Path('bend2/test').resolve()
     selected = {str(pathlib.Path('bend2/test', name).resolve()): name for name in SELECTED}
-    path = pathlib.Path(argv[0]).resolve() if argv else None
-    if path is None or str(path) not in selected:
+    path = pathlib.Path(argv[0]).resolve() if argv and argv[0].endswith('.py') else None
+    if path is None or path.parent != tests or not path.is_file():
         os.execv(sys.executable, [sys.executable, *argv])
-    name = selected[str(path)]
-    document = {'file': 'bend2/test/' + name, 'argv': argv,
+    # Every test file is watched for progress; the selected files also record outcomes.
+    name = selected.get(str(path))
+    document = {'file': 'bend2/test/' + path.name, 'argv': argv,
                 'test_contract_sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'runs': []}
     state = {'result': None, 'expected': 0, 'active': False, 'current': None, 'stalls': []}
     lock = threading.Lock()
+    tag = uuid.uuid4().hex
+    os.environ['BATON2_OBSERVE_TAG'] = tag
+    runner = threading.main_thread().ident
     original = unittest.TextTestRunner.run
     start_test = unittest.TestResult.startTest
 
@@ -138,11 +178,12 @@ def observe(output, argv):
             for row in document['runs'])
         document['judged'] = document['judged'] and (
             (status == 0 and not failures) or (status == 1 and bool(failures)))
-        write(output / (name + '.json'), document)
+        if name:
+            write(output / (name + '.json'), document)
 
     def watch():
         pid, me = os.getpid(), threading.get_native_id()
-        last, changed, stalled = process_tree(pid, me), time.monotonic(), None
+        last, changed, quiet = process_tree(pid, me), time.monotonic(), {}
         while True:
             time.sleep(STALL_SAMPLE_SECONDS)
             now = process_tree(pid, me)
@@ -152,18 +193,22 @@ def observe(output, argv):
             if time.monotonic() - changed < STALL_SECONDS or not state['active']:
                 continue
             test = state['current']
+            quiet[test] = quiet.get(test, 0) + 1
             print('record-native-checks: %s made no progress for %s seconds' % (test, STALL_SECONDS),
                   file=sys.stderr, flush=True)
-            if test == stalled:
+            if quiet[test] == 3:
                 with lock:
                     if state['active'] and state['result'] is not None:
                         document['runs'].append(run_row(state['result'], state['expected'], state['stalls']))
                     finish(1)
                 os._exit(1)
-            stalled = test
-            state['stalls'].append(test)
-            document.setdefault('stalled', []).append(test)
-            stop_descendants(pid, me)
+            if test not in state['stalls']:
+                state['stalls'].append(test)
+                document.setdefault('stalled', []).append(test)
+            stopped = stop_processes(pid, me, tag)
+            if stopped:
+                document.setdefault('stopped_processes', []).extend(stopped)
+            ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(runner), ctypes.py_object(Stalled))
             last, changed = process_tree(pid, me), time.monotonic()
 
     unittest.TestResult.startTest = started
@@ -181,6 +226,9 @@ def observe(output, argv):
         status = 1
     finally:
         status = 1 if document.get('stalled') and status == 0 else status
+        leftover = stop_processes(os.getpid(), threading.get_native_id(), tag)
+        if leftover:
+            document.setdefault('stopped_processes', []).extend(leftover)
         with lock:
             finish(status)
     raise SystemExit(status)
