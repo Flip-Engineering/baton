@@ -36,6 +36,10 @@ class DshPublicRead(unittest.TestCase):
         self.fx = receive.Receive()
         self.addCleanup(self.fx.doCleanups)
         self.fx.setUp()
+        config_path = self.fx.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['dsh_public_read'] = True
+        config_path.write_text(json.dumps(config))
         self.fx.player('dsh-parent', harness='dsh')
         self.fx.prepare_input('dsh-input', 'dsh-parent',
                               'Read the complete DSH input.\n', kind='guidance')

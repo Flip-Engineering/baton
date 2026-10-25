@@ -195,7 +195,7 @@ FIXTURE = r'''import json,os,pathlib,re,socket,sqlite3,subprocess,sys,time
 home=pathlib.Path(__file__).resolve().parent
 config=json.loads((home/'fixture.json').read_text())
 args=sys.argv[1:]
-if '--profile' in args:
+if '--profile' in args and config.get('dsh_public_read'):
     # Controlled DSH headless native for the public-read regression. The task
     # arrives on stdin; each referenced input is read through the public CLI
     # with the launch's BATON_DATABASE/BATON_SESSION/BATON_ATTEMPT_DIRECTORY
