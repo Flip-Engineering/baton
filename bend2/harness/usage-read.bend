@@ -4,6 +4,7 @@ import ../src/host/clock.bend as Clock
 import ../src/host/http.bend as Http
 import ../src/host/text.bend as Text
 import ../src/host/sqlite.bend as DB
+import ../src/host/process.bend as P
 import ../src/json/canonical.bend as J
 import ../src/coordinator/commands.bend as C
 import ../src/coordinator/usage-reads.bend as UR
@@ -11,6 +12,7 @@ import ../src/coordinator/zai-quota.bend as Zai
 import ../src/coordinator/deepseek-usage.bend as Deepseek
 import ../src/coordinator/kimi-usage.bend as Kimi
 import ../src/coordinator/claude-usage.bend as Claude
+import ../src/coordinator/codex-rate-limits.bend as Codex
 
 # usage-read PROVIDER CREDENTIAL_REF (#1025). Performs one live read of the provider's
 # usage API and prints one baton2-usage-read-v1 document: the normalized windows, or
@@ -23,7 +25,12 @@ import ../src/coordinator/claude-usage.bend as Claude
 # in $HOME/.omp/agent/models.yml; omp-auth:PROVIDER is the key field of the provider's
 # enabled row in $HOME/.omp/agent/agent.db auth_credentials; claude-oauth:PATH is the
 # Claude Code OAuth access token in PATH, $HOME/.claude/.credentials.json when PATH is
-# empty; file:PATH is the first line of PATH.
+# empty; file:PATH is the first line of PATH; codex-home:PATH runs codex app-server
+# with CODEX_HOME=PATH, or with the inherited environment when PATH is empty.
+#
+# The optional third argument is the codex executable the coordinator recorded for the
+# reading seat. The Codex read runs BATON_CODEX_BIN when it is set, else that recorded
+# executable, else codex found on PATH.
 
 def print_unreadable(+provider: String, +source: String, +observed: String, +reason: String) -> IO(Unit):
   IO.print(UR.unreadable_document(provider,source,observed,reason))
@@ -36,8 +43,9 @@ def time_value(result: Result<&1,&1,U32 & String,String>) -> String:
 def scheme_of(+reference: String) -> String:
   Bool.pick(String,Tx.starts_with(reference,"omp-models:"),"omp-models",
   Bool.pick(String,Tx.starts_with(reference,"file:"),"file",
+  Bool.pick(String,Tx.starts_with(reference,"codex-home:"),"codex-home",
   Bool.pick(String,Tx.starts_with(reference,"omp-auth:"),"omp-auth",
-  Bool.pick(String,Tx.starts_with(reference,"claude-oauth:"),"claude-oauth",""))))
+  Bool.pick(String,Tx.starts_with(reference,"claude-oauth:"),"claude-oauth","")))))
 
 def after_colon(text: String) -> String:
   match text:
@@ -280,13 +288,123 @@ def read_claude(+observed: String, +reference: String) -> IO(Unit):
 def muse_reason() -> String:
   "no authenticated usage endpoint was identified for the configured API key"
 
+# --- Codex -------------------------------------------------------------------------
+
+# The helper sends initialize, waits for its answer, and only then sends initialized and
+# the read; codex app-server ended without answering when all three arrived at once.
+def codex_initialize() -> String:
+  "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"baton2-usage-read\",\"version\":\"1.0\"}}}\n"
+
+def codex_read_request() -> String:
+  "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\"}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"account/rateLimits/read\",\"params\":{}}\n"
+
+
+# The response line's role: 'initialized' for the answer to initialize, 'result' with the
+# read's result object, 'error' with an error message, or 'other' for any other line.
+def codex_line_sql(+line: String) -> String:
+  "SELECT CASE WHEN NOT json_valid(" ++ C.q(line) ++ ") THEN 'other' WHEN coalesce(json_extract(" ++ C.q(line) ++ ",'$.id'),0)=1 AND json_type(" ++ C.q(line) ++ ",'$.error') IS NULL THEN 'initialized' WHEN coalesce(json_extract(" ++ C.q(line) ++ ",'$.id'),0) NOT IN (1,2) THEN 'other' WHEN json_type(" ++ C.q(line) ++ ",'$.error') IS NOT NULL THEN 'error' || char(31) || coalesce(json_extract(" ++ C.q(line) ++ ",'$.error.message'),json_extract(" ++ C.q(line) ++ ",'$.error')) ELSE 'result' || char(31) || json_extract(" ++ C.q(line) ++ ",'$.result') END;"
+
+@unsafe
+def codex_drain_lines(+handle: U32, line: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Unit):
+  match line:
+    case Fail{error}: IO.pure(Unit,Unit{})
+    case Done{value}:
+      match value:
+        case None{}: IO.pure(Unit,Unit{})
+        case Some{text}: do IO<Unit>:
+          next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
+          codex_drain_lines(handle,next)
+
+# Closing stdin starts app-server shutdown. Consume its remaining notifications
+# while it exits so its stdout writes can complete.
+def codex_finish(+handle: U32) -> IO(Unit):
+  do IO<Unit>:
+    closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
+    next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
+    drained : Unit <- codex_drain_lines(handle,next)
+    waited : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
+    IO.pure(Unit,Unit{})
+
+def wait_text(waited: Result<&1,&1,U32 & String,String>) -> String:
+  match waited:
+    case Done{+status}: Tx.trim_nl(status)
+    case Fail{(code,detail)}: "status unavailable: " ++ detail
+
+# The child's own status names why it ended: a missing codex executable on PATH is
+# env's exit 127.
+def codex_ended(+handle: U32, +observed: String) -> IO(Unit):
+  do IO<Unit>:
+    closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
+    waited : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
+    print_unreadable("codex",Codex.codex_source(),observed,"codex app-server ended before it answered account/rateLimits/read (" ++ wait_text(waited) ++ ")")
+
+def codex_result(+observed: String, +result: String) -> IO(Unit):
+  do IO<Unit>:
+    problem : Result<&1,&1,U32 & String,String> <- DB.Sql.query(":memory:",Codex.codex_problem_sql(result))
+    print_parsed("codex",Codex.codex_source(),observed,Codex.codex_windows_sql(result),sql_text(problem))
+
+def codex_classified(+handle: U32, +observed: String, fields: List<&2,String>) -> IO(Bool):
+  match fields:
+    case "result" <> +result <> Nil{}: do IO<Bool>:
+      finished : Unit <- codex_finish(handle)
+      printed : Unit <- codex_result(observed,result)
+      IO.pure(Bool,True{})
+    case "initialized" <> Nil{}: do IO<Bool>:
+      wrote : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.write(handle,codex_read_request())
+      IO.pure(Bool,False{})
+    case "error" <> +message <> Nil{}: do IO<Bool>:
+      finished : Unit <- codex_finish(handle)
+      printed : Unit <- print_unreadable("codex",Codex.codex_source(),observed,"codex app-server answered an error: " ++ message)
+      IO.pure(Bool,True{})
+    case other: IO.pure(Bool,False{})
+
+@unsafe
+def codex_lines(+handle: U32, +observed: String, line: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Unit):
+  match line:
+    case Fail{(code,detail)}: do IO<Unit>:
+      finished : Unit <- codex_finish(handle)
+      print_unreadable("codex",Codex.codex_source(),observed,"reading codex app-server failed: " ++ detail)
+    case Done{value}:
+      match value:
+        case None{}: codex_ended(handle,observed)
+        case Some{+text}: do IO<Unit>:
+          +role : String <- IO.try(String,DB.Sql.query(":memory:",codex_line_sql(Tx.trim_nl(text))))
+          +done : Bool <- codex_classified(handle,observed,String.split(Tx.trim_nl(role),Char.from_u32(31)))
+          next : Result<&1,&1,U32 & String,Maybe<String>> <- Bool.pick(IO(Result<&1,&1,U32 & String,Maybe<String>>),done,IO.pure(Result<&1,&1,U32 & String,Maybe<String>>,Done{None{}}),P.ProcessChild.read_line(handle))
+          Bool.pick(IO(Unit),done,IO.pure(Unit,Unit{}),codex_lines(handle,observed,next))
+
+def codex_spawned(+observed: String, spawned: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
+  match spawned:
+    case Fail{(code,detail)}: print_unreadable("codex",Codex.codex_source(),observed,"codex app-server did not start: " ++ detail)
+    case Done{+handle}: do IO<Unit>:
+      wrote : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.write(handle,codex_initialize())
+      first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
+      codex_lines(handle,observed,first)
+
+def env_value(found: Result<&1,&1,U32 & String,String>) -> String:
+  match found:
+    case Fail{error}: ""
+    case Done{+value}: Tx.trim_nl(value)
+
+def codex_spawn(+observed: String, +reference: String, +recorded: String) -> IO(Unit):
+  do IO<Unit>:
+    configured : Result<&1,&1,U32 & String,String> <- IO.get_env("BATON_CODEX_BIN")
+    +executable : String <- IO.pure(String,Codex.codex_executable(env_value(configured),recorded))
+    spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv(Codex.codex_app_server_argv(after_colon(reference),executable)),".","/dev/null")
+    codex_spawned(observed,spawned)
+
+def read_codex(+observed: String, +reference: String, +recorded: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(scheme_of(reference),"codex-home"),codex_spawn(observed,reference,recorded),print_unreadable("codex",Codex.codex_source(),observed,"the credential reference " ++ reference ++ " is not codex-home:PATH"))
+
 # --- dispatch ------------------------------------------------------------------------
 
-def read_provider(+provider: String, +reference: String, +observed: String) -> IO(Unit):
+# recorded is the codex executable the coordinator recorded for the reading seat, or ''.
+def read_provider(+provider: String, +reference: String, +observed: String, +recorded: String) -> IO(Unit):
   match provider:
     case "zai": read_zai(observed,reference)
     case "deepseek": read_deepseek(observed,reference)
     case "kimi-code": read_kimi(observed,reference)
+    case "codex": read_codex(observed,reference,recorded)
     case "claude": read_claude(observed,reference)
     case "muse": print_unreadable("muse","",observed,muse_reason())
     case _: print_unreadable(provider,"",observed,"no usage reader for provider " ++ provider ++ " is in this build")
@@ -295,8 +413,11 @@ def main_arguments(arguments: List<String>) -> IO(Unit):
   match arguments:
     case +provider <> +reference <> Nil{}: do IO<Unit>:
       now : Result<&1,&1,U32 & String,String> <- Clock.Clock.millis()
-      read_provider(provider,reference,time_value(now))
-    case other: IO.die(Unit,2,"usage: usage-read PROVIDER CREDENTIAL_REF")
+      read_provider(provider,reference,time_value(now),"")
+    case +provider <> +reference <> +recorded <> Nil{}: do IO<Unit>:
+      now : Result<&1,&1,U32 & String,String> <- Clock.Clock.millis()
+      read_provider(provider,reference,time_value(now),recorded)
+    case other: IO.die(Unit,2,"usage: usage-read PROVIDER CREDENTIAL_REF [CODEX_EXECUTABLE]")
 
 def main() -> IO(Unit):
   do IO<Unit>:

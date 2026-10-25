@@ -45,9 +45,12 @@ BATON2_ACCOUNT_ENTRY="$root/.scratch/bend2/account-credits-entry" "$PYTHON3" ben
 sh bend2/scripts/build-native.sh bend2/harness/claude-credit-observe.bend .scratch/bend2/claude-credit-observe
 BATON2_CREDIT_OBSERVE="$root/.scratch/bend2/claude-credit-observe" "$PYTHON3" bend2/test/claude-credit-observe.py
 sh bend2/scripts/build-native.sh bend2/harness/usage-read.bend .scratch/bend2/usage-read
+"$PYTHON3" bend2/test/usage-read-codex.py "$root/.scratch/bend2/usage-read"
 BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" BATON2_CREDIT_OBSERVE="$root/.scratch/bend2/claude-credit-observe" BATON2_USAGE_READ="$root/.scratch/bend2/usage-read" "$PYTHON3" bend2/test/native-helper-install.py
 sh bend2/scripts/build-native.sh bend2/test/zai-quota.bend .scratch/bend2/zai-quota-test
 .scratch/bend2/zai-quota-test
+sh bend2/scripts/build-native.sh bend2/test/codex-rate-limits.bend .scratch/bend2/codex-rate-limits-test
+.scratch/bend2/codex-rate-limits-test
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-store.bend .scratch/bend2/usage-windows-store-test
 rm -f .scratch/bend2/usage-windows-store.db
 .scratch/bend2/usage-windows-store-test .scratch/bend2/usage-windows-store.db

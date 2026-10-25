@@ -296,15 +296,38 @@ def run_outcome(outcome: T.RunRes) -> String & String:
     case T.RRun{T.SSignal{num},out}: ("","the usage-read helper ended by signal " ++ U32.show(num))
     case T.RSpawn{detail}: ("","the usage-read helper did not start: " ++ detail)
 
-def run_read_present(+helper: String, +provider: String, +ref: String) -> IO(String & String):
+# The codex executable recorded for a Codex seat: the harness command in its receiver
+# endpoint, at the positions Usage.harness_command_sql reads. Another seat's harness
+# records no codex command, so it answers ''.
+def recorded_codex_sql(+session: String) -> String:
+  "SELECT coalesce((SELECT CASE WHEN harness='codex' AND json_valid(endpoint) THEN CASE json_array_length(endpoint) WHEN 9 THEN coalesce(json_extract(endpoint,'$[4]'),'') WHEN 17 THEN coalesce(json_extract(endpoint,'$[12]'),'') WHEN 19 THEN coalesce(json_extract(endpoint,'$[14]'),'') ELSE '' END ELSE '' END FROM sessions WHERE id=" ++ C.q(session) ++ "),'');"
+
+def recorded_text(found: Result<&1,&1,U32 & String,String>) -> String:
+  match found:
+    case Fail{error}: ""
+    case Done{+text}: Tx.trim_nl(text)
+
+def recorded_codex(+db: String, +session: String) -> IO(String):
+  do IO<String>:
+    found : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,recorded_codex_sql(session))
+    IO.pure(String,recorded_text(found))
+
+# The executable passed to the helper for a Codex read, or '' for another provider.
+def read_executable(+db: String, +session: String, +provider: String) -> IO(String):
+  Bool.pick(IO(String),String.eq(provider,"codex"),recorded_codex(db,session),IO.pure(String,""))
+
+def read_argv(+helper: String, +provider: String, +ref: String, +executable: String) -> List<String>:
+  Bool.pick(List<String>,String.is_empty(executable),[helper,provider,ref],[helper,provider,ref,executable])
+
+def run_read_present(+helper: String, +provider: String, +ref: String, +executable: String) -> IO(String & String):
   do IO<String & String>:
-    run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv([helper,provider,ref]),".")
+    run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(read_argv(helper,provider,ref,executable)),".")
     IO.pure(String & String,run_outcome(Tx.run_res(run)))
 
-def run_read(+helper: String, +provider: String, +ref: String) -> IO(String & String):
+def run_read(+helper: String, +provider: String, +ref: String, +executable: String) -> IO(String & String):
   Bool.pick(IO(String & String),String.is_empty(helper),
     IO.pure(String & String,("","no usage-read helper is installed beside the runtime identity helper")),
-    run_read_present(helper,provider,ref))
+    run_read_present(helper,provider,ref,executable))
 
 # --- announcements ---------------------------------------------------------------
 #
@@ -462,7 +485,8 @@ def read_with(+db: String, +session: String, +provider: String, +account: String
     +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
     lock : U32 <- IO.try(U32,Lock.SessionLock.wait_acquire(canonical,"usage-read:" ++ J.string_literal(provider) ++ ":" ++ J.string_literal(account)))
     +ref : String <- credential_ref(canonical,provider,account)
-    answer : String & String <- run_read(helper,provider,ref)
+    +executable : String <- read_executable(canonical,session,provider)
+    answer : String & String <- run_read(helper,provider,ref,executable)
     recorded : Unit <- record_document(canonical,session,provider,account,trigger,answer)
     released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
     release_others(canonical,session,provider,account)

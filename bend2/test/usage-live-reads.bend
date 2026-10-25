@@ -13,6 +13,7 @@ import Base
 import ../src/coordinator/commands.bend as C
 import ../src/coordinator/usage-windows.bend as UW
 import ../src/coordinator/usage-reads.bend as UR
+import ../src/coordinator/codex-rate-limits.bend as Codex
 import ../src/host/sqlite.bend as DB
 import ../src/host/session-lock.bend as Lock
 import ../src/git/text.bend as Tx
@@ -315,6 +316,73 @@ def regression(+name: String, +db: String, +helper: String, +path: String) -> IO
     case "admission": admission_case(db,helper,path)
     case "delay": delay_case(db)
     case _: IO.die(Unit,2,"unknown usage-read regression")
+# The Codex read passes the codex command recorded in a Codex seat's receiver endpoint;
+# another seat records none.
+def recorded_codex_case(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    seats : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('kx','coord','codex','gpt-6-astra','high','','[\"receive\",\"db\",\"kx\",\"x\",\"/opt/codex/0.163.0/codex\",\"\",\"\",\"\",\"log\"]');")
+    +codex : String <- UW.read_executable(db,"kx","codex")
+    one : Unit <- expect("codex-seat-passes-recorded-command",String.eq(codex,"/opt/codex/0.163.0/codex"))
+    +other : String <- UW.read_executable(db,"a","codex")
+    two : Unit <- expect("other-harness-records-no-codex-command",String.is_empty(other))
+    +zai : String <- UW.read_executable(db,"kx","zai")
+    expect("non-codex-read-passes-nothing",String.is_empty(zai))
+
+def codex_snapshot_with_limit(+allowed: String, +used: String, +reached: String) -> String:
+  "{\"ordinaryUsageAllowed\":" ++ allowed ++ ",\"rateLimits\":{\"primary\":{\"usedPercent\":" ++ used ++ ",\"windowDurationMins\":300,\"resetsAt\":1793382116},\"secondary\":null,\"rateLimitReachedType\":" ++ reached ++ "}}"
+
+def codex_snapshot(+allowed: String, +used: String) -> String:
+  codex_snapshot_with_limit(allowed,used,"null")
+
+# The live helper timestamps each read with its observation clock.
+def codex_answer_raw(+db: String, +path: String, +raw: String) -> IO(Unit):
+  do IO<Unit>:
+    +clock : String <- read(db,"SELECT " ++ UW.now_ms() ++ ";")
+    +observed : String = Tx.trim_nl(clock)
+    +problem : String <- read(db,Codex.codex_problem_sql(raw))
+    +document : String <- read(db,UR.read_document_sql("codex",Codex.codex_source(),observed,Codex.codex_windows_sql(raw)))
+    answer(path,Bool.pick(String,String.is_empty(Tx.trim_nl(problem)),Tx.trim_nl(document),UR.unreadable_document("codex",Codex.codex_source(),observed,Tx.trim_nl(problem))))
+
+def codex_answer(+db: String, +path: String, +allowed: String, +used: String) -> IO(Unit):
+  codex_answer_raw(db,path,codex_snapshot(allowed,used))
+
+def codex_limit_type_case(+db: String, +helper: String, +path: String) -> IO(Unit):
+  do IO<Unit>:
+    initial : UW.Gate <- state_of(db,"k","acct-codex")
+    unheld : Unit <- expect("codex-reported-limit-starts-unheld",Bool.not(String.eq(gate_class(initial),"held")))
+    limited : Unit <- codex_answer_raw(db,path,codex_snapshot_with_limit("null","15","\"rate_limit_reached\""))
+    refused : Unit <- UW.read_refused_with(db,"k","acct-codex","att-reported-limit",helper)
+    held : UW.Gate <- state_of(db,"k","acct-codex")
+    exhausted : Unit <- expect("codex-null-permission-reported-limit-holds",String.eq(gate_class(held),"held"))
+    readable : Unit <- expect_read(db,"SELECT state FROM usage_reads ORDER BY id DESC LIMIT 1;","read\n","codex-reported-limit-recorded-readable")
+    unknown : Unit <- codex_answer(db,path,"null","15")
+    reread : Unit <- UW.read_refused_with(db,"k","acct-codex","att-unknown-after-limit",helper)
+    retained : UW.Gate <- state_of(db,"k","acct-codex")
+    kept : Unit <- expect("codex-unreported-permission-keeps-reported-limit-hold",String.eq(gate_class(retained),"held"))
+    unreadable : Unit <- expect_read(db,"SELECT state FROM usage_reads ORDER BY id DESC LIMIT 1;","unreadable\n","codex-no-limit-permission-recorded-unreadable")
+    allowed : Unit <- codex_answer_raw(db,path,codex_snapshot_with_limit("true","100","\"rate_limit_reached\""))
+    permitted : Unit <- UW.read_refused_with(db,"k","acct-codex","att-permitted-with-limit",helper)
+    released : UW.Gate <- state_of(db,"k","acct-codex")
+    expect("codex-affirmative-permission-releases-with-reported-limit",String.eq(gate_class(released),"none"))
+
+def codex_unknown_permission_case(+db: String, +helper: String, +path: String) -> IO(Unit):
+  do IO<Unit>:
+    denied : Unit <- codex_answer(db,path,"false","15")
+    refused : Unit <- UW.read_refused_with(db,"k","acct-codex","att-denied",helper)
+    held : UW.Gate <- state_of(db,"k","acct-codex")
+    established : Unit <- expect("codex-denied-permission-holds",String.eq(gate_class(held),"held"))
+    unknown : Unit <- codex_answer(db,path,"null","15")
+    reread : Unit <- UW.read_refused_with(db,"k","acct-codex","att-unknown",helper)
+    retained : UW.Gate <- state_of(db,"k","acct-codex")
+    kept : Unit <- expect("codex-unknown-permission-keeps-hold",String.eq(gate_class(retained),"held"))
+    expect_read(db,"SELECT state FROM usage_reads ORDER BY id DESC LIMIT 1;","unreadable\n","codex-unknown-permission-recorded-unreadable")
+
+def codex_affirmative_permission_case(+db: String, +helper: String, +path: String) -> IO(Unit):
+  do IO<Unit>:
+    allowed : Unit <- codex_answer(db,path,"true","100")
+    reread : Unit <- UW.read_refused_with(db,"k","acct-codex","att-allowed",helper)
+    released : UW.Gate <- state_of(db,"k","acct-codex")
+    expect("codex-affirmative-permission-releases-at-100",String.eq(gate_class(released),"none"))
 
 def run(+db: String, +helper: String) -> IO(Unit):
   do IO<Unit>:
@@ -331,6 +399,10 @@ def run(+db: String, +helper: String) -> IO(Unit):
     seven : Unit <- unknown_case(db,helper,path)
     eight : Unit <- malformed_case(db,helper,path)
     nine : Unit <- model_scope_case(db,helper,path)
+    ten : Unit <- recorded_codex_case(db)
+    unknown_permission : Unit <- codex_unknown_permission_case(db,helper,path)
+    affirmative_permission : Unit <- codex_affirmative_permission_case(db,helper,path)
+    reported_limit : Unit <- codex_limit_type_case(db,helper,path)
     IO.print("fixture-usage-live-reads-ok")
 
 def complete_mark(+db: String, +message: String) -> IO(Unit):
@@ -339,8 +411,25 @@ def complete_mark(+db: String, +message: String) -> IO(Unit):
     signaled : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","printf '%s\\n' \"$2\" > \"$1\"","sh",db ++ ".wake-complete",message]),".")
     expect("release-wake-signaled",run_ok(Tx.run_res(signaled)))
 
+def codex_permission_case(+db: String, +helper: String, affirmative: Bool) -> IO(Unit):
+  do IO<Unit>:
+    +path : String = db ++ ".answer"
+    ready : Unit <- setup(db,path)
+    denied : Unit <- codex_answer(db,path,"false","15")
+    held : Unit <- UW.read_refused_with(db,"k","acct-codex","att-initial",helper)
+    Bool.pick(IO(Unit),affirmative,codex_affirmative_permission_case(db,helper,path),codex_unknown_permission_case(db,helper,path))
+
+def codex_limit_type_fixture(+db: String, +helper: String) -> IO(Unit):
+  do IO<Unit>:
+    +path : String = db ++ ".answer"
+    ready : Unit <- setup(db,path)
+    codex_limit_type_case(db,helper,path)
+
 def main_args(args: List<String>) -> IO(Unit):
   match args:
+    case "--codex-limit-type" <> +db <> +helper <> Nil{}: codex_limit_type_fixture(db,helper)
+    case "--codex-unknown" <> +db <> +helper <> Nil{}: codex_permission_case(db,helper,False{})
+    case "--codex-affirmative" <> +db <> +helper <> Nil{}: codex_permission_case(db,helper,True{})
     case "--case" <> +name <> +db <> +helper <> Nil{}: do IO<Unit>:
       ready : Unit <- setup(db,db ++ ".answer")
       regression(name,db,helper,db ++ ".answer")
