@@ -850,6 +850,12 @@ async function startDelivery() {
     let input = '';
     client.on('data', (chunk) => { input += chunk; });
     client.on('end', () => {
+      // Baton's root channel check connects and sends nothing to learn that
+      // this server still accepts connections.
+      if (input === '') {
+        client.end();
+        return;
+      }
       try {
         notifyPending(JSON.parse(input));
         client.end('ok\n');

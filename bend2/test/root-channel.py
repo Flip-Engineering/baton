@@ -13,15 +13,29 @@ otherwise the test builds it with bend2/scripts/build-native.sh.
 import json
 import os
 import pathlib
+import signal
 import socket
 import sqlite3
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCRATCH = ROOT / '.scratch/bend2'
 CONDUCTOR = '/opt/baton/bend2/scripts/mcp-conductor.mjs'
+# A conductor stand-in: listens on a socket name relative to its directory,
+# as mcp-conductor.mjs does, until it is killed.
+LISTENER = '''import socket, sys, time
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(sys.argv[1])
+server.listen(8)
+print('listening', flush=True)
+while True:
+    connection, _ = server.accept()
+    connection.close()
+'''
 
 
 def fixture():
@@ -119,7 +133,7 @@ class RootChannel(unittest.TestCase):
         lines = self.warn()
         self.assertEqual(len(lines), 1, lines)
         self.assertIn('root session operator has 1 owed inputs', lines[0])
-        self.assertIn(f'the conductor socket {self.dir}/conductor-2-b.sock does not exist', lines[0])
+        self.assertIn(f'no process accepts connections on the conductor socket {self.dir}/conductor-2-b.sock', lines[0])
 
     def test_parentless_conductor_with_a_missing_socket_is_reported(self):
         self.owe('lead', 3, sender='operator', kind='guidance')
@@ -127,7 +141,33 @@ class RootChannel(unittest.TestCase):
         lines = self.warn()
         self.assertEqual(len(lines), 1, lines)
         self.assertIn('root session lead has 3 owed inputs', lines[0])
-        self.assertIn('conductor-3-c.sock does not exist', lines[0])
+        self.assertIn('accepts connections on the conductor socket', lines[0])
+        self.assertIn('conductor-3-c.sock', lines[0])
+
+    def test_socket_left_by_a_killed_conductor_is_reported(self):
+        self.owe('operator', 1)
+        name = 'conductor-4-d.sock'
+        self.endpoint('operator', self.conductor_endpoint('operator', name))
+        listener = subprocess.Popen([sys.executable, '-c', LISTENER, name], cwd=self.dir,
+                                    stdout=subprocess.PIPE, text=True)
+        self.addCleanup(lambda: listener.poll() is None and listener.kill())
+        self.assertEqual(listener.stdout.readline().strip(), 'listening')
+        self.assertEqual(self.warn(), [])
+        listener.send_signal(signal.SIGKILL)
+        listener.wait(timeout=30)
+        self.assertTrue((self.dir / name).exists())
+        lines = self.warn()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn(f'no process accepts connections on the conductor socket {self.dir}/{name}', lines[0])
+
+    def test_regular_file_at_the_socket_path_is_reported(self):
+        self.owe('operator', 1)
+        name = 'conductor-5-e.sock'
+        (self.dir / name).write_text('')
+        self.endpoint('operator', self.conductor_endpoint('operator', name))
+        lines = self.warn()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn(f'no process accepts connections on the conductor socket {self.dir}/{name}', lines[0])
 
     def test_removed_resident_endpoint_is_reported(self):
         self.owe('operator', 1)

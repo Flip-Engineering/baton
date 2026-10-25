@@ -3,9 +3,10 @@
 # mcp-root.mjs. Its input reaches it only through an attached Claude Code
 # channel: the conductor's '--session ID --deliver SOCKET' endpoint and the
 # socket file that endpoint names beside the database. A channel root with
-# owed input is unattached when it has no such endpoint or when the socket
-# file does not exist. Every check derives this from sessions, messages and
-# the socket path when it runs.
+# owed input is unattached when it has no such endpoint or when no process
+# accepts a connect on the socket that endpoint names. A socket file left by a
+# conductor that died abruptly refuses the connect. Every check derives this
+# from sessions, messages and a connect probe when it runs.
 #
 # status, session and orchestra print one error line per unattached root on
 # stderr. A committed message, report or question to an unattached root prints
@@ -44,16 +45,16 @@ def roots_sql(+condition: String) -> String:
 def error_text(+session: String, +owed: String, +cause: String) -> String:
   "Baton error: root session " ++ session ++ " has " ++ owed ++ " owed inputs and no attached channel: " ++ cause ++ ". Attach a Claude Code channel with bend2/scripts/mcp-conductor.mjs as described in bend2/README.md, section \"Root on another host\"."
 
-def socket_checked(+session: String, +owed: String, +socket: String, mode: Result<&1,&1,U32 & String,U32>) -> String:
-  match mode:
-    case Done{bits}: ""
-    case Fail{(code,text)}: error_text(session,owed,"the conductor socket " ++ socket ++ " does not exist (" ++ U32.show(code) ++ ": " ++ text ++ ")")
+def socket_checked(+session: String, +owed: String, +socket: String, probe: Result<&1,&1,U32 & String,Unit>) -> String:
+  match probe:
+    case Done{connected}: ""
+    case Fail{(code,text)}: error_text(session,owed,"no process accepts connections on the conductor socket " ++ socket ++ " (" ++ U32.show(code) ++ ": " ++ text ++ ")")
 
 def row_error(fields: List<String>) -> IO(String):
   match fields:
     case session <> owed <> "socket" <> +socket <> Nil{}: do IO<String>:
-      mode : Result<&1,&1,U32 & String,U32> <- F.Files.mode_of(socket)
-      IO.pure(String,socket_checked(session,owed,socket,mode))
+      probe : Result<&1,&1,U32 & String,Unit> <- F.Files.listening(socket)
+      IO.pure(String,socket_checked(session,owed,socket,probe))
     case session <> owed <> "endpoint" <> cause <> Nil{}: IO.pure(String,error_text(session,owed,cause))
     case other: IO.pure(String,"")
 

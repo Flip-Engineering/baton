@@ -115,7 +115,9 @@ async function attach(t, session) {
   send({ id: 2, method: 'tools/list' });
   // The server sends this request after its delivery endpoint is registered.
   await until(() => responses.some((r) => r.id === 'conductor-channel-ready'), 'delivery registered');
-  return calls().filter((argv) => argv[0] === database).map((argv) => argv.slice(1));
+  const recorded = calls().filter((argv) => argv[0] === database).map((argv) => argv.slice(1));
+  recorded.database = database;
+  return recorded;
 }
 
 test('an operator attachment keeps the operator role', async (t) => {
@@ -129,4 +131,23 @@ test('an operator attachment keeps the operator role', async (t) => {
 test('a parentless conductor attachment records the principal role', async (t) => {
   const calls = await attach(t, 'lead');
   assert.deepEqual(calls.filter((argv) => argv[0] === 'role'), [['role', 'lead', 'principal-conductor']]);
+});
+
+// Baton's root channel check connects to the delivery socket and sends
+// nothing. The server closes that connection with no answer. The probe runs in
+// the database directory, where the socket name in the endpoint is relative.
+const PROBE = `const c = require('net').createConnection({ path: process.argv[1] });
+let text = '';
+c.on('connect', () => c.end());
+c.on('data', (chunk) => { text += chunk; });
+c.on('error', (error) => { console.error(error.code); process.exit(2); });
+c.on('close', () => { process.stdout.write(JSON.stringify(text)); });`;
+
+test('a connect probe that sends nothing gets no answer', async (t) => {
+  const calls = await attach(t, 'operator');
+  const endpoint = JSON.parse(calls.find((argv) => argv[0] === 'attach')[4]);
+  const probe = spawnSync(process.execPath, ['-e', PROBE, endpoint[7]],
+    { cwd: dirname(calls.database), encoding: 'utf8', timeout: 30000 });
+  assert.equal(probe.status, 0, probe.stderr);
+  assert.equal(JSON.parse(probe.stdout), '');
 });
