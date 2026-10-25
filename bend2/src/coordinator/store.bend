@@ -88,11 +88,21 @@ def publish_after_commit(db: String, committed: Result<&1,&1,U32 & String,String
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
     case Done{+saved}: publish_committed(db,saved)
 
+# Preflight installation takes BEGIN IMMEDIATE when the projection is stale, so
+# it can meet a held write lock too. Its failure reaches the caller's result,
+# where a busy answer goes through the same retry as the command (#1054 review,
+# item 2).
+def transact_ensured(+db: String, sql: String, ensured: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match ensured:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{installed}: do IO<Result<&1,&1,U32 & String,String>>:
+      committed : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,sql)
+      publish_after_commit(db,committed)
+
 def transact_sql(+db: String, sql: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    ensured : Unit <- ensure_before_begin(db)
-    committed : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,sql)
-    publish_after_commit(db,committed)
+    ensured : Result<&1,&1,U32 & String,String> <- DB.Sql.ensure_projection(db,C.schema())
+    transact_ensured(db,sql,ensured)
 
 
 law rolled_back_transaction_publishes_nothing:
