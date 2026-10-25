@@ -19,6 +19,7 @@ import Base
 import ../src/coordinator/commands.bend as C
 import ../src/coordinator/usage-windows.bend as UW
 import ../src/coordinator/usage-reads.bend as UR
+import ../src/coordinator/codex-rate-limits.bend as Codex
 import ../src/host/sqlite.bend as DB
 import ../src/git/text.bend as Tx
 import ../src/git/process.bend as Proc
@@ -208,6 +209,35 @@ def recorded_codex_case(+db: String) -> IO(Unit):
     +zai : String <- UW.read_executable(db,"kx","zai")
     expect("non-codex-read-passes-nothing",String.is_empty(zai))
 
+def codex_snapshot(+allowed: String, +used: String) -> String:
+  "{\"ordinaryUsageAllowed\":" ++ allowed ++ ",\"rateLimits\":{\"primary\":{\"usedPercent\":" ++ used ++ ",\"windowDurationMins\":300,\"resetsAt\":1793382116},\"secondary\":null,\"rateLimitReachedType\":null}}"
+
+def codex_answer(+db: String, +path: String, +allowed: String, +used: String) -> IO(Unit):
+  do IO<Unit>:
+    +raw : String = codex_snapshot(allowed,used)
+    +problem : String <- read(db,Codex.codex_problem_sql(raw))
+    +document : String <- read(db,UR.read_document_sql("codex",Codex.codex_source(),"1",Codex.codex_windows_sql(raw)))
+    answer(path,Bool.pick(String,String.is_empty(Tx.trim_nl(problem)),Tx.trim_nl(document),UR.unreadable_document("codex",Codex.codex_source(),"1",Tx.trim_nl(problem))))
+
+def codex_unknown_permission_case(+db: String, +helper: String, +path: String) -> IO(Unit):
+  do IO<Unit>:
+    denied : Unit <- codex_answer(db,path,"false","15")
+    refused : Unit <- UW.read_refused_with(db,"k","acct-codex","att-denied",helper)
+    held : UW.Gate <- state_of(db,"k","acct-codex")
+    established : Unit <- expect("codex-denied-permission-holds",String.eq(gate_class(held),"held"))
+    unknown : Unit <- codex_answer(db,path,"null","15")
+    reread : Unit <- UW.read_refused_with(db,"k","acct-codex","att-unknown",helper)
+    retained : UW.Gate <- state_of(db,"k","acct-codex")
+    kept : Unit <- expect("codex-unknown-permission-keeps-hold",String.eq(gate_class(retained),"held"))
+    expect_read(db,"SELECT state FROM usage_reads ORDER BY id DESC LIMIT 1;","unreadable\n","codex-unknown-permission-recorded-unreadable")
+
+def codex_affirmative_permission_case(+db: String, +helper: String, +path: String) -> IO(Unit):
+  do IO<Unit>:
+    allowed : Unit <- codex_answer(db,path,"true","100")
+    reread : Unit <- UW.read_refused_with(db,"k","acct-codex","att-allowed",helper)
+    released : UW.Gate <- state_of(db,"k","acct-codex")
+    expect("codex-affirmative-permission-releases-at-100",String.eq(gate_class(released),"none"))
+
 def run(+db: String, +helper: String) -> IO(Unit):
   do IO<Unit>:
     +path : String <- IO.pure(String,db ++ ".answer")
@@ -224,10 +254,22 @@ def run(+db: String, +helper: String) -> IO(Unit):
     eight : Unit <- malformed_case(db,helper,path)
     nine : Unit <- model_scope_case(db,helper,path)
     ten : Unit <- recorded_codex_case(db)
+    unknown_permission : Unit <- codex_unknown_permission_case(db,helper,path)
+    affirmative_permission : Unit <- codex_affirmative_permission_case(db,helper,path)
     IO.print("fixture-usage-live-reads-ok")
+
+def codex_permission_case(+db: String, +helper: String, affirmative: Bool) -> IO(Unit):
+  do IO<Unit>:
+    +path : String = db ++ ".answer"
+    ready : Unit <- setup(db,path)
+    denied : Unit <- codex_answer(db,path,"false","15")
+    held : Unit <- UW.read_refused_with(db,"k","acct-codex","att-initial",helper)
+    Bool.pick(IO(Unit),affirmative,codex_affirmative_permission_case(db,helper,path),codex_unknown_permission_case(db,helper,path))
 
 def main_args(args: List<String>) -> IO(Unit):
   match args:
+    case "--codex-unknown" <> +db <> +helper <> Nil{}: codex_permission_case(db,helper,False{})
+    case "--codex-affirmative" <> +db <> +helper <> Nil{}: codex_permission_case(db,helper,True{})
     case "--wake-message" <> +db <> +message <> Nil{}: query(db,"INSERT INTO wake_marks(message) VALUES(" ++ C.q(message) ++ ");")
     case +db <> +helper <> Nil{}: run(db,helper)
     case other: IO.die(Unit,2,"usage: usage-live-reads DB HELPER")

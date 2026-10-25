@@ -2,7 +2,7 @@
 # SQL from src/coordinator/codex-rate-limits.bend through the sqlite host over the
 # account/rateLimits/read result read live on 2026-10-23 (weekly window 15%,
 # ordinaryUsageAllowed true) and over variants of the same shape: ordinary usage
-# refused, the permission unavailable with a full 5-hour window, and no window. It also
+# refused, the permission unavailable, and no window. It also
 # checks the order in which the Codex read chooses its executable and the app-server argv.
 #
 # usage: codex-rate-limits
@@ -29,8 +29,10 @@ def main() -> IO(Unit):
     one : Unit <- expect("live-shape-windows",String.eq(open,"[{\"window\":\"7-day\",\"usedPercent\":15,\"resetsAt\":1793382116000,\"exhausted\":false}]"))
     +refused : String <- run(Codex.codex_windows_sql(result("false","null")) ++ ";")
     two : Unit <- expect("ordinary-usage-refused-exhausts",String.eq(refused,"[{\"window\":\"7-day\",\"usedPercent\":15,\"resetsAt\":1793382116000,\"exhausted\":true}]"))
-    +unknown : String <- run(Codex.codex_windows_sql(result("null","{\"usedPercent\":100,\"windowDurationMins\":300,\"resetsAt\":1793000000}")) ++ ";")
-    three : Unit <- expect("permission-unavailable-uses-used-percent",String.eq(unknown,"[{\"window\":\"7-day\",\"usedPercent\":15,\"resetsAt\":1793382116000,\"exhausted\":false},{\"window\":\"5-hour\",\"usedPercent\":100,\"resetsAt\":1793000000000,\"exhausted\":true}]"))
+    +unknown : String <- run(Codex.codex_problem_sql(result("null","null")))
+    three : Unit <- expect("permission-unavailable-unreadable",String.eq(unknown,"the Codex ordinary usage permission is unavailable"))
+    +unknown_full : String <- run(Codex.codex_problem_sql(result("null","{\"usedPercent\":100,\"windowDurationMins\":300,\"resetsAt\":1793000000}")))
+    full : Unit <- expect("full-window-permission-unavailable-unreadable",String.eq(unknown_full,"the Codex ordinary usage permission is unavailable"))
     +readable : String <- run(Codex.codex_problem_sql(result("true","null")))
     four : Unit <- expect("live-shape-readable",String.is_empty(readable))
     +windowless : String <- run(Codex.codex_problem_sql("{\"ordinaryUsageAllowed\":true,\"rateLimits\":{\"primary\":null,\"secondary\":null}}"))
