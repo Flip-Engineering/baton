@@ -285,8 +285,26 @@ def delay_case(+db: String) -> IO(Unit):
     +delay : String <- read(db,UW.schedule_delay_sql(Tx.trim_nl(future)))
     expect_read(db,"SELECT CAST(" ++ C.q(Tx.trim_nl(delay)) ++ " AS INTEGER) BETWEEN 7199 AND 7200;","1\n","future-reset-sleeps-to-provider-clock")
 
+def unreadable_episode_case(+db: String, +helper: String, +path: String) -> IO(Unit):
+  do IO<Unit>:
+    written : Unit <- answer(path,UR.unreadable_document("codex","fixture","1","fixture provider unreadable"))
+    first : UW.Gate <- UW.window_gate_with(db,"k","acct-codex",helper)
+    first_unknown : Unit <- expect("first-unreadable-admission-is-unknown",String.eq(gate_class(first),"unknown"))
+    second : UW.Gate <- UW.window_gate_with(db,"k","acct-codex",helper)
+    second_unknown : Unit <- expect("second-unreadable-admission-is-unknown",String.eq(gate_class(second),"unknown"))
+    one_pair : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id GLOB 'usage-read:*:unreadable:k*';","2\n","unreadable-admissions-report-one-episode-pair")
+    +open_doc : String <- read(db,UR.read_document_sql("codex","fixture","2","SELECT json_array()"))
+    available : Unit <- answer(path,Tx.trim_nl(open_doc))
+    open_gate : UW.Gate <- UW.window_gate_with(db,"k","acct-codex",helper)
+    open : Unit <- expect("readable-admission-ends-unreadable-episode",String.eq(gate_class(open_gate),"none"))
+    again : Unit <- answer(path,UR.unreadable_document("codex","fixture","3","fixture provider unreadable again"))
+    new_gate : UW.Gate <- UW.window_gate_with(db,"k","acct-codex",helper)
+    unknown : Unit <- expect("new-unreadable-episode-is-unknown",String.eq(gate_class(new_gate),"unknown"))
+    expect_read(db,"SELECT group_concat(id,',') FROM (SELECT id FROM messages WHERE id GLOB 'usage-read:*:unreadable:k*' ORDER BY id);","usage-read:1:unreadable:k,usage-read:1:unreadable:k:root,usage-read:4:unreadable:k,usage-read:4:unreadable:k:root\n","readable-observation-separates-unreadable-episodes")
+
 def regression(+name: String, +db: String, +helper: String, +path: String) -> IO(Unit):
   match name:
+    case "unreadable-episode": unreadable_episode_case(db,helper,path)
     case "ordering": ordering_case(db)
     case "serialization": serialization_case(db,helper)
     case "persistence": persistence_case(db,helper,path)

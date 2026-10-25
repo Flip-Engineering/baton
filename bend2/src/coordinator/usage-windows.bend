@@ -173,6 +173,10 @@ def latest_readable_sql(+provider: String, +account: String) -> String:
 def latest_read_sql(+provider: String, +account: String) -> String:
   "(SELECT id FROM usage_reads WHERE " ++ scope_sql("",provider,account) ++ " ORDER BY observed_at DESC,id DESC LIMIT 1)"
 
+# An unreadable episode starts after the newest readable observation.
+def unknown_episode_sql(+provider: String, +account: String) -> String:
+  "(SELECT e.id FROM usage_reads e WHERE " ++ scope_sql("e.",provider,account) ++ " AND e.state='unreadable' AND NOT EXISTS(SELECT 1 FROM usage_reads r WHERE r.id=" ++ latest_readable_sql(provider,account) ++ " AND (r.observed_at,r.id)>=(e.observed_at,e.id)) ORDER BY e.observed_at,e.id LIMIT 1)"
+
 def last_open_sql(+provider: String, +account: String, +model: String) -> String:
   "(SELECT o.id FROM usage_reads o WHERE " ++ scope_sql("o.",provider,account) ++ " AND o.state='read' AND NOT " ++ read_holds_sql("o",model) ++ " ORDER BY o.observed_at DESC,o.id DESC LIMIT 1)"
 
@@ -192,7 +196,7 @@ def decision_sql(+provider: String, +account: String, +model: String) -> String:
   +episode = episode_sql(provider,account,model)
   +latest = latest_read_sql(provider,account)
   "SELECT CASE WHEN " ++ episode ++ " IS NOT NULL THEN 'held'||char(31)||" ++ field_sql(held_window_sql(provider,account,model,"json_extract(w.value,'$.window')")) ++ "||char(31)||" ++ field_sql(held_window_sql(provider,account,model,"CAST(CAST(json_extract(w.value,'$.resetsAt') AS INTEGER) AS TEXT)")) ++ "||char(31)||" ++ field_sql("(SELECT source FROM usage_reads WHERE id=" ++ latest_readable_sql(provider,account) ++ ")") ++ "||char(31)||'usage-read:'||" ++ episode ++ "||char(31)||''"
-  ++ " WHEN (SELECT state FROM usage_reads WHERE id=" ++ latest ++ ")='unreadable' THEN 'unknown'||char(31)||''||char(31)||''||char(31)||" ++ field_sql("(SELECT source FROM usage_reads WHERE id=" ++ latest ++ ")") ++ "||char(31)||'usage-read:'||" ++ latest ++ "||char(31)||" ++ field_sql("(SELECT reason FROM usage_reads WHERE id=" ++ latest ++ ")")
+  ++ " WHEN (SELECT state FROM usage_reads WHERE id=" ++ latest ++ ")='unreadable' THEN 'unknown'||char(31)||''||char(31)||''||char(31)||" ++ field_sql("(SELECT source FROM usage_reads WHERE id=" ++ latest ++ ")") ++ "||char(31)||'usage-read:'||" ++ unknown_episode_sql(provider,account) ++ "||char(31)||" ++ field_sql("(SELECT reason FROM usage_reads WHERE id=" ++ latest ++ ")")
   ++ " ELSE 'none'||char(31)||''||char(31)||''||char(31)||''||char(31)||''||char(31)||'' END;"
 
 def gate_of_state(+state: String, +window: String, +resets: String, +source: String, +receipt: String, +reason: String) -> Gate:
@@ -335,7 +339,7 @@ def hold_sql(+seat: String, +provider: String, +account: String, +model: String)
 
 def unknown_sql(+seat: String, +provider: String, +account: String) -> String:
   +latest = latest_read_sql(provider,account)
-  announce_sql("'usage-read:'||" ++ latest ++ "||':unreadable:'||" ++ C.q(seat),C.q(seat),"'usage read unreadable: seat " ++ C.escaped(seat) ++ " on " ++ C.escaped(scope_text(provider,account)) ++ ". ' || (SELECT source FROM usage_reads WHERE id=" ++ latest ++ ") || ': ' || (SELECT reason FROM usage_reads WHERE id=" ++ latest ++ ") || '. The hold state is unknown; Baton does not hold the seat on an unknown read and keeps any hold an earlier readable read recorded.'","(SELECT state FROM usage_reads WHERE id=" ++ latest ++ ")='unreadable'")
+  announce_sql("'usage-read:'||" ++ unknown_episode_sql(provider,account) ++ "||':unreadable:'||" ++ C.q(seat),C.q(seat),"'usage read unreadable: seat " ++ C.escaped(seat) ++ " on " ++ C.escaped(scope_text(provider,account)) ++ ". ' || (SELECT source FROM usage_reads WHERE id=" ++ latest ++ ") || ': ' || (SELECT reason FROM usage_reads WHERE id=" ++ latest ++ ") || '. The hold state is unknown; Baton does not hold the seat on an unknown read and keeps any hold an earlier readable read recorded.'","(SELECT state FROM usage_reads WHERE id=" ++ latest ++ ")='unreadable'")
 
 # The seat's hold announcements without a release, each answered with a release that
 # keeps the hold's recipient. The id prefix lets the read use the unique id index.

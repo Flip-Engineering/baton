@@ -139,8 +139,11 @@ share each read. A read runs on these events:
 A hold episode starts at the first exhausted readable read after the last open one.
 When a seat's gate finds the seat `Held`, Baton reports the hold to the seat's
 orchestrator and, as a second message, to the root of the seat's parent chain:
-`usage-read:EPISODE:hold:SEAT` and the same identity with `:root`. An unreadable read
-is reported the same way as `usage-read:READ:unreadable:SEAT`.
+`usage-read:EPISODE:hold:SEAT` and the same identity with `:root`. An unreadable
+episode starts with the first unreadable observation after the latest readable
+one. It is reported as `usage-read:EPISODE:unreadable:SEAT` and the same identity
+with `:root`. Repeated unreadable observations keep that announcement identity
+until a readable observation intervenes.
 
 A read that ends a hold reports `usage-read:EPISODE:release:SEAT` for every seat that
 reported that hold on the provider and account being read. It launches each other
