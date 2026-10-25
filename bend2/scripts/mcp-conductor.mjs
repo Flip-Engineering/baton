@@ -978,6 +978,12 @@ async function startDelivery() {
     let input = '';
     client.on('data', (chunk) => { input += chunk; });
     client.on('end', () => {
+      // Baton's root channel check connects and sends nothing to learn that
+      // this server still accepts connections.
+      if (input === '') {
+        client.end();
+        return;
+      }
       try {
         const request = JSON.parse(input);
         if (request && typeof request === 'object' && request.nativeEvent) {
@@ -1002,7 +1008,11 @@ async function startDelivery() {
   try { existing = selectedSession(); } catch {}
   if (hasParent(existing)) coord('connect', sessionId, existing.native || '', endpoint);
   else coord('attach', sessionId, 'claude-code', existing?.native || '', endpoint);
-  coord('role', sessionId, hasParent(existing) ? 'associate-conductor' : 'principal-conductor');
+  // The operator session keeps its role: reports and questions from parentless
+  // Conductors select their recipient by the operator role.
+  if (recordedRole() !== 'operator') {
+    coord('role', sessionId, hasParent(existing) ? 'associate-conductor' : 'principal-conductor');
+  }
   connectionCustody = { database, coordinator, session: sessionId,
     native: selectedSession()?.native, endpoint, socket: socketName, connection,
     bridge: processIdentity(processFacts(process.pid)), client: processIdentity(processFacts(process.ppid)) };
@@ -1010,6 +1020,14 @@ async function startDelivery() {
 
 function selectedSession() {
   return openDb()?.prepare('SELECT * FROM sessions WHERE id=?').get(sessionId);
+}
+
+function recordedRole() {
+  try {
+    return openDb()?.prepare('SELECT role FROM session_roles WHERE session=?').get(sessionId)?.role;
+  } catch {
+    return undefined;
+  }
 }
 
 function initialInstructions() {

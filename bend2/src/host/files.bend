@@ -20,6 +20,14 @@ def Files.size(path: String) -> IO(Result<&1,&1,U32 & String,U32>):
 def Files.mode_of(path: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./files.c"
 
+# Connects to the Unix socket at path and closes the connection. Done when a
+# process accepts the connect; otherwise the connect error, such as
+# ECONNREFUSED for a socket file no process listens on, ENOENT for a missing
+# path, or ECONNREFUSED/ENOTSOCK for a regular file. The connect runs in the
+# socket's directory, so the full path may be longer than a socket address.
+def Files.listening(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./files.c"
+
 # Creates one owner-only regular file with O_EXCL and no symlink follow. An
 # existing path is a failure; the caller chooses a fresh path.
 def Files.write_private(path: String, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):

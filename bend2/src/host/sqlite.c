@@ -281,6 +281,17 @@ static int baton_sql_busy(void *context, int tries) {
   return 1;
 }
 
+/* Write-ahead logging lets one writer commit while readers hold their
+   transactions; under the rollback journal a reader blocks every commit, and
+   wakes and observations failed with SQLITE_BUSY (#1054). The mode is stored in
+   the database file, so the first read-write open by this binary converts an
+   existing rollback-journal database. A conversion that cannot take its lock
+   leaves the database in its current mode, and the next read-write open tries
+   again; the caller's statement runs either way. */
+static void baton_sql_wal(sqlite3 *db) {
+  sqlite3_exec(db, "PRAGMA journal_mode=WAL;", NULL, NULL, NULL);
+}
+
 static void baton_sql_json_pretty(sqlite3_context *context, int argc, sqlite3_value **argv);
 
 static void baton_sql_call(IoWork *w) {
@@ -291,6 +302,7 @@ static void baton_sql_call(IoWork *w) {
     call->error = strdup(db ? sqlite3_errmsg(db) : "cannot open database");
   } else {
     sqlite3_busy_handler(db, baton_sql_busy, NULL);
+    baton_sql_wal(db);
     char *error = NULL;
     call->code = sqlite3_create_function_v2(db, "baton_json_pretty", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_json_pretty, NULL, NULL, NULL);
     if (call->code == SQLITE_OK)
@@ -425,6 +437,7 @@ static void baton_sql_span_call(IoWork *w) {
     call->error = strdup(db ? sqlite3_errmsg(db) : "cannot open database");
   } else {
     sqlite3_busy_handler(db, baton_sql_busy, NULL);
+    baton_sql_wal(db);
     char *error = NULL;
     call->code = sqlite3_create_function_v2(db, "baton_json_pretty", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_json_pretty, NULL, NULL, NULL);
     if (call->code == SQLITE_OK)
@@ -1137,6 +1150,7 @@ static void baton_sql_bound_call(IoWork *w) {
     return;
   }
   sqlite3_busy_handler(db, baton_sql_busy, NULL);
+  baton_sql_wal(db);
   char *error = NULL;
   call->code = sqlite3_create_function_v2(db, "baton_ref_entry", 2, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_ref_entry, NULL, NULL, NULL);
   if (call->code == SQLITE_OK)

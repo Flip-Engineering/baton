@@ -88,11 +88,21 @@ def publish_after_commit(db: String, committed: Result<&1,&1,U32 & String,String
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
     case Done{+saved}: publish_committed(db,saved)
 
+# Preflight installation takes BEGIN IMMEDIATE when the projection is stale, so
+# it can meet a held write lock too. Its failure reaches the caller's result,
+# where a busy answer goes through the same retry as the command (#1054 review,
+# item 2).
+def transact_ensured(+db: String, sql: String, ensured: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match ensured:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{installed}: do IO<Result<&1,&1,U32 & String,String>>:
+      committed : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,sql)
+      publish_after_commit(db,committed)
+
 def transact_sql(+db: String, sql: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    ensured : Unit <- ensure_before_begin(db)
-    committed : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,sql)
-    publish_after_commit(db,committed)
+    ensured : Result<&1,&1,U32 & String,String> <- DB.Sql.ensure_projection(db,C.schema())
+    transact_ensured(db,sql,ensured)
 
 
 law rolled_back_transaction_publishes_nothing:
@@ -157,6 +167,28 @@ def apply(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, Str
   do IO<Result<&1,&1,U32 & String,String>>:
     result : Result<&1,&1,U32 & String,String> <- commit(db,command)
     committed(result)
+
+# SQLITE_BUSY (5) and SQLITE_LOCKED (6) mean the connection's busy handler gave
+# up on a lock another connection held; the transaction committed nothing.
+def busy(+code: U32) -> Bool:
+  Bool.or(U32.is_eq(code,5),U32.is_eq(code,6))
+
+def busy_again(result: Result<&1,&1,U32 & String,String>, again: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Result<&1,&1,U32 & String,String>):
+  match result:
+    case Fail{(+code,+text)}: Bool.pick(IO(Result<&1,&1,U32 & String,String>),busy(code),again(Unit{}),IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,text)}))
+    case Done{saved}: IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
+
+# Applies a command whose statements are idempotent, again after each busy
+# answer, until the store commits it or reports another failure. Each attempt
+# waits in the busy handler first. The native observer records frames through
+# it: a busy write had stopped the span read, and turn 225958 of
+# compiler-crash-1017-opus-20261022 ended 'without a native result' although
+# its native turn finished (#1054, instance B2).
+@unsafe
+def apply_through_busy(+db: String, +command: C.Command) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    result : Result<&1,&1,U32 & String,String> <- apply(db,command)
+    busy_again(result,unit => apply_through_busy(db,command))
 
 
 # Wake-claim transitions for issue #685. The table is owned by this module:

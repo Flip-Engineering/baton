@@ -399,8 +399,8 @@ law detached_self_entry_delivers_the_committed_message:
   for +db: String
   for +id: String
   {Control.deliver(db,id) == (do IO<Unit>:
-  delivered : String <- IO.try(String,Delivery.deliver(db,id,"1",""))
-  IO.pure(Unit,Unit{})) : IO(Unit)}
+  delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id,"1","")
+  Control.delivered_or_redriven(db,id,delivered)) : IO(Unit)}
 
 def detached_self_entry_delivers_the_committed_message(db,id):
   {==}

@@ -2,7 +2,11 @@ import Base
 import ../coordinator/commands.bend as C
 import ./receive.bend as Receive
 import ./delivery.bend as Delivery
+<<<<<<< HEAD
 import ./codex-route.bend as CodexRoute
+=======
+import ../coordinator/root-channel.bend as RootChannel
+>>>>>>> 2ad79a8714a4994b617a90187f118bfec0df1b3f
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
 
@@ -99,8 +103,25 @@ def drive_id(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
 def message_cli(+db: String, +id: String) -> IO(Unit):
   IO.try(Unit,drive_id(db,id))
 
+# Input whose sender is told when its root recipient has no attached channel.
+def addressed_message_id(command: C.Command) -> String:
+  match command:
+    case C.Message{id,sender,recipient,kind,body}: id
+    case C.Report{id,sender,body}: id
+    case C.Ask{id,player,body}: id
+    case other: ""
+
+def root_checked(+db: String, +id: String, empty: Bool) -> IO(Unit):
+  match empty:
+    case True{}: IO.pure(Unit,Unit{})
+    case False{}: RootChannel.warn_message(db,id)
+
 # A committed answer with a message identity reaches the session driver.
-def drive_command(db: String, command: C.Command, answer: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def drive_command(+db: String, +command: C.Command, answer: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match answer:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
-    case Done{saved}: drive_id(db,admitted_message_id(command))
+    case Done{saved}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      driven : Result<&1,&1,U32 & String,Unit> <- drive_id(db,admitted_message_id(command))
+      +addressed : String <- IO.pure(String,addressed_message_id(command))
+      checked : Unit <- root_checked(db,addressed,String.is_empty(addressed))
+      IO.pure(Result<&1,&1,U32 & String,Unit>,driven)
