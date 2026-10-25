@@ -1,32 +1,21 @@
-# The Claude Code Stop hook of a Baton seat (#1054, instance B1). Claude Code
-# runs `baton --stop-hook` when its agent ends a turn and passes the hook input
-# as JSON on standard input; the retained launch records the seat in
-# BATON_SESSION and the database in BATON_DATABASE.
-#
-# Input that arrives while a Claude Code turn runs had reached the agent only
-# when it read its inbox: the turn's stdin closes after the first frame. The
-# hook now hands owed input to the same turn, and tells an agent whose
-# assignment is open with no completion request to request completion or
-# continue. Claude Code reports stop_hook_active when an earlier block already
-# continued this turn; the stop is then allowed, so the hook cannot keep a
-# turn alive that has nothing more to do. Owed input left at that point starts
-# the next turn through the ordinary turn-end continuation.
+# Claude Code invokes this entry at Stop and PostToolUse tool boundaries.
+# The retained launch supplies the seat and database in the environment.
 import Base
 import ../coordinator/commands.bend as C
 import ./native-input.bend as NativeInput
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
+import ./input-hook.bend as InputHook
 
 def owed_sql(+session: String) -> String:
   "(SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ")"
 
 def owed_lines_sql(+session: String) -> String:
-  "(SELECT group_concat(line,char(10)) FROM (SELECT 'Message (' || kind || ') from ' || sender || ' [id: ' || id || '] retained ' || CAST(length(CAST(body AS BLOB)) AS TEXT) || ' bytes; read the complete body with baton read ' || id || '.' AS line FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " ORDER BY seq))"
+  "(SELECT group_concat(line,char(10)) FROM (SELECT 'Message (' || kind || ') from ' || sender || ' [id: ' || id || ']:' || char(10) || body || char(10) || 'Read the complete body with baton read ' || id || '.' AS line FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " ORDER BY seq))"
 
 # The hook's answer: a JSON block decision, or empty to let the turn end.
-def decision_sql(+session: String, +input: String) -> String:
-  "SELECT CASE WHEN json_valid(" ++ C.q(input) ++ ") AND coalesce(json_extract(" ++ C.q(input) ++ ",'$.stop_hook_active'),0) THEN ''"
-  ++ " WHEN " ++ owed_sql(session) ++ ">0 THEN json_object('decision','block','reason','Baton holds ' || " ++ owed_sql(session) ++ " || ' owed inputs for ' || " ++ C.q(session) ++ " || '. Read and handle them before ending the turn:' || char(10) || " ++ owed_lines_sql(session) ++ ")"
+def decision_sql(+session: String) -> String:
+  "SELECT CASE WHEN " ++ owed_sql(session) ++ ">0 THEN json_object('decision','block','reason','Baton holds ' || " ++ owed_sql(session) ++ " || ' owed inputs for ' || " ++ C.q(session) ++ " || '. Read and handle these inputs, then run acknowledge. When the assignment is ready, run completion-request --text SUMMARY:' || char(10) || " ++ owed_lines_sql(session) ++ ")"
   ++ " WHEN " ++ C.task_open_sql(C.q(session)) ++ " AND " ++ C.task_request_sql(C.q(session)) ++ " IS NULL THEN json_object('decision','block','reason','Assignment ' || (SELECT id FROM messages WHERE seq=" ++ C.task_assignment_sql(C.q(session)) ++ ") || ' is still open and you have sent no completion request. When the work is ready, run completion-request --text SUMMARY; otherwise continue the work.')"
   ++ " ELSE '' END;"
 
@@ -47,12 +36,19 @@ def answered(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
     case Done{+text}: Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(text)),IO.pure(Unit,Unit{}),IO.print(Tx.trim_nl(text)))
     case Fail{error}: IO.pure(Unit,Unit{})
 
+def route(db: String, session: String, tool: Bool) -> IO(Unit):
+  match tool:
+    case True{}: InputHook.run(db,session)
+    case False{}: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,decision_sql(session))
+      answered(result)
+
 def decided(+db: String, +session: String, +input: String, unknown: Bool) -> IO(Unit):
   match unknown:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
-      result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,decision_sql(session,input))
-      answered(result)
+      event : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT CASE WHEN json_valid(" ++ C.q(input) ++ ") THEN json_extract(" ++ C.q(input) ++ ",'$.hook_event_name') ELSE '' END;")
+      route(db,session,String.eq(Tx.trim_nl(input_text(event)),"PostToolUse"))
 
 def run() -> IO(Unit):
   do IO<Unit>:

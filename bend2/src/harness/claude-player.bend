@@ -2,16 +2,13 @@ import Base
 import ../host/process.bend as P
 import ../json/canonical.bend as J
 
-# The Stop hook runs the Baton executable named in BATON_STOP_HOOK, which the
-# retained launch sets; without it the hook does nothing (#1054). The hook
-# hands owed input to the running turn and reminds the agent of an open
-# assignment, so input that arrives during a turn is not left until the next
-# one.
+# Claude Code runs the retained Baton entry at Stop and after successful tools.
+# PostToolUse adds complete owed input to the current conversation (#1054).
 def stop_hook_command() -> String:
   "[ -z \"$BATON_STOP_HOOK\" ] || exec \"$BATON_STOP_HOOK\" --stop-hook"
 
 def settings() -> String:
-  "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":" ++ J.string_literal(stop_hook_command()) ++ "}]}]}}"
+  "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":" ++ J.string_literal(stop_hook_command()) ++ "}]}],\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[{\"type\":\"command\",\"command\":" ++ J.string_literal(stop_hook_command()) ++ "}]}]}}"
 
 def arguments(cmd: String, model: String, effort: String) -> List<String>:
   [cmd,"--print","--input-format","stream-json","--output-format","stream-json","--verbose","--permission-mode","bypassPermissions","--settings",settings(),"--model",model,"--effort",effort]

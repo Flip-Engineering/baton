@@ -1,20 +1,7 @@
-"""The Claude Code Stop hook gives a running turn its owed input (#1054, B1).
+"""Claude hooks enforce completion and inject input during tool work (#1054).
 
-During turn receive:compiler-crash-1017-opus-20261022:246199, coordinator
-guidance 030aa2fbe8e4f667f... arrived at 01:22:52Z. Claude Code turns get one
-input frame and their stdin closes, so the message reached the agent only
-because the agent ran 'baton inbox'. Baton now launches Claude Code with a
-Stop hook that runs 'baton --stop-hook': owed input is handed to the same
-turn, and an open assignment without a completion request is named. When
-Claude Code reports stop_hook_active the hook allows the stop.
-
-These checks run the hook entry against fixture databases, run the hook
-command from the generated Claude arguments, and drive two fake Claude
-processes: one that honours Stop hooks the way Claude Code does, and one that
-ignores them.
-
-BATON2_STOP_HOOK_FIXTURE names a built bend2/test/stop-hook-entry binary;
-otherwise the test builds it with bend2/scripts/build-native.sh.
+The fixture runs the installed hook commands against SQLite databases and fake
+Claude processes. BATON2_STOP_HOOK_FIXTURE names the queue-built native entry.
 """
 import json
 import os
@@ -25,35 +12,50 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-SCRATCH = ROOT / '.scratch/bend2'
 SCHEMA = '''
-CREATE TABLE sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT, harness TEXT NOT NULL DEFAULT 'claude-code');
+CREATE TABLE sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT, harness TEXT NOT NULL DEFAULT 'claude-code', native TEXT NOT NULL DEFAULT '');
 CREATE TABLE session_roles (session TEXT NOT NULL, role TEXT NOT NULL);
 CREATE TABLE session_stops (session TEXT PRIMARY KEY NOT NULL, id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, outcome TEXT NOT NULL);
 CREATE TABLE messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL, recipient TEXT NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);
+CREATE TABLE executions (session TEXT PRIMARY KEY, id TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL);
+CREATE TABLE message_reads(attempt TEXT NOT NULL, message TEXT NOT NULL, recipient TEXT NOT NULL, native TEXT NOT NULL, identity TEXT NOT NULL, handled TEXT, PRIMARY KEY(attempt,identity,message));
 INSERT INTO sessions(id,parent) VALUES('coordinator',NULL),('worker','coordinator');
 INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES('dispatch:assignment','coordinator','worker','task','Do the work.','native-turn:receive:worker:1:aa');
 '''
-# A fake Claude Code that ends its turn the way Claude Code does: it runs each
-# Stop hook command with the hook input on stdin; a block decision continues
-# the turn with the reason as input, and the next stop reports
-# stop_hook_active. The agent never reads its inbox. Each stop is recorded.
-HONOURING = r'''import json, subprocess, sys
+# The fake agent ignores repeated completion reminders, then requests completion.
+HONOURING = r'''import json, os, sqlite3, subprocess, sys
 args = sys.argv[1:]
 settings = json.loads(args[args.index('--settings') + 1])
 command = settings['hooks']['Stop'][0]['hooks'][0]['command']
 log = open(sys.argv[0] + '.stops', 'a')
-active = False
-while True:
+for active in (False, True, True):
     hook = subprocess.run(['/bin/sh', '-c', command], input=json.dumps({'hook_event_name': 'Stop', 'stop_hook_active': active}),
                           capture_output=True, text=True, timeout=120)
     decision = json.loads(hook.stdout) if hook.stdout.strip() else {}
     log.write(json.dumps({'active': active, 'decision': decision}) + '\n')
     log.flush()
-    if decision.get('decision') != 'block':
-        break
-    active = True
+    if active:
+        with sqlite3.connect(os.environ['BATON_DATABASE']) as db:
+            db.execute("INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body,receipt) VALUES('request','worker','coordinator','completion-request','Done.','read')")
 print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False, 'result': 'done'}))
+'''
+# One successful tool finishes, new input commits, and another tool finishes.
+TOOL_LOOP = r'''import json, os, sqlite3, subprocess, sys
+args = sys.argv[1:]
+settings = json.loads(args[args.index('--settings') + 1])
+commands = [h['command'] for group in settings['hooks'].get('PostToolUse', []) for h in group['hooks']]
+contexts = []
+for tool in ('first', 'second'):
+    if tool == 'second':
+        with sqlite3.connect(os.environ['BATON_DATABASE']) as db:
+            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('mid-loop','coordinator','worker','guidance',?)", ('New complete body.\nλ🙂\n',))
+    for command in commands:
+        hook = subprocess.run(['/bin/sh', '-c', command], input=json.dumps({'hook_event_name': 'PostToolUse', 'tool_name': 'Bash', 'tool_response': tool}), capture_output=True, text=True, timeout=120)
+        if hook.returncode:
+            raise RuntimeError(hook.stderr)
+        if hook.stdout.strip():
+            contexts.append(json.loads(hook.stdout)['hookSpecificOutput'])
+print(json.dumps(contexts))
 '''
 IGNORING = r'''import json, sys
 print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False, 'result': 'done'}))
@@ -64,14 +66,7 @@ def fixture():
     binary = os.environ.get('BATON2_STOP_HOOK_FIXTURE')
     if binary:
         return binary
-    SCRATCH.mkdir(parents=True, exist_ok=True)
-    binary = str(SCRATCH / 'stop-hook-entry')
-    build = subprocess.run(['sh', 'bend2/scripts/build-native.sh',
-                            'bend2/test/stop-hook-entry.bend', binary],
-                           cwd=ROOT, env=os.environ.copy(), capture_output=True, text=True)
-    if build.returncode:
-        raise AssertionError(build.stdout + build.stderr)
-    return binary
+    raise AssertionError('Set BATON2_STOP_HOOK_FIXTURE to the queue-built fixture.')
 
 
 class StopHook(unittest.TestCase):
@@ -111,11 +106,15 @@ class StopHook(unittest.TestCase):
         decision = self.hook()
         self.assertEqual(decision['decision'], 'block')
         self.assertIn('Baton holds 1 owed inputs for worker', decision['reason'])
-        self.assertIn('[id: message:coordinator:mid-turn] retained 11 bytes; read the complete body with baton read message:coordinator:mid-turn.', decision['reason'])
+        self.assertIn('[id: message:coordinator:mid-turn]:\nNew detail.\nRead the complete body with baton read message:coordinator:mid-turn.', decision['reason'])
 
-    def test_stop_hook_active_lets_the_turn_end(self):
+    def test_stop_hook_active_keeps_blocking_owed_input(self):
         self.owe()
-        self.assertIsNone(self.hook(active=True))
+        self.assertEqual(self.hook(active=True)['decision'], 'block')
+
+    def test_stop_hook_active_keeps_blocking_open_assignment(self):
+        self.assertEqual(self.hook()['decision'], 'block')
+        self.assertEqual(self.hook(active=True)['decision'], 'block')
 
     def test_open_assignment_without_request_is_named(self):
         decision = self.hook()
@@ -157,13 +156,108 @@ class StopHook(unittest.TestCase):
         stops = (self.home / 'claude.py.stops')
         return result, [json.loads(line) for line in stops.read_text().splitlines()] if stops.exists() else []
 
-    def test_claude_honouring_the_hook_ends_after_one_continuation(self):
-        self.owe()
+    def test_claude_ignoring_two_blocks_must_request_completion(self):
         result, stops = self.fake(HONOURING)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(len(stops), 2)
-        self.assertEqual(stops[0]['decision']['decision'], 'block')
-        self.assertEqual(stops[1], {'active': True, 'decision': {}})
+        self.assertEqual([s['decision'].get('decision') for s in stops], ['block', 'block', None])
+
+    def tool_hook(self, env=None):
+        result = subprocess.run([self.binary, '--stop-hook'], input=json.dumps({'hook_event_name': 'PostToolUse', 'tool_name': 'Bash'}),
+                                capture_output=True, text=True, env=env or self.env, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return json.loads(result.stdout) if result.stdout.strip() else None
+
+    def test_tool_loop_receives_new_body_before_stop(self):
+        result, _ = self.fake(TOOL_LOOP)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        contexts = json.loads(result.stdout)
+        self.assertEqual(contexts, [{'hookEventName': 'PostToolUse', 'additionalContext':
+            'Baton input for this turn. Handle the following complete messages:\nMessage (guidance) from coordinator [id: mid-loop]:\nNew complete body.\nλ🙂\n\nRead the complete body with baton read mid-loop.'}])
+        self.assertIsNone(self.db.execute("SELECT receipt FROM messages WHERE id='mid-loop'").fetchone()[0])
+        self.assertEqual(self.db.execute('SELECT * FROM message_reads').fetchall(), [])
+
+    def test_tool_hook_preserves_complete_bodies_and_order(self):
+        body = "Quote ' \"\nλ🙂\n" + 'abcdef' * 3000 + '\nend\n'
+        self.owe(body=body)
+        self.owe(ident='second', kind='recovery', body='Second body.')
+        context = self.tool_hook()['hookSpecificOutput']['additionalContext']
+        self.assertIn(body, context)
+        self.assertLess(context.index(body), context.index('Second body.'))
+        self.assertEqual(self.db.execute('SELECT * FROM message_reads').fetchall(), [])
+
+    def test_injected_reads_settle_only_with_the_owned_successful_turn(self):
+        statements = subprocess.run([self.binary, 'state-statements'], capture_output=True, text=True)
+        self.assertEqual(statements.returncode, 0, statements.stderr)
+        selection, record, settle = statements.stdout.splitlines()
+        self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
+        self.db.execute("INSERT INTO executions VALUES('worker','receive:worker:100:feed','/attempt','running')")
+        self.owe(body='Exact full body.\nλ🙂\n')
+        saved = self.db.execute(selection).fetchone()[0]
+        self.assertEqual(json.loads(saved)[0]['body'], 'Exact full body.\nλ🙂\n')
+        self.db.executescript(record.replace("'@INPUT@'", "'" + saved.replace("'", "''") + "'"))
+        self.assertEqual(json.loads(self.db.execute(selection).fetchone()[0]), [])
+        self.assertIsNone(self.db.execute('SELECT handled FROM message_reads').fetchone()[0])
+        self.assertIsNone(self.db.execute("SELECT receipt FROM messages WHERE id='message:coordinator:mid-turn'").fetchone()[0])
+        self.db.executescript(settle)
+        self.assertEqual(self.db.execute('SELECT handled FROM message_reads').fetchone()[0], 'native-turn:receive:worker:100:feed')
+        self.assertEqual(self.db.execute("SELECT receipt FROM messages WHERE id='message:coordinator:mid-turn'").fetchone()[0], 'native-turn:receive:worker:100:feed')
+
+    def test_admitted_tool_loop_records_reads_without_handling(self):
+        directory = self.home / 'attempt'
+        self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
+        self.db.execute("INSERT INTO executions VALUES('worker','attempt-1',?,'running')", (str(directory),))
+        script = self.home / 'admitted.py'
+        script.write_text(r'''import json, os, sqlite3, subprocess, sys
+config = json.loads(sys.argv[1])
+env = dict(os.environ, BATON_DATABASE=config['db'], BATON_SESSION='worker', BATON_ATTEMPT_DIRECTORY=config['directory'])
+command = config['command']
+results = []
+for tool in ('first', 'second', 'third'):
+    if tool == 'second':
+        with sqlite3.connect(config['db']) as db:
+            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('admitted-message','coordinator','worker','guidance','Admitted full body.')")
+    result = subprocess.run(['/bin/sh','-c',command], input=json.dumps({'hook_event_name':'PostToolUse','tool_name':'Bash'}), env=env, capture_output=True, text=True, timeout=60)
+    if result.returncode:
+        raise RuntimeError(result.stderr)
+    results.append(json.loads(result.stdout) if result.stdout.strip() else None)
+print(json.dumps(results), flush=True)
+''')
+        config = json.dumps({'db': self.path, 'directory': str(directory), 'command': self.settings_command()})
+        env = dict(self.env, BATON_STOP_HOOK=self.binary)
+        try:
+            result = subprocess.run([self.binary, 'admit', self.path, str(directory), str(self.home),
+                'python3', '-I', str(script), config], env=env, capture_output=True, text=True, timeout=120)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            outputs = result.stdout.splitlines()
+            self.assertEqual(outputs[-1], 'exit 0')
+            first, second, third = json.loads(outputs[0])
+            self.assertIsNone(first)
+            self.assertIn('Admitted full body.', second['hookSpecificOutput']['additionalContext'])
+            self.assertIsNone(third)
+            rows = self.db.execute("SELECT attempt,message,recipient,native,identity,handled FROM message_reads").fetchall()
+            self.assertEqual([row[:4] for row in rows], [('attempt-1','admitted-message','worker','native-1')])
+            self.assertTrue(rows[0][4])
+            self.assertIsNone(rows[0][5])
+            self.assertIsNone(self.db.execute("SELECT receipt FROM messages WHERE id='admitted-message'").fetchone()[0])
+        finally:
+            subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True, timeout=30)
+
+    def test_tool_hook_database_failure_keeps_tool_result_available(self):
+        env = dict(self.env, BATON_DATABASE=str(self.home / 'absent' / 'bad.db'))
+        self.assertIsNone(self.tool_hook(env))
+
+    def test_tool_hook_does_nothing_for_stopped_session(self):
+        self.owe()
+        self.db.execute("INSERT INTO session_stops VALUES('worker','stop','operator request','stopped')")
+        self.assertIsNone(self.tool_hook())
+        self.assertIsNone(self.hook(active=True))
+
+    def test_confirmation_and_new_assignment_derive_current_request(self):
+        self.request()
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES('confirm','coordinator','worker','completion-confirmed','message:worker:request','read')")
+        self.assertIsNone(self.hook(active=True))
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES('new-task','coordinator','worker','task','More work.','read')")
+        self.assertEqual(self.hook(active=True)['decision'], 'block')
 
     def test_claude_ignoring_the_hook_still_ends_its_turn(self):
         self.owe()
