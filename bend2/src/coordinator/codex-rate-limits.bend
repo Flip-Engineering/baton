@@ -13,9 +13,10 @@
 # resetsAt is in Unix seconds. The generated schema states that ordinaryUsageAllowed is
 # the backend's permission for ordinary included usage and that a client must not
 # infer recovery from percentages or reset times when it is null. A false value marks
-# every window exhausted and a true value marks none. An unavailable permission
-# makes the read unreadable and preserves an existing hold. This
-# module only extracts fields; the first parser of this shape is commit 0401a13e5.
+# every window exhausted. A reported rateLimitReachedType also marks every window
+# exhausted. An unavailable permission with no reached limit makes the read unreadable
+# and preserves an existing hold. This module only extracts fields; the first parser
+# of this shape is commit 0401a13e5.
 import Base
 import ../coordinator/commands.bend as C
 
@@ -37,7 +38,7 @@ def codex_window_name_sql(+minutes: String) -> String:
   "CASE " ++ minutes ++ " WHEN 300 THEN '5-hour' WHEN 10080 THEN '7-day' ELSE CASE WHEN " ++ minutes ++ " IS NULL THEN 'unnamed' ELSE " ++ minutes ++ " || '-minute' END END"
 
 def codex_exhausted_sql(+result: String) -> String:
-  "json_type(" ++ result ++ ",'$.ordinaryUsageAllowed')='false'"
+  "(json_type(" ++ result ++ ",'$.ordinaryUsageAllowed')='false' OR coalesce(json_type(" ++ result ++ ",'$.rateLimits.rateLimitReachedType'),'')='text')"
 
 # The windows array of the read contract from the primary and secondary windows.
 def codex_windows_sql(+result: String) -> String:
@@ -47,5 +48,5 @@ def codex_windows_sql(+result: String) -> String:
 def codex_problem_sql(+result: String) -> String:
   "SELECT CASE WHEN NOT json_valid(" ++ C.q(result) ++ ") THEN 'the Codex rate-limit result is not JSON'"
   ++ " WHEN coalesce(json_type(" ++ C.q(result) ++ ",'$.rateLimits.primary'),'')<>'object' AND coalesce(json_type(" ++ C.q(result) ++ ",'$.rateLimits.secondary'),'')<>'object' THEN 'the Codex rate-limit result has no primary or secondary window'"
-  ++ " WHEN coalesce(json_type(" ++ C.q(result) ++ ",'$.ordinaryUsageAllowed'),'') NOT IN ('true','false') THEN 'the Codex ordinary usage permission is unavailable'"
+  ++ " WHEN coalesce(json_type(" ++ C.q(result) ++ ",'$.ordinaryUsageAllowed'),'') NOT IN ('true','false') AND coalesce(json_type(" ++ C.q(result) ++ ",'$.rateLimits.rateLimitReachedType'),'')<>'text' THEN 'the Codex ordinary usage permission is unavailable'"
   ++ " ELSE '' END;"

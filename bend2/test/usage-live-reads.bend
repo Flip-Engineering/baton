@@ -209,15 +209,35 @@ def recorded_codex_case(+db: String) -> IO(Unit):
     +zai : String <- UW.read_executable(db,"kx","zai")
     expect("non-codex-read-passes-nothing",String.is_empty(zai))
 
-def codex_snapshot(+allowed: String, +used: String) -> String:
-  "{\"ordinaryUsageAllowed\":" ++ allowed ++ ",\"rateLimits\":{\"primary\":{\"usedPercent\":" ++ used ++ ",\"windowDurationMins\":300,\"resetsAt\":1793382116},\"secondary\":null,\"rateLimitReachedType\":null}}"
+def codex_snapshot_with_limit(+allowed: String, +used: String, +reached: String) -> String:
+  "{\"ordinaryUsageAllowed\":" ++ allowed ++ ",\"rateLimits\":{\"primary\":{\"usedPercent\":" ++ used ++ ",\"windowDurationMins\":300,\"resetsAt\":1793382116},\"secondary\":null,\"rateLimitReachedType\":" ++ reached ++ "}}"
 
-def codex_answer(+db: String, +path: String, +allowed: String, +used: String) -> IO(Unit):
+def codex_snapshot(+allowed: String, +used: String) -> String:
+  codex_snapshot_with_limit(allowed,used,"null")
+
+def codex_answer_raw(+db: String, +path: String, +raw: String) -> IO(Unit):
   do IO<Unit>:
-    +raw : String = codex_snapshot(allowed,used)
     +problem : String <- read(db,Codex.codex_problem_sql(raw))
     +document : String <- read(db,UR.read_document_sql("codex",Codex.codex_source(),"1",Codex.codex_windows_sql(raw)))
     answer(path,Bool.pick(String,String.is_empty(Tx.trim_nl(problem)),Tx.trim_nl(document),UR.unreadable_document("codex",Codex.codex_source(),"1",Tx.trim_nl(problem))))
+
+def codex_answer(+db: String, +path: String, +allowed: String, +used: String) -> IO(Unit):
+  codex_answer_raw(db,path,codex_snapshot(allowed,used))
+
+def codex_limit_type_case(+db: String, +helper: String, +path: String) -> IO(Unit):
+  do IO<Unit>:
+    initial : UW.Gate <- state_of(db,"k","acct-codex")
+    unheld : Unit <- expect("codex-reported-limit-starts-unheld",Bool.not(String.eq(gate_class(initial),"held")))
+    limited : Unit <- codex_answer_raw(db,path,codex_snapshot_with_limit("null","15","\"primary\""))
+    refused : Unit <- UW.read_refused_with(db,"k","acct-codex","att-reported-limit",helper)
+    held : UW.Gate <- state_of(db,"k","acct-codex")
+    exhausted : Unit <- expect("codex-null-permission-reported-limit-holds",String.eq(gate_class(held),"held"))
+    readable : Unit <- expect_read(db,"SELECT state FROM usage_reads ORDER BY id DESC LIMIT 1;","read\n","codex-reported-limit-recorded-readable")
+    unknown : Unit <- codex_answer(db,path,"null","15")
+    reread : Unit <- UW.read_refused_with(db,"k","acct-codex","att-unknown-after-limit",helper)
+    retained : UW.Gate <- state_of(db,"k","acct-codex")
+    kept : Unit <- expect("codex-unreported-permission-keeps-reported-limit-hold",String.eq(gate_class(retained),"held"))
+    expect_read(db,"SELECT state FROM usage_reads ORDER BY id DESC LIMIT 1;","unreadable\n","codex-no-limit-permission-recorded-unreadable")
 
 def codex_unknown_permission_case(+db: String, +helper: String, +path: String) -> IO(Unit):
   do IO<Unit>:
@@ -256,6 +276,7 @@ def run(+db: String, +helper: String) -> IO(Unit):
     ten : Unit <- recorded_codex_case(db)
     unknown_permission : Unit <- codex_unknown_permission_case(db,helper,path)
     affirmative_permission : Unit <- codex_affirmative_permission_case(db,helper,path)
+    reported_limit : Unit <- codex_limit_type_case(db,helper,path)
     IO.print("fixture-usage-live-reads-ok")
 
 def codex_permission_case(+db: String, +helper: String, affirmative: Bool) -> IO(Unit):
@@ -266,8 +287,15 @@ def codex_permission_case(+db: String, +helper: String, affirmative: Bool) -> IO
     held : Unit <- UW.read_refused_with(db,"k","acct-codex","att-initial",helper)
     Bool.pick(IO(Unit),affirmative,codex_affirmative_permission_case(db,helper,path),codex_unknown_permission_case(db,helper,path))
 
+def codex_limit_type_fixture(+db: String, +helper: String) -> IO(Unit):
+  do IO<Unit>:
+    +path : String = db ++ ".answer"
+    ready : Unit <- setup(db,path)
+    codex_limit_type_case(db,helper,path)
+
 def main_args(args: List<String>) -> IO(Unit):
   match args:
+    case "--codex-limit-type" <> +db <> +helper <> Nil{}: codex_limit_type_fixture(db,helper)
     case "--codex-unknown" <> +db <> +helper <> Nil{}: codex_permission_case(db,helper,False{})
     case "--codex-affirmative" <> +db <> +helper <> Nil{}: codex_permission_case(db,helper,True{})
     case "--wake-message" <> +db <> +message <> Nil{}: query(db,"INSERT INTO wake_marks(message) VALUES(" ++ C.q(message) ++ ");")
