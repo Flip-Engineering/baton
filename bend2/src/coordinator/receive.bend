@@ -330,7 +330,8 @@ def wake_fenced_gate(+db: String, +session: String, +cursor: String, launch: Str
 def wake_fenced_gated(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +label : String <- Accounts.handoff_label_io(db,session)
-    gate : UW.Gate <- UW.window_gate(db,session,Tx.trim_nl(label))
+    current : UW.Gate <- UW.window_gate(db,session,Tx.trim_nl(label))
+    gate : UW.Gate <- Accounts.order_gate(db,session,current)
     next : Result<&1,&1,U32 & String,Unit> <- wake_fenced_gate(db,session,cursor,launch,lock,gate)
     IO.pure(Result<&1,&1,U32 & String,Unit>,next)
 
@@ -838,6 +839,8 @@ def start_admitted(+db: String, +session: String, +id: String, +cmd: String, rou
       IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.")})
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       +head : String <- wake_found(db,session,"0")
+      +conversation : String <- Turn.direct_conversation(db,session,native)
+      checked : Unit <- Accounts.order_move(db,session,conversation,cmd,workspace)
       +label : String <- Accounts.handoff_label_io(db,session)
       gate : UW.Gate <- UW.window_gate(db,session,Tx.trim_nl(label))
       held : Bool <- window_held_start(db,session,id,head,lock,gate)
