@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 import tempfile
 import unittest
+from decimal import Decimal
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 ENTRY = pathlib.Path(os.environ.get('BATON2_ACCOUNT_ENTRY', ROOT / '.scratch/bend2/account-credits-entry'))
@@ -490,9 +491,9 @@ class FocusedAccountCredits(unittest.TestCase):
         result = self.gate_body('attempt-1', body)
         self.assertEqual(result[0], 'binding')
         nanos = len(body.encode()) * 4000 + 20000
-        whole, frac = divmod(nanos, 10 ** 9)
-        self.assertEqual(self.query("SELECT request,state,max_charge FROM credit_reservations"),
-                         [('attempt-1', 'reserved', f'{whole}.{frac:09d}')])
+        rows = self.query("SELECT request,state,max_charge FROM credit_reservations")
+        self.assertEqual([(request, state) for request, state, charge in rows], [('attempt-1', 'reserved')])
+        self.assertEqual(Decimal(rows[0][2]), Decimal(nanos) / Decimal(10 ** 9))
 
     def test_reservation_uses_provider_spend_reconciliation(self):
         self.credit_account('200.00')
