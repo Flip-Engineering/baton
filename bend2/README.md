@@ -807,9 +807,10 @@ Baton notifications. Replace that entry with the conductor entry above.
 
 A root is a parentless session with the operator role, or one whose endpoint
 runs `mcp-conductor.mjs`. A root with unacknowledged input is unattached when
-its endpoint is not a conductor `--deliver` endpoint or when the socket file
-that endpoint names does not exist beside the database. Baton derives this
-from the session row, its messages and the socket path each time it checks.
+its endpoint is not a conductor `--deliver` endpoint or when a connection to
+its delivery socket fails. Baton connects from the database directory and
+closes the connection after checking it. Each check uses the current session
+row, messages and socket connection result.
 
 `status`, `session` and `orchestra` print one line on stderr for each
 unattached root:
