@@ -2,11 +2,8 @@ import Base
 import ../coordinator/commands.bend as C
 import ./receive.bend as Receive
 import ./delivery.bend as Delivery
-<<<<<<< HEAD
 import ./codex-route.bend as CodexRoute
-=======
 import ../coordinator/root-channel.bend as RootChannel
->>>>>>> 2ad79a8714a4994b617a90187f118bfec0df1b3f
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
 

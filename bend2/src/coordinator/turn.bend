@@ -252,13 +252,8 @@ def prepare(+db: String, +player: String, +id: String, log: String, stderr: Stri
     +generation : String <- IO.pure(String,generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     reported : Unit <- prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
-<<<<<<< HEAD
-    AgentInput.record_initial_reads(db,player,id)
-=======
-    success : Bool <- settlement_success(db,outcome)
-    settled : Unit <- AgentInput.settle_if(db,player,id,success)
+    read : Unit <- AgentInput.record_initial_reads(db,player,id)
     note_open_assignment(db,player,id)
->>>>>>> 2ad79a8714a4994b617a90187f118bfec0df1b3f
 
 def record_exit(db: String, player: String, +id: String, log: String, outcome: Outcome) -> IO(Unit):
   match outcome:
@@ -603,11 +598,7 @@ def observed_initial(db: String, player: String, id: String, line: String, resul
 def observe_event(+db: String, +player: String, +id: String, +event: String, relevant: Bool, sealed: Bool, +harness: String) -> IO(Result<&1,&1,U32 & String,String>):
   match relevant:
     case True{}: do IO<Result<&1,&1,U32 & String,String>>:
-<<<<<<< HEAD
-      stored : Result<&1,&1,U32 & String,String> <- Store.apply(db,C.Observe{id,player,event,sealed,harness})
-=======
-      stored : Result<&1,&1,U32 & String,String> <- Store.apply_through_busy(db,C.Observe{id,player,event,sealed})
->>>>>>> 2ad79a8714a4994b617a90187f118bfec0df1b3f
+      stored : Result<&1,&1,U32 & String,String> <- Store.apply_through_busy(db,C.Observe{id,player,event,sealed,harness})
       observed_initial(db,player,id,event,stored)
     case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
 
@@ -1319,7 +1310,6 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
       +native : String <- retained_native(db,player,sessions,session,harness)
       +prompt_file : String <- IO.pure(String,directory ++ "/prompt.txt")
       +executable : String <- IO.try(String,Lock.SessionLock.executable())
-<<<<<<< HEAD
       retained_identity(executable, identity => do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
         +absolute_db : String <- IO.try(String,Lock.SessionLock.canonical(db))
         +parts : IdentityParts <- IO.pure(IdentityParts,identity_products(model,identity))
@@ -1330,7 +1320,7 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
         +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
         home : String <- dsh_home_if(dsh,db,absolute_db,player)
         prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort)
-        +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory]) ++ identity_prefix(parts))
+        +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory,"BATON_STOP_HOOK=" ++ executable]) ++ identity_prefix(parts))
         +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
         store : String <- current_store(db,player,harness)
         history : String <- current_history(db,player)
@@ -1339,28 +1329,6 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
         +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,history,Tx.trim_nl(harness),account,launch_credit)))
         launch : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_launch_checked(prepared,dsh,agy,prefix,home,cmd,model,effort,native,muse,args,initial,omp,claude,level,seal_prompt)
         IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,launch))
-=======
-      identity : String & String <- IO.try(String & String,HostControl.Control.identity(executable))
-      +absolute_db : String <- IO.try(String,Lock.SessionLock.canonical(db))
-      +parts : IdentityParts <- IO.pure(IdentityParts,identity_products(model,identity))
-      +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
-      +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
-      +dsh : Bool <- IO.pure(Bool,String.eq(harness,"dsh\n"))
-      +agy : Bool <- IO.pure(Bool,String.eq(harness,"antigravity\n"))
-      +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
-      home : String <- dsh_home_if(dsh,db,absolute_db,player)
-      prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort)
-      +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory,"BATON_STOP_HOOK=" ++ executable]) ++ identity_prefix(parts))
-      +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
-      store : String <- current_store(db,player,harness)
-      history : String <- current_history(db,player)
-      credit_refusal : String <- Accounts.credit_launch_refusal_for(db,account)
-      binding : Maybe<List<String>> <- Accounts.credit_launch_binding(db,player,directory,Tx.trim_nl(harness),account,identity_resolver(parts),store)
-      recorded : Unit <- Accounts.record_current_attempt(db,player,directory,predecessor,account)
-      +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,history,Tx.trim_nl(harness),account,binding,credit_refusal)))
-      launch : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_launch_checked(prepared,dsh,agy,prefix,home,cmd,model,effort,native,muse,args,initial,omp,claude,level,seal_prompt)
-      IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,launch)
->>>>>>> 2ad79a8714a4994b617a90187f118bfec0df1b3f
 
 def retained_prepare(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool, predecessor: String) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
