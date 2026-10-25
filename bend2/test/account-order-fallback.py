@@ -1,22 +1,16 @@
-"""Focused account-order fallback tests (#1059).
+"""Focused account-order fallback tests (#1059, #1080).
 
-These drive the focused native account-credits-entry, which imports the same
-accounts.bend and subscription-fallback.bend functions the coordinator uses.
-
-The repro case reproduces the observed 2026-10-24 Riff state: the operator profile
-list names claude-max-primary then claude-max-incognito, the seat's profile record
-names claude-credit-primary, which that list does not contain, and the provider
-refuses with "Credit balance is too low". The accounts table holds the operator's
-order in recording order and, when the column exists, in accounts.priority. It runs
-against account-credits-entry on main and account-order-entry on the branch.
-
-The live-read cases need account-order-entry and the #1025 read interface. The fake
-helper bend2/test/fake-account-usage-read answers each Claude subscription account's
-read with the windows the case writes into that account's store.
+The focused entry imports the coordinator's account and usage-window modules.
+The deployment cases record the live API-key rows and the incognito subscription,
+bind the seat by its old profile, and use the real Claude credential resolver and
+response parser with a fixture HTTP response. Other cases use fake-account-usage-read
+to select account states and exercise binding failures, announcements and releases.
 """
+import concurrent.futures
 import json
 import os
 import pathlib
+import shlex
 import sqlite3
 import subprocess
 import tempfile
@@ -150,7 +144,7 @@ class AccountOrderFallback(unittest.TestCase):
         self.assertEqual(self.current('leaf'), 'claude-max-incognito')
         holds = self.query("SELECT body FROM messages WHERE kind='report' AND body LIKE 'account order held:%'")
         self.assertIn('4 claude-max-primary usage unreadable', holds[0][0])
-        self.assertIn('the last entry is taken only on an open live read', holds[0][0])
+        self.assertIn('claude-max-primary is taken only on an open live read', holds[0][0])
 
     def all_held(self):
         self.record_order()
@@ -182,18 +176,165 @@ class AccountOrderFallback(unittest.TestCase):
         self.all_held()
         pathlib.Path(str(self.db) + '.helper').write_text(HELPER + '\n')
         self.windows('max-primary', OPEN)
-        completed = self.entry('read', 'root', 'claude-max-primary', HELPER)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
         mark = pathlib.Path(str(self.db) + '.wake-mark')
-        for _ in range(200):
-            if mark.exists() and mark.read_text().strip():
-                break
-            time.sleep(0.1)
-        self.assertEqual(mark.read_text().strip(), 'task-1 gate=none moved=true current=claude-max-primary')
+        # The release receiver writes one completion frame to this FIFO.
+        # Opening and reading it waits for that receiver's completed decision.
+        os.mkfifo(mark)
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            completed_frame = executor.submit(mark.read_text)
+            completed = self.entry('read', 'root', 'claude-max-primary', HELPER)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(completed_frame.result().strip(),
+                             'task-1 gate=none moved=true current=claude-max-primary')
         released = self.query("SELECT count(*) FROM messages WHERE id GLOB 'usage-read:*:release:leaf'")
         self.assertGreater(released[0][0], 0)
         moves = self.query("SELECT body FROM messages WHERE kind='report' AND body LIKE 'account move:%'")
         self.assertIn('from claude-max-incognito to claude-max-primary', moves[0][0])
+
+    def deployed_order(self, incognito_last=False):
+        # These rows are shared by Riff, render-fframes and flip-brusharena.
+        rows = (
+            ('claude-credit-incognito', 'api_key', 'file:/fixture/keys/credit-incognito', '2'),
+            ('claude-max-incognito', 'subscription', self.store('max-incognito'), '3'),
+            ('claude-credit-normal', 'api_key', 'file:/fixture/keys/credit-normal', ''),
+        )
+        for label, funding, reference, priority in rows:
+            completed = self.entry('account', 'record', label, 'anthropic', 'claude-code',
+                                   funding, reference, '', '', '')
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.execute('UPDATE accounts SET priority=? WHERE id=?', (priority, label))
+        if incognito_last:
+            self.execute("UPDATE accounts SET priority='1' WHERE id='claude-credit-normal'")
+        self.riff_profiles()
+        helper = self.directory / 'claude-reader'
+        helper.write_text('#!/bin/sh\nexec {} --fixture-usage-read "$@"\n'.format(shlex.quote(str(ENTRY))))
+        helper.chmod(0o755)
+        return str(helper)
+
+    def claude_response(self, utilization, expired=False):
+        store = pathlib.Path(self.store('max-incognito'))
+        (store / '.credentials.json').write_text(json.dumps({'claudeAiOauth': {
+            'accessToken': 'fixture-oauth', 'expiresAt': 1 if expired else RESET_MS}}))
+        (store / '.credentials.json.response').write_text(json.dumps({
+            'five_hour': {'utilization': utilization, 'resets_at': '2099-01-01T00:00:00Z'},
+            'seven_day': {'utilization': utilization, 'resets_at': '2099-01-01T00:00:00Z'}}))
+
+    def test_deployed_accounts_use_the_live_claude_reader(self):
+        helper = self.deployed_order()
+        self.claude_response(12)
+        completed = self.entry('handoff-with', 'leaf', 'deployed-open', CREDIT_EVENT, helper)
+        self.assertEqual((completed.returncode, completed.stdout.strip()), (0, 'advanced'), completed.stderr)
+        self.assertEqual(self.current('leaf'), 'claude-max-incognito')
+        self.assertEqual(self.query("SELECT state,source FROM usage_reads WHERE account='claude-max-incognito'"),
+                         [('read', 'GET https://api.anthropic.com/api/oauth/usage')])
+        self.assertFalse(self.query("SELECT id FROM accounts WHERE id='claude-max-primary'"))
+
+    def test_deployed_held_incognito_retains_input(self):
+        helper = self.deployed_order()
+        self.claude_response(100)
+        completed = self.entry('handoff-with', 'leaf', 'deployed-held', CREDIT_EVENT, helper)
+        self.assertEqual((completed.returncode, completed.stdout.strip()), (0, 'exhausted'), completed.stderr)
+        self.assertEqual(self.current('leaf'), '')
+        self.assertTrue(self.query("SELECT id FROM messages WHERE id='task-1'"))
+        self.assertTrue(self.query("SELECT id FROM messages WHERE body LIKE 'account order held:%'"))
+
+    def expired_deployment(self, incognito_last):
+        helper = self.deployed_order(incognito_last=incognito_last)
+        self.claude_response(12, expired=True)
+        completed = self.entry('handoff-with', 'leaf', 'deployed-expired', CREDIT_EVENT, helper)
+        self.assertEqual((completed.returncode, completed.stdout.strip()), (0, 'advanced'), completed.stderr)
+        self.assertEqual(self.current('leaf'), 'claude-max-incognito')
+        read = self.query("SELECT state,reason FROM usage_reads WHERE account='claude-max-incognito'")
+        self.assertEqual(read[0][0], 'unreadable')
+        self.assertIn('expired at', read[0][1])
+
+    def test_expired_incognito_can_resume_at_the_end_of_the_order(self):
+        self.expired_deployment(incognito_last=True)
+
+    def test_expired_incognito_can_resume_before_unprioritized_credit(self):
+        self.expired_deployment(incognito_last=False)
+
+    def test_unknown_primary_is_reserved_before_incognito(self):
+        self.record_order()
+        self.riff_profiles()
+        self.execute("UPDATE accounts SET priority='2' WHERE id='claude-max-primary'")
+        self.assertEqual(self.handoff_with(CREDIT_EVENT), 'advanced')
+        self.assertEqual(self.current('leaf'), 'claude-max-incognito')
+        moves = self.query("SELECT body FROM messages WHERE body LIKE 'account move:%'")
+        self.assertIn('claude-max-primary is taken only on an open live read', moves[0][0])
+
+    def launch_failure_setup(self):
+        self.record_order()
+        self.bind('claude-max-incognito')
+        self.windows('max-incognito', EXHAUSTED)
+        self.windows('max-primary', OPEN)
+
+    def test_failed_account_append_aborts_launch(self):
+        self.launch_failure_setup()
+        sidecar = pathlib.Path(str(self.db) + '.account-' + 'leaf'.encode().hex())
+        sidecar.unlink()
+        sidecar.mkdir()
+        # The profile supplies the original label when the account file cannot be read.
+        record = pathlib.Path(str(self.db) + '.profile-' + 'leaf'.encode().hex())
+        record.write_text(' claude-code claude-max-incognito {}\n'.format(self.store('max-incognito')))
+        completed = self.entry('wake', 'leaf', HELPER)
+        self.assertNotEqual(completed.returncode, 0, completed.stdout)
+        self.assertIn('Account move failed', completed.stderr)
+        self.assertEqual(self.current('leaf'), 'claude-max-incognito')
+        self.assertTrue(self.reports(':account-append-failed'))
+        self.assertTrue(self.query("SELECT id FROM messages WHERE id='task-1'"))
+
+    def test_failed_history_preparation_aborts_launch(self):
+        self.launch_failure_setup()
+        completed = self.entry('wake-native', 'leaf', HELPER, 'missing-native-conversation')
+        self.assertNotEqual(completed.returncode, 0, completed.stdout)
+        self.assertEqual(self.current('leaf'), 'claude-max-incognito')
+        self.assertTrue(self.query("SELECT id FROM messages WHERE id='task-1'"))
+
+    def test_unpersisted_binding_aborts_launch(self):
+        self.launch_failure_setup()
+        sidecar = pathlib.Path(str(self.db) + '.account-' + 'leaf'.encode().hex())
+        sidecar.unlink()
+        sidecar.symlink_to('/dev/null')
+        record = pathlib.Path(str(self.db) + '.profile-' + 'leaf'.encode().hex())
+        record.write_text(' claude-code claude-max-incognito {}\n'.format(self.store('max-incognito')))
+        completed = self.entry('wake', 'leaf', HELPER)
+        self.assertNotEqual(completed.returncode, 0, completed.stdout)
+        self.assertIn('does not match selected account', completed.stderr)
+        self.assertEqual(self.current('leaf'), 'claude-max-incognito')
+
+    def test_failed_root_announcement_keeps_binding_and_rolls_back_both_notices(self):
+        self.record_order()
+        self.riff_profiles()
+        self.execute("INSERT INTO sessions(id,parent,harness,model) VALUES('middle','root','claude-code','claude-opus-5-5')")
+        self.execute("UPDATE sessions SET parent='middle' WHERE id='leaf'")
+        self.windows('max-incognito', OPEN)
+        self.execute("""CREATE TRIGGER reject_root_move BEFORE INSERT ON messages
+                        WHEN NEW.id LIKE '%:account-move:root'
+                        BEGIN SELECT RAISE(ABORT,'fixture root announcement failed'); END""")
+        completed = self.entry('handoff-with', 'leaf', 'sql-failure', CREDIT_EVENT, HELPER)
+        self.assertNotEqual(completed.returncode, 0, completed.stdout)
+        self.assertIn('fixture root announcement failed', completed.stderr)
+        self.assertEqual(self.current('leaf'), '')
+        self.assertFalse(self.query("SELECT id FROM messages WHERE body LIKE 'account move:%'"))
+        self.execute('DROP TRIGGER reject_root_move')
+        completed = self.entry('handoff-with', 'leaf', 'sql-failure', CREDIT_EVENT, HELPER)
+        self.assertEqual((completed.returncode, completed.stdout.strip()), (0, 'advanced'), completed.stderr)
+        self.assertEqual(self.current('leaf'), 'claude-max-incognito')
+        self.assertEqual({row[0] for row in self.query("SELECT recipient FROM messages WHERE body LIKE 'account move:%'")},
+                         {'middle', 'root'})
+
+    def test_failed_hold_announcement_preserves_database_error(self):
+        self.launch_failure_setup()
+        self.windows('max-primary', EXHAUSTED)
+        self.execute("""CREATE TRIGGER reject_hold BEFORE INSERT ON messages
+                        WHEN NEW.body LIKE 'account order held:%'
+                        BEGIN SELECT RAISE(ABORT,'fixture hold announcement failed'); END""")
+        completed = self.entry('handoff-with', 'leaf', 'hold-sql-failure', LIMIT_EVENT, HELPER)
+        self.assertNotEqual(completed.returncode, 0, completed.stdout)
+        self.assertIn('fixture hold announcement failed', completed.stderr)
+        self.assertEqual(self.current('leaf'), 'claude-max-incognito')
+        self.assertTrue(self.query("SELECT id FROM messages WHERE id='task-1'"))
 
 
 if __name__ == '__main__':

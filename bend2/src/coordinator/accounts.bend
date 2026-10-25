@@ -1344,14 +1344,14 @@ type Scan is Data:
 def states_joined(+states: String, +line: String, +separator: String) -> String:
   Bool.pick(String,String.is_empty(states),line,states ++ separator ++ line)
 
-# The last entry of the order is taken only on an open live read; an unknown read
-# moves a seat to any earlier entry. The operator's last entry is the root's own
-# account (claude-max-primary), which no seat takes without a read that says open.
-def entry_chosen(+kind: String, +last: Bool) -> Bool:
-  Bool.or(String.eq(kind,"open"),Bool.and(String.eq(kind,"unknown"),Bool.not(last)))
+# The operator reserves claude-max-primary for an open live read. Other accounts
+# can resume with an unknown read, including an expired incognito OAuth token
+# whose own Claude Code process renews it.
+def entry_chosen(+kind: String, +protected: Bool) -> Bool:
+  Bool.or(String.eq(kind,"open"),Bool.and(String.eq(kind,"unknown"),Bool.not(protected)))
 
-def last_note(+kind: String, +last: Bool) -> String:
-  Bool.pick(String,Bool.and(String.eq(kind,"unknown"),last)," (the last entry is taken only on an open live read)","")
+def protected_note(+kind: String, +protected: Bool) -> String:
+  Bool.pick(String,Bool.and(String.eq(kind,"unknown"),protected)," (claude-max-primary is taken only on an open live read)","")
 
 # One scanned entry's outcome: whether the seat takes it, and the states, held labels
 # and hold reads accumulated through it.
@@ -1374,19 +1374,19 @@ def step_receipts(step: Step) -> String:
   match step:
     case St{taken,states,held,receipts}: receipts
 
-def scan_step(+account: AccountRecord, +position: U32, +states: String, +held: String, +receipts: String, +last: Bool, state: EntryState) -> Step:
+def scan_step(+account: AccountRecord, +position: U32, +states: String, +held: String, +receipts: String, +protected: Bool, state: EntryState) -> Step:
   match state:
     case Es{+kind,+detail,+receipt}:
-      +line = U32.show(position) ++ " " ++ account_id(account) ++ " " ++ detail ++ last_note(kind,last)
+      +line = U32.show(position) ++ " " ++ account_id(account) ++ " " ++ detail ++ protected_note(kind,protected)
       +is_held = String.eq(kind,"held")
-      St{entry_chosen(kind,last),states_joined(states,line,"; "),Bool.pick(String,is_held,held ++ account_id(account) ++ "\n",held),Bool.pick(String,is_held,states_joined(receipts,receipt,","),receipts)}
+      St{entry_chosen(kind,protected),states_joined(states,line,"; "),Bool.pick(String,is_held,held ++ account_id(account) ++ "\n",held),Bool.pick(String,is_held,states_joined(receipts,receipt,","),receipts)}
 
 def order_scan(+db: String, +session: String, +provider: String, +model: String, +helper: String, +read: Bool, +refused: String, +refused_detail: String, accounts: List<&2,AccountRecord>, +position: U32, +states: String, +held: String, +receipts: String) -> IO(Scan):
   match accounts:
     case Nil{}: IO.pure(Scan,Missing{states,held,receipts})
     case +account <> +rest: do IO<Scan>:
       state : EntryState <- account_state(db,session,provider,model,helper,read,refused,refused_detail,account)
-      +step : Step <- IO.pure(Step,scan_step(account,position,states,held,receipts,accounts_empty(rest),state))
+      +step : Step <- IO.pure(Step,scan_step(account,position,states,held,receipts,String.eq(account_id(account),"claude-max-primary"),state))
       Bool.pick(IO(Scan),step_taken(step),
         IO.pure(Scan,Found{account,position,step_states(step)}),
         order_scan(db,session,provider,model,helper,read,refused,refused_detail,rest,U32.add(position,1),step_states(step),step_held(step),step_receipts(step)))
@@ -1409,14 +1409,14 @@ def announce_sql(+id: String, +session: String, +body: String) -> String:
 
 def announce(+db: String, +id: String, +session: String, +body: String) -> IO(Unit):
   do IO<Unit>:
-    noted : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,announce_sql(id,session,body))
+    noted : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ announce_sql(id,session,body) ++ "COMMIT;"))
     IO.pure(Unit,Unit{})
 
 def from_text(+label: String) -> String:
   Bool.pick(String,String.is_empty(label),"(no recorded account)",label)
 
 def move_body(+session: String, +harness: String, +from: String, +to: String, +position: U32, +total: U32, +states: String) -> String:
-  "account move: seat " ++ session ++ " (" ++ harness ++ ") moved from " ++ from_text(from) ++ " to " ++ to ++ ", entry " ++ U32.show(position) ++ " of " ++ U32.show(total) ++ " in the operator order. Entry states: " ++ states ++ ". Owed input resumes on " ++ to ++ "."
+  "account move: seat " ++ session ++ " (" ++ harness ++ ") selected move from " ++ from_text(from) ++ " to " ++ to ++ ", entry " ++ U32.show(position) ++ " of " ++ U32.show(total) ++ " in the operator order. Entry states: " ++ states ++ ". The binding is verified before owed input resumes on " ++ to ++ "."
 
 def hold_body(+session: String, +harness: String, +states: String) -> String:
   "account order held: seat " ++ session ++ " (" ++ harness ++ ") has no available account in the operator order. Entry states: " ++ states ++ ". Owed input stays queued. A live usage read that opens any listed account resumes the seat on it."
@@ -1450,22 +1450,31 @@ def store_in_force(+db: String, +session: String, +harness: String, bound: Maybe
       recorded : String <- file_text(Tx.trim_nl(path))
       IO.pure(String,Subs.record_source(harness,Subs.last_line(Tx.split_lines(recorded))))
 
-def move_appended(+db: String, +session: String, +id: String, +body: String, appended: Result<&1,&1,U32 & String,Unit>) -> IO(Bool):
+def binding_matches(+label: String, bound: Maybe<&2,AccountRecord>) -> Bool:
+  match bound:
+    case None{}: False{}
+    case Some{+account}: String.eq(label,account_id(account))
+
+def move_appended(+db: String, +session: String, +id: String, +harness: String, +label: String, appended: Result<&1,&1,U32 & String,Unit>) -> IO(Bool):
   match appended:
     case Done{unit}: do IO<Bool>:
-      noted : Unit <- announce(db,id ++ ":account-move",session,body)
-      IO.pure(Bool,True{})
+      bound : Maybe<&2,AccountRecord> <- current_account(db,session,harness)
+      IO.try(Bool,IO.pure(Result<&1,&1,U32 & String,Bool>,Bool.pick(Result<&1,&1,U32 & String,Bool>,binding_matches(label,bound),Done{True{}},Fail{(1,"Account binding does not match selected account " ++ label ++ "; owed input remains retained.")})))
     case Fail{(code,detail)}: do IO<Bool>:
       noted : Unit <- Subs.report_body(db,session,id,"account-append-failed","account record append failed: " ++ U32.show(code) ++ ": " ++ detail ++ "; the provider cause stands and no account was advanced.")
       IO.pure(Bool,False{})
 
-def move_recorded(+db: String, +session: String, +id: String, +account: AccountRecord, +body: String, prepared: Bool) -> IO(Bool):
+# The selection notices commit together before the binding changes. A database
+# failure leaves the binding in force. The notices describe the selected move;
+# an append failure has its own report and leaves the input owed.
+def move_recorded(+db: String, +session: String, +id: String, +harness: String, +account: AccountRecord, +body: String, prepared: Bool) -> IO(Bool):
   match prepared:
     case False{}: IO.pure(Bool,False{})
     case True{}: do IO<Bool>:
+      noted : Unit <- announce(db,id ++ ":account-move",session,body)
       path : String <- account_sidecar(db,session)
       appended : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(Tx.trim_nl(path),account_id(account) ++ "\n")
-      move_appended(db,session,id,body,appended)
+      move_appended(db,session,id,harness,account_id(account),appended)
 
 # The native history is prepared for the next store before the account record names
 # it, so a failed preparation leaves the account unadvanced with its own report. A
@@ -1473,7 +1482,7 @@ def move_recorded(+db: String, +session: String, +id: String, +account: AccountR
 def move_to(+db: String, +session: String, +id: String, +harness: String, +from: String, +from_store: String, +native: String, cmd: String, cwd: String, +account: AccountRecord, +position: U32, +total: U32, +states: String) -> IO(Bool):
   do IO<Bool>:
     prepared : Bool <- Bool.pick(IO(Bool),Bool.or(String.is_empty(native),String.eq(from_store,account_secret_ref(account))),IO.pure(Bool,True{}),Subs.prepare_account_history(db,session,id,harness,from_store,account_secret_ref(account),cmd,cwd,native))
-    move_recorded(db,session,id,account,move_body(session,harness,from,account_id(account),position,total,states),prepared)
+    move_recorded(db,session,id,harness,account,move_body(session,harness,from,account_id(account),position,total,states),prepared)
 
 def order_decided(+db: String, +session: String, +id: String, +harness: String, +from: String, +from_store: String, native: String, cmd: String, cwd: String, +total: U32, scan: Scan) -> IO(Bool):
   match scan:
@@ -1533,9 +1542,18 @@ def order_gate(+db: String, +session: String, gate: UW.Gate) -> IO(UW.Gate):
     +helper : String <- UW.read_helper()
     order_gate_with(db,session,helper,gate)
 
+# A failed required move terminates this launch with the recorded failure report.
+# Callers return from the move only after its selected binding was verified.
+def launch_move_result(moved: Bool) -> IO(Bool):
+  match moved:
+    case True{}: IO.pure(Bool,True{})
+    case False{}: IO.die(Bool,1,"Account move failed; read the account history or append failure report. Owed input remains retained.")
+
 def order_move_decided(+db: String, +session: String, +harness: String, +label: String, native: String, cmd: String, cwd: String, +receipt: String, +total: U32, +from_store: String, scan: Scan) -> IO(Bool):
   match scan:
-    case Found{+account,+position,+states}: move_to(db,session,"account-order:" ++ session ++ ":" ++ receipt,harness,label,from_store,native,cmd,cwd,account,position,total,states)
+    case Found{+account,+position,+states}: do IO<Bool>:
+      moved : Bool <- move_to(db,session,"account-order:" ++ session ++ ":" ++ receipt,harness,label,from_store,native,cmd,cwd,account,position,total,states)
+      launch_move_result(moved)
     case Missing{states,held,receipts}: IO.pure(Bool,False{})
 
 def order_move_scan(+db: String, +session: String, +harness: String, +label: String, native: String, cmd: String, cwd: String, +receipt: String, +ordered: List<&2,AccountRecord>) -> IO(Bool):
@@ -1547,7 +1565,7 @@ def order_move_scan(+db: String, +session: String, +harness: String, +label: Str
 
 # Before a launch: the held accounts that are due are read, and a seat whose current
 # account a live read holds moves to the first available entry of its order. Returns
-# whether it moved.
+# whether it moved. A selected move that fails exits with its retained failure.
 def order_move_with(+db: String, +session: String, +native: String, +cmd: String, +cwd: String, +helper: String) -> IO(Bool):
   do IO<Bool>:
     due : Unit <- UW.reread_due(db,session,helper)
@@ -1560,10 +1578,11 @@ def order_move_with(+db: String, +session: String, +native: String, +cmd: String
     +gate : UW.Gate <- Bool.pick(IO(UW.Gate),Bool.or(String.is_empty(provider),accounts_empty(ordered)),IO.pure(UW.Gate,UW.GateNone{}),UW.decide(db,provider,label,model))
     Bool.pick(IO(Bool),UW.gate_held(gate),order_move_scan(db,session,harness,label,native,cmd,cwd,held_receipt(gate),ordered),IO.pure(Bool,False{}))
 
-def order_move(+db: String, +session: String, +native: String, +cmd: String, +cwd: String) -> IO(Bool):
-  do IO<Bool>:
+def order_move(+db: String, +session: String, +native: String, +cmd: String, +cwd: String) -> IO(Unit):
+  do IO<Unit>:
     +helper : String <- UW.read_helper()
-    order_move_with(db,session,native,cmd,cwd,helper)
+    moved : Bool <- order_move_with(db,session,native,cmd,cwd,helper)
+    IO.pure(Unit,Unit{})
 
 # Provider-reported exhaustion advances the account in force when a binding
 # put one in force, and the operator's profile list otherwise. The refusal

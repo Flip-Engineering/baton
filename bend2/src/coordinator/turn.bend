@@ -208,9 +208,7 @@ def direct_wake(+db: String, +player: String, id: String, outcome: Outcome) -> I
 def direct_window_gate(+db: String, +player: String) -> IO(UW.Gate):
   do IO<UW.Gate>:
     +label : String <- Accounts.handoff_label_io(db,player)
-    current : UW.Gate <- UW.window_gate(db,player,Tx.trim_nl(label))
-    gate : UW.Gate <- Accounts.order_gate(db,player,current)
-    IO.pure(UW.Gate,gate)
+    UW.window_gate(db,player,Tx.trim_nl(label))
 
 def direct_gate_held(gate: UW.Gate) -> Bool:
   match gate:
@@ -1380,7 +1378,7 @@ def direct_conversation(+db: String, +player: String, +session: String) -> IO(St
 def direct_retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, +lock: U32, +recovery: String, +level: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
     +conversation : String <- direct_conversation(db,player,session)
-    moved : Bool <- Accounts.order_move(db,player,conversation,cmd,cwd)
+    checked : Unit <- Accounts.order_move(db,player,conversation,cmd,cwd)
     prepared : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_prepare(db,player,directory,cmd,model,effort,session,harness,sessions,prompt,level,True{},"")
     direct_retained_prepared(db,player,directory,cwd,prompt,lock,recovery,prepared)
 

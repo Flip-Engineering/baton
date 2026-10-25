@@ -840,10 +840,9 @@ def start_admitted(+db: String, +session: String, +id: String, +cmd: String, rou
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       +head : String <- wake_found(db,session,"0")
       +conversation : String <- Turn.direct_conversation(db,session,native)
-      moved : Bool <- Accounts.order_move(db,session,conversation,cmd,workspace)
+      checked : Unit <- Accounts.order_move(db,session,conversation,cmd,workspace)
       +label : String <- Accounts.handoff_label_io(db,session)
-      current : UW.Gate <- UW.window_gate(db,session,Tx.trim_nl(label))
-      gate : UW.Gate <- Accounts.order_gate(db,session,current)
+      gate : UW.Gate <- UW.window_gate(db,session,Tx.trim_nl(label))
       held : Bool <- window_held_start(db,session,id,head,lock,gate)
       Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),held,
         IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
