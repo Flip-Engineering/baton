@@ -57,6 +57,54 @@ class FocusedAccountCredits(unittest.TestCase):
     def record(self, label, harness='claude-code', funding='subscription', secret='/fixture/store', provider='anthropic'):
         return self.account('record', label, provider, harness, funding, secret)
 
+    def legacy_credit_account(self, primary_secret=None):
+        self.execute("INSERT INTO accounts(id,provider,harness,funding,secret_ref,organization,priority) "
+                     "VALUES('claude-credit-normal','anthropic','claude-code','api_key','file:/fixture/legacy','org-legacy','7')")
+        if primary_secret is not None:
+            self.execute("INSERT INTO accounts(id,provider,harness,funding,secret_ref,organization) "
+                         "VALUES('claude-credit-primary','anthropic','claude-code','api_key',?,'org-legacy')",
+                         (primary_secret,))
+        self.execute("INSERT INTO account_attempts(attempt,session,account,funding,secret_ref) "
+                     "VALUES('legacy-attempt','leaf','claude-credit-normal','api_key','file:/fixture/legacy')")
+        self.execute("INSERT INTO credit_reservations(request,account,organization) "
+                     "VALUES('legacy-request','claude-credit-normal','org-legacy')")
+        self.execute("INSERT INTO credit_authorizations(attempt,account) VALUES('legacy-auth','claude-credit-normal')")
+        self.execute("INSERT INTO credit_observations(id,organization,fact,state,source,observed_at,authority) "
+                     "VALUES('claude-credit-normal:legacy','org-legacy','promotional_credit','unavailable','fixture','0','operator')")
+        sidecar = pathlib.Path(str(self.db) + '.account-' + 'leaf'.encode().hex())
+        sidecar.write_text('previous-account\nclaude-credit-normal\n')
+        recorded = self.record('unrelated', secret='/fixture/unrelated')
+        self.assertEqual(recorded.returncode, 0, recorded.stderr)
+        return sidecar
+
+    def test_credit_rename_preserves_session_binding_and_lineage(self):
+        sidecar = self.legacy_credit_account()
+        self.assertEqual(self.current('leaf'), 'claude-credit-primary')
+        self.assertEqual(sidecar.read_text(), 'previous-account\nclaude-credit-normal\nclaude-credit-primary\n')
+        self.assertEqual(self.query("SELECT id,secret_ref,priority FROM accounts WHERE id LIKE 'claude-credit-%'"),
+                         [('claude-credit-primary', 'file:/fixture/legacy', '7')])
+        for table in ('account_attempts', 'credit_reservations', 'credit_authorizations'):
+            self.assertEqual(self.query('SELECT account FROM ' + table), [('claude-credit-primary',)])
+        self.assertEqual(self.query('SELECT id FROM credit_observations'), [('claude-credit-primary:legacy',)])
+        self.assertEqual(self.current('leaf'), 'claude-credit-primary')
+        self.assertEqual(sidecar.read_text().splitlines()[-2:], ['claude-credit-normal', 'claude-credit-primary'])
+
+    def test_credit_rename_preserves_conflicting_credentials_and_history(self):
+        sidecar = self.legacy_credit_account('file:/fixture/different')
+        self.json_account('read')
+        self.assertEqual(self.current('leaf'), 'claude-credit-normal')
+        self.assertEqual(sidecar.read_text(), 'previous-account\nclaude-credit-normal\n')
+        self.assertEqual(self.query("SELECT secret_ref FROM accounts WHERE id='claude-credit-primary'"),
+                         [('file:/fixture/different',)])
+        for table in ('account_attempts', 'credit_reservations', 'credit_authorizations'):
+            self.assertEqual(self.query('SELECT account FROM ' + table), [('claude-credit-normal',)])
+
+    def test_credit_rename_merges_matching_credentials(self):
+        self.legacy_credit_account('file:/fixture/legacy')
+        self.assertEqual(self.current('leaf'), 'claude-credit-primary')
+        self.assertEqual(self.query("SELECT account,secret_ref FROM account_attempts"),
+                         [('claude-credit-primary', 'file:/fixture/legacy')])
+
     def current(self, session, harness='claude-code'):
         completed = self.entry('current', session, harness)
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -401,6 +449,31 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(facts[3:6], ['0', '0', '0'])
         self.assertEqual(facts[6:], ['global', '0', '0', '0'])
 
+    def test_body_price_keeps_input_and_output_bounds_in_order(self):
+        body = '{"model":"claude-opus-5-5","max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}'
+        completed = self.entry('price-body', body)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), 'priced|0.020836000')
+
+    def test_qualified_gate_admits_unverified_and_unreadable_funding(self):
+        self.record('claude-api', funding='api_key', secret='file:/fixture/api')
+        self.bind('claude-api', 'leaf')
+        self.assertEqual(self.gate_qualified('unverified')[0], 'binding')
+        self.observe('claude-api', 'org-fixture')
+        self.import_credit('claude-api', 'org-fixture', '', state='unavailable')
+        self.assertEqual(self.gate_priced('unreadable')[0], 'binding')
+        self.assertEqual(self.query("SELECT cycle,balance,unit FROM credit_authorizations ORDER BY attempt"),
+                         [('', '', ''), ('', '', '')])
+
+    def test_qualified_gate_admits_unknown_and_expired_funding(self):
+        self.credit_account(balance=None)
+        self.assertEqual(self.gate_qualified('unknown')[0], 'binding')
+        self.import_credit('claude-api', 'org-fixture', '200.00', expires='1000000000000')
+        self.assertEqual(self.gate_priced('expired')[0], 'binding')
+        self.assertEqual(self.query("SELECT cycle,balance,unit FROM credit_authorizations ORDER BY attempt"),
+                         [('', '', ''), ('', '', '')])
+        self.assertEqual(self.query('SELECT request FROM credit_reservations'), [])
+
     def test_request_facts_mark_cache_fast_and_server_tools(self):
         body = '{"model":"claude-opus-5-5","max_tokens":100,"speed":"fast","system":[{"type":"text","text":"x","cache_control":{"type":"ephemeral","ttl":"1h"}}],"tools":[{"type":"web_search_20250305","name":"web_search"}],"messages":[]}'
         facts = self.facts(body)
@@ -487,7 +560,7 @@ class FocusedAccountCredits(unittest.TestCase):
     def test_reservation_refuses_missing_observation_and_expired_grant(self):
         self.record('claude-api', funding='api_key', secret='file:/fixture/api')
         self.bind('claude-api', 'leaf')
-        self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditObservationUnavailable'])
+        self.assertEqual(self.reserve('attempt-1'), ['refused', 'organizationUnverified'])
         self.observe('claude-api', 'org-fixture')
         self.import_credit('claude-api', 'org-fixture', '200.00', 1760000000000,
                            expires='1000000000000', cycle='grant:2026-09-01')
@@ -670,12 +743,12 @@ class FocusedAccountCredits(unittest.TestCase):
         rows = self.query("SELECT attempt,account,organization,balance,unit FROM credit_authorizations")
         self.assertEqual(rows, [('attempt-1', 'claude-api', 'org-fixture', '200.00', 'USD')])
 
-    def test_authorization_records_nothing_for_an_exhausted_balance(self):
+    def test_authorization_records_the_route_for_a_reported_zero_balance(self):
         self.credit_account(balance='0.00')
-        self.assertEqual(self.authorize('attempt-1'), 'not-authorized')
-        self.assertEqual(self.query("SELECT count(*) FROM credit_authorizations"), [(0,)])
+        self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        self.assertEqual(self.query("SELECT account,balance FROM credit_authorizations"), [('claude-api', '0.00')])
 
-    def test_a_credit_reading_records_expiry_and_authorizes_its_cycle(self):
+    def test_a_date_only_expiry_keeps_authorization_balance_unknown(self):
         self.record('claude-api', funding='api_key', secret='file:/fixture/api')
         self.bind('claude-api', 'leaf')
         self.observe('claude-api', 'org-fixture')
@@ -685,7 +758,7 @@ class FocusedAccountCredits(unittest.TestCase):
                          ('2026-11-01', '2026-10'))
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
         self.assertEqual(self.query("SELECT cycle,balance,unit FROM credit_authorizations WHERE attempt='attempt-1'"),
-                         [('2026-10', '200.00', 'USD')])
+                         [('', '', '')])
     def test_helper_runs_only_with_marker_and_durable_authorization(self):
         helper = os.environ.get('BATON2_API_KEY_EXEC')
         if not helper:
@@ -752,12 +825,11 @@ class FocusedAccountCredits(unittest.TestCase):
         refused = [error for code, (out, error) in zip([first.returncode, second.returncode], outputs) if code != 0]
         self.assertIn('creditAuthorizationConsumed', refused[0])
 
-    def test_an_unfunded_attempt_refuses_before_a_child_runs(self):
+    def test_an_unauthorized_attempt_refuses_before_a_child_runs(self):
         helper = os.environ.get('BATON2_API_KEY_EXEC')
         if not helper:
             self.skipTest('BATON2_API_KEY_EXEC not set')
         self.credit_account(balance='0.00')
-        self.assertEqual(self.authorize('attempt-1'), 'not-authorized')
         directory = self.directory
         secret = directory / 'secret'
         secret.write_text('fixture-secret\n')
