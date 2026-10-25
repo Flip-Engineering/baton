@@ -47,6 +47,15 @@ int flock(int fd, int operation) {
   return result;
 }
 
+int close(int fd) {
+  int (*actual)(int) = dlsym(RTLD_NEXT, "close");
+  int ours = admission_fd(fd);
+  int result = actual(fd);
+  int previous = 1;
+  if (!result && ours) atomic_compare_exchange_strong(&phase, &previous, 2);
+  return result;
+}
+
 int kill(pid_t pid, int sig) {
   int (*actual)(pid_t, int) = dlsym(RTLD_NEXT, "kill");
   const char *log = getenv("TAKEOVER_TRANSITION_SIGNALS");
