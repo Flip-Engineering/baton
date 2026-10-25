@@ -11,6 +11,7 @@ import json
 import os
 import pathlib
 import shlex
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -38,8 +39,9 @@ ORDER = (
 
 class AccountOrderFallback(unittest.TestCase):
     def setUp(self):
+        self.executable = ENTRY
         self.directory = pathlib.Path(tempfile.mkdtemp(prefix='account-order-'))
-        self.addCleanup(lambda: __import__('shutil').rmtree(self.directory, ignore_errors=True))
+        self.addCleanup(lambda: shutil.rmtree(self.directory, ignore_errors=True))
         self.db = self.directory / 'test.db'
         sqlite3.connect(self.db).close()
         self.assertEqual(self.entry('account', 'read', '', '', '', '', '', '', '', '').returncode, 0)
@@ -62,7 +64,7 @@ class AccountOrderFallback(unittest.TestCase):
             return database.execute(sql, parameters).fetchall()
 
     def entry(self, *arguments):
-        return subprocess.run([str(ENTRY), str(self.db), *arguments], capture_output=True, text=True)
+        return subprocess.run([str(self.executable), str(self.db), *arguments], capture_output=True, text=True)
 
     def record_order(self):
         for priority, (label, funding, secret) in enumerate(ORDER, start=1):
@@ -286,8 +288,17 @@ class AccountOrderFallback(unittest.TestCase):
 
     def test_failed_history_preparation_aborts_launch(self):
         self.launch_failure_setup()
+        runtime = self.directory / 'runtime'
+        self.executable = runtime / 'bin' / 'account-order-entry'
+        self.executable.parent.mkdir(parents=True)
+        shutil.copy2(ENTRY, self.executable)
+        helpers = runtime / 'libexec' / 'baton2'
+        helpers.mkdir(parents=True)
+        (helpers / 'git-series.mjs').symlink_to(ROOT / 'bend2/harness/git-series.mjs')
         completed = self.entry('wake-native', 'leaf', HELPER, 'missing-native-conversation')
         self.assertNotEqual(completed.returncode, 0, completed.stdout)
+        self.assertIn('Account move failed', completed.stderr)
+        self.assertTrue(self.reports(':account-history-failed'))
         self.assertEqual(self.current('leaf'), 'claude-max-incognito')
         self.assertTrue(self.query("SELECT id FROM messages WHERE id='task-1'"))
 
