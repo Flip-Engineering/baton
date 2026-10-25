@@ -1519,7 +1519,11 @@ static void cq_raise_peaks(const char *state, const char *group, const char *sha
   if (*kind && !cq_path(path, "%s/peaks/k.%s", state, kind)) cq_history_raise(path, peak);
 }
 
-static void cq_record_peak(const char *attempt, long long peak) {
+/* A run that did not end with exit 0 records its peak for its own key only. The
+   tier records predict what a successful build of a similar request needs, and the
+   peak of a build that died (a blow-up that ended at 209 GB) says nothing about a
+   build of the entry after the source was fixed. */
+static void cq_record_peak(const char *attempt, long long peak, int failed) {
   char state[PATH_MAX], keydir[PATH_MAX], key[CQ_NAME], path[PATH_MAX], text[1024];
   char group[CQ_NAME] = "", compiler[CQ_NAME] = "", kind[16] = "", shape[24] = "", entry[CQ_ENTRY] = "";
   if (peak <= 0 || cq_attempt_parts(attempt, state, keydir, key)) return;
@@ -1535,7 +1539,7 @@ static void cq_record_peak(const char *attempt, long long peak) {
   int fd = -1;
   if (cq_admission_lock(state, &fd)) return;
   if (!cq_path(path, "%s/peak", keydir)) cq_history_raise(path, peak);
-  cq_raise_peaks(state, group, shape, entry, cq_mode(attempt), compiler, kind, peak);
+  if (!failed) cq_raise_peaks(state, group, shape, entry, cq_mode(attempt), compiler, kind, peak);
   cq_admission_unlock(fd);
 }
 
@@ -1652,6 +1656,17 @@ static int cq_backfill(const char *state, char **out, size_t *length) {
   int error = cq_admission_dirs(state);
   int fd = -1;
   if (!error) error = cq_admission_lock(state, &fd);
+  /* The tier records are derived from the runs, so they are derived again: the
+     records of earlier executables hold the peaks of runs that did not succeed. */
+  if (!error && !cq_path(path, "%s/peaks", state)) {
+    DIR *peaks = opendir(path);
+    struct dirent *peak_entry;
+    while (peaks && (peak_entry = readdir(peaks))) {
+      char old[PATH_MAX];
+      if (peak_entry->d_name[0] != '.' && !cq_path(old, "%s/%s", path, peak_entry->d_name)) unlink(old);
+    }
+    if (peaks) closedir(peaks);
+  }
   if (!error && !cq_path(keys, "%s/keys", state)) {
     DIR *key_dir = opendir(keys);
     struct dirent *key_entry;
@@ -1674,7 +1689,9 @@ static int cq_backfill(const char *state, char **out, size_t *length) {
           cq_field(text, "compiler", compiler, sizeof(compiler));
         }
         if (!cq_path(path, "%s/%s/peak", keys, key_entry->d_name)) cq_history_raise(path, peak);
-        cq_raise_peaks(state, group, shape, entry, cq_mode(attempt), compiler, kind, peak);
+        char result[1024], status[32] = "";
+        if (!cq_path(path, "%s/result", attempt) && !cq_read_small(path, result, sizeof(result))) cq_field(result, "status", status, sizeof(status));
+        if (!strcmp(status, "completed")) cq_raise_peaks(state, group, shape, entry, cq_mode(attempt), compiler, kind, peak);
         runs++;
       }
       if (run_dir) closedir(run_dir);
@@ -2321,7 +2338,7 @@ static int cq_run_command(const char *argv_text, size_t argv_length, const char 
       size_t length = (size_t)(suffix - stdout_path);
       if (length < sizeof(attempt)) {
         memcpy(attempt, stdout_path, length); attempt[length] = 0;
-        cq_record_peak(attempt, peak);
+        cq_record_peak(attempt, peak, !(WIFEXITED(wait_status) && WEXITSTATUS(wait_status) == 0));
       }
     }
   }

@@ -188,8 +188,13 @@ The supervisor samples the memory of its session while the command runs, every
 two seconds, as the sum of `RssAnon` and `RssShmem` over the session. When the
 command ends, the peak is the larger of the samples and the `ru_maxrss` of the
 command's descendants. A run that was canceled records no peak. The peak is
-written to `runs/<attempt>/peak`, raised in `keys/<key>/peak`, and raised in
-`peaks/<group>`, `peaks/kc.<kind>.<compiler>` and `peaks/k.<kind>`. The group is
+written to `runs/<attempt>/peak` and raised in `keys/<key>/peak`. When the command
+ended with exit 0 it is also raised in `peaks/<group>`, the shape, entry, mode,
+`peaks/kc.<kind>.<compiler>` and `peaks/k.<kind>` records. The peak of a run that
+did not end with exit 0 belongs to its key only: it predicts an exact repeat of
+the request, and says nothing about a build of the entry after the source was
+fixed (a build that died at 209 GB on 2026-10-24 held the estimate of every later
+build of its entry and compiler at 209 GB). The group is
 the SHA-256 of the kind, the entry file, the compiler closure digest and the
 normalized command (the text the key uses: compiler, outputs and root-relative
 paths replaced by placeholders). Before hashing, the checkout directories of
@@ -235,8 +240,14 @@ A ticket's expected peak is, in order:
    the entry is empty or no such job runs. A job without a group, and the
    holder of the older lock, are matched by entry file.
 
-`backfill --state-root DIR` raises the key, kind-and-compiler, entry, shape, group and kind
-records from the `peak`, `group` and `meta` files of the runs already recorded.
+`backfill --state-root DIR` derives the records again from the runs already
+recorded. It takes `admission/lock`, removes the files in `peaks/`, raises
+`keys/<key>/peak` from every run that has a `peak` file, and raises the group,
+shape, entry, mode, kind-and-compiler and kind records from the runs whose
+`result` has `status=completed`. The command is idempotent. Records written by an
+earlier executable from failed runs do not survive it. A run that ended with exit 0
+but a missing artifact has a failed result: the live recording counts it by its
+exit status and `backfill` by its result.
 
 ### Rule
 
