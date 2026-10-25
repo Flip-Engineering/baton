@@ -19,8 +19,10 @@ CREATE TABLE session_stops (session TEXT PRIMARY KEY NOT NULL, id TEXT UNIQUE NO
 CREATE TABLE messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL, recipient TEXT NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);
 CREATE TABLE executions (session TEXT PRIMARY KEY, id TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL);
 CREATE TABLE message_reads(attempt TEXT NOT NULL, message TEXT NOT NULL, recipient TEXT NOT NULL, native TEXT NOT NULL, identity TEXT NOT NULL, handled TEXT, PRIMARY KEY(attempt,identity,message));
+CREATE TABLE wake_claims(session TEXT PRIMARY KEY,state TEXT,owner TEXT,generation INTEGER);
 INSERT INTO sessions(id,parent) VALUES('coordinator',NULL),('worker','coordinator');
-INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES('dispatch:assignment','coordinator','worker','task','Do the work.','native-turn:receive:worker:1:aa');
+INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES('dispatch:assignment','coordinator','worker','task','Do the work.',NULL);
+INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES('fixture','dispatch:assignment','worker','','fixture');
 '''
 # The fake agent ignores repeated completion reminders, then requests completion.
 HONOURING = r'''import json, os, sqlite3, subprocess, sys
@@ -30,13 +32,13 @@ command = settings['hooks']['Stop'][0]['hooks'][0]['command']
 log = open(sys.argv[0] + '.stops', 'a')
 for active in (False, True, True):
     hook = subprocess.run(['/bin/sh', '-c', command], input=json.dumps({'hook_event_name': 'Stop', 'stop_hook_active': active}),
-                          capture_output=True, text=True, timeout=120)
+                          capture_output=True, text=True)
     decision = json.loads(hook.stdout) if hook.stdout.strip() else {}
     log.write(json.dumps({'active': active, 'decision': decision}) + '\n')
     log.flush()
     if active:
         with sqlite3.connect(os.environ['BATON_DATABASE']) as db:
-            db.execute("INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body,receipt) VALUES('request','worker','coordinator','completion-request','Done.','read')")
+            db.execute("INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body,receipt) VALUES('request','worker','coordinator','completion-request','Done.',NULL)")
 print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False, 'result': 'done'}))
 '''
 # One successful tool finishes, new input commits, and another tool finishes.
@@ -50,7 +52,7 @@ for tool in ('first', 'second'):
         with sqlite3.connect(os.environ['BATON_DATABASE']) as db:
             db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('mid-loop','coordinator','worker','guidance',?)", ('New complete body.\nλ🙂\n',))
     for command in commands:
-        hook = subprocess.run(['/bin/sh', '-c', command], input=json.dumps({'hook_event_name': 'PostToolUse', 'tool_name': 'Bash', 'tool_response': tool}), capture_output=True, text=True, timeout=120)
+        hook = subprocess.run(['/bin/sh', '-c', command], input=json.dumps({'hook_event_name': 'PostToolUse', 'tool_name': 'Bash', 'tool_response': tool}), capture_output=True, text=True)
         if hook.returncode:
             raise RuntimeError(hook.stderr)
         if hook.stdout.strip():
@@ -92,12 +94,15 @@ class StopHook(unittest.TestCase):
         self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,'coordinator','worker',?,?)",
                         (ident, kind, body))
 
+    def read(self, ident):
+        self.db.execute("INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES('fixture',?,'worker','','fixture')", (ident,))
+
     def request(self):
-        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES('message:worker:request','worker','coordinator','completion-request','Done.','read')")
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES('message:worker:request','worker','coordinator','completion-request','Done.',NULL)")
 
     def hook(self, active=False, env=None):
         result = subprocess.run([self.binary, '--stop-hook'], input=json.dumps({'hook_event_name': 'Stop', 'stop_hook_active': active}),
-                                capture_output=True, text=True, env=env if env is not None else self.env, timeout=60)
+                                capture_output=True, text=True, env=env if env is not None else self.env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout) if result.stdout.strip() else None
 
@@ -152,7 +157,7 @@ class StopHook(unittest.TestCase):
         script = self.home / 'claude.py'
         script.write_text(source)
         result = subprocess.run(['python3', '-I', str(script)] + self.arguments[1:], capture_output=True, text=True,
-                                env=dict(self.env, BATON_STOP_HOOK=self.binary), timeout=300)
+                                env=dict(self.env, BATON_STOP_HOOK=self.binary))
         stops = (self.home / 'claude.py.stops')
         return result, [json.loads(line) for line in stops.read_text().splitlines()] if stops.exists() else []
 
@@ -163,7 +168,7 @@ class StopHook(unittest.TestCase):
 
     def tool_hook(self, env=None):
         result = subprocess.run([self.binary, '--stop-hook'], input=json.dumps({'hook_event_name': 'PostToolUse', 'tool_name': 'Bash'}),
-                                capture_output=True, text=True, env=env or self.env, timeout=60)
+                                capture_output=True, text=True, env=env or self.env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout) if result.stdout.strip() else None
 
@@ -174,7 +179,7 @@ class StopHook(unittest.TestCase):
         self.assertEqual(contexts, [{'hookEventName': 'PostToolUse', 'additionalContext':
             'Baton input for this turn. Handle the following complete messages:\nMessage (guidance) from coordinator [id: mid-loop]:\nNew complete body.\nλ🙂\n\nRead the complete body with baton read mid-loop.'}])
         self.assertIsNone(self.db.execute("SELECT receipt FROM messages WHERE id='mid-loop'").fetchone()[0])
-        self.assertEqual(self.db.execute('SELECT * FROM message_reads').fetchall(), [])
+        self.assertEqual(self.db.execute("SELECT message FROM message_reads ORDER BY message").fetchall(), [('dispatch:assignment',)])
 
     def test_tool_hook_preserves_complete_bodies_and_order(self):
         body = "Quote ' \"\nλ🙂\n" + 'abcdef' * 3000 + '\nend\n'
@@ -183,12 +188,12 @@ class StopHook(unittest.TestCase):
         context = self.tool_hook()['hookSpecificOutput']['additionalContext']
         self.assertIn(body, context)
         self.assertLess(context.index(body), context.index('Second body.'))
-        self.assertEqual(self.db.execute('SELECT * FROM message_reads').fetchall(), [])
+        self.assertEqual(self.db.execute("SELECT message FROM message_reads ORDER BY message").fetchall(), [('dispatch:assignment',)])
 
-    def test_injected_reads_settle_only_with_the_owned_successful_turn(self):
+    def test_injected_complete_reads_remain_read_after_the_owned_turn_ends(self):
         statements = subprocess.run([self.binary, 'state-statements'], capture_output=True, text=True)
         self.assertEqual(statements.returncode, 0, statements.stderr)
-        selection, record, settle = statements.stdout.splitlines()
+        selection, record = statements.stdout.splitlines()
         self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
         self.db.execute("INSERT INTO executions VALUES('worker','receive:worker:100:feed','/attempt','running')")
         self.owe(body='Exact full body.\nλ🙂\n')
@@ -196,13 +201,15 @@ class StopHook(unittest.TestCase):
         self.assertEqual(json.loads(saved)[0]['body'], 'Exact full body.\nλ🙂\n')
         self.db.executescript(record.replace("'@INPUT@'", "'" + saved.replace("'", "''") + "'"))
         self.assertEqual(json.loads(self.db.execute(selection).fetchone()[0]), [])
-        self.assertIsNone(self.db.execute('SELECT handled FROM message_reads').fetchone()[0])
+        self.assertEqual(self.db.execute("SELECT attempt,message,recipient,native,identity,handled FROM message_reads WHERE message='message:coordinator:mid-turn'").fetchall(),
+                         [('receive:worker:100:feed','message:coordinator:mid-turn','worker','native-1','identity-1',None)])
         self.assertIsNone(self.db.execute("SELECT receipt FROM messages WHERE id='message:coordinator:mid-turn'").fetchone()[0])
-        self.db.executescript(settle)
-        self.assertEqual(self.db.execute('SELECT handled FROM message_reads').fetchone()[0], 'native-turn:receive:worker:100:feed')
-        self.assertEqual(self.db.execute("SELECT receipt FROM messages WHERE id='message:coordinator:mid-turn'").fetchone()[0], 'native-turn:receive:worker:100:feed')
+        self.db.execute("UPDATE executions SET phase='exited'")
+        self.assertEqual(json.loads(self.db.execute(selection).fetchone()[0]), [])
+        self.owe(ident='unread-after-turn', body='Still unread.')
+        self.assertEqual([row['id'] for row in json.loads(self.db.execute(selection).fetchone()[0])], ['unread-after-turn'])
 
-    def test_admitted_tool_loop_records_reads_without_handling(self):
+    def test_admitted_tool_loop_records_its_actual_complete_read(self):
         directory = self.home / 'attempt'
         self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
         self.db.execute("INSERT INTO executions VALUES('worker','attempt-1',?,'running')", (str(directory),))
@@ -216,7 +223,7 @@ for tool in ('first', 'second', 'third'):
     if tool == 'second':
         with sqlite3.connect(config['db']) as db:
             db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('admitted-message','coordinator','worker','guidance','Admitted full body.')")
-    result = subprocess.run(['/bin/sh','-c',command], input=json.dumps({'hook_event_name':'PostToolUse','tool_name':'Bash'}), env=env, capture_output=True, text=True, timeout=60)
+    result = subprocess.run(['/bin/sh','-c',command], input=json.dumps({'hook_event_name':'PostToolUse','tool_name':'Bash'}), env=env, capture_output=True, text=True)
     if result.returncode:
         raise RuntimeError(result.stderr)
     results.append(json.loads(result.stdout) if result.stdout.strip() else None)
@@ -226,7 +233,7 @@ print(json.dumps(results), flush=True)
         env = dict(self.env, BATON_STOP_HOOK=self.binary)
         try:
             result = subprocess.run([self.binary, 'admit', self.path, str(directory), str(self.home),
-                'python3', '-I', str(script), config], env=env, capture_output=True, text=True, timeout=120)
+                'python3', '-I', str(script), config], env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             outputs = result.stdout.splitlines()
             self.assertEqual(outputs[-1], 'exit 0')
@@ -234,13 +241,13 @@ print(json.dumps(results), flush=True)
             self.assertIsNone(first)
             self.assertIn('Admitted full body.', second['hookSpecificOutput']['additionalContext'])
             self.assertIsNone(third)
-            rows = self.db.execute("SELECT attempt,message,recipient,native,identity,handled FROM message_reads").fetchall()
+            rows = self.db.execute("SELECT attempt,message,recipient,native,identity,handled FROM message_reads WHERE message='admitted-message'").fetchall()
             self.assertEqual([row[:4] for row in rows], [('attempt-1','admitted-message','worker','native-1')])
             self.assertTrue(rows[0][4])
             self.assertIsNone(rows[0][5])
             self.assertIsNone(self.db.execute("SELECT receipt FROM messages WHERE id='admitted-message'").fetchone()[0])
         finally:
-            subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True, timeout=30)
+            subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True)
 
     def test_tool_hook_database_failure_keeps_tool_result_available(self):
         env = dict(self.env, BATON_DATABASE=str(self.home / 'absent' / 'bad.db'))
@@ -254,9 +261,11 @@ print(json.dumps(results), flush=True)
 
     def test_confirmation_and_new_assignment_derive_current_request(self):
         self.request()
-        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES('confirm','coordinator','worker','completion-confirmed','message:worker:request','read')")
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES('confirm','coordinator','worker','completion-confirmed','message:worker:request',NULL)")
+        self.read('confirm')
         self.assertIsNone(self.hook(active=True))
-        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES('new-task','coordinator','worker','task','More work.','read')")
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES('new-task','coordinator','worker','task','More work.',NULL)")
+        self.read('new-task')
         self.assertEqual(self.hook(active=True)['decision'], 'block')
 
     def test_claude_ignoring_the_hook_still_ends_its_turn(self):
@@ -265,6 +274,21 @@ print(json.dumps(results), flush=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(stops, [])
         self.assertIn('"type": "result"', result.stdout)
+
+
+    def test_complete_read_from_a_previous_attempt_is_not_injected_again(self):
+        self.owe()
+        self.read('message:coordinator:mid-turn')
+        self.assertIsNone(self.tool_hook())
+        self.assertIn('Assignment message:coordinator:mid-turn is still open', self.hook()['reason'])
+
+    def test_unread_input_with_legacy_receipt_stays_owed(self):
+        self.owe()
+        self.db.execute("UPDATE messages SET receipt='legacy-only' WHERE id='message:coordinator:mid-turn'")
+        decision = self.hook()
+        self.assertIn('Baton holds 1 owed inputs', decision['reason'])
+        self.assertNotIn('acknowledge', decision['reason'])
+        self.assertIn('New detail.', self.tool_hook()['hookSpecificOutput']['additionalContext'])
 
 
 if __name__ == '__main__':

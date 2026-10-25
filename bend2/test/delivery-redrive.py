@@ -36,6 +36,7 @@ SCHEMA = '''
 CREATE TABLE sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT, harness TEXT NOT NULL DEFAULT 'claude-code', model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');
 CREATE TABLE session_roles (session TEXT NOT NULL, role TEXT NOT NULL);
 CREATE TABLE session_stops (session TEXT PRIMARY KEY NOT NULL, id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');
+CREATE TABLE message_reads(attempt TEXT NOT NULL,message TEXT NOT NULL,recipient TEXT NOT NULL,native TEXT NOT NULL,identity TEXT NOT NULL,handled TEXT,PRIMARY KEY(attempt,identity,message));
 CREATE TABLE messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL, recipient TEXT NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);
 '''
 # Records each call as one line 'ARGS' in the calls file; fails while the
@@ -59,7 +60,7 @@ exit 0
 LOCKED_ENDPOINT = '''import sqlite3, sys
 calls, database, message = sys.argv[1], sys.argv[2], sys.argv[-1]
 try:
-    db = sqlite3.connect(database, timeout=2, isolation_level=None)
+    db = sqlite3.connect(database, isolation_level=None)
     db.execute('BEGIN IMMEDIATE')
     db.execute('COMMIT')
 except sqlite3.OperationalError as error:
@@ -127,7 +128,7 @@ class DeliveryRedrive(unittest.TestCase):
 
     def dispatch(self, ident):
         return subprocess.run([self.binary, '--dispatch-message', self.path, ident],
-                              capture_output=True, text=True, timeout=60)
+                              capture_output=True, text=True)
 
     def wait_for(self, predicate, seconds=30):
         end = time.monotonic() + seconds
@@ -201,6 +202,19 @@ class DeliveryRedrive(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         time.sleep(2)
         self.assertEqual(self.calls('worker'), ['root-nudge'])
+
+
+    def test_redelivery_skips_recorded_reads_and_keeps_unread_receipt_rows(self):
+        self.message('already-read', 'worker', 'coordinator', kind='report', body='Read report.')
+        self.db.execute("INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES('fixture','already-read','coordinator','','fixture')")
+        self.message('unread-report', 'worker', 'coordinator', kind='report', body='Unread report.')
+        self.db.execute("UPDATE messages SET receipt='legacy-only' WHERE id='unread-report'")
+        self.message('trigger', 'worker', 'coordinator', kind='report', body='Trigger report.')
+        self.fail_endpoint('coordinator', 1)
+        first = self.dispatch('trigger')
+        self.assertNotEqual(first.returncode, 0)
+        self.assertTrue(self.wait_for(lambda: len(self.calls('coordinator')) >= 2), self.calls('coordinator'))
+        self.assertEqual(self.calls('coordinator'), ['trigger', 'unread-report'])
 
 
 if __name__ == '__main__':

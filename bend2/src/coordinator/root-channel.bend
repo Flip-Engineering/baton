@@ -1,6 +1,6 @@
-# Root channel attachment (#1054). A channel root is a parentless session that
-# holds the operator role, or whose recorded endpoint runs mcp-conductor.mjs or
-# mcp-root.mjs. Its input reaches it only through an attached Claude Code
+# Root channel attachment (#1054). A channel root is a parentless Claude Code
+# session that holds the operator role, or a parentless session whose recorded
+# endpoint runs mcp-conductor.mjs or mcp-root.mjs. It uses an attached Claude Code
 # channel: the conductor's '--session ID --deliver SOCKET' endpoint and the
 # socket file that endpoint names beside the database. A channel root with
 # owed input is unattached when it has no such endpoint or when no process
@@ -22,10 +22,10 @@ def conductor_endpoint_sql() -> String:
   "(CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)=8 AND (json_extract(s.endpoint,'$[1]') LIKE '%/mcp-conductor.mjs' OR json_extract(s.endpoint,'$[1]') LIKE '%/mcp-root.mjs') AND json_extract(s.endpoint,'$[4]')='--session' AND json_extract(s.endpoint,'$[5]')=s.id AND json_extract(s.endpoint,'$[6]')='--deliver' ELSE 0 END)"
 
 def channel_root_sql() -> String:
-  "(s.parent IS NULL AND (" ++ C.assigned_role("s.id") ++ "='operator' OR coalesce(s.endpoint,'') LIKE '%/mcp-conductor.mjs%' OR coalesce(s.endpoint,'') LIKE '%/mcp-root.mjs%'))"
+  "(s.parent IS NULL AND ((" ++ C.assigned_role("s.id") ++ "='operator' AND s.harness='claude-code') OR coalesce(s.endpoint,'') LIKE '%/mcp-conductor.mjs%' OR coalesce(s.endpoint,'') LIKE '%/mcp-root.mjs%'))"
 
 def owed_sql() -> String:
-  "(SELECT count(*) FROM messages owed WHERE owed.recipient=s.id AND owed.receipt IS NULL)"
+  "(SELECT count(*) FROM messages owed WHERE owed.recipient=s.id AND " ++ C.owed_sql("owed") ++ ")"
 
 # The conductor listens on a socket name relative to the database directory.
 def socket_sql() -> String:
@@ -112,5 +112,5 @@ def warn(+db: String) -> IO(Unit):
 # A committed message: only the root it was addressed to, while it is owed.
 def warn_message(+db: String, +id: String) -> IO(Unit):
   do IO<Unit>:
-    found : List<String> <- errors(db,"EXISTS(SELECT 1 FROM messages admitted WHERE admitted.id=" ++ C.q(id) ++ " AND admitted.recipient=s.id AND admitted.receipt IS NULL)")
+    found : List<String> <- errors(db,"EXISTS(SELECT 1 FROM messages admitted WHERE admitted.id=" ++ C.q(id) ++ " AND admitted.recipient=s.id AND " ++ C.owed_sql("admitted") ++ ")")
     reported(db ++ ".root.log",found)

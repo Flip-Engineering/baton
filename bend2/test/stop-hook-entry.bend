@@ -5,7 +5,6 @@ import Base
 import ../src/coordinator/stop-hook.bend as StopHook
 import ../src/harness/claude-player.bend as Claude
 import ../src/coordinator/input-hook.bend as InputHook
-import ../src/coordinator/message-status.bend as Status
 import ../src/host/instance.bend as Custody
 import ../src/host/process.bend as P
 
@@ -34,8 +33,7 @@ def admitted(start: P.RetainedStart) -> IO(Unit):
 def state_statements() -> IO(Unit):
   do IO<Unit>:
     selected : Unit <- IO.print(InputHook.selection_sql("worker","/attempt","{\"live\":true,\"identity\":\"identity-1\"}"))
-    recorded : Unit <- IO.print(InputHook.record_sql("worker","/attempt","receive:worker:100:feed","native-1","identity-1","@INPUT@"))
-    IO.print(Status.settle_sql("worker","receive:worker:100:feed","identity-1"))
+    IO.print(InputHook.record_sql("worker","/attempt","receive:worker:100:feed","native-1","identity-1","@INPUT@"))
 
 def lines(args: List<String>) -> IO(Unit):
   match args:

@@ -14,7 +14,7 @@ def answered(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
 
 def observe(+db: String) -> IO(Unit):
   do IO<Unit>:
-    result : Result<&1,&1,U32 & String,String> <- Store.apply_through_busy(db,C.Observe{"receive:worker:9:beef","worker","{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Turn finished.\",\"session_id\":\"native-1\"}",False{}})
+    result : Result<&1,&1,U32 & String,String> <- Store.apply_through_busy(db,C.Observe{"receive:worker:9:beef","worker","{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Turn finished.\",\"session_id\":\"native-1\"}",False{},"claude-code"})
     answered(result)
 
 def route(args: List<String>) -> IO(Unit):

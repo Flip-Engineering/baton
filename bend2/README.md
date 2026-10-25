@@ -779,23 +779,10 @@ pass one `server:NAME` value for each orchestra.
 
 The root attaches as the `operator` session. The operator keeps its operator
 role, so reports and questions from parentless Conductors still select it as
-their recipient. When the channel becomes ready, the server sends all of the
-operator's unacknowledged input in one notification. An operator that has run
-without a channel can hold a large backlog; one orchestra held 7136
-unacknowledged operator inputs (7.9 MB of bodies) when its root was found
-unattached.
-
-Acknowledge stale reports before the first attach. Baton has no single command
-that acknowledges messages by age. `pending --index` selects them by sequence
-number, and `acknowledge` accepts several message IDs. On the database host:
-
-```sh
-baton DATABASE pending --index --recipient operator --kind report --through-seq SEQ \
-  | jq -r '.[].id' | xargs baton DATABASE as operator acknowledge
-```
-
-`SEQ` is the last message sequence number to acknowledge; `pending --index`
-prints each message's `seq`. Omit `--kind report` to include questions.
+their recipient. When the channel becomes ready, the server sends the
+operator's unread input in one notification. Complete owed input stays in the
+database. The recipient reads complete bodies through its normal inbox and
+read operations; Baton records each complete read.
 
 The JavaScript resident `impl/scripts/mcp-web.mjs` has been removed. A Claude
 Code configuration that still names it starts no server and receives no
@@ -803,12 +790,15 @@ Baton notifications. Replace that entry with the conductor entry above.
 
 ### Unattached root error
 
-A root is a parentless session with the operator role, or one whose endpoint
-runs `mcp-conductor.mjs`. A root with unacknowledged input is unattached when
+A channel root is a parentless Claude Code session with the operator role,
+or a parentless session whose endpoint runs `mcp-conductor.mjs` or `mcp-root.mjs`.
+A channel root with unread input is unattached when
 its endpoint is not a conductor `--deliver` endpoint or when a connection to
 its delivery socket fails. Baton connects from the database directory and
 closes the connection after checking it. Each check uses the current session
-row, messages and socket connection result.
+row, recorded reads and socket connection result. Codex and other harnesses
+use their recorded native routes. This Claude Code channel configuration
+does not establish a Codex connection.
 
 `status`, `session` and `orchestra` print one line on stderr for each
 unattached root:

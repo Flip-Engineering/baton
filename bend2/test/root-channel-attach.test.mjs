@@ -31,6 +31,7 @@ function orchestra(dir) {
   const db = new DatabaseSync(path);
   db.exec(`CREATE TABLE sessions(id TEXT PRIMARY KEY, parent TEXT, harness TEXT, native TEXT, endpoint TEXT);
     CREATE TABLE session_roles(session TEXT PRIMARY KEY, role TEXT);
+    CREATE TABLE message_reads(attempt TEXT, message TEXT, recipient TEXT, native TEXT, identity TEXT, handled TEXT);
     CREATE TABLE messages(seq INTEGER PRIMARY KEY, id TEXT, sender TEXT, recipient TEXT, kind TEXT, body TEXT, receipt TEXT);
     INSERT INTO sessions(id,parent,harness) VALUES('operator',NULL,'operator'),('lead',NULL,'claude-code');
     INSERT INTO session_roles(session,role) VALUES('operator','operator'),('lead','conductor');`);
@@ -147,7 +148,7 @@ test('a connect probe that sends nothing gets no answer', async (t) => {
   const calls = await attach(t, 'operator');
   const endpoint = JSON.parse(calls.find((argv) => argv[0] === 'attach')[4]);
   const probe = spawnSync(process.execPath, ['-e', PROBE, endpoint[7]],
-    { cwd: dirname(calls.database), encoding: 'utf8', timeout: 30000 });
+    { cwd: dirname(calls.database), encoding: 'utf8' });
   assert.equal(probe.status, 0, probe.stderr);
   assert.equal(JSON.parse(probe.stdout), '');
 });

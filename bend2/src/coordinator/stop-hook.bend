@@ -8,14 +8,14 @@ import ../git/text.bend as Tx
 import ./input-hook.bend as InputHook
 
 def owed_sql(+session: String) -> String:
-  "(SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ")"
+  "(SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ")"
 
 def owed_lines_sql(+session: String) -> String:
-  "(SELECT group_concat(line,char(10)) FROM (SELECT 'Message (' || kind || ') from ' || sender || ' [id: ' || id || ']:' || char(10) || body || char(10) || 'Read the complete body with baton read ' || id || '.' AS line FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " ORDER BY seq))"
+  "(SELECT group_concat(line,char(10)) FROM (SELECT 'Message (' || kind || ') from ' || sender || ' [id: ' || id || ']:' || char(10) || body || char(10) || 'Read the complete body with baton read ' || id || '.' AS line FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " ORDER BY seq))"
 
 # The hook's answer: a JSON block decision, or empty to let the turn end.
 def decision_sql(+session: String) -> String:
-  "SELECT CASE WHEN " ++ owed_sql(session) ++ ">0 THEN json_object('decision','block','reason','Baton holds ' || " ++ owed_sql(session) ++ " || ' owed inputs for ' || " ++ C.q(session) ++ " || '. Read and handle these inputs, then run acknowledge. When the assignment is ready, run completion-request --text SUMMARY:' || char(10) || " ++ owed_lines_sql(session) ++ ")"
+  "SELECT CASE WHEN " ++ owed_sql(session) ++ ">0 THEN json_object('decision','block','reason','Baton holds ' || " ++ owed_sql(session) ++ " || ' owed inputs for ' || " ++ C.q(session) ++ " || '. Read these inputs and continue the work. When the assignment is ready, run completion-request --text SUMMARY:' || char(10) || " ++ owed_lines_sql(session) ++ ")"
   ++ " WHEN " ++ C.task_open_sql(C.q(session)) ++ " AND " ++ C.task_request_sql(C.q(session)) ++ " IS NULL THEN json_object('decision','block','reason','Assignment ' || (SELECT id FROM messages WHERE seq=" ++ C.task_assignment_sql(C.q(session)) ++ ") || ' is still open and you have sent no completion request. When the work is ready, run completion-request --text SUMMARY; otherwise continue the work.')"
   ++ " ELSE '' END;"
 

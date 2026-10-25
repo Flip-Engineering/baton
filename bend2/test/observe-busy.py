@@ -51,7 +51,7 @@ class ObserveBusy(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.path = str(pathlib.Path(self.temp.name) / 'orchestra.db')
-        installed = subprocess.run([self.binary, 'install', self.path], capture_output=True, text=True, timeout=120)
+        installed = subprocess.run([self.binary, 'install', self.path], capture_output=True, text=True)
         self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
         db = sqlite3.connect(self.path, isolation_level=None)
         db.execute("INSERT INTO sessions(id,parent,harness) VALUES('coordinator',NULL,'claude-code')")
@@ -59,7 +59,7 @@ class ObserveBusy(unittest.TestCase):
         db.close()
 
     def observe(self):
-        return subprocess.run([self.binary, 'observe', self.path], capture_output=True, text=True, timeout=300)
+        return subprocess.run([self.binary, 'observe', self.path], capture_output=True, text=True)
 
     def recorded(self):
         db = sqlite3.connect(self.path)

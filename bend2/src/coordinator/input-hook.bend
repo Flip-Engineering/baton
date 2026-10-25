@@ -28,7 +28,7 @@ def witness(+db: String, directory: String, empty: Bool) -> IO(String):
 
 def selection_sql(+session: String, +directory: String, +witness: String) -> String:
   "SELECT coalesce(json_group_array(json(item)),'[]') FROM (SELECT json_object('id',m.id,'recipient',m.recipient,'sender',m.sender,'kind',m.kind,'body',m.body) AS item FROM messages m WHERE m.recipient=" ++ C.q(session)
-  ++ " AND m.receipt IS NULL AND NOT " ++ C.stopped_session_sql(C.q(session))
+  ++ " AND " ++ Status.owed_sql("m") ++ " AND NOT " ++ C.stopped_session_sql(C.q(session))
   ++ " AND NOT EXISTS(SELECT 1 FROM message_reads r JOIN executions e ON e.id=r.attempt AND e.session=r.recipient JOIN sessions s ON s.id=e.session WHERE r.message=m.id AND r.recipient=m.recipient AND r.native=s.native AND e.phase='running' AND e.directory=" ++ C.q(directory)
   ++ " AND json_extract(" ++ C.q(witness) ++ ",'$.live')=1 AND r.identity=json_extract(" ++ C.q(witness) ++ ",'$.identity')) ORDER BY m.seq);"
 
