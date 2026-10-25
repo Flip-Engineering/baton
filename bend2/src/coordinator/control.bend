@@ -333,7 +333,7 @@ def redrive(+db: String, +next: String, empty: Bool) -> IO(Unit):
 # started for it (#1054): worktree-paths-972-haiku-20261022 never started after
 # its endpoint exited 5 on 'database is locked', and the coordinator kept 22
 # owed inputs after its receive process died. The dispatch derives the oldest
-# owed input from the pending inbox and starts one redelivery for it; the
+# owed input from the pending inbox and starts a redelivery for it; the
 # receive endpoint's session lock and custody check decide whether a turn
 # starts. The dispatch still exits with the delivery failure.
 def delivered_or_redriven(+db: String, +id: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
@@ -350,20 +350,77 @@ def deliver(+db: String, +id: String) -> IO(Unit):
     delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id,"1","")
     delivered_or_redriven(db,id,delivered)
 
-# A redelivery that fails again is reported to the recipient's coordinator,
-# which decides how to proceed; it starts no further delivery.
-def redelivered(+db: String, +id: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
-  match result:
-    case Done{output}: IO.pure(Unit,Unit{})
-    case Fail{(+code,+detail)}: do IO<Unit>:
-      reported : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,undelivered_report_sql(id,detail))
+# A failure on a held write lock: SQLITE_BUSY or SQLITE_LOCKED from the store,
+# or a receive endpoint that exited with that code. A Baton endpoint exits 5
+# only after its own busy wait, so each such failure spans a held lock.
+def busy_failure(+code: U32, +detail: String) -> Bool:
+  Bool.or(Store.busy(code),Bool.or(String.contains(detail,"session delivery failed (exit 5)"),Bool.or(String.contains(detail,"session delivery failed (exit 6)"),String.contains(detail,"database is locked"))))
+
+def probe_result(probed: Result<&1,&1,U32 & String,String>, again: Unit -> IO(Unit)) -> IO(Unit):
+  match probed:
+    case Fail{(+code,text)}: Bool.pick(IO(Unit),Store.busy(code),again(Unit{}),IO.pure(Unit,Unit{}))
+    case Done{saved}: IO.pure(Unit,Unit{})
+
+# Returns once no connection holds the write lock: an empty write transaction
+# waits in the busy handler while a writer holds it, and is taken again after
+# each busy answer.
+@unsafe
+def writer_gone(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    probed : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;COMMIT;")
+    probe_result(probed,unit => writer_gone(db))
+
+# The undelivered report is committed through every busy answer; a report that
+# cannot be committed for another cause leaves the input owed in the pending
+# inbox, where the next wake of the recipient finds it.
+@unsafe
+def undelivered_reported(+db: String, +id: String, +detail: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    reported : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,undelivered_report_sql(id,detail))
+    Store.busy_again(reported,unit => undelivered_reported(db,id,detail))
+
+def escalated(+db: String, +id: String, +code: U32, +detail: String, reported: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match reported:
+    case Done{saved}: do IO<Unit>:
       notified : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":undelivered","1","")
       IO.die(Unit,code,detail)
+    case Fail{(report_code,report_text)}: IO.die(Unit,code,detail ++ "\nThe undelivered report for " ++ id ++ " was not committed (" ++ U32.show(report_code) ++ ": " ++ report_text ++ "); the input stays owed in the pending inbox.")
 
+def redelivery_failed(+db: String, +id: String, +code: U32, +detail: String, busy: Bool, again: Unit -> IO(Unit)) -> IO(Unit):
+  match busy:
+    case True{}: do IO<Unit>:
+      waited : Unit <- writer_gone(db)
+      again(Unit{})
+    case False{}: do IO<Unit>:
+      reported : Result<&1,&1,U32 & String,String> <- undelivered_reported(db,id,detail)
+      escalated(db,id,code,detail,reported)
+
+def redelivered(+db: String, +id: String, result: Result<&1,&1,U32 & String,String>, again: Unit -> IO(Unit)) -> IO(Unit):
+  match result:
+    case Done{output}: IO.pure(Unit,Unit{})
+    case Fail{(+code,+detail)}: redelivery_failed(db,id,code,detail,busy_failure(code,detail),again)
+
+def next_owed(+next: String, empty: Bool, again: String -> IO(Unit)) -> IO(Unit):
+  match empty:
+    case True{}: IO.pure(Unit,Unit{})
+    case False{}: again(next)
+
+def owed_again(+db: String, +id: String, again: String -> IO(Unit)) -> IO(Unit):
+  do IO<Unit>:
+    owed : String <- IO.try(String,DB.Sql.read(db,owed_after_sql(id)))
+    +next : String <- IO.pure(String,Tx.trim_nl(owed))
+    next_owed(next,String.is_empty(next),again)
+
+# A redelivery that fails on a held write lock waits until the writer is gone
+# and delivers the recipient's oldest owed input again, until a delivery
+# succeeds, nothing is owed, or a failure has another cause (#1054 review,
+# item 1). No attempt count bounds it: each attempt waits on the writer. A
+# failure with another cause is reported to the recipient's coordinator.
+@unsafe
 def redeliver(+db: String, +id: String) -> IO(Unit):
   do IO<Unit>:
     delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id,"1","")
-    redelivered(db,id,delivered)
+    redelivered(db,id,delivered,unit => owed_again(db,id,next => redeliver(db,next)))
 
 def turn_admission_sql(+player: String) -> String:
   "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(player) ++ " AND parent IS NOT NULL AND workspace<>'' AND harness IN ('codex','omp','muse','claude-code','dsh','antigravity') AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ ");"
