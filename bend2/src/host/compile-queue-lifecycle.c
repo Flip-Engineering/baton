@@ -2063,33 +2063,33 @@ static int cq_retake_waiting(const char *state, char **text, size_t *used, size_
       error = cq_text_append(text, used, capacity, "skipped pid=%d reason=other-mount-namespace attempt=%s\n", pid, attempt);
       continue;
     }
-    /* Take the admission lock first. A supervisor that is stopped while it holds
-       the lock would keep it and block every other waiter. With the lock held
-       here the target either waits for it or sleeps. */
+    /* Admission creates the claim and removes the ticket under this lock. Check
+       the current rows before signaling: a supervisor from the earlier view may
+       already be admitted. Keep the lock until a waiting supervisor is stopped. */
     int locked = !cq_admission_lock(state, &fd);
     if (!locked) { error = cq_text_append(text, used, capacity, "skipped pid=%d reason=no-lock attempt=%s\n", pid, attempt); continue; }
+    CqAdmission now;
+    int claimed = 0, listed = 0;
+    if (!cq_admission_load(state, &now)) {
+      for (size_t i = 0; i < now.claim_count; i++) if (now.claims[i].pid == pid) claimed = 1;
+      for (size_t i = 0; i < now.ticket_count; i++) if (now.tickets[i].pid == pid) listed = 1;
+    }
+    cq_admission_free(&now);
+    if (claimed || !listed) {
+      cq_admission_unlock(fd);
+      error = cq_text_append(text, used, capacity, "skipped pid=%d reason=not-waiting attempt=%s\n", pid, attempt);
+      continue;
+    }
     if (kill((pid_t)pid, SIGSTOP)) {
       cq_admission_unlock(fd);
       error = cq_text_append(text, used, capacity, "skipped pid=%d reason=not-permitted attempt=%s\n", pid, attempt);
       continue;
     }
     for (int wait = 0; wait < 100 && !cq_stopped(pid); wait++) cq_sleep_ns(20000000L);
-    /* A stopped supervisor cannot start its command. Check that it was not
-       admitted before it stopped, then remove its ticket. */
-    int still_waiting = 0;
-    if (cq_stopped(pid)) {
-      CqAdmission now;
-      if (!cq_admission_load(state, &now)) {
-        int claimed = 0, listed = 0;
-        for (size_t i = 0; i < now.claim_count; i++) if (now.claims[i].pid == pid) claimed = 1;
-        for (size_t i = 0; i < now.ticket_count; i++) if (now.tickets[i].pid == pid) listed = 1;
-        if (!claimed && listed) {
-          char ticket_path[PATH_MAX];
-          if (!cq_path(ticket_path, "%s/admission/waiting/%s", state, ticket->id)) unlink(ticket_path);
-          still_waiting = 1;
-        }
-      }
-      cq_admission_free(&now);
+    int still_waiting = cq_stopped(pid);
+    if (still_waiting) {
+      char ticket_path[PATH_MAX];
+      if (!cq_path(ticket_path, "%s/admission/waiting/%s", state, ticket->id)) unlink(ticket_path);
     }
     cq_admission_unlock(fd);
     if (!still_waiting) {

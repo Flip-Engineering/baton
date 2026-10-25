@@ -23,6 +23,7 @@ kind of the waiting job, the successor runs it beside the first job.
 """
 import os
 import pathlib
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -341,6 +342,115 @@ def scenario_lock_holder():
     print('PASS takeover replaced supervisors that hold the admission lock most of the time, without a stall')
 
 
+TRANSITION_SUPERVISOR = '''
+import fcntl, json, os, pathlib, sys, time
+state, attempt = map(pathlib.Path, (sys.argv[1], sys.argv[-1]))
+root = state.parent
+key = attempt.parent.parent.name
+start = pathlib.Path('/proc/self/stat').read_text().rsplit(')', 1)[1].split()[19]
+queued = time.time_ns()
+name = '%020d-%010d' % (queued, os.getpid())
+ticket = state / 'admission/waiting' / name
+claim = state / 'admission/running' / name
+lock = (state / 'admission/lock').open('a+')
+key_lock = (attempt.parent.parent / 'lock').open('a+')
+fcntl.flock(key_lock, fcntl.LOCK_EX)
+with lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    ticket.write_text('pid=%d\\nstarttime=%s\\nkey=%s\\ngroup=\\nentry=\\ncompiler=\\nkind=cc\\nqueued_ns=%d\\n'
+                      % (os.getpid(), start, key, queued))
+    fcntl.flock(lock, fcntl.LOCK_UN)
+(root / 'supervisor-ready').write_text(json.dumps(dict(pid=os.getpid(), start=start, queued=queued, ticket=name)))
+while not (root / 'admit').exists(): time.sleep(0.001)
+lock = (state / 'admission/lock').open('a+')
+fcntl.flock(lock, fcntl.LOCK_EX)
+claim_lock = claim.open('w+')
+fcntl.flock(claim_lock, fcntl.LOCK_EX)
+claim_lock.write('pid=%d\\nstarttime=%s\\nroot=%d\\nmeasure=tree\\nkey=%s\\ngroup=\\nentry=\\nexpected_kb=1\\nhistory=1\\nbackfill=0\\nadmitted_ns=%d\\n'
+                 % (os.getpid(), start, os.getpid(), key, time.time_ns()))
+claim_lock.flush()
+ticket.unlink()
+fcntl.flock(lock, fcntl.LOCK_UN)
+(root / 'admitted').touch()
+while not (root / 'finish').exists(): time.sleep(0.001)
+(attempt / 'result').write_text('status=completed\\nexit=0\\n')
+'''
+
+
+def scenario_admission_transition():
+    """A waiter admitted after enumeration receives no signal from takeover.
+
+    Supervisor 4190273 crossed this boundary during the 2026-10-25 deployment.
+    The preload fixture schedules that transition at the admission lock and
+    records actual signal calls without changing their delivery.
+    """
+    if sys.platform != 'linux':
+        print('SKIP admission transition: Linux process observation required')
+        return
+    root = T / 'transition'
+    state = root / 'queue'
+    for sub in ('', 'admission', 'admission/waiting', 'admission/running'):
+        directory = state / sub
+        directory.mkdir(parents=True, exist_ok=True)
+        directory.chmod(0o2770)
+    lock = state / 'admission/lock'
+    lock.touch()
+    keydir = state / 'keys' / ('a' * 64)
+    attempt = keydir / 'runs' / 'transition'
+    attempt.mkdir(parents=True)
+    (attempt / 'meta').write_text('kind=cc\nkey=' + keydir.name + '\n')
+    (keydir / 'owners').mkdir()
+    owner = keydir / 'owners' / 'fixture-owner'
+    owner.write_text('pid=%d\n' % os.getpid())
+    original_owner = owner.read_bytes()
+    supervisor = root / 'supervisor.py'
+    supervisor.write_text(TRANSITION_SUPERVISOR)
+    waiter = subprocess.Popen([sys.executable, '-I', str(supervisor), str(state), '__supervise', str(attempt)],
+                              stdout=open(root / 'supervisor.stdout', 'w'), stderr=open(root / 'supervisor.stderr', 'w'))
+    procs.append(waiter)
+    until('transition supervisor wrote its waiting ticket', lambda: (root / 'supervisor-ready').exists())
+    original_ticket = next((state / 'admission/waiting').iterdir())
+    ticket_name = original_ticket.name
+    library = root / 'transition.so'
+    source = pathlib.Path(__file__).with_name('compile-queue-takeover-transition.c')
+    compiled = subprocess.run([*shlex.split(os.environ.get('CC', 'cc')), '-shared', '-fPIC', str(source),
+                               '-ldl', '-o', str(library)], capture_output=True, text=True)
+    assert compiled.returncode == 0, (compiled.stdout, compiled.stderr, T)
+    ready, release = root / 'takeover-ready', root / 'takeover-release'
+    signals = root / 'signals'
+    env = dict(ENV, BATON_COMPILE_QUEUE_ROOT=str(state), LD_PRELOAD=str(library),
+               TAKEOVER_TRANSITION_LOCK=str(lock), TAKEOVER_TRANSITION_READY=str(ready),
+               TAKEOVER_TRANSITION_RELEASE=str(release), TAKEOVER_TRANSITION_SIGNALS=str(signals))
+    takeover = subprocess.Popen([BINARY, '--', 'takeover', '--state-root', str(state)], env=env,
+                                stdout=open(root / 'takeover.stdout', 'w'), stderr=open(root / 'takeover.stderr', 'w'))
+    procs.append(takeover)
+    try:
+        until('takeover read the waiting view and is about to reacquire the admission lock', ready.exists)
+        (root / 'admit').touch()
+        until('waiting supervisor became admitted under the admission lock', (root / 'admitted').exists)
+        claim = state / 'admission/running' / ticket_name
+        original_claim = claim.read_bytes()
+        release.touch()
+        takeover.wait(timeout=60)
+        stdout, stderr = (root / 'takeover.stdout').read_text(), (root / 'takeover.stderr').read_text()
+        assert takeover.returncode == 0, (stdout, stderr, T)
+        calls = [tuple(map(int, line.split())) for line in signals.read_text().splitlines()] if signals.exists() else []
+        delivered = [(pid, sig) for pid, sig in calls if pid == waiter.pid and sig != 0]
+        assert not delivered, ('takeover signaled an admitted supervisor', delivered, stdout, T)
+        assert 'skipped pid=%d reason=not-waiting' % waiter.pid in stdout, (stdout, T)
+        assert waiter.poll() is None and claim.read_bytes() == original_claim
+        assert owner.read_bytes() == original_owner
+        assert not original_ticket.exists() and not (attempt / 'takeover').exists()
+        print('PASS takeover sent no signal to a supervisor admitted after its waiting snapshot')
+        print('PASS admission-transition claim, owner and original queue time remained intact')
+    finally:
+        release.touch()
+        (root / 'finish').touch()
+    waiter.wait(timeout=60)
+    assert waiter.returncode == 0 and (attempt / 'result').read_text() == 'status=completed\nexit=0\n'
+    print('PASS the admitted supervisor completed through its original result')
+
+
 try:
     scenario_empty_state()
     scenario_lock_holder()
@@ -356,6 +466,7 @@ try:
             scenario_namespace(LEGACY, 'legacy-ns', 'queue-legacy-ns', legacy_waiting)
         if PRIOR:
             scenario_namespace(PRIOR, 'prior-ns', 'queue-prior-ns', admission_waiting)
+    scenario_admission_transition()
     print('evidence=' + str(T))
 except BaseException:
     print('evidence=' + str(T), file=sys.stderr)
