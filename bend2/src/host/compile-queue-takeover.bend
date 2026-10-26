@@ -4,8 +4,8 @@ import ./compile-queue-files.bend as QF
 import ./compile-queue-process.bend as Proc
 import ./compile-queue-admission.bend as A
 import ./posix.bend as P
-import ./files.bend as F
-import ./text.bend as T
+import ../host/files.bend as F
+import ../host/text.bend as T
 
 def nul() -> String:
   Char.show(Char.from_u32(0))

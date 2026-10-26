@@ -4,7 +4,7 @@ import ./compile-queue-process.bend as Proc
 import ./compile-queue-admission.bend as A
 import ./compile-queue-history.bend as H
 import ./posix.bend as P
-import ./files.bend as F
+import ../host/files.bend as F
 import ./wide.bend as W
 
 # Sampler state lasts for the owned execution. Usage and peak files remain the

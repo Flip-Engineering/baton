@@ -1,8 +1,8 @@
 import Base
 import ./compile-queue-state.bend as S
 import ./compile-queue-files.bend as QF
-import ./files.bend as F
-import ./text.bend as T
+import ../host/files.bend as F
+import ../host/text.bend as T
 import ./posix.bend as P
 
 def proc_base( +pid: U32) -> String:

@@ -1,6 +1,6 @@
 import Base
-import ./files.bend as F
-import ./storage.bend as S
+import ../host/files.bend as F
+import ../host/storage.bend as S
 import ./digest.bend as D
 import ./compile-queue-files.bend as Q
 

@@ -1,7 +1,7 @@
 import Base
 import ./posix.bend as P
-import ./files.bend as F
-import ./text.bend as T
+import ../host/files.bend as F
+import ../host/text.bend as T
 import ./compile-queue-files.bend as QF
 import ./compile-queue-state.bend as S
 import ./compile-queue-process.bend as Proc

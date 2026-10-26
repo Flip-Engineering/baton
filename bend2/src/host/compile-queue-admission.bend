@@ -3,8 +3,8 @@ import ./compile-queue-state.bend as S
 import ./compile-queue-files.bend as QF
 import ./compile-queue-process.bend as Proc
 import ./compile-queue-history.bend as H
-import ./files.bend as F
-import ./text.bend as T
+import ../host/files.bend as F
+import ../host/text.bend as T
 import ./posix.bend as P
 import ./wide.bend as W
 

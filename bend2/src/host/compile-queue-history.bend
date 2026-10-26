@@ -1,7 +1,7 @@
 import Base
 import ./compile-queue-state.bend as S
 import ./compile-queue-files.bend as QF
-import ./files.bend as F
+import ../host/files.bend as F
 import ./posix.bend as P
 
 def maybe_peak(+text: String) -> Maybe<Nat>:

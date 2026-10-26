@@ -1,7 +1,7 @@
 import Base
-import ./files.bend as F
-import ./text.bend as T
-import ./storage.bend as S
+import ../host/files.bend as F
+import ../host/text.bend as T
+import ../host/storage.bend as S
 import ../git/text.bend as Tx
 
 def first( +values: List<&2,String>) -> String:

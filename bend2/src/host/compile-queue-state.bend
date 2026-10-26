@@ -1,6 +1,6 @@
 import Base
-import ./text.bend as T
-import ./files.bend as F
+import ../host/text.bend as T
+import ../host/files.bend as F
 import ./compile-queue-files.bend as QF
 import ./posix.bend as P
 import ./wide.bend as W
