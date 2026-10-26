@@ -195,8 +195,6 @@ class CodexRootAdapter(unittest.TestCase):
         try:
             try:
                 if self.db.exists():
-                    while self.delivery_pids():
-                        time.sleep(.01)
                     owners = self.instance_owner_pids()
                     stopped = subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
                                              capture_output=True, text=True)
@@ -208,12 +206,15 @@ class CodexRootAdapter(unittest.TestCase):
                     except BaseException:
                         pass
                     self.assertEqual(stopped.returncode, 0, stopped.stdout + stopped.stderr)
-                    while owners & self.instance_owner_pids():
+                    while self.delivery_pids() or owners & self.instance_owner_pids():
                         time.sleep(.01)
             except Exception:
                 self.temp._finalizer.detach()
                 raise
-            self.temp.cleanup()
+            if getattr(self, '_retain_fixture', False):
+                self.temp._finalizer.detach()
+            else:
+                self.temp.cleanup()
         except BaseException as error:
             self.cleanup_failure_observe(error)
             raise
@@ -224,7 +225,7 @@ class CodexRootAdapter(unittest.TestCase):
             text=True, capture_output=True,
         )
         if ok:
-            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         return p.stdout.strip()
 
     def observe(self, observation):
@@ -234,19 +235,68 @@ class CodexRootAdapter(unittest.TestCase):
                 return value
             time.sleep(0.05)
 
-    def accepted(self, ident, receipt, missing=False):
-        def observation():
+    def ended_delivery(self, value):
+        # The receiver inlines tasks and supplies retained-body notices for other input.
+        header = f"Message ({value['kind']}) from {value['sender']} [id: {value['id']}]"
+        if value['kind'] in ('task', 'task-assignment'):
+            notice = header + ':\n' + value['body']
+        else:
+            notice = (header + f" retained {len(value['body'].encode('utf-8'))} bytes; "
+                      + f"read the complete body with baton read {value['id']}.")
+        with sqlite3.connect(self.db.resolve().as_uri() + '?mode=ro', uri=True) as database:
+            if database.execute("SELECT 1 FROM sqlite_master WHERE name='native_initial_inputs'").fetchone() is None:
+                return None
+            row = database.execute(
+                "SELECT e.id,e.directory,e.status FROM executions e "
+                "JOIN native_initial_inputs n ON n.session=e.session AND n.turn=e.id AND n.attempt=e.directory "
+                "WHERE e.session=? AND e.phase='exited' AND instr(n.guidance,?)>0",
+                (value['recipient'], notice)).fetchone()
+        if row is None:
+            return None
+        attempt, directory, status = row
+        output = {'attempt': attempt, 'directory': directory, 'status': status}
+        for name in ('stdout', 'native.stderr'):
+            path = pathlib.Path(directory) / name
+            try:
+                output[name] = path.read_bytes().decode('utf-8', 'backslashreplace')
+            except OSError as error:
+                output[name] = repr(error)
+        return output
+
+    def accepted(self, ident, receipt=None, missing=False):
+        def delivery():
             stored = subprocess.run([str(EXE), str(self.db), 'delivery', ident],
                                     text=True, capture_output=True)
             if (missing and stored.returncode == 1 and stored.stdout == ''
                     and stored.stderr == 'No matching session or message; inspect status and the requested ID.\n'):
                 return None
             self.assertEqual(stored.returncode, 0, stored.stdout + stored.stderr)
-            value = json.loads(stored.stdout)
+            return json.loads(stored.stdout)
+
+        def accepted(value):
+            if value is None:
+                return False
+            if receipt is None:
+                return value.get('nativeInputStatus', {}).get('read') == 'recorded'
             if value['receipt'] is None:
-                return None
+                return False
             self.assertEqual(value['receipt'], receipt, value)
-            return value
+            return True
+
+        def observation():
+            value = delivery()
+            if accepted(value):
+                return value
+            ended = self.ended_delivery(value) if value is not None else None
+            if ended is not None:
+                # The first delivery read may precede the producer's final commit.
+                value = delivery()
+                if accepted(value):
+                    return value
+                self._retain_fixture = True
+                self.fail('Fixture producer ended before the required input read/result: '
+                          + json.dumps(ended, ensure_ascii=False))
+            return None
         return self.observe(observation)
 
     def exited(self, session, status='exit 0'):
@@ -264,13 +314,31 @@ class CodexRootAdapter(unittest.TestCase):
             return execution
         return self.observe(observation)
 
-    def completed(self, session, bodies):
+    def completed(self, session, bodies, delivery):
         def observation():
             turns = json.loads(self.coord('turns', session))
-            return turns if len(turns) >= len(bodies) else None
+            if len(turns) >= len(bodies):
+                return turns
+            ended = self.ended_delivery(delivery)
+            if ended is not None:
+                turns = json.loads(self.coord('turns', session))
+                if len(turns) >= len(bodies):
+                    return turns
+                self._retain_fixture = True
+                self.fail('Fixture producer ended before the required turn result: '
+                          + json.dumps(ended, ensure_ascii=False))
+            return None
         turns = self.observe(observation)
         self.assertEqual([turn['reportBody'] for turn in turns], bodies)
-        self.exited(session)
+        try:
+            self.exited(session)
+        except AssertionError:
+            ended = self.ended_delivery(delivery)
+            if ended is not None:
+                self._retain_fixture = True
+                self.fail('Fixture producer failed after its turn result: '
+                          + json.dumps(ended, ensure_ascii=False))
+            raise
         return turns
 
     def test_player_terminal_starts_attached_root_without_a_listener(self):
@@ -478,10 +546,11 @@ class CodexRootAdapter(unittest.TestCase):
         self.register('child', associate, 'fixture', 'child-model', 'low')
         calls = temp / 'selected.json'
         native = temp / 'selected.py'
-        native.write_text('#!' + sys.executable + '\nimport json,os,pathlib,subprocess,sys\n'
+        native.write_text('#!' + sys.executable + '\nimport json,os,pathlib,subprocess,sys,time\n'
             + f'pathlib.Path({str(calls)!r}).write_text(json.dumps({{"argv":sys.argv[1:],"cwd":os.getcwd(),"prompt":sys.stdin.read(),"api_keys":[k for k in ("OPENAI_API_KEY","CODEX_API_KEY") if k in os.environ]}}))\n'
-            + f'subprocess.run({[str(EXE), str(self.db), "ack", "selected-report", associate, "selected-reviewed"]!r},check=True,stdout=subprocess.DEVNULL)\n'
             + 'print(json.dumps({"type":"thread.started","thread_id":"saved-codex"}),flush=True)\n'
+            + f'while json.loads(subprocess.check_output({[str(EXE), str(self.db), "session", associate]!r},text=True))["native"]!="saved-codex":time.sleep(.01)\n'
+            + f'subprocess.run({[str(EXE), str(self.db), "inbox", associate]!r},check=True,stdout=subprocess.DEVNULL)\n'
             + 'print(json.dumps({"type":"item.completed","item":{"type":"agent_message","text":"Selected Associate reviewed."}}),flush=True)\n'
             + 'print(json.dumps({"type":"turn.completed"}),flush=True)\n')
         native.chmod(0o700)
@@ -497,8 +566,8 @@ class CodexRootAdapter(unittest.TestCase):
                                   env={**os.environ, 'OPENAI_API_KEY': 'fixture-only',
                                        'CODEX_API_KEY': 'fixture-only'})
         self.assertEqual(reported.returncode, 0, reported.stderr)
-        self.accepted('selected-report', 'selected-reviewed')
-        self.completed(associate, ['Selected Associate reviewed.'])
+        delivery = self.accepted('selected-report')
+        self.completed(associate, ['Selected Associate reviewed.'], delivery)
         observed = json.loads(calls.read_text())
         expected_prefix = ['exec', 'resume', native_id] if native_id else ['exec', '--json', '--model']
         start = observed['argv'].index('exec')
