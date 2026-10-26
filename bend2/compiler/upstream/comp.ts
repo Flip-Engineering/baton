@@ -927,28 +927,43 @@ function term_nodes(cf: Carb, t: HTerm): number {
 }
 
 function term_const(t: HTerm): boolean {
-  const s = term_strip(t);
-  if (s.$ !== "Ctr") {
-    return false;
+  const root = term_strip(t);
+  if (root.$ !== "Ctr") return false;
+  if (CONSTANTS.has(root)) return true;
+  const got = CONSTS.get(root);
+  if (got !== undefined) return got;
+  const stack: { term: Of<"Ctr">; next: number }[] = [];
+  let tm: HTerm = root;
+  walk: for (;;) {
+    const s = term_strip(tm);
+    let value: boolean;
+    if (s.$ !== "Ctr") {
+      value = false;
+    } else if (CONSTANTS.has(s)) {
+      value = true;
+    } else {
+      const got = CONSTS.get(s);
+      if (got !== undefined) {
+        value = got;
+      } else {
+        stack.push({ term: s, next: 0 });
+        value = true;
+      }
+    }
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1];
+      if (value && frame.next < frame.term.x.length) {
+        tm = frame.term.x[frame.next++];
+        continue walk;
+      }
+      stack.pop();
+      if (value) CONSTANTS.add(frame.term);
+      // Each completed constructor is inserted after its visited children.
+      if (CONSTS.size >= CONSTS_CAP) CONSTS.clear();
+      CONSTS.set(frame.term, value);
+    }
+    return value;
   }
-  if (CONSTANTS.has(s)) {
-    return true;
-  }
-  const got = CONSTS.get(s);
-  if (got !== undefined) {
-    return got;
-  }
-  const value = s.x.every(term_const);
-  if (value) {
-    CONSTANTS.add(s);
-  }
-  // Check immediately before insertion so recursive frames cannot exceed the
-  // bound while unwinding.
-  if (CONSTS.size >= CONSTS_CAP) {
-    CONSTS.clear();
-  }
-  CONSTS.set(s, value);
-  return value;
 }
 
 function use_get(u: UMap, i: number): number {
@@ -1020,36 +1035,75 @@ function term_use(u: UMap, p: Probe): number {
   return use_get(u, p.i);
 }
 
-// The uses of each probe in a term. A map is held while the definition's held
-// entries fit the cap; see USE_CAP for the recompute fallback.
-function term_uses(cb: Carb, tm: HTerm): UMap {
-  const got = USES.get(tm);
-  if (got !== undefined) {
-    return got;
-  }
-  const t = term_force(tm);
-  let out: UMap;
-  switch (t.$) {
-    case "Var": {
-      const p = probe_of(t);
-      out = p === DUMMY ? USE0 : [p.i, 1];
-      break;
-    }
-    case "Mat": {
-      out = use_union(term_uses(cb, t.h), term_uses(cb, t.m), Math.max);
-      break;
-    }
-    default: {
-      out = term_kids(cb, t).reduce((u, x) =>
-        use_union(u, term_uses(cb, x), (a, b) => a + b), USE0);
-    }
-  }
+function use_hold(tm: HTerm, out: UMap): void {
   const held = Math.max(1, out.length >> 1);
   if (use_held + held <= USE_CAP) {
     USES.set(tm, out);
     use_held += held;
   }
-  return out;
+}
+
+// The uses of each probe in a term. A map is held while the definition's held
+// entries fit the cap; see USE_CAP for the recompute fallback.
+function term_uses(cb: Carb, tm: HTerm): UMap {
+  const got = USES.get(tm);
+  if (got !== undefined) return got;
+  type Frame = { tm: HTerm; kids: HTerm[]; next: number; out: UMap;
+    max: boolean; let: { term: HLet; ps: Probe[]; body: HTerm } | null };
+  const stack: Frame[] = [];
+  let current = tm;
+  let out: UMap;
+  walk: for (;;) {
+    const got = USES.get(current);
+    if (got !== undefined) {
+      out = got;
+    } else {
+      const t = term_force(current);
+      if (t.$ === "Var") {
+        const p = probe_of(t);
+        out = p === DUMMY ? USE0 : [p.i, 1];
+        use_hold(current, out);
+      } else if (t.$ === "Let") {
+        // The body determines the live values before their uses are folded.
+        const o = term_open(t);
+        stack.push({ tm: current, kids: [], next: 0, out: USE0, max: false,
+          let: { term: t, ps: o.ps, body: o.b } });
+        current = o.b;
+        continue;
+      } else {
+        const kids = t.$ === "Mat" ? [t.h, t.m] : term_kids(cb, t);
+        if (kids.length === 0) {
+          out = USE0;
+          use_hold(current, out);
+        } else {
+          stack.push({ tm: current, kids, next: 1, out: USE0,
+            max: t.$ === "Mat", let: null });
+          current = kids[0];
+          continue;
+        }
+      }
+    }
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1];
+      if (frame.let !== null) {
+        const { term, ps, body } = frame.let;
+        const on = term.q.map((_, j) => term_use(out, ps[j]) > 0);
+        frame.kids = [...term.v.filter((_, j) => on[j]), body];
+        frame.let = null;
+      } else {
+        frame.out = use_union(frame.out, out,
+          frame.max ? Math.max : (a, b) => a + b);
+      }
+      if (frame.next < frame.kids.length) {
+        current = frame.kids[frame.next++];
+        continue walk;
+      }
+      stack.pop();
+      out = frame.out;
+      use_hold(frame.tm, out);
+    }
+    return out;
+  }
 }
 
 function rest_use(cb: Carb, rest: HTerm[], p: Probe): number {
