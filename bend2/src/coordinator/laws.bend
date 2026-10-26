@@ -730,9 +730,8 @@ law m5_a_report_and_its_delivery_are_one_transaction:
   for +sender: String
   for +body: String
   {Store.commit(db, C.Report{id, sender, body}) == (do IO<Result<&1,&1,U32 & String,String>>:
-    ensured : Unit <- Store.ensure_before_begin(db)
-    queried : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,Store.commit_sql(C.Report{id, sender, body}))
-    Store.publish_after_commit(db,queried)) : IO(Result<&1,&1,U32 & String,String>)}
+    ensured : Result<&1,&1,U32 & String,String> <- DB.Sql.ensure_projection(db,C.schema())
+    Store.transact_ensured(db,Store.commit_sql(C.Report{id, sender, body}),ensured)) : IO(Result<&1,&1,U32 & String,String>)}
 
 def m5_a_report_and_its_delivery_are_one_transaction(db, id, sender, body):
   {==}
@@ -1186,7 +1185,8 @@ law completion_preparation_checks_the_upstream_recipient:
     +generation : String <- IO.pure(String,Turn.generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     reported : Unit <- Turn.prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
-    AgentInput.record_initial_reads(db,player,id)) : IO(Unit)}
+    read : Unit <- AgentInput.record_initial_reads(db,player,id)
+    Turn.note_open_assignment(db,player,id)) : IO(Unit)}
 
 def completion_preparation_checks_the_upstream_recipient(db,player,id,log,stderr,outcome):
   {==}

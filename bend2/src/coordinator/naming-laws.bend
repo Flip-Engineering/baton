@@ -266,9 +266,8 @@ law named_commands_execute_the_committed_query_and_classify_its_answer:
   for +db: String
   for +command: C.Command
   {Store.apply(db,command) == (do IO<Result<&1,&1,U32 & String,String>>:
-    ensured : Unit <- Store.ensure_before_begin(db)
-    queried : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,Store.commit_sql(command))
-    published : Result<&1,&1,U32 & String,String> <- Store.publish_after_commit(db,queried)
+    ensured : Result<&1,&1,U32 & String,String> <- DB.Sql.ensure_projection(db,C.schema())
+    published : Result<&1,&1,U32 & String,String> <- Store.transact_ensured(db,Store.commit_sql(command),ensured)
     Store.committed(published)) : IO(Result<&1,&1,U32 & String,String>)}
 
 def named_commands_execute_the_committed_query_and_classify_its_answer(db,command):
