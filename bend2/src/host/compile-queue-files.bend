@@ -75,17 +75,19 @@ def nonempty( +parts: List<&2,String>) -> List<&2,String>:
     case SNil{} <> rest: nonempty(rest)
     case value <> rest: value <> nonempty(rest)
 
-def mkdir_parts( +parts: List<&2,String>, +prefix: String, +absolute: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def mkdir_next(rest: List<&2,String>, +path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match rest:
+    case Nil{}: ensure(path,True{})
+    case next <> tail:
+      do IO<Result<&1,&1,U32 & String,Unit>>:
+        made : Unit <- IO.try(Unit,ensure(path,False{}))
+        mkdir_parts(next <> tail,path,False{})
+
+def mkdir_parts(+parts: List<&2,String>, +prefix: String, +absolute: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match parts:
     case Nil{}: ensure(Bool.pick(String,absolute,"/",prefix),True{})
     case +part <> rest:
-      +path = Bool.pick(String,Bool.and(String.is_empty(prefix),Bool.not(absolute)),part,prefix ++ "/" ++ part)
-      match rest:
-        case Nil{}: ensure(path,True{})
-        case next <> tail:
-          do IO<Result<&1,&1,U32 & String,Unit>>:
-            made : Unit <- IO.try(Unit,ensure(path,False{}))
-            mkdir_parts(next <> tail,path,False{})
+      mkdir_next(rest,Bool.pick(String,Bool.and(String.is_empty(prefix),Bool.not(absolute)),part,prefix ++ "/" ++ part))
 
 def mkdir_p( +path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.is_empty(path),

@@ -71,18 +71,22 @@ def expected(+state: String, +ticket: String) -> IO(Maybe<Nat>):
   expected_paths(paths)
 
 # The lock is acquired by the caller after admission directories are checked.
+
+def record_match_1(+attempt: String, +peak: Nat, +failed: Bool, locked: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
+  match locked:
+    case Fail{error}: IO.pure(Unit,Unit{})
+    case Done{fd}:
+      do IO<Unit>:
+        raised : Unit <- raise_attempt(attempt,peak,failed)
+        closed : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.lock_release(fd)
+        IO.pure(Unit,Unit{})
+
 def record(+attempt: String, +peak: Nat, +failed: Bool) -> IO(Unit):
   Bool.pick(IO(Unit),Nat.is_gt(peak,0n),
     do IO<Unit>:
       saved : Unit <- S.write(attempt ++ "/peak","peak_kb=" ++ Nat.show(peak) ++ "\n")
       locked : Result<&1,&1,U32 & String,U32> <- P.HostPosix.lock_acquire(S.state(attempt) ++ "/admission/lock")
-      match locked:
-        case Fail{error}: IO.pure(Unit,Unit{})
-        case Done{fd}:
-          do IO<Unit>:
-            raised : Unit <- raise_attempt(attempt,peak,failed)
-            closed : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.lock_release(fd)
-            IO.pure(Unit,Unit{}),
+      record_match_1(attempt, peak, failed, locked),
     IO.pure(Unit,Unit{}))
 
 def clear_paths( +names: List<&2,String>, +directory: String) -> IO(Unit):
@@ -112,13 +116,13 @@ def backfill_keys( +names: List<&2,String>, +directory: String, +count: Nat) -> 
       do IO<Nat>:
         +runs : String <- IO.pure(String,directory ++ "/" ++ name ++ "/runs")
         +children : List<&2,String> <- S.names(runs)
-        +next : Nat <- backfill_runs(children,runs,count)
+        +next : Nat <- backfill_runs(S.visible(children),runs,count)
         backfill_keys(rest,directory,next)
 
 def backfill_locked(+state: String) -> IO(String):
   do IO<String>:
     +peaks : List<&2,String> <- S.names(state ++ "/peaks")
-    cleared : Unit <- clear_paths(peaks,state ++ "/peaks")
+    cleared : Unit <- clear_paths(S.visible(peaks),state ++ "/peaks")
     +keys : List<&2,String> <- S.names(state ++ "/keys")
-    +count : Nat <- backfill_keys(keys,state ++ "/keys",0n)
+    +count : Nat <- backfill_keys(S.visible(keys),state ++ "/keys",0n)
     IO.pure(String,"backfilled runs=" ++ Nat.show(count) ++ "\n")

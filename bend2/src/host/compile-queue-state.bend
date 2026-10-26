@@ -70,6 +70,11 @@ def read( +path: String) -> IO(String):
     result : Result<&1,&1,U32 & String,String> <- T.Text.read(path)
     IO.pure(String,text_or_empty(result))
 
+def visible(names: List<&2,String>) -> List<&2,String>:
+  match names:
+    case Nil{}: Nil{}
+    case +name <> +rest: Bool.pick(List<&2,String>,String.starts_with(name,"."),visible(rest),name <> visible(rest))
+
 def names( +path: String) -> IO(List<&2,String>):
   do IO<List<&2,String>>:
     result : Result<&1,&1,U32 & String,String> <- QF.list_dir(path)

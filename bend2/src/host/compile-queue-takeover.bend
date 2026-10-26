@@ -13,13 +13,16 @@ def nul() -> String:
 def reason(+pid: U32, +label: String, +attempt: String) -> String:
   "skipped pid=" ++ U32.show(pid) ++ " reason=" ++ label ++ " attempt=" ++ attempt ++ "\n"
 
+def namespace_result_match_10(+own: String, theirs: Result<&1,&1,U32 & String,String>) -> String:
+  match theirs:
+    case Fail{(code,message)}: "mount-namespace-error-" ++ U32.show(code)
+    case Done{other}: Bool.pick(String,String.eq(own,other),"","other-mount-namespace")
+
 def namespace_result(mine: Result<&1,&1,U32 & String,String>, theirs: Result<&1,&1,U32 & String,String>) -> String:
   match mine:
     case Fail{(code,message)}: "mount-namespace-error-" ++ U32.show(code)
     case Done{own}:
-      match theirs:
-        case Fail{(code,message)}: "mount-namespace-error-" ++ U32.show(code)
-        case Done{other}: Bool.pick(String,String.eq(own,other),"","other-mount-namespace")
+      namespace_result_match_10(own, theirs)
 
 def namespace( +pid: U32) -> IO(String):
   do IO<String>:
@@ -27,25 +30,34 @@ def namespace( +pid: U32) -> IO(String):
     theirs : Result<&1,&1,U32 & String,String> <- F.Files.readlink(Proc.proc_base(pid) ++ "/ns/mnt")
     IO.pure(String,namespace_result(mine,theirs))
 
+def owned_match_9(+uid: U32, observed: Result<&1,&1,U32 & String,String>) -> IO(Bool):
+  match observed:
+    case Fail{error}: IO.pure(Bool,False{})
+    case Done{record}: IO.pure(Bool,U32.is_eq(S.number(S.at(String.split(record,Char.from_u32(9)),6)),uid))
+
 def owned( +pid: U32) -> IO(Bool):
   do IO<Bool>:
     +uid : U32 <- IO.try(U32,P.HostPosix.uid())
     observed : Result<&1,&1,U32 & String,String> <- F.Files.lstat(Proc.proc_base(pid))
-    match observed:
-      case Fail{error}: IO.pure(Bool,False{})
-      case Done{record}: IO.pure(Bool,U32.is_eq(S.number(S.at(String.split(record,Char.from_u32(9)),6)),uid))
+    owned_match_9(uid, observed)
+
+def other_executable_match_7(+mine: String, other: Result<&1,&1,U32 & String,String>) -> IO(Bool):
+  match other:
+    case Fail{error}: IO.pure(Bool,False{})
+    case Done{+theirs}:
+      IO.pure(Bool,Bool.not(Bool.and(String.eq(S.at(String.split(mine,Char.from_u32(9)),2),S.at(String.split(theirs,Char.from_u32(9)),2)),String.eq(S.at(String.split(mine,Char.from_u32(9)),3),S.at(String.split(theirs,Char.from_u32(9)),3)))))
+
+def other_executable_match_8(own: Result<&1,&1,U32 & String,String>, other: Result<&1,&1,U32 & String,String>) -> IO(Bool):
+  match own:
+    case Fail{error}: IO.pure(Bool,False{})
+    case Done{+mine}:
+      other_executable_match_7(mine,other)
 
 def other_executable( +pid: U32) -> IO(Bool):
   do IO<Bool>:
     own : Result<&1,&1,U32 & String,String> <- F.Files.stat("/proc/self/exe")
     other : Result<&1,&1,U32 & String,String> <- F.Files.stat(Proc.proc_base(pid) ++ "/exe")
-    match own:
-      case Fail{error}: IO.pure(Bool,False{})
-      case Done{+mine}:
-        match other:
-          case Fail{error}: IO.pure(Bool,False{})
-          case Done{+theirs}:
-            IO.pure(Bool,Bool.not(Bool.and(String.eq(S.at(String.split(mine,Char.from_u32(9)),2),S.at(String.split(theirs,Char.from_u32(9)),2)),String.eq(S.at(String.split(mine,Char.from_u32(9)),3),S.at(String.split(theirs,Char.from_u32(9)),3)))))
+    other_executable_match_8(own, other)
 
 def has_pid( +items: List<&2,String>, +pid: U32) -> Bool:
   match items:
@@ -53,20 +65,38 @@ def has_pid( +items: List<&2,String>, +pid: U32) -> Bool:
     case item <> rest: Bool.or(U32.is_eq(S.number(S.field(item,"pid")),pid),has_pid(rest,pid))
 
 @unsafe
+
+def stopped_match_6(+start: String, +pid: U32, live: Result<&1,&1,U32 & String,U32>) -> IO(Bool):
+  match live:
+    case Fail{error}: IO.pure(Bool,False{})
+    case Done{value}:
+      Bool.pick(IO(Bool),U32.is_eq(value,0),IO.pure(Bool,False{}),
+        do IO<Bool>:
+          +text : String <- S.read(Proc.proc_base(pid) ++ "/stat")
+          +state : String <- IO.pure(String,S.first(Proc.stat_fields(text)))
+          Bool.pick(IO(Bool),Bool.or(String.eq(state,"T"),String.eq(state,"t")),IO.pure(Bool,True{}),
+            do IO<Bool>:
+              slept : Unit <- IO.sleep(20)
+              stopped(pid,start)))
+
 def stopped(+pid: U32, +start: String) -> IO(Bool):
   do IO<Bool>:
     live : Result<&1,&1,U32 & String,U32> <- P.HostPosix.alive(pid,start)
-    match live:
-      case Fail{error}: IO.pure(Bool,False{})
-      case Done{value}:
-        Bool.pick(IO(Bool),U32.is_eq(value,0),IO.pure(Bool,False{}),
-          do IO<Bool>:
-            +text : String <- S.read(Proc.proc_base(pid) ++ "/stat")
-            +state : String <- IO.pure(String,S.first(Proc.stat_fields(text)))
-            Bool.pick(IO(Bool),Bool.or(String.eq(state,"T"),String.eq(state,"t")),IO.pure(Bool,True{}),
-              do IO<Bool>:
-                slept : Unit <- IO.sleep(20)
-                stopped(pid,start)))
+    stopped_match_6(start, pid, live)
+
+def successor_match_5(+old_pid: String, +args: String, +key_fd: U32, heavy: Result<&1,&1,U32 & String,U32>) -> IO(Result<&1,&1,U32 & String,U32>):
+  match heavy:
+    case Fail{error}:
+      do IO<Result<&1,&1,U32 & String,U32>>:
+        closed : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.close_fd(key_fd)
+        IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})
+    case Done{+heavy_fd}:
+      do IO<Result<&1,&1,U32 & String,U32>>:
+        +environment : String <- S.read(Proc.proc_base(S.number(old_pid)) ++ "/environ")
+        result : Result<&1,&1,U32 & String,U32> <- P.HostPosix.spawn_detached(args,key_fd,heavy_fd,environment)
+        key_closed : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.close_fd(key_fd)
+        heavy_closed : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.close_fd(heavy_fd)
+        IO.pure(Result<&1,&1,U32 & String,U32>,result)
 
 def successor(+state: String, +attempt: String, +old_pid: String, +old_start: String, +queued: String) -> IO(Result<&1,&1,U32 & String,U32>):
   do IO<Result<&1,&1,U32 & String,U32>>:
@@ -74,18 +104,7 @@ def successor(+state: String, +attempt: String, +old_pid: String, +old_start: St
     +args : String <- IO.pure(String,self ++ nul() ++ "--" ++ nul() ++ "__takeover" ++ nul() ++ attempt ++ nul() ++ old_pid ++ nul() ++ old_start ++ nul() ++ queued ++ nul())
     +key_fd : U32 <- IO.try(U32,P.HostPosix.lock_open(S.keydir(attempt) ++ "/lock"))
     heavy : Result<&1,&1,U32 & String,U32> <- P.HostPosix.lock_open(state ++ "/heavy.lock")
-    match heavy:
-      case Fail{error}:
-        do IO<Result<&1,&1,U32 & String,U32>>:
-          closed : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.close_fd(key_fd)
-          IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})
-      case Done{+heavy_fd}:
-        do IO<Result<&1,&1,U32 & String,U32>>:
-          +environment : String <- S.read(Proc.proc_base(S.number(old_pid)) ++ "/environ")
-          result : Result<&1,&1,U32 & String,U32> <- P.HostPosix.spawn_detached(args,key_fd,heavy_fd,environment)
-          key_closed : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.close_fd(key_fd)
-          heavy_closed : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.close_fd(heavy_fd)
-          IO.pure(Result<&1,&1,U32 & String,U32>,result)
+    successor_match_5(old_pid, args, key_fd, heavy)
 
 def original_args( +args: List<&2,String>, +pid: U32, +start: String, +queued: String) -> String:
   match args:
@@ -96,16 +115,19 @@ def original_args( +args: List<&2,String>, +pid: U32, +start: String, +queued: S
     case value <> rest: original_args(rest,pid,start,queued)
     case Nil{}: ""
 
+def resume_match_4(+pid: U32, alive: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
+  match alive:
+    case Done{value}:
+      Bool.pick(IO(Unit),U32.is_gt(value,0),
+        do IO<Unit>:
+          continued : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.signal_pid(pid,18)
+          IO.pure(Unit,Unit{}),IO.pure(Unit,Unit{}))
+    case Fail{error}: IO.pure(Unit,Unit{})
+
 def resume(+pid: U32, +start: String) -> IO(Unit):
   do IO<Unit>:
     alive : Result<&1,&1,U32 & String,U32> <- P.HostPosix.alive(pid,start)
-    match alive:
-      case Done{value}:
-        Bool.pick(IO(Unit),U32.is_gt(value,0),
-          do IO<Unit>:
-            continued : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.signal_pid(pid,18)
-            IO.pure(Unit,Unit{}),IO.pure(Unit,Unit{}))
-      case Fail{error}: IO.pure(Unit,Unit{})
+    resume_match_4(pid, alive)
 
 def publish_success(result: Result<&1,&1,U32 & String,U32>, +pid: U32, +start: String, +details: String, +legacy: Bool) -> IO(String):
   match result:
@@ -135,21 +157,37 @@ def replace_stopped(+state: String, +pid: U32, +start: String, +details: String,
 
 # The current admission view is checked while its lock is held. An admitted
 # holder is left running even when a previously read ticket named its pid.
+
+def replace_locked_match_2(+start: String, +pid: U32, +state: String, +details: String, +legacy: Bool, +ticket_id: String, stopped: Result<&1,&1,U32 & String,Unit>) -> IO(String):
+  match stopped:
+    case Fail{(code,message)}: IO.pure(String,reason(pid,"not-permitted-" ++ U32.show(code),S.field(details,"attempt")))
+    case Done{unit}: replace_stopped(state,pid,start,details,legacy,ticket_id)
+
+def replace_locked_match_3(+start: String, +pid: U32, +state: String, +details: String, +legacy: Bool, +ticket_id: String, +waiting: Bool, live: Result<&1,&1,U32 & String,U32>) -> IO(String):
+  match live:
+    case Fail{error}: IO.pure(String,reason(pid,"not-waiting",S.field(details,"attempt")))
+    case Done{value}:
+      Bool.pick(IO(String),Bool.and(waiting,U32.is_gt(value,0)),
+        do IO<String>:
+          stopped : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.signal_pid(pid,19)
+          replace_locked_match_2(start, pid, state, details, legacy, ticket_id, stopped),
+        IO.pure(String,reason(pid,"not-waiting",S.field(details,"attempt"))))
+
 def replace_locked(+state: String, +pid: U32, +start: String, +details: String, +legacy: Bool, +ticket_id: String) -> IO(String):
   do IO<String>:
     +view : A.QueueView <- A.load(state)
     +waiting : Bool <- IO.pure(Bool,Bool.and(Bool.not(has_pid(A.claims(view),pid)),Bool.pick(Bool,legacy,U32.is_ne(S.number(S.field(A.facts(view),"legacy_pid")),pid),has_pid(A.tickets(view),pid))))
     live : Result<&1,&1,U32 & String,U32> <- P.HostPosix.alive(pid,start)
-    match live:
-      case Fail{error}: IO.pure(String,reason(pid,"not-waiting",S.field(details,"attempt")))
-      case Done{value}:
-        Bool.pick(IO(String),Bool.and(waiting,U32.is_gt(value,0)),
-          do IO<String>:
-            stopped : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.signal_pid(pid,19)
-            match stopped:
-              case Fail{(code,message)}: IO.pure(String,reason(pid,"not-permitted-" ++ U32.show(code),S.field(details,"attempt")))
-              case Done{unit}: replace_stopped(state,pid,start,details,legacy,ticket_id),
-          IO.pure(String,reason(pid,"not-waiting",S.field(details,"attempt"))))
+    replace_locked_match_3(start, pid, state, details, legacy, ticket_id, waiting, live)
+
+def replace_match_1(+start: String, +pid: U32, +state: String, +details: String, +legacy: Bool, +ticket_id: String, locked: Result<&1,&1,U32 & String,U32>) -> IO(String):
+  match locked:
+    case Fail{(code,message)}: IO.pure(String,reason(pid,"no-lock-" ++ U32.show(code),S.field(details,"attempt")))
+    case Done{fd}:
+      do IO<String>:
+        +result : String <- replace_locked(state,pid,start,details,legacy,ticket_id)
+        closed : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.lock_release(fd)
+        IO.pure(String,result)
 
 def replace(+state: String, +pid: U32, +start: String, +details: String, +legacy: Bool, +ticket_id: String) -> IO(String):
   do IO<String>:
@@ -158,13 +196,7 @@ def replace(+state: String, +pid: U32, +start: String, +details: String, +legacy
     Bool.pick(IO(String),Bool.and(owned,String.is_empty(namespace)),
       do IO<String>:
         locked : Result<&1,&1,U32 & String,U32> <- A.lock(state)
-        match locked:
-          case Fail{(code,message)}: IO.pure(String,reason(pid,"no-lock-" ++ U32.show(code),S.field(details,"attempt")))
-          case Done{fd}:
-            do IO<String>:
-              +result : String <- replace_locked(state,pid,start,details,legacy,ticket_id)
-              closed : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.lock_release(fd)
-              IO.pure(String,result),
+        replace_match_1(start, pid, state, details, legacy, ticket_id, locked),
       IO.pure(String,reason(pid,Bool.pick(String,owned,namespace,"other-uid-or-unreadable"),S.field(details,"attempt"))))
 
 def replace_ticket(+ticket: String, +state: String, +legacy: Bool) -> IO(String):

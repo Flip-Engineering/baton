@@ -9,6 +9,7 @@ import ./wide.bend as W
 
 # Sampler state lasts for the owned execution. Usage and peak files remain the
 # observations consumed by the existing admission and history contracts.
+
 def claim_set( +items: List<&2,String>) -> W.Wide64:
   match items:
     case Nil{}: W.zero()
@@ -40,17 +41,20 @@ def outside_locked(+state: String, +sample: String, +own: Nat) -> IO(String):
     +again : A.QueueView <- A.load(state)
     IO.pure(String,Bool.pick(String,Nat.is_gt(S.nat(S.field(A.facts(view),"total")),0n),outside_sample(sample,own,view,again),sample))
 
+def sample_outside_match_3(+own: Nat, +sample: String, +state: String, locked: Result<&1,&1,U32 & String,U32>) -> IO(String):
+  match locked:
+    case Fail{error}: IO.pure(String,sample)
+    case Done{fd}:
+      do IO<String>:
+        +next : String <- outside_locked(state,sample,own)
+        closed : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.lock_release(fd)
+        IO.pure(String,next)
+
 def sample_outside(+sample: String, +own: Nat) -> IO(String):
   do IO<String>:
     +state : String <- IO.pure(String,S.field(sample,"state"))
     locked : Result<&1,&1,U32 & String,U32> <- A.lock(state)
-    match locked:
-      case Fail{error}: IO.pure(String,sample)
-      case Done{fd}:
-        do IO<String>:
-          +next : String <- outside_locked(state,sample,own)
-          closed : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.lock_release(fd)
-          IO.pure(String,next)
+    sample_outside_match_3(own, sample, state, locked)
 
 def publish(+sample: String, +own: Nat) -> IO(Unit):
   Bool.pick(IO(Unit),String.is_empty(S.field(sample,"claim")),IO.pure(Unit,Unit{}),
@@ -87,18 +91,22 @@ def watch_command(+attempt: String, +child: U32, +start: String) -> IO(Result<&1
     P.HostPosix.spawn_detached(args,9,8,"")
 
 @unsafe
+
+def wait_running_match_2(+child: U32, +sample_state: String, +delay: U32, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String & String>):
+  match result:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String & String>,Fail{error})
+    case Done{+status}:
+      Bool.pick(IO(Result<&1,&1,U32 & String,String & String>),String.eq(S.field(status,"running"),"1"),
+        do IO<Result<&1,&1,U32 & String,String & String>>:
+          +next : String <- sample(sample_state,False{})
+          slept : Unit <- IO.sleep(delay)
+          wait_running(child,next,U32.min(U32.mul(delay,2),128)),
+        IO.pure(Result<&1,&1,U32 & String,String & String>,Done{(status,sample_state)}))
+
 def wait_running(+child: U32, +sample_state: String, +delay: U32) -> IO(Result<&1,&1,U32 & String,String & String>):
   do IO<Result<&1,&1,U32 & String,String & String>>:
     result : Result<&1,&1,U32 & String,String> <- P.HostPosix.try_wait(child)
-    match result:
-      case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String & String>,Fail{error})
-      case Done{+status}:
-        Bool.pick(IO(Result<&1,&1,U32 & String,String & String>),String.eq(S.field(status,"running"),"1"),
-          do IO<Result<&1,&1,U32 & String,String & String>>:
-            +next : String <- sample(sample_state,False{})
-            slept : Unit <- IO.sleep(delay)
-            wait_running(child,next,U32.min(U32.mul(delay,2),128)),
-          IO.pure(Result<&1,&1,U32 & String,String & String>,Done{(status,sample_state)}))
+    wait_running_match_2(child, sample_state, delay, result)
 
 def disposition(+status: String, +canceled: U32) -> U32 & String:
   +signal = S.number(S.field(status,"signal"))
@@ -131,6 +139,18 @@ def run_started(started: Result<&1,&1,U32 & String,Unit>, +child: U32, +attempt:
         restored : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.restore_signals()
         finish_wait(result,attempt,canceled)
 
+def run_spawned_match_1(+child: U32, +gate: U32, +status: U32, +attempt: String, watcher: Result<&1,&1,U32 & String,U32>) -> IO(Result<&1,&1,U32 & String,U32 & String>):
+  match watcher:
+    case Done{pid}:
+      do IO<Result<&1,&1,U32 & String,U32 & String>>:
+        started : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.start(gate,status)
+        run_started(started,child,attempt)
+    case Fail{error}:
+      do IO<Result<&1,&1,U32 & String,U32 & String>>:
+        closed : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.close_fd(gate)
+        closed_status : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.close_fd(status)
+        run_started(Fail{error},child,attempt)
+
 def run_spawned(result: Result<&1,&1,U32 & String,U32 & (U32 & U32)>, +attempt: String) -> IO(Result<&1,&1,U32 & String,U32 & String>):
   match result:
     case Fail{error}:
@@ -141,16 +161,7 @@ def run_spawned(result: Result<&1,&1,U32 & String,U32 & (U32 & U32)>, +attempt: 
       do IO<Result<&1,&1,U32 & String,U32 & String>>:
         +start : String <- IO.try(String,P.HostPosix.starttime(child))
         watcher : Result<&1,&1,U32 & String,U32> <- watch_command(attempt,child,start)
-        match watcher:
-          case Done{pid}:
-            do IO<Result<&1,&1,U32 & String,U32 & String>>:
-              started : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.start(gate,status)
-              run_started(started,child,attempt)
-          case Fail{error}:
-            do IO<Result<&1,&1,U32 & String,U32 & String>>:
-              closed : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.close_fd(gate)
-              closed_status : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.close_fd(status)
-              run_started(Fail{error},child,attempt)
+        run_spawned_match_1(child, gate, status, attempt, watcher)
 
 def run( +argv: String, +cwd: String, +stdout: String, +stderr: String) -> IO(Result<&1,&1,U32 & String,U32 & String>):
   do IO<Result<&1,&1,U32 & String,U32 & String>>:

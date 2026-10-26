@@ -55,6 +55,7 @@ def contains_pid( +seen: List<&2,U32>, +pid: U32) -> Bool:
     case value <> rest: Bool.or(U32.is_eq(value,pid),contains_pid(rest,pid))
 
 @unsafe
+
 def descendant(+rows: List<&2,String>, +pid: U32, +root: U32, +seen: List<&2,U32>) -> Bool:
   Bool.pick(Bool,U32.is_eq(pid,root),True{},
     Bool.pick(Bool,Bool.or(U32.is_eq(pid,0),contains_pid(seen,pid)),False{},
@@ -150,16 +151,22 @@ def environ( +pid: U32, +name: String) -> IO(Result<&1,&1,U32 & String,String>):
     +values = String.split(bytes,Char.from_u32(0))
     IO.pure(Result<&1,&1,U32 & String,String>,Bool.pick(Result<&1,&1,U32 & String,String>,env_present(values,name),Done{env_field(values,name)},Fail{(2,"process environment variable is absent")}))
 
+def hidden_match_1(signaled: Result<&1,&1,U32 & String,Unit>) -> IO(Bool):
+  match signaled:
+    case Done{unit}: IO.pure(Bool,True{})
+    case Fail{(number,message)}: IO.pure(Bool,U32.is_eq(number,1))
+
+def hidden_match_2(+pid: U32, observed: Result<&1,&1,U32 & String,String>) -> IO(Bool):
+  match observed:
+    case Done{record}: IO.pure(Bool,False{})
+    case Fail{(code,message)}:
+      Bool.pick(IO(Bool),U32.is_eq(code,2),
+        do IO<Bool>:
+          signaled : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.signal_pid(pid,0)
+          hidden_match_1(signaled),
+        IO.pure(Bool,False{}))
+
 def hidden(+pid: U32) -> IO(Bool):
   do IO<Bool>:
     observed : Result<&1,&1,U32 & String,String> <- F.Files.lstat(proc_base(pid))
-    match observed:
-      case Done{record}: IO.pure(Bool,False{})
-      case Fail{(code,message)}:
-        Bool.pick(IO(Bool),U32.is_eq(code,2),
-          do IO<Bool>:
-            signaled : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.signal_pid(pid,0)
-            match signaled:
-              case Done{unit}: IO.pure(Bool,True{})
-              case Fail{(number,message)}: IO.pure(Bool,U32.is_eq(number,1)),
-          IO.pure(Bool,False{}))
+    hidden_match_2(pid, observed)
