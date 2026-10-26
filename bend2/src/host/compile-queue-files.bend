@@ -183,13 +183,17 @@ def include_lines( +lines: List<&2,String>) -> String:
       Bool.pick(String,String.is_empty(target),"",target ++ "\n") ++ include_lines(rest)
 
 @unsafe
-def include_chunks( +path: String, +position: String, +collected: String) -> IO(Result<&1,&1,U32 & String,String>):
+def include_chunk_values(chunk: String & String, +path: String, +collected: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match chunk:
+    case (+text,next):
+      Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(text),
+        IO.pure(Result<&1,&1,U32 & String,String>,Done{collected}),
+        include_chunks(path,next,collected ++ include_lines(String.lines(text))))
+
+def include_chunks(+path: String, position: String, collected: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     chunk : String & String <- IO.try(String & String,F.Files.text_chunk(path,position))
-    (text,next) = chunk
-    Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(text),
-      IO.pure(Result<&1,&1,U32 & String,String>,Done{collected}),
-      include_chunks(path,next,collected ++ include_lines(String.lines(text))))
+    include_chunk_values(chunk,path,collected)
 
 def c_includes( +path: String) -> IO(Result<&1,&1,U32 & String,String>):
   include_chunks(path,"0","")
