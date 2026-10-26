@@ -104,10 +104,11 @@ law completion_output_preserves_delivery_errors_and_returns_write_failure:
     exit_id : String <- Bool.pick(IO(String),True{},Subs.exit_report_id(db,player,id,""),IO.pure(String,id ++ ":exit"))
     diagnostic_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":observation","1","")
     delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id,"1",saved)
+    assignment_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":assignment","1","")
     exit_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,exit_id,"1","")
     stopped : Result<&1,&1,U32 & String,Unit> <- Stop.deliver(db,player,id)
     written : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output(saved)
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(Turn.delivery_result(Turn.remember(Turn.remember(Turn.remember("",diagnostic_delivery),delivered),exit_delivery)),Turn.combine(stopped,written)))) : IO(Result<&1,&1,U32 & String,Unit>)}
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(Turn.delivery_result(Turn.remember(Turn.remember(Turn.remember(Turn.remember("",diagnostic_delivery),delivered),assignment_delivery),exit_delivery)),Turn.combine(stopped,written)))) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def completion_output_preserves_delivery_errors_and_returns_write_failure(db,player,id):
   {==}
