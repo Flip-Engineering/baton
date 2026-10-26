@@ -1,5 +1,6 @@
 """Check adapter exit disposition with small subprocesses; no compiler runs."""
 import hashlib
+import io
 import importlib.util
 import json
 import os
@@ -9,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -146,6 +148,88 @@ class AdapterExitTests(unittest.TestCase):
         evidence.mkdir()
         adapter.retain({'state': str(state)}, 'fixture-key', evidence, True)
         self.assertEqual((evidence / 'compiler-diagnostics.json').read_bytes(), diagnostic)
+
+    def run_submit_with_denied_diagnostic_copy(self, success):
+        adapter_spec = importlib.util.spec_from_file_location('queue_native_checks_adapter', ADAPTER)
+        adapter = importlib.util.module_from_spec(adapter_spec)
+        adapter_spec.loader.exec_module(adapter)
+        state = Path(self.temp.name) / ('state-success' if success else 'state-failure')
+        keydir = state / 'keys' / 'fixture-key'
+        completed = keydir / 'completed'
+        attempt = keydir / 'runs' / 'fixture-run'
+        attempt.mkdir(parents=True)
+        completed.mkdir(parents=True)
+        result = ('exit_code=0\n' if success else 'exit_code=17\n') + 'attempt=' + str(attempt) + '\n'
+        result_path = completed / 'result' if success else attempt / 'result'
+        result_path.write_text(result)
+        evidence = {
+            'stdout': b'compiler stdout\n',
+            'stderr': b'compiler stderr\n',
+            'meta': b'kind=cgen\n',
+            'command': b'compiler fixture\n',
+            'source-digest': b'digest=fixture\n',
+            'compiler-diagnostics.json': b'{"schema":"fixture"}\n',
+        }
+        for name, contents in evidence.items():
+            (attempt / name).write_bytes(contents)
+
+        directory = Path(self.temp.name) / ('queue-success' if success else 'queue-failure')
+        directory.mkdir()
+        config = {'client': 'fixture-client', 'state': str(state)}
+        stdout = io.BytesIO()
+        stderr = io.BytesIO()
+
+        class BinaryCapture:
+            def __init__(self, buffer):
+                self.buffer = buffer
+                self.text = []
+
+            def write(self, text):
+                self.text.append(text)
+
+        class QueueRun:
+            def __init__(self, argv, stdout, stderr):
+                stdout.write(b'queue stdout\n')
+                stderr.write(b'queue stderr\n')
+
+            def wait(self):
+                return 0 if success else 17
+
+        real_copyfile = adapter.shutil.copyfile
+
+        def deny_diagnostic_copy(source, destination):
+            if Path(source).name == 'compiler-diagnostics.json':
+                raise PermissionError(13, 'fixture denied optional diagnostics copy')
+            return real_copyfile(source, destination)
+
+        captured_stdout = BinaryCapture(stdout)
+        captured_stderr = BinaryCapture(stderr)
+
+        with mock.patch.object(adapter.subprocess, 'check_output', return_value='fixture-key'), \
+                mock.patch.object(adapter.subprocess, 'Popen', side_effect=QueueRun), \
+                mock.patch.object(adapter.shutil, 'copyfile', side_effect=deny_diagnostic_copy), \
+                mock.patch.object(adapter.sys, 'stdout', captured_stdout), \
+                mock.patch.object(adapter.sys, 'stderr', captured_stderr):
+            code = adapter.submit(config, directory, [], ['fixture-compiler'])
+
+        expected_code = 0 if success else 17
+        self.assertEqual(code, expected_code)
+        self.assertIn(b'compiler stdout\n', stdout.getvalue())
+        self.assertIn(b'compiler stderr\n', stderr.getvalue())
+        if success:
+            self.assertNotIn('queue stderr\n', captured_stderr.text)
+        else:
+            self.assertIn('queue stderr\n', captured_stderr.text)
+        self.assertTrue((directory / 'queue-result').is_file())
+        for name in ('stdout', 'stderr', 'meta', 'command', 'source-digest'):
+            self.assertEqual((directory / name).read_bytes(), evidence[name])
+        self.assertFalse((directory / 'compiler-diagnostics.json').exists())
+
+    def test_optional_diagnostic_copy_failure_preserves_successful_outcome(self):
+        self.run_submit_with_denied_diagnostic_copy(True)
+
+    def test_optional_diagnostic_copy_failure_preserves_failed_outcome(self):
+        self.run_submit_with_denied_diagnostic_copy(False)
 
     def test_toolchain_identity_uses_matching_packaged_versions(self):
         adapter_spec = importlib.util.spec_from_file_location('queue_native_checks_adapter', ADAPTER)

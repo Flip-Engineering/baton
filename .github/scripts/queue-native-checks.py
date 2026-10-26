@@ -241,10 +241,16 @@ def retain(config, key, directory, success):
     shutil.copyfile(result, directory / 'queue-result')
     fields = dict(line.split('=', 1) for line in result.read_text().splitlines() if '=' in line)
     attempt = Path(fields['attempt'])
-    for name in ('stdout', 'stderr', 'meta', 'command', 'source-digest', DIAGNOSTIC_FILE):
+    for name in ('stdout', 'stderr', 'meta', 'command', 'source-digest'):
         source = attempt / name
         if source.is_file():
             shutil.copyfile(source, directory / name)
+    diagnostics = attempt / DIAGNOSTIC_FILE
+    try:
+        if diagnostics.is_file():
+            shutil.copyfile(diagnostics, directory / DIAGNOSTIC_FILE)
+    except OSError:
+        pass
     for name, stream in [('stdout', sys.stdout.buffer), ('stderr', sys.stderr.buffer)]:
         path = directory / name
         if path.is_file():
