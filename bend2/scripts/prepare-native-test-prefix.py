@@ -95,6 +95,10 @@ def main():
     run('source-closure', [sys.executable, ROOT / 'bend2/scripts/source-closure.py',
                           '--source', ROOT, '--output', closure, '--commit', commit,
                           '--status', status, '--diff-output', output / 'source.diff'])
+    full_closure = Path(original['source_closure']['path'])
+    full_source = json.loads(full_closure.read_text())
+    full_tree = subprocess.check_output(['git', '-C', full_source['source'], 'rev-parse',
+                                         full_source['commit'] + '^{tree}'], text=True).strip()
     prefix = output / 'prefix'
     command = [sys.executable, ROOT / 'bend2/scripts/stage-native-install.py',
                '--prefix', prefix, '--focused-binary', output / 'baton-focused',
@@ -104,12 +108,15 @@ def main():
                '--repl-runtime-sha256', runtime['binary']['sha256'],
                '--repl-runtime-notices', output / 'repl-runtime/Bun-NOTICES']
     for role in ('focused', 'full', 'recovery', 'full-wrapper'):
-        command.extend(['--' + role + '-source-commit', commit,
-                        '--' + role + '-source-tree', tree,
-                        '--' + role + '-source-status', status,
-                        '--' + role + '-source-directory', ROOT,
-                        '--' + role + '-source-closure', closure,
-                        '--' + role + '-source-manifest-sha256', digest(closure)])
+        pin = (full_source['commit'], full_tree, full_source['status'],
+               full_source['source'], full_closure) if role == 'full' else (
+                   commit, tree, status, ROOT, closure)
+        command.extend(['--' + role + '-source-commit', pin[0],
+                        '--' + role + '-source-tree', pin[1],
+                        '--' + role + '-source-status', pin[2],
+                        '--' + role + '-source-directory', pin[3],
+                        '--' + role + '-source-closure', pin[4],
+                        '--' + role + '-source-manifest-sha256', digest(pin[4])])
     run('stage', command)
     environment = dict(os.environ)
     if driver:

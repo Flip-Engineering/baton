@@ -77,6 +77,12 @@ if [ "$recovery" = 1 ] && { [ "$focused" = 1 ] || [ "$router" = 1 ]; }; then
   printf '{"error":"build-mode-conflict","condition":"recovery-helper-with-other-native-entry","entry":"%s"}\n' "$entry_path" >&2
   exit 78
 fi
+if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ] ||
+   [ "$focused" = 1 ] || [ "$recovery" = 1 ]; then
+  python3 "$root/bend2/scripts/source-closure.py" --source "$root" \
+    --output "$output.source-closure.json" --commit "$(git rev-parse HEAD)" \
+    --status "$(git status --porcelain=v1)" --diff-output "$output.source.diff"
+fi
 generated=${BEND_GENERATED_C:-}
 if [ -z "$generated" ] && [ -n "${BATON2_MAIN_GENERATED_C:-}" ] &&
    [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
@@ -114,6 +120,7 @@ build_native_shards() {
   esac
   set -- --source "$output.c" \
     --native-entry "$entry_path" \
+    --source-closure "$output.source-closure.json" \
     --outdir "$native_binary.parallel" \
     --binary "$native_binary" \
     --shards 4 --jobs 4 --cc "${CC:-clang}" \

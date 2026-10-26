@@ -153,6 +153,10 @@ def compiler(mode, argv, key_only=False):
                 producer = json.loads(Path(argv[argv.index('--relink-from') + 1]).read_text())
                 inputs = producer['build']['object_files'] + [
                     row for process in producer['process_records'] for row in process['dependencies']]
+                inputs.append(producer['source_closure'])
+                closure = json.loads(Path(producer['source_closure']['path']).read_text())
+                inputs.extend({'path': str(Path(closure['source']) / row['path'])}
+                              for row in closure['files'])
                 for path in sorted({row['path'] for row in inputs}):
                     options.extend(['--aux', path])
             command = [sys.executable if argv[0] == 'python3' else argv[0], *argv[1:]]

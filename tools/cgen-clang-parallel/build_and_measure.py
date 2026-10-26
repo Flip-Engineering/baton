@@ -436,6 +436,16 @@ def validate_relink(receipt: dict, args: argparse.Namespace, link_extra: list[st
     entry = receipt.get("native_entry")
     if not entry or not entry['path'].endswith('/bend2/src/coordinator/main.bend'):
         raise RuntimeError("Router relinking requires the Main production entry")
+    closure = receipt.get("source_closure")
+    if not closure or file_identity(Path(closure["path"])) != closure:
+        raise RuntimeError("The original Main source closure is missing or changed")
+    sources = json.loads(Path(closure["path"]).read_text())
+    if sources.get("schema") != "baton2-source-closure-v1" or not sources.get("files"):
+        raise RuntimeError("The original Main source closure is incomplete")
+    for row in sources["files"]:
+        path = Path(sources["source"]) / row["path"]
+        if path.stat().st_size != row["bytes"] or sha256_file(path) != row["sha256"]:
+            raise RuntimeError("Original Main source changed: " + str(path))
     modes = ('BATON2_NATIVE_RECEIVER_ROUTER', 'BATON2_RECEIVE_FOCUSED', 'BATON2_RECOVERY_HELPER')
     if any(mode in flag for mode in modes for flag in receipt['link_flags']):
         raise RuntimeError("The original Main producer must use its general CLI wrapper")
@@ -476,6 +486,7 @@ def relink_router(args: argparse.Namespace, link_extra: list[str]) -> int:
                "producer_receipt": file_identity(args.relink_from),
                "source": original["source"], "toolchain": toolchain_receipt(args),
                "native_entry": original["native_entry"],
+               "source_closure": original["source_closure"],
                "compile_flags": original["compile_flags"],
                "link_flags": builder.link_flags + link_extra,
                "objects": original["build"]["object_files"],
@@ -490,6 +501,7 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--source", required=True, type=Path)
     ap.add_argument("--native-entry", type=Path, help="Bend entry used to generate this C input")
+    ap.add_argument("--source-closure", type=Path, help="complete source closure captured before C generation")
     ap.add_argument("--build-only", action="store_true", help="compile and link shards without an oracle run")
     ap.add_argument("--binary", type=Path, help="output binary path for --build-only")
     ap.add_argument("--ccache", help="optional ccache executable used as the compiler launcher")
@@ -570,6 +582,7 @@ def main(argv: list[str]) -> int:
                 "sha256": sha256_file(source),
             },
             "native_entry": file_identity(args.native_entry) if args.native_entry else None,
+            "source_closure": file_identity(args.source_closure) if args.source_closure else None,
             "compiler": {
                 "path": args.cc,
                 "version": subprocess.check_output(

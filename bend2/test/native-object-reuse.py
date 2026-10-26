@@ -2,6 +2,7 @@
 import argparse
 import copy
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -23,10 +24,18 @@ class NativeObjectReuse(unittest.TestCase):
         self.header = self.root / 'runtime.h'
         self.object = self.root / 'runtime.o'
         self.entry = self.root / 'bend2/src/coordinator/main.bend'
+        self.imported = self.root / 'bend2/src/coordinator/store.bend'
         self.entry.parent.mkdir(parents=True)
         for path, text in [(self.source, 'producer C'), (self.header, 'producer header'),
-                           (self.object, 'producer object'), (self.entry, 'producer Main')]:
+                           (self.object, 'producer object'), (self.entry, 'producer Main'),
+                           (self.imported, 'producer imported source')]:
             path.write_text(text)
+        self.closure = self.root / 'source-closure.json'
+        self.closure.write_text(json.dumps({
+            'schema': 'baton2-source-closure-v1', 'source': str(self.root),
+            'files': [{'path': str(path.relative_to(self.root)),
+                       'bytes': path.stat().st_size,
+                       'sha256': BUILD.sha256_file(path)} for path in [self.entry, self.imported]]}))
         self.toolchain = {'compiler': 'selected compiler identity'}
         self.args = argparse.Namespace(source=self.source, build_only=True, main_rename=True,
                                        cflags=['-O1', '-pthread'])
@@ -35,6 +44,7 @@ class NativeObjectReuse(unittest.TestCase):
             'schema': 'baton-cgen-clang-parallel-build-v1', 'mode': 'sharded-build',
             'source': BUILD.file_identity(self.source),
             'native_entry': BUILD.file_identity(self.entry),
+            'source_closure': BUILD.file_identity(self.closure),
             'compile_flags': ['-O1', '-pthread', '-Dmain=baton2_runtime_main'],
             'link_flags': ['-O1', '-pthread', 'wrapper.c', '-lsqlite3', '-lm'],
             'toolchain': self.toolchain,
@@ -83,6 +93,11 @@ class NativeObjectReuse(unittest.TestCase):
     def test_changed_generated_c_is_rejected(self):
         self.source.write_text('different generated C')
         with self.assertRaisesRegex(RuntimeError, 'generated C differs'):
+            self.validate()
+
+    def test_changed_imported_bend_source_is_rejected(self):
+        self.imported.write_text('different imported source')
+        with self.assertRaisesRegex(RuntimeError, 'Original Main source changed'):
             self.validate()
 
     def test_changed_toolchain_is_rejected(self):
