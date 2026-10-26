@@ -98,3 +98,6 @@ def Files.remove_attempt_file(database: String, directory: String, name: String)
 # Reports whether a path names a regular file without following a symlink.
 def Files.regular(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./files.c"
+
+def Files.stat(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./files.c"

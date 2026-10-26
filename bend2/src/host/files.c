@@ -538,15 +538,16 @@ static void baton_path_work(IoWork *work) {
     snprintf(next,sizeof next,"%llu",position+call->length);
     free(call->position);call->position=strdup(next);
     if(!call->position) call->error=ENOMEM;
-  } else if(call->operation==5) {
+  } else if((call->operation==5 || call->operation==7)) {
     struct stat info;
-    if(lstat(call->path,&info)) {call->error=errno;return;}
+    if((call->operation==7?stat(call->path,&info):lstat(call->path,&info))) {call->error=errno;return;}
     const char *kind=S_ISDIR(info.st_mode)?"dir":S_ISREG(info.st_mode)?"file":
       S_ISLNK(info.st_mode)?"symlink":"other";
     char text[256];
-    snprintf(text,sizeof text,"%s\t%u\t%llu\t%llu\t%llu",kind,
+    snprintf(text,sizeof text,"%s\t%u\t%llu\t%llu\t%llu\t%lld\t%u\t%u",kind,
       (unsigned)(info.st_mode&07777),(unsigned long long)info.st_dev,
-      (unsigned long long)info.st_ino,(unsigned long long)info.st_size);
+      (unsigned long long)info.st_ino,(unsigned long long)info.st_size,
+      (long long)info.st_mtime,(unsigned)info.st_uid,(unsigned)info.st_gid);
     call->text=strdup(text);
     if(!call->text) call->error=ENOMEM;
   } else if(call->operation==6) {
@@ -636,7 +637,10 @@ static int baton_data_write(int fd,const char *data,size_t length) {
 static void baton_data_work(IoWork *work) {
   BatonFileData *call=(BatonFileData *)work->data;
   if(call->operation==1) {
-    if(mkdir(call->first,call->mode&0777)) call->error=errno;
+    mode_t previous=umask(0007);
+    int result=mkdir(call->first,call->mode&01777);
+    int saved=errno;umask(previous);
+    if(result) call->error=saved;
   } else if(call->operation==2) {
     if(chmod(call->first,call->mode&07777)) call->error=errno;
   } else if(call->operation==3) {
@@ -649,7 +653,9 @@ static void baton_data_work(IoWork *work) {
     struct stat info;
     if(fstat(input,&info)) {call->error=errno;close(input);return;}
     if(!S_ISREG(info.st_mode)) {call->error=EINVAL;close(input);return;}
-    int output=open(call->second,O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW|O_CLOEXEC,0600);
+    mode_t previous=umask(0007);
+    int output=open(call->second,O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW|O_CLOEXEC,0660);
+    int saved=errno;umask(previous);errno=saved;
     if(output<0) {call->error=errno;close(input);return;}
     char chunk[65536];
     for(;;) {
@@ -660,6 +666,7 @@ static void baton_data_work(IoWork *work) {
       } else if(count==0) break;
       else if(errno!=EINTR) {call->error=errno;break;}
     }
+    if(!call->error && fsync(output)) call->error=errno;
     if(!call->error && fchmod(output,info.st_mode&0777)) call->error=errno;
     if(close(output) && !call->error) call->error=errno;
     if(close(input) && !call->error) call->error=errno;
@@ -768,4 +775,10 @@ static void __attribute__((constructor)) baton_data_properties_use(void) {io_eff
 #ifdef CID_FILES_MOVE
 static Term baton_data_move(Env e,Term *f,IoWork *w) {return baton_data_run(e,f,w,8);}
 static void __attribute__((constructor)) baton_data_move_use(void) {io_eff(CID_FILES_MOVE,baton_data_move,0);}
+#endif
+
+
+#ifdef CID_FILES_STAT
+static Term baton_path_stat(Env e,Term *f,IoWork *w) {return baton_path_run(e,f,w,7);}
+static void __attribute__((constructor)) baton_path_stat_use(void) {io_eff(CID_FILES_STAT,baton_path_stat,0);}
 #endif

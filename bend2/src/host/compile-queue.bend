@@ -7,18 +7,9 @@ import ./compile-queue-identity.bend as Identity
 import ./compile-queue-result.bend as Result
 import ./compile-queue-artifact.bend as Artifact
 
-# The identity seat declares schema(), source_closure, source_digest,
-# file_closure, compiler_closure, file_digest, text_digest, key(material) and
-# request_key(kind, cwd, root, source_root, entry, compiler, linker, version,
-# inputs, aux, artifacts, options, command). The request_key export is the
-# adapter used below; change only this adapter if its final shape differs. The
-# identity is schema v2 and its keys do not match the shell reference keys; a
-# shell completed result is evidence only.
-#
-# Result owns result formatting, parsing, verification, artifact copy and the
-# adoption record. Exports used here: write, write_adoption, verify_completed,
-# verify_adoption, copy_artifacts, retain_artifacts, retain_external,
-# receipt_write, latest_result, report_failure.
+# Standalone queue commands use identity-v2 keys and result-v2 artifacts.
+# Identity derives source and toolchain closures. Result verifies cached
+# artifact bytes, publishes artifacts and records external adoption.
 
 type Split is Data:
   Split{left: String, right: String}
