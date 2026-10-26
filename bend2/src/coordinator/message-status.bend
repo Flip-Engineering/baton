@@ -50,10 +50,11 @@ def settle_sql(+session: String, +attempt: String, +identity: String) -> String:
   ++ "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE recipient=" ++ q(session) ++ " AND id IN(SELECT r.message FROM message_reads r JOIN executions e ON e.id=r.attempt AND e.session=r.recipient JOIN sessions s ON s.id=r.recipient WHERE r.recipient=" ++ q(session) ++ " AND r.attempt=" ++ q(attempt) ++ " AND r.identity=" ++ q(identity) ++ " AND s.native=r.native AND r.handled IS NOT NULL) AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ q(session) ++ ");COMMIT;"
 
 # Turn-start input. Task, task-assignment and completion-confirmed messages
-# carry their complete bodies, so the admitted prompt records them as read and
-# turn settlement acknowledges them. DSH sessions receive all owed bodies in
-# the prompt; prompt_record_sql records those reads in the normal turn path
-# (#1084). Other harnesses carry pointers for other message kinds. The
+# carry their complete bodies. prompt_record_sql records their reads, and turn
+# settlement marks those read rows handled and sets their receipts. DSH
+# sessions receive all owed bodies in the prompt; prompt_record_sql records
+# those reads through the same attempt path (#1084). Other harnesses carry
+# pointers for other message kinds. The
 # completion-confirmed row in consol-788-sonnet-20261022 remained owed when
 # delivered by pointer and caused repeated turns (#1054).
 def prompt_selection_sql(+session: String, +cursor: String) -> String:
