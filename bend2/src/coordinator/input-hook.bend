@@ -16,7 +16,7 @@ def output_sql(+saved: String) -> String:
 def answered(answer: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match answer:
     case Fail{error}: IO.pure(Unit,Unit{})
-    case Done{output}: Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(output)),IO.pure(Unit,Unit{}),IO.print(Tx.trim_nl(output)))
+    case Done{+output}: Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(output)),IO.pure(Unit,Unit{}),IO.print(Tx.trim_nl(output)))
 
 def selected(db: String, saved: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match saved:
