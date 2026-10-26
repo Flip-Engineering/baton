@@ -40,18 +40,19 @@ def raise_attempt(+attempt: String, +peak: Nat, +failed: Bool) -> IO(Unit):
     Bool.pick(IO(Unit),failed,IO.pure(Unit,Unit{}),
       raise_paths(tier_paths(S.state(attempt),S.field(group,"group"),shape,S.field(meta,"entry"),mode,S.field(group,"compiler"),S.field(meta,"kind")),peak))
 
-def expected_result(result: Maybe<&2,Nat>, rest: List<&2,String>) -> IO(Maybe<&2,Nat>):
+def expected_result(+again_expected_paths: (@+paths: List<&2,String> -> IO(Maybe<&2,Nat>)), result: Maybe<&2,Nat>, rest: List<&2,String>) -> IO(Maybe<&2,Nat>):
   match result:
     case Some{peak}: IO.pure(Maybe<&2,Nat>,Some{peak})
-    case None{}: expected_paths(rest)
+    case None{}: again_expected_paths(rest)
 
+@unsafe
 def expected_paths( +paths: List<&2,String>) -> IO(Maybe<&2,Nat>):
   match paths:
     case Nil{}: IO.pure(Maybe<&2,Nat>,None{})
     case +path <> rest:
       do IO<Maybe<&2,Nat>>:
         +text : String <- Bool.pick(IO(String),String.is_empty(path),IO.pure(String,""),S.read(path))
-        expected_result(maybe_peak(text),rest)
+        expected_result(expected_paths, maybe_peak(text),rest)
 
 def expected(+state: String, +ticket: String) -> IO(Maybe<&2,Nat>):
   +base = state ++ "/peaks/"
