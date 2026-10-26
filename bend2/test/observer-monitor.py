@@ -373,16 +373,20 @@ class ObserverMonitor(unittest.TestCase):
         self.assertEqual(checkpoint_offset(self.attempt), len(stdout.encode()))
         self.assertEqual(custody_offset(self.attempt), len(stdout.encode()))
         self.assert_unknown_pending(native_exited=True)
+        expected_event = {'type': 'result', 'is_error': int(terminal['type'] == 'turn.failed'),
+                          'nativeEvent': terminal, 'result': expected_body}
         reports = self.row("SELECT count(*),min(body) FROM messages WHERE kind='report' "
                            "AND sender='parent' AND id NOT LIKE '%:exit'")
-        self.assertEqual(reports, (1, expected_body))
+        self.assertEqual(reports[0], 1)
+        if terminal['type'] == 'turn.failed':
+            # terminal_body_expr preserves the full error result in the report.
+            self.assertEqual(json.loads(reports[1]), expected_event)
+        else:
+            self.assertEqual(reports[1], expected_body)
         event_row = self.row("SELECT event FROM turns WHERE worker='parent' LIMIT 1")
         self.assertIsNotNone(event_row)
         event = json.loads(event_row[0])
-        self.assertEqual(event['type'], 'result')
-        self.assertEqual(event['result'], expected_body)
-        self.assertEqual(event['is_error'], int(terminal['type'] == 'turn.failed'))
-        self.assertEqual(event['nativeEvent'], terminal)
+        self.assertEqual(event, expected_event)
         self.assertEqual(self.row('SELECT count(*) FROM message_reads WHERE message=? AND recipient=?',
                                   'task', 'parent'), (0,))
         self.assertFalse((self.attempt / 'acknowledged').exists())
