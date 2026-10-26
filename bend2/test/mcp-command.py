@@ -444,9 +444,12 @@ class McpCommand(unittest.TestCase):
             self.assertTrue({'baton2_delivery_batch', 'baton2_outbox',
                              'baton2_message_batch'}.isdisjoint(tools))
             self.assertNotIn('baton2_input', tools)
+            self.assertNotIn('baton2_ack', tools)
             instructions = replies[0]['result']['instructions']
             self.assertIn('baton2_delivery reads one complete stored message', instructions)
             self.assertNotIn('baton2_delivery_batch', instructions)
+            self.assertNotIn('baton2_ack', instructions)
+            self.assertIn('Baton records each complete read internally', instructions)
 
     def test_native_control_tools_advertise_typed_arguments(self):
         self.command()

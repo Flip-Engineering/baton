@@ -498,6 +498,12 @@ def ack_then_retire(+db: String, +session: String, +attempt: String, +handle: U3
     acked : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.acknowledge(handle)
     ack_retire_ticket(db,session,attempt,handle,acked)
 
+def ack_if_owned(+db: String, +session: String, +attempt: String, +handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    +monitor : Bool <- Observer.monitor_handle(db,handle)
+    Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),monitor,
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),ack_then_retire(db,session,attempt,handle))
+
 def completed_wake(+db: String, session: String, cursor: String, finished: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     woke : Result<&1,&1,U32 & String,Unit> <- wake_due(db,session,cursor,target => wake_launch(db,target))
@@ -567,7 +573,7 @@ def completed(+db: String, +session: String, +id: String, +log: String, +attempt
     settled : Unit <- Accounts.attempt_settled(db,session,attempt,failed,terminal_event(outcome))
     observer_released : Unit <- release_observer(lock)
     native_released : Unit <- release_native(db,handle)
-    finished : Result<&1,&1,U32 & String,Unit> <- finish_pending(db,session,id,attempt,log,pending_cursor,outcome,deliveries,again,u => ack_then_retire(db,session,attempt,handle),superseded)
+    finished : Result<&1,&1,U32 & String,Unit> <- finish_pending(db,session,id,attempt,log,pending_cursor,outcome,deliveries,again,u => ack_if_owned(db,session,attempt,handle),superseded)
     wake_if_kept(db,session,pending_cursor,superseded,finished)
 
 # The recovery input records the workspace state and makes clearing the refused

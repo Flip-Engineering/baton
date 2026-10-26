@@ -104,12 +104,7 @@ law principal_startup_validates_before_assignment_and_dispatch:
   for +task: String
   {Control.start(db,session,harness,cmd,model,effort,cwd,log,id,task) == (do IO<String>:
   body : String <- IO.try(String,Text.Text.read(task))
-  +workspace : String <- IO.try(String,Host.Control.workspace(cwd))
-  schema : String <- IO.try(String,Store.commit(db,C.Session{session}))
-  endpoint : String <- Control.configured_endpoint(db,session,cmd,log,model,workspace)
-  configured : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ Control.start_sql(session,harness,model,effort,workspace,endpoint) ++ "COMMIT;"))
-  allowed : Unit <- Control.startup_refused(Tx.trim_nl(configured))
-  session_read : String <- IO.try(String,Store.read(db,C.Session{session}))
+  configured : String <- Control.start_setup(db,session,harness,cmd,model,effort,cwd,log)
   Control.dispatch_body(db,id,"operator",session,"task",body)) : IO(String)}
 
 def principal_startup_validates_before_assignment_and_dispatch(db,session,harness,cmd,model,effort,cwd,log,id,task):

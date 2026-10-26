@@ -57,6 +57,9 @@ def lifecycle_admitted(+db: String, +directory: String, start: P.RetainedStart) 
       line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
       lifecycle_observed(db,directory,handle,"",line)
 
+def decision_statement() -> IO(Unit):
+  IO.print(StopHook.decision_sql("worker","/attempt","{\"live\":true,\"identity\":\"identity-1\"}"))
+
 def lines(args: List<String>) -> IO(Unit):
   match args:
     case Nil{}: IO.pure(Unit,Unit{})
@@ -67,6 +70,7 @@ def lines(args: List<String>) -> IO(Unit):
 def route(args: List<String>) -> IO(Unit):
   match args:
     case "--stop-hook" <> Nil{}: StopHook.run()
+    case "decision-sql" <> Nil{}: decision_statement()
     case "arguments" <> Nil{}: lines(Claude.arguments("claude","claude-opus-5-5","high"))
     case "schema" <> Nil{}: IO.write(C.schema())
     case "read" <> db <> id <> Nil{}: Agent.execute(db,"worker",Actions.Read{[id]})

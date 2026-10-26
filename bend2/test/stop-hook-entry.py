@@ -111,8 +111,40 @@ class StopHook(unittest.TestCase):
         self.owe()
         decision = self.hook()
         self.assertEqual(decision['decision'], 'block')
-        self.assertIn('Baton holds 1 owed inputs for worker', decision['reason'])
+        self.assertIn('Baton holds 1 unread inputs for worker', decision['reason'])
         self.assertIn('[id: message:coordinator:mid-turn]:\nNew detail.\nRead the complete body with baton read message:coordinator:mid-turn.', decision['reason'])
+
+    def decision_sql(self):
+        result = subprocess.run([self.binary, 'decision-sql'], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result.stdout.strip()
+
+    def test_stop_allows_complete_current_read_and_keeps_stale_or_unread_input_owed(self):
+        self.request()
+        self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
+        self.db.execute("INSERT INTO executions VALUES('worker','attempt-1','/attempt','running')")
+        self.owe(kind='question')
+        sql = self.decision_sql()
+
+        unread = json.loads(self.db.execute(sql).fetchone()[0])
+        self.assertEqual(unread['decision'], 'block')
+        self.assertIn('Baton holds 1 unread inputs for worker', unread['reason'])
+
+        self.db.execute(
+            "INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES('attempt-1','message:coordinator:mid-turn','worker','native-1','identity-1')")
+        self.assertEqual(self.db.execute(sql).fetchone()[0], '')
+
+        for attempt, native, identity in (
+                ('old-attempt', 'native-1', 'identity-1'),
+                ('attempt-1', 'old-native', 'identity-1'),
+                ('attempt-1', 'native-1', 'old-identity')):
+            with self.subTest(attempt=attempt, native=native, identity=identity):
+                self.db.execute("DELETE FROM message_reads")
+                self.db.execute(
+                    "INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES(?,?,?,?,?)",
+                    (attempt, 'message:coordinator:mid-turn', 'worker', native, identity))
+                stale = json.loads(self.db.execute(sql).fetchone()[0])
+                self.assertEqual(stale['decision'], 'block')
 
     def test_stop_hook_active_keeps_blocking_owed_input(self):
         self.owe()
