@@ -191,6 +191,27 @@ def max_growth( +claims: List<&2,String>) -> Nat:
     case Nil{}: 0n
     case claim <> rest: Nat.max(S.nat(S.field(claim,"growth_kb")),max_growth(rest))
 
+def published_values(items: List<&2,String>) -> Bool:
+  match items:
+    case Nil{}: True{}
+    case item <> rest: Bool.and(Bool.not(String.is_empty(S.field(item,"current_kb"))),published_values(rest))
+
+def measured_view(memory: String, +legacy: String, cache: String, +measured: List<&2,String>, tickets: List<&2,String>) -> QueueView:
+  QueueView{memory ++ "reserve=" ++ Nat.show(max_growth(measured)) ++ "\nlegacy_pid=" ++ S.field(legacy,"pid") ++ "\nlegacy_entry=" ++ S.field(legacy,"entry") ++ "\nlegacy_kb=" ++ S.field(cache,"legacy_kb") ++ "\n",measured,tickets}
+
+# An empty fallback cache gives a current value only to a fresh owner usage
+# record. Other claims and legacy holders retain the process observation path.
+def observe_view(+state: String, +memory: String, +claims: List<&2,String>, +tickets: List<&2,String>, +legacy: String, +now: String) -> IO(QueueView):
+  do IO<QueueView>:
+    +seconds : Nat <- IO.pure(Nat,S.nat(String.take(now,Nat.sub(String.length(now),9n))))
+    +published : List<&2,String> <- published_claims(claims,state,"",seconds)
+    Bool.pick(IO(QueueView),Bool.and(U32.is_eq(S.number(S.field(legacy,"pid")),0),published_values(published)),
+      IO.pure(QueueView,measured_view(memory,legacy,"legacy_kb=0\n",published,tickets)),
+      do IO<QueueView>:
+        +cache : String <- observed(state,claims,legacy,now)
+        +measured : List<&2,String> <- published_claims(claims,state,cache,seconds)
+        IO.pure(QueueView,measured_view(memory,legacy,cache,measured,tickets)))
+
 def load(+state: String) -> IO(QueueView):
   do IO<QueueView>:
     +memory : String <- Proc.memory_info()
@@ -200,9 +221,7 @@ def load(+state: String) -> IO(QueueView):
     +tickets : List<&2,String> <- load_tickets(admission_names(waiting),state,Nil{})
     +legacy : String <- Proc.legacy(state)
     +now : String <- IO.try(String,P.HostPosix.now_ns())
-    +cache : String <- observed(state,claims,legacy,now)
-    +measured : List<&2,String> <- published_claims(claims,state,cache,S.nat(String.take(now,Nat.sub(String.length(now),9n))))
-    IO.pure(QueueView,QueueView{memory ++ "reserve=" ++ Nat.show(max_growth(measured)) ++ "\nlegacy_pid=" ++ S.field(legacy,"pid") ++ "\nlegacy_entry=" ++ S.field(legacy,"entry") ++ "\nlegacy_kb=" ++ S.field(cache,"legacy_kb") ++ "\n",measured,tickets})
+    observe_view(state,memory,claims,tickets,legacy,now)
 
 def sum_field( +claims: List<&2,String>, +name: String) -> Nat:
   match claims:
