@@ -153,6 +153,7 @@ def compiler(mode, argv, key_only=False):
                 producer = json.loads(Path(argv[argv.index('--relink-from') + 1]).read_text())
                 inputs = producer['build']['object_files'] + [
                     row for process in producer['process_records'] for row in process['dependencies']]
+                inputs.extend(row for row in producer['toolchain'].values() if row is not None)
                 inputs.append(producer['source_closure'])
                 closure = json.loads(Path(producer['source_closure']['path']).read_text())
                 inputs.extend({'path': str(Path(closure['source']) / row['path'])}
