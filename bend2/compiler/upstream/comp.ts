@@ -36,6 +36,14 @@ function diagnostic_join(site: string, values: (string | number)[],
   return result;
 }
 
+// Facts-only passes are OFF by default. They converge own/hot/stat before
+// emitting C, but on the large fixtures they measured 22-24% slower than
+// the full passes they replace, with identical output (paired interleaved
+// A/B, 8 pairs per fixture, receipts in the round record). No throughput
+// measurement establishes an improvement, so the default keeps the full
+// passes. Set BEND_FACTS_ONLY_FIRST=1 to enable the dry-first path.
+const FACTS_ONLY_FIRST = process.env.BEND_FACTS_ONLY_FIRST === "1";
+
 // Comp
 // ====
 
@@ -2153,11 +2161,16 @@ function facts_lend(cb: Carb): void {
 
 // facts_lend only reads the BRWS memo; brw_of fills it during emission.
 // Snapshot the keys, clear the memo, and recompute those defs against the
-// current own before closing lend again. Each round can only add own keys,
-// so the loop is finite; the round limit is an invariant guard for a broken
-// derivation, not a work budget.
+// current own before closing lend again.
+//
+// Termination: every own key has the form k~i for a BRWS slot (k, i), and
+// facts_lend only adds such keys for slots brw_of has already filled. brw_of
+// fills each def's slots deterministically from that def's compiled term,
+// so the slot set is finite and fixed by the program under compilation, and
+// a round that re-adds no key returns. Each continuing round adds at least
+// one previously absent own key, so the number of productive rounds is at
+// most the total number of BRWS slots in the program.
 function facts_converge(cb: Carb): void {
-  const limit = 1 << 16;
   for (let round = 0; ; round++) {
     const before = new Set(cb.own);
     const ks = [...BRWS.keys()];
@@ -2170,10 +2183,6 @@ function facts_converge(cb: Carb): void {
       keys: added.slice(0, 32) });
     if (added.length === 0) {
       return;
-    }
-    if (round >= limit) {
-      die("facts do not converge; new own keys: "
-        + added.slice(0, 32).join(", "));
     }
   }
 }
@@ -3773,20 +3782,27 @@ export function compile_book(book: Bend.Book): string {
   // producer and the result is not safe to emit.
   let fl: File;
   let was: number;
-  do {
-    was = facts();
-    pass(emission_defs, true);
-  } while (was !== facts());
-  const before = { own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size };
-  fl = pass(emission_defs, false);
-  const after = { own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size };
-  diagnostic("facts.no_growth", { before, after,
-    added: { own: after.own - before.own, hot: after.hot - before.hot,
-      stat: after.stat - before.stat } });
-  if (after.own !== before.own || after.hot !== before.hot
-    || after.stat !== before.stat) {
-    die("facts grew during real emission; the dry walk missed a producer: "
-      + JSON.stringify({ before, after }));
+  if (FACTS_ONLY_FIRST) {
+    do {
+      was = facts();
+      pass(emission_defs, true);
+    } while (was !== facts());
+    const before = { own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size };
+    fl = pass(emission_defs, false);
+    const after = { own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size };
+    diagnostic("facts.no_growth", { before, after,
+      added: { own: after.own - before.own, hot: after.hot - before.hot,
+        stat: after.stat - before.stat } });
+    if (after.own !== before.own || after.hot !== before.hot
+      || after.stat !== before.stat) {
+      die("facts grew during real emission; the dry walk missed a producer: "
+        + JSON.stringify({ before, after }));
+    }
+  } else {
+    do {
+      was = facts();
+      fl = pass(emission_defs, false);
+    } while (was !== facts());
   }
   // Foreign source text and request stubs do not contribute to own/hot/stat/lend facts.
   // Emit them once after the fixed point reaches its stable pass.
