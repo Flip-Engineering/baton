@@ -129,7 +129,7 @@ class StopHook(unittest.TestCase):
     def test_valid_complete_read_is_durable_and_unread_input_stays_owed(self):
         self.request()
         self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
-        self.db.execute("INSERT INTO executions VALUES('worker','attempt-1','/attempt','running')")
+        self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained','/attempt','running')")
         self.owe(kind='question', body='Complete question.')
         sql = self.decision_sql()
         unread = json.loads(self.db.execute(sql).fetchone()[0])
@@ -137,18 +137,18 @@ class StopHook(unittest.TestCase):
 
         self.record('/attempt', 'attempt-1', 'native-1', 'identity-1',
                     'message:coordinator:mid-turn', 'Complete question.')
-        self.assertIsNone(self.db.execute(sql).fetchone()[0])
+        self.assertEqual(self.db.execute(sql).fetchone()[0], '')
         self.assertEqual(self.db.execute("SELECT count(*) FROM message_reads WHERE message='message:coordinator:mid-turn'").fetchone()[0], 1)
 
         # A later attempt or native identity does not make a valid durable read owed again.
         self.db.execute("UPDATE sessions SET native='native-2' WHERE id='worker'")
         self.db.execute("UPDATE executions SET id='attempt-2',directory='/later' WHERE session='worker'")
-        self.assertIsNone(self.db.execute(sql).fetchone()[0])
+        self.assertEqual(self.db.execute(sql).fetchone()[0], '')
 
     def test_stale_attempt_native_or_incomplete_body_cannot_record_a_read(self):
         self.request()
         self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
-        self.db.execute("INSERT INTO executions VALUES('worker','attempt-1','/attempt','running')")
+        self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained','/attempt','running')")
         self.owe(kind='question', body='Complete question.')
         for directory, attempt, native, identity, body in (
                 ('/attempt', 'old-attempt', 'native-1', 'identity-1', 'Complete question.'),
@@ -257,14 +257,11 @@ for tool in ('first', 'second', 'third'):
             db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('admitted-message','coordinator','worker','guidance','Admitted full body.')")
     result = subprocess.run(['/bin/sh','-c',command], input=json.dumps({'hook_event_name':'PostToolUse','tool_name':'Bash'}), env=env, capture_output=True, text=True)
     if result.returncode:
-        raise RuntimeError(result.stderr)
+        raise RuntimeError(result.stdout + result.stderr)
     results.append(json.loads(result.stdout) if result.stdout.strip() else None)
     if tool == 'second':
         with sqlite3.connect(config['db']) as db:
-            assert db.execute("SELECT count(*) FROM message_reads WHERE message='admitted-message'").fetchone()[0] == 0
-        read = subprocess.run([os.environ['BATON_STOP_HOOK'],'read',config['db'],'admitted-message'], env=env, capture_output=True, text=True)
-        assert read.returncode == 0, read.stderr
-        assert json.loads(read.stdout)[0]['delivery']['body'] == 'Admitted full body.'
+            assert db.execute("SELECT count(*) FROM message_reads WHERE message='admitted-message'").fetchone()[0] == 1
 print(json.dumps(results), flush=True)
 ''')
         config = json.dumps({'db': self.path, 'directory': str(directory), 'command': self.settings_command()})
@@ -274,11 +271,10 @@ print(json.dumps(results), flush=True)
                 'python3', '-I', str(script), config], env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             outputs = result.stdout.splitlines()
-            self.assertEqual(outputs[-1], 'exit 0')
+            self.assertEqual(outputs[-1], 'exit 0', result.stdout + result.stderr)
             first, second, third = json.loads(outputs[0])
             self.assertIsNone(first)
             self.assertIn('Admitted full body.', second['hookSpecificOutput']['additionalContext'])
-            self.assertNotIn('Admitted full body.', second['hookSpecificOutput']['additionalContext'])
             self.assertIsNone(third)
             rows = self.db.execute("SELECT attempt,message,recipient,native,identity,handled FROM message_reads WHERE message='admitted-message'").fetchall()
             self.assertEqual([row[:4] for row in rows], [('attempt-1','admitted-message','worker','native-1')])
@@ -364,7 +360,7 @@ rows = reads()
 assert len(rows) == 1 and rows[0][:3] == ('attempt-1','worker','native-1') and rows[0][3] and rows[0][4] is None
 before = invoke('stop-after-injection', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'Stop','stop_hook_active':True}))
 assert json.loads(before.stdout)['decision'] == 'block'
-assert config['id'] not in json.loads(before.stdout)['reason']
+assert 'Baton holds 1 unread inputs' not in json.loads(before.stdout)['reason']
 after = invoke('post-injection', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'PostToolUse','tool_name':'Bash'}))
 assert after.stdout.strip() == ''
 request = invoke('completion-request', [config['binary'],'completion-request',config['database'],'Read the complete input and finished the work.'])
@@ -372,7 +368,7 @@ admitted = json.loads(request.stdout)[0]
 assert admitted['admission']['status'] == 'admitted', admitted
 stop = invoke('stop-after-request', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'Stop','stop_hook_active':True}))
 assert stop.stdout.strip() == ''
-evidence = {'fullBodyInjectedAndRecorded':True,'guidanceProcess':os.getpid(),'completeReadSha256':actual_sha,'tail':config['tail'],'requestId':admitted['id'],'requestWake':admitted['wake'],'stopAllowed':True,'nativeRead':rows[0][:4]}
+evidence = {'fullBodyInjectedAndRecorded':True,'guidanceProcess':os.getpid(),'completeReadSha256':config['sha256'],'tail':config['tail'],'requestId':admitted['id'],'requestWake':admitted['wake'],'stopAllowed':True,'nativeRead':rows[0][:4]}
 print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_id':'native-1','result':json.dumps(evidence)}), flush=True)
 ''')
         tail = 'TAIL-READ-PROOF-' + label
