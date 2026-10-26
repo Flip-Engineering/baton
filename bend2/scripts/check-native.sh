@@ -117,7 +117,11 @@ rm -f .scratch/bend2/route-change-identity.db
 sh bend2/scripts/build-native.sh bend2/test/quota-exhaustion-reset.bend .scratch/bend2/quota-exhaustion-reset-test
 rm -f .scratch/bend2/quota-exhaustion-reset.db
 .scratch/bend2/quota-exhaustion-reset-test .scratch/bend2/quota-exhaustion-reset.db
-BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
+native_prefix_work=$(mktemp -d "$root/.scratch/bend2/native-prefix.XXXXXXXX")
+"$PYTHON3" bend2/scripts/prepare-native-test-prefix.py --output "$native_prefix_work"
+BATON2_NATIVE_TEST_PREFIX="$native_prefix_work/prefix" \
+  BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" \
+  "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
 sh bend2/scripts/build-native.sh bend2/test/omp-home-preflight.bend .scratch/bend2/omp-home-preflight-test
 BATON2_EXE="$root/.scratch/bend2/omp-home-preflight-test" "$PYTHON3" bend2/test/omp-home-preflight.py
 sh bend2/scripts/build-native.sh bend2/test/launch-store.bend .scratch/bend2/launch-store-test

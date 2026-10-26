@@ -16,6 +16,13 @@ import traceback
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
+def production_environment(source):
+    prefix = source / '.scratch/bend2/production-prefix'
+    return {'BATON2_NATIVE_DELIVERY_PREFIX': str(prefix),
+            'BATON2_CODEX_BACKEND_PREFIX': str(prefix),
+            'BATON2_CODEX_FOCUSED_BINARY': str(prefix / 'bin/baton')}
+
+
 def write(path, value):
     path.write_text(json.dumps(value, indent=2) + '\n')
 
@@ -93,6 +100,8 @@ def main():
     scratch.mkdir(parents=True)
     for name in ('baton2', 'process-test', 'process-test.c', 'codex-proxy-test', 'instance-test', 'git-test', 'land-test'):
         shutil.copy2(ROOT / '.scratch/bend2' / name, scratch / name)
+    shutil.copytree(os.environ['BATON2_NATIVE_TEST_PREFIX'], scratch / 'production-prefix',
+                    symlinks=True)
     python = sys.argv[1]
     queue = [{'label': path.name, 'argv': [python, 'bend2/test/' + path.name]}
              for path in sorted((seed / 'bend2/test').glob('*.py'))]
@@ -133,7 +142,8 @@ def main():
             native_evidence.mkdir(mode=0o700)
             environment = dict(os.environ, TMPDIR=str(runtime / 'tmp'),
                                XDG_RUNTIME_DIR=str(runtime / 'runtime'),
-                               FINAL_NATIVE_CONTEXT_EVIDENCE=str(native_evidence))
+                               FINAL_NATIVE_CONTEXT_EVIDENCE=str(native_evidence),
+                               **production_environment(source))
             # The inherited Python shim records each selected suite in its original output directory.
             with (evidence / 'stdout').open('wb') as stdout, (evidence / 'stderr').open('wb') as stderr:
                 child = subprocess.Popen(spec['argv'], cwd=source, env=environment,

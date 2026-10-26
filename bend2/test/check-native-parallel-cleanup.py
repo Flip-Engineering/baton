@@ -75,9 +75,11 @@ class NativeSuiteCleanupTest(unittest.TestCase):
         (root / '.scratch/bend2').mkdir(parents=True)
         (root / '.gitignore').write_text('.scratch/\n')
         (root / 'bend2/test/one.py').write_text('print("fixture")\n')
-        for name in ('baton2', 'process-test', 'process-test.c', 'instance-test',
+        for name in ('baton2', 'process-test', 'process-test.c', 'codex-proxy-test', 'instance-test',
                      'git-test', 'land-test'):
             (root / '.scratch/bend2' / name).write_text(name)
+        (root / '.scratch/bend2/prefix').mkdir()
+        (root / '.scratch/bend2/prefix/copy-sentinel').write_text('complete prefix copy')
         subprocess.run(['git', 'init', '-q', '-b', 'main', str(root)], check=True)
         subprocess.run(['git', '-C', str(root), 'config', 'user.name', 'Fixture'], check=True)
         subprocess.run(['git', '-C', str(root), 'config', 'user.email',
@@ -98,6 +100,11 @@ class NativeSuiteCleanupTest(unittest.TestCase):
             if not kwargs.get('start_new_session'):
                 return real_popen(argv, *args, **kwargs)
             env = kwargs['env']
+            local = Path(kwargs['cwd']) / '.scratch/bend2/production-prefix'
+            self.assertEqual(Path(env['BATON2_NATIVE_DELIVERY_PREFIX']), local)
+            self.assertEqual(Path(env['BATON2_CODEX_BACKEND_PREFIX']), local)
+            self.assertEqual(Path(env['BATON2_CODEX_FOCUSED_BINARY']), local / 'bin/baton')
+            self.assertEqual((local / 'copy-sentinel').read_text(), 'complete prefix copy')
             destination = Path(env['FINAL_NATIVE_CONTEXT_EVIDENCE'])
             (destination / 'fixture.json').write_text(json.dumps({'argv': argv}))
             return FinishedProcess()
@@ -108,7 +115,9 @@ class NativeSuiteCleanupTest(unittest.TestCase):
                              return_value=remaining_process_group), \
                 patch.object(MODULE.subprocess, 'Popen', side_effect=fake_popen), \
                 patch.object(sys, 'argv', ['check-native-parallel.py', sys.executable]), \
-                patch.dict(os.environ, environment, clear=False), redirect_stdout(stream):
+                patch.dict(os.environ, dict(environment,
+                    BATON2_NATIVE_TEST_PREFIX=str(root / '.scratch/bend2/prefix')),
+                    clear=False), redirect_stdout(stream):
             for key in ('BATON2_LINUX_RUN',):
                 if key not in environment:
                     os.environ.pop(key, None)

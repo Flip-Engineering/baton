@@ -24,6 +24,18 @@ BUN_NOTICES = {
     'url': 'https://raw.githubusercontent.com/oven-sh/bun/0d9b296af33f2b851fcbf4df3e9ec89751734ba4/LICENSE.md',
     'sha256': '2c6160ec8fb853f7e8f97d9b249e756c9b0ac44860a68b6bf4f1b0bcbc5c3741',
 }
+BUN_RUNTIMES = {
+    ('Darwin', 'arm64'): {'platform': 'darwin-arm64', 'archive': BUN_ARCHIVE,
+                          'member': 'bun-darwin-aarch64/bun'},
+    ('Linux', 'x86_64'): {
+        'platform': 'linux-x64',
+        'archive': {
+            'url': 'https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64.zip',
+            'sha256': '951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f',
+        },
+        'member': 'bun-linux-x64/bun',
+    },
+}
 
 
 def save(path, value):
@@ -76,22 +88,22 @@ def download(pin, target):
 
 
 def runtime_inputs(args):
-    assert platform.system() == 'Darwin' and platform.machine() == 'arm64'
+    selected = BUN_RUNTIMES[(platform.system(), platform.machine())]
     args.output.mkdir(parents=True, exist_ok=False)
-    archive = args.output / 'bun-darwin-aarch64.zip'
+    archive = args.output / Path(selected['archive']['url']).name
     notices = args.output / 'Bun-NOTICES'
-    download(BUN_ARCHIVE, archive)
+    download(selected['archive'], archive)
     download(BUN_NOTICES, notices)
     binary = args.output / 'bun'
     with zipfile.ZipFile(archive) as packed:
-        member = packed.getinfo('bun-darwin-aarch64/bun')
+        member = packed.getinfo(selected['member'])
         assert not member.is_dir()
         with packed.open(member) as source, binary.open('xb') as output:
             shutil.copyfileobj(source, output)
     binary.chmod(0o755)
     save(args.output / 'runtime.json', {
-        'schema': 'baton2-repl-runtime-v1', 'version': '1.3.14', 'platform': 'darwin-arm64',
-        'archive': {**BUN_ARCHIVE, **fact(archive)},
+        'schema': 'baton2-repl-runtime-v1', 'version': '1.3.14', 'platform': selected['platform'],
+        'archive': {**selected['archive'], **fact(archive)},
         'notices': {**BUN_NOTICES, **fact(notices)}, 'binary': fact(binary),
     })
 
