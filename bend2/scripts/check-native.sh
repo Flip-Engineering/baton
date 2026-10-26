@@ -7,6 +7,7 @@ if python3 --version 2>/dev/null; then
 else
   PYTHON3=/usr/bin/python3
 fi
+"$PYTHON3" bend2/test/queue-native-checks.py
 sh bend2/scripts/build-native.sh
 "$PYTHON3" bend2/test/package-receiver-layout.py
 sh bend2/test/bend-launch-guard.sh

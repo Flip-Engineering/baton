@@ -173,6 +173,14 @@ def main():
     if mode == 'execute-cgen':
         output, *command = argv
         code = subprocess.run(command).returncode
+        if code < 0:
+            # OOM #1068 killed the compiler with SIGKILL. Preserve its signal
+            # disposition when the queue observes this adapter process.
+            signum = -code
+            if signum not in (signal.SIGKILL, signal.SIGSTOP):
+                signal.signal(signum, signal.SIG_DFL)
+            os.kill(os.getpid(), signum)
+            return 128 + signum
         if not code and '-o' not in command:
             Path(output).write_text('/* Compiler check completed successfully. */\n')
         return code
