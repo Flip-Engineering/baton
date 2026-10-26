@@ -37,6 +37,9 @@ def state_statements() -> IO(Unit):
     recorded : Unit <- IO.print(InputHook.record_sql("worker","/attempt","receive:worker:100:feed","native-1","identity-1","@INPUT@"))
     IO.print(Status.settle_sql("worker","receive:worker:100:feed","identity-1"))
 
+def decision_statement() -> IO(Unit):
+  IO.print(StopHook.decision_sql("worker","/attempt","{\"live\":true,\"identity\":\"identity-1\"}"))
+
 def lines(args: List<String>) -> IO(Unit):
   match args:
     case Nil{}: IO.pure(Unit,Unit{})
@@ -49,6 +52,7 @@ def route(args: List<String>) -> IO(Unit):
     case "--stop-hook" <> Nil{}: StopHook.run()
     case "arguments" <> Nil{}: lines(Claude.arguments("claude","claude-opus-5-5","high"))
     case "state-statements" <> Nil{}: state_statements()
+    case "decision-sql" <> Nil{}: decision_statement()
     case "--instance-owner" <> database <> Nil{}: IO.try(Unit,Custody.Instance.owner(database))
     case "shutdown" <> database <> Nil{}: IO.try(Unit,Custody.Instance.shutdown(database))
     case "admit" <> database <> +directory <> cwd <> program: do IO<Unit>:
