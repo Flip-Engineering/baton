@@ -60,18 +60,18 @@ def sorted( +values: List<&2,String>) -> List<&2,String>:
     case Nil{}: Nil{}
     case value <> rest: insert(value,sorted(rest))
 
-def collect_kind(+again_collect: (@+root: String -> @+relative: String -> IO(List<&2,String>)), kind: String, root: String, relative: String) -> IO(List<&2,String>):
+def collect_kind(~again_collect: (@+root: String -> @+relative: String -> IO(List<&2,String>)), kind: String, root: String, relative: String) -> IO(List<&2,String>):
   match kind:
     case "file": IO.pure(List<&2,String>,[relative])
     case "dir": again_collect(root,relative)
     case other: IO.pure(List<&2,String>,Nil{})
 
-def collect_observed(+again_collect: (@+root: String -> @+relative: String -> IO(List<&2,String>)), observed: Result<&1,&1,U32 & String,String>, +root: String, +relative: String) -> IO(List<&2,String>):
+def collect_observed(~again_collect: (@+root: String -> @+relative: String -> IO(List<&2,String>)), observed: Result<&1,&1,U32 & String,String>, +root: String, +relative: String) -> IO(List<&2,String>):
   match observed:
     case Fail{error}: IO.pure(List<&2,String>,Nil{})
     case Done{record}: collect_kind(again_collect, Q.observation_kind(record),root,relative)
 
-def collect_names(+again_collect: (@+root: String -> @+relative: String -> IO(List<&2,String>)),  +names: List<&2,String>, +root: String, +relative: String) -> IO(List<&2,String>):
+def collect_names(~again_collect: (@+root: String -> @+relative: String -> IO(List<&2,String>)),  +names: List<&2,String>, +root: String, +relative: String) -> IO(List<&2,String>):
   match names:
     case Nil{}: IO.pure(List<&2,String>,Nil{})
     case SNil{} <> rest: collect_names(again_collect, rest,root,relative)
@@ -83,7 +83,7 @@ def collect_names(+again_collect: (@+root: String -> @+relative: String -> IO(Li
         +remaining : List<&2,String> <- collect_names(again_collect, rest,root,relative)
         IO.pure(List<&2,String>,append(found,remaining))
 
-def collect_listing(+again_collect: (@+root: String -> @+relative: String -> IO(List<&2,String>)), result: Result<&1,&1,U32 & String,String>, +root: String, +relative: String) -> IO(List<&2,String>):
+def collect_listing(~again_collect: (@+root: String -> @+relative: String -> IO(List<&2,String>)), result: Result<&1,&1,U32 & String,String>, +root: String, +relative: String) -> IO(List<&2,String>):
   match result:
     case Fail{error}: IO.pure(List<&2,String>,Nil{})
     case Done{listing}: collect_names(again_collect, String.lines(listing),root,relative)
@@ -114,7 +114,7 @@ def CompileQueueArtifact.digest( +path: String) -> IO(Result<&1,&1,U32 & String,
         D.HostDigest.text(rows),
       D.HostDigest.file(resolved))
 
-def remove_children(+again_CompileQueueArtifact_remove: (@+path: String -> IO(Result<&1,&1,U32 & String,Unit>)),  +names: List<&2,String>, +path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def remove_children(~again_CompileQueueArtifact_remove: (@+path: String -> IO(Result<&1,&1,U32 & String,Unit>)),  +names: List<&2,String>, +path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match names:
     case Nil{}: F.Files.rmdir(path)
     case SNil{} <> rest: remove_children(again_CompileQueueArtifact_remove, rest,path)
@@ -123,7 +123,7 @@ def remove_children(+again_CompileQueueArtifact_remove: (@+path: String -> IO(Re
         removed : Unit <- IO.try(Unit,again_CompileQueueArtifact_remove(path ++ "/" ++ name))
         remove_children(again_CompileQueueArtifact_remove, rest,path)
 
-def remove_observed(+again_CompileQueueArtifact_remove: (@+path: String -> IO(Result<&1,&1,U32 & String,Unit>)), observed: Result<&1,&1,U32 & String,String>, +path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def remove_observed(~again_CompileQueueArtifact_remove: (@+path: String -> IO(Result<&1,&1,U32 & String,Unit>)), observed: Result<&1,&1,U32 & String,String>, +path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match observed:
     case Fail{(+code,message)}:
       Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),U32.is_eq(code,2),
@@ -142,7 +142,7 @@ def CompileQueueArtifact.remove( +path: String) -> IO(Result<&1,&1,U32 & String,
     observed : Result<&1,&1,U32 & String,String> <- F.Files.lstat(path)
     remove_observed(CompileQueueArtifact.remove, observed,path)
 
-def copy_children(+again_CompileQueueArtifact_copy: (@+source: String -> @+staging: String -> IO(Result<&1,&1,U32 & String,Unit>)),  +names: List<&2,String>, +source: String, +destination: String, +mode: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+def copy_children(~again_CompileQueueArtifact_copy: (@+source: String -> @+staging: String -> IO(Result<&1,&1,U32 & String,Unit>)),  +names: List<&2,String>, +source: String, +destination: String, +mode: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   match names:
     case Nil{}: F.Files.chmod(destination,mode)
     case SNil{} <> rest: copy_children(again_CompileQueueArtifact_copy, rest,source,destination,mode)
@@ -161,7 +161,7 @@ def created_directory(created: Result<&1,&1,U32 & String,Unit>, +destination: St
           Q.check_directory(observed,False{}),
         IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,message)}))
 
-def copy_kind(+again_CompileQueueArtifact_copy: (@+source: String -> @+staging: String -> IO(Result<&1,&1,U32 & String,Unit>)), kind: String, +mode: U32, +source: String, +destination: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def copy_kind(~again_CompileQueueArtifact_copy: (@+source: String -> @+staging: String -> IO(Result<&1,&1,U32 & String,Unit>)), kind: String, +mode: U32, +source: String, +destination: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match kind:
     case "file": F.Files.copy_file(source,destination)
     case "dir":
@@ -176,7 +176,7 @@ def copy_kind(+again_CompileQueueArtifact_copy: (@+source: String -> @+staging: 
         F.Files.symlink(target,destination)
     case other: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(22,"unsupported artifact kind")})
 
-def copy_observed(+again_CompileQueueArtifact_copy: (@+source: String -> @+staging: String -> IO(Result<&1,&1,U32 & String,Unit>)), +record: String, source: String, destination: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def copy_observed(~again_CompileQueueArtifact_copy: (@+source: String -> @+staging: String -> IO(Result<&1,&1,U32 & String,Unit>)), +record: String, source: String, destination: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   copy_kind(again_CompileQueueArtifact_copy, Q.observation_kind(record),U32.mod(Q.number(Q.at(String.split(record,Char.from_u32(9)),1)),512),source,destination)
 
 @unsafe

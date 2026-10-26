@@ -55,7 +55,7 @@ def divide_ten(value: Wide64) -> Wide64 & U32:
       (Wide64{U32.add(U32.mul(U32.div(a,10),65536),U32.div(b,10)),U32.add(U32.mul(U32.div(c,10),65536),U32.div(d,10))},U32.mod(d,10))
 
 @unsafe
-def show_go(+again_show_step: (@pair: Wide64 & U32 -> @acc: String -> String), +value: Wide64, +acc: String) -> String:
+def show_go(~again_show_step: (@pair: Wide64 & U32 -> @acc: String -> String), +value: Wide64, +acc: String) -> String:
   Bool.pick(String,equal(value,zero()),acc,again_show_step(divide_ten(value),acc))
 
 @unsafe

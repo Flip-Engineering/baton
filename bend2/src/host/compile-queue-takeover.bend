@@ -66,7 +66,7 @@ def has_pid( +items: List<&2,String>, +pid: U32) -> Bool:
 
 @unsafe
 
-def stopped_match_6(+again_stopped: (@+pid: U32 -> @+start: String -> IO(Bool)), +start: String, +pid: U32, live: Result<&1,&1,U32 & String,U32>) -> IO(Bool):
+def stopped_match_6(~again_stopped: (@+pid: U32 -> @+start: String -> IO(Bool)), +start: String, +pid: U32, live: Result<&1,&1,U32 & String,U32>) -> IO(Bool):
   match live:
     case Fail{error}: IO.pure(Bool,False{})
     case Done{value}:
