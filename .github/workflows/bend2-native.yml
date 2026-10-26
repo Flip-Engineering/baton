@@ -94,7 +94,7 @@ jobs:
     env:
       CC: /usr/bin/clang-19
       BEND_NO_TELEMETRY: '1'
-      BUN_JSC_maxPerThreadStackUsage: '67108864'
+      BUN_JSC_maxPerThreadStackUsage: '1073741824'
     steps:
       - name: Validate exact source commit
         shell: bash
@@ -284,7 +284,7 @@ jobs:
     env:
       CC: /usr/bin/clang-19
       BEND_NO_TELEMETRY: '1'
-      BUN_JSC_maxPerThreadStackUsage: '67108864'
+      BUN_JSC_maxPerThreadStackUsage: '1073741824'
       BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.target_commit }}
       BATON2_TARGET_BUILD_RUN: ${{ inputs.target_build_run }}
       BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/emitter-bun144-20261026/bend-2.0.25-linux-x64.tar.gz' }}
@@ -529,7 +529,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export BUN_JSC_maxPerThreadStackUsage=67108864
+          export BUN_JSC_maxPerThreadStackUsage=1073741824
           unset BEND_GENERATED_C
           settings="$BATON2_NATIVE_RUN/build-settings"
           test ! -e "$settings"

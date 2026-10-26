@@ -14,7 +14,7 @@ if [ ! -x "$compiler" ]; then
 fi
 (
   ulimit -s unlimited 2>/dev/null || true
-  BEND_NO_TELEMETRY=1 BUN_JSC_maxPerThreadStackUsage="${BUN_JSC_maxPerThreadStackUsage:-67108864}" "$compiler" bend2/src/coordinator/laws.bend --check-only
+  BEND_NO_TELEMETRY=1 BUN_JSC_maxPerThreadStackUsage="${BUN_JSC_maxPerThreadStackUsage:-1073741824}" "$compiler" bend2/src/coordinator/laws.bend --check-only
 )
 sh bend2/scripts/build-native.sh
 "$PYTHON3" bend2/test/package-receiver-layout.py

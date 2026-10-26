@@ -2,6 +2,11 @@
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
 cd "$root"
+# Full coordinator cgen exceeds a 64 MB JavaScriptCore stack during C
+# emission on current main (run 40389480370 target job, queue key
+# 8f5c564e). The runner OS stack is unlimited; this cap is the binding
+# limit, so default it to 1 GiB unless the caller sets it.
+export BUN_JSC_maxPerThreadStackUsage="${BUN_JSC_maxPerThreadStackUsage:-1073741824}"
 entry=${1:-bend2/src/coordinator/main.bend}
 output=${2:-.scratch/bend2/baton2}
 mkdir -p "$(dirname -- "$output")"
