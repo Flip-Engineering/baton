@@ -1,10 +1,9 @@
 #!/bin/sh
 # One-time bootstrap for the shared compile queue executable.
 #
-# The bootstrap waits for heavy.lock, which serializes bootstraps with each
-# other and with a queue that still uses the lock. Queue jobs do not take
-# heavy.lock; the bootstrap registers its memory with the admission rule as a
-# running job, so queued jobs count it.
+# The bootstrap holds heavy.lock while it compiles and links the queue
+# executable. Queue C-generation requests use the same lock until their C
+# output is ready, so the lock serializes bootstrap with queue C generation.
 #
 # This is the only supported pre-queue compilation. It builds exactly
 # bend2/src/host/compile-queue.bend to the requested output and accepts no
@@ -120,19 +119,6 @@ printf 'lock_path=%s\nlock_identity=%s\nlock_descriptor=8\nphase=waiting\n' \
 flock -x 8
 phase=compile
 printf 'phase=%s\nacquired_ns=%s\n' "$phase" "$(date +%s%N)" >> "$telemetry"
-# Register with the admission rule. The claim file stays locked through
-# descriptor 7 while this script or a compiler it started holds the descriptor.
-mkdir -p "$state/admission/running" "$state/admission/waiting"
-exec 6>"$state/admission/lock"
-flock -x 6
-claim_ns=$(date +%s%N)
-claim=$(printf '%s/admission/running/%020d-%010d' "$state" "$claim_ns" "$$")
-exec 7>"$claim"
-flock -x -n 7
-printf 'pid=%s\nstarttime=%s\nroot=%s\nmeasure=tree\nkey=bootstrap\ngroup=\nexpected_kb=0\nhistory=1\nbackfill=0\nadmitted_ns=%s\n' \
-  "$$" "$(process_start "$$")" "$$" "$claim_ns" >&7
-exec 6>&-
-printf 'admission_claim=%s\n' "$claim" >> "$telemetry"
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/baton2-queue-bootstrap.XXXXXXXX")
 printf 'scratch=%s\n' "$scratch" >> "$telemetry"
 run_phase() {
