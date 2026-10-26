@@ -287,10 +287,11 @@ print(json.dumps(results), flush=True)
 
     def combined_lifecycle(self, body, label):
         ident = 'lifecycle-guidance'
-        self.owe(ident=ident, body=body)
         directory = self.home / 'lifecycle-attempt'
         self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
         self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained',?,'running')", (str(directory),))
+        body_path = self.home / 'lifecycle-body.txt'
+        body_path.write_text(body, encoding='utf-8')
         script = self.home / 'lifecycle.py'
         script.write_text(r'''import hashlib, json, os, pathlib, sqlite3, subprocess, sys
 config = json.loads(sys.argv[1])
@@ -306,6 +307,11 @@ def invoke(name, args, data=None):
 def reads():
     with sqlite3.connect(config['database']) as db:
         return db.execute('SELECT attempt,recipient,native,identity,handled FROM message_reads WHERE message=?', (config['id'],)).fetchall()
+with sqlite3.connect(config['database']) as db:
+    assert db.execute("SELECT phase FROM executions WHERE session='worker' AND id='attempt-1'").fetchone() == ('running',)
+    assert db.execute('SELECT count(*) FROM messages WHERE id=?', (config['id'],)).fetchone()[0] == 0
+    db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,'coordinator','worker','guidance',?)",
+               (config['id'], pathlib.Path(config['bodyPath']).read_text(encoding='utf-8')))
 hook = invoke('pointer', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'PostToolUse','tool_name':'Bash'}))
 context = json.loads(hook.stdout)['hookSpecificOutput']['additionalContext']
 assert 'baton read ' + config['id'] in context
@@ -328,13 +334,13 @@ admitted = json.loads(request.stdout)[0]
 assert admitted['admission']['status'] == 'admitted', admitted
 stop = invoke('stop-after-request', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'Stop','stop_hook_active':True}))
 assert stop.stdout.strip() == ''
-evidence = {'pointerWithoutRead':True,'completeReadSha256':actual_sha,'tail':config['tail'],'requestId':admitted['id'],'requestWake':admitted['wake'],'stopAllowed':True,'nativeRead':rows[0][:4]}
+evidence = {'pointerWithoutRead':True,'guidanceProcess':os.getpid(),'completeReadSha256':actual_sha,'tail':config['tail'],'requestId':admitted['id'],'requestWake':admitted['wake'],'stopAllowed':True,'nativeRead':rows[0][:4]}
 print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_id':'native-1','result':json.dumps(evidence)}), flush=True)
 ''')
         tail = 'TAIL-READ-PROOF-' + label
         self.assertTrue(body.endswith(tail))
         config = {'database': self.path, 'directory': str(directory), 'binary': self.binary,
-                  'id': ident, 'sha256': hashlib.sha256(body.encode()).hexdigest(),
+                  'id': ident, 'bodyPath': str(body_path), 'sha256': hashlib.sha256(body.encode()).hexdigest(),
                   'tail': tail, 'label': label, 'evidence': os.environ.get('BATON2_HOOK_EVIDENCE', '')}
         env = dict(self.env, BATON_STOP_HOOK=self.binary)
         try:
@@ -352,7 +358,16 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             self.assertEqual(self.db.execute("SELECT phase,status FROM executions WHERE id='attempt-1'").fetchone(), ('exited','exit 0'))
             self.assertEqual(self.db.execute("SELECT recipient,kind FROM messages WHERE id=?", (evidence['requestId'],)).fetchone(), ('coordinator','completion-request'))
             self.assertEqual(self.db.execute("SELECT count(*) FROM turns WHERE id='attempt-1'").fetchone()[0], 1)
+            self.assertEqual(self.db.execute('SELECT attempt,recipient,native,identity,handled FROM message_reads WHERE message=?',
+                (ident,)).fetchall(), [tuple(evidence['nativeRead']) + (None,)])
+            self.assertEqual(self.db.execute('SELECT body FROM messages WHERE id=?', (ident,)).fetchone()[0], body)
             self.assertIsNone(self.db.execute('SELECT receipt FROM messages WHERE id=?', (ident,)).fetchone()[0])
+            self.assertEqual(self.db.execute("SELECT count(*) FROM messages m WHERE m.recipient='worker' AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=m.id AND r.recipient=m.recipient)").fetchone()[0], 0)
+            self.assertEqual(self.db.execute("SELECT count(*) FROM messages WHERE recipient='worker' AND kind='completion-confirmed'").fetchone()[0], 0)
+            self.assertIsNone(self.hook(active=True))
+            self.owe(ident='unread-after-exit', body='Input committed after the native exit.')
+            self.assertEqual(self.db.execute("SELECT m.id FROM messages m WHERE m.recipient='worker' AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=m.id AND r.recipient=m.recipient)").fetchall(), [('unread-after-exit',)])
+            self.assertIn('Baton holds 1 owed inputs', self.hook(active=True)['reason'])
         finally:
             subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True)
 
