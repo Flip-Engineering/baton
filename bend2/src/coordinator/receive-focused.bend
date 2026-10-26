@@ -11,6 +11,7 @@ import ./stop-hook.bend as StopHook
 import ./turn.bend as Turn
 import ./native-input.bend as NativeInput
 import ./codex-inbox.bend as CodexInbox
+import ./agent-command.bend as AgentCommand
 import ../git/process.bend as GitProcess
 import ../git/text.bend as Tx
 import ../git/types.bend as T
@@ -180,6 +181,7 @@ def register_receiver_cwd(selected: Bool, +db: String, +session: String, +cmd: S
 
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
+    case +db <> "agent-worker-context" <> Nil{}: AgentCommand.worker_context(db)
     case +db <> "codex-inbox-session" <> +session <> +native <> +message <> +token <> Nil{}:
       IO.try(Unit,CodexInbox.session(db,session,native,message,token))
     case +db <> "codex-inbox-session" <> +session <> +native <> +message <> Nil{}:

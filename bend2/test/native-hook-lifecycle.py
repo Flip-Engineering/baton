@@ -77,7 +77,7 @@ class NativeHookLifecycle(unittest.TestCase):
         self.focused = self.prefix / 'bin/baton'
         self.database = self.directory / 'fixture.sqlite'
         self.environment = {key: value for key, value in os.environ.items()
-                            if not key.startswith('BATON_') and key != 'CODEX_THREAD_ID'}
+                            if not key.startswith('BATON') and key != 'CODEX_THREAD_ID'}
         self.environment.update(HOME=str(self.directory / 'home'),
                                 XDG_RUNTIME_DIR=str(self.directory / 'runtime'))
         Path(self.environment['XDG_RUNTIME_DIR']).mkdir(mode=0o700)

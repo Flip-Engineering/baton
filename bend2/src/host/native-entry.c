@@ -179,6 +179,10 @@ static int codex_inbox_args(int argc,char **argv) {
     !strcmp(argv[2],"codex-inbox-follow") || !strcmp(argv[2],"codex-inbox-deliver") ||
     !strcmp(argv[2],"codex-input-witness"));
 }
+
+static int worker_context_args(int argc,char **argv) {
+  return argc==3 && !strcmp(argv[2],"agent-worker-context");
+}
 #endif
 
 #ifdef BATON2_RECEIVE_FOCUSED
@@ -187,6 +191,7 @@ static int codex_inbox_args(int argc,char **argv) {
 static int focused_receiver_verb(int argc,char **argv) {
   if(argc<2 || native_help_request(argc,argv)) return 0;
   if(codex_inbox_args(argc,argv)) return 1;
+  if(worker_context_args(argc,argv)) return 1;
   if(recruitment_args(argc,argv)) return 1;
   const char *first=argv[1];
   if(!strcmp(first,"--stop-hook") || !strcmp(first,"--redeliver-message") ||
@@ -246,6 +251,7 @@ static int native_receiver_route(int argc, char **argv) {
       !strcmp(argv[2],"storage-preview") || !strcmp(argv[2],"storage-apply"))) focused_verb=1;
   if(recruitment_args(argc,argv)) focused_verb=1;
   if(codex_inbox_args(argc,argv)) focused_verb=1;
+  if(worker_context_args(argc,argv)) focused_verb=1;
   if(!native_input && !focused_verb && !clear_stop_public_args(argc,argv)) return -1;
   char *full=application_executable();
   char *directory=full?strdup(full):NULL;
