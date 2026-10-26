@@ -73,11 +73,21 @@ def CompileQueueLifecycle.write_stderr(text: String) -> IO(Result<&1,&1,U32 & St
 def CompileQueueLifecycle.set_env(name: String, value: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   P.HostPosix.set_env(name,value)
 
+def absent_text(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match result:
+    case Done{text}: IO.pure(Result<&1,&1,U32 & String,String>,Done{text})
+    case Fail{(+code,message)}:
+      IO.pure(Result<&1,&1,U32 & String,String>,Bool.pick(Result<&1,&1,U32 & String,String>,U32.is_eq(code,2),Done{""},Fail{(code,message)}))
+
 def CompileQueueLifecycle.read_text(path: String) -> IO(Result<&1,&1,U32 & String,String>):
-  T.Text.read(path)
+  do IO<Result<&1,&1,U32 & String,String>>:
+    result : Result<&1,&1,U32 & String,String> <- T.Text.read(path)
+    absent_text(result)
 
 def CompileQueueLifecycle.list_dir(path: String) -> IO(Result<&1,&1,U32 & String,String>):
-  QF.list_dir(path)
+  do IO<Result<&1,&1,U32 & String,String>>:
+    result : Result<&1,&1,U32 & String,String> <- QF.list_dir(path)
+    absent_text(result)
 
 def CompileQueueLifecycle.remove(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   F.Files.remove(path)
