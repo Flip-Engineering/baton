@@ -500,7 +500,7 @@ def CompileQueueIdentity.release_walk(+items: List<&2,CompileQueueReleaseItem>, 
               Bool.pick(IO(CompileQueueReleaseStep), String.eq(kind, "dir"),
                 do IO<CompileQueueReleaseStep>:
                   names : String <- IO.try(String, CompileQueueIdentity.list_dir(path))
-                  children : List<&2,CompileQueueReleaseItem> <- IO.pure(List<&2,CompileQueueReleaseItem>, CompileQueueIdentity.release_items(String.lines(names), path, entry))
+                  children : List<&2,CompileQueueReleaseItem> <- IO.pure(List<&2,CompileQueueReleaseItem>, CompileQueueIdentity.release_items(String.split(names,Char.from_u32(0)), path, entry))
                   IO.pure(CompileQueueReleaseStep, CompileQueueReleaseStep{List.append(&2,CompileQueueReleaseItem,children,rest), acc}),
                 IO.pure(CompileQueueReleaseStep, CompileQueueReleaseStep{rest, acc})))
             CompileQueueIdentity.release_walk(CompileQueueIdentity.release_step_items(step), CompileQueueIdentity.release_step_acc(step))
@@ -508,7 +508,7 @@ def CompileQueueIdentity.release_walk(+items: List<&2,CompileQueueReleaseItem>, 
 def CompileQueueIdentity.release_entries(+root: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
   do IO<Result<&1,&1,U32 & String,List<&2,String>>>:
     bent : String <- IO.try(String, CompileQueueIdentity.list_dir(root ++ "/bend2"))
-    items : List<&2,CompileQueueReleaseItem> <- IO.pure(List<&2,CompileQueueReleaseItem>, CompileQueueIdentity.release_items(String.lines(bent), root ++ "/bend2", "bend2"))
+    items : List<&2,CompileQueueReleaseItem> <- IO.pure(List<&2,CompileQueueReleaseItem>, CompileQueueIdentity.release_items(String.split(bent,Char.from_u32(0)), root ++ "/bend2", "bend2"))
     +walked : List<&2,String> <- CompileQueueIdentity.release_walk(items, Nil{})
     kind : String <- CompileQueueIdentity.observe_kind(root ++ "/bin/bun")
     with_bun : List<&2,String> <- IO.pure(List<&2,String>, Bool.pick(List<&2,String>, String.eq(kind, "file"), "bin/bun" <> walked, walked))

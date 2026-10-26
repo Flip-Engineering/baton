@@ -107,12 +107,24 @@ def file_size( +path: String) -> IO(Result<&1,&1,U32 & String,String>):
       IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"missing file")}),
       IO.pure(Result<&1,&1,U32 & String,String>,Done{at(String.split(record,Char.from_u32(9)),3)}))
 
-def directory_names( +records: List<&2,String>) -> String:
+# POSIX directory entry names never contain NUL, so a NUL-joined list
+# re-parses to the same names. Newline joining split newline-containing
+# names into different paths in the artifact tree walk.
+def entry_names(+records: List<&2,String>) -> List<&2,String>:
   match records:
-    case Nil{}: ""
+    case Nil{}: Nil{}
     case record <> rest:
       +name = at(String.split(record,Char.from_u32(9)),1)
-      Choice.choose(String,String.is_empty(name), _choice_unit => "", _choice_unit => name ++ "\n") ++ directory_names(rest)
+      Choice.choose(List<&2,String>,String.is_empty(name), _choice_unit => entry_names(rest), _choice_unit => name <> entry_names(rest))
+
+def join_nul(+names: List<&2,String>) -> String:
+  match names:
+    case Nil{}: ""
+    case name <> Nil{}: name
+    case name <> rest: name ++ Char.show(Char.from_u32(0)) ++ join_nul(rest)
+
+def directory_names( +records: List<&2,String>) -> String:
+  join_nul(entry_names(records))
 
 def directory_entries_result(result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,String>:
   match result:

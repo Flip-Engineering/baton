@@ -62,40 +62,48 @@ def sorted( +values: List<&2,String>) -> List<&2,String>:
     case value <> rest: insert(value,sorted(rest))
 
 @unsafe
-def collect_kind(~again_collect: (@+root: String -> @+relative: String -> IO(List<&2,String>)), kind: String, root: String, relative: String) -> IO(List<&2,String>):
+def collect_kind(~again_collect: (@+root: String -> @+relative: String -> IO(Result<&1,&1,U32 & String,List<&2,String>>)), kind: String, root: String, relative: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
   match kind:
-    case "file": IO.pure(List<&2,String>,[relative])
+    case "file": IO.pure(Result<&1,&1,U32 & String,List<&2,String>>,Done{[relative]})
     case "dir": again_collect(root,relative)
-    case other: IO.pure(List<&2,String>,Nil{})
+    case other: IO.pure(Result<&1,&1,U32 & String,List<&2,String>>,Done{Nil{}})
 
 @unsafe
-def collect_observed(~again_collect: (@+root: String -> @+relative: String -> IO(List<&2,String>)), observed: Result<&1,&1,U32 & String,String>, +root: String, +relative: String) -> IO(List<&2,String>):
+def collect_observed(~again_collect: (@+root: String -> @+relative: String -> IO(Result<&1,&1,U32 & String,List<&2,String>>)), observed: Result<&1,&1,U32 & String,String>, +root: String, +relative: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
   match observed:
-    case Fail{error}: IO.pure(List<&2,String>,Nil{})
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,List<&2,String>>,Fail{error})
     case Done{record}: collect_kind(again_collect, Q.observation_kind(record),root,relative)
 
+def combine_collected(first: Result<&1,&1,U32 & String,List<&2,String>>, second: Result<&1,&1,U32 & String,List<&2,String>>) -> Result<&1,&1,U32 & String,List<&2,String>>:
+  match first:
+    case Fail{error}: Fail{error}
+    case Done{left}:
+      match second:
+        case Fail{error}: Fail{error}
+        case Done{right}: Done{append(left,right)}
+
 @unsafe
-def collect_names(~again_collect: (@+root: String -> @+relative: String -> IO(List<&2,String>)),  +names: List<&2,String>, +root: String, +relative: String) -> IO(List<&2,String>):
+def collect_names(~again_collect: (@+root: String -> @+relative: String -> IO(Result<&1,&1,U32 & String,List<&2,String>>)),  +names: List<&2,String>, +root: String, +relative: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
   match names:
-    case Nil{}: IO.pure(List<&2,String>,Nil{})
+    case Nil{}: IO.pure(Result<&1,&1,U32 & String,List<&2,String>>,Done{Nil{}})
     case SNil{} <> rest: collect_names(again_collect, rest,root,relative)
     case name <> rest:
       +child = relative ++ "/" ++ name
-      do IO<List<&2,String>>:
+      do IO<Result<&1,&1,U32 & String,List<&2,String>>>:
         observed : Result<&1,&1,U32 & String,String> <- F.Files.lstat(root ++ "/" ++ child)
-        +found : List<&2,String> <- collect_observed(again_collect, observed,root,child)
-        +remaining : List<&2,String> <- collect_names(again_collect, rest,root,relative)
-        IO.pure(List<&2,String>,append(found,remaining))
+        found : Result<&1,&1,U32 & String,List<&2,String>> <- collect_observed(again_collect, observed,root,child)
+        remaining : Result<&1,&1,U32 & String,List<&2,String>> <- collect_names(again_collect, rest,root,relative)
+        IO.pure(Result<&1,&1,U32 & String,List<&2,String>>,combine_collected(found,remaining))
 
 @unsafe
-def collect_listing(~again_collect: (@+root: String -> @+relative: String -> IO(List<&2,String>)), result: Result<&1,&1,U32 & String,String>, +root: String, +relative: String) -> IO(List<&2,String>):
+def collect_listing(~again_collect: (@+root: String -> @+relative: String -> IO(Result<&1,&1,U32 & String,List<&2,String>>)), result: Result<&1,&1,U32 & String,String>, +root: String, +relative: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
   match result:
-    case Fail{error}: IO.pure(List<&2,String>,Nil{})
-    case Done{listing}: collect_names(again_collect, String.lines(listing),root,relative)
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,List<&2,String>>,Fail{error})
+    case Done{listing}: collect_names(again_collect, String.split(listing,Char.from_u32(0)),root,relative)
 
 @unsafe
-def collect( +root: String, +relative: String) -> IO(List<&2,String>):
-  do IO<List<&2,String>>:
+def collect( +root: String, +relative: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
+  do IO<Result<&1,&1,U32 & String,List<&2,String>>>:
     listing : Result<&1,&1,U32 & String,String> <- Q.list_dir(root ++ "/" ++ relative)
     collect_listing(collect, listing,root,relative)
 
@@ -108,14 +116,19 @@ def digest_rows( +names: List<&2,String>, +root: String) -> IO(Result<&1,&1,U32 
         +tail : String <- IO.try(String,digest_rows(rest,root))
         IO.pure(Result<&1,&1,U32 & String,String>,Done{name ++ " " ++ hash ++ "\n" ++ tail})
 
+def digest_collected(collected: Result<&1,&1,U32 & String,List<&2,String>>, +resolved: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match collected:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{names}: digest_rows(sorted(names),resolved)
+
 def CompileQueueArtifact.digest( +path: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     +resolved : String <- IO.try(String,F.Files.realpath(path))
     +observed : String <- IO.try(String,F.Files.lstat(resolved))
     Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.eq(Q.observation_kind(observed),"dir"),
       do IO<Result<&1,&1,U32 & String,String>>:
-        +names : List<&2,String> <- collect(resolved,".")
-        +rows : String <- IO.try(String,digest_rows(sorted(names),resolved))
+        collected : Result<&1,&1,U32 & String,List<&2,String>> <- collect(resolved,".")
+        +rows : String <- IO.try(String,digest_collected(collected,resolved))
         D.HostDigest.text(rows),
       D.HostDigest.file(resolved))
 
@@ -140,7 +153,7 @@ def remove_observed(~again_CompileQueueArtifact_remove: (@+path: String -> IO(Re
       Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.eq(Q.observation_kind(record),"dir"),
         do IO<Result<&1,&1,U32 & String,Unit>>:
           +names : String <- IO.try(String,Q.list_dir(path))
-          remove_children(again_CompileQueueArtifact_remove, String.lines(names),path),
+          remove_children(again_CompileQueueArtifact_remove, String.split(names,Char.from_u32(0)),path),
         F.Files.remove(path))
 
 @unsafe
@@ -178,7 +191,7 @@ def copy_kind(~again_CompileQueueArtifact_copy: (@+source: String -> @+staging: 
         made : Result<&1,&1,U32 & String,Unit> <- F.Files.mkdir_mode(destination,mode)
         checked : Unit <- IO.try(Unit,created_directory(made,destination))
         +names : String <- IO.try(String,Q.list_dir(source))
-        copy_children(again_CompileQueueArtifact_copy, String.lines(names),source,destination,mode)
+        copy_children(again_CompileQueueArtifact_copy, String.split(names,Char.from_u32(0)),source,destination,mode)
     case "symlink":
       do IO<Result<&1,&1,U32 & String,Unit>>:
         +target : String <- IO.try(String,F.Files.readlink(source))

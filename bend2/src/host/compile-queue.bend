@@ -713,7 +713,7 @@ def count_live_owners(+keydir: String, names: List<&1,String>, acc: U32) -> IO(U
 def owner_count(+keydir: String) -> IO(U32):
   do IO<U32>:
     names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(keydir ++ "/owners"))
-    count_live_owners(keydir, Tx.split_lines(names), 0)
+    count_live_owners(keydir, Tx.split_nul(names), 0)
 
 def clean_stale_active_alive(pid: U32, active: String, start: String) -> IO(Unit):
   do IO<Unit>:
@@ -1378,7 +1378,7 @@ def status_state_key(parsed: StateKey) -> IO(Unit):
         admission : String <- IO.try(String, L.CompileQueueLifecycle.admission_status(state))
         IO.write(admission)
         names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(state ++ "/keys"))
-        status_rows(state, filter, Tx.split_lines(names))
+        status_rows(state, filter, Tx.split_nul(names))
 
 def status_command(args: List<&2,String>) -> IO(Unit):
   do IO<Unit>:
