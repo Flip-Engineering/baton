@@ -44,7 +44,7 @@ def lifecycle_observed(+db: String, +directory: String, +handle: U32, +last: Str
       next : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
       lifecycle_observed(db,directory,handle,value,next)
     case None{}: do IO<Unit>:
-      status : String <- IO.try(String,P.ProcessChild.wait(handle))
+      +status : String <- IO.try(String,P.ProcessChild.wait(handle))
       recorded : Unit <- Stop.exited(db,"worker","attempt-1",status,last,"",directory ++ "/native.jsonl")
       released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
       acknowledged : Unit <- IO.try(Unit,P.ProcessChild.acknowledge(handle))
@@ -83,7 +83,7 @@ def route(args: List<String>) -> IO(Unit):
     case "schema" <> Nil{}: IO.write(C.schema())
     case "read" <> db <> id <> Nil{}: Agent.execute(db,"worker",Actions.Read{[id]})
     case "completion-request" <> db <> body <> Nil{}: Agent.execute(db,"worker",Actions.CompletionRequest{"",Actions.Text{body}})
-    case "lifecycle" <> database <> +directory <> cwd <> program: do IO<Unit>:
+    case "lifecycle" <> +database <> +directory <> cwd <> program: do IO<Unit>:
       start : P.RetainedStart <- IO.try(P.RetainedStart,Custody.Instance.admit(database,directory,P.argv(program),cwd,directory ++ "/native.stderr","",0,None{},P.argv(["/usr/bin/false"])))
       lifecycle_admitted(database,directory,start)
     case "--instance-owner" <> database <> Nil{}: IO.try(Unit,Custody.Instance.owner(database))
