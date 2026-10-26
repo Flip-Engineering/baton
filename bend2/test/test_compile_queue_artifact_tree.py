@@ -99,7 +99,7 @@ class QueueArtifactTreeTests(unittest.TestCase):
         self.assertEqual(fields["status"], "completed")
         expected_rows = "".join(tree_rows(self.output))
         expected = hashlib.sha256(expected_rows.encode()).hexdigest()
-        self.assertIn("artifact=output\tdirectory\t" + expected + "\n", fields["artifact"])
+        self.assertEqual(fields["artifact"], "output\tdirectory\t" + expected)
 
     @unittest.skipUnless(hasattr(os, "geteuid") and os.geteuid() != 0,
                          "an unreadable directory requires a non-root user")
