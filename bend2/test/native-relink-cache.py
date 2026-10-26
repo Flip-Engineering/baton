@@ -110,7 +110,8 @@ class NativeRelinkCache(unittest.TestCase):
             'tool': name, 'original_keys': sorted(first_keys), 'changed_keys': sorted(later_keys),
             'changed_exit': code, 'changed_tool': identity(changed),
             'producer_receipt': identity(producer)}, indent=2) + '\n')
-        self.assertEqual(code, 78, 'Changed tooling must reach the consumer identity check.\n' + stderr)
+        self.assertNotEqual(code, 0, 'Changed tooling must reach the consumer identity check.\n' + stderr)
+        self.assertIn('Producer ' + name + ' identity changed.', stderr)
         self.assertTrue(later_keys and first_keys.isdisjoint(later_keys),
                         'Changed consumed tool bytes reused the original queue key')
 
