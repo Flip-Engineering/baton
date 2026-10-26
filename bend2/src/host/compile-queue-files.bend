@@ -75,19 +75,20 @@ def nonempty( +parts: List<&2,String>) -> List<&2,String>:
     case SNil{} <> rest: nonempty(rest)
     case value <> rest: value <> nonempty(rest)
 
-def mkdir_next(rest: List<&2,String>, +path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def mkdir_next(+again_mkdir_parts: (@+parts: List<&2,String> -> @+prefix: String -> @+absolute: Bool -> IO(Result<&1,&1,U32 & String,Unit>)), rest: List<&2,String>, +path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match rest:
     case Nil{}: ensure(path,True{})
     case next <> tail:
       do IO<Result<&1,&1,U32 & String,Unit>>:
         made : Unit <- IO.try(Unit,ensure(path,False{}))
-        mkdir_parts(next <> tail,path,False{})
+        again_mkdir_parts(next <> tail,path,False{})
 
+@unsafe
 def mkdir_parts(+parts: List<&2,String>, +prefix: String, +absolute: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match parts:
     case Nil{}: ensure(Bool.pick(String,absolute,"/",prefix),True{})
     case +part <> rest:
-      mkdir_next(rest,Bool.pick(String,Bool.and(String.is_empty(prefix),Bool.not(absolute)),part,prefix ++ "/" ++ part))
+      mkdir_next(mkdir_parts, rest,Bool.pick(String,Bool.and(String.is_empty(prefix),Bool.not(absolute)),part,prefix ++ "/" ++ part))
 
 def mkdir_p( +path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.is_empty(path),
@@ -144,11 +145,12 @@ def resolve_path( +path: String) -> IO(Result<&1,&1,U32 & String,String>):
     resolved : Result<&1,&1,U32 & String,String> <- F.Files.realpath(path)
     resolved_or_path(resolved,path)
 
-def resolve_found(found: Result<&1,&1,U32 & String,Unit>, +candidate: String, +rest: List<&2,String>, +command: String) -> IO(Result<&1,&1,U32 & String,String>):
+def resolve_found(+again_resolve_search: (@+parts: List<&2,String> -> @+command: String -> IO(Result<&1,&1,U32 & String,String>)), found: Result<&1,&1,U32 & String,Unit>, +candidate: String, +rest: List<&2,String>, +command: String) -> IO(Result<&1,&1,U32 & String,String>):
   match found:
     case Done{unit}: resolve_path(candidate)
-    case Fail{error}: resolve_search(rest,command)
+    case Fail{error}: again_resolve_search(rest,command)
 
+@unsafe
 def resolve_search( +parts: List<&2,String>, +command: String) -> IO(Result<&1,&1,U32 & String,String>):
   match parts:
     case Nil{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{command})
@@ -156,7 +158,7 @@ def resolve_search( +parts: List<&2,String>, +command: String) -> IO(Result<&1,&
       +candidate = Bool.pick(String,String.is_empty(directory),".",directory) ++ "/" ++ command
       do IO<Result<&1,&1,U32 & String,String>>:
         found : Result<&1,&1,U32 & String,Unit> <- F.Files.executable(candidate)
-        resolve_found(found,candidate,rest,command)
+        resolve_found(resolve_search, found,candidate,rest,command)
 
 def resolve_environment(value: Result<&1,&1,U32 & String,String>, +command: String) -> IO(Result<&1,&1,U32 & String,String>):
   match value:
@@ -183,17 +185,18 @@ def include_lines( +lines: List<&2,String>) -> String:
       Bool.pick(String,String.is_empty(target),"",target ++ "\n") ++ include_lines(rest)
 
 @unsafe
-def include_chunk_values(chunk: String & String, +path: String, +collected: String) -> IO(Result<&1,&1,U32 & String,String>):
+def include_chunk_values(+again_include_chunks: (@+path: String -> @position: String -> @collected: String -> IO(Result<&1,&1,U32 & String,String>)), chunk: String & String, +path: String, +collected: String) -> IO(Result<&1,&1,U32 & String,String>):
   match chunk:
     case (+text,next):
       Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(text),
         IO.pure(Result<&1,&1,U32 & String,String>,Done{collected}),
-        include_chunks(path,next,collected ++ include_lines(String.lines(text))))
+        again_include_chunks(path,next,collected ++ include_lines(String.lines(text))))
 
+@unsafe
 def include_chunks(+path: String, position: String, collected: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     chunk : String & String <- IO.try(String & String,F.Files.text_chunk(path,position))
-    include_chunk_values(chunk,path,collected)
+    include_chunk_values(include_chunks, chunk,path,collected)
 
 def c_includes( +path: String) -> IO(Result<&1,&1,U32 & String,String>):
   include_chunks(path,"0","")
