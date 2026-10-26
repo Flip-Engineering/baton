@@ -713,110 +713,141 @@ export function term_strip<X>(tm: TermOf<X>): TermOf<X> {
   return t;
 }
 
-export function term_higher(tm: LTerm, env: Env = null): HTerm {
-  switch (tm.$) {
-    case "Var": {
-      if (tm.i < 0) {
-        return tm;
-      }
-      const v = list_get(env, tm.i);
-      if (v === null) {
-        return tm.v ?? Ref(tm.k, tm.s);
-      } else if (typeof v === "function") {
-        return v(tm.s);
-      } else {
-        return v.s !== undefined || tm.s === undefined || (v.$ === "Var" && v.i < 0) ? v : { ...v, s: tm.s };
-      }
+export function term_higher(term: LTerm, env: Env = null): HTerm {
+  // An explicit post-order stack keeps deep terms off the JavaScript call
+  // stack: the recursive form recursed one frame per nesting level, and
+  // the liveness walkers apply the HOAS closures built here one level at
+  // a time, so a deeply let-nested body overflowed the machine stack in
+  // pass 1's v_live on the combined book. Binder closures still defer
+  // their bodies, and each deferred body now re-enters this iterative
+  // form instead of a recursive call chain.
+  type Task =
+    | { visit: LTerm, env: Env }
+    | { build: LTerm, env: Env, count: number }
+    | { sub: Extract<LTerm, { $: "Sub" }>, env: Env }
+    | { value: HTerm };
+  const results: HTerm[] = [];
+  const tasks: Task[] = [{ visit: term, env }];
+  while (tasks.length > 0) {
+    const task = tasks.pop() as Task;
+    if ("value" in task) {
+      results.push(task.value);
+      continue;
     }
-    case "Ref": {
-      if (tm.k.lastIndexOf(".") === 0) {
-        const op = tm.s === undefined ? tm.k : tm.s.src.slice(tm.s.beg, tm.s.end);
-        throw Err(book_nil(), ctx_nil(), "a type for this operator (write (a " + op + " b : Nat))", undefined, tm.s, undefined,
-          "Note: we broke this after launch, sorry. Until 2.0.16 a bare operator meant Nat.\n"
-          + "That was a bug: operators demand annotation. Wrap the expression and it'll work again.");
-      }
-      return Ref(tm.k, tm.s, tm.b);
+    if ("sub" in task) {
+      const v = results.pop() as HTerm;
+      tasks.push({ visit: task.sub.f, env: list_set(task.env, task.sub.i, v) });
+      continue;
     }
-    case "Sub": {
-      const x = tm.v;
-      const v = x.$ === "PVar" || x.$ === "PCtr"
-        ? (s?: Span) => term_higher(patt_term(x, s), env)
-        : term_higher(x, env);
-      return term_higher(tm.f, list_set(env, tm.i, v));
-    }
-    case "Let": {
-      const b = tm;
-      const v = b.v.map((x) => term_higher(x, env));
-      return Let(b.k, b.i, v, (xs: HTerm[]) => {
-        let e = env;
-        for (let j = 0; j < xs.length; j++) {
-          e = list_set(e, b.i[j], xs[j]);
+    if ("build" in task) {
+      const tm = task.build;
+      const kids = results.splice(results.length - task.count, task.count);
+      switch (tm.$) {
+        case "Let": {
+          const b = tm;
+          results.push(Let(b.k, b.i, kids, (xs: HTerm[]) => {
+            let e = task.env;
+            for (let j = 0; j < xs.length; j++) {
+              e = list_set(e, b.i[j], xs[j]);
+            }
+            return term_higher(b.f, e);
+          }, b.s, b.q));
+          break;
         }
-        return term_higher(b.f, e);
-      }, b.s, b.q);
-    }
-    case "All": {
-      const b = tm;
-      const A = term_higher(b.A, env);
-      return All(b.q, b.k, b.i, A, (x: HTerm) => {
-        return term_higher(b.B, list_set(env, b.i, x));
-      }, b.s);
-    }
-    case "Lam": {
-      const b = tm;
-      return Lam(b.k, b.i, (x: HTerm) => {
-        return term_higher(b.f, list_set(env, b.i, x));
-      }, b.s, b.q);
-    }
-    case "Typ": {
-      return Typ(term_higher(tm.g, env), tm.s);
-    }
-    case "Qnt":
-    case "Qua": {
-      return tm;
-    }
-    case "Min": {
-      return Min(term_higher(tm.a, env), term_higher(tm.b, env), tm.s);
-    }
-    case "App": {
-      const f = term_higher(tm.f, env);
-      const x = term_higher(tm.x, env);
-      if (f.$ === "Lam") {
-        return f.f(x);
+        case "All": {
+          const b = tm;
+          results.push(All(b.q, b.k, b.i, kids[0], (x: HTerm) =>
+            term_higher(b.B, list_set(task.env, b.i, x)), b.s));
+          break;
+        }
+        case "Typ": results.push(Typ(kids[0], tm.s)); break;
+        case "Min": results.push(Min(kids[0], kids[1], tm.s)); break;
+        case "App": {
+          const f = kids[0];
+          results.push(f.$ === "Lam" ? f.f(kids[1]) : App(f, kids[1], tm.s));
+          break;
+        }
+        case "ADT": results.push(ADT(tm.k, kids, tm.s, tm.r)); break;
+        case "Ctr": results.push(Ctr(tm.k, kids, tm.s)); break;
+        case "Mat": results.push(Mat(tm.k, kids[0], kids[1], tm.s)); break;
+        case "Eql": results.push(Eql(kids[0], kids[1], kids[2], tm.s)); break;
+        case "Rwt": results.push(Rwt(kids[0], kids[1], kids[2], tm.s)); break;
+        case "Ann": results.push(Ann(kids[0], kids[1], tm.s)); break;
+        default: throw new Error("term_higher build task for a leaf term");
       }
-      return App(f, x, tm.s);
+      continue;
     }
-    case "ADT": {
-      return ADT(tm.k, tm.x.map((x) => term_higher(x, env)), tm.s, tm.r);
-    }
-    case "Ctr": {
-      return Ctr(tm.k, tm.x.map((x) => term_higher(x, env)), tm.s);
-    }
-    case "Lit": {
-      return tm;
-    }
-    case "Mat": {
-      return Mat(tm.k, term_higher(tm.h, env), term_higher(tm.m, env), tm.s);
-    }
-    case "Efq": {
-      return Efq(tm.s);
-    }
-    case "Eql": {
-      return Eql(term_higher(tm.a, env), term_higher(tm.b, env), term_higher(tm.T, env), tm.s);
-    }
-    case "Rfl": {
-      return Rfl(tm.s);
-    }
-    case "Rwt": {
-      return Rwt(term_higher(tm.e, env), term_higher(tm.p, env), term_higher(tm.f, env), tm.s);
-    }
-    case "Hol": {
-      return Hol(tm.k, tm.s);
-    }
-    case "Ann": {
-      return Ann(term_higher(tm.x, env), term_higher(tm.T, env), tm.s);
+    const tm = task.visit;
+    const here = task.env;
+    const expand = (kids: LTerm[]): void => {
+      tasks.push({ build: tm, env: here, count: kids.length });
+      for (let i = kids.length - 1; i >= 0; i -= 1) {
+        tasks.push({ visit: kids[i], env: here });
+      }
+    };
+    switch (tm.$) {
+      case "Var": {
+        if (tm.i < 0) {
+          results.push(tm);
+          break;
+        }
+        const v = list_get(here, tm.i);
+        if (v === null) {
+          results.push(tm.v ?? Ref(tm.k, tm.s));
+        } else if (typeof v === "function") {
+          results.push(v(tm.s));
+        } else {
+          results.push(v.s !== undefined || tm.s === undefined
+            || (v.$ === "Var" && v.i < 0) ? v : { ...v, s: tm.s });
+        }
+        break;
+      }
+      case "Ref": {
+        if (tm.k.lastIndexOf(".") === 0) {
+          const op = tm.s === undefined ? tm.k : tm.s.src.slice(tm.s.beg, tm.s.end);
+          throw Err(book_nil(), ctx_nil(), "a type for this operator (write (a " + op + " b : Nat))", undefined, tm.s, undefined,
+            "Note: we broke this after launch, sorry. Until 2.0.16 a bare operator meant Nat.\n"
+            + "That was a bug: operators demand annotation. Wrap the expression and it'll work again.");
+        }
+        results.push(Ref(tm.k, tm.s, tm.b));
+        break;
+      }
+      case "Sub": {
+        const x = tm.v;
+        if (x.$ === "PVar" || x.$ === "PCtr") {
+          tasks.push({
+            visit: tm.f,
+            env: list_set(here, tm.i, (s?: Span) => term_higher(patt_term(x, s), here)),
+          });
+        } else {
+          tasks.push({ sub: tm, env: here });
+          tasks.push({ visit: x, env: here });
+        }
+        break;
+      }
+      case "Let": expand(tm.v); break;
+      case "All": expand([tm.A]); break;
+      case "Lam": {
+        const b = tm;
+        results.push(Lam(b.k, b.i, (x: HTerm) =>
+          term_higher(b.f, list_set(here, b.i, x)), b.s, b.q));
+        break;
+      }
+      case "Typ": expand([tm.g]); break;
+      case "Qnt": case "Qua": case "Lit": results.push(tm); break;
+      case "Min": expand([tm.a, tm.b]); break;
+      case "App": expand([tm.f, tm.x]); break;
+      case "ADT": case "Ctr": expand(tm.x); break;
+      case "Mat": expand([tm.h, tm.m]); break;
+      case "Efq": results.push(Efq(tm.s)); break;
+      case "Eql": expand([tm.a, tm.b, tm.T]); break;
+      case "Rfl": results.push(Rfl(tm.s)); break;
+      case "Rwt": expand([tm.e, tm.p, tm.f]); break;
+      case "Hol": results.push(Hol(tm.k, tm.s)); break;
+      case "Ann": expand([tm.x, tm.T]); break;
     }
   }
+  return results[0];
 }
 
 export function term_lower(term: HTerm, d: number = 0): LTerm {
