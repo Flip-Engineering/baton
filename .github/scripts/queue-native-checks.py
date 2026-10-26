@@ -311,6 +311,17 @@ def compiler(mode, argv, key_only=False):
         fcntl.flock(lock, fcntl.LOCK_EX)
         directory = evidence / uuid.uuid4().hex
         directory.mkdir()
+        if mode == 'bend' and '--check-only' in argv:
+            entries = [value for value in argv[1:]
+                       if value.endswith('.bend') and Path(value).is_file()]
+            if len(entries) != 1:
+                raise SystemExit('queued Bend check requires exactly one existing .bend entry')
+            actual = str(Path(shutil.which(argv[0]) or argv[0]).resolve())
+            entry = str(Path(entries[0]).resolve())
+            options = ['--kind', 'check', '--source-root', str(Path.cwd()),
+                       '--entry', os.path.relpath(entry), '--compiler', actual]
+            options.extend(['--option', 'adapter-sha256=' + hashlib.sha256(Path(SCRIPT).read_bytes()).hexdigest()])
+            return submit(config, directory, options, argv, key_only)
         output_flag = '--binary' if '--binary' in argv else '-o'
         output = Path(argv[argv.index(output_flag) + 1]).absolute() if output_flag in argv else directory / 'checked.c'
         if output_flag in argv:
