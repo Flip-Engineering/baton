@@ -191,12 +191,18 @@ def root_length( +roots: List<&2,String>, +text: String, +best: Nat) -> Nat:
       root_length(rest,text,Bool.pick(Nat,fits,Nat.max(best,size),best))
 
 @unsafe
+def replace_roots_branch(~again: (@+text: String -> @+roots: List<&2,String> -> String), +matched: Bool, +text: String, +roots: List<&2,String>, +size: Nat, +char: Char, +rest: String) -> String:
+  match matched:
+    case True{}: "@root" ++ again(String.drop(text,size),roots)
+    case False{}: Char.show(char) ++ again(rest,roots)
+
+@unsafe
 def replace_roots(+text: String, +roots: List<&2,String>) -> String:
   match text:
     case SNil{}: ""
     case SCon{char,rest}:
       +size = root_length(roots,text,0n)
-      Bool.pick(String,Nat.is_gt(size,0n),"@root" ++ replace_roots(String.drop(text,size),roots),Char.show(char) ++ replace_roots(rest,roots))
+      replace_roots_branch(replace_roots,Nat.is_gt(size,0n),text,roots,size,char,rest)
 
 def name_length( +text: String) -> Nat:
   match text:
@@ -223,14 +229,20 @@ def pattern_length(+text: String, +attempts: Bool) -> Nat:
         Nat.add(76n,name_length(String.drop(text,76n))),0n)
 
 @unsafe
+def replace_pattern_branch(~again: (@+text: String -> @+attempts: Bool -> @+acc: String -> String), +matched: Bool, +text: String, +attempts: Bool, +size: Nat, +acc: String, +char: Char, +rest: String) -> String:
+  match matched:
+    case True{}:
+      again(String.drop(text,size),attempts,String.reverse(Bool.pick(String,attempts,"@attempt","@worktree")) ++ trim_path(acc))
+    case False{}:
+      again(rest,attempts,SCon{char,acc})
+
+@unsafe
 def replace_pattern(+text: String, +attempts: Bool, +acc: String) -> String:
   match text:
     case SNil{}: String.reverse(acc)
     case SCon{char,rest}:
       +size = pattern_length(text,attempts)
-      Bool.pick(String,Nat.is_gt(size,0n),
-        replace_pattern(String.drop(text,size),attempts,String.reverse(Bool.pick(String,attempts,"@attempt","@worktree")) ++ trim_path(acc)),
-        replace_pattern(rest,attempts,SCon{char,acc}))
+      replace_pattern_branch(replace_pattern,Nat.is_gt(size,0n),text,attempts,size,acc,char,rest)
 
 def group_text( +text: String, +roots: String) -> String:
   replace_pattern(replace_pattern(replace_roots(text,String.lines(roots)),False{},""),True{},"")
