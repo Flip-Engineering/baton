@@ -114,19 +114,31 @@ def source_files(root, commit, tree):
 
 
 def production_inputs(root, rows):
-    selected = sorted((row for row in rows if row['path'].startswith('bend2/src/')), key=lambda row: row['path'])
-    expected = {row['path'] for row in selected}
-    actual = {str(path.relative_to(root)) for path in (root / 'bend2/src').rglob('*')
-              if path.is_file() or path.is_symlink()}
-    if expected != actual:
-        return selected, 'Production directory contains untracked or missing files.'
-    for row in selected:
-        path = root / row['path']
-        if row['mode'] == '120000':
-            return selected, 'A production symlink requires a normal compilation.'
-        if path.suffix != '.bend':
+    # Select the transitive import closure of the Main entry, not the whole
+    # source directory. A file outside the closure cannot reach the generated
+    # C: module imports are static relative paths, foreign inputs are static
+    # string imports, and Base comes from the compiler distribution, which is
+    # bound separately. Any import shape outside this model fails closed to a
+    # normal compilation, and the closure is recomputed from the current
+    # bytes on both sides, so a change that imports a previously unrelated
+    # file pulls that file into the compared set.
+    by_path = {row['path']: row for row in rows}
+    src = (root / 'bend2/src').resolve()
+    selected = {}
+    pending = [ENTRY]
+    while pending:
+        relative = pending.pop()
+        if relative in selected:
             continue
-        # Current Main imports are local modules and Base. External imports need a normal build.
+        row = by_path.get(relative)
+        if row is None:
+            return [], 'A production dependency is not tracked: ' + relative
+        if row['mode'] == '120000':
+            return [], 'A production symlink requires a normal compilation.'
+        selected[relative] = row
+        if not relative.endswith('.bend'):
+            continue
+        path = root / relative
         lines = path.read_text().splitlines()
         in_header = True
         for line in lines:
@@ -138,17 +150,19 @@ def production_inputs(root, rows):
                     continue
                 match = re.fullmatch(r'(\S+)\s+as\s+[A-Za-z_][A-Za-z0-9_]*(?:\s+#.*)?', value)
                 if not match:
-                    return selected, 'A module import requires a normal compilation: ' + row['path']
+                    return [], 'A module import requires a normal compilation: ' + relative
                 target = (path.parent / match[1]).resolve()
-                if not target.is_relative_to(root / 'bend2/src') or target.suffix != '.bend':
-                    return selected, 'A module import leaves the production directory: ' + row['path']
+                if not target.is_relative_to(src) or target.suffix != '.bend':
+                    return [], 'A module import leaves the production directory: ' + relative
+                pending.append(str(target.relative_to(root.resolve())))
                 continue
             in_header = False
             for match in re.finditer(r'\bimport\s+"([^"]+)"', line):
                 target = (path.parent / match[1]).resolve()
-                if not target.is_relative_to(root / 'bend2/src') or str(target.relative_to(root)) not in expected:
-                    return selected, 'A foreign import leaves the production inputs: ' + row['path']
-    return selected, None
+                if not target.is_relative_to(src):
+                    return [], 'A foreign import leaves the production inputs: ' + relative
+                pending.append(str(target.relative_to(root.resolve())))
+    return sorted(selected.values(), key=lambda row: row['path']), None
 
 
 def canonical_host_change(original, current):
