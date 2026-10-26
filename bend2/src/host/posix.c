@@ -637,10 +637,6 @@ static void __attribute__((constructor)) host_posix_lock_acquire_use(void) {io_e
 static Term host_posix_lock_try_run(Env e,Term *f,IoWork *w) {return host_posix_run(e,f,w,32,4,"s");}
 static void __attribute__((constructor)) host_posix_lock_try_use(void) {io_eff(CID_HOSTPOSIX_LOCK_TRY,host_posix_lock_try_run,0);}
 #endif
-#ifdef CID_HOSTPOSIX_LOCK_TRY
-static Term host_posix_lock_try_run(Env e,Term *f,IoWork *w) {return host_posix_run(e,f,w,32,4,"s");}
-static void __attribute__((constructor)) host_posix_lock_try_use(void) {io_eff(CID_HOSTPOSIX_LOCK_TRY,host_posix_lock_try_run,0);}
-#endif
 #ifdef CID_HOSTPOSIX_LOCK_FD_ACQUIRE
 static Term host_posix_lock_fd_acquire_run(Env e,Term *f,IoWork *w) {return host_posix_run(e,f,w,14,0,"u");}
 static void __attribute__((constructor)) host_posix_lock_fd_acquire_use(void) {io_eff(CID_HOSTPOSIX_LOCK_FD_ACQUIRE,host_posix_lock_fd_acquire_run,0);}
