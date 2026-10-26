@@ -244,7 +244,7 @@ def config_input(config: Config, +source: String) -> Config:
 
 def default_config(state_root: String, cwd: String) -> Config:
   Config{"kind=\nstate_root=" ++ state_root ++ "\ncwd=" ++ cwd
-    ++ "\nroot=\nsource_root=\nentry=\ncompiler=\nreceipt=\ntoken=\n", Nil{}}
+    ++ "\nroot=\nsource_root=\nentry=\ncompiler=\nreceipt=\ntoken=\npriority=\n", Nil{}}
 
 def env_value_result(result: Result<&1,&1,U32 & String,String>) -> IO(String):
   match result:
@@ -266,7 +266,8 @@ def fresh_config() -> IO(Config):
   do IO<Config>:
     state : String <- default_state_root()
     cwd : String <- IO.try(String, L.CompileQueueLifecycle.cwd())
-    IO.pure(Config, default_config(state, cwd))
+    priority : String <- env_value("BATON_COMPILE_QUEUE_PRIORITY")
+    IO.pure(Config, config_line(default_config(state, cwd), "priority", priority))
 
 # require_state_root rejects a request whose flag differs from the host
 # configuration, then verifies the configured directory is present, readable,
@@ -332,6 +333,7 @@ def parse_common(args: List<&2,String>, config: Config) -> IO(Config):
     case "--version" <> value <> rest: parse_common(rest, config_line(config, "version", value))
     case "--receipt" <> value <> rest: parse_common(rest, config_line(config, "receipt", value))
     case "--token" <> value <> rest: parse_common(rest, config_line(config, "token", value))
+    case "--priority" <> value <> rest: parse_common(rest, config_line(config, "priority", value))
     case "--input" <> value <> rest: parse_common(rest, config_input(config, value))
     case "--aux" <> value <> rest: parse_common(rest, config_line(config, "aux", value))
     case "--option" <> value <> rest: parse_common(rest, config_line(config, "option", value))
@@ -340,6 +342,17 @@ def parse_common(args: List<&2,String>, config: Config) -> IO(Config):
         updated : Config <- artifact_option_config(split_eq(value, ""), value, config)
         parse_common(rest, updated)
     case +option <> rest: IO.die(Config, 2, "compile-queue: unknown option " ++ option)
+
+# The priority class of a request, from the labels of the issue it works on:
+# extreme, then high, then rest. It orders waiting entries and is not part of
+# the key, so one request submitted at two priorities is one key.
+def priority_valid(+priority: String) -> Bool:
+  Bool.or(Bool.not(non_empty(priority)),
+    Bool.or(Tx.str_eq(priority, "extreme"), Bool.or(Tx.str_eq(priority, "high"), Tx.str_eq(priority, "rest"))))
+
+def priority_rank(+priority: String) -> U32:
+  Bool.pick(U32, Tx.str_eq(priority, "extreme"), 2,
+    Bool.pick(U32, Tx.str_eq(priority, "high"), 1, 0))
 
 def validate_config(config: Config, need_command: Bool) -> String:
   match config:
@@ -363,6 +376,7 @@ def validate_config(config: Config, need_command: Bool) -> String:
       +toolchain_ok = Bool.pick(Bool, Tx.str_eq(kind, "cc"),
         Bool.and(non_empty(linker), non_empty(version)), True{})
       +token_okay = Bool.pick(Bool, non_empty(token), token_ok(token), True{})
+      +priority_okay = priority_valid(field(text, "priority"))
       +state_ok = valid_state_root(state)
       +cwd_ok = non_empty(cwd)
       +duplicates = duplicate_destinations(inputs)
@@ -375,9 +389,11 @@ def validate_config(config: Config, need_command: Bool) -> String:
                   Bool.pick(String, cc_source_ok,
                     Bool.pick(String, toolchain_ok,
                       Bool.pick(String, token_okay,
-                        Bool.pick(String, duplicates,
-                          "compile-queue: two inputs share a destination basename",
-                          ""),
+                        Bool.pick(String, priority_okay,
+                          Bool.pick(String, duplicates,
+                            "compile-queue: two inputs share a destination basename",
+                            ""),
+                          "compile-queue: priority must be extreme, high or rest"),
                         "compile-queue: token must contain only letters, digits, dot, underscore or hyphen"),
                       "compile-queue: cc requires --linker and --version"),
                     "compile-queue: cc requires an absolute --source-root"),
@@ -591,6 +607,7 @@ def meta_text(config: Config, key: String, keydir: String, attempt: String, arti
       ++ "key=" ++ key ++ "\n"
       ++ "keydir=" ++ keydir ++ "\n"
       ++ "attempt=" ++ attempt ++ "\n"
+      ++ "priority=" ++ field(text, "priority") ++ "\n"
       ++ names_text(artifact_names(artifacts))
 
 def write_attempt_digest(attempt: String, +text: String) -> IO(Unit):
@@ -653,6 +670,21 @@ def remove_token(+keydir: String, token: String) -> IO(Unit):
     removed : Unit <- remove_token_unlocked(keydir, token)
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
     IO.pure(Unit, Unit{})
+
+# keys/KEY/priority holds the highest class of the requesters of the key; the
+# admission rule reads it for every waiting entry. A requester that joins a
+# waiting key with a higher class raises the entry; nothing lowers it.
+def raise_priority(+keydir: String, +requested: String) -> IO(Unit):
+  Bool.pick(IO(Unit), non_empty(requested),
+    do IO<Unit>:
+      lock : U32 <- owner_lock(keydir)
+      +current : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/priority"))
+      wrote : Unit <- Bool.pick(IO(Unit), U32.is_gt(priority_rank(requested), priority_rank(field(current, "priority"))),
+        IO.try(Unit, L.CompileQueueLifecycle.write_text(keydir ++ "/priority", "priority=" ++ requested ++ "\n")),
+        IO.pure(Unit, Unit{}))
+      released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
+      IO.pure(Unit, Unit{}),
+    IO.pure(Unit, Unit{}))
 
 def remove_stale_owner(keydir: String, name: String) -> IO(U32):
   do IO<U32>:
@@ -1119,6 +1151,7 @@ def run_config_locked(parsed: Config, +text: String, +key: String) -> IO(Unit):
     state : String <- IO.pure(String, field(text, "state_root"))
     +keydir : String <- IO.pure(String, keydir_of(state, key))
     +owner : String <- publish_token(keydir, field(text, "token"))
+    raised : Unit <- raise_priority(keydir, field(text, "priority"))
     owner_line : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_stderr("owner=" ++ owner ++ "\n"))
     wait_start : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
     present : Bool <- regular(keydir ++ "/active")
@@ -1696,7 +1729,7 @@ def adopt_command(args: List<&2,String>) -> IO(Unit):
     adopt_parsed_config(parsed)
 
 def usage() -> String:
-  "usage: compile-queue.sh run --kind cgen|cc --state-root DIR --cwd DIR [options] -- COMMAND...\n"
+  "usage: compile-queue.sh run --kind cgen|cc --state-root DIR --cwd DIR [--priority extreme|high|rest] [options] -- COMMAND...\n"
   ++ "       compile-queue.sh key --kind cgen|cc [options]\n"
   ++ "       compile-queue.sh cancel --state-root DIR --key KEY --token TOKEN\n"
   ++ "       compile-queue.sh wait --state-root DIR --key KEY\n"

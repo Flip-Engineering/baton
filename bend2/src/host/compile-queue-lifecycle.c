@@ -627,7 +627,7 @@ typedef struct {
 typedef struct {
   char id[CQ_ID], start[32], key[CQ_NAME], group[CQ_NAME], entry[CQ_ENTRY];
   char compiler[CQ_NAME], kind[16], shape[24];
-  int pid, history;
+  int pid, history, priority;
   long long expected;
   unsigned long long queued;
 } CqTicket;
@@ -1172,8 +1172,28 @@ static void cq_observe(const char *state, CqAdmission *view) {
 #endif
 }
 
+/* The priority class of a request: extreme 2, high 1, anything else 0. The client
+   records the highest class of the requesters of a key in keys/<key>/priority. */
+static int cq_priority_rank(const char *name) {
+  return !strcmp(name, "extreme") ? 2 : !strcmp(name, "high") ? 1 : 0;
+}
+
+static const char *cq_priority_name(int rank) {
+  return rank >= 2 ? "extreme" : rank == 1 ? "high" : "rest";
+}
+
+static int cq_key_priority(const char *state, const char *key) {
+  char path[PATH_MAX], text[128], value[32] = "";
+  if (!*key || cq_path(path, "%s/keys/%s/priority", state, key) || cq_read_small(path, text, sizeof(text))) return 0;
+  cq_field(text, "priority", value, sizeof(value));
+  return cq_priority_rank(value);
+}
+
+/* Waiting tickets are ordered by priority class, then by arrival. */
 static int cq_ticket_compare(const void *left, const void *right) {
-  return strcmp(((const CqTicket *)left)->id, ((const CqTicket *)right)->id);
+  const CqTicket *a = (const CqTicket *)left, *b = (const CqTicket *)right;
+  if (a->priority != b->priority) return b->priority - a->priority;
+  return strcmp(a->id, b->id);
 }
 
 /* Reads the claims and tickets, removes dead ones, and fills the observation.
@@ -1224,6 +1244,7 @@ static int cq_admission_load(const char *state, CqAdmission *view) {
       u32 alive = 0;
       if (cq_alive_value((u32)ticket.pid, ticket.start, &alive) || !alive) { unlink(path); continue; }
       cq_ticket_complete(&ticket);
+      ticket.priority = cq_key_priority(state, ticket.key);
       cq_expected(state, ticket.key, ticket.group, ticket.shape, ticket.entry, ticket.compiler, ticket.kind, &ticket.expected, &ticket.history);
       CqTicket *grown = realloc(view->tickets, (view->ticket_count + 1) * sizeof(*grown));
       if (!grown) { closedir(waiting); return ENOMEM; }
@@ -1298,6 +1319,15 @@ static int cq_admit_decision(const CqAdmission *view, size_t index, int *backfil
   long long head_need = cq_need(view, head);
   if (head_need <= free_now && need + head_need > free_now) return 0;
   if (backfilled + need + head_need > idle) return 0;
+  /* An entry of a higher class that waits ahead of this one keeps the memory it
+     needs, whether it fits now or has to wait for running entries to end. */
+  for (size_t before = 1; before < index; before++) {
+    const CqTicket *ahead = &view->tickets[before];
+    if (ahead->priority <= ticket->priority) continue;
+    long long ahead_need = cq_need(view, ahead);
+    if (ahead_need <= free_now && need + ahead_need > free_now) return 0;
+    if (backfilled + need + ahead_need > idle) return 0;
+  }
   *backfill = 1;
   return 1;
 }
@@ -1804,8 +1834,9 @@ static int cq_admission_status(const char *state, char **out, size_t *length) {
         view.claims[i].pid, view.claims[i].key, view.claims[i].expected, view.claims[i].current,
         view.claims[i].history, view.claims[i].backfill);
     for (size_t i = 0; !error && i < view.ticket_count; i++)
-      error = cq_text_append(&text, &used, &capacity, "waiting position=%zu pid=%d key=%s expected_kb=%lld history=%d\n",
-        i + 1, view.tickets[i].pid, view.tickets[i].key, view.tickets[i].expected, view.tickets[i].history);
+      error = cq_text_append(&text, &used, &capacity, "waiting position=%zu pid=%d key=%s expected_kb=%lld history=%d priority=%s\n",
+        i + 1, view.tickets[i].pid, view.tickets[i].key, view.tickets[i].expected, view.tickets[i].history,
+        cq_priority_name(view.tickets[i].priority));
   }
   cq_admission_free(&view);
   cq_admission_unlock(fd);

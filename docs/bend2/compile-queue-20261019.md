@@ -144,6 +144,7 @@ $state/keys/<key>/runs/<attempt>/stdout
 $state/keys/<key>/runs/<attempt>/stderr
 $state/keys/<key>/runs/<attempt>/result
 $state/keys/<key>/peak                         largest recorded peak, kB
+$state/keys/<key>/priority                     highest priority class of the requesters of the key
 $state/keys/<key>/runs/<attempt>/peak          peak of one run, kB
 $state/keys/<key>/runs/<attempt>/group         history group of the attempt
 $state/peaks/<group>                           largest recorded peak of a group, kB
@@ -235,7 +236,8 @@ records from the `peak`, `group` and `meta` files of the runs already recorded.
 
 All records are read and written under `admission/lock`. A waiting supervisor
 polls every 200 ms and starts when its ticket passes the rule. Tickets are
-ordered by queue time, so the first ticket is the head.
+ordered by priority class (see "Priority"), then by queue time, so the first
+ticket is the head.
 
 - `reserve` is the recorded growth of memory used outside the queue (see
   "Outside growth"). It is the part of memory the rule never grants, and it
@@ -274,6 +276,24 @@ the cgen has grown to its peak; a second cgen of 95 GB or more waits until the
 first ends. Two jobs of 70 GB start together when `140 + 31 + g <= 220`, that
 is when the recorded growth is at most 49 GB. A job of 1 GB starts beside the
 first.
+
+### Priority
+
+A request carries the priority class of the issue it works on: `extreme`,
+`high` or `rest` (`--priority CLASS`, or `BATON_COMPILE_QUEUE_PRIORITY` when no
+flag is given; no value means `rest`). The class is not part of the key. The
+client raises `keys/<key>/priority` under `owners.lock` to the highest class of
+the requesters, so a requester of a higher class that joins a waiting key raises
+that entry; nothing lowers it. `meta` of the attempt records the class of the
+requester that started it, and `status` lists it on each waiting row.
+
+Waiting tickets are ordered by class, then by queue time. A running entry is
+never stopped. An entry of a higher class that waits ahead of a candidate keeps
+the memory it needs: the candidate starts only if the entry still fits beside
+it when the entry fits now, and only if the jobs started ahead of the queue,
+the candidate and the entry fit in `idle`. These are the two tests of the head
+applied to every waiting entry of a higher class. A ticket of an older executable
+has no class and is `rest`.
 
 ### Outside growth
 
