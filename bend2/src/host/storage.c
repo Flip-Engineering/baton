@@ -375,7 +375,7 @@ static void baton_storage_entries_call(IoWork *w) {
     entry = readdir(directory);
     if (!entry) { if (errno) call->error = errno; break; }
     if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-    if (strchr(entry->d_name, '\t') || strchr(entry->d_name, '\n')) { call->error = EINVAL; break; }
+    if (strchr(entry->d_name, '\t')) { call->error = EINVAL; break; }
     struct stat info;
     if (fstatat(fd, entry->d_name, &info, AT_SYMLINK_NOFOLLOW)) {
       if (errno == ENOENT) continue;
