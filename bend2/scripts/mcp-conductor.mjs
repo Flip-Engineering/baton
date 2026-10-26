@@ -668,7 +668,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_message_batch',
-    description: 'Send authored messages from the attached session to multiple recipients. Each item reports its admission, wake outcome, retained message and current recipient-owned receipt. Recipient work remains pending through its acknowledgment and completion flow.',
+    description: 'Send authored messages from the attached session to multiple recipients. Each item reports its admission, wake outcome, retained message and current recipient-owned receipt. Recipient work remains pending until a successful turn handles the complete input and the task is completed.',
     inputSchema: {
       type: 'object',
       properties: {

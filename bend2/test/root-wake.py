@@ -397,6 +397,7 @@ while True:
         self.assertIn('baton inbox', text)
         self.assertIn('baton read MESSAGE_ID...', text)
         self.assertNotIn('completion-request', text)
+        self.assertNotIn('acknowledge', text)
         self.assertNotIn('ack MESSAGE', text)
         inbox = {message['id']: message for message in json.loads(self.coord('inbox', 'root'))}
         self.assertEqual(set(inbox), set(owed))

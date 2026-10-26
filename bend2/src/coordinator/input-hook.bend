@@ -30,7 +30,7 @@ def selection_sql(+session: String, +directory: String, +witness: String) -> Str
   "SELECT coalesce(json_group_array(json(item)),'[]') FROM (SELECT json_object('id',m.id,'recipient',m.recipient,'sender',m.sender,'kind',m.kind,'body',m.body) AS item FROM messages m WHERE m.recipient=" ++ C.q(session)
   ++ " AND m.receipt IS NULL AND NOT " ++ C.stopped_session_sql(C.q(session))
   ++ " AND NOT EXISTS(SELECT 1 FROM message_reads r JOIN executions e ON e.id=r.attempt AND e.session=r.recipient JOIN sessions s ON s.id=e.session WHERE r.message=m.id AND r.recipient=m.recipient AND r.native=s.native AND e.phase='running' AND e.directory=" ++ C.q(directory)
-  ++ " AND json_extract(" ++ C.q(witness) ++ ",'$.live')=1 AND r.identity=json_extract(" ++ C.q(witness) ++ ",'$.identity')) ORDER BY m.seq);"
+  ++ " AND json_extract(" ++ C.q(witness) ++ ",'$.live')=1 AND r.identity=json_extract(" ++ C.q(witness) ++ ",'$.identity')) ORDER BY m.seq)"
 
 def output_sql(+saved: String) -> String:
   "SELECT CASE WHEN json_array_length(" ++ C.q(saved) ++ ")>0 THEN json_object('hookSpecificOutput',json_object('hookEventName','PostToolUse','additionalContext','Baton input for this turn. Handle the following complete messages:' || char(10) || (SELECT group_concat('Message (' || json_extract(value,'$.kind') || ') from ' || json_extract(value,'$.sender') || ' [id: ' || json_extract(value,'$.id') || ']:' || char(10) || json_extract(value,'$.body') || char(10) || 'Read the complete body with baton read ' || json_extract(value,'$.id') || '.',char(10)||char(10)) FROM json_each(" ++ C.q(saved) ++ ")))) ELSE '' END;"
