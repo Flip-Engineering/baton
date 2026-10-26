@@ -159,7 +159,9 @@ class PackageLicenses(unittest.TestCase):
         layout = LAYOUT.ReceiverLayout(methodName='runTest')
         layout.setUp()
         self.addCleanup(layout.doCleanups)
-        prefix, manifest, _ = layout.staged()
+        with mock.patch.object(LAYOUT.PACKAGE, 'source_identity',
+                               return_value={'commit': LAYOUT.COMMIT, 'status': ''}):
+            prefix, manifest, _ = layout.staged()
         self.payload = prefix
         manifest['selected_dependencies'] = [self.repl_fixture()]
         manifest['required_system_dependencies'] = CHECK.system_dependencies(CHECK.platform.system())
