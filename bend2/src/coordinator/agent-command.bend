@@ -3,7 +3,7 @@ import ./agent-actions.bend as A
 import ./agent-route.bend as Route
 import ./agent-native.bend as Native
 import ./agent-input.bend as AgentInput
-import ./message-status.bend as MessageStatus
+import ../coordinator/message-status.bend as MessageStatus
 import ./branching.bend as Branching
 import ./repl.bend as Repl
 import ../coordinator/commands.bend as C
