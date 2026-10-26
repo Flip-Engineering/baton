@@ -75,7 +75,10 @@ class McpCommand(unittest.TestCase):
             self.assertEqual(replies[0]['result']['serverInfo']['name'], 'baton-conductor')
             self.instructions = replies[0]['result']['instructions']
             self.tools = {row['name']: row for row in replies[1]['result']['tools']}
-            self.assertIn(tool, self.tools)
+            if tool == 'baton2_ack':
+                self.assertNotIn(tool, self.tools)
+            else:
+                self.assertIn(tool, self.tools)
             self.assertTrue(completed.exists(), 'the coordinator child did not finish its operation')
             child = json.loads(completed.read_text())
             self.assertEqual(child['exit_code'], code)
@@ -94,6 +97,13 @@ class McpCommand(unittest.TestCase):
                 self.assertEqual(child['stdin'], expected_stdin)
             self.assertFalse((home / 'state.db.actions').exists())
             return replies[2]['result']
+
+    def test_contextual_instructions_describe_automatic_input_handling(self):
+        self.command(repl=True)
+        self.assertIn('automatically record handling of complete input', self.instructions)
+        self.assertNotIn('acknowledge', self.instructions)
+        self.assertNotIn('acknowledge', self.tools['baton2_action']['description'])
+        self.assertNotIn('baton2_ack', self.tools)
 
     def test_task_forwards_full_input_through_stdin_and_keeps_attached_authorship(self):
         body = 'Complete MCP input λ🙂\nMultiline task text with "quotes".\n' * 10000
@@ -235,7 +245,6 @@ class McpCommand(unittest.TestCase):
     def test_inferred_mutation_schemas_keep_explicit_compatibility_fields(self):
         self.command()
         selectors = {
-            'baton2_ack': ('id', 'receipt'),
             'baton2_guide': ('id', 'request'),
             'baton2_context_query_file': ('query',),
             'baton2_context_result': ('query',),
@@ -251,7 +260,7 @@ class McpCommand(unittest.TestCase):
                 for field in fields:
                     self.assertNotIn(field, schema.get('required', []))
                     self.assertEqual(schema['properties'][field]['type'], 'string')
-        self.assertEqual(self.tools['baton2_ack']['inputSchema'].get('required', []), [])
+        self.assertNotIn('baton2_ack', self.tools)
         self.assertEqual(self.tools['baton2_guide']['inputSchema']['required'], ['player'])
         link = self.tools['baton2_knowledge_record']['inputSchema']['properties']['links']['items']
         self.assertNotIn('id', link['required'])
@@ -434,8 +443,12 @@ class McpCommand(unittest.TestCase):
             self.assertTrue({'baton2_delivery_batch', 'baton2_outbox',
                              'baton2_message_batch'}.isdisjoint(tools))
             self.assertNotIn('baton2_input', tools)
+            self.assertNotIn('baton2_ack', tools)
             instructions = replies[0]['result']['instructions']
             self.assertIn('baton2_delivery reads one complete stored message', instructions)
+            self.assertIn('automatically record handling of complete reads', instructions)
+            self.assertNotIn('baton2_ack', instructions)
+            self.assertNotIn('acknowledge', instructions)
             self.assertNotIn('baton2_delivery_batch', instructions)
 
     def test_native_control_tools_advertise_typed_arguments(self):
@@ -693,9 +706,11 @@ class McpCommand(unittest.TestCase):
              ['inbox', '', '--index', '--sender', '--index', '--kind', '--pretty',
               '--state', 'all', '--after-seq', wide, '--through-seq', '9007199254740994', '--pretty']),
             ('baton2_pending', {'recipient': 'root', 'sender': '', 'kind': "report's λ",
-                                'state': 'acknowledged', 'afterSeq': wide},
+                                'state': 'handled', 'afterSeq': wide},
              ['pending', '--index', '--recipient', 'root', '--sender', '', '--kind', "report's λ",
               '--state', 'acknowledged', '--after-seq', wide]),
+            ('baton2_pending', {'recipient': 'root', 'state': 'acknowledged'},
+             ['pending', '--index', '--recipient', 'root', '--state', 'acknowledged']),
         ]
         for tool, arguments, argv in cases:
             with self.subTest(tool=tool, arguments=arguments):
@@ -705,6 +720,7 @@ class McpCommand(unittest.TestCase):
                 schema = self.tools[tool]['inputSchema']['properties']
                 self.assertEqual(schema['afterSeq']['type'], 'string')
                 self.assertEqual(schema['throughSeq']['type'], 'string')
+                self.assertEqual(schema['state']['enum'], ['pending', 'handled', 'all'])
 
     def test_context_and_resume_refusals_preserve_native_exit_and_diagnostics(self):
         for tool, arguments, argv, reason in (
