@@ -13,14 +13,17 @@ def selection_sql(+session: String) -> String:
 def output_sql(+saved: String) -> String:
   "SELECT CASE WHEN " ++ C.q(saved) ++ "<>'' THEN json_object('hookSpecificOutput',json_object('hookEventName','PostToolUse','additionalContext','Baton input is pending. Message (' || json_extract(" ++ C.q(saved) ++ ",'$.kind') || ') from ' || json_extract(" ++ C.q(saved) ++ ",'$.sender') || ' [id: ' || json_extract(" ++ C.q(saved) ++ ",'$.id') || '] is unread. Read the complete body with baton read ' || json_extract(" ++ C.q(saved) ++ ",'$.id') || '.')) ELSE '' END;"
 
+def answered(answer: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match answer:
+    case Fail{error}: IO.pure(Unit,Unit{})
+    case Done{output}: Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(output)),IO.pure(Unit,Unit{}),IO.print(Tx.trim_nl(output)))
+
 def selected(db: String, saved: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match saved:
     case Fail{error}: IO.pure(Unit,Unit{})
     case Done{+row}: do IO<Unit>:
       answer : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,output_sql(Tx.trim_nl(row)))
-      match answer:
-        case Fail{error}: IO.pure(Unit,Unit{})
-        case Done{output}: Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(output)),IO.pure(Unit,Unit{}),IO.print(Tx.trim_nl(output)))
+      answered(answer)
 
 # Database failures preserve the successful tool result and unread input.
 def run(+db: String, session: String) -> IO(Unit):
