@@ -87,7 +87,9 @@ class StopHook(unittest.TestCase):
         self.db = sqlite3.connect(self.path, isolation_level=None)
         self.addCleanup(self.db.close)
         self.db.executescript(self.schema + SEED)
-        self.env = dict(os.environ, BATON_SESSION='worker', BATON_DATABASE=self.path)
+        self.env = {key: value for key, value in os.environ.items()
+                    if key not in ('BATON_ATTEMPT_DIRECTORY', 'BATON_MCP_INPUT', 'CODEX_THREAD_ID')}
+        self.env.update(BATON_SESSION='worker', BATON_DATABASE=self.path)
 
     def owe(self, ident='message:coordinator:mid-turn', kind='guidance', body='New detail.'):
         self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,'coordinator','worker',?,?)",
