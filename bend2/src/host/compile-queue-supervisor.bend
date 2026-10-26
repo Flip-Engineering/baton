@@ -92,7 +92,7 @@ def watch_command(+attempt: String, +child: U32, +start: String) -> IO(Result<&1
 
 @unsafe
 
-def wait_running_match_2(+child: U32, +sample_state: String, +delay: U32, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String & String>):
+def wait_running_match_2(+again_wait_running: (@+child: U32 -> @+sample_state: String -> @+delay: U32 -> IO(Result<&1,&1,U32 & String,String & String>)), +child: U32, +sample_state: String, +delay: U32, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String & String>):
   match result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String & String>,Fail{error})
     case Done{+status}:
@@ -100,13 +100,14 @@ def wait_running_match_2(+child: U32, +sample_state: String, +delay: U32, result
         do IO<Result<&1,&1,U32 & String,String & String>>:
           +next : String <- sample(sample_state,False{})
           slept : Unit <- IO.sleep(delay)
-          wait_running(child,next,U32.min(U32.mul(delay,2),128)),
+          again_wait_running(child,next,U32.min(U32.mul(delay,2),128)),
         IO.pure(Result<&1,&1,U32 & String,String & String>,Done{(status,sample_state)}))
 
+@unsafe
 def wait_running(+child: U32, +sample_state: String, +delay: U32) -> IO(Result<&1,&1,U32 & String,String & String>):
   do IO<Result<&1,&1,U32 & String,String & String>>:
     result : Result<&1,&1,U32 & String,String> <- P.HostPosix.try_wait(child)
-    wait_running_match_2(child, sample_state, delay, result)
+    wait_running_match_2(wait_running, child, sample_state, delay, result)
 
 def disposition(+status: String, +canceled: U32) -> U32 & String:
   +signal = S.number(S.field(status,"signal"))

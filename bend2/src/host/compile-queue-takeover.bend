@@ -66,7 +66,7 @@ def has_pid( +items: List<&2,String>, +pid: U32) -> Bool:
 
 @unsafe
 
-def stopped_match_6(+start: String, +pid: U32, live: Result<&1,&1,U32 & String,U32>) -> IO(Bool):
+def stopped_match_6(+again_stopped: (@+pid: U32 -> @+start: String -> IO(Bool)), +start: String, +pid: U32, live: Result<&1,&1,U32 & String,U32>) -> IO(Bool):
   match live:
     case Fail{error}: IO.pure(Bool,False{})
     case Done{value}:
@@ -77,12 +77,13 @@ def stopped_match_6(+start: String, +pid: U32, live: Result<&1,&1,U32 & String,U
           Bool.pick(IO(Bool),Bool.or(String.eq(state,"T"),String.eq(state,"t")),IO.pure(Bool,True{}),
             do IO<Bool>:
               slept : Unit <- IO.sleep(20)
-              stopped(pid,start)))
+              again_stopped(pid,start)))
 
+@unsafe
 def stopped(+pid: U32, +start: String) -> IO(Bool):
   do IO<Bool>:
     live : Result<&1,&1,U32 & String,U32> <- P.HostPosix.alive(pid,start)
-    stopped_match_6(start, pid, live)
+    stopped_match_6(stopped, start, pid, live)
 
 def successor_match_5(+old_pid: String, +args: String, +key_fd: U32, heavy: Result<&1,&1,U32 & String,U32>) -> IO(Result<&1,&1,U32 & String,U32>):
   match heavy:

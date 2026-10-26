@@ -49,19 +49,20 @@ def admission_names(names: List<&2,String>) -> List<&2,String>:
     case Nil{}: Nil{}
     case +name <> +rest: Bool.pick(List<&2,String>,valid_name(name),name <> admission_names(rest),admission_names(rest))
 
-def load_claims_match_3(+rest: List<&2,String>, +name: String, +path: String, +state: String, +acc: List<&2,String>, held: Result<&1,&1,U32 & String,U32>) -> IO(List<&2,String>):
+def load_claims_match_3(+again_load_claims: (@+names: List<&2,String> -> @+state: String -> @+acc: List<&2,String> -> IO(List<&2,String>)), +rest: List<&2,String>, +name: String, +path: String, +state: String, +acc: List<&2,String>, held: Result<&1,&1,U32 & String,U32>) -> IO(List<&2,String>):
   match held:
     case Done{value}:
       Bool.pick(IO(List<&2,String>),U32.is_eq(value,0),
         do IO<List<&2,String>>:
           gone : Unit <- S.remove(path)
           usage : Unit <- S.remove(state ++ "/admission/usage/" ++ name)
-          load_claims(rest,state,acc),
+          again_load_claims(rest,state,acc),
         do IO<List<&2,String>>:
           +text : String <- S.read(path)
-          load_claims(rest,state,Bool.pick(List<&2,String>,Bool.and(valid_name(name),Bool.not(String.is_empty(text))),("id=" ++ name ++ "\n" ++ text) <> acc,acc)))
-    case Fail{error}: load_claims(rest,state,acc)
+          again_load_claims(rest,state,Bool.pick(List<&2,String>,Bool.and(valid_name(name),Bool.not(String.is_empty(text))),("id=" ++ name ++ "\n" ++ text) <> acc,acc)))
+    case Fail{error}: again_load_claims(rest,state,acc)
 
+@unsafe
 def load_claims( +names: List<&2,String>, +state: String, +acc: List<&2,String>) -> IO(List<&2,String>):
   match names:
     case Nil{}: IO.pure(List<&2,String>,acc)
@@ -69,7 +70,7 @@ def load_claims( +names: List<&2,String>, +state: String, +acc: List<&2,String>)
       do IO<List<&2,String>>:
         +path : String <- IO.pure(String,state ++ "/admission/running/" ++ name)
         held : Result<&1,&1,U32 & String,U32> <- P.HostPosix.held(path)
-        load_claims_match_3(rest, name, path, state, acc, held)
+        load_claims_match_3(load_claims, rest, name, path, state, acc, held)
 
 def priority(+name: String) -> U32:
   Bool.pick(U32,String.eq(name,"extreme"),2,Bool.pick(U32,String.eq(name,"high"),1,0))
@@ -105,7 +106,7 @@ def complete_ticket(+ticket: String) -> IO(String):
       +group : String <- S.read(attempt ++ "/group")
       IO.pure(String,fill_missing(fill_missing(fill_missing(fill_missing(ticket,"shape",shape),"mode",mode),"kind",S.field(meta,"kind")),"compiler",S.field(group,"compiler"))))
 
-def load_tickets_match_2(+rest: List<&2,String>, +name: String, +path: String, +state: String, +acc: List<&2,String>, +text: String, live: Result<&1,&1,U32 & String,U32>) -> IO(List<&2,String>):
+def load_tickets_match_2(+again_load_tickets: (@+names: List<&2,String> -> @+state: String -> @+acc: List<&2,String> -> IO(List<&2,String>)), +rest: List<&2,String>, +name: String, +path: String, +state: String, +acc: List<&2,String>, +text: String, live: Result<&1,&1,U32 & String,U32>) -> IO(List<&2,String>):
   match live:
     case Done{value}:
       Bool.pick(IO(List<&2,String>),Bool.and(U32.is_gt(value,0),valid_name(name)),
@@ -114,12 +115,13 @@ def load_tickets_match_2(+rest: List<&2,String>, +name: String, +path: String, +
           expected : Maybe<&2,Nat> <- H.expected(state,completed)
           +pri : String <- S.read(state ++ "/keys/" ++ S.field(completed,"key") ++ "/priority")
           +row : String <- IO.pure(String,"id=" ++ name ++ "\npriority=" ++ U32.show(priority(S.field(pri,"priority"))) ++ "\n" ++ expected_fields(expected) ++ completed)
-          load_tickets(rest,state,insert_ticket(acc,row)),
+          again_load_tickets(rest,state,insert_ticket(acc,row)),
         do IO<List<&2,String>>:
           gone : Unit <- S.remove(path)
-          load_tickets(rest,state,acc))
-    case Fail{error}: load_tickets(rest,state,acc)
+          again_load_tickets(rest,state,acc))
+    case Fail{error}: again_load_tickets(rest,state,acc)
 
+@unsafe
 def load_tickets( +names: List<&2,String>, +state: String, +acc: List<&2,String>) -> IO(List<&2,String>):
   match names:
     case Nil{}: IO.pure(List<&2,String>,acc)
@@ -128,7 +130,7 @@ def load_tickets( +names: List<&2,String>, +state: String, +acc: List<&2,String>
         +path : String <- IO.pure(String,state ++ "/admission/waiting/" ++ name)
         +text : String <- S.read(path)
         live : Result<&1,&1,U32 & String,U32> <- P.HostPosix.alive(S.number(S.field(text,"pid")),S.field(text,"starttime"))
-        load_tickets_match_2(rest, name, path, state, acc, text, live)
+        load_tickets_match_2(load_tickets, rest, name, path, state, acc, text, live)
 
 def cached_claims( +claims: List<&2,String>, +cache: String) -> Bool:
   match claims:
@@ -323,17 +325,18 @@ def poll(+state: String, +id: String, +body: String) -> IO(Result<&1,&1,U32 & St
 
 @unsafe
 
-def wait_result(result: Result<&1,&1,U32 & String,Maybe<&2,U32>>, +state: String, +id: String, +body: String) -> IO(Result<&1,&1,U32 & String,U32>):
+def wait_result(+again_wait_loop: (@+state: String -> @+id: String -> @+body: String -> IO(Result<&1,&1,U32 & String,U32>)), result: Result<&1,&1,U32 & String,Maybe<&2,U32>>, +state: String, +id: String, +body: String) -> IO(Result<&1,&1,U32 & String,U32>):
   match result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})
     case Done{Some{fd}}: IO.pure(Result<&1,&1,U32 & String,U32>,Done{fd})
     case Done{None{}}:
       do IO<Result<&1,&1,U32 & String,U32>>:
         slept : Unit <- IO.sleep(200)
-        wait_loop(state,id,body)
+        again_wait_loop(state,id,body)
 
 @unsafe
 
+@unsafe
 def wait_loop(+state: String, +id: String, +body: String) -> IO(Result<&1,&1,U32 & String,U32>):
   do IO<Result<&1,&1,U32 & String,U32>>:
     +signal : U32 <- IO.try(U32,P.HostPosix.pending_signal())
@@ -341,7 +344,7 @@ def wait_loop(+state: String, +id: String, +body: String) -> IO(Result<&1,&1,U32
       IO.pure(Result<&1,&1,U32 & String,U32>,Fail{(125,"admission canceled")}),
       do IO<Result<&1,&1,U32 & String,U32>>:
         result : Result<&1,&1,U32 & String,Maybe<&2,U32>> <- poll(state,id,body)
-        wait_result(result,state,id,body))
+        wait_result(wait_loop, result,state,id,body))
 
 def old_canceled_match_1(+old_pid: U32, +signal: U32, alive: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
   match alive:

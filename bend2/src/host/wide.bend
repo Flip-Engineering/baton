@@ -55,16 +55,16 @@ def divide_ten(value: Wide64) -> Wide64 & U32:
       (Wide64{U32.add(U32.mul(U32.div(a,10),65536),U32.div(b,10)),U32.add(U32.mul(U32.div(c,10),65536),U32.div(d,10))},U32.mod(d,10))
 
 @unsafe
-def show_go(+value: Wide64, +acc: String) -> String:
-  Bool.pick(String,equal(value,zero()),acc,show_step(divide_ten(value),acc))
+def show_go(+again_show_step: (@pair: Wide64 & U32 -> @acc: String -> String), +value: Wide64, +acc: String) -> String:
+  Bool.pick(String,equal(value,zero()),acc,again_show_step(divide_ten(value),acc))
 
 @unsafe
 def show_step(pair: Wide64 & U32, acc: String) -> String:
   match pair:
-    case (value,digit): show_go(value,U32.show(digit) ++ acc)
+    case (value,digit): show_go(show_step, value,U32.show(digit) ++ acc)
 
 def show(+value: Wide64) -> String:
-  Bool.pick(String,equal(value,zero()),"0",show_go(value,""))
+  Bool.pick(String,equal(value,zero()),"0",show_go(show_step, value,""))
 
 @unsafe
 def hex_word(+value: U32, +count: U32, +acc: String) -> String:
