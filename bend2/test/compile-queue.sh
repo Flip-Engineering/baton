@@ -41,6 +41,7 @@ tag=fake
 log=''
 out=''
 sleep_s=0
+alloc=0
 fail=0
 gpu=0
 suffix_sensitive=0
@@ -50,6 +51,7 @@ for arg in "$@"; do
     --tag) tag=$arg ;;
     --log) log=$arg ;;
     --sleep) sleep_s=$arg ;;
+    --alloc-mb) alloc=$arg ;;
   esac
   case $arg in
     --fail) fail=1 ;;
@@ -61,6 +63,7 @@ for arg in "$@"; do
 done
 now() { python3 -c 'import time;print(time.time_ns())'; }
 [ -n "$log" ] && printf 'start %s %s %s\n' "$(now)" "$$" "$tag" >> "$log"
+[ "$alloc" = 0 ] || python3 -c "b = b'x' * ($alloc * 1048576)"
 if [ "$fail" = 1 ]; then
   printf 'synthetic compiler failure %s\n' "$tag" >&2
   [ -n "$log" ] && printf 'end %s %s %s 3\n' "$(now)" "$$" "$tag" >> "$log"
@@ -1277,6 +1280,30 @@ PY
 else
   printf 'SKIP check and generation records: no /proc/meminfo or too little memory\n'
 fi
+
+# The peak of a run that did not succeed belongs to its key only. A build that died
+# after it used 512 MB does not raise the records that predict other builds, and a
+# successful build of the same compiler records its own, smaller peak.
+STATE_FH=$(fresh_state failed-history)
+FH_FAKE=$(fresh_fake failed-history)
+( CQ_STATE=$STATE_FH; CQ_FAKE=$FH_FAKE; run_cc fh-fail "$T/fh-fail" --fail --alloc-mb 512 ) >/dev/null 2>&1
+fh_key_peak=$(cat "$STATE_FH"/keys/*/peak 2>/dev/null | sed -n 's/^peak_kb=//p' | sort -n | tail -1)
+[ "${fh_key_peak:-0}" -ge 400000 ] && [ -z "$(ls "$STATE_FH/peaks" 2>/dev/null)" ] \
+  && pass 'a failed run records its peak for its key and raises no other record' \
+  || bad "a failed run raised the tier records: key peak ${fh_key_peak:-none}, records: $(ls "$STATE_FH/peaks" 2>/dev/null | tr '\n' ' ')"
+( CQ_STATE=$STATE_FH; CQ_FAKE=$FH_FAKE; run_cc fh-ok "$T/fh-ok" --alloc-mb 0 ) >/dev/null 2>&1 || bad 'failed history: the successful run failed'
+fh_kind_peak=$(sed -n 's/^peak_kb=//p' "$STATE_FH/peaks/k.cc" 2>/dev/null)
+[ -n "$fh_kind_peak" ] && [ "$fh_kind_peak" -lt 400000 ] \
+  && pass 'a successful run records its own peak beside the failed run of the same compiler' \
+  || bad "the kind record is ${fh_kind_peak:-missing} kB after a successful run beside a failed run of 512 MB"
+# Records written by an earlier executable hold the peaks of runs that failed; backfill
+# derives the tier records again from the successful runs.
+printf 'peak_kb=900000000\n' > "$STATE_FH/peaks/k.cc"
+sh "$QUEUE" backfill --state-root "$STATE_FH" > "$T/fh-backfill.out" 2>&1 || bad 'failed history: backfill failed'
+fh_kind_peak=$(sed -n 's/^peak_kb=//p' "$STATE_FH/peaks/k.cc" 2>/dev/null)
+[ -n "$fh_kind_peak" ] && [ "$fh_kind_peak" -lt 400000 ] \
+  && pass 'backfill derives the tier records again from the successful runs' \
+  || bad "backfill kept the kind record at ${fh_kind_peak:-missing} kB"
 
 # backfill raises the kind and key records from the runs already recorded.
 rm -f "$STATE/peaks/k.cgen" "$STATE/peaks/k.cc"
