@@ -335,8 +335,6 @@ def wait_result(+again_wait_loop: (@+state: String -> @+id: String -> @+body: St
         again_wait_loop(state,id,body)
 
 @unsafe
-
-@unsafe
 def wait_loop(+state: String, +id: String, +body: String) -> IO(Result<&1,&1,U32 & String,U32>):
   do IO<Result<&1,&1,U32 & String,U32>>:
     +signal : U32 <- IO.try(U32,P.HostPosix.pending_signal())
