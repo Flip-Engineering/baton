@@ -1772,16 +1772,38 @@ function carb_book(src: Bend.Book, roots: Bend.Name[]): Carb {
   return cb;
 }
 
-// The datatypes a type mentions
+// The datatypes a type mentions, in first-encounter order. Shared type nodes
+// are visited once; carb_book already skips repeated names when dequeuing.
 function type_adts(cb: Carb, T: HTerm): Bend.Name[] {
-  const t = ty_wnf(cb.book, T);
-  switch (t?.$) {
-    case "All": return [...type_adts(cb, t.A), ...type_adts(cb, t.B(DUMMY))];
-    case "Lam": return type_adts(cb, t.f(DUMMY));
-    case "ADT": return [...WORDS[t.k] === undefined && t.k !== "Array"
-      ? [t.k] : [], ...t.x.flatMap((x) => type_adts(cb, x))];
-    default: return [];
+  const out: Bend.Name[] = [];
+  const names = new Set<Bend.Name>();
+  const seen = new Set<HTerm>();
+  const stack: (HTerm | (() => HTerm))[] = [T];
+  while (stack.length > 0) {
+    const task = stack.pop() as HTerm | (() => HTerm);
+    const u = typeof task === "function" ? task() : task;
+    if (seen.has(u)) continue;
+    seen.add(u);
+    const t = ty_wnf(cb.book, u);
+    if (t === null || (t !== u && seen.has(t))) continue;
+    seen.add(t);
+    switch (t.$) {
+      case "All":
+        stack.push(() => t.B(DUMMY), t.A);
+        break;
+      case "Lam":
+        stack.push(t.f(DUMMY));
+        break;
+      case "ADT":
+        if (WORDS[t.k] === undefined && t.k !== "Array" && !names.has(t.k)) {
+          names.add(t.k);
+          out.push(t.k);
+        }
+        for (let i = t.x.length - 1; i >= 0; --i) stack.push(t.x[i]);
+        break;
+    }
   }
+  return out;
 }
 
 // V
