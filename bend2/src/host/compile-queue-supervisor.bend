@@ -151,14 +151,17 @@ def run_spawned_match_1(+child: U32, +gate: U32, +status: U32, +attempt: String,
         closed_status : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.close_fd(status)
         run_started(Fail{error},child,attempt)
 
-def run_spawned(result: Result<&1,&1,U32 & String,U32 & (U32 & U32)>, +attempt: String) -> IO(Result<&1,&1,U32 & String,U32 & String>):
+def run_spawned(result: Result<&1,&1,U32 & String,String>, +attempt: String) -> IO(Result<&1,&1,U32 & String,U32 & String>):
   match result:
     case Fail{error}:
       do IO<Result<&1,&1,U32 & String,U32 & String>>:
         restored : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.restore_signals()
         IO.pure(Result<&1,&1,U32 & String,U32 & String>,Fail{error})
-    case Done{(+child,(+gate,+status))}:
+    case Done{+handles}:
       do IO<Result<&1,&1,U32 & String,U32 & String>>:
+        +child : U32 <- IO.pure(U32,S.number(S.field(handles,"pid")))
+        gate : U32 <- IO.pure(U32,S.number(S.field(handles,"gate")))
+        status : U32 <- IO.pure(U32,S.number(S.field(handles,"status")))
         +start : String <- IO.try(String,P.HostPosix.starttime(child))
         watcher : Result<&1,&1,U32 & String,U32> <- watch_command(attempt,child,start)
         run_spawned_match_1(child, gate, status, attempt, watcher)
@@ -166,5 +169,5 @@ def run_spawned(result: Result<&1,&1,U32 & String,U32 & (U32 & U32)>, +attempt: 
 def run( +argv: String, +cwd: String, +stdout: String, +stderr: String) -> IO(Result<&1,&1,U32 & String,U32 & String>):
   do IO<Result<&1,&1,U32 & String,U32 & String>>:
     handling : Unit <- IO.try(Unit,P.HostPosix.watch_signals())
-    result : Result<&1,&1,U32 & String,U32 & (U32 & U32)> <- P.HostPosix.spawn_held(argv,cwd,stdout,stderr)
+    result : Result<&1,&1,U32 & String,String> <- P.HostPosix.spawn_held(argv,cwd,stdout,stderr)
     run_spawned(result,S.dirname(stdout))

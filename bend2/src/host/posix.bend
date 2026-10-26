@@ -60,7 +60,7 @@ def HostPosix.create_locked(path: String, bytes: String) -> IO(Result<&1,&1,U32 
 def HostPosix.spawn_detached(argv: String, first: U32, second: U32, environment: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./posix.c"
 
-def HostPosix.spawn_held(argv: String, cwd: String, stdout: String, stderr: String) -> IO(Result<&1,&1,U32 & String,U32 & (U32 & U32)>):
+def HostPosix.spawn_held(argv: String, cwd: String, stdout: String, stderr: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./posix.c"
 
 def HostPosix.start(gate: U32, status: U32) -> IO(Result<&1,&1,U32 & String,Unit>):

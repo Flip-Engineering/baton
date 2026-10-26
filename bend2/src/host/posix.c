@@ -371,6 +371,7 @@ static int host_posix_release_start(int gate,int errors) {
 
 typedef struct {
   char *text[4],*answer;
+  char spawned[96];
   size_t length[4];
   u32 number[4],value,gate,errors;
   int operation,error,result_kind;
@@ -448,6 +449,7 @@ static void host_posix_work(IoWork *work) {
     case 21:
       call->error=host_posix_spawn_held(call->text[0],call->length[0],
         call->text[1],call->text[2],call->text[3],&call->value,&call->gate,&call->errors);
+      if(!call->error) snprintf(call->spawned,sizeof call->spawned,"pid=%u\ngate=%u\nstatus=%u\n",call->value,call->gate,call->errors);
       break;
     case 22: call->error=host_posix_release_start((int)call->number[0],(int)call->number[1]);break;
     case 23: {
@@ -534,8 +536,7 @@ static Term host_posix_pack(Env env,IoWork *work) {
   if(!call->error) {
     if(call->result_kind==1) value=(Term)call->value;
     else if(call->result_kind==2) value=io_str(env,call->answer?call->answer:"",call->answer?strlen(call->answer):0);
-    else if(call->result_kind==3) value=io_tup(env,(Term)call->value,
-      io_tup(env,(Term)call->gate,(Term)call->errors));
+    else if(call->result_kind==3) value=io_str(env,call->spawned,strlen(call->spawned));
   }
   Term result=call->error?io_fail(env,call->error,NULL):io_done(env,value);
   for(int i=0;i<4;i++) free(call->text[i]);
