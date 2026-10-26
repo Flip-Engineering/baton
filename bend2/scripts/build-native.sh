@@ -103,6 +103,19 @@ else
   sh "$root/bend2/scripts/bend-lineage-guard.sh" "$compiler"
   native_compile bend "$compiler" "$entry" -o "$output.c"
 fi
+if grep -Fq '#include "persistent-path.h"' "$output.c"; then
+  persistent_header_dir=$(dirname "$output.c")
+  persistent_header="$persistent_header_dir/persistent-path.h"
+  expected_persistent_header=$(readlink -f "$root/bend2/src/host/persistent-path.h")
+  if [ -e "$persistent_header" ] || [ -L "$persistent_header" ]; then
+    if [ "$(readlink -f "$persistent_header")" != "$expected_persistent_header" ]; then
+      echo "generated C input resolves persistent-path.h to an unexpected file: $persistent_header" >&2
+      exit 1
+    fi
+  else
+    ln -s "$expected_persistent_header" "$persistent_header"
+  fi
+fi
 build_native_shards() {
   native_link_flags="-O1 -pthread -lsqlite3 -lm"
   if [ -n "$1" ]; then
