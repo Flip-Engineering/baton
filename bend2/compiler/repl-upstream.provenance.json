@@ -3,7 +3,7 @@
   "upstream": "Baton fork of Bend 2.0.25",
   "compiler_archive_sha256": "6e03633ff79f14781c35281bf3004b21da9dd5ea46bd3199c62b0ab7b2d3f6c7",
   "official_release_artifact": false,
-  "lock_sha256": "045a8a84e8c58d6cf2edff9fb78e6ac7909ddda22c37b0745a00a2df2ddd02f5",
+  "lock_sha256": "026da6d7504b8828e0c108d4f5ab3209181b05d191a1e96679de67c0c17d3aec",
   "files": [
     {
       "path": "base.bend",
@@ -12,8 +12,8 @@
     },
     {
       "path": "bend.ts",
-      "bytes": 141642,
-      "sha256": "c9990cbdfd47aba0db5dad2efc0915b6a10ed9134dd4fa56b6e8e425c080df4e"
+      "bytes": 144409,
+      "sha256": "0602d5a0d7b2f92f8d5262d0ddec43d58bcb43f26dd81a7ef1f1f09f061cff08"
     },
     {
       "path": "comp.ts",
