@@ -64,6 +64,7 @@ def toolchain_receipt(args: argparse.Namespace) -> dict:
         "sharder": {"path": str(sharder), "sha256": sha256_file(sharder)},
         "driver": file_identity(Path(__file__)),
         "linker": file_identity(Path(shutil.which(linker) or linker)),
+        "ccache": file_identity(Path(shutil.which(args.ccache) or args.ccache)) if args.ccache else None,
     }
 
 def sha256_bytes(data: bytes) -> str:

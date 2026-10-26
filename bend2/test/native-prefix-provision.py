@@ -70,9 +70,10 @@ class NativePrefixProvision(unittest.TestCase):
                     'link_flags': ['-O1', '-pthread', '-I/source with spaces',
                                    '/source with spaces/native-entry.c', '-lsqlite3', '-lm'],
                     'source': {'path': '/producer/generated.c'},
-                    'compiler': {'path': '/selected/clang'}}
+                    'compiler': {'path': '/selected/clang', 'ccache': '/selected/cache'}}
         command = prepare.relink_command(producer, Path('/owned/output'))
         self.assertEqual(command[command.index('--cc') + 1], '/selected/clang')
+        self.assertEqual(command[command.index('--ccache') + 1], '/selected/cache')
         self.assertIn('--cflag=-I/source with spaces', command)
         import shlex
         extra = shlex.split(next(value.split('=', 1)[1]

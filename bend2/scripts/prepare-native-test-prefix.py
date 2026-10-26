@@ -34,11 +34,14 @@ def relink_command(receipt, output):
     if receipt['link_flags'][:len(flags)] != flags:
         raise RuntimeError('The Main producer records different compile and link flags')
     extra = receipt['link_flags'][len(flags):] + ['-DBATON2_NATIVE_RECEIVER_ROUTER']
-    return [sys.executable, str(ROOT / 'tools/cgen-clang-parallel/build_and_measure.py'),
+    command = [sys.executable, str(ROOT / 'tools/cgen-clang-parallel/build_and_measure.py'),
             '--source', receipt['source']['path'], '--outdir', str(output / 'router'),
             '--binary', str(output / 'baton-full'), '--cc', receipt['compiler']['path'],
             '--main-rename', '--build-only', '--max-aggregate-rss-mb', '0',
             *['--cflag=' + flag for flag in flags], '--link-flags=' + shlex.join(extra)]
+    if receipt['compiler'].get('ccache'):
+        command.extend(['--ccache', receipt['compiler']['ccache']])
+    return command
 
 
 def main():
