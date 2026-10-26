@@ -123,9 +123,9 @@ function commit(args) {
 const textSchema = { type: 'object', properties: { text: { type: 'string' } },
   required: ['text'], additionalProperties: false };
 const tools = [
-  { name: 'inbox', description: 'Read complete pending input for the recorded actor. Baton records complete reads against the current native attempt; receipts remain pending until handling settles.',
+  { name: 'inbox', description: 'Read complete owed input for the recorded actor. Baton records complete reads against the current native attempt. Recorded reads remove input from the owed inbox.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
-  { name: 'read', description: 'Read complete stored messages by ID through the recorded actor context. Acknowledged messages remain readable. Baton records recipient-owned reads against the current native attempt.',
+  { name: 'read', description: 'Read complete stored messages by ID through the recorded actor context. Stored messages remain readable after their complete read is recorded. Baton records recipient-owned reads against the current native attempt.',
     inputSchema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string' } } },
       required: ['ids'], additionalProperties: false } },
   { name: 'report', description: 'Send a complete report to the recorded coordinator.', inputSchema: textSchema },

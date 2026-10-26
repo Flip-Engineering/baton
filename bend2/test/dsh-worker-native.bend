@@ -1,7 +1,6 @@
 # Focused entry for production worker admission and retained DSH launch.
 import Base
 import ../src/coordinator/agent-command.bend as Agent
-import ../src/coordinator/agent-input.bend as AgentInput
 import ../src/coordinator/agent-route.bend as Route
 import ../src/coordinator/agent-native.bend as Native
 import ../src/coordinator/commands.bend as C
@@ -24,29 +23,28 @@ def setup(+db: String, directory: String, cwd: String, native: String) -> IO(Uni
     IO.print("setup-complete")
 
 @unsafe
-def observe(+db: String, +handle: U32, +lock: U32, line: Maybe<String>) -> IO(Unit):
+def observe(+handle: U32, +lock: U32, line: Maybe<String>) -> IO(Unit):
   match line:
     case Some{text}: do IO<Unit>:
       IO.print(text)
       next : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_text_line(handle))
-      observe(db,handle,lock,next)
+      observe(handle,lock,next)
     case None{}: do IO<Unit>:
       status : String <- IO.try(String,P.ProcessChild.wait(handle))
-      settled : Unit <- AgentInput.settle_if(db,"worker","worker-turn",String.eq(status,"exit 0"))
       IO.print("native-" ++ status)
       released_lock : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
       acknowledged : Unit <- IO.try(Unit,P.ProcessChild.acknowledge(handle))
       IO.try(Unit,Custody.Instance.retire(handle))
 
-def started(start: P.RetainedStart, +db: String, +lock: U32) -> IO(Unit):
+def started(start: P.RetainedStart, +lock: U32) -> IO(Unit):
   match start:
     case P.Unstarted{error}: do IO<Unit>:
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       IO.die(Unit,2,error)
     case P.Retained{+handle}: do IO<Unit>:
       line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_text_line(handle))
-      observe(db,handle,lock,line)
+      observe(handle,lock,line)
 
 def launch_locked(+db: String, +directory: String, cwd: String, command: String, native: String, lock: Maybe<U32>) -> IO(Unit):
   match lock:
@@ -56,7 +54,7 @@ def launch_locked(+db: String, +directory: String, cwd: String, command: String,
         Turn.retained_prepare(db,"worker",directory,command,"deepseek-flash","max",native,"dsh\n",db ++ ".sessions","Fixture worker task.","default",True{},""))
       start : P.RetainedStart <- IO.try(P.RetainedStart,
         Turn.retained_admit(db,directory,cwd,"Fixture worker task.",owned,P.argv(["/bin/true"]),launch))
-      started(start,db,owned)
+      started(start,owned)
 
 def run(args: List<String>) -> IO(Unit):
   match args:

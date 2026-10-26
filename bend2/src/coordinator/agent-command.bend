@@ -3,6 +3,7 @@ import ./agent-actions.bend as A
 import ./agent-route.bend as Route
 import ./agent-native.bend as Native
 import ./agent-input.bend as AgentInput
+import ./message-status.bend as MessageStatus
 import ./branching.bend as Branching
 import ./repl.bend as Repl
 import ../coordinator/commands.bend as C
@@ -10,6 +11,7 @@ import ./store.bend as Store
 import ./message-batch.bend as Batch
 import ./project.bend as Project
 import ../host/sqlite.bend as DB
+import ../host/instance.bend as Custody
 import ../context/raw.bend as Raw
 import ../context/request.bend as Req
 import ../git/text.bend as Tx
@@ -292,21 +294,29 @@ def current_session(+db: String) -> IO(Unit):
     Bool.pick(IO(Unit),String.is_empty(saved),IO.die(Unit,2,"No recorded session matches the current agent context."),IO.write(saved))
 
 # The host worker bridge uses the existing admitted native birth on each call.
-def worker_context_scope(scope: AgentInput.HandlingScope, +db: String, +session: String) -> IO(Unit):
-  match scope:
-    case AgentInput.NoHandling{}: IO.die(Unit,2,"Worker operations require the current admitted native execution.")
-    case AgentInput.Handling{+attempt,+native,identity,+current}: do IO<Unit>:
+def worker_context_fields(fields: List<String>, +db: String, +session: String, +directory: String) -> IO(Unit):
+  match fields:
+    case attempt_hex <> native_hex <> Nil{}: do IO<Unit>:
+      +attempt : String <- AgentInput.field(attempt_hex)
+      +native : String <- AgentInput.field(native_hex)
+      witness : String <- IO.try(String,Custody.Instance.input_witness(db,directory))
       +saved : String <- IO.try(String,DB.Sql.read(db,
         "SELECT json_object('session',s.id,'attempt',e.id,'directory',e.directory,'native',s.native,'harness',s.harness,'workspace',s.workspace,'branch',s.branch,'model',s.model) FROM sessions s JOIN executions e ON e.session=s.id WHERE s.id=" ++ C.q(session)
         ++ " AND s.harness='dsh' AND s.native=" ++ C.q(native) ++ " AND e.id=" ++ C.q(attempt)
-        ++ " AND (" ++ current ++ ") AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"))
-      Bool.pick(IO(Unit),String.is_empty(saved),IO.die(Unit,2,"Worker operations require the current DSH execution and effective stop state."),IO.write(saved))
+        ++ " AND e.directory=" ++ C.q(directory) ++ " AND e.phase='running' AND json_extract(" ++ C.q(witness) ++ ",'$.live')=1"
+        ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"))
+      Bool.pick(IO(Unit),String.is_empty(saved),IO.die(Unit,2,"Worker operations require the current DSH execution, live native birth and effective stop state."),IO.write(saved))
+    case other: IO.die(Unit,2,"Worker operations require the current admitted native execution.")
 
 def worker_context(+db: String) -> IO(Unit):
   do IO<Unit>:
     +session : String <- implicit_session(db)
-    scope : AgentInput.HandlingScope <- AgentInput.handling_scope(db,session)
-    worker_context_scope(scope,db,session)
+    +directory : String <- AgentInput.context(db,session)
+    Bool.pick(IO(Unit),String.is_empty(directory),
+      IO.die(Unit,2,"Worker operations require the recorded database, actor and native attempt directory."),
+      (do IO<Unit>:
+        fields : String <- IO.try(String,DB.Sql.read(db,MessageStatus.current_sql(session,directory)))
+        worker_context_fields(Tx.split_tabs(Tx.trim_nl(fields)),db,session,directory)))
 
 def implicit_database(+path: String, registered: Bool) -> IO(String):
   match registered:
