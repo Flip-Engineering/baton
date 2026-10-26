@@ -326,8 +326,6 @@ def poll(+state: String, +id: String, +body: String) -> IO(Result<&1,&1,U32 & St
     IO.pure(Result<&1,&1,U32 & String,Maybe<&2,U32>>,result)
 
 @unsafe
-
-@unsafe
 def wait_result(~again_wait_loop: (@+state: String -> @+id: String -> @+body: String -> IO(Result<&1,&1,U32 & String,U32>)), result: Result<&1,&1,U32 & String,Maybe<&2,U32>>, +state: String, +id: String, +body: String) -> IO(Result<&1,&1,U32 & String,U32>):
   match result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})

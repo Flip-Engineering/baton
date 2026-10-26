@@ -91,8 +91,6 @@ def watch_command(+attempt: String, +child: U32, +start: String) -> IO(Result<&1
     P.HostPosix.spawn_detached(args,9,8,"")
 
 @unsafe
-
-@unsafe
 def wait_running_match_2(~again_wait_running: (@+child: U32 -> @+sample_state: String -> @+delay: U32 -> IO(Result<&1,&1,U32 & String,String & String>)), +child: U32, +sample_state: String, +delay: U32, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String & String>):
   match result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String & String>,Fail{error})

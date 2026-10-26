@@ -4,6 +4,9 @@ import ../host/text.bend as T
 import ../host/storage.bend as S
 import ../git/text.bend as Tx
 
+type IncludeScan is Data:
+  IncludeScan{mode: U32, matched: U32, target: String, output: String}
+
 def first( +values: List<&2,String>) -> String:
   match values:
     case value <> rest: value
@@ -174,31 +177,52 @@ def resolve_command( +command: String) -> IO(Result<&1,&1,U32 & String,String>):
       value : Result<&1,&1,U32 & String,String> <- IO.get_env("PATH")
       resolve_environment(value,command))
 
-def include_target( +line: String) -> String:
-  +trimmed = String.trim_start(line)
-  Bool.pick(String,String.starts_with(trimmed,"#include \""),
-    first(String.split(String.drop(trimmed,10n),Char.from_u32(34))),"")
+def include_prefix(index: U32) -> String:
+  String.take(String.drop("#include \"",U32.to_nat(index)),1n)
 
-def include_lines( +lines: List<&2,String>) -> String:
-  match lines:
-    case Nil{}: ""
-    case line <> rest:
-      +target = include_target(line)
-      Bool.pick(String,String.is_empty(target),"",target ++ "\n") ++ include_lines(rest)
+def include_advance(+char: Char, scan: IncludeScan) -> IncludeScan:
+  match scan:
+    case IncludeScan{+mode,+matched,+target,+output}:
+      +newline = U32.is_eq(Char.to_u32(char),10)
+      +capture = U32.is_eq(mode,2)
+      +quote = U32.is_eq(Char.to_u32(char),34)
+      +same = String.eq(Char.show(char),include_prefix(matched))
+      Bool.pick(IncludeScan,capture,
+        Bool.pick(IncludeScan,Bool.or(quote,newline),
+          IncludeScan{Bool.pick(U32,newline,0,3),0,"",output ++ Bool.pick(String,String.is_empty(target),"",target ++ "\n")},
+          IncludeScan{2,matched,target ++ Char.show(char),output}),
+        Bool.pick(IncludeScan,newline,IncludeScan{0,0,"",output},
+          Bool.pick(IncludeScan,U32.is_eq(mode,3),IncludeScan{3,0,"",output},
+            Bool.pick(IncludeScan,Bool.and(U32.is_eq(mode,0),Char.is_space(char)),IncludeScan{0,0,"",output},
+              Bool.pick(IncludeScan,same,IncludeScan{Bool.pick(U32,U32.is_eq(matched,9),2,1),U32.add(matched,1),"",output},IncludeScan{3,0,"",output})))))
 
-@unsafe
-def include_chunk_values(~again_include_chunks: (@+path: String -> @position: String -> @collected: String -> IO(Result<&1,&1,U32 & String,String>)), chunk: String & String, +path: String, +collected: String) -> IO(Result<&1,&1,U32 & String,String>):
+def include_text(text: String, scan: IncludeScan) -> IncludeScan:
+  match text:
+    case SNil{}: scan
+    case SCon{char,rest}: include_text(rest,include_advance(char,scan))
+
+def include_finish(scan: IncludeScan) -> String:
+  match scan:
+    case IncludeScan{mode,matched,+target,output}:
+      output ++ Bool.pick(String,Bool.and(U32.is_eq(mode,2),Bool.not(String.is_empty(target))),target ++ "\n","")
+
+def chunk_text(chunk: String & String) -> String:
   match chunk:
-    case (+text,next):
-      Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(text),
-        IO.pure(Result<&1,&1,U32 & String,String>,Done{collected}),
-        again_include_chunks(path,next,collected ++ include_lines(String.lines(text))))
+    case (text,next): text
+
+def chunk_position(chunk: String & String) -> String:
+  match chunk:
+    case (text,next): next
 
 @unsafe
-def include_chunks(+path: String, position: String, collected: String) -> IO(Result<&1,&1,U32 & String,String>):
+def include_chunks(+path: String, position: String, +scan: IncludeScan) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    chunk : String & String <- IO.try(String & String,F.Files.text_chunk(path,position))
-    include_chunk_values(include_chunks, chunk,path,collected)
+    +chunk : String & String <- IO.try(String & String,F.Files.text_chunk(path,position))
+    +text : String <- IO.pure(String,chunk_text(chunk))
+    next : String <- IO.pure(String,chunk_position(chunk))
+    Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(text),
+      IO.pure(Result<&1,&1,U32 & String,String>,Done{include_finish(scan)}),
+      include_chunks(path,next,include_text(text,scan)))
 
-def c_includes( +path: String) -> IO(Result<&1,&1,U32 & String,String>):
-  include_chunks(path,"0","")
+def c_includes(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  include_chunks(path,"0",IncludeScan{0,0,"",""})

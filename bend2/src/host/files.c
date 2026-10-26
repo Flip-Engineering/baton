@@ -516,10 +516,10 @@ static void baton_path_work(IoWork *work) {
     if(fseeko(file,(off_t)position,SEEK_SET)) {
       call->error=errno;fclose(file);return;
     }
-    size_t capacity=65537;
+    size_t capacity=65541;
     call->text=malloc(capacity);
     if(!call->text) {call->error=ENOMEM;fclose(file);return;}
-    int ch;
+    int ch;unsigned continuation=0;
     while((ch=fgetc(file))!=EOF) {
       if(call->length+1==capacity) {
         if(capacity>SIZE_MAX/2) {call->error=EOVERFLOW;break;}
@@ -528,7 +528,10 @@ static void baton_path_work(IoWork *work) {
         call->text=grown;capacity*=2;
       }
       call->text[call->length++]=(char)ch;
-      if(call->length>=65536 && ch=='\n') break;
+      unsigned char byte=(unsigned char)ch;
+      if(continuation && (byte&0xc0)==0x80) continuation--;
+      else continuation=byte>=0xc2 && byte<=0xdf?1:byte>=0xe0 && byte<=0xef?2:byte>=0xf0 && byte<=0xf4?3:0;
+      if(call->length>=65536 && !continuation) break;
     }
     if(!call->error && ferror(file)) call->error=errno?errno:EIO;
     call->text[call->length]=0;

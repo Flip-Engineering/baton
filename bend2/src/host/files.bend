@@ -11,8 +11,8 @@ def Files.readlink(path: String) -> IO(Result<&1,&1,U32 & String,String>):
 def Files.executable(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./files.c"
 
-# A block of complete text lines and its next decimal byte position.
-# An empty block reports EOF. The final line can end at EOF.
+# A block of UTF-8 text and its next decimal byte position. Reads up to 64 KiB
+# plus the bytes that complete its final character. An empty block reports EOF.
 def Files.text_chunk(path: String, position: String) -> IO(Result<&1,&1,U32 & String,String & String>):
   import "./files.c"
 
