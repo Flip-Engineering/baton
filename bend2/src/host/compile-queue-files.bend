@@ -1,4 +1,5 @@
 import Base
+import ./choice.bend as Choice
 import ../host/files.bend as F
 import ../host/text.bend as T
 import ../host/storage.bend as S
@@ -15,7 +16,7 @@ def first( +values: List<&2,String>) -> String:
 def at( +values: List<&2,String>, +index: U32) -> String:
   match values:
     case Nil{}: ""
-    case value <> rest: Bool.pick(String, U32.is_eq(index,0), value, at(rest,U32.sub(index,1)))
+    case value <> rest: Choice.choose(String, U32.is_eq(index,0), _choice_unit =>  value, _choice_unit =>  at(rest,U32.sub(index,1)))
 
 def number_result(result: Maybe<&2,U32>) -> U32:
   match result:
@@ -90,9 +91,9 @@ def mkdir_next(~again_mkdir_parts: (@+parts: List<&2,String> -> @+prefix: String
 @unsafe
 def mkdir_parts(+parts: List<&2,String>, +prefix: String, +absolute: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match parts:
-    case Nil{}: ensure(Bool.pick(String,absolute,"/",prefix),True{})
+    case Nil{}: ensure(Choice.choose(String,absolute, _choice_unit => "/", _choice_unit => prefix),True{})
     case +part <> rest:
-      mkdir_next(mkdir_parts, rest,Bool.pick(String,Bool.and(String.is_empty(prefix),Bool.not(absolute)),part,prefix ++ "/" ++ part))
+      mkdir_next(mkdir_parts, rest,Choice.choose(String,Bool.and(String.is_empty(prefix),Bool.not(absolute)), _choice_unit => part, _choice_unit => prefix ++ "/" ++ part))
 
 def mkdir_p( +path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.is_empty(path),
@@ -111,7 +112,7 @@ def directory_names( +records: List<&2,String>) -> String:
     case Nil{}: ""
     case record <> rest:
       +name = at(String.split(record,Char.from_u32(9)),1)
-      Bool.pick(String,String.is_empty(name),"",name ++ "\n") ++ directory_names(rest)
+      Choice.choose(String,String.is_empty(name), _choice_unit => "", _choice_unit => name ++ "\n") ++ directory_names(rest)
 
 def directory_entries( +path: String, +record: String) -> IO(Result<&1,&1,U32 & String,String>):
   Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.eq(observation_kind(record),"dir"),
@@ -128,7 +129,7 @@ def list_dir( +path: String) -> IO(Result<&1,&1,U32 & String,String>):
 def script_prefix(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match result:
     case Done{prefix}:
-      IO.pure(Result<&1,&1,U32 & String,String>,Done{Bool.pick(String,String.eq(prefix,"#!"),"1","0")})
+      IO.pure(Result<&1,&1,U32 & String,String>,Done{Choice.choose(String,String.eq(prefix,"#!"), _choice_unit => "1", _choice_unit => "0")})
     case Fail{(+code,message)}:
       Bool.pick(IO(Result<&1,&1,U32 & String,String>),U32.is_eq(code,22),
         IO.pure(Result<&1,&1,U32 & String,String>,Done{"0"}),
@@ -160,7 +161,7 @@ def resolve_search( +parts: List<&2,String>, +command: String) -> IO(Result<&1,&
   match parts:
     case Nil{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{command})
     case +directory <> rest:
-      +candidate = Bool.pick(String,String.is_empty(directory),".",directory) ++ "/" ++ command
+      +candidate = Choice.choose(String,String.is_empty(directory), _choice_unit => ".", _choice_unit => directory) ++ "/" ++ command
       do IO<Result<&1,&1,U32 & String,String>>:
         found : Result<&1,&1,U32 & String,Unit> <- F.Files.executable(candidate)
         resolve_found(resolve_search, found,candidate,rest,command)
@@ -187,14 +188,14 @@ def include_advance(+char: Char, scan: IncludeScan) -> IncludeScan:
       +capture = U32.is_eq(mode,2)
       +quote = U32.is_eq(Char.to_u32(char),34)
       +same = String.eq(Char.show(char),include_prefix(matched))
-      Bool.pick(IncludeScan,capture,
-        Bool.pick(IncludeScan,Bool.or(quote,newline),
-          IncludeScan{Bool.pick(U32,newline,0,3),0,"",output ++ Bool.pick(String,String.is_empty(target),"",target ++ "\n")},
-          IncludeScan{2,matched,target ++ Char.show(char),output}),
-        Bool.pick(IncludeScan,newline,IncludeScan{0,0,"",output},
-          Bool.pick(IncludeScan,U32.is_eq(mode,3),IncludeScan{3,0,"",output},
-            Bool.pick(IncludeScan,Bool.and(U32.is_eq(mode,0),Char.is_space(char)),IncludeScan{0,0,"",output},
-              Bool.pick(IncludeScan,same,IncludeScan{Bool.pick(U32,U32.is_eq(matched,9),2,1),U32.add(matched,1),"",output},IncludeScan{3,0,"",output})))))
+      Choice.choose(IncludeScan,capture, _choice_unit =>
+        Choice.choose(IncludeScan,Bool.or(quote,newline), _choice_unit =>
+          IncludeScan{Choice.choose(U32,newline, _choice_unit => 0, _choice_unit => 3),0,"",output ++ Choice.choose(String,String.is_empty(target), _choice_unit => "", _choice_unit => target ++ "\n")}, _choice_unit =>
+          IncludeScan{2,matched,target ++ Char.show(char),output}), _choice_unit =>
+        Choice.choose(IncludeScan,newline, _choice_unit => IncludeScan{0,0,"",output}, _choice_unit =>
+          Choice.choose(IncludeScan,U32.is_eq(mode,3), _choice_unit => IncludeScan{3,0,"",output}, _choice_unit =>
+            Choice.choose(IncludeScan,Bool.and(U32.is_eq(mode,0),Char.is_space(char)), _choice_unit => IncludeScan{0,0,"",output}, _choice_unit =>
+              Choice.choose(IncludeScan,same, _choice_unit => IncludeScan{Choice.choose(U32,U32.is_eq(matched,9), _choice_unit => 2, _choice_unit => 1),U32.add(matched,1),"",output}, _choice_unit => IncludeScan{3,0,"",output})))))
 
 def include_text(text: String, scan: IncludeScan) -> IncludeScan:
   match text:
@@ -204,7 +205,7 @@ def include_text(text: String, scan: IncludeScan) -> IncludeScan:
 def include_finish(scan: IncludeScan) -> String:
   match scan:
     case IncludeScan{mode,matched,+target,output}:
-      output ++ Bool.pick(String,Bool.and(U32.is_eq(mode,2),Bool.not(String.is_empty(target))),target ++ "\n","")
+      output ++ Choice.choose(String,Bool.and(U32.is_eq(mode,2),Bool.not(String.is_empty(target))), _choice_unit => target ++ "\n", _choice_unit => "")
 
 def chunk_text(chunk: String & String) -> String:
   match chunk:

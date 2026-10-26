@@ -1,4 +1,5 @@
 import Base
+import ./choice.bend as Choice
 import ./compile-queue-state.bend as S
 import ./compile-queue-files.bend as QF
 import ../host/files.bend as F
@@ -15,12 +16,12 @@ def raise_value(+path: String, +peak: Nat) -> IO(Unit):
 def tier_paths(+state: String, +group: String, +shape: String, +entry: String, +mode: String, +compiler: String, +kind: String) -> List<&2,String>:
   +base = state ++ "/peaks/"
   +entry_id = S.entry_key(entry)
-  Bool.pick(String,Bool.and(Bool.not(String.is_empty(kind)),Bool.not(String.is_empty(entry_id))),base ++ "en." ++ kind ++ "." ++ entry_id,"")
-  <> Bool.pick(String,Bool.and(Bool.not(String.is_empty(kind)),Bool.and(Bool.not(String.is_empty(entry_id)),Bool.not(String.is_empty(mode)))),base ++ "em." ++ kind ++ "." ++ entry_id ++ "." ++ mode,"")
-  <> Bool.pick(String,Bool.not(String.is_empty(group)),base ++ group,"")
-  <> Bool.pick(String,Bool.and(Bool.not(String.is_empty(kind)),Bool.not(String.is_empty(shape))),base ++ "sh." ++ kind ++ "." ++ shape,"")
-  <> Bool.pick(String,Bool.and(Bool.not(String.is_empty(kind)),Bool.not(String.is_empty(compiler))),base ++ "kc." ++ kind ++ "." ++ compiler,"")
-  <> Bool.pick(String,Bool.not(String.is_empty(kind)),base ++ "k." ++ kind,"") <> Nil{}
+  Choice.choose(String,Bool.and(Bool.not(String.is_empty(kind)),Bool.not(String.is_empty(entry_id))), _choice_unit => base ++ "en." ++ kind ++ "." ++ entry_id, _choice_unit => "")
+  <> Choice.choose(String,Bool.and(Bool.not(String.is_empty(kind)),Bool.and(Bool.not(String.is_empty(entry_id)),Bool.not(String.is_empty(mode)))), _choice_unit => base ++ "em." ++ kind ++ "." ++ entry_id ++ "." ++ mode, _choice_unit => "")
+  <> Choice.choose(String,Bool.not(String.is_empty(group)), _choice_unit => base ++ group, _choice_unit => "")
+  <> Choice.choose(String,Bool.and(Bool.not(String.is_empty(kind)),Bool.not(String.is_empty(shape))), _choice_unit => base ++ "sh." ++ kind ++ "." ++ shape, _choice_unit => "")
+  <> Choice.choose(String,Bool.and(Bool.not(String.is_empty(kind)),Bool.not(String.is_empty(compiler))), _choice_unit => base ++ "kc." ++ kind ++ "." ++ compiler, _choice_unit => "")
+  <> Choice.choose(String,Bool.not(String.is_empty(kind)), _choice_unit => base ++ "k." ++ kind, _choice_unit => "") <> Nil{}
 
 def raise_paths( +paths: List<&2,String>, +peak: Nat) -> IO(Unit):
   match paths:
@@ -64,12 +65,12 @@ def expected(+state: String, +ticket: String) -> IO(Maybe<&2,Nat>):
   +group = S.field(ticket,"group")
   +compiler = S.field(ticket,"compiler")
   +paths : List<&2,String> = (state ++ "/keys/" ++ S.field(ticket,"key") ++ "/peak")
-    <> Bool.pick(String,String.is_empty(group),"",base ++ group)
-    <> Bool.pick(String,Bool.or(String.is_empty(kind),String.is_empty(shape)),"",base ++ "sh." ++ kind ++ "." ++ shape)
-    <> Bool.pick(String,Bool.or(String.is_empty(kind),Bool.or(String.is_empty(entry),String.is_empty(mode))),"",base ++ "em." ++ kind ++ "." ++ entry ++ "." ++ mode)
-    <> Bool.pick(String,Bool.or(String.is_empty(kind),String.is_empty(entry)),"",base ++ "en." ++ kind ++ "." ++ entry)
-    <> Bool.pick(String,Bool.or(String.is_empty(kind),String.is_empty(compiler)),"",base ++ "kc." ++ kind ++ "." ++ compiler)
-    <> Bool.pick(String,String.is_empty(kind),"",base ++ "k." ++ kind) <> Nil{}
+    <> Choice.choose(String,String.is_empty(group), _choice_unit => "", _choice_unit => base ++ group)
+    <> Choice.choose(String,Bool.or(String.is_empty(kind),String.is_empty(shape)), _choice_unit => "", _choice_unit => base ++ "sh." ++ kind ++ "." ++ shape)
+    <> Choice.choose(String,Bool.or(String.is_empty(kind),Bool.or(String.is_empty(entry),String.is_empty(mode))), _choice_unit => "", _choice_unit => base ++ "em." ++ kind ++ "." ++ entry ++ "." ++ mode)
+    <> Choice.choose(String,Bool.or(String.is_empty(kind),String.is_empty(entry)), _choice_unit => "", _choice_unit => base ++ "en." ++ kind ++ "." ++ entry)
+    <> Choice.choose(String,Bool.or(String.is_empty(kind),String.is_empty(compiler)), _choice_unit => "", _choice_unit => base ++ "kc." ++ kind ++ "." ++ compiler)
+    <> Choice.choose(String,String.is_empty(kind), _choice_unit => "", _choice_unit => base ++ "k." ++ kind) <> Nil{}
   expected_paths(paths)
 
 # The lock is acquired by the caller after admission directories are checked.
@@ -109,7 +110,7 @@ def backfill_runs( +names: List<&2,String>, +directory: String, +count: Nat) -> 
         +peak : Nat <- IO.pure(Nat,S.nat(S.field(text,"peak_kb")))
         +result : String <- S.read(attempt ++ "/result")
         raised : Unit <- Bool.pick(IO(Unit),Nat.is_gt(peak,0n),raise_attempt(attempt,peak,Bool.not(String.eq(S.field(result,"status"),"completed"))),IO.pure(Unit,Unit{}))
-        backfill_runs(rest,directory,Bool.pick(Nat,Nat.is_gt(peak,0n),Nat.add(count,1n),count))
+        backfill_runs(rest,directory,Choice.choose(Nat,Nat.is_gt(peak,0n), _choice_unit => Nat.add(count,1n), _choice_unit => count))
 
 def backfill_keys( +names: List<&2,String>, +directory: String, +count: Nat) -> IO(Nat):
   match names:

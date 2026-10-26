@@ -1,4 +1,5 @@
 import Base
+import ./choice.bend as Choice
 import ./compile-queue-state.bend as S
 import ./compile-queue-process.bend as Proc
 import ./compile-queue-admission.bend as A
@@ -29,17 +30,17 @@ def outside_sample(+sample: String, +own: Nat, +view: A.QueueView, +again: A.Que
   +set = claim_set(A.claims(view))
   +steady = Bool.and(steady_claims(A.claims(view)),Bool.and(W.equal(set,claim_set(A.claims(again))),Bool.or(String.is_empty(S.field(sample,"claims")),String.eq(W.hex(set),S.field(sample,"claims")))))
   +unsteady = Nat.add(S.nat(S.field(sample,"unsteady")),1n)
-  +outside = Nat.sub(A.outside(view),Bool.pick(Nat,listed(A.claims(view),S.field(sample,"claim")),0n,own))
-  +baseline = Bool.pick(Nat,String.is_empty(S.field(sample,"baseline")),outside,S.nat(S.field(sample,"baseline")))
-  Bool.pick(String,steady,
-    S.put(S.put(S.put(S.put(S.put(sample,"claims",W.hex(set)),"unsteady","0"),"baseline",Nat.show(baseline)),"growth",Nat.show(Nat.sub(outside,baseline))),"samples",Nat.show(Nat.add(S.nat(S.field(sample,"samples")),1n))),
-    S.put(S.put(S.put(sample,"claims",W.hex(set)),"unsteady",Nat.show(unsteady)),"growth",Bool.pick(String,Nat.is_ge(unsteady,5n),"0",S.field(sample,"growth"))))
+  +outside = Nat.sub(A.outside(view),Choice.choose(Nat,listed(A.claims(view),S.field(sample,"claim")), _choice_unit => 0n, _choice_unit => own))
+  +baseline = Choice.choose(Nat,String.is_empty(S.field(sample,"baseline")), _choice_unit => outside, _choice_unit => S.nat(S.field(sample,"baseline")))
+  Choice.choose(String,steady, _choice_unit =>
+    S.put(S.put(S.put(S.put(S.put(sample,"claims",W.hex(set)),"unsteady","0"),"baseline",Nat.show(baseline)),"growth",Nat.show(Nat.sub(outside,baseline))),"samples",Nat.show(Nat.add(S.nat(S.field(sample,"samples")),1n))), _choice_unit =>
+    S.put(S.put(S.put(sample,"claims",W.hex(set)),"unsteady",Nat.show(unsteady)),"growth",Choice.choose(String,Nat.is_ge(unsteady,5n), _choice_unit => "0", _choice_unit => S.field(sample,"growth"))))
 
 def outside_locked(+state: String, +sample: String, +own: Nat) -> IO(String):
   do IO<String>:
     +view : A.QueueView <- A.load(state)
     +again : A.QueueView <- A.load(state)
-    IO.pure(String,Bool.pick(String,Nat.is_gt(S.nat(S.field(A.facts(view),"total")),0n),outside_sample(sample,own,view,again),sample))
+    IO.pure(String,Choice.choose(String,Nat.is_gt(S.nat(S.field(A.facts(view),"total")),0n), _choice_unit => outside_sample(sample,own,view,again), _choice_unit => sample))
 
 def sample_outside_match_3(+own: Nat, +sample: String, +state: String, locked: Result<&1,&1,U32 & String,U32>) -> IO(String):
   match locked:
@@ -110,8 +111,8 @@ def wait_running(+child: U32, +sample_state: String, +delay: U32) -> IO(Result<&
 
 def disposition(+status: String, +canceled: U32) -> U32 & String:
   +signal = S.number(S.field(status,"signal"))
-  Bool.pick(U32 & String,U32.is_gt(canceled,0),(130,"canceled"),
-    Bool.pick(U32 & String,U32.is_gt(signal,0),(U32.add(128,signal),"signal"),(S.number(S.field(status,"exit")),"exit")))
+  Choice.choose(U32 & String,U32.is_gt(canceled,0), _choice_unit => (130,"canceled"), _choice_unit =>
+    Choice.choose(U32 & String,U32.is_gt(signal,0), _choice_unit => (U32.add(128,signal),"signal"), _choice_unit => (S.number(S.field(status,"exit")),"exit")))
 
 def finish_wait(result: Result<&1,&1,U32 & String,String & String>, +attempt: String, +canceled: U32) -> IO(Result<&1,&1,U32 & String,U32 & String>):
   match result:
