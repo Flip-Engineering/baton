@@ -309,19 +309,25 @@ static int cq_mkdir_p(const char *path) {
   for (char *at = copy + 1; *at; at++) {
     if (*at != '/') continue;
     *at = 0;
-    if (mkdir(copy, 02770) && errno != EEXIST) {
-      int error = errno; umask(previous); free(copy); return error;
-    }
     struct stat parent_info;
-    int parent_status = lstat(copy, &parent_info);
-    if (parent_status || !S_ISDIR(parent_info.st_mode)) {
-      int error = parent_status ? errno : ENOTDIR;
-      umask(previous); free(copy); return error;
+    if (lstat(copy, &parent_info)) {
+      if (errno != ENOENT) { int error = errno; umask(previous); free(copy); return error; }
+      if (mkdir(copy, 0770) && errno != EEXIST) {
+        int error = errno; umask(previous); free(copy); return error;
+      }
+      if (lstat(copy, &parent_info)) { int error = errno; umask(previous); free(copy); return error; }
+    }
+    if (!S_ISDIR(parent_info.st_mode)) {
+      umask(previous); free(copy); return ENOTDIR;
     }
     *at = '/';
   }
   int error = 0;
-  if (mkdir(copy, 02770) && errno != EEXIST) error = errno;
+  struct stat leaf_info;
+  if (lstat(copy, &leaf_info)) {
+    if (errno != ENOENT) error = errno;
+    else if (mkdir(copy, 0770) && errno != EEXIST) error = errno;
+  }
   umask(previous);
   struct stat info;
   if (!error && (lstat(copy, &info) || !S_ISDIR(info.st_mode))) error = ENOTDIR;
