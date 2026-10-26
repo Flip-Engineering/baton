@@ -114,17 +114,27 @@ def directory_names( +records: List<&2,String>) -> String:
       +name = at(String.split(record,Char.from_u32(9)),1)
       Choice.choose(String,String.is_empty(name), _choice_unit => "", _choice_unit => name ++ "\n") ++ directory_names(rest)
 
-def directory_entries( +path: String, +record: String) -> IO(Result<&1,&1,U32 & String,String>):
+def directory_entries_result(result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,String>:
+  match result:
+    case Fail{error}: Fail{error}
+    case Done{entries}: Done{directory_names(String.split(entries,Char.from_u32(0)))}
+
+def directory_entries(+path: String, +record: String) -> IO(Result<&1,&1,U32 & String,String>):
   Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.eq(observation_kind(record),"dir"),
     do IO<Result<&1,&1,U32 & String,String>>:
-      +entries : String <- IO.try(String,S.StorageHost.entries(path))
-      IO.pure(Result<&1,&1,U32 & String,String>,Done{directory_names(String.split(entries,Char.from_u32(0)))}),
+      entries : Result<&1,&1,U32 & String,String> <- S.StorageHost.entries(path)
+      IO.pure(Result<&1,&1,U32 & String,String>,directory_entries_result(entries)),
     IO.pure(Result<&1,&1,U32 & String,String>,Fail{(20,"directory required")}))
 
-def list_dir( +path: String) -> IO(Result<&1,&1,U32 & String,String>):
+def directory_observed(observed: Result<&1,&1,U32 & String,String>, path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match observed:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{record}: directory_entries(path,record)
+
+def list_dir(+path: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    +record : String <- IO.try(String,F.Files.lstat(path))
-    directory_entries(path,record)
+    observed : Result<&1,&1,U32 & String,String> <- F.Files.lstat(path)
+    directory_observed(observed,path)
 
 def script_prefix(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match result:

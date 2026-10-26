@@ -96,12 +96,14 @@ def cwd(pid: U32) -> IO(Result<&1,&1,U32 & String,String>):
 def cmdline( +pid: U32) -> IO(Result<&1,&1,U32 & String,String>):
   proc_file(pid,"cmdline")
 
-def attempt_args( +args: List<&2,String>) -> String:
+def attempt_args(+args: List<&2,String>) -> String:
   match args:
-    case verb <> attempt <> Nil{}: Choice.choose(String,String.eq(verb,"__supervise"), _choice_unit => attempt, _choice_unit => "")
-    case verb <> attempt <> old <> start <> queued <> Nil{}: Choice.choose(String,String.eq(verb,"__takeover"), _choice_unit => attempt, _choice_unit => "")
-    case value <> rest: attempt_args(rest)
     case Nil{}: ""
+    case +verb <> +rest:
+      +length = List.length(&2,String,rest)
+      Choice.choose(String,Bool.or(Bool.and(String.eq(verb,"__supervise"),Nat.is_eq(length,1n)),
+        Bool.and(String.eq(verb,"__takeover"),Nat.is_eq(length,4n))),
+        _choice_unit => S.first(rest), _choice_unit => attempt_args(rest))
 
 def attempt( +pid: U32) -> IO(String):
   do IO<String>:

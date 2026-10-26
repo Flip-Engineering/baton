@@ -107,14 +107,16 @@ def successor(+state: String, +attempt: String, +old_pid: String, +old_start: St
     heavy : Result<&1,&1,U32 & String,U32> <- P.HostPosix.lock_open(state ++ "/heavy.lock")
     successor_match_5(old_pid, args, key_fd, heavy)
 
-def original_args( +args: List<&2,String>, +pid: U32, +start: String, +queued: String) -> String:
+def original_args(+args: List<&2,String>, +pid: U32, +start: String, +queued: String) -> String:
   match args:
-    case verb <> attempt <> Nil{}:
-      Choice.choose(String,String.eq(verb,"__supervise"), _choice_unit => "attempt=" ++ attempt ++ "\nold_pid=" ++ U32.show(pid) ++ "\nold_start=" ++ start ++ "\nqueued=" ++ queued ++ "\n", _choice_unit => "")
-    case verb <> attempt <> old <> old_start <> old_queued <> Nil{}:
-      Choice.choose(String,String.eq(verb,"__takeover"), _choice_unit => "attempt=" ++ attempt ++ "\nold_pid=" ++ old ++ "\nold_start=" ++ old_start ++ "\nqueued=" ++ old_queued ++ "\nsuccessor_kind=1\n", _choice_unit => "")
-    case value <> rest: original_args(rest,pid,start,queued)
     case Nil{}: ""
+    case +verb <> +rest:
+      +length = List.length(&2,String,rest)
+      Choice.choose(String,Bool.and(String.eq(verb,"__supervise"),Nat.is_eq(length,1n)),
+        _choice_unit => "attempt=" ++ S.first(rest) ++ "\nold_pid=" ++ U32.show(pid) ++ "\nold_start=" ++ start ++ "\nqueued=" ++ queued ++ "\n",
+        _choice_unit => Choice.choose(String,Bool.and(String.eq(verb,"__takeover"),Nat.is_eq(length,4n)),
+          _choice_unit => "attempt=" ++ S.at(rest,0) ++ "\nold_pid=" ++ S.at(rest,1) ++ "\nold_start=" ++ S.at(rest,2) ++ "\nqueued=" ++ S.at(rest,3) ++ "\nsuccessor_kind=1\n",
+          _choice_unit => original_args(rest,pid,start,queued)))
 
 def resume_match_4(+pid: U32, alive: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
   match alive:
