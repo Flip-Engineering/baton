@@ -28,6 +28,11 @@ COMPILER_ARCHIVES = {
         'official_release_artifact': False,
         'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
     },
+    '308ee68411dd11fb7c81a8cb06278a8343d6cdb259320558e6b59f5047a40bb2': {
+        'name': 'Bend 2.0.25 with PR1087 arm sharing, the CONSTS insertion bound, the iterative pass-1 emitter and iterative datatype layout walks (Bun 1.4.4 launcher)',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
     'f22a9bc5d42ebe57d0e46240a5ca407e673bc84a4ba21e6ad2c693cf44b8d651': {
         'name': 'Bend 2.0.25 with PR1087 arm sharing, the CONSTS insertion bound and the iterative pass-1 emitter (Bun 1.4.4 launcher)',
         'official_release_artifact': False,

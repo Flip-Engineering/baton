@@ -12,6 +12,6 @@
 #
 # Flip require_cgen_cache to 1 in the commit that selects the release above.
 lineage_commit=f5185e384146d631b94676ade3d4b4ff68fb0563
-release_name=2.0.25-f5185e38-pr1087-emitter-bun144-20261026
+release_name=2.0.25-f5185e38-pr1087-emitter-lay-bun144-20261026
 cache_ts_sha256=30950fb56d75056e3c1b46ac6ce8209d49f01e556a950f18e005a55cdb06396e
 require_cgen_cache=0
