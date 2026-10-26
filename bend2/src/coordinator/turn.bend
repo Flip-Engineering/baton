@@ -384,8 +384,8 @@ def codex_span_commit(+db: String, spool: String, offset: String, length: String
       committed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_span(db,spool,offset,length,sql)
       Store.publish_after_commit(db,committed)
 
-# The span observation uses the same busy retry as ordinary native observations
-# for the held-writer failure recorded in #1054, instance B2.
+# The span writer retries SQLITE_BUSY and SQLITE_LOCKED for the held-writer
+# failure recorded in #1054, instance B2.
 @unsafe
 def codex_span_write(+db: String, +spool: String, +offset: String, +length: String, +sql: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:

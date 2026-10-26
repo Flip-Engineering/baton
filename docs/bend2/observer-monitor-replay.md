@@ -18,9 +18,9 @@ checkpoint and custody cursors.
   spool through `Turn.retained_output` from the stored cursor to the end of the
   file, and completes through `completed_observation`. A handle that is not
   monitor-only keeps `gone_orphan`.
-- `Receive.ack_then_retire` preserves a monitor-only handle's custody and
-  admission ticket. The pending input stays unread. An owned completed handle
-  follows the existing acknowledgment, ticket cleanup and retirement path.
+- `Receive.ack_if_owned` preserves a monitor-only handle's custody. The pending
+  input stays unread. An owned completed handle follows the existing
+  `ack_then_retire` acknowledgment and retirement path.
 - `Observer.restore` returns `Restored` or `Rejected`. For a monitor-only
   handle, an empty or invalid reducer state returns `Rejected`, which ends the
   observation as `checkpoint rejected` without a write, a replay or a cursor
