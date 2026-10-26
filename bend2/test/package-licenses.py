@@ -237,7 +237,7 @@ class PackageLicenses(unittest.TestCase):
         native = self.source / '.scratch/bend2'
         native.mkdir(parents=True)
         # Archive tests retain file bytes and executable modes; these helpers are never run.
-        for name in ('claude-credit-observe', 'api-key-exec'):
+        for name in ('claude-credit-observe', 'api-key-exec', 'usage-read'):
             path = native / name
             path.write_bytes(('File-only ' + name + ' fixture; never run.\n').encode())
             path.chmod(0o755)
