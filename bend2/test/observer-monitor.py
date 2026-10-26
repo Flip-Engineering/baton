@@ -355,6 +355,67 @@ class ObserverMonitor(unittest.TestCase):
         else:
             self.assertEqual(execution, ('running', ''), 'live native status must remain pending')
 
+    def assert_codex_frames_report(self, latest_frame, terminal, expected_body):
+        earlier = {'type': 'item.completed', 'item': {
+            'id': 'earlier', 'type': 'agent_message', 'text': 'earlier assistant body'}}
+        stdout = '\n'.join((json.dumps(earlier), latest_frame,
+                            json.dumps(terminal, ensure_ascii=False, separators=(',', ':')))) + '\n'
+        observer, birth, manifest = self.start_attempt(
+            stdout_text=stdout, hold=True, reporter=True)
+        self.hold_marker.touch()
+        self.wait_native_exit()
+        recovered = self.recover_to_eof(observer)
+        self.assertNotEqual(recovered.returncode, 0, recovered.stdout + recovered.stderr)
+
+        self.assertEqual((self.attempt / 'stdout').read_bytes(), stdout.encode())
+        self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
+        self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
+        self.assertEqual(checkpoint_offset(self.attempt), len(stdout.encode()))
+        self.assertEqual(custody_offset(self.attempt), len(stdout.encode()))
+        self.assert_unknown_pending(native_exited=True)
+        reports = self.row("SELECT count(*),min(body) FROM messages WHERE kind='report' "
+                           "AND sender='parent' AND id NOT LIKE '%:exit'")
+        self.assertEqual(reports, (1, expected_body))
+        event_row = self.row("SELECT event FROM turns WHERE worker='parent' LIMIT 1")
+        self.assertIsNotNone(event_row)
+        event = json.loads(event_row[0])
+        self.assertEqual(event['type'], 'result')
+        self.assertEqual(event['result'], expected_body)
+        self.assertEqual(event['is_error'], int(terminal['type'] == 'turn.failed'))
+        self.assertEqual(event['nativeEvent'], terminal)
+        self.assertEqual(self.row('SELECT count(*) FROM message_reads WHERE message=? AND recipient=?',
+                                  'task', 'parent'), (0,))
+        self.assertFalse((self.attempt / 'acknowledged').exists())
+        self.assertFalse((self.attempt / 'released').exists())
+
+    def test_codex_escape_boundary_reports_latest_assistant(self):
+        prefix = '{"type":"item.completed","item":{"id":"latest","type":"agent_message","text":"'
+        text = ('A' * (4095 - len(prefix))) + '\n' + ('B' * 5000) + '完整'
+        frame = json.dumps({'type': 'item.completed', 'item': {
+            'id': 'latest', 'type': 'agent_message', 'text': text}},
+            ensure_ascii=False, separators=(',', ':'))
+        self.assertEqual(frame.encode()[4095:4097], b'\\n')
+        self.assert_codex_frames_report(frame, {'type': 'turn.completed'}, text)
+
+    def test_codex_metadata_after_text_reports_latest_assistant(self):
+        text = ('latest "quoted" body\\path\n' * 400) + '完整'
+        frame = json.dumps({'item': {'text': text, 'type': 'agent_message', 'id': 'latest'},
+                            'type': 'item.completed'}, ensure_ascii=False, separators=(',', ':'))
+        terminal = {'padding': 'terminal metadata ' * 400, 'type': 'turn.completed',
+                    'usage': {'input_tokens': 17, 'output_tokens': 23}}
+        self.assert_codex_frames_report(frame, terminal, text)
+
+    def test_codex_failed_terminal_after_error_keeps_complete_fields(self):
+        frame = json.dumps({'item': {'text': 'latest assistant body', 'type': 'agent_message'},
+                            'type': 'item.completed'}, separators=(',', ':'))
+        prefix = '{"error":{"message":"'
+        error = ('E' * (4095 - len(prefix))) + '\n' + ('failure detail ' * 400) + '完整'
+        terminal = {'error': {'message': error, 'code': 'provider-failure'},
+                    'type': 'turn.failed', 'usage': {'input_tokens': 29}}
+        encoded = json.dumps(terminal, ensure_ascii=False, separators=(',', ':')).encode()
+        self.assertEqual(encoded[4095:4097], b'\\n')
+        self.assert_codex_frames_report(frame, terminal, error)
+
     def test_codex_large_assistant_frame_stays_spanned_through_report(self):
 
         assistant_bytes = 8 * 1024 * 1024
