@@ -12,6 +12,7 @@ import tempfile
 import time
 from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -24,6 +25,9 @@ SMOKE_SPEC.loader.exec_module(SMOKE)
 CHECK_SPEC = importlib.util.spec_from_file_location('check_install', ROOT / 'bend2/scripts/check-install.py')
 CHECK = importlib.util.module_from_spec(CHECK_SPEC)
 CHECK_SPEC.loader.exec_module(CHECK)
+LAYOUT_SPEC = importlib.util.spec_from_file_location('package_receiver_fixture', ROOT / 'bend2/test/package-receiver-layout.py')
+LAYOUT = importlib.util.module_from_spec(LAYOUT_SPEC)
+LAYOUT_SPEC.loader.exec_module(LAYOUT)
 
 
 class PackageLicenses(unittest.TestCase):
@@ -141,29 +145,48 @@ class PackageLicenses(unittest.TestCase):
 
     def test_archive_without_required_repl_dependency_refuses(self):
         archive, provenance = self.archive_fixture(include_repl=False)
+        prefix, manifest = SMOKE.extract(archive, provenance, self.home / 'incomplete-extraction')
         with self.assertRaisesRegex(RuntimeError, 'requires one bundled Bend2 REPL compiler'):
-            SMOKE.extract(archive, provenance, self.home / 'incomplete-extraction')
+            CHECK.verify_repl(prefix, manifest)
 
     def test_archive_with_changed_bundled_runtime_refuses(self):
         archive, provenance = self.archive_fixture(changed_runtime=True)
+        prefix, manifest = SMOKE.extract(archive, provenance, self.home / 'changed-runtime-extraction')
         with self.assertRaisesRegex(RuntimeError, 'file differs from its manifest: bun'):
-            SMOKE.extract(archive, provenance, self.home / 'changed-runtime-extraction')
+            CHECK.verify_repl(prefix, manifest)
 
     def test_installation_refuses_unusable_bundled_runtime(self):
-        self.archive_fixture()
-        path = self.payload / 'manifest.json'
-        manifest = json.loads(path.read_text())
-        manifest['binary']['sha256'] = PACKAGE.sha256(self.payload / 'bin/baton2')
+        layout = LAYOUT.ReceiverLayout(methodName='runTest')
+        layout.setUp()
+        self.addCleanup(layout.doCleanups)
+        prefix, manifest, _ = layout.staged()
+        self.payload = prefix
+        manifest['selected_dependencies'] = [self.repl_fixture()]
         manifest['required_system_dependencies'] = CHECK.system_dependencies(CHECK.platform.system())
-        path.write_text(json.dumps(manifest) + '\n')
+        PACKAGE.write_json(prefix / 'manifest.json', manifest)
+        helper = prefix / 'libexec/baton2/task-start.mjs'
+        shutil.copyfile(ROOT / 'bend2/harness/task-start.mjs', helper)
+        LAYOUT.FINALIZE.finalize(prefix)
         output = self.home / 'unusable-runtime-check'
         output.mkdir()
-        with self.assertRaisesRegex(RuntimeError, 'command could not start'):
-            CHECK.check(self.payload, output)
+        help_commands = [[str(prefix / 'bin' / name), '--help']
+                         for name in ('baton', 'baton-full')]
+        runtime_command = [str(prefix / 'libexec/baton2/repl/bun'), '--version']
+        actual_run = subprocess.run
+
+        def run(argv, **kwargs):
+            if argv in help_commands:
+                return subprocess.CompletedProcess(argv, 0, stdout='', stderr='')
+            self.assertEqual(argv, runtime_command)
+            return actual_run(argv, **kwargs)
+
+        with mock.patch.object(CHECK.subprocess, 'run', side_effect=run):
+            with self.assertRaisesRegex(RuntimeError, 'command could not start'):
+                CHECK.check(prefix, output)
         records = json.loads((output / 'commands.json').read_text())
-        self.assertEqual(records[0]['argv'], [str(self.payload / 'libexec/baton2/repl/bun'), '--version'])
-        self.assertIsNone(records[0]['returncode'])
-        self.assertTrue(records[0]['error'])
+        self.assertEqual([record['argv'] for record in records], help_commands + [runtime_command])
+        self.assertIsNone(records[-1]['returncode'])
+        self.assertTrue(records[-1]['error'])
 
     def test_project_and_upstream_documents_keep_separate_bytes_and_metadata(self):
         license_data = b'Project license fixture\r\n'
