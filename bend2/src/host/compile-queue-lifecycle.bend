@@ -1,4 +1,5 @@
 import Base
+import ./choice.bend as Choice
 import ./posix.bend as P
 import ../host/files.bend as F
 import ../host/text.bend as T
@@ -77,7 +78,7 @@ def absent_text(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U3
   match result:
     case Done{text}: IO.pure(Result<&1,&1,U32 & String,String>,Done{text})
     case Fail{(+code,message)}:
-      IO.pure(Result<&1,&1,U32 & String,String>,Bool.pick(Result<&1,&1,U32 & String,String>,U32.is_eq(code,2),Done{""},Fail{(code,message)}))
+      IO.pure(Result<&1,&1,U32 & String,String>,Choice.choose(Result<&1,&1,U32 & String,String>,U32.is_eq(code,2), _choice_unit => Done{""}, _choice_unit => Fail{(code,message)}))
 
 def CompileQueueLifecycle.read_text(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
@@ -116,7 +117,7 @@ def CompileQueueLifecycle.cwd_of_pid(pid: U32) -> IO(Result<&1,&1,U32 & String,S
 def signal_result(result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match result:
     case Done{unit}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
-    case Fail{(+code,message)}: IO.pure(Result<&1,&1,U32 & String,Unit>,Bool.pick(Result<&1,&1,U32 & String,Unit>,U32.is_eq(code,3),Done{Unit{}},Fail{(code,message)}))
+    case Fail{(+code,message)}: IO.pure(Result<&1,&1,U32 & String,Unit>,Choice.choose(Result<&1,&1,U32 & String,Unit>,U32.is_eq(code,3), _choice_unit => Done{Unit{}}, _choice_unit => Fail{(code,message)}))
 
 def CompileQueueLifecycle.signal_pid(pid: U32, sig: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -145,5 +146,5 @@ def CompileQueueLifecycle.wait_external(+pid: U32, +start: String) -> IO(Result<
 def CompileQueueLifecycle.spawn_detached(+argv: String, key_lock: U32, heavy_lock: U32) -> IO(Result<&1,&1,U32 & String,U32>):
   do IO<Result<&1,&1,U32 & String,U32>>:
     self : String <- IO.try(String,P.HostPosix.self_exe())
-    complete : String <- IO.pure(String,Bool.pick(String,String.starts_with(argv,"/"),argv,self ++ Char.show(Char.from_u32(0)) ++ argv))
+    complete : String <- IO.pure(String,Choice.choose(String,String.starts_with(argv,"/"), _choice_unit => argv, _choice_unit => self ++ Char.show(Char.from_u32(0)) ++ argv))
     P.HostPosix.spawn_detached(complete,key_lock,heavy_lock,"")

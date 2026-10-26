@@ -1,4 +1,5 @@
 import Base
+import ./choice.bend as Choice
 import ./compile-queue-state.bend as S
 import ./compile-queue-files.bend as QF
 import ../host/files.bend as F
@@ -23,7 +24,7 @@ def table_rows( +names: List<&2,String>, +acc: List<&2,String>) -> IO(List<&2,St
         +state : String <- IO.pure(String,S.at(fields,0))
         +valid : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(state)),Bool.not(Bool.or(String.eq(state,"Z"),String.eq(state,"X")))))
         +row : String <- IO.pure(String,"pid=" ++ name ++ "\nppid=" ++ S.at(fields,1) ++ "\nsid=" ++ S.at(fields,3) ++ "\n")
-        table_rows(rest,Bool.pick(List<&2,String>,valid,row <> acc,acc))
+        table_rows(rest,Choice.choose(List<&2,String>,valid, _choice_unit => row <> acc, _choice_unit => acc))
 
 def table() -> IO(List<&2,String>):
   do IO<List<&2,String>>:
@@ -34,7 +35,7 @@ def status_value( +lines: List<&2,String>, +name: String) -> Nat:
   match lines:
     case Nil{}: 0n
     case +line <> rest:
-      Bool.pick(Nat,String.starts_with(line,name),S.nat(S.first(S.words(String.drop(line,String.length(name))))),status_value(rest,name))
+      Choice.choose(Nat,String.starts_with(line,name), _choice_unit => S.nat(S.first(S.words(String.drop(line,String.length(name))))), _choice_unit => status_value(rest,name))
 
 def memory(+pid: U32) -> IO(Nat):
   do IO<Nat>:
@@ -42,12 +43,12 @@ def memory(+pid: U32) -> IO(Nat):
     +lines : List<&2,String> <- IO.pure(List<&2,String>,String.lines(text))
     +anon : Nat <- IO.pure(Nat,status_value(lines,"RssAnon:"))
     +shared : Nat <- IO.pure(Nat,status_value(lines,"RssShmem:"))
-    IO.pure(Nat,Bool.pick(Nat,Nat.is_gt(Nat.add(anon,shared),0n),Nat.add(anon,shared),status_value(lines,"VmRSS:")))
+    IO.pure(Nat,Choice.choose(Nat,Nat.is_gt(Nat.add(anon,shared),0n), _choice_unit => Nat.add(anon,shared), _choice_unit => status_value(lines,"VmRSS:")))
 
 def lookup( +rows: List<&2,String>, +pid: U32) -> String:
   match rows:
     case Nil{}: ""
-    case +row <> rest: Bool.pick(String,U32.is_eq(S.number(S.field(row,"pid")),pid),row,lookup(rest,pid))
+    case +row <> rest: Choice.choose(String,U32.is_eq(S.number(S.field(row,"pid")),pid), _choice_unit => row, _choice_unit => lookup(rest,pid))
 
 def contains_pid( +seen: List<&2,U32>, +pid: U32) -> Bool:
   match seen:
@@ -57,8 +58,8 @@ def contains_pid( +seen: List<&2,U32>, +pid: U32) -> Bool:
 @unsafe
 
 def descendant(+rows: List<&2,String>, +pid: U32, +root: U32, +seen: List<&2,U32>) -> Bool:
-  Bool.pick(Bool,U32.is_eq(pid,root),True{},
-    Bool.pick(Bool,Bool.or(U32.is_eq(pid,0),contains_pid(seen,pid)),False{},
+  Choice.choose(Bool,U32.is_eq(pid,root), _choice_unit => True{}, _choice_unit =>
+    Choice.choose(Bool,Bool.or(U32.is_eq(pid,0),contains_pid(seen,pid)), _choice_unit => False{}, _choice_unit =>
       descendant(rows,S.number(S.field(lookup(rows,pid),"ppid")),root,pid <> seen)))
 
 def measure_rows( +rows: List<&2,String>, +table: List<&2,String>, +root: U32, +tree: Bool, +total: Nat) -> IO(Nat):
@@ -67,7 +68,7 @@ def measure_rows( +rows: List<&2,String>, +table: List<&2,String>, +root: U32, +
     case +row <> rest:
       do IO<Nat>:
         +pid : U32 <- IO.pure(U32,S.number(S.field(row,"pid")))
-        +belongs : Bool <- IO.pure(Bool,Bool.pick(Bool,tree,descendant(table,pid,root,Nil{}),U32.is_eq(S.number(S.field(row,"sid")),root)))
+        +belongs : Bool <- IO.pure(Bool,Choice.choose(Bool,tree, _choice_unit => descendant(table,pid,root,Nil{}), _choice_unit => U32.is_eq(S.number(S.field(row,"sid")),root)))
         +kb : Nat <- Bool.pick(IO(Nat),belongs,memory(pid),IO.pure(Nat,0n))
         measure_rows(rest,table,root,tree,Nat.add(total,kb))
 
@@ -80,7 +81,7 @@ def memory_info() -> IO(String):
     +lines : List<&2,String> <- IO.pure(List<&2,String>,String.lines(text))
     +total : Nat <- IO.pure(Nat,status_value(lines,"MemTotal:"))
     +available : Nat <- IO.pure(Nat,status_value(lines,"MemAvailable:"))
-    IO.pure(String,"total=" ++ Nat.show(total) ++ "\navailable=" ++ Nat.show(available) ++ "\nknown=" ++ Bool.pick(String,Nat.is_gt(total,0n),"1","0") ++ "\n")
+    IO.pure(String,"total=" ++ Nat.show(total) ++ "\navailable=" ++ Nat.show(available) ++ "\nknown=" ++ Choice.choose(String,Nat.is_gt(total,0n), _choice_unit => "1", _choice_unit => "0") ++ "\n")
 
 def proc_file(+pid: U32, name: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
@@ -97,8 +98,8 @@ def cmdline( +pid: U32) -> IO(Result<&1,&1,U32 & String,String>):
 
 def attempt_args( +args: List<&2,String>) -> String:
   match args:
-    case verb <> attempt <> Nil{}: Bool.pick(String,String.eq(verb,"__supervise"),attempt,"")
-    case verb <> attempt <> old <> start <> queued <> Nil{}: Bool.pick(String,String.eq(verb,"__takeover"),attempt,"")
+    case verb <> attempt <> Nil{}: Choice.choose(String,String.eq(verb,"__supervise"), _choice_unit => attempt, _choice_unit => "")
+    case verb <> attempt <> old <> start <> queued <> Nil{}: Choice.choose(String,String.eq(verb,"__takeover"), _choice_unit => attempt, _choice_unit => "")
     case value <> rest: attempt_args(rest)
     case Nil{}: ""
 
@@ -110,19 +111,19 @@ def attempt( +pid: U32) -> IO(String):
 def lock_after_write( +parts: List<&2,String>) -> List<&2,String>:
   match parts:
     case Nil{}: Nil{}
-    case +part <> +rest: Bool.pick(List<&2,String>,String.eq(part,"WRITE"),rest,lock_after_write(rest))
+    case +part <> +rest: Choice.choose(List<&2,String>,String.eq(part,"WRITE"), _choice_unit => rest, _choice_unit => lock_after_write(rest))
 
 def lock_pid(+line: String, +inode: String, +waiter: Bool) -> U32:
   +parts = lock_after_write(S.words(line))
   +valid = Bool.and(String.contains(line,"FLOCK"),Bool.and(Bool.not(Bool.xor(String.contains(line,"->"),waiter)),String.eq(S.last(String.split(S.at(parts,1),Char.from_u32(58))),inode)))
-  Bool.pick(U32,valid,S.number(S.first(parts)),0)
+  Choice.choose(U32,valid, _choice_unit => S.number(S.first(parts)), _choice_unit => 0)
 
 def lock_rows( +lines: List<&2,String>, +inode: String, +waiter: Bool) -> List<&2,U32>:
   match lines:
     case Nil{}: Nil{}
     case line <> +rest:
       +pid = lock_pid(line,inode,waiter)
-      Bool.pick(List<&2,U32>,U32.is_gt(pid,0),pid <> lock_rows(rest,inode,waiter),lock_rows(rest,inode,waiter))
+      Choice.choose(List<&2,U32>,U32.is_gt(pid,0), _choice_unit => pid <> lock_rows(rest,inode,waiter), _choice_unit => lock_rows(rest,inode,waiter))
 
 def locks(+state: String, +waiter: Bool) -> IO(List<&2,U32>):
   do IO<List<&2,U32>>:
@@ -148,7 +149,7 @@ def env_field( +values: List<&2,String>, +name: String) -> String:
     case Nil{}: ""
     case +value <> rest:
       +prefix = name ++ "="
-      Bool.pick(String,String.starts_with(value,prefix),String.drop(value,String.length(prefix)),env_field(rest,name))
+      Choice.choose(String,String.starts_with(value,prefix), _choice_unit => String.drop(value,String.length(prefix)), _choice_unit => env_field(rest,name))
 
 def env_present(values: List<&2,String>, +name: String) -> Bool:
   match values:
@@ -159,7 +160,7 @@ def environ( +pid: U32, +name: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     +bytes : String <- IO.try(String,proc_file(pid,"environ"))
     +values : List<&2,String> <- IO.pure(List<&2,String>,String.split(bytes,Char.from_u32(0)))
-    IO.pure(Result<&1,&1,U32 & String,String>,Bool.pick(Result<&1,&1,U32 & String,String>,env_present(values,name),Done{env_field(values,name)},Fail{(2,"process environment variable is absent")}))
+    IO.pure(Result<&1,&1,U32 & String,String>,Choice.choose(Result<&1,&1,U32 & String,String>,env_present(values,name), _choice_unit => Done{env_field(values,name)}, _choice_unit => Fail{(2,"process environment variable is absent")}))
 
 def hidden_match_1(signaled: Result<&1,&1,U32 & String,Unit>) -> IO(Bool):
   match signaled:

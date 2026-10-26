@@ -1,4 +1,5 @@
 import Base
+import ./choice.bend as Choice
 import ./compile-queue-state.bend as S
 import ./compile-queue-files.bend as QF
 import ./compile-queue-process.bend as Proc
@@ -16,7 +17,7 @@ def reason(+pid: U32, +label: String, +attempt: String) -> String:
 def namespace_result_match_10(+own: String, theirs: Result<&1,&1,U32 & String,String>) -> String:
   match theirs:
     case Fail{(code,message)}: "mount-namespace-error-" ++ U32.show(code)
-    case Done{other}: Bool.pick(String,String.eq(own,other),"","other-mount-namespace")
+    case Done{other}: Choice.choose(String,String.eq(own,other), _choice_unit => "", _choice_unit => "other-mount-namespace")
 
 def namespace_result(mine: Result<&1,&1,U32 & String,String>, theirs: Result<&1,&1,U32 & String,String>) -> String:
   match mine:
@@ -109,9 +110,9 @@ def successor(+state: String, +attempt: String, +old_pid: String, +old_start: St
 def original_args( +args: List<&2,String>, +pid: U32, +start: String, +queued: String) -> String:
   match args:
     case verb <> attempt <> Nil{}:
-      Bool.pick(String,String.eq(verb,"__supervise"),"attempt=" ++ attempt ++ "\nold_pid=" ++ U32.show(pid) ++ "\nold_start=" ++ start ++ "\nqueued=" ++ queued ++ "\n","")
+      Choice.choose(String,String.eq(verb,"__supervise"), _choice_unit => "attempt=" ++ attempt ++ "\nold_pid=" ++ U32.show(pid) ++ "\nold_start=" ++ start ++ "\nqueued=" ++ queued ++ "\n", _choice_unit => "")
     case verb <> attempt <> old <> old_start <> old_queued <> Nil{}:
-      Bool.pick(String,String.eq(verb,"__takeover"),"attempt=" ++ attempt ++ "\nold_pid=" ++ old ++ "\nold_start=" ++ old_start ++ "\nqueued=" ++ old_queued ++ "\nsuccessor_kind=1\n","")
+      Choice.choose(String,String.eq(verb,"__takeover"), _choice_unit => "attempt=" ++ attempt ++ "\nold_pid=" ++ old ++ "\nold_start=" ++ old_start ++ "\nqueued=" ++ old_queued ++ "\nsuccessor_kind=1\n", _choice_unit => "")
     case value <> rest: original_args(rest,pid,start,queued)
     case Nil{}: ""
 
@@ -139,13 +140,13 @@ def publish_success(result: Result<&1,&1,U32 & String,U32>, +pid: U32, +start: S
       do IO<String>:
         killed : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.eq(S.field(details,"successor_kind"),"1"),P.HostPosix.signal_pid(pid,9),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
         saved : Unit <- S.write(S.field(details,"attempt") ++ "/takeover","pid=" ++ S.field(details,"old_pid") ++ "\nstarttime=" ++ S.field(details,"old_start") ++ "\nsuccessor=" ++ U32.show(child) ++ "\n")
-        IO.pure(String,Bool.pick(String,legacy,"taken-over","retaken") ++ " pid=" ++ U32.show(pid) ++ " successor=" ++ U32.show(child) ++ " attempt=" ++ S.field(details,"attempt") ++ "\n")
+        IO.pure(String,Choice.choose(String,legacy, _choice_unit => "taken-over", _choice_unit => "retaken") ++ " pid=" ++ U32.show(pid) ++ " successor=" ++ U32.show(child) ++ " attempt=" ++ S.field(details,"attempt") ++ "\n")
 
 def replace_stopped(+state: String, +pid: U32, +start: String, +details: String, +legacy: Bool, +ticket_id: String) -> IO(String):
   do IO<String>:
     +stopped : Bool <- stopped(pid,start)
     +view : A.QueueView <- A.load(state)
-    +valid : Bool <- IO.pure(Bool,Bool.and(stopped,Bool.and(Bool.not(has_pid(A.claims(view),pid)),Bool.pick(Bool,legacy,U32.is_ne(S.number(S.field(A.facts(view),"legacy_pid")),pid),has_pid(A.tickets(view),pid)))))
+    +valid : Bool <- IO.pure(Bool,Bool.and(stopped,Bool.and(Bool.not(has_pid(A.claims(view),pid)),Choice.choose(Bool,legacy, _choice_unit => U32.is_ne(S.number(S.field(A.facts(view),"legacy_pid")),pid), _choice_unit => has_pid(A.tickets(view),pid)))))
     Bool.pick(IO(String),valid,
       do IO<String>:
         removed : Unit <- Bool.pick(IO(Unit),legacy,IO.pure(Unit,Unit{}),S.remove(state ++ "/admission/waiting/" ++ ticket_id))
@@ -176,7 +177,7 @@ def replace_locked_match_3(+start: String, +pid: U32, +state: String, +details: 
 def replace_locked(+state: String, +pid: U32, +start: String, +details: String, +legacy: Bool, +ticket_id: String) -> IO(String):
   do IO<String>:
     +view : A.QueueView <- A.load(state)
-    +waiting : Bool <- IO.pure(Bool,Bool.and(Bool.not(has_pid(A.claims(view),pid)),Bool.pick(Bool,legacy,U32.is_ne(S.number(S.field(A.facts(view),"legacy_pid")),pid),has_pid(A.tickets(view),pid))))
+    +waiting : Bool <- IO.pure(Bool,Bool.and(Bool.not(has_pid(A.claims(view),pid)),Choice.choose(Bool,legacy, _choice_unit => U32.is_ne(S.number(S.field(A.facts(view),"legacy_pid")),pid), _choice_unit => has_pid(A.tickets(view),pid))))
     live : Result<&1,&1,U32 & String,U32> <- P.HostPosix.alive(pid,start)
     replace_locked_match_3(start, pid, state, details, legacy, ticket_id, waiting, live)
 
@@ -197,7 +198,7 @@ def replace(+state: String, +pid: U32, +start: String, +details: String, +legacy
       do IO<String>:
         locked : Result<&1,&1,U32 & String,U32> <- A.lock(state)
         replace_match_1(start, pid, state, details, legacy, ticket_id, locked),
-      IO.pure(String,reason(pid,Bool.pick(String,owned,namespace,"other-uid-or-unreadable"),S.field(details,"attempt"))))
+      IO.pure(String,reason(pid,Choice.choose(String,owned, _choice_unit => namespace, _choice_unit => "other-uid-or-unreadable"),S.field(details,"attempt"))))
 
 def replace_ticket(+ticket: String, +state: String, +legacy: Bool) -> IO(String):
   do IO<String>:
@@ -220,8 +221,8 @@ def legacy_tickets( +pids: List<&2,U32>, +state: String, +seen: List<&2,U32>) ->
         start : Result<&1,&1,U32 & String,String> <- P.HostPosix.starttime(pid)
         +start_text : String <- IO.pure(String,S.text_or_empty(start))
         +tail : List<&2,String> <- legacy_tickets(rest,state,pid <> seen)
-        IO.pure(List<&2,String>,Bool.pick(List<&2,String>,Bool.and(Bool.not(Proc.contains_pid(seen,pid)),Bool.and(String.eq(S.state(attempt),state),Bool.and(String.is_empty(S.text_or_empty(marker)),Bool.not(String.is_empty(start_text))))),
-          ("pid=" ++ U32.show(pid) ++ "\nstarttime=" ++ start_text ++ "\nqueued_ns=" ++ S.field(active,"started_ns") ++ "\n") <> tail,tail))
+        IO.pure(List<&2,String>,Choice.choose(List<&2,String>,Bool.and(Bool.not(Proc.contains_pid(seen,pid)),Bool.and(String.eq(S.state(attempt),state),Bool.and(String.is_empty(S.text_or_empty(marker)),Bool.not(String.is_empty(start_text))))), _choice_unit =>
+          ("pid=" ++ U32.show(pid) ++ "\nstarttime=" ++ start_text ++ "\nqueued_ns=" ++ S.field(active,"started_ns") ++ "\n") <> tail, _choice_unit => tail))
 
 def replace_rows( +items: List<&2,String>, +state: String, +legacy: Bool) -> IO(String):
   match items:

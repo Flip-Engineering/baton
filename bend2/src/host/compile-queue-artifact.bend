@@ -1,4 +1,5 @@
 import Base
+import ./choice.bend as Choice
 import ../host/files.bend as F
 import ../host/storage.bend as S
 import ./digest.bend as D
@@ -6,14 +7,14 @@ import ./compile-queue-files.bend as Q
 
 def kind_of( +record: String) -> String:
   +value = Q.observation_kind(record)
-  Bool.pick(String,String.eq(value,"dir"),"directory",
-    Bool.pick(String,String.eq(value,"file"),"file","other"))
+  Choice.choose(String,String.eq(value,"dir"), _choice_unit => "directory", _choice_unit =>
+    Choice.choose(String,String.eq(value,"file"), _choice_unit => "file", _choice_unit => "other"))
 
 def kind_result(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match result:
     case Done{record}: IO.pure(Result<&1,&1,U32 & String,String>,Done{kind_of(record)})
     case Fail{(code,message)}:
-      IO.pure(Result<&1,&1,U32 & String,String>,Done{Bool.pick(String,U32.is_eq(code,2),"missing","other")})
+      IO.pure(Result<&1,&1,U32 & String,String>,Done{Choice.choose(String,U32.is_eq(code,2), _choice_unit => "missing", _choice_unit => "other")})
 
 def kind_resolved(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match result:
@@ -33,8 +34,8 @@ def field( +lines: List<&2,String>, +name: String) -> String:
     case Nil{}: ""
     case +line <> rest:
       +prefix = name ++ "="
-      Bool.pick(String,String.starts_with(line,prefix),
-        String.drop(line,String.length(prefix)),field(rest,name))
+      Choice.choose(String,String.starts_with(line,prefix), _choice_unit =>
+        String.drop(line,String.length(prefix)), _choice_unit => field(rest,name))
 
 def CompileQueueArtifact.c_source_kind( +path: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
@@ -42,7 +43,7 @@ def CompileQueueArtifact.c_source_kind( +path: String) -> IO(Result<&1,&1,U32 & 
     +lines : List<&2,String> <- IO.pure(List<&2,String>,String.lines(record))
     +binary : Bool <- IO.pure(Bool,Bool.or(String.eq(field(lines,"bytes"),"0"),
       Bool.or(String.eq(field(lines,"zeros"),"1"),String.eq(field(lines,"prefix"),"7f454c46"))))
-    IO.pure(Result<&1,&1,U32 & String,String>,Done{Bool.pick(String,binary,"binary","text")})
+    IO.pure(Result<&1,&1,U32 & String,String>,Done{Choice.choose(String,binary, _choice_unit => "binary", _choice_unit => "text")})
 
 def append( +left: List<&2,String>, +right: List<&2,String>) -> List<&2,String>:
   match left:
@@ -53,7 +54,7 @@ def insert( +value: String, +sorted: List<&2,String>) -> List<&2,String>:
   match sorted:
     case Nil{}: [value]
     case +head <> +rest:
-      Bool.pick(List<&2,String>,String.is_lt(value,head),value <> head <> rest,head <> insert(value,rest))
+      Choice.choose(List<&2,String>,String.is_lt(value,head), _choice_unit => value <> head <> rest, _choice_unit => head <> insert(value,rest))
 
 def sorted( +values: List<&2,String>) -> List<&2,String>:
   match values:

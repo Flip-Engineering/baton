@@ -1,4 +1,5 @@
 import Base
+import ./choice.bend as Choice
 import ./compile-queue-state.bend as S
 import ./compile-queue-files.bend as QF
 import ./compile-queue-process.bend as Proc
@@ -47,7 +48,7 @@ def valid_name(+name: String) -> Bool:
 def admission_names(names: List<&2,String>) -> List<&2,String>:
   match names:
     case Nil{}: Nil{}
-    case +name <> +rest: Bool.pick(List<&2,String>,valid_name(name),name <> admission_names(rest),admission_names(rest))
+    case +name <> +rest: Choice.choose(List<&2,String>,valid_name(name), _choice_unit => name <> admission_names(rest), _choice_unit => admission_names(rest))
 
 @unsafe
 def load_claims_match_3(~again_load_claims: (@+names: List<&2,String> -> @+state: String -> @+acc: List<&2,String> -> IO(List<&2,String>)), +rest: List<&2,String>, +name: String, +path: String, +state: String, +acc: List<&2,String>, held: Result<&1,&1,U32 & String,U32>) -> IO(List<&2,String>):
@@ -60,7 +61,7 @@ def load_claims_match_3(~again_load_claims: (@+names: List<&2,String> -> @+state
           again_load_claims(rest,state,acc),
         do IO<List<&2,String>>:
           +text : String <- S.read(path)
-          again_load_claims(rest,state,Bool.pick(List<&2,String>,Bool.and(valid_name(name),Bool.not(String.is_empty(text))),("id=" ++ name ++ "\n" ++ text) <> acc,acc)))
+          again_load_claims(rest,state,Choice.choose(List<&2,String>,Bool.and(valid_name(name),Bool.not(String.is_empty(text))), _choice_unit => ("id=" ++ name ++ "\n" ++ text) <> acc, _choice_unit => acc)))
     case Fail{error}: again_load_claims(rest,state,acc)
 
 @unsafe
@@ -74,10 +75,10 @@ def load_claims( +names: List<&2,String>, +state: String, +acc: List<&2,String>)
         load_claims_match_3(load_claims, rest, name, path, state, acc, held)
 
 def priority(+name: String) -> U32:
-  Bool.pick(U32,String.eq(name,"extreme"),2,Bool.pick(U32,String.eq(name,"high"),1,0))
+  Choice.choose(U32,String.eq(name,"extreme"), _choice_unit => 2, _choice_unit => Choice.choose(U32,String.eq(name,"high"), _choice_unit => 1, _choice_unit => 0))
 
 def priority_name( +rank: U32) -> String:
-  Bool.pick(String,U32.is_ge(rank,2),"extreme",Bool.pick(String,U32.is_eq(rank,1),"high","rest"))
+  Choice.choose(String,U32.is_ge(rank,2), _choice_unit => "extreme", _choice_unit => Choice.choose(String,U32.is_eq(rank,1), _choice_unit => "high", _choice_unit => "rest"))
 
 def ticket_before(+a: String, +b: String) -> Bool:
   +ap = S.number(S.field(a,"priority"))
@@ -87,7 +88,7 @@ def ticket_before(+a: String, +b: String) -> Bool:
 def insert_ticket( +items: List<&2,String>, +ticket: String) -> List<&2,String>:
   match items:
     case Nil{}: ticket <> Nil{}
-    case +head <> +rest: Bool.pick(List<&2,String>,ticket_before(ticket,head),ticket <> head <> rest,head <> insert_ticket(rest,ticket))
+    case +head <> +rest: Choice.choose(List<&2,String>,ticket_before(ticket,head), _choice_unit => ticket <> head <> rest, _choice_unit => head <> insert_ticket(rest,ticket))
 
 def expected_fields(value: Maybe<&2,Nat>) -> String:
   match value:
@@ -95,7 +96,7 @@ def expected_fields(value: Maybe<&2,Nat>) -> String:
     case Some{peak}: "expected_kb=" ++ Nat.show(peak) ++ "\nhistory=1\n"
 
 def fill_missing(+ticket: String, +name: String, +value: String) -> String:
-  Bool.pick(String,String.is_empty(S.field(ticket,name)),name ++ "=" ++ value ++ "\n" ++ ticket,ticket)
+  Choice.choose(String,String.is_empty(S.field(ticket,name)), _choice_unit => name ++ "=" ++ value ++ "\n" ++ ticket, _choice_unit => ticket)
 
 def complete_ticket(+ticket: String) -> IO(String):
   Bool.pick(IO(String),Bool.and(Bool.not(String.is_empty(S.field(ticket,"shape"))),Bool.and(Bool.not(String.is_empty(S.field(ticket,"kind"))),Bool.not(String.is_empty(S.field(ticket,"mode"))))),IO.pure(String,ticket),
@@ -145,7 +146,7 @@ def measure_claims( +claims: List<&2,String>, +table: List<&2,String>) -> IO(Str
     case +claim <> rest:
       do IO<String>:
         +root : String <- IO.pure(String,S.field(claim,"root"))
-        +kb : Nat <- Proc.measure(table,S.number(Bool.pick(String,String.is_empty(root),S.field(claim,"pid"),root)),String.eq(S.field(claim,"measure"),"tree"))
+        +kb : Nat <- Proc.measure(table,S.number(Choice.choose(String,String.is_empty(root), _choice_unit => S.field(claim,"pid"), _choice_unit => root)),String.eq(S.field(claim,"measure"),"tree"))
         +tail : String <- measure_claims(rest,table)
         IO.pure(String,"c." ++ S.field(claim,"id") ++ "=" ++ Nat.show(kb) ++ "\n" ++ tail)
 
@@ -179,11 +180,11 @@ def published_claims( +claims: List<&2,String>, +state: String, +cache: String, 
         observed : Result<&1,&1,U32 & String,String> <- F.Files.lstat(path)
         +usage : String <- S.read(path)
         +fresh : Bool <- IO.pure(Bool,Bool.and(usage_fresh(observed,now),Bool.not(String.is_empty(usage))))
-        +kb : String <- IO.pure(String,Bool.pick(String,fresh,S.field(usage,"kb"),S.field(cache,"c." ++ S.field(claim,"id"))))
-        +growth : String <- IO.pure(String,Bool.pick(String,fresh,S.field(usage,"growth_kb"),"0"))
+        +kb : String <- IO.pure(String,Choice.choose(String,fresh, _choice_unit => S.field(usage,"kb"), _choice_unit => S.field(cache,"c." ++ S.field(claim,"id"))))
+        +growth : String <- IO.pure(String,Choice.choose(String,fresh, _choice_unit => S.field(usage,"growth_kb"), _choice_unit => "0"))
         +hidden : Bool <- Bool.pick(IO(Bool),Bool.and(Bool.not(fresh),Nat.is_eq(S.nat(kb),0n)),Proc.hidden(S.number(S.field(claim,"root"))),IO.pure(Bool,False{}))
         +tail : List<&2,String> <- published_claims(rest,state,cache,now)
-        IO.pure(List<&2,String>,("unreliable=" ++ Bool.pick(String,hidden,"1","0") ++ "\ncurrent_kb=" ++ kb ++ "\ngrowth_kb=" ++ growth ++ "\n" ++ claim) <> tail)
+        IO.pure(List<&2,String>,("unreliable=" ++ Choice.choose(String,hidden, _choice_unit => "1", _choice_unit => "0") ++ "\ncurrent_kb=" ++ kb ++ "\ngrowth_kb=" ++ growth ++ "\n" ++ claim) <> tail)
 
 def max_growth( +claims: List<&2,String>) -> Nat:
   match claims:
@@ -220,13 +221,13 @@ def matching( +claims: List<&2,String>, +ticket: String) -> Nat:
     case +claim <> rest:
       +group = S.field(ticket,"group")
       +other = S.field(claim,"group")
-      +same = Bool.pick(Bool,Bool.and(Bool.not(String.is_empty(group)),Bool.not(String.is_empty(other))),String.eq(group,other),String.eq(S.field(ticket,"entry"),S.field(claim,"entry")))
-      Nat.max(Bool.pick(Nat,same,S.nat(S.field(claim,"current_kb")),0n),matching(rest,ticket))
+      +same = Choice.choose(Bool,Bool.and(Bool.not(String.is_empty(group)),Bool.not(String.is_empty(other))), _choice_unit => String.eq(group,other), _choice_unit => String.eq(S.field(ticket,"entry"),S.field(claim,"entry")))
+      Nat.max(Choice.choose(Nat,same, _choice_unit => S.nat(S.field(claim,"current_kb")), _choice_unit => 0n),matching(rest,ticket))
 
 def need(+view: QueueView, +ticket: String) -> Nat:
-  Bool.pick(Nat,String.eq(S.field(ticket,"history"),"1"),S.nat(S.field(ticket,"expected_kb")),
-    Bool.pick(Nat,String.is_empty(S.field(ticket,"entry")),0n,
-      Nat.max(matching(claims(view),ticket),Bool.pick(Nat,String.eq(S.field(ticket,"entry"),S.field(facts(view),"legacy_entry")),S.nat(S.field(facts(view),"legacy_kb")),0n))))
+  Choice.choose(Nat,String.eq(S.field(ticket,"history"),"1"), _choice_unit => S.nat(S.field(ticket,"expected_kb")), _choice_unit =>
+    Choice.choose(Nat,String.is_empty(S.field(ticket,"entry")), _choice_unit => 0n, _choice_unit =>
+      Nat.max(matching(claims(view),ticket),Choice.choose(Nat,String.eq(S.field(ticket,"entry"),S.field(facts(view),"legacy_entry")), _choice_unit => S.nat(S.field(facts(view),"legacy_kb")), _choice_unit => 0n))))
 
 def unspent( +claims: List<&2,String>) -> Nat:
   match claims:
@@ -236,7 +237,7 @@ def unspent( +claims: List<&2,String>) -> Nat:
 def backfilled( +claims: List<&2,String>) -> Nat:
   match claims:
     case Nil{}: 0n
-    case +claim <> rest: Nat.add(Bool.pick(Nat,String.eq(S.field(claim,"backfill"),"1"),Nat.max(S.nat(S.field(claim,"expected_kb")),S.nat(S.field(claim,"current_kb"))),0n),backfilled(rest))
+    case +claim <> rest: Nat.add(Choice.choose(Nat,String.eq(S.field(claim,"backfill"),"1"), _choice_unit => Nat.max(S.nat(S.field(claim,"expected_kb")),S.nat(S.field(claim,"current_kb"))), _choice_unit => 0n),backfilled(rest))
 
 def all_history( +claims: List<&2,String>) -> Bool:
   match claims:
@@ -262,7 +263,7 @@ def protect_ahead( +items: List<&2,String>, +view: QueueView, +ticket: String) -
   match items:
     case Nil{}: True{}
     case +ahead <> rest:
-      Bool.pick(Bool,String.eq(S.field(ahead,"id"),S.field(ticket,"id")),True{},
+      Choice.choose(Bool,String.eq(S.field(ahead,"id"),S.field(ticket,"id")), _choice_unit => True{}, _choice_unit =>
         Bool.and(Bool.or(U32.is_le(S.number(S.field(ahead,"priority")),S.number(S.field(ticket,"priority"))),protect(view,ticket,ahead)),protect_ahead(rest,view,ticket)))
 
 def decision(+view: QueueView, +ticket: String) -> Bool:
@@ -270,7 +271,7 @@ def decision(+view: QueueView, +ticket: String) -> Bool:
   +first = String.eq(S.field(head,"id"),S.field(ticket,"id"))
   +empty = Bool.and(String.is_empty(S.first(claims(view))),U32.is_eq(S.number(S.field(facts(view),"legacy_pid")),0))
   +wanted = need(view,ticket)
-  +fit = Bool.and(room_nonnegative(view),Bool.pick(Bool,Nat.is_gt(wanted,0n),Nat.is_le(wanted,headroom(view)),Nat.is_gt(headroom(view),0n)))
+  +fit = Bool.and(room_nonnegative(view),Choice.choose(Bool,Nat.is_gt(wanted,0n), _choice_unit => Nat.is_le(wanted,headroom(view)), _choice_unit => Nat.is_gt(headroom(view),0n)))
   Bool.or(Bool.and(empty,first),Bool.and(String.eq(S.field(facts(view),"known"),"1"),
     Bool.and(Bool.or(String.eq(S.field(ticket,"history"),"1"),all_history(claims(view))),
       Bool.and(fit,Bool.or(first,Bool.and(protect(view,ticket,head),protect_ahead(tickets(view),view,ticket)))))))
@@ -278,7 +279,7 @@ def decision(+view: QueueView, +ticket: String) -> Bool:
 def next_eligible( +items: List<&2,String>, +view: QueueView) -> String:
   match items:
     case Nil{}: ""
-    case +ticket <> rest: Bool.pick(String,decision(view,ticket),ticket,next_eligible(rest,view))
+    case +ticket <> rest: Choice.choose(String,decision(view,ticket), _choice_unit => ticket, _choice_unit => next_eligible(rest,view))
 
 def ticket_body(+attempt: String, +queued: String, +pid: U32, +start: String) -> IO(String):
   do IO<String>:
@@ -289,7 +290,7 @@ def ticket_body(+attempt: String, +queued: String, +pid: U32, +start: String) ->
     IO.pure(String,"pid=" ++ U32.show(pid) ++ "\nstarttime=" ++ start ++ "\nkey=" ++ S.key(attempt) ++ "\ngroup=" ++ S.field(group,"group") ++ "\nentry=" ++ S.field(meta,"entry") ++ "\ncompiler=" ++ S.field(group,"compiler") ++ "\nkind=" ++ S.field(meta,"kind") ++ "\nshape=" ++ shape ++ "\nmode=" ++ mode ++ "\nqueued_ns=" ++ queued ++ "\n")
 
 def claim_body(+ticket: String, +view: QueueView, +root: U32, +now: String) -> String:
-  "pid=" ++ S.field(ticket,"pid") ++ "\nstarttime=" ++ S.field(ticket,"starttime") ++ "\nroot=" ++ U32.show(root) ++ "\nmeasure=session\nkey=" ++ S.field(ticket,"key") ++ "\ngroup=" ++ S.field(ticket,"group") ++ "\nentry=" ++ S.field(ticket,"entry") ++ "\nexpected_kb=" ++ Nat.show(need(view,ticket)) ++ "\nhistory=" ++ S.field(ticket,"history") ++ "\nbackfill=" ++ Bool.pick(String,String.eq(S.field(S.first(tickets(view)),"id"),S.field(ticket,"id")),"0","1") ++ "\nadmitted_ns=" ++ now ++ "\n"
+  "pid=" ++ S.field(ticket,"pid") ++ "\nstarttime=" ++ S.field(ticket,"starttime") ++ "\nroot=" ++ U32.show(root) ++ "\nmeasure=session\nkey=" ++ S.field(ticket,"key") ++ "\ngroup=" ++ S.field(ticket,"group") ++ "\nentry=" ++ S.field(ticket,"entry") ++ "\nexpected_kb=" ++ Nat.show(need(view,ticket)) ++ "\nhistory=" ++ S.field(ticket,"history") ++ "\nbackfill=" ++ Choice.choose(String,String.eq(S.field(S.first(tickets(view)),"id"),S.field(ticket,"id")), _choice_unit => "0", _choice_unit => "1") ++ "\nadmitted_ns=" ++ now ++ "\n"
 
 def polled_claim(result: Result<&1,&1,U32 & String,U32>, +ticket_path: String) -> IO(Result<&1,&1,U32 & String,Maybe<&2,U32>>):
   match result:
@@ -376,7 +377,7 @@ def admit(+attempt: String, +queued_override: String, +old_pid: U32, +old_start:
     +pid : U32 <- IO.try(U32,P.HostPosix.pid())
     +start : String <- IO.try(String,P.HostPosix.starttime(pid))
     +now : String <- IO.try(String,P.HostPosix.now_ns())
-    +queued : String <- IO.pure(String,Bool.pick(String,Bool.not(W.equal(W.parse(queued_override),W.zero())),queued_override,now))
+    +queued : String <- IO.pure(String,Choice.choose(String,Bool.not(W.equal(W.parse(queued_override),W.zero())), _choice_unit => queued_override, _choice_unit => now))
     +id : String <- IO.pure(String,S.id(queued,pid))
     +body : String <- ticket_body(attempt,queued,pid,start)
     +fd : U32 <- IO.try(U32,lock(state))
@@ -422,7 +423,7 @@ def status(+state: String) -> IO(Result<&1,&1,U32 & String,String>):
     released : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.lock_release(fd)
     +facts : String <- IO.pure(String,facts(view))
     IO.pure(Result<&1,&1,U32 & String,String>,Done{"memory total_kb=" ++ S.field(facts,"total") ++ " available_kb=" ++ S.field(facts,"available") ++ " outside_use_kb=" ++ Nat.show(outside(view)) ++ " outside_growth_kb=" ++ S.field(facts,"reserve") ++ "\n"
-      ++ Bool.pick(String,U32.is_gt(S.number(S.field(facts,"legacy_pid")),0),"legacy-holder pid=" ++ S.field(facts,"legacy_pid") ++ " current_kb=" ++ S.field(facts,"legacy_kb") ++ "\n","")
+      ++ Choice.choose(String,U32.is_gt(S.number(S.field(facts,"legacy_pid")),0), _choice_unit => "legacy-holder pid=" ++ S.field(facts,"legacy_pid") ++ " current_kb=" ++ S.field(facts,"legacy_kb") ++ "\n", _choice_unit => "")
       ++ status_claims(claims(view)) ++ status_tickets(tickets(view),1n)})
 
 def backfill(+state: String) -> IO(Result<&1,&1,U32 & String,String>):

@@ -1,4 +1,5 @@
 import Base
+import ./choice.bend as Choice
 
 # Two U32 words retain unsigned 64-bit observations and protocol hashes.
 # The pinned native runtime represents Nat with 48 bits.
@@ -40,7 +41,7 @@ def parse_go(text: String, value: Wide64) -> Wide64:
   match text:
     case SNil{}: value
     case SCon{+char,rest}:
-      Bool.pick(Wide64,Char.is_digit(char),parse_go(rest,add(scale(value,10),from_u32(U32.sub(Char.to_u32(char),48)))),zero())
+      Choice.choose(Wide64,Char.is_digit(char), _choice_unit => parse_go(rest,add(scale(value,10),from_u32(U32.sub(Char.to_u32(char),48)))), _choice_unit => zero())
 
 def parse(text: String) -> Wide64:
   parse_go(text,zero())
@@ -56,7 +57,7 @@ def divide_ten(value: Wide64) -> Wide64 & U32:
 
 @unsafe
 def show_go(~again_show_step: (@pair: Wide64 & U32 -> @acc: String -> String), +value: Wide64, +acc: String) -> String:
-  Bool.pick(String,equal(value,zero()),acc,again_show_step(divide_ten(value),acc))
+  Choice.choose(String,equal(value,zero()), _choice_unit => acc, _choice_unit => again_show_step(divide_ten(value),acc))
 
 @unsafe
 def show_step(pair: Wide64 & U32, acc: String) -> String:
@@ -64,11 +65,11 @@ def show_step(pair: Wide64 & U32, acc: String) -> String:
     case (value,digit): show_go(show_step, value,U32.show(digit) ++ acc)
 
 def show(+value: Wide64) -> String:
-  Bool.pick(String,equal(value,zero()),"0",show_go(show_step, value,""))
+  Choice.choose(String,equal(value,zero()), _choice_unit => "0", _choice_unit => show_go(show_step, value,""))
 
 @unsafe
 def hex_word(+value: U32, +count: U32, +acc: String) -> String:
-  Bool.pick(String,U32.is_eq(count,0),acc,hex_word(U32.div(value,16),U32.sub(count,1),String.take(String.drop("0123456789abcdef",U32.to_nat(U32.mod(value,16))),1n) ++ acc))
+  Choice.choose(String,U32.is_eq(count,0), _choice_unit => acc, _choice_unit => hex_word(U32.div(value,16),U32.sub(count,1),String.take(String.drop("0123456789abcdef",U32.to_nat(U32.mod(value,16))),1n) ++ acc))
 
 def hex(value: Wide64) -> String:
   match value:
