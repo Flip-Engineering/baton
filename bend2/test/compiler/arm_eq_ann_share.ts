@@ -33,7 +33,15 @@ type Compiler = {
 };
 // The compiler under test is selected at run time, so its module shape is
 // declared here rather than imported from a fixed path.
-const Comp = (await import(pathToFileURL(path.join(dir, "bend2/comp.ts")).href)) as unknown as Compiler;
+const compSource = [
+  path.join(dir, "bend2/compiler/upstream/comp.ts"),
+  path.join(dir, "bend2/comp.ts"),
+].find((p) => fs.existsSync(p));
+if (compSource === undefined) {
+  console.error("no comp.ts under " + dir);
+  process.exit(2);
+}
+const Comp = (await import(pathToFileURL(compSource).href)) as unknown as Compiler;
 
 function seed(base: Bend.Book): Bend.Book {
   const book = Bend.book_nil();
