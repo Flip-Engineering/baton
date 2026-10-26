@@ -60,14 +60,16 @@ def sorted( +values: List<&2,String>) -> List<&2,String>:
     case Nil{}: Nil{}
     case value <> rest: insert(value,sorted(rest))
 
+def collect_kind(kind: String, root: String, relative: String) -> IO(List<&2,String>):
+  match kind:
+    case "file": IO.pure(List<&2,String>,[relative])
+    case "dir": collect(root,relative)
+    case other: IO.pure(List<&2,String>,Nil{})
+
 def collect_observed(observed: Result<&1,&1,U32 & String,String>, +root: String, +relative: String) -> IO(List<&2,String>):
   match observed:
     case Fail{error}: IO.pure(List<&2,String>,Nil{})
-    case Done{record}:
-      match Q.observation_kind(record):
-        case "file": IO.pure(List<&2,String>,[relative])
-        case "dir": collect(root,relative)
-        case other: IO.pure(List<&2,String>,Nil{})
+    case Done{record}: collect_kind(Q.observation_kind(record),root,relative)
 
 def collect_names( +names: List<&2,String>, +root: String, +relative: String) -> IO(List<&2,String>):
   match names:
@@ -159,9 +161,8 @@ def created_directory(created: Result<&1,&1,U32 & String,Unit>, +destination: St
           Q.check_directory(observed,False{}),
         IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,message)}))
 
-def copy_observed( +record: String, +source: String, +destination: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  +mode = U32.mod(Q.number(Q.at(String.split(record,Char.from_u32(9)),1)),512)
-  match Q.observation_kind(record):
+def copy_kind(kind: String, +mode: U32, +source: String, +destination: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match kind:
     case "file": F.Files.copy_file(source,destination)
     case "dir":
       do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -174,6 +175,9 @@ def copy_observed( +record: String, +source: String, +destination: String) -> IO
         +target : String <- IO.try(String,F.Files.readlink(source))
         F.Files.symlink(target,destination)
     case other: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(22,"unsupported artifact kind")})
+
+def copy_observed(+record: String, source: String, destination: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  copy_kind(Q.observation_kind(record),U32.mod(Q.number(Q.at(String.split(record,Char.from_u32(9)),1)),512),source,destination)
 
 @unsafe
 def CompileQueueArtifact.copy( +source: String, +staging: String) -> IO(Result<&1,&1,U32 & String,Unit>):

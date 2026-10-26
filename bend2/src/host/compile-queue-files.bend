@@ -14,10 +14,13 @@ def at( +values: List<&2,String>, +index: U32) -> String:
     case Nil{}: ""
     case value <> rest: Bool.pick(String, U32.is_eq(index,0), value, at(rest,U32.sub(index,1)))
 
-def number( +value: String) -> U32:
-  match U32.read(value):
+def number_result(result: Maybe<U32>) -> U32:
+  match result:
     case Some{found}: found
     case None{}: 0
+
+def number(value: String) -> U32:
+  number_result(U32.read(value))
 
 def observation_kind( +record: String) -> String:
   first(String.split(record,Char.from_u32(9)))
