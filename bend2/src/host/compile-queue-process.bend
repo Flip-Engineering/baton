@@ -95,7 +95,7 @@ def measure_tree_rows( +rows: List<&2,String>, +members: List<&2,U32>, +total: N
         measure_tree_rows(rest,members,Nat.add(total,kb))
 
 def measure(+rows: List<&2,String>, +root: U32, +tree: Bool) -> IO(Nat):
-  Choice.choose(IO(Nat),tree, _choice_unit => measure_tree_rows(rows,expand_tree(rows,root <> Nil{}),0n), _choice_unit => measure_rows(rows,rows,root,tree,0n))
+  Choice.choose(IO(Nat),tree, _choice_unit => measure_tree_rows(rows,expand_tree(expand_tree,rows,root <> Nil{}),0n), _choice_unit => measure_rows(rows,rows,root,tree,0n))
 
 def memory_info() -> IO(String):
   do IO<String>:
