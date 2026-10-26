@@ -443,11 +443,13 @@ def completion_prepares_before_owner_release(+db: String, +session: String, +id:
     +failed : Bool <- Receive.outcome_failed(db,outcome)
     transient : Bool <- Receive.transient_provider_error(db,outcome)
     +pending_cursor : String <- IO.pure(String,Bool.pick(String,Bool.and(failed,Bool.not(Bool.and(transient,Receive.observation_clear(outcome)))),cursor,"0"))
+    attempt_current : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ "),'');"))
+    account_settled : Unit <- Turn.settle_account_attempt(db,Tx.trim_nl(attempt_current),outcome)
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
     settled : Unit <- Accounts.attempt_settled(db,session,attempt,failed,Receive.terminal_event(outcome))
     observer_released : Unit <- Receive.release_observer(lock)
     native_released : Unit <- Receive.release_native(db,handle)
-    finished : Result<&1,&1,U32 & String,Unit> <- Receive.finish_pending(db,session,id,attempt,log,pending_cursor,outcome,deliveries,again,u => Receive.ack_then_retire(db,session,attempt,handle),superseded)
+    finished : Result<&1,&1,U32 & String,Unit> <- Receive.finish_pending(db,session,id,attempt,log,pending_cursor,outcome,deliveries,again,u => Receive.ack_if_owned(db,session,attempt,handle),superseded)
     Receive.wake_if_kept(db,session,pending_cursor,superseded,finished)
 
 law native_completion_is_committed_before_owner_release:
