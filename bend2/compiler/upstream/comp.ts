@@ -1215,22 +1215,90 @@ function ty_clo(book: Bend.Book, A: HTerm | null,
 // constructors, a recursive datatype is a node, and a field re-entering
 // the datatype under layout (a family hid the cycle) is one: boxes.
 // Memoized on the type's key.
-function lay_of(book: Bend.Book, A: HTerm | null): Lay {
+function lay_cached(book: Bend.Book, A: HTerm | null):
+  { lay: Lay } | { key: string, t: Bend.ADT } | null {
   const t = ty_adt(book, A);
   if (t === null) {
-    return BOX;
+    return { lay: BOX };
+  }
+  const word = WORDS[t.k];
+  if (word !== undefined) {
+    return { lay: word };
   }
   const key = Bend.term_key(Bend.term_lower(t));
-  return WORDS[t.k] ?? memo(LAYS, key, () => {
-    const tld = book.tlds[t.k];
-    if (t.k === "Array" || t.k === "IO.OP" || tld?.$ !== "ADT"
-      || lay_cyclic(book, t.k)) {
-      return BOX;
-    }
+  const memoized = LAYS.get(key);
+  if (memoized !== undefined) {
+    return { lay: memoized };
+  }
+  const tld = book.tlds[t.k];
+  if (t.k === "Array" || t.k === "IO.OP" || tld?.$ !== "ADT"
+    || lay_cyclic(book, t.k)) {
+    return { lay: BOX };
+  }
+  return { key, t };
+}
+
+function lay_of(book: Bend.Book, A: HTerm | null): Lay {
+  const root = lay_cached(book, A);
+  if (root === null || "lay" in root) {
+    return root === null ? BOX : root.lay;
+  }
+  // An explicit stack keeps deep datatype nesting off the JavaScript call
+  // stack: the recursive form recursed one frame per nested constructor
+  // domain, which overflowed at pass entry on the combined book. A key
+  // already on the stack is a cycle and reads the BOX placeholder, exactly
+  // as the memoized recursion did.
+  type Frame = {
+    key: string, arms: Bend.Name[][], fields: HTerm[][],
+    lays: Lay[][], arm: number, field: number,
+  };
+  const begin = (key: string, t: Bend.ADT): Frame => {
+    const tld = book.tlds[t.k] as Bend.ADT;
     LAYS.set(key, BOX);
-    return lay_pack(tld.c.map((c) =>
-      [c.k, lay_wide(ctr_doms(book, c, t.x).map((A) => lay_of(book, A)))]));
-  });
+    return {
+      key, arms: tld.c.map((c) => [c.k]),
+      fields: tld.c.map((c) => ctr_doms(book, c, t.x)),
+      lays: tld.c.map(() => []), arm: 0, field: 0,
+    };
+  };
+  const stack: Frame[] = [begin(root.key, root.t)];
+  const active = new Set<string>([root.key]);
+  let result: Lay = BOX;
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1];
+    if (frame.arm >= frame.fields.length) {
+      result = lay_pack(frame.arms.map(([k], i) =>
+        [k, lay_wide(frame.lays[i])] as [Bend.Name, Lay[]]));
+      LAYS.set(frame.key, result);
+      active.delete(frame.key);
+      stack.pop();
+      if (stack.length > 0) {
+        const parent = stack[stack.length - 1];
+        parent.lays[parent.arm].push(result);
+        parent.field += 1;
+      }
+      continue;
+    }
+    if (frame.field >= frame.fields[frame.arm].length) {
+      frame.arm += 1;
+      frame.field = 0;
+      continue;
+    }
+    const child = lay_cached(book, frame.fields[frame.arm][frame.field]);
+    if (child === null || "lay" in child) {
+      frame.lays[frame.arm].push(child === null ? BOX : child.lay);
+      frame.field += 1;
+      continue;
+    }
+    if (active.has(child.key)) {
+      frame.lays[frame.arm].push(BOX);
+      frame.field += 1;
+      continue;
+    }
+    active.add(child.key);
+    stack.push(begin(child.key, child.t));
+  }
+  return result;
 }
 
 // An Array's cell is its element datatype's open layout (the type its
@@ -1268,18 +1336,45 @@ function lay_pack(arms: [Bend.Name, Lay[]][]): Lay {
 }
 
 function lay_cyclic(book: Bend.Book, k: Bend.Name): boolean {
-  const seen = new Set<Bend.Name>();
-  const hits = (A: HTerm): boolean => {
-    const a = ty_adt(book, A);
-    return a !== null && (a.k === k || a.x.some(hits)
-      || (!seen.has(a.k) && seen.add(a.k) && walk(a.k)));
-  };
-  const walk = (d: Bend.Name): boolean => {
-    const tld = book.tlds[d];
-    return tld?.$ === "ADT" && WORDS[d] === undefined && d !== "Array"
-      && tld.c.some((c) => ctr_doms(book, c).some(hits));
-  };
-  return memo(CYCLES, k, () => walk(k));
+  return memo(CYCLES, k, () => {
+    // Reachability over datatype domains with an explicit stack: k is
+    // cyclic when a constructor domain of k, or of a datatype reachable
+    // from one, names k again. The recursive form walked the same graph
+    // on the JavaScript call stack.
+    const expandable = (d: Bend.Name): boolean => {
+      const tld = book.tlds[d];
+      return tld?.$ === "ADT" && WORDS[d] === undefined && d !== "Array";
+    };
+    if (!expandable(k)) {
+      return false;
+    }
+    const seen = new Set<Bend.Name>([k]);
+    const pending: Bend.Name[] = [k];
+    while (pending.length > 0) {
+      const d = pending.pop() as Bend.Name;
+      const tld = book.tlds[d] as Bend.ADT;
+      for (const c of tld.c) {
+        const terms: HTerm[] = [...ctr_doms(book, c)];
+        while (terms.length > 0) {
+          const a = ty_adt(book, terms.pop() as HTerm);
+          if (a === null) {
+            continue;
+          }
+          if (a.k === k) {
+            return true;
+          }
+          for (const x of a.x) {
+            terms.push(x);
+          }
+          if (expandable(a.k) && !seen.has(a.k)) {
+            seen.add(a.k);
+            pending.push(a.k);
+          }
+        }
+      }
+    }
+    return false;
+  });
 }
 
 function lay_node(book: Bend.Book, k: Bend.Name): Lay {
