@@ -31,11 +31,11 @@ checkpoint and custody cursors.
 `Turn.retained_output` reads every Codex line as a byte range in the attempt
 spool.
 
-- `Turn.codex_span_prefix_sql` classifies a span from its first 4096 bytes,
-  closed with a quote and two braces when the prefix is not complete JSON. The
-  Codex type fields precede the large body strings, so the prefix identifies an
-  assistant message, a completed turn and a failed turn without parsing the
-  body.
+- `Turn.codex_frame_kind_sql`, `codex_frame_role_sql` and
+  `codex_observation_span_sql` classify the complete retained JSON through
+  `DB.Sql.query_span`. JSON escapes and the position of type fields preserve
+  their ordinary JSON meaning. Classification returns the command kind,
+  assistant or terminal role, or observation event type.
 - A span of 4096 bytes or less is materialized and handled as text. A small
   frame that follows a span state fills the terminal slot of that state, or
   replaces the state when it is an assistant message.

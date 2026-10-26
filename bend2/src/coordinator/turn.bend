@@ -787,19 +787,10 @@ def omp_frame_kind(+db: String, decoded: Frame.FrameDecoded, omp: Bool) -> IO(St
 def codex_frame_kind_sql(+value: String) -> String:
   "WITH frame(value) AS (VALUES(" ++ value ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.item.type')='command_execution' AND json_type(value,'$.item.id')='text' AND json_extract(value,'$.item.id')<>'' THEN CASE json_extract(value,'$.type') WHEN 'item.started' THEN 'codex_command_start' WHEN 'item.completed' THEN 'codex_command_end' ELSE '' END ELSE '' END ELSE '' END FROM frame;"
 
-# A large frame is classified from a bounded prefix. The prefix either parses
-# already or is closed at the end of the string and object; this avoids parsing
-# the retained body while keeping the type checks exact for the generated frames.
-def codex_span_prefix_sql(+value: String) -> String:
-  "CASE WHEN json_valid(substr(" ++ value ++ ",1,4096)) THEN substr(" ++ value ++ ",1,4096) ELSE substr(" ++ value ++ ",1,4096) || char(34) || '}}' END"
-
-def codex_frame_kind_span_sql(+value: String) -> String:
-  "WITH frame(value) AS (SELECT " ++ codex_span_prefix_sql(value) ++ ") SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.item.type')='command_execution' AND json_type(value,'$.item.id')='text' AND json_extract(value,'$.item.id')<>'' THEN CASE json_extract(value,'$.type') WHEN 'item.started' THEN 'codex_command_start' WHEN 'item.completed' THEN 'codex_command_end' ELSE '' END ELSE '' END ELSE '' END FROM frame;"
-
 def codex_frame_kind_decoded(db: String, decoded: Frame.FrameDecoded, +line: String) -> IO(String):
   match decoded:
     case Frame.TextFrame{line}: IO.try(String,DB.Sql.query(db,codex_frame_kind_sql(C.q(line))))
-    case Frame.SpanFrame{spool,offset,length}: IO.try(String,DB.Sql.query_span(db,spool,offset,length,codex_frame_kind_span_sql("?1")))
+    case Frame.SpanFrame{spool,offset,length}: IO.try(String,DB.Sql.query_span(db,spool,offset,length,codex_frame_kind_sql("?1")))
     case Frame.InvalidFrame{line}: IO.pure(String,"")
 
 
@@ -866,7 +857,7 @@ def terminal_event(event: String, previous: String, selected: Bool) -> IO(String
     case True{}: IO.pure(String,event)
 
 def codex_frame_role_sql(+value: String) -> String:
-  "WITH frame(value) AS (SELECT " ++ codex_span_prefix_sql(value) ++ ") SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.type')='item.completed' AND json_extract(value,'$.item.type')='agent_message' THEN 'assistant' WHEN json_extract(value,'$.type')='turn.failed' THEN 'terminal-error' WHEN json_extract(value,'$.type')='turn.completed' THEN 'terminal' ELSE '' END ELSE '' END FROM frame;"
+  "WITH frame(value) AS (VALUES(" ++ value ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.type')='item.completed' AND json_extract(value,'$.item.type')='agent_message' THEN 'assistant' WHEN json_extract(value,'$.type')='turn.failed' THEN 'terminal-error' WHEN json_extract(value,'$.type')='turn.completed' THEN 'terminal' ELSE '' END ELSE '' END FROM frame;"
 
 def codex_span_small_parsed(parsed: Maybe<&2,U32>) -> Bool:
   match parsed:
@@ -937,11 +928,11 @@ def codex_frames(db: String, +previous: String, decoded: Frame.FrameDecoded, +li
     case False{}: IO.pure(String,previous)
     case True{}: codex_frames_selected(db,previous,decoded,line)
 
-# Generic Codex observation. Small spans are materialized and keep the exact
-# text. Large spans are classified from a bounded prefix and represented
-# without their body; the exact result remains readable from the full span.
+# Generic Codex observation classifies the complete retained JSON. Small spans
+# keep their exact text; large spans return the event type used by observation.
+# The result and report read the body from the retained span at EOF.
 def codex_observation_span_sql(+value: String) -> String:
-  "WITH frame(value) AS (SELECT " ++ codex_span_prefix_sql(value) ++ ") SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.type')='item.completed' AND json_extract(value,'$.item.type')='agent_message' THEN json_object('type','item.completed','item',json_object('type','agent_message')) WHEN json_extract(value,'$.type')='turn.failed' THEN json_object('type','turn.failed') WHEN json_extract(value,'$.type')='turn.completed' THEN json_object('type','turn.completed') ELSE '' END ELSE '' END FROM frame;"
+  "WITH frame(value) AS (VALUES(" ++ value ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.type')='item.completed' AND json_extract(value,'$.item.type')='agent_message' THEN json_object('type','item.completed','item',json_object('type','agent_message')) WHEN json_extract(value,'$.type')='turn.failed' THEN json_object('type','turn.failed') WHEN json_extract(value,'$.type')='turn.completed' THEN json_object('type','turn.completed') ELSE '' END ELSE '' END FROM frame;"
 
 def codex_observation_span_parsed(+db: String, +decoded: Frame.FrameDecoded, +spool: String, +offset: String, +length: String, small: Bool) -> IO(String):
   match small:
