@@ -1303,7 +1303,7 @@ fh_kind_peak=$(sed -n 's/^peak_kb=//p' "$STATE_FH/peaks/k.cc" 2>/dev/null)
 # Records written by an earlier executable hold the peaks of runs that failed; backfill
 # derives the tier records again from the successful runs.
 printf 'peak_kb=900000000\n' > "$STATE_FH/peaks/k.cc"
-sh "$QUEUE" backfill --state-root "$STATE_FH" > "$T/fh-backfill.out" 2>&1 || bad 'failed history: backfill failed'
+BATON_COMPILE_QUEUE_ROOT="$STATE_FH" sh "$QUEUE" backfill --state-root "$STATE_FH" > "$T/fh-backfill.out" 2>&1 || bad 'failed history: backfill failed'
 fh_kind_peak=$(sed -n 's/^peak_kb=//p' "$STATE_FH/peaks/k.cc" 2>/dev/null)
 [ -n "$fh_kind_peak" ] && [ "$fh_kind_peak" -lt 400000 ] \
   && pass 'backfill derives the tier records again from the successful runs' \
