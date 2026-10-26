@@ -18,6 +18,13 @@ SPEC.loader.exec_module(DRIVER)
 
 
 class QueueNativeCheckPhaseTests(unittest.TestCase):
+    def test_native_check_caller_routes_law_check_through_configured_driver(self):
+        check_native = (ROOT / 'bend2/scripts/check-native.sh').read_text()
+        self.assertIn('if [ -n "${BATON2_NATIVE_QUEUE_DRIVER:-}" ]; then', check_native)
+        self.assertIn('"$PYTHON3" "$BATON2_NATIVE_QUEUE_DRIVER" compiler bend "$compiler"',
+                      check_native)
+        self.assertIn('bend2/src/coordinator/laws.bend --check-only', check_native)
+
     def test_check_only_uses_check_phase_and_preserves_compiler_argv(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
@@ -91,11 +98,12 @@ class QueueNativeCheckPhaseTests(unittest.TestCase):
             client = root / 'fake-client'
             client.write_text(
                 '#!/usr/bin/env python3\n'
-                'import os, sys\n'
+                'import json, os, sys\n'
                 'if "key" in sys.argv:\n'
                 '    print("a" * 64)\n'
                 'else:\n'
-                '    open(os.environ["QUEUE_CLIENT_ENV"], "w").write(os.environ.get("BEND_NO_TELEMETRY", ""))\n'
+                '    values = [os.environ.get("BEND_NO_TELEMETRY", ""), os.environ.get("BUN_JSC_maxPerThreadStackUsage", "")]\n'
+                '    open(os.environ["QUEUE_CLIENT_ENV"], "w").write(json.dumps(values))\n'
                 '    print("check compiler failed", file=sys.stderr)\n'
                 '    raise SystemExit(29)\n')
             client.chmod(0o755)
@@ -104,6 +112,7 @@ class QueueNativeCheckPhaseTests(unittest.TestCase):
             command = [str(root / 'bend'), '--check-only', str(root / 'laws.bend')]
             error_output = io.StringIO()
             with patch.dict(os.environ, {'BEND_NO_TELEMETRY': '1',
+                                         'BUN_JSC_maxPerThreadStackUsage': '67108864',
                                          'QUEUE_CLIENT_ENV': str(environment_file)}), \
                  patch('sys.stderr', error_output):
                 result = DRIVER.submit(config, run, ['--kind', 'check'], command)
@@ -112,7 +121,7 @@ class QueueNativeCheckPhaseTests(unittest.TestCase):
             self.assertEqual(result, 29)
             self.assertEqual(request['command'], command)
             self.assertEqual(request['exit_code'], 29)
-            self.assertEqual(environment_file.read_text(), '1')
+            self.assertEqual(json.loads(environment_file.read_text()), ['1', '67108864'])
             self.assertIn('check compiler failed', error_output.getvalue())
 
 
