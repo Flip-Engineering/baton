@@ -9,6 +9,7 @@ import json
 import os
 import pathlib
 import socket
+import sqlite3
 import subprocess
 import sys
 import unittest
@@ -67,7 +68,8 @@ try {
   const agent={};
   const visible=[...root.tools.view(agent).visible.keys()];
   const results={};
-  for(const [tool,args] of [['report',{text:'Production native worker report λ'}],
+  for(const [tool,args] of [['inbox',{}], ['read',{ids:['owed-detail','already-handled']}],
+      ['report',{text:'Production native worker report λ'}],
       ['completion_request',{text:'Production native completion evidence λ'}],
       ['commit',{paths:['native-contribution'],message:'Native worker scoped contribution'}]]) {
     assert.ok(visible.includes('mcp__baton-worker__'+tool),JSON.stringify(visible));
@@ -75,6 +77,13 @@ try {
       arguments:args,signal:new AbortController().signal});
     results[tool]=result;
     assert.ok(!result.isError,JSON.stringify(result));
+    if(tool==='inbox'||tool==='read') {
+      const child=JSON.parse(result.content[0].text);
+      const rows=JSON.parse(child.stdout);
+      const messages=tool==='read'?rows.map(row=>row.delivery):rows;
+      assert.equal(messages.find(row=>row.id==='owed-detail').body,'Complete native input λ🙂\n'.repeat(10000));
+      if(tool==='read') assert.equal(messages.find(row=>row.id==='already-handled').receipt,'earlier-receipt');
+    }
   }
   console.log(JSON.stringify({visible,results,overlay:process.env.TOOLS_OVERLAY}));
 } finally {await root.fiber.dispose();}
@@ -118,6 +127,12 @@ class NativeWorker(unittest.TestCase):
         setup = self.fixture.child([self.binary, 'setup', self.fixture.database, self.fixture.attempt,
                             self.fixture.workspace, 'session-retained-fixture'], self.root)
         self.assertEqual(setup['returncode'], 0, setup)
+        with sqlite3.connect(self.fixture.database) as db:
+            db.executemany('INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(?,?,?,?,?,?)', [
+                ('owed-detail', 'operator', 'worker', 'guidance', 'Complete native input λ🙂\n' * 10000, None),
+                ('owed-inbox', 'operator', 'worker', 'guidance', 'Complete inbox body', None),
+                ('already-handled', 'operator', 'worker', 'guidance', 'Retained history', 'earlier-receipt'),
+                ('other-recipient', 'worker', 'operator', 'report', 'Other recipient body', None)])
         (self.fixture.workspace / 'native-contribution').write_text('Native fixture contribution\n')
         self.output = (self.root / 'native-observer.stdout').open('w')
         self.errors = (self.root / 'native-observer.stderr').open('w')
@@ -171,11 +186,16 @@ class NativeWorker(unittest.TestCase):
                          ('worker', 'worker-turn', 'session-retained-fixture', 'deepseek-flash', 'worker-branch'))
         result = self.action('mcp')
         self.assertEqual(result['code'], 0, result)
-        import sqlite3
         with sqlite3.connect(self.fixture.database) as db:
             messages = db.execute("SELECT sender,recipient,kind,body FROM messages WHERE sender='worker'").fetchall()
             self.assertIn(('worker', 'operator', 'report', 'Production native worker report λ'), messages)
             self.assertIn(('worker', 'operator', 'completion-request', 'Production native completion evidence λ'), messages)
+            reads = db.execute('SELECT message,recipient,attempt,native,handled FROM message_reads').fetchall()
+            self.assertEqual({row[0] for row in reads}, {'owed-detail', 'owed-inbox', 'already-handled'})
+            self.assertTrue(all(row[1:] == ('worker', 'worker-turn', 'session-retained-fixture', None)
+                                for row in reads), reads)
+            self.assertEqual(db.execute("SELECT receipt FROM messages WHERE id='owed-detail'").fetchone(), (None,))
+            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('late-unread','operator','worker','guidance','Arrived after the reads')")
             db.execute("UPDATE executions SET phase='exited' WHERE session='worker'")
         self.assertNotEqual(self.action('context')['code'], 0)
         with sqlite3.connect(self.fixture.database) as db:
@@ -188,6 +208,13 @@ class NativeWorker(unittest.TestCase):
         self.assertEqual(self.fixture.git('show', '-s', '--format=%an').strip(), 'Flip Baton - DeepSeek')
         self.finish()
         self.assertEqual(self.launch.returncode, 0, (self.root / 'native-observer.stderr').read_text())
+        with sqlite3.connect(self.fixture.database) as db:
+            self.assertEqual(db.execute("SELECT receipt FROM messages WHERE id='owed-detail'").fetchone(),
+                             ('native-turn:worker-turn',))
+            self.assertEqual(db.execute("SELECT receipt FROM messages WHERE id='already-handled'").fetchone(),
+                             ('earlier-receipt',))
+            self.assertEqual(db.execute("SELECT receipt FROM messages WHERE id='late-unread'").fetchone(), (None,))
+            self.assertEqual(db.execute("SELECT receipt FROM messages WHERE id='other-recipient'").fetchone(), (None,))
         dead_env = {**self.env, **self.started['context']}
         old = self.fixture.env
         self.fixture.env = dead_env

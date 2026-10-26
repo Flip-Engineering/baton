@@ -135,12 +135,58 @@ class DshWorker(unittest.TestCase):
         self.assertEqual((failed['status'], failed['stdout'], failed['stderr']),
                          (43, self.state['stdout'] + '\n', self.state['stderr']))
 
+    def test_inbox_and_read_forward_complete_output_with_recorded_context(self):
+        body = 'Complete owed input λ🙂\n"quoted"\n' * 10000
+        messages = [{'id': 'message:parent:one', 'recipient': 'worker', 'body': body, 'receipt': None},
+                    {'id': 'message:parent:two', 'recipient': 'worker', 'body': 'second', 'receipt': None}]
+        ids = [message['id'] for message in messages]
+        for tool, arguments, action, output in [
+                ('inbox', {}, ['inbox'], messages),
+                ('read', {'ids': ids}, ['read', *ids],
+                 [{'status': 'found', 'delivery': message} for message in messages])]:
+            self.state['stdout'] = json.dumps(output, ensure_ascii=False)
+            self.save_state()
+            result = self.call(tool, arguments)
+            self.assertFalse(result.get('isError'), result)
+            child = json.loads(result['content'][0]['text'])
+            self.assertEqual(child['stdout'], self.state['stdout'] + '\n')
+            self.assertEqual(json.loads(child['stdout']), output)
+            check, operation = self.calls()[-2:]
+            self.assertEqual(check['argv'], [str(self.database), 'agent-worker-context'])
+            self.assertEqual(operation['argv'], [str(self.database), 'agent-contextual-input', 'worker'])
+            self.assertEqual(json.loads(operation['stdin']), action)
+            self.assertEqual(operation['session'], 'worker')
+
+    def test_read_custody_failure_preserves_printed_body_and_readonly_cause(self):
+        self.state.update(code=8, stdout=json.dumps([{'status': 'found', 'delivery': {
+            'id': 'owed', 'recipient': 'worker', 'body': 'Already printed λ🙂\n' * 10000}}]),
+            stderr='attempt to write a readonly database\n')
+        self.save_state()
+        for tool, arguments in [('inbox', {}), ('read', {'ids': ['owed']})]:
+            result = self.call(tool, arguments)
+            self.assertIn(tool, self.tools)
+            self.assertTrue(result['isError'], result)
+            child = json.loads(result['content'][0]['text'])
+            self.assertEqual((child['status'], child['stdout'], child['stderr']),
+                             (8, self.state['stdout'] + '\n', self.state['stderr']))
+
+    def test_input_tools_accept_only_semantic_message_selection(self):
+        for tool, arguments in [('inbox', {'session': 'other'}), ('inbox', {'database': '/other'}),
+                                ('read', {'ids': ['owed'], 'session': 'other'}),
+                                ('read', {'ids': ['owed'], 'action': 'acknowledge'}),
+                                ('read', {'ids': ['--help']}), ('read', {'ids': []}),
+                                ('read', {'ids': 'owed'}), ('read', {'ids': ['bad\0id']})]:
+            result = self.call(tool, arguments)
+            self.assertTrue(result['isError'], result)
+        self.assertEqual(self.calls(), [])
+
     def test_ended_native_context_stops_the_operation(self):
         self.state.update(context_code=2, context_stderr='current native execution has ended')
         self.save_state()
-        result = self.call('report', {'text': 'late'})
-        self.assertTrue(result['isError'])
-        self.assertEqual([call['argv'][1:] for call in self.calls()], [['agent-worker-context']])
+        for tool, arguments in [('report', {'text': 'late'}), ('inbox', {}), ('read', {'ids': ['owed']})]:
+            result = self.call(tool, arguments)
+            self.assertTrue(result['isError'])
+        self.assertTrue(all(call['argv'][1:] == ['agent-worker-context'] for call in self.calls()))
 
     def test_semantic_refusal_keeps_the_completed_process_result(self):
         self.state['stdout'] = json.dumps([{'status': 'refused', 'admission': {

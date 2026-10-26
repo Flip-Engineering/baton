@@ -58,10 +58,10 @@ function argumentsOf(value, allowed) {
   return value;
 }
 
-function contextual(action, text) {
+function contextual(args) {
   admit();
   const result = run(coordinator, [database, 'agent-contextual-input', session],
-    { input: JSON.stringify([action, '--text', string(text, 'text')]) });
+    { input: JSON.stringify(args) });
   if (admissionFailed(result.stdout)) throw new Error(JSON.stringify(result));
   return result;
 }
@@ -123,6 +123,11 @@ function commit(args) {
 const textSchema = { type: 'object', properties: { text: { type: 'string' } },
   required: ['text'], additionalProperties: false };
 const tools = [
+  { name: 'inbox', description: 'Read complete pending input for the recorded actor. Baton records complete reads against the current native attempt; receipts remain pending until handling settles.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'read', description: 'Read complete stored messages by ID through the recorded actor context. Acknowledged messages remain readable. Baton records recipient-owned reads against the current native attempt.',
+    inputSchema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string' } } },
+      required: ['ids'], additionalProperties: false } },
   { name: 'report', description: 'Send a complete report to the recorded coordinator.', inputSchema: textSchema },
   { name: 'completion_request', description: 'Send completion evidence to the recorded immediate parent.', inputSchema: textSchema },
   { name: 'ask', description: 'Ask the recorded coordinator for missing information.', inputSchema: textSchema },
@@ -138,7 +143,7 @@ function handle(request) {
     switch (request.method) {
       case 'initialize': result = { protocolVersion: request.params.protocolVersion,
         capabilities: { tools: {} }, serverInfo: { name: 'baton-worker', version: '1.0.0' },
-        instructions: 'Use these tools for Baton reports, completion requests and scoped Git commits. The native workspace and permission settings remain recorded by DSH.' }; break;
+        instructions: 'Use inbox to read complete owed input and read to select stored messages before acting on them. Use these tools for Baton reports, completion requests and scoped Git commits. The native workspace and permission settings remain recorded by DSH.' }; break;
       case 'ping': result = {}; break;
       case 'tools/list': result = { tools }; break;
       case 'tools/call': {
@@ -146,11 +151,20 @@ function handle(request) {
         try {
           let value;
           if (name === 'commit') value = commit(args);
-          else {
+          else if (name === 'inbox') {
+            argumentsOf(args, []);
+            value = contextual(['inbox']);
+          } else if (name === 'read') {
+            argumentsOf(args, ['ids']);
+            if (!Array.isArray(args.ids) || !args.ids.length) throw new Error('Select stored message IDs.');
+            const ids = args.ids.map(value => string(value, 'id'));
+            if (ids.some(id => !id || id.startsWith('-'))) throw new Error('Select stored message IDs.');
+            value = contextual(['read', ...ids]);
+          } else {
             argumentsOf(args, ['text']);
             const action = { report: 'report', completion_request: 'completion-request', ask: 'ask' }[name];
             if (!action) throw new Error('Unknown worker operation.');
-            value = contextual(action, args.text);
+            value = contextual([action, '--text', string(args.text, 'text')]);
           }
           result = { content: [{ type: 'text', text: JSON.stringify(value) }] };
         } catch (error) {
