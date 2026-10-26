@@ -7,6 +7,7 @@ if python3 --version 2>/dev/null; then
 else
   PYTHON3=/usr/bin/python3
 fi
+"$PYTHON3" bend2/test/queue-native-checks.py
 compiler=${BEND:-"$root/.bend/bin/bend"}
 if [ ! -x "$compiler" ]; then
   compiler="$root/node_modules/.bend/bin/bend"
