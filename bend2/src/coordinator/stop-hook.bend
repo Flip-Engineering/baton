@@ -37,7 +37,7 @@ def answered(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
     case Done{+text}: Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(text)),IO.pure(Unit,Unit{}),IO.print(Tx.trim_nl(text)))
     case Fail{error}: IO.pure(Unit,Unit{})
 
-def route(db: String, session: String, tool: Bool) -> IO(Unit):
+def route(+db: String, +session: String, tool: Bool) -> IO(Unit):
   match tool:
     case True{}: InputHook.run(db,session)
     case False{}: do IO<Unit>:
