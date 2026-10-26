@@ -820,74 +820,104 @@ export function term_higher(tm: LTerm, env: Env = null): HTerm {
 }
 
 export function term_lower(term: HTerm, d: number = 0): LTerm {
-  const tm = term_force(term);
-  switch (tm.$) {
-    case "Var": {
-      return Var(tm.k, tm.i, tm.s);
+  // An explicit post-order stack keeps deep terms off the JavaScript call
+  // stack: the recursive form recursed one frame per App/ADT/All level,
+  // which overflowed at pass entry when the layout walk lowered every
+  // datatype type on the combined book. Children are lowered in the same
+  // order and every node is forced exactly as the recursion forced it.
+  type Task =
+    | { visit: HTerm, depth: number }
+    | { build: HTerm, depth: number, count: number }
+    | { value: LTerm };
+  const results: LTerm[] = [];
+  const tasks: Task[] = [{ visit: term, depth: d }];
+  while (tasks.length > 0) {
+    const task = tasks.pop() as Task;
+    if ("value" in task) {
+      results.push(task.value);
+      continue;
     }
-    case "Ref": {
-      return Ref(tm.k, tm.s, tm.b);
+    if ("build" in task) {
+      const tm = task.build;
+      const at = results.length - task.count;
+      const kids = results.splice(at, task.count);
+      switch (tm.$) {
+        case "Sub": results.push(Sub(tm.i, kids[0], kids[1], tm.s)); break;
+        case "Let": results.push(Let(tm.k, tm.k.map((_, j) => task.depth + j),
+          kids.slice(0, tm.v.length), kids[tm.v.length], tm.s, tm.q)); break;
+        case "Typ": results.push(Typ(kids[0], tm.s)); break;
+        case "Min": results.push(Min(kids[0], kids[1], tm.s)); break;
+        case "All": results.push(All(tm.q, tm.k, task.depth, kids[0], kids[1], tm.s)); break;
+        case "Lam": results.push(Lam(tm.k, task.depth, kids[0], tm.s, tm.q)); break;
+        case "App": results.push(App(kids[0], kids[1], tm.s)); break;
+        case "ADT": results.push(ADT(tm.k, kids, tm.s, tm.r)); break;
+        case "Ctr": results.push(Ctr(tm.k, kids, tm.s)); break;
+        case "Mat": results.push(Mat(tm.k, kids[0], kids[1], tm.s)); break;
+        case "Eql": results.push(Eql(kids[0], kids[1], kids[2], tm.s)); break;
+        case "Rwt": results.push(Rwt(kids[0], kids[1], kids[2], tm.s)); break;
+        case "Ann": results.push(Ann(kids[0], kids[1], tm.s)); break;
+        default: throw new Error("term_lower build task for a leaf term");
+      }
+      continue;
     }
-    case "Sub": {
-      return Sub(tm.i, tm.v.$ === "PVar" || tm.v.$ === "PCtr" ? tm.v : term_lower(tm.v, d), term_lower(tm.f, d), tm.s);
-    }
-    case "Let": {
-      const xs = tm.k.map((k, j): HTerm => Var(k, d + j));
-      const vs = tm.v.map((v) => term_lower(v, d));
-      return Let(tm.k, xs.map((_, j) => d + j), vs, term_lower(tm.f(xs), d + tm.k.length), tm.s, tm.q);
-    }
-    case "Typ": {
-      return Typ(term_lower(tm.g, d), tm.s);
-    }
-    case "Qnt":
-    case "Qua": {
-      return tm;
-    }
-    case "Min": {
-      return Min(term_lower(tm.a, d), term_lower(tm.b, d), tm.s);
-    }
-    case "All": {
-      const x: HTerm = Var(tm.k, d);
-      return All(tm.q, tm.k, d, term_lower(tm.A, d), term_lower(tm.B(x), d + 1), tm.s);
-    }
-    case "Lam": {
-      const x: HTerm = Var(tm.k, d);
-      return Lam(tm.k, d, term_lower(tm.f(x), d + 1), tm.s, tm.q);
-    }
-    case "App": {
-      return App(term_lower(tm.f, d), term_lower(tm.x, d), tm.s);
-    }
-    case "ADT": {
-      return ADT(tm.k, tm.x.map((x) => term_lower(x, d)), tm.s, tm.r);
-    }
-    case "Ctr": {
-      return Ctr(tm.k, tm.x.map((x) => term_lower(x, d)), tm.s);
-    }
-    case "Lit": {
-      return tm;
-    }
-    case "Mat": {
-      return Mat(tm.k, term_lower(tm.h, d), term_lower(tm.m, d), tm.s);
-    }
-    case "Efq": {
-      return Efq(tm.s);
-    }
-    case "Eql": {
-      return Eql(term_lower(tm.a, d), term_lower(tm.b, d), term_lower(tm.T, d), tm.s);
-    }
-    case "Rfl": {
-      return Rfl(tm.s);
-    }
-    case "Rwt": {
-      return Rwt(term_lower(tm.e, d), term_lower(tm.p, d), term_lower(tm.f, d), tm.s);
-    }
-    case "Hol": {
-      return Hol(tm.k, tm.s);
-    }
-    case "Ann": {
-      return Ann(term_lower(tm.x, d), term_lower(tm.T, d), tm.s);
+    const tm = term_force(task.visit);
+    const depth = task.depth;
+    const visit = (t: HTerm, dd: number): void => {
+      tasks.push({ visit: t, depth: dd });
+    };
+    const expand = (kids: HTerm[], depths: number[]): void => {
+      tasks.push({ build: tm, depth, count: kids.length });
+      for (let i = kids.length - 1; i >= 0; i -= 1) {
+        visit(kids[i], depths[i]);
+      }
+    };
+    switch (tm.$) {
+      case "Var": results.push(Var(tm.k, tm.i, tm.s)); break;
+      case "Ref": results.push(Ref(tm.k, tm.s, tm.b)); break;
+      case "Sub": {
+        if (tm.v.$ === "PVar" || tm.v.$ === "PCtr") {
+          // The pattern is already a lowered term: emit it as the first
+          // kid, then lower the body above it.
+          tasks.push({ build: tm, depth, count: 2 });
+          visit(tm.f, depth);
+          tasks.push({ value: tm.v as LTerm });
+        } else {
+          expand([tm.v, tm.f], [depth, depth]);
+        }
+        break;
+      }
+      case "Let": {
+        const xs = tm.k.map((k, j): HTerm => Var(k, depth + j));
+        expand([...tm.v, tm.f(xs)],
+          [...tm.v.map(() => depth), depth + tm.k.length]);
+        break;
+      }
+      case "Typ": expand([tm.g], [depth]); break;
+      case "Qnt": case "Qua": case "Lit": results.push(tm); break;
+      case "Min": expand([tm.a, tm.b], [depth, depth]); break;
+      case "All": {
+        const x: HTerm = Var(tm.k, depth);
+        expand([tm.A, tm.B(x)], [depth, depth + 1]);
+        break;
+      }
+      case "Lam": {
+        const x: HTerm = Var(tm.k, depth);
+        expand([tm.f(x)], [depth + 1]);
+        break;
+      }
+      case "App": expand([tm.f, tm.x], [depth, depth]); break;
+      case "ADT": case "Ctr":
+        expand(tm.x, tm.x.map(() => depth)); break;
+      case "Mat": expand([tm.h, tm.m], [depth, depth]); break;
+      case "Efq": results.push(Efq(tm.s)); break;
+      case "Eql": expand([tm.a, tm.b, tm.T], [depth, depth, depth]); break;
+      case "Rfl": results.push(Rfl(tm.s)); break;
+      case "Rwt": expand([tm.e, tm.p, tm.f], [depth, depth, depth]); break;
+      case "Hol": results.push(Hol(tm.k, tm.s)); break;
+      case "Ann": expand([tm.x, tm.T], [depth, depth]); break;
     }
   }
+  return results[0];
 }
 
 export function term_descend(q: Quant, arg: HTerm, col: HTerm): Cmp {
