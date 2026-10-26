@@ -353,7 +353,7 @@ def worker_context_scope(scope: AgentInput.HandlingScope, +db: String, +session:
   match scope:
     case AgentInput.NoHandling{}: IO.die(Unit,2,"Worker operations require the current admitted native execution.")
     case AgentInput.Handling{+attempt,+native,identity,+current}: do IO<Unit>:
-      saved : String <- IO.try(String,DB.Sql.read(db,
+      +saved : String <- IO.try(String,DB.Sql.read(db,
         "SELECT json_object('session',s.id,'attempt',e.id,'directory',e.directory,'native',s.native,'harness',s.harness,'workspace',s.workspace,'branch',s.branch,'model',s.model) FROM sessions s JOIN executions e ON e.session=s.id WHERE s.id=" ++ C.q(session)
         ++ " AND s.harness='dsh' AND s.native=" ++ C.q(native) ++ " AND e.id=" ++ C.q(attempt)
         ++ " AND (" ++ current ++ ") AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"))
