@@ -10,6 +10,7 @@ import ./control.bend as Control
 import ./stop-hook.bend as StopHook
 import ./turn.bend as Turn
 import ./native-input.bend as NativeInput
+import ./codex-inbox.bend as CodexInbox
 import ../git/process.bend as GitProcess
 import ../git/text.bend as Tx
 import ../git/types.bend as T
@@ -179,6 +180,16 @@ def register_receiver_cwd(selected: Bool, +db: String, +session: String, +cmd: S
 
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
+    case +db <> "codex-inbox-session" <> +session <> +native <> +message <> +token <> Nil{}:
+      IO.try(Unit,CodexInbox.session(db,session,native,message,token))
+    case +db <> "codex-inbox-session" <> +session <> +native <> +message <> Nil{}:
+      IO.try(Unit,CodexInbox.session(db,session,native,message,""))
+    case +db <> "codex-inbox-follow" <> +session <> +native <> Nil{}:
+      IO.try(Unit,CodexInbox.follow(db,session,native))
+    case +db <> "codex-inbox-deliver" <> +native <> +pointer <> Nil{}:
+      IO.try(Unit,CodexInbox.deliver(db,native,pointer))
+    case +db <> "codex-input-witness" <> +native <> Nil{}:
+      IO.try(Unit,CodexInbox.witness(db,native))
     case +db <> +verb <> Nil{}:
       Bool.pick(IO(Unit), String.eq(verb,"storage-policy"), StoragePolicy.run_policy(db),
         dispatch_schema(String.eq(db,"--ensure-schema"),db,verb))

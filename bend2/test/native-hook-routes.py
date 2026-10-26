@@ -51,6 +51,36 @@ class NativeHookRoutes(unittest.TestCase):
     def test_unknown_flag_keeps_the_full_cli(self):
         self.route(self.focused, ['--unknown-native-route'], self.full)
 
+    def test_codex_session_preserves_native_message_and_token(self):
+        for executable in (self.focused, self.full):
+            for token in ([], ['claim-token']):
+                with self.subTest(executable=executable, token=token):
+                    self.route(executable, [str(self.prefix / 'database λ.sqlite'),
+                               'codex-inbox-session', 'worker',
+                               '019a174b-1234-7123-8123-123456789abc',
+                               'message:operator:two words', *token], self.focused)
+
+    def test_codex_follow_preserves_session_and_native(self):
+        for executable in (self.focused, self.full):
+            with self.subTest(executable=executable):
+                self.route(executable, [str(self.prefix / 'database.sqlite'),
+                           'codex-inbox-follow', 'worker',
+                           '019a174b-1234-7123-8123-123456789abc'], self.focused)
+
+    def test_codex_delivery_preserves_complete_pointer(self):
+        for executable in (self.focused, self.full):
+            with self.subTest(executable=executable):
+                self.route(executable, [str(self.prefix / 'database.sqlite'),
+                           'codex-inbox-deliver', '019a174b-1234-7123-8123-123456789abc',
+                           'Pending input λ🙂 with spaces.'], self.focused)
+
+    def test_codex_witness_preserves_native(self):
+        for executable in (self.focused, self.full):
+            with self.subTest(executable=executable):
+                self.route(executable, [str(self.prefix / 'database.sqlite'),
+                           'codex-input-witness', '019a174b-1234-7123-8123-123456789abc'],
+                           self.focused)
+
 
 if __name__ == '__main__':
     unittest.main()

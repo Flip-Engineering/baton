@@ -173,11 +173,20 @@ static int recruitment_args(int argc,char **argv) {
          (argc==9 && !strcmp(argv[2],"join"));
 }
 
+#if defined(BATON2_RECEIVE_FOCUSED) || defined(BATON2_NATIVE_RECEIVER_ROUTER)
+static int codex_inbox_args(int argc,char **argv) {
+  return argc>2 && (!strcmp(argv[2],"codex-inbox-session") ||
+    !strcmp(argv[2],"codex-inbox-follow") || !strcmp(argv[2],"codex-inbox-deliver") ||
+    !strcmp(argv[2],"codex-input-witness"));
+}
+#endif
+
 #ifdef BATON2_RECEIVE_FOCUSED
 /* The focused executable owns receiver operations and exposes the same path
    to native workers. Selected stop and quota commands use its public parser. */
 static int focused_receiver_verb(int argc,char **argv) {
   if(argc<2 || native_help_request(argc,argv)) return 0;
+  if(codex_inbox_args(argc,argv)) return 1;
   if(recruitment_args(argc,argv)) return 1;
   const char *first=argv[1];
   if(!strcmp(first,"--stop-hook") || !strcmp(first,"--redeliver-message") ||
@@ -236,6 +245,7 @@ static int native_receiver_route(int argc, char **argv) {
       !strcmp(argv[2],"register-receiver") || !strcmp(argv[2],"storage-policy") ||
       !strcmp(argv[2],"storage-preview") || !strcmp(argv[2],"storage-apply"))) focused_verb=1;
   if(recruitment_args(argc,argv)) focused_verb=1;
+  if(codex_inbox_args(argc,argv)) focused_verb=1;
   if(!native_input && !focused_verb && !clear_stop_public_args(argc,argv)) return -1;
   char *full=application_executable();
   char *directory=full?strdup(full):NULL;
