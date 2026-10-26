@@ -248,7 +248,7 @@ print(json.dumps(results), flush=True)
 
     def test_tool_hook_does_nothing_for_stopped_session(self):
         self.owe()
-        self.db.execute("INSERT INTO session_stops VALUES('worker','stop','operator request','stopped')")
+        self.db.execute("INSERT INTO session_stops(session,id,reason,outcome) VALUES('worker','stop','operator request','stopped')")
         self.assertIsNone(self.tool_hook())
         self.assertIsNone(self.hook(active=True))
 
