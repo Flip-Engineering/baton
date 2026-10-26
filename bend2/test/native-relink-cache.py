@@ -100,14 +100,32 @@ class NativeRelinkCache(unittest.TestCase):
         self.assertEqual(code, 0, stderr)
         self.assertEqual(json.loads(output.read_text())['tool'], name)
         first_requests = set((run / 'evidence/compile-queue').glob('*/request.json'))
+        code, stderr = invoke('unchanged')
+        self.assertEqual(code, 0, stderr)
+        unchanged_requests = set((run / 'evidence/compile-queue').glob('*/request.json')) - first_requests
+        first_keys = {json.loads(path.read_text())['key'] for path in first_requests}
+        unchanged_keys = {json.loads(path.read_text())['key'] for path in unchanged_requests}
+
+        def attempts(requests):
+            return {dict(line.split('=', 1) for line in
+                         (path.parent / 'queue-result').read_text().splitlines()
+                         if '=' in line)['attempt'] for path in requests}
+
+        first_attempts = attempts(first_requests)
+        unchanged_attempts = attempts(unchanged_requests)
+        self.assertTrue(unchanged_keys and first_keys == unchanged_keys)
+        self.assertEqual(first_attempts, unchanged_attempts,
+                         'Unchanged inputs must reuse the authentic completed producer result')
         changed = sharder if name == 'sharder' else linker
         changed.write_text('changed ' + name + ' bytes\n')
         code, stderr = invoke('changed')
-        later_requests = set((run / 'evidence/compile-queue').glob('*/request.json')) - first_requests
-        first_keys = {json.loads(path.read_text())['key'] for path in first_requests}
+        later_requests = (set((run / 'evidence/compile-queue').glob('*/request.json'))
+                          - first_requests - unchanged_requests)
         later_keys = {json.loads(path.read_text())['key'] for path in later_requests}
         (directory / 'cache-outcome.json').write_text(json.dumps({
             'tool': name, 'original_keys': sorted(first_keys), 'changed_keys': sorted(later_keys),
+            'unchanged_keys': sorted(unchanged_keys),
+            'original_attempts': sorted(first_attempts), 'unchanged_attempts': sorted(unchanged_attempts),
             'changed_exit': code, 'changed_tool': identity(changed),
             'producer_receipt': identity(producer)}, indent=2) + '\n')
         self.assertNotEqual(code, 0, 'Changed tooling must reach the consumer identity check.\n' + stderr)
