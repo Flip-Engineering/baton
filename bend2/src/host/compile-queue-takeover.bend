@@ -218,9 +218,10 @@ def legacy_tickets( +pids: List<&2,U32>, +state: String, +seen: List<&2,U32>) ->
         +active : String <- S.read(S.keydir(attempt) ++ "/active")
         marker : Result<&1,&1,U32 & String,String> <- F.Files.lstat(attempt ++ "/takeover")
         start : Result<&1,&1,U32 & String,String> <- P.HostPosix.starttime(pid)
+        +start_text : String <- IO.pure(String,S.text_or_empty(start))
         +tail : List<&2,String> <- legacy_tickets(rest,state,pid <> seen)
-        IO.pure(List<&2,String>,Bool.pick(List<&2,String>,Bool.and(Bool.not(Proc.contains_pid(seen,pid)),Bool.and(String.eq(S.state(attempt),state),Bool.and(String.is_empty(S.text_or_empty(marker)),Bool.not(String.is_empty(S.text_or_empty(start)))))),
-          ("pid=" ++ U32.show(pid) ++ "\nstarttime=" ++ S.text_or_empty(start) ++ "\nqueued_ns=" ++ S.field(active,"started_ns") ++ "\n") <> tail,tail))
+        IO.pure(List<&2,String>,Bool.pick(List<&2,String>,Bool.and(Bool.not(Proc.contains_pid(seen,pid)),Bool.and(String.eq(S.state(attempt),state),Bool.and(String.is_empty(S.text_or_empty(marker)),Bool.not(String.is_empty(start_text))))),
+          ("pid=" ++ U32.show(pid) ++ "\nstarttime=" ++ start_text ++ "\nqueued_ns=" ++ S.field(active,"started_ns") ++ "\n") <> tail,tail))
 
 def replace_rows( +items: List<&2,String>, +state: String, +legacy: Bool) -> IO(String):
   match items:
