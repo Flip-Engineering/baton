@@ -39,7 +39,8 @@ for line in stream:
     if action['kind']=='quit':break
     if action['kind']=='context':argv=[os.environ['BATON_COORDINATOR'],os.environ['BATON_DATABASE'],'agent-worker-context']
     else:argv=[os.environ['NODE'],os.environ['BATON_DSH_FIXTURE_PIPELINE']]
-    child=subprocess.Popen(argv,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    child=subprocess.Popen(argv,env={**os.environ,**action.get('environment',{})},
+                           stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     stdout,stderr=child.communicate()
     send({'pid':os.getpid(),'child_pid':child.pid,'argv':argv,'code':child.returncode,'stdout':stdout,'stderr':stderr})
 print(json.dumps({'type':'final','text':'Controlled worker finished.'},separators=(',',':')),flush=True)
@@ -151,8 +152,8 @@ class NativeWorker(unittest.TestCase):
         self.started = json.loads(self.stream.readline())
         (self.root / 'native-started.json').write_text(json.dumps(self.started, indent=2))
 
-    def action(self, kind):
-        self.stream.write((json.dumps({'kind': kind}) + '\n').encode())
+    def action(self, kind, **fields):
+        self.stream.write((json.dumps({'kind': kind, **fields}) + '\n').encode())
         result = json.loads(self.stream.readline())
         with (self.root / 'native-actions.jsonl').open('a') as out:
             out.write(json.dumps(result) + '\n')
@@ -184,16 +185,26 @@ class NativeWorker(unittest.TestCase):
         value = json.loads(context['stdout'])
         self.assertEqual((value['session'], value['attempt'], value['native'], value['model'], value['branch']),
                          ('worker', 'worker-turn', 'session-retained-fixture', 'deepseek-flash', 'worker-branch'))
+        other_database = self.root / 'other.db'
+        other_database.touch()
+        for changed in [{'BATON_DATABASE': str(other_database)}, {'BATON_SESSION': 'other-worker'},
+                        {'BATON_ATTEMPT_DIRECTORY': str(self.root)}]:
+            refused = self.action('context', environment=changed)
+            self.assertNotEqual(refused['code'], 0, refused)
         result = self.action('mcp')
         self.assertEqual(result['code'], 0, result)
         with sqlite3.connect(self.fixture.database) as db:
             messages = db.execute("SELECT sender,recipient,kind,body FROM messages WHERE sender='worker'").fetchall()
             self.assertIn(('worker', 'operator', 'report', 'Production native worker report λ'), messages)
             self.assertIn(('worker', 'operator', 'completion-request', 'Production native completion evidence λ'), messages)
-            reads = db.execute('SELECT message,recipient,attempt,native,handled FROM message_reads').fetchall()
+            read_query = "SELECT message,recipient,attempt,native,identity,handled FROM message_reads WHERE attempt='worker-turn' ORDER BY message"
+            reads = db.execute(read_query).fetchall()
             self.assertEqual({row[0] for row in reads}, {'owed-detail', 'owed-inbox', 'already-handled'})
-            self.assertTrue(all(row[1:] == ('worker', 'worker-turn', 'session-retained-fixture', None)
+            self.assertTrue(all(row[1:4] == ('worker', 'worker-turn', 'session-retained-fixture')
+                                and row[4] and row[5] is None
                                 for row in reads), reads)
+            owed_query = "SELECT m.id FROM messages m WHERE m.recipient='worker' AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=m.id AND r.recipient=m.recipient) ORDER BY m.id"
+            self.assertEqual(db.execute(owed_query).fetchall(), [])
             self.assertEqual(db.execute("SELECT receipt FROM messages WHERE id='owed-detail'").fetchone(), (None,))
             db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('late-unread','operator','worker','guidance','Arrived after the reads')")
             db.execute("UPDATE executions SET phase='exited' WHERE session='worker'")
@@ -209,12 +220,15 @@ class NativeWorker(unittest.TestCase):
         self.finish()
         self.assertEqual(self.launch.returncode, 0, (self.root / 'native-observer.stderr').read_text())
         with sqlite3.connect(self.fixture.database) as db:
+            self.assertEqual(db.execute(read_query).fetchall(), reads)
+            self.assertEqual(db.execute(owed_query).fetchall(), [('late-unread',)])
             self.assertEqual(db.execute("SELECT receipt FROM messages WHERE id='owed-detail'").fetchone(),
-                             ('native-turn:worker-turn',))
+                             (None,))
             self.assertEqual(db.execute("SELECT receipt FROM messages WHERE id='already-handled'").fetchone(),
                              ('earlier-receipt',))
             self.assertEqual(db.execute("SELECT receipt FROM messages WHERE id='late-unread'").fetchone(), (None,))
             self.assertEqual(db.execute("SELECT receipt FROM messages WHERE id='other-recipient'").fetchone(), (None,))
+            self.assertEqual(db.execute("SELECT count(*) FROM message_reads WHERE message IN ('late-unread','other-recipient')").fetchone(), (0,))
         dead_env = {**self.env, **self.started['context']}
         old = self.fixture.env
         self.fixture.env = dead_env
