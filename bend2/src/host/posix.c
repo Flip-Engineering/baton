@@ -21,37 +21,6 @@
 #endif
 extern char **environ;
 
-static int posix_read_all(int fd, char **out, size_t *length) {
-  size_t capacity = 4096, used = 0;
-  char *buffer = malloc(capacity);
-  if (!buffer) return ENOMEM;
-  for (;;) {
-    if (used == capacity) {
-      size_t next = capacity * 2;
-      char *grown = realloc(buffer, next);
-      if (!grown) { free(buffer); return ENOMEM; }
-      buffer = grown; capacity = next;
-    }
-    ssize_t got = read(fd, buffer + used, capacity - used);
-    if (got < 0) {
-      if (errno == EINTR) continue;
-      int error = errno; free(buffer); return error;
-    }
-    if (got == 0) break;
-    used += (size_t)got;
-  }
-  *out = buffer; *length = used;
-  return 0;
-}
-
-static int posix_read_path(const char *path, char **out, size_t *length) {
-  int fd = open(path, O_RDONLY);
-  if (fd < 0) return errno;
-  int error = posix_read_all(fd, out, length);
-  close(fd);
-  return error;
-}
-
 static int posix_starttime_text(u32 pid, char **out) {
   char *text = calloc(64, 1);
   if (!text) return ENOMEM;

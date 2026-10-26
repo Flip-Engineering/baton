@@ -171,7 +171,7 @@ def replace_ticket(+ticket: String, +state: String, +legacy: Bool) -> IO(String)
   do IO<String>:
     +pid : U32 <- IO.pure(U32,S.number(S.field(ticket,"pid")))
     args : Result<&1,&1,U32 & String,String> <- Proc.cmdline(pid)
-    +details : String <- IO.pure(String,original_args(QF.nonempty(String.split(S.text_or_empty(args),Char.from_u32(0))),pid,S.field(ticket,"starttime"),S.field(ticket,"queued_ns")))
+    +details : String <- IO.pure(String,original_args(S.argv_parts(String.split(S.text_or_empty(args),Char.from_u32(0))),pid,S.field(ticket,"starttime"),S.field(ticket,"queued_ns")))
     +other : Bool <- Bool.pick(IO(Bool),legacy,IO.pure(Bool,True{}),other_executable(pid))
     +self : U32 <- IO.try(U32,P.HostPosix.pid())
     +eligible : Bool <- IO.pure(Bool,Bool.and(other,Bool.and(U32.is_ne(self,pid),String.eq(S.state(S.field(details,"attempt")),state))))

@@ -16,7 +16,8 @@ def Files.executable(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
 def Files.text_chunk(path: String, position: String) -> IO(Result<&1,&1,U32 & String,String & String>):
   import "./files.c"
 
-# One lstat observation: kind, mode, device, inode and bytes, separated by tabs.
+# One lstat observation: kind, mode, device, inode, bytes, modification seconds,
+# uid and gid, separated by tabs.
 def Files.lstat(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./files.c"
 

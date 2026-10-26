@@ -94,7 +94,7 @@ def attempt_args( +args: List<&2,String>) -> String:
 def attempt( +pid: U32) -> IO(String):
   do IO<String>:
     argv : Result<&1,&1,U32 & String,String> <- cmdline(pid)
-    IO.pure(String,attempt_args(QF.nonempty(String.split(S.text_or_empty(argv),Char.from_u32(0)))))
+    IO.pure(String,attempt_args(S.argv_parts(String.split(S.text_or_empty(argv),Char.from_u32(0)))))
 
 def lock_after_write( +parts: List<&2,String>) -> List<&2,String>:
   match parts:
@@ -139,10 +139,16 @@ def env_field( +values: List<&2,String>, +name: String) -> String:
       +prefix = name ++ "="
       Bool.pick(String,String.starts_with(value,prefix),String.drop(value,String.length(prefix)),env_field(rest,name))
 
+def env_present(values: List<&2,String>, +name: String) -> Bool:
+  match values:
+    case Nil{}: False{}
+    case value <> rest: Bool.or(String.starts_with(value,name ++ "="),env_present(rest,name))
+
 def environ( +pid: U32, +name: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     +bytes : String <- IO.try(String,T.Text.read(proc_base(pid) ++ "/environ"))
-    IO.pure(Result<&1,&1,U32 & String,String>,Done{env_field(String.split(bytes,Char.from_u32(0)),name)})
+    +values = String.split(bytes,Char.from_u32(0))
+    IO.pure(Result<&1,&1,U32 & String,String>,Bool.pick(Result<&1,&1,U32 & String,String>,env_present(values,name),Done{env_field(values,name)},Fail{(2,"process environment variable is absent")}))
 
 def hidden(+pid: U32) -> IO(Bool):
   do IO<Bool>:

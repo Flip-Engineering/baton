@@ -42,16 +42,6 @@ def last( +parts: List<&2,String>) -> String:
 def basename(+path: String) -> String:
   last(String.split(path,Char.from_u32(47)))
 
-def before_parts( +parts: List<&2,String>, +marker: String, +acc: String) -> String:
-  match parts:
-    case Nil{}: ""
-    case +part <> rest:
-      Bool.pick(String,String.eq(part,marker),acc,before_parts(rest,marker,acc ++ part ++ "/"))
-
-def before(+path: String, +marker: String) -> String:
-  +value = before_parts(String.split(path,Char.from_u32(47)),marker,"")
-  String.take(value,Nat.sub(String.length(value),1n))
-
 def dirname_parts(parts: List<&2,String>, +acc: String, first: Bool) -> String:
   match parts:
     case Nil{}: acc
@@ -84,9 +74,6 @@ def names( +path: String) -> IO(List<&2,String>):
   do IO<List<&2,String>>:
     result : Result<&1,&1,U32 & String,String> <- QF.list_dir(path)
     IO.pure(List<&2,String>,QF.nonempty(String.lines(text_or_empty(result))))
-
-def ignore(result: Result<&1,&1,U32 & String,Unit>) -> Unit:
-  Unit{}
 
 def remove( +path: String) -> IO(Unit):
   do IO<Unit>:
