@@ -593,12 +593,15 @@ static int cq_spawn_detached(const char *argv_text, size_t argv_length,
                                  is the custody lock and the supervisor and
                                  its command hold it as descriptor 8
      admission/observed          process measurements, at most one second old
-     outside-growth              largest rise of memory used outside the queue
-                                 seen during one run
+     admission/usage/<claim>     memory of the claim and the growth of outside use
+                                 that its supervisor measured, rewritten at each sample
      peaks/<group>               largest recorded peak of one kind, compiler, entry
                                  and command
      peaks/sh.<kind>.<shape>     largest recorded peak of one kind, entry and command
                                  shape on any compiler
+     peaks/em.<kind>.<entry>.<mode>
+                                 largest recorded peak of one kind and entry file in
+                                 check or full mode on any compiler
      peaks/en.<kind>.<entry>     largest recorded peak of one kind and entry file with
                                  any command on any compiler
      peaks/kc.<kind>.<compiler>  largest recorded peak of one kind and compiler
@@ -620,13 +623,13 @@ static int cq_spawn_detached(const char *argv_text, size_t argv_length,
 typedef struct {
   char id[CQ_ID], start[32], key[CQ_NAME], group[CQ_NAME], entry[CQ_ENTRY];
   int pid, root, tree, history, backfill;
-  long long expected, current;
+  long long expected, current, growth;
   unsigned long long admitted;
 } CqClaim;
 
 typedef struct {
   char id[CQ_ID], start[32], key[CQ_NAME], group[CQ_NAME], entry[CQ_ENTRY];
-  char compiler[CQ_NAME], kind[16], shape[24];
+  char compiler[CQ_NAME], kind[16], shape[24], mode[8];
   int pid, history, priority;
   long long expected;
   unsigned long long queued;
@@ -985,13 +988,32 @@ static int cq_shape(const char *attempt, char *shape, size_t capacity, char *kin
   return 0;
 }
 
+/* The mode of an attempt: "check" when any token of its command contains
+   `--check-only`, otherwise "full". The wrapper scripts of the check carry the
+   option inside an sh -c argument, so the test is a search in the text. Empty when
+   the attempt files are missing. */
+static const char *cq_mode(const char *attempt) {
+  char path[PATH_MAX];
+  char *text = NULL; size_t length = 0;
+  if (!(!cq_path(path, "%s/argv", attempt) && !cq_read_path(path, &text, &length))
+      && !(!cq_path(path, "%s/command", attempt) && !cq_read_path(path, &text, &length))) return "";
+  static const char option[] = "--check-only";
+  const size_t option_length = sizeof(option) - 1;
+  int found = 0;
+  for (size_t at = 0; !found && length >= option_length && at <= length - option_length; at++)
+    if (text[at] == '-' && !memcmp(text + at, option, option_length)) found = 1;
+  free(text);
+  return found ? "check" : "full";
+}
+
 /* The expected peak of a key: its own recorded peak, otherwise the largest
    recorded peak of its group, otherwise of its kind, entry and command shape on
-   any compiler, otherwise of its kind and entry with any command, otherwise of
-   its kind and compiler, otherwise of its kind.
+   any compiler, otherwise of its kind and entry in the same mode (check or full),
+   otherwise of its kind and entry with any command, otherwise of its kind and
+   compiler, otherwise of its kind.
    History is false when none exists. */
 static void cq_expected(const char *state, const char *key, const char *group,
-                        const char *shape, const char *entry, const char *compiler, const char *kind,
+                        const char *shape, const char *entry, const char *mode, const char *compiler, const char *kind,
                         long long *expected, int *history) {
   char path[PATH_MAX];
   long long peak = -1;
@@ -1002,6 +1024,8 @@ static void cq_expected(const char *state, const char *key, const char *group,
     cq_peak_load(path, &peak);
   char entry_key[24];
   cq_entry_key(entry, entry_key, sizeof(entry_key));
+  if (peak < 0 && *kind && *entry_key && *mode && !cq_path(path, "%s/peaks/em.%s.%s.%s", state, kind, entry_key, mode))
+    cq_peak_load(path, &peak);
   if (peak < 0 && *kind && *entry_key && !cq_path(path, "%s/peaks/en.%s.%s", state, kind, entry_key))
     cq_peak_load(path, &peak);
   if (peak < 0 && *kind && *compiler && !cq_path(path, "%s/peaks/kc.%s.%s", state, kind, compiler))
@@ -1047,6 +1071,7 @@ static void cq_ticket_parse(const char *id, const char *text, CqTicket *ticket) 
   cq_field(text, "compiler", ticket->compiler, sizeof(ticket->compiler));
   cq_field(text, "kind", ticket->kind, sizeof(ticket->kind));
   cq_field(text, "shape", ticket->shape, sizeof(ticket->shape));
+  cq_field(text, "mode", ticket->mode, sizeof(ticket->mode));
   ticket->queued = (unsigned long long)cq_field_number(text, "queued_ns", 0);
 }
 
@@ -1055,7 +1080,7 @@ static int cq_read_cmdline(int pid, char *line, size_t capacity, char **argv, in
 /* A ticket written by an older build has no shape, kind or compiler. They are
    read from the attempt that the process of the ticket runs. */
 static void cq_ticket_complete(CqTicket *ticket) {
-  if (*ticket->shape && *ticket->kind) return;
+  if (*ticket->shape && *ticket->kind && *ticket->mode) return;
 #ifdef __linux__
   char line[8192], *argv[16], path[PATH_MAX], text[1024]; int argc = 0;
   if (!cq_read_cmdline(ticket->pid, line, sizeof(line), argv, &argc)) return;
@@ -1066,6 +1091,7 @@ static void cq_ticket_complete(CqTicket *ticket) {
   char kind[16] = "";
   if (!*ticket->shape) cq_shape(attempt, ticket->shape, sizeof(ticket->shape), kind, sizeof(kind));
   if (!*ticket->kind) snprintf(ticket->kind, sizeof(ticket->kind), "%s", kind);
+  if (!*ticket->mode) snprintf(ticket->mode, sizeof(ticket->mode), "%s", cq_mode(attempt));
   if (!*ticket->compiler && !cq_path(path, "%s/group", attempt) && !cq_read_small(path, text, sizeof(text)))
     cq_field(text, "compiler", ticket->compiler, sizeof(ticket->compiler));
 #endif
@@ -1091,10 +1117,12 @@ static void cq_write_cache(const char *path, const char *text, size_t length) {
 /* Current memory of each claim and of the old lock holder. Measurements are
    shared through admission/observed so a waiting queue scans /proc about once
    a second in total. The caller holds the admission lock. */
+static long long cq_max_ll(long long a, long long b) { return a > b ? a : b; }
+
 /* The supervisor of a claim measures its own session and publishes the value, so
    a process that cannot see it in /proc (another user's service hides processes)
    still reads it. A value older than five sample intervals is not used. */
-static int cq_usage_value(const char *state, const char *id, unsigned long long now, long long *kb) {
+static int cq_usage_value(const char *state, const char *id, unsigned long long now, long long *kb, long long *growth) {
   char path[PATH_MAX], text[64];
   struct stat info;
   if (cq_path(path, "%s/admission/usage/%s", state, id) || stat(path, &info)) return 0;
@@ -1103,6 +1131,7 @@ static int cq_usage_value(const char *state, const char *id, unsigned long long 
   if (age > 5 * (CQ_SAMPLE_NS / 1000000000ull)) return 0;
   if (cq_read_small(path, text, sizeof(text))) return 0;
   *kb = cq_field_number(text, "kb", 0);
+  *growth = cq_field_number(text, "growth_kb", 0);
   return 1;
 }
 
@@ -1163,9 +1192,14 @@ static void cq_observe(const char *state, CqAdmission *view) {
   /* The value published by the supervisor of a claim is its own measurement. A
      claim that nobody measured and whose process is hidden has no usable value. */
   for (size_t i = 0; i < view->claim_count; i++) {
-    long long published = 0;
-    if (cq_usage_value(state, view->claims[i].id, now, &published)) view->claims[i].current = published;
-    else if (view->claims[i].current == 0 && cq_hidden(view->claims[i].root)) view->unreliable = 1;
+    long long published = 0, growth = 0;
+    if (cq_usage_value(state, view->claims[i].id, now, &published, &growth)) {
+      view->claims[i].current = published;
+      view->claims[i].growth = growth;
+    } else if (view->claims[i].current == 0 && cq_hidden(view->claims[i].root)) view->unreliable = 1;
+    /* The reserve is the largest growth of outside use that a running supervisor
+       measured and published within the last five sample intervals. */
+    view->reserve = cq_max_ll(view->reserve, view->claims[i].growth);
   }
 #else
   (void)state; (void)view;
@@ -1202,12 +1236,7 @@ static int cq_admission_load(const char *state, CqAdmission *view) {
   char directory[PATH_MAX], path[PATH_MAX], text[2048];
   memset(view, 0, sizeof(*view));
   view->memory_known = !cq_meminfo(&view->total, &view->available);
-  /* The reserve is the largest rise of memory used outside the queue that a run
-     has seen. Until a run has recorded one, the rule starts one job at a time. */
-  long long growth = -1;
-  if (!cq_path(path, "%s/outside-growth", state)) cq_value_load(path, "growth_kb", &growth);
-  view->reserve = growth > 0 ? growth : 0;
-  if (growth < 0) view->memory_known = 0;
+  /* The reserve is set from the running claims after they are observed. */
   int error = cq_path(directory, "%s/admission/running", state);
   if (error) return error;
   DIR *running = opendir(directory);
@@ -1245,7 +1274,7 @@ static int cq_admission_load(const char *state, CqAdmission *view) {
       if (cq_alive_value((u32)ticket.pid, ticket.start, &alive) || !alive) { unlink(path); continue; }
       cq_ticket_complete(&ticket);
       ticket.priority = cq_key_priority(state, ticket.key);
-      cq_expected(state, ticket.key, ticket.group, ticket.shape, ticket.entry, ticket.compiler, ticket.kind, &ticket.expected, &ticket.history);
+      cq_expected(state, ticket.key, ticket.group, ticket.shape, ticket.entry, ticket.mode, ticket.compiler, ticket.kind, &ticket.expected, &ticket.history);
       CqTicket *grown = realloc(view->tickets, (view->ticket_count + 1) * sizeof(*grown));
       if (!grown) { closedir(waiting); return ENOMEM; }
       view->tickets = grown;
@@ -1261,8 +1290,6 @@ static int cq_admission_load(const char *state, CqAdmission *view) {
   if (view->claim_count || view->legacy_pid) cq_observe(state, view);
   return 0;
 }
-
-static long long cq_max_ll(long long a, long long b) { return a > b ? a : b; }
 
 /* Memory in use that no running queue job accounts for. */
 static long long cq_outside_use(const CqAdmission *view) {
@@ -1290,8 +1317,8 @@ static long long cq_need(const CqAdmission *view, const CqTicket *ticket) {
   return bound;
 }
 
-/* Whether the ticket may start now. The reserve is the recorded growth of memory
-   used outside the queue. Running jobs keep claiming the part of their expected peak they have not
+/* Whether the ticket may start now. The reserve is the growth of memory used
+   outside the queue that the running supervisors measure now. Running jobs keep claiming the part of their expected peak they have not
    reached yet, so a job admitted a moment ago is counted before it grows. */
 static int cq_admit_decision(const CqAdmission *view, size_t index, int *backfill) {
   const CqTicket *ticket = &view->tickets[index];
@@ -1363,23 +1390,24 @@ static void cq_admit_handler(int sig) { cq_admit_signal = sig; }
 
 static int cq_ticket_write(const char *state, const char *id, const char *key,
                            const char *group, const char *entry, const char *compiler, const char *kind,
-                           const char *shape, unsigned long long queued, const char *start) {
+                           const char *shape, const char *mode, unsigned long long queued, const char *start) {
   char path[PATH_MAX], body[1024];
   int error = cq_path(path, "%s/admission/waiting/%s", state, id);
   if (error) return error;
   int length = snprintf(body, sizeof(body),
-    "pid=%d\nstarttime=%s\nkey=%s\ngroup=%s\nentry=%s\ncompiler=%s\nkind=%s\nshape=%s\nqueued_ns=%llu\n",
-    (int)getpid(), start, key, group, entry, compiler, kind, shape, queued);
+    "pid=%d\nstarttime=%s\nkey=%s\ngroup=%s\nentry=%s\ncompiler=%s\nkind=%s\nshape=%s\nmode=%s\nqueued_ns=%llu\n",
+    (int)getpid(), start, key, group, entry, compiler, kind, shape, mode, queued);
   return cq_write_text(path, body, (size_t)length);
 }
 
 static int cq_wait_admission(const char *attempt, const char *queued_text,
                              u32 old_pid, const char *old_start, int *claim_fd) {
   char state[PATH_MAX], keydir[PATH_MAX], key[CQ_NAME], path[PATH_MAX], text[1024];
-  char group[CQ_NAME] = "", entry[CQ_ENTRY] = "", compiler[CQ_NAME] = "", kind[16] = "", shape[24] = "", *start = NULL;
+  char group[CQ_NAME] = "", entry[CQ_ENTRY] = "", compiler[CQ_NAME] = "", kind[16] = "", shape[24] = "", mode[8] = "", *start = NULL;
   int error = cq_attempt_parts(attempt, state, keydir, key);
   if (error) return error;
   { char shape_kind[16]; cq_shape(attempt, shape, sizeof(shape), shape_kind, sizeof(shape_kind)); }
+  snprintf(mode, sizeof(mode), "%s", cq_mode(attempt));
   if (!cq_path(path, "%s/group", attempt) && !cq_read_small(path, text, sizeof(text))) {
     cq_field(text, "group", group, sizeof(group));
     cq_field(text, "compiler", compiler, sizeof(compiler));
@@ -1396,7 +1424,7 @@ static int cq_wait_admission(const char *attempt, const char *queued_text,
   snprintf(id, sizeof(id), "%020llu-%010d", queued, (int)getpid());
   int fd = -1;
   if ((error = cq_admission_lock(state, &fd))) { free(start); return error; }
-  error = cq_ticket_write(state, id, key, group, entry, compiler, kind, shape, queued, start);
+  error = cq_ticket_write(state, id, key, group, entry, compiler, kind, shape, mode, queued, start);
   cq_admission_unlock(fd);
   if (error) { free(start); return error; }
   struct sigaction action, old_term, old_int, old_hup;
@@ -1419,7 +1447,7 @@ static int cq_wait_admission(const char *attempt, const char *queued_text,
     CqAdmission view;
     error = cq_admission_load(state, &view);
     int index = error ? -1 : cq_ticket_index(&view, id);
-    if (!error && index < 0) error = cq_ticket_write(state, id, key, group, entry, compiler, kind, shape, queued, start);
+    if (!error && index < 0) error = cq_ticket_write(state, id, key, group, entry, compiler, kind, shape, mode, queued, start);
     int backfill = 0;
     /* The oldest ticket that may start goes first, whichever supervisor polls first. */
     int go = !error && index >= 0 && cq_admit_decision(&view, (size_t)index, &backfill);
@@ -1479,10 +1507,11 @@ static int cq_history_raise(const char *path, long long peak) {
 
 /* Raises the peaks of a run in the group, kind-and-compiler and kind records. */
 static void cq_raise_peaks(const char *state, const char *group, const char *shape, const char *entry,
-                           const char *compiler, const char *kind, long long peak) {
+                           const char *mode, const char *compiler, const char *kind, long long peak) {
   char path[PATH_MAX], entry_key[24];
   cq_entry_key(entry, entry_key, sizeof(entry_key));
   if (*kind && *entry_key && !cq_path(path, "%s/peaks/en.%s.%s", state, kind, entry_key)) cq_history_raise(path, peak);
+  if (*kind && *entry_key && *mode && !cq_path(path, "%s/peaks/em.%s.%s.%s", state, kind, entry_key, mode)) cq_history_raise(path, peak);
   if (*group && !cq_path(path, "%s/peaks/%s", state, group)) cq_history_raise(path, peak);
   if (*kind && *shape && !cq_path(path, "%s/peaks/sh.%s.%s", state, kind, shape)) cq_history_raise(path, peak);
   if (*kind && *compiler && !cq_path(path, "%s/peaks/kc.%s.%s", state, kind, compiler))
@@ -1506,7 +1535,7 @@ static void cq_record_peak(const char *attempt, long long peak) {
   int fd = -1;
   if (cq_admission_lock(state, &fd)) return;
   if (!cq_path(path, "%s/peak", keydir)) cq_history_raise(path, peak);
-  cq_raise_peaks(state, group, shape, entry, compiler, kind, peak);
+  cq_raise_peaks(state, group, shape, entry, cq_mode(attempt), compiler, kind, peak);
   cq_admission_unlock(fd);
 }
 
@@ -1645,7 +1674,7 @@ static int cq_backfill(const char *state, char **out, size_t *length) {
           cq_field(text, "compiler", compiler, sizeof(compiler));
         }
         if (!cq_path(path, "%s/%s/peak", keys, key_entry->d_name)) cq_history_raise(path, peak);
-        cq_raise_peaks(state, group, shape, entry, compiler, kind, peak);
+        cq_raise_peaks(state, group, shape, entry, cq_mode(attempt), compiler, kind, peak);
         runs++;
       }
       if (run_dir) closedir(run_dir);
@@ -1661,12 +1690,13 @@ static int cq_backfill(const char *state, char **out, size_t *length) {
 
 /* Samples the session of the calling supervisor while its command runs. */
 /* Samples the session of the calling supervisor while its command runs, and the
-   memory used outside the queue. The rise of outside use from the first sample
-   is raised in outside-growth when the run ends. */
+   memory used outside the queue. The growth of outside use above the first
+   steady sample is published in the usage record of the claim, where admission
+   reads it while the run lasts. */
 typedef struct {
-  unsigned long long next, begun, last, claims;
-  long long peak, baseline, rise;
-  int samples, track, have_claims;
+  unsigned long long next, claims;
+  long long peak, baseline, growth;
+  int samples, track, have_claims, unsteady;
   char state[PATH_MAX];
 } CqSampler;
 
@@ -1696,7 +1726,7 @@ static unsigned long long cq_claim_set(const CqAdmission *view) {
    in the previous sample. A claim that started or ended in that interval has a
    value that does not belong to the same moment as MemAvailable, and its memory
    would count as outside use. */
-static void cq_sample_outside(CqSampler *sampler, long long own_kb, unsigned long long now) {
+static void cq_sample_outside(CqSampler *sampler, long long own_kb) {
   int fd = -1;
   if (!sampler->track || cq_admission_lock(sampler->state, &fd)) return;
   CqAdmission view;
@@ -1710,18 +1740,33 @@ static void cq_sample_outside(CqSampler *sampler, long long own_kb, unsigned lon
     cq_admission_free(&again);
     if (sampler->have_claims && sampler->claims != set) steady = 0;
     sampler->claims = set; sampler->have_claims = 1;
-    if (!steady) { cq_admission_free(&view); cq_admission_unlock(fd); return; }
+    /* A run whose samples stay unsteady for five intervals has no current measure,
+       and publishes 0 until a steady sample comes. */
+    if (!steady) {
+      if (++sampler->unsteady >= 5) sampler->growth = 0;
+      cq_admission_free(&view); cq_admission_unlock(fd);
+      return;
+    }
+    sampler->unsteady = 0;
     int listed = 0;
     for (size_t i = 0; i < view.claim_count; i++) if (!strcmp(view.claims[i].id, cq_my_claim)) listed = 1;
     /* After the compile marker the claim is released but the command still uses memory. */
     if (!listed) outside = cq_max_ll(0, outside - own_kb);
-    if (sampler->baseline < 0) { sampler->baseline = outside; sampler->begun = now; }
-    else sampler->rise = cq_max_ll(sampler->rise, outside - sampler->baseline);
-    sampler->last = now;
+    if (sampler->baseline < 0) sampler->baseline = outside;
+    sampler->growth = cq_max_ll(0, outside - sampler->baseline);
     sampler->samples++;
   }
   cq_admission_free(&view);
   cq_admission_unlock(fd);
+}
+#endif
+
+#ifdef __linux__
+static void cq_publish_usage(const CqSampler *sampler, long long kb) {
+  if (!sampler->track || !*cq_my_claim) return;
+  char usage[PATH_MAX], text[96];
+  int length = snprintf(text, sizeof(text), "kb=%lld\ngrowth_kb=%lld\n", kb, sampler->growth);
+  if (!cq_path(usage, "%s/admission/usage/%s", sampler->state, cq_my_claim)) cq_write_cache(usage, text, (size_t)length);
 }
 #endif
 
@@ -1736,25 +1781,13 @@ static void cq_sample(CqSampler *sampler, int final) {
   long long kb = cq_measure(table, count, (int)getsid(0), 0, &members);
   free(table);
   if (kb > sampler->peak) sampler->peak = kb;
-  if (sampler->track && *cq_my_claim) {
-    char usage[PATH_MAX], text[48];
-    int length = snprintf(text, sizeof(text), "kb=%lld\n", kb);
-    if (!cq_path(usage, "%s/admission/usage/%s", sampler->state, cq_my_claim)) cq_write_cache(usage, text, (size_t)length);
-  }
-  cq_sample_outside(sampler, kb, now);
+  cq_publish_usage(sampler, kb);
+  long long before = sampler->growth;
+  cq_sample_outside(sampler, kb);
+  if (sampler->growth != before) cq_publish_usage(sampler, kb);
 #else
   (void)sampler; (void)final;
 #endif
-}
-
-/* A run shorter than one sample interval has no measured rise to record. */
-static void cq_record_outside(const CqSampler *sampler) {
-  if (!sampler->track || sampler->samples < 2 || sampler->last - sampler->begun < CQ_SAMPLE_NS) return;
-  char path[PATH_MAX];
-  int fd = -1;
-  if (cq_path(path, "%s/outside-growth", sampler->state) || cq_admission_lock(sampler->state, &fd)) return;
-  cq_value_raise(path, "growth_kb", sampler->rise);
-  cq_admission_unlock(fd);
 }
 
 static long long cq_children_peak_kb(void) {
@@ -1820,11 +1853,9 @@ static int cq_admission_status(const char *state, char **out, size_t *length) {
   memset(&view, 0, sizeof(view));
   if (!error) error = cq_admission_load(state, &view);
   if (!error) {
-    char growth[32] = "none";
-    if (view.memory_known || view.reserve > 0) snprintf(growth, sizeof(growth), "%lld", view.reserve);
     error = cq_text_append(&text, &used, &capacity,
-      "memory total_kb=%lld available_kb=%lld outside_use_kb=%lld outside_growth_kb=%s\n",
-      view.total, view.available, cq_outside_use(&view), growth);
+      "memory total_kb=%lld available_kb=%lld outside_use_kb=%lld outside_growth_kb=%lld\n",
+      view.total, view.available, cq_outside_use(&view), view.reserve);
     if (!error && view.legacy_pid)
       error = cq_text_append(&text, &used, &capacity, "legacy-holder pid=%d current_kb=%lld\n",
         view.legacy_pid, view.legacy_current);
@@ -2282,7 +2313,6 @@ static int cq_run_command(const char *argv_text, size_t argv_length, const char 
   if (waited < 0) return errno;
   if (!cq_cancel_signal) {
     cq_sample(&sampler, 1);
-    cq_record_outside(&sampler);
     long long peak = cq_children_peak_kb();
     if (sampler.peak > peak) peak = sampler.peak;
     const char *suffix = strrchr(stdout_path, '/');
