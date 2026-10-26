@@ -49,6 +49,7 @@ def admission_names(names: List<&2,String>) -> List<&2,String>:
     case Nil{}: Nil{}
     case +name <> +rest: Bool.pick(List<&2,String>,valid_name(name),name <> admission_names(rest),admission_names(rest))
 
+@unsafe
 def load_claims_match_3(~again_load_claims: (@+names: List<&2,String> -> @+state: String -> @+acc: List<&2,String> -> IO(List<&2,String>)), +rest: List<&2,String>, +name: String, +path: String, +state: String, +acc: List<&2,String>, held: Result<&1,&1,U32 & String,U32>) -> IO(List<&2,String>):
   match held:
     case Done{value}:
@@ -106,6 +107,7 @@ def complete_ticket(+ticket: String) -> IO(String):
       +group : String <- S.read(attempt ++ "/group")
       IO.pure(String,fill_missing(fill_missing(fill_missing(fill_missing(ticket,"shape",shape),"mode",mode),"kind",S.field(meta,"kind")),"compiler",S.field(group,"compiler"))))
 
+@unsafe
 def load_tickets_match_2(~again_load_tickets: (@+names: List<&2,String> -> @+state: String -> @+acc: List<&2,String> -> IO(List<&2,String>)), +rest: List<&2,String>, +name: String, +path: String, +state: String, +acc: List<&2,String>, +text: String, live: Result<&1,&1,U32 & String,U32>) -> IO(List<&2,String>):
   match live:
     case Done{value}:
@@ -325,6 +327,7 @@ def poll(+state: String, +id: String, +body: String) -> IO(Result<&1,&1,U32 & St
 
 @unsafe
 
+@unsafe
 def wait_result(~again_wait_loop: (@+state: String -> @+id: String -> @+body: String -> IO(Result<&1,&1,U32 & String,U32>)), result: Result<&1,&1,U32 & String,Maybe<&2,U32>>, +state: String, +id: String, +body: String) -> IO(Result<&1,&1,U32 & String,U32>):
   match result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})

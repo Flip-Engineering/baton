@@ -75,6 +75,7 @@ def nonempty( +parts: List<&2,String>) -> List<&2,String>:
     case SNil{} <> rest: nonempty(rest)
     case value <> rest: value <> nonempty(rest)
 
+@unsafe
 def mkdir_next(~again_mkdir_parts: (@+parts: List<&2,String> -> @+prefix: String -> @+absolute: Bool -> IO(Result<&1,&1,U32 & String,Unit>)), rest: List<&2,String>, +path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match rest:
     case Nil{}: ensure(path,True{})
@@ -145,6 +146,7 @@ def resolve_path( +path: String) -> IO(Result<&1,&1,U32 & String,String>):
     resolved : Result<&1,&1,U32 & String,String> <- F.Files.realpath(path)
     resolved_or_path(resolved,path)
 
+@unsafe
 def resolve_found(~again_resolve_search: (@+parts: List<&2,String> -> @+command: String -> IO(Result<&1,&1,U32 & String,String>)), found: Result<&1,&1,U32 & String,Unit>, +candidate: String, +rest: List<&2,String>, +command: String) -> IO(Result<&1,&1,U32 & String,String>):
   match found:
     case Done{unit}: resolve_path(candidate)

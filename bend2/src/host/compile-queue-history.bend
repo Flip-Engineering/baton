@@ -40,6 +40,7 @@ def raise_attempt(+attempt: String, +peak: Nat, +failed: Bool) -> IO(Unit):
     Bool.pick(IO(Unit),failed,IO.pure(Unit,Unit{}),
       raise_paths(tier_paths(S.state(attempt),S.field(group,"group"),shape,S.field(meta,"entry"),mode,S.field(group,"compiler"),S.field(meta,"kind")),peak))
 
+@unsafe
 def expected_result(~again_expected_paths: (@+paths: List<&2,String> -> IO(Maybe<&2,Nat>)), result: Maybe<&2,Nat>, rest: List<&2,String>) -> IO(Maybe<&2,Nat>):
   match result:
     case Some{peak}: IO.pure(Maybe<&2,Nat>,Some{peak})
