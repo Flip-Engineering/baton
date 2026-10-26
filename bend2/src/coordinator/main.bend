@@ -310,6 +310,7 @@ type NormalCliKind is Data:
   TaskResultInput{}
   TaskReadInput{}
   AgentCurrentInput{}
+  WorkerContextInput{}
   NativeAttachmentInput{}
   CodexInboxInput{}
   ReplObserverInput{}
@@ -332,6 +333,7 @@ def normal_cli_kind(+head: String) -> NormalCliKind:
     case "codex-inbox-follow": CodexInboxInput{}
     case "codex-inbox-deliver": CodexInboxInput{}
     case "codex-input-witness": CodexInboxInput{}
+    case "agent-worker-context": WorkerContextInput{}
     case other: normal_cli_kind_existing(other)
 
 def normal_cli_fallback_if(project: Bool, db: String, head: String, tail: List<String>) -> IO(Unit):
@@ -443,6 +445,10 @@ def normal_cli_selected(kind: NormalCliKind, db: String, head: String, args: Lis
     case TaskResultInput{}: normal_cli_task_result(args,db,head)
     case TaskReadInput{}: normal_cli_task_read(args,db,head)
     case AgentCurrentInput{}: normal_cli_agent_current(args,db,head)
+    case WorkerContextInput{}:
+      match args:
+        case Nil{}: AgentCommand.worker_context(db)
+        case other: normal_cli_fallback(db,head,other)
     case NativeAttachmentInput{}: normal_cli_native_attachment(args,db,head)
     case CodexInboxInput{}: normal_cli_codex(args,db,head)
     case ReplObserverInput{}: normal_cli_repl_observer(db,args)

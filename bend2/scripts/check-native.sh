@@ -129,6 +129,7 @@ sh bend2/scripts/build-native.sh bend2/test/dsh-player.bend .scratch/bend2/dsh-p
 BATON2_EXE="$root/.scratch/bend2/dsh-player-test" "$PYTHON3" bend2/test/dsh-player.py
 sh bend2/scripts/build-native.sh bend2/test/dsh-retained.bend .scratch/bend2/dsh-retained-test
 BATON2_EXE="$root/.scratch/bend2/dsh-retained-test" "$PYTHON3" bend2/test/dsh-retained.py
+"$PYTHON3" bend2/test/dsh-worker.py
 sh bend2/scripts/build-native.sh bend2/test/dsh-turn.bend .scratch/bend2/dsh-turn-test
 BATON2_EXE="$root/.scratch/bend2/dsh-turn-test" "$PYTHON3" bend2/test/dsh-turn.py
 sh bend2/scripts/build-native.sh bend2/test/agy-player.bend .scratch/bend2/agy-player-test

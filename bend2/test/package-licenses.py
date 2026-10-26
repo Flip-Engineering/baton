@@ -89,14 +89,17 @@ class PackageLicenses(unittest.TestCase):
         (self.payload / 'bin').mkdir()
         binaries = []
         for role, name, alias, entry, mode in (
-                ('focused-facade', 'baton', 'baton2',
+                ('focused-facade', 'baton', None,
                  'bend2/src/coordinator/receive-focused.bend', 'focused-native-entry'),
-                ('full-cli', 'baton-full', None,
-                 'bend2/src/coordinator/main.bend', 'full-native-receiver-router')):
+                ('full-cli', 'baton2', 'baton-full',
+                 'bend2/src/coordinator/main.bend', 'full-native-receiver-router'),
+                ('recovery-helper', 'baton-recovery', None,
+                 'bend2/src/coordinator/receive-recovery-focused.bend', 'recovery-native-entry')):
             path = self.payload / 'bin' / name
             path.write_bytes(('File-only ' + role + ' fixture; never run.\n').encode())
             path.chmod(0o755)
             record = {'role': role, 'path': 'bin/' + name,
+                      'alias': None,
                       'sha256': PACKAGE.sha256(path),
                       'source': {'directory': str(self.source), 'commit': 'a' * 40,
                                  'tree': 'b' * 40, 'status': ''},
@@ -115,7 +118,7 @@ class PackageLicenses(unittest.TestCase):
                     'source': {'directory': str(self.source), 'commit': 'a' * 40,
                                'tree': 'b' * 40, 'status': ''},
                     'binaries': binaries,
-                    'binary': {'path': focused['path'], 'alias': focused['alias'],
+                    'binary': {'path': focused['path'], 'alias': focused.get('alias'),
                                'sha256': focused['sha256'], 'source': focused['source']},
                     'terms': terms}
         if include_repl:
@@ -223,13 +226,21 @@ class PackageLicenses(unittest.TestCase):
         names = [harness + '-' + suffix + '.mjs'
                  for harness in ('codex', 'omp', 'mcp') for suffix in ('conductor', 'root')]
         names.extend(('check-install.py', 'context-provider.mjs', 'context-project-policy.mjs',
-                      'context-query-artifact.mjs', 'context-worktree-capture.mjs'))
+                      'context-query-artifact.mjs', 'context-worktree-capture.mjs',
+                      'dsh-worker.mjs'))
         for name in names:
             shutil.copyfile(ROOT / 'bend2/scripts' / name, scripts / name)
         harness = self.source / 'bend2/harness'
         harness.mkdir(parents=True)
         for name in ('git-series.mjs', 'native-history.mjs', 'project-settings.mjs', 'task-start.mjs'):
             shutil.copyfile(ROOT / 'bend2/harness' / name, harness / name)
+        native = self.source / '.scratch/bend2'
+        native.mkdir(parents=True)
+        # Archive tests retain file bytes and executable modes; these helpers are never run.
+        for name in ('claude-credit-observe', 'api-key-exec'):
+            path = native / name
+            path.write_bytes(('File-only ' + name + ' fixture; never run.\n').encode())
+            path.chmod(0o755)
         shutil.copytree(ROOT / 'bend2/ui/orchestra', self.source / 'bend2/ui/orchestra')
         PACKAGE.stage_adapters(self.payload)
         return names
@@ -242,6 +253,9 @@ class PackageLicenses(unittest.TestCase):
             path = 'libexec/baton2/' + name
             data = (ROOT / 'bend2/scripts' / name).read_bytes()
             self.assertEqual((prefix / path).read_bytes(), data)
+        for name in ('claude-credit-observe', 'api-key-exec'):
+            self.assertEqual((prefix / 'libexec/baton2' / name).read_bytes(),
+                             (self.source / '.scratch/bend2' / name).read_bytes())
 
     def test_extracted_git_helper_selects_author_with_its_source_absent(self):
         self.stage_runtime_files()

@@ -291,6 +291,23 @@ def current_session(+db: String) -> IO(Unit):
     +saved : String <- IO.try(String,DB.Sql.read(db,"SELECT json_object('id',id) FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     Bool.pick(IO(Unit),String.is_empty(saved),IO.die(Unit,2,"No recorded session matches the current agent context."),IO.write(saved))
 
+# The host worker bridge uses the existing admitted native birth on each call.
+def worker_context_scope(scope: AgentInput.HandlingScope, +db: String, +session: String) -> IO(Unit):
+  match scope:
+    case AgentInput.NoHandling{}: IO.die(Unit,2,"Worker operations require the current admitted native execution.")
+    case AgentInput.Handling{+attempt,+native,identity,+current}: do IO<Unit>:
+      +saved : String <- IO.try(String,DB.Sql.read(db,
+        "SELECT json_object('session',s.id,'attempt',e.id,'directory',e.directory,'native',s.native,'harness',s.harness,'workspace',s.workspace,'branch',s.branch,'model',s.model) FROM sessions s JOIN executions e ON e.session=s.id WHERE s.id=" ++ C.q(session)
+        ++ " AND s.harness='dsh' AND s.native=" ++ C.q(native) ++ " AND e.id=" ++ C.q(attempt)
+        ++ " AND (" ++ current ++ ") AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"))
+      Bool.pick(IO(Unit),String.is_empty(saved),IO.die(Unit,2,"Worker operations require the current DSH execution and effective stop state."),IO.write(saved))
+
+def worker_context(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    +session : String <- implicit_session(db)
+    scope : AgentInput.HandlingScope <- AgentInput.handling_scope(db,session)
+    worker_context_scope(scope,db,session)
+
 def implicit_database(+path: String, registered: Bool) -> IO(String):
   match registered:
     case True{}: Project.database(path)
