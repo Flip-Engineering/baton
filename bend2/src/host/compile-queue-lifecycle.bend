@@ -101,7 +101,7 @@ def CompileQueueLifecycle.environ(pid: U32, name: String) -> IO(Result<&1,&1,U32
   Proc.environ(pid,name)
 
 def CompileQueueLifecycle.cwd_of_pid(pid: U32) -> IO(Result<&1,&1,U32 & String,String>):
-  F.Files.readlink(Proc.proc_base(pid) ++ "/cwd")
+  Proc.cwd(pid)
 
 def signal_result(result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match result:

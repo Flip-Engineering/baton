@@ -63,7 +63,7 @@ def expected(+state: String, +ticket: String) -> IO(Maybe<&2,Nat>):
   +shape = S.field(ticket,"shape")
   +group = S.field(ticket,"group")
   +compiler = S.field(ticket,"compiler")
-  +paths = (state ++ "/keys/" ++ S.field(ticket,"key") ++ "/peak")
+  +paths : List<&2,String> = (state ++ "/keys/" ++ S.field(ticket,"key") ++ "/peak")
     <> Bool.pick(String,String.is_empty(group),"",base ++ group)
     <> Bool.pick(String,Bool.or(String.is_empty(kind),String.is_empty(shape)),"",base ++ "sh." ++ kind ++ "." ++ shape)
     <> Bool.pick(String,Bool.or(String.is_empty(kind),Bool.or(String.is_empty(entry),String.is_empty(mode))),"",base ++ "em." ++ kind ++ "." ++ entry ++ "." ++ mode)

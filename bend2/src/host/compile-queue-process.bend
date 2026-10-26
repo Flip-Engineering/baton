@@ -82,8 +82,18 @@ def memory_info() -> IO(String):
     +available : Nat <- IO.pure(Nat,status_value(lines,"MemAvailable:"))
     IO.pure(String,"total=" ++ Nat.show(total) ++ "\navailable=" ++ Nat.show(available) ++ "\nknown=" ++ Bool.pick(String,Nat.is_gt(total,0n),"1","0") ++ "\n")
 
+def proc_file(+pid: U32, name: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    platform : String <- IO.try(String,P.HostPosix.platform())
+    Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.eq(platform,"linux"),T.Text.read(proc_base(pid) ++ "/" ++ name),IO.pure(Result<&1,&1,U32 & String,String>,Fail{(38,"process file observation requires Linux")}))
+
+def cwd(pid: U32) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    platform : String <- IO.try(String,P.HostPosix.platform())
+    Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.eq(platform,"linux"),F.Files.readlink(proc_base(pid) ++ "/cwd"),IO.pure(Result<&1,&1,U32 & String,String>,Fail{(38,"process cwd observation requires Linux")}))
+
 def cmdline( +pid: U32) -> IO(Result<&1,&1,U32 & String,String>):
-  T.Text.read(proc_base(pid) ++ "/cmdline")
+  proc_file(pid,"cmdline")
 
 def attempt_args( +args: List<&2,String>) -> String:
   match args:
@@ -147,7 +157,7 @@ def env_present(values: List<&2,String>, +name: String) -> Bool:
 
 def environ( +pid: U32, +name: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    +bytes : String <- IO.try(String,T.Text.read(proc_base(pid) ++ "/environ"))
+    +bytes : String <- IO.try(String,proc_file(pid,"environ"))
     +values : List<&2,String> <- IO.pure(List<&2,String>,String.split(bytes,Char.from_u32(0)))
     IO.pure(Result<&1,&1,U32 & String,String>,Bool.pick(Result<&1,&1,U32 & String,String>,env_present(values,name),Done{env_field(values,name)},Fail{(2,"process environment variable is absent")}))
 
