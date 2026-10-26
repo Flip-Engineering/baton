@@ -13,8 +13,8 @@ host. A source checkout uses `bend2/harness/git-series.mjs`. The Python source
 remains a legacy reference. The immutable 1.0 archive carries the earlier Python
 helper; its version-specific payload is described in [installation](installation.md).
 
-The helper has no repository allowlist. For a credential request to
-`github.com/OWNER/NAME`, the helper looks up the App installation of the account
+For a credential request to `github.com/OWNER/NAME`, the default `git` profile
+looks up the App installation of the account
 `OWNER` with `GET /repos/OWNER/NAME/installation`, using the App JWT. It then
 mints an installation access token for that installation. The token request
 specifies `contents:write`, `pull_requests:write` and `metadata:read` permissions and no
@@ -22,7 +22,7 @@ repository restriction, so it carries the repositories that the account granted
 the App. Each account owner has its own installation. Adding the App to another
 owner requires no change to the registry or the helper.
 
-The public identity, installation and issued token must include those three
+For this profile, the public identity, installation and issued token must include those three
 minimum permissions. Additional grants, including `workflows:write` and
 `actions:read`, are accepted. The token request keeps the three Git permissions.
 A missing or weaker required permission produces a refusal naming its level.
@@ -207,6 +207,44 @@ its native subcommand. The selected GPT series clears
 `OPENAI_API_KEY` and `CODEX_API_KEY` across exact versions. A Codex login-status
 command uses the ordinary command launch because it has no model argument.
 
+## Workflow maintenance
+
+`--profile workflow-write` requests `contents:write`, `pull_requests:write`,
+`metadata:read` and `workflows:write` for one repository. The `launch`, `check`
+and `helper` commands require `--repository OWNER/REPO` with this profile.
+The selected exact model, App and commit attribution follow the configured
+registry. The launcher carries the profile and repository into its Git
+credential command.
+
+The selected public identity's `github.permissions` must include
+`workflows:write`. The credential helper also checks the App registration,
+the repository owner's installation and the issued token for all four grants.
+Permission refusals name the required level and its source. `check`
+validates local identity metadata; credential issuance performs the remote checks.
+
+The token request includes `repositories: ["REPO"]` and the four permissions.
+The helper verifies that GitHub returns a selected token covering exactly
+`OWNER/REPO` and accepts credential requests only for that repository.
+[GitHub's installation-token API](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app)
+supports repository and permission selection. The default `git` profile keeps
+its three-permission request.
+
+If the App registration needs the Workflows permission, its owner sets
+**Repository permissions > Workflows > Read and write**. The installation's
+account owner approves that change. GitHub retains the prior installation
+grant until the owner accepts the update. Record the approved permission in
+the selected public identity before using this profile.
+[GitHub's Git access requirements](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app#choosing-permissions-for-git-access)
+describe the Workflows grant for `.github/workflows` files.
+
+For an approved workflow publication, select the profile explicitly:
+
+```sh
+node "$GIT_SERIES" launch --registry "$REGISTRY" --model-key MODEL \
+  --repository OWNER/REPO --profile workflow-write -- \
+  git push https://github.com/OWNER/REPO.git HEAD:refs/heads/BRANCH
+```
+
 ## Process and publication boundaries
 
 The native controls select the recipient's series for receiver and detached
@@ -256,7 +294,8 @@ repository protection provide review authority.
 Run the controlled fixtures with `node --test bend2/test/git-series.mjs`. They
 use invented public metadata, a generated signing key, API response doubles and
 a controlled Node child. Fixtures remain under `.scratch/git-series-node-fixtures/`.
-The checks cover identity selection, per-owner installations for two accounts, the
+The checks cover identity selection, repository-bound workflow credentials,
+per-owner installations for two accounts, the
 missing-installation refusal, credential restrictions, askpass execution, signature verification and PID, stream and
 exit preservation. Real App authentication, native tool inheritance, commit
 attribution and remote actor verification require separate qualification.
