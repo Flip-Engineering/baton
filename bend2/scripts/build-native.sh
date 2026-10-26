@@ -113,6 +113,7 @@ build_native_shards() {
     *) native_binary="$root/$output" ;;
   esac
   set -- --source "$output.c" \
+    --native-entry "$entry_path" \
     --outdir "$native_binary.parallel" \
     --binary "$native_binary" \
     --shards 4 --jobs 4 --cc "${CC:-clang}" \

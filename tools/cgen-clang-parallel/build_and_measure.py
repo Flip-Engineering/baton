@@ -43,12 +43,27 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def file_identity(path: Path) -> dict:
+    path = path.absolute()
+    return {"path": str(path), "resolved": str(path.resolve()), "bytes": path.stat().st_size,
+            "sha256": sha256_file(path)}
+
+
+def dependency_files(path: Path, cwd: Path) -> list[dict]:
+    text = path.read_text().replace("\\\n", "")
+    names = shlex.split(text.split(":", 1)[1])
+    return [file_identity(cwd / name) for name in sorted(set(names))]
+
+
 def toolchain_receipt(args: argparse.Namespace) -> dict:
     compiler = Path(shutil.which(args.cc) or args.cc).resolve()
     sharder = MODULE_DIR / "shard_emitted_c.py"
+    linker = subprocess.check_output([args.cc, "-print-prog-name=ld"], text=True).strip()
     return {
         "compiler_executable": {"path": str(compiler), "sha256": sha256_file(compiler)},
         "sharder": {"path": str(sharder), "sha256": sha256_file(sharder)},
+        "driver": file_identity(Path(__file__)),
+        "linker": file_identity(Path(shutil.which(linker) or linker)),
     }
 
 def sha256_bytes(data: bytes) -> str:
@@ -134,6 +149,11 @@ class Builder:
         self.monitor.stop()
 
     def run(self, cmd: list[str], cwd: Path, tag: str) -> dict:
+        dependencies = None
+        if "-o" in cmd and any(str(value).endswith(".c") for value in cmd):
+            output = Path(cmd[cmd.index("-o") + 1])
+            dependencies = output.with_name(output.name + ".d")
+            cmd = [*cmd, "-MD", "-MF", str(dependencies), "-MT", "baton2-output"]
         with self.monitor.lock:
             self._counter += 1
             index = self._counter
@@ -166,6 +186,8 @@ class Builder:
             "stderr_sha256": sha256_file(err_path),
             "stderr_tail": err_path.read_text(errors="replace")[-2000:],
         }
+        if proc.returncode == 0 and dependencies is not None:
+            record["dependencies"] = dependency_files(cwd / dependencies, cwd)
         self.records.append(record)
         if proc.returncode != 0:
             raise SystemExit(
@@ -365,6 +387,7 @@ def build_sharded(
         "sum_process_maxrss_kib": sum(r["maxrss_kib"] for r in shard_records + [link_record])
         + (0 if use_pch else 0),
         "objects": [str(obj) for obj in objects],
+        "object_files": [file_identity(obj) for obj in objects],
         "binary": str(binary),
         "binary_sha256": sha256_file(binary),
     }
@@ -405,9 +428,68 @@ def build_oracle(
     }
 
 
+def validate_relink(receipt: dict, args: argparse.Namespace, link_extra: list[str]) -> None:
+    if (receipt.get("schema") != "baton-cgen-clang-parallel-build-v1"
+            or receipt.get("mode") != "sharded-build"
+            or not args.build_only or not args.main_rename):
+        raise RuntimeError("Router relinking requires a completed Main sharded build with main rename")
+    entry = receipt.get("native_entry")
+    if not entry or not entry['path'].endswith('/bend2/src/coordinator/main.bend'):
+        raise RuntimeError("Router relinking requires the Main production entry")
+    modes = ('BATON2_NATIVE_RECEIVER_ROUTER', 'BATON2_RECEIVE_FOCUSED', 'BATON2_RECOVERY_HELPER')
+    if any(mode in flag for mode in modes for flag in receipt['link_flags']):
+        raise RuntimeError("The original Main producer must use its general CLI wrapper")
+    if receipt["source"]["sha256"] != sha256_file(args.source):
+        raise RuntimeError("Router relink generated C differs from the producer")
+    flags = [*args.cflags, "-Dmain=baton2_runtime_main"]
+    if receipt["compile_flags"] != flags or receipt["toolchain"] != toolchain_receipt(args):
+        raise RuntimeError("Router relink compiler, tools or compile flags differ from the producer")
+    if receipt["link_flags"] + ["-DBATON2_NATIVE_RECEIVER_ROUTER"] != args.cflags + link_extra:
+        raise RuntimeError("Router relink must preserve the producer link command and add its router mode")
+    build = receipt["build"]
+    if (not build.get("object_files")
+            or [row["path"] for row in build["object_files"]]
+            != [str(Path(path).resolve()) for path in build["objects"]]):
+        raise RuntimeError("The completed producer did not retain its original object identities")
+    records = receipt.get("process_records", [])
+    if not records or any(row["exit"] != 0 or not row.get("dependencies") for row in records):
+        raise RuntimeError("The completed producer lacks successful process and header dependency evidence")
+    for row in [entry, *build["object_files"],
+                *[item for record in records for item in record["dependencies"]]]:
+        if file_identity(Path(row["path"])) != row:
+            raise RuntimeError("Router relink input changed: " + row["path"])
+
+
+def relink_router(args: argparse.Namespace, link_extra: list[str]) -> int:
+    original = json.loads(args.relink_from.read_text())
+    validate_relink(original, args, link_extra)
+    builder = Builder(args)
+    binary = args.binary or args.outdir / "router"
+    try:
+        link = builder.run([builder.cc, *builder.link_flags,
+                            *[row['path'] for row in original["build"]["object_files"]],
+                            *link_extra, "-o", str(binary)], args.source.resolve().parent,
+                           "router-relink")
+    finally:
+        builder.close()
+    receipt = {"schema": "baton-cgen-clang-parallel-relink-v1",
+               "producer_receipt": file_identity(args.relink_from),
+               "source": original["source"], "toolchain": toolchain_receipt(args),
+               "native_entry": original["native_entry"],
+               "compile_flags": original["compile_flags"],
+               "link_flags": builder.link_flags + link_extra,
+               "objects": original["build"]["object_files"],
+               "process_records": [link], "binary": file_identity(binary)}
+    (args.outdir / "build-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    print(json.dumps({"binary": str(binary), "binary_sha256": sha256_file(binary),
+                      "receipt": str(args.outdir / "build-receipt.json")}))
+    return 0
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--source", required=True, type=Path)
+    ap.add_argument("--native-entry", type=Path, help="Bend entry used to generate this C input")
     ap.add_argument("--build-only", action="store_true", help="compile and link shards without an oracle run")
     ap.add_argument("--binary", type=Path, help="output binary path for --build-only")
     ap.add_argument("--ccache", help="optional ccache executable used as the compiler launcher")
@@ -431,6 +513,8 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--pch-only", action="store_true", help="build only the PCH arm")
     ap.add_argument("--reuse-split", action="store_true",
                     help="reuse an existing split directory when its input hash matches")
+    ap.add_argument("--relink-from", type=Path,
+                    help="link a router using the verified objects of a completed Main build")
     ap.add_argument("--determinism", action="store_true")
     args = ap.parse_args(argv)
     if args.cflag is not None:
@@ -440,6 +524,8 @@ def main(argv: list[str]) -> int:
     if args.pch_only and args.no_pch:
         raise SystemExit("--pch-only and --no-pch are mutually exclusive")
     args.outdir.mkdir(parents=True, exist_ok=True)
+    if args.relink_from is not None:
+        return relink_router(args, link_extra)
     source = args.source.resolve()
     split_dir = args.outdir / "split"
     split_started = time.monotonic()
@@ -483,6 +569,7 @@ def main(argv: list[str]) -> int:
                 "bytes": source.stat().st_size,
                 "sha256": sha256_file(source),
             },
+            "native_entry": file_identity(args.native_entry) if args.native_entry else None,
             "compiler": {
                 "path": args.cc,
                 "version": subprocess.check_output(

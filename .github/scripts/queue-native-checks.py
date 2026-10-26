@@ -149,6 +149,12 @@ def compiler(mode, argv, key_only=False):
             for value in argv:
                 if value != str(output) and not value.startswith('-') and Path(value).is_file():
                     options.extend(['--aux', str(Path(value).resolve())])
+            if '--relink-from' in argv:
+                producer = json.loads(Path(argv[argv.index('--relink-from') + 1]).read_text())
+                inputs = producer['build']['object_files'] + [
+                    row for process in producer['process_records'] for row in process['dependencies']]
+                for path in sorted({row['path'] for row in inputs}):
+                    options.extend(['--aux', path])
             command = [sys.executable if argv[0] == 'python3' else argv[0], *argv[1:]]
         else:
             entry = next(str(Path(a).resolve()) for a in argv if a.endswith('.bend') and Path(a).is_file())
