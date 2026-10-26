@@ -667,6 +667,7 @@ const LAYS: Map<string, Lay> = new Map();
 const CYCLES: Map<Bend.Name, boolean> = new Map();
 
 const CONSTS: Map<HTerm, boolean> = new Map();
+const CONSTS_CAP = 1 << 16;
 
 const LITS = new WeakMap<HTerm, HTerm>();
 
@@ -877,15 +878,26 @@ function term_kids(cf: Carb, tm: HTerm): HTerm[] {
 // tail position (under annotations, binders, arms and let bodies).
 function term_any(cf: Carb, t: HTerm, p: (s: HTerm, tail: boolean) => boolean,
   tail = true, seen: Set<HTerm> = new Set()): boolean {
-  const s = term_force(t);
-  if (seen.has(s)) {
-    return false;
+  // An explicit stack preserves the short-circuiting walk without
+  // JavaScript call-stack growth on deep terms.
+  const stack: [HTerm, boolean][] = [[t, tail]];
+  for (let top = stack.pop(); top !== undefined; top = stack.pop()) {
+    const [u, tl] = top;
+    const s = term_force(u);
+    if (seen.has(s)) {
+      continue;
+    }
+    seen.add(s);
+    const kids = term_kids(cf, s);
+    if (p(s, tl)) {
+      return true;
+    }
+    for (let i = kids.length - 1; i >= 0; i -= 1) {
+      stack.push([kids[i], tl && (s.$ === "Let"
+        ? i === kids.length - 1 : "Ann Lam Mat Rwt".includes(s.$))]);
+    }
   }
-  seen.add(s);
-  const kids = term_kids(cf, s);
-  return p(s, tail) || kids.some((x, i) => term_any(cf, x, p, tail
-    && (s.$ === "Let" ? i === kids.length - 1 : "Ann Lam Mat Rwt".includes(s.$)),
-  seen));
+  return false;
 }
 
 // The nodes of a term, its shared parts once. The fold's fuel is the size
@@ -900,13 +912,27 @@ function term_nodes(cf: Carb, t: HTerm): number {
 
 function term_const(t: HTerm): boolean {
   const s = term_strip(t);
-  return s.$ === "Ctr" && (CONSTANTS.has(s) || memo(CONSTS, s, () => {
-    const value = s.x.every(term_const);
-    if (value) {
-      CONSTANTS.add(s);
-    }
-    return value;
-  }));
+  if (s.$ !== "Ctr") {
+    return false;
+  }
+  if (CONSTANTS.has(s)) {
+    return true;
+  }
+  const got = CONSTS.get(s);
+  if (got !== undefined) {
+    return got;
+  }
+  const value = s.x.every(term_const);
+  if (value) {
+    CONSTANTS.add(s);
+  }
+  // Check immediately before insertion so recursive frames cannot exceed the
+  // bound while unwinding.
+  if (CONSTS.size >= CONSTS_CAP) {
+    CONSTS.clear();
+  }
+  CONSTS.set(s, value);
+  return value;
 }
 
 function use_get(u: UMap, i: number): number {
@@ -1496,60 +1522,68 @@ function anf(cb: Carb, t: HTerm, ty: HTerm | null = null): HTerm {
     binds.push([p, Bend.Ann(r, T ?? die("an untyped cut"))]);
     return Bend.Ann(p, T as HTerm);
   };
-  const go = (u: HTerm, top: boolean, T: HTerm | null): HTerm => {
-    const s = term_force(u);
-    if (term_const(s)) {
-      return s;
-    }
-    switch (s.$) {
-      case "Ann": {
-        const x = go(s.x, top, s.T);
-        return x === s.x ? s : Bend.Ann(x, s.T, s.s);
+  const go = (u0: HTerm, top: boolean, T: HTerm | null): HTerm => {
+    let u = u0;
+    for (;;) {
+      const s = term_force(u);
+      if (term_const(s)) {
+        return s;
       }
-      case "Rwt": return go(s.f, top, T);
-      case "Ctr": {
-        const on = ctr_flds(cb.book, s.k, s.x);
-        const xs = s.x.map((x) => on.includes(x) ? go(x, false, null) : x);
-        return xs.every((x, j) => x === s.x[j]) ? s : Bend.Ctr(s.k, xs, s.s);
-      }
-      case "Ref":
-      case "App": {
-        const m = term_spine(cb, s);
-        // A spine's proper prefix that is a call (an over-application) cuts;
-        // an erased application of a variable is the variable.
-        const spine = (v: HTerm): HTerm => {
-          const f = term_force(v);
-          if (f.$ === "Ann") {
-            const x = spine(f.x);
-            return x === f.x ? f : Bend.Ann(x, f.T, f.s);
-          }
-          if (f.$ !== "App") {
-            return f;
-          }
-          if (m.t.$ === "Var" && !m.args.includes(f.x)) {
-            return spine(f.f);
-          }
-          const g = cut(spine(f.f), ty_ann(f.f));
-          const x = m.args.includes(f.x) ? go(f.x, false, null) : f.x;
-          return g === f.f && x === f.x ? f : Bend.App(g, x, f.s);
-        };
-        const r = spine(s);
-        return top ? r : cut(r, T);
-      }
-      case "Let": {
-        const o = term_open(s);
-        const on = let_live(cb, s);
-        s.v.forEach((v, j) => on[j] && binds.push([o.ps[j], go(v, true, null)]));
-        return go(o.b, top, T);
-      }
-      case "Lam": {
-        const all = ty_all(cb.book, T);
-        if (all === null || quant_live(all.q)) {
-          return s;
+      switch (s.$) {
+        case "Ann": {
+          const x = go(s.x, top, s.T);
+          return x === s.x ? s : Bend.Ann(x, s.T, s.s);
         }
-        return Bend.Ann(go(s.f(DUMMY), top, all.B(DUMMY)), all.B(DUMMY));
+        case "Rwt":
+          u = s.f;
+          continue;
+        case "Ctr": {
+          const on = ctr_flds(cb.book, s.k, s.x);
+          const xs = s.x.map((x) => on.includes(x) ? go(x, false, null) : x);
+          return xs.every((x, j) => x === s.x[j]) ? s
+            : Bend.Ctr(s.k, xs, s.s);
+        }
+        case "Ref":
+        case "App": {
+          const m = term_spine(cb, s);
+          // A spine's proper prefix that is a call (an over-application)
+          // cuts; an erased application of a variable is the variable.
+          const spine = (v: HTerm): HTerm => {
+            const f = term_force(v);
+            if (f.$ === "Ann") {
+              const x = spine(f.x);
+              return x === f.x ? f : Bend.Ann(x, f.T, f.s);
+            }
+            if (f.$ !== "App") {
+              return f;
+            }
+            if (m.t.$ === "Var" && !m.args.includes(f.x)) {
+              return spine(f.f);
+            }
+            const g = cut(spine(f.f), ty_ann(f.f));
+            const x = m.args.includes(f.x) ? go(f.x, false, null) : f.x;
+            return g === f.f && x === f.x ? f : Bend.App(g, x, f.s);
+          };
+          const r = spine(s);
+          return top ? r : cut(r, T);
+        }
+        case "Let": {
+          const o = term_open(s);
+          const on = let_live(cb, s);
+          s.v.forEach((v, j) =>
+            on[j] && binds.push([o.ps[j], go(v, true, null)]));
+          u = o.b;
+          continue;
+        }
+        case "Lam": {
+          const all = ty_all(cb.book, T);
+          if (all === null || quant_live(all.q)) {
+            return s;
+          }
+          return Bend.Ann(go(s.f(DUMMY), top, all.B(DUMMY)), all.B(DUMMY));
+        }
+        default: return s;
       }
-      default: return s;
     }
   };
   const wrap = (b: HTerm): HTerm =>
@@ -1685,68 +1719,81 @@ function type_adts(cb: Carb, T: HTerm): Bend.Name[] {
 // names can never be unfolded by a compile.
 function type_live(t: HTerm, out: Set<Bend.Name>,
   seen: Set<HTerm> = new Set(), d = 0): void {
-  const s = Bend.term_force(t);
-  if (seen.has(s)) {
-    return;
-  }
-  seen.add(s);
-  switch (s.$) {
-    case "Ref": out.add(s.k); return;
-    case "ADT":
-      out.add(s.k);
-      s.x.forEach((x) => type_live(x, out, seen, d));
-      return;
-    case "App":
-      type_live(s.f, out, seen, d);
-      type_live(s.x, out, seen, d);
-      return;
-    case "Lam":
-      type_live(s.f(Bend.Var<Bend.HBody>(s.k, d)), out, seen, d + 1);
-      return;
-    case "All":
-      type_live(s.A, out, seen, d);
-      type_live(s.B(Bend.Var<Bend.HBody>(s.k, d)), out, seen, d + 1);
-      return;
-    case "Let":
-      s.v.forEach((v) => type_live(v, out, seen, d));
-      type_live(s.f(s.k.map((k, j) => Bend.Var<Bend.HBody>(k, d + j))),
-        out, seen, d + s.k.length);
-      return;
-    case "Sub":
-      if (s.v.$ !== "PVar" && s.v.$ !== "PCtr") {
-        type_live(s.v as HTerm, out, seen, d);
-      }
-      type_live(s.f, out, seen, d);
-      return;
-    case "Ctr":
-      s.x.forEach((x) => type_live(x, out, seen, d));
-      return;
-    case "Mat":
-      type_live(s.h, out, seen, d);
-      type_live(s.m, out, seen, d);
-      return;
-    case "Eql":
-      type_live(s.a, out, seen, d);
-      type_live(s.b, out, seen, d);
-      type_live(s.T, out, seen, d);
-      return;
-    case "Rwt":
-      type_live(s.e, out, seen, d);
-      type_live(s.p, out, seen, d);
-      type_live(s.f, out, seen, d);
-      return;
-    case "Typ":
-      type_live(s.g, out, seen, d);
-      return;
-    case "Min":
-      type_live(s.a, out, seen, d);
-      type_live(s.b, out, seen, d);
-      return;
-    case "Ann":
-      type_live(s.x, out, seen, d);
-      type_live(s.T, out, seen, d);
-      return;
-    default: return;
+  // An explicit stack keeps the pre-order walk off the JavaScript call
+  // stack: deep types (long App spines, nested annotations) recurse one
+  // frame a level otherwise.
+  const stack: [HTerm, number][] = [[t, d]];
+  for (let top = stack.pop(); top !== undefined; top = stack.pop()) {
+    const [u, du] = top;
+    const s = Bend.term_force(u);
+    if (seen.has(s)) {
+      continue;
+    }
+    seen.add(s);
+    switch (s.$) {
+      case "Ref": out.add(s.k); break;
+      case "ADT":
+        out.add(s.k);
+        for (let i = s.x.length - 1; i >= 0; i -= 1) {
+          stack.push([s.x[i], du]);
+        }
+        break;
+      case "App":
+        stack.push([s.x, du]);
+        stack.push([s.f, du]);
+        break;
+      case "Lam":
+        stack.push([s.f(Bend.Var<Bend.HBody>(s.k, du)), du + 1]);
+        break;
+      case "All":
+        stack.push([s.B(Bend.Var<Bend.HBody>(s.k, du)), du + 1]);
+        stack.push([s.A, du]);
+        break;
+      case "Let":
+        for (let i = s.v.length - 1; i >= 0; i -= 1) {
+          stack.push([s.v[i], du]);
+        }
+        stack.push([s.f(s.k.map((k, j) =>
+          Bend.Var<Bend.HBody>(k, du + j))), du + s.k.length]);
+        break;
+      case "Sub":
+        if (s.v.$ !== "PVar" && s.v.$ !== "PCtr") {
+          stack.push([s.v as HTerm, du]);
+        }
+        stack.push([s.f, du]);
+        break;
+      case "Ctr":
+        for (let i = s.x.length - 1; i >= 0; i -= 1) {
+          stack.push([s.x[i], du]);
+        }
+        break;
+      case "Mat":
+        stack.push([s.m, du]);
+        stack.push([s.h, du]);
+        break;
+      case "Eql":
+        stack.push([s.T, du]);
+        stack.push([s.b, du]);
+        stack.push([s.a, du]);
+        break;
+      case "Rwt":
+        stack.push([s.f, du]);
+        stack.push([s.p, du]);
+        stack.push([s.e, du]);
+        break;
+      case "Typ":
+        stack.push([s.g, du]);
+        break;
+      case "Min":
+        stack.push([s.b, du]);
+        stack.push([s.a, du]);
+        break;
+      case "Ann":
+        stack.push([s.T, du]);
+        stack.push([s.x, du]);
+        break;
+      default: break;
+    }
   }
 }
 
@@ -1755,60 +1802,71 @@ function type_live(t: HTerm, out: Set<Bend.Name>,
 // seeds nothing.
 function ann_live(t: HTerm, out: Set<Bend.Name>,
   seen: Set<HTerm> = new Set(), d = 0): void {
-  const s = Bend.term_force(t);
-  if (seen.has(s)) {
-    return;
-  }
-  seen.add(s);
-  switch (s.$) {
-    case "Ann":
-      type_live(s.T, out);
-      ann_live(s.x, out, seen, d);
-      return;
-    case "Lam":
-      ann_live(s.f(Bend.Var<Bend.HBody>(s.k, d)), out, seen, d + 1);
-      return;
-    case "Let":
-      s.v.forEach((v) => ann_live(v, out, seen, d));
-      ann_live(s.f(s.k.map((k, j) => Bend.Var<Bend.HBody>(k, d + j))),
-        out, seen, d + s.k.length);
-      return;
-    case "App":
-      ann_live(s.f, out, seen, d);
-      ann_live(s.x, out, seen, d);
-      return;
-    case "Ctr":
-      s.x.forEach((x) => ann_live(x, out, seen, d));
-      return;
-    case "Mat":
-      ann_live(s.h, out, seen, d);
-      ann_live(s.m, out, seen, d);
-      return;
-    case "Sub":
-      if (s.v.$ !== "PVar" && s.v.$ !== "PCtr") {
-        ann_live(s.v as HTerm, out, seen, d);
-      }
-      ann_live(s.f, out, seen, d);
-      return;
-    case "Rwt":
-      type_live(s.p, out);
-      ann_live(s.e, out, seen, d);
-      ann_live(s.f, out, seen, d);
-      return;
-    case "Eql":
-      type_live(s.T, out);
-      ann_live(s.a, out, seen, d);
-      ann_live(s.b, out, seen, d);
-      return;
-    case "Typ":
-      type_live(s.g, out);
-      return;
-    case "All":
-    case "ADT":
-    case "Min":
-      type_live(s, out);
-      return;
-    default: return;
+  // An explicit stack keeps the pre-order walk off the JavaScript call
+  // stack: a coordinator body nests an annotation a let a level deep, and
+  // the recursive form overflowed the machine stack in pass 1's v_drop.
+  const stack: [HTerm, number][] = [[t, d]];
+  for (let top = stack.pop(); top !== undefined; top = stack.pop()) {
+    const [u, du] = top;
+    const s = Bend.term_force(u);
+    if (seen.has(s)) {
+      continue;
+    }
+    seen.add(s);
+    switch (s.$) {
+      case "Ann":
+        type_live(s.T, out);
+        stack.push([s.x, du]);
+        break;
+      case "Lam":
+        stack.push([s.f(Bend.Var<Bend.HBody>(s.k, du)), du + 1]);
+        break;
+      case "Let":
+        for (let i = s.v.length - 1; i >= 0; i -= 1) {
+          stack.push([s.v[i], du]);
+        }
+        stack.push([s.f(s.k.map((k, j) =>
+          Bend.Var<Bend.HBody>(k, du + j))), du + s.k.length]);
+        break;
+      case "App":
+        stack.push([s.x, du]);
+        stack.push([s.f, du]);
+        break;
+      case "Ctr":
+        for (let i = s.x.length - 1; i >= 0; i -= 1) {
+          stack.push([s.x[i], du]);
+        }
+        break;
+      case "Mat":
+        stack.push([s.m, du]);
+        stack.push([s.h, du]);
+        break;
+      case "Sub":
+        if (s.v.$ !== "PVar" && s.v.$ !== "PCtr") {
+          stack.push([s.v as HTerm, du]);
+        }
+        stack.push([s.f, du]);
+        break;
+      case "Rwt":
+        type_live(s.p, out);
+        stack.push([s.f, du]);
+        stack.push([s.e, du]);
+        break;
+      case "Eql":
+        type_live(s.T, out);
+        stack.push([s.b, du]);
+        stack.push([s.a, du]);
+        break;
+      case "Typ":
+        type_live(s.g, out);
+        break;
+      case "All":
+      case "ADT":
+      case "Min":
+        type_live(s, out);
+        break;
+      default: break;
+    }
   }
 }
 
@@ -2550,7 +2608,21 @@ function emit_put(fl: File, dst: Dst, v: Val): void {
   dst === null && file_push(fl, `WL_RETN(${ws.length});`);
 }
 
-function emit_fuse(fl: File, ck: Call, dst: Dst, tail = false): void {
+// A tail emission step returned by emit_fuse and emit_fork in place of
+// their tail-recursive emit_body call: applying it continues the caller's
+// emission loop without growing the JS stack. `def` names the caller
+// definition to restore when the step's body completes (null: no switch).
+type BodyTail = {
+  tm: HTerm;
+  ty: HTerm | null;
+  ers: HTerm[];
+  args: Val[];
+  dst: Dst;
+  def: Bend.Name | null;
+};
+
+function emit_fuse(fl: File, ck: Call, dst: Dst,
+  tail = false): BodyTail | null {
   const tld = fl.book.tlds[ck.k] as Def;
   const doms = tele_unbind(fl.book, tld.T).doms;
   const ers = ck.all.filter((_, i) => i < tld.n && !quant_live(doms[i][0]));
@@ -2560,11 +2632,15 @@ function emit_fuse(fl: File, ck: Call, dst: Dst, tail = false): void {
   if (!flat) {
     const vs = lays.map((lay) =>
       val_new(ws.splice(0, lay.ks.length), lay));
+    if (tail) {
+      return { tm: tld.h as HTerm, ty: tld.T, ers, args: vs, dst,
+        def: ck.k };
+    }
     const outer = fl.def;
     fl.def = ck.k;
     emit_body(fl, tld.h as HTerm, tld.T, ers, vs, dst);
     fl.def = outer;
-    return;
+    return null;
   }
   const out = emit_dst(fl, ret);
   const name = emit_native(fl, ck, ers);
@@ -2578,6 +2654,7 @@ function emit_fuse(fl: File, ck: Call, dst: Dst, tail = false): void {
     bind_dead(fl, []);
   }
   emit_put(fl, dst, out);
+  return null;
 }
 
 // Opens a unit of `k`: the unit state fresh, its parameters bound and its
@@ -2818,71 +2895,86 @@ function emit_unfold(fl: File, s: HTerm): HTerm | null {
   return walk(fs) === null ? null : bind(0, []);
 }
 
-function emit_expr(fl: File, tm: HTerm, ty0: HTerm | null,
+function emit_expr(fl: File, tm0: HTerm, ty0: HTerm | null,
   at: Lay | null): Val {
-  const [x, ty] = ty_peel(tm, ty0);
-  switch (x.$) {
-    case "Var": return bind_pop(fl, x);
-    case "Ref":
-    case "App": {
-      const got = emit_fold(fl, x);
-      if (got !== null && got !== x) {
-        const a = term_uses(fl, x);
-        const b = term_uses(fl, got);
-        fl.uses.forEach((bd, p) => {
-          const n = bd.n - term_use(a, p) + term_use(b, p);
-          n > 0 ? fl.uses.set(p, { ...bd, n })
-            : (fl.uses.delete(p), val_sink(fl, bd.val));
-        });
-        return emit_expr(fl, got, ty, at);
+  let tm = tm0, tyA = ty0;
+  for (;;) {
+    const [x, ty] = ty_peel(tm, tyA);
+    switch (x.$) {
+      case "Var": return bind_pop(fl, x);
+      case "Ref":
+      case "App": {
+        const got = emit_fold(fl, x);
+        if (got !== null && got !== x) {
+          const a = term_uses(fl, x);
+          const b = term_uses(fl, got);
+          fl.uses.forEach((bd, p) => {
+            const n = bd.n - term_use(a, p) + term_use(b, p);
+            n > 0 ? fl.uses.set(p, { ...bd, n })
+              : (fl.uses.delete(p), val_sink(fl, bd.val));
+          });
+          tm = got;
+          tyA = ty;
+          continue;
+        }
+        const m = term_spine(fl, x);
+        const ck = m.call;
+        if (ck !== null && flat_call(fl, x)) {
+          const dst = emit_dst(fl, sig_def(fl, ck.k).ret);
+          emit_fuse(fl, ck, dst);
+          return dst;
+        }
+        const eta = call_eta(fl, x);
+        if (eta !== null) {
+          tm = eta;
+          tyA = ty;
+          continue;
+        }
+        const g = m.t as Of<"Ref">;
+        if (g.$ !== "Ref" && m.args.length === 0) {
+          tm = m.h;
+          tyA = ty;
+          continue;
+        }
+        const tld = m.tld;
+        const intr = intr_of(fl, g.k);
+        if (intr !== undefined) {
+          return emit_intr(fl, intr, x, ty);
+        }
+        if (tld?.$ === "ADT") {
+          return emit_zero(fl, ty);
+        }
+        if (!def_foreign(tld)) {
+          die(`a live call into the law ${g.k}`);
+        }
+        // A foreign def short of its continuation: an IO action awaiting it.
+        return val_new([seg_clo(fl, seg_fid(g.k),
+          emit_each(fl, m.args, m.args.map(() => BOX))
+            .map((v) => val_box(fl, v)))], BOX);
       }
-      const m = term_spine(fl, x);
-      const ck = m.call;
-      if (ck !== null && flat_call(fl, x)) {
-        const dst = emit_dst(fl, sig_def(fl, ck.k).ret);
-        emit_fuse(fl, ck, dst);
-        return dst;
+      case "Ctr": return emit_ctr(fl, x, ty, at);
+      case "Let": {
+        const o = term_open(x);
+        if (let_live(fl, x)[0]) {
+          const rest = fl.rest;
+          fl.rest = [o.b, ...rest];
+          emit_let(fl, x, o);
+          fl.rest = rest;
+        }
+        tm = o.b;
+        tyA = null;
+        continue;
       }
-      const eta = call_eta(fl, x);
-      if (eta !== null) {
-        return emit_expr(fl, eta, ty, at);
-      }
-      const g = m.t as Of<"Ref">;
-      if (g.$ !== "Ref" && m.args.length === 0) {
-        return emit_expr(fl, m.h, ty, at);
-      }
-      const tld = m.tld;
-      const intr = intr_of(fl, g.k);
-      if (intr !== undefined) {
-        return emit_intr(fl, intr, x, ty);
-      }
-      if (tld?.$ === "ADT") {
-        return emit_zero(fl, ty);
-      }
-      if (!def_foreign(tld)) {
-        die(`a live call into the law ${g.k}`);
-      }
-      // A foreign def short of its continuation: an IO action awaiting it.
-      return val_new([seg_clo(fl, seg_fid(g.k),
-        emit_each(fl, m.args, m.args.map(() => BOX))
-          .map((v) => val_box(fl, v)))], BOX);
+      case "Lam": case "Mat": case "Efq":
+        if (fun_live(fl.book, x, ty)) {
+          return emit_clo(fl, x, ty);
+        }
+        tm = (x as Of<"Lam">).f(DUMMY);
+        tyA = (ty_all(fl.book, ty) as HAll).B(DUMMY);
+        continue;
+      case "Hol": die("a hole value");
+      default: return emit_zero(fl, ty);
     }
-    case "Ctr": return emit_ctr(fl, x, ty, at);
-    case "Let": {
-      const o = term_open(x);
-      if (let_live(fl, x)[0]) {
-        const rest = fl.rest;
-        fl.rest = [o.b, ...rest];
-        emit_let(fl, x, o);
-        fl.rest = rest;
-      }
-      return emit_expr(fl, o.b, null, at);
-    }
-    case "Lam": case "Mat": case "Efq": return fun_live(fl.book, x, ty)
-      ? emit_clo(fl, x, ty) : emit_expr(fl, (x as Of<"Lam">).f(DUMMY),
-        (ty_all(fl.book, ty) as HAll).B(DUMMY), at);
-    case "Hol": die("a hole value");
-    default: return emit_zero(fl, ty);
   }
 }
 
@@ -2897,72 +2989,127 @@ function emit_let(fl: File, x: HLet, o: { ps: Probe[]; b: HTerm }): void {
   bind_uses(fl, o.ps[0], v, [o.b], ty_ann(x.v[0]) ?? die("an unannotated let"));
 }
 
-function emit_body(fl: File, tm: HTerm, ty0: HTerm | null,
-  ers: HTerm[], args: Val[], dst: Dst): void {
-  const [x, ty] = ty_peel(tm, ty0);
-  if (args.length === 0 && fun_live(fl.book, x, ty)) {
-    return emit_put(fl, dst, emit_clo(fl, x, ty));
-  }
-  const l = x.$ === "Let" || (args.length === 0 && x.$ !== "Lam")
-    ? anf(fl, x, ty) : x;
-  if (l !== x) {
-    return emit_body(fl, l, ty, ers, args, dst);
-  }
-  switch (x.$) {
-    case "Lam": {
-      const all = ty_all(fl.book, ty) ?? die("an untyped binder");
-      if (!quant_live(all.q)) {
-        const t = ers[0] ?? Bend.Var(x.k, x.i);
-        return emit_body(fl, x.f(t), all.B(t), ers.slice(1), args, dst);
-      }
-      const o = term_open(x);
-      const v = val_hold(fl, val_to(fl, args[0], lay_of(fl.book, all.A)), x.k);
-      bind_uses(fl, o.ps[0], v, [o.b], all.A);
-      return emit_body(fl, o.b, all.B(DUMMY), ers, args.slice(1), dst);
+function emit_body(fl: File, tm0: HTerm, ty0: HTerm | null,
+  ers0: HTerm[], args0: Val[], dst0: Dst): void {
+  let tm = tm0, ty = ty0, ers = ers0, args = args0, dst = dst0;
+  // Caller definitions saved by tail-fused calls, restored innermost-first
+  // when the tail chain reaches a terminal.
+  const restore: Bend.Name[] = [];
+  const done = (): void => {
+    while (restore.length > 0) {
+      fl.def = restore.pop() as Bend.Name;
     }
-    case "Mat":
-    case "Efq": return emit_match(fl, x, ty, ers, args, dst);
-    case "Let": {
-      if (x.k.length >= 2
-        || (call_kind(fl, x.v[0]) !== null && !flat_call(fl, x.v[0]))) {
-        return emit_fork(fl, x, ers);
-      }
-      const o = term_open(x);
-      fl.rest = [o.b];
-      emit_let(fl, x, o);
-      bind_dead(fl, [o.b]);
-      return emit_body(fl, o.b, null, ers, [], dst);
+  };
+  const apply = (tail: BodyTail): void => {
+    if (tail.def !== null) {
+      restore.push(fl.def);
+      fl.def = tail.def;
     }
-    default: {
-      if (args.length > 0) {
-        return emit_body(fl, term_eta(fl.book, x,
-          ty ?? die("an untyped arm"), 1), ty, ers, args, dst);
+    tm = tail.tm;
+    ty = tail.ty;
+    ers = tail.ers;
+    args = tail.args;
+    dst = tail.dst;
+  };
+  for (;;) {
+    const [x, tyP] = ty_peel(tm, ty);
+    ty = tyP;
+    if (args.length === 0 && fun_live(fl.book, x, ty)) {
+      emit_put(fl, dst, emit_clo(fl, x, ty));
+      done();
+      return;
+    }
+    const l = x.$ === "Let" || (args.length === 0 && x.$ !== "Lam")
+      ? anf(fl, x, ty) : x;
+    if (l !== x) {
+      tm = l;
+      continue;
+    }
+    switch (x.$) {
+      case "Lam": {
+        const all = ty_all(fl.book, ty) ?? die("an untyped binder");
+        if (!quant_live(all.q)) {
+          const t = ers[0] ?? Bend.Var(x.k, x.i);
+          tm = x.f(t);
+          ty = all.B(t);
+          ers = ers.slice(1);
+          continue;
+        }
+        const o = term_open(x);
+        const v = val_hold(fl, val_to(fl, args[0], lay_of(fl.book, all.A)), x.k);
+        bind_uses(fl, o.ps[0], v, [o.b], all.A);
+        tm = o.b;
+        ty = all.B(DUMMY);
+        args = args.slice(1);
+        continue;
       }
-      fl.rest = [];
-      const ck = call_kind(fl, x);
-      if (ck === null) {
-        const v = emit_expr(fl, x, ty, dst?.lay ?? fl.seg.ret);
-        bind_dead(fl, []);
-        return emit_put(fl, dst, v);
+      case "Mat":
+      case "Efq":
+        emit_match(fl, x, ty, ers, args, dst);
+        done();
+        return;
+      case "Let": {
+        if (x.k.length >= 2
+          || (call_kind(fl, x.v[0]) !== null && !flat_call(fl, x.v[0]))) {
+          const tail = emit_fork(fl, x, ers);
+          if (tail !== null) {
+            apply(tail);
+            continue;
+          }
+          done();
+          return;
+        }
+        const o = term_open(x);
+        fl.rest = [o.b];
+        emit_let(fl, x, o);
+        bind_dead(fl, [o.b]);
+        tm = o.b;
+        ty = null;
+        args = [];
+        continue;
       }
-      const ret = sig_def(fl, ck.k).ret;
-      const once = fl.sites.get(ck.k) === 1 && !ck.bang
-        && !def_foreign(fl.book.tlds[ck.k])
-        && (!lay_box(ret) || lay_box(fl.seg.ret));
-      if (fl.seg.def !== ck.k && (flat_call(fl, x) || (dst === null && once))) {
-        return emit_fuse(fl, ck, dst, true);
+      default: {
+        if (args.length > 0) {
+          tm = term_eta(fl.book, x,
+            ty ?? die("an untyped arm"), 1);
+          continue;
+        }
+        fl.rest = [];
+        const ck = call_kind(fl, x);
+        if (ck === null) {
+          const v = emit_expr(fl, x, ty, dst?.lay ?? fl.seg.ret);
+          bind_dead(fl, []);
+          emit_put(fl, dst, v);
+          done();
+          return;
+        }
+        const ret = sig_def(fl, ck.k).ret;
+        const once = fl.sites.get(ck.k) === 1 && !ck.bang
+          && !def_foreign(fl.book.tlds[ck.k])
+          && (!lay_box(ret) || lay_box(fl.seg.ret));
+        if (fl.seg.def !== ck.k && (flat_call(fl, x) || (dst === null && once))) {
+          const tail = emit_fuse(fl, ck, dst, true);
+          if (tail !== null) {
+            apply(tail);
+            continue;
+          }
+          done();
+          return;
+        }
+        // A jump's returns must agree, or both be one word (a box holds a
+        // word as is): a call whose return disagrees is a cut converted here.
+        if (!lay_eq(fl.seg.ret, ret)
+          && (fl.seg.ret.arms !== null || ret.arms !== null)) {
+          const v = Bend.Ann(x, ty ?? die("an untyped cut"));
+          tm = Bend.Let(["r"], [0], [v], (xs) => xs[0]);
+          continue;
+        }
+        const cargs = emit_args(fl, ck, true);
+        spare_flush(fl);
+        emit_jump(fl, cargs, ck.k, ck.bang);
+        done();
+        return;
       }
-      // A jump's returns must agree, or both be one word (a box holds a
-      // word as is): a call whose return disagrees is a cut converted here.
-      if (!lay_eq(fl.seg.ret, ret)
-        && (fl.seg.ret.arms !== null || ret.arms !== null)) {
-        const v = Bend.Ann(x, ty ?? die("an untyped cut"));
-        return emit_body(fl, Bend.Let(["r"], [0], [v], (xs) => xs[0]), ty,
-          ers, args, dst);
-      }
-      const cargs = emit_args(fl, ck, true);
-      spare_flush(fl);
-      emit_jump(fl, cargs, ck.k, ck.bang);
     }
   }
 }
@@ -2973,7 +3120,7 @@ function emit_body(fl: File, tm: HTerm, ty0: HTerm | null,
 // pushing its result, the last jumping into the joiner (a cut's one step
 // is its continuation). What the parallel join holds (hold) every step
 // holds too, so both paths open one joiner.
-function emit_fork(fl: File, x: HLet, ers: HTerm[]): void {
+function emit_fork(fl: File, x: HLet, ers: HTerm[]): BodyTail | null {
   const o = term_open(x);
   const calls = x.v.map((v) => call_kind(fl, v) as Call);
   const fork = calls.length > 1;
@@ -3052,7 +3199,7 @@ function emit_fork(fl: File, x: HLet, ers: HTerm[]): void {
     emit_jump(fl, live.flatMap(([, b]) => b.val.ws), name);
     seg_open(fl, name, fl.seg.ret, null, live, "", [], [o.b]);
   }
-  emit_body(fl, o.b, null, ers, [], null);
+  return { tm: o.b, ty: null, ers, args: [], dst: null, def: null };
 }
 
 // A row is JS text; the C lane's F32 row is its bits (a NaN's payload
