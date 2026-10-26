@@ -678,7 +678,10 @@ const SPINES: Map<HTerm, Spine> = new Map();
 
 const NODES: Map<Bend.Name, Lay> = new Map();
 
-const LAYS: Map<string, Lay> = new Map();
+const LAYS: Map<number, Lay> = new Map();
+
+const LAY_KEY_NODES: Map<string, number> = new Map();
+let LAY_KEY_NEXT = 0;
 
 const CYCLES: Map<Bend.Name, boolean> = new Map();
 
@@ -1216,7 +1219,7 @@ function ty_clo(book: Bend.Book, A: HTerm | null,
 // the datatype under layout (a family hid the cycle) is one: boxes.
 // Memoized on the type's key.
 function lay_cached(book: Bend.Book, A: HTerm | null):
-  { lay: Lay } | { key: string, t: Bend.ADT } | null {
+  { lay: Lay } | { key: number, t: Bend.ADT } | null {
   const t = ty_adt(book, A);
   if (t === null) {
     return { lay: BOX };
@@ -1225,7 +1228,7 @@ function lay_cached(book: Bend.Book, A: HTerm | null):
   if (word !== undefined) {
     return { lay: word };
   }
-  const key = Bend.term_key(Bend.term_lower(t));
+  const key = lay_key(t);
   const memoized = LAYS.get(key);
   if (memoized !== undefined) {
     return { lay: memoized };
@@ -1249,10 +1252,10 @@ function lay_of(book: Bend.Book, A: HTerm | null): Lay {
   // already on the stack is a cycle and reads the BOX placeholder, exactly
   // as the memoized recursion did.
   type Frame = {
-    key: string, arms: Bend.Name[][], fields: HTerm[][],
+    key: number, arms: Bend.Name[][], fields: HTerm[][],
     lays: Lay[][], arm: number, field: number,
   };
-  const begin = (key: string, t: Bend.ADT): Frame => {
+  const begin = (key: number, t: Bend.ADT): Frame => {
     const tld = book.tlds[t.k] as Bend.ADT;
     LAYS.set(key, BOX);
     return {
@@ -1262,7 +1265,7 @@ function lay_of(book: Bend.Book, A: HTerm | null): Lay {
     };
   };
   const stack: Frame[] = [begin(root.key, root.t)];
-  const active = new Set<string>([root.key]);
+  const active = new Set<number>([root.key]);
   let result: Lay = BOX;
   while (stack.length > 0) {
     const frame = stack[stack.length - 1];
@@ -1299,6 +1302,115 @@ function lay_of(book: Bend.Book, A: HTerm | null): Lay {
     stack.push(begin(child.key, child.t));
   }
   return result;
+}
+
+const LAY_KEY_OMIT = Symbol();
+
+// Intern the lowered JSON structure bottom-up. Child ids keep the descriptor
+// size proportional to the distinct structure and preserve exact key equality.
+function lay_key(term: HTerm): number {
+  const lowered = Bend.term_lower_shared(term);
+  const seen = new WeakMap<object, number>();
+  const encode = (value: unknown, inArray: boolean): unknown => {
+    if (value === null) {
+      return ["null"];
+    }
+    if (value === undefined || typeof value === "function" || typeof value === "symbol") {
+      return inArray ? ["null"] : LAY_KEY_OMIT;
+    }
+    if (typeof value === "string") {
+      return ["string", value];
+    }
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? ["number", JSON.stringify(value)] : ["null"];
+    }
+    if (typeof value === "boolean") {
+      return ["boolean", value];
+    }
+    if (typeof value === "bigint") {
+      throw new TypeError("Do not know how to serialize a BigInt");
+    }
+    const id = seen.get(value);
+    if (id === undefined) {
+      throw new Error("Layout key child was not interned");
+    }
+    return ["ref", id];
+  };
+  const children = (value: object): object[] => {
+    const out: object[] = [];
+    const add = (child: unknown): void => {
+      if (typeof child === "object" && child !== null) {
+        out.push(child);
+      }
+    };
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) {
+        add(value[i]);
+      }
+    } else {
+      for (const key of Object.keys(value)) {
+        if (key !== "s") {
+          add((value as Record<string, unknown>)[key]);
+        }
+      }
+    }
+    return out;
+  };
+  const descriptor = (value: object): unknown[] => {
+    if (Array.isArray(value)) {
+      return ["array", Array.from({ length: value.length }, (_, i) => {
+        const item = encode(value[i], true);
+        return item === LAY_KEY_OMIT ? ["null"] : item;
+      })];
+    }
+    const fields: unknown[][] = [];
+    for (const key of Object.keys(value)) {
+      if (key === "s") {
+        continue;
+      }
+      const item = encode((value as Record<string, unknown>)[key], false);
+      if (item !== LAY_KEY_OMIT) {
+        fields.push([key, item]);
+      }
+    }
+    return ["object", fields];
+  };
+  type Frame = { value: object; children: object[]; next: number };
+  const active = new WeakSet<object>();
+  const stack: Frame[] = [{ value: lowered, children: children(lowered), next: 0 }];
+  active.add(lowered);
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1];
+    if (frame.next < frame.children.length) {
+      const child = frame.children[frame.next++];
+      if (seen.has(child)) {
+        continue;
+      }
+      if (active.has(child)) {
+        throw new TypeError("Converting circular structure to JSON");
+      }
+      active.add(child);
+      stack.push({ value: child, children: children(child), next: 0 });
+      continue;
+    }
+    const signature = JSON.stringify(descriptor(frame.value));
+    if (signature === undefined) {
+      throw new TypeError("Unable to encode a layout key");
+    }
+    let id = LAY_KEY_NODES.get(signature);
+    if (id === undefined) {
+      id = LAY_KEY_NEXT++;
+      LAY_KEY_NODES.set(signature, id);
+    }
+    seen.set(frame.value, id);
+    active.delete(frame.value);
+    stack.pop();
+  }
+  const id = seen.get(lowered);
+  if (id === undefined) {
+    throw new Error("Layout key root was not interned");
+  }
+  return id;
 }
 
 // An Array's cell is its element datatype's open layout (the type its
@@ -1805,6 +1917,8 @@ function carb_book(src: Bend.Book, roots: Bend.Name[]): Carb {
   book_owned(src);
   [TELES, SRCS, NODES, LAYS, CYCLES, FLATS, SIGS, BRWS].forEach((m) =>
     m.clear());
+  LAY_KEY_NODES.clear();
+  LAY_KEY_NEXT = 0;
   LOCAL.clear();
   for (const [k, tld] of Object.entries(src.tlds)) {
     if (def_foreign(tld)) {
