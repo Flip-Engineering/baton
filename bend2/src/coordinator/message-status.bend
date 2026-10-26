@@ -1,11 +1,10 @@
 import Base
 import ../context/request.bend as Req
 
-# A row records one complete owned read in one admitted attempt. The row is
-# the read event; it persists whether or not the turn later succeeds. The
-# legacy handled column preserves historical acknowledgement values; new code
-# never writes it. The backfill gives legacy receipted messages their read row
-# once, so every read derivation consults message_reads alone.
+# A row records one complete owned read in one admitted attempt. It persists
+# whether or not the turn later succeeds. The handled column retains historical
+# values for compatibility. Legacy receipts backfill as read rows, and current
+# read state derives from message_reads.
 def schema() -> String:
   "CREATE TABLE IF NOT EXISTS message_reads(attempt TEXT NOT NULL, message TEXT NOT NULL REFERENCES messages(id), recipient TEXT NOT NULL REFERENCES sessions(id), native TEXT NOT NULL, identity TEXT NOT NULL, handled TEXT, PRIMARY KEY(attempt,identity,message));"
   ++ "CREATE INDEX IF NOT EXISTS message_reads_by_message ON message_reads(message);"
@@ -83,31 +82,12 @@ def forwarded_read_sql(+session: String, +attempt: String, +native: String, iden
   ++ " ON CONFLICT(attempt,identity,message) DO NOTHING;"
   ++ "DELETE FROM wake_claims WHERE session=" ++ q(session) ++ " AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.recipient=" ++ q(session) ++ " AND " ++ owed_sql("m") ++ ");COMMIT;"
 
-# Turn-start input. Tasks, task assignments and completion confirmations carry
-# their complete stored body, so the admitted prompt records them as read.
 # Turn-start input carries complete bodies for task, task-assignment and
 # completion-confirmed messages. DSH sessions receive complete bodies for all
-# unsettled messages. Complete prompts record read events through
-# prompt_record_sql; successful settlement records their handled state and
-# receipt. Other message kinds carry a pointer to the stored body.
-def settle_sql(+session: String, +attempt: String, +identity: String) -> String:
-  +receipt = "native-turn:" ++ attempt
-  "BEGIN IMMEDIATE;UPDATE message_reads SET handled=coalesce(handled," ++ q(receipt) ++ ") WHERE recipient=" ++ q(session) ++ " AND attempt=" ++ q(attempt) ++ " AND identity=" ++ q(identity)
-  ++ " AND EXISTS(SELECT 1 FROM executions e JOIN sessions s ON s.id=e.session WHERE e.session=" ++ q(session) ++ " AND e.id=" ++ q(attempt) ++ " AND s.native=message_reads.native)"
-  ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ q(session) ++ ");"
-  ++ "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE recipient=" ++ q(session) ++ " AND id IN(SELECT r.message FROM message_reads r JOIN executions e ON e.id=r.attempt AND e.session=r.recipient JOIN sessions s ON s.id=r.recipient WHERE r.recipient=" ++ q(session) ++ " AND r.attempt=" ++ q(attempt) ++ " AND r.identity=" ++ q(identity) ++ " AND s.native=r.native AND r.handled IS NOT NULL) AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ q(session) ++ ");COMMIT;"
-
-# Turn-start input. Task, task-assignment and completion-confirmed messages
-# carry their complete bodies. prompt_record_sql records their reads, and turn
-# settlement marks those read rows handled and sets their receipts. DSH
-# sessions receive all owed bodies in the prompt; prompt_record_sql records
-# those reads through the same attempt path (#1084). Other harnesses carry
-# pointers for other message kinds. The
-# completion-confirmed row in consol-788-sonnet-20261022 remained owed when
-# delivered by pointer and caused repeated turns (#1054).
-
+# owed messages. Complete prompts record read events through
+# prompt_record_sql. Other message kinds carry a pointer to the stored body.
 def prompt_selection_sql(+session: String, +cursor: String) -> String:
-  "SELECT json_object('ids',json_group_array(id),'text',coalesce(group_concat(input,char(10)||char(10)),'')) FROM (SELECT id,CASE WHEN kind IN ('task','task-assignment','completion-confirmed') OR EXISTS(SELECT 1 FROM sessions prompt_session WHERE prompt_session.id=" ++ q(session) ++ " AND prompt_session.harness='dsh') THEN 'Message (' || kind || ') from ' || sender || ' [id: ' || id || ']:' || char(10) || body ELSE 'Message (' || kind || ') from ' || sender || ' [id: ' || id || '] retained ' || CAST(length(CAST(body AS BLOB)) AS TEXT) || ' bytes; read the complete body with baton read ' || id || '.' END AS input FROM messages WHERE recipient=" ++ q(session) ++ " AND receipt IS NULL AND seq<=CAST(" ++ q(cursor) ++ " AS INTEGER) ORDER BY seq);"
+  "SELECT json_object('ids',json_group_array(id),'text',coalesce(group_concat(input,char(10)||char(10)),'')) FROM (SELECT id,CASE WHEN kind IN ('task','task-assignment','completion-confirmed') OR EXISTS(SELECT 1 FROM sessions prompt_session WHERE prompt_session.id=" ++ q(session) ++ " AND prompt_session.harness='dsh') THEN 'Message (' || kind || ') from ' || sender || ' [id: ' || id || ']:' || char(10) || body ELSE 'Message (' || kind || ') from ' || sender || ' [id: ' || id || '] retained ' || CAST(length(CAST(body AS BLOB)) AS TEXT) || ' bytes; read the complete body with baton read ' || id || '.' END AS input FROM messages WHERE recipient=" ++ q(session) ++ " AND " ++ owed_sql("messages") ++ " AND seq<=CAST(" ++ q(cursor) ++ " AS INTEGER) ORDER BY seq);"
 
 # The admitted complete prompt supplies the exact stored header and body.
 def prompt_record_sql(+session: String, +attempt: String, +native: String, identity: String, +input: String) -> String:
@@ -137,17 +117,3 @@ def codex_record_sql(+session: String, +native: String, +turn: String, saved: St
   ++ " AND NOT EXISTS(SELECT 1 FROM messages terminal WHERE terminal.id=" ++ q("codex-inbox-turn:" ++ session ++ ":" ++ native ++ ":" ++ turn) ++ " AND terminal.sender=s.id AND terminal.kind='report')"
   ++ " ON CONFLICT(attempt,identity,message) DO NOTHING;"
   ++ "DELETE FROM wake_claims WHERE session=" ++ q(session) ++ " AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.recipient=" ++ q(session) ++ " AND " ++ owed_sql("m") ++ ");COMMIT;"
-
-def codex_terminal_sql(+session: String, +native: String, +turn: String) -> String:
-  "EXISTS(SELECT 1 FROM messages terminal JOIN sessions s ON s.id=terminal.sender WHERE terminal.id=" ++ q("codex-inbox-turn:" ++ session ++ ":" ++ native ++ ":" ++ turn)
-  ++ " AND terminal.sender=" ++ q(session) ++ " AND terminal.kind='report' AND s.native=" ++ q(native) ++ " AND s.harness='codex'"
-  ++ " AND CASE WHEN json_valid(terminal.body) THEN json_extract(terminal.body,'$.type')='codex-inbox-turn-settled' AND json_extract(terminal.body,'$.session')=" ++ q(session)
-  ++ " AND json_extract(terminal.body,'$.threadId')=" ++ q(native) ++ " AND json_extract(terminal.body,'$.turn.id')=" ++ q(turn) ++ " AND json_extract(terminal.body,'$.turn.status')='completed' ELSE 0 END)"
-
-def settle_codex_sql(+session: String, +native: String, +turn: String) -> String:
-  +attempt = codex_attempt(turn)
-  +receipt = "native-turn:" ++ attempt
-  "BEGIN IMMEDIATE;UPDATE message_reads SET handled=coalesce(handled," ++ q(receipt) ++ ") WHERE recipient=" ++ q(session) ++ " AND native=" ++ q(native) ++ " AND attempt=" ++ q(attempt) ++ " AND identity=" ++ codex_identity(native,turn)
-  ++ " AND " ++ codex_terminal_sql(session,native,turn) ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ q(session) ++ ");"
-  ++ "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE recipient=" ++ q(session) ++ " AND id IN(SELECT message FROM message_reads WHERE recipient=" ++ q(session) ++ " AND native=" ++ q(native) ++ " AND attempt=" ++ q(attempt) ++ " AND identity=" ++ codex_identity(native,turn) ++ " AND handled IS NOT NULL)"
-  ++ " AND " ++ codex_terminal_sql(session,native,turn) ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ q(session) ++ ");COMMIT;"

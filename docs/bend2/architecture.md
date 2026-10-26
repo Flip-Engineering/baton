@@ -311,10 +311,10 @@ On attachment, pending messages wait until tool discovery completes a client
 The server's in-memory sent set suppresses repeated notifications during that
 process lifetime. On restart it reads pending messages from SQLite again.
 The adapter's `--claude` launcher supplies session-scoped native hooks. Complete
-reads include Claude's prompt identity. Its successful `Stop` event invokes
-Bend's existing owned-read settlement. `StopFailure` preserves failed input;
-interrupted prompts remain pending. The native session resumes with the same
-database and recorded native identity.
+reads record the current prompt identity and active attempt in `message_reads`.
+`Stop` allows the turn to end when its complete input has a read event. Input
+without a complete read remains pending. The native session resumes with the
+same database and recorded native identity.
 
 ## Landing and publication
 

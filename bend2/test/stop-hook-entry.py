@@ -112,39 +112,54 @@ class StopHook(unittest.TestCase):
         decision = self.hook()
         self.assertEqual(decision['decision'], 'block')
         self.assertIn('Baton holds 1 unread inputs for worker', decision['reason'])
-        self.assertIn('[id: message:coordinator:mid-turn]:\nNew detail.\nRead the complete body with baton read message:coordinator:mid-turn.', decision['reason'])
+        self.assertIn('[id: message:coordinator:mid-turn]:\nNew detail.\nThe complete input is available in this turn.', decision['reason'])
 
     def decision_sql(self):
         result = subprocess.run([self.binary, 'decision-sql'], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result.stdout.strip()
 
-    def test_stop_allows_complete_current_read_and_keeps_stale_or_unread_input_owed(self):
+    def record(self, directory, attempt, native, identity, ident, body):
+        saved = json.dumps([{'id': ident, 'recipient': 'worker', 'body': body}], ensure_ascii=False)
+        result = subprocess.run([self.binary, 'record-sql', directory, attempt, native, identity, saved],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.db.executescript(result.stdout)
+
+    def test_valid_complete_read_is_durable_and_unread_input_stays_owed(self):
         self.request()
         self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
         self.db.execute("INSERT INTO executions VALUES('worker','attempt-1','/attempt','running')")
-        self.owe(kind='question')
+        self.owe(kind='question', body='Complete question.')
         sql = self.decision_sql()
-
         unread = json.loads(self.db.execute(sql).fetchone()[0])
         self.assertEqual(unread['decision'], 'block')
-        self.assertIn('Baton holds 1 unread inputs for worker', unread['reason'])
 
-        self.db.execute(
-            "INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES('attempt-1','message:coordinator:mid-turn','worker','native-1','identity-1')")
-        self.assertEqual(self.db.execute(sql).fetchone()[0], '')
+        self.record('/attempt', 'attempt-1', 'native-1', 'identity-1',
+                    'message:coordinator:mid-turn', 'Complete question.')
+        self.assertIsNone(self.db.execute(sql).fetchone()[0])
+        self.assertEqual(self.db.execute("SELECT count(*) FROM message_reads WHERE message='message:coordinator:mid-turn'").fetchone()[0], 1)
 
-        for attempt, native, identity in (
-                ('old-attempt', 'native-1', 'identity-1'),
-                ('attempt-1', 'old-native', 'identity-1'),
-                ('attempt-1', 'native-1', 'old-identity')):
-            with self.subTest(attempt=attempt, native=native, identity=identity):
-                self.db.execute("DELETE FROM message_reads")
-                self.db.execute(
-                    "INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES(?,?,?,?,?)",
-                    (attempt, 'message:coordinator:mid-turn', 'worker', native, identity))
-                stale = json.loads(self.db.execute(sql).fetchone()[0])
-                self.assertEqual(stale['decision'], 'block')
+        # A later attempt or native identity does not make a valid durable read owed again.
+        self.db.execute("UPDATE sessions SET native='native-2' WHERE id='worker'")
+        self.db.execute("UPDATE executions SET id='attempt-2',directory='/later' WHERE session='worker'")
+        self.assertIsNone(self.db.execute(sql).fetchone()[0])
+
+    def test_stale_attempt_native_or_incomplete_body_cannot_record_a_read(self):
+        self.request()
+        self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
+        self.db.execute("INSERT INTO executions VALUES('worker','attempt-1','/attempt','running')")
+        self.owe(kind='question', body='Complete question.')
+        for directory, attempt, native, identity, body in (
+                ('/attempt', 'old-attempt', 'native-1', 'identity-1', 'Complete question.'),
+                ('/attempt', 'attempt-1', 'old-native', 'identity-1', 'Complete question.'),
+                ('/stale', 'attempt-1', 'native-1', 'identity-1', 'Complete question.'),
+                ('/attempt', 'attempt-1', 'native-1', 'identity-1', 'Incomplete')):
+            with self.subTest(directory=directory, attempt=attempt, native=native, body=body):
+                self.record(directory, attempt, native, identity, 'message:coordinator:mid-turn', body)
+                self.assertEqual(self.db.execute("SELECT count(*) FROM message_reads WHERE message='message:coordinator:mid-turn'").fetchone()[0], 0)
+                decision = json.loads(self.db.execute(self.decision_sql()).fetchone()[0])
+                self.assertEqual(decision['decision'], 'block')
 
     def test_stop_hook_active_keeps_blocking_owed_input(self):
         self.owe()
@@ -205,29 +220,26 @@ class StopHook(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout) if result.stdout.strip() else None
 
-    def test_tool_loop_receives_pointer_before_stop(self):
+    def test_tool_loop_receives_complete_body_before_stop(self):
         result, _ = self.fake(TOOL_LOOP)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         contexts = json.loads(result.stdout)
         self.assertEqual(contexts, [{'hookEventName': 'PostToolUse', 'additionalContext':
-            'Baton input is pending. Message (guidance) from coordinator [id: mid-loop] is unread. Read the complete body with baton read mid-loop.'}])
+            'Baton input for this turn. Handle the following complete messages:\nMessage (guidance) from coordinator [id: mid-loop]:\nNew complete body.\nλ🙂\n\nThe complete input is available in this turn.'}])
         self.assertIsNone(self.db.execute("SELECT receipt FROM messages WHERE id='mid-loop'").fetchone()[0])
         self.assertEqual(self.db.execute("SELECT message FROM message_reads ORDER BY message").fetchall(), [('dispatch:assignment',)])
 
-    def test_tool_hook_points_to_the_oldest_body_without_recording_a_read(self):
+    def test_tool_hook_injects_complete_bodies_in_order_without_unowned_read(self):
         body = "Quote ' \"\nλ🙂\n" + 'abcdef' * 3000 + '\nend\n'
         self.owe(body=body)
         self.owe(ident='second', kind='recovery', body='Second body.')
         context = self.tool_hook()['hookSpecificOutput']['additionalContext']
-        self.assertIn('baton read message:coordinator:mid-turn', context)
-        self.assertNotIn(body, context)
-        self.assertNotIn('Second body.', context)
+        self.assertIn(body, context)
+        self.assertIn('Second body.', context)
+        self.assertLess(context.index(body), context.index('Second body.'))
+        self.assertNotIn('baton read', context)
         self.assertEqual(self.db.execute("SELECT body FROM messages WHERE id='message:coordinator:mid-turn'").fetchone()[0], body)
         self.assertEqual(self.db.execute("SELECT message FROM message_reads ORDER BY message").fetchall(), [('dispatch:assignment',)])
-        read = subprocess.run([self.binary, 'read', self.path, 'message:coordinator:mid-turn'], capture_output=True, text=True, env=self.env)
-        self.assertEqual(read.returncode, 0, read.stdout + read.stderr)
-        self.assertEqual(json.loads(read.stdout)[0]['delivery']['body'], body)
-        self.assertIn('baton read second', self.tool_hook()['hookSpecificOutput']['additionalContext'])
 
     def test_admitted_tool_loop_records_a_read_only_after_supported_read(self):
         directory = self.home / 'attempt'
@@ -265,7 +277,7 @@ print(json.dumps(results), flush=True)
             self.assertEqual(outputs[-1], 'exit 0')
             first, second, third = json.loads(outputs[0])
             self.assertIsNone(first)
-            self.assertIn('baton read admitted-message', second['hookSpecificOutput']['additionalContext'])
+            self.assertIn('Admitted full body.', second['hookSpecificOutput']['additionalContext'])
             self.assertNotIn('Admitted full body.', second['hookSpecificOutput']['additionalContext'])
             self.assertIsNone(third)
             rows = self.db.execute("SELECT attempt,message,recipient,native,identity,handled FROM message_reads WHERE message='admitted-message'").fetchall()
@@ -313,9 +325,9 @@ print(json.dumps(results), flush=True)
         self.owe()
         self.db.execute("UPDATE messages SET receipt='legacy-only' WHERE id='message:coordinator:mid-turn'")
         decision = self.hook()
-        self.assertIn('Baton holds 1 owed inputs', decision['reason'])
+        self.assertIn('Baton holds 1 unread inputs', decision['reason'])
         self.assertNotIn('acknowledge', decision['reason'])
-        self.assertIn('baton read message:coordinator:mid-turn', self.tool_hook()['hookSpecificOutput']['additionalContext'])
+        self.assertIn('New detail.', self.tool_hook()['hookSpecificOutput']['additionalContext'])
 
     def combined_lifecycle(self, body, label):
         ident = 'lifecycle-guidance'
@@ -344,29 +356,23 @@ with sqlite3.connect(config['database']) as db:
     assert db.execute('SELECT count(*) FROM messages WHERE id=?', (config['id'],)).fetchone()[0] == 0
     db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,'coordinator','worker','guidance',?)",
                (config['id'], pathlib.Path(config['bodyPath']).read_text(encoding='utf-8')))
-hook = invoke('pointer', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'PostToolUse','tool_name':'Bash'}))
+hook = invoke('injected-input', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'PostToolUse','tool_name':'Bash'}))
 context = json.loads(hook.stdout)['hookSpecificOutput']['additionalContext']
-assert 'baton read ' + config['id'] in context
-assert config['tail'] not in context
-assert reads() == [], 'A pointer must not record a complete read'
-before = invoke('stop-before-read', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'Stop','stop_hook_active':True}))
-assert json.loads(before.stdout)['decision'] == 'block'
-assert reads() == []
-read = invoke('actual-read', [config['binary'],'read',config['database'],config['id']])
-message = json.loads(read.stdout)[0]['delivery']
-assert message['id'] == config['id'] and message['body'].endswith(config['tail'])
-actual_sha = hashlib.sha256(message['body'].encode()).hexdigest()
-assert actual_sha == config['sha256']
+assert config['tail'] in context
+assert 'baton read ' + config['id'] not in context
 rows = reads()
 assert len(rows) == 1 and rows[0][:3] == ('attempt-1','worker','native-1') and rows[0][3] and rows[0][4] is None
-after = invoke('pointer-after-read', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'PostToolUse','tool_name':'Bash'}))
+before = invoke('stop-after-injection', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'Stop','stop_hook_active':True}))
+assert json.loads(before.stdout)['decision'] == 'block'
+assert config['id'] not in json.loads(before.stdout)['reason']
+after = invoke('post-injection', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'PostToolUse','tool_name':'Bash'}))
 assert after.stdout.strip() == ''
 request = invoke('completion-request', [config['binary'],'completion-request',config['database'],'Read the complete input and finished the work.'])
 admitted = json.loads(request.stdout)[0]
 assert admitted['admission']['status'] == 'admitted', admitted
 stop = invoke('stop-after-request', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'Stop','stop_hook_active':True}))
 assert stop.stdout.strip() == ''
-evidence = {'pointerWithoutRead':True,'guidanceProcess':os.getpid(),'completeReadSha256':actual_sha,'tail':config['tail'],'requestId':admitted['id'],'requestWake':admitted['wake'],'stopAllowed':True,'nativeRead':rows[0][:4]}
+evidence = {'fullBodyInjectedAndRecorded':True,'guidanceProcess':os.getpid(),'completeReadSha256':actual_sha,'tail':config['tail'],'requestId':admitted['id'],'requestWake':admitted['wake'],'stopAllowed':True,'nativeRead':rows[0][:4]}
 print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_id':'native-1','result':json.dumps(evidence)}), flush=True)
 ''')
         tail = 'TAIL-READ-PROOF-' + label
@@ -399,14 +405,14 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             self.assertIsNone(self.hook(active=True))
             self.owe(ident='unread-after-exit', body='Input committed after the native exit.')
             self.assertEqual(self.db.execute("SELECT m.id FROM messages m WHERE m.recipient='worker' AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=m.id AND r.recipient=m.recipient)").fetchall(), [('unread-after-exit',)])
-            self.assertIn('Baton holds 1 owed inputs', self.hook(active=True)['reason'])
+            self.assertIn('Baton holds 1 unread inputs', self.hook(active=True)['reason'])
         finally:
             subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True)
 
-    def test_pointer_actual_read_completion_stop_and_ended_attempt(self):
+    def test_injected_read_completion_stop_and_ended_attempt(self):
         self.combined_lifecycle('Complete short body.\nTAIL-READ-PROOF-short', 'short')
 
-    def test_large_body_tail_actual_read_completion_stop_and_ended_attempt(self):
+    def test_large_body_injected_read_completion_stop_and_ended_attempt(self):
         self.combined_lifecycle('Large complete body λ🙂.\n' * 25000 + 'TAIL-READ-PROOF-large', 'large')
 
 

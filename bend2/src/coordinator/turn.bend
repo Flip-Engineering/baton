@@ -387,7 +387,7 @@ def codex_span_observe_sql(+id: String, +player: String, +message_value: String,
   +event = codex_span_result_sql(message_value,terminal_value)
   "BEGIN IMMEDIATE;CREATE TEMP TABLE baton_observation_frame(value TEXT NOT NULL);"
   ++ "INSERT INTO temp.baton_observation_frame(value) SELECT value FROM (" ++ event ++ ") WHERE json_valid(value);"
-  ++ C.observe_identity_sql_expr(player,frame)
+  ++ C.observe_identity_sql_expr(player,frame,"codex")
   ++ Bool.pick(String,sealed,"",C.completion_sql_expr(id,player,frame))
   ++ "SELECT coalesce((SELECT json_object('type','result','is_error',json_extract(value,'$.is_error')) FROM temp.baton_observation_frame),'');"
   ++ "DROP TABLE temp.baton_observation_frame;COMMIT;"

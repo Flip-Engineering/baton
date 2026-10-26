@@ -3,6 +3,7 @@
 # one argument per line.
 import Base
 import ../src/coordinator/stop-hook.bend as StopHook
+import ../src/coordinator/message-status.bend as MessageStatus
 import ../src/harness/claude-player.bend as Claude
 import ../src/coordinator/commands.bend as C
 import ../src/coordinator/agent-actions.bend as Actions
@@ -58,7 +59,13 @@ def lifecycle_admitted(+db: String, +directory: String, start: P.RetainedStart) 
       lifecycle_observed(db,directory,handle,"",line)
 
 def decision_statement() -> IO(Unit):
-  IO.print(StopHook.decision_sql("worker","/attempt","{\"live\":true,\"identity\":\"identity-1\"}"))
+  IO.print(StopHook.decision_sql("worker"))
+
+def record_statement(args: List<String>) -> IO(Unit):
+  match args:
+    case directory <> attempt <> native <> identity <> saved <> Nil{}:
+      IO.print(MessageStatus.record_sql("worker",directory,attempt,native,identity,saved,False{}))
+    case other: IO.die(Unit,2,"usage: stop-hook-entry record-sql DIRECTORY ATTEMPT NATIVE IDENTITY SAVED_JSON")
 
 def lines(args: List<String>) -> IO(Unit):
   match args:
@@ -71,6 +78,7 @@ def route(args: List<String>) -> IO(Unit):
   match args:
     case "--stop-hook" <> Nil{}: StopHook.run()
     case "decision-sql" <> Nil{}: decision_statement()
+    case "record-sql" <> rest: record_statement(rest)
     case "arguments" <> Nil{}: lines(Claude.arguments("claude","claude-opus-5-5","high"))
     case "schema" <> Nil{}: IO.write(C.schema())
     case "read" <> db <> id <> Nil{}: Agent.execute(db,"worker",Actions.Read{[id]})
