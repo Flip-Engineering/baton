@@ -94,6 +94,16 @@ def transact_sql(+db: String, sql: String) -> IO(Result<&1,&1,U32 & String,Strin
     committed : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,sql)
     publish_after_commit(db,committed)
 
+# The held-writer failure in #1054, instance B2, stopped native span reads.
+# A busy or locked transaction can be retried after its busy handler returns.
+def busy(+code: U32) -> Bool:
+  Bool.or(U32.is_eq(code,5),U32.is_eq(code,6))
+
+def busy_again(result: Result<&1,&1,U32 & String,String>, again: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Result<&1,&1,U32 & String,String>):
+  match result:
+    case Fail{(+code,+text)}: Bool.pick(IO(Result<&1,&1,U32 & String,String>),busy(code),again(Unit{}),IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,text)}))
+    case Done{saved}: IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
+
 
 law rolled_back_transaction_publishes_nothing:
   for db: String
