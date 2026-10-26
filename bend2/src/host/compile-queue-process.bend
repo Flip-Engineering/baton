@@ -81,9 +81,11 @@ def expand_once( +rows: List<&2,String>, +members: List<&2,U32>) -> List<&2,U32>
       expand_once(rest,Choice.choose(List<&2,U32>,Bool.and(contains_pid(members,ppid),Bool.not(contains_pid(members,pid))), _choice_unit => pid <> members, _choice_unit => members))
 
 @unsafe
-def expand_tree(~again_expand_tree: (@+rows: List<&2,String> -> @+members: List<&2,U32> -> List<&2,U32>), +rows: List<&2,String>, +members: List<&2,U32>) -> List<&2,U32>:
-  +next = expand_once(rows,members)
+def expand_next(~again_expand_tree: (@+rows: List<&2,String> -> @+members: List<&2,U32> -> List<&2,U32>), +rows: List<&2,String>, +members: List<&2,U32>, +next: List<&2,U32>) -> List<&2,U32>:
   Choice.choose(List<&2,U32>,Nat.is_eq(List.length(&2,U32,next),List.length(&2,U32,members)), _choice_unit => next, _choice_unit => again_expand_tree(rows,next))
+
+def expand_tree( +rows: List<&2,String>, +members: List<&2,U32>) -> List<&2,U32>:
+  expand_next(expand_tree,rows,members,expand_once(rows,members))
 
 def measure_tree_rows( +rows: List<&2,String>, +members: List<&2,U32>, +total: Nat) -> IO(Nat):
   match rows:
@@ -95,7 +97,7 @@ def measure_tree_rows( +rows: List<&2,String>, +members: List<&2,U32>, +total: N
         measure_tree_rows(rest,members,Nat.add(total,kb))
 
 def measure(+rows: List<&2,String>, +root: U32, +tree: Bool) -> IO(Nat):
-  Choice.choose(IO(Nat),tree, _choice_unit => measure_tree_rows(rows,expand_tree(expand_tree,rows,root <> Nil{}),0n), _choice_unit => measure_rows(rows,rows,root,tree,0n))
+  Choice.choose(IO(Nat),tree, _choice_unit => measure_tree_rows(rows,expand_tree(rows,root <> Nil{}),0n), _choice_unit => measure_rows(rows,rows,root,tree,0n))
 
 def memory_info() -> IO(String):
   do IO<String>:
