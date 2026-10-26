@@ -117,7 +117,7 @@ class StopHook(unittest.TestCase):
         self.request()
         self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
         self.db.execute("INSERT INTO executions VALUES('worker','attempt-1','/attempt','running')")
-        self.owe()
+        self.owe(kind='question')
         sql = self.decision_sql()
 
         unread = json.loads(self.db.execute(sql).fetchone()[0])
