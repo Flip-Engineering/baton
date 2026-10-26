@@ -4,7 +4,7 @@ import ./compile-queue-files.bend as QF
 import ../host/files.bend as F
 import ./posix.bend as P
 
-def maybe_peak(+text: String) -> Maybe<Nat>:
+def maybe_peak(+text: String) -> Maybe<&2,Nat>:
   Nat.read(S.field(text,"peak_kb"))
 
 def raise_value(+path: String, +peak: Nat) -> IO(Unit):
@@ -40,20 +40,20 @@ def raise_attempt(+attempt: String, +peak: Nat, +failed: Bool) -> IO(Unit):
     Bool.pick(IO(Unit),failed,IO.pure(Unit,Unit{}),
       raise_paths(tier_paths(S.state(attempt),S.field(group,"group"),shape,S.field(meta,"entry"),mode,S.field(group,"compiler"),S.field(meta,"kind")),peak))
 
-def expected_result(result: Maybe<Nat>, rest: List<&2,String>) -> IO(Maybe<Nat>):
+def expected_result(result: Maybe<&2,Nat>, rest: List<&2,String>) -> IO(Maybe<&2,Nat>):
   match result:
-    case Some{peak}: IO.pure(Maybe<Nat>,Some{peak})
+    case Some{peak}: IO.pure(Maybe<&2,Nat>,Some{peak})
     case None{}: expected_paths(rest)
 
-def expected_paths( +paths: List<&2,String>) -> IO(Maybe<Nat>):
+def expected_paths( +paths: List<&2,String>) -> IO(Maybe<&2,Nat>):
   match paths:
-    case Nil{}: IO.pure(Maybe<Nat>,None{})
+    case Nil{}: IO.pure(Maybe<&2,Nat>,None{})
     case +path <> rest:
-      do IO<Maybe<Nat>>:
+      do IO<Maybe<&2,Nat>>:
         +text : String <- Bool.pick(IO(String),String.is_empty(path),IO.pure(String,""),S.read(path))
         expected_result(maybe_peak(text),rest)
 
-def expected(+state: String, +ticket: String) -> IO(Maybe<Nat>):
+def expected(+state: String, +ticket: String) -> IO(Maybe<&2,Nat>):
   +base = state ++ "/peaks/"
   +kind = S.field(ticket,"kind")
   +entry = S.entry_key(S.field(ticket,"entry"))

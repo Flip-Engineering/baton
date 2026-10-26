@@ -87,7 +87,7 @@ def insert_ticket( +items: List<&2,String>, +ticket: String) -> List<&2,String>:
     case Nil{}: ticket <> Nil{}
     case +head <> +rest: Bool.pick(List<&2,String>,ticket_before(ticket,head),ticket <> head <> rest,head <> insert_ticket(rest,ticket))
 
-def expected_fields(value: Maybe<Nat>) -> String:
+def expected_fields(value: Maybe<&2,Nat>) -> String:
   match value:
     case None{}: "expected_kb=0\nhistory=0\n"
     case Some{peak}: "expected_kb=" ++ Nat.show(peak) ++ "\nhistory=1\n"
@@ -111,7 +111,7 @@ def load_tickets_match_2(+rest: List<&2,String>, +name: String, +path: String, +
       Bool.pick(IO(List<&2,String>),Bool.and(U32.is_gt(value,0),valid_name(name)),
         do IO<List<&2,String>>:
           +completed : String <- complete_ticket(text)
-          expected : Maybe<Nat> <- H.expected(state,completed)
+          expected : Maybe<&2,Nat> <- H.expected(state,completed)
           +pri : String <- S.read(state ++ "/keys/" ++ S.field(completed,"key") ++ "/priority")
           +row : String <- IO.pure(String,"id=" ++ name ++ "\npriority=" ++ U32.show(priority(S.field(pri,"priority"))) ++ "\n" ++ expected_fields(expected) ++ completed)
           load_tickets(rest,state,insert_ticket(acc,row)),
@@ -287,43 +287,43 @@ def ticket_body(+attempt: String, +queued: String, +pid: U32, +start: String) ->
 def claim_body(+ticket: String, +view: QueueView, +root: U32, +now: String) -> String:
   "pid=" ++ S.field(ticket,"pid") ++ "\nstarttime=" ++ S.field(ticket,"starttime") ++ "\nroot=" ++ U32.show(root) ++ "\nmeasure=session\nkey=" ++ S.field(ticket,"key") ++ "\ngroup=" ++ S.field(ticket,"group") ++ "\nentry=" ++ S.field(ticket,"entry") ++ "\nexpected_kb=" ++ Nat.show(need(view,ticket)) ++ "\nhistory=" ++ S.field(ticket,"history") ++ "\nbackfill=" ++ Bool.pick(String,String.eq(S.field(S.first(tickets(view)),"id"),S.field(ticket,"id")),"0","1") ++ "\nadmitted_ns=" ++ now ++ "\n"
 
-def polled_claim(result: Result<&1,&1,U32 & String,U32>, +ticket_path: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32>>):
+def polled_claim(result: Result<&1,&1,U32 & String,U32>, +ticket_path: String) -> IO(Result<&1,&1,U32 & String,Maybe<&2,U32>>):
   match result:
-    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Maybe<U32>>,Fail{error})
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Maybe<&2,U32>>,Fail{error})
     case Done{fd}:
-      do IO<Result<&1,&1,U32 & String,Maybe<U32>>>:
+      do IO<Result<&1,&1,U32 & String,Maybe<&2,U32>>>:
         removed : Unit <- S.remove(ticket_path)
-        IO.pure(Result<&1,&1,U32 & String,Maybe<U32>>,Done{Some{fd}})
+        IO.pure(Result<&1,&1,U32 & String,Maybe<&2,U32>>,Done{Some{fd}})
 
 def has_id(items: List<&2,String>, +id: String) -> Bool:
   match items:
     case Nil{}: False{}
     case item <> rest: Bool.or(String.eq(S.field(item,"id"),id),has_id(rest,id))
 
-def poll_locked(+state: String, +id: String, +body: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32>>):
-  do IO<Result<&1,&1,U32 & String,Maybe<U32>>>:
+def poll_locked(+state: String, +id: String, +body: String) -> IO(Result<&1,&1,U32 & String,Maybe<&2,U32>>):
+  do IO<Result<&1,&1,U32 & String,Maybe<&2,U32>>>:
     +view : QueueView <- load(state)
     +next : String <- IO.pure(String,next_eligible(tickets(view),view))
-    Bool.pick(IO(Result<&1,&1,U32 & String,Maybe<U32>>),String.eq(S.field(next,"id"),id),
-      do IO<Result<&1,&1,U32 & String,Maybe<U32>>>:
+    Bool.pick(IO(Result<&1,&1,U32 & String,Maybe<&2,U32>>),String.eq(S.field(next,"id"),id),
+      do IO<Result<&1,&1,U32 & String,Maybe<&2,U32>>>:
         +root : U32 <- IO.try(U32,P.HostPosix.sid())
         +now : String <- IO.try(String,P.HostPosix.now_ns())
         created : Result<&1,&1,U32 & String,U32> <- P.HostPosix.create_locked(state ++ "/admission/running/" ++ id,claim_body(next,view,root,now))
         polled_claim(created,state ++ "/admission/waiting/" ++ id),
-      do IO<Result<&1,&1,U32 & String,Maybe<U32>>>:
+      do IO<Result<&1,&1,U32 & String,Maybe<&2,U32>>>:
         written : Unit <- Bool.pick(IO(Unit),has_id(tickets(view),id),IO.pure(Unit,Unit{}),IO.try(Unit,F.Files.write_shared(state ++ "/admission/waiting/" ++ id,body)))
-        IO.pure(Result<&1,&1,U32 & String,Maybe<U32>>,Done{None{}}))
+        IO.pure(Result<&1,&1,U32 & String,Maybe<&2,U32>>,Done{None{}}))
 
-def poll(+state: String, +id: String, +body: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32>>):
-  do IO<Result<&1,&1,U32 & String,Maybe<U32>>>:
+def poll(+state: String, +id: String, +body: String) -> IO(Result<&1,&1,U32 & String,Maybe<&2,U32>>):
+  do IO<Result<&1,&1,U32 & String,Maybe<&2,U32>>>:
     +fd : U32 <- IO.try(U32,lock(state))
-    result : Result<&1,&1,U32 & String,Maybe<U32>> <- poll_locked(state,id,body)
+    result : Result<&1,&1,U32 & String,Maybe<&2,U32>> <- poll_locked(state,id,body)
     closed : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.lock_release(fd)
-    IO.pure(Result<&1,&1,U32 & String,Maybe<U32>>,result)
+    IO.pure(Result<&1,&1,U32 & String,Maybe<&2,U32>>,result)
 
 @unsafe
 
-def wait_result(result: Result<&1,&1,U32 & String,Maybe<U32>>, +state: String, +id: String, +body: String) -> IO(Result<&1,&1,U32 & String,U32>):
+def wait_result(result: Result<&1,&1,U32 & String,Maybe<&2,U32>>, +state: String, +id: String, +body: String) -> IO(Result<&1,&1,U32 & String,U32>):
   match result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})
     case Done{Some{fd}}: IO.pure(Result<&1,&1,U32 & String,U32>,Done{fd})
@@ -340,7 +340,7 @@ def wait_loop(+state: String, +id: String, +body: String) -> IO(Result<&1,&1,U32
     Bool.pick(IO(Result<&1,&1,U32 & String,U32>),U32.is_gt(signal,0),
       IO.pure(Result<&1,&1,U32 & String,U32>,Fail{(125,"admission canceled")}),
       do IO<Result<&1,&1,U32 & String,U32>>:
-        result : Result<&1,&1,U32 & String,Maybe<U32>> <- poll(state,id,body)
+        result : Result<&1,&1,U32 & String,Maybe<&2,U32>> <- poll(state,id,body)
         wait_result(result,state,id,body))
 
 def old_canceled_match_1(+old_pid: U32, +signal: U32, alive: Result<&1,&1,U32 & String,U32>) -> IO(Unit):

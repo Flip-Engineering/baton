@@ -14,7 +14,7 @@ def at( +values: List<&2,String>, +index: U32) -> String:
     case Nil{}: ""
     case value <> rest: Bool.pick(String, U32.is_eq(index,0), value, at(rest,U32.sub(index,1)))
 
-def number_result(result: Maybe<U32>) -> U32:
+def number_result(result: Maybe<&2,U32>) -> U32:
   match result:
     case Some{found}: found
     case None{}: 0
