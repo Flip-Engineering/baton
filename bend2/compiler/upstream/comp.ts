@@ -8,8 +8,13 @@ import * as Bend from "./bend.ts";
 
 const DIAGNOSTICS = process.env.BEND_COMPILER_DIAGNOSTICS === "1";
 const diagnostic_started = performance.now();
+let diagnostic_context: { event: string; details: Record<string, unknown> } | null = null;
+function diagnostic_stage(event: string, details: Record<string, unknown> = {}): void {
+  if (DIAGNOSTICS) diagnostic_context = { event, details };
+}
 function diagnostic(event: string, details: Record<string, unknown> = {}): void {
   if (!DIAGNOSTICS) return;
+  diagnostic_stage(event, details);
   fs.writeSync(2, JSON.stringify({
     compiler_diagnostic: event,
     at: new Date().toISOString(),
@@ -19,6 +24,17 @@ function diagnostic(event: string, details: Record<string, unknown> = {}): void 
       uses: USES.size, folds: FOLDS.size, spines: SPINES.size, consts: CONSTS.size },
     ...details,
   }) + "\n");
+}
+export function diagnostic_error(error: unknown): void {
+  if (!DIAGNOSTICS) return;
+  const last_operation = diagnostic_context;
+  try {
+    diagnostic("exception", { last_operation, error: error instanceof Error
+      ? { name: error.name, message: error.message, stack: error.stack ?? null }
+      : { name: typeof error, message: String(error), stack: null } });
+  } catch {
+    // Keep the original compiler error available if stderr rejects the diagnostic.
+  }
 }
 function diagnostic_join(site: string, values: (string | number)[],
   separator: string): string {
@@ -1661,16 +1677,19 @@ function carb_book(src: Bend.Book, roots: Bend.Name[]): Carb {
     if (SRCS.has(d)) {
       continue;
     }
+    diagnostic_stage("carb.definition", { name: d });
     memo_gc();
     const tld = def_body(cb, d);
     const own: Src = { refs: new Set(), deps: new Set(), flat: done_live(tld) };
     SRCS.set(d, own);
+    diagnostic_stage("carb.types", { name: d });
     for (const x of tld?.$ === "ADT" ? tld.c : tld ? [tld] : []) {
       queue.push(...type_adts(cb, x.T));
     }
     if (!done_live(tld)) {
       continue;
     }
+    diagnostic_stage("carb.body", { name: d });
     term_any(cb, tld.h as HTerm, (s, tail) => {
       if (s.$ === "Ann") {
         queue.push(...type_adts(cb, s.T));
@@ -3723,8 +3742,10 @@ function compile_def(fl: File, k: Bend.Name, tld: Def): void {
   diagnostic("definition.begin", { name: k, segments: fl.segs.length });
   Object.assign(fl, { fresh: new Map(), brwl: new Map(), rest: [] });
   memo_gc();
+  diagnostic_stage("definition.open", { name: k });
   const vals = emit_open(fl, k);
   fl.segs.push(fl.seg);
+  diagnostic_stage("definition.body", { name: k });
   emit_body(fl, tld.h as HTerm, tld.T, [], vals, null);
   diagnostic("definition.end", { name: k, duration_ms: performance.now() - diagnostic_before,
     segments: fl.segs.length, spins: fl.spins.length, tables: fl.tabs.size,
@@ -3863,6 +3884,7 @@ export function compile_book(book: Bend.Book): string {
   diagnostic("carb.begin");
   const cb = carb_book(book, ["main", ...RUNTIME_ADTS]);
   diagnostic("carb.end", { sources: SRCS.size });
+  diagnostic_stage("show.begin");
   const show = show_main(book);
   diagnostic("show.end");
   // SRCS and TLD liveness are fixed after carb_book; reuse both ordered lists
@@ -3880,6 +3902,7 @@ export function compile_book(book: Bend.Book): string {
     [cb.lend, BRWS].forEach((m) => m.clear());
     const fl = file_new(cb, "Term");
     fl.dry = dry;
+    diagnostic_stage("pass.layouts", { pass: pass_number });
     for (const k of SRCS.keys()) {
       for (const c of (cb.book.tlds[k] as Bend.ADT).c ?? []) {
         fl.cids.set(c.k, lay_node(fl.book, c.k).ks.length);
@@ -3894,7 +3917,10 @@ export function compile_book(book: Bend.Book): string {
       // built before this point and would otherwise keep the old ones,
       // and their parsed graphs, live through the whole fixed point.
       v_dropped = true;
-      v_drop(cb, v_live(cb));
+      diagnostic_stage("pass.v_live", { pass: pass_number });
+      const live = v_live(cb);
+      diagnostic_stage("pass.v_drop", { pass: pass_number });
+      v_drop(cb, live);
       [emission_defs, defs].forEach((ps) => ps.forEach((p) => {
         p[1] = cb.book.tlds[p[0]] as Def;
       }));
@@ -3902,6 +3928,7 @@ export function compile_book(book: Bend.Book): string {
     for (const [k, tld] of defs) {
       compile_def(fl, k, tld);
     }
+    diagnostic_stage("pass.facts", { pass: pass_number });
     facts_converge(cb);
     let constant_entries = 0;
     for (const values of fl.consts.values()) constant_entries += values.size;
