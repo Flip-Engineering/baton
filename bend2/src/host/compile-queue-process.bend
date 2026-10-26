@@ -148,7 +148,7 @@ def env_present(values: List<&2,String>, +name: String) -> Bool:
 def environ( +pid: U32, +name: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     +bytes : String <- IO.try(String,T.Text.read(proc_base(pid) ++ "/environ"))
-    +values = String.split(bytes,Char.from_u32(0))
+    +values : List<&2,String> <- IO.pure(List<&2,String>,String.split(bytes,Char.from_u32(0)))
     IO.pure(Result<&1,&1,U32 & String,String>,Bool.pick(Result<&1,&1,U32 & String,String>,env_present(values,name),Done{env_field(values,name)},Fail{(2,"process environment variable is absent")}))
 
 def hidden_match_1(signaled: Result<&1,&1,U32 & String,Unit>) -> IO(Bool):

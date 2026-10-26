@@ -39,9 +39,9 @@ def field( +lines: List<&2,String>, +name: String) -> String:
 def CompileQueueArtifact.c_source_kind( +path: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     +record : String <- IO.try(String,F.Files.byte_properties(path))
-    +lines = String.lines(record)
-    +binary = Bool.or(String.eq(field(lines,"bytes"),"0"),
-      Bool.or(String.eq(field(lines,"zeros"),"1"),String.eq(field(lines,"prefix"),"7f454c46")))
+    +lines : List<&2,String> <- IO.pure(List<&2,String>,String.lines(record))
+    +binary : Bool <- IO.pure(Bool,Bool.or(String.eq(field(lines,"bytes"),"0"),
+      Bool.or(String.eq(field(lines,"zeros"),"1"),String.eq(field(lines,"prefix"),"7f454c46"))))
     IO.pure(Result<&1,&1,U32 & String,String>,Done{Bool.pick(String,binary,"binary","text")})
 
 def append( +left: List<&2,String>, +right: List<&2,String>) -> List<&2,String>:

@@ -295,6 +295,11 @@ def polled_claim(result: Result<&1,&1,U32 & String,U32>, +ticket_path: String) -
         removed : Unit <- S.remove(ticket_path)
         IO.pure(Result<&1,&1,U32 & String,Maybe<U32>>,Done{Some{fd}})
 
+def has_id(items: List<&2,String>, +id: String) -> Bool:
+  match items:
+    case Nil{}: False{}
+    case item <> rest: Bool.or(String.eq(S.field(item,"id"),id),has_id(rest,id))
+
 def poll_locked(+state: String, +id: String, +body: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32>>):
   do IO<Result<&1,&1,U32 & String,Maybe<U32>>>:
     +view : QueueView <- load(state)
@@ -306,7 +311,7 @@ def poll_locked(+state: String, +id: String, +body: String) -> IO(Result<&1,&1,U
         created : Result<&1,&1,U32 & String,U32> <- P.HostPosix.create_locked(state ++ "/admission/running/" ++ id,claim_body(next,view,root,now))
         polled_claim(created,state ++ "/admission/waiting/" ++ id),
       do IO<Result<&1,&1,U32 & String,Maybe<U32>>>:
-        written : Unit <- IO.try(Unit,F.Files.write_shared(state ++ "/admission/waiting/" ++ id,body))
+        written : Unit <- Bool.pick(IO(Unit),has_id(tickets(view),id),IO.pure(Unit,Unit{}),IO.try(Unit,F.Files.write_shared(state ++ "/admission/waiting/" ++ id,body)))
         IO.pure(Result<&1,&1,U32 & String,Maybe<U32>>,Done{None{}}))
 
 def poll(+state: String, +id: String, +body: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32>>):
