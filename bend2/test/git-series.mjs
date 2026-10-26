@@ -7,7 +7,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSyn
 import { basename, dirname, join, resolve } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as model from '../harness/git-series.mjs';
 
 const SOURCE = fileURLToPath(new URL('../harness/git-series.mjs', import.meta.url));
@@ -47,22 +47,25 @@ function execution(selected, environment = {}) {
 }
 // Fake GitHub responses. `installed` lists the account owners with an App
 // installation. `tamper` overrides one field of one response for a negative case.
-function installation_api(github, installed, tamper = {}) {
+function installation_api(github, installed, tamper = {}, permissions = model.PERMISSIONS) {
   const calls = [];
   const answer = (name, value) => ({ ...value, ...(tamper.name === name ? { [tamper.field]: tamper.value } : {}) });
   const request = async (api_path, authorization, body) => {
     calls.push({ api_path, authorization, body });
-    if (api_path === '/app') return answer('app', { id: github.appId, slug: github.slug, client_id: github.clientId });
+    if (api_path === '/app') return answer('app', { id: github.appId, slug: github.slug, client_id: github.clientId, permissions });
     const lookup = /^\/repos\/([^/]+)\/([^/]+)\/installation$/.exec(api_path);
     if (lookup) {
       const found = installed.find(entry => entry.owner === lookup[1]);
       if (!found) throw new model.Missing('GitHub reported no matching resource.');
       return answer('lookup', { id: found.id, app_id: github.appId, app_slug: github.slug,
-        account: { login: found.owner }, suspended_at: null, permissions: { ...model.PERMISSIONS } });
+        account: { login: found.owner }, suspended_at: null, permissions: { ...permissions } });
     }
     const access = /^\/app\/installations\/([0-9]+)\/access_tokens$/.exec(api_path);
     assert.ok(access, api_path);
-    return answer('issue', { token: 'fixture-token-' + access[1], permissions: { ...model.PERMISSIONS },
+    const owner = installed.find(entry => String(entry.id) === access[1]).owner;
+    return answer('issue', { token: 'fixture-token-' + access[1], permissions: { ...body.permissions },
+      repository_selection: body.repositories ? 'selected' : 'all',
+      repositories: body.repositories?.map(name => ({ full_name: owner + '/' + name })),
       expires_at: new Date(Date.now() + 86400000).toISOString() });
   };
   return { calls, request };
@@ -144,6 +147,63 @@ test('a repository whose owner has no App installation refuses and names the App
     error => error instanceof model.Refusal && error.message === 'The GitHub App fixture-series-gpt is not installed for flip-engineer; '
       + 'install it on flip-engineer to grant access to flip-engineer/flip.');
   assert.ok(!fixture.calls.some(call => call.api_path.includes('/access_tokens')));
+});
+
+test('Git credentials accept granted workflow and actions permissions and keep the token request subset', async () => {
+  for (const extra of [{}, { workflows: 'write' }, { workflows: 'write', actions: 'read' }]) {
+    const permissions = { contents: 'write', pull_requests: 'write', metadata: 'read', ...extra };
+    const fixture = installation_api(identities.gpt, [{ owner: 'Flip-Engineering', id: 5100 },
+      { owner: 'flip-engineer', id: 5200 }], { name: 'lookup', field: 'permissions', value: permissions });
+    const issue = (home, identity, repository) => model.installation_token(home, identity, repository,
+      () => 'fixture-jwt-no-key', fixture.request);
+    for (const repository of ['Flip-Engineering/baton', 'flip-engineer/flip']) {
+      let response = '';
+      await model.helper({ registry, series_key: 'gpt', repository, operation: 'get' },
+        Readable.from([`protocol=https\nhost=github.com\npath=${repository}.git\n\n`]),
+        { write(value) { response += value; } }, issue);
+      assert.ok(response.startsWith('username=x-access-token\npassword=fixture-token-'));
+      assert.deepEqual(fixture.calls.at(-1).body,
+        { permissions: { contents: 'write', pull_requests: 'write', metadata: 'read' } });
+    }
+  }
+});
+
+test('identity metadata and issued tokens accept additional granted permissions', async () => {
+  const permissions = { contents: 'write', pull_requests: 'write', metadata: 'read', workflows: 'write' };
+  const home = join(directory, 'expanded-grants'); mkdirSync(home);
+  save(join(home, 'identity-series.json'), { seriesKey: 'gpt', displaySeries: 'GPT',
+    github: { ...identities.gpt, permissions } });
+  const alternative = join(directory, 'expanded-registry.json');
+  save(alternative, { models, series: { ...series, gpt: home } });
+  assert.deepEqual(model.selected_identity(alternative, null, 'gpt')[2].permissions, permissions);
+  const fixture = installation_api(identities.gpt, [{ owner: 'Flip-Engineering', id: 5100 }],
+    { name: 'issue', field: 'permissions', value: permissions });
+  assert.ok(await model.installation_token(home, identities.gpt, REPOSITORY,
+    () => 'fixture-jwt-no-key', fixture.request));
+});
+
+test('missing or weaker Git permissions are refused by name in identities, installations and tokens', async () => {
+  const home = join(directory, 'insufficient-grants'); mkdirSync(home);
+  const alternative = join(directory, 'insufficient-registry.json');
+  save(alternative, { models, series: { ...series, gpt: home } });
+  for (const [permission, required] of Object.entries({ contents: 'write', pull_requests: 'write', metadata: 'read' })) {
+    for (const level of [undefined, 'none', ...(required === 'write' ? ['read'] : [])]) {
+      const permissions = { ...model.PERMISSIONS, workflows: 'write' };
+      if (level === undefined) delete permissions[permission];
+      else permissions[permission] = level;
+      const namedRefusal = error => error instanceof model.Refusal && error.message.includes(permission + ':' + required);
+      save(join(home, 'identity-series.json'), { seriesKey: 'gpt', displaySeries: 'GPT',
+        github: { ...identities.gpt, permissions } });
+      assert.throws(() => model.selected_identity(alternative, null, 'gpt'), namedRefusal);
+      for (const name of ['lookup', 'issue']) {
+        const fixture = installation_api(identities.gpt, [{ owner: 'Flip-Engineering', id: 5100 }],
+          { name, field: 'permissions', value: permissions });
+        await assert.rejects(model.installation_token(home, identities.gpt, REPOSITORY,
+          () => 'fixture-jwt-no-key', fixture.request), namedRefusal);
+        if (name === 'lookup') assert.ok(!fixture.calls.some(call => call.api_path.endsWith('/access_tokens')));
+      }
+    }
+  }
 });
 
 test('a retained repositories map is not read and the series directory serves every repository', () => {
@@ -409,7 +469,7 @@ test('metadata requires owned regular non-writable files and verified numeric id
     value => { value.displaySeries = 'gpt'; }, value => { value.seriesKey = 'kimi'; },
     value => { value.github.botId = true; }, value => { value.github.appId = '1000'; },
     value => { value.github.commitEmail = 'someone@example.invalid'; },
-    value => { value.github.permissions.issues = 'write'; },
+    value => { value.github.permissions.contents = 'read'; },
   ].entries()) {
     const home = join(directory, 'invalid-' + index); mkdirSync(home);
     const identity = { seriesKey: 'gpt', displaySeries: 'GPT', github: structuredClone(identities.gpt) };
@@ -466,8 +526,8 @@ test('installation token validates the App, owner installation, permissions and 
   const mutations = [['app', 'id', -1], ['app', 'client_id', 'wrong'],
     ['lookup', 'id', -1], ['lookup', 'id', 5100.5], ['lookup', 'app_id', -1], ['lookup', 'app_slug', 'other-app'],
     ['lookup', 'suspended_at', 'fixture-suspended'], ['lookup', 'account', { login: 'flip-engineer' }],
-    ['lookup', 'permissions', { ...model.PERMISSIONS, issues: 'write' }],
-    ['issue', 'permissions', { ...model.PERMISSIONS, issues: 'write' }], ['issue', 'token', 'bad\nvalue'],
+    ['lookup', 'permissions', { ...model.PERMISSIONS, contents: 'read' }],
+    ['issue', 'permissions', { ...model.PERMISSIONS, pull_requests: 'read' }], ['issue', 'token', 'bad\nvalue'],
     ['issue', 'expires_at', '2000-01-01T00:00:00Z'], ['issue', 'expires_at', 9999], ['issue', 'expires_at', '9999'],
     ['issue', 'expires_at', '2099-02-30T00:00:00Z']];
   for (const [name, field, value] of mutations) {
@@ -587,4 +647,155 @@ test('check resolves a configured exact model and refuses an unmapped one withou
   const wrong = await child([SOURCE, 'check', '--registry', registry, '--model-key', 'gpt-6-astra', '--series-key', 'gpt']);
   assert.equal(wrong.code, 1); assert.equal(wrong.stdout, '');
   assert.equal(wrong.stderr, 'Series Git operation refused: The check takes an exact model key and no series option.\n');
+});
+
+const WORKFLOW_GRANTS = { contents: 'write', pull_requests: 'write', metadata: 'read', workflows: 'write' };
+function workflow_fixture(tamper = {}) {
+  const home = mkdtempSync(join(directory, 'workflow-'));
+  const github = { ...identities.gpt, permissions: { ...WORKFLOW_GRANTS } };
+  save(join(home, 'identity-series.json'), { seriesKey: 'gpt', displaySeries: 'GPT', github });
+  const registry = join(home, 'registry.json');
+  save(registry, { models: { ...models, 'gpt-6.1-sol': 'gpt' }, series: { ...series, gpt: home } });
+  const api = installation_api(github, [{ owner: 'Flip-Engineering', id: 5100 },
+    { owner: 'flip-engineer', id: 5200 }], tamper, WORKFLOW_GRANTS);
+  return { home, registry, github, api };
+}
+
+test('workflow-write requires an explicit repository and preserves exact model selection', () => {
+  const fixture = workflow_fixture();
+  for (const verb of ['launch', 'helper', 'check']) {
+    const selection = verb === 'helper' ? ['--series-key', 'gpt', 'get'] : ['--model-key', 'gpt-6.1-sol'];
+    const command = [verb, '--registry', fixture.registry, ...selection, '--profile=workflow-write'];
+    assert.throws(() => model.parse(command), /requires --repository/);
+    const parsed = model.parse([...command, '--repository', 'Flip-Engineering/riff']);
+    assert.equal(parsed.profile, 'workflow-write');
+    assert.equal(parsed.repository, 'Flip-Engineering/riff');
+    if (verb === 'check') assert.equal(model.check(parsed), undefined);
+  }
+  assert.throws(() => model.parse(['launch', '--registry', fixture.registry, '--profile', 'all']), /permission profile/);
+  assert.throws(() => model.selected_identity(fixture.registry, 'unmapped-model', null,
+    'workflow-write', 'Flip-Engineering/riff'), /Select an explicitly configured model/);
+  assert.throws(() => model.selected_identity(fixture.registry, 'gpt-6.1-sol', 'glm',
+    'workflow-write', 'Flip-Engineering/riff'), /explicit series differs/);
+  assert.throws(() => model.selected_identity(registry, 'gpt-6-astra', null,
+    'workflow-write', 'Flip-Engineering/riff'), /App identity requires workflows:write/);
+});
+
+test('workflow-write launch carries its profile and repository into the Git credential command', () => {
+  const fixture = workflow_fixture();
+  const selected = { registry: fixture.registry, model_key: 'gpt-6.1-sol', repository: 'Flip-Engineering/riff',
+    profile: 'workflow-write', native_model: true, command: ['fixture-native', '--model', 'gpt-6.1-sol'] };
+  const [, command, environment] = execution(selected, { GH_TOKEN: 'fixture-sender', GITHUB_TOKEN: 'fixture-sender' });
+  assert.deepEqual(command, selected.command);
+  const pairs = Object.fromEntries(Array.from({ length: Number(environment.GIT_CONFIG_COUNT) },
+    (_, index) => [environment[`GIT_CONFIG_KEY_${index}`], environment[`GIT_CONFIG_VALUE_${index}`]]));
+  assert.deepEqual(model.shell_split(pairs['credential.https://github.com/Flip-Engineering/riff.helper'].slice(1)),
+    [process.execPath, SOURCE, 'helper', '--registry', fixture.registry, '--series-key', 'gpt',
+      '--repository', 'Flip-Engineering/riff', '--profile', 'workflow-write']);
+  assert.equal(environment.GIT_AUTHOR_NAME, 'Flip Baton - GPT');
+  assert.equal(environment.GIT_COMMITTER_EMAIL, fixture.github.commitEmail);
+  assert.ok(!('GH_TOKEN' in environment) && !('GITHUB_TOKEN' in environment));
+  assert.throws(() => execution({ ...selected, repository: null }), /requires --repository/);
+  assert.throws(() => execution({ ...selected, command: ['fixture-native', '--model', 'other-model'] }), /native model option differs/);
+});
+
+test('workflow-write tokens request four grants for one repository in the target owner installation', async () => {
+  const fixture = workflow_fixture();
+  for (const repository of ['Flip-Engineering/riff', 'flip-engineer/riff']) {
+    await model.installation_token(fixture.home, fixture.github, repository, () => 'fixture-jwt',
+      fixture.api.request, 'workflow-write');
+    assert.deepEqual(fixture.api.calls.at(-1).body, { permissions: WORKFLOW_GRANTS, repositories: ['riff'] });
+  }
+  assert.deepEqual(fixture.api.calls.filter(call => call.api_path.endsWith('/access_tokens')).map(call => call.api_path),
+    ['/app/installations/5100/access_tokens', '/app/installations/5200/access_tokens']);
+  await model.installation_token(fixture.home, fixture.github, 'Flip-Engineering/riff', () => 'fixture-jwt', fixture.api.request);
+  assert.deepEqual(fixture.api.calls.at(-1).body,
+    { permissions: { contents: 'write', pull_requests: 'write', metadata: 'read' } });
+});
+
+test('workflow-write checks local, App, installation and issued permission levels before returning a credential', async () => {
+  for (const [permission, required] of Object.entries(WORKFLOW_GRANTS)) {
+    for (const level of [undefined, 'none', ...(required === 'write' ? ['read'] : [])]) {
+      const permissions = { ...WORKFLOW_GRANTS };
+      if (level === undefined) delete permissions[permission];
+      else permissions[permission] = level;
+      for (const name of ['identity', 'app', 'lookup', 'issue']) {
+        const fixture = workflow_fixture({ name, field: 'permissions', value: permissions });
+        if (name === 'identity') fixture.github.permissions = permissions;
+        await assert.rejects(model.installation_token(fixture.home, fixture.github, 'Flip-Engineering/riff',
+          () => 'fixture-jwt', fixture.api.request, 'workflow-write'), error => error instanceof model.Refusal
+            && error.message.includes(permission + ':' + required));
+        if (name !== 'issue') assert.ok(!fixture.api.calls.some(call => call.api_path.endsWith('/access_tokens')));
+        if (name === 'identity') assert.equal(fixture.api.calls.length, 0);
+      }
+    }
+  }
+});
+
+test('workflow-write refuses mismatched credential paths and tokens with broader or missing repository scope', async () => {
+  const scopeChanges = [['repository_selection', 'all'], ['repositories', undefined], ['repositories', []],
+    ['repositories', [{ full_name: 'Flip-Engineering/other' }]], ['repositories', [{ full_name: 'other-owner/riff' }]],
+    ['repositories', [{ full_name: 'Flip-Engineering/riff' }, { full_name: 'Flip-Engineering/other' }]]];
+  for (const [field, value] of scopeChanges) {
+    const fixture = workflow_fixture({ name: 'issue', field, value });
+    let responded = false;
+    const issue = (home, github, repository, _jwt, _request, profile) =>
+      model.installation_token(home, github, repository, () => 'fixture-jwt', fixture.api.request, profile);
+    await assert.rejects(model.helper({ registry: fixture.registry, series_key: 'gpt', operation: 'get',
+      repository: 'Flip-Engineering/riff', profile: 'workflow-write' },
+    Readable.from(['protocol=https\nhost=github.com\npath=Flip-Engineering/riff.git\n\n']),
+    { write() { responded = true; } }, issue), /must be restricted to Flip-Engineering\/riff/);
+    assert.equal(responded, false);
+  }
+  const fixture = workflow_fixture();
+  await assert.rejects(model.helper({ registry: fixture.registry, series_key: 'gpt', operation: 'get',
+    repository: 'Flip-Engineering/riff', profile: 'workflow-write' },
+  Readable.from(['protocol=https\nhost=github.com\npath=Flip-Engineering/baton.git\n\n']),
+  { write() { assert.fail('credential returned'); } }, () => assert.fail('authenticated')), /assigned HTTPS repository/);
+});
+
+test('workflow-write executable launch supplies only a scoped Git credential with unchanged authorship', async () => {
+  const fixture = workflow_fixture();
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  writeFileSync(join(fixture.home, 'private-key.pem'), privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
+  const preload = join(fixture.home, 'fake-api.mjs');
+  writeFileSync(preload, `import assert from 'node:assert/strict';
+import https from 'node:https';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+https.request = (url, options, received) => {
+  const outgoing = new EventEmitter();
+  outgoing.end = body => {
+    const path = new URL(url).pathname;
+    let response;
+    if (path === '/app') response = ${JSON.stringify({ id: fixture.github.appId, slug: fixture.github.slug, permissions: WORKFLOW_GRANTS })};
+    else if (path === '/repos/Flip-Engineering/riff/installation') response = ${JSON.stringify({
+      id: 5100, app_id: fixture.github.appId, app_slug: fixture.github.slug,
+      account: { login: 'Flip-Engineering' }, permissions: WORKFLOW_GRANTS })};
+    else if (path === '/app/installations/5100/access_tokens') {
+      assert.deepEqual(JSON.parse(body), ${JSON.stringify({ permissions: WORKFLOW_GRANTS, repositories: ['riff'] })});
+      response = { token: 'fixture-workflow-only', permissions: ${JSON.stringify(WORKFLOW_GRANTS)},
+        repository_selection: 'selected', repositories: [{ full_name: 'Flip-Engineering/riff' }],
+        expires_at: new Date(Date.now() + 3600000).toISOString() };
+    } else throw Error('Unexpected fixture request');
+    const incoming = new PassThrough(); incoming.statusCode = 200;
+    queueMicrotask(() => { received(incoming); incoming.end(JSON.stringify(response)); });
+  };
+  return outgoing;
+};\n`);
+  const capture = join(fixture.home, 'capture.mjs');
+  writeFileSync(capture, `import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+const credential = spawnSync('git', ['credential', 'fill'], { input: readFileSync(0), encoding: 'utf8' });
+process.stdout.write(JSON.stringify({ authenticated: credential.status === 0 && credential.stdout.includes('password=fixture-workflow-only'),
+  author: process.env.GIT_AUTHOR_NAME, email: process.env.GIT_AUTHOR_EMAIL, senderRemoved: !('GH_TOKEN' in process.env) && !('GITHUB_TOKEN' in process.env) }));\n`);
+  const result = await child([SOURCE, 'launch', '--registry', fixture.registry, '--model-key', 'gpt-6.1-sol',
+    '--repository', 'Flip-Engineering/riff', '--profile', 'workflow-write', '--', process.execPath, capture],
+  { env: { PATH: process.env.PATH, NODE_OPTIONS: '--import=' + pathToFileURL(preload).href,
+    GH_TOKEN: 'fixture-sender', GITHUB_TOKEN: 'fixture-sender' },
+    input: 'protocol=https\nhost=github.com\npath=Flip-Engineering/riff.git\n\n' });
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), { authenticated: true, author: 'Flip Baton - GPT',
+    email: fixture.github.commitEmail, senderRemoved: true });
+  assert.ok(!result.stdout.includes('fixture-workflow-only'));
 });
