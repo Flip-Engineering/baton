@@ -91,15 +91,19 @@ class QueueCommandTests(unittest.TestCase):
                         mock.patch.object(adapter, 'CLIENT', str(pathlib.Path(client).resolve())), \
                         mock.patch.object(adapter, 'STATE', str(state)):
                     environment = adapter.environment(run)
-                result = subprocess.run(
-                    [sys.executable, str(adapter_path), 'stage', 'cc',
-                     str(compiler), '-o', output.name, source.name],
-                    cwd=root, env=environment, capture_output=True, text=True)
+                argv = [sys.executable, str(adapter_path), 'stage', 'cc',
+                        str(compiler), '-o', output.name, source.name]
+                started_ns = time.time_ns()
+                process = subprocess.Popen(argv, cwd=root, env=environment,
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                stdout, stderr = process.communicate()
+                finished_ns = time.time_ns()
+                result = subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
                 (root / 'adapter.stdout').write_text(result.stdout)
                 (root / 'adapter.stderr').write_text(result.stderr)
                 (root / 'process.json').write_text(json.dumps({
                     'argv': result.args, 'cwd': str(root), 'exit_code': result.returncode,
-                    'finished_ns': time.time_ns(),
+                    'pid': process.pid, 'started_ns': started_ns, 'finished_ns': finished_ns,
                     'client': str(pathlib.Path(client).resolve()),
                     'native_sha256': hashlib.sha256(pathlib.Path(native).read_bytes()).hexdigest(),
                     'launcher_sha256': hashlib.sha256(pathlib.Path(launcher).read_bytes()).hexdigest(),
@@ -119,7 +123,18 @@ class QueueCommandTests(unittest.TestCase):
                 self.assertEqual(request['argv'][:3], [str(pathlib.Path(client).resolve()), '--', 'run'])
                 self.assertEqual(request['argv'][3:7], ['--token', request['token'], '--receipt', str(requests[0].parent / 'receipt')])
                 self.assertEqual(request['argv'][7:], request['key_argv'][3:])
-                self.assertIn('output=' + str(output), request['key_argv'])
+                common = request['key_argv'][3:]
+                separator = common.index('--')
+                flags = common[:separator]
+                self.assertEqual(len(flags) % 2, 0)
+                options = dict(zip(flags[::2], flags[1::2]))
+                for option, expected in {
+                        '--state-root': str(state), '--cwd': str(root), '--root': str(root),
+                        '--kind': 'cc', '--source-root': '/', '--compiler': str(compiler),
+                        '--artifact': 'output=' + str(output)}.items():
+                    self.assertEqual(options[option], expected, option)
+                self.assertEqual(common[separator + 1:],
+                                 [str(compiler), '-o', str(output), source.name])
                 self.assertEqual(request['exit_code'], 0)
                 self.assertGreaterEqual(request['finished_ns'], request['started_ns'])
                 receipt = dict(line.split('=', 1) for line in
