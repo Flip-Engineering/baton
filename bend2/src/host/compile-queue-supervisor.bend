@@ -108,7 +108,7 @@ def disposition(+status: String, +canceled: U32) -> U32 & String:
 def finish_wait(result: Result<&1,&1,U32 & String,String & String>, +attempt: String, +canceled: U32) -> IO(Result<&1,&1,U32 & String,U32 & String>):
   match result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32 & String>,Fail{error})
-    case Done{(+status,sample_state)}:
+    case Done{(+status,+sample_state)}:
       do IO<Result<&1,&1,U32 & String,U32 & String>>:
         +final : String <- Bool.pick(IO(String),U32.is_eq(canceled,0),sample(sample_state,True{}),IO.pure(String,sample_state))
         usage : Result<&1,&1,U32 & String,String> <- P.HostPosix.children_peak()
@@ -137,7 +137,7 @@ def run_spawned(result: Result<&1,&1,U32 & String,U32 & (U32 & U32)>, +attempt: 
       do IO<Result<&1,&1,U32 & String,U32 & String>>:
         restored : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.restore_signals()
         IO.pure(Result<&1,&1,U32 & String,U32 & String>,Fail{error})
-    case Done{(+child,(gate,status))}:
+    case Done{(+child,(+gate,+status))}:
       do IO<Result<&1,&1,U32 & String,U32 & String>>:
         +start : String <- IO.try(String,P.HostPosix.starttime(child))
         watcher : Result<&1,&1,U32 & String,U32> <- watch_command(attempt,child,start)

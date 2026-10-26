@@ -46,7 +46,7 @@ def dirname_parts(parts: List<&2,String>, +acc: String, first: Bool) -> String:
   match parts:
     case Nil{}: acc
     case part <> Nil{}: acc
-    case part <> next <> rest: dirname_parts(next <> rest,Bool.pick(String,first,part,acc ++ "/" ++ part),False{})
+    case +part <> next <> rest: dirname_parts(next <> rest,Bool.pick(String,first,part,acc ++ "/" ++ part),False{})
 
 def dirname(path: String) -> String:
   dirname_parts(String.split(path,Char.from_u32(47)),"",True{})
@@ -88,7 +88,7 @@ def write( +path: String, +bytes: String) -> IO(Unit):
 def words_go( +text: String, +acc: String, +out: List<&2,String>) -> List<&2,String>:
   match text:
     case SNil{}: List.reverse(&2,String,Bool.pick(List<&2,String>,String.is_empty(acc),out,acc <> out))
-    case SCon{+char,rest}:
+    case SCon{+char,+rest}:
       Bool.pick(List<&2,String>,Char.is_space(char),
         words_go(rest,"",Bool.pick(List<&2,String>,String.is_empty(acc),out,acc <> out)),
         words_go(rest,acc ++ Char.show(char),out))
@@ -206,7 +206,7 @@ def hex_length( +text: String) -> Nat:
 def trim_path( +text: String) -> String:
   match text:
     case SNil{}: ""
-    case SCon{+char,rest}: Bool.pick(String,path_char(char),trim_path(rest),SCon{char,rest})
+    case SCon{+char,+rest}: Bool.pick(String,path_char(char),trim_path(rest),SCon{char,rest})
 
 def pattern_length(+text: String, +attempts: Bool) -> Nat:
   match attempts:

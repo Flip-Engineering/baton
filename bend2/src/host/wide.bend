@@ -55,7 +55,7 @@ def divide_ten(value: Wide64) -> Wide64 & U32:
       (Wide64{U32.add(U32.mul(U32.div(a,10),65536),U32.div(b,10)),U32.add(U32.mul(U32.div(c,10),65536),U32.div(d,10))},U32.mod(d,10))
 
 @unsafe
-def show_go(+value: Wide64, acc: String) -> String:
+def show_go(+value: Wide64, +acc: String) -> String:
   Bool.pick(String,equal(value,zero()),acc,show_step(divide_ten(value),acc))
 
 @unsafe
@@ -67,7 +67,7 @@ def show(+value: Wide64) -> String:
   Bool.pick(String,equal(value,zero()),"0",show_go(value,""))
 
 @unsafe
-def hex_word(+value: U32, +count: U32, acc: String) -> String:
+def hex_word(+value: U32, +count: U32, +acc: String) -> String:
   Bool.pick(String,U32.is_eq(count,0),acc,hex_word(U32.div(value,16),U32.sub(count,1),String.take(String.drop("0123456789abcdef",U32.to_nat(U32.mod(value,16))),1n) ++ acc))
 
 def hex(value: Wide64) -> String:

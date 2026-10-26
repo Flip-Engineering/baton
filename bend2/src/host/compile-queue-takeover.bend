@@ -41,10 +41,10 @@ def other_executable( +pid: U32) -> IO(Bool):
     other : Result<&1,&1,U32 & String,String> <- F.Files.stat(Proc.proc_base(pid) ++ "/exe")
     match own:
       case Fail{error}: IO.pure(Bool,False{})
-      case Done{mine}:
+      case Done{+mine}:
         match other:
           case Fail{error}: IO.pure(Bool,False{})
-          case Done{theirs}:
+          case Done{+theirs}:
             IO.pure(Bool,Bool.not(Bool.and(String.eq(S.at(String.split(mine,Char.from_u32(9)),2),S.at(String.split(theirs,Char.from_u32(9)),2)),String.eq(S.at(String.split(mine,Char.from_u32(9)),3),S.at(String.split(theirs,Char.from_u32(9)),3)))))
 
 def has_pid( +items: List<&2,String>, +pid: U32) -> Bool:
@@ -79,7 +79,7 @@ def successor(+state: String, +attempt: String, +old_pid: String, +old_start: St
         do IO<Result<&1,&1,U32 & String,U32>>:
           closed : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.close_fd(key_fd)
           IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})
-      case Done{heavy_fd}:
+      case Done{+heavy_fd}:
         do IO<Result<&1,&1,U32 & String,U32>>:
           +environment : String <- S.read(Proc.proc_base(S.number(old_pid)) ++ "/environ")
           result : Result<&1,&1,U32 & String,U32> <- P.HostPosix.spawn_detached(args,key_fd,heavy_fd,environment)

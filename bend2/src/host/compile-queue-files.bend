@@ -34,7 +34,7 @@ def mode_valid( +record: String) -> Bool:
 def check_directory(observed: Result<&1,&1,U32 & String,String>, +leaf: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match observed:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
-    case Done{record}:
+    case Done{+record}:
       Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.eq(observation_kind(record),"dir"),
         Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),Bool.or(Bool.not(leaf),mode_valid(record)),
           IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
@@ -43,7 +43,7 @@ def check_directory(observed: Result<&1,&1,U32 & String,String>, +leaf: Bool) ->
 
 def after_create(created: Result<&1,&1,U32 & String,Unit>, +path: String, +leaf: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match created:
-    case Fail{(code,message)}:
+    case Fail{(+code,message)}:
       Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),U32.is_eq(code,17),
         do IO<Result<&1,&1,U32 & String,Unit>>:
           observed : Result<&1,&1,U32 & String,String> <- F.Files.lstat(path)
@@ -57,7 +57,7 @@ def after_create(created: Result<&1,&1,U32 & String,Unit>, +path: String, +leaf:
 def ensure_observed(observed: Result<&1,&1,U32 & String,String>, +path: String, +leaf: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match observed:
     case Done{record}: check_directory(Done{record},leaf)
-    case Fail{(code,message)}:
+    case Fail{(+code,message)}:
       Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),U32.is_eq(code,2),
         do IO<Result<&1,&1,U32 & String,Unit>>:
           created : Result<&1,&1,U32 & String,Unit> <- F.Files.mkdir_shared(path)
@@ -78,7 +78,7 @@ def nonempty( +parts: List<&2,String>) -> List<&2,String>:
 def mkdir_parts( +parts: List<&2,String>, +prefix: String, +absolute: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match parts:
     case Nil{}: ensure(Bool.pick(String,absolute,"/",prefix),True{})
-    case part <> rest:
+    case +part <> rest:
       +path = Bool.pick(String,Bool.and(String.is_empty(prefix),Bool.not(absolute)),part,prefix ++ "/" ++ part)
       match rest:
         case Nil{}: ensure(path,True{})
@@ -122,7 +122,7 @@ def script_prefix(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,
   match result:
     case Done{prefix}:
       IO.pure(Result<&1,&1,U32 & String,String>,Done{Bool.pick(String,String.eq(prefix,"#!"),"1","0")})
-    case Fail{(code,message)}:
+    case Fail{(+code,message)}:
       Bool.pick(IO(Result<&1,&1,U32 & String,String>),U32.is_eq(code,22),
         IO.pure(Result<&1,&1,U32 & String,String>,Done{"0"}),
         IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,message)}))
@@ -150,7 +150,7 @@ def resolve_found(found: Result<&1,&1,U32 & String,Unit>, +candidate: String, +r
 def resolve_search( +parts: List<&2,String>, +command: String) -> IO(Result<&1,&1,U32 & String,String>):
   match parts:
     case Nil{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{command})
-    case directory <> rest:
+    case +directory <> rest:
       +candidate = Bool.pick(String,String.is_empty(directory),".",directory) ++ "/" ++ command
       do IO<Result<&1,&1,U32 & String,String>>:
         found : Result<&1,&1,U32 & String,Unit> <- F.Files.executable(candidate)

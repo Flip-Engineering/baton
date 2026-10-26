@@ -99,7 +99,7 @@ def attempt( +pid: U32) -> IO(String):
 def lock_after_write( +parts: List<&2,String>) -> List<&2,String>:
   match parts:
     case Nil{}: Nil{}
-    case +part <> rest: Bool.pick(List<&2,String>,String.eq(part,"WRITE"),rest,lock_after_write(rest))
+    case +part <> +rest: Bool.pick(List<&2,String>,String.eq(part,"WRITE"),rest,lock_after_write(rest))
 
 def lock_pid(+line: String, +inode: String, +waiter: Bool) -> U32:
   +parts = lock_after_write(S.words(line))
@@ -109,7 +109,7 @@ def lock_pid(+line: String, +inode: String, +waiter: Bool) -> U32:
 def lock_rows( +lines: List<&2,String>, +inode: String, +waiter: Bool) -> List<&2,U32>:
   match lines:
     case Nil{}: Nil{}
-    case line <> rest:
+    case line <> +rest:
       +pid = lock_pid(line,inode,waiter)
       Bool.pick(List<&2,U32>,U32.is_gt(pid,0),pid <> lock_rows(rest,inode,waiter),lock_rows(rest,inode,waiter))
 

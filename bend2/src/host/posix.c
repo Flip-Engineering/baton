@@ -350,13 +350,15 @@ static int host_posix_release_start(int gate,int errors) {
   sigemptyset(&blocked);sigaddset(&blocked,SIGPIPE);
   int error=pthread_sigmask(SIG_BLOCK,&blocked,&previous);
   if(error) {close(gate);close(errors);return error;}
+  sigset_t pending;
+  int had_pipe=!sigpending(&pending) && sigismember(&pending,SIGPIPE);
   char ready=1;ssize_t sent;
   do {sent=write(gate,&ready,1);} while(sent<0 && errno==EINTR);
   error=sent==1?0:errno;
   close(gate);
-  if(error==EPIPE && !sigismember(&previous,SIGPIPE)) {
-    struct timespec zero={0,0};
-    while(sigtimedwait(&blocked,NULL,&zero)<0 && errno==EINTR) {}
+  if(error==EPIPE && !had_pipe && !sigpending(&pending) && sigismember(&pending,SIGPIPE)) {
+    int signal_number=0;
+    sigwait(&blocked,&signal_number);
   }
   pthread_sigmask(SIG_SETMASK,&previous,NULL);
   int child_error=0;ssize_t got;

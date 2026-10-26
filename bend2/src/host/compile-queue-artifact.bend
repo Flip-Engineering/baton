@@ -31,7 +31,7 @@ def CompileQueueArtifact.kind( +path: String) -> IO(Result<&1,&1,U32 & String,St
 def field( +lines: List<&2,String>, +name: String) -> String:
   match lines:
     case Nil{}: ""
-    case line <> rest:
+    case +line <> rest:
       +prefix = name ++ "="
       Bool.pick(String,String.starts_with(line,prefix),
         String.drop(line,String.length(prefix)),field(rest,name))
@@ -52,7 +52,7 @@ def append( +left: List<&2,String>, +right: List<&2,String>) -> List<&2,String>:
 def insert( +value: String, +sorted: List<&2,String>) -> List<&2,String>:
   match sorted:
     case Nil{}: [value]
-    case head <> rest:
+    case +head <> +rest:
       Bool.pick(List<&2,String>,String.is_lt(value,head),value <> head <> rest,head <> insert(value,rest))
 
 def sorted( +values: List<&2,String>) -> List<&2,String>:
@@ -97,7 +97,7 @@ def collect( +root: String, +relative: String) -> IO(List<&2,String>):
 def digest_rows( +names: List<&2,String>, +root: String) -> IO(Result<&1,&1,U32 & String,String>):
   match names:
     case Nil{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
-    case name <> rest:
+    case +name <> rest:
       do IO<Result<&1,&1,U32 & String,String>>:
         +hash : String <- IO.try(String,D.HostDigest.file(root ++ "/" ++ name))
         +tail : String <- IO.try(String,digest_rows(rest,root))
@@ -125,7 +125,7 @@ def remove_children( +names: List<&2,String>, +path: String) -> IO(Result<&1,&1,
 
 def remove_observed(observed: Result<&1,&1,U32 & String,String>, +path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match observed:
-    case Fail{(code,message)}:
+    case Fail{(+code,message)}:
       Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),U32.is_eq(code,2),
         IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
         IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,message)}))
@@ -146,7 +146,7 @@ def copy_children( +names: List<&2,String>, +source: String, +destination: Strin
   match names:
     case Nil{}: F.Files.chmod(destination,mode)
     case SNil{} <> rest: copy_children(rest,source,destination,mode)
-    case name <> rest:
+    case +name <> rest:
       do IO<Result<&1,&1,U32 & String,Unit>>:
         copied : Unit <- IO.try(Unit,CompileQueueArtifact.copy(source ++ "/" ++ name,destination ++ "/" ++ name))
         copy_children(rest,source,destination,mode)
@@ -154,7 +154,7 @@ def copy_children( +names: List<&2,String>, +source: String, +destination: Strin
 def created_directory(created: Result<&1,&1,U32 & String,Unit>, +destination: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match created:
     case Done{unit}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
-    case Fail{(code,message)}:
+    case Fail{(+code,message)}:
       Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),U32.is_eq(code,17),
         do IO<Result<&1,&1,U32 & String,Unit>>:
           observed : Result<&1,&1,U32 & String,String> <- F.Files.lstat(destination)

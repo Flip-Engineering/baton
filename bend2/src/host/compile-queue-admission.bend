@@ -26,7 +26,7 @@ def tickets( +view: QueueView) -> List<&2,String>:
 def mkdir_waiting(result: Result<&1,&1,U32 & String,Unit>, +path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match result:
     case Done{unit}: QF.mkdir_p(path)
-    case Fail{(code,message)}:
+    case Fail{(+code,message)}:
       Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),U32.is_eq(code,17),QF.mkdir_p(path),IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,message)}))
 
 def directories(+state: String) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -47,7 +47,7 @@ def valid_name(+name: String) -> Bool:
 def load_claims( +names: List<&2,String>, +state: String, +acc: List<&2,String>) -> IO(List<&2,String>):
   match names:
     case Nil{}: IO.pure(List<&2,String>,acc)
-    case +name <> rest:
+    case +name <> +rest:
       do IO<List<&2,String>>:
         +path : String <- IO.pure(String,state ++ "/admission/running/" ++ name)
         held : Result<&1,&1,U32 & String,U32> <- P.HostPosix.held(path)
@@ -77,7 +77,7 @@ def ticket_before(+a: String, +b: String) -> Bool:
 def insert_ticket( +items: List<&2,String>, +ticket: String) -> List<&2,String>:
   match items:
     case Nil{}: ticket <> Nil{}
-    case +head <> rest: Bool.pick(List<&2,String>,ticket_before(ticket,head),ticket <> head <> rest,head <> insert_ticket(rest,ticket))
+    case +head <> +rest: Bool.pick(List<&2,String>,ticket_before(ticket,head),ticket <> head <> rest,head <> insert_ticket(rest,ticket))
 
 def expected_fields(value: Maybe<Nat>) -> String:
   match value:
@@ -100,7 +100,7 @@ def complete_ticket(+ticket: String) -> IO(String):
 def load_tickets( +names: List<&2,String>, +state: String, +acc: List<&2,String>) -> IO(List<&2,String>):
   match names:
     case Nil{}: IO.pure(List<&2,String>,acc)
-    case +name <> rest:
+    case +name <> +rest:
       do IO<List<&2,String>>:
         +path : String <- IO.pure(String,state ++ "/admission/waiting/" ++ name)
         +text : String <- S.read(path)
