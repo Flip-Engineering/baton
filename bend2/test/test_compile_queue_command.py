@@ -47,9 +47,11 @@ class QueueCommandTests(unittest.TestCase):
 
 
     def test_maintained_adapter_runs_native_and_public_launcher(self):
+        import hashlib
         import importlib.util
         import json
         import subprocess
+        import time
         import sys
 
         native = os.environ.get('BATON2_COMPILE_QUEUE_BIN')
@@ -62,8 +64,12 @@ class QueueCommandTests(unittest.TestCase):
         adapter = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(adapter)
         for mode, client in [('native', native), ('launcher', launcher)]:
-            with self.subTest(mode=mode), tempfile.TemporaryDirectory(prefix='queue-adapter-') as temporary:
-                root = pathlib.Path(temporary)
+            with self.subTest(mode=mode):
+                evidence = os.environ.get('BATON_COMPILE_QUEUE_TEST_EVIDENCE')
+                if evidence:
+                    pathlib.Path(evidence).mkdir(parents=True, exist_ok=True)
+                root = pathlib.Path(tempfile.mkdtemp(prefix='queue-adapter-' + mode + '-', dir=evidence))
+                print('retained queue adapter evidence: ' + str(root), flush=True)
                 state = root / 'queue'
                 state.mkdir(mode=0o2770)
                 state.chmod(0o2770)
@@ -87,13 +93,33 @@ class QueueCommandTests(unittest.TestCase):
                     environment = adapter.environment(run)
                 result = subprocess.run(
                     [sys.executable, str(adapter_path), 'stage', 'cc',
-                     str(compiler), '-o', str(output), str(source)],
+                     str(compiler), '-o', output.name, source.name],
                     cwd=root, env=environment, capture_output=True, text=True)
+                (root / 'adapter.stdout').write_text(result.stdout)
+                (root / 'adapter.stderr').write_text(result.stderr)
+                (root / 'process.json').write_text(json.dumps({
+                    'argv': result.args, 'cwd': str(root), 'exit_code': result.returncode,
+                    'finished_ns': time.time_ns(),
+                    'client': str(pathlib.Path(client).resolve()),
+                    'native_sha256': hashlib.sha256(pathlib.Path(native).read_bytes()).hexdigest(),
+                    'launcher_sha256': hashlib.sha256(pathlib.Path(launcher).read_bytes()).hexdigest(),
+                    'adapter_sha256': hashlib.sha256(adapter_path.read_bytes()).hexdigest(),
+                    'python': sys.executable,
+                    'python_sha256': hashlib.sha256(pathlib.Path(sys.executable).read_bytes()).hexdigest(),
+                }, indent=2) + '\n')
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(output.read_text(), 'adapter-artifact\n')
                 requests = list((run / 'evidence/compile-queue').glob('*/request.json'))
                 self.assertEqual(len(requests), 1)
                 request = json.loads(requests[0].read_text())
+                self.assertEqual(request['cwd'], str(root))
+                self.assertEqual(request['command'], [str(compiler), '-o', str(output), source.name])
+                self.assertRegex(request['key'], r'^[0-9a-f]{64}$')
+                self.assertEqual(request['key_argv'][:3], [str(pathlib.Path(client).resolve()), '--', 'key'])
+                self.assertEqual(request['argv'][:3], [str(pathlib.Path(client).resolve()), '--', 'run'])
+                self.assertEqual(request['argv'][3:7], ['--token', request['token'], '--receipt', str(requests[0].parent / 'receipt')])
+                self.assertEqual(request['argv'][7:], request['key_argv'][3:])
+                self.assertIn('output=' + str(output), request['key_argv'])
                 self.assertEqual(request['exit_code'], 0)
                 self.assertGreaterEqual(request['finished_ns'], request['started_ns'])
                 receipt = dict(line.split('=', 1) for line in
@@ -101,7 +127,8 @@ class QueueCommandTests(unittest.TestCase):
                                if '=' in line)
                 self.assertEqual(receipt['status'], 'completed')
                 self.assertEqual(receipt['key'], request['key'])
-                self.assertTrue(receipt['owner'])
+                self.assertEqual(receipt['owner'], request['token'])
+                self.assertEqual(receipt['artifact-output'], str(output))
                 saved = dict(line.split('=', 1) for line in
                              (requests[0].parent / 'queue-result').read_text().splitlines()
                              if '=' in line)
@@ -110,6 +137,10 @@ class QueueCommandTests(unittest.TestCase):
                 self.assertEqual(saved['exit'], '0')
                 self.assertEqual(saved['key'], request['key'])
                 self.assertEqual(saved['verified'], '1')
+                self.assertEqual(saved['identity_schema'], 'baton-compile-queue-identity-v2')
+                expected_digest = hashlib.sha256(b'adapter-artifact\n').hexdigest()
+                self.assertEqual(saved['artifact'], 'output\tfile\t' + expected_digest)
+                self.assertEqual(hashlib.sha256(output.read_bytes()).hexdigest(), expected_digest)
 
 
 if __name__ == '__main__':
