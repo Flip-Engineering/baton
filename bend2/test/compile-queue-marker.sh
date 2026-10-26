@@ -21,7 +21,11 @@ BASE=${BATON_COMPILE_QUEUE_ROOT:-/var/tmp/baton2-compile-queue}
 [ -d "$BASE" ] || { printf 'missing shared queue parent: %s\n' "$BASE" >&2; exit 2; }
 T=$(mktemp -d "$BASE/marker-test-$(id -u)-XXXXXX") || exit 2
 chmod 775 "$T" || exit 2
-trap 'rm -rf -- "$T"' EXIT
+if [ -n "${BATON_COMPILE_QUEUE_TEST_EVIDENCE:-}" ]; then
+  trap 'printf "evidence=%s\n" "$T"' EXIT
+else
+  trap 'rm -rf -- "$T"' EXIT
+fi
 STATE=$T/state
 mkdir -p "$STATE" "$T/src/bend2/src" || exit 2
 chmod 775 "$STATE" || exit 2

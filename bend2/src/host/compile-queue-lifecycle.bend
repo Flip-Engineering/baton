@@ -106,7 +106,7 @@ def CompileQueueLifecycle.cwd_of_pid(pid: U32) -> IO(Result<&1,&1,U32 & String,S
 def signal_result(result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match result:
     case Done{unit}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
-    case Fail{(code,message)}: IO.pure(Result<&1,&1,U32 & String,Unit>,Bool.pick(Result<&1,&1,U32 & String,Unit>,U32.is_eq(code,3),Done{Unit{}},Fail{(code,message)}))
+    case Fail{(+code,message)}: IO.pure(Result<&1,&1,U32 & String,Unit>,Bool.pick(Result<&1,&1,U32 & String,Unit>,U32.is_eq(code,3),Done{Unit{}},Fail{(code,message)}))
 
 def CompileQueueLifecycle.signal_pid(pid: U32, sig: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:

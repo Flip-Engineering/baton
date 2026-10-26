@@ -17,7 +17,11 @@ case "${BATON_COMPILE_QUEUE_ROOT:-}" in
 esac
 
 T=$(mktemp -d "${TMPDIR:-/tmp}/compile-queue-test.XXXXXX") || exit 2
-trap 'rm -rf -- "$T"' EXIT
+if [ -n "${BATON_COMPILE_QUEUE_TEST_EVIDENCE:-}" ]; then
+  trap 'printf "evidence=%s\n" "$T"' EXIT
+else
+  trap 'rm -rf -- "$T"' EXIT
+fi
 STATE=$BATON_COMPILE_QUEUE_ROOT
 if [ ! -e "$STATE" ]; then
   (umask 0007; mkdir -p -m 2770 "$STATE") || exit 2
