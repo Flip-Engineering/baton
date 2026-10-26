@@ -167,13 +167,35 @@ static int native_help_request(int argc,char **argv) {
 }
 #endif
 
+static int recruitment_args(int argc,char **argv) {
+  if(argc<4 || argv[3][0]=='-') return 0;
+  return (argc==12 && !strcmp(argv[2],"recruit")) ||
+         (argc==9 && !strcmp(argv[2],"join"));
+}
+
+#if defined(BATON2_RECEIVE_FOCUSED) || defined(BATON2_NATIVE_RECEIVER_ROUTER)
+static int codex_inbox_args(int argc,char **argv) {
+  return argc>2 && (!strcmp(argv[2],"codex-inbox-session") ||
+    !strcmp(argv[2],"codex-inbox-follow") || !strcmp(argv[2],"codex-inbox-deliver") ||
+    !strcmp(argv[2],"codex-input-witness"));
+}
+
+static int worker_context_args(int argc,char **argv) {
+  return argc==3 && !strcmp(argv[2],"agent-worker-context");
+}
+#endif
+
 #ifdef BATON2_RECEIVE_FOCUSED
 /* The focused executable owns receiver operations and exposes the same path
    to native workers. Selected stop and quota commands use its public parser. */
 static int focused_receiver_verb(int argc,char **argv) {
   if(argc<2 || native_help_request(argc,argv)) return 0;
+  if(codex_inbox_args(argc,argv)) return 1;
+  if(worker_context_args(argc,argv)) return 1;
+  if(recruitment_args(argc,argv)) return 1;
   const char *first=argv[1];
-  if(!strcmp(first,"--dispatch-message") || !strcmp(first,"--host-process-keeper") ||
+  if(!strcmp(first,"--stop-hook") || !strcmp(first,"--redeliver-message") ||
+     !strcmp(first,"--dispatch-message") || !strcmp(first,"--host-process-keeper") ||
      !strcmp(first,"--instance-owner") || !strcmp(first,"--instance-shutdown") ||
       !strcmp(first,"--ensure-schema")) return 1;
   if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
@@ -219,13 +241,17 @@ static int native_receiver_route(int argc, char **argv) {
   int recovery=(argc>1 && (!strcmp(argv[1],"--recover-observer") ||
                            !strcmp(argv[1],"--recover-receive"))) ||
                (argc>2 && !strcmp(argv[2],"recover-observer"));
-  int focused_verb=argc>1 && (!strcmp(argv[1],"--dispatch-message") ||
+  int focused_verb=argc>1 && (!strcmp(argv[1],"--stop-hook") ||
+    !strcmp(argv[1],"--redeliver-message") || !strcmp(argv[1],"--dispatch-message") ||
     !strcmp(argv[1],"--host-process-keeper") || !strcmp(argv[1],"--instance-owner") ||
     !strcmp(argv[1],"--instance-shutdown") || !strcmp(argv[1],"--ensure-schema") || recovery);
   if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
       !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"recover-observer") ||
       !strcmp(argv[2],"register-receiver") || !strcmp(argv[2],"storage-policy") ||
       !strcmp(argv[2],"storage-preview") || !strcmp(argv[2],"storage-apply"))) focused_verb=1;
+  if(recruitment_args(argc,argv)) focused_verb=1;
+  if(codex_inbox_args(argc,argv)) focused_verb=1;
+  if(worker_context_args(argc,argv)) focused_verb=1;
   if(!native_input && !focused_verb && !clear_stop_public_args(argc,argv)) return -1;
   char *full=application_executable();
   char *directory=full?strdup(full):NULL;
@@ -317,7 +343,7 @@ static int recovery_helper_verb(int argc,char **argv) {
   if(argc<2 || native_help_request(argc,argv)) return 0;
   if(!strcmp(argv[1],"--recover-observer") || !strcmp(argv[1],"--recover-receive") ||
      !strcmp(argv[1],"--host-process-keeper") || !strcmp(argv[1],"--instance-owner") ||
-     !strcmp(argv[1],"--instance-shutdown")) return 1;
+     !strcmp(argv[1],"--instance-shutdown") || !strcmp(argv[1],"--dispatch-message")) return 1;
   return argc>2 && !strcmp(argv[2],"recover-observer");
 }
 #endif

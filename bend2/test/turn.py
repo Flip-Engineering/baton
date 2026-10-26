@@ -24,7 +24,7 @@ def finish_owned_input():
         if message['kind']=='task-assignment':
             reviewed=coordinator('delivery',message['id'])
             assert reviewed['body']==expected_task,reviewed
-            coordinator('ack',message['id'],model,'Fixture worker handled its Direct task.')
+            coordinator('as',model,'read',message['id'])
     confirm_finished_fixture_task('Completed the controlled native protocol task.')
 class NativeOutput:
     def __init__(self,output):
@@ -111,6 +111,15 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
 
     def tearDown(self): self.temp.cleanup()
 
+    def read_count(self, ident, recipient=None):
+        with sqlite3.connect(self.db) as database:
+            if recipient is None:
+                return database.execute(
+                    'SELECT count(*) FROM message_reads WHERE message=?', (ident,)).fetchone()[0]
+            return database.execute(
+                'SELECT count(*) FROM message_reads WHERE message=? AND recipient=?',
+                (ident, recipient)).fetchone()[0]
+
     def call(self,*args):
         if args[0]=='turn' and args[3]==str(self.player):
             session,turn=args[1:3]
@@ -144,7 +153,8 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         self.assertIn('Message (task-assignment) from worker [id: turn-1:task-input]:',delivered)
         original=json.loads(self.call('delivery','turn-1:task-input'))
         self.assertEqual(original['body'],self.task.read_text())
-        self.assertIsNotNone(original['receipt'])
+        self.assertIsNone(original['receipt'])
+        self.assertGreater(self.read_count('turn-1:task-input'),0)
         self.assertFalse(json.loads(self.call('session','worker'))['taskCompletion']['open'])
         self.assertEqual(json.loads(self.call('player','worker'))['native'],'native-fixture')
         self.assertEqual(len(self.generation('turn-1').read_text().splitlines()),3)
@@ -382,14 +392,14 @@ with sqlite3.connect(db) as conn:
 pathlib.Path('guidance.json').write_text(json.dumps(guide))
 response={'type':'response','command':'steer','success':True,'id':guide['id']}
 print(json.dumps(response),flush=True)
-subprocess.run([BATON_EXE,db,'ack',guide['id'],'omp-worker',json.dumps(response)],check=True,stdout=subprocess.DEVNULL)
+subprocess.run([BATON_EXE,db,'as','omp-worker','read',guide['id']],check=True,stdout=subprocess.DEVNULL)
 print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assistant','content':[{'type':'text','text':guide['message']}]}]}),flush=True)
 assert sys.stdin.read()==''
 '''.replace('BATON_EXE',repr(str(EXE))))
         self.call('turn','omp-worker','guided-turn',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'')
         self.assertEqual(json.loads((self.cwd/'guidance.json').read_text())['message'],body)
-        receipt=json.loads(json.loads(self.call('delivery','guidance-1'))['receipt'])
-        self.assertEqual(receipt,{'type':'response','command':'steer','success':True,'id':'guidance-1'})
+        self.assertIsNone(json.loads(self.call('delivery','guidance-1'))['receipt'])
+        self.assertGreater(self.read_count('guidance-1','omp-worker'),0)
         self.assertEqual(json.loads(self.call('delivery','guided-turn'))['body'],body)
         self.assertEqual(json.loads(self.call('inbox','omp-worker')),[])
 

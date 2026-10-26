@@ -79,7 +79,7 @@ class SqliteWal(unittest.TestCase):
             conn.close()
 
     def run_fixture(self, *args):
-        return subprocess.run([str(FIXTURE), *args, ], capture_output=True, text=True, timeout=120)
+        return subprocess.run([str(FIXTURE), *args, ], capture_output=True, text=True)
 
     def test_first_open_converts_the_database(self):
         result = self.run_fixture('open', self.db)

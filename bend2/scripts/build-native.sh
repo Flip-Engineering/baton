@@ -116,7 +116,7 @@ build_native_shards() {
     --outdir "$native_binary.parallel" \
     --binary "$native_binary" \
     --shards 4 --jobs 4 --cc "${CC:-clang}" \
-    --cflag=-O1 --cflag=-pthread --main-rename \
+    --cflag=-O1 --cflag=-pthread --cflag=-I"$root/bend2/src/host" --main-rename \
     --link-extra "$root/bend2/src/host/native-entry.c" \
     --link-flags="$native_link_flags" \
     --max-aggregate-rss-mb 0 --build-only
@@ -139,7 +139,8 @@ else
   extra_libs=
   case "$entry_path" in
     */bend2/harness/claude-credit-observe.bend) extra_libs=-lcurl ;;
+    */bend2/harness/usage-read.bend) extra_libs=-lcurl ;;
   esac
-  native_compile cc "${CC:-clang}" -O1 -pthread "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
+  native_compile cc "${CC:-clang}" -O1 -pthread -I "$root/bend2/src/host" "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
 fi
 printf '%s\n' "$output"

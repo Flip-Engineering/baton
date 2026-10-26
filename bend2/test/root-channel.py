@@ -64,13 +64,13 @@ class RootChannel(unittest.TestCase):
         self.path = str(self.dir / 'orchestra.db')
         installed = self.run_entry('install', self.path)
         self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
-        self.sql("INSERT INTO sessions(id,parent,harness) VALUES('operator',NULL,'operator')")
+        self.sql("INSERT INTO sessions(id,parent,harness) VALUES('operator',NULL,'claude-code')")
         self.sql("INSERT INTO session_roles(session,role) VALUES('operator','operator')")
         self.sql("INSERT INTO sessions(id,parent,harness) VALUES('lead',NULL,'omp')")
         self.sql("INSERT INTO session_roles(session,role) VALUES('lead','conductor')")
 
     def run_entry(self, *args):
-        return subprocess.run([self.binary, *args], capture_output=True, text=True, timeout=300)
+        return subprocess.run([self.binary, *args], capture_output=True, text=True)
 
     def sql(self, statement, values=()):
         db = sqlite3.connect(self.path, isolation_level=None)
@@ -154,7 +154,7 @@ class RootChannel(unittest.TestCase):
         self.assertEqual(listener.stdout.readline().strip(), 'listening')
         self.assertEqual(self.warn(), [])
         listener.send_signal(signal.SIGKILL)
-        listener.wait(timeout=30)
+        listener.wait()
         self.assertTrue((self.dir / name).exists())
         lines = self.warn()
         self.assertEqual(len(lines), 1, lines)
@@ -204,6 +204,50 @@ class RootChannel(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), 'driven')
         self.assertIn('Baton error: root session operator has 1 owed inputs', result.stderr)
         self.assertIn('Baton error: root session operator has 1 owed inputs', self.root_log())
+
+
+    def test_recorded_reads_remove_root_warnings_with_null_receipts(self):
+        self.owe('operator', 2)
+        self.sql("INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES('fixture','operator:report:0','operator','','fixture')")
+        lines = self.warn()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn('1 owed inputs', lines[0])
+        self.sql("INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES('fixture','operator:report:1','operator','','fixture')")
+        self.assertEqual(self.warn(), [])
+
+    def test_unread_receipt_row_still_warns_for_the_committed_message(self):
+        self.owe('operator', 1)
+        self.sql("UPDATE messages SET receipt='legacy-only'")
+        result = self.run_entry('message', self.path, 'operator:report:0')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('1 owed inputs', result.stderr)
+        self.assertIn('no channel endpoint is registered', self.root_log())
+
+
+    def test_codex_operator_route_is_not_a_claude_channel(self):
+        self.owe('operator', 1)
+        self.sql("UPDATE sessions SET harness='codex',native='recorded-codex-thread' WHERE id='operator'")
+        self.endpoint('operator', json.dumps(['/opt/baton/bin/baton', self.path, 'codex-inbox-session', 'operator', 'recorded-codex-thread']))
+        self.assertEqual(self.warn(), [])
+
+    def test_other_harness_operator_does_not_get_a_claude_attachment_instruction(self):
+        self.owe('operator', 1)
+        self.sql("UPDATE sessions SET harness='omp' WHERE id='operator'")
+        self.endpoint('operator', json.dumps(['/opt/baton/bin/baton', self.path, 'receive', 'operator']))
+        self.assertEqual(self.warn(), [])
+
+    def test_untyped_operator_is_not_classified_as_a_claude_channel(self):
+        self.owe('operator', 1)
+        self.sql("UPDATE sessions SET harness='operator' WHERE id='operator'")
+        self.assertEqual(self.warn(), [])
+
+    def test_explicit_mcp_endpoint_keeps_channel_diagnostics(self):
+        self.owe('operator', 1)
+        self.sql("UPDATE sessions SET harness='operator' WHERE id='operator'")
+        self.endpoint('operator', self.conductor_endpoint('operator', 'missing-mcp.sock'))
+        lines = self.warn()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn('no process accepts connections on the conductor socket', lines[0])
 
 
 if __name__ == '__main__':

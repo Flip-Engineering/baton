@@ -16,15 +16,20 @@ import sys
 import time
 
 values = json.loads(Path(__file__).with_suffix('.json').read_text())
-if sys.argv[1:] == ['--help'] or (len(sys.argv) > 2 and sys.argv[2] == 'help'):
-    if values.get('batch', True):
-        sys.stdout.write('outbox\\ndelivery-batch\\nmessage-batch\\ninput MESSAGE_ID\\ntask --stdin\\nusage: baton2 as SESSION ACTION ARGS\\n')
-        if values.get('dispatch', True):
-            sys.stdout.write('dispatch --stdin\\n')
-        if values.get('repl', False):
-            sys.stdout.write('Actions: inbox, read, send, report, ask, guide, finish, confirm, dispatch, players, assignment, status, role, ensemble, section, orchestra, branch, knowledge, repl\\n')
-    else:
-        sys.stdout.write('delivery\\nmessage\\n')
+args = sys.argv[1:]
+if args == ['--help'] or (args and args[0] == 'help'):
+    if args == ['help', 'context']:
+        if values.get('context_eval', True):
+            sys.stdout.write('context engines|install|query|eval|result NAMED_ARGS\\n')
+    elif args == ['--help']:
+        if values.get('batch', True):
+            sys.stdout.write('outbox\\ndelivery-batch\\nmessage-batch\\ninput MESSAGE_ID\\ntask --stdin\\nusage: baton2 as SESSION ACTION ARGS\\n')
+            if values.get('dispatch', True):
+                sys.stdout.write('dispatch --stdin\\n')
+            if values.get('repl', False):
+                sys.stdout.write('Actions: inbox, read, send, report, ask, guide, finish, confirm, dispatch, players, assignment, status, role, ensemble, section, orchestra, branch, knowledge, repl\\n')
+        else:
+            sys.stdout.write('delivery\\nmessage\\n')
     sys.exit(0)
 time.sleep(values['delay'])
 sys.stdout.write(values['stdout'])
@@ -44,7 +49,8 @@ sys.exit(values['code'])
 class McpCommand(unittest.TestCase):
     def command(self, stdout='', stderr='', code=0, delay=0, *,
                 tool='baton2_status', arguments=None, session=None, expected_args=None,
-                expected_stdin='', expected_context=None, dispatch=True, repl=False):
+                expected_stdin='', expected_context=None, dispatch=True, repl=False,
+                context_eval=True):
         with tempfile.TemporaryDirectory() as home:
             home = pathlib.Path(home)
             executable = home / 'fixture-coordinator'
@@ -54,7 +60,7 @@ class McpCommand(unittest.TestCase):
             executable.with_suffix('.json').write_text(json.dumps({
                 'stdout': stdout, 'stderr': stderr, 'code': code,
                 'delay': delay, 'completed': str(completed), 'batch': True,
-                'dispatch': dispatch, 'repl': repl,
+                'dispatch': dispatch, 'repl': repl, 'context_eval': context_eval,
             }))
             requests = [
                 {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}},
@@ -75,10 +81,7 @@ class McpCommand(unittest.TestCase):
             self.assertEqual(replies[0]['result']['serverInfo']['name'], 'baton-conductor')
             self.instructions = replies[0]['result']['instructions']
             self.tools = {row['name']: row for row in replies[1]['result']['tools']}
-            if tool == 'baton2_ack':
-                self.assertNotIn(tool, self.tools)
-            else:
-                self.assertIn(tool, self.tools)
+            self.assertIn(tool, self.tools)
             self.assertTrue(completed.exists(), 'the coordinator child did not finish its operation')
             child = json.loads(completed.read_text())
             self.assertEqual(child['exit_code'], code)
@@ -97,13 +100,6 @@ class McpCommand(unittest.TestCase):
                 self.assertEqual(child['stdin'], expected_stdin)
             self.assertFalse((home / 'state.db.actions').exists())
             return replies[2]['result']
-
-    def test_contextual_instructions_describe_automatic_input_handling(self):
-        self.command(repl=True)
-        self.assertIn('automatically record handling of complete input', self.instructions)
-        self.assertNotIn('acknowledge', self.instructions)
-        self.assertNotIn('acknowledge', self.tools['baton2_action']['description'])
-        self.assertNotIn('baton2_ack', self.tools)
 
     def test_task_forwards_full_input_through_stdin_and_keeps_attached_authorship(self):
         body = 'Complete MCP input λ🙂\nMultiline task text with "quotes".\n' * 10000
@@ -160,6 +156,12 @@ class McpCommand(unittest.TestCase):
                 self.assertEqual('baton2_repl' in self.tools, available)
                 self.assertEqual('Use baton2_repl' in self.instructions, available)
                 self.assertIn('repl', self.tools['baton2_action']['description'])
+
+    def test_context_eval_requires_advertised_coordinator_surface(self):
+        self.command(context_eval=False)
+        self.assertNotIn('baton2_context_eval', self.tools)
+        self.command(context_eval=True)
+        self.assertIn('baton2_context_eval', self.tools)
 
     def test_contextual_action_preserves_complete_bodies_for_independent_batch_items(self):
         first = '\ufeffFull first body λ🙂\nLiteral quotes " and tabs\t.\n' * 10000
@@ -247,6 +249,7 @@ class McpCommand(unittest.TestCase):
         selectors = {
             'baton2_guide': ('id', 'request'),
             'baton2_context_query_file': ('query',),
+            'baton2_context_eval': ('query',),
             'baton2_context_result': ('query',),
             'baton2_knowledge_record': ('id',),
             'baton2_knowledge_relate': ('id',),
@@ -260,7 +263,6 @@ class McpCommand(unittest.TestCase):
                 for field in fields:
                     self.assertNotIn(field, schema.get('required', []))
                     self.assertEqual(schema['properties'][field]['type'], 'string')
-        self.assertNotIn('baton2_ack', self.tools)
         self.assertEqual(self.tools['baton2_guide']['inputSchema']['required'], ['player'])
         link = self.tools['baton2_knowledge_record']['inputSchema']['properties']['links']['items']
         self.assertNotIn('id', link['required'])
@@ -269,8 +271,6 @@ class McpCommand(unittest.TestCase):
     def test_inferred_actions_delegate_current_authority_to_attached_native_context(self):
         body = '\ufeffComplete authored input.\nλ🙂\nTrailing spaces  '
         cases = (
-            ('baton2_ack', None, ['acknowledge']),
-            ('baton2_ack', {'id': 'selected input'}, ['acknowledge', 'selected input']),
             ('baton2_guide', {'player': 'worker', 'body': body},
              ['send', 'worker', '--kind', 'guidance', '--text', body]),
             ('baton2_guide', {'player': 'worker', 'kind': 'completion-confirmed'},
@@ -299,6 +299,10 @@ class McpCommand(unittest.TestCase):
                                        'log': '/retained output', 'task': "/tasks/task's λ.txt"},
              ['turn', '--session', 'worker', '--command', '/native command',
               '--output-log', '/retained output', '--file', "/tasks/task's λ.txt"]),
+            ('baton2_context_eval', {'session': 'rt:installed', 'expression': '1 + 1',
+                                     'frame': 'frame-1', 'cwd': '/work'},
+             ['context', 'eval', '--session', 'rt:installed', '--expression', '1 + 1',
+              '--frame', 'frame-1', '--cwd', '/work']),
         )
         for tool, arguments, contextual in cases:
             with self.subTest(tool=tool, arguments=arguments):
@@ -308,15 +312,12 @@ class McpCommand(unittest.TestCase):
                 self.assertEqual(result['content'],
                                  [{'type': 'text', 'text': '{"retained":"native decision λ"}'}])
                 self.assertNotIn('isError', result)
-        self.command(tool='baton2_ack', arguments={'id': 'selected input',
-                     'receipt': 'First complete handling.'}, session='attached-λ',
-                     expected_args=['ack', 'selected input', 'attached-λ', 'First complete handling.'])
-
-    def test_inferred_handling_keeps_native_refusal_and_complete_diagnostic(self):
-        diagnostic = json.dumps({'error': 'handling-context',
-                                 'condition': 'No live owned input context.\nλ🙂'}) + '\n'
-        self.failure('', diagnostic, code=2, tool='baton2_ack', session='attached-λ',
-                     expected_context=['acknowledge'])
+        self.command(tool='baton2_context_eval',
+                     arguments={'session': 'rt:installed', 'expression': '1 + 1',
+                                'query': 'eval-one'},
+                     session='attached-λ',
+                     expected_args=['context-eval', 'attached-λ', 'eval-one',
+                                    'rt:installed', '1 + 1', '', ''])
 
     def test_semantic_report_evidence_uses_native_context_with_an_explicit_record_id(self):
         body = '\ufeffComplete source fact.\nλ🙂\nTrailing spaces  '
@@ -446,10 +447,9 @@ class McpCommand(unittest.TestCase):
             self.assertNotIn('baton2_ack', tools)
             instructions = replies[0]['result']['instructions']
             self.assertIn('baton2_delivery reads one complete stored message', instructions)
-            self.assertIn('automatically record handling of complete reads', instructions)
-            self.assertNotIn('baton2_ack', instructions)
-            self.assertNotIn('acknowledge', instructions)
             self.assertNotIn('baton2_delivery_batch', instructions)
+            self.assertNotIn('baton2_ack', instructions)
+            self.assertIn('Baton records each complete read internally', instructions)
 
     def test_native_control_tools_advertise_typed_arguments(self):
         self.command()
@@ -706,11 +706,9 @@ class McpCommand(unittest.TestCase):
              ['inbox', '', '--index', '--sender', '--index', '--kind', '--pretty',
               '--state', 'all', '--after-seq', wide, '--through-seq', '9007199254740994', '--pretty']),
             ('baton2_pending', {'recipient': 'root', 'sender': '', 'kind': "report's λ",
-                                'state': 'handled', 'afterSeq': wide},
+                                'state': 'read', 'afterSeq': wide},
              ['pending', '--index', '--recipient', 'root', '--sender', '', '--kind', "report's λ",
-              '--state', 'acknowledged', '--after-seq', wide]),
-            ('baton2_pending', {'recipient': 'root', 'state': 'acknowledged'},
-             ['pending', '--index', '--recipient', 'root', '--state', 'acknowledged']),
+              '--state', 'read', '--after-seq', wide]),
         ]
         for tool, arguments, argv in cases:
             with self.subTest(tool=tool, arguments=arguments):
@@ -720,7 +718,6 @@ class McpCommand(unittest.TestCase):
                 schema = self.tools[tool]['inputSchema']['properties']
                 self.assertEqual(schema['afterSeq']['type'], 'string')
                 self.assertEqual(schema['throughSeq']['type'], 'string')
-                self.assertEqual(schema['state']['enum'], ['pending', 'handled', 'all'])
 
     def test_context_and_resume_refusals_preserve_native_exit_and_diagnostics(self):
         for tool, arguments, argv, reason in (

@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 import tempfile
 import unittest
+from decimal import Decimal
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 ENTRY = pathlib.Path(os.environ.get('BATON2_ACCOUNT_ENTRY', ROOT / '.scratch/bend2/account-credits-entry'))
@@ -57,6 +58,54 @@ class FocusedAccountCredits(unittest.TestCase):
     def record(self, label, harness='claude-code', funding='subscription', secret='/fixture/store', provider='anthropic'):
         return self.account('record', label, provider, harness, funding, secret)
 
+    def legacy_credit_account(self, primary_secret=None):
+        self.execute("INSERT INTO accounts(id,provider,harness,funding,secret_ref,organization,priority) "
+                     "VALUES('claude-credit-normal','anthropic','claude-code','api_key','file:/fixture/legacy','org-legacy','7')")
+        if primary_secret is not None:
+            self.execute("INSERT INTO accounts(id,provider,harness,funding,secret_ref,organization) "
+                         "VALUES('claude-credit-primary','anthropic','claude-code','api_key',?,'org-legacy')",
+                         (primary_secret,))
+        self.execute("INSERT INTO account_attempts(attempt,session,account,funding,secret_ref) "
+                     "VALUES('legacy-attempt','leaf','claude-credit-normal','api_key','file:/fixture/legacy')")
+        self.execute("INSERT INTO credit_reservations(request,account,organization) "
+                     "VALUES('legacy-request','claude-credit-normal','org-legacy')")
+        self.execute("INSERT INTO credit_authorizations(attempt,account) VALUES('legacy-auth','claude-credit-normal')")
+        self.execute("INSERT INTO credit_observations(id,organization,fact,state,source,observed_at,authority) "
+                     "VALUES('claude-credit-normal:legacy','org-legacy','promotional_credit','unavailable','fixture','0','operator')")
+        sidecar = pathlib.Path(str(self.db) + '.account-' + 'leaf'.encode().hex())
+        sidecar.write_text('previous-account\nclaude-credit-normal\n')
+        recorded = self.record('unrelated', secret='/fixture/unrelated')
+        self.assertEqual(recorded.returncode, 0, recorded.stderr)
+        return sidecar
+
+    def test_credit_rename_preserves_session_binding_and_lineage(self):
+        sidecar = self.legacy_credit_account()
+        self.assertEqual(self.current('leaf'), 'claude-credit-primary')
+        self.assertEqual(sidecar.read_text(), 'previous-account\nclaude-credit-normal\nclaude-credit-primary\n')
+        self.assertEqual(self.query("SELECT id,secret_ref,priority FROM accounts WHERE id LIKE 'claude-credit-%'"),
+                         [('claude-credit-primary', 'file:/fixture/legacy', '7')])
+        for table in ('account_attempts', 'credit_reservations', 'credit_authorizations'):
+            self.assertEqual(self.query('SELECT account FROM ' + table), [('claude-credit-primary',)])
+        self.assertEqual(self.query('SELECT id FROM credit_observations'), [('claude-credit-primary:legacy',)])
+        self.assertEqual(self.current('leaf'), 'claude-credit-primary')
+        self.assertEqual(sidecar.read_text().splitlines()[-2:], ['claude-credit-normal', 'claude-credit-primary'])
+
+    def test_credit_rename_preserves_conflicting_credentials_and_history(self):
+        sidecar = self.legacy_credit_account('file:/fixture/different')
+        self.json_account('read')
+        self.assertEqual(self.current('leaf'), 'claude-credit-normal')
+        self.assertEqual(sidecar.read_text(), 'previous-account\nclaude-credit-normal\n')
+        self.assertEqual(self.query("SELECT secret_ref FROM accounts WHERE id='claude-credit-primary'"),
+                         [('file:/fixture/different',)])
+        for table in ('account_attempts', 'credit_reservations', 'credit_authorizations'):
+            self.assertEqual(self.query('SELECT account FROM ' + table), [('claude-credit-normal',)])
+
+    def test_credit_rename_merges_matching_credentials(self):
+        self.legacy_credit_account('file:/fixture/legacy')
+        self.assertEqual(self.current('leaf'), 'claude-credit-primary')
+        self.assertEqual(self.query("SELECT account,secret_ref FROM account_attempts"),
+                         [('claude-credit-primary', 'file:/fixture/legacy')])
+
     def current(self, session, harness='claude-code'):
         completed = self.entry('current', session, harness)
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -68,6 +117,11 @@ class FocusedAccountCredits(unittest.TestCase):
 
     def handoff(self, session, event=CREDIT_EVENT):
         completed = self.entry('handoff', session, 'turn-' + session, event)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip()
+
+    def history_needed(self, first, second, harness='claude-code'):
+        completed = self.entry('history-needed', first, second, harness)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return completed.stdout.strip()
 
@@ -101,7 +155,7 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(refused.returncode, 2, refused.stderr)
         self.assertEqual(self.json_account('read', label='claude-api')['accounts'][0]['secretRef'], 'file:/fixture/one')
 
-    def test_the_pool_names_conflicting_readings_and_unknown_credit_state(self):
+    def test_the_pool_names_a_chronological_decrease_without_a_conflict(self):
         self.record('claude-max')
         self.record('claude-api', funding='api_key', secret='file:/fixture/api')
         self.observe('claude-max', 'org-fixture')
@@ -112,11 +166,24 @@ class FocusedAccountCredits(unittest.TestCase):
         self.import_credit('claude-api', 'org-fixture', '184.32', 1760000002000)
         pooled = self.json_account('pool', organization='org-fixture')['organizations'][0]
         fact = {row['fact']: row for row in pooled['facts']}['promotional_credit']
-        self.assertTrue(fact['conflict'])
+        self.assertFalse(fact['conflict'])
+        self.assertEqual(fact['balance'], '184.32')
         self.assertEqual(sorted(row['balance'] for row in fact['readings']), ['184.32', '200.00'])
         chosen = self.json_account('select', harness='claude-code', funding='api_key')
         self.assertEqual((chosen['selected'], chosen['creditEligible'], chosen['observationState']),
                          ('claude-api', True, 'reported'))
+
+    def test_the_pool_names_conflicting_balances_at_the_same_observation_time(self):
+        self.record('claude-max')
+        self.record('claude-api', funding='api_key', secret='file:/fixture/api')
+        self.observe('claude-max', 'org-fixture')
+        self.observe('claude-api', 'org-fixture')
+        self.import_credit('claude-max', 'org-fixture', '200.00', 1760000002000)
+        self.import_credit('claude-api', 'org-fixture', '184.32', 1760000002000)
+        pooled = self.json_account('pool', organization='org-fixture')['organizations'][0]
+        fact = {row['fact']: row for row in pooled['facts']}['promotional_credit']
+        self.assertTrue(fact['conflict'])
+        self.assertEqual(sorted(row['balance'] for row in fact['readings']), ['184.32', '200.00'])
 
     def test_bind_requires_a_session_whose_harness_the_account_records(self):
         self.execute("INSERT INTO sessions(id,parent,harness) VALUES('omp-leaf','root','omp')")
@@ -219,6 +286,16 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(self.query("SELECT body FROM messages WHERE id='task-1'"), [('original task',)])
         self.assertEqual(self.query("SELECT count(*) FROM messages WHERE kind='guidance' AND recipient='leaf'"), [(0,)])
 
+    def test_account_history_transport_is_needed_only_for_distinct_subscription_stores(self):
+        self.record('claude-a', secret='/fixture/store-a')
+        self.record('claude-b', secret='/fixture/store-b')
+        self.record('claude-c', secret='/fixture/store-a')
+        self.record('api-a', funding='api_key', secret='file:/fixture/api-a')
+        self.record('api-b', funding='api_key', secret='file:/fixture/api-b')
+        self.assertEqual(self.history_needed('claude-a', 'claude-b'), 'yes')
+        self.assertEqual(self.history_needed('claude-a', 'claude-c'), 'no')
+        self.assertEqual(self.history_needed('api-a', 'api-b'), 'no')
+
     def test_a_subscription_usage_fact_is_not_a_credit_import(self):
         self.record('claude-max')
         self.observe('claude-max', 'org-fixture')
@@ -268,6 +345,394 @@ class FocusedAccountCredits(unittest.TestCase):
         self.credit_account(balance=None)
         self.assertIn('creditObservationUnavailable', self.gate('attempt-1'))
 
+    def reserve(self, attempt, session='leaf', cap='2026-10'):
+        completed = self.entry('reserve', session, 'claude-code', attempt, cap)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip().split('|')
+
+    def reserve_bound(self, attempt, bound, session='leaf', period='2026-10'):
+        completed = self.entry('reserve-bound', session, 'claude-code', attempt, period, bound)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip().split('|')
+
+    def gate_priced(self, attempt, model='claude-opus-5-5', input='1', output='1', cache5='0', cache1='0', cachehit='0', geo='global', fast='0', server='0', tools='0', qualified='1', session='leaf'):
+        completed = self.entry('gate-priced', session, 'claude-code', attempt, model, input, output, cache5, cache1, cachehit, geo, fast, server, tools, qualified)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip().split('|')
+
+    def facts(self, body):
+        completed = self.entry('facts', body)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip().split('|')
+
+    def gate_body(self, attempt, body, qualified='1', session='leaf'):
+        completed = self.entry('gate-body', session, 'claude-code', attempt, body, qualified)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip().split('|')
+
+    def settle(self, request, outcome='completed', cost=''):
+        completed = self.entry('settle', request, outcome, cost)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip()
+
+    def reconcile(self, request, cost):
+        completed = self.entry('reconcile', request, cost)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip()
+
+    def gate_qualified(self, attempt, session='leaf'):
+        completed = self.entry('gate-qualified', session, 'claude-code', attempt)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip().split('|')
+
+    def gate_held(self, attempt, session='leaf'):
+        completed = self.entry('gate-held', session, 'claude-code', attempt)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip().split('|')
+
+    def import_spend(self, label, organization, balance, cycle='2026-10', unit='USD'):
+        detail = json.dumps({'fact': 'external_spend', 'state': 'reported', 'balance': balance,
+                             'unit': unit, 'cycle': cycle,
+                             'source': 'anthropic-admin-api:/v1/organizations/cost_report',
+                             'observedAt': 1760000005000})
+        completed = self.account('import-spend', label, organization=organization, detail=detail, session='')
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return json.loads(completed.stdout)
+
+    def test_reservation_reserves_the_lower_bound_and_admits_concurrent_requests(self):
+        self.credit_account('200.00')
+        first = self.reserve('attempt-1')
+        self.assertEqual(first[:3], ['admitted', 'org-fixture', 'grant:2026-10-11'])
+        self.assertEqual(first[3:], ['200', '0', '0'])
+        second = self.reserve('attempt-2')
+        self.assertEqual(second[:3], ['admitted', 'org-fixture', 'grant:2026-10-11'])
+        self.assertEqual(sorted(state for _, state, _ in self.query(
+            "SELECT request,state,max_charge FROM credit_reservations")), ['reserved', 'reserved'])
+
+    def test_reservation_uses_the_observed_balance_when_lower(self):
+        self.credit_account('150.00')
+        admitted = self.reserve('attempt-1')
+        self.assertEqual(admitted[:3], ['admitted', 'org-fixture', 'grant:2026-10-11'])
+        self.assertEqual(admitted[3:], ['150', '0', '50'])
+
+    def test_a_bounded_reservation_reserves_only_the_request_charge(self):
+        self.credit_account('200.00')
+        first = self.reserve_bound('attempt-1', '1.25')
+        self.assertEqual(first[:3], ['admitted', 'org-fixture', 'grant:2026-10-11'])
+        self.assertEqual(first[3:], ['1.25', '198.75', '198.75'])
+        self.assertEqual(self.settle('attempt-1', 'completed', '1.25'), 'settled')
+        second = self.reserve_bound('attempt-2', '198.75')
+        self.assertEqual(second[:3], ['admitted', 'org-fixture', 'grant:2026-10-11'])
+        self.assertEqual(second[3:], ['198.75', '1.25', '0'])
+
+    def test_the_priced_gate_reserves_the_request_bound_before_binding(self):
+        self.credit_account('200.00')
+        bound = self.gate_priced('attempt-1')
+        self.assertEqual(bound[0], 'binding')
+        self.assertEqual(self.query("SELECT request,state,max_charge FROM credit_reservations"),
+                         [('attempt-1', 'reserved', '0.000024000')])
+        again = self.gate_priced('attempt-2')
+        self.assertEqual(again[0], 'binding')
+
+    def test_the_priced_gate_refuses_an_unpriced_request(self):
+        self.credit_account('200.00')
+        refused = self.gate_priced('attempt-1', model='claude-unknown')
+        self.assertEqual(refused[0], 'refused')
+        self.assertIn('creditModelUnpriced', refused[1])
+        self.assertEqual(self.query("SELECT count(*) FROM credit_reservations"), [(0,)])
+
+    def test_request_facts_read_the_actual_body(self):
+        body = '{"model":"claude-opus-5-5","max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}'
+        facts = self.facts(body)
+        self.assertEqual(facts[0], 'claude-opus-5-5')
+        self.assertEqual(facts[1], str(len(body.encode())))
+        self.assertEqual(facts[2], '1024')
+        self.assertEqual(facts[3:6], ['0', '0', '0'])
+        self.assertEqual(facts[6:], ['global', '0', '0', '0'])
+
+    def test_body_price_keeps_input_and_output_bounds_in_order(self):
+        body = '{"model":"claude-opus-5-5","max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}'
+        completed = self.entry('price-body', body)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), 'priced|0.020836000')
+
+    def test_qualified_gate_admits_unverified_and_unreadable_funding(self):
+        self.record('claude-api', funding='api_key', secret='file:/fixture/api')
+        self.bind('claude-api', 'leaf')
+        self.assertEqual(self.gate_qualified('unverified')[0], 'binding')
+        self.observe('claude-api', 'org-fixture')
+        self.import_credit('claude-api', 'org-fixture', '', state='unavailable')
+        self.assertEqual(self.gate_priced('unreadable')[0], 'binding')
+        self.assertEqual(self.query("SELECT cycle,balance,unit FROM credit_authorizations ORDER BY attempt"),
+                         [('', '', ''), ('', '', '')])
+
+    def test_qualified_gate_admits_unknown_and_expired_funding(self):
+        self.credit_account(balance=None)
+        self.assertEqual(self.gate_qualified('unknown')[0], 'binding')
+        self.import_credit('claude-api', 'org-fixture', '200.00', expires='1000000000000')
+        self.assertEqual(self.gate_priced('expired')[0], 'binding')
+        self.assertEqual(self.query("SELECT cycle,balance,unit FROM credit_authorizations ORDER BY attempt"),
+                         [('', '', ''), ('', '', '')])
+        self.assertEqual(self.query('SELECT request FROM credit_reservations'), [])
+
+    def test_request_facts_mark_cache_fast_and_server_tools(self):
+        body = '{"model":"claude-opus-5-5","max_tokens":100,"speed":"fast","system":[{"type":"text","text":"x","cache_control":{"type":"ephemeral","ttl":"1h"}}],"tools":[{"type":"web_search_20250305","name":"web_search"}],"messages":[]}'
+        facts = self.facts(body)
+        self.assertEqual(facts[0], 'claude-opus-5-5')
+        self.assertEqual(facts[1], str(len(body.encode())))
+        self.assertEqual(facts[2], '100')
+        self.assertEqual(facts[3], str(len(body.encode())))
+        self.assertEqual(facts[4], str(len(body.encode())))
+        self.assertEqual(facts[5:], ['0', 'global', '1', '1', '1'])
+
+    def test_the_gate_prices_the_actual_request_body(self):
+        self.credit_account('200.00')
+        body = '{"model":"claude-opus-5-5","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}'
+        result = self.gate_body('attempt-1', body)
+        self.assertEqual(result[0], 'binding')
+        nanos = len(body.encode()) * 4000 + 20000
+        rows = self.query("SELECT request,state,max_charge FROM credit_reservations")
+        self.assertEqual([(request, state) for request, state, charge in rows], [('attempt-1', 'reserved')])
+        self.assertEqual(Decimal(rows[0][2]), Decimal(nanos) / Decimal(10 ** 9))
+
+    def test_reservation_uses_provider_spend_reconciliation(self):
+        self.credit_account('200.00')
+        self.import_spend('claude-api', 'org-fixture', '50.00')
+        admitted = self.reserve('attempt-1')
+        self.assertEqual(admitted[3:], ['150', '50', '0'])
+
+    def test_reservation_refuses_conflicting_readings(self):
+        self.credit_account('200.00')
+        self.import_credit('claude-api', 'org-fixture', '199.00', 1760000000000)
+        self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditReadingsConflict'])
+
+    def test_reservation_accepts_chronological_balance_decrease(self):
+        self.credit_account('200.00')
+        self.import_credit('claude-api', 'org-fixture', '199.52', 1760000009000)
+        admitted = self.reserve('attempt-1')
+        self.assertEqual(admitted[:3], ['admitted', 'org-fixture', 'grant:2026-10-11'])
+        self.assertEqual(admitted[3], '199.52')
+
+    def test_reservation_refuses_non_usd_and_unverified_expiry(self):
+        self.credit_account('200.00')
+        self.import_credit('claude-api', 'org-fixture', '200.00', 1760000010000, unit='EUR')
+        self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditUnitNotUSD'])
+        self.import_credit('claude-api', 'org-fixture', '200.00', 1760000011000,
+                           unit='USD', expires='1000000000000')
+        self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditObservationExpired'])
+        self.import_credit('claude-api', 'org-fixture', '200.00', 1760000012000,
+                           unit='USD', expires='2026-11-14')
+        self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditObservationExpiryUnverified'])
+        self.import_credit('claude-api', 'org-fixture', '200.00', 1760000013000,
+                           unit='USD', expires='soon')
+        self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditObservationExpiryUnverified'])
+        self.import_credit('claude-api', 'org-fixture', '200.00', 1760000014000,
+                           unit='USD', expires='4102444800000')
+        self.assertEqual(self.reserve('attempt-1')[:2], ['admitted', 'org-fixture'])
+
+    def test_reservation_settles_missing_cost_and_reconciles(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.assertEqual(self.settle('attempt-1', 'completed', ''), 'failed')
+        self.assertEqual(self.reserve('attempt-2'), ['refused', 'monthlyCapExhausted'])
+        self.assertEqual(self.reconcile('attempt-1', '12.50'), 'settled')
+        admitted = self.reserve('attempt-2')
+        self.assertEqual(admitted[:2], ['admitted', 'org-fixture'])
+        self.assertEqual(admitted[3], '187.5')
+
+    def test_reservation_duplicate_request_is_idempotent(self):
+        self.credit_account('200.00')
+        first = self.reserve('attempt-1')
+        self.assertEqual(first, self.reserve('attempt-1'))
+        self.assertEqual(self.query("SELECT count(*) FROM credit_reservations WHERE request='attempt-1'"), [(1,)])
+
+    def test_reservation_binding_is_real_when_qualified_and_held(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        qualified = self.gate_qualified('attempt-1')
+        self.assertEqual(qualified[0], 'binding')
+        self.assertEqual(qualified[1], '/fixture/api-key-exec')
+        self.assertEqual(self.query("SELECT state FROM credit_authorizations WHERE attempt='attempt-1'"),
+                         [('authorized',)])
+        held = self.gate_held('attempt-1')
+        self.assertEqual(held[0], 'refused')
+        self.assertIn('held', held[1])
+
+    def test_reservation_refuses_missing_observation_and_expired_grant(self):
+        self.record('claude-api', funding='api_key', secret='file:/fixture/api')
+        self.bind('claude-api', 'leaf')
+        self.assertEqual(self.reserve('attempt-1'), ['refused', 'organizationUnverified'])
+        self.observe('claude-api', 'org-fixture')
+        self.import_credit('claude-api', 'org-fixture', '200.00', 1760000000000,
+                           expires='1000000000000', cycle='grant:2026-09-01')
+        self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditObservationExpired'])
+        self.import_credit('claude-api', 'org-fixture', '200.00', 1760000001000,
+                           expires='4102444800000', cycle='grant:2026-10-11')
+        self.assertEqual(self.reserve('attempt-1')[:2], ['admitted', 'org-fixture'])
+
+    def test_reservation_process_failure_keeps_the_bound(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.assertEqual(self.settle('attempt-1', 'failed', ''), 'failed')
+        self.assertEqual(self.reserve('attempt-2'), ['refused', 'monthlyCapExhausted'])
+        self.assertEqual(self.reconcile('attempt-1', '5.00'), 'settled')
+        self.assertEqual(self.reserve('attempt-2')[3], '195')
+
+    def test_account_reconcile_dispatches(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.assertEqual(self.settle('attempt-1', 'completed', ''), 'failed')
+        completed = self.account('reconcile', 'attempt-1',
+                                 detail=json.dumps({'cost': '12.50'}), session='')
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), 'settled')
+
+    def complete_event(self, attempt, event, outcome='completed'):
+        completed = self.entry('complete-event', attempt, outcome, '', event)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip()
+
+    def test_attempt_completion_settles_the_result_cost_once(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        event = json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False,
+                            'total_cost_usd': 0.4875489})
+        self.assertEqual(self.complete_event('attempt-1', event), 'attempt-completed')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '0.4875489')])
+        self.assertEqual(self.complete_event('attempt-1', event), 'attempt-completed')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '0.4875489')])
+        self.assertEqual(self.reserve('attempt-2')[3], '199.5124511')
+
+    def test_attempt_completion_without_result_cost_keeps_the_bound(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.assertEqual(self.complete_event('attempt-1', '{"type":"result","is_error":true}', 'failed'),
+                         'attempt-completed')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('failed', '')])
+        self.assertEqual(self.reserve('attempt-2'), ['refused', 'monthlyCapExhausted'])
+
+    def test_result_cost_rejects_an_exponent(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', '{"type":"result","total_cost_usd":1e2}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('failed', '')])
+
+    def test_result_cost_reads_the_root_field_past_a_nested_field(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', '{"type":"result","usage":{"total_cost_usd":0.01},"total_cost_usd":1.25}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '1.25')])
+
+    def test_result_cost_preserves_the_exact_root_decimal_past_a_nested_field(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', '{"type":"result","usage":{"total_cost_usd":0.100000000000000001},"total_cost_usd":0.100000000000000002}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '0.100000000000000002')])
+
+    def test_result_cost_ignores_a_nested_exponent_field(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', '{"type":"result","usage":{"total_cost_usd":1e2},"total_cost_usd":1.25}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '1.25')])
+
+    def test_result_cost_refuses_duplicate_root_fields(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', '{"type":"result","total_cost_usd":0.1,"total_cost_usd":100}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('failed', '')])
+
+    def test_result_cost_refuses_duplicate_root_fields_with_equal_values(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', '{"type":"result","total_cost_usd":0.1,"total_cost_usd":0.1}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('failed', '')])
+
+    def test_result_cost_settles_past_an_escaped_newline(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', r'{"type":"result","result":"line\nbreak","total_cost_usd":1.25}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '1.25')])
+
+    def test_result_cost_settles_past_an_escaped_quote(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', r'{"type":"result","result":"quote\"inside","total_cost_usd":1.25}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '1.25')])
+
+    def test_result_cost_settles_past_an_escaped_backslash(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', r'{"type":"result","result":"slash\\inside","total_cost_usd":1.25}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '1.25')])
+
+    def test_result_cost_settles_past_an_escaped_tab(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', r'{"type":"result","result":"tab\tinside","total_cost_usd":1.25}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '1.25')])
+
+    def test_result_cost_rejects_malformed_json(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', '{"type":"result","total_cost_usd":0.1garbage}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('failed', '')])
+
+    def test_result_cost_rejects_a_non_result_frame(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', '{"type":"message","total_cost_usd":0.1}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('failed', '')])
+
+    def test_result_cost_accepts_whitespace_before_the_colon(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.complete_event('attempt-1', '{"type":"result","total_cost_usd" : 1.25}')
+        self.assertEqual(self.query("SELECT state,actual_cost FROM credit_reservations WHERE request='attempt-1'"),
+                         [('settled', '1.25')])
+
+    def price(self, model, input='0', output='0', cache5='0', cache1='0', cachehit='0', geo='global', fast='0', server='0', tools='0'):
+        completed = self.entry('price', model, input, output, cache5, cache1, cachehit, geo, fast, server, tools)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip()
+
+    def test_request_price_uses_the_verified_opus_rates(self):
+        self.assertEqual(self.price('claude-opus-5-5', '1000000', '1000000'), 'priced|24.000000000')
+        self.assertEqual(self.price('claude-opus-5-5', cache5='1000000'), 'priced|5.000000000')
+        self.assertEqual(self.price('claude-opus-5-5', cache1='1000000'), 'priced|8.000000000')
+        self.assertEqual(self.price('claude-opus-5-5', cachehit='1000000'), 'priced|0.200000000')
+
+    def test_request_price_uses_the_verified_sonnet_rates(self):
+        self.assertEqual(self.price('claude-sonnet-5-5', '1000000', '1000000'), 'priced|12.000000000')
+
+    def test_request_price_applies_the_haiku_long_context_tier(self):
+        self.assertEqual(self.price('claude-haiku-5-5', '100000', '100000'), 'priced|0.060000000')
+        self.assertEqual(self.price('claude-haiku-5-5', '100001', '100001'), 'priced|0.300003000')
+
+    def test_request_price_applies_fast_mode_residency_and_tools(self):
+        self.assertEqual(self.price('claude-opus-5-5', '1000000', '1000000', fast='1'), 'priced|48.000000000')
+        self.assertEqual(self.price('claude-opus-5-5', '1000000', '1000000', geo='us'), 'priced|26.400000000')
+        self.assertEqual(self.price('claude-opus-5-5', tools='1'), 'priced|0.001624000')
+
+    def test_request_price_refuses_unpriced_actions(self):
+        self.assertEqual(self.price('claude-opus-5-5', server='1'), 'refused|creditServerToolUnpriced')
+        self.assertEqual(self.price('claude-unknown'), 'refused|creditModelUnpriced')
+        self.assertEqual(self.price('claude-sonnet-5-5', fast='1'), 'refused|creditFastModeUnpriced')
+        self.assertEqual(self.price('claude-opus-5-5', geo='eu'), 'refused|creditResidencyUnpriced')
     def authorize(self, attempt, session='leaf'):
         completed = self.entry('authorize', session, 'claude-code', attempt)
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -279,12 +744,12 @@ class FocusedAccountCredits(unittest.TestCase):
         rows = self.query("SELECT attempt,account,organization,balance,unit FROM credit_authorizations")
         self.assertEqual(rows, [('attempt-1', 'claude-api', 'org-fixture', '200.00', 'USD')])
 
-    def test_authorization_records_nothing_for_an_exhausted_balance(self):
+    def test_authorization_records_the_route_for_a_reported_zero_balance(self):
         self.credit_account(balance='0.00')
-        self.assertEqual(self.authorize('attempt-1'), 'not-authorized')
-        self.assertEqual(self.query("SELECT count(*) FROM credit_authorizations"), [(0,)])
+        self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        self.assertEqual(self.query("SELECT account,balance FROM credit_authorizations"), [('claude-api', '0.00')])
 
-    def test_a_credit_reading_records_expiry_and_authorizes_its_cycle(self):
+    def test_a_date_only_expiry_keeps_authorization_balance_unknown(self):
         self.record('claude-api', funding='api_key', secret='file:/fixture/api')
         self.bind('claude-api', 'leaf')
         self.observe('claude-api', 'org-fixture')
@@ -294,8 +759,7 @@ class FocusedAccountCredits(unittest.TestCase):
                          ('2026-11-01', '2026-10'))
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
         self.assertEqual(self.query("SELECT cycle,balance,unit FROM credit_authorizations WHERE attempt='attempt-1'"),
-                         [('2026-10', '200.00', 'USD')])
-
+                         [('', '', '')])
     def test_helper_runs_only_with_marker_and_durable_authorization(self):
         helper = os.environ.get('BATON2_API_KEY_EXEC')
         if not helper:
@@ -362,12 +826,11 @@ class FocusedAccountCredits(unittest.TestCase):
         refused = [error for code, (out, error) in zip([first.returncode, second.returncode], outputs) if code != 0]
         self.assertIn('creditAuthorizationConsumed', refused[0])
 
-    def test_an_unfunded_attempt_refuses_before_a_child_runs(self):
+    def test_an_unauthorized_attempt_refuses_before_a_child_runs(self):
         helper = os.environ.get('BATON2_API_KEY_EXEC')
         if not helper:
             self.skipTest('BATON2_API_KEY_EXEC not set')
         self.credit_account(balance='0.00')
-        self.assertEqual(self.authorize('attempt-1'), 'not-authorized')
         directory = self.directory
         secret = directory / 'secret'
         secret.write_text('fixture-secret\n')
@@ -575,10 +1038,9 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return json.loads(completed.stdout)
 
-    def import_credit(self, label, organization, balance, observed_at=1760000000000, state='reported', fact='promotional_credit', expires='', cycle='2026-10'):
-        detail = json.dumps({'fact': fact, 'state': state, 'balance': balance, 'unit': 'USD',
-                             'expires': expires, 'cycle': cycle, 'source': 'console-billing-display',
-                             'observedAt': observed_at})
+    def import_credit(self, label, organization, balance, observed_at=1760000000000, state='reported', fact='promotional_credit', unit='USD', expires='4102444800000', cycle='grant:2026-10-11'):
+        detail = json.dumps({'fact': fact, 'state': state, 'balance': balance, 'unit': unit,
+                             'cycle': cycle, 'expires': expires, 'source': 'console-billing-display', 'observedAt': observed_at})
         completed = self.account('import-credit', label, organization=organization, detail=detail, session='')
         if completed.returncode != 0:
             return completed

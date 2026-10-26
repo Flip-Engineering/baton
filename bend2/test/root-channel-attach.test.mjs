@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -31,6 +32,8 @@ function orchestra(dir) {
   const db = new DatabaseSync(path);
   db.exec(`CREATE TABLE sessions(id TEXT PRIMARY KEY, parent TEXT, harness TEXT, native TEXT, endpoint TEXT);
     CREATE TABLE session_roles(session TEXT PRIMARY KEY, role TEXT);
+    CREATE TABLE session_stops(session TEXT PRIMARY KEY);
+    CREATE TABLE message_reads(attempt TEXT, message TEXT, recipient TEXT, native TEXT, identity TEXT, handled TEXT);
     CREATE TABLE messages(seq INTEGER PRIMARY KEY, id TEXT, sender TEXT, recipient TEXT, kind TEXT, body TEXT, receipt TEXT);
     INSERT INTO sessions(id,parent,harness) VALUES('operator',NULL,'operator'),('lead',NULL,'claude-code');
     INSERT INTO session_roles(session,role) VALUES('operator','operator'),('lead','conductor');`);
@@ -83,14 +86,43 @@ test('a database that does not exist on this host is refused', (t) => {
 });
 
 // The fake coordinator records each argv as one JSON line.
-async function attach(t, session) {
+async function attach(t, session, setup = () => {}) {
   const dir = scratch(t);
   const database = orchestra(dir);
+  const connection = new DatabaseSync(database);
+  setup(connection);
+  connection.close();
   const log = join(dir, 'coordinator.log');
   const fake = executable(join(dir, 'baton'),
-    `#!${process.execPath}\nrequire('fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');\n`);
+    `#!${process.execPath}
+const args = process.argv.slice(2);
+require('fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + '\\n');
+const { DatabaseSync } = require('node:sqlite');
+if (args[0] === '--help' || args[0] === 'help') process.exit(0);
+const db = new DatabaseSync(args[0]);
+if (args[1] === 'attach') {
+  db.prepare('UPDATE sessions SET harness=?,native=?,endpoint=? WHERE id=?').run(args[3],args[4],args[5],args[2]);
+} else if (args[1] === 'session') {
+  console.log(JSON.stringify(db.prepare('SELECT * FROM sessions WHERE id=?').get(args[2])));
+} else if (args[1] === 'delivery') {
+  const message = db.prepare('SELECT * FROM messages WHERE id=?').get(args[2]);
+  if (message?.recipient === process.env.BATON_SESSION) {
+    const context = JSON.parse(process.env.BATON_MCP_INPUT);
+    if (!context.ready) throw new Error('The channel is not ready.');
+    db.prepare('INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES(?,?,?,?,?)')
+      .run('fixture-read',message.id,message.recipient,context.native,'fixture-coordinator');
+  }
+  console.log(JSON.stringify(message ?? null));
+} else if (args[1] === 'status') console.log('{}');
+db.close();
+`);
   const child = spawn(process.execPath, [CONDUCTOR, database, fake, '--session', session], { stdio: ['pipe', 'pipe', 'pipe'] });
-  t.after(() => child.kill());
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill();
+      await once(child, 'exit');
+    }
+  });
   let stderr = '';
   child.stderr.on('data', (chunk) => { stderr += chunk; });
   const responses = [];
@@ -117,6 +149,40 @@ async function attach(t, session) {
   await until(() => responses.some((r) => r.id === 'conductor-channel-ready'), 'delivery registered');
   const recorded = calls().filter((argv) => argv[0] === database).map((argv) => argv.slice(1));
   recorded.database = database;
+  recorded.channel = { child, send, responses, until, fake, log,
+    activate: () => send({ id: 'conductor-channel-ready', result: {} }),
+    notes: () => responses.filter((r) => r.method === 'notifications/claude/channel'),
+    async call(id, name, args = {}) {
+      send({ id, method: 'tools/call', params: { name, arguments: args } });
+      await until(() => responses.some((r) => r.id === id), `${name} answered`);
+      return responses.find((r) => r.id === id).result;
+    },
+    async barrier(id) {
+      send({ id, method: 'ping' });
+      await until(() => responses.some((r) => r.id === id), 'ping answered');
+    },
+    async deliver(id) {
+      const endpoint = JSON.parse(recorded.find((args) => args[0] === 'attach')[4]);
+      const delivery = spawn(process.execPath, [CONDUCTOR, database, fake, '--session', session, '--deliver', endpoint[7], id],
+        { stdio: ['ignore', 'pipe', 'pipe'] });
+      let error = '';
+      delivery.stderr.on('data', (chunk) => { error += chunk; });
+      const [code, signal] = await once(delivery, 'exit');
+      assert.equal(code, 0, `${signal ?? ''} ${error}`);
+    },
+    async native(event, prompt) {
+      const native = new DatabaseSync(database, { readOnly: true });
+      const sessionId = native.prepare('SELECT native FROM sessions WHERE id=?').get(session).native;
+      native.close();
+      const hook = spawn(process.execPath, [CONDUCTOR, database, fake, '--session', session, '--native-event'],
+        { stdio: ['pipe', 'pipe', 'pipe'] });
+      let error = '';
+      hook.stderr.on('data', (chunk) => { error += chunk; });
+      hook.stdin.end(JSON.stringify({ hook_event_name: event, session_id: sessionId, prompt_id: prompt }));
+      const [code, signal] = await once(hook, 'exit');
+      assert.equal(code, 0, `${signal ?? ''} ${error}`);
+    },
+  };
   return recorded;
 }
 
@@ -147,7 +213,117 @@ test('a connect probe that sends nothing gets no answer', async (t) => {
   const calls = await attach(t, 'operator');
   const endpoint = JSON.parse(calls.find((argv) => argv[0] === 'attach')[4]);
   const probe = spawnSync(process.execPath, ['-e', PROBE, endpoint[7]],
-    { cwd: dirname(calls.database), encoding: 'utf8', timeout: 30000 });
+    { cwd: dirname(calls.database), encoding: 'utf8' });
   assert.equal(probe.status, 0, probe.stderr);
   assert.equal(JSON.parse(probe.stdout), '');
+});
+
+test('retained root backlog produces a stored-input pointer and preserves every unread body', async (t) => {
+  const retained = 7136;
+  const body = 'Retained report body. λ🙂\n'.repeat(40) + 'Complete tail.';
+  const calls = await attach(t, 'operator', (db) => {
+    const insert = db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)');
+    db.exec('BEGIN');
+    for (let n = 0; n < retained; n++) insert.run(`retained-${n}`, 'worker', 'operator', 'report', body);
+    db.exec('COMMIT');
+  });
+  const { channel } = calls;
+  channel.activate();
+  await channel.until(() => channel.notes().length > 0, 'retained input notice');
+  const notice = channel.notes()[0];
+  assert.deepEqual(JSON.parse(notice.params.meta.messageIds), ['retained-0']);
+  assert.match(notice.params.content, /baton2_delivery/);
+  assert.ok(!notice.params.content.includes(body));
+  assert.ok(!notice.params.content.includes(`retained-${retained - 1}`));
+  const db = new DatabaseSync(calls.database, { readOnly: true });
+  assert.equal(db.prepare('SELECT count(*) AS n FROM message_reads').get().n, 0);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM messages WHERE body=? AND receipt IS NULL').get(body).n, retained);
+  db.close();
+});
+
+test('a complete recipient read advances the root backlog without a clearing action', async (t) => {
+  const calls = await attach(t, 'operator', (db) => {
+    db.prepare('UPDATE sessions SET native=? WHERE id=?').run('retained-native', 'operator');
+    const insert = db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)');
+    insert.run('first', 'worker', 'operator', 'report', 'First complete body.\nλ🙂\nTail.');
+    insert.run('second', 'worker', 'operator', 'report', 'Second complete body.');
+  });
+  const { channel } = calls;
+  channel.activate();
+  await channel.until(() => channel.notes().length > 0, 'first input notice');
+  assert.deepEqual(JSON.parse(channel.notes()[0].params.meta.messageIds), ['first']);
+  const first = await channel.call('read-first', 'baton2_delivery', { id: 'first' });
+  assert.equal(JSON.parse(first.content[0].text).body, 'First complete body.\nλ🙂\nTail.');
+  await channel.until(() => channel.notes().some((note) => note.params.meta.messageIds === '["second"]'), 'next unread input notice');
+  const second = await channel.call('read-second', 'baton2_delivery', { id: 'second' });
+  assert.equal(JSON.parse(second.content[0].text).body, 'Second complete body.');
+  const notes = channel.notes().slice();
+  await channel.barrier('drained');
+  assert.deepEqual(channel.notes(), notes);
+  const db = new DatabaseSync(calls.database, { readOnly: true });
+  assert.deepEqual(db.prepare('SELECT message,native,handled FROM message_reads ORDER BY message').all().map((r) => ({ ...r })),
+    [{ message: 'first', native: 'retained-native', handled: null }, { message: 'second', native: 'retained-native', handled: null }]);
+  assert.deepEqual(db.prepare('SELECT id,receipt FROM messages ORDER BY seq').all().map((r) => ({ ...r })),
+    [{ id: 'first', receipt: null }, { id: 'second', receipt: null }]);
+  db.close();
+  const actions = readFileSync(channel.log, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.ok(actions.every((args) => !['ack', 'acknowledge'].includes(args[1])));
+});
+
+test('an unread notice returns on native prompt changes and respects an explicit stop', async (t) => {
+  const calls = await attach(t, 'operator', (db) => {
+    db.prepare('UPDATE sessions SET native=? WHERE id=?').run('retained-native', 'operator');
+    db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+      .run('unread', 'worker', 'operator', 'report', 'Retain this body until a complete read.');
+  });
+  const { channel } = calls;
+  channel.activate();
+  await channel.until(() => channel.notes().length > 0, 'initial unread notice');
+  const initial = channel.notes().slice();
+  await channel.call('status', 'baton2_status');
+  await channel.barrier('unchanged');
+  assert.deepEqual(channel.notes(), initial);
+  await channel.native('PreToolUse', 'prompt-1');
+  await channel.barrier('first-prompt');
+  assert.deepEqual(channel.notes().slice(initial.length).map((r) => JSON.parse(r.params.meta.messageIds)), [['unread']]);
+  const firstPrompt = channel.notes().slice();
+  await channel.native('PreToolUse', 'prompt-1');
+  await channel.barrier('same-prompt');
+  assert.deepEqual(channel.notes(), firstPrompt);
+  await channel.native('Stop', 'prompt-1');
+  await channel.barrier('unread-turn-ended');
+  assert.deepEqual(channel.notes().slice(firstPrompt.length).map((r) => JSON.parse(r.params.meta.messageIds)), [['unread']]);
+  const db = new DatabaseSync(calls.database);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM message_reads').get().n, 0);
+  db.prepare('INSERT INTO session_stops VALUES(?)').run('operator');
+  const stopped = channel.notes().slice();
+  await channel.native('PreToolUse', 'prompt-2');
+  await channel.barrier('explicit-stop');
+  assert.deepEqual(channel.notes(), stopped);
+  db.close();
+});
+
+test('new committed input has a pointer while older unread history stays recoverable', async (t) => {
+  const calls = await attach(t, 'operator', (db) => {
+    db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+      .run('old-report', 'worker', 'operator', 'report', 'Older unread history.');
+  });
+  const { channel } = calls;
+  channel.activate();
+  await channel.until(() => channel.notes().length > 0, 'old input notice');
+  const db = new DatabaseSync(calls.database);
+  db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+    .run('new-guidance', 'parent', 'operator', 'guidance', 'New committed guidance.');
+  await channel.deliver('new-guidance');
+  await channel.barrier('new-input');
+  const latest = channel.notes().at(-1);
+  assert.deepEqual(JSON.parse(latest.params.meta.messageIds), ['new-guidance']);
+  assert.ok(!latest.params.content.includes('New committed guidance.'));
+  await channel.call('read-new', 'baton2_delivery', { id: 'new-guidance' });
+  await channel.barrier('old-input-remains');
+  assert.deepEqual(JSON.parse(channel.notes().at(-1).params.meta.messageIds), ['old-report']);
+  assert.deepEqual(db.prepare('SELECT message FROM message_reads').all().map((r) => r.message), ['new-guidance']);
+  assert.equal(db.prepare('SELECT body,receipt FROM messages WHERE id=?').get('old-report').body, 'Older unread history.');
+  assert.equal(db.prepare('SELECT body,receipt FROM messages WHERE id=?').get('old-report').receipt, null);
+  db.close();
 });

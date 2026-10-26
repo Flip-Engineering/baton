@@ -1,11 +1,14 @@
 # Focused fixture for the account DB regression: an unqualified Muse model
-# records provider='', window='' and account='', and every incoming report woke
-# the session into another exhausted attempt. The fixture reproduces that
-# durable shape, then proves the gate holds across repeated wake checks, the
-# empty-window reset observation is supported, repeated refusal reports share
-# one durable identity, and clear-only preserves native identity, owed input and
-# the quota hold. It also proves cross-session report separation, the first-attempt
-# exit identity before its usage row, and the handoff/direct-start gate.
+# records provider='', window='' and account='' refusal evidence, and every
+# incoming report woke the session into another exhausted attempt. The fixture
+# reproduces that durable shape with an exhausted live read of the muse provider
+# (#1025), then proves the gate holds across repeated wake checks and reports the
+# hold once, repeated refusal reports share one durable identity, and clear-only
+# preserves native identity, owed input and the hold. It proves the account and
+# profile handoffs skip accounts and profiles that a live read holds, refusal text
+# alone does not hold a profile, and an open read makes a profile selectable again.
+# It also proves cross-session report separation, the first-attempt exit identity
+# before its usage row, and the handoff/direct-start gate.
 #
 # usage: quota-backoff-dedupe DB
 import Base
@@ -39,14 +42,18 @@ def expect_read(+db: String, +text: String, +expected: String, +label: String) -
 def gate_class(gate: UW.Gate) -> String:
   match gate:
     case UW.GateNone{}: "none"
-    case UW.GateUnknown{window,source,receipt}: "unknown"
     case UW.GateHeld{window,resets_at,source,receipt}: "held"
-    case UW.GateElapsed{window,resets_at,source,receipt}: "elapsed"
+    case UW.GateUnknown{source,reason,receipt}: "unknown"
 
 def expect_gate(+db: String, +session: String, +account: String, +expected: String, +label: String) -> IO(Unit):
   do IO<Unit>:
     gate : UW.Gate <- UW.window_gate(db,session,account)
     expect(label,String.eq(gate_class(gate),expected))
+
+def expect_admitted(+db: String, +session: String, +account: String, +label: String) -> IO(Unit):
+  do IO<Unit>:
+    gate : UW.Gate <- UW.window_gate(db,session,account)
+    expect(label,Bool.not(UW.gate_held(gate)))
 
 def expect_route_harness(selected: Maybe<&2,Subs.Route>, expected: String, label: String) -> IO(Unit):
   match selected:
@@ -57,6 +64,16 @@ def expect_route_model(selected: Maybe<&2,Subs.Route>, expected: String, label: 
   match selected:
     case None{}: IO.die(Unit,1,"fixture-quota-backoff " ++ label ++ ": no route selected")
     case Some{route}: expect(label,String.eq(Subs.route_model(route),expected))
+
+# One readable live read of a provider's 5-hour window for an account.
+def read_row_sql(+provider: String, +account: String, +percent: String, +exhausted: String) -> String:
+  "INSERT INTO usage_reads(observed_at,provider,account,session,trigger,state,source,reason,document) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000," ++ C.q(provider) ++ "," ++ C.q(account) ++ ",'','fixture','read','fixture','',json_object('schema','baton2-usage-read-v1','provider'," ++ C.q(provider) ++ ",'source','fixture','observedAt',1,'state','read','windows',json_array(json_object('window','5-hour','usedPercent'," ++ percent ++ ",'resetsAt',CAST(strftime('%s','now') AS INTEGER)*1000+3600000,'exhausted',json(" ++ C.q(exhausted) ++ ")))));"
+
+def held_read(+db: String, +provider: String, +account: String) -> IO(Unit):
+  query(db,read_row_sql(provider,account,"100","true"))
+
+def open_read(+db: String, +provider: String, +account: String, +percent: String) -> IO(Unit):
+  query(db,read_row_sql(provider,account,percent,"false"))
 
 def messages_state_sql(session: String) -> String:
   "SELECT group_concat(id || ':' || kind || ':' || body || ':' || coalesce(receipt,'-'),'|') FROM (SELECT id,kind,body,receipt FROM messages WHERE recipient="
@@ -93,16 +110,17 @@ def setup(+db: String) -> IO(Unit):
     first : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(1792430349000,'muse','muse-wonder-1.0','','','',1792972800000,'provider-message',NULL,'attempt one','receive:wonder:1');")
     second : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(1792430367000,'muse','muse-wonder-1.0','','','',1792972800000,'provider-message',NULL,'attempt two','receive:wonder:2');")
     third : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(1792430388000,'muse','muse-wonder-1.0','','','',1792972800000,'provider-message',NULL,'attempt three','receive:wonder:3');")
+    held : Unit <- held_read(db,"muse","")
     IO.pure(Unit,Unit{})
 
-# A refuses, B has an actual current provider hold, and C has a partial usage
-# report. Handoff must reach C. When C also refuses, all remaining holds keep
+# A refuses, B is held by an exhausted live read, and C has a partly used live
+# read. Handoff must reach C. When C also refuses, all remaining holds keep
 # the all-accounts-exhausted report and cross-harness route selection available.
 def account_fallback_cases(+db: String) -> IO(Unit):
   do IO<Unit>:
     bound : Unit <- Accounts.bind(db,"route-a","route-forward")
-    held_b : Unit <- UW.record_cause(db,"route-forward","route-b-refusal","route-b",cause("route-b-request"))
-    partial_c : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','route-c','',32472144000000,'provider-report',0.4,'partial provider usage','partial-c');")
+    held_b : Unit <- held_read(db,"kimi-code","route-b")
+    partial_c : Unit <- open_read(db,"kimi-code","route-c","40")
     advanced : Bool <- Accounts.handoff(db,"route-forward","route-a-refusal",quota_event("route-a-request"),"native-forward","","/route-forward")
     expect("handoff-skips-held-account",advanced)
     +chosen : String <- Accounts.handoff_label_io(db,"route-forward")
@@ -112,7 +130,7 @@ def account_fallback_cases(+db: String) -> IO(Unit):
     expect("held-account-never-bound",String.eq(binding,"route-a\nroute-c\n"))
     held_stays : Unit <- expect_gate(db,"route-forward","route-b","held","skipped-account-hold-preserved")
     bound_again : Unit <- Accounts.bind(db,"route-a","route-all-held")
-    held_c : Unit <- UW.record_cause(db,"route-all-held","route-c-refusal","route-c",cause("route-c-request"))
+    held_c : Unit <- held_read(db,"kimi-code","route-c")
     exhausted : Bool <- Accounts.handoff(db,"route-all-held","all-held-a-refusal",quota_event("all-held-a-request"),"native-all-held","","/route-all-held")
     expect("all-held-accounts-do-not-continue",Bool.not(exhausted))
     +unchanged : String <- Accounts.handoff_label_io(db,"route-all-held")
@@ -125,30 +143,29 @@ def account_fallback_cases(+db: String) -> IO(Unit):
     expect_route_harness(selected,"codex","all-held-selects-configured-alternate-route")
     expect_read(db,"SELECT count(*) FROM executions WHERE session IN ('route-forward','route-all-held');","0\n","account-selection-starts-no-execution")
 
-# The legacy profile path uses the same recorded provider holds. Only the
-# selected profile receives a binding and handoff report. Repeated held labels
-# preserve traversal progress. The original refusal remains the cause when a
-# later profile is selected or the list is exhausted.
+# The legacy profile path uses the same live-read holds. Only the selected profile
+# receives a binding and handoff report. Repeated held labels preserve traversal
+# progress. Refusal text recorded for a profile does not hold it. The original
+# refusal remains the cause when a later profile is selected or the list is
+# exhausted.
 def profile_fallback_cases(+db: String) -> IO(Unit):
   do IO<Unit>:
     +listed_path : String <- Subs.profile_list_path(db)
     listed : Unit <- IO.try(Unit,Text.Text.append(listed_path,"omp legacy-a /profiles/legacy-a\nomp legacy-b /profiles/legacy-b\nomp legacy-b /profiles/legacy-b-duplicate\nomp legacy-c /profiles/legacy-c\n"))
     bound : Unit <- Subs.bind_profile(db,"legacy-forward","omp","legacy-a","/profiles/legacy-a")
-    held_b : Unit <- UW.record_cause(db,"legacy-forward","legacy-b-refusal","legacy-b",cause("legacy-b-request"))
-    unknown_c : Unit <- UW.record_cause(db,"legacy-forward","legacy-c-unknown","legacy-c","provider-reported usage exhaustion: API error 429: Subscription quota exhausted. (rate_limit_error)")
-    unknown_gate : Unit <- expect_gate(db,"legacy-forward","legacy-c","unknown","legacy-unknown-profile-remains-selectable")
+    held_b : Unit <- held_read(db,"profile-test","legacy-b")
+    refused_c : Unit <- UW.record_cause(db,"legacy-forward","legacy-c-refusal","legacy-c","provider-reported usage exhaustion: API error 429: Subscription quota exhausted. (rate_limit_error)")
+    text_gate : Unit <- expect_admitted(db,"legacy-forward","legacy-c","legacy-refusal-text-does-not-hold-profile")
     advanced : Bool <- Accounts.handoff(db,"legacy-forward","legacy-a-refusal",quota_event("legacy-a-request"),"native-legacy-forward","","/legacy-forward")
-    expect("legacy-handoff-skips-repeated-held-profile",advanced)
+    expect("legacy-handoff-skips-held-profiles",advanced)
     +chosen : String <- Subs.profile_label_io(db,"legacy-forward")
-    expect("legacy-handoff-reaches-unknown-profile",String.eq(chosen,"legacy-c"))
+    expect("legacy-handoff-passes-repeated-held-label",String.eq(chosen,"legacy-c"))
     +record_path : String <- Subs.profile_record_path(db,"legacy-forward")
     +recorded : String <- Subs.file_text(record_path)
-    expect("legacy-held-profile-never-bound",String.eq(recorded," omp legacy-a /profiles/legacy-a\n omp legacy-c /profiles/legacy-c\n"))
-    +handoff_body : String <- read(db,"SELECT body FROM messages WHERE id='legacy-a-refusal:profile-handoff-legacy-c';")
-    expect("legacy-selected-profile-preserves-refusal-cause",Bool.and(String.contains(handoff_body,"refused profile=legacy-a; bound profile=legacy-c"),String.contains(handoff_body,"legacy-a-request")))
+    expect("legacy-held-profile-never-bound",Bool.not(String.contains(recorded,"legacy-b")))
     held_stays : Unit <- expect_gate(db,"legacy-forward","legacy-b","held","legacy-skipped-profile-hold-preserved")
     bound_all : Unit <- Subs.bind_profile(db,"legacy-all-held","omp","legacy-a","/profiles/legacy-a")
-    held_c : Unit <- UW.record_cause(db,"legacy-all-held","legacy-c-refusal","legacy-c",cause("legacy-c-request"))
+    held_c : Unit <- held_read(db,"profile-test","legacy-c")
     exhausted : Bool <- Accounts.handoff(db,"legacy-all-held","legacy-all-held-refusal",quota_event("legacy-all-held-request"),"native-legacy-all-held","","/legacy-all-held")
     expect("legacy-all-held-profiles-do-not-continue",Bool.not(exhausted))
     +unchanged : String <- Subs.profile_label_io(db,"legacy-all-held")
@@ -157,11 +174,11 @@ def profile_fallback_cases(+db: String) -> IO(Unit):
     expect("legacy-all-held-retains-alternate-route-trigger",triggered)
     selected : Maybe<&2,Subs.Route> <- Subs.select_route(db,"legacy-all-held","legacy-all-held-refusal")
     expect_route_model(selected,"kimi-code/kimi-for-coding","legacy-all-held-selects-configured-alternate-route")
-    elapsed_b : Unit <- UW.reset_exhausted(db,"legacy-forward","2020-01-01T00:00:00Z","provider reset observed by fixture","legacy-b")
-    elapsed_gate : Unit <- expect_gate(db,"legacy-forward","legacy-b","elapsed","legacy-elapsed-profile-remains-selectable")
+    opened_b : Unit <- open_read(db,"profile-test","legacy-b","3")
+    open_gate : Unit <- expect_admitted(db,"legacy-forward","legacy-b","legacy-open-read-profile-selectable")
     bound_elapsed : Unit <- Subs.bind_profile(db,"legacy-elapsed","omp","legacy-a","/profiles/legacy-a")
     advanced_elapsed : Bool <- Accounts.handoff(db,"legacy-elapsed","legacy-elapsed-refusal",quota_event("legacy-elapsed-request"),"native-legacy-elapsed","","/legacy-elapsed")
-    expect("legacy-handoff-selects-elapsed-profile",advanced_elapsed)
+    expect("legacy-handoff-selects-reopened-profile",advanced_elapsed)
     +elapsed_chosen : String <- Subs.profile_label_io(db,"legacy-elapsed")
     expect("legacy-elapsed-profile-order-preserved",String.eq(elapsed_chosen,"legacy-b"))
     expect_read(db,"SELECT count(*) FROM executions WHERE session IN ('legacy-forward','legacy-all-held','legacy-elapsed');","0\n","legacy-selection-starts-no-execution")
@@ -175,8 +192,9 @@ def gate_attempts(+db: String, +session: String, +account: String, attempts: Lis
 
 def gate_cases(+db: String) -> IO(Unit):
   do IO<Unit>:
-    held : Unit <- expect_gate(db,"wonder","","held","unqualified-provider-message-holds")
+    held : Unit <- expect_gate(db,"wonder","","held","unqualified-muse-seat-held-by-live-read")
     repeated : Unit <- gate_attempts(db,"wonder","",["184737","184742","184753","184759","184765","184771"])
+    reported : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id GLOB 'usage-read:*:hold:wonder' AND recipient='operator';","1\n","repeated-gates-report-hold-once")
     executions : Unit <- expect_read(db,"SELECT count(*) FROM executions WHERE session='wonder';","1\n","gate-creates-no-execution")
     provider_rows : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE reset_source='provider-message' AND account='' AND harness='muse';","3\n","provider-exhaustion-durable")
     IO.pure(Unit,Unit{})
@@ -254,7 +272,7 @@ def handoff_cases(+db: String) -> IO(Unit):
     expect("held-handoff-does-not-continue",Bool.not(advanced))
     +gate : UW.Gate <- Turn.direct_window_gate(db,"wonder-gate")
     expect("direct-start-observes-held-window",Turn.direct_gate_held(gate))
-    expect("direct-start-retains-provider-cause",String.contains(Turn.direct_gate_refusal(gate),"Provider usage window held"))
+    expect("direct-start-retains-provider-cause",String.contains(Turn.direct_gate_refusal(gate),"Provider usage held by a live read"))
     expect_read(db,"SELECT count(*) FROM executions WHERE session='wonder-gate';","0\n","handoff-and-gate-create-no-execution")
 
 def clear_cases(+db: String) -> IO(Unit):
@@ -270,21 +288,19 @@ def clear_cases(+db: String) -> IO(Unit):
     expect("clear-preserves-execution",String.eq(execution_before,execution_after))
     expect_gate(db,"wonder","","held","clear-preserves-quota-hold")
 
-# Reset observations cover the empty window label carried by the native Muse
-# refusal. They preserve provider evidence and create no execution.
-def reset_cases(+db: String) -> IO(Unit):
+# An open live read of the muse provider releases the hold on the unqualified seat.
+# It preserves the refusal evidence, reports the release and creates no execution.
+def release_cases(+db: String) -> IO(Unit):
   do IO<Unit>:
     +provider_before : String <- read(db,"SELECT count(*) FROM usage_windows WHERE harness='muse' AND provider='' AND account='' AND reset_source='provider-message';")
     +executions_before : String <- read(db,"SELECT count(*) FROM executions;")
-    future : Unit <- UW.reset_exhausted(db,"wonder","2999-01-01T00:00:00Z","provider console future reset","")
-    held : Unit <- expect_gate(db,"wonder","","held","empty-window-future-reset-held")
-    empty : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE harness='muse' AND provider='' AND account='' AND window='' AND reset_source='operator-observation' AND resets_at IS NOT NULL;","1\n","empty-window-reset-recorded")
-    past : Unit <- UW.reset_exhausted(db,"wonder","2020-01-01T00:00:00Z","provider console reset elapsed","")
-    elapsed : Unit <- expect_gate(db,"wonder","","elapsed","empty-window-past-reset-selectable")
+    opened : Unit <- open_read(db,"muse","","3")
+    released : Unit <- expect_admitted(db,"wonder","","open-read-releases-unqualified-seat")
+    reported : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id GLOB 'usage-read:*:release:wonder' AND recipient='operator';","1\n","release-reported-once")
     +provider_after : String <- read(db,"SELECT count(*) FROM usage_windows WHERE harness='muse' AND provider='' AND account='' AND reset_source='provider-message';")
-    expect("reset-retains-provider-evidence",String.eq(provider_before,provider_after))
+    expect("release-retains-provider-evidence",String.eq(provider_before,provider_after))
     +executions_after : String <- read(db,"SELECT count(*) FROM executions;")
-    expect("reset-creates-no-execution",String.eq(executions_before,executions_after))
+    expect("release-creates-no-execution",String.eq(executions_before,executions_after))
 
 def instance_mode(+mode: String, +db: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.eq(mode,"--instance-owner"),IO.try(Unit,Custody.Instance.owner(db)),
@@ -303,7 +319,7 @@ def main_args(args: List<String>) -> IO(Unit):
       first_exit_cases(path)
       handoff_cases(path)
       clear_cases(path)
-      reset_cases(path)
+      release_cases(path)
       IO.print("fixture-quota-backoff-dedupe-ok")
     case other: IO.die(Unit,2,"usage: quota-backoff-dedupe DB")
 

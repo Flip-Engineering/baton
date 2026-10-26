@@ -26,6 +26,7 @@ fixed = fixture_module('task_fixed_fixture', 'fixed-coordinator.py')
 class TaskStart(unittest.TestCase):
     git = identity.ControlIdentity.git
     call = identity.ControlIdentity.call
+    read_count = identity.ControlIdentity.read_count
     root = identity.ControlIdentity.root
     accept = identity.ControlIdentity.accept
     accept_any = identity.ControlIdentity.accept_any
@@ -226,7 +227,7 @@ class TaskStart(unittest.TestCase):
                 self.assertEqual(native['cwd'], str(self.repo.resolve()))
                 self.failed_turn(session, stream, 'Retained provider error λ🙂\n' + source)
                 self.assertTrue(self.output_log(session).is_file())
-                self.assertEqual(self.call('delivery', result['task'])['receipt'], 'fixture-native-reviewed')
+                self.assertGreater(self.read_count(result['task']), 0)
 
     def test_muse_file_and_claude_stdin_receive_complete_seeded_initial_input(self):
         for harness in ('muse', 'claude-code'):
@@ -447,7 +448,7 @@ class TaskStart(unittest.TestCase):
         self.assertEqual(self.rows('SELECT event FROM turns WHERE id=? AND worker=?',
                                   (execution['id'], session))[0]['event'], retained['body'])
         self.eventually(lambda: self.call('session', session)['blockedCause'] == 'provider-failure')
-        self.assertEqual(self.call('delivery', result['task'])['receipt'], 'fixture-native-reviewed')
+        self.assertGreater(self.read_count(result['task']), 0)
         refused = self.task_call('--stdin', stdin=body.encode(), project=self.directory,
                                  environment=environment, ok=False)
         self.assertEqual(refused['error']['reason'], 'ENOTDIR')
@@ -877,13 +878,7 @@ class TaskStart(unittest.TestCase):
                 self.assertEqual((owned['recipient'], owned['native']), ('root', 'saved-root'))
                 self.assertTrue(owned['attempt'].startswith('claude-mcp:'), owned)
                 self.assertIsNone(owned['handled'])
-                handled = invoke('baton2_ack', {})
-                acknowledged = next(row for row in handled if row['id'] == reports[0]['id'])
-                receipt = 'native-turn:' + owned['attempt']
-                self.assertEqual(acknowledged['acknowledgement']['receipt'], receipt)
-                self.assertEqual(self.call('delivery', reports[0]['id'])['receipt'], receipt)
-                invoke('baton2_ack', {})
-                self.assertEqual(self.call('delivery', reports[0]['id'])['receipt'], receipt)
+                self.assertIsNone(self.call('delivery', reports[0]['id'])['receipt'])
                 child.stdin.close()
                 child.stdin = None
                 graceful = True

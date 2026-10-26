@@ -28,6 +28,11 @@ COMPILER_ARCHIVES = {
         'official_release_artifact': False,
         'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
     },
+    'f22a9bc5d42ebe57d0e46240a5ca407e673bc84a4ba21e6ad2c693cf44b8d651': {
+        'name': 'Bend 2.0.25 with PR1087 arm sharing, the CONSTS insertion bound and the iterative pass-1 emitter (Bun 1.4.4 launcher)',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
     ARCHIVE_SHA: {'name': 'Bend 2.0.25', 'official_release_artifact': True},
     '38bb1813d52ddc7b816a8a01f971fe8503959fef54795ca22eb346b5cfc069a7': {
         'name': 'Bend 2.0.25 with the Baton #741 pure memo patch',

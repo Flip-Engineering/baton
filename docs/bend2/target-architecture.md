@@ -64,7 +64,7 @@ Session IDs establish routing, not a security boundary between these agents.
 ## Commands and notifications
 
 The commands are `attach`, `recruit`, `connect`, `bind`, `message` and
-`message-file`, `report`, `ask` and `ask-file`, `observe-file`, `ack`, `session`,
+`message-file`, `report`, `ask` and `ask-file`, `observe-file`, `session`,
 `delivery`, `pending`, `inbox`, `status`, `workers`, `turns`, `worktree`, `land`,
 `land-checked`, `push`, `turn` and `receive`. `attach ID HARNESS NATIVE
 ENDPOINT` records the session identity, its harness, its native session ID and
@@ -109,10 +109,9 @@ output, receipts and workspace. Killing only a `receive` observer starts
 observation recovery through the keeper.
 
 A native attachment must demonstrate that a report can start a parent turn while
-the parent is idle. The recipient records acceptance with `ack` after the
-message reaches its native session; the receipt body is the acceptance text the
-recipient supplies. An acceptance receipt establishes that the recipient
-recorded acceptance of that message and nothing about the work itself. Parent
+the parent is idle. Baton records the recipient's complete read after the
+message reaches its native session. A read establishes that the recipient read
+that message and nothing about the work itself. Parent
 review is a separate action: the parent reads the report and inspects the branch
 and worktree with `worktree`. A `land-checked` answer of `landed` names the
 advanced target commit; `already` names a worker commit already in the target.

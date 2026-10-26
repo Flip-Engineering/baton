@@ -62,6 +62,20 @@ law receiver_model_requires_a_recorded_model:
 def receiver_model_requires_a_recorded_model(session):
   {==}
 
+# The refusal object carries session, condition and next after the error field,
+# so the marker is the opening prefix and not a complete object.
+law receiver_refusal_with_fields_is_denied:
+  {Control.receiver_denied("{\"error\":\"receiver-refused\",\"session\":\"s\",\"condition\":\"c\",\"next\":\"n\"}") == True{} : Bool}
+
+def receiver_refusal_with_fields_is_denied():
+  {==}
+
+law receiver_update_answer_is_not_denied:
+  {Control.receiver_denied("{\"session\":\"s\",\"endpoint\":[],\"workspace\":\"/w\"}") == False{} : Bool}
+
+def receiver_update_answer_is_not_denied():
+  {==}
+
 law detached_delivery_commits_before_launch_and_checks_refusals:
   for +db: String
   for +id: String
@@ -232,7 +246,7 @@ law receiver_update_changes_only_an_admitted_endpoint:
   for +endpoint: String
   for +cwd: String
   for +admitted: String
-  {Control.receiver_update_sql(session,endpoint,cwd,admitted) == ("UPDATE sessions SET workspace=CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN " ++ C.q(cwd) ++ " ELSE workspace END,endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
+  {Control.receiver_update_sql(session,endpoint,cwd,admitted) == ("UPDATE sessions SET workspace=CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN " ++ C.q(cwd) ++ " ELSE workspace END,endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ " AND 1;"
 ++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered Codex, OMP, Muse or Claude Code session with a recorded model, a working directory and valid text argv.','next','Record the model with configure and the working directory with receiver, then dispatch complete task text with dispatch TEXT --to SESSION. Pass the CWD argument when only the directory is missing. Inspect the session and retained inbox and retry. Receiver registration preserves an explicit stop; resume SESSION --lift-stop explicitly lifts it and continues pending work.') WHERE NOT " ++ admitted ++ ";"
 ++ "SELECT json_object('session'," ++ C.q(session) ++ ",'endpoint',json(" ++ C.q(endpoint) ++ "),'workspace',(SELECT workspace FROM sessions WHERE id=" ++ C.q(session) ++ ")) WHERE " ++ admitted ++ ";") : String}
 

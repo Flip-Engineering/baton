@@ -14,6 +14,7 @@ import Base
 import ../json/canonical.bend as J
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
+import ../coordinator/commands.bend as C
 import ./wake.bend as Wake
 
 # The endpoint predicate the coordinator already uses for a runnable route.
@@ -22,7 +23,7 @@ def endpoint_present_expr(+column: String) -> String:
 
 # The owed-input count for one session.
 def owed_expr(+session: String) -> String:
-  "(SELECT count(*) FROM messages m WHERE m.recipient=" ++ session ++ " AND m.receipt IS NULL)"
+  "(SELECT count(*) FROM messages m WHERE m.recipient=" ++ session ++ " AND " ++ C.owed_sql("m") ++ ")"
 
 # An explicit stop resolves the session's wake obligation.
 def stopped_expr(+session: String) -> String:
@@ -57,7 +58,7 @@ def stalled_rows_sql(+present: Bool) -> String:
   ++ "CAST(" ++ owed_expr("s.id") ++ " AS TEXT)||char(9)||"
   ++ "coalesce(e.id,'')||char(9)||coalesce(e.phase,'')||char(9)||"
   ++ "CAST(" ++ endpoint_present_expr("s.endpoint") ++ " AS TEXT)||char(9)||"
-  ++ "coalesce((SELECT m.id FROM messages m WHERE m.recipient=s.id AND m.receipt IS NULL ORDER BY m.seq LIMIT 1),'')||char(9)||"
+  ++ "coalesce((SELECT m.id FROM messages m WHERE m.recipient=s.id AND " ++ C.owed_sql("m") ++ " ORDER BY m.seq LIMIT 1),'')||char(9)||"
   ++ "CAST(" ++ stopped_expr("s.id") ++ " AS TEXT)||char(9)||"
   ++ claim_state_expr("s.id",present) ++ "||char(9)||"
   ++ state_expr("s.id","e.phase","s.endpoint",present)

@@ -8,6 +8,14 @@ else
   PYTHON3=/usr/bin/python3
 fi
 "$PYTHON3" bend2/test/queue-native-checks.py
+compiler=${BEND:-"$root/.bend/bin/bend"}
+if [ ! -x "$compiler" ]; then
+  compiler="$root/node_modules/.bend/bin/bend"
+fi
+(
+  ulimit -s unlimited 2>/dev/null || true
+  BEND_NO_TELEMETRY=1 BUN_JSC_maxPerThreadStackUsage="${BUN_JSC_maxPerThreadStackUsage:-67108864}" "$compiler" bend2/src/coordinator/laws.bend --check-only
+)
 sh bend2/scripts/build-native.sh
 "$PYTHON3" bend2/test/package-receiver-layout.py
 "$PYTHON3" bend2/test/record-native-checks.py
@@ -37,14 +45,22 @@ sh bend2/scripts/build-native.sh bend2/test/account-credits-entry.bend .scratch/
 BATON2_ACCOUNT_ENTRY="$root/.scratch/bend2/account-credits-entry" "$PYTHON3" bend2/test/account-credits-focused.py
 sh bend2/scripts/build-native.sh bend2/harness/claude-credit-observe.bend .scratch/bend2/claude-credit-observe
 BATON2_CREDIT_OBSERVE="$root/.scratch/bend2/claude-credit-observe" "$PYTHON3" bend2/test/claude-credit-observe.py
-BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" BATON2_CREDIT_OBSERVE="$root/.scratch/bend2/claude-credit-observe" "$PYTHON3" bend2/test/native-helper-install.py
-sh bend2/scripts/build-native.sh bend2/test/usage-windows.bend .scratch/bend2/usage-windows-test
-.scratch/bend2/usage-windows-test
-sh bend2/scripts/build-native.sh bend2/test/usage-windows-long.bend .scratch/bend2/usage-windows-long-test
-.scratch/bend2/usage-windows-long-test
+sh bend2/scripts/build-native.sh bend2/harness/usage-read.bend .scratch/bend2/usage-read
+"$PYTHON3" bend2/test/usage-read-codex.py "$root/.scratch/bend2/usage-read"
+BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" BATON2_CREDIT_OBSERVE="$root/.scratch/bend2/claude-credit-observe" BATON2_USAGE_READ="$root/.scratch/bend2/usage-read" "$PYTHON3" bend2/test/native-helper-install.py
+sh bend2/scripts/build-native.sh bend2/test/zai-quota.bend .scratch/bend2/zai-quota-test
+.scratch/bend2/zai-quota-test
+sh bend2/scripts/build-native.sh bend2/test/codex-rate-limits.bend .scratch/bend2/codex-rate-limits-test
+.scratch/bend2/codex-rate-limits-test
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-store.bend .scratch/bend2/usage-windows-store-test
 rm -f .scratch/bend2/usage-windows-store.db
-.scratch/bend2/usage-windows-store-test .scratch/bend2/usage-windows-store.db bend2/test/fake-omp-usage
+.scratch/bend2/usage-windows-store-test .scratch/bend2/usage-windows-store.db
+sh bend2/scripts/build-native.sh bend2/test/usage-hold-error-text.bend .scratch/bend2/usage-hold-error-text-test
+rm -f .scratch/bend2/usage-hold-error-text.db
+.scratch/bend2/usage-hold-error-text-test .scratch/bend2/usage-hold-error-text.db
+sh bend2/scripts/build-native.sh bend2/test/usage-live-reads.bend .scratch/bend2/usage-live-reads-test
+rm -f .scratch/bend2/usage-live-reads.db .scratch/bend2/usage-live-reads.db.answer
+.scratch/bend2/usage-live-reads-test .scratch/bend2/usage-live-reads.db bend2/test/fake-usage-read
 sh bend2/scripts/build-native.sh bend2/test/clear-stop-quota.bend .scratch/bend2/clear-stop-quota-test
 clear_stop_quota_db=$(mktemp "$root/.scratch/bend2/clear-stop-quota.XXXXXXXX")
 rm -f "$clear_stop_quota_db"
@@ -95,6 +111,9 @@ rm -f .scratch/bend2/usage-windows-wake.db
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-wake-path.bend .scratch/bend2/usage-windows-wake-path-test
 rm -f .scratch/bend2/usage-windows-wake-path.db
 .scratch/bend2/usage-windows-wake-path-test .scratch/bend2/usage-windows-wake-path.db
+sh bend2/scripts/build-native.sh bend2/test/route-change-identity.bend .scratch/bend2/route-change-identity-test
+rm -f .scratch/bend2/route-change-identity.db
+.scratch/bend2/route-change-identity-test .scratch/bend2/route-change-identity.db
 sh bend2/scripts/build-native.sh bend2/test/quota-exhaustion-reset.bend .scratch/bend2/quota-exhaustion-reset-test
 rm -f .scratch/bend2/quota-exhaustion-reset.db
 .scratch/bend2/quota-exhaustion-reset-test .scratch/bend2/quota-exhaustion-reset.db
@@ -111,6 +130,7 @@ sh bend2/scripts/build-native.sh bend2/test/dsh-player.bend .scratch/bend2/dsh-p
 BATON2_EXE="$root/.scratch/bend2/dsh-player-test" "$PYTHON3" bend2/test/dsh-player.py
 sh bend2/scripts/build-native.sh bend2/test/dsh-retained.bend .scratch/bend2/dsh-retained-test
 BATON2_EXE="$root/.scratch/bend2/dsh-retained-test" "$PYTHON3" bend2/test/dsh-retained.py
+"$PYTHON3" bend2/test/dsh-worker.py
 sh bend2/scripts/build-native.sh bend2/test/dsh-turn.bend .scratch/bend2/dsh-turn-test
 BATON2_EXE="$root/.scratch/bend2/dsh-turn-test" "$PYTHON3" bend2/test/dsh-turn.py
 sh bend2/scripts/build-native.sh bend2/test/agy-player.bend .scratch/bend2/agy-player-test

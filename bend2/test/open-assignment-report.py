@@ -25,9 +25,11 @@ SCHEMA = '''
 CREATE TABLE sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT, harness TEXT NOT NULL DEFAULT 'claude-code');
 CREATE TABLE session_roles (session TEXT NOT NULL, role TEXT NOT NULL);
 CREATE TABLE session_stops (session TEXT PRIMARY KEY NOT NULL, id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');
+CREATE TABLE message_reads(attempt TEXT NOT NULL,message TEXT NOT NULL,recipient TEXT NOT NULL,native TEXT NOT NULL,identity TEXT NOT NULL,handled TEXT,PRIMARY KEY(attempt,identity,message));
 CREATE TABLE messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL, recipient TEXT NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);
 INSERT INTO sessions(id,parent) VALUES('coordinator',NULL),('worker','coordinator');
-INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES('dispatch:assignment','coordinator','worker','task','Do the work.','native-turn:receive:worker:1:aa');
+INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES('dispatch:assignment','coordinator','worker','task','Do the work.',NULL);
+INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES('fixture','dispatch:assignment','worker','','fixture');
 '''
 
 
@@ -65,9 +67,12 @@ class OpenAssignmentReport(unittest.TestCase):
             "SELECT sender, recipient, kind, body FROM messages WHERE id=?",
             (ATTEMPT + ':assignment',)).fetchall()
 
-    def message(self, ident, sender, recipient, kind, body, receipt='native-turn:receive:worker:2:bb'):
+    def message(self, ident, sender, recipient, kind, body, read=True):
         self.db.execute('INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(?,?,?,?,?,?)',
-                        (ident, sender, recipient, kind, body, receipt))
+                        (ident, sender, recipient, kind, body, None))
+        if read:
+            self.db.execute('INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES(?,?,?,?,?)',
+                            ('fixture',ident,recipient,'','fixture'))
 
     def test_open_assignment_without_request_reports_the_idle_seat(self):
         rows = self.turn_ends()
@@ -83,7 +88,7 @@ class OpenAssignmentReport(unittest.TestCase):
         self.assertEqual(self.turn_ends(), [])
 
     def test_owed_input_writes_no_report(self):
-        self.message('message:coordinator:guidance', 'coordinator', 'worker', 'guidance', 'More.', receipt=None)
+        self.message('message:coordinator:guidance', 'coordinator', 'worker', 'guidance', 'More.', read=False)
         self.assertEqual(self.turn_ends(), [])
 
     def test_confirmed_assignment_writes_no_report(self):
@@ -100,6 +105,17 @@ class OpenAssignmentReport(unittest.TestCase):
         self.assertEqual(len(self.turn_ends()), 1)
         count = self.db.execute("SELECT count(*) FROM messages WHERE id=?", (ATTEMPT + ':assignment',)).fetchone()[0]
         self.assertEqual(count, 1)
+
+
+    def test_recorded_read_with_null_receipt_permits_the_open_assignment_report(self):
+        self.message('read-guidance', 'coordinator', 'worker', 'guidance', 'Already read.')
+        self.assertEqual(len(self.turn_ends()), 1)
+        self.assertIsNone(self.db.execute("SELECT receipt FROM messages WHERE id='read-guidance'").fetchone()[0])
+
+    def test_unread_input_with_legacy_receipt_still_prevents_the_report(self):
+        self.message('unread-guidance', 'coordinator', 'worker', 'guidance', 'Unread.', read=False)
+        self.db.execute("UPDATE messages SET receipt='legacy-only' WHERE id='unread-guidance'")
+        self.assertEqual(self.turn_ends(), [])
 
 
 if __name__ == '__main__':

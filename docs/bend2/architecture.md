@@ -36,6 +36,8 @@ write transactions.
 | `coordinator/recruit.bend`, `turn.bend` | Create Player workspaces and supervise native turns. |
 | `coordinator/receive.bend` | Read parent input, select the native route and continue queued session work. |
 | `coordinator/guidance.bend`, `delivery.bend` | Send OMP guidance and invoke the recipient endpoint after a committed message. |
+| `coordinator/codex-inbox*.bend`, `codex-route.bend` | Admit Codex inbox input, preserve its receiver environment, and report completed native turns. |
+| `coordinator/branching*.bend` | Snapshot workspaces, start fresh conversations, retain evaluations, and continue a selected Player. |
 | `bend2/src/harness/` | Construct the five harness launch and resume protocols. |
 | `bend2/src/git/` | Inspect Git state, create worktrees, prepare and judge landings, update refs and push. |
 | `bend2/src/host/` | Bind process, file and SQLite effects to the host. |
@@ -46,6 +48,12 @@ Claude channel adapter uses Node's standard library, including `node:sqlite`.
 Native `receive` supplies Codex, OMP, Muse and Claude Code Conductor delivery. Their earlier Node
 adapters remain available for existing configurations.
 Application decisions live in the Bend modules; C bindings perform host effects.
+Codex's interactive inbox uses `codex app-server proxy`. The native host handles
+WebSocket framing and the proxy process. Bend reads the committed inbox, selects
+turn admission or steering, retains terminal reports, and resolves handling from
+complete owned input reads. Receiver argv retains `HOME` and `CODEX_HOME` for
+cross-provider delivery. Restart reconstructs pending work from the database and
+the retained native conversation.
 Production modules are imported libraries. Earlier JSON and replay experiments
 and their frozen-output checks remain optional reference programs.
 
@@ -56,7 +64,7 @@ The core session and message records are:
 | Table | Meaning |
 | --- | --- |
 | `sessions` | A logical session, parent, requested route, observed route, native session ID, delivery endpoint, workspace, branch and resolved base commit. |
-| `messages` | Ordered messages with caller-supplied unique IDs, sender, recipient, kind, full body and optional native acceptance receipt. |
+| `messages` | Ordered messages with caller-supplied unique IDs, sender, recipient, kind, full body and the stored recipient read rows. |
 | `turns` | A completed turn's report ID, Player and native terminal event. |
 | `session_roles` | An explicit Player, Conductor or operator assignment; an unassigned session is a Player. |
 | `ensembles` | A declared Conductor owner and loose or tight coupling. |
@@ -74,13 +82,12 @@ Recipient delivery starts after the transaction commits. A delivery failure leav
 the message available in the database and returns an error to the writer.
 
 A matching retry of a message ID, sender, recipient, kind and body returns its
-retained result and receipt.
+retained result and read state.
 Conflicting reuse of an ID fails. A repeated completed turn ID returns its
 existing report. Retrying failed work uses a new turn ID and may resume the
-same native session. `acknowledge` derives recipient-owned handling receipts
-from the current native turn's complete reads. Each receipt preserves its first
-stored value. Branch review and landing have their own report and Git evidence.
-The explicit `ack ID RECIPIENT RECEIPT` form remains available for integrations.
+same native session. Baton records a complete recipient-owned read when the
+recipient reads the input; the record persists when the turn later fails or is
+interrupted. Branch review and landing have their own report and Git evidence.
 
 The native session ID refers to the harness's retained conversation. The logical
 Player ID routes messages and associates a workspace with that conversation.
@@ -168,8 +175,9 @@ pending input remains deliverable after role or membership changes.
 During an OMP turn
 the supervisor sends pending guidance as native `steer` frames on response, message
 completion and tool events. Forwarding advances the attempt's guidance cursor.
-The observed stream retains the native steer response. Complete recipient-owned
-reads supply the inputs handled by successful turn settlement or `acknowledge`.
+The observed stream retains the native steer response. A forwarded steer frame
+records the read at forwarding; a complete recipient-owned `inbox` or `read`
+records the same event directly.
 Guidance during a silent tool operation waits for the next relevant
 native event. Other Player harnesses currently receive further instructions
 through their next explicitly started native turn; their inbox remains readable.
@@ -192,18 +200,18 @@ The endpoint invokes `receive SESSION HARNESS_COMMAND MODEL EFFORT CWD
 OUTPUT_LOG MESSAGE_ID`. Empty model, effort and working-directory arguments
 select the recorded session values. The executable and log path are required.
 The receiver reads pending messages under session ownership and supervises the
-native turn through the Player harness code. The recipient reviews the input
-and acknowledges it with coordinator commands.
+native turn through the Player harness code. Baton records the recipient's
+complete reads internally.
 
 The receive command prints one JSON object with the `receive` classification
 (`accepted`, `none` or `refused`), the session, the attempt admitted by this
-invocation, its recorded state, the selected receipt, the pending count and the
-error text. A refused admission prints the same object and exits nonzero. A
+invocation, its recorded state, the read state of the selected input, the
+pending count and the error text. A refused admission prints the same object and exits nonzero. A
 receiver that finds an active turn reports `none`. The active supervisor
 releases ownership after native exit, then checks for newly pending input and
 invokes the receiver again. Reading after release covers messages committed
 while the previous turn was ending. Pending messages remain in the existing
-SQLite inbox. A failed turn retains unacknowledged input for later delivery.
+SQLite inbox. A failed turn retains unread input for later delivery.
 
 Native initialization stores its seed, instruction and complete unprefixed
 guidance in `native_initial_inputs`. The retained attempt seals the rendered
@@ -295,15 +303,18 @@ The server creates a local socket beside the database and records a one-shot
 socket client as its receive endpoint. A report writer calls that client; the
 server reads the committed message and sends
 `notifications/claude/channel` with its full content and string metadata.
-The native channel notification starts the Conductor's turn. A successful
-native turn records handling for its complete owned reads.
+The native channel notification starts the Conductor's turn. The Conductor reads
+the report through the coordinator, and Baton records that read.
 
 On attachment, pending messages wait until tool discovery completes a client
 `ping` round trip. That order addresses the observed native startup replay loss.
 The server's in-memory sent set suppresses repeated notifications during that
 process lifetime. On restart it reads pending messages from SQLite again.
-The interactive Conductor must enable the local development channel. Its native
-session is resumed with the same database and MCP configuration.
+The adapter's `--claude` launcher supplies session-scoped native hooks. Complete
+reads record the current prompt identity and active attempt in `message_reads`.
+`Stop` allows the turn to end when its complete input has a read event. Input
+without a complete read remains pending. The native session resumes with the
+same database and recorded native identity.
 
 ## Landing and publication
 
@@ -361,8 +372,9 @@ Recovery retains SQLite, native conversation storage, output files and Git
 worktrees. The caller reads a Player's native ID and starts a new turn using it
 in the same workspace. A Codex, OMP, Muse or Claude Code Conductor reattaches and resumes its recorded
 native session. Claude resumes its interactive session and reloads the channel;
-pending messages replay after discovery. A crash before acknowledgment can
-produce repeated input. Messages awaiting receipts are derived from SQLite.
+pending messages replay after discovery. A crash before the read is recorded
+can produce repeated input. Pending messages are derived from stored read rows
+in SQLite.
 
 The real recovery runs killed the owned coordinator, adapter and native
 processes and resumed every tested session with pending work. They did not

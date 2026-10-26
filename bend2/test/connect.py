@@ -25,7 +25,7 @@ class Connect(unittest.TestCase):
             'exe,db,log,*arguments=sys.argv[1:]\n'
             'with pathlib.Path(log).open("a") as output:\n'
             ' output.write(json.dumps(arguments,ensure_ascii=False)+"\\n")\n'
-            'result=subprocess.run([exe,db,"ack",arguments[-1],"lead","accepted"],capture_output=True)\n'
+            'result=subprocess.run([exe,db,"as","lead","read",arguments[-1]],capture_output=True)\n'
             'sys.stdout.buffer.write(result.stdout)\n'
             'sys.stderr.buffer.write(result.stderr)\n'
             'raise SystemExit(result.returncode)\n')
@@ -39,6 +39,15 @@ class Connect(unittest.TestCase):
         self.call('role', 'lead', 'principal-conductor')
         self.call(*self.task)
         self.call('connect', 'lead', 'native-kept', self.endpoint)
+
+    def read_count(self, ident, recipient=None):
+        with closing(sqlite3.connect(self.db)) as database:
+            if recipient is None:
+                return database.execute(
+                    'SELECT count(*) FROM message_reads WHERE message=?', (ident,)).fetchone()[0]
+            return database.execute(
+                'SELECT count(*) FROM message_reads WHERE message=? AND recipient=?',
+                (ident, recipient)).fetchone()[0]
 
     def call(self, *args, success=True):
         result = subprocess.run([str(EXE), str(self.db), *args], text=True, capture_output=True)
@@ -72,7 +81,8 @@ class Connect(unittest.TestCase):
         self.call(*self.task)
         self.assertEqual(json.loads(self.deliveries.read_text()), self.arguments + ['retained-task'])
         self.assertEqual(self.call('delivery', 'retained-task')['body'], self.task[-1])
-        self.assertEqual(self.call('delivery', 'retained-task')['receipt'], 'accepted')
+        self.assertIsNone(self.call('delivery', 'retained-task')['receipt'])
+        self.assertGreater(self.read_count('retained-task', 'lead'), 0)
         self.assertEqual(self.call('inbox', 'lead'), [])
         self.call(*self.task)
         self.assertEqual(len(self.deliveries.read_text().splitlines()), 1)
