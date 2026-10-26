@@ -207,12 +207,12 @@ const unavailableTools = new Set([
 
 function messageInstructions() {
   if (contextualActions) {
-    return `Use ${dispatchInput ? 'baton2_dispatch' : 'baton2_task'} for complete task text or a UTF-8 file, with to or session selecting an existing conversation. Baton preserves its current assignment automatically. Dispatch input and setup outcomes are stored in the database. Use baton2_action for the contextual native actions: inbox, read, send, completion-request, completion-confirmed, guide, acknowledge and domain help. The attached session supplies actor identity. Pass action and its named argument tokens; use action:help with the domain name for usage. Complete action argument strings travel directly through JSON standard input to native admission. Multi-message reads, independent sends and explicit acknowledgements return each item outcome. Successful recipient turns record handling of complete inputs; failed turns retain unfinished handling. Baton generates mutation identities and selects current owned input, receipts and completion requests. Use acknowledge without identifiers after handling input, and completion-confirmed with an optional recipient. Task completion and coordinator decisions remain separate recorded actions.` +
+    return `Use ${dispatchInput ? 'baton2_dispatch' : 'baton2_task'} for complete task text or a UTF-8 file, with to or session selecting an existing conversation. Baton preserves its current assignment automatically. Dispatch input and setup outcomes are stored in the database. Use baton2_action for the contextual native actions: inbox, read, send, completion-request, completion-confirmed, guide and domain help. The attached session supplies actor identity. Pass action and its named argument tokens; use action:help with the domain name for usage. Complete action argument strings travel directly through JSON standard input to native admission. Multi-message reads and independent sends return each item outcome. Successful recipient turns automatically record handling of complete input; failed turns retain unfinished input. Baton generates mutation identities and selects current owned input, receipts and completion requests. Use completion-confirmed with an optional recipient. Task completion and coordinator decisions remain separate recorded actions.` +
       (replInput ? ' Use baton2_repl for Bend2 define, eval, bind, read, recover, share, import and interactive operations; the packaged compiler checks types and affine use and each result retains complete output and process outcomes.' : '');
   }
   const messaging = batchMessaging
-    ? 'Use baton2_inbox or baton2_pending to see pending messages, and baton2_outbox to inspect authored messages and receipts. Their optional index:true argument returns metadata; baton2_delivery and baton2_delivery_batch read selected complete messages. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide or baton2_message_batch to direct recipients. Each batch item keeps its own admission, wake, retained message and receipt facts.'
-    : 'Use baton2_inbox or baton2_pending to see pending messages. Their optional index:true argument returns metadata. baton2_delivery reads one complete stored message and its receipt. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide to direct one recipient.';
+    ? 'Use baton2_inbox or baton2_pending to see pending messages, and baton2_outbox to inspect authored messages and receipts. Their optional index:true argument returns metadata; baton2_delivery and baton2_delivery_batch read selected complete messages. Successful recipient turns automatically record handling of complete reads; failed turns retain unfinished input. Use baton2_guide or baton2_message_batch to direct recipients. Each batch item keeps its own admission, wake, retained message and receipt facts.'
+    : 'Use baton2_inbox or baton2_pending to see pending messages. Their optional index:true argument returns metadata. baton2_delivery reads one complete stored message and its receipt. Successful recipient turns automatically record handling of complete reads; failed turns retain unfinished input. Use baton2_guide to direct one recipient.';
   return messaging + (inputDetail
     ? ' baton2_input relates one stored message to its admission, recipient-owned receipt, current recipient state and available attempt evidence.'
     : '');
@@ -292,7 +292,7 @@ const messageIndexProperties = {
   index: { type: 'boolean', description: 'Return ordered message metadata; filters select this output automatically' },
   sender: { type: 'string', description: 'Match a literal sender ID' },
   kind: { type: 'string', description: 'Match a literal message kind' },
-  state: { type: 'string', enum: ['pending', 'acknowledged', 'all'], description: 'Receipt state (default: pending)' },
+  state: { type: 'string', enum: ['pending', 'handled', 'all'], description: 'Input handling state (default: pending)' },
   afterSeq: { type: 'string', description: 'Exclusive integer sequence bound, kept as text for exact integer comparisons' },
   throughSeq: { type: 'string', description: 'Inclusive integer sequence bound, kept as text for exact integer comparisons' },
   pretty: { type: 'boolean', description: 'Pretty-print the JSON result' },
@@ -337,7 +337,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_action',
-    description: 'Run a contextual native action as the attached session. Use inbox, read, send, completion-request, completion-confirmed, guide, acknowledge, repl or help with a command domain. Named arguments and independent batch clauses use the same native grammar as baton. Complete argument strings travel through JSON standard input. Each item retains its outcome and actual failure cause.',
+    description: 'Run a contextual native action as the attached session. Use inbox, read, send, completion-request, completion-confirmed, guide, repl or help with a command domain. Named arguments and independent batch clauses use the same native grammar as baton. Complete argument strings travel through JSON standard input. Each item retains its outcome and actual failure cause.',
     inputSchema: { type: 'object', properties: {
       action: { type: 'string' }, arguments: { type: 'array', items: { type: 'string' } },
     }, required: ['action'], additionalProperties: false },
@@ -613,7 +613,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_inbox',
-    description: 'Show a session inbox. The default returns unacknowledged complete messages; index or optional metadata filters return ordered metadata. baton2_delivery reads a complete stored message.',
+    description: 'Show a session inbox. The default returns pending complete messages; index or optional metadata filters return ordered metadata. baton2_delivery reads a complete stored message.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -650,18 +650,6 @@ const TOOLS = [
     }, additionalProperties: false },
   },
   {
-    name: 'baton2_ack',
-    description: 'Acknowledge the attached Conductor’s fully read and handled input. Record unfinished work in reports and project state.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        id: { type: 'string', description: 'Message ID to acknowledge' },
-        receipt: { type: 'string', description: 'Input disposition' },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
     name: 'baton2_guide',
     description: 'Send an authored message to a player through the coordinator. The default kind is guidance. Baton generates the message identity. Completion-confirmed selects the current request for that recipient when its body and request are omitted.',
     inputSchema: {
@@ -680,7 +668,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_message_batch',
-    description: 'Send authored messages from the attached session to multiple recipients. Each item reports its admission, wake outcome, retained message and current recipient-owned receipt. Recipient work remains pending through its acknowledgment and completion flow.',
+    description: 'Send authored messages from the attached session to multiple recipients. Each item reports its admission, wake outcome, retained message and current recipient-owned receipt. Recipient work remains pending until a successful turn handles the complete input and the task is completed.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -850,6 +838,12 @@ async function startDelivery() {
     let input = '';
     client.on('data', (chunk) => { input += chunk; });
     client.on('end', () => {
+      // Baton's root channel check connects and sends nothing to learn that
+      // this server still accepts connections.
+      if (input === '') {
+        client.end();
+        return;
+      }
       try {
         notifyPending(JSON.parse(input));
         client.end('ok\n');
@@ -871,7 +865,11 @@ async function startDelivery() {
   try { existing = selectedSession(); } catch {}
   if (hasParent(existing)) coord('connect', sessionId, existing.native || '', endpoint);
   else coord('attach', sessionId, 'claude-code', existing?.native || '', endpoint);
-  coord('role', sessionId, hasParent(existing) ? 'associate-conductor' : 'principal-conductor');
+  // The operator session keeps its role: reports and questions from parentless
+  // Conductors select their recipient by the operator role.
+  if (recordedRole() !== 'operator') {
+    coord('role', sessionId, hasParent(existing) ? 'associate-conductor' : 'principal-conductor');
+  }
   connectionCustody = { database, coordinator, session: sessionId,
     native: selectedSession()?.native, endpoint, socket: socketName, connection,
     bridge: processIdentity(processFacts(process.pid)), client: processIdentity(processFacts(process.ppid)) };
@@ -879,6 +877,14 @@ async function startDelivery() {
 
 function selectedSession() {
   return openDb()?.prepare('SELECT * FROM sessions WHERE id=?').get(sessionId);
+}
+
+function recordedRole() {
+  try {
+    return openDb()?.prepare('SELECT role FROM session_roles WHERE session=?').get(sessionId)?.role;
+  } catch {
+    return undefined;
+  }
 }
 
 function initialInstructions() {
@@ -972,7 +978,10 @@ function messageReadOptions(args, pending = false) {
     ['sender', '--sender'], ['kind', '--kind'], ['state', '--state'],
     ['afterSeq', '--after-seq'], ['throughSeq', '--through-seq'],
   ]) {
-    if (args?.[field] !== undefined) flags.push(flag, args[field]);
+    if (args?.[field] !== undefined) {
+      const value = field === 'state' && args[field] === 'handled' ? 'acknowledged' : args[field];
+      flags.push(flag, value);
+    }
   }
   return [
     ...(args?.index === true || flags.length ? ['--index'] : []),

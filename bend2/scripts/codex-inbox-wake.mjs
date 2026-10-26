@@ -382,7 +382,6 @@ async function openInbox(executable, database, session, threadId) {
         '\nUse baton inbox to read all complete owed input. Use baton read MESSAGE_ID... for selected complete bodies and ' +
         'baton send TARGET --kind KIND --text TEXT and TARGET --kind KIND --file PATH for independent messages. ' +
         'Use baton help ACTION for named arguments and context overrides. Successful recipient turns record handling of their complete inputs. ' +
-        'Use baton acknowledge to record handling of the current turn\'s complete owned reads; Baton resolves the messages and creates the receipt. ' +
         'Use baton completion-request --text SUMMARY when the assignment is ready, and baton completion-confirmed --to PLAYER to confirm a child\'s current request. ' +
         'Select an explicit context with baton DATABASE as RECIPIENT ACTION. Coordinator executable/database argv: ' +
         JSON.stringify([executable, database]) + '. ' +

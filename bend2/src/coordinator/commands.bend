@@ -378,6 +378,13 @@ def terminal_span(+event: String) -> String:
 def report_recipient(+session: String) -> String:
   "(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN report_sender.parent WHEN " ++ assigned_role("report_sender.id") ++ "='conductor' THEN (SELECT report_operator.id FROM sessions report_operator WHERE report_operator.id='operator' AND report_operator.parent IS NULL AND " ++ assigned_role("report_operator.id") ++ "='operator') END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")"
 
+# A worker whose turn ends with its assignment open, no completion request and
+# no owed input has nothing that starts its next turn (#1054). This report goes
+# to the coordinator beside the turn report, so the coordinator decides whether
+# to continue the work or to wait for a completion request.
+def open_assignment_report_sql(+id: String, +session: String) -> String:
+  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id ++ ":assignment") ++ ",worker.id," ++ report_recipient("worker.id") ++ ",'report','Turn ' || " ++ q(id) ++ " || ' ended with assignment ' || (SELECT id FROM messages WHERE seq=" ++ task_assignment_sql("worker.id") ++ ") || ' still open. ' || worker.id || ' sent no completion request and has no owed input, so no further turn starts until its coordinator acts. Run continue-task --session ' || worker.id || ' to continue the work, or send guidance asking for a completion request.' FROM sessions worker WHERE worker.id=" ++ q(session) ++ " AND " ++ report_recipient("worker.id") ++ " IS NOT NULL AND " ++ task_open_sql("worker.id") ++ " AND " ++ task_request_sql("worker.id") ++ " IS NULL AND NOT EXISTS(SELECT 1 FROM messages owed WHERE owed.recipient=worker.id AND owed.receipt IS NULL);"
+
 def last_assistant_sql(+event: String) -> String:
   "(SELECT " ++ last_assistant_sql_expr("native_frame.value") ++ " FROM (SELECT " ++ q(event) ++ " AS value) native_frame)"
 

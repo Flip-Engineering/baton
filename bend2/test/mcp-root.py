@@ -318,6 +318,8 @@ class McpRoot(unittest.TestCase):
         tools = {item['name']: item for item in read_mcp(proc)['result']['tools']}
         self.assertIn('baton2_players', tools)
         self.assertIn('baton2_player_status', tools)
+        self.assertNotIn('baton2_ack', tools)
+        self.assertNotIn('acknowledge', tools['baton2_action']['description'])
         self.assertNotIn('baton2_workers', tools)
         self.assertNotIn('baton2_worker_status', tools)
         for tool in tools.values():

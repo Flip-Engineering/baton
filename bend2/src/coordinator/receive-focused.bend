@@ -7,6 +7,7 @@ import ./receive.bend as Receive
 import ../host/instance.bend as Custody
 import ../host/process.bend as P
 import ./control.bend as Control
+import ./stop-hook.bend as StopHook
 import ./turn.bend as Turn
 import ./native-input.bend as NativeInput
 import ../git/process.bend as GitProcess
@@ -68,16 +69,21 @@ def dispatch_message(selected: Bool, +db: String, +id: String) -> IO(Unit):
     case True{}: Control.deliver(db,id)
     case False{}: IO.die(Unit,2,"expected dispatch message")
 
-def dispatch_three_route(host_keeper: Bool, message: Bool, +first: String, +second: String) -> IO(Unit):
+def dispatch_redelivery(selected: Bool, +db: String, +id: String) -> IO(Unit):
+  match selected:
+    case True{}: Control.redeliver(db,id)
+    case False{}: IO.die(Unit,2,"unsupported focused receive command")
+
+def dispatch_three_route(host_keeper: Bool, message: Bool, redelivery: Bool, +first: String, +second: String) -> IO(Unit):
   match host_keeper:
     case True{}: dispatch_host_keeper(True{},first,second)
     case False{}:
       match message:
         case True{}: dispatch_message(True{},first,second)
-        case False{}: IO.die(Unit,2,"unsupported focused receive command")
+        case False{}: dispatch_redelivery(redelivery,first,second)
 
 def dispatch_three(+flag: String, +first: String, +second: String) -> IO(Unit):
-  dispatch_three_route(String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"),first,second)
+  dispatch_three_route(String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"),String.eq(flag,"--redeliver-message"),first,second)
 
 def dispatch_turn(selected: Bool, +db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String) -> IO(Unit):
   match selected:
@@ -183,15 +189,20 @@ def dispatch(args: List<String>) -> IO(Unit):
       dispatch_recover(String.eq(flag,"--recover-receive"),db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,inputs)
     case other: IO.die(Unit,2,"unsupported focused receive command")
 
-def focused_entry_route(selected: Bool, flag: String, rest: List<String>) -> IO(Unit):
+def focused_entry_hook(hook: Bool, flag: String, rest: List<String>) -> IO(Unit):
+  match hook:
+    case True{}: StopHook.run()
+    case False{}: dispatch(Con{flag,rest})
+
+def focused_entry_route(selected: Bool, hook: Bool, flag: String, rest: List<String>) -> IO(Unit):
   match selected:
     case True{}: ClearStop.run(rest)
-    case False{}: dispatch(Con{flag,rest})
+    case False{}: focused_entry_hook(hook,flag,rest)
 
 def focused_entry(args: List<String>) -> IO(Unit):
   match args:
     case +flag <> rest:
-      focused_entry_route(String.eq(flag,"--focused-clear-stop"),flag,rest)
+      focused_entry_route(String.eq(flag,"--focused-clear-stop"),String.eq(flag,"--stop-hook"),flag,rest)
     case Nil{}: dispatch(Nil{})
 
 def main() -> IO(Unit):

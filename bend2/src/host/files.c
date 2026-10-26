@@ -4,7 +4,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 typedef struct { char *directory,*suffix,*path; int error; } BatonFindFile;
@@ -153,6 +156,44 @@ static Term baton_file_mode_run(Env e,Term *f,IoWork *w) {
   return io_work(w,baton_file_mode_call,baton_file_mode_pack);
 }
 static void __attribute__((constructor)) baton_file_mode_use(void) {io_eff(CID_FILES_MODE_OF,baton_file_mode_run,0);}
+#endif
+
+#ifdef CID_FILES_LISTENING
+/* A connect probe on a Unix socket: a process that accepts on it answers the
+   connect. The child changes into the socket's directory and connects by the
+   file name, so the full path may exceed sun_path. The child makes only
+   async-signal-safe calls; its exit status carries the connect errno. */
+static void baton_file_listening_call(IoWork *w) {
+  BatonFileOp *call=(BatonFileOp *)w->data;
+  char *slash=strrchr(call->path,'/');
+  const char *name=slash?slash+1:call->path;
+  struct sockaddr_un address;
+  memset(&address,0,sizeof(address));address.sun_family=AF_UNIX;
+  if(!*name || strlen(name)>=sizeof(address.sun_path)) {call->error=ENAMETOOLONG;return;}
+  memcpy(address.sun_path,name,strlen(name)+1);
+  if(slash) *slash='\0';
+  const char *directory=slash?(call->path[0]?call->path:"/"):".";
+  pid_t child=fork();
+  if(child<0) {call->error=errno;return;}
+  if(child==0) {
+    if(chdir(directory)) _exit(errno&0xff);
+    int fd=socket(AF_UNIX,SOCK_STREAM,0);
+    if(fd<0) _exit(errno&0xff);
+    if(connect(fd,(struct sockaddr *)&address,sizeof(address))) _exit(errno&0xff);
+    close(fd);
+    _exit(0);
+  }
+  int status=0;
+  while(waitpid(child,&status,0)<0) if(errno!=EINTR) {call->error=errno;return;}
+  call->error=WIFEXITED(status)?WEXITSTATUS(status):EIO;
+}
+static Term baton_file_listening_run(Env e,Term *f,IoWork *w) {
+  BatonFileOp *call=baton_file_op(e,f,w,1);
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  if(call->error) return baton_file_unit_pack(e,w);
+  return io_work(w,baton_file_listening_call,baton_file_unit_pack);
+}
+static void __attribute__((constructor)) baton_file_listening_use(void) {io_eff(CID_FILES_LISTENING,baton_file_listening_run,0);}
 #endif
 
 #ifdef CID_FILES_WRITE_PRIVATE
