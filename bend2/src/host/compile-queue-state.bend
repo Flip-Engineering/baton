@@ -79,7 +79,7 @@ def visible(names: List<&2,String>) -> List<&2,String>:
 def names( +path: String) -> IO(List<&2,String>):
   do IO<List<&2,String>>:
     result : Result<&1,&1,U32 & String,String> <- QF.list_dir(path)
-    IO.pure(List<&2,String>,QF.nonempty(String.lines(text_or_empty(result))))
+    IO.pure(List<&2,String>,QF.nonempty(String.split(text_or_empty(result),Char.from_u32(0))))
 
 def remove( +path: String) -> IO(Unit):
   do IO<Unit>:
