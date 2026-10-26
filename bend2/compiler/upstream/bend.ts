@@ -890,6 +890,173 @@ export function term_lower(term: HTerm, d: number = 0): LTerm {
   }
 }
 
+type TermLowerMemo = WeakMap<HTerm, Map<number, LTerm>>;
+
+type SharedLowerFrame = {
+  tm: HTerm;
+  d: number;
+  stage: number;
+  children: LTerm[];
+  xs?: HTerm[];
+  x?: HTerm;
+};
+
+function shared_lower_frame(term: HTerm, d: number): SharedLowerFrame {
+  const tm = term_force(term);
+  return {
+    tm, d, stage: 0, children: [],
+    xs: tm.$ === "Let" ? tm.k.map((k, j): HTerm => Var(k, d + j)) : undefined,
+    x: tm.$ === "All" || tm.$ === "Lam" ? Var(tm.k, d) : undefined,
+  };
+}
+
+function shared_lower_next(frame: SharedLowerFrame): [HTerm, number] | null {
+  const { tm, d } = frame;
+  switch (tm.$) {
+    case "Sub": {
+      if (frame.stage === 0) {
+        frame.stage = 1;
+        if (tm.v.$ !== "PVar" && tm.v.$ !== "PCtr") {
+          return [tm.v, d];
+        }
+      }
+      if (frame.stage === 1) {
+        frame.stage = 2;
+        return [tm.f, d];
+      }
+      return null;
+    }
+    case "Let": {
+      if (frame.stage < tm.v.length) {
+        return [tm.v[frame.stage++], d];
+      }
+      if (frame.stage === tm.v.length) {
+        frame.stage += 1;
+        return [tm.f(frame.xs as HTerm[]), d + tm.k.length];
+      }
+      return null;
+    }
+    case "Typ":
+      return frame.stage++ === 0 ? [tm.g, d] : null;
+    case "All": {
+      if (frame.stage === 0) {
+        frame.stage = 1;
+        return [tm.A, d];
+      }
+      if (frame.stage === 1) {
+        frame.stage = 2;
+        return [tm.B(frame.x as HTerm), d + 1];
+      }
+      return null;
+    }
+    case "Lam":
+      return frame.stage++ === 0 ? [tm.f(frame.x as HTerm), d + 1] : null;
+    case "App":
+      if (frame.stage === 0) { frame.stage = 1; return [tm.f, d]; }
+      if (frame.stage === 1) { frame.stage = 2; return [tm.x, d]; }
+      return null;
+    case "ADT": case "Ctr":
+      return frame.stage < tm.x.length ? [tm.x[frame.stage++], d] : null;
+    case "Min":
+      if (frame.stage === 0) { frame.stage = 1; return [tm.a, d]; }
+      if (frame.stage === 1) { frame.stage = 2; return [tm.b, d]; }
+      return null;
+    case "Mat":
+      if (frame.stage === 0) { frame.stage = 1; return [tm.h, d]; }
+      if (frame.stage === 1) { frame.stage = 2; return [tm.m, d]; }
+      return null;
+    case "Eql":
+      if (frame.stage === 0) { frame.stage = 1; return [tm.a, d]; }
+      if (frame.stage === 1) { frame.stage = 2; return [tm.b, d]; }
+      if (frame.stage === 2) { frame.stage = 3; return [tm.T, d]; }
+      return null;
+    case "Rwt":
+      if (frame.stage === 0) { frame.stage = 1; return [tm.e, d]; }
+      if (frame.stage === 1) { frame.stage = 2; return [tm.p, d]; }
+      if (frame.stage === 2) { frame.stage = 3; return [tm.f, d]; }
+      return null;
+    case "Ann":
+      if (frame.stage === 0) { frame.stage = 1; return [tm.x, d]; }
+      if (frame.stage === 1) { frame.stage = 2; return [tm.T, d]; }
+      return null;
+    case "Var": case "Ref": case "Qnt": case "Qua": case "Lit":
+    case "Efq": case "Rfl": case "Hol":
+      return null;
+  }
+}
+
+function shared_lower_build(frame: SharedLowerFrame): LTerm {
+  const { tm, d, children } = frame;
+  switch (tm.$) {
+    case "Var": return Var(tm.k, tm.i, tm.s);
+    case "Ref": return Ref(tm.k, tm.s, tm.b);
+    case "Sub": {
+      const pattern = tm.v.$ === "PVar" || tm.v.$ === "PCtr";
+      return Sub(tm.i, pattern ? tm.v : children[0], children[pattern ? 0 : 1], tm.s);
+    }
+    case "Let":
+      return Let(tm.k, (frame.xs as HTerm[]).map((_, j) => d + j),
+        children.slice(0, tm.v.length), children[tm.v.length], tm.s, tm.q);
+    case "Typ": return Typ(children[0], tm.s);
+    case "Qnt": case "Qua": return tm;
+    case "Min": return Min(children[0], children[1], tm.s);
+    case "All": return All(tm.q, tm.k, d, children[0], children[1], tm.s);
+    case "Lam": return Lam(tm.k, d, children[0], tm.s, tm.q);
+    case "App": return App(children[0], children[1], tm.s);
+    case "ADT": return ADT(tm.k, children, tm.s, tm.r);
+    case "Ctr": return Ctr(tm.k, children, tm.s);
+    case "Lit": return tm;
+    case "Mat": return Mat(tm.k, children[0], children[1], tm.s);
+    case "Efq": return Efq(tm.s);
+    case "Eql": return Eql(children[0], children[1], children[2], tm.s);
+    case "Rfl": return Rfl(tm.s);
+    case "Rwt": return Rwt(children[0], children[1], children[2], tm.s);
+    case "Hol": return Hol(tm.k, tm.s);
+    case "Ann": return Ann(children[0], children[1], tm.s);
+  }
+}
+
+// Preserve shared nodes for callers that encode the lowered structure by identity.
+export function term_lower_shared(term: HTerm, d: number = 0): LTerm {
+  const memo: TermLowerMemo = new WeakMap();
+  const stack: SharedLowerFrame[] = [shared_lower_frame(term, d)];
+  const active = new WeakSet<HTerm>([stack[0].tm]);
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1];
+    const child = shared_lower_next(frame);
+    if (child !== null) {
+      const tm = term_force(child[0]);
+      const lowered = memo.get(tm)?.get(child[1]);
+      if (lowered !== undefined) {
+        frame.children.push(lowered);
+      } else {
+        if (active.has(tm)) {
+          throw new RangeError("Maximum call stack size exceeded");
+        }
+        const next = shared_lower_frame(tm, child[1]);
+        active.add(next.tm);
+        stack.push(next);
+      }
+      continue;
+    }
+    const lowered = shared_lower_build(frame);
+    let depths = memo.get(frame.tm);
+    if (depths === undefined) {
+      depths = new Map();
+      memo.set(frame.tm, depths);
+    }
+    depths.set(frame.d, lowered);
+    active.delete(frame.tm);
+    stack.pop();
+    if (stack.length > 0) {
+      stack[stack.length - 1].children.push(lowered);
+    } else {
+      return lowered;
+    }
+  }
+  throw new Error("term_lower_shared completed without a root term");
+}
+
 export function term_descend(q: Quant, arg: HTerm, col: HTerm): Cmp {
   if (q.$ === "None") {
     return "EQ";

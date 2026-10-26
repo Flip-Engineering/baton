@@ -9,13 +9,13 @@
     },
     {
       "path": "bend.ts",
-      "bytes": 135926,
-      "sha256": "93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85"
+      "bytes": 141642,
+      "sha256": "c9990cbdfd47aba0db5dad2efc0915b6a10ed9134dd4fa56b6e8e425c080df4e"
     },
     {
       "path": "comp.ts",
-      "bytes": 230343,
-      "sha256": "46cc6f8fbd591552c6f2ce925ddbe680f650077bdc4f8554b0167700106ca3e5"
+      "bytes": 237519,
+      "sha256": "72b76a4141dd9747fd906b38bea19064712cdcb927d74ada998cd31569cab8b6"
     },
     {
       "path": "effs/args.c",
