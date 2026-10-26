@@ -36,13 +36,6 @@ function diagnostic_join(site: string, values: (string | number)[],
   return result;
 }
 
-// Facts-only passes are OFF by default on this lineage. They converge
-// own/hot/stat before emitting C, but on the large fixtures they measured
-// 22-24% slower than the two full passes they replace, with identical output
-// (paired interleaved A/B, 8 pairs per fixture, receipts in the round record).
-// Set BEND_FACTS_ONLY_FIRST=1 to enable them; the code path is unchanged.
-const FACTS_ONLY_FIRST = process.env.BEND_FACTS_ONLY_FIRST === "1";
-
 // Comp
 // ====
 
@@ -127,7 +120,7 @@ type File = Carb & {
   spun: Map<string, string>;
   armSeq: number;
   armBusy: Set<string>;
-  armHints: Map<string, { term: HTerm; name: string; lay: Lay; ks: Kind[] }[]>;
+  armHints: Map<string, ArmRep[]>;
   clos: Set<string>;
   img: string[];
   lits: Map<string, number>;
@@ -153,6 +146,8 @@ type HAll = Of<"All">;
 
 type Probe = Of<"Var">;
 
+type ArmRep = { term: HTerm; name: string; lay: Lay; ks: Kind[]; caps: Probe[] };
+
 type HAdt = Of<"ADT">;
 
 type HLet = Of<"Let">;
@@ -162,11 +157,11 @@ type HLet = Of<"Let">;
 // index; the maps are only ever read, so the pairs are all that is kept.
 type UMap = number[];
 
-type Level = [string, HTerm, () => Val[]];
+type Level = [string, HTerm, () => Val[], boolean?];
 
 type Chain = [HTerm, number | null][];
 
-type Leaf = [HTerm, number, number, number];
+type Leaf = [HTerm, number, number, number, boolean];
 
 type Call = {
   k: Bend.Name;
@@ -2156,6 +2151,33 @@ function facts_lend(cb: Carb): void {
     b && !cb.lend.has(k + "~" + i) && cb.own.add(k + "~" + i)));
 }
 
+// facts_lend only reads the BRWS memo; brw_of fills it during emission.
+// Snapshot the keys, clear the memo, and recompute those defs against the
+// current own before closing lend again. Each round can only add own keys,
+// so the loop is finite; the round limit is an invariant guard for a broken
+// derivation, not a work budget.
+function facts_converge(cb: Carb): void {
+  const limit = 1 << 16;
+  for (let round = 0; ; round++) {
+    const before = new Set(cb.own);
+    const ks = [...BRWS.keys()];
+    BRWS.clear();
+    for (const k of ks) brw_of(cb, k);
+    facts_lend(cb);
+    const added = [...cb.own].filter((k) => !before.has(k));
+    diagnostic("facts.round", { round, own: cb.own.size,
+      hot: cb.hot.size, stat: cb.stat.size, added: added.length,
+      keys: added.slice(0, 32) });
+    if (added.length === 0) {
+      return;
+    }
+    if (round >= limit) {
+      die("facts do not converge; new own keys: "
+        + added.slice(0, 32).join(", "));
+    }
+  }
+}
+
 // A value with no heap: a constructor packed into its word.
 function facts_packed(cb: Carb, t: HTerm): boolean {
   const s = term_strip(t);
@@ -3079,9 +3101,10 @@ function emit_nats(x: HTerm): Chain {
 }
 
 // A word match's leaves: the bits each knows (32: a hit), their value, its
-// arm, and the words it binds (none; the tail; a bit and its tail). A
-// default covers the deeper defaults and tail arms that are its instance
-// (the flattener's substitution replayed): a literal compares whole.
+// arm, and the words it binds (none; the tail; a bit and its tail), and
+// whether the leaf is the match's default (a hit is not). A default covers
+// the deeper defaults and tail arms that are its instance (the flattener's
+// substitution replayed): a literal compares whole.
 function emit_lits(x: HTerm): Leaf[] {
   const ws: Leaf[] = [];
   const key = (t: HTerm): string => JSON.stringify(Bend.term_lower(t),
@@ -3090,7 +3113,7 @@ function emit_lits(x: HTerm): Leaf[] {
     cov: ((w: Of<"Ctr">) => HTerm) | null): void => {
     const h = mat_arms(t).arms[0]?.[1];
     if (h !== undefined && j === 32) {
-      ws.push([h, j, n, 0]);
+      ws.push([h, j, n, 0, false]);
       return;
     }
     const { arms, end } = mat_arms(h ?? t);
@@ -3106,7 +3129,7 @@ function emit_lits(x: HTerm): Leaf[] {
         sub(Bend.Ctr("WCon", [Bend.Ctr(k, []), v]) as Of<"Ctr">)));
     }
     if (own) {
-      ws.push([end, j, n, e]);
+      ws.push([end, j, n, e, true]);
     }
   };
   walk(mat_arms(x).arms[0][1], 0, 0, null);
@@ -3246,13 +3269,13 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
         const ye = y as Of<"Eql">;
         return go(x.a, ye.a, d) && go(x.b, ye.b, d) && go(x.T, ye.T, d);
       }
-      // ADT.r is the checker's remaining-constructor refinement. book_adt
-      // reads it to filter the constructor list used for default-arm
-      // existence; layouts and calls key on k and the type arguments, so it
-      // stays out of the equality.
+      // ADT.r is the checker's remaining-constructor refinement. A shared
+      // arm body must not merge ADTs whose constructor lists differ.
       case "ADT": {
         const yd = y as Of<"ADT">;
         return x.k === yd.k && x.x.length === yd.x.length
+          && x.r.length === yd.r.length
+          && yd.r.every((c) => x.r.includes(c))
           && x.x.every((z, i) => go(z, yd.x[i], d));
       }
       case "Min": { const ym = y as Of<"Min">; return go(x.a, ym.a, d) && go(x.b, ym.b, d); }
@@ -3287,10 +3310,60 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
   return go(a, b, 0);
 }
 
-function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst): boolean {
-  if (term_uses(fl, h).length !== 0) {
-    return false;
+// The captures in the term's first-use order. A probe absent from fl.uses
+// cannot be passed as a parameter; a missing capture selects inline emission,
+// which keeps the name bound.
+function capture_order(fl: File, h: HTerm, u: UMap): [Probe, Bind][] {
+  const out: [Probe, Bind][] = [];
+  const seen = new Set<number>();
+  const by_idx = new Map<number, [Probe, Bind]>();
+  for (const e of fl.uses) by_idx.set(e[0].i, e);
+  const walk = (t: HTerm): void => {
+    const s = term_force(t);
+    if (s.$ === "Var") {
+      const p = s as Probe;
+      if (term_use(u, p) > 0 && !seen.has(p.i)) {
+        const e = by_idx.get(p.i);
+        if (e !== undefined) {
+          seen.add(p.i);
+          out.push(e);
+        }
+      }
+      return;
+    }
+    for (const k of term_kids(fl, s)) walk(k);
+  };
+  walk(h);
+  return out;
+}
+
+// A literal word match's default continuation is the same source body at
+// every character column. The outer nodes carry the character pattern spans,
+// so arm_hint puts the copies in different buckets; the innermost body span
+// is stable and only narrows the candidates, as arm_eq still decides reuse.
+function arm_body_hint(h: HTerm): string {
+  let t = term_force(h);
+  for (let i = 0; i < 100000; i++) {
+    if (t.$ === "Ann") {
+      t = term_force(t.x);
+    } else if (t.$ === "Lam") {
+      t = term_force(term_open(t).b);
+    } else if (t.$ === "Mat") {
+      t = term_force(t.m);
+    } else {
+      break;
+    }
   }
+  const sp = t.s;
+  return (sp !== undefined && sp.beg !== undefined
+    ? sp.beg + ":" + sp.end : "?") + ":" + t.$;
+}
+
+function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
+  def: boolean, lit = false): boolean {
+  const u = term_uses(fl, h);
+  const closed = u.length === 0;
+  if (!def && !closed) return false;
   // A shared arm is emitted as an ordinary C helper with only its explicit
   // parameters. WL_JMP uses the register bank declared for its segment, so
   // an arm that can transfer segments must stay in its owning segment.
@@ -3301,23 +3374,33 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst): boolean {
   if (has_segment_jump) {
     return false;
   }
+  const caps = capture_order(fl, h, u);
+  if ((u.length >> 1) > caps.length) return false;
+  const capKs = caps.flatMap(([, b]) => b.val.lay.ks);
+  const avKs = av.flatMap((v) => v.lay.ks);
   const lay = dst?.lay ?? fl.seg.ret;
-  const ks = av.flatMap((v) => v.lay.ks);
-  const base = [ks.join("."), lay.ks.join("."),
+  const base = [capKs.join("."), avKs.join("."), lay.ks.join("."),
     lay.arms === null ? "" : lay.arms.map((a) => a.k).join(",")].join("|");
-  const hint = arm_hint(h) + "|" + base;
+  const hint = lit
+    ? "lit|" + arm_body_hint(h) + "|" + base
+    : arm_hint(h) + "|" + base;
   const reps = fl.armHints.get(hint) ?? [];
   for (const rep of reps) {
-    if (arm_eq(rep.term, h)) {
-      if (fl.armBusy.has(rep.name)) {
-        return false;
-      }
-      emit_arm_call(fl, rep, av, dst);
+    if (rep.ks.length === capKs.length + avKs.length
+      && rep.caps.length === caps.length && arm_eq(rep.term, h)) {
+      if (fl.armBusy.has(rep.name)) return false;
+      const capWs = caps.flatMap(([p, b]) => {
+        const use = term_use(u, p);
+        fl.uses.set(p, { ...b, n: b.n - use + 1 });
+        return val_own(fl, bind_pop(fl, p));
+      });
+      emit_arm_call(fl, rep, capWs, av, dst);
       return true;
     }
   }
   const name = seg_ref(fl, `arm_${fl.armSeq++}`);
-  const rec = { term: h, name, lay, ks };
+  const ks = [...capKs, ...avKs];
+  const rec: ArmRep = { term: h, name, lay, ks, caps: caps.map(([p]) => p) };
   reps.push(rec);
   fl.armHints.set(hint, reps);
   fl.armBusy.add(name);
@@ -3329,13 +3412,18 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst): boolean {
   Object.assign(fl, { seg, spares: [], tab: 2,
     uses: new Map(fl.uses) });
   let at = 0;
-  const argv = av.map((v) => {
+  for (const [p, b] of caps) {
+    const w = val_new(ts.slice(at, at + b.val.lay.ks.length), b.val.lay);
+    at += b.val.lay.ks.length;
+    bind_uses(fl, p, w, [h], b.A, false);
+  }
+  const aparams = av.map((v) => {
     const w = val_new(ts.slice(at, at + v.lay.ks.length), v.lay);
     at += v.lay.ks.length;
     return w;
   });
   const d = val_new(lay.ks.map(() => name_local(fl, "v")), lay);
-  emit_body(fl, h, null, [], argv, d);
+  emit_body(fl, h, null, [], aparams, d);
   if (!fl.dry) {
     fl.spins.push([name, [`${seg.lines.length < SPIN_FAR ? "INLINE" : "FAR"} Term ${name}(Env e, THR Term* o${
       seg.ks.map((k, i) => `, ${lay_c(k)} r${i}`).join("")}) {`,
@@ -3348,14 +3436,20 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst): boolean {
   }
   Object.assign(fl, outer);
   fl.armBusy.delete(name);
-  emit_arm_call(fl, rec, av, dst);
+  const capWs = caps.flatMap(([p, b]) => {
+    const use = term_use(u, p);
+    fl.uses.set(p, { ...b, n: b.n - use + 1 });
+    return val_own(fl, bind_pop(fl, p));
+  });
+  emit_arm_call(fl, rec, capWs, av, dst);
   return true;
 }
 
 function emit_arm_call(fl: File,
-  ent: { name: string; lay: Lay; ks: Kind[] }, av: Val[], dst: Dst): void {
+  ent: { name: string; lay: Lay; ks: Kind[] }, capWs: string[],
+  av: Val[], dst: Dst): void {
   seg_ref(fl, ent.name);
-  const ws = av.flatMap((v) => val_own(fl, v));
+  const ws = [...capWs, ...av.flatMap((v) => val_own(fl, v))];
   const o = name_local(fl, "o");
   file_push(fl, `Term ${o}[${ent.lay.ks.length}];`);
   block(fl, `if (${ent.name}(${["e", o, ...ws].join(", ")}) == 0) {`,
@@ -3392,7 +3486,7 @@ function emit_match(fl: File, x: Of<"Mat"> | Of<"Efq">,
     ? ls.map(([h, n], i): Level => [`${sw} == ${i}`, h, () =>
       n === null ? [] : [val_new([`(${sw} - ${n})`], lay)]])
     : ws !== null
-    ? ws.map(([h, j, n, e]): Level => [lits_cond(sw, j, n), h, () => {
+    ? ws.map(([h, j, n, e, d]): Level => [lits_cond(sw, j, n), h, () => {
       let v = val_new(lay.ks.map((_, i) => `((${sw} >> ${i}) & 1)`),
         lay.arms![0].fs[0].lay);
       for (let i = 0; i < j; i++) {
@@ -3400,7 +3494,7 @@ function emit_match(fl: File, x: Of<"Mat"> | Of<"Efq">,
       }
       return e === 1 ? [v]
         : v.lay.arms![0].fs.slice(0, e).map((f) => val_field(v, f));
-    }])
+    }, d])
     : arms.map(([k, h]): Level => {
       if (adt.k === "Array") {
         const el = lay_el(fl.book, adt.x[0]);
@@ -3424,12 +3518,13 @@ function emit_match(fl: File, x: Of<"Mat"> | Of<"Efq">,
     lv.push(["", end, () => [u]]);
   }
   const spares = fl.spares;
-  const arms2 = lv.map(([, h, fs]) => () => {
+  const arms2 = lv.map(([, h, fs, lit], i) => () => {
     fl.spares = spares.slice();
     const outer = { seg: fl.seg, tab: fl.tab, uses: new Map(fl.uses) };
     bind_dead(fl, [h]);
     const av = [...fs(), ...rest];
-    if (!emit_arm_shared(fl, h, av, dst)) {
+    const def = lit === true || (i === lv.length - 1 && lv[i][0] === "");
+    if (!emit_arm_shared(fl, h, av, dst, def, lit === true)) {
       emit_body(fl, h, null, ers, av, dst);
     }
     if (dst !== null) {
@@ -3651,7 +3746,7 @@ export function compile_book(book: Bend.Book): string {
     for (const [k, tld] of defs) {
       compile_def(fl, k, tld);
     }
-    facts_lend(cb);
+    facts_converge(cb);
     let constant_entries = 0;
     for (const values of fl.consts.values()) constant_entries += values.size;
     let lines = 0, line_code_units = 0, spin_code_units = 0;
@@ -3671,23 +3766,28 @@ export function compile_book(book: Bend.Book): string {
       own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size, dry });
     return fl;
   };
-  // Emitted callees first until a pass changes nothing (own, hot and stat
-  // only grow): that pass is kept.
+  // Dry emission walks converge the monotone facts; they still run
+  // emit_body/emit_args/val_own and skip only retained lines and spin
+  // sources. Each iteration gets a fresh File. The one real pass after the
+  // fixed point must not add facts; growth means the dry walk missed a
+  // producer and the result is not safe to emit.
   let fl: File;
   let was: number;
-  if (FACTS_ONLY_FIRST) {
-    // These passes compute the same monotone facts as emission while
-    // file_push avoids retaining generated C lines. The regular loop then
-    // emits and retains the stable pass from the converged fact sets.
-    do {
-      was = facts();
-      pass(done_defs(cb).reverse(), true);
-    } while (was !== facts());
-  }
   do {
     was = facts();
-    fl = pass(emission_defs, false);
+    pass(emission_defs, true);
   } while (was !== facts());
+  const before = { own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size };
+  fl = pass(emission_defs, false);
+  const after = { own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size };
+  diagnostic("facts.no_growth", { before, after,
+    added: { own: after.own - before.own, hot: after.hot - before.hot,
+      stat: after.stat - before.stat } });
+  if (after.own !== before.own || after.hot !== before.hot
+    || after.stat !== before.stat) {
+    die("facts grew during real emission; the dry walk missed a producer: "
+      + JSON.stringify({ before, after }));
+  }
   // Foreign source text and request stubs do not contribute to own/hot/stat/lend facts.
   // Emit them once after the fixed point reaches its stable pass.
   diagnostic("requests.begin", { pass: diagnostic_pass, segments: fl.segs.length });
