@@ -196,9 +196,21 @@ Each ranked by value-per-cost (not raw value), each with the baton lane it would
 
 ---
 
+## 14. Anvaya — local coding agent and experience store
+
+**What it is (official product material):** Anvaya pairs a Rust CLI coding agent, available as a TUI or headless process, with Anvaya Mind, a project-local experience service that returns context to the agent. Mind also exposes the same graph to other clients through MCP, while the CLI supports local Ollama and configured Anthropic or OpenAI-compatible providers ([Harness](https://www.anvayahq.com/harness), [Mind](https://www.anvayahq.com/mind), [FAQ](https://www.anvayahq.com/faq)).
+
+**Ideas and Baton fit:**
+
+- **Outcome-weighted project experience — ADAPT.** Mind describes six typed node classes, type-specific decay, Git-based drift checks, linked retrieval, and a per-node Beta-Bernoulli utility score updated from whether prior context was used. This is a useful reference for testing whether feedback about retrieved knowledge improves context selection; Baton should keep source identity and observed outcomes attached to any such context ([Mind](https://www.anvayahq.com/mind)).
+- **One project store available through multiple clients — ADAPT.** Mind offers direct, Unix-socket IPC, and MCP access to a local daemon that owns writes to the graph. For Baton, this is an integration reference for a bounded knowledge provider shared across harnesses; project identity, read/write authority, and source attribution remain part of the adapter contract ([Home](https://www.anvayahq.com/), [FAQ](https://www.anvayahq.com/faq)).
+- **Headless operation with visible write approval — ADAPT.** The CLI supports a headless CI mode, a plan-only mode, and approval-gated destructive tools. These are useful reference points for harness adapters that need both scripted execution and an observable authorization surface ([Harness](https://www.anvayahq.com/harness)).
+
+**Evidence limits:** The product site reports 25.6 MB median harness RSS across 238 Phase 1 runs, 24 concurrent agents by default, and a 256-agent hard cap. These are vendor-reported measurements and configuration claims; this survey did not reproduce them ([Harness](https://www.anvayahq.com/harness), [FAQ](https://www.anvayahq.com/faq)). The getting-started page says the CLI and Mind repositories remain private until the Q4 2026 public beta, so this review covers public product documentation and does not verify implementation details ([Get Started](https://www.anvayahq.com/start)).
+
 ## Sources
 
-External (cited inline; all retrieved 2026-08-12):
+External (cited inline; original entries retrieved 2026-08-12; Anvaya entries retrieved 2026-10-26):
 - oh-my-pi: https://github.com/can1357/oh-my-pi · https://omp.sh/
 - Serena: https://github.com/oraios/serena · https://oraios.github.io/serena/01-about/000_intro.html
 - Aider repo-map: https://aider.chat/2023/10/22/repomap.html · https://aider.chat/docs/repomap.html
@@ -209,6 +221,7 @@ External (cited inline; all retrieved 2026-08-12):
 - ACP: https://github.com/zed-industries/agent-client-protocol · https://agentclientprotocol.com/get-started/introduction · https://zed.dev/acp · https://www.morphllm.com/agent-client-protocol · https://blog.marcnuri.com/agent-client-protocol-acp-introduction
 - Claude Code LSP-as-tools: https://github.com/anthropics/claude-code/issues/24249
 - LSP-for-agents trend: https://tech-talk.the-experts.nl/give-your-ai-coding-agent-eyes-how-lsp-integration-transform-coding-agents-4ccae8444929
+- Anvaya official product material: https://www.anvayahq.com/harness · https://www.anvayahq.com/mind · https://www.anvayahq.com/faq · https://www.anvayahq.com/start
 
 Baton-internal (cited inline; repo-relative):
 - Product/seams: `docs/19-north-star-corrected.md` · `docs/00-brief.md` · `docs/PROGRESS.md` · `docs/37-wave-driver.md`
