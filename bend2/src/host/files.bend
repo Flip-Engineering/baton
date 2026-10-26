@@ -1,5 +1,58 @@
 import Base
 
+# The resolved absolute path from realpath(3).
+def Files.realpath(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./files.c"
+
+# The uninterpreted target of one symbolic link.
+def Files.readlink(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./files.c"
+
+def Files.executable(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./files.c"
+
+# A block of complete text lines and its next decimal byte position.
+# An empty block reports EOF. The final line can end at EOF.
+def Files.text_chunk(path: String, position: String) -> IO(Result<&1,&1,U32 & String,String & String>):
+  import "./files.c"
+
+# One lstat observation: kind, mode, device, inode and bytes, separated by tabs.
+def Files.lstat(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./files.c"
+
+# Creates one directory with group-write mode under umask 0007.
+# EEXIST remains an error for the caller to inspect.
+def Files.mkdir_shared(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./files.c"
+
+def Files.mkdir_mode(path: String, mode: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./files.c"
+
+def Files.chmod(path: String, mode: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./files.c"
+
+def Files.rmdir(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./files.c"
+
+def Files.symlink(target: String, path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./files.c"
+
+# Copies one regular file and retains its permission bits.
+def Files.copy_file(source: String, path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./files.c"
+
+# Atomically publishes the complete bytes with shared file mode 0660.
+def Files.write_shared(path: String, value: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./files.c"
+
+# File size, presence of NUL, and the first four bytes as hexadecimal text.
+def Files.byte_properties(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./files.c"
+
+# rename(2) with every failure preserved.
+def Files.move(source: String, path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./files.c"
+
 # Creates one directory. An existing directory succeeds.
 def Files.mkdir(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./files.c"

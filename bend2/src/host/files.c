@@ -1,6 +1,8 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -474,4 +476,296 @@ static Term baton_segments_run(Env e,Term *f,IoWork *w) {
   return io_work(w,baton_segments_call,baton_segments_pack);
 }
 static void __attribute__((constructor)) baton_segments_use(void) {io_eff(CID_FILES_SEGMENTS,baton_segments_run,0);}
+#endif
+
+typedef struct {
+  char *path,*position,*text;
+  size_t length;
+  int operation,error;
+} BatonPathCall;
+
+static void baton_path_work(IoWork *work) {
+  BatonPathCall *call=(BatonPathCall *)work->data;
+  if(call->operation==1) {
+    call->text=realpath(call->path,NULL);
+    if(!call->text) call->error=errno;
+  } else if(call->operation==2) {
+    size_t capacity=256;
+    for(;;) {
+      char *next=malloc(capacity);
+      if(!next) {call->error=ENOMEM;break;}
+      ssize_t length=readlink(call->path,next,capacity-1);
+      if(length<0) {call->error=errno;free(next);break;}
+      if((size_t)length<capacity-1) {
+        next[length]=0;call->text=next;break;
+      }
+      free(next);
+      if(capacity>SIZE_MAX/2) {call->error=EOVERFLOW;break;}
+      capacity*=2;
+    }
+  } else if(call->operation==3) {
+    if(access(call->path,X_OK)) call->error=errno;
+  } else if(call->operation==4) {
+    char *end=NULL;
+    errno=0;
+    unsigned long long position=strtoull(call->position,&end,10);
+    if(errno || !*call->position || *end || (off_t)position<0 ||
+       (unsigned long long)(off_t)position!=position) {call->error=EINVAL;return;}
+    FILE *file=fopen(call->path,"rb");
+    if(!file) {call->error=errno;return;}
+    if(fseeko(file,(off_t)position,SEEK_SET)) {
+      call->error=errno;fclose(file);return;
+    }
+    size_t capacity=65537;
+    call->text=malloc(capacity);
+    if(!call->text) {call->error=ENOMEM;fclose(file);return;}
+    int ch;
+    while((ch=fgetc(file))!=EOF) {
+      if(call->length+1==capacity) {
+        if(capacity>SIZE_MAX/2) {call->error=EOVERFLOW;break;}
+        char *grown=realloc(call->text,capacity*2);
+        if(!grown) {call->error=ENOMEM;break;}
+        call->text=grown;capacity*=2;
+      }
+      call->text[call->length++]=(char)ch;
+      if(call->length>=65536 && ch=='\n') break;
+    }
+    if(!call->error && ferror(file)) call->error=errno?errno:EIO;
+    call->text[call->length]=0;
+    if(fclose(file) && !call->error) call->error=errno;
+    char next[32];
+    if(position>ULLONG_MAX-call->length) {call->error=EOVERFLOW;return;}
+    snprintf(next,sizeof next,"%llu",position+call->length);
+    free(call->position);call->position=strdup(next);
+    if(!call->position) call->error=ENOMEM;
+  } else if(call->operation==5) {
+    struct stat info;
+    if(lstat(call->path,&info)) {call->error=errno;return;}
+    const char *kind=S_ISDIR(info.st_mode)?"dir":S_ISREG(info.st_mode)?"file":
+      S_ISLNK(info.st_mode)?"symlink":"other";
+    char text[256];
+    snprintf(text,sizeof text,"%s\t%u\t%llu\t%llu\t%llu",kind,
+      (unsigned)(info.st_mode&07777),(unsigned long long)info.st_dev,
+      (unsigned long long)info.st_ino,(unsigned long long)info.st_size);
+    call->text=strdup(text);
+    if(!call->text) call->error=ENOMEM;
+  } else if(call->operation==6) {
+    mode_t previous=umask(0007);
+    int result=mkdir(call->path,0770);
+    int saved=errno;
+    umask(previous);
+    if(result) call->error=saved;
+  }
+}
+
+static Term baton_path_pack(Env env,IoWork *work) {
+  BatonPathCall *call=(BatonPathCall *)work->data;
+  Term value=term_pak(CID_UNIT,0);
+  if(!call->error) {
+    if(call->operation==4) value=io_tup(env,
+      io_str(env,call->text,call->length),
+      io_str(env,call->position,strlen(call->position)));
+    else if(call->text) value=io_str(env,call->text,strlen(call->text));
+  }
+  Term result=call->error?io_fail(env,call->error,NULL):io_done(env,value);
+  free(call->path);free(call->position);free(call->text);free(call);
+  work->data=NULL;
+  return result;
+}
+
+static Term baton_path_run(Env env,Term *fields,IoWork *work,int operation) {
+  BatonPathCall *call=calloc(1,sizeof(*call));
+  if(!call) return io_fail(env,ENOMEM,NULL);
+  call->operation=operation;
+  u64 length=0;
+  call->path=io_cstr(env,fields[0],&length);
+  if(!call->path) {free(call);return io_fail(env,ENOMEM,NULL);}
+  if(strlen(call->path)!=length) call->error=EINVAL;
+  if(operation==4) {
+    call->position=io_cstr(env,fields[1],&length);
+    if(!call->position || strlen(call->position)!=length) call->error=EINVAL;
+  }
+  work->data=(char *)call;
+  if(call->error) return baton_path_pack(env,work);
+  return io_work(work,baton_path_work,baton_path_pack);
+}
+
+#ifdef CID_FILES_REALPATH
+static Term baton_path_realpath(Env e,Term *f,IoWork *w) {return baton_path_run(e,f,w,1);}
+static void __attribute__((constructor)) baton_path_realpath_use(void) {io_eff(CID_FILES_REALPATH,baton_path_realpath,0);}
+#endif
+#ifdef CID_FILES_READLINK
+static Term baton_path_readlink(Env e,Term *f,IoWork *w) {return baton_path_run(e,f,w,2);}
+static void __attribute__((constructor)) baton_path_readlink_use(void) {io_eff(CID_FILES_READLINK,baton_path_readlink,0);}
+#endif
+#ifdef CID_FILES_EXECUTABLE
+static Term baton_path_executable(Env e,Term *f,IoWork *w) {return baton_path_run(e,f,w,3);}
+static void __attribute__((constructor)) baton_path_executable_use(void) {io_eff(CID_FILES_EXECUTABLE,baton_path_executable,0);}
+#endif
+#ifdef CID_FILES_TEXT_CHUNK
+static Term baton_path_chunk(Env e,Term *f,IoWork *w) {return baton_path_run(e,f,w,4);}
+static void __attribute__((constructor)) baton_path_chunk_use(void) {io_eff(CID_FILES_TEXT_CHUNK,baton_path_chunk,0);}
+#endif
+#ifdef CID_FILES_LSTAT
+static Term baton_path_lstat(Env e,Term *f,IoWork *w) {return baton_path_run(e,f,w,5);}
+static void __attribute__((constructor)) baton_path_lstat_use(void) {io_eff(CID_FILES_LSTAT,baton_path_lstat,0);}
+#endif
+#ifdef CID_FILES_MKDIR_SHARED
+static Term baton_path_mkdir(Env e,Term *f,IoWork *w) {return baton_path_run(e,f,w,6);}
+static void __attribute__((constructor)) baton_path_mkdir_use(void) {io_eff(CID_FILES_MKDIR_SHARED,baton_path_mkdir,0);}
+#endif
+
+typedef struct {
+  char *first,*second,*answer;
+  size_t length;
+  u32 mode;
+  int operation,error;
+} BatonFileData;
+
+static int baton_data_write(int fd,const char *data,size_t length) {
+  size_t offset=0;
+  while(offset<length) {
+    ssize_t count=write(fd,data+offset,length-offset);
+    if(count>0) offset+=(size_t)count;
+    else if(count<0 && errno==EINTR) continue;
+    else return count<0?errno:EIO;
+  }
+  return 0;
+}
+
+static void baton_data_work(IoWork *work) {
+  BatonFileData *call=(BatonFileData *)work->data;
+  if(call->operation==1) {
+    if(mkdir(call->first,call->mode&0777)) call->error=errno;
+  } else if(call->operation==2) {
+    if(chmod(call->first,call->mode&07777)) call->error=errno;
+  } else if(call->operation==3) {
+    if(rmdir(call->first)) call->error=errno;
+  } else if(call->operation==4) {
+    if(symlink(call->first,call->second)) call->error=errno;
+  } else if(call->operation==5) {
+    int input=open(call->first,O_RDONLY|O_CLOEXEC);
+    if(input<0) {call->error=errno;return;}
+    struct stat info;
+    if(fstat(input,&info)) {call->error=errno;close(input);return;}
+    if(!S_ISREG(info.st_mode)) {call->error=EINVAL;close(input);return;}
+    int output=open(call->second,O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW|O_CLOEXEC,0600);
+    if(output<0) {call->error=errno;close(input);return;}
+    char chunk[65536];
+    for(;;) {
+      ssize_t count=read(input,chunk,sizeof chunk);
+      if(count>0) {
+        call->error=baton_data_write(output,chunk,(size_t)count);
+        if(call->error) break;
+      } else if(count==0) break;
+      else if(errno!=EINTR) {call->error=errno;break;}
+    }
+    if(!call->error && fchmod(output,info.st_mode&0777)) call->error=errno;
+    if(close(output) && !call->error) call->error=errno;
+    if(close(input) && !call->error) call->error=errno;
+  } else if(call->operation==6) {
+    size_t length=strlen(call->first)+48;
+    char *temporary=malloc(length);
+    if(!temporary) {call->error=ENOMEM;return;}
+    snprintf(temporary,length,"%s.tmp.%u",call->first,(unsigned)getpid());
+    unlink(temporary);
+    mode_t previous=umask(0007);
+    int fd=open(temporary,O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,0660);
+    int saved=errno;umask(previous);
+    if(fd<0) {call->error=saved;free(temporary);return;}
+    call->error=baton_data_write(fd,call->second,call->length);
+    if(!call->error && fsync(fd)) call->error=errno;
+    if(close(fd) && !call->error) call->error=errno;
+    if(!call->error && rename(temporary,call->first)) call->error=errno;
+    if(call->error) unlink(temporary);
+    free(temporary);
+  } else if(call->operation==7) {
+    int fd=open(call->first,O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
+    if(fd<0) {call->error=errno;return;}
+    struct stat info;
+    if(fstat(fd,&info)) {call->error=errno;close(fd);return;}
+    char chunk[65536],prefix[9]={0};
+    static const char hex[]="0123456789abcdef";
+    unsigned long long bytes=0;
+    int zero=0;
+    for(;;) {
+      ssize_t count=read(fd,chunk,sizeof chunk);
+      if(count<0 && errno==EINTR) continue;
+      if(count<0) {call->error=errno;break;}
+      if(count==0) break;
+      for(ssize_t i=0;i<count;i++) {
+        unsigned char value=(unsigned char)chunk[i];
+        if(bytes<4) {prefix[bytes*2]=hex[value>>4];prefix[bytes*2+1]=hex[value&15];}
+        if(value==0) zero=1;
+        bytes++;
+      }
+    }
+    if(close(fd) && !call->error) call->error=errno;
+    if(!call->error) {
+      char result[96];
+      snprintf(result,sizeof result,"bytes=%llu\nzeros=%d\nprefix=%s\n",bytes,zero,prefix);
+      call->answer=strdup(result);
+      if(!call->answer) call->error=ENOMEM;
+    }
+  } else if(call->operation==8) {
+    if(rename(call->first,call->second)) call->error=errno;
+  }
+}
+
+static Term baton_data_pack(Env env,IoWork *work) {
+  BatonFileData *call=(BatonFileData *)work->data;
+  Term value=call->answer?io_str(env,call->answer,strlen(call->answer)):term_pak(CID_UNIT,0);
+  Term result=call->error?io_fail(env,call->error,NULL):io_done(env,value);
+  free(call->first);free(call->second);free(call->answer);free(call);work->data=NULL;
+  return result;
+}
+
+static Term baton_data_run(Env env,Term *fields,IoWork *work,int operation) {
+  BatonFileData *call=calloc(1,sizeof(*call));
+  if(!call) return io_fail(env,ENOMEM,NULL);
+  call->operation=operation;
+  u64 length=0;
+  call->first=io_cstr(env,fields[0],&length);
+  if(!call->first || strlen(call->first)!=length) call->error=EINVAL;
+  if(operation==1 || operation==2) call->mode=(u32)fields[1];
+  if(operation==4 || operation==5 || operation==6 || operation==8) {
+    call->second=io_cstr(env,fields[1],&length);call->length=(size_t)length;
+    if(!call->second || (operation!=6 && strlen(call->second)!=length)) call->error=EINVAL;
+  }
+  work->data=(char *)call;
+  if(call->error) return baton_data_pack(env,work);
+  return io_work(work,baton_data_work,baton_data_pack);
+}
+
+#ifdef CID_FILES_MKDIR_MODE
+static Term baton_data_mkdir(Env e,Term *f,IoWork *w) {return baton_data_run(e,f,w,1);}
+static void __attribute__((constructor)) baton_data_mkdir_use(void) {io_eff(CID_FILES_MKDIR_MODE,baton_data_mkdir,0);}
+#endif
+#ifdef CID_FILES_CHMOD
+static Term baton_data_chmod(Env e,Term *f,IoWork *w) {return baton_data_run(e,f,w,2);}
+static void __attribute__((constructor)) baton_data_chmod_use(void) {io_eff(CID_FILES_CHMOD,baton_data_chmod,0);}
+#endif
+#ifdef CID_FILES_RMDIR
+static Term baton_data_rmdir(Env e,Term *f,IoWork *w) {return baton_data_run(e,f,w,3);}
+static void __attribute__((constructor)) baton_data_rmdir_use(void) {io_eff(CID_FILES_RMDIR,baton_data_rmdir,0);}
+#endif
+#ifdef CID_FILES_SYMLINK
+static Term baton_data_symlink(Env e,Term *f,IoWork *w) {return baton_data_run(e,f,w,4);}
+static void __attribute__((constructor)) baton_data_symlink_use(void) {io_eff(CID_FILES_SYMLINK,baton_data_symlink,0);}
+#endif
+#ifdef CID_FILES_COPY_FILE
+static Term baton_data_copy(Env e,Term *f,IoWork *w) {return baton_data_run(e,f,w,5);}
+static void __attribute__((constructor)) baton_data_copy_use(void) {io_eff(CID_FILES_COPY_FILE,baton_data_copy,0);}
+#endif
+#ifdef CID_FILES_WRITE_SHARED
+static Term baton_data_write_run(Env e,Term *f,IoWork *w) {return baton_data_run(e,f,w,6);}
+static void __attribute__((constructor)) baton_data_write_use(void) {io_eff(CID_FILES_WRITE_SHARED,baton_data_write_run,0);}
+#endif
+#ifdef CID_FILES_BYTE_PROPERTIES
+static Term baton_data_properties(Env e,Term *f,IoWork *w) {return baton_data_run(e,f,w,7);}
+static void __attribute__((constructor)) baton_data_properties_use(void) {io_eff(CID_FILES_BYTE_PROPERTIES,baton_data_properties,0);}
+#endif
+#ifdef CID_FILES_MOVE
+static Term baton_data_move(Env e,Term *f,IoWork *w) {return baton_data_run(e,f,w,8);}
+static void __attribute__((constructor)) baton_data_move_use(void) {io_eff(CID_FILES_MOVE,baton_data_move,0);}
 #endif
