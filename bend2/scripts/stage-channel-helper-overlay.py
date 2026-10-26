@@ -27,10 +27,8 @@ def main():
                                     cwd=ROOT, text=True).strip()
     output.mkdir(parents=True, exist_ok=False)
     records, install, rollback = [], [], []
-    for name in HELPERS:
-        source = 'bend2/scripts/' + name
-        payload = subprocess.check_output(['git', 'show', commit + ':' + source], cwd=ROOT)
-        relative = Path('libexec/baton2') / name
+
+    def stage(relative, payload):
         staged, previous, target = output / 'forward' / relative, output / 'rollback' / relative, prefix / relative
         staged.parent.mkdir(parents=True, exist_ok=True)
         staged.write_bytes(payload)
@@ -45,11 +43,30 @@ def main():
         else:
             rollback.append(['rm', '--', str(target)])
         install.append(['install', '-m', '0644', '--', str(staged), str(target)])
-        records.append({'source': source, 'target': str(target), 'sha256': digest(staged),
-                        'previousSha256': before})
+        return {'path': str(relative), 'target': str(target), 'sha256': digest(staged),
+                'previousSha256': before}
+
+    for name in HELPERS:
+        source = 'bend2/scripts/' + name
+        payload = subprocess.check_output(['git', 'show', commit + ':' + source], cwd=ROOT)
+        record = stage(Path('libexec/baton2') / name, payload)
+        records.append({'source': source, **record})
     backend = prefix / 'bin/baton-full'
+    provenance = {'sourceCommit': commit, 'helpers': records,
+                  'backendSha256': digest(backend)}
+    metadata = [stage(Path('channel-helper-overlay.json'),
+                      (json.dumps(provenance, indent=2) + '\n').encode())]
+    checksums = {}
+    for line in (prefix / 'SHA256SUMS').read_text().splitlines():
+        checksum, name = line.split('  ', 1)
+        checksums[name] = checksum
+    for record in records + metadata:
+        checksums[record['path']] = record['sha256']
+    metadata.append(stage(Path('SHA256SUMS'), ''.join(
+        checksum + '  ' + name + '\n' for name, checksum in sorted(checksums.items())).encode()))
     plan = {'sourceCommit': commit, 'prefix': str(prefix), 'backend': str(backend),
             'backendSha256': digest(backend), 'helpers': records,
+            'metadata': metadata,
             'installArgv': install, 'rollbackArgv': rollback,
             'limits': ['Helper file installation only. Running MCP processes load the new code on reconnect.',
                        'Native binaries, live database, session records, provider settings and permissions are unchanged.',
