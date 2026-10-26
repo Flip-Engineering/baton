@@ -4,6 +4,7 @@ import importlib.util
 import inspect
 import json
 import os
+import re
 from pathlib import Path
 import socket
 import sqlite3
@@ -17,6 +18,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[2]
 RECORDER = Path(os.environ.get('BATON2_RECORDER', ROOT / '.github/scripts/record-native-checks.py'))
 CODEX_ROOT = Path(os.environ.get('BATON2_CODEX_ROOT_FIXTURE', ROOT / 'bend2/test/codex-root.py'))
+RECEIVE = ROOT / 'bend2/src/coordinator/receive.bend'
 sys.path.insert(0, str(CODEX_ROOT.parent))
 spec = importlib.util.spec_from_file_location('codex_root_fixture', CODEX_ROOT)
 fixture = importlib.util.module_from_spec(spec)
@@ -221,26 +223,74 @@ class Recorder(Evidence):
 
 
 class FixtureFailure(Evidence):
-    def make_case(self, phase='exited', status='exit 17', related=True):
+    def guidance(self, database):
+        # Execute the existing receiver's selection SQL on these private messages.
+        line = next(line for line in RECEIVE.read_text().splitlines() if '+selection : String' in line)
+        expression = line.split('DB.Sql.query(db,', 1)[1].removesuffix('))')
+        parts = [json.loads(token) for token in re.findall(r'"(?:[^"\\]|\\.)*"', expression)]
+        selection = database.execute('?'.join(parts), (self.delivery['recipient'], '1')).fetchone()[0]
+        return 'Receive instructions.\n\n' + json.loads(selection)['text']
+
+    def make_case(self, phase='exited', status='exit 17', related=True, kind='report'):
         case = fixture.CodexRootAdapter('runTest')
         case.db = self.directory / "state's λ.db"
         attempt = self.directory / 'attempt'
         attempt.mkdir()
         self.delivery = {'id': 'selected-report', 'sender': 'child', 'recipient': "delegated's λ",
-            'kind': 'report', 'body': 'Complete report λ🙂', 'receipt': None,
+            'kind': kind, 'body': 'Complete report λ🙂', 'receipt': None,
             'nativeInputStatus': {'read': 'unrecorded'}}
-        header = 'Message (report) from child [id: selected-report]:\nComplete report λ🙂'
         with sqlite3.connect(case.db) as database:
             database.executescript('CREATE TABLE executions(session PRIMARY KEY,id,directory,phase,status);'
-                'CREATE TABLE native_initial_inputs(session,turn,attempt,guidance);')
+                'CREATE TABLE native_initial_inputs(session,turn,attempt,guidance);'
+                'CREATE TABLE messages(seq,id,sender,recipient,kind,body,receipt);')
+            database.execute('INSERT INTO messages VALUES(?,?,?,?,?,?,?)',
+                (1, self.delivery['id'], self.delivery['sender'], self.delivery['recipient'],
+                 self.delivery['kind'], self.delivery['body'], None))
             database.execute('INSERT INTO executions VALUES(?,?,?,?,?)',
                 (self.delivery['recipient'], 'fixture-turn', str(attempt), phase, status))
             database.execute('INSERT INTO native_initial_inputs VALUES(?,?,?,?)',
-                (self.delivery['recipient'], 'fixture-turn', str(attempt), header if related else 'Older unrelated input.'))
+                (self.delivery['recipient'], 'fixture-turn', str(attempt), self.guidance(database) if related else 'Older unrelated input.'))
         return case, attempt
 
     def run_delivery(self, *args, **kwargs):
         return subprocess.CompletedProcess(args[0], 0, json.dumps(self.delivery), '')
+
+    def test_retained_report_guidance_uses_the_actual_utf8_notice(self):
+        case, attempt = self.make_case()
+        with sqlite3.connect(case.db) as database:
+            guidance = database.execute('SELECT guidance FROM native_initial_inputs').fetchone()[0]
+        self.assertIn('Message (report) from child [id: selected-report] retained '
+                      + str(len('Complete report λ🙂'.encode('utf-8')))
+                      + ' bytes; read the complete body with baton read selected-report.', guidance)
+        self.assertNotIn('Complete report λ🙂', guidance)
+        (attempt / 'stdout').write_text('Retained report producer output. λ🙂')
+        (attempt / 'native.stderr').write_text('Retained report producer error. λ🙂')
+        with mock.patch.object(fixture.subprocess, 'run', side_effect=self.run_delivery), \
+                mock.patch.object(fixture.time, 'sleep', side_effect=AssertionError('waited after producer exit')):
+            with self.assertRaisesRegex(AssertionError, 'exit 17') as failure:
+                case.accepted('selected-report', 'required-result')
+        self.assertIn('Retained report producer error. λ🙂', str(failure.exception))
+
+    def test_inlined_task_guidance_keeps_the_actual_producer_failure(self):
+        for kind in ('task', 'task-assignment'):
+            with self.subTest(kind=kind):
+                root = self.directory
+                self.directory = root / kind
+                self.directory.mkdir()
+                try:
+                    case, attempt = self.make_case(kind=kind)
+                    (attempt / 'stdout').write_text('Inlined task producer output. λ🙂')
+                    (attempt / 'native.stderr').write_text('Inlined task producer error. λ🙂')
+                    with sqlite3.connect(case.db) as database:
+                        guidance = database.execute('SELECT guidance FROM native_initial_inputs').fetchone()[0]
+                    self.assertIn(f'Message ({kind}) from child [id: selected-report]:\nComplete report λ🙂', guidance)
+                    with mock.patch.object(fixture.subprocess, 'run', side_effect=self.run_delivery), \
+                            mock.patch.object(fixture.time, 'sleep', side_effect=AssertionError('waited after producer exit')):
+                        with self.assertRaisesRegex(AssertionError, 'exit 17') as failure:
+                            case.accepted('selected-report', 'required-result')
+                    self.assertIn('Inlined task producer error. λ🙂', str(failure.exception))
+                finally:
+                    self.directory = root
 
     def test_failed_producer_preserves_complete_real_python_error(self):
         case, attempt = self.make_case()
@@ -366,8 +416,7 @@ class FixtureFailure(Evidence):
             database.execute("UPDATE executions SET id=?,directory=?,phase='running',status=''",
                              ('retry-turn', str(new)))
             database.execute('INSERT INTO native_initial_inputs VALUES(?,?,?,?)',
-                (self.delivery['recipient'], 'retry-turn', str(new),
-                 'Message (report) from child [id: selected-report]:\nComplete report λ🙂'))
+                (self.delivery['recipient'], 'retry-turn', str(new), self.guidance(database)))
         released = []
         def turns(*args):
             return json.dumps([{'reportBody': 'Expected complete result.'}] if released else [])

@@ -236,8 +236,13 @@ class CodexRootAdapter(unittest.TestCase):
             time.sleep(0.05)
 
     def ended_delivery(self, value):
-        # Bind failure diagnosis to the complete input of the producing attempt.
-        header = f"Message ({value['kind']}) from {value['sender']} [id: {value['id']}]:\n{value['body']}"
+        # The receiver inlines tasks and supplies retained-body notices for other input.
+        header = f"Message ({value['kind']}) from {value['sender']} [id: {value['id']}]"
+        if value['kind'] in ('task', 'task-assignment'):
+            notice = header + ':\n' + value['body']
+        else:
+            notice = (header + f" retained {len(value['body'].encode('utf-8'))} bytes; "
+                      + f"read the complete body with baton read {value['id']}.")
         with sqlite3.connect(self.db.resolve().as_uri() + '?mode=ro', uri=True) as database:
             if database.execute("SELECT 1 FROM sqlite_master WHERE name='native_initial_inputs'").fetchone() is None:
                 return None
@@ -245,7 +250,7 @@ class CodexRootAdapter(unittest.TestCase):
                 "SELECT e.id,e.directory,e.status FROM executions e "
                 "JOIN native_initial_inputs n ON n.session=e.session AND n.turn=e.id AND n.attempt=e.directory "
                 "WHERE e.session=? AND e.phase='exited' AND instr(n.guidance,?)>0",
-                (value['recipient'], header)).fetchone()
+                (value['recipient'], notice)).fetchone()
         if row is None:
             return None
         attempt, directory, status = row
