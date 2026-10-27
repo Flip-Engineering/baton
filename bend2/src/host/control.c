@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <spawn.h>
+#include <stdint.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "persistent-path.h"
@@ -21,18 +22,51 @@ static char *baton_control_join(const char *a, const char *b) {
   return s;
 }
 
+#define BATON_CONTROL_NAME_MAX 255
+
+static uint64_t baton_control_hash(const char *text,uint64_t seed) {
+  uint64_t value=seed;
+  for(const unsigned char *cursor=(const unsigned char *)text;*cursor;cursor++) {
+    value^=*cursor;
+    value*=1099511628211ULL;
+  }
+  return value;
+}
+
+static void baton_control_digest(const char *text,char digest[33]) {
+  static const char hex[]="0123456789abcdef";
+  uint64_t first=baton_control_hash(text,1469598103934665603ULL);
+  uint64_t second=baton_control_hash(text,1099511628211ULL);
+  for(int i=15;i>=0;i--) {
+    digest[i]=hex[first&15];first>>=4;
+    digest[16+i]=hex[second&15];second>>=4;
+  }
+  digest[32]=0;
+}
+
 static char *baton_control_log(const char *database,const char *id,const char *suffix) {
   size_t dn=strlen(database),in=strlen(id),sn=strlen(suffix);
+  const char *base=strrchr(database,'/');
+  size_t bn=strlen(base?base+1:database);
+  if(in>SIZE_MAX/2) return NULL;
+  int bounded=bn+10+in*2+sn>BATON_CONTROL_NAME_MAX;
+  size_t encoded=bounded?32:in*2;
   if(in>(SIZE_MAX-dn-sn-12)/2) return NULL;
-  char *path=malloc(dn+11+in*2+sn+1);
+  char *path=malloc(dn+11+encoded+sn+1);
   if(!path) return NULL;
   memcpy(path,database,dn);memcpy(path+dn,".dispatch-",10);
-  for(size_t i=0;i<in;i++) {
-    unsigned char c=(unsigned char)id[i];
-    path[dn+10+i*2]="0123456789abcdef"[c>>4];
-    path[dn+11+i*2]="0123456789abcdef"[c&15];
+  if(bounded) {
+    char digest[33];
+    baton_control_digest(id,digest);
+    memcpy(path+dn+10,digest,32);
+  } else {
+    for(size_t i=0;i<in;i++) {
+      unsigned char c=(unsigned char)id[i];
+      path[dn+10+i*2]="0123456789abcdef"[c>>4];
+      path[dn+11+i*2]="0123456789abcdef"[c&15];
+    }
   }
-  memcpy(path+dn+10+in*2,suffix,sn+1);
+  memcpy(path+dn+10+encoded,suffix,sn+1);
   return path;
 }
 
