@@ -293,16 +293,26 @@ def select(args, result):
     rows = []
     for path in sorted((root / 'bend2/src').rglob('*')):
         if path.is_symlink():
-            result['reason'] = 'A production symlink requires a normal compilation.'
-            return
+            body = os.fsencode(os.readlink(path))
+            rows.append({'path': str(path.relative_to(root)), 'mode': '120000',
+                         'git_blob': hashlib.sha1(b'blob ' + str(len(body)).encode() + b'\0' + body).hexdigest(),
+                         'size_bytes': len(body), 'sha256': hashlib.sha256(body).hexdigest()})
         if path.is_file():
             body = path.read_bytes()
             rows.append({'path': str(path.relative_to(root)),
                          'mode': '100755' if path.stat().st_mode & 0o111 else '100644',
                          'git_blob': hashlib.sha1(b'blob ' + str(len(body)).encode() + b'\0' + body).hexdigest(),
                          'size_bytes': len(body), 'sha256': hashlib.sha256(body).hexdigest()})
-    rows.sort(key=lambda row: row['path'])
+    # Select through the same entry-closure function that prepared the
+    # proof: the manifest records the closure rows, so this side compares
+    # the closure it recomputes from the actual checkout bytes against
+    # that manifest. Files outside the closure do not select or reject
+    # reuse; a changed file inside the closure changes its row.
+    rows, issue = production_inputs(root, rows)
     result['production_inputs'] = rows
+    if issue is not None:
+        result['reason'] = issue
+        return
     if rows != expected:
         result['reason'] = 'Actual Main production input membership, bytes or modes differ.'
         return
