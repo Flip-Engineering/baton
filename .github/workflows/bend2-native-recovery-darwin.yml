@@ -54,6 +54,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Checkout current shared queue source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          path: .queue-source
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Confirm the source contains the portable proof selector
         run: |
           set -euo pipefail
@@ -119,38 +127,81 @@ jobs:
             .selected_source_closure_file_count == 79
           ' "$BATON2_RECOVERY_RUN/recovery-c-selection.json"
 
-      - name: Prepare the maintained shared compile queue
+      - name: Build a queue client for the shared state root
         run: |
           set -euo pipefail
           queue_root="${BATON_COMPILE_QUEUE_ROOT:-/private/var/tmp/baton2-compile-queue}"
           install -d -m 2775 "$queue_root"
           queue_root="$(cd "$queue_root" && pwd -P)"
-          printf 'BATON_COMPILE_QUEUE_ROOT=%s\n' "$queue_root" >> "$GITHUB_ENV"
-          queue_client="${BATON2_COMPILE_QUEUE_BIN:-}"
-          if [[ -z "$queue_client" && -x "$queue_root/compile-queue-runner" ]]; then
-            queue_client="$queue_root/compile-queue-runner"
+          queue_group="$(id -gn)"
+          queue_uid="$(id -u)"
+          queue_owner="$(stat -f '%u' "$queue_root")"
+          if [[ "$queue_owner" != "$queue_uid" ]]; then
+            printf 'The compile queue state root is not owned by the runner user: %s\n' "$queue_root" >&2
+            exit 78
           fi
-          if [[ -z "$queue_client" && -n "${BATON2_PREFIX:-}" && -x "$BATON2_PREFIX/bin/baton-compile-queue" ]]; then
-            queue_client="$BATON2_PREFIX/bin/baton-compile-queue"
+          chgrp "$queue_group" "$queue_root"
+          chmod 2775 "$queue_root"
+          if [[ -L "$queue_root/bootstrap-runs" ]]; then
+            printf 'The compile queue bootstrap-runs path must be a directory, not a symlink: %s\n' "$queue_root/bootstrap-runs" >&2
+            exit 78
           fi
-          if [[ -z "$queue_client" ]]; then
-            queue_client="$queue_root/compile-queue-runner"
-            if [[ -e "$queue_client" ]]; then
-              printf 'The configured compile queue client exists but is not executable: %s\n' "$queue_client" >&2
+          if [[ -d "$queue_root/bootstrap-runs" ]]; then
+            if [[ "$(stat -f '%u' "$queue_root/bootstrap-runs")" != "$queue_uid" ]]; then
+              printf 'The compile queue bootstrap-runs directory is not owned by the runner user: %s\n' "$queue_root/bootstrap-runs" >&2
               exit 78
             fi
-            BATON_COMPILE_QUEUE_ROOT="$queue_root" \
-              BATON_COMPILE_QUEUE_TELEMETRY="$BATON2_RECOVERY_RUN/queue-bootstrap.telemetry" \
-              BEND="$BEND" BEND_NO_TELEMETRY=1 \
-              sh bend2/scripts/bootstrap-compile-queue.sh "$queue_client" \
-              > "$BATON2_RECOVERY_RUN/queue-bootstrap.stdout" \
-              2> "$BATON2_RECOVERY_RUN/queue-bootstrap.stderr"
+            chgrp "$queue_group" "$queue_root/bootstrap-runs"
+            chmod 2770 "$queue_root/bootstrap-runs"
           fi
+          for shared_file in "$queue_root/heavy.lock" "$queue_root/compile-queue-runner"; do
+            if [[ -L "$shared_file" ]]; then
+              printf 'The compile queue shared file must not be a symlink: %s\n' "$shared_file" >&2
+              exit 78
+            fi
+            if [[ -e "$shared_file" ]]; then
+              if [[ ! -f "$shared_file" || "$(stat -f '%u' "$shared_file")" != "$queue_owner" ]]; then
+                printf 'The compile queue shared file is not a runner-owned regular file: %s\n' "$shared_file" >&2
+                exit 78
+              fi
+              chgrp "$queue_group" "$shared_file"
+            fi
+          done
+          if [[ -L "$queue_root/keys" ]]; then
+            printf 'The compile queue keys path must be a directory, not a symlink: %s\n' "$queue_root/keys" >&2
+            exit 78
+          fi
+          if [[ -d "$queue_root/keys" ]]; then
+            if find "$queue_root/keys" -type l -print -quit | grep -q .; then
+              printf 'The compile queue keys tree contains a symlink: %s\n' "$queue_root/keys" >&2
+              exit 78
+            fi
+            if find "$queue_root/keys" ! -uid "$queue_uid" -print -quit | grep -q .; then
+              printf 'The compile queue key entries include an owner other than the runner user: %s\n' "$queue_root/keys" >&2
+              exit 78
+            fi
+            find "$queue_root/keys" -exec chgrp "$queue_group" {} +
+            find "$queue_root/keys" -type d -exec chmod 2770 {} +
+          fi
+          queue_source="$GITHUB_WORKSPACE/.queue-source"
+          queue_source_commit="$(git -C "$queue_source" rev-parse HEAD)"
+          test "$queue_source_commit" = "$GITHUB_SHA"
+          queue_source_tree="$(git -C "$queue_source" rev-parse 'HEAD^{tree}')"
+          queue_client="$BATON2_RECOVERY_RUN/compile-queue-runner"
+          BATON_COMPILE_QUEUE_ROOT="$queue_root" \
+            BATON_COMPILE_QUEUE_TELEMETRY="$BATON2_RECOVERY_RUN/queue-bootstrap.telemetry" \
+            BEND="$BEND" BEND_NO_TELEMETRY=1 \
+            sh "$queue_source/bend2/scripts/bootstrap-compile-queue.sh" "$queue_client" \
+            > "$BATON2_RECOVERY_RUN/queue-bootstrap.stdout" \
+            2> "$BATON2_RECOVERY_RUN/queue-bootstrap.stderr"
           test -d "$queue_root"
           test -x "$queue_client"
-          printf 'queue_root=%s\nqueue_client=%s\n' "$queue_root" "$queue_client" \
+          printf 'queue_root=%s\nqueue_group=%s\nqueue_source_commit=%s\nqueue_source_tree=%s\nqueue_client=%s\n' \
+            "$queue_root" "$queue_group" "$queue_source_commit" "$queue_source_tree" "$queue_client" \
             > "$BATON2_RECOVERY_RUN/queue-selection.txt"
           shasum -a 256 "$queue_client" > "$BATON2_RECOVERY_RUN/queue-client.sha256"
+          printf 'BATON_COMPILE_QUEUE_ROOT=%s\nBATON2_COMPILE_QUEUE_BIN=%s\n' \
+            "$queue_root" "$queue_client" >> "$GITHUB_ENV"
 
       - name: Build only the recovery native component
         env:
@@ -193,11 +244,16 @@ jobs:
           run = pathlib.Path(os.environ['BATON2_RECOVERY_RUN'])
           root = pathlib.Path(os.environ['GITHUB_WORKSPACE'])
           selection = json.loads((run / 'recovery-c-selection.json').read_text())
+          queue_selection = dict(
+              line.partition('=')[::2]
+              for line in (run / 'queue-selection.txt').read_text().splitlines())
           proof_path = pathlib.Path(os.environ['BATON2_RECOVERY_BUNDLE']) / 'recovery-c-reuse.json'
           proof = json.loads(proof_path.read_text())
           binary = run / 'baton-recovery'
           generated = run / 'baton-recovery.c'
+          queue_client = run / 'compile-queue-runner'
           shutil.copyfile(binary, run / 'artifact/baton-recovery')
+          shutil.copyfile(queue_client, run / 'artifact/compile-queue-runner')
           shutil.copyfile(proof_path, run / 'artifact/recovery-c-reuse.json')
           shutil.copyfile(run / 'recovery-c-selection.json', run / 'artifact/recovery-c-selection.json')
           shutil.copyfile(run / 'source-closure.json', run / 'artifact/source-closure.json')
@@ -247,6 +303,10 @@ jobs:
                            'binary_sha256': (run / 'toolchain/compiler.sha256').read_text().split()[0]},
               'queue': {'admission': 'shared compile queue through bend2/scripts/build-native.sh',
                         'client_sha256': (run / 'queue-client.sha256').read_text().split()[0],
+                        'client_source_commit': queue_selection['queue_source_commit'],
+                        'client_source_tree': queue_selection['queue_source_tree'],
+                        'state_root': queue_selection['queue_root'],
+                        'state_group': queue_selection['queue_group'],
                         'bootstrap_used': (run / 'queue-bootstrap.telemetry').is_file(),
                         'bootstrap_telemetry_sha256': digest(run / 'queue-bootstrap.telemetry')
                             if (run / 'queue-bootstrap.telemetry').is_file() else None,
