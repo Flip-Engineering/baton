@@ -519,9 +519,10 @@ def live_tui_observed(+link: Proxy.Link, +db: String, +session: String, +thread:
   match Inbox.stopped(row):
     case True{}: released(session,thread,row)
     case False{}:
-      Bool.pick(Outcome.Checked(Unit),Bool.or(String.is_empty(target),read),
+      Bool.pick(Outcome.Checked(Unit),read,
         observed_live_read(session,thread,target,row),
-        live_tui_wait(link,db,session,thread,state,target))
+        Bool.pick(Outcome.Checked(Unit),String.is_empty(target),released(session,thread,row),
+          live_tui_wait(link,db,session,thread,state,target)))
 
 def live_tui_snapshot(+link: Proxy.Link, +db: String, +session: String, +thread: String, +state: State, +target: String) -> Outcome.Checked(Unit):
   do Outcome.Checked<Unit>:
