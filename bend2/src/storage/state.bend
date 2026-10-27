@@ -494,6 +494,12 @@ def staging_text(result: G.RunRes) -> Maybe<String>:
     case G.RRun{G.SSignal{num}, out}: None{}
     case G.RSpawn{detail}: None{}
 
+def commit_named(lines: List<String>, +commit: String) -> Bool:
+  match lines:
+    case Nil{}: False{}
+    case Con{head, tail}:
+      Bool.or(String.eq(Tx.trim_nl(head), commit), commit_named(tail, commit))
+
 def published_head(head: Maybe<String>, listed: Maybe<String>) -> T.Presence:
   match head:
     case None{}: T.Unknown{}
@@ -502,7 +508,7 @@ def published_head(head: Maybe<String>, listed: Maybe<String>) -> T.Presence:
         case None{}: T.Unknown{}
         case Some{text}:
           Bool.pick(T.Presence, String.is_empty(value), T.Unknown{},
-            Bool.pick(T.Presence, reachable_walk(Tx.split_lines(text), value),
+            Bool.pick(T.Presence, commit_named(Tx.split_lines(text), value),
               T.Absent{}, T.Present{"unpublished-commit"}))
 
 # A staging source is an ownership-ending checkout. Its commit must be present
