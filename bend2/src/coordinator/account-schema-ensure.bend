@@ -1,11 +1,14 @@
 import Base
 import ../host/session-lock.bend as Lock
+import ./store.bend as Store
 import ./accounts.bend as Accounts
 
 def ensure_account_schema(+path: String) -> IO(Unit):
   do IO<Unit>:
     canonical : String <- IO.try(String,Lock.SessionLock.canonical(path))
-    installed : String <- IO.try(String,Accounts.commit_read(canonical,""))
+    account_path : String <- canonical ++ ""
+    ensured : Unit <- Store.ensure_before_begin(canonical)
+    installed : String <- IO.try(String,Accounts.commit_read(account_path,""))
     IO.write("{\"schema\":\"baton2-account-schema-ensure-v1\",\"status\":\"ready\"}\n")
 
 def main_arguments(arguments: List<String>) -> IO(Unit):
