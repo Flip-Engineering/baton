@@ -4169,7 +4169,7 @@ function compile_tables(fl: File, entries: Seg[], show: Show | null): string[] {
       for (const c of tld.c) add(c.k, lay_node(fl.book, c.k).ks.length);
     }
   }
-  check_id_limit("CID", cids.size, 65536);
+  check_id_limit("CID", cids.size, 1 << 20);
   check_id_limit("FID live segments", entries.length - 2, (1 << 20) - 4);
   for (const ms of [[...cids.keys()].map(cid_mac),
     [...entries.map((s) => s.fid), "FID_EXIT", "FID_ENTER"]]) {

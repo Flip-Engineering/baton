@@ -117,7 +117,7 @@ assert.deepEqual(arityTable(c), [1, 2, 2, 0, 2, 2, 1, 2, 1, 1, 0, 1, 0, 0, 0, 0,
 assert.deepEqual(hotTable(c), Array.from({ length: 17 }, () => 0),
   "CID hot table");
 const fid = fids(c);
-assert.ok(fid.length > 0 && fid.length <= 65532, "FID table inside the limit");
+assert.ok(fid.length > 0 && fid.length <= (1 << 20) - 4, "FID table inside the limit");
 
 // The emitted C keeps the runtime's own tags and runs the selected values.
 const cPath = path.join(temp, "cid-boundary.c");
@@ -142,11 +142,11 @@ function over(namespace: string, count: number, limit: number): string {
     return errorText(e);
   }
 }
-assert.equal(over("CID", 65536, 65536), "");
-assert.match(over("CID", 65537, 65536), /CID: 65537 over 65536/);
-assert.equal(over("FID live segments", 65532, 65532), "");
-assert.match(over("FID live segments", 65533, 65532),
-  /FID live segments: 65533 over 65532/);
+assert.equal(over("CID", 1 << 20, 1 << 20), "");
+assert.match(over("CID", (1 << 20) + 1, 1 << 20), /CID: 1048577 over 1048576/);
+assert.equal(over("FID live segments", (1 << 20) - 4, (1 << 20) - 4), "");
+assert.match(over("FID live segments", (1 << 20) - 3, (1 << 20) - 4),
+  /FID live segments: 1048573 over 1048572/);
 
 console.log(`PASS CID value reach: 65,537 type-reachable -> ${cid.length} CIDs, `
   + `base guard failed, FID table ${fid.length} segments limits enforced`);
