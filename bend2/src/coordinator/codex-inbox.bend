@@ -556,7 +556,9 @@ def resumed_or_live_tui(+link: Proxy.Link, +executable: String, +db: String, +se
     case (pending,Fail{(code,+cause)}): do Outcome.Checked<Unit>:
       +next : State <- synced(replace_pending(state,pending),thread)
       Bool.pick(Outcome.Checked(Unit),String.contains(cause,"already has an active writer"),
-        live_tui_snapshot(link,db,session,thread,next,Inbox.message(row)),
+        live_tui_snapshot(link,db,session,thread,next,Inbox.message(row),
+          next_link => next_db => next_session => next_thread => next_state => next_target =>
+            live_tui_wait(next_link,next_db,next_session,next_thread,next_state,next_target)),
         Outcome.Checked.fail(Unit,code,cause))
 
 def follow_loaded(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +state: State, +row: Inbox.Snapshot, +stopped: Bool) -> Outcome.Checked(Unit):
