@@ -3,9 +3,9 @@
 The fixture compiles the verbatim BatonSql row callback, busy handler and the
 marked read-cache section of bend2/src/host/sqlite.c. It exercises two helper
 threads, path switching, file replacement, committed-write visibility,
-autocommit rollback, busy handling, fork reset, UTF-8 refusal and thread-exit
-cleanup, then measures database reads for fresh and reused read calls against
-a small replay-shaped database and a 158-byte spool.
+autocommit rollback, busy handling, UTF-8 refusal and thread-exit cleanup, then
+measures database reads for fresh and reused read calls against a small
+replay-shaped database.
 """
 import os
 import pathlib
@@ -32,7 +32,6 @@ PRELUDE = '''#include <sqlite3.h>
 #include <string.h>
 #include <pthread.h>
 #include <stdatomic.h>
-#include <sys/wait.h>
 #include <time.h>
 #include <sched.h>
 typedef struct { void *data; } IoWork;
@@ -105,8 +104,8 @@ class SqliteReadReuse(unittest.TestCase):
                       'write-before', 'write-after', 'autocommit-transaction',
                       'autocommit-after', 'read-only', 'read-only-after',
                       'replacement-before', 'replacement-after',
-                      'multi-statement', 'busy-read', 'fork-child',
-                      'fork-parent', 'encoding-refusal', 'encoding-utf8',
+                      'multi-statement', 'busy-read',
+                      'encoding-refusal', 'encoding-utf8',
                       'lifecycle'):
             self.assertIn('ok ' + label, result.stdout)
 

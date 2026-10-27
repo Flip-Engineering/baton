@@ -1393,10 +1393,10 @@ static int baton_sql_encoding_status(sqlite3 *db, char **error) {
 }
 
 /* Read-only connections are reused per IO helper thread. The cache is keyed
-   by path, device and inode; a new process, path or file replacement discards
-   the old connection. Every call checks autocommit and rolls back a caller
-   transaction, so a reused connection sees committed writes and leaves no
-   transaction behind. */
+   by process, path, device and inode; process changes reject reuse because
+   SQLite connections cannot cross fork boundaries. Every call checks
+   autocommit and rolls back a caller transaction, so a reused connection sees
+   committed writes and leaves no transaction behind. */
 typedef struct {
   sqlite3 *db;
   char *path;
@@ -1502,10 +1502,14 @@ static sqlite3 *baton_sql_read_acquire(const char *path, char **error,
   *cached = 0;
   *status = SQLITE_OK;
   if (!cache) return baton_sql_read_open(path, error, status);
+  if (cache->db && cache->pid != pid) {
+    *status = SQLITE_MISUSE;
+    *error = sqlite3_mprintf("SQLite read connection cannot cross a fork boundary");
+    return NULL;
+  }
   if (cache->db &&
-      (cache->pid != pid || !cache->path || strcmp(cache->path, path) != 0 ||
-       !identity || !cache->identity ||
-       cache->device != info.st_dev || cache->file != info.st_ino))
+      (!cache->path || strcmp(cache->path, path) != 0 || !identity ||
+       !cache->identity || cache->device != info.st_dev || cache->file != info.st_ino))
     baton_sql_read_close(cache);
   if (!cache->db) {
     sqlite3 *db = baton_sql_read_open(path, error, status);
@@ -1580,7 +1584,6 @@ typedef struct {
   sqlite3 *connection;
   int autocommit;
   int live;
-  pid_t cache_pid;
 } BatonSqlReadTestResult;
 
 static void baton_sql_read_test_forget(void) {
@@ -1618,7 +1621,6 @@ static int baton_sql_read_test_run(const char *path, const char *sql,
   out->connection = cache ? cache->db : NULL;
   out->autocommit = out->connection ? sqlite3_get_autocommit(out->connection) : 1;
   out->live = __atomic_load_n(&baton_sql_read_live, __ATOMIC_RELAXED);
-  out->cache_pid = cache ? cache->pid : 0;
   free(call.path);
   free(call.sql);
   free(call.output);

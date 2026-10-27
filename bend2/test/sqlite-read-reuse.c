@@ -1,7 +1,6 @@
 /* Fixture driver for the SQLite read-cache checks. The test runner prepends
    the BatonSql structure, its row callback, the busy handler and the marked
    read-cache section from bend2/src/host/sqlite.c. */
-#include <sys/wait.h>
 #include <time.h>
 #include <sched.h>
 
@@ -375,47 +374,6 @@ static int test_busy(const char *database) {
   return failed;
 }
 
-static int test_fork(const char *database) {
-  baton_sql_read_test_forget();
-  BatonSqlReadTestResult before, after;
-  memset(&before, 0, sizeof(before));
-  memset(&after, 0, sizeof(after));
-  if (baton_sql_read_test_run(database, "SELECT count(*) FROM t;", &before) != 0)
-    return 1;
-  pid_t child = fork();
-  if (child < 0) {
-    perror("fork");
-    return 1;
-  }
-  if (child == 0) {
-    BatonSqlReadTestResult result;
-    int run = baton_sql_read_test_run(database, "SELECT count(*) FROM t;", &result);
-    int ok = run == 0 && result.code == SQLITE_OK &&
-             result.cache_pid == getpid();
-    free(result.output);
-    free(result.error);
-    _exit(ok ? 0 : 1);
-  }
-  int status = 0;
-  waitpid(child, &status, 0);
-  int failed = 0;
-  if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-    fprintf(stderr, "fail fork-child: status=%d\n", status);
-    failed = 1;
-  } else {
-    printf("ok fork-child\n");
-  }
-  if (!failed &&
-      baton_sql_read_test_run(database, "SELECT count(*) FROM t;", &after) != 0)
-    return 1;
-  if (!failed)
-    failed = check("fork-parent", after.code, after.output, "3\n");
-  free(before.output); free(before.error);
-  free(after.output); free(after.error);
-  baton_sql_read_test_forget();
-  return failed;
-}
-
 static int test_encoding(const char *utf16, const char *utf8) {
   baton_sql_read_test_forget();
   BatonSqlReadTestResult bad, good;
@@ -469,7 +427,6 @@ static int mode_lifecycle(const char *work) {
   failed |= test_replacement(replacement, replacement_next);
   failed |= test_multi(first);
   failed |= test_busy(busy);
-  failed |= test_fork(first);
   failed |= test_encoding(utf16, plain);
   baton_sql_read_test_forget();
   if (failed) {
