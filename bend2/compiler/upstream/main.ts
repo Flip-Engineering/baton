@@ -734,7 +734,9 @@ function book_run(book: Bend.Book, n0: number, argv: string[]): number {
 function book_err(e: unknown): string {
   Comp.diagnostic_error(e);
   const err = e as Bend.Err;
-  if (e instanceof RangeError) {
+  if (e instanceof RangeError
+    && /(?:maximum call stack size exceeded|out of stack space|stack overflow)/i
+      .test(e.message)) {
     return "Error: the machine stack overflowed (a deep recursion, or a"
       + " literal too large to expand)";
   }
