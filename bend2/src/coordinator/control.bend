@@ -9,6 +9,8 @@ import ../host/sqlite.bend as DB
 import ../host/text.bend as Text
 import ../host/session-lock.bend as Lock
 import ../host/control.bend as Host
+import ../host/files.bend as F
+import ../host/process.bend as P
 import ../json/canonical.bend as J
 import ../git/text.bend as Tx
 import ../git/process.bend as Process
@@ -243,19 +245,106 @@ def configure_endpoint(+db: String, +id: String, +harness: String, +cmd: String,
     receiver_harness : Bool <- IO.pure(Bool,Bool.or(String.eq(harness,"codex"),Bool.or(String.eq(harness,"omp"),Bool.or(String.eq(harness,"muse"),Bool.or(String.eq(harness,"claude-code"),Bool.or(String.eq(harness,"dsh"),String.eq(harness,"antigravity")))))))
     Bool.pick(IO(String),receiver_harness,configured_endpoint(db,id,cmd,log,model,""),IO.pure(String,""))
 
+# A starting retained attempt whose native custody is absent is stranded: it
+# cannot run and must not block a route change. The caller holds the physical
+# session lock while this check runs, so a live receiver cannot be prelaunch.
+# Only positive evidence retires the attempt; unreadable status or recovery
+# records leave the attempt owned and the route change refused (#1016).
+def recovery_none(recovery: Result<&1,&1,U32 & String,Maybe<String>>) -> Bool:
+  match recovery:
+    case Done{found}: match found:
+      case Some{argv}: False{}
+      case None{}: True{}
+    case Fail{error}: False{}
+
+def stranded_without_status(+directory: String) -> IO(Bool):
+  do IO<Bool>:
+    recovery : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.recovery_argv(directory)
+    IO.pure(Bool,recovery_none(recovery))
+
+def stranded_status(+directory: String, reaped: Result<&1,&1,U32 & String,U32>) -> IO(Bool):
+  match reaped:
+    case Done{size}: Bool.pick(IO(Bool),U32.is_eq(size,0),stranded_without_status(directory),IO.pure(Bool,False{}))
+    case Fail{(code, detail)}: Bool.pick(IO(Bool),U32.is_eq(code,2),stranded_without_status(directory),IO.pure(Bool,False{}))
+
+def starting_attempt_observed(+directory: String, observed: Result<&1,&1,U32 & String,String>) -> IO(Bool):
+  match observed:
+    case Fail{(code, detail)}: IO.pure(Bool,U32.is_eq(code,2))
+    case Done{output}: do IO<Bool>:
+      reaped : Result<&1,&1,U32 & String,U32> <- F.Files.size(directory ++ "/status")
+      stranded_status(directory,reaped)
+
+def starting_attempt_stranded(+directory: String) -> IO(Bool):
+  do IO<Bool>:
+    observed : Result<&1,&1,U32 & String,String> <- F.Files.lstat(directory)
+    starting_attempt_observed(directory,observed)
+
+def starting_attempt_snapshot_sql(+session: String) -> String:
+  "SELECT coalesce((SELECT id || char(9) || directory FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='retained' AND phase='starting'),'');"
+
+def reconcile_starting_snapshot(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
+  do IO<Unit>:
+    stranded : Bool <- starting_attempt_stranded(directory)
+    Bool.pick(IO(Unit),stranded,do IO<Unit>:
+      retired : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;UPDATE executions SET phase='exited',status='start failed' WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ " AND mode='retained' AND phase='starting' AND directory=" ++ C.q(directory) ++ ";COMMIT;"))
+      IO.pure(Unit,Unit{}),IO.pure(Unit,Unit{}))
+
+def reconcile_starting_tabs(+db: String, +session: String, fields: List<String>) -> IO(Unit):
+  match fields:
+    case attempt <> directory <> Nil{}: reconcile_starting_snapshot(db,session,attempt,directory)
+    case other: IO.pure(Unit,Unit{})
+
+def reconcile_starting_fields(+db: String, +session: String, +snapshot: String) -> IO(Unit):
+  reconcile_starting_tabs(db,session,Tx.split_tabs(snapshot))
+
+def reconcile_stranded_starting(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    snapshot : String <- IO.try(String,DB.Sql.read(db,starting_attempt_snapshot_sql(session)))
+    reconcile_starting_fields(db,session,Tx.trim_nl(snapshot))
+
 def configure_result(saved: String, denied: Bool) -> IO(String):
   match denied:
     case True{}: IO.die(String,2,saved)
     case False{}: IO.pure(String,saved)
 
-def configure(+db: String, +id: String, +harness: String, +model: String, effort: String, cmd: String, log: String, +expected_harness: String, +expected_model: String, expected_effort: String) -> IO(String):
+def configure_write(+db: String, +id: String, +harness: String, +model: String, +effort: String, +endpoint: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> IO(String):
+  do IO<String>:
+    +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.configure_sql(id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort) ++ "COMMIT;"))
+    migrated : String <- Bool.pick(IO(String),Bool.and(String.eq(harness,"codex"),Bool.not(Tx.starts_with(saved,"{\"error\":\"configure-refused\""))),CodexRoute.normalize(db,id),IO.pure(String,""))
+    IO.pure(String,saved)
+
+def configure_same_route(+db: String, +id: String, +harness: String, +model: String, +effort: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> IO(String):
+  do IO<String>:
+    +saved : String <- configure_write(db,id,harness,model,effort,"",expected_harness,expected_model,expected_effort)
+    configure_result(saved,Tx.starts_with(saved,"{\"error\":\"configure-refused\""))
+
+def configure_locked(+db: String, +id: String, +harness: String, +model: String, +effort: String, cmd: String, +log: String, +expected_harness: String, +expected_model: String, +expected_effort: String, lock: U32) -> IO(String):
+  do IO<String>:
+    reconciled : Unit <- reconcile_stranded_starting(db,id)
+    endpoint : String <- configure_endpoint(db,id,harness,cmd,log,model)
+    +saved : String <- configure_write(db,id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort)
+    released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+    configure_result(saved,Tx.starts_with(saved,"{\"error\":\"configure-refused\""))
+
+def configure_live_refusal(+session: String) -> IO(String):
+  IO.die(String,2,"{\"error\":\"configure-refused\",\"session\":" ++ J.string_literal(session) ++ ",\"condition\":\"A live receive holds the session lock; preserve the current attempt before changing its route.\",\"next\":\"Retry after the current receive attempt ends.\"}\n")
+
+def configure_lock_decided(+db: String, +id: String, +harness: String, +model: String, +effort: String, cmd: String, +log: String, +expected_harness: String, +expected_model: String, +expected_effort: String, lock: Maybe<U32>) -> IO(String):
+  match lock:
+    case Some{handle}: configure_locked(db,id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort,handle)
+    case None{}: configure_live_refusal(id)
+
+def configure(+db: String, +id: String, +harness: String, +model: String, +effort: String, cmd: String, +log: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> IO(String):
   do IO<String>:
     found : String <- IO.try(String,Store.apply(db,C.Session{id}))
     accepted : String <- registered(found)
-    endpoint : String <- Bool.pick(IO(String),Bool.and(String.eq(harness,expected_harness),String.eq(model,expected_model)),IO.pure(String,""),configure_endpoint(db,id,harness,cmd,log,model))
-    +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.configure_sql(id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort) ++ "COMMIT;"))
-    migrated : String <- Bool.pick(IO(String),Bool.and(String.eq(harness,"codex"),Bool.not(Tx.starts_with(saved,"{\"error\":\"configure-refused\""))),CodexRoute.normalize(db,id),IO.pure(String,""))
-    configure_result(saved,Tx.starts_with(saved,"{\"error\":\"configure-refused\""))
+    same : Bool = Bool.and(String.eq(harness,expected_harness),String.eq(model,expected_model))
+    Bool.pick(IO(String),same,
+      configure_same_route(db,id,harness,model,effort,expected_harness,expected_model,expected_effort),
+      do IO<String>:
+        canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+        lock : Maybe<U32> <- IO.try(Maybe<U32>,Lock.SessionLock.try_acquire(canonical,id))
+        configure_lock_decided(db,id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort,lock))
 
 def principal_matches(+session: String, +harness: String, +model: String, +effort: String, +cwd: String) -> String:
   "(id=" ++ C.q(session) ++ " AND parent IS NULL AND harness=" ++ C.q(harness) ++ " AND (model='' OR model=" ++ C.q(model) ++ ") AND (effort='' OR effort=" ++ C.q(effort) ++ ") AND (workspace='' OR workspace=" ++ C.q(cwd) ++ ") AND " ++ C.assigned_role("sessions.id") ++ "<>'operator' AND NOT " ++ C.stopped_session_sql("sessions.id") ++ ")"
