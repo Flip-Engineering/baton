@@ -506,6 +506,8 @@ CREATE TABLE log_generations(session TEXT,log TEXT,base TEXT,attempt TEXT);
         runtime, config, manifest = self.selection_paths()
         target = runtime / 'target'
         shutil.copytree(self.target, target)
+        with sqlite3.connect(self.db) as db:
+            db.execute("INSERT INTO executions VALUES('owner','admit-runtime',?,'exited','')", (str(target),))
         record = self.write_record(json.dumps(self.selection_record(runtime, config, manifest), separators=(',', ':')))
         answer = self.apply_roots(target, record)
         self.assertIn('cargo-runtime-selected', answer)
@@ -517,6 +519,8 @@ CREATE TABLE log_generations(session TEXT,log TEXT,base TEXT,attempt TEXT);
         escaped.write_text('{}\n')
         target = runtime / 'target'
         shutil.copytree(self.target, target)
+        with sqlite3.connect(self.db) as db:
+            db.execute("INSERT INTO executions VALUES('owner','admit-runtime',?,'exited','')", (str(target),))
         record = self.write_record(json.dumps(self.selection_record(runtime, escaped, manifest), indent=2))
         answer = self.apply_roots(target, record)
         self.assertIn('cargo-runtime-selected', answer)

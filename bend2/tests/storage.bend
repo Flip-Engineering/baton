@@ -542,26 +542,7 @@ def deep_marker_path(remaining: Nat, +prefix: String) -> String:
     case 0n: prefix ++ "/marker.txt"
     case 1n+rest: deep_marker_path(rest, prefix ++ "/n")
 
-def removal_repair_check(+db: String, +root: String, +dir: String, +deep: String, +leaf: String, +marker: String) -> IO(Unit):
-  do IO<Unit>:
-    +repair : String = "r=\"$1/repaired\"; mkdir -p \"$r\" || exit 1; mv \"$2\" \"$r/leaf.txt\" || exit 1; mv \"$3\" \"$r/marker.txt\" || exit 1; rm -rf \"$4\""
-    repaired : Unit <- run_cmd(["/bin/sh", "-c", repair, "sh", dir, leaf, marker, deep])
-    +repaired_leaf : String = dir ++ "/repaired/leaf.txt"
-    +repaired_marker : String = dir ++ "/repaired/marker.txt"
-    repaired_leaf_seen : O.Observation <- O.observe(repaired_leaf)
-    e : Unit <- check("interrupted-repaired-leaf-preserved", O.observation_is_found(repaired_leaf_seen), "repaired leaf missing")
-    repaired_marker_seen : O.Observation <- O.observe(repaired_marker)
-    f : Unit <- check("interrupted-repaired-marker-preserved", O.observation_is_found(repaired_marker_seen), "repaired marker missing")
-    +replayed_candidate : T.Candidate <- candidate_for(dir, T.Scratch{}, clear_facts())
-    +replayed_report : String <- remove_until_settled(db, root, replayed_candidate, dir, 64n)
-    g : Unit <- check("interrupted-replay", String.starts_with(replayed_report, "removed"), replayed_report)
-    removed_leaf : O.Observation <- O.observe(repaired_leaf)
-    h : Unit <- check("interrupted-replay-leaf-removed", Bool.not(O.observation_is_found(removed_leaf)), "repaired leaf remains")
-    removed_marker : O.Observation <- O.observe(repaired_marker)
-    i : Unit <- check("interrupted-replay-marker-removed", Bool.not(O.observation_is_found(removed_marker)), "repaired marker remains")
-    IO.pure(Unit, Unit{})
-
-def removal_refused_check(+db: String, +root: String) -> IO(Unit):
+def removal_deep_check(+db: String, +root: String) -> IO(Unit):
   do IO<Unit>:
     +dir : String = root ++ "/interrupted"
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
@@ -572,13 +553,14 @@ def removal_refused_check(+db: String, +root: String) -> IO(Unit):
     +marker : String = deep_marker_path(130n, deep)
     +candidate : T.Candidate <- candidate_for(dir, T.Scratch{}, clear_facts())
     +report : String <- remove_until_settled(db, root, candidate, dir, 64n)
-    a : Unit <- check("interrupted-refused", String.starts_with(report, "refused"), report)
-    b : Unit <- check("interrupted-refused-detail", Bool.and(String.contains(report, "partial"), String.contains(report, "error=")), report)
-    kept : O.Observation <- O.observe(leaf)
-    c : Unit <- check("interrupted-leaf-preserved", O.observation_is_found(kept), "deep leaf removed")
-    kept_marker : O.Observation <- O.observe(marker)
-    d : Unit <- check("interrupted-marker-preserved", O.observation_is_found(kept_marker), "deep marker removed")
-    replay : Unit <- removal_repair_check(db, root, dir, deep, leaf, marker)
+    a : Unit <- check("deep-tree-removed", String.starts_with(report, "removed"), report)
+    removed_leaf : O.Observation <- O.observe(leaf)
+    b : Unit <- check("deep-leaf-removed", Bool.not(O.observation_is_found(removed_leaf)), "deep leaf remains")
+    removed_marker : O.Observation <- O.observe(marker)
+    c : Unit <- check("deep-marker-removed", Bool.not(O.observation_is_found(removed_marker)), "deep marker remains")
+    +replay_candidate : T.Candidate <- candidate_for(dir, T.Scratch{}, clear_facts())
+    +replayed : String <- remove_until_settled(db, root, replay_candidate, dir, 64n)
+    d : Unit <- check("deep-replay-idempotent", Bool.or(String.starts_with(replayed, "already-absent"), String.starts_with(replayed, "missing")), replayed)
     cleaned : Unit <- run_cmd(["/bin/rm", "-rf", dir])
     IO.pure(Unit, Unit{})
 
@@ -982,7 +964,7 @@ def storage_checks() -> IO(Unit):
     malformed : Unit <- malformed_entries_check(root)
     overlap : Unit <- overlap_check(db, root)
     busy : Unit <- busy_check(db, root)
-    removal_refused : Unit <- removal_refused_check(db, root)
+    removal_deep : Unit <- removal_deep_check(db, root)
     unknown_runtime : Unit <- unknown_runtime_check(db, root)
     parent_rename : Unit <- parent_rename_check(db, root)
     malformed_db : Unit <- malformed_db_check(db, root)
