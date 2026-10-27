@@ -176,12 +176,20 @@ def CompileQueueResult.verify_rows(+rows: List<&2,String>, +keydir: String) -> I
           ok : Bool <- CompileQueueResult.verify_row(row, keydir)
           Bool.pick(IO(Bool), ok, CompileQueueResult.verify_rows(rest, keydir), IO.pure(Bool, False{})))
 
+# State inspection reads the persisted record only: schema, identity,
+# key, verified flag, status and artifact membership. It never hashes
+# the artifact tree. Content qualification stays with verify and
+# reusable, which compare the recorded artifact rows against the
+# actual files before any reuse or adoption.
 def CompileQueueResult.acceptable(+result: String, +key: String, +rows: String) -> Bool:
   Bool.and(String.eq(CompileQueueResult.field(result, "external"), "0"),
     Bool.and(CompileQueueResult.base_verified(result, key),
       Bool.and(CompileQueueResult.completed(result),
         Bool.pick(Bool, String.eq(CompileQueueResult.field(result, "kind"), "check"),
           String.is_empty(rows), Bool.not(String.is_empty(rows))))))
+
+def CompileQueueResult.recorded_completed(+result: String, +key: String) -> Bool:
+  CompileQueueResult.acceptable(result, key, CompileQueueResult.artifact_rows(result))
 
 def CompileQueueResult.verify_result_read(read: Result<&1,&1,U32 & String,String>, +keydir: String, +key: String) -> IO(Bool):
   match read:

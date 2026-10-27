@@ -164,19 +164,12 @@ class QueueOpaqueInputTests(unittest.TestCase):
                 self.assertNotEqual(before, changed)
                 before = changed
 
-    def waiter_rss(self, payload):
+    def waiter_rss_under_heavy_lock(self, payload):
         (self.root / "output").unlink(missing_ok=True)
-        # A running job without a recorded peak makes the request wait for admission.
-        running = self.state / "admission" / "running"
-        for directory in (self.state / "admission", running):
-            directory.mkdir(mode=0o2770, exist_ok=True)
-            directory.chmod(0o2770)
-        lock = (running / "00000000000000000001-0000000001").open("w")
+        # The shared heavy lock holds compilation while the queue records waiter allocation.
+        lock = (self.state / "heavy.lock").open("w")
         self.addCleanup(lock.close)
         fcntl.flock(lock, fcntl.LOCK_EX)
-        lock.write(f"pid={os.getpid()}\nstarttime=1\nroot={os.getpid()}\nmeasure=tree\nkey=held\n"
-                   "group=\nexpected_kb=0\nhistory=0\nbackfill=0\nadmitted_ns=1\n")
-        lock.flush()
         process = subprocess.Popen(self.command(self.candidate, action="run", payload=payload),
                                    env=self.environment, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, text=True)
@@ -186,7 +179,7 @@ class QueueOpaqueInputTests(unittest.TestCase):
             while time.monotonic() < deadline:
                 if process.poll() is not None:
                     stdout, stderr = process.communicate()
-                    self.fail("waiter exited before admission sample: " + stdout + stderr)
+                    self.fail("waiter exited before allocation sample: " + stdout + stderr)
                 status = pathlib.Path(f"/proc/{process.pid}/status").read_text()
                 values = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
                 runs = list(self.state.glob(f"keys/*/runs/*-{process.pid}/meta"))
@@ -196,23 +189,23 @@ class QueueOpaqueInputTests(unittest.TestCase):
                     if len(samples) == 3:
                         return min(samples)
                 time.sleep(0.1)
-            self.fail("queue did not reach its pre-execution wait")
+            self.fail("queue did not wait on the shared heavy lock")
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
             stdout, stderr = process.communicate(timeout=60)
             self.assertEqual(process.returncode, 0, stdout + stderr)
 
     @unittest.skipUnless(pathlib.Path("/proc/self/status").exists(), "Linux /proc is required")
-    def test_large_opaque_payload_has_bounded_waiter_allocation(self):
-        # These are allocation observations; admission and execution use the same queue path.
+    def test_large_opaque_payload_waiter_allocation_under_heavy_lock(self):
+        # These are allocation observations while the shared compile lock is held.
         small = self.root / "small.bin"
         large = self.root / "large.bin"
         small.write_bytes(b"\x00\xff\xfe\n" * 1024)
         with large.open("wb") as stream:
             for _ in range(64):
                 stream.write(b"\x00\xff\xfe\n" * (1024 * 256))
-        small_rss = self.waiter_rss(small)
-        large_rss = self.waiter_rss(large)
+        small_rss = self.waiter_rss_under_heavy_lock(small)
+        large_rss = self.waiter_rss_under_heavy_lock(large)
         observation = {"small_bytes": small.stat().st_size, "large_bytes": large.stat().st_size,
                        "small_waiter_rss_kib": small_rss, "large_waiter_rss_kib": large_rss,
                        "rss_growth_kib": large_rss - small_rss}

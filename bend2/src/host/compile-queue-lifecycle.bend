@@ -84,6 +84,9 @@ def CompileQueueLifecycle.copy_file(source: String, destination: String) -> IO(R
 def CompileQueueLifecycle.wait_pid(pid: U32) -> IO(Result<&1,&1,U32 & String,U32>):
   P.HostPosix.wait_pid(pid)
 
+def CompileQueueLifecycle.try_wait(pid: U32) -> IO(Result<&1,&1,U32 & String,String>):
+  P.HostPosix.try_wait(pid)
+
 def CompileQueueLifecycle.run_command(argv: String, cwd: String, stdout_path: String, stderr_path: String) -> IO(Result<&1,&1,U32 & String,U32 & String>):
   Supervisor.run(argv,cwd,stdout_path,stderr_path)
 
