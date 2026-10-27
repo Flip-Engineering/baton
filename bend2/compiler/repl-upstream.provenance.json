@@ -392,5 +392,10 @@
   },
   "vendored_license": "LICENSE",
   "reference_handoff_sha256": "17e9518492b7b9676beb73085c05d5801d7ade573ae3ee41e8954d67abfc05ff",
-  "reference_source_commit": "9bdc172e9d44bc6e85c6a1f1d7c15017cde31bdb"
+  "reference_source_commit": "9bdc172e9d44bc6e85c6a1f1d7c15017cde31bdb",
+  "source_commit": "a7abe784add6a79d22149ed88944d69f170cd0ff",
+  "source_tree": "b9ef62de97e9b1dedded14b443db35ac53c01aad",
+  "source_root": "bend2/compiler/upstream",
+  "package_root": "bend2",
+  "distribution_state": "packaged_not_installed"
 }
