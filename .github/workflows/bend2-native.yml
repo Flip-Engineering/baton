@@ -9,6 +9,8 @@ name: bend2-native-development
       - '.github/scripts/reuse-native-target.py'
       - '.github/scripts/package-native-target-handoff.py'
       - '.github/scripts/reuse-native-main.py'
+      - '.github/scripts/reuse-native-recovery.py'
+      - '.github/scripts/test-reuse-native-recovery.py'
       - '.github/scripts/prepare-native-compiler.py'
       - '.github/scripts/repl-package.py'
       - 'LICENSE'
