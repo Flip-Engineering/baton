@@ -24,6 +24,9 @@ OLD_SOURCE_DIGEST = '135f33abbcb4ab13c5a60e4f2d7dfafe058a7d679d3f4c9b94765ee3a63
 OLD_C_SHA256 = '2ee44b644f274759ea8d4ad73a6d82bff9be3d57d3ece4304e224887955b4e1e'
 OLD_HOST_SHA256 = '9a2eb95b395e87af7f6f99bf4b5265554463584a4a5979dbf2c00a3caa560443'
 CURRENT_HOST_SHA256 = 'f54835767dd5fe0ec871e05be69d981ab3ea9cc4aa9e4b2ec2ffb18dca1dcb21'
+SPAWN_SOURCE = 'bend2/src/host/process-spawn.c'
+OLD_SPAWN_SHA256 = 'e82d6727d23c94d46044f5a4e12210a903482c4aca19371993989a82d1bf87fd'
+CURRENT_SPAWN_SHA256 = '9db470c0db6dcb37973ef11f242f20eb4e045949da586482a7680a825a7e288e'
 GENERATOR = {
     'source_commit': '04e328c809526932bf72d346c17a197c8fef7e29',
     'source_tree': '5ada6a6d736309ba1c1579e2257800e24aa94223',
@@ -58,6 +61,10 @@ def sha256(data):
 def file_sha256(path):
     with pathlib.Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def same_resolved_path(left, right):
+    return pathlib.Path(left).resolve() == pathlib.Path(right).resolve()
 
 
 def git(root, *args):
@@ -170,14 +177,21 @@ def source_closure(root, commit, entry):
     return records, sha256(serialized.encode('utf-8'))
 
 
-def compare_closures(old, current, allowed_path, allowed_hashes):
+def compare_closures(old, current, allowed_path, allowed_hashes, allowed_path_2=None, allowed_hashes_2=None):
     old_map = {path: (mode, digest, size, body) for path, mode, digest, size, body in old}
     new_map = {path: (mode, digest, size, body) for path, mode, digest, size, body in current}
     require(old_map.keys() == new_map.keys(), 'Focused recovery source closure membership differs.')
     changed = [path for path in sorted(old_map) if old_map[path][:3] != new_map[path][:3]]
-    require(changed == [allowed_path], 'Focused recovery source closure has another changed input.')
-    require((old_map[allowed_path][1], new_map[allowed_path][1]) == allowed_hashes,
-            'Focused recovery changed source hashes do not match the reviewed pair.')
+    allowed = {allowed_path: allowed_hashes}
+    if allowed_path_2 is not None:
+        allowed[allowed_path_2] = allowed_hashes_2
+    require(all(path in allowed for path in changed)
+            and [allowed_path] == [path for path in changed if path == allowed_path],
+            'Focused recovery source closure has another changed input.')
+    for path, (old_sha, new_sha) in allowed.items():
+        if path in changed:
+            require((old_map[path][1], new_map[path][1]) == (old_sha, new_sha),
+                    'Focused recovery changed source hashes do not match the reviewed pair: ' + path)
     return old_map, new_map
 
 
@@ -192,23 +206,40 @@ def verify_source_transition(root, target_commit):
     base, _ = source_closure(root, TARGET_BASE_COMMIT, ENTRY)
     require(old_digest == OLD_SOURCE_DIGEST, 'Retained Cgen source digest differs from the pinned c6953 closure.')
     base_map = {path: (mode, digest, size, body) for path, mode, digest, size, body in base}
-    require(base_map == {path: (mode, digest, size, body) for path, mode, digest, size, body in current},
-            'Focused recovery source closure changed after the pinned 9993 tree.')
+    current_map = {path: (mode, digest, size, body) for path, mode, digest, size, body in current}
+    require(base_map.keys() == current_map.keys(),
+            'Focused recovery source closure membership changed after the pinned 9993 tree.')
+    later = sorted(path for path in base_map if base_map[path][:3] != current_map[path][:3])
+    spawn_applied = bool(later)
+    require(later == [] or later == [SPAWN_SOURCE],
+            'Focused recovery source closure changed after the pinned 9993 tree: ' + ', '.join(later))
+    if spawn_applied:
+        require((base_map[SPAWN_SOURCE][1], current_map[SPAWN_SOURCE][1])
+                == (OLD_SPAWN_SHA256, CURRENT_SPAWN_SHA256),
+                'Focused recovery durable-status source does not match the reviewed transition.')
     old_map, new_map = compare_closures(old, current, HOST_SOURCE,
-                                        (OLD_HOST_SHA256, CURRENT_HOST_SHA256))
+                                        (OLD_HOST_SHA256, CURRENT_HOST_SHA256),
+                                        SPAWN_SOURCE if spawn_applied else None,
+                                        (OLD_SPAWN_SHA256, CURRENT_SPAWN_SHA256))
     old_host = old_map[HOST_SOURCE][3]
     current_host = new_map[HOST_SOURCE][3]
+    transition = {'origin_source_digest': old_digest, 'current_source_digest': current_digest,
+                  'closure_file_count': len(old), 'changed_input': HOST_SOURCE,
+                  'old_control_sha256': sha256(old_host), 'current_control_sha256': sha256(current_host),
+                  'old_control': old_host, 'current_control': current_host}
+    if spawn_applied:
+        transition['old_spawn_sha256'] = sha256(old_map[SPAWN_SOURCE][3])
+        transition['current_spawn_sha256'] = sha256(new_map[SPAWN_SOURCE][3])
+        transition['old_spawn'] = old_map[SPAWN_SOURCE][3]
+        transition['current_spawn'] = new_map[SPAWN_SOURCE][3]
     origin_rows = git_blob_rows(root, ORIGIN_COMMIT)
     current_rows = git_blob_rows(root, target_commit)
     require(origin_rows[LINK_SOURCE][:2] == current_rows[LINK_SOURCE][:2],
             'Separately linked native-entry.c changed.')
     require(origin_rows[LINK_SOURCE][1] == current_rows[LINK_SOURCE][1],
             'Separately linked native-entry.c bytes changed.')
-    return {'origin_source_digest': old_digest, 'current_source_digest': current_digest,
-            'closure_file_count': len(old), 'changed_input': HOST_SOURCE,
-            'old_control_sha256': sha256(old_host), 'current_control_sha256': sha256(current_host),
-            'native_entry_sha256': sha256(current_rows[LINK_SOURCE][1]),
-            'old_control': old_host, 'current_control': current_host}
+    transition['native_entry_sha256'] = sha256(current_rows[LINK_SOURCE][1])
+    return transition
 
 
 def parse_fields(text):
@@ -250,8 +281,9 @@ def verify_generator(generator_root, diagnostics):
     require(file_sha256(base) == BASE_SHA256, 'Retained generator Base differs.')
     require(manifest['compiler']['sha256'] == GENERATOR['compiler_sha256']
             and manifest['bun']['sha256'] == GENERATOR['runtime_sha256'], 'Generator manifest toolchain hashes differ.')
-    require(diagnostics['toolchain']['compiler']['path'] == str(compiler)
-            and diagnostics['toolchain']['runtime']['path'] == str(runtime), 'Cgen toolchain paths differ.')
+    require(same_resolved_path(diagnostics['toolchain']['compiler']['path'], compiler)
+            and same_resolved_path(diagnostics['toolchain']['runtime']['path'], runtime),
+            'Cgen toolchain paths differ.')
     require(diagnostics['toolchain']['compiler']['sha256'] == GENERATOR['compiler_sha256']
             and diagnostics['toolchain']['runtime']['sha256'] == GENERATOR['runtime_sha256']
             and diagnostics['toolchain']['manifest']['sha256'] == GENERATOR['manifest_sha256'],
@@ -320,6 +352,31 @@ def verify_capture(origin, generator_root):
             'generated_c_sha256': OLD_C_SHA256, 'generator': generator}
 
 
+def validate_source_proof(root, target_commit, proof, transition):
+    proof_commit = proof['current_source_commit']
+    proof_tree = proof['current_source_tree']
+    require(git_tree(root, proof_commit) == proof_tree,
+            'Focused recovery proof source tree differs from its pinned commit.')
+    ancestry = subprocess.run(['git', '-c', 'safe.directory=' + str(root), 'merge-base', '--is-ancestor',
+                               proof_commit, target_commit], cwd=root, check=False)
+    require(ancestry.returncode == 0,
+            'Selected source does not descend from the source pinned by the recovery C proof.')
+    require(proof['origin_source_digest'] == transition['origin_source_digest']
+            and proof['current_source_digest'] == transition['current_source_digest']
+            and proof['source_closure_file_count'] == transition['closure_file_count'],
+            'Focused recovery source closure differs from the proof.')
+
+
+def captured_cgen_matches(captured, expected):
+    normalized = dict(expected)
+    generator = expected.get('generator')
+    if isinstance(generator, dict) and isinstance(generator.get('generator_root'), str):
+        normalized['generator'] = dict(generator)
+        normalized['generator']['generator_root'] = str(
+            pathlib.Path(generator['generator_root']).resolve())
+    return captured == normalized
+
+
 def substitute_fragment(original_c, old_host, current_host):
     require(original_c.count(old_host) == 1, 'Generated C must contain the old host source exactly once.')
     prefix, suffix = original_c.split(old_host)
@@ -328,16 +385,39 @@ def substitute_fragment(original_c, old_host, current_host):
     return result, prefix, suffix
 
 
-def derive(original_c, old_host, current_host):
+def derive(original_c, old_host, current_host, spawn=None):
     require(sha256(original_c) == OLD_C_SHA256, 'Retained recovery C hash differs.')
     require(sha256(old_host) == OLD_HOST_SHA256 and sha256(current_host) == CURRENT_HOST_SHA256,
             'Foreign source hashes do not match the focused recovery substitution.')
     result, prefix, suffix = substitute_fragment(original_c, old_host, current_host)
-    return result, {'path': HOST_SOURCE, 'old_sha256': OLD_HOST_SHA256,
+    substitution = {'path': HOST_SOURCE, 'old_sha256': OLD_HOST_SHA256,
                     'current_sha256': CURRENT_HOST_SHA256, 'offset': len(prefix),
                     'prefix_sha256': sha256(prefix), 'suffix_sha256': sha256(suffix),
                     'original_c_sha256': sha256(original_c), 'derived_c_sha256': sha256(result),
                     'derived_c_size_bytes': len(result)}
+    spawn_substitution = None
+    if spawn is not None:
+        old_spawn, current_spawn = spawn
+        require(sha256(old_spawn) == OLD_SPAWN_SHA256 and sha256(current_spawn) == CURRENT_SPAWN_SHA256,
+                'Foreign source hashes do not match the durable-status substitution.')
+        result, prefix, suffix = substitute_fragment(result, old_spawn, current_spawn)
+        spawn_substitution = {'path': SPAWN_SOURCE, 'old_sha256': OLD_SPAWN_SHA256,
+                              'current_sha256': CURRENT_SPAWN_SHA256, 'offset': len(prefix),
+                              'prefix_sha256': sha256(prefix), 'suffix_sha256': sha256(suffix),
+                              'original_c_sha256': substitution['derived_c_sha256'],
+                              'derived_c_sha256': sha256(result),
+                              'derived_c_size_bytes': len(result)}
+    return result, substitution, spawn_substitution
+
+
+def verify_substitution_proof(proof, substitution, spawn_substitution):
+    require(substitution == proof['foreign_source_substitution'],
+            'Foreign source substitution proof differs.')
+    require(spawn_substitution == proof.get('foreign_source_substitution_spawn'),
+            'Durable-status substitution proof differs.')
+    expected_changed_input_2 = SPAWN_SOURCE if spawn_substitution is not None else None
+    require(proof.get('changed_input_2') == expected_changed_input_2,
+            'Second changed source input differs from the durable-status substitution.')
 
 
 def prepare(args):
@@ -360,8 +440,10 @@ def prepare(args):
                        ('compiler-diagnostics.json', args.diagnostics)):
         shutil.copyfile(path, evidence / name)
     captured = verify_capture(origin, generator)
-    derived, substitution = derive((origin / 'generated.c').read_bytes(),
-                                   transition['old_control'], transition['current_control'])
+    spawn = (transition['old_spawn'], transition['current_spawn']) if 'old_spawn' in transition else None
+    derived, substitution, spawn_substitution = derive((origin / 'generated.c').read_bytes(),
+                                                       transition['old_control'], transition['current_control'],
+                                                       spawn)
     generated = origin / 'baton-recovery.c'
     generated.write_bytes(derived)
     proof = {
@@ -376,6 +458,9 @@ def prepare(args):
         'generated_c': str(generated), 'generated_c_sha256': sha256(derived),
         'selected_base_sha256': BASE_SHA256,
     }
+    if spawn_substitution is not None:
+        proof['changed_input_2'] = SPAWN_SOURCE
+        proof['foreign_source_substitution_spawn'] = spawn_substitution
     proof_path = pathlib.Path(args.run).resolve() / 'generated/recovery-c-reuse.json'
     proof_path.write_text(json.dumps(proof, indent=2) + '\n')
     env = pathlib.Path(args.github_env)
@@ -398,25 +483,29 @@ def select(args):
             and proof['entry'] == ENTRY,
             'Focused recovery C proof does not bind the selected entry and source.')
     target_commit = git(root, 'rev-parse', 'HEAD').decode().strip()
-    require(target_commit == proof['current_source_commit']
-            and git_tree(root, target_commit) == proof['current_source_tree'],
-            'Selected source differs from the recovery C proof.')
+    target_tree = git_tree(root, target_commit)
     transition = verify_source_transition(root, target_commit)
-    require(proof['origin_source_digest'] == transition['origin_source_digest']
-            and proof['current_source_digest'] == transition['current_source_digest'],
-            'Focused recovery source closure differs from the proof.')
+    validate_source_proof(root, target_commit, proof, transition)
     current_base = pathlib.Path(args.compiler).resolve().parent.parent / 'bend2/base.bend'
     require(file_sha256(current_base) == BASE_SHA256, 'Selected compiler Base differs from the focused recovery proof.')
     origin = proof_path.parent / 'recovery-c-origin'
     captured = verify_capture(origin, args.generator_root)
-    require(captured == proof['captured_cgen'], 'Retained Cgen identity differs from the proof.')
-    derived, substitution = derive((origin / 'generated.c').read_bytes(),
-                                   transition['old_control'], transition['current_control'])
+    require(captured_cgen_matches(captured, proof['captured_cgen']),
+            'Retained Cgen identity differs from the proof.')
+    spawn = (transition['old_spawn'], transition['current_spawn']) if 'old_spawn' in transition else None
+    derived, substitution, spawn_substitution = derive((origin / 'generated.c').read_bytes(),
+                                                       transition['old_control'], transition['current_control'],
+                                                       spawn)
     generated = pathlib.Path(args.generated_c).resolve()
     require(generated.is_file() and file_sha256(generated) == proof['generated_c_sha256']
             and generated.read_bytes() == derived, 'Selected recovery C differs from the derived C.')
-    require(substitution == proof['foreign_source_substitution'], 'Foreign source substitution proof differs.')
-    return generated
+    verify_substitution_proof(proof, substitution, spawn_substitution)
+    return {'generated': generated, 'source_commit': target_commit, 'source_tree': target_tree,
+            'source_digest': transition['current_source_digest'],
+            'source_closure_file_count': transition['closure_file_count'],
+            'proof_source_commit': proof['current_source_commit'],
+            'proof_source_tree': proof['current_source_tree'],
+            'proof_sha256': args.proof_sha256}
 
 
 def main():
@@ -436,9 +525,17 @@ def main():
             proof = prepare(args)
             print(json.dumps({key: value for key, value in proof.items() if key != 'captured_cgen'}))
         else:
-            selected = select(args)
+            selection = select(args)
+            selected = selection['generated']
             result = {'schema': 'baton2-focused-recovery-c-selection-v1', 'status': 'reused',
-                      'selected_c': str(selected), 'selected_c_sha256': file_sha256(selected)}
+                      'selected_c': str(selected), 'selected_c_sha256': file_sha256(selected),
+                      'selected_source_commit': selection['source_commit'],
+                      'selected_source_tree': selection['source_tree'],
+                      'selected_source_digest': selection['source_digest'],
+                      'selected_source_closure_file_count': selection['source_closure_file_count'],
+                      'proof_source_commit': selection['proof_source_commit'],
+                      'proof_source_tree': selection['proof_source_tree'],
+                      'proof_sha256': selection['proof_sha256']}
             args.output.write_text(json.dumps(result, indent=2) + '\n')
             print(selected)
     except BaseException:
