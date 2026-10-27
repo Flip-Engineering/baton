@@ -122,8 +122,10 @@ jobs:
       - name: Prepare the maintained shared compile queue
         run: |
           set -euo pipefail
-          queue_root="${BATON_COMPILE_QUEUE_ROOT:-/var/tmp/baton2-compile-queue}"
+          queue_root="${BATON_COMPILE_QUEUE_ROOT:-/private/var/tmp/baton2-compile-queue}"
           install -d -m 2775 "$queue_root"
+          queue_root="$(cd "$queue_root" && pwd -P)"
+          printf 'BATON_COMPILE_QUEUE_ROOT=%s\n' "$queue_root" >> "$GITHUB_ENV"
           queue_client="${BATON2_COMPILE_QUEUE_BIN:-}"
           if [[ -z "$queue_client" && -x "$queue_root/compile-queue-runner" ]]; then
             queue_client="$queue_root/compile-queue-runner"
