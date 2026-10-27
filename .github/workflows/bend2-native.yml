@@ -7,6 +7,7 @@ name: bend2-native-development
       - '.github/scripts/record-native-checks.py'
       - '.github/scripts/queue-native-checks.py'
       - '.github/scripts/reuse-native-target.py'
+      - '.github/scripts/package-native-target-handoff.py'
       - '.github/scripts/reuse-native-main.py'
       - '.github/scripts/prepare-native-compiler.py'
       - '.github/scripts/repl-package.py'
@@ -388,6 +389,18 @@ jobs:
           outcomes = {name: json.loads((evidence / 'selected' / (name + '.json')).read_text()) for name in selected}
           assert all(result['judged'] for result in outcomes.values()), 'Target comparison is incomplete'
           PY
+      - name: Retain reusable exact target build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/package-native-target-handoff.py \
+            --source "$BATON2_TARGET_RUN/source" --run "$BATON2_TARGET_RUN" \
+            --target-commit "$BATON2_TARGET_COMMIT" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --compiler "$BEND" --compiler-archive "$BATON2_TARGET_RUN/bend-2.0.25-linux-x64.tar.gz" \
+            --cc "$CC" \
+            > "$BATON2_TARGET_RUN/evidence/target-handoff.stdout" \
+            2> "$BATON2_TARGET_RUN/evidence/target-handoff.stderr"
       - name: Cancel target compile queue requests
         if: cancelled() && env.BATON2_TARGET_RUN != ''
         shell: bash
