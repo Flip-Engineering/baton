@@ -932,7 +932,7 @@ def waiters_ticket_text(priority: U32, pid: U32, start: String, key: String, tok
 # Unknown or malformed records stay; a live ticket stays; a canceled or
 # killed supervisor's blocked ticket is reaped by the next scan.
 
-def waiters_reap_second(~again_second: (@+read: Result<&1,&1,U32 & String,String> -> @+judged: String -> @+path: String -> IO(Unit)), read: Result<&1,&1,U32 & String,String>, +judged: String, +path: String) -> IO(Unit):
+def waiters_reap_second(read: Result<&1,&1,U32 & String,String>, +judged: String, +path: String) -> IO(Unit):
   match read:
     case Fail{error}: IO.pure(Unit, Unit{})
     case Done{+text}:
@@ -951,10 +951,9 @@ def waiters_reap_pid_parsed(parsed: Maybe<&2,U32>, +text: String, +path: String)
           Bool.pick(IO(Unit), U32.is_eq(alive, 1), IO.pure(Unit, Unit{}),
             do IO<Unit>:
               again : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(path)
-              waiters_reap_second(waiters_reap_second, again, text, path)))
+              waiters_reap_second(again, text, path)))
 
-@unsafe
-def waiters_reap_first(~again_first: (@+read: Result<&1,&1,U32 & String,String> -> @+path: String -> IO(Unit)), read: Result<&1,&1,U32 & String,String>, +path: String) -> IO(Unit):
+def waiters_reap_first(read: Result<&1,&1,U32 & String,String>, +path: String) -> IO(Unit):
   match read:
     case Fail{error}: IO.pure(Unit, Unit{})
     case Done{+text}: waiters_reap_pid_parsed(U32.read(field(text, "pid")), text, path)
@@ -962,7 +961,7 @@ def waiters_reap_first(~again_first: (@+read: Result<&1,&1,U32 & String,String> 
 def waiters_reap_stale(+dir: String, +name: String) -> IO(Unit):
   do IO<Unit>:
     read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(dir ++ "/" ++ name)
-    waiters_reap_first(waiters_reap_first, read, dir ++ "/" ++ name)
+    waiters_reap_first(read, dir ++ "/" ++ name)
 
 def waiters_ticket_higher(text: String, +token: String, +priority: U32) -> IO(Bool):
   do IO<Bool>:
@@ -976,36 +975,34 @@ def waiters_ticket_higher(text: String, +token: String, +priority: U32) -> IO(Bo
         IO.pure(Bool, U32.is_eq(alive, 1)),
       IO.pure(Bool, False))
 
-def waiters_scan_read(~next_scan: (@+names: List<&1,String> -> @+dir: String -> @+token: String -> @+priority: U32 -> IO(Bool)), read: Result<&1,&1,U32 & String,String>, +names: List<&1,String>, +dir: String, +token: String, +priority: U32) -> IO(Bool):
+def waiters_scan_one(read: Result<&1,&1,U32 & String,String>, +token: String, +priority: U32) -> IO(Bool):
   match read:
-    case Fail{error}: next_scan(names, dir, token, priority)
-    case Done{+text}:
-      do IO<Bool>:
-        higher : Bool <- waiters_ticket_higher(text, token, priority)
-        Bool.pick(IO(Bool), higher, IO.pure(Bool, True), next_scan(names, dir, token, priority))
+    case Fail{error}: IO.pure(Bool, False)
+    case Done{+text}: waiters_ticket_higher(text, token, priority)
 
-@unsafe
-def waiters_next(~again_scan: (@+read: Result<&1,&1,U32 & String,String> -> @+names: List<&1,String> -> @+dir: String -> @+token: String -> @+priority: U32 -> IO(Bool)), +names: List<&1,String>, +dir: String, +token: String, +priority: U32) -> IO(Bool):
+def waiters_scan_names(+names: List<&1,String>, +dir: String, +token: String, +priority: U32) -> IO(Bool):
   match names:
     case Nil{}: IO.pure(Bool, False)
     case Con{+name, rest}:
       do IO<Bool>:
         reaped : Unit <- waiters_reap_stale(dir, name)
         read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(dir ++ "/" ++ name)
-        again_scan(read, rest, dir, token, priority)
+        higher : Bool <- waiters_scan_one(read, token, priority)
+        Bool.pick(IO(Bool), higher, IO.pure(Bool, True),
+          waiters_scan_names(rest, dir, token, priority))
 
 def waiters_higher(+dir: String, +token: String, +priority: U32) -> IO(Bool):
   do IO<Bool>:
     names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(dir))
-    waiters_next(waiters_scan_read, Tx.split_nul(names), dir, token, priority)
+    waiters_scan_names(Tx.split_nul(names), dir, token, priority)
 
-def acquire_heavy(~again_acquire: (@+dir: String -> @+token: String -> @+priority: U32 -> @+delay: U32 -> IO(Unit)), +dir: String, +token: String, +priority: U32, +delay: U32) -> IO(Unit):
+def acquire_heavy(+dir: String, +token: String, +priority: U32, +delay: U32) -> IO(Unit):
   do IO<Unit>:
     higher : Bool <- waiters_higher(dir, token, priority)
     Bool.pick(IO(Unit), higher,
       do IO<Unit>:
         slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(delay))
-        again_acquire(dir, token, priority, U32.min(U32.mul(delay, 2), 64)),
+        acquire_heavy(dir, token, priority, U32.min(U32.mul(delay, 2), 64)),
       do IO<Unit>:
         locked : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_fd_acquire(8))
         higher_after : Bool <- waiters_higher(dir, token, priority)
@@ -1013,13 +1010,13 @@ def acquire_heavy(~again_acquire: (@+dir: String -> @+token: String -> @+priorit
           do IO<Unit>:
             released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(8))
             slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(delay))
-            again_acquire(dir, token, priority, U32.min(U32.mul(delay, 2), 64)),
+            acquire_heavy(dir, token, priority, U32.min(U32.mul(delay, 2), 64)),
           do IO<Unit>:
             removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(dir ++ "/" ++ token))
             IO.pure(Unit, Unit{})))
 
 def acquire_heavy_loop(+dir: String, +token: String, +priority: U32, +delay: U32) -> IO(Unit):
-  acquire_heavy(acquire_heavy, dir, token, priority, delay)
+  acquire_heavy(dir, token, priority, delay)
 
 def supervise_owned(+attempt: String, +keydir: String, +kind: String, source_root: String,
                     entry: String, key: String, +started: String, names: List<&2,String>,
