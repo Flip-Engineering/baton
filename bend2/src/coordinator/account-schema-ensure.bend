@@ -10,9 +10,12 @@ def ensure_account_schema(+path: String) -> IO(Unit):
     installed : String <- IO.try(String,Accounts.commit_read(canonical,""))
     IO.write("{\"schema\":\"baton2-account-schema-ensure-v1\",\"status\":\"ready\"}\n")
 
+def main_arguments(arguments: List<String>) -> IO(Unit):
+  match arguments:
+    case +path <> Nil{}: ensure_account_schema(path)
+    case other: IO.die(Unit,2,"usage: account-schema-ensure DATABASE")
+
 def main() -> IO(Unit):
   do IO<Unit>:
     arguments : List<String> <- IO.args()
-    match arguments:
-      case +path <> Nil{}: ensure_account_schema(path)
-      case other: IO.die(Unit,2,"usage: account-schema-ensure DATABASE")
+    main_arguments(arguments)
