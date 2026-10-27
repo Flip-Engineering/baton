@@ -12,6 +12,7 @@ import ../src/storage/state.bend as S
 import ../src/host/process.bend as Proc
 import ../src/host/files.bend as F
 import ../src/host/sqlite.bend as DB
+import ../src/host/storage.bend as Host
 import ../src/git/process.bend as Git
 import ../src/git/types.bend as G
 import ../src/git/text.bend as Tx
@@ -59,7 +60,7 @@ def write_file(+path: String, +text: String) -> IO(Unit):
     IO.pure(Unit, unit)
 
 def db_schema() -> String:
-  "CREATE TABLE sessions(id TEXT PRIMARY KEY,parent TEXT,harness TEXT,model TEXT DEFAULT '',effort TEXT DEFAULT '',native TEXT DEFAULT '',observed_harness TEXT DEFAULT '',observed_model TEXT DEFAULT '',observed_effort TEXT DEFAULT '',endpoint TEXT DEFAULT '',workspace TEXT DEFAULT '',branch TEXT DEFAULT '',base TEXT DEFAULT '');CREATE TABLE executions(session TEXT,id TEXT,directory TEXT,phase TEXT,status TEXT);CREATE TABLE messages(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE,sender TEXT,recipient TEXT,kind TEXT,body TEXT,receipt TEXT);CREATE TABLE log_files(session TEXT,log TEXT,PRIMARY KEY(session,log));CREATE TABLE log_generations(session TEXT NOT NULL,attempt TEXT NOT NULL,log TEXT NOT NULL,base TEXT NOT NULL,PRIMARY KEY(session,attempt));"
+  "CREATE TABLE sessions(id TEXT PRIMARY KEY,parent TEXT,harness TEXT,model TEXT DEFAULT '',effort TEXT DEFAULT '',native TEXT DEFAULT '',observed_harness TEXT DEFAULT '',observed_model TEXT DEFAULT '',observed_effort TEXT DEFAULT '',endpoint TEXT DEFAULT '',workspace TEXT DEFAULT '',branch TEXT DEFAULT '',base TEXT DEFAULT '');CREATE TABLE executions(session TEXT,id TEXT,directory TEXT,phase TEXT,status TEXT);CREATE TABLE messages(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE,sender TEXT,recipient TEXT,kind TEXT,body TEXT,receipt TEXT);CREATE TABLE message_reads(message TEXT,recipient TEXT,PRIMARY KEY(message,recipient));CREATE TABLE log_files(session TEXT,log TEXT,PRIMARY KEY(session,log));CREATE TABLE log_generations(session TEXT NOT NULL,attempt TEXT NOT NULL,log TEXT NOT NULL,base TEXT NOT NULL,PRIMARY KEY(session,attempt));"
 
 def db_session_sql(+root: String) -> String:
   "INSERT INTO sessions(id,parent,harness,workspace,branch,base) VALUES('owner',NULL,'omp','" ++ root ++ "','','');"
@@ -275,8 +276,25 @@ def presence_detail(presence: T.Presence) -> String:
     case T.Absent{}: ""
     case T.Unknown{}: "unknown"
 
-def held_file_script(+file: String) -> String:
-  "exec 3<" ++ file ++ "; sleep 30"
+# Peers register in the test proc view and report readiness after setup.
+def peer_line(value: Maybe<String>) -> String:
+  match value:
+    case Some{line}: Tx.trim_nl(line)
+    case None{}: ""
+
+def peer_ready(result: Result<&1,&1,U32 & String,U32>) -> IO(Result<&1,&1,U32 & String,U32>):
+  match result:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>, Fail{error})
+    case Done{+handle}: do IO<Result<&1,&1,U32 & String,U32>>:
+      ready : Maybe<String> <- IO.try(Maybe<String>, Proc.ProcessChild.read_line(handle))
+      checked : Unit <- check("peer-ready", String.eq(peer_line(ready), "ready"), "peer did not initialize")
+      IO.pure(Result<&1,&1,U32 & String,U32>, Done{handle})
+
+def fixture_peer(+dir: String, +stderr: String, +file: String, +unreadable: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  do IO<Result<&1,&1,U32 & String,U32>>:
+    script : String <- command_output(["/bin/realpath", "bend2/test/storage-peer.py"])
+    child : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/usr/bin/env", "python3", script, file, unreadable]), dir, stderr)
+    peer_ready(child)
 
 def spawned_holder(result: Result<&1,&1,U32 & String,U32>, +dir: String) -> IO(Unit):
   match result:
@@ -309,12 +327,12 @@ def process_checks(+root: String) -> IO(Unit):
   do IO<Unit>:
     +dir : String = root ++ "/proc-parent"
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
-    spawned : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sleep", "30"]), dir, dir ++ "/stderr")
+    spawned : Result<&1,&1,U32 & String,U32> <- fixture_peer(dir, dir ++ "/stderr", "", "0")
     unit : Unit <- spawned_process(spawned, dir)
     +held : String = dir ++ "/held"
     wrote : Unit <- write_file(held, "x")
     +held_path : String <- command_output(["/bin/realpath", "-m", held])
-    holder : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sh", "-c", held_file_script(held_path)]), dir, dir ++ "/holder.stderr")
+    holder : Result<&1,&1,U32 & String,U32> <- fixture_peer(dir, dir ++ "/holder.stderr", held_path, "0")
     unit2 : Unit <- spawned_holder(holder, dir)
     IO.pure(Unit, unit2)
 
@@ -507,8 +525,6 @@ def database_malformed_check(+db: String, +root: String) -> IO(Unit):
     b : Unit <- check("malformed-endpoint-unknown", presence_unknown(facts_database_or_unknown(facts)), "malformed endpoint produced known database evidence")
     IO.pure(Unit, Unit{})
 
-def unknown_peer_script() -> String:
-  "import ctypes,time; getattr(ctypes.CDLL(None),'prctl',lambda *args: 0)(4,0,0,0,0); time.sleep(30)"
 
 # Unknown runtime evidence preserves the candidate before removal is attempted.
 # The removal check uses a readable 130-deep chain through the full apply and
@@ -526,26 +542,7 @@ def deep_marker_path(remaining: Nat, +prefix: String) -> String:
     case 0n: prefix ++ "/marker.txt"
     case 1n+rest: deep_marker_path(rest, prefix ++ "/n")
 
-def removal_repair_check(+db: String, +root: String, +dir: String, +deep: String, +leaf: String, +marker: String) -> IO(Unit):
-  do IO<Unit>:
-    +repair : String = "r=\"$1/repaired\"; mkdir -p \"$r\" || exit 1; mv \"$2\" \"$r/leaf.txt\" || exit 1; mv \"$3\" \"$r/marker.txt\" || exit 1; rm -rf \"$4\""
-    repaired : Unit <- run_cmd(["/bin/sh", "-c", repair, "sh", dir, leaf, marker, deep])
-    +repaired_leaf : String = dir ++ "/repaired/leaf.txt"
-    +repaired_marker : String = dir ++ "/repaired/marker.txt"
-    repaired_leaf_seen : O.Observation <- O.observe(repaired_leaf)
-    e : Unit <- check("interrupted-repaired-leaf-preserved", O.observation_is_found(repaired_leaf_seen), "repaired leaf missing")
-    repaired_marker_seen : O.Observation <- O.observe(repaired_marker)
-    f : Unit <- check("interrupted-repaired-marker-preserved", O.observation_is_found(repaired_marker_seen), "repaired marker missing")
-    +replayed_candidate : T.Candidate <- candidate_for(dir, T.Scratch{}, clear_facts())
-    +replayed_report : String <- remove_until_settled(db, root, replayed_candidate, dir, 64n)
-    g : Unit <- check("interrupted-replay", String.starts_with(replayed_report, "removed"), replayed_report)
-    removed_leaf : O.Observation <- O.observe(repaired_leaf)
-    h : Unit <- check("interrupted-replay-leaf-removed", Bool.not(O.observation_is_found(removed_leaf)), "repaired leaf remains")
-    removed_marker : O.Observation <- O.observe(repaired_marker)
-    i : Unit <- check("interrupted-replay-marker-removed", Bool.not(O.observation_is_found(removed_marker)), "repaired marker remains")
-    IO.pure(Unit, Unit{})
-
-def removal_refused_check(+db: String, +root: String) -> IO(Unit):
+def removal_deep_check(+db: String, +root: String) -> IO(Unit):
   do IO<Unit>:
     +dir : String = root ++ "/interrupted"
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
@@ -556,13 +553,14 @@ def removal_refused_check(+db: String, +root: String) -> IO(Unit):
     +marker : String = deep_marker_path(130n, deep)
     +candidate : T.Candidate <- candidate_for(dir, T.Scratch{}, clear_facts())
     +report : String <- remove_until_settled(db, root, candidate, dir, 64n)
-    a : Unit <- check("interrupted-refused", String.starts_with(report, "refused"), report)
-    b : Unit <- check("interrupted-refused-detail", Bool.and(String.contains(report, "partial"), String.contains(report, "error=")), report)
-    kept : O.Observation <- O.observe(leaf)
-    c : Unit <- check("interrupted-leaf-preserved", O.observation_is_found(kept), "deep leaf removed")
-    kept_marker : O.Observation <- O.observe(marker)
-    d : Unit <- check("interrupted-marker-preserved", O.observation_is_found(kept_marker), "deep marker removed")
-    replay : Unit <- removal_repair_check(db, root, dir, deep, leaf, marker)
+    a : Unit <- check("deep-tree-removed", String.starts_with(report, "removed"), report)
+    removed_leaf : O.Observation <- O.observe(leaf)
+    b : Unit <- check("deep-leaf-removed", Bool.not(O.observation_is_found(removed_leaf)), "deep leaf remains")
+    removed_marker : O.Observation <- O.observe(marker)
+    c : Unit <- check("deep-marker-removed", Bool.not(O.observation_is_found(removed_marker)), "deep marker remains")
+    +replay_candidate : T.Candidate <- candidate_for(dir, T.Scratch{}, clear_facts())
+    +replayed : String <- remove_until_settled(db, root, replay_candidate, dir, 64n)
+    d : Unit <- check("deep-replay-idempotent", Bool.or(String.starts_with(replayed, "already-absent"), String.starts_with(replayed, "missing")), replayed)
     cleaned : Unit <- run_cmd(["/bin/rm", "-rf", dir])
     IO.pure(Unit, Unit{})
 
@@ -571,7 +569,6 @@ def unknown_runtime_spawned(result: Result<&1,&1,U32 & String,U32>, +db: String,
     case Fail{error}: IO.die(Unit, 1, "unknown runtime peer spawn failed")
     case Done{+handle}:
       do IO<Unit>:
-        slept : Unit <- IO.sleep(100)
         +candidate : T.Candidate <- candidate_for(file, T.Scratch{}, clear_facts())
         preview : T.Preview <- one_preview(root, candidate)
         receipt : T.Receipt <- apply_preview(db, preview)
@@ -595,12 +592,11 @@ def spawned_unknown_holder(result: Result<&1,&1,U32 & String,U32>, +dir: String,
     case Fail{error}: IO.die(Unit, 1, "unknown peer spawn failed")
     case Done{+handle}:
       do IO<Unit>:
-        slept : Unit <- IO.sleep(100)
         absent : T.Presence <- O.runtime_presence(dir)
         unknown_ok : Unit <- check_unknown_presence(absent)
         signaled : Unit <- IO.try(Unit, Proc.ProcessChild.signal(handle, 15))
         waited : String <- IO.try(String, Proc.ProcessChild.wait(handle))
-        holder : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sh", "-c", held_file_script(database), "sh", database]), ".", dir ++ ".holder.stderr")
+        holder : Result<&1,&1,U32 & String,U32> <- fixture_peer(".", dir ++ ".holder.stderr", database, "0")
         held : Unit <- spawned_holder(holder, dir)
         IO.pure(Unit, held)
 
@@ -622,8 +618,7 @@ def spawned_presence_precedence(result: Result<&1,&1,U32 & String,U32>, +dir: St
     case Fail{error}: IO.die(Unit, 1, "unknown peer spawn failed")
     case Done{+unknown_handle}:
       do IO<Unit>:
-        slept : Unit <- IO.sleep(100)
-        holder : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sleep", "30"]), dir, dir ++ ".cwd-holder.stderr")
+        holder : Result<&1,&1,U32 & String,U32> <- fixture_peer(dir, dir ++ ".cwd-holder.stderr", "", "0")
         spawned_positive_holder(holder, unknown_handle, dir)
 
 def unknown_runtime_check(+db: String, +root: String) -> IO(Unit):
@@ -632,7 +627,7 @@ def unknown_runtime_check(+db: String, +root: String) -> IO(Unit):
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
     +file : String = dir ++ "/candidate.txt"
     wrote : Unit <- write_file(file, "payload")
-    spawned : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/usr/bin/env", "python3", "-c", unknown_peer_script()]), ".", dir ++ ".unknown.stderr")
+    spawned : Result<&1,&1,U32 & String,U32> <- fixture_peer(".", dir ++ ".unknown.stderr", "", "1")
     unit : Unit <- unknown_runtime_spawned(spawned, db, root, file)
     IO.pure(Unit, unit)
 
@@ -640,7 +635,7 @@ def positive_precedence_check(+root: String) -> IO(Unit):
   do IO<Unit>:
     +dir : String = root ++ "/positive-precedence"
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
-    unknown : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/usr/bin/env", "python3", "-c", unknown_peer_script()]), ".", dir ++ ".unknown.stderr")
+    unknown : Result<&1,&1,U32 & String,U32> <- fixture_peer(".", dir ++ ".unknown.stderr", "", "1")
     spawned_presence_precedence(unknown, dir)
 
 def unlinked_holder_check(+root: String) -> IO(Unit):
@@ -650,7 +645,7 @@ def unlinked_holder_check(+root: String) -> IO(Unit):
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
     +database : String = dir ++ "/orchestra.db"
     wrote : Unit <- write_file(database, "payload")
-    spawned : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/usr/bin/env", "python3", "-c", unknown_peer_script()]), ".", dir ++ ".unknown.stderr")
+    spawned : Result<&1,&1,U32 & String,U32> <- fixture_peer(".", dir ++ ".unknown.stderr", "", "1")
     spawned_unknown_holder(spawned, dir, database)
 
 def exclusive_check(+db: String) -> IO(Unit):
@@ -948,7 +943,7 @@ def collect_check(+db: String, +root: String) -> IO(Unit):
     k : Unit <- check("collect-refused-json", String.eq(refused_text,"{\"session\":\"collect-owner\",\"refused\":\"3: storage cleanup busy\",\"receipts\":[]}"), refused_text)
     IO.pure(Unit, Unit{})
 
-def main() -> IO(Unit):
+def storage_checks() -> IO(Unit):
   do IO<Unit>:
     +root : String <- command_output(["/usr/bin/realpath", "-m", ".scratch/bend2-storage-test"])
     +db : String <- command_output(["/usr/bin/realpath", "-m", ".scratch/bend2-storage-test.db"])
@@ -969,10 +964,33 @@ def main() -> IO(Unit):
     malformed : Unit <- malformed_entries_check(root)
     overlap : Unit <- overlap_check(db, root)
     busy : Unit <- busy_check(db, root)
-    removal_refused : Unit <- removal_refused_check(db, root)
+    removal_deep : Unit <- removal_deep_check(db, root)
     unknown_runtime : Unit <- unknown_runtime_check(db, root)
     parent_rename : Unit <- parent_rename_check(db, root)
     malformed_db : Unit <- malformed_db_check(db, root)
     malformed_endpoint : Unit <- database_malformed_check(db, root)
     collection : Unit <- collect_check(db, root)
     IO.print("storage checks: all green")
+
+def reference_scan(mode: String, +path: String) -> IO(Unit):
+  match mode:
+    case "process-refs":
+      do IO<Unit>:
+        result : String <- IO.try(String, Host.StorageHost.process_refs(path))
+        IO.print(result)
+    case "runtime-refs":
+      do IO<Unit>:
+        result : String <- IO.try(String, Host.StorageHost.runtime_refs(path))
+        IO.print(result)
+    case other: IO.die(Unit, 2, "storage-test [process-refs|runtime-refs PATH]")
+
+def main_args(args: List<String>) -> IO(Unit):
+  match args:
+    case Nil{}: storage_checks()
+    case mode <> path <> Nil{}: reference_scan(mode, path)
+    case other: IO.die(Unit, 2, "storage-test [process-refs|runtime-refs PATH]")
+
+def main() -> IO(Unit):
+  do IO<Unit>:
+    args : List<String> <- IO.args()
+    main_args(args)

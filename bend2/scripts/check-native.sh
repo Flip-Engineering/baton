@@ -39,7 +39,30 @@ sh bend2/scripts/build-native.sh bend2/tests/git.bend .scratch/bend2/git-test
 sh bend2/scripts/build-native.sh bend2/tests/land.bend .scratch/bend2/land-test
 .scratch/bend2/land-test
 sh bend2/scripts/build-native.sh bend2/tests/storage.bend .scratch/bend2/storage-test
-.scratch/bend2/storage-test
+case "$(uname -s)" in
+  Linux)
+    # The reference-scan and Cargo fixtures read the Linux proc filesystem and
+    # Linux mount identity. Other platforms keep the production
+    # unknown:non-linux answer, which preserves every candidate.
+    BATON2_STORAGE_TEST="$root/.scratch/bend2/storage-test" "$PYTHON3" bend2/test/storage-process-refs.py
+    ;;
+  *)
+    echo "storage reference fixtures run on Linux only; running the native storage checks" >&2
+    .scratch/bend2/storage-test
+    ;;
+esac
+sh bend2/scripts/build-native.sh bend2/tests/storage-cargo.bend .scratch/bend2/storage-cargo-test
+case "$(uname -s)" in
+  Linux)
+    BATON2_STORAGE_CARGO_TEST="$root/.scratch/bend2/storage-cargo-test" \
+    BATON2_TEST_CARGO="${BATON2_TEST_CARGO:-$(command -v cargo || printf '%s/.cargo/bin/cargo' "$HOME")}" \
+    BATON2_TEST_RUSTC="${BATON2_TEST_RUSTC:-$(command -v rustc || printf '%s/.cargo/bin/rustc' "$HOME")}" \
+    "$PYTHON3" bend2/test/storage-cargo.py
+    ;;
+  *)
+    echo "Cargo release fixture runs on Linux only; Darwin validation not performed here" >&2
+    ;;
+esac
 sh bend2/scripts/build-native.sh bend2/test/subscription-profiles.bend .scratch/bend2/subscription-profiles-test
 .scratch/bend2/subscription-profiles-test
 sh bend2/scripts/build-native.sh bend2/test/focused-reads.bend .scratch/bend2/focused-reads

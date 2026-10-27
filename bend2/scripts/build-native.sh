@@ -155,6 +155,11 @@ else
     */bend2/harness/claude-credit-observe.bend) extra_libs=-lcurl ;;
     */bend2/harness/usage-read.bend) extra_libs=-lcurl ;;
   esac
-  native_compile cc "${CC:-clang}" -O1 -pthread -I "$root/bend2/src/host" "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
+  storage_test_flag=
+  case "$entry_path" in
+    */bend2/tests/storage.bend) storage_test_flag="-DBATON_STORAGE_TEST_PROC" ;;
+    */bend2/tests/storage-cargo.bend) storage_test_flag=-DBATON_STORAGE_CARGO_TEST ;;
+  esac
+  native_compile cc "${CC:-clang}" -O1 -pthread -I "$root/bend2/src/host" $storage_test_flag "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
 fi
 printf '%s\n' "$output"

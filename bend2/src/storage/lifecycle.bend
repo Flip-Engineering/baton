@@ -26,6 +26,7 @@ import ./policy.bend as P
 import ./apply.bend as A
 import ./observe.bend as O
 import ./state.bend as S
+import ./cargo.bend as Cargo
 import ../host/session-lock.bend as Lock
 import ../json/canonical.bend as J
 import ../git/text.bend as Tx
@@ -363,20 +364,127 @@ def preview_scan(+session: String, +spec: RootSpec, +state: S.State, +observed: 
           IO.pure(RootPreview, current),
         preview_valid(spec, observed, False{}, Nil{}))
 
-def preview_root(+session: String, +spec: RootSpec, +state: S.State) -> IO(RootPreview):
+def preview_root_generic(+session: String, +spec: RootSpec, +state: S.State) -> IO(RootPreview):
   do IO<RootPreview>:
     observed : O.Observation <- O.observe(root_path_of(spec))
     scan : O.Scan <- O.children(root_path_of(spec))
     current : RootPreview <- preview_scan(session, spec, state, observed, scan)
     IO.pure(RootPreview, current)
 
-def preview_roots(+session: String, specs: List<&2,RootSpec>, +state: S.State, acc: List<RootPreview>) -> IO(List<RootPreview>):
+# Cargo consumers use canonical operation/workspace paths. Missing historical
+# owners do not add a provenance requirement to generated output collection.
+def cargo_reference_result(result: Result<&1,&1,U32 & String,String>, +path: String,
+                           detail: String, unknown: Bool, next: Bool -> IO(T.Presence)) -> IO(T.Presence):
+  match result:
+    case Fail{error}: next(True{})
+    case Done{+resolved}:
+      Bool.pick(IO(T.Presence), Bool.or(S.path_under(path, resolved), S.path_under(resolved, path)),
+        IO.pure(T.Presence, T.Present{detail}), next(unknown))
+
+def cargo_pending_sessions(rows: List<&2,S.SessionRow>, +pending: List<&2,S.PendingRow>,
+                           +path: String, +unknown: Bool) -> IO(T.Presence):
+  match rows:
+    case Nil{}: IO.pure(T.Presence, Bool.pick(T.Presence, unknown, T.Unknown{}, T.Absent{}))
+    case S.SessionRow{+id, workspace, branch, base} <> +rest:
+      Bool.pick(IO(T.Presence), U32.is_eq(S.pending_count(pending, id), 0),
+        cargo_pending_sessions(rest, pending, path, unknown),
+        do IO<T.Presence>:
+          resolved : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(workspace)
+          cargo_reference_result(resolved, path, "pending:" ++ id, unknown,
+            next_unknown => cargo_pending_sessions(rest, pending, path, next_unknown)))
+
+def cargo_executions(rows: List<&2,S.ExecutionRow>, +sessions: List<&2,S.SessionRow>,
+                     +pending: List<&2,S.PendingRow>, +path: String, +unknown: Bool) -> IO(T.Presence):
+  match rows:
+    case Nil{}: cargo_pending_sessions(sessions, pending, path, unknown)
+    case S.ExecutionRow{session, id, directory, phase, status} <> +rest:
+      Bool.pick(IO(T.Presence), String.eq(phase, "exited"),
+        cargo_executions(rest, sessions, pending, path, unknown),
+        do IO<T.Presence>:
+          resolved : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(directory)
+          cargo_reference_result(resolved, path, "execution:" ++ id, unknown,
+            next_unknown => cargo_executions(rest, sessions, pending, path, next_unknown)))
+
+def cargo_consumer_operations(state: S.State, path: String) -> IO(T.Presence):
+  match state:
+    case S.State{sessions, executions, logs, pending, databases, retained, valid}:
+      cargo_executions(executions, sessions, pending, path, False{})
+
+def cargo_consumer_database(state: S.State, +path: String, database: T.Presence) -> IO(T.Presence):
+  match database:
+    case T.Absent{}: cargo_consumer_operations(state, path)
+    case present: IO.pure(T.Presence, present)
+
+def cargo_consumer_canonical(+state: S.State, canonical: Result<&1,&1,U32 & String,String>) -> IO(T.Presence):
+  match canonical:
+    case Fail{error}: IO.pure(T.Presence, T.Unknown{})
+    case Done{+path}: do IO<T.Presence>:
+      database : T.Presence <- S.database_fact(state, path)
+      cargo_consumer_database(state, path, database)
+
+def cargo_consumer_valid(+state: S.State, path: String, valid: Bool) -> IO(T.Presence):
+  match valid:
+    case False{}: IO.pure(T.Presence, T.Unknown{})
+    case True{}: do IO<T.Presence>:
+      canonical : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(path)
+      cargo_consumer_canonical(state, canonical)
+
+def cargo_state_consumer(+state: S.State, +path: String) -> IO(T.Presence):
+  cargo_consumer_valid(state, path, S.valid_of(state))
+
+def cargo_consumer(+db: String, +path: String) -> IO(T.Presence):
+  do IO<T.Presence>:
+    state : S.State <- S.load(db)
+    cargo_state_consumer(state, path)
+
+# The root's recorded source names the producing service's selection
+# authority. A `selection:` source names an ACP service selection record
+# (schema acp.fframes-service-selection/v1) whose registered runtime, config
+# and manifest paths stay retained. A directory source names an installed
+# command directory whose symlinks resolve the runtime and rollback
+# selections. A root without a recorded source keeps an unknown service and
+# its output stays.
+def root_selection(+db: String, +spec: RootSpec, +candidate: String) -> IO(T.Presence):
+  match spec:
+    case RootSpec{T.BuildOutput{}, +path, +source}:
+      Bool.pick(IO(T.Presence), String.is_empty(source),
+        Cargo.unknown_selection(candidate),
+        Bool.pick(IO(T.Presence), String.starts_with(source, "selection:"),
+          Cargo.acp_selection(db, String.drop(source, 10n), candidate),
+          Cargo.baton_selection(source, candidate)))
+    case other: Cargo.unknown_selection(candidate)
+
+# Service producers use the same release path with their current selection
+# reader. The apply pipeline holds the storage-cleanup session lock and the
+# exclusive per-root cleanup lease across the collection.
+def cargo_release(+db: String, +path: String, +associated: String,
+                  selection: @+candidate: String -> IO(T.Presence)) -> IO(Cargo.Collection):
+  Cargo.collect(path, associated, candidate => cargo_consumer(db, candidate), selection)
+
+def preview_root_cargo(+db: String, +session: String, +spec: RootSpec, +state: S.State, output: Cargo.Output) -> IO(RootPreview):
+  match output:
+    case Cargo.Cargo{identity, origin}:
+      do IO<RootPreview>:
+        planned : T.Preview <- Cargo.preview(root_path_of(spec), session,
+          candidate => cargo_state_consumer(state, candidate), candidate => root_selection(db, spec, candidate))
+        +observed : O.Observation <- O.observe(root_path_of(spec))
+        IO.pure(RootPreview, RootPreview{root_path_of(spec), mount_of(observed), O.observation_identity(observed), planned})
+    case other: preview_root_generic(session, spec, state)
+
+def preview_root(+db: String, +session: String, +spec: RootSpec, +state: S.State) -> IO(RootPreview):
+  match spec:
+    case RootSpec{T.BuildOutput{}, +path, +source}: do IO<RootPreview>:
+      output : Cargo.Output <- Cargo.observe(path)
+      preview_root_cargo(db, session, spec, state, output)
+    case other: preview_root_generic(session, spec, state)
+
+def preview_roots(+db: String, +session: String, specs: List<&2,RootSpec>, +state: S.State, acc: List<RootPreview>) -> IO(List<RootPreview>):
   match specs:
     case Nil{}: IO.pure(List<RootPreview>, List.reverse(&1, RootPreview, acc))
     case Con{head, tail}:
       do IO<List<RootPreview>>:
-        current : RootPreview <- preview_root(session, head, state)
-        deeper : List<RootPreview> <- preview_roots(session, tail, state, Con{current, acc})
+        current : RootPreview <- preview_root(db, session, head, state)
+        deeper : List<RootPreview> <- preview_roots(db, session, tail, state, Con{current, acc})
         IO.pure(List<RootPreview>, deeper)
 
 def entry_class(+entry: T.Entry) -> T.StorageClass:
@@ -400,12 +508,26 @@ def apply_preview(+db: String, +spec: RootSpec, preview: RootPreview) -> IO(T.Re
     case RootPreview{root, mount, identity, planned}:
       A.apply(planned, A.Refresh{db, root_source_of(spec), root, identity})
 
-def apply_root(+session: String, +db: String, +spec: RootSpec) -> IO(T.Receipt):
+def apply_root_generic(+session: String, +db: String, +spec: RootSpec) -> IO(T.Receipt):
   do IO<T.Receipt>:
     state : S.State <- S.load(db)
-    preview : RootPreview <- preview_root(session, spec, state)
+    preview : RootPreview <- preview_root(db, session, spec, state)
     receipt : T.Receipt <- apply_preview(db, spec, preview)
     IO.pure(T.Receipt, receipt)
+
+def apply_root_cargo(+session: String, +db: String, +spec: RootSpec, output: Cargo.Output) -> IO(T.Receipt):
+  match output:
+    case Cargo.Cargo{identity, origin}:
+      Cargo.receipt(root_path_of(spec), "", session, candidate => cargo_consumer(db, candidate),
+        candidate => root_selection(db, spec, candidate))
+    case other: apply_root_generic(session, db, spec)
+
+def apply_root(+session: String, +db: String, +spec: RootSpec) -> IO(T.Receipt):
+  match spec:
+    case RootSpec{T.BuildOutput{}, +path, +source}: do IO<T.Receipt>:
+      output : Cargo.Output <- Cargo.observe(path)
+      apply_root_cargo(session, db, spec, output)
+    case other: apply_root_generic(session, db, spec)
 
 def apply_roots(+session: String, +db: String, specs: List<&2,RootSpec>, acc: List<T.Receipt>) -> IO(List<T.Receipt>):
   match specs:
@@ -443,7 +565,7 @@ def preview_json(+db: String, +session: String) -> IO(String):
   do IO<String>:
     specs : List<&2,RootSpec> <- configured_roots()
     +state : S.State <- S.load(db)
-    previews : List<RootPreview> <- preview_roots(session, specs, state, Nil{})
+    previews : List<RootPreview> <- preview_roots(db, session, specs, state, Nil{})
     IO.pure(String, previews_json(previews))
 
 def run_preview(+db: String, +session: String) -> IO(Unit):
