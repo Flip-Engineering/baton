@@ -1977,6 +1977,51 @@ class Receive(unittest.TestCase):
         self.assertNotEqual(answer['attempt'], stale)
         self.assertTrue(answer['error'])
 
+    def test_terminal_start_failure_allows_the_next_retained_attempt(self):
+        """A recorded start failure has no native birth to recover. The next
+        receive starts a fresh attempt and keeps the failed attempt directory."""
+        self.player('parent', harness='omp')
+        self.prepare_input('after-failed-start', 'parent',
+                           'Continue after the failed start.', kind='task')
+        failed_id = 'receive:parent:1:failed-start'
+        failed = self.directory / 'failed-start-attempt'
+        failed.mkdir()
+        fields = [
+            b'/bin/true\0',
+            os.fsencode(str(self.directory)),
+            os.fsencode(str(failed / 'native.stderr')),
+            b'',
+            b'recovery\0',
+            os.fsencode(str(failed / 'missing-owner.sock')),
+        ]
+        header = struct.pack('=8s6Q2I', b'BATONRP1',
+                             *(len(value) for value in fields), 0, 0)
+        (failed / 'manifest').write_bytes(header + b''.join(fields))
+        (failed / 'launch').write_bytes(b'launch\n')
+        with sqlite3.connect(self.db) as database:
+            database.execute(
+                'INSERT OR REPLACE INTO executions(session,id,mode,directory,phase,status) '
+                'VALUES(?,?,?,?,?,?)',
+                ('parent', failed_id, 'retained', str(failed),
+                 'exited', 'start failed'))
+        receiver = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(receiver, 'parent')
+        self.assertIn('[id: after-failed-start]', started['prompt'])
+        self.action(stream)
+        answer = self.receive_answer(receiver)
+        self.assertEqual(answer['receive'], 'accepted')
+        self.assertNotEqual(answer['attempt'], failed_id)
+        self.assertEqual(answer['state'], 'exited')
+        self.assertTrue(read_recorded(self.db, 'after-failed-start'))
+        new_directory = pathlib.Path(self.execution('parent')[2])
+        self.assertNotEqual(new_directory, failed)
+        self.assertTrue((failed / 'launch').is_file(),
+                        'the failed attempt directory must be retained')
+        self.assertFalse((failed / 'native.birth').exists(),
+                         'the failed attempt never recorded a native birth')
+        self.shutdown_idle_database_owner(
+            'the replacement receive did not leave an idle database owner')
+
     def test_queued_receive_does_not_report_another_admission(self):
         self.player('parent', harness='omp')
         self.prepare_input('first', 'parent', 'Complete the first task.', kind='task')

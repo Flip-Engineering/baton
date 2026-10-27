@@ -409,7 +409,7 @@ def acquired_native_owner_resolves_recorded_attempt(db,session,cmd,model,effort,
 # supplied lock while its recorded recovery arguments are used.
 def recorded_attempt_before_pending(+db: String, +session: String, +lock: U32, again: String -> IO(Result<&1,&1,U32 & String,Unit>), pending: (String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    +directory : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='retained'),'');"))
+    +directory : String <- IO.try(String,DB.Sql.query(db,Store.recorded_retained_sql(session)))
     +attempt : String <- IO.pure(String,Tx.trim_nl(directory))
     recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(attempt))
     Receive.acquired_attempt(db,session,lock,attempt,recovery,again,pending)
@@ -527,7 +527,7 @@ def direct_turn_checks_receive_before_admission(db,player,id,cmd,model,effort,cw
 
 def direct_receive_guard_reads_current(+db: String, player: String) -> IO(Unit):
   do IO<Unit>:
-    directory : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(player) ++ " AND mode='retained'),'');"))
+    directory : String <- IO.try(String,DB.Sql.query(db,Store.recorded_retained_sql(player)))
     recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(Tx.trim_nl(directory)))
     Turn.retained_receive_admitted(recovery)
 

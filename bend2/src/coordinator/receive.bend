@@ -1015,10 +1015,12 @@ def acquired_attempt(db: String, session: String, lock: U32, directory: String, 
     case None{}: pending(again)
     case Some{args}: recover_owned(db,session,directory,lock,String.split(args,Char.from_u32(0)),again)
 
-# The canonical guard owner resolves the current durable attempt before admission.
+# The canonical guard owner resolves a recoverable recorded attempt before
+# admission. A terminal start failure is not recoverable: its keeper never
+# recorded a native birth, so the next admission starts a fresh attempt.
 def acquired_recorded(+db: String, +session: String, +lock: U32, again: String -> IO(Result<&1,&1,U32 & String,Unit>), pending: (String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    +directory : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='retained'),'');"))
+    +directory : String <- IO.try(String,DB.Sql.query(db,Store.recorded_retained_sql(session)))
     +attempt : String <- IO.pure(String,Tx.trim_nl(directory))
     recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(attempt))
     acquired_attempt(db,session,lock,attempt,recovery,again,pending)
