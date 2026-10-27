@@ -3363,6 +3363,7 @@ function literal_chain_list_helpers(p: Parse, b: Extract<Body, { $: "Match" }>,
     body = body_sub(body, row.h0.i, { $: "PVar", k: h0K, i: h0I,
       q: Many(), s: row.h0.s });
     const hIdx = row.fields.map(() => fr());
+    const tIdx = row.fields.map(() => fr());
     row.fields.forEach((f, i) => {
       body = body_sub(body, f.i, { $: "PVar", k: "_f" + hIdx[i],
         i: hIdx[i], q: Many(), s: f.s });
@@ -3384,7 +3385,7 @@ function literal_chain_list_helpers(p: Parse, b: Extract<Body, { $: "Match" }>,
           con2("_x" + eh, eh, Many(), "_t" + et, et,
             fail([...prefix, EH], ET)), success);
       }
-      const fh = fr(), ft = fr();
+      const fh = hIdx[i], ft = tIdx[i];
       const H = Var("_f" + fh, fh), TT = Var("_t" + ft, ft);
       return listA(current,
         con2("_f" + fh, fh, Many(), "_t" + ft, ft,

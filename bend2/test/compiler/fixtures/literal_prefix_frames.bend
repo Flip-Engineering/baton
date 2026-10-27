@@ -7,7 +7,7 @@ def describe(xs: List<String>) -> String:
 
 def classify(xs: List<String>) -> String:
   match xs:
-    case +a <> "x" <> +rest <> Nil{}: a
+    case +a <> "x" <> +rest <> Nil{}: rest
     case +a <> "y" <> Nil{}: a
     case +a <> +b <> Nil{}: a
     case other: describe(other)

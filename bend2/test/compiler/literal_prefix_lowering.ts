@@ -102,7 +102,7 @@ assert.deepEqual(helpers, ["classify$litsuffix0", "classify$litrow1",
   "classify$litchain2", "classify$litrow3", "classify$litchain4"],
   "one helper per prefix row and literal group plus the remaining rows");
 check(fixture, "classify_text",
-  "a9fa7d1673394bc32b4b433558bbff62bf6ac45182eb0a8dfa8a73fb3b8a2ffc", 172);
+  "d7de8d9a971f98b5500b0a69be3347faa70bd8675660461821f07ed4a32a48a4", 172);
 check(fixture, "classify",
-  "f62145be40593ce8ec1844516efdd942e334f7ca9eb5693b609239b8f992c9cb", 41);
+  "58957da5bc662bacad71bfa58d6b44eb5a2d009bb3a1e154a1cc5a7718794a33", 41);
 console.log("PASS literal prefix fixture: Many String and Lone list lowered");
