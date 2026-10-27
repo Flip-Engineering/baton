@@ -77,6 +77,8 @@ bin/baton DATABASE register-receiver SESSION HARNESS_COMMAND OUTPUT_LOG
 
 The command validates and updates the endpoint through the coordinator's receiver registration path. It retains the session's model, harness, native session identity, workspace, and branch. Registration leaves pending input queued and does not start a receiver. Supply an optional working-directory argument only when updating the recorded workspace.
 
+For an OMP session, registration also runs the harness command with the recorded model, effort and session directory in rpc mode. The first stdout line must be a JSON object with `"type":"ready"`. A command that exits, prints another first line or prints no frame is refused, and the typed `receiver-refused` answer carries the child's `stdout` and `stderr`. The probe sends no prompt and writes no coordination row; a refusal leaves the endpoint, workspace, model, native identity and pending input as recorded, and creates no execution row and no output log.
+
 ## Package contents and distribution terms
 
 The archive contains the focused receiver at `bin/baton`, the full router at `bin/baton2`, the identical general CLI sibling `bin/baton-full`, manifest.json, install-receipt.json, SHA256SUMS, notices/, and libexec/baton2/. The focused receiver delegates general actions to `bin/baton-full`; the full router forwards internal receiver actions to `bin/baton` and recovery actions to `bin/baton-recovery`. A missing sibling makes the operation refuse. The task input, project settings and managed Codex inbox helpers are included in libexec/baton2/. The adapters select the archive's executable by default. The output directory also contains build logs, generated C when available, the manifest, archive, and archive checksum.

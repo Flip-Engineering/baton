@@ -179,6 +179,16 @@ the selected recorded session. An omitted command and log use its recorded
 native receiver. Explicit fields take precedence. The native configuration
 operation enforces the expected route, current attempt and explicit stop rules.
 
+For an OMP session, `receiver` runs the harness command before the endpoint is
+recorded. The command starts with the recorded model, effort and session
+directory in rpc mode, and its first stdout line must be a JSON object with
+`"type":"ready"`. The command is terminated when no frame arrives within five
+seconds, and killed five seconds later if it has not stopped. A refused
+command answers `receiver-refused` with the captured `stdout` and `stderr`.
+A refusal leaves the endpoint, workspace, model, native identity and pending
+input as recorded, and creates no execution row and no output log. A wrapper
+script is accepted when it delivers the frame.
+
 `resume --lift-stop` explicitly lifts an existing stop and resumes its recorded
 conversation. `resume --clear-stop` (also `clear-stop`) removes a terminal stop
 only: it preserves the native identity, conversation history, workspace and
