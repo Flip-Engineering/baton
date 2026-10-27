@@ -1017,7 +1017,7 @@ def acquire_heavy(~again_acquire: (@+dir: String -> @+token: String -> @+priorit
             IO.pure(Unit, Unit{})))
 
 def acquire_heavy_loop(+dir: String, +token: String, +priority: U32, +delay: U32) -> IO(Unit):
-  acquire_heavy(acquire_heavy, dir, token, priority, delay)
+  acquire_heavy(acquire_heavy_loop, dir, token, priority, delay)
 
 def supervise_owned(+attempt: String, +keydir: String, +kind: String, source_root: String,
                     entry: String, key: String, +started: String, names: List<&2,String>,
