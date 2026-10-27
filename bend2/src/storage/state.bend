@@ -531,10 +531,12 @@ def all_equal(values: List<String>, +expected: String) -> Bool:
     case Con{head, tail}: Bool.and(String.eq(head, expected), all_equal(tail, expected))
 
 # A staging source is an ownership-ending checkout. Removal requires the
-# candidate origin to be the authenticated repository, every local ref name to
-# exist on that remote, HEAD to be among the remote commits, and every worktree
-# registration to point at the candidate itself. Any command failure or parse
-# failure is unknown evidence and preserves the candidate.
+# candidate origin to be the authenticated repository, every local ref object
+# in every namespace to be advertised by that remote (a same-name ref that
+# points at a different object preserves the candidate), HEAD to be among the
+# advertised objects, and every worktree registration to point at the
+# candidate itself. Any command failure or parse failure is unknown evidence
+# and preserves the candidate.
 def staging_evidence(source_url: String, candidate_url: String, remote_text: String,
                      refs: String, head: String, toplevel: String, gitdir: String,
                      commondir: String, worklist: String) -> T.Presence:
@@ -546,16 +548,14 @@ def staging_evidence(source_url: String, candidate_url: String, remote_text: Str
 
 def staging_remote_evidence(remote_text: String, refs: String, head: String, toplevel: String,
                             gitdir: String, commondir: String, worklist: String) -> T.Presence:
-  +lines : List<String> = Tx.split_lines(remote_text)
-  +names : List<String> = field_lines(lines, 1n, Nil{})
-  +commits : List<String> = field_lines(lines, 0n, Nil{})
+  +commits : List<String> = field_lines(Tx.split_lines(remote_text), 0n, Nil{})
   +local : List<String> = Tx.split_lines(refs)
   Bool.pick(T.Presence, String.is_empty(head),
     T.Unknown{},
-    Bool.pick(T.Presence, Bool.not(String.is_empty(first_missing(local, names, ""))),
-      T.Present{"unpublished-ref"},
+    Bool.pick(T.Presence, Bool.not(String.is_empty(first_missing(local, commits, ""))),
+      T.Present{"unpublished-object"},
       Bool.pick(T.Presence, Bool.not(contains_value(commits, Tx.trim_nl(head))),
-        T.Present{"unpublished-commit"},
+        T.Present{"unpublished-object"},
         staging_worktree_evidence(Tx.trim_nl(toplevel), gitdir, commondir, worklist))))
 
 def staging_worktree_evidence(toplevel: String, gitdir: String, commondir: String, worklist: String) -> T.Presence:
@@ -573,7 +573,7 @@ def staging_unpublished(+source: String, +path: String) -> IO(T.Presence):
     toplevel_git : G.GitOut <- Git.runGit(path, ["rev-parse", "--show-toplevel"])
     gitdir_git : G.GitOut <- Git.runGit(path, ["rev-parse", "--git-dir"])
     commondir_git : G.GitOut <- Git.runGit(path, ["rev-parse", "--git-common-dir"])
-    refs_git : G.GitOut <- Git.runGit(path, ["for-each-ref", "--format=%(refname)", "refs/heads", "refs/tags", "refs/stash"])
+    refs_git : G.GitOut <- Git.runGit(path, ["for-each-ref", "--format=%(objectname)"])
     worklist_git : G.GitOut <- Git.runGit(path, ["worktree", "list", "--porcelain"])
     staging_remote_reads(git_text(source_url_git), git_text(candidate_url_git), git_text(head_git),
       git_text(toplevel_git), git_text(gitdir_git), git_text(commondir_git), git_text(refs_git), git_text(worklist_git))

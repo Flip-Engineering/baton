@@ -695,15 +695,37 @@ CREATE TABLE log_generations(session TEXT,log TEXT,base TEXT,attempt TEXT);
         subprocess.run(['git', '-C', str(clone), 'commit', '--allow-empty', '-qm', 'local'],
                        check=True, capture_output=True)
         answer = self.staging_apply(staging, upstream)
-        self.assertIn('unpublished-commit', answer)
+        self.assertIn('unpublished-object', answer)
         self.assertTrue(clone.exists())
 
-    def test_staging_source_unpublished_ref_is_preserved(self):
+    def test_staging_source_same_name_diverged_ref_is_preserved(self):
+        # The remote feature branch stays at the published commit while the
+        # local branch of the same name carries a unique commit. HEAD remains
+        # on the published main, so only the ref object proves the divergence.
         upstream, staging, clone, remote = self.staging_clone()
-        subprocess.run(['git', '-C', str(clone), 'branch', 'local-only'],
+        def git(*args, cwd):
+            return subprocess.run(['git', '-C', str(cwd), *args],
+                                  check=True, capture_output=True, text=True)
+        git('checkout', '-q', '-b', 'feature', cwd=upstream)
+        git('push', '-q', 'origin', 'feature', cwd=upstream)
+        git('checkout', '-q', 'main', cwd=upstream)
+        git('fetch', '-q', 'origin', cwd=clone)
+        git('checkout', '-q', '-b', 'feature', 'origin/feature', cwd=clone)
+        git('commit', '--allow-empty', '-qm', 'local-diverged', cwd=clone)
+        git('checkout', '-q', 'main', cwd=clone)
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('unpublished-object', answer)
+        self.assertTrue(clone.exists())
+        self.assertTrue((clone / '.git' / 'refs' / 'heads' / 'feature').is_file())
+
+    def test_staging_source_other_ref_namespace_is_preserved(self):
+        # A note lives in refs/notes/commits and is unique local data even
+        # though every branch and HEAD point at advertised remote objects.
+        upstream, staging, clone, remote = self.staging_clone()
+        subprocess.run(['git', '-C', str(clone), 'notes', 'add', '-m', 'audit', 'HEAD'],
                        check=True, capture_output=True)
         answer = self.staging_apply(staging, upstream)
-        self.assertIn('unpublished-ref', answer)
+        self.assertIn('unpublished-object', answer)
         self.assertTrue(clone.exists())
 
     def test_staging_source_remote_identity_mismatch_is_preserved(self):

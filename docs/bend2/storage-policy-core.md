@@ -59,10 +59,10 @@ session workspace or execution directory is recorded under it. An absolute root
 with no such reference is arbitrary and is refused. A `staging-source` root
 is admitted when the operator records the authenticated repository as its
 source; its candidates carry no session record. A staging candidate is removed
-only when it is a clean worktree whose commit the authenticated repository
-contains (its `rev-list --all` names the commit), no process, runtime input,
-lease, live reference, database path or pending attempt names it, and every
-other preservation fact is absent. A dirty worktree, a commit the authenticated
+only when it is a clean worktree whose origin is the authenticated repository
+and every local ref object in every namespace is advertised by that remote
+(`git ls-remote`), no process, runtime input, lease, live reference, database
+path or pending attempt names it, and every other preservation fact is absent. A dirty worktree, a commit the authenticated
 repository does not contain, or any unknown fact preserves it. The policy reports
 `covered` per root, `apply:"lease-gated"` when every configured root is covered,
 `apply:"refused"` when any root is not covered, and `apply:"ready"` when the
