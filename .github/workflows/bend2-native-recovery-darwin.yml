@@ -80,6 +80,20 @@ jobs:
           printf 'BEND=%s\n' "$run/toolchain-home/bin/bend" >> "$GITHUB_ENV"
           shasum -a 256 "$run/toolchain-home/bin/bend" > "$run/toolchain/compiler.sha256"
 
+      - name: Select the maintained Xcode compiler and SDK
+        run: |
+          set -euo pipefail
+          developer_dir=/Applications/Xcode.app/Contents/Developer
+          test -d "$developer_dir"
+          cc="$(DEVELOPER_DIR="$developer_dir" xcrun --sdk macosx --find clang)"
+          sdk="$(DEVELOPER_DIR="$developer_dir" xcrun --sdk macosx --show-sdk-path)"
+          test -x "$cc"
+          test -d "$sdk"
+          printf 'DEVELOPER_DIR=%s\nCC=%s\nSDKROOT=%s\n' \
+            "$developer_dir" "$cc" "$sdk" >> "$GITHUB_ENV"
+          printf 'Darwin C compiler: %s\nDarwin SDK: %s\n' "$cc" "$sdk" \
+            | tee "$BATON2_RECOVERY_RUN/darwin-c-toolchain.txt"
+
       - name: Verify retained recovery C selection
         run: |
           set -euo pipefail
@@ -146,7 +160,7 @@ jobs:
           set -euo pipefail
           unset BEND_GENERATED_C
           export BATON2_QUEUE_RUN_ROOT="$BATON2_RECOVERY_RUN/queue-run"
-          clang --version > "$BATON2_RECOVERY_RUN/clang.txt"
+          "$CC" --version > "$BATON2_RECOVERY_RUN/clang.txt"
           git rev-parse HEAD > "$BATON2_RECOVERY_RUN/source-commit.txt"
           git rev-parse 'HEAD^{tree}' > "$BATON2_RECOVERY_RUN/source-tree.txt"
           python3 bend2/scripts/source-closure.py \
@@ -184,7 +198,7 @@ jobs:
           shutil.copyfile(proof_path, run / 'artifact/recovery-c-reuse.json')
           shutil.copyfile(run / 'recovery-c-selection.json', run / 'artifact/recovery-c-selection.json')
           shutil.copyfile(run / 'source-closure.json', run / 'artifact/source-closure.json')
-          for name in ('clang.txt', 'source-commit.txt', 'source-tree.txt', 'source-closure.stdout',
+          for name in ('clang.txt', 'darwin-c-toolchain.txt', 'source-commit.txt', 'source-tree.txt', 'source-closure.stdout',
                        'build.stdout', 'build.stderr', 'output.sha256'):
               shutil.copyfile(run / name, run / 'artifact' / name)
           for name in ('queue-bootstrap.telemetry', 'queue-bootstrap.stdout',
