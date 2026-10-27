@@ -123,7 +123,8 @@ def production_inputs(root, rows):
     # bytes on both sides, so a change that imports a previously unrelated
     # file pulls that file into the compared set.
     by_path = {row['path']: row for row in rows}
-    src = (root / 'bend2/src').resolve()
+    if len(by_path) != len(rows):
+        return [], 'A production path is recorded twice.'
     selected = {}
     pending = [ENTRY]
     while pending:
@@ -136,9 +137,20 @@ def production_inputs(root, rows):
         if row['mode'] == '120000':
             return [], 'A production symlink requires a normal compilation.'
         selected[relative] = row
-        if not relative.endswith('.bend'):
-            continue
         path = root / relative
+        if not relative.endswith('.bend'):
+            if relative.endswith(('.c', '.h')):
+                # A quoted C include is a tracked production input exactly
+                # like a Bend foreign import: the generated C is compiled
+                # with this header through bend2/src/host, so its bytes
+                # belong to the reuse identity (persistent-path.h in
+                # host/control.c and host/process-spawn.c).
+                for match in re.finditer(r'#\s*include\s+"([^"]+)"', path.read_text()):
+                    child = os.path.normpath(os.path.join(os.path.dirname(relative), match[1]))
+                    if child not in ('bend2/src',) and not child.startswith('bend2/src/'):
+                        return [], 'A C include leaves the production inputs: ' + relative
+                    pending.append(child)
+            continue
         lines = path.read_text().splitlines()
         in_header = True
         for line in lines:
@@ -151,17 +163,17 @@ def production_inputs(root, rows):
                 match = re.fullmatch(r'(\S+)\s+as\s+[A-Za-z_][A-Za-z0-9_]*(?:\s+#.*)?', value)
                 if not match:
                     return [], 'A module import requires a normal compilation: ' + relative
-                target = (path.parent / match[1]).resolve()
-                if not target.is_relative_to(src) or target.suffix != '.bend':
+                child = os.path.normpath(os.path.join(os.path.dirname(relative), match[1]))
+                if not (child.startswith('bend2/src/') and child.endswith('.bend')):
                     return [], 'A module import leaves the production directory: ' + relative
-                pending.append(str(target.relative_to(root.resolve())))
+                pending.append(child)
                 continue
             in_header = False
             for match in re.finditer(r'\bimport\s+"([^"]+)"', line):
-                target = (path.parent / match[1]).resolve()
-                if not target.is_relative_to(src):
+                child = os.path.normpath(os.path.join(os.path.dirname(relative), match[1]))
+                if not child.startswith('bend2/src/'):
                     return [], 'A foreign import leaves the production inputs: ' + relative
-                pending.append(str(target.relative_to(root.resolve())))
+                pending.append(child)
     return sorted(selected.values(), key=lambda row: row['path']), None
 
 
@@ -297,7 +309,7 @@ def select(args, result):
             rows.append({'path': str(path.relative_to(root)), 'mode': '120000',
                          'git_blob': hashlib.sha1(b'blob ' + str(len(body)).encode() + b'\0' + body).hexdigest(),
                          'size_bytes': len(body), 'sha256': hashlib.sha256(body).hexdigest()})
-        if path.is_file():
+        elif path.is_file():
             body = path.read_bytes()
             rows.append({'path': str(path.relative_to(root)),
                          'mode': '100755' if path.stat().st_mode & 0o111 else '100644',

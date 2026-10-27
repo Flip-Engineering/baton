@@ -57,7 +57,9 @@ def build_tree(root):
           "import Base\nimport ../host/process.bend as Process\n\ndef value() -> U32:\n  Process.value\n")
     write(root / "bend2/src/host/process.bend",
           "import Base\n\ndef value() -> U32:\n  foreign:\n    import \"./process-spawn.c\"\n")
-    write(root / "bend2/src/host/process-spawn.c", "int baton_process_spawn;\n")
+    write(root / "bend2/src/host/process-spawn.c",
+          "#include \"persistent-path.h\"\nint baton_process_spawn;\n")
+    write(root / "bend2/src/host/persistent-path.h", "#define BATON_PERSISTENT_PATH 1\n")
     write(root / "bend2/src/coordinator/laws.bend",
           "import Base\nimport ./receive-laws.bend as ReceiveLaws\n")
     write(root / "bend2/src/coordinator/receive-laws.bend",
@@ -139,6 +141,33 @@ def main():
         result = run_select(source, generated, proof_path, generated_c, compiler)
         assert result["status"] == "miss", result
         print("PASS newly imported law module selects a normal build")
+
+        build_tree(source)
+        write(source / "bend2/src/host/persistent-path.h", "#define BATON_PERSISTENT_PATH 2\n")
+        result = run_select(source, generated, proof_path, generated_c, compiler)
+        assert result["status"] == "miss", result
+        print("PASS changed included header selects a normal build")
+
+        header = source / "bend2/src/host/persistent-path.h"
+        if header.is_symlink():
+            header.unlink()
+        build_tree(source)
+        header.unlink()
+        header.symlink_to(source / "bend2/src/coordinator/store.bend")
+        result = run_select(source, generated, proof_path, generated_c, compiler)
+        assert result["status"] == "miss", result
+        assert "symlink" in result.get("reason", ""), result
+        print("PASS imported symlink selects a normal build with its reason")
+
+        if header.is_symlink():
+            header.unlink()
+        build_tree(source)
+        law = source / "bend2/src/coordinator/receive-laws.bend"
+        law.unlink()
+        law.symlink_to(source / "bend2/src/coordinator/store.bend")
+        result = run_select(source, generated, proof_path, generated_c, compiler)
+        assert result["status"] == "reused", result
+        print("PASS symlink outside the closure still selects reused")
     return 0
 
 
