@@ -2106,7 +2106,8 @@ function type_live(t: HTerm, out: Set<Bend.Name>,
 // node in a term. A ref in an argument or a body is not a type ref and
 // seeds nothing.
 function ann_live(t: HTerm, out: Set<Bend.Name>,
-  seen: WeakSet<HTerm> = new WeakSet(), d = 0): void {
+  seen: WeakSet<HTerm> = new WeakSet(), d = 0,
+  type_seen: WeakSet<HTerm> = new WeakSet()): void {
   // An explicit stack keeps the pre-order walk off the JavaScript call
   // stack: a coordinator body nests an annotation a let a level deep, and
   // let-bound annotations can produce temporary terms as their bodies open.
@@ -2122,7 +2123,7 @@ function ann_live(t: HTerm, out: Set<Bend.Name>,
     seen.add(s);
     switch (s.$) {
       case "Ann":
-        type_live(s.T, out);
+        type_live(s.T, out, type_seen);
         stack.push([s.x, du]);
         break;
       case "Lam":
@@ -2155,22 +2156,22 @@ function ann_live(t: HTerm, out: Set<Bend.Name>,
         stack.push([s.f, du]);
         break;
       case "Rwt":
-        type_live(s.p, out);
+        type_live(s.p, out, type_seen);
         stack.push([s.f, du]);
         stack.push([s.e, du]);
         break;
       case "Eql":
-        type_live(s.T, out);
+        type_live(s.T, out, type_seen);
         stack.push([s.b, du]);
         stack.push([s.a, du]);
         break;
       case "Typ":
-        type_live(s.g, out);
+        type_live(s.g, out, type_seen);
         break;
       case "All":
       case "ADT":
       case "Min":
-        type_live(s, out);
+        type_live(s, out, type_seen);
         break;
       default: break;
     }
@@ -2183,22 +2184,25 @@ function ann_live(t: HTerm, out: Set<Bend.Name>,
 // reachable elaborated body carries in an annotation.
 function v_live(cb: Carb): Set<Bend.Name> {
   const live = new Set<Bend.Name>();
+  // These roots all add names to `live`. Reuse identity visits across
+  // signatures and annotations so a shared higher-order type is opened once.
+  const type_seen = new WeakSet<HTerm>();
   // A book handed to compile_book must stay runnable: book_run reads main.v.
   live.add("main");
   for (const tld of Object.values(cb.book.tlds)) {
-    type_live(tld.T, live);
+    type_live(tld.T, live, type_seen);
   }
   for (const ctr of Object.values(cb.book.ctrs)) {
-    type_live(ctr.T, live);
+    type_live(ctr.T, live, type_seen);
   }
   let ann_definitions = 0;
   for (const k of SRCS.keys()) {
     const tld = cb.book.tlds[k];
     if (tld?.$ === "Def" && tld.h !== undefined) {
-      diagnostic_stage("pass.v_live.ann_live", {
-        definition: k, index: ++ann_definitions, total: SRCS.size,
-      });
-      ann_live(tld.h, live);
+      const details = { definition: k, index: ++ann_definitions, total: SRCS.size };
+      diagnostic("pass.v_live.ann_live.begin", details);
+      ann_live(tld.h, live, new WeakSet(), 0, type_seen);
+      diagnostic("pass.v_live.ann_live.end", details);
     }
   }
   const done = new Set<Bend.Name>();
