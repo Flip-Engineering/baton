@@ -973,22 +973,22 @@ def waiters_ticket_higher(text: String, +token: String, +priority: U32) -> IO(Bo
         alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(
           status_number(field(text, "pid")), field(text, "starttime")))
         IO.pure(Bool, U32.is_eq(alive, 1)),
-      IO.pure(Bool, False))
+      IO.pure(Bool, False{}))
 
 def waiters_scan_one(read: Result<&1,&1,U32 & String,String>, +token: String, +priority: U32) -> IO(Bool):
   match read:
-    case Fail{error}: IO.pure(Bool, False)
+    case Fail{error}: IO.pure(Bool, False{})
     case Done{+text}: waiters_ticket_higher(text, token, priority)
 
 def waiters_scan_names(+names: List<&1,String>, +dir: String, +token: String, +priority: U32) -> IO(Bool):
   match names:
-    case Nil{}: IO.pure(Bool, False)
+    case Nil{}: IO.pure(Bool, False{})
     case Con{+name, rest}:
       do IO<Bool>:
         reaped : Unit <- waiters_reap_stale(dir, name)
         read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(dir ++ "/" ++ name)
         higher : Bool <- waiters_scan_one(read, token, priority)
-        Bool.pick(IO(Bool), higher, IO.pure(Bool, True),
+        Bool.pick(IO(Bool), higher, IO.pure(Bool, True{}),
           waiters_scan_names(rest, dir, token, priority))
 
 def waiters_higher(+dir: String, +token: String, +priority: U32) -> IO(Bool):
