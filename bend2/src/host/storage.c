@@ -472,17 +472,35 @@ static int baton_storage_names_push(BatonStorageNames *names, const char *name) 
   return 0;
 }
 
-/* Linux mount IDs also distinguish bind mounts on the same device. */
+/* Answers 0 for a verified same mount, EXDEV for a different mount, and
+   ENOTSUP when the mount identity cannot be established (no statx support,
+   ENOSYS, or a mask without STATX_MNT_ID). Callers preserve on any non-zero
+   answer: st_dev equality cannot see a same-device bind mount. */
 static int baton_storage_mount_boundary(int fd, const char *name) {
 #if defined(__linux__) && defined(STATX_MNT_ID)
   struct statx parent, child;
   if (statx(fd, "", AT_EMPTY_PATH, STATX_MNT_ID, &parent) ||
       statx(fd, name, AT_SYMLINK_NOFOLLOW, STATX_MNT_ID, &child)) {
-    return errno == ENOSYS ? 0 : errno;
+    return ENOTSUP;
   }
-  if ((parent.stx_mask & child.stx_mask & STATX_MNT_ID) && parent.stx_mnt_id != child.stx_mnt_id) return EXDEV;
+  if (!(parent.stx_mask & STATX_MNT_ID) || !(child.stx_mask & STATX_MNT_ID)) return ENOTSUP;
+  return parent.stx_mnt_id == child.stx_mnt_id ? 0 : EXDEV;
+#else
+  return ENOTSUP;
 #endif
-  return 0;
+}
+
+/* The candidate root is a boundary of its own: a same-device bind mount keeps
+   st_dev equal, so without this check its contents would be deleted before
+   the final rmdir fails with EBUSY. The fixture hooks inject the kernel's
+   answers because unprivileged fixtures cannot mount. */
+static int baton_storage_candidate_boundary(int parent, const char *name) {
+#ifdef BATON_STORAGE_CARGO_TEST
+  const char *forced = getenv("BATON_CARGO_TEST_CANDIDATE_BOUNDARY");
+  if (forced && !strcmp(forced, "exdev")) return EXDEV;
+  if (forced && !strcmp(forced, "unknown")) return ENOTSUP;
+#endif
+  return baton_storage_mount_boundary(parent, name);
 }
 
 /* Removal walks with an explicit stack of frames. A frame holds one open
@@ -576,6 +594,12 @@ static int baton_storage_remove_children(int fd, dev_t device, BatonStorageCount
       if (different_device && !strcmp(name, different_device)) info.st_dev = device ^ 1;
 #endif
       int boundary = baton_storage_mount_boundary(frame->fd, name);
+#ifdef BATON_STORAGE_CARGO_TEST
+      /* Unknown mount identity must preserve the subtree exactly like a
+         detected boundary; the fixture injects the kernel's answer. */
+      const char *unknown_mount = getenv("BATON_CARGO_TEST_MOUNT_UNKNOWN");
+      if (unknown_mount && !strcmp(name, unknown_mount)) boundary = ENOTSUP;
+#endif
       if (info.st_dev != frame->device || boundary) {
         fprintf(stderr, "storage removal preserves mount entry=%s device=%llu root-device=%llu\n",
                 name, (baton_u64)info.st_dev, (baton_u64)frame->device);
@@ -640,6 +664,17 @@ static int baton_storage_remove_at(int parent, const char *name, const char *kin
     if (fstat(child, &opened) || opened.st_dev != info.st_dev || opened.st_ino != info.st_ino) {
       close(child);
       return 2;
+    }
+    /* The candidate root itself must not be a mount boundary before any
+       descent; the fixture hooks inject the kernel answer for the same-device
+       bind mount and unknown-identity cases. */
+    int boundary = baton_storage_candidate_boundary(parent, name);
+    if (boundary) {
+      fprintf(stderr, "storage removal preserves candidate mount entry=%s error=%d (%s)\n",
+              name, boundary, strerror(boundary));
+      close(child);
+      errno = boundary;
+      return -1;
     }
     count->nodes = 1;
     int error = baton_storage_remove_children(child, opened.st_dev, count);

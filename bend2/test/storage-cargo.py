@@ -587,5 +587,57 @@ CREATE TABLE log_generations(session TEXT,log TEXT,base TEXT,attempt TEXT);
         self.assertTrue(self.target.exists())
 
 
+    def native_remove(self, path, root, env=None):
+        st = os.lstat(path)
+        rst = os.stat(root)
+        identity = 'dir:%d:%d' % (st.st_dev, st.st_ino)
+        root_identity = 'dir:%d:%d' % (rst.st_dev, rst.st_ino)
+        run = subprocess.run([str(BINARY), 'remove', str(path), str(root), identity, root_identity],
+                             cwd=ROOT, env=env or self.environment, text=True, capture_output=True)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        return run.stdout.strip(), run.stderr
+
+    def test_candidate_bind_mount_boundary_preserves_the_tree(self):
+        # The hook injects the kernel's answer for a same-device bind mount:
+        # unprivileged fixtures cannot mount, and st_dev alone cannot see it.
+        parent = self.root / 'parent'
+        candidate = parent / 'candidate'
+        (candidate / 'keep').mkdir(parents=True)
+        (candidate / 'keep' / 'file.txt').write_text('keep\n')
+        env = dict(self.environment, BATON_CARGO_TEST_CANDIDATE_BOUNDARY='exdev')
+        answer, stderr = self.native_remove(candidate, parent, env)
+        self.assertIn('refused', answer, answer)
+        self.assertIn('error=18', answer, answer)
+        self.assertIn('preserves candidate mount entry=candidate', stderr)
+        self.assertEqual((candidate / 'keep' / 'file.txt').read_text(), 'keep\n')
+
+    def test_candidate_unknown_mount_identity_preserves_the_tree(self):
+        # statx unavailable or a mask without the mount id is unknown evidence:
+        # it must preserve, never authorize deletion.
+        parent = self.root / 'parent'
+        candidate = parent / 'candidate'
+        (candidate / 'keep').mkdir(parents=True)
+        (candidate / 'keep' / 'file.txt').write_text('keep\n')
+        env = dict(self.environment, BATON_CARGO_TEST_CANDIDATE_BOUNDARY='unknown')
+        answer, stderr = self.native_remove(candidate, parent, env)
+        self.assertIn('refused', answer, answer)
+        self.assertIn('error=95', answer, answer)
+        self.assertEqual((candidate / 'keep' / 'file.txt').read_text(), 'keep\n')
+
+    def test_unknown_child_mount_identity_preserves_the_subtree(self):
+        mounted = self.target / 'debug' / 'mount-unknown'
+        mounted.mkdir()
+        (mounted / 'keep').write_text('retained subtree\n')
+        env = dict(self.environment, BATON_CARGO_TEST_MOUNT_UNKNOWN=mounted.name)
+        run = subprocess.run([str(BINARY), 'collect', str(self.target), '', str(self.db), str(self.commands)],
+                             cwd=ROOT, env=env, text=True, capture_output=True)
+        print(run.stdout + run.stderr, end='', flush=True)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertIn('refused', run.stdout)
+        self.assertIn('error=95', run.stdout)
+        self.assertEqual((mounted / 'keep').read_text(), 'retained subtree\n')
+        self.assertTrue(self.target.exists())
+        self.build()
+
 if __name__ == '__main__':
     unittest.main()

@@ -204,7 +204,8 @@ def baton_selection(+directory: String, +path: String) -> IO(T.Presence):
 # selection record (schema acp.fframes-service-selection/v1): a JSON object
 # whose runtime, config and manifest text fields name the retained paths.
 # The running service's own process evidence holds active producer custody;
-# this reader answers only whether the record retains the candidate. Any
+# the record is a separate authority and this reader answers only whether the
+# record retains the candidate. Any
 # invalid, truncated, unreadable or unresolvable evidence is unknown, which
 # preserves the allocation.
 def sql_quote(+text: String) -> String:
