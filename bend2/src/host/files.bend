@@ -46,6 +46,11 @@ def Files.copy_file(source: String, path: String) -> IO(Result<&1,&1,U32 & Strin
 def Files.write_shared(path: String, value: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./files.c"
 
+# Atomically publishes a regular file with owner read/write and group read
+# permissions. The file is not writable by other group members.
+def Files.write_group_read(path: String, value: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./files.c"
+
 # File size, presence of NUL, and the first four bytes as hexadecimal text.
 def Files.byte_properties(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./files.c"

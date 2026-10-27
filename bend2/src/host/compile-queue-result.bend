@@ -215,6 +215,11 @@ def CompileQueueResult.write_text(+path: String, +text: String, +temporary: Stri
     written : Result<&1,&1,U32 & String,Unit> <- F.Files.write_private(temporary, text)
     CompileQueueResult.write_text_result(written, path, temporary)
 
+def CompileQueueResult.write_result_text(+path: String, +text: String, +temporary: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    written : Result<&1,&1,U32 & String,Unit> <- F.Files.write_group_read(temporary, text)
+    CompileQueueResult.write_text_result(written, path, temporary)
+
 def CompileQueueResult.install(+source: String, +destination: String, +staging: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   Artifact.CompileQueueArtifact.install(source, destination, staging)
 
@@ -329,7 +334,7 @@ def CompileQueueResult.write_rows(+path: String, +status: String, +code: String,
         ++ "work=" ++ work ++ "\n"
         ++ "detail=" ++ detail ++ "\n"
         ++ stdout_row ++ stderr_row ++ artifact_text
-      CompileQueueResult.write_text(path, text, path ++ ".tmp")
+      CompileQueueResult.write_result_text(path, text, path ++ ".tmp")
 
 def CompileQueueResult.write(+path: String, +status: String, +code: String, +kind: String, +key: String, +started: String, +finished: String, +attempt: String, +work: String, +stdout: String, +stderr: String, +detail: String, +names: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -430,7 +435,7 @@ def CompileQueueResult.write_adoption(+path: String, +key: String, +started: Str
       ++ adoption
       ++ "external-name=" ++ name ++ "\n"
       ++ "artifact=" ++ name ++ "\t" ++ kind ++ "\t" ++ digest ++ "\n")
-    CompileQueueResult.write_text(path, text, path ++ ".tmp")
+    CompileQueueResult.write_result_text(path, text, path ++ ".tmp")
 
 def CompileQueueResult.verify_adoption_read(read: Result<&1,&1,U32 & String,String>, +keydir: String, +adoption: String) -> IO(Result<&1,&1,U32 & String,Bool>):
   match read:
