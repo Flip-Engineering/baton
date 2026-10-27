@@ -1079,6 +1079,15 @@ class Control(unittest.TestCase):
     def dispatch_log(self, ident, suffix='.stdout'):
         return pathlib.Path(str(self.db) + '.dispatch-' + ident.encode().hex() + suffix)
 
+    def test_dispatch_long_message_identity_bounds_the_control_log_name(self):
+        self.root()
+        self.recruit('leaf')
+        ident = 'message:' + 'x' * 114
+        self.dispatch('dispatch-file', ident, 'root', 'leaf', 'guidance', self.task)
+        logs = list(self.db.parent.glob(self.db.name + '.dispatch-*.stdout'))
+        self.assertTrue(logs)
+        self.assertTrue(all(len(path.name) <= 255 for path in logs), logs)
+
     def report_logged(self, body):
         log = pathlib.Path(str(self.db) + '.root.log')
         if not log.exists():
