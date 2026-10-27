@@ -211,7 +211,7 @@ def queue_refreshed(+link: Proxy.Link, +state: State, +thread: String, +token: S
       Outcome.Checked.pure(Admission,Accepted{state})
     case False{}:
       do Outcome.Checked<Admission>:
-        result : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(["codex","queue","--thread",thread,"--message",pointer]),".")
+        result : Result<&1,&1,U32 & String,String> <- Outcome.Checked.lift(Result<&1,&1,U32 & String,String>,Process.Process.run(Tx.enc_argv(["codex","queue","--thread",thread,"--message",pointer]),"."))
         queue_receipt(link,state,thread,result)
 
 def queue_refreshed_result(+link: Proxy.Link, +state: State, +thread: String, refreshed: String & String) -> Outcome.Checked(Admission):
