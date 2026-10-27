@@ -997,27 +997,27 @@ def waiters_higher(+dir: String, +token: String, +priority: U32) -> IO(Bool):
     waiters_scan_names(Tx.split_nul(names), dir, token, priority)
 
 @unsafe
-def acquire_heavy(~again_acquire: (@+dir: String -> @+token: String -> @+priority: U32 -> @+delay: U32 -> IO(Unit)), +dir: String, +token: String, +priority: U32, +delay: U32) -> IO(Unit):
+def acquire_heavy(~again_acquire: (@+dir: String -> @+lock: String -> @+token: String -> @+priority: U32 -> @+delay: U32 -> IO(Unit)), +dir: String, +lock: String, +token: String, +priority: U32, +delay: U32) -> IO(Unit):
   do IO<Unit>:
     higher : Bool <- waiters_higher(dir, token, priority)
     Bool.pick(IO(Unit), higher,
       do IO<Unit>:
         slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(delay))
-        again_acquire(dir, token, priority, U32.min(U32.mul(delay, 2), 64)),
+        again_acquire(dir, lock, token, priority, U32.min(U32.mul(delay, 2), 64)),
       do IO<Unit>:
-        locked : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_fd_acquire(8))
+        +held : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(lock))
         higher_after : Bool <- waiters_higher(dir, token, priority)
         Bool.pick(IO(Unit), higher_after,
           do IO<Unit>:
-            released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(8))
+            released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(held))
             slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(delay))
-            again_acquire(dir, token, priority, U32.min(U32.mul(delay, 2), 64)),
+            again_acquire(dir, lock, token, priority, U32.min(U32.mul(delay, 2), 64)),
           do IO<Unit>:
             removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(dir ++ "/" ++ token))
             IO.pure(Unit, Unit{})))
 
-def acquire_heavy_loop(+dir: String, +token: String, +priority: U32, +delay: U32) -> IO(Unit):
-  acquire_heavy(acquire_heavy_loop, dir, token, priority, delay)
+def acquire_heavy_loop(+dir: String, +lock: String, +token: String, +priority: U32, +delay: U32) -> IO(Unit):
+  acquire_heavy(acquire_heavy_loop, dir, lock, token, priority, delay)
 
 def supervise_owned(+attempt: String, +keydir: String, +kind: String, source_root: String,
                     entry: String, key: String, +started: String, names: List<&2,String>,
@@ -1028,7 +1028,7 @@ def supervise_owned(+attempt: String, +keydir: String, +kind: String, source_roo
       ++ "\nstarttime=" ++ start ++ "\nkind=" ++ kind ++ "\nsetsid=1\nstarted_ns=" ++ started ++ "\n")
     active : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(keydir ++ "/active", active_text))
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
-    acquired : Unit <- acquire_heavy_loop(waiters_dir(state), token, priority, 4)
+    acquired : Unit <- acquire_heavy_loop(waiters_dir(state), state ++ "/heavy.lock", token, priority, 4)
     signaled : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.set_env(
       "BATON_COMPILE_QUEUE_COMPILED", attempt ++ "/compiled")
     supervise_marker_result(signaled, attempt, keydir, kind, source_root, entry, key, started, names, cwd)

@@ -35,8 +35,15 @@ class QueuePriorityTests(unittest.TestCase):
         self.compiler = self.root / "fake-compiler"
         self.compiler.write_text(
             "#!/bin/sh\n"
+            "out=\n"
+            "previous=\n"
+            "for argument in \"$@\"; do\n"
+            "  if [ \"$previous\" = -o ]; then out=$argument; fi\n"
+            "  previous=$argument\n"
+            "done\n"
             "sleep 0.4\n"
             "printf '%s\\n' \"$QUEUE_TEST_ID\" >> '" + str(self.log) + "'\n"
+            "if [ -n \"$out\" ]; then : > \"$out\"; fi\n"
             "exit 0\n")
         self.compiler.chmod(0o755)
         self.main = self.root / "main.c"
