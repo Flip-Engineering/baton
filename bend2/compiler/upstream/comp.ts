@@ -2022,10 +2022,11 @@ function type_adts(cb: Carb, T: HTerm): Bend.Name[] {
 // unfolds a definition only from inside a type, so a definition no type
 // names can never be unfolded by a compile.
 function type_live(t: HTerm, out: Set<Bend.Name>,
-  seen: Set<HTerm> = new Set(), d = 0): void {
+  seen: WeakSet<HTerm> = new WeakSet(), d = 0): void {
   // An explicit stack keeps the pre-order walk off the JavaScript call
   // stack: deep types (long App spines, nested annotations) recurse one
-  // frame a level otherwise.
+  // frame a level otherwise. Weak identity tracking lets temporary terms be
+  // collected after their branches are processed.
   const stack: [HTerm, number][] = [[t, d]];
   for (let top = stack.pop(); top !== undefined; top = stack.pop()) {
     const [u, du] = top;
@@ -2105,10 +2106,12 @@ function type_live(t: HTerm, out: Set<Bend.Name>,
 // node in a term. A ref in an argument or a body is not a type ref and
 // seeds nothing.
 function ann_live(t: HTerm, out: Set<Bend.Name>,
-  seen: Set<HTerm> = new Set(), d = 0): void {
+  seen: WeakSet<HTerm> = new WeakSet(), d = 0): void {
   // An explicit stack keeps the pre-order walk off the JavaScript call
   // stack: a coordinator body nests an annotation a let a level deep, and
-  // the recursive form overflowed the machine stack in pass 1's v_drop.
+  // let-bound annotations can produce temporary terms as their bodies open.
+  // Weak identity tracking lets temporary terms be collected after branches
+  // are processed.
   const stack: [HTerm, number][] = [[t, d]];
   for (let top = stack.pop(); top !== undefined; top = stack.pop()) {
     const [u, du] = top;
@@ -2188,9 +2191,13 @@ function v_live(cb: Carb): Set<Bend.Name> {
   for (const ctr of Object.values(cb.book.ctrs)) {
     type_live(ctr.T, live);
   }
+  let ann_definitions = 0;
   for (const k of SRCS.keys()) {
     const tld = cb.book.tlds[k];
     if (tld?.$ === "Def" && tld.h !== undefined) {
+      diagnostic_stage("pass.v_live.ann_live", {
+        definition: k, index: ++ann_definitions, total: SRCS.size,
+      });
       ann_live(tld.h, live);
     }
   }
