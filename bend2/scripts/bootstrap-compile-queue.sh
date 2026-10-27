@@ -65,6 +65,9 @@ telemetry="$record/telemetry"
 scratch=
 phase=waiting
 child=
+child_starttime=
+cancel_signal=
+retain_scratch=0
 process_start() {
   if [ -r "/proc/$1/stat" ]; then
     sed 's/.*) //' "/proc/$1/stat" | awk '{print $20}'
@@ -86,28 +89,53 @@ pressure() {
 }
 cleanup_bootstrap() {
   status=$?
-  trap - EXIT
+  trap - EXIT HUP INT TERM
+  if [ -n "$cancel_signal" ]; then
+    retain_scratch=1
+    printf 'cancel_signal=%s\n' "$cancel_signal" >> "$telemetry"
+  fi
+  if [ -n "$child" ]; then
+    current_starttime=$(process_start "$child")
+    if [ -n "$current_starttime" ] && [ -n "$child_starttime" ] \
+        && [ "$current_starttime" != "$child_starttime" ]; then
+      printf 'child_cleanup=identity-changed\nchild_pid=%s\nchild_starttime=%s\n' \
+        "$child" "$child_starttime" >> "$telemetry"
+    else
+      if kill -0 "$child" 2>/dev/null; then
+        # Background children may ignore SIGINT inherited from the shell.
+        printf 'child_cancel_signal=TERM\nchild_cancel_pid=%s\nchild_cancel_starttime=%s\n' \
+          "$child" "$child_starttime" >> "$telemetry"
+        kill -TERM "$child" 2>/dev/null || true
+      fi
+      child_status=0
+      wait "$child" || child_status=$?
+      printf 'child_exit_status=%s\nchild_reaped=1\n' "$child_status" >> "$telemetry"
+    fi
+    child=
+    child_starttime=
+    retain_scratch=1
+  fi
   printf 'phase=terminal\nlast_phase=%s\nterminal_status=%s\nfinished_ns=%s\n' \
     "$phase" "$status" "$(date +%s%N)" >> "$telemetry"
   pressure
-  if [ -n "$child" ] && [ -d "/proc/$child" ]; then
-    printf 'retained_child_pid=%s\nretained_scratch=%s\n' "$child" "$scratch" >> "$telemetry"
-  else
-    [ -z "$scratch" ] || rm -rf -- "$scratch"
+  if [ -n "$scratch" ] && [ "$retain_scratch" -eq 1 ]; then
+    printf 'retained_scratch=%s\n' "$scratch" >> "$telemetry"
+  elif [ -n "$scratch" ]; then
+    rm -rf -- "$scratch"
   fi
   if [ -n "${BATON_COMPILE_QUEUE_TELEMETRY:-}" ]; then
     if ! cp "$telemetry" "$BATON_COMPILE_QUEUE_TELEMETRY"; then
       printf 'The bootstrap telemetry remains at %s\n' "$telemetry" >&2
     fi
   fi
-  # Closing the shell descriptor preserves custody held by a surviving child.
+  # The active child has exited and been reaped before this lock is closed.
   exec 8>&-
   exit "$status"
 }
 trap cleanup_bootstrap EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'cancel_signal=HUP; exit 129' HUP
+trap 'cancel_signal=INT; exit 130' INT
+trap 'cancel_signal=TERM; exit 143' TERM
 printf 'schema=baton-compile-queue-custody-v1\nkind=bootstrap\n' > "$telemetry"
 printf 'pid=%s\nstarttime=%s\nentry=%s\ncompiler=%s\ncc=%s\nstarted_ns=%s\n' \
   "$$" "$(process_start "$$")" "$entry" "$compiler" "$cc" "$(date +%s%N)" >> "$telemetry"
@@ -124,13 +152,16 @@ printf 'scratch=%s\n' "$scratch" >> "$telemetry"
 run_phase() {
   "$@" > "$record/$phase.stdout" 2> "$record/$phase.stderr" &
   child=$!
+  child_starttime=$(process_start "$child")
   printf 'child_phase=%s\nchild_pid=%s\nchild_starttime=%s\n' \
-    "$phase" "$child" "$(process_start "$child")" >> "$telemetry"
+    "$phase" "$child" "$child_starttime" >> "$telemetry"
   rc=0
   wait "$child" || rc=$?
+  printf 'child_exit_status=%s\nchild_reaped=1\n' "$rc" >> "$telemetry"
+  child=
+  child_starttime=
   cat "$record/$phase.stdout"
   cat "$record/$phase.stderr" >&2
-  child=
   return "$rc"
 }
 run_phase "$compiler" "$entry" -o "$scratch/compile-queue.c"

@@ -8,6 +8,7 @@ else
   PYTHON3=/usr/bin/python3
 fi
 "$PYTHON3" bend2/test/queue-native-checks.py
+"$PYTHON3" bend2/test/bootstrap-compile-queue-cancel.py
 compiler=${BEND:-"$root/.bend/bin/bend"}
 if [ ! -x "$compiler" ]; then
   compiler="$root/node_modules/.bend/bin/bend"
