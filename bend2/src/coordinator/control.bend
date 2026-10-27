@@ -337,7 +337,7 @@ def configure_lock_decided(+db: String, +id: String, +harness: String, +model: S
     case Some{handle}: configure_locked(db,id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort,handle)
     case None{}: configure_live_refusal(id)
 
-def configure(+db: String, +id: String, +harness: String, +model: String, +effort: String, cmd: String, +log: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> IO(String):
+def configure(+db: String, +id: String, +harness: String, +model: String, +effort: String, +cmd: String, +log: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> IO(String):
   do IO<String>:
     found : String <- IO.try(String,Store.apply(db,C.Session{id}))
     accepted : String <- registered(found)
