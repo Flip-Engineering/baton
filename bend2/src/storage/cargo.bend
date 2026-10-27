@@ -216,12 +216,13 @@ def sql_quote(+text: String) -> String:
 type RecordStep is Data:
   RsMore{next: String, acc: String}
   RsDone{acc: String}
-  RsFailed{}
+
+def record_empty_step(+acc: String, +text: String, +next: String) -> RecordStep:
+  Bool.pick(RecordStep, String.is_empty(text), RsDone{acc}, RsMore{next, acc ++ text})
 
 def record_pair_step(+acc: String, pair: String & String) -> RecordStep:
   match pair:
-    case (text, next):
-      Bool.pick(RecordStep, String.is_empty(text), RsDone{acc}, RsMore{next, acc ++ text})
+    case (text, next): record_empty_step(acc, text, next)
 
 def record_step(+acc: String, chunk: Result<&1,&1,U32 & String,String & String>) -> RecordStep:
   match chunk:
