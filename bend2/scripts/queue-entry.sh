@@ -1,19 +1,36 @@
 # Shared compilation-queue selection for the native build and check entry
 # points. Source this file after `root` and `compiler` are set.
 #
-# An explicit BATON2_NATIVE_QUEUE_DRIVER always wins. A caller that already
-# supplies BATON2_NATIVE_QUEUE owns that route too: the CI target comparison
+# An explicit BATON2_NATIVE_QUEUE_DRIVER always wins. A caller that supplies a
+# readable BATON2_NATIVE_QUEUE owns that route too: the CI target comparison
 # supplies its own queue wrappers with the driver deliberately empty, and
 # synthesizing another driver around those wrappers would recurse through the
-# adapter. Otherwise an installed adapter, client and shared state root
-# synthesize the queue configuration and route every compilation through it.
-# A host without an installed queue is refused with the one-time bootstrap
-# command, so an ordinary build cannot compile outside the queue.
-if [ -n "${BATON2_NATIVE_QUEUE_DRIVER:-}" ] || [ -n "${BATON2_NATIVE_QUEUE:-}" ]; then
+# adapter. A non-empty but unreadable supplied path is refused, so a typo or
+# stale export cannot silently compile outside the queue. Otherwise an
+# installed adapter, client and shared state root synthesize the queue
+# configuration and route every compilation through it. A host without an
+# installed queue is refused with the one-time bootstrap command.
+if [ -n "${BATON2_NATIVE_QUEUE:-}" ]; then
+  if [ ! -r "$BATON2_NATIVE_QUEUE" ]; then
+    printf '%s\n' \
+      "queue-entry: BATON2_NATIVE_QUEUE is set but not readable: $BATON2_NATIVE_QUEUE" \
+      "Correct the path, unset it, or set BATON2_NATIVE_QUEUE_DRIVER explicitly." >&2
+    exit 2
+  fi
+  return 0
+fi
+if [ -n "${BATON2_NATIVE_QUEUE_DRIVER:-}" ]; then
   return 0
 fi
 queue_adapter="$root/.github/scripts/queue-native-checks.py"
 queue_state=${BATON_COMPILE_QUEUE_ROOT:-/var/tmp/baton2-compile-queue}
+case "$queue_state" in
+  /*) ;;
+  *)
+    printf 'queue-entry: BATON_COMPILE_QUEUE_ROOT must be an absolute path: %s\n' "$queue_state" >&2
+    exit 2
+    ;;
+esac
 queue_client=${BATON2_COMPILE_QUEUE_BIN:-}
 if [ -z "$queue_client" ] && [ -x "$queue_state/compile-queue-runner" ]; then
   queue_client="$queue_state/compile-queue-runner"
@@ -32,10 +49,18 @@ if [ ! -f "$queue_adapter" ] || [ -z "$queue_client" ] || [ ! -x "$queue_client"
 fi
 # Each invocation owns an immutable configuration. Concurrent builds in one
 # checkout must not change each other's compiler, client or state path while
-# their queue request still refers to it. Keep the invocation directory after
-# the build so its evidence and request identity stay readable.
+# their queue request still refers to it. The invocation directory is kept
+# with its request evidence; prune old invocation.* directories under this
+# root when their queue results are no longer needed.
 queue_root=${BATON2_QUEUE_RUN_ROOT:-"$root/.scratch/bend2/queue-run"}
-mkdir -p "$queue_root"
+case "$queue_root" in
+  /*) ;;
+  *) queue_root="$root/$queue_root" ;;
+esac
+if ! mkdir -p "$queue_root"; then
+  printf 'queue-entry: could not create the queue run root %s\n' "$queue_root" >&2
+  exit 2
+fi
 if ! queue_run=$(mktemp -d "$queue_root/invocation.XXXXXXXX"); then
   printf 'queue-entry: could not create an owned queue run directory under %s\n' "$queue_root" >&2
   exit 2
