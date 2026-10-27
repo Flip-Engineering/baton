@@ -11,7 +11,7 @@
 #                       0: it is reported on stderr and the build continues
 #
 # Flip require_cgen_cache to 1 in the commit that selects the release above.
-lineage_commit=7261c8fc7ecddd0d746c1ea9bb6203bdec608d02
-release_name=2.0.25-compiler-main-7261-weakset-20261027
+lineage_commit=c2cc9849205904d8d3170cb44bb80cee314fdf17
+release_name=2.0.25-compiler-main-shared-types-20261027
 cache_ts_sha256=30950fb56d75056e3c1b46ac6ce8209d49f01e556a950f18e005a55cdb06396e
 require_cgen_cache=0
