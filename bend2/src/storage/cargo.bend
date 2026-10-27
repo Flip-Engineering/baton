@@ -301,17 +301,19 @@ def acp_selection_compare(+path: String, runtime_hex: String, config_hex: String
     +verdict : SelectionVerdict = merge_verdict(merge_verdict(merge_verdict(SvReleased{}, runtime), config), manifest)
     selection_presence(path, verdict)
 
+def acp_selection_fields(+db: String, +path: String, fields: List<String>) -> IO(T.Presence):
+  match fields:
+    case valid <> root_kind <> schema_kind <> schema_hex <> runtime_kind <> runtime_hex <> config_kind <> config_hex <> manifest_kind <> manifest_hex <> Nil{}:
+      Bool.pick(IO<T.Presence>, selection_valid(valid, root_kind, schema_kind, schema_hex,
+        runtime_kind, runtime_hex, config_kind, config_hex, manifest_kind, manifest_hex),
+        acp_selection_compare(path, runtime_hex, config_hex, manifest_hex),
+        unknown_selection(path))
+    case other: unknown_selection(path)
+
 def acp_selection_row(+db: String, +path: String, row_result: Result<&1,&1,U32 & String,String>) -> IO(T.Presence):
   match row_result:
     case Fail{error}: unknown_selection(path)
-    case Done{row}:
-      match Tx.split_tabs(Tx.trim_nl(row)):
-        case valid <> root_kind <> schema_kind <> schema_hex <> runtime_kind <> runtime_hex <> config_kind <> config_hex <> manifest_kind <> manifest_hex <> Nil{}:
-          Bool.pick(IO<T.Presence>, selection_valid(valid, root_kind, schema_kind, schema_hex,
-            runtime_kind, runtime_hex, config_kind, config_hex, manifest_kind, manifest_hex),
-            acp_selection_compare(path, runtime_hex, config_hex, manifest_hex),
-            unknown_selection(path))
-        case other: unknown_selection(path)
+    case Done{row}: acp_selection_fields(db, path, Tx.split_tabs(Tx.trim_nl(row)))
 
 def acp_selection_text(+db: String, +path: String, text: Maybe<String>) -> IO(T.Presence):
   match text:
