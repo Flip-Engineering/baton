@@ -980,7 +980,7 @@ def waiters_scan_one(read: Result<&1,&1,U32 & String,String>, +token: String, +p
     case Fail{error}: IO.pure(Bool, False{})
     case Done{+text}: waiters_ticket_higher(text, token, priority)
 
-def waiters_scan_names(+names: List<&1,String>, +dir: String, +token: String, +priority: U32) -> IO(Bool):
+def waiters_scan_names(names: List<&1,String>, +dir: String, +token: String, +priority: U32) -> IO(Bool):
   match names:
     case Nil{}: IO.pure(Bool, False{})
     case Con{+name, rest}:
