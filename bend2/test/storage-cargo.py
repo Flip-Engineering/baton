@@ -750,6 +750,51 @@ CREATE TABLE log_generations(session TEXT,log TEXT,base TEXT,attempt TEXT);
         self.assertIn('staging-source-released', answer)
         self.assertFalse(clone.exists())
 
+    def test_staging_source_other_upstream_cannot_publish_candidate_ref(self):
+        upstream, staging, clone, remote = self.staging_clone()
+        other = self.root / 'other.git'
+        subprocess.run(['git', 'clone', '-q', '--bare', str(remote), str(other)],
+                       check=True, capture_output=True)
+        other_work = self.root / 'other-work'
+        subprocess.run(['git', 'clone', '-q', str(other), str(other_work)],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(other_work), 'config', 'user.email', 'fixture@example.invalid'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(other_work), 'config', 'user.name', 'Fixture'],
+                       check=True, capture_output=True)
+        (other_work / 'other-only.txt').write_text('published to the other remote only\n')
+        subprocess.run(['git', '-C', str(other_work), 'add', 'other-only.txt'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(other_work), 'commit', '-qm', 'other remote only'],
+                       check=True, capture_output=True)
+        unique = subprocess.check_output(
+            ['git', '-C', str(other_work), 'rev-parse', 'HEAD'], text=True).strip()
+        subprocess.run(['git', '-C', str(other_work), 'push', '-q', 'origin', 'HEAD:refs/heads/other-only'],
+                       check=True, capture_output=True)
+
+        subprocess.run(['git', '-C', str(upstream), 'remote', 'add', 'other', str(other)],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(upstream), 'fetch', '-q', 'other'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(upstream), 'branch', '--set-upstream-to=other/main', 'main'],
+                       check=True, capture_output=True)
+        default_listing = subprocess.check_output(
+            ['git', '-C', str(upstream), 'ls-remote'], text=True)
+        authenticated_listing = subprocess.check_output(
+            ['git', '-C', str(upstream), 'ls-remote', 'origin'], text=True)
+        self.assertIn(unique, default_listing)
+        self.assertNotIn(unique, authenticated_listing)
+
+        subprocess.run(['git', '-C', str(clone), 'remote', 'add', 'other', str(other)],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(clone), 'fetch', '-q', 'other', 'other-only'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(clone), 'branch', 'other-only', 'FETCH_HEAD'],
+                       check=True, capture_output=True)
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('unpublished-object', answer)
+        self.assertTrue(clone.exists())
+
     def test_staging_source_same_name_diverged_ref_is_preserved(self):
         # The remote feature branch stays at the published commit while the
         # local branch of the same name carries a unique commit. HEAD remains

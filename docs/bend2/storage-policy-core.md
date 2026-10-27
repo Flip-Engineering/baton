@@ -61,7 +61,7 @@ is admitted when the operator records the authenticated repository as its
 source; its candidates carry no session record. A staging candidate is removed
 only when it is a clean worktree whose origin is the authenticated repository
 and every local ref object in every namespace is advertised by that remote
-(`git ls-remote`), `git fsck --no-reflogs --unreachable` reports no objects
+(`git ls-remote origin`), `git fsck --no-reflogs --unreachable` reports no objects
 outside those refs, no process, runtime input, lease, live reference, database
 path or pending attempt names it, and every other preservation fact is absent.
 The object check includes commits retained only by reflogs and otherwise

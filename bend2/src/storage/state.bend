@@ -626,7 +626,7 @@ def staging_unpublished(+source: String, +path: String) -> IO(T.Presence):
     commondir_git : G.GitOut <- Git.runGit(path, ["rev-parse", "--git-common-dir"])
     refs_git : G.GitOut <- Git.runGit(path, ["for-each-ref", "--format=%(objectname)"])
     worklist_git : G.GitOut <- Git.runGit(path, ["worktree", "list", "--porcelain"])
-    listed_git : G.RunRes <- Git.runFull(["/usr/bin/env", "git", "-C", source, "ls-remote"], ".")
+    listed_git : G.RunRes <- Git.runFull(["/usr/bin/env", "git", "-C", source, "ls-remote", "origin"], ".")
     unreachable_git : G.RunRes <- Git.runFull(["/usr/bin/env", "git", "-C", path, "fsck",
       "--no-progress", "--no-reflogs", "--unreachable"], ".")
     staging_finish(staging_text(listed_git), staging_text(unreachable_git),
