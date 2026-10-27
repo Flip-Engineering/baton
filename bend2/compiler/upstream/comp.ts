@@ -2288,13 +2288,25 @@ function cid_mac(k: string): string {
 // File
 // ====
 
-function file_new(cb: Carb, decl: string): File {
-  return { ...cb, decl, segs: [], seg: seg_new("", BOX, []), tab: 2,
-    cids: new Map(), tabs: new Map(), spins: [], spun: new Map(), armSeq: 0, armBusy: new Set(), armHints: new Map(), clos: new Set(),
+// A File's per-pass state. `file_reset` is the only initializer: a File
+// reused across the emission fixed point then starts exactly as a new one,
+// and a field added to the File type cannot be initialized on one path only.
+// The Carb fields (`src`, `book`, the `own`/`hot`/`stat` facts and `lend`)
+// are the cross-pass state and are copied by reference.
+function file_reset(fl: File, cb: Carb, decl: string): File {
+  return Object.assign(fl, cb, {
+    decl, segs: [], seg: seg_new("", BOX, []), tab: 2,
+    cids: new Map(), tabs: new Map(), spins: [], spun: new Map(), armSeq: 0,
+    armBusy: new Set(), armHints: new Map(), clos: new Set(),
     img: [], lits: new Map(), consts: new Map(), reqs: "", fuel: 0,
     fresh: new Map(), spares: [],
     uses: new Map(), brwl: new Map(), rest: [], def: "",
-    dry: false, dry_lines: 0, dry_units: 0 };
+    dry: false, dry_lines: 0, dry_units: 0,
+  });
+}
+
+function file_new(cb: Carb, decl: string): File {
+  return file_reset({} as File, cb, decl);
 }
 
 function file_push(fl: File, line: string): void {
@@ -4191,12 +4203,16 @@ export function compile_book(book: Bend.Book): string {
   const facts = () => cb.own.size + cb.hot.size + cb.stat.size;
   let diagnostic_pass = 0;
   let v_dropped = false;
+  // One File serves every pass: resetting it before each pass drops the
+  // previous pass's emitted lines before the next pass allocates, so only one
+  // pass's output is live. `file_reset` restores every per-pass field.
+  const fl = file_new(cb, "Term");
   const pass = (defs: [Bend.Name, Def][], dry = false): File => {
     const pass_number = ++diagnostic_pass;
     diagnostic("pass.begin", { pass: pass_number, definitions: defs.length,
       own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size, dry });
     [cb.lend, BRWS].forEach((m) => m.clear());
-    const fl = file_new(cb, "Term");
+    file_reset(fl, cb, "Term");
     fl.dry = dry;
     diagnostic_stage("pass.layouts", { pass: pass_number });
     for (const k of SRCS.keys()) {
@@ -4247,10 +4263,9 @@ export function compile_book(book: Bend.Book): string {
   };
   // Dry emission walks converge the monotone facts; they still run
   // emit_body/emit_args/val_own and skip only retained lines and spin
-  // sources. Each iteration gets a fresh File. The one real pass after the
+  // sources. Each iteration reuses the one File. The one real pass after the
   // fixed point must not add facts; growth means the dry walk missed a
   // producer and the result is not safe to emit.
-  let fl: File;
   let was: number;
   if (FACTS_ONLY_FIRST) {
     do {
@@ -4258,7 +4273,7 @@ export function compile_book(book: Bend.Book): string {
       pass(emission_defs, true);
     } while (was !== facts());
     const before = { own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size };
-    fl = pass(emission_defs, false);
+    pass(emission_defs, false);
     const after = { own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size };
     diagnostic("facts.no_growth", { before, after,
       added: { own: after.own - before.own, hot: after.hot - before.hot,
@@ -4271,7 +4286,7 @@ export function compile_book(book: Bend.Book): string {
   } else {
     do {
       was = facts();
-      fl = pass(emission_defs, false);
+      pass(emission_defs, false);
     } while (was !== facts());
   }
   // Foreign source text and request stubs do not contribute to own/hot/stat/lend facts.
