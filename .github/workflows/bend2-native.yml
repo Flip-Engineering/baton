@@ -390,6 +390,7 @@ jobs:
           assert all(result['judged'] for result in outcomes.values()), 'Target comparison is incomplete'
           PY
       - name: Retain reusable exact target build
+        if: inputs.target_build_run == ''
         shell: bash
         run: |
           set -euo pipefail
