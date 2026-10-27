@@ -19,7 +19,7 @@ env:
 
 jobs:
   recovery-darwin-arm64:
-    timeout-minutes: 180
+    timeout-minutes: 4320
     runs-on: [self-hosted, macOS, ARM64, baton2-native-darwin-arm64]
     steps:
       - name: Validate source and runner identity
