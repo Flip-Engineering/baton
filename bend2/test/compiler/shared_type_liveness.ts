@@ -29,12 +29,17 @@ function priorTraversal(source: string): string {
   ann = ann.replaceAll(", type_seen)", ")");
   let live = source.slice(liveStart, liveEnd);
   live = live.replaceAll(", type_seen)", ")");
-  const shared = "  // These roots all add names to `live`. Reuse identity visits across\n"
-    + "  // signatures and annotations so a shared higher-order type is opened once.\n"
-    + "  const type_seen = new WeakSet<HTerm>();\n";
+  const shared = "  const type_seen = new WeakSet<HTerm>();\n";
   assert.ok(live.includes(shared), "shared-set source anchor");
   live = live.replace(shared, "");
   return source.slice(0, annStart) + ann + live + source.slice(liveEnd);
+}
+
+// The source before this change walked each parsed body with a fresh visited
+// set.
+function retainedClosure(source: string): string {
+  return replaceOnce(source, "type_live(tld.v, got, type_seen);",
+    "type_live(tld.v, got);");
 }
 
 function instrument(source: string): string {
@@ -105,14 +110,19 @@ try {
   const source = fs.readFileSync(path.join(upstream, "comp.ts"), "utf8");
   fs.writeFileSync(path.join(temp, "current.ts"), instrument(source));
   fs.writeFileSync(path.join(temp, "prior.ts"), instrument(priorTraversal(source)));
+  fs.writeFileSync(path.join(temp, "retained.ts"), instrument(retainedClosure(source)));
   const current = await import(pathToFileURL(path.join(temp, "current.ts")).href) as Module;
   const prior = await import(pathToFileURL(path.join(temp, "prior.ts")).href) as Module;
+  const retained = await import(pathToFileURL(path.join(temp, "retained.ts")).href) as Module;
 
   const depth = 64;
   const shared = sharedType(depth);
   const left = Bend.App(Bend.Ref("DistinctLeft"), shared);
   const right = Bend.ADT("DistinctRight", [shared]);
-  const mainBody = Bend.Ctr("Body", Array.from({ length: 128 }, () => annotation(shared)));
+  const mainBody = Bend.Ctr("Body", [
+    ...Array.from({ length: 128 }, () => annotation(shared)),
+    annotation(Bend.Ref("C")),
+  ]);
   const book = {
     tlds: {
       main: definition(shared, Bend.Ref("ClosureA"), mainBody),
@@ -121,35 +131,45 @@ try {
       ClosureA: definition(Bend.Ref("SigClosureA"),
         Bend.App(Bend.Ref("ClosureB"), Bend.Ref("ClosureNameA"))),
       ClosureB: definition(Bend.Ref("SigClosureB"), Bend.Ref("ClosureNameB")),
+      C: definition(shared, Bend.App(Bend.Ref("DistinctClosure"), shared),
+        Bend.Ctr("BodyC", [])),
     },
     ctrs: { TestCtor: { k: "TestCtor", n: 0, T: right } },
   } as unknown as { tlds: Record<string, Bend.TLD & { h?: Bend.HTerm }>; ctrs: Record<string, Bend.Ctr> };
   const expected = new Set([
-    "main", "SharedLeaf", "DistinctLeft", "DistinctRight", "SigClosureA", "SigClosureB",
-    "ClosureA", "ClosureB", "ClosureNameA", "ClosureNameB",
-    ...Array.from({ length: depth }, (_, i) => `Domain${i}`),
+    "main", "C", "SharedLeaf", "DistinctLeft", "DistinctRight", "DistinctClosure",
+    "SigClosureA", "SigClosureB", "ClosureA", "ClosureB", "ClosureNameA",
+    "ClosureNameB", ...Array.from({ length: depth }, (_, i) => `Domain${i}`),
   ]);
   const results: Set<string>[] = [];
   const states: Module["test_counts"][] = [];
-  for (const mod of [prior, current]) {
-    mod.test_set_srckeys(["main", "A", "B"]);
+  for (const [label, mod] of [["prior", prior], ["retained", retained],
+    ["current", current]] as [string, Module][]) {
+    mod.test_set_srckeys(["main", "A", "B", "C"]);
     mod.test_reset();
     const live = mod.v_live({ book });
-    assert.deepEqual([...live].sort(), [...expected].sort(), "live names");
+    assert.deepEqual([...live].sort(), [...expected].sort(), label + " live names");
     assert.deepEqual(mod.test_diagnostics.map(({ event, details }) => [event, details.definition]), [
       ["pass.v_live.ann_live.begin", "main"], ["pass.v_live.ann_live.end", "main"],
       ["pass.v_live.ann_live.begin", "A"], ["pass.v_live.ann_live.end", "A"],
       ["pass.v_live.ann_live.begin", "B"], ["pass.v_live.ann_live.end", "B"],
-    ], "per-definition diagnostics");
+      ["pass.v_live.ann_live.begin", "C"], ["pass.v_live.ann_live.end", "C"],
+    ], label + " per-definition diagnostics");
     results.push(live);
     states.push({ ...mod.test_counts });
   }
-  assert.deepEqual([...results[0]].sort(), [...results[1]].sort(), "prior/current live names");
-  assert.equal(states[1].type_opens, depth, "shared type graph opens once");
+  assert.deepEqual([...results[0]].sort(), [...results[2]].sort(), "prior/current live names");
+  assert.deepEqual([...results[1]].sort(), [...results[2]].sort(), "retained/current live names");
+  assert.equal(states[2].type_opens, depth, "shared type graph opens once including parsed bodies");
+  assert.equal(states[1].type_opens, 2 * depth, "retained closure re-opens the shared type");
+  assert.equal(states[1].type_nodes - states[2].type_nodes, 2 * depth + 1,
+    "closure skips the visited shared type graph");
   assert.ok(states[0].type_opens > 8_000, "prior traversal repeats shared All openings");
-  assert.ok(states[1].type_nodes < 200, "current traversal visits unique shared graph nodes");
-  console.log(`PASS shared type liveness: names unchanged; All openings ${states[0].type_opens} -> ${states[1].type_opens}; `
-    + `type nodes ${states[0].type_nodes} -> ${states[1].type_nodes}; per-definition diagnostics verified`);
+  assert.ok(states[2].type_nodes < 200, "current traversal visits unique shared graph nodes");
+  console.log(`PASS shared type liveness: names unchanged; All openings ${states[0].type_opens}`
+    + ` -> ${states[1].type_opens} -> ${states[2].type_opens}; type nodes`
+    + ` ${states[0].type_nodes} -> ${states[1].type_nodes} -> ${states[2].type_nodes};`
+    + " parsed-body closure verified");
 } finally {
   if (previousDiagnostics === undefined) delete process.env.BEND_COMPILER_DIAGNOSTICS;
   else process.env.BEND_COMPILER_DIAGNOSTICS = previousDiagnostics;

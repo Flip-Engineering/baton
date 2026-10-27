@@ -678,23 +678,31 @@ function cli_fail(msg: string): never {
 
 async function book_read(file: string, base?: Bend.Book,
   seen = new Map<string, string | null>()): Promise<[Bend.Book, number]> {
+  Comp.diagnostic("book.read.begin", { file });
   const book = base === undefined ? Bend.book_nil() : book_seed(base);
   if (base !== undefined) {
     seen.set(BASE, "");
   }
+  Comp.diagnostic("book.load.begin", { file });
   const n0 = await Bend.book_load(book, file, "", seen);
+  Comp.diagnostic("book.load.end", { file, definitions: book.order.length });
   const laws = path.join(path.dirname(file), "LAWS.bend");
   if (path.basename(file) === "PROOF.bend" && fs.existsSync(laws)
     && !seen.has(fs.realpathSync(laws))) {
     cli_fail("PROOF.bend must import ./LAWS.bend");
   }
+  Comp.diagnostic("book.valid.begin", { file });
   Bend.book_valid(book, base?.order.length ?? 0);
+  Comp.diagnostic("book.valid.end", { file });
+  Comp.diagnostic("book.owned.begin", { file });
   Comp.book_owned(book, Comp.SYNTH);
+  Comp.diagnostic("book.owned.end", { file });
   const hols = book.hols + book.open;
   if (hols > 0) {
     throw "Error: " + String(hols) + " TODO" + (hols === 1 ? "" : "s")
       + " found.\nThe code is incomplete, and not a valid proof yet.";
   }
+  Comp.diagnostic("book.read.end", { file });
   return [book, n0];
 }
 

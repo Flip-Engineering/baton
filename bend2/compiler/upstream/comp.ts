@@ -12,7 +12,7 @@ let diagnostic_context: { event: string; details: Record<string, unknown> } | nu
 function diagnostic_stage(event: string, details: Record<string, unknown> = {}): void {
   if (DIAGNOSTICS) diagnostic_context = { event, details };
 }
-function diagnostic(event: string, details: Record<string, unknown> = {}): void {
+export function diagnostic(event: string, details: Record<string, unknown> = {}): void {
   if (!DIAGNOSTICS) return;
   diagnostic_stage(event, details);
   fs.writeSync(2, JSON.stringify({
@@ -50,6 +50,20 @@ function diagnostic_join(site: string, values: (string | number)[],
   const result = values.join(separator);
   diagnostic("join.end", { site, code_units: result.length });
   return result;
+}
+
+// Reclaim garbage at an emission-pass boundary. Under `bun --smol` JSC runs
+// few full collections on this workload, so the previous pass's emitted
+// lines and temporary terms otherwise stay in the old generation while the
+// next pass allocates. A forced collection at the boundary keeps the peak
+// near the live set. Memory management only: the emitted C is unchanged.
+function collect_full(): void {
+  // Bun installs gc; this compiler has no ambient Bun type. The cast names
+  // the one host member read here.
+  const runtime = globalThis as typeof globalThis & {
+    Bun?: { gc(force: boolean): void };
+  };
+  runtime.Bun?.gc(true);
 }
 
 // Facts-only passes are OFF by default. They converge own/hot/stat before
@@ -2185,7 +2199,9 @@ function ann_live(t: HTerm, out: Set<Bend.Name>,
 function v_live(cb: Carb): Set<Bend.Name> {
   const live = new Set<Bend.Name>();
   // These roots all add names to `live`. Reuse identity visits across
-  // signatures and annotations so a shared higher-order type is opened once.
+  // signatures, constructor telescopes, annotations and parsed bodies: a
+  // visited node's names are already in `live`, so the closure adds the same
+  // names.
   const type_seen = new WeakSet<HTerm>();
   // A book handed to compile_book must stay runnable: book_run reads main.v.
   live.add("main");
@@ -2217,7 +2233,7 @@ function v_live(cb: Carb): Set<Bend.Name> {
       continue;
     }
     const got = new Set<Bend.Name>();
-    type_live(tld.v, got);
+    type_live(tld.v, got, type_seen);
     for (const n of got) {
       if (!live.has(n)) {
         live.add(n);
@@ -2288,13 +2304,25 @@ function cid_mac(k: string): string {
 // File
 // ====
 
-function file_new(cb: Carb, decl: string): File {
-  return { ...cb, decl, segs: [], seg: seg_new("", BOX, []), tab: 2,
-    cids: new Map(), tabs: new Map(), spins: [], spun: new Map(), armSeq: 0, armBusy: new Set(), armHints: new Map(), clos: new Set(),
+// A File's per-pass state. `file_reset` is the only initializer: a File
+// reused across the emission fixed point then starts exactly as a new one,
+// and a field added to the File type cannot be initialized on one path only.
+// The Carb fields (`src`, `book`, the `own`/`hot`/`stat` facts and `lend`)
+// are the cross-pass state and are copied by reference.
+function file_reset(fl: File, cb: Carb, decl: string): File {
+  return Object.assign(fl, cb, {
+    decl, segs: [], seg: seg_new("", BOX, []), tab: 2,
+    cids: new Map(), tabs: new Map(), spins: [], spun: new Map(), armSeq: 0,
+    armBusy: new Set(), armHints: new Map(), clos: new Set(),
     img: [], lits: new Map(), consts: new Map(), reqs: "", fuel: 0,
     fresh: new Map(), spares: [],
     uses: new Map(), brwl: new Map(), rest: [], def: "",
-    dry: false, dry_lines: 0, dry_units: 0 };
+    dry: false, dry_lines: 0, dry_units: 0,
+  });
+}
+
+function file_new(cb: Carb, decl: string): File {
+  return file_reset({} as File, cb, decl);
 }
 
 function file_push(fl: File, line: string): void {
@@ -4191,12 +4219,17 @@ export function compile_book(book: Bend.Book): string {
   const facts = () => cb.own.size + cb.hot.size + cb.stat.size;
   let diagnostic_pass = 0;
   let v_dropped = false;
+  // One File serves every pass: resetting it before each pass drops the
+  // previous pass's emitted lines before the next pass allocates, so only one
+  // pass's output is live. `file_reset` restores every per-pass field.
+  const fl = file_new(cb, "Term");
   const pass = (defs: [Bend.Name, Def][], dry = false): File => {
     const pass_number = ++diagnostic_pass;
     diagnostic("pass.begin", { pass: pass_number, definitions: defs.length,
       own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size, dry });
     [cb.lend, BRWS].forEach((m) => m.clear());
-    const fl = file_new(cb, "Term");
+    file_reset(fl, cb, "Term");
+    collect_full();
     fl.dry = dry;
     diagnostic_stage("pass.layouts", { pass: pass_number });
     for (const k of SRCS.keys()) {
@@ -4220,6 +4253,10 @@ export function compile_book(book: Bend.Book): string {
       [emission_defs, defs].forEach((ps) => ps.forEach((p) => {
         p[1] = cb.book.tlds[p[0]] as Def;
       }));
+      // The dropped parsed bodies are unreachable now. Collect them before
+      // the emission loop allocates, so the first-pass peak excludes the
+      // pre-drop graph instead of carrying it to the next pass boundary.
+      collect_full();
     }
     for (const [k, tld] of defs) {
       compile_def(fl, k, tld);
@@ -4247,10 +4284,9 @@ export function compile_book(book: Bend.Book): string {
   };
   // Dry emission walks converge the monotone facts; they still run
   // emit_body/emit_args/val_own and skip only retained lines and spin
-  // sources. Each iteration gets a fresh File. The one real pass after the
+  // sources. Each iteration reuses the one File. The one real pass after the
   // fixed point must not add facts; growth means the dry walk missed a
   // producer and the result is not safe to emit.
-  let fl: File;
   let was: number;
   if (FACTS_ONLY_FIRST) {
     do {
@@ -4258,7 +4294,7 @@ export function compile_book(book: Bend.Book): string {
       pass(emission_defs, true);
     } while (was !== facts());
     const before = { own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size };
-    fl = pass(emission_defs, false);
+    pass(emission_defs, false);
     const after = { own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size };
     diagnostic("facts.no_growth", { before, after,
       added: { own: after.own - before.own, hot: after.hot - before.hot,
@@ -4271,11 +4307,14 @@ export function compile_book(book: Bend.Book): string {
   } else {
     do {
       was = facts();
-      fl = pass(emission_defs, false);
+      pass(emission_defs, false);
     } while (was !== facts());
   }
-  // Foreign source text and request stubs do not contribute to own/hot/stat/lend facts.
-  // Emit them once after the fixed point reaches its stable pass.
+  // The fixed point's last pass leaves its temporary terms and maps dead
+  // before the assembly builds the final source string.
+  collect_full();
+  // Foreign source text and request stubs do not contribute to own/hot/stat/lend
+  // facts. Emit them once after the fixed point reaches its stable pass.
   diagnostic("requests.begin", { pass: diagnostic_pass, segments: fl.segs.length });
   compile_reqs(fl, foreign_defs);
   diagnostic("requests.end", { pass: diagnostic_pass, code_units: fl.reqs.length });
