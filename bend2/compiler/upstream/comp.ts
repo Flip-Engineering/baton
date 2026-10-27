@@ -1568,7 +1568,7 @@ function ctr_flds(book: Bend.Book, k: Bend.Name,
 
 function ctr_build(fl: File, k: Bend.Name, exprs: string[],
   stat = false): string {
-  const cid = cid_mac(k);
+  const cid = cid_use(fl, k);
   const node = lay_node(fl.book, k);
   if (exprs.length === 0 || (node.ks.length === 1 && node.ks[0] === "w32")) {
     return `term_pak(${cid}, ${exprs[0] ?? 0})`;
@@ -2301,6 +2301,15 @@ function cid_mac(k: string): string {
   return "CID_" + name_clean(k).toUpperCase();
 }
 
+// A CID is needed only when live code, the show description, or the runtime
+// can reference the constructor. The old blanket seed added every constructor
+// of every type-reachable ADT, which overflows the 16-bit aux field on a large
+// book even when most constructors never appear in the emitted program.
+function cid_use(fl: File, k: string): string {
+  if (!fl.cids.has(k)) fl.cids.set(k, lay_node(fl.book, k).ks.length);
+  return cid_mac(k);
+}
+
 // File
 // ====
 
@@ -2723,7 +2732,7 @@ function val_unbox(fl: File, v: Val, lay: Lay): Val {
   }
   const t = emit_alias(fl, v.ws[0], "u");
   return val_arms(fl, lay, t, (_, i) =>
-    `term_aux(${t}) == ${cid_mac(lay.arms![i].k)}`, (arm) => {
+    `term_aux(${t}) == ${cid_use(fl, lay.arms![i].k)}`, (arm) => {
     const fs = node_fields(fl, t, lay_node(fl.book, arm.k));
     return arm.fs.map((f, j) => val_to(fl, fs[j], f.lay));
   });
@@ -4011,7 +4020,7 @@ function emit_match(fl: File, x: Of<"Mat"> | Of<"Efq">,
             "h").map((w) => val_new([w], BOX)))];
       }
       if (lay_box(lay)) {
-        return [`term_aux(${sw}) == ${cid_mac(k)}`, h,
+        return [`term_aux(${sw}) == ${cid_use(fl, k)}`, h,
           () => node_fields(fl, sw, lay_node(fl.book, k), true)];
       }
       const arm = lay_arm(lay, k);
@@ -4093,7 +4102,7 @@ function compile_reqs(fl: File, defs: [Bend.Name, Def][]): void {
     const own = ns === "" ? []
       : Object.keys(fl.book.ctrs).filter((c) => c.startsWith(ns));
     const macs = own.map((c) =>
-      [cid_mac(c.slice(ns.length)), cid_mac(c)]);
+      [cid_mac(c.slice(ns.length)), cid_use(fl, c)]);
     for (const [m, g] of macs) {
       fl.reqs += `#pragma push_macro("${m}")\n#define ${m} ${g}\n`;
     }
@@ -4136,11 +4145,16 @@ export function book_owned(src: Bend.Book, ks = OWNED): void {
 
 function compile_tables(fl: File, entries: Seg[]): string[] {
   const defs: string[] = [];
-  for (const ms of [[...fl.cids.keys()].map(cid_mac),
-    [...entries.map((s) => s.fid), "FID_EXIT", "FID_ENTER"]]) {
+  const tables: [string, string[], number][] = [
+    ["CID", [...fl.cids.keys()].map(cid_mac), 65536],
+    ["FID", [...entries.map((s) => s.fid), "FID_EXIT", "FID_ENTER"], 65532],
+  ];
+  for (const [ns, ms, limit] of tables) {
     const dup = [...ms, ...TABLES].find((m, i, a) => a.indexOf(m) < i);
-    if (ms.length > 65536 || dup !== undefined) {
-      die(dup === undefined ? "an id over 65535"
+    diagnostic("tables.ids", { namespace: ns, ids: ms.length, limit });
+    if (ms.length > limit || dup !== undefined) {
+      die(dup === undefined
+        ? `${ns} namespace has ${ms.length} ids; the runtime limit is ${limit}`
         : "two names mangle to " + dup);
     }
     defs.push(...ms.map((m, i) => `#define ${m} ${i}`));
@@ -4239,10 +4253,9 @@ export function compile_book(book: Bend.Book): string {
     collect_full();
     fl.dry = dry;
     diagnostic_stage("pass.layouts", { pass: pass_number });
-    for (const k of SRCS.keys()) {
-      for (const c of (cb.book.tlds[k] as Bend.ADT).c ?? []) {
-        fl.cids.set(c.k, lay_node(fl.book, c.k).ks.length);
-      }
+    for (const k of RUNTIME_ADTS) {
+      const tld = cb.book.tlds[k];
+      if (tld?.$ === "ADT") for (const c of tld.c ?? []) cid_use(fl, c.k);
     }
     if (!v_dropped) {
       // show_main has read main.v and the constructor preamble has laid
@@ -4376,7 +4389,7 @@ export function compile_book(book: Bend.Book): string {
     seg_new("clo_apply", BOX, ["", ""])];
   const desc = show === null ? [] : ["#if !DEVICE",
     `static const u32 SHOW_DESC[] = { ${show.cells.map((c) =>
-      typeof c === "string" ? cid_mac(c) : c).join(", ")} };`,
+      typeof c === "string" ? cid_use(fl, c) : c).join(", ")} };`,
     `static const char* SHOW_NAMES[] = { ${show.names.map((n) =>
       JSON.stringify(n)).join(", ")} };`, "#endif"];
   diagnostic("tables.begin", { entries: entries.length });
