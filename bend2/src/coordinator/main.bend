@@ -521,8 +521,10 @@ def observe_context_runtime_cli(+flag: String, +db: String, +owner: String,
     ContextRuntime.runtime_recover(db, owner, launch_query, target_dir, adapter_dir),
     normal_cli([flag, db, owner, launch_query, target_dir, adapter_dir]))
 
-def legacy_cli_arity(args: List<String>) -> IO(Unit):
+def legacy_cli(args: List<String>) -> IO(Unit):
   match args:
+    case Nil{}: normal_cli(Nil{})
+    case "--project" <> tail: normal_cli(Con{"--project",tail})
     case "--stop-hook" <> Nil{}: StopHook.run()
     case flag <> database <> Nil{}: instance_owner_cli(database,flag)
     case flag <> db <> owner <> launch_query <> target_dir <> adapter_dir <> Nil{}:
@@ -543,16 +545,6 @@ def legacy_cli_arity(args: List<String>) -> IO(Unit):
     case +flag <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> input_messages <> Nil{}:
       recover_receive_input_cli(String.eq(flag,"--recover-receive"),flag,db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,input_messages)
     case other: normal_cli(other)
-
-def legacy_cli_project(project: Bool, head: String, tail: List<String>) -> IO(Unit):
-  match project:
-    case True{}: normal_cli(Con{head,tail})
-    case False{}: legacy_cli_arity(Con{head,tail})
-
-def legacy_cli(args: List<String>) -> IO(Unit):
-  match args:
-    case Nil{}: normal_cli(Nil{})
-    case +head <> tail: legacy_cli_project(String.eq(head,"--project"),head,tail)
 
 def cli_route(route: AgentRoute.Route) -> IO(Unit):
   match route:
