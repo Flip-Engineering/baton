@@ -116,6 +116,57 @@ sit in main ancestry. Patch-id comparison against main:
   ledger artifact; repo policy bans ledger-as-function, so it is deletable once the #788
   closure (10-27) is accepted as final.
 
+## Full branch classification (pass 2)
+
+Pass 2 added a subject-level test for every content-unique branch: each unique commit subject
+was searched in main. 144 of 153 non-superseded branches carry at least one subject absent from
+main; combined with issue state, they fall into the buckets below. "Confirm" means one specific
+verification remains before deletion; everything else is a direct verdict.
+
+### Superseded — delete (with named confirmation where a closure is recent)
+
+| Set | Refs | Evidence |
+|---|---|---|
+| Zero-unique | 26 branches (list above) | every non-merge commit patch-id-present in main |
+| 970 family | 19 `*compiler-queue-970*` + `consol/queue-line-20261022` | PR #982 closed unmerged with supersession statement; queue implemented by 10-27 wave |
+| PR869/PR901 cluster | runtime-output-checkpoint-fix-20261019, runtime-output-checkpoint-fix-wonder-20261019, codex/pr901-monitor-replay-proposal-20261021, codex/pr901-current-main-c021089a-20261021, codex/pr901-safe-successor-20261021, codex/pr901-current-main-integration-20261020, codex/pr869-span-fix-20261021, codex/pr869-current-main-integration-20261020, consol/998-observer-20261022 | PRs #869/#901 closed unmerged; #998 closed; monitor replay re-landed as merged PR #1150. Confirm #998 closure comment, then delete. |
+| Settlement fixture line | knowledge-pr862-settlement-20261019, codex/completed-guidance-786-20261018, dev/backlog-862-20261019 | #862 closed 2026-10-27; confirm the closure consumed the fixture work, then delete. |
+| #788 line | dev/backlog-788-20261019, codex/backlog-788-866-integration-20261020 (83 unique each) | #788 closed 2026-10-27 18:33 and PR #866 merged; confirm, then delete. |
+| Landed-elsewhere singles | fix/1019-series-gh-20261022 (PR #1053 merged), consol/866-qualification-20261022 (PR #1169 covers process-group reaping), fix/native-ci-target-reuse-key-20261023 (PR #1136 same subject), fix/issue905-main-port-20261022 / fix/logging-769-tests-main-port-20261022 / fix/receive-attempt-identity-tests-main-port-20261022 / fix/orchestra-subscription-test-main-port-20261022 / fix/inotify-909-main-port-20261022 / fix/compiler-queue-971-main-port-20261022 (explicit main ports; verify each port's target landed) | subjects match merged PRs |
+| Closed-issue carriers | codex/postboot-recovery-985-20261020 (#985 closed; 10-27 recovery wave #1162/#1163/#1165/#1166), runtime919-attempt-identity-ds-20261019 + fix/pr919-invocation-identity-20261019 (#919 closed) | confirm closure consumed the approach |
+
+### Open-issue work — review, port or return to the issue's conductor
+
+| Issue (state) | Branches (content-unique) | Note |
+|---|---|---|
+| #1089 cgen 2h20m (open) | fix/1089-main-reuse-closure-20261026 (2), claude/cgen-stack-20261026 (1), fix/term-higher-iterative-20261026 (2 of 3; 3rd is archive admission shared with fix/compiler-lay-iterative-20261026) | small, current-main-based; strongest merge candidates in the fleet |
+| #1146 receiver validation (open) | fix/1146-receiver-harness-probe-20261027 (1) | fresh, tiny |
+| #905 fresh receive after start failure (open) | codex/issue905-start-failed-fresh-receive-20261019 (21) | 10-19 base; port cost moderate |
+| #943 SQLite replay read amplification (open) | fix/sqlite943-read-reuse-20261019 (4), fix/replay-read-amplification-current-20261019 (4), fix/replay-read-reuse-943-main-20261022 (7), fix/sqlite937-reader-20261020 (1) | the -main-20261022 variant is already rebased |
+| #1001 REPL staging after caller update (open) | fix/queue1001-repl-adapter-20261021 (98) | queue-era; rebasing onto post-#982 queue is the work |
+| #995 binary queue inputs (open) | integrate/queue995-current-main-20261021 (91) | same era |
+| #978 corrupt queue cache recovery (open) | codex/compiler-queue-978-cache-recovery-20261020 (60) | same era |
+| #971 replay cursor before NUL suffix (open) | codex/compiler-queue-971-runtime-candidate-20261020 (59), fix/compiler-queue-971-followup-20261020 (1), codex/compiler-queue-971-investigator-ds-20261019 (3) | same era; regression test is 1 commit |
+| #776 Bend build time/memory (open) | consol/776-compiler-20261022 (19), fix/compiler776-capture-main-integration-e8d5-20261020 (16), fix/compiler776-literal-default-production-20261020 (8), fix/compiler776-lit-default-share-20261020 (7), fix/compiler776-main-bend-arity-20261020 (1), fix/compiler776-literal-port-e8d5ac89-20261020 (1), baton/branch-1df5d351e684ff4605e02535c1381069-{0,1} (10/6) + preserve/ twins (11/7, incl. root-seat wip) | arm_eq structural equality + shared arm emitters; largest coherent un-landed performance line; return to the #776 owner |
+| #1049 worker disk sprawl (open) | fix/1049-cargo-target-release-20261024 (12), design/1049-worker-disk-sprawl-20261023 (6, docs) | ops-relevant, current |
+| #1045 storage process-reference check (open) | fix/1045-storage-process-reference-20261024 (5) | current |
+| #965 remove native hard-limit admission (open) | fix/issue965-storage-cleanup-no-memory-cap-20261021 (1), consol/logs-cleanup-20261022 (1) | directly implements the no-memory-caps policy |
+| #1014/#1037/#1025/#858 usage holds and quota windows (all open) | fix/usage-holds-1014-20261022 (3), fix/usage-holds-1014-zai-handoff-20261024 (4), docs/usage-reopen-design-1037-20261023 (2), fix/858-clear-stop-quota-20261019 (2) | account-credits/usage domain; coordinate with the credits conductor |
+| #997 retained launchers after OOM (open) | fix/credit-maintained-caller-integration-20261021 (1) | credits line |
+| #787 owner election across runtime dirs (open) | consol/787-20261022 (2) | tiny |
+| #721 Antigravity harness (open) | codex/baton-721-agy-haiku-20261022 (2) | tiny |
+| #956 Harness² evaluation (open) | research/h2-source (1), research/h2-evaluator (1) | knowledge capture |
+| #951/#778/#775/#747 REPL and release gates (all open) | release-repl-deepseek-951-20261019 (8), release-repl-glm-778 (6), release-qual-deepseek-775-747 (5), consol/repl-critique-20261022 (1), consol/1009-repl-pins-20261022 (1), fix/repl-public-eval-20261019 (1), codex/repl-darwin-dependency-preflight-20261016 (2), dev/backlog-959-20261019 (3) | model-specific release qualification evidence |
+| #769/#786 ENOSPC and retry backoff (both open) | runtime-deepseek-successor-769-786 (11), logging-deepseek-769-main-tests (4), logging-deepseek-769 (3), logging-glm-769 (2) | merged PR #1165 (ENOSPC retained status) may cover part; diff against it before porting |
+| Coordinator laws (PR #782 era) | codex/hosted-laws-782-20261017 (3), codex/coordinator-law-gate-782-20261016 (1 of 6) | laws qualification; check against current law fixtures |
+| Storage policy continuation | codex/storage-policy-core-20261019 (1), codex/storage-policy-core-continuation-20261019 (1), codex/storage-policy-20261019 (1) | all three are root-seat "wip: preserve uncommitted work" captures from 2026-10-22; root decides |
+| PR1165 follow-ups | ensemble/critical-native-package-kimi-20261027 (2), codex/pr1165-darwin-recovery-workflow-20261027 (5) | confirm whether the #1166/#1167 chain consumed the workflow branch; kimi branch has an unknown ensemble owner |
+| Residual singles | codex/storage-reflog-preservation-20261027 (9, feeds PR #1157), fix/graph-answer-fix-20261019, fix/issue937-{terminal-policy,replay-guard,legacy,live-attach}-202610xx, fix/inotify-909-ds-20261019, fix/stop-dsh-1015-20261022, fix/native-ci-{launch-guard-stubs,bun144}-20261023, codex/{canonical-owner-ipc,host-inspector-bounded,runtime-frame-span-review,frontend-check-custody-20261021}, consol/{string-eq,frame-span-tests}-20261022, compiler-knowledge-ds-20261019, baton/knowledge-attach-hang-ds-20261018 (5), qual/composite-reap-ports-20261022 (14) | each 1–5 unique commits; individually triaged in later passes |
+
+`codex/frontend-check-custody-20261021` (93 unique) is listed under residuals pending one
+check: its check-kind routing may be the same problem main's merged "Resolve check entries
+from the source root" line already handles.
+
 ## Process observations
 
 - The local clone tracked only `refs/heads/main`; any prior audit run on this worktree saw a
