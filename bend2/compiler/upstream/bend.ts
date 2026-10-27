@@ -3132,7 +3132,10 @@ export function body_flatten(b: Body, vars: PVar[], fr: () => number): LTerm {
 // emitter see the compiler-lowered case form.
 function literal_chain(p: Parse, b: Body, vars: PVar[], def: Def,
   k: Name): LTerm | null {
-  if (b.$ !== "Match" || b.e.length !== 1 || vars.length === 0) return null;
+  // The lowering binds only the matched first parameter. A definition with
+  // later top-level parameters stays on the ordinary lowering: its helpers
+  // would abstract those parameters without carrying them in the signatures.
+  if (b.$ !== "Match" || b.e.length !== 1 || vars.length !== 1) return null;
   const scrut = b.e[0];
   if (scrut.$ !== "Var" || scrut.i !== vars[0].i) return null;
   const all = def.T;
