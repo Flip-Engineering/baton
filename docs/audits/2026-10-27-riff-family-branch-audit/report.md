@@ -219,3 +219,29 @@ repositories until root changes the grant or supplies other credentials.
 Fresh `ls-remote` at 2026-10-27T05:45Z: 181 heads, 420 tag refs (no `^{}` duplicates), 242 pull
 refs. The peer session working baton refs reports 267 tags from its clone and the user-reported
 baseline is 305; the numbers should be reconciled from a fresh remote read before any tag action.
+
+## Addendum 3: flip-client content verdicts (2026-10-27T07:30Z)
+
+Tip-tree membership against main's full history, plus per-file byte comparison against main for
+the 212 PR-less and closed-unmerged heads, gives:
+
+- 91 heads whose tip tree exists exactly in main's history: 66 `backup/*`, 12 PR-less, 9
+  closed-unmerged, 4 `archive/*`. Content landed exactly; deletable as residue after owner
+  confirmation.
+- 2 more heads whose every changed file is byte-equal to main: `fix/macos-unattended-gui-20260922`
+  and `fix/macos-worker-ancestor-20260922`.
+- 60 open-PR heads: live. The My Flip ensemble (#1110-#1112, #1117, 2026-10-26) and its source
+  branch `ensemble/flip-myflip-luna3-2212-cards-client-20261023` (49 commits, +6643, tree absent
+  from main) are active work, not residue.
+- 375 heads whose exact state exists nowhere in main: 42 closed-unmerged (rejected work), 149
+  PR-less unclassified, 13 `archive/*`, 171 `backup/*`. These hold pre-rebase intermediates and
+  abandoned states; deletion is an owner decision branch by branch. Two twin 4-line test-mock
+  branches (`fix/enrichment-mocks-20261022`, `fix/thread-enrichments-mock-b46f5ece`, the latter
+  closed as PR #1109) are the smallest of these.
+
+Tag correction: flip-client has 11 real tags (17 tag refs include 6 `^{}` peel duplicates), all
+pointing at main ancestors.
+
+Verdict data: `fclient-verdicts.tsv` shape (branch, commits-ahead, last-commit-date, files,
+insertions, deletions, files-byte-equal-to-main) covers the 212; the tree test covers all 526.
+Both derive from `Flip-Engineering/flip-client` clones at main `7c0d858b`.
