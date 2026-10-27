@@ -2199,7 +2199,9 @@ function ann_live(t: HTerm, out: Set<Bend.Name>,
 function v_live(cb: Carb): Set<Bend.Name> {
   const live = new Set<Bend.Name>();
   // These roots all add names to `live`. Reuse identity visits across
-  // signatures and annotations so a shared higher-order type is opened once.
+  // signatures, constructor telescopes, annotations and parsed bodies: a
+  // visited node's names are already in `live`, so the closure adds the same
+  // names.
   const type_seen = new WeakSet<HTerm>();
   // A book handed to compile_book must stay runnable: book_run reads main.v.
   live.add("main");
@@ -2231,7 +2233,7 @@ function v_live(cb: Carb): Set<Bend.Name> {
       continue;
     }
     const got = new Set<Bend.Name>();
-    type_live(tld.v, got);
+    type_live(tld.v, got, type_seen);
     for (const n of got) {
       if (!live.has(n)) {
         live.add(n);
