@@ -12,6 +12,7 @@ import ../host/instance.bend as Custody
 import ../host/sqlite.bend as DB
 import ../host/session-lock.bend as Lock
 import ../json/canonical.bend as J
+import ../git/process.bend as Process
 import ../git/text.bend as Tx
 
 # The live reducer is reconstructed from the provider and committed inbox after
@@ -191,6 +192,40 @@ def send_admission(+link: Proxy.Link, +state: State, +thread: String, +method: S
   match refreshed:
     case (token,+pointer): send_refreshed(link,state,thread,method,turn,notice,token,pointer,String.is_empty(pointer))
 
+def queue_receipt(+link: Proxy.Link, +state: State, +thread: String, result: Result<&1,&1,U32 & String,String>) -> Outcome.Checked(Admission):
+  match result:
+    case Fail{(code,cause)}: Outcome.Checked.pure(Admission,Refused{state,code,cause})
+    case Done{+output}:
+      match Bool.and(String.contains(output,"Queued message "),String.contains(output," for thread " ++ thread ++ ".")):
+        case True{}: do Outcome.Checked<Admission>:
+          recorded : Unit <- Proxy.record("{\"type\":\"codexInboxAdmission\",\"threadId\":" ++ J.string_literal(thread) ++ ",\"method\":\"codex queue\",\"result\":{\"receipt\":" ++ J.string_literal(output) ++ "}}")
+          Outcome.Checked.pure(Admission,Accepted{state})
+        case False{}: Outcome.Checked.pure(Admission,Refused{state,1,"Codex queue returned no matching admission receipt: " ++ output})
+
+def queue_refreshed(+link: Proxy.Link, +state: State, +thread: String, +token: String, +pointer: String, +empty: Bool) -> Outcome.Checked(Admission):
+  match empty:
+    case True{}: do Outcome.Checked<Admission>:
+      logged : Unit <- Proxy.record("{\"type\":\"codexInboxCoalesced\",\"threadId\":" ++ J.string_literal(thread) ++ ",\"pendingCount\":0}")
+      Outcome.Checked.pure(Admission,Accepted{state})
+    case False{}:
+      do Outcome.Checked<Admission>:
+        result : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(["codex","queue","--thread",thread,"--message",pointer]),".")
+        queue_receipt(link,state,thread,result)
+
+def queue_for_live_tui(+link: Proxy.Link, +state: State, +thread: String, +notice: Notice, +status: String) -> Outcome.Checked(Admission):
+  do Outcome.Checked<Admission>:
+    refreshed : String & String <- refresh(notice,status)
+    match refreshed:
+      case (token,+pointer): queue_refreshed(link,state,thread,token,pointer,String.is_empty(pointer))
+
+def deliver_resumed(+link: Proxy.Link, +thread: String, +notice: Notice, result: Admission) -> Outcome.Checked(Admission):
+  match result:
+    case Accepted{state}: Outcome.Checked.pure(Admission,Accepted{state})
+    case Refused{state,code,cause}:
+      Bool.pick(Outcome.Checked(Admission),String.contains(cause,"already has an active writer"),
+        queue_for_live_tui(link,state,thread,notice,"notLoaded"),
+        Outcome.Checked.pure(Admission,Refused{state,code,cause}))
+
 def steer_selected(+link: Proxy.Link, +thread: String, +notice: Notice, +state: State, +page: String, +turn: String, +cursor: String, +found: Bool, again: State -> String -> Outcome.Checked(Admission)) -> Outcome.Checked(Admission):
   match found:
     case True{}: do Outcome.Checked<Admission>:
@@ -224,7 +259,9 @@ def deliver_read(+link: Proxy.Link, +thread: String, +notice: Notice, +state: St
 
 def deliver_loaded(+link: Proxy.Link, +thread: String, +notice: Notice, +state: State, +response: String, +unloaded: Bool) -> Outcome.Checked(Admission):
   match unloaded:
-    case True{}: admission_rpc(link,state,thread,"thread/resume",thread_params(thread),next => resumed => deliver_read(link,thread,notice,next,resumed))
+    case True{}: do Outcome.Checked<Admission>:
+      result : Admission <- admission_rpc(link,state,thread,"thread/resume",thread_params(thread),next => resumed => deliver_read(link,thread,notice,next,resumed))
+      deliver_resumed(link,thread,notice,result)
     case False{}: deliver_read(link,thread,notice,state,response)
 
 def deliver_started(+link: Proxy.Link, +thread: String, +notice: Notice, +state: State, +response: String) -> Outcome.Checked(Admission):
@@ -473,12 +510,52 @@ def following(+link: Proxy.Link, +executable: String, +db: String, +session: Str
       logged : Unit <- Proxy.record("{\"type\":\"codexInboxSubscribed\",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ "}")
       follow_loop(link,executable,db,session,thread,next,row,"{\"initial\":true}")
 
+def observed_live_read(+session: String, +thread: String, +message: String, +row: Inbox.Snapshot) -> Outcome.Checked(Unit):
+  do Outcome.Checked<Unit>:
+    recorded : Unit <- Proxy.record("{\"type\":\"codexInboxMessageRead\",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"messageId\":" ++ J.string_literal(message) ++ "}")
+    released(session,thread,row)
+
+def live_tui_observed(+link: Proxy.Link, +db: String, +session: String, +thread: String, +state: State, +target: String, +row: Inbox.Snapshot, +read: Bool) -> Outcome.Checked(Unit):
+  match Inbox.stopped(row):
+    case True{}: released(session,thread,row)
+    case False{}:
+      Bool.pick(Outcome.Checked(Unit),Bool.or(String.is_empty(target),read),
+        observed_live_read(session,thread,target,row),
+        live_tui_wait(link,db,session,thread,state,target))
+
+def live_tui_snapshot(+link: Proxy.Link, +db: String, +session: String, +thread: String, +state: State, +target: String) -> Outcome.Checked(Unit):
+  do Outcome.Checked<Unit>:
+    +row : Inbox.Snapshot <- Inbox.read(db,session,thread)
+    +read : Bool <- Inbox.message_read(db,session,thread,target)
+    live_tui_observed(link,db,session,thread,state,target,row,read)
+
+def live_tui_next(+link: Proxy.Link, +db: String, +session: String, +thread: String, +state: State, +target: String, result: Proxy.Pending & String) -> Outcome.Checked(Unit):
+  match result:
+    case (pending,frame): live_tui_snapshot(link,db,session,thread,replace_pending(state,pending),target)
+
+@unsafe
+def live_tui_wait(+link: Proxy.Link, +db: String, +session: String, +thread: String, +state: State, +target: String) -> Outcome.Checked(Unit):
+  do Outcome.Checked<Unit>:
+    incoming : Proxy.Pending & String <- Proxy.next(link,state_pending(state))
+    live_tui_next(link,db,session,thread,state,target,incoming)
+
+def resumed_or_live_tui(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +state: State, +row: Inbox.Snapshot, result: Proxy.Pending & Result<&1,&1,U32 & String,String>) -> Outcome.Checked(Unit):
+  match result:
+    case (pending,Done{+response}): do Outcome.Checked<Unit>:
+      +next : State <- synced(replace_pending(state,pending),thread)
+      following(link,executable,db,session,thread,row,(next,response))
+    case (pending,Fail{(code,+cause)}): do Outcome.Checked<Unit>:
+      +next : State <- synced(replace_pending(state,pending),thread)
+      Bool.pick(Outcome.Checked(Unit),String.contains(cause,"already has an active writer"),
+        live_tui_snapshot(link,db,session,thread,next,Inbox.message(row)),
+        Outcome.Checked.fail(Unit,code,cause))
+
 def follow_loaded(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +state: State, +row: Inbox.Snapshot, +stopped: Bool) -> Outcome.Checked(Unit):
   match stopped:
     case True{}: released(session,thread,row)
     case False{}: do Outcome.Checked<Unit>:
-      result : State & String <- request(link,state,thread,"thread/resume","{\"threadId\":" ++ J.string_literal(thread) ++ "}")
-      following(link,executable,db,session,thread,row,result)
+      result : Proxy.Pending & Result<&1,&1,U32 & String,String> <- Proxy.rpc_result(link,state_pending(state),"thread/resume","{\"threadId\":" ++ J.string_literal(thread) ++ "}")
+      resumed_or_live_tui(link,executable,db,session,thread,state,row,result)
 
 def follow_run(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +pending: Proxy.Pending) -> Outcome.Checked(Unit):
   do Outcome.Checked<Unit>:

@@ -42,6 +42,14 @@ def write_public_queue_codex(directory, calls):
     executable = pathlib.Path(directory) / 'codex'
     executable.write_text('#!' + sys.executable + '\n' + r'''
 import base64,hashlib,json,pathlib,struct,sys
+if sys.argv[1:2]==['queue']:
+    args=sys.argv[2:]
+    thread=args[args.index('--thread')+1]
+    message=args[args.index('--message')+1]
+    with pathlib.Path(__CALLS__).open('a') as output:
+        output.write(json.dumps({'method':'codex queue','threadId':thread,'message':message})+chr(10))
+    print('Queued message fixture-queue for thread '+thread+'.')
+    raise SystemExit(0)
 assert sys.argv[1:]==['app-server','proxy'], sys.argv
 def exact(n):
     data=b''
@@ -75,7 +83,17 @@ while True:
     method=request['method']
     if 'id' not in request:continue
     if method=='initialize':result={}
-    elif method=='thread/read':result={'thread':{'id':request['params']['threadId'],'status':{'type':'active'}}}
+    elif method=='thread/read':
+        status='notLoaded' if __import__('os').environ.get('BATON_FIXTURE_RESUME_CONFLICT')=='1' else 'active'
+        if status=='notLoaded':
+            with pathlib.Path(__CALLS__).open('a') as output:
+                output.write(json.dumps({'method':method,'threadId':request['params']['threadId']})+chr(10))
+        result={'thread':{'id':request['params']['threadId'],'status':{'type':status}}}
+    elif method=='thread/resume' and __import__('os').environ.get('BATON_FIXTURE_RESUME_CONFLICT')=='1':
+        with pathlib.Path(__CALLS__).open('a') as output:
+            output.write(json.dumps({'method':method,'threadId':request['params']['threadId']})+chr(10))
+        reply({'id':request['id'],'error':{'code':-32000,'message':'thread '+request['params']['threadId']+' already has an active writer'}})
+        continue
     elif method=='thread/turns/list':result={'data':[{'id':'fixture-turn','status':'inProgress'}],'nextCursor':None}
     elif method=='turn/steer':
         with pathlib.Path(__CALLS__).open('a') as output:

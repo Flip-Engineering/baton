@@ -112,6 +112,17 @@ class FocusedCodexInbox(unittest.TestCase):
                           'expectedTurnId': 'fixture-turn'})
         self.assertEqual(self.reads(), [])
 
+    def test_unloaded_active_writer_uses_supported_codex_queue(self):
+        self.env['BATON_FIXTURE_RESUME_CONFLICT'] = '1'
+        self.run_cli(self.focused, 'codex-inbox-session', 'worker', NATIVE, 'owed', '')
+        calls = self.proxy_calls()
+        self.assertEqual([call['method'] for call in calls],
+                         ['thread/read', 'thread/resume', 'codex queue'])
+        self.assertEqual(calls[-1]['threadId'], NATIVE)
+        self.assertIn('owed', calls[-1]['message'])
+        self.assertNotIn(self.body, calls[-1]['message'])
+        self.assertEqual(self.reads(), [])
+
     def test_witness_reports_existing_active_native_turn(self):
         output = self.run_cli(self.focused, 'codex-input-witness', NATIVE)
         self.assertEqual(json.loads(output),
