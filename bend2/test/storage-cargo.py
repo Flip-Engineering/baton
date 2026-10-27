@@ -461,7 +461,7 @@ CREATE TABLE log_generations(session TEXT,log TEXT,base TEXT,attempt TEXT);
 
     def test_recorded_rollback_selection_keeps_the_output(self):
         binary = self.target / 'debug/cargo_release_fixture'
-        link = self.commands / 'baton.pre-production'
+        link = self.commands / 'baton.pre-fixture'
         original = link.resolve()
         link.unlink()
         link.symlink_to(binary)
