@@ -41,6 +41,44 @@ class FocusedRecoveryReuseTests(unittest.TestCase):
         self.assertEqual(transition['changed_input'], REUSE.HOST_SOURCE)
         self.assertEqual(transition['native_entry_sha256'], '3e8120dd6f0d42f526aa66c99730a8d54f7dd581c3611c822476e6a93f33b62f')
 
+    def test_recovery_proof_paths_match_across_darwin_var_alias(self):
+        target = self.root / 'real-generator'
+        alias = self.root / 'generator-alias'
+        target.mkdir()
+        alias.symlink_to(target, target_is_directory=True)
+        self.assertTrue(REUSE.same_resolved_path(alias / 'bin/bend', target / 'bin/bend'))
+        captured = {'generator': {'generator_root': str(target.resolve())}}
+        proof_capture = {'generator': {'generator_root': str(alias)}}
+        self.assertTrue(REUSE.captured_cgen_matches(captured, proof_capture))
+
+    def test_descendant_source_proof_requires_the_same_closure(self):
+        old, current = self.git_snapshots(
+            fixture_files(), fixture_files(queue=b'changed queue outside entry closure\n'))
+        old_rows, old_digest = REUSE.source_closure(self.root, old, 'bend2/src/coordinator/entry.bend')
+        current_rows, current_digest = REUSE.source_closure(self.root, current, 'bend2/src/coordinator/entry.bend')
+        proof = {'current_source_commit': old, 'current_source_tree': REUSE.git_tree(self.root, old),
+                 'origin_source_digest': 'origin-digest', 'current_source_digest': old_digest,
+                 'source_closure_file_count': len(old_rows)}
+        transition = {'origin_source_digest': 'origin-digest', 'current_source_digest': current_digest,
+                      'closure_file_count': len(current_rows)}
+        REUSE.validate_source_proof(self.root, current, proof, transition)
+        transition['current_source_digest'] = 'changed-imported-source'
+        with self.assertRaisesRegex(ValueError, 'source closure differs'):
+            REUSE.validate_source_proof(self.root, current, proof, transition)
+
+    def test_old_37951_proof_does_not_qualify_905_spawn_closure(self):
+        root = SCRIPT.parents[2]
+        old_transition = REUSE.verify_source_transition(root, '37951e3ad8b865783c8f898981841c52671dfc98')
+        current_transition = REUSE.verify_source_transition(root, '905f0bfacbc1ef490af156a2f3f3e0bd8efeb49d')
+        old_commit = '37951e3ad8b865783c8f898981841c52671dfc98'
+        proof = {'current_source_commit': old_commit, 'current_source_tree': REUSE.git_tree(root, old_commit),
+                 'origin_source_digest': old_transition['origin_source_digest'],
+                 'current_source_digest': old_transition['current_source_digest'],
+                 'source_closure_file_count': old_transition['closure_file_count']}
+        with self.assertRaisesRegex(ValueError, 'source closure differs'):
+            REUSE.validate_source_proof(root, '905f0bfacbc1ef490af156a2f3f3e0bd8efeb49d',
+                                        proof, current_transition)
+
     def test_qualified_37951_source_keeps_the_control_only_transition(self):
         root = SCRIPT.parents[2]
         transition = REUSE.verify_source_transition(root, '37951e3ad8b865783c8f898981841c52671dfc98')
