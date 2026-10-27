@@ -716,6 +716,19 @@ CREATE TABLE log_generations(session TEXT,log TEXT,base TEXT,attempt TEXT);
             ['git', '-C', str(clone), 'reflog', '--format=%H'], text=True).splitlines())
         self.assertEqual(subprocess.check_output(
             ['git', '-C', str(clone), 'rev-parse', 'HEAD'], text=True).strip(), published)
+        advertised = subprocess.check_output(
+            ['git', '-C', str(upstream), 'ls-remote', 'origin'], text=True)
+        advertised_oids = {line.split('\t', 1)[0] for line in advertised.splitlines()}
+        local_oids = set(subprocess.check_output(
+            ['git', '-C', str(clone), 'for-each-ref', '--format=%(objectname)'],
+            text=True).splitlines())
+        self.assertTrue(local_oids)
+        self.assertTrue(local_oids <= advertised_oids)
+        self.assertIn(published, advertised_oids)
+        fsck = subprocess.check_output(
+            ['git', '-C', str(clone), 'fsck', '--no-progress', '--no-reflogs', '--unreachable'],
+            text=True)
+        self.assertIn('unreachable commit ' + unique, fsck)
         answer = self.staging_apply(staging, upstream)
         self.assertIn('unpublished-object', answer)
         self.assertTrue(clone.exists())
