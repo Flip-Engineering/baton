@@ -926,6 +926,44 @@ def waiters_ticket_text(priority: U32, pid: U32, start: String, key: String, tok
   "priority=" ++ U32.show(priority) ++ "\npid=" ++ U32.show(pid)
   ++ "\nstarttime=" ++ start ++ "\nkey=" ++ key ++ "\ntoken=" ++ token ++ "\n"
 
+# A ticket is reaped only when it parses as a complete record (numeric pid
+# and a non-empty start time), the recorded pid and start time no longer
+# identify a live process, and a second read still shows the same record.
+# Unknown or malformed records stay; a live ticket stays; a canceled or
+# killed supervisor's blocked ticket is reaped by the next scan.
+
+def waiters_reap_second(~again_second: (@+read: Result<&1,&1,U32 & String,String> -> @+judged: String -> @+path: String -> IO(Unit)), read: Result<&1,&1,U32 & String,String>, +judged: String, +path: String) -> IO(Unit):
+  match read:
+    case Fail{error}: IO.pure(Unit, Unit{})
+    case Done{+text}:
+      Bool.pick(IO(Unit), Tx.str_eq(text, judged),
+        IO.try(Unit, L.CompileQueueLifecycle.remove(path)),
+        IO.pure(Unit, Unit{}))
+
+def waiters_reap_pid_parsed(parsed: Maybe<&2,U32>, +text: String, +path: String) -> IO(Unit):
+  match parsed:
+    case None{}: IO.pure(Unit, Unit{})
+    case Some{+pid}:
+      Bool.pick(IO(Unit), String.is_empty(field(text, "starttime")),
+        IO.pure(Unit, Unit{}),
+        do IO<Unit>:
+          alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(pid, field(text, "starttime")))
+          Bool.pick(IO(Unit), U32.is_eq(alive, 1), IO.pure(Unit, Unit{}),
+            do IO<Unit>:
+              again : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(path)
+              waiters_reap_second(waiters_reap_second, again, text, path)))
+
+@unsafe
+def waiters_reap_first(~again_first: (@+read: Result<&1,&1,U32 & String,String> -> @+path: String -> IO(Unit)), read: Result<&1,&1,U32 & String,String>, +path: String) -> IO(Unit):
+  match read:
+    case Fail{error}: IO.pure(Unit, Unit{})
+    case Done{+text}: waiters_reap_pid_parsed(U32.read(field(text, "pid")), text, path)
+
+def waiters_reap_stale(+dir: String, +name: String) -> IO(Unit):
+  do IO<Unit>:
+    read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(dir ++ "/" ++ name)
+    waiters_reap_first(waiters_reap_first, read, dir ++ "/" ++ name)
+
 def waiters_ticket_higher(text: String, +token: String, +priority: U32) -> IO(Bool):
   do IO<Bool>:
     contender : Bool <- IO.pure(Bool,
@@ -952,6 +990,7 @@ def waiters_next(~again_scan: (@+read: Result<&1,&1,U32 & String,String> -> @+na
     case Nil{}: IO.pure(Bool, False)
     case Con{+name, rest}:
       do IO<Bool>:
+        reaped : Unit <- waiters_reap_stale(dir, name)
         read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(dir ++ "/" ++ name)
         again_scan(read, rest, dir, token, priority)
 

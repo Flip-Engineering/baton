@@ -259,6 +259,12 @@ def retain(config, key, directory, success):
             stream.flush()
 
 
+def queue_priority(config):
+    """Scheduling priority for this request; never part of the cache key."""
+    value = str(config.get('priority') or os.environ.get('BATON2_COMPILE_QUEUE_PRIORITY') or '0')
+    return value if value.isdigit() else '0'
+
+
 def submit(config, directory, options, command, key_only=False):
     common = ['--state-root', config['state'], '--cwd', str(Path.cwd()),
               '--root', str(Path.cwd()), *options, '--', *command]
@@ -267,7 +273,13 @@ def submit(config, directory, options, command, key_only=False):
     token = uuid.uuid4().hex
     request = {'key': key, 'token': token, 'cwd': str(Path.cwd()), 'command': command,
                'key_argv': key_argv, 'started_ns': time.time_ns()}
-    argv = [config['client'], '--', 'run', '--token', token, '--receipt', str(directory / 'receipt'), *common]
+    run_common = list(common)
+    priority = queue_priority(config)
+    if priority != '0':
+        separator = run_common.index('--')
+        run_common[separator:separator] = ['--priority', priority]
+    request['priority'] = priority
+    argv = [config['client'], '--', 'run', '--token', token, '--receipt', str(directory / 'receipt'), *run_common]
     request['argv'] = argv
     write(directory / 'request.json', request)
     if key_only:

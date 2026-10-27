@@ -9,6 +9,7 @@ live process is ignored; a completed request leaves no ticket behind.
 """
 import fcntl
 import os
+import signal
 import pathlib
 import subprocess
 import tempfile
@@ -112,8 +113,36 @@ class QueuePriorityTests(unittest.TestCase):
         request = self.request("alive")
         self.finish(request)
         self.assertEqual(self.read_order(), ["alive"])
-        self.assertEqual(list(waiters.iterdir()), [pathlib.Path(
-            str(waiters / "00000000000000000001-dead"))])
+        # A ticket that parses but is proven stale is reaped by the scan.
+        self.assertEqual(list(waiters.iterdir()), [])
+        # An unparseable or incomplete record is preserved.
+        (waiters / "00000000000000000002-unknown").write_text("garbage\n")
+        again = self.request("alive2")
+        self.finish(again)
+        self.assertEqual([path.name for path in waiters.iterdir()],
+                         ["00000000000000000002-unknown"])
+
+    def test_killed_supervisor_ticket_is_reaped(self):
+        lock = self.hold_heavy()
+        blocked = self.request("blocked")
+        active = None
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            keys = list((self.state / "keys").glob("*")) if (self.state / "keys").is_dir() else []
+            if keys and (keys[0] / "active").exists():
+                active = keys[0] / "active"
+                break
+            time.sleep(0.02)
+        self.assertIsNotNone(active, "blocked request did not record its supervisor")
+        fields = dict(line.split("=", 1) for line in active.read_text().splitlines() if "=" in line)
+        os.kill(int(fields["pid"]), signal.SIGKILL)
+        blocked.wait(timeout=60)
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        waiters = self.state / "waiters"
+        self.assertTrue(list(waiters.iterdir()), "expected the killed supervisor ticket to remain")
+        revived = self.request("revived")
+        self.finish(revived)
+        self.assertEqual(list(waiters.iterdir()), [])
 
 
 if __name__ == "__main__":
