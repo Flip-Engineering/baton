@@ -1298,7 +1298,8 @@ def status_row_selected(selected: Bool, state_root: String, +key: String) -> IO(
           ++ " kind=" ++ field(text, "kind") ++ " setsid=" ++ field(text, "setsid")
           ++ " started_ns=" ++ field(text, "started_ns") ++ "\n"),
         IO.pure(Unit, Unit{}))
-      completed : Bool <- IO.try(Bool, Result.CompileQueueResult.verify_completed(keydir))
+      +record : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/completed/result"))
+      completed : Bool <- IO.pure(Bool, Result.CompileQueueResult.recorded_completed(record, key))
       present : Bool <- regular(keydir ++ "/completed/result")
       status_cache_row(present, completed, keydir, key),
     IO.pure(Unit, Unit{}))
