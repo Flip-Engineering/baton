@@ -2325,15 +2325,22 @@ function file_new(cb: Carb, decl: string): File {
   return file_reset({} as File, cb, decl);
 }
 
+// Emission indentation stops growing past eight levels. Expanded literal
+// matches nest hundreds of levels; their leading whitespace was 44.7% of the
+// 77.7 MB recovery-entry C and carries no meaning. Caching the prefixes also
+// stops "  ".repeat(tab) from allocating one string per emitted line.
+const INDENTS = Array.from({ length: 9 }, (_, i) => "  ".repeat(i));
+
 function file_push(fl: File, line: string): void {
+  const tab = fl.tab < INDENTS.length ? fl.tab : INDENTS.length - 1;
   // Facts-only passes use the same compiler decisions while counting output
   // lines without retaining their strings.
   if (fl.dry) {
     fl.dry_lines += 1;
-    fl.dry_units += line.length + fl.tab * 2;
+    fl.dry_units += line.length + tab * 2;
     return;
   }
-  fl.seg.lines.push("  ".repeat(fl.tab) + line);
+  fl.seg.lines.push(INDENTS[tab] + line);
 }
 
 // Block
