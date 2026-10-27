@@ -3,6 +3,7 @@
 // constructor subtrees stay shared through the production parser transforms.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import path from "node:path";
 import * as Bend from "../../compiler/upstream/bend.ts";
 
 const fixtures = [
@@ -96,3 +97,40 @@ for (const fixture of fixtures) {
   assert.equal(term_hash(Bend.term_lower(checked_shape)), fixture.hash, `${fixture.name} term structure`);
   console.log(`PASS ${fixture.name}: ${term_nodes(checked_shape)} visits`);
 }
+
+const production_fixture = path.join(import.meta.dir,
+  "fixtures/legacy_cli_arity_production/main.bend");
+const production_book = Bend.book_nil();
+const production_started = performance.now();
+await Bend.book_load(production_book, production_fixture, "", new Map());
+console.error(JSON.stringify({
+  stage: "book_load",
+  elapsed_ms: Math.round(performance.now() - production_started),
+  rss_bytes: process.memoryUsage().rss,
+}));
+const production_def = production_book.tlds.legacy_cli_arity;
+assert.ok(production_def !== undefined && production_def.$ === "Def"
+  && production_def.v !== null, "production legacy_cli_arity fixture parses");
+const production_nodes = term_nodes(production_def.v);
+console.error(JSON.stringify({
+  stage: "term_nodes",
+  elapsed_ms: Math.round(performance.now() - production_started),
+  rss_bytes: process.memoryUsage().rss,
+  visits: production_nodes,
+}));
+const production_lowered = Bend.term_lower_shared(production_def.v);
+console.error(JSON.stringify({
+  stage: "term_lower_shared",
+  elapsed_ms: Math.round(performance.now() - production_started),
+  rss_bytes: process.memoryUsage().rss,
+}));
+const production_hash = term_hash(production_lowered);
+console.error(JSON.stringify({
+  stage: "term_hash",
+  elapsed_ms: Math.round(performance.now() - production_started),
+  rss_bytes: process.memoryUsage().rss,
+}));
+assert.equal(production_hash,
+  "31c88055cadf55c5d0c3984ecf50bb524c26df0438dc997c7287dee989b2fba4",
+  "production legacy_cli_arity normalized term");
+console.log(`PASS production legacy_cli_arity parser: ${production_nodes} visits ${production_hash}`);

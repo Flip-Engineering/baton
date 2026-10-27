@@ -2823,7 +2823,8 @@ export function parse_def(p: Parse, book: Book, u: Bool = false): void {
     }
   } else {
     const vars = tele.map((cell): PVar => ({ $: "PVar", k: cell[1], i: cell[2], q: Lone(), s: cell[4] }));
-    def.v = term_higher(term_lower(term_higher(body_flatten(parse_body(p), vars, () => p.sc.frs++))));
+    def.v = term_higher(term_lower_shared(term_higher(
+      body_flatten(parse_body(p), vars, () => p.sc.frs++))));
   }
   parse_close(p, n0);
   book.order.push(k);
