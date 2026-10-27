@@ -110,11 +110,12 @@ jobs:
             .selected_source_closure_file_count == 79
           ' "$BATON2_RECOVERY_RUN/recovery-c-selection.json"
 
-      - name: Require the maintained shared compile queue
+      - name: Prepare the maintained shared compile queue
         shell: bash
         run: |
           set -euo pipefail
           queue_root="${BATON_COMPILE_QUEUE_ROOT:-/var/tmp/baton2-compile-queue}"
+          install -d -m 2775 "$queue_root"
           queue_client="${BATON2_COMPILE_QUEUE_BIN:-}"
           if [[ -z "$queue_client" && -x "$queue_root/compile-queue-runner" ]]; then
             queue_client="$queue_root/compile-queue-runner"
@@ -122,11 +123,24 @@ jobs:
           if [[ -z "$queue_client" && -n "${BATON2_PREFIX:-}" && -x "$BATON2_PREFIX/bin/baton-compile-queue" ]]; then
             queue_client="$BATON2_PREFIX/bin/baton-compile-queue"
           fi
-          if [[ ! -d "$queue_root" || ! -x "$queue_client" ]]; then
-            printf 'The Darwin shared compile queue is unavailable at %s. Install the maintained per-host queue before dispatching this component build.\n' \
-              "$queue_root" >&2
-            exit 78
+          if [[ -z "$queue_client" ]]; then
+            queue_client="$queue_root/compile-queue-runner"
+            if [[ -e "$queue_client" ]]; then
+              printf 'The configured compile queue client exists but is not executable: %s\n' "$queue_client" >&2
+              exit 78
+            fi
+            BATON_COMPILE_QUEUE_ROOT="$queue_root" \
+              BATON_COMPILE_QUEUE_TELEMETRY="$BATON2_RECOVERY_RUN/queue-bootstrap.telemetry" \
+              BEND="$BEND" BEND_NO_TELEMETRY=1 \
+              sh bend2/scripts/bootstrap-compile-queue.sh "$queue_client" \
+              > "$BATON2_RECOVERY_RUN/queue-bootstrap.stdout" \
+              2> "$BATON2_RECOVERY_RUN/queue-bootstrap.stderr"
           fi
+          test -d "$queue_root"
+          test -x "$queue_client"
+          printf 'queue_root=%s\nqueue_client=%s\n' "$queue_root" "$queue_client" \
+            > "$BATON2_RECOVERY_RUN/queue-selection.txt"
+          shasum -a 256 "$queue_client" > "$BATON2_RECOVERY_RUN/queue-client.sha256"
 
       - name: Build only the recovery native component
         shell: bash
@@ -182,6 +196,11 @@ jobs:
           for name in ('clang.txt', 'source-commit.txt', 'source-tree.txt', 'source-closure.stdout',
                        'build.stdout', 'build.stderr', 'output.sha256'):
               shutil.copyfile(run / name, run / 'artifact' / name)
+          for name in ('queue-bootstrap.telemetry', 'queue-bootstrap.stdout',
+                       'queue-bootstrap.stderr', 'queue-selection.txt', 'queue-client.sha256'):
+              path = run / name
+              if path.is_file():
+                  shutil.copyfile(path, run / 'artifact' / name)
           queue_root = run / 'queue-run'
           if queue_root.is_dir():
               shutil.copytree(queue_root, run / 'artifact/queue-run')
@@ -219,6 +238,10 @@ jobs:
               'compiler': {'archive_sha256': 'c5bb22ba029d5909da9c6db82aa037278a66d1cf8a5572f433879f7dcd866c31',
                            'binary_sha256': (run / 'toolchain/compiler.sha256').read_text().split()[0]},
               'queue': {'admission': 'shared compile queue through bend2/scripts/build-native.sh',
+                        'client_sha256': (run / 'queue-client.sha256').read_text().split()[0],
+                        'bootstrap_used': (run / 'queue-bootstrap.telemetry').is_file(),
+                        'bootstrap_telemetry_sha256': digest(run / 'queue-bootstrap.telemetry')
+                            if (run / 'queue-bootstrap.telemetry').is_file() else None,
                         'evidence_path': 'queue-run',
                         'invocations': sorted(path.name for path in queue_root.glob('invocation.*'))},
           }
