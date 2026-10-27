@@ -221,14 +221,12 @@ type RecordStep is Data:
 def record_empty_step(+acc: String, +text: String, +next: String) -> RecordStep:
   Bool.pick(RecordStep, String.is_empty(text), RsDone{acc}, RsMore{next, acc ++ text})
 
-def record_pair_step(+acc: String, pair: String & String) -> RecordStep:
-  match pair:
-    case (text, next): record_empty_step(acc, text, next)
-
 def record_step(+acc: String, chunk: Result<&1,&1,U32 & String,String & String>) -> RecordStep:
   match chunk:
     case Fail{error}: RsFailed{}
-    case Done{+pair}: record_pair_step(acc, pair)
+    case Done{+pair}:
+      match pair:
+        case (text, next): record_empty_step(acc, text, next)
 
 def record_advance(step: RecordStep) -> Bool:
   match step:
@@ -251,11 +249,15 @@ def record_value(step: RecordStep) -> Maybe<String>:
     case RsDone{acc}: Some{acc}
     case other: None{}
 
+# Chunk positions come from the host read, so the recursion is not
+# structurally decreasing; the compiled C loop is bounded by EOF, matching
+# the maintained include_chunks reader.
+@unsafe
 def record_read(+record: String, +position: String, +acc: String) -> IO(Maybe<String>):
   do IO<Maybe<String>>:
     chunk : Result<&1,&1,U32 & String,String & String> <- F.Files.text_chunk(record, position)
     +step : RecordStep = record_step(acc, chunk)
-    Bool.pick(IO<Maybe<String>>, record_advance(step),
+    Bool.pick(IO(Maybe<String>), record_advance(step),
       record_read(record, record_position(step), record_gathered(step)),
       IO.pure(Maybe<String>, record_value(step)))
 
@@ -340,7 +342,7 @@ def acp_selection_compare(+path: String, runtime_hex: String, config_hex: String
 def acp_selection_fields(+db: String, +path: String, fields: List<String>) -> IO(T.Presence):
   match fields:
     case valid <> root_kind <> schema_kind <> schema_hex <> runtime_kind <> +runtime_hex <> config_kind <> +config_hex <> manifest_kind <> +manifest_hex <> Nil{}:
-      Bool.pick(IO<T.Presence>, selection_valid(valid, root_kind, schema_kind, schema_hex,
+      Bool.pick(IO(T.Presence), selection_valid(valid, root_kind, schema_kind, schema_hex,
         runtime_kind, runtime_hex, config_kind, config_hex, manifest_kind, manifest_hex),
         acp_selection_compare(path, runtime_hex, config_hex, manifest_hex),
         unknown_selection(path))
