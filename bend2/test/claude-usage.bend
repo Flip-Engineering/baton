@@ -23,6 +23,11 @@ def main_args(args: List<String>) -> IO(Unit):
       check(db,"claude-model-scopes","{\"five_hour\":{\"utilization\":28},\"seven_day\":{\"utilization\":64},\"seven_day_opus\":{\"utilization\":100,\"resets_at\":\"2026-10-28T19:59:59Z\"},\"seven_day_sonnet\":{\"utilization\":20}}","json_array_length(v)=4 AND json_extract(v,'$[2].window')='7-day:opus' AND json_extract(v,'$[2].exhausted')=1 AND json_extract(v,'$[3].window')='7-day:sonnet' AND json_extract(v,'$[3].exhausted')=0 AND json_extract(v,'$[0].exhausted')=0 AND json_extract(v,'$[1].exhausted')=0")
       check(db,"claude-null-model-scopes","{\"five_hour\":{\"utilization\":28},\"seven_day\":{\"utilization\":64},\"seven_day_opus\":null,\"seven_day_sonnet\":null}","json_array_length(v)=2")
       check(db,"claude-invalid-model-scope","{\"five_hour\":{\"utilization\":28},\"seven_day\":{\"utilization\":64},\"seven_day_opus\":{\"utilization\":\"100\"}}","v IS NULL")
+      check(db,"claude-unlisted-model-scope","{\"five_hour\":{\"utilization\":10},\"seven_day\":{\"utilization\":20},\"seven_day_haiku\":{\"utilization\":100,\"resets_at\":\"2026-10-28T19:59:59Z\"}}","json_array_length(v)=3 AND json_extract(v,'$[2].window')='7-day:haiku' AND json_extract(v,'$[2].exhausted')=1")
+      check(db,"claude-five-hour-model-scope","{\"five_hour\":{\"utilization\":10},\"seven_day\":{\"utilization\":20},\"five_hour_opus\":{\"utilization\":55}}","json_array_length(v)=3 AND json_extract(v,'$[2].window')='5-hour:opus' AND json_extract(v,'$[2].exhausted')=0")
+      check(db,"claude-literal-prefix-underscore","{\"five_hour\":{\"utilization\":10},\"seven_day\":{\"utilization\":20},\"sevenXdayXhaiku\":{\"utilization\":100}}","json_array_length(v)=2 AND json_extract(v,'$[0].window')='5-hour' AND json_extract(v,'$[1].window')='7-day'")
+      check(db,"claude-string-model-scope","{\"five_hour\":{\"utilization\":10},\"seven_day\":{\"utilization\":20},\"seven_day_haiku\":\"bad\"}","v IS NULL")
+      check(db,"claude-number-model-scope","{\"five_hour\":{\"utilization\":10},\"seven_day\":{\"utilization\":20},\"seven_day_haiku\":42}","v IS NULL")
       IO.print("fixture-claude-usage-ok")
     case other: IO.die(Unit,2,"usage: claude-usage DB")
 
