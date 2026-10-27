@@ -144,3 +144,44 @@ in this ensemble.
    `b7ab93cf`.
 5. baton-cli: no action.
 6. video-studies-archive: grant app access or inventory from a credentialled host.
+
+## Addendum: adjacent granted repositories (2026-10-27T05:40-05:55Z)
+
+### flip-platform
+
+`main` = `e7d7ce8` ("Align general runner source with existing twelve-CPU limit (#18)"), last push
+2026-09-22 — the repository is dormant. 13 heads:
+
+- 9 merged: `main`, `agent/fleet-canary-admission-20260831` (PR #3), and 8 squash-merged residues
+  with PR receipts: #6 `agent/runner-authority-migration-20260831`, #9
+  `agent/general-v2-reusable-canary-20260831`, #10 `agent/android-kvm-source-authority-20260831`,
+  #12 `agent/capability-routing-inventory-20260831`, #13
+  `agent/android-build-package-capability-20260831-aurora`, #15
+  `feat/apple-hosted-capabilities-20260831`, #16 `agent/capacity-authority-import-v2-20260901`,
+  #18 `fix/general-v2-existing-cpu-quota-20260922`. All are based on pre-cleanup main (a later
+  ~65k-line deletion), and each adds only a small delta. Deletable as residue after owner
+  confirmation.
+- 2 heads with no pull request carrying real unmerged work:
+  `agent/adaptive-admission-consumer-issue4-20260901` (15 files, +4733, includes a 160-line test)
+  and `agent/capacity-authority-migration-issue7-20260901` (5 files, +497, includes a 131-line
+  test). Whether the issue #4 and #7 work is still wanted is an ownership decision; this
+  deployment records no active conductor for the repository.
+- 1 explicit backup branch: `backup/20260901/capacity-authority-import-20260901` (+427), an
+  earlier variant of the capacity-authority import line.
+
+### riff-private-archive-20260911
+
+Exactly one head `cd97c2393f0511fb0f4f8a7bf876a587f936a1a2`, no tags, no other branches: a dated
+provenance snapshot of riff at 2026-09-11 (riff's earliest published tag `v0.2.0` is the same
+date). No debris.
+
+### flip-client
+
+Pushed 2026-10-27 (active): 527 heads, 17 tags — the largest branch backlog in the set and well
+above the user-reported 205 for "Flip". Classification pending a scope claim.
+
+### baton fresh counts
+
+`git ls-remote` at 2026-10-27T05:45Z: 181 heads, 420 tags (no peeled `^{}` duplicates), 242 pull
+refs. Branch arithmetic: 213 reported − 33 removed by root + 1 audit branch = 181. The tag count
+does not match the reported 305 baseline.
