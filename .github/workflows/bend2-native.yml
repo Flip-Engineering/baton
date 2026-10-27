@@ -76,6 +76,11 @@ name: bend2-native-development
         required: false
         default: ''
         type: string
+      compiler_diagnostics:
+        description: 'Record compiler stages and memory observations during this run'
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: read
 
@@ -85,6 +90,7 @@ concurrency:
 
 env:
   BATON2_SOURCE_SHA: ${{ inputs.source_commit || (github.event_name == 'pull_request' && github.event.pull_request.head.sha) || github.sha }}
+  BEND_COMPILER_DIAGNOSTICS: ${{ inputs.compiler_diagnostics && '1' || '' }}
 
 jobs:
   linux-candidate:
