@@ -1,6 +1,7 @@
 // Usage: bun bend2/test/compiler/bounded_indent.ts [REPOSITORY_ROOT]
 // Emitted C leading indentation is capped, and the capped source is
 // token-identical to the uncapped source for a deeply nested literal match.
+// The temp compiler disables the branch C literal lowering so this test isolates the indentation cap.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
@@ -68,20 +69,30 @@ try {
     fs.copyFileSync(path.join(upstream, name), path.join(temp, name));
   }
   fs.cpSync(path.join(upstream, "effs"), path.join(temp, "effs"), { recursive: true });
+  // The branch C literal lowering removes the deep decision tree. This test
+  // exercises the indentation cap, so use the generic lowering in its temp
+  // compiler copies. The branch C lowering has its own test.
+  const bendSource = fs.readFileSync(path.join(upstream, "bend.ts"), "utf8");
+  const lower = "literal_chain(p, body, vars, def, k)\n      ?? body_flatten(body, vars, () => p.sc.frs++));";
+  const generic = "body_flatten(body, vars, () => p.sc.frs++));";
+  fs.writeFileSync(path.join(temp, "bend.ts"),
+    bendSource.includes(lower)
+      ? replaceOnce(bendSource, lower, generic) : bendSource);
   const source = fs.readFileSync(path.join(upstream, "comp.ts"), "utf8");
   fs.writeFileSync(path.join(temp, "capped.ts"), instrument(source));
   fs.writeFileSync(path.join(temp, "uncapped.ts"),
     instrument(replaceOnce(source, capped, uncapped)));
   // The temp compiler copies are selected at run time, so these imports cannot be static.
+  const BendTmp = await import(pathToFileURL(path.join(temp, "bend.ts")).href) as typeof Bend;
   const cap = await import(pathToFileURL(path.join(temp, "capped.ts")).href) as Comp;
   const uncap = await import(pathToFileURL(path.join(temp, "uncapped.ts")).href) as Comp;
   const file = path.join(temp, "deep.bend");
   fs.writeFileSync(file, fixture);
   const load = async (Comp: Comp): Promise<string> => {
-    const book = Bend.book_nil();
-    await Bend.book_load(book, file, "", new Map());
-    Bend.book_valid(book);
-    return Comp.compile_book(book);
+    const book = BendTmp.book_nil();
+    await BendTmp.book_load(book, file, "", new Map());
+    BendTmp.book_valid(book);
+    return Comp.compile_book(book as Bend.Book);
   };
   const a = await load(uncap);
   const b = await load(cap);
