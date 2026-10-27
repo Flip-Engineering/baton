@@ -64,12 +64,12 @@ name: bend2-native-development
       retained_compiler_archive:
         description: 'Pinned compiler archive on the homelab; $RUNNER_TEMP uses the selected runner namespace'
         required: false
-        default: '/var/tmp/baton2-compile-queue/toolchains/compiler-main-pattern-literal-sharing-20261027/bend-2.0.25-linux-x64-compiler-main-pattern-literal-sharing-20261027.tar.gz'
+        default: '/var/tmp/baton2-compile-queue/toolchains/compiler-main-parser-shared-lowering-20261027/bend-2.0.25-linux-x64-compiler-main-parser-shared-lowering-20261027.tar.gz'
         type: string
       retained_compiler_archive_sha256:
         description: 'Exact SHA256 of the selected pinned compiler archive'
         required: false
-        default: '5b8ae4da56ec4103a9c5042f6a834931d0c6fc8d4ed2fb145481d01f8152ed3d'
+        default: 'be457f1bb221df434a685506b18c0dd7fe55464ab82257a58189078374bc6f0f'
         type: string
       retained_ccache:
         description: 'Measured private ccache wrapper on the homelab; leave blank for direct native compilation'
@@ -121,8 +121,8 @@ jobs:
       - name: Prepare candidate toolchain and TypeScript runtime
         shell: bash
         env:
-          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-pattern-literal-sharing-20261027/bend-2.0.25-linux-x64-compiler-main-pattern-literal-sharing-20261027.tar.gz' }}
-          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '5b8ae4da56ec4103a9c5042f6a834931d0c6fc8d4ed2fb145481d01f8152ed3d' }}
+          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-parser-shared-lowering-20261027/bend-2.0.25-linux-x64-compiler-main-parser-shared-lowering-20261027.tar.gz' }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || 'be457f1bb221df434a685506b18c0dd7fe55464ab82257a58189078374bc6f0f' }}
           BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
           BATON2_LINUX_RUNNER: homelab
         run: |
@@ -294,8 +294,8 @@ jobs:
       BUN_JSC_maxPerThreadStackUsage: '67108864'
       BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.target_commit }}
       BATON2_TARGET_BUILD_RUN: ${{ inputs.target_build_run }}
-      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-pattern-literal-sharing-20261027/bend-2.0.25-linux-x64-compiler-main-pattern-literal-sharing-20261027.tar.gz' }}
-      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '5b8ae4da56ec4103a9c5042f6a834931d0c6fc8d4ed2fb145481d01f8152ed3d' }}
+      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-parser-shared-lowering-20261027/bend-2.0.25-linux-x64-compiler-main-parser-shared-lowering-20261027.tar.gz' }}
+      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || 'be457f1bb221df434a685506b18c0dd7fe55464ab82257a58189078374bc6f0f' }}
     steps:
       - name: Validate exact source commit
         shell: bash
