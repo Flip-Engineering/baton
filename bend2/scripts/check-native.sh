@@ -16,7 +16,7 @@ fi
   ulimit -s unlimited 2>/dev/null || true
   if [ -n "${BATON2_NATIVE_QUEUE_DRIVER:-}" ]; then
     BEND_NO_TELEMETRY=1 BUN_JSC_maxPerThreadStackUsage="${BUN_JSC_maxPerThreadStackUsage:-67108864}" \
-      "$PYTHON3" "$BATON2_NATIVE_QUEUE_DRIVER" compiler bend "$compiler" \
+      "$PYTHON3" "$BATON2_NATIVE_QUEUE_DRIVER" compiler bend \
       bend2/src/coordinator/laws.bend --check-only
   else
     BEND_NO_TELEMETRY=1 BUN_JSC_maxPerThreadStackUsage="${BUN_JSC_maxPerThreadStackUsage:-67108864}" \
