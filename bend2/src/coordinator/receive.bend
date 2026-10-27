@@ -1048,7 +1048,7 @@ def acquired_recorded(+db: String, +session: String, +lock: U32, again: String -
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +directory : String <- IO.try(String,DB.Sql.query(db,Store.recorded_retained_sql(session)))
     +attempt : String <- IO.pure(String,Tx.trim_nl(directory))
-    recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(attempt))
+    recovery : Maybe<String> <- Bool.pick(IO(Maybe<String>),String.is_empty(attempt),IO.pure(Maybe<String>,None{}),IO.try(Maybe<String>,P.ProcessChild.recovery_argv(attempt)))
     acquired_attempt(db,session,lock,attempt,recovery,again,pending)
 
 def acquired(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, result: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), predecessor: String, +updates: Chan(String)) -> IO(Result<&1,&1,U32 & String,Unit>):

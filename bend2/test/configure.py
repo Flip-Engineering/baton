@@ -117,6 +117,25 @@ class Configure(unittest.TestCase):
         self.exited('leaf')
         self.assertGreater(self.read_count('retained-task'), 0)
 
+    def test_same_route_command_and_log_rebinds_the_endpoint(self):
+        self.root()
+        self.recruit('leaf')
+        log = self.directory / 'rebound.jsonl'
+        changed = self.route('leaf', 'omp', 'kimi-code/k3', 'low',
+                             ('omp', 'kimi-code/k3', 'low'), log=log)
+        self.assertEqual(changed['endpointArgv'], self.receiver_endpoint('leaf', 'kimi-code/k3', log))
+
+
+    def test_same_route_command_without_log_is_refused(self):
+        self.root()
+        self.recruit('leaf')
+        before = self.assignment('leaf')
+        refused = self.call('configure', 'leaf', 'omp', 'kimi-code/k3', 'low',
+                            self.fixture, '', 'omp', 'kimi-code/k3', 'low', ok=False)
+        self.assertEqual(refused['code'], 2)
+        self.assertIn('requires both --command and --output-log', refused['stderr'])
+        self.assertEqual(self.assignment('leaf'), before)
+
     def test_route_change_fences_a_delayed_expected_route_and_leaves_the_row_alone(self):
         self.root()
         self.recruit('leaf')
