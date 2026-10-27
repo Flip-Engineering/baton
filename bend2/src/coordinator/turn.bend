@@ -1221,7 +1221,10 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
       NativeRequests.with_observation(WakeRead,questions,wakes => question_error => question_incomplete => do IO<WakeRead>:
         +question_text : String <- IO.pure(String,question_error)
         +request_incomplete : Bool <- IO.pure(Bool,question_incomplete)
-        +checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(incomplete_observation),Bool.and(Bool.not(failed),Bool.and(Bool.not(request_incomplete),Bool.and(Bool.not(invalid),Bool.and(Bool.not(observation_store_failed(unshared_result(String,observed))),Bool.and(Bool.not(String.is_empty(attempt)),Bool.or(Observer.checkpoint_due_fields(checkpoint_state,next_checkpoint,message_frame,terminal_selected,codex_frame),frame_is_span(decoded)))))))))
+        # A first output span commits its cursor; later progress-only spans
+        # replay from the previous durable checkpoint. A terminal is the next
+        # durable result boundary; after it, EOF commits the final cursor.
+        +checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(incomplete_observation),Bool.and(Bool.not(failed),Bool.and(Bool.not(request_incomplete),Bool.and(Bool.not(invalid),Bool.and(Bool.not(observation_store_failed(unshared_result(String,observed))),Bool.and(Bool.not(String.is_empty(attempt)),Observer.checkpoint_due_span(checkpoint_state,next_checkpoint,message_frame,terminal_selected,codex_frame,frame_is_span(decoded)))))))))
         +next_checkpoint_state : Observer.State <- Observer.checkpoint_state(spool,next_checkpoint,checkpoint_enabled)
         +checkpointed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,Observer.after_materialized_observation(db,handle,next_checkpoint_state,checkpoint_enabled,monitor,unshared_result(String,observed)))
         checkpoint_notice : Unit <- checkpoint_failure_notice(db,player,id,attempt,checkpoint_enabled,unshared_result(Unit,checkpointed))
