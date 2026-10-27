@@ -594,6 +594,118 @@ static int br_file(const char *directory,const char *name,const void *data,size_
   close(fd);
   return error;
 }
+/* Native wait status is the custody record for a completed process. Write it
+   through a temporary file so an interrupted or full-disk write cannot leave
+   an empty status path that looks like a completed record. */
+static int br_status_read(const char *directory,int *status) {
+  char *path=br_path(directory,"status");
+  if(!path)return ENOMEM;
+  int fd=open(path,O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
+  free(path);
+  if(fd<0)return errno;
+  struct stat info;
+  int error=fstat(fd,&info)?errno:0;
+  if(!error && !S_ISREG(info.st_mode))error=EINVAL;
+  char bytes[64];size_t length=0;
+  while(!error && length<sizeof(bytes)) {
+    ssize_t n=read(fd,bytes+length,sizeof(bytes)-length);
+    if(n<0 && errno==EINTR)continue;
+    if(n<0)error=errno;
+    else if(!n)break;
+    else length+=(size_t)n;
+  }
+  if(!error && length==sizeof(bytes))error=EOVERFLOW;
+  if(close(fd) && !error)error=errno;
+  if(error)return error;
+  if(length<2 || bytes[length-1]!='\n')return EINVAL;
+  size_t text_length=length-1;
+  bytes[text_length]=0;
+  char *end=NULL;errno=0;
+  long value=strtol(bytes,&end,10);
+  int decoded=(int)value;
+  if(errno || !end || end!=bytes+text_length || value<0 || value>INT_MAX ||
+     (!WIFEXITED(decoded) && !WIFSIGNALED(decoded)))return EINVAL;
+  *status=decoded;
+  return 0;
+}
+static int br_atomic_replace(const char *directory,const char *name,
+                             const void *bytes,size_t length) {
+  char *path=br_path(directory,name);
+  size_t suffix=strlen(name)+strlen(".tmp.XXXXXX")+2;
+  char *temporary=malloc(strlen(directory)+suffix+1);
+  if(temporary)snprintf(temporary,strlen(directory)+suffix+1,"%s/.%s.tmp.XXXXXX",directory,name);
+  if(!path || !temporary) {free(path);free(temporary);return ENOMEM;}
+  int fd=mkstemp(temporary);
+  if(fd<0) {int error=errno;free(path);free(temporary);return error;}
+  (void)fcntl(fd,F_SETFD,FD_CLOEXEC);
+  int error=br_write_all(fd,bytes,length);
+  if(!error && fchmod(fd,0400))error=errno;
+  if(!error && fsync(fd))error=errno;
+  if(close(fd) && !error)error=errno;
+  if(!error && rename(temporary,path))error=errno;
+  if(!error) {
+    int directory_fd=open(directory,O_RDONLY|O_CLOEXEC);
+    if(directory_fd<0)error=errno;
+    else {
+      if(fsync(directory_fd))error=errno;
+      close(directory_fd);
+    }
+  }
+  if(error)unlink(temporary);
+  free(path);free(temporary);
+  return error;
+}
+static int br_sync_record(const char *directory,const char *name) {
+  char *path=br_path(directory,name);
+  if(!path)return ENOMEM;
+  int fd=open(path,O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
+  free(path);
+  if(fd<0)return errno;
+  int error=fsync(fd)?errno:0;
+  if(close(fd) && !error)error=errno;
+  if(error)return error;
+  int directory_fd=open(directory,O_RDONLY|O_CLOEXEC);
+  if(directory_fd<0)return errno;
+  if(fsync(directory_fd))error=errno;
+  close(directory_fd);
+  return error;
+}
+static int br_status_store(const char *directory,int status) {
+  int recorded=0,error=br_status_read(directory,&recorded);
+  if(!error)return recorded==status?br_sync_record(directory,"status"):ESTALE;
+  if(error!=ENOENT && error!=EINVAL)return error;
+  char bytes[64];int length=snprintf(bytes,sizeof(bytes),"%d\n",status);
+  if(length<=0 || (size_t)length>=sizeof(bytes))return EOVERFLOW;
+  return br_atomic_replace(directory,"status",bytes,(size_t)length);
+}
+static int br_marker_recorded(const char *directory,const char *name,
+                              const char *record,size_t length) {
+  char *path=br_path(directory,name);
+  if(!path)return 0;
+  int fd=open(path,O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
+  free(path);
+  if(fd<0)return 0;
+  struct stat info;char bytes[32];
+  int ok=!fstat(fd,&info) && S_ISREG(info.st_mode) && length<=sizeof(bytes);
+  size_t used=0;
+  while(ok && used<length) {
+    ssize_t n=read(fd,bytes+used,length-used);
+    if(n<0 && errno==EINTR)continue;
+    if(n<=0) {ok=0;break;}
+    used+=(size_t)n;
+  }
+  char extra;
+  ssize_t tail;
+  do {tail=read(fd,&extra,1);} while(tail<0 && errno==EINTR);
+  if(tail!=0)ok=0;
+  close(fd);
+  return ok && used==length && !memcmp(bytes,record,length);
+}
+static int br_marker_store(const char *directory,const char *name,
+                           const char *record,size_t length) {
+  if(br_marker_recorded(directory,name,record,length))return br_sync_record(directory,name);
+  return br_atomic_replace(directory,name,record,length);
+}
 static void br_note(BrKeeper *keeper,const char *name,int error) {
   char text[256];
   int n=snprintf(text,sizeof(text),"%d: %s\n",error,strerror(error));
@@ -1375,8 +1487,8 @@ static void baton_retained_call(BatonProcessCall *call) {
   if(orphan && (call->error==EPIPE || call->error==ECONNRESET)) {
     if(op==BR_CLOSE)call->error=0;
     else if(op==BR_RELEASE || op==BR_ACK) {
-      call->error=exited?br_file(retained->directory,op==BR_RELEASE?"released":"acknowledged",
-        op==BR_RELEASE?"released\n":"acknowledged\n",op==BR_RELEASE?9:13,1):EBUSY;
+      call->error=exited?br_marker_store(retained->directory,op==BR_RELEASE?"released":"acknowledged",
+        op==BR_RELEASE?"released\n":"acknowledged\n",op==BR_RELEASE?9:13):EBUSY;
       if(call->error==EEXIST)call->error=0;
     } else if(op==BR_SIGNAL)call->error=exited?ESRCH:kill(-call->child->pid,(int)call->signal)?errno:0;
   }
@@ -1496,18 +1608,10 @@ static int br_recovery_reap_unwatched(BrKeeper *keeper) {
    attempt and reads its retained output. */
 static int br_attempt_completed(BrKeeper *keeper) {
   if(keeper->exited)return 1;
-  char *path=br_path(keeper->directory,"status");
-  int recorded=path && access(path,F_OK)==0;
-  free(path);
-  if(recorded)return 1;
-  path=br_path(keeper->directory,"released");
-  int released=path && access(path,F_OK)==0;
-  free(path);
-  if(released)return 1;
-  path=br_path(keeper->directory,"acknowledged");
-  int acknowledged=path && access(path,F_OK)==0;
-  free(path);
-  return acknowledged;
+  int status=0;
+  if(!br_status_read(keeper->directory,&status))return 1;
+  return br_marker_recorded(keeper->directory,"released","released\n",9) ||
+    br_marker_recorded(keeper->directory,"acknowledged","acknowledged\n",13);
 }
 static void br_recover(BrKeeper *keeper) {
   if(keeper->recovery_attempted)return;
@@ -1550,19 +1654,39 @@ static void br_disconnected(BrKeeper *keeper) {
      !br_attempt_completed(keeper)) br_recover(keeper);
 }
 static int br_record_native_exit(BrKeeper *keeper) {
-  if(!keeper->native_waiting || !keeper->native_pid)return 0;
-  pid_t reaped;int status;
-  do {reaped=waitpid(keeper->native_pid,&status,0);}while(reaped<0 && errno==EINTR);
-  if(reaped<0)return errno;
-  keeper->status=status;keeper->exited=1;keeper->native_waiting=0;
-  char text[64];int n=snprintf(text,sizeof(text),"%d\n",status);
-  int error=br_file(keeper->directory,"status",text,(size_t)n,1);
+  if(!keeper->native_pid)return 0;
+  int status=keeper->status;
+  if(keeper->native_waiting) {
+    pid_t reaped;
+    do {reaped=waitpid(keeper->native_pid,&status,0);}while(reaped<0 && errno==EINTR);
+    if(reaped<0)return errno;
+    keeper->status=status;keeper->exited=1;keeper->native_waiting=0;
+  } else if(!keeper->exited || keeper->status_unavailable)return 0;
+  int error=br_status_store(keeper->directory,keeper->status);
   if(error)return error;
-  return keeper->ready?br_send(keeper,(BrFrame){.op=BR_EXIT,.value=status},NULL):0;
+  return keeper->ready?br_send(keeper,(BrFrame){.op=BR_EXIT,.value=keeper->status},NULL):0;
 }
 static int br_native_exited(BrKeeper *keeper) {
   if(!keeper->ready)return 0;
   return br_record_native_exit(keeper);
+}
+static int br_native_exit_event(BrKeeper *keeper) {
+  int error=br_native_exited(keeper);
+  if(error) {
+    /* A failed status commit after waitpid leaves the actual status in this
+       keeper. Deliver that known status on the existing exit frame and keep
+       serving the attempt so a later control request can retry the durable write. */
+    br_note(keeper,"native-exit-error",error);
+    /* Only a successfully reaped wait status can be reported as terminal.
+       waitpid failures leave the native outcome unknown and status may still
+       contain its zero-initialized value. */
+    if(keeper->ready && keeper->exited && !keeper->status_unavailable &&
+       !keeper->native_waiting) {
+      int send_error=br_send(keeper,(BrFrame){.op=BR_EXIT,.value=keeper->status},NULL);
+      if(send_error)br_note(keeper,"native-exit-send-error",send_error);
+    }
+  }
+  return 0;
 }
 static int br_command(BrKeeper *keeper,BrFrame frame,const char *payload) {
   int error=0;
@@ -1596,9 +1720,8 @@ static int br_command(BrKeeper *keeper,BrFrame frame,const char *payload) {
     /* A waiter can observe the native exit before readiness. Reap that exit now
        that readiness is set; a running native returns without error. An error is
        recorded without failing the keeper serving state. */
-    if(keeper->native_waiting) {
-      int exit_error=br_native_exited(keeper);
-      if(exit_error)br_note(keeper,"native-exit-error",exit_error);
+    if(keeper->native_waiting || (keeper->exited && !keeper->status_unavailable)) {
+      br_native_exit_event(keeper);
     }
     return 0;
   }
@@ -1608,14 +1731,19 @@ static int br_command(BrKeeper *keeper,BrFrame frame,const char *payload) {
   }
   else if(frame.op==BR_RELEASE) {
     if(!keeper->exited) error=EBUSY;
+    else if(keeper->status_unavailable || keeper->native_waiting) error=ECHILD;
+    else if((error=br_status_store(keeper->directory,keeper->status))) {}
     else if(!keeper->released) {
-      if(keeper->lock>=0 && close(keeper->lock)) error=errno;
-      else {keeper->lock=-1;keeper->released=1;error=br_file(keeper->directory,"released","released\n",9,1);}
+      error=br_marker_store(keeper->directory,"released","released\n",9);
+      if(!error && keeper->lock>=0 && close(keeper->lock))error=errno;
+      if(!error) {keeper->lock=-1;keeper->released=1;}
     }
   } else if(frame.op==BR_ACK) {
     if(!keeper->exited || !keeper->released) error=EBUSY;
+    else if(keeper->status_unavailable || keeper->native_waiting) error=ECHILD;
+    else if((error=br_status_store(keeper->directory,keeper->status))) {}
     else {
-      error=br_file(keeper->directory,"acknowledged","acknowledged\n",13,1);
+      error=br_marker_store(keeper->directory,"acknowledged","acknowledged\n",13);
       if(!error) {
         keeper->finishing=1;
         if(keeper->status==0 && !keeper->status_unavailable) {
@@ -1727,13 +1855,11 @@ static int br_reconcile_native(BrKeeper *keeper,BrBirth requested) {
   if(error)return error;
   if(!br_same_birth(recorded,keeper->native_birth))return ESTALE;
   if(keeper->exited) {
-    char text[64];int length=snprintf(text,sizeof(text),"%d\n",keeper->status);
-    error=br_file(keeper->directory,"status",text,(size_t)length,1);
-    if(error!=EEXIST)return error;
-    char *path=br_path(keeper->directory,"status");FILE *file=path?fopen(path,"r"):NULL;
-    error=file?0:path?errno:ENOMEM;free(path);
+    if(keeper->status_unavailable || keeper->native_waiting)return ECHILD;
     int status=0;
-    if(file) {if(fscanf(file,"%d",&status)!=1)error=EINVAL;fclose(file);}
+    error=br_status_store(keeper->directory,keeper->status);
+    if(error)return error;
+    error=br_status_read(keeper->directory,&status);
     return error?error:status==keeper->status?0:ESTALE;
   }
   BrBirth current;
@@ -2210,7 +2336,7 @@ static int br_attempt_ready(BrKeeper *keeper,struct pollfd *fds,BrControl **clie
       if(!keeper->exited) {
         if(event.status<0)return ECHILD;
         keeper->native_waiting=1;
-        if((error=br_native_exited(keeper)))return error;
+        br_native_exit_event(keeper);
       }
     } else if(event.kind=='R') {
       /* Recovery waiters belong to this keeper attempt, not an observer
@@ -2708,14 +2834,12 @@ static void br_owner_state(BrOwner *owner,BrKeeper *keeper,BrOwnerState *state) 
   free(spool);
   uint64_t offset=0;
   if(!br_checkpoint_offset(keeper->directory,&offset))state->checkpoint_offset=offset;
-  char *status=br_path(keeper->directory,"status");
-  FILE *file=status?fopen(status,"r"):NULL;
-  if(file) {
-    int value=0;
-    if(fscanf(file,"%d",&value)==1) {state->status=value;state->status_known=1;}
-    fclose(file);
+  int value=0;
+  if(!br_status_read(keeper->directory,&value)) {
+    state->status=value;state->status_known=1;
+  } else if(keeper->exited && !keeper->status_unavailable) {
+    state->status=keeper->status;state->status_known=1;
   }
-  free(status);
 }
 /* Uses the same immutable database incarnation discriminator as the SQLite
    binding. Ordinary database writes preserve it; an unknown birth cannot qualify
@@ -3685,14 +3809,8 @@ static const char *br_lifecycle_state(const char *directory,BrLifecycle *record,
     fclose(file);
   }
   free(pid_path);
-  char *status_path=br_path(directory,"status");
-  file=status_path?fopen(status_path,"r"):NULL;
-  if(file) {
-    int value=0;
-    if(fscanf(file,"%d",&value)==1) {*status=value;*status_known=1;}
-    fclose(file);
-  }
-  free(status_path);
+  int value=0;
+  if(!br_status_read(directory,&value)) {*status=value;*status_known=1;}
   if(record->cancelled)return "cancelled";
   if(!record->latched)return record->observer_ready?"ready":"prepared";
   if(!*pid)return "uncertain";
@@ -3758,21 +3876,15 @@ static int br_owner_recover(BrOwner *owner,const char *directory,const char *boo
   BrLifecycle lifecycle={0};
   if(!error)error=br_lifecycle_required(canonical,&lifecycle);
   if(!error && (!lifecycle.latched || lifecycle.cancelled || !lifecycle.observer_ready))error=EPERM;
-  if(!error && (br_exists(canonical,"acknowledged") || br_exists(canonical,"native-start-error")))error=ENODATA;
+  if(!error && (br_marker_recorded(canonical,"acknowledged","acknowledged\n",13) ||
+      br_exists(canonical,"native-start-error")))error=ENODATA;
   int terminal=0,terminal_status=0;
-  if(!error && br_exists(canonical,"status")) {
-    char *status_path=br_path(canonical,"status");
-    FILE *status_file=status_path?fopen(status_path,"r"):NULL;
-    if(!status_file)error=status_path?errno:ENOMEM;
-    else {
-      if(fscanf(status_file,"%d",&terminal_status)!=1 ||
-         (!WIFEXITED(terminal_status) && !WIFSIGNALED(terminal_status)))error=EPERM;
-      fclose(status_file);
-      if(!error)terminal=1;
-    }
-    free(status_path);
+  if(!error) {
+    int status_error=br_status_read(canonical,&terminal_status);
+    if(!status_error)terminal=1;
+    else if(status_error!=ENOENT && status_error!=EINVAL)error=status_error;
   }
-  if(!error && br_exists(canonical,"released") && !terminal)error=ENODATA;
+  if(!error && br_marker_recorded(canonical,"released","released\n",9) && !terminal)error=ENODATA;
   BrBirth saved={0},current={0};int ended=0,life=-1;
   if(!error)error=br_read_file(canonical,"native.birth",&saved,sizeof(saved));
   if(!error) {
