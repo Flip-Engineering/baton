@@ -41,6 +41,9 @@ def CompileQueueLifecycle.lock_release(handle: U32) -> IO(Result<&1,&1,U32 & Str
 def CompileQueueLifecycle.close_fd(fd: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   P.HostPosix.close_fd(fd)
 
+def CompileQueueLifecycle.dup_to(fd: U32, target: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  P.HostPosix.dup_to(fd,target)
+
 def CompileQueueLifecycle.mkdir_p(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   QF.mkdir_p(path)
 
