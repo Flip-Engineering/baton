@@ -12,6 +12,7 @@ import ../src/storage/state.bend as S
 import ../src/host/process.bend as Proc
 import ../src/host/files.bend as F
 import ../src/host/sqlite.bend as DB
+import ../src/host/storage.bend as Host
 import ../src/git/process.bend as Git
 import ../src/git/types.bend as G
 import ../src/git/text.bend as Tx
@@ -275,8 +276,25 @@ def presence_detail(presence: T.Presence) -> String:
     case T.Absent{}: ""
     case T.Unknown{}: "unknown"
 
-def held_file_script(+file: String) -> String:
-  "exec 3<" ++ file ++ "; sleep 30"
+# Peers register in the test proc view and report readiness after setup.
+def peer_line(value: Maybe<String>) -> String:
+  match value:
+    case Some{line}: Tx.trim_nl(line)
+    case None{}: ""
+
+def peer_ready(result: Result<&1,&1,U32 & String,U32>) -> IO(Result<&1,&1,U32 & String,U32>):
+  match result:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>, Fail{error})
+    case Done{+handle}: do IO<Result<&1,&1,U32 & String,U32>>:
+      ready : Maybe<String> <- IO.try(Maybe<String>, Proc.ProcessChild.read_line(handle))
+      checked : Unit <- check("peer-ready", String.eq(peer_line(ready), "ready"), "peer did not initialize")
+      IO.pure(Result<&1,&1,U32 & String,U32>, Done{handle})
+
+def fixture_peer(+dir: String, +stderr: String, +file: String, +unreadable: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  do IO<Result<&1,&1,U32 & String,U32>>:
+    script : String <- command_output(["/bin/realpath", "bend2/test/storage-peer.py"])
+    child : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/usr/bin/env", "python3", script, file, unreadable]), dir, stderr)
+    peer_ready(child)
 
 def spawned_holder(result: Result<&1,&1,U32 & String,U32>, +dir: String) -> IO(Unit):
   match result:
@@ -309,12 +327,12 @@ def process_checks(+root: String) -> IO(Unit):
   do IO<Unit>:
     +dir : String = root ++ "/proc-parent"
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
-    spawned : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sleep", "30"]), dir, dir ++ "/stderr")
+    spawned : Result<&1,&1,U32 & String,U32> <- fixture_peer(dir, dir ++ "/stderr", "", "0")
     unit : Unit <- spawned_process(spawned, dir)
     +held : String = dir ++ "/held"
     wrote : Unit <- write_file(held, "x")
     +held_path : String <- command_output(["/bin/realpath", "-m", held])
-    holder : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sh", "-c", held_file_script(held_path)]), dir, dir ++ "/holder.stderr")
+    holder : Result<&1,&1,U32 & String,U32> <- fixture_peer(dir, dir ++ "/holder.stderr", held_path, "0")
     unit2 : Unit <- spawned_holder(holder, dir)
     IO.pure(Unit, unit2)
 
@@ -507,8 +525,6 @@ def database_malformed_check(+db: String, +root: String) -> IO(Unit):
     b : Unit <- check("malformed-endpoint-unknown", presence_unknown(facts_database_or_unknown(facts)), "malformed endpoint produced known database evidence")
     IO.pure(Unit, Unit{})
 
-def unknown_peer_script() -> String:
-  "import ctypes,time; getattr(ctypes.CDLL(None),'prctl',lambda *args: 0)(4,0,0,0,0); time.sleep(30)"
 
 # Unknown runtime evidence preserves the candidate before removal is attempted.
 # The removal check uses a readable 130-deep chain through the full apply and
@@ -571,7 +587,6 @@ def unknown_runtime_spawned(result: Result<&1,&1,U32 & String,U32>, +db: String,
     case Fail{error}: IO.die(Unit, 1, "unknown runtime peer spawn failed")
     case Done{+handle}:
       do IO<Unit>:
-        slept : Unit <- IO.sleep(100)
         +candidate : T.Candidate <- candidate_for(file, T.Scratch{}, clear_facts())
         preview : T.Preview <- one_preview(root, candidate)
         receipt : T.Receipt <- apply_preview(db, preview)
@@ -595,12 +610,11 @@ def spawned_unknown_holder(result: Result<&1,&1,U32 & String,U32>, +dir: String,
     case Fail{error}: IO.die(Unit, 1, "unknown peer spawn failed")
     case Done{+handle}:
       do IO<Unit>:
-        slept : Unit <- IO.sleep(100)
         absent : T.Presence <- O.runtime_presence(dir)
         unknown_ok : Unit <- check_unknown_presence(absent)
         signaled : Unit <- IO.try(Unit, Proc.ProcessChild.signal(handle, 15))
         waited : String <- IO.try(String, Proc.ProcessChild.wait(handle))
-        holder : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sh", "-c", held_file_script(database), "sh", database]), ".", dir ++ ".holder.stderr")
+        holder : Result<&1,&1,U32 & String,U32> <- fixture_peer(".", dir ++ ".holder.stderr", database, "0")
         held : Unit <- spawned_holder(holder, dir)
         IO.pure(Unit, held)
 
@@ -622,8 +636,7 @@ def spawned_presence_precedence(result: Result<&1,&1,U32 & String,U32>, +dir: St
     case Fail{error}: IO.die(Unit, 1, "unknown peer spawn failed")
     case Done{+unknown_handle}:
       do IO<Unit>:
-        slept : Unit <- IO.sleep(100)
-        holder : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sleep", "30"]), dir, dir ++ ".cwd-holder.stderr")
+        holder : Result<&1,&1,U32 & String,U32> <- fixture_peer(dir, dir ++ ".cwd-holder.stderr", "", "0")
         spawned_positive_holder(holder, unknown_handle, dir)
 
 def unknown_runtime_check(+db: String, +root: String) -> IO(Unit):
@@ -632,7 +645,7 @@ def unknown_runtime_check(+db: String, +root: String) -> IO(Unit):
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
     +file : String = dir ++ "/candidate.txt"
     wrote : Unit <- write_file(file, "payload")
-    spawned : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/usr/bin/env", "python3", "-c", unknown_peer_script()]), ".", dir ++ ".unknown.stderr")
+    spawned : Result<&1,&1,U32 & String,U32> <- fixture_peer(".", dir ++ ".unknown.stderr", "", "1")
     unit : Unit <- unknown_runtime_spawned(spawned, db, root, file)
     IO.pure(Unit, unit)
 
@@ -640,7 +653,7 @@ def positive_precedence_check(+root: String) -> IO(Unit):
   do IO<Unit>:
     +dir : String = root ++ "/positive-precedence"
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
-    unknown : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/usr/bin/env", "python3", "-c", unknown_peer_script()]), ".", dir ++ ".unknown.stderr")
+    unknown : Result<&1,&1,U32 & String,U32> <- fixture_peer(".", dir ++ ".unknown.stderr", "", "1")
     spawned_presence_precedence(unknown, dir)
 
 def unlinked_holder_check(+root: String) -> IO(Unit):
@@ -650,7 +663,7 @@ def unlinked_holder_check(+root: String) -> IO(Unit):
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
     +database : String = dir ++ "/orchestra.db"
     wrote : Unit <- write_file(database, "payload")
-    spawned : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/usr/bin/env", "python3", "-c", unknown_peer_script()]), ".", dir ++ ".unknown.stderr")
+    spawned : Result<&1,&1,U32 & String,U32> <- fixture_peer(".", dir ++ ".unknown.stderr", "", "1")
     spawned_unknown_holder(spawned, dir, database)
 
 def exclusive_check(+db: String) -> IO(Unit):
@@ -948,7 +961,7 @@ def collect_check(+db: String, +root: String) -> IO(Unit):
     k : Unit <- check("collect-refused-json", String.eq(refused_text,"{\"session\":\"collect-owner\",\"refused\":\"3: storage cleanup busy\",\"receipts\":[]}"), refused_text)
     IO.pure(Unit, Unit{})
 
-def main() -> IO(Unit):
+def storage_checks() -> IO(Unit):
   do IO<Unit>:
     +root : String <- command_output(["/usr/bin/realpath", "-m", ".scratch/bend2-storage-test"])
     +db : String <- command_output(["/usr/bin/realpath", "-m", ".scratch/bend2-storage-test.db"])
@@ -976,3 +989,26 @@ def main() -> IO(Unit):
     malformed_endpoint : Unit <- database_malformed_check(db, root)
     collection : Unit <- collect_check(db, root)
     IO.print("storage checks: all green")
+
+def reference_scan(mode: String, +path: String) -> IO(Unit):
+  match mode:
+    case "process-refs":
+      do IO<Unit>:
+        result : String <- IO.try(String, Host.StorageHost.process_refs(path))
+        IO.print(result)
+    case "runtime-refs":
+      do IO<Unit>:
+        result : String <- IO.try(String, Host.StorageHost.runtime_refs(path))
+        IO.print(result)
+    case other: IO.die(Unit, 2, "storage-test [process-refs|runtime-refs PATH]")
+
+def main_args(args: List<String>) -> IO(Unit):
+  match args:
+    case Nil{}: storage_checks()
+    case mode <> path <> Nil{}: reference_scan(mode, path)
+    case other: IO.die(Unit, 2, "storage-test [process-refs|runtime-refs PATH]")
+
+def main() -> IO(Unit):
+  do IO<Unit>:
+    args : List<String> <- IO.args()
+    main_args(args)
