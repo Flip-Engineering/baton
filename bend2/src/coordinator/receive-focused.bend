@@ -39,7 +39,7 @@ def dispatch_instance(owner: Bool, shutdown: Bool, +db: String) -> IO(Unit):
 def dispatch_schema(selected: Bool, +flag: String, +db: String) -> IO(Unit):
   match selected:
     case True{}: do IO<Unit>:
-      canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+      +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
       ensured : Unit <- Store.ensure_before_begin(canonical)
       accounts_schema : String <- IO.try(String,Accounts.commit_read(canonical,""))
       IO.write("{\"schema\":\"baton2-schema-ensure-v1\",\"status\":\"ready\"}\n")
