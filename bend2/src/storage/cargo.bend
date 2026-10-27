@@ -210,20 +210,52 @@ def baton_selection(+directory: String, +path: String) -> IO(T.Presence):
 def sql_quote(+text: String) -> String:
   "'" ++ String.join(String.split(text, Char.from_u32(39)), "''") ++ "'"
 
+# One chunk read answers whether more text follows, the accumulated text so
+# far, and the next position. The recursion stays inside record_read so no
+# forward definition is needed.
+type RecordStep is Data:
+  RsMore{next: String, acc: String}
+  RsDone{acc: String}
+  RsFailed{}
+
+def record_pair_step(+acc: String, pair: String & String) -> RecordStep:
+  match pair:
+    case (text, next):
+      Bool.pick(RecordStep, String.is_empty(text), RsDone{acc}, RsMore{next, acc ++ text})
+
+def record_step(+acc: String, chunk: Result<&1,&1,U32 & String,String & String>) -> RecordStep:
+  match chunk:
+    case Fail{error}: RsFailed{}
+    case Done{+pair}: record_pair_step(acc, pair)
+
+def record_advance(step: RecordStep) -> Bool:
+  match step:
+    case RsMore{next, acc}: True{}
+    case other: False{}
+
+def record_position(step: RecordStep) -> String:
+  match step:
+    case RsMore{next, acc}: next
+    case other: ""
+
+def record_gathered(step: RecordStep) -> String:
+  match step:
+    case RsMore{next, acc}: acc
+    case RsDone{acc}: acc
+    case RsFailed{}: ""
+
+def record_value(step: RecordStep) -> Maybe<String>:
+  match step:
+    case RsDone{acc}: Some{acc}
+    case other: None{}
+
 def record_read(+record: String, +position: String, +acc: String) -> IO(Maybe<String>):
   do IO<Maybe<String>>:
     chunk : Result<&1,&1,U32 & String,String & String> <- F.Files.text_chunk(record, position)
-    record_step(record, acc, chunk)
-
-def record_step(+record: String, +acc: String, chunk: Result<&1,&1,U32 & String,String & String>) -> IO(Maybe<String>):
-  match chunk:
-    case Fail{error}: IO.pure(Maybe<String>, None{})
-    case Done{+pair}:
-      match pair:
-        case (text, next):
-          Bool.pick(IO<Maybe<String>>, String.is_empty(text),
-            IO.pure(Maybe<String>, Some{acc}),
-            record_read(record, next, acc ++ text))
+    +step : RecordStep = record_step(acc, chunk)
+    Bool.pick(IO<Maybe<String>>, record_advance(step),
+      record_read(record, record_position(step), record_gathered(step)),
+      IO.pure(Maybe<String>, record_value(step)))
 
 def record_text(+record: String) -> IO(Maybe<String>):
   record_read(record, "0", "")
