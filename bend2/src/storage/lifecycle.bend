@@ -296,10 +296,17 @@ def candidate_member(+path: String, candidates: List<T.Candidate>) -> Bool:
 def add_candidate(+candidate: T.Candidate, candidates: List<T.Candidate>) -> List<T.Candidate>:
   Con{candidate, candidates}
 
+# An ownership-ending staging candidate has no recorded owner by premise, so
+# the session/owner filter must not drop it when a session is supplied.
+def ownership_ended(+cls: T.StorageClass) -> Bool:
+  match cls:
+    case T.StagingSource{}: True{}
+    case other: False{}
+
 def candidate_choice(+session: String, +cls: T.StorageClass, +path: String, +identity: String, +bytes: Nat, +facts: T.Facts, +choice: S.OwnerChoice) -> IO(Maybe<T.Candidate>):
   match choice:
     case S.OwnerChoice{owner, fact}:
-      +selected = Bool.or(String.is_empty(session), String.eq(owner, session))
+      +selected = Bool.or(Bool.or(String.is_empty(session), String.eq(owner, session)), ownership_ended(cls))
       Bool.pick(IO(Maybe<T.Candidate>), selected,
         do IO<Maybe<T.Candidate>>:
           proof : String = "owner:" ++ owner

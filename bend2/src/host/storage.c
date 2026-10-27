@@ -1774,6 +1774,15 @@ static Term baton_storage_cleanup_try_acquire_run(Env e, Term *f, IoWork *w) {
 static void __attribute__((constructor)) baton_storage_cleanup_try_acquire_use(void) {io_eff(CID_STORAGEHOST_CLEANUP_TRY_ACQUIRE, baton_storage_cleanup_try_acquire_run, 0);}
 #endif
 
+#ifdef CID_STORAGEHOST_SELF_UID
+static Term baton_storage_self_uid_run(Env e, Term *f, IoWork *w) {
+  char text[32];
+  snprintf(text, sizeof(text), "%lu", (unsigned long)geteuid());
+  return io_done(e, io_str(e, text, strlen(text)));
+}
+static void __attribute__((constructor)) baton_storage_self_uid_use(void) {io_eff(CID_STORAGEHOST_SELF_UID, baton_storage_self_uid_run, 0);}
+#endif
+
 #ifdef CID_STORAGEHOST_LEASE_RELEASE
 static void __attribute__((constructor)) baton_storage_lease_release_use(void) {io_eff(CID_STORAGEHOST_LEASE_RELEASE, baton_storage_lease_release_run, 0);}
 #endif

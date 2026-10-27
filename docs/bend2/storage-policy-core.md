@@ -65,8 +65,13 @@ and every local ref object in every namespace is advertised by that remote
 outside those refs, no process, runtime input, lease, live reference, database
 path or pending attempt names it, and every other preservation fact is absent.
 The object check includes commits retained only by reflogs and otherwise
-unreachable objects. A dirty worktree, a commit the authenticated repository
-does not contain, an unreachable object, or any unknown fact preserves it. The policy reports
+unreachable objects. The candidate must also be owned by the cleaner's
+effective uid: the process, lease and mount evidence scan covers that uid
+only, so a candidate owned by another uid is preserved. A dirty worktree, an
+untracked or ignored local file, a commit the authenticated repository does
+not contain, an unreachable object, a cross-uid candidate, or any unknown fact
+preserves it. The session/owner filter does not drop a staging candidate when
+a session is supplied because its ownership ended by premise. The policy reports
 `covered` per root, `apply:"lease-gated"` when every configured root is covered,
 `apply:"refused"` when any root is not covered, and `apply:"ready"` when the
 root list is empty. storage-apply SESSION acquires the per-root writer lease

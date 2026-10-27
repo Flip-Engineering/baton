@@ -8,6 +8,8 @@
 import Base
 import ./types.bend as T
 import ./observe.bend as O
+import ../host/files.bend as F
+import ../host/storage.bend as H
 import ../host/sqlite.bend as DB
 import ../host/session-lock.bend as Lock
 import ../git/process.bend as Git
@@ -443,6 +445,16 @@ def dirty_result(status: Result<&1, &1, G.GitFail, G.WtStatus>) -> T.Presence:
     case Done{made}: T.Unknown{}
     case Fail{fail}: T.Unknown{}
 
+# A staging candidate is dirty when tracked, untracked or ignored local files
+# exist. Ignored files such as .env are unknown local user data and must not be
+# removed with the tree, so the status includes them.
+def staging_status(result: G.GitOut) -> T.Presence:
+  match result:
+    case G.GRun{code, out}:
+      Bool.pick(T.Presence, Bool.not(U32.is_eq(code, 0)), T.Unknown{},
+        Bool.pick(T.Presence, String.is_empty(Tx.trim_nl(out)), T.Absent{}, T.Present{"worktree"}))
+    case G.GBroken{detail}: T.Unknown{}
+
 def dirty_fact(+cls: T.StorageClass, +path: String) -> IO(T.Presence):
   match cls:
     case T.Checkout{}:
@@ -451,8 +463,8 @@ def dirty_fact(+cls: T.StorageClass, +path: String) -> IO(T.Presence):
         IO.pure(T.Presence, dirty_result(status))
     case T.StagingSource{}:
       do IO<T.Presence>:
-        status : Result<&1, &1, G.GitFail, G.WtStatus> <- WS.worktreeStatus(path)
-        IO.pure(T.Presence, dirty_result(status))
+        status : G.GitOut <- Git.runGit(path, ["status", "--porcelain", "--ignored", "--untracked-files=all"])
+        IO.pure(T.Presence, staging_status(status))
     case other:
       IO.pure(T.Presence, T.Absent{})
 
@@ -616,7 +628,40 @@ def staging_finish(listed: Maybe<String>, unreachable: Maybe<String>, source_url
       staging_finish_rest(remote_text, unreachable, source_url, candidate_url,
         head, toplevel, gitdir, commondir, refs, worklist)
 
+def uid_field(fields: List<String>) -> String:
+  match fields:
+    case kind <> mode <> device <> inode <> bytes <> mtime <> uid <> gid <> Nil{}: uid
+    case other: ""
+
+def same_uid_result(+lstat: Result<&1,&1,U32 & String,String>, +self: Result<&1,&1,U32 & String,String>) -> T.Presence:
+  match lstat:
+    case Fail{error}: T.Unknown{}
+    case Done{record}:
+      match self:
+        case Fail{error}: T.Unknown{}
+        case Done{own}:
+          Bool.pick(T.Presence, String.eq(uid_field(Tx.split_tabs(record)), Tx.trim_nl(own)),
+            T.Absent{}, T.Present{"cross-uid-root"})
+
+# The process, lease and mount evidence scan covers the cleaner's effective uid
+# only, so a candidate owned by another uid is preserved.
+def staging_same_uid(+path: String) -> IO(T.Presence):
+  do IO<T.Presence>:
+    lstat : Result<&1,&1,U32 & String,String> <- F.Files.lstat(path)
+    self : Result<&1,&1,U32 & String,String> <- H.StorageHost.self_uid()
+    IO.pure(T.Presence, same_uid_result(lstat, self))
+
 def staging_unpublished(+source: String, +path: String) -> IO(T.Presence):
+  do IO<T.Presence>:
+    cross : T.Presence <- staging_same_uid(path)
+    staging_gate(source, path, cross)
+
+def staging_gate(+source: String, +path: String, cross: T.Presence) -> IO(T.Presence):
+  match cross:
+    case T.Absent{}: staging_reads(source, path)
+    case other: IO.pure(T.Presence, other)
+
+def staging_reads(+source: String, +path: String) -> IO(T.Presence):
   do IO<T.Presence>:
     source_url_git : G.GitOut <- Git.runGit(source, ["config", "--get", "remote.origin.url"])
     candidate_url_git : G.GitOut <- Git.runGit(path, ["config", "--get", "remote.origin.url"])

@@ -657,6 +657,7 @@ CREATE TABLE log_generations(session TEXT,log TEXT,base TEXT,attempt TEXT);
         git('config', 'user.email', 'fixture@example.invalid')
         git('config', 'user.name', 'Fixture')
         (upstream / 'file.txt').write_text('published\n')
+        (upstream / '.gitignore').write_text('*.env\n')
         git('add', '.')
         git('commit', '-qm', 'published')
         git('push', '-q', 'origin', 'HEAD:refs/heads/main')
@@ -827,6 +828,19 @@ CREATE TABLE log_generations(session TEXT,log TEXT,base TEXT,attempt TEXT);
         self.assertIn('unpublished-object', answer)
         self.assertTrue(clone.exists())
         self.assertTrue((clone / '.git' / 'refs' / 'heads' / 'feature').is_file())
+
+    def test_staging_source_ignored_local_file_is_preserved(self):
+        # Ignored files are omitted by a plain git status. A staging tree must
+        # not be removed while one exists, because it is unknown local data.
+        upstream, staging, clone, remote = self.staging_clone()
+        (clone / 'local.env').write_text('SECRET=unique\n')
+        status = subprocess.check_output(
+            ['git', '-C', str(clone), 'status', '--porcelain'], text=True)
+        self.assertEqual(status, '')
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('worktree-dirty', answer)
+        self.assertTrue(clone.exists())
+        self.assertEqual((clone / 'local.env').read_text(), 'SECRET=unique\n')
 
     def test_staging_source_other_ref_namespace_is_preserved(self):
         # A note lives in refs/notes/commits and is unique local data even

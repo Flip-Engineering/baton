@@ -22,6 +22,12 @@ def StorageHost.measure(path: String) -> IO(Result<&1,&1,U32 & String,String>):
 def StorageHost.entries(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./storage.c"
 
+# The calling process's effective uid as decimal text. Staging-source roots
+# whose content belongs to another uid are preserved because the process,
+# lease and mount evidence scan covers this uid only.
+def StorageHost.self_uid() -> IO(Result<&1,&1,U32 & String,String>):
+  import "./storage.c"
+
 # Removes exactly the path whose identity is `kind:device:inode`. The answer is
 # `removed<TAB>bytes<TAB>nodes`, `already-absent<TAB>0<TAB>0`,
 # `changed<TAB>0<TAB>0` or `refused<TAB>detail`. Directories are removed as a
