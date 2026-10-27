@@ -319,7 +319,7 @@ export type Ctx = PMap<Ann>;
 
 // Body
 export type PVar  = { $: "PVar"; k: Name; i: number; q: Quant; s?: Span };
-export type PCtr  = { $: "PCtr"; k: Name; x: Patt[]; s?: Span };
+export type PCtr  = { $: "PCtr"; k: Name; x: Patt[]; s?: Span; lit?: string };
 export type Patt  = PVar | PCtr;
 export type Case  = { p: Patt[]; f: Body };
 export type Rows  = Array<Case>;
@@ -2042,7 +2042,8 @@ export function parse_patt(p: Parse, t: LTerm): Patt {
       return { $: "PCtr", k: t.k, x: t.x.map((x) => parse_patt(p, x)), s: t.s };
     }
     case "Lit": {
-      return parse_patt(p, lit_full(t));
+      const q = parse_patt(p, lit_full(t));
+      return typeof t.v !== "string" ? q : { ...(q as PCtr), lit: t.v };
     }
     default: {
       throw Err(book, ctx_nil(), "a pattern (a binder or a constructor)", term_show(term_lower(term_higher(t), 0)), t.s);
@@ -2823,10 +2824,12 @@ export function parse_def(p: Parse, book: Book, u: Bool = false): void {
     }
   } else {
     const vars = tele.map((cell): PVar => ({ $: "PVar", k: cell[1], i: cell[2], q: Lone(), s: cell[4] }));
+    const body = parse_body(p);
     // term_higher applies body_flatten's substitutions and interns the closed
     // constructor chains. The lower/raise round trip that followed rebuilt the
     // same normalized term and held a second LTerm and HTerm during the load.
-    def.v = term_higher(body_flatten(parse_body(p), vars, () => p.sc.frs++));
+    def.v = term_higher(literal_chain(p, body, vars, def.T)
+      ?? body_flatten(body, vars, () => p.sc.frs++));
   }
   parse_close(p, n0);
   book.order.push(k);
@@ -3120,6 +3123,72 @@ export function body_flatten(b: Body, vars: PVar[], fr: () => number): LTerm {
       return match_flatten(b, vars, fr);
     }
   }
+}
+
+// A top-level match on a Many String parameter whose rows are string literal
+// patterns plus an optional final binder lowers to one String.eq test per row.
+// Each row body appears once; no character decision tree is built. The Mat on
+// the computed Bool is annotated with the branch type, so the checker and
+// emitter see the compiler-lowered case form.
+function literal_chain(p: Parse, b: Body, vars: PVar[], T: HTerm): LTerm | null {
+  if (b.$ !== "Match" || b.e.length !== 1 || vars.length === 0) return null;
+  const scrut = b.e[0];
+  if (scrut.$ !== "Var" || scrut.i !== vars[0].i) return null;
+  const all = T;
+  if (all.$ !== "All" || all.i !== vars[0].i || all.q.$ !== "Many") return null;
+  if (all.A.$ === "Ref" && all.A.k === "String") {
+    return literal_chain_string(p, b, vars, all, scrut);
+  }
+  return null;
+}
+
+function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
+  vars: PVar[], all: Extract<HTerm, { $: "All" }>, scrut: LTerm): LTerm | null {
+  if (p.book.tlds["String.eq"] === undefined || p.book.tlds["Bool"] === undefined
+    || p.book.ctrs["False"] === undefined || p.book.ctrs["True"] === undefined) {
+    return null;
+  }
+  let fallback: { f: Body; i: number } | null = null;
+  let literals = 0;
+  for (let j = 0; j < b.r.length; j++) {
+    const row = b.r[j];
+    if (row.p.length !== 1) return null;
+    const q = row.p[0];
+    if (q.$ === "PCtr" && q.lit !== undefined) {
+      literals += 1;
+    } else if (j === b.r.length - 1 && q.$ === "PVar") {
+      fallback = { f: row.f, i: q.i };
+    } else {
+      return null;
+    }
+  }
+  if (literals === 0) return null;
+  const fr = () => p.sc.frs++;
+  const A = term_lower_shared(all.B(Var(all.k, all.i)) as HTerm);
+  const boolIndex = p.sc.frs++;
+  let tail: LTerm;
+  if (fallback !== null) {
+    const binder: PVar = { $: "PVar", k: vars[0].k, i: vars[0].i,
+      q: Lone(), s: vars[0].s };
+    tail = body_flatten(body_sub(fallback.f, fallback.i, binder),
+      vars.slice(1), fr);
+  } else {
+    tail = Efq(b.s);
+  }
+  const span = b.s;
+  for (let j = b.r.length - 1; j >= 0; j--) {
+    const row = b.r[j];
+    const q = row.p[0];
+    if (q.$ !== "PCtr" || q.lit === undefined) continue;
+    const hit = body_flatten(row.f, vars.slice(1), fr);
+    const cond = App(App(Ref("String.eq", q.s), scrut, q.s),
+      patt_term(q), q.s);
+    const inner = Mat("True", hit, Efq(row.s ?? span), row.s ?? span);
+    const mat = Mat("False", tail, inner, span);
+    tail = App(Ann(mat, All(Lone(), "c", boolIndex, Ref("Bool"), A), span),
+      cond, span);
+  }
+  return Lam(all.k, all.i, tail, all.s, all.q);
 }
 
 // WNF

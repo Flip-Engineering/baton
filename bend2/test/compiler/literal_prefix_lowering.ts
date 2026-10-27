@@ -1,0 +1,99 @@
+// Usage: bun test ./bend2/test/compiler/literal_prefix_lowering.ts
+// Explicit baseline for the literal-prefix String lowering: each hot verb
+// dispatcher's stored term must match the lowered hash and node count. The
+// Lone-list path in the fixture keeps the generic decision tree and its own
+// baseline. The 11 existing compiler fixtures stay byte-identical; this test
+// records the one fixture whose C changed.
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import path from "node:path";
+
+import * as Bend from "../../compiler/upstream/bend.ts";
+
+type L = { $: string; s?: { src: string; beg: number; end: number }; [x: string]: unknown };
+
+function children(term: L): L[] {
+  switch (term.$) {
+    case "Sub": return [term.f as L, term.v as L];
+    case "Let": return [...(term.v as L[]), term.f as L];
+    case "All": return [term.A as L, term.B as L];
+    case "Lam": return [term.f as L];
+    case "Typ": return [term.g as L];
+    case "Min": return [term.a as L, term.b as L];
+    case "App": return [term.f as L, term.x as L];
+    case "ADT": case "Ctr": return term.x as L[];
+    case "Mat": return [term.h as L, term.m as L];
+    case "Eql": return [term.a as L, term.b as L, term.T as L];
+    case "Rwt": return [term.e as L, term.p as L, term.f as L];
+    case "Ann": return [term.x as L, term.T as L];
+    default: return [];
+  }
+}
+function term_hash(term: L): string {
+  const hashes = new WeakMap<object, string>();
+  function hash(node: L): string {
+    const prior = hashes.get(node);
+    if (prior !== undefined) return prior;
+    const fields: Record<string, unknown> = { $: node.$ };
+    for (const key of ["k", "i", "n", "v", "b", "q", "r"]) {
+      if (node[key] !== undefined && typeof node[key] !== "function") fields[key] = node[key];
+    }
+    if (node.s !== undefined) fields.s = [node.s.src, node.s.beg, node.s.end];
+    const body = JSON.stringify([node.$, Object.fromEntries(
+      Object.entries(fields).filter(([key]) => key !== "$"),
+    ), node.s === undefined ? null : [node.s.src, node.s.beg, node.s.end],
+    children(node).map(hash)]);
+    const result = createHash("sha256").update(body).digest("hex");
+    hashes.set(node, result);
+    return result;
+  }
+  return hash(term);
+}
+function unique(term: L): number {
+  const seen = new WeakSet<object>();
+  const stack: L[] = [term];
+  let n = 0;
+  while (stack.length > 0) {
+    const node = stack.pop() as L;
+    if (seen.has(node)) continue;
+    seen.add(node);
+    n += 1;
+    stack.push(...children(node));
+  }
+  return n;
+}
+
+async function load(file: string): Promise<Bend.Book> {
+  const book = Bend.book_nil();
+  await Bend.book_load(book, file, "", new Map());
+  return book;
+}
+function check(book: Bend.Book, name: string, hash: string, nodes: number): void {
+  const def = book.tlds[name];
+  assert.ok(def !== undefined && def.$ === "Def" && def.v !== null, `${name} is a filled def`);
+  const lowered = Bend.term_lower_shared(def.v) as L;
+  assert.equal(term_hash(lowered), hash, `${name} normalized term`);
+  assert.equal(unique(lowered), nodes, `${name} unique nodes`);
+}
+
+const root = path.join(import.meta.dir, "../../..");
+const codex = await load(path.join(root, "bend2/src/coordinator/codex-inbox.bend"));
+const hot: Record<string, [string, number]> = {
+  "../coordinator/commands.parse_verb_only":
+    ["71df6a78f0132579cc39dfc40bea14d435edca1461c2028cc2077e2220980ba6", 1518],
+  "../coordinator/commands.parse_verb_id":
+    ["bad86322142fca746d9f574e8c12af605753af783b7b1373a162a640191a766d", 14637],
+  "../coordinator/commands.parse_verb_session_id":
+    ["b7fe884f1900cfc9a35fb49fd4b5bbf30f9c40b6d5a6f4b9c8a6965ef774571a", 39855],
+  "../coordinator/commands.parse_verb_three_args":
+    ["14bce1060ebf6e9e29bf37115c63e72d6800a126597e2fa43f8c43e8085d54f8", 2221],
+};
+for (const [name, [hash, nodes]] of Object.entries(hot)) check(codex, name, hash, nodes);
+console.log(`PASS codex-inbox literal-prefix String lowering: ${Object.keys(hot).length} defs`);
+
+const fixture = await load(path.join(import.meta.dir, "fixtures/literal_prefix_frames.bend"));
+check(fixture, "classify_text",
+  "59939ff52c99855525c0f195bb713a89b84a119af32a7cd37dfb7f73260fb68d", 172);
+check(fixture, "classify",
+  "ee4b55e986eb9b17183601bead667f95b1791a82cb656eb46ef2c9f2514b3f2d", 4348);
+console.log("PASS literal prefix fixture: Many String lowered, Lone list unchanged");
