@@ -61,15 +61,59 @@ class QueueMissingResultTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         record = self.retained_result()
         self.assertIn("signal 9", record)
-        self.assertIn("137", record)
-        self.assertNotIn("exit_code=1\n", record)
+        self.assertIn("exit=137\n", record)
+        self.assertIn("supervisor terminated by signal 9", record)
+        self.assertNotIn("exit=1\n", record)
 
     def test_distinct_signal_records_its_own_status(self):
         result = self.run_queue(6)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         record = self.retained_result()
         self.assertIn("signal 6", record)
-        self.assertIn("134", record)
+        self.assertIn("exit=134\n", record)
+        self.assertIn("supervisor terminated by signal 6", record)
+
+    def test_canceled_request_retains_130(self):
+        import fcntl
+        import time
+        token = "cancel-token"
+        lock = (self.state / "heavy.lock").open("w")
+        self.addCleanup(lock.close)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        compiler = self.root / "fake-holder"
+        compiler.write_text("#!/bin/sh\nexit 0\n")
+        compiler.chmod(0o755)
+        argv = [self.candidate, "--", "run", "--token", token,
+                "--kind", "cc", "--state-root", str(self.state),
+                "--cwd", str(self.root), "--root", str(self.root),
+                "--source-root", str(self.root), "--compiler", str(compiler),
+                "--linker", "/usr/bin/ld", "--version", "fake-cancel-v1",
+                "--artifact", "output=" + str(self.output),
+                "--input", str(self.root / "main.c"),
+                "--", str(compiler), "-o", str(self.output)]
+        process = subprocess.Popen(argv, env=self.environment,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        deadline = time.monotonic() + 60
+        keydir = None
+        while time.monotonic() < deadline:
+            keys = list((self.state / "keys").glob("*")) if (self.state / "keys").is_dir() else []
+            if keys and (keys[0] / "active").exists():
+                keydir = keys[0]
+                break
+            time.sleep(0.05)
+        self.assertIsNotNone(keydir, "queue request did not start a supervisor")
+        canceled = subprocess.run(
+            [self.candidate, "--", "cancel", "--state-root", str(self.state),
+             "--key", keydir.name, "--token", token],
+            env=self.environment, capture_output=True, text=True)
+        self.assertIn("canceled=requested", canceled.stdout)
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        stdout, stderr = process.communicate(timeout=60)
+        self.assertNotEqual(process.returncode, 0, stdout + stderr)
+        record = self.retained_result()
+        self.assertIn("status=canceled", record)
+        self.assertIn("exit=130", record)
+        self.assertIn("all requesters canceled", record)
 
 
 if __name__ == "__main__":

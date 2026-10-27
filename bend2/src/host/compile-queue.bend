@@ -957,7 +957,10 @@ def start_attempt_result_exists(exists: Bool, +text: String, +key: String, +keyd
       +signal : U32 <- IO.pure(U32, status_number(field(waited, "signal")))
       +exit_code : U32 <- IO.pure(U32, status_number(field(waited, "exit")))
       +signaled : Bool <- IO.pure(Bool, U32.is_gt(signal, 0))
-      +observed : Bool <- IO.pure(Bool, non_empty(waited))
+      +wait_error : String <- IO.pure(String, field(waited, "error"))
+      +wait_error_code : U32 <- IO.pure(U32, status_number(field(waited, "error_code")))
+      +wait_failed : Bool <- IO.pure(Bool, non_empty(wait_error))
+      +observed : Bool <- IO.pure(Bool, Bool.and(non_empty(waited), Bool.not(wait_failed)))
       +missing_code : U32 <- IO.pure(U32,
         Bool.pick(U32, signaled, U32.add(128, signal),
           Bool.pick(U32, U32.is_eq(exit_code, 0), 1, exit_code)))
@@ -965,10 +968,12 @@ def start_attempt_result_exists(exists: Bool, +text: String, +key: String, +keyd
         Bool.pick(String, signaled,
           "supervisor exited before publishing a terminal result; supervisor terminated by signal "
             ++ U32.show(signal) ++ " (wait status " ++ U32.show(U32.add(128, signal)) ++ ")",
-          Bool.pick(String, observed,
-            "supervisor exited before publishing a terminal result; supervisor exit "
-              ++ U32.show(exit_code),
-            "supervisor exited before publishing a terminal result")))
+          Bool.pick(String, wait_failed,
+            "supervisor wait failed (error " ++ U32.show(wait_error_code) ++ "): " ++ wait_error,
+            Bool.pick(String, observed,
+              "supervisor exited before publishing a terminal result; supervisor exit "
+                ++ U32.show(exit_code),
+              "supervisor exited before publishing a terminal result"))))
       wrote : Unit <- write_failure(attempt, keydir,
         Bool.pick(String, was_canceled, "canceled", "failed"),
         Bool.pick(U32, was_canceled, 130, missing_code), field(text, "kind"), key, now,
@@ -987,10 +992,20 @@ def start_attempt_missing_result(text: String, key: String, keydir: String,
     exists : Bool <- regular(attempt ++ "/result")
     start_attempt_result_exists(exists, text, key, keydir, attempt, owner, now, waited)
 
+def wait_error_lines(lines: List<&1,String>, +acc: String) -> String:
+  match lines:
+    case Nil{}: acc
+    case line <> rest: wait_error_lines(rest, acc ++ " " ++ line)
+
+def wait_error_text(message: String) -> String:
+  wait_error_lines(Tx.split_lines(message), "")
+
 @unsafe
 def wait_supervisor_result(~again_wait: (@+pid: U32 -> @+delay: U32 -> IO(String)), +pid: U32, +delay: U32, result: Result<&1,&1,U32 & String,String>) -> IO(String):
   match result:
-    case Fail{error}: IO.pure(String, "")
+    case Fail{(code, message)}:
+      IO.pure(String, "running=0\nerror_code=" ++ U32.show(code)
+        ++ "\nerror=" ++ wait_error_text(message) ++ "\n")
     case Done{+status}:
       Bool.pick(IO(String), Tx.str_eq(field(status, "running"), "1"),
         do IO<String>:
