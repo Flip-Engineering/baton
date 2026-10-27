@@ -1055,12 +1055,12 @@ def supervise(+attempt: String) -> IO(Unit):
     source_root : String <- IO.pure(String, field(meta, "source_root"))
     entry : String <- IO.pure(String, field(meta, "entry"))
     +priority : U32 <- IO.pure(U32, status_number(field(meta, "priority")))
-    key : String <- IO.pure(String, field(meta, "key"))
+    +key : String <- IO.pure(String, field(meta, "key"))
     +keydir : String <- IO.pure(String, field(meta, "keydir"))
     names : List<&2,String> <- IO.pure(List<&2,String>, fields_all(meta, "artifact_name"))
-    started : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
+    +started : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
     +pid : U32 <- IO.try(U32, L.CompileQueueLifecycle.pid())
-    start : String <- IO.try(String, L.CompileQueueLifecycle.starttime(pid))
+    +start : String <- IO.try(String, L.CompileQueueLifecycle.starttime(pid))
     +token : String <- IO.pure(String, started ++ "-" ++ U32.show(pid))
     published : Unit <- Bool.pick(IO(Unit), String.is_empty(state), IO.pure(Unit, Unit{}),
       do IO<Unit>:
