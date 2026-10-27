@@ -1,7 +1,6 @@
 import Base
 import ./clear-stop-focused.bend as ClearStop
 import ./stop.bend as Stop
-import ./store.bend as Store
 import ./accounts.bend as Accounts
 import ../host/session-lock.bend as Lock
 import ./receive.bend as Receive
@@ -40,7 +39,6 @@ def dispatch_schema(selected: Bool, +flag: String, +db: String) -> IO(Unit):
   match selected:
     case True{}: do IO<Unit>:
       canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
-      ensured : Unit <- Store.ensure_before_begin(canonical)
       accounts_schema : String <- IO.try(String,Accounts.commit_read(canonical,""))
       IO.write("{\"schema\":\"baton2-schema-ensure-v1\",\"status\":\"ready\"}\n")
     case False{}: dispatch_instance(String.eq(flag,"--instance-owner"),String.eq(flag,"--instance-shutdown"),db)
