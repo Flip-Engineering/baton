@@ -12,7 +12,7 @@ let diagnostic_context: { event: string; details: Record<string, unknown> } | nu
 function diagnostic_stage(event: string, details: Record<string, unknown> = {}): void {
   if (DIAGNOSTICS) diagnostic_context = { event, details };
 }
-function diagnostic(event: string, details: Record<string, unknown> = {}): void {
+export function diagnostic(event: string, details: Record<string, unknown> = {}): void {
   if (!DIAGNOSTICS) return;
   diagnostic_stage(event, details);
   fs.writeSync(2, JSON.stringify({
