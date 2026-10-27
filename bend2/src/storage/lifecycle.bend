@@ -444,13 +444,13 @@ def cargo_consumer(+db: String, +path: String) -> IO(T.Presence):
 # command directory whose symlinks resolve the runtime and rollback
 # selections. A root without a recorded source keeps an unknown service and
 # its output stays.
-def root_selection(+spec: RootSpec, +candidate: String) -> IO(T.Presence):
+def root_selection(+db: String, +spec: RootSpec, +candidate: String) -> IO(T.Presence):
   match spec:
     case RootSpec{T.BuildOutput{}, +path, +source}:
       Bool.pick(IO(T.Presence), String.is_empty(source),
         Cargo.unknown_selection(candidate),
         Bool.pick(IO(T.Presence), String.starts_with(source, "selection:"),
-          Cargo.acp_selection(String.drop(source, 10n), candidate),
+          Cargo.acp_selection(db, String.drop(source, 10n), candidate),
           Cargo.baton_selection(source, candidate)))
     case other: Cargo.unknown_selection(candidate)
 
@@ -461,30 +461,30 @@ def cargo_release(+db: String, +path: String, +associated: String,
                   selection: @+candidate: String -> IO(T.Presence)) -> IO(Cargo.Collection):
   Cargo.collect(path, associated, candidate => cargo_consumer(db, candidate), selection)
 
-def preview_root_cargo(+session: String, +spec: RootSpec, +state: S.State, output: Cargo.Output) -> IO(RootPreview):
+def preview_root_cargo(+db: String, +session: String, +spec: RootSpec, +state: S.State, output: Cargo.Output) -> IO(RootPreview):
   match output:
     case Cargo.Cargo{identity, origin}:
       do IO<RootPreview>:
         planned : T.Preview <- Cargo.preview(root_path_of(spec), session,
-          candidate => cargo_state_consumer(state, candidate), candidate => root_selection(spec, candidate))
+          candidate => cargo_state_consumer(state, candidate), candidate => root_selection(db, spec, candidate))
         +observed : O.Observation <- O.observe(root_path_of(spec))
         IO.pure(RootPreview, RootPreview{root_path_of(spec), mount_of(observed), O.observation_identity(observed), planned})
     case other: preview_root_generic(session, spec, state)
 
-def preview_root(+session: String, +spec: RootSpec, +state: S.State) -> IO(RootPreview):
+def preview_root(+db: String, +session: String, +spec: RootSpec, +state: S.State) -> IO(RootPreview):
   match spec:
     case RootSpec{T.BuildOutput{}, +path, +source}: do IO<RootPreview>:
       output : Cargo.Output <- Cargo.observe(path)
-      preview_root_cargo(session, spec, state, output)
+      preview_root_cargo(db, session, spec, state, output)
     case other: preview_root_generic(session, spec, state)
 
-def preview_roots(+session: String, specs: List<&2,RootSpec>, +state: S.State, acc: List<RootPreview>) -> IO(List<RootPreview>):
+def preview_roots(+db: String, +session: String, specs: List<&2,RootSpec>, +state: S.State, acc: List<RootPreview>) -> IO(List<RootPreview>):
   match specs:
     case Nil{}: IO.pure(List<RootPreview>, List.reverse(&1, RootPreview, acc))
     case Con{head, tail}:
       do IO<List<RootPreview>>:
-        current : RootPreview <- preview_root(session, head, state)
-        deeper : List<RootPreview> <- preview_roots(session, tail, state, Con{current, acc})
+        current : RootPreview <- preview_root(db, session, head, state)
+        deeper : List<RootPreview> <- preview_roots(db, session, tail, state, Con{current, acc})
         IO.pure(List<RootPreview>, deeper)
 
 def entry_class(+entry: T.Entry) -> T.StorageClass:
@@ -511,7 +511,7 @@ def apply_preview(+db: String, +spec: RootSpec, preview: RootPreview) -> IO(T.Re
 def apply_root_generic(+session: String, +db: String, +spec: RootSpec) -> IO(T.Receipt):
   do IO<T.Receipt>:
     state : S.State <- S.load(db)
-    preview : RootPreview <- preview_root(session, spec, state)
+    preview : RootPreview <- preview_root(db, session, spec, state)
     receipt : T.Receipt <- apply_preview(db, spec, preview)
     IO.pure(T.Receipt, receipt)
 
@@ -519,7 +519,7 @@ def apply_root_cargo(+session: String, +db: String, +spec: RootSpec, output: Car
   match output:
     case Cargo.Cargo{identity, origin}:
       Cargo.receipt(root_path_of(spec), "", session, candidate => cargo_consumer(db, candidate),
-        candidate => root_selection(spec, candidate))
+        candidate => root_selection(db, spec, candidate))
     case other: apply_root_generic(session, db, spec)
 
 def apply_root(+session: String, +db: String, +spec: RootSpec) -> IO(T.Receipt):
@@ -565,7 +565,7 @@ def preview_json(+db: String, +session: String) -> IO(String):
   do IO<String>:
     specs : List<&2,RootSpec> <- configured_roots()
     +state : S.State <- S.load(db)
-    previews : List<RootPreview> <- preview_roots(session, specs, state, Nil{})
+    previews : List<RootPreview> <- preview_roots(db, session, specs, state, Nil{})
     IO.pure(String, previews_json(previews))
 
 def run_preview(+db: String, +session: String) -> IO(Unit):

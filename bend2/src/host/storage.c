@@ -251,6 +251,7 @@ static int baton_storage_measure_push(BatonStorageMeasureStack *stack, int fd) {
   if (copy < 0) { int error = errno; close(fd); return error; }
   if (lseek(copy, 0, SEEK_SET) < 0) { int error = errno; close(copy); close(fd); return error; }
   DIR *stream = fdopendir(copy);
+  if (!stream) { int error = errno; close(copy); close(fd); return error; }
   stack->items[stack->count].fd = fd;
   stack->items[stack->count].stream = stream;
   stack->count++;
@@ -310,6 +311,7 @@ static int baton_storage_measure_walk(int fd, BatonStorageCount *count) {
     error = baton_storage_measure_entry(frame->fd, entry->d_name, count, &stack);
   }
   while (stack.count) baton_storage_measure_pop(&stack);
+  free(stack.items);
   return error;
 }
 
@@ -524,6 +526,7 @@ static int baton_storage_remove_frame(int fd, int parent, char *name, dev_t devi
      earlier pass may already have enumerated. Rewind before the stream. */
   if (lseek(copy, 0, SEEK_SET) < 0) { int error = errno; close(copy); close(fd); free(name); return error; }
   DIR *directory = fdopendir(copy);
+  if (!directory) { int error = errno; close(copy); close(fd); free(name); return error; }
   int error = 0;
   struct dirent *entry;
   for (;;) {
@@ -614,6 +617,7 @@ static int baton_storage_remove_children(int fd, dev_t device, BatonStorageCount
     }
   }
   while (stack.count) baton_storage_remove_pop(&stack);
+  free(stack.items);
   return error;
 }
 
@@ -814,6 +818,7 @@ static int baton_cargo_profiles(int fd, const char *prefix, dev_t device, BatonS
        earlier pass leaves its offset at end. Rewind before the new stream. */
     if (lseek(copy, 0, SEEK_SET) < 0) { error = errno; close(copy); close(scan.fd); free(scan.prefix); break; }
     DIR *directory = fdopendir(copy);
+    if (!directory) { error = errno; close(copy); close(scan.fd); free(scan.prefix); break; }
     for (;;) {
       errno = 0;
       struct dirent *entry = readdir(directory);
@@ -843,7 +848,6 @@ static int baton_cargo_profiles(int fd, const char *prefix, dev_t device, BatonS
       if (profile < 0) { error = errno; free(relative); close(child); break; }
       if (!profile) {
         error = baton_cargo_scan_push(&scans, child, relative);
-        if (error) close(child);
       } else {
         free(relative);
         close(child);

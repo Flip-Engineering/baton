@@ -477,38 +477,101 @@ CREATE TABLE log_generations(session TEXT,log TEXT,base TEXT,attempt TEXT);
 
 
 
-    def test_acp_selection_record_retains_the_registered_runtime(self):
+    def selection_paths(self):
+        runtime = self.root / 'runtime'
+        runtime.mkdir(exist_ok=True)
+        config = self.root / 'config.json'
+        config.write_text('{}\n')
+        manifest = self.root / 'inputs.json'
+        manifest.write_text('{}\n')
+        return runtime, config, manifest
+
+    def selection_record(self, runtime, config, manifest, schema="acp.fframes-service-selection/v1"):
+        record = {"schema": schema, "acp_commit": "e382392cdc4daaff043350d0780aa492d9eb0d90",
+                  "runtime": str(runtime), "config": str(config), "manifest": str(manifest),
+                  "private_commit": "beaa8d55830c6a4fe2a913c2b2137270823ef803"}
+        return record
+
+    def write_record(self, text):
         record = self.root / 'selection.json'
-        record.write_text(json.dumps({
-            "schema": "acp.fframes-service-selection/v1",
-            "acp_commit": "e382392cdc4daaff043350d0780aa492d9eb0d90",
-            "runtime": str(self.root / 'registered' / 'runtime'),
-            "config": "/etc/recorded/service.json",
-            "manifest": "/etc/recorded/inputs.json",
-            "private_commit": "beaa8d55830c6a4fe2a913c2b2137270823ef803",
-        }))
-        target = self.root / 'registered' / 'runtime' / 'target'
-        shutil.copytree(self.target, target)
+        record.write_text(text)
+        return record
+
+    def apply_roots(self, target, record):
         env = dict(self.environment,
                    BATON_STORAGE_ROOTS=f'build-output={target}|selection:{record}')
-        answer = self.call('apply', self.db, 'owner', environment=env)
+        return self.call('apply', self.db, 'owner', environment=env)
+
+    def test_compact_maintained_selection_record_retains_the_registered_runtime(self):
+        runtime, config, manifest = self.selection_paths()
+        target = runtime / 'target'
+        shutil.copytree(self.target, target)
+        record = self.write_record(json.dumps(self.selection_record(runtime, config, manifest), separators=(',', ':')))
+        answer = self.apply_roots(target, record)
         self.assertIn('cargo-runtime-selected', answer)
         self.assertTrue(target.exists())
 
-    def test_acp_selection_record_releases_unregistered_output(self):
-        record = self.root / 'selection.json'
-        record.write_text(json.dumps({
-            "schema": "acp.fframes-service-selection/v1",
-            "runtime": str(self.root / 'registered' / 'runtime'),
-            "config": "/etc/recorded/service.json",
-            "manifest": "/etc/recorded/inputs.json",
-        }))
-        env = dict(self.environment,
-                   BATON_STORAGE_ROOTS=f'build-output={self.target}|selection:{record}')
-        answer = self.call('apply', self.db, 'owner', environment=env)
+    def test_pretty_selection_record_with_escaped_value_retains(self):
+        runtime, config, manifest = self.selection_paths()
+        escaped = self.root / 'conf"ig.json'
+        escaped.write_text('{}\n')
+        target = runtime / 'target'
+        shutil.copytree(self.target, target)
+        record = self.write_record(json.dumps(self.selection_record(runtime, escaped, manifest), indent=2))
+        answer = self.apply_roots(target, record)
+        self.assertIn('cargo-runtime-selected', answer)
+        self.assertTrue(target.exists())
+
+    def test_unregistered_output_releases_against_a_complete_record(self):
+        runtime, config, manifest = self.selection_paths()
+        record = self.write_record(json.dumps(self.selection_record(runtime, config, manifest), separators=(',', ':')))
+        answer = self.apply_roots(self.target, record)
         self.assertIn('cargo-output-released', answer)
         self.assertFalse(self.target.exists())
         self.build()
+
+    def test_invalid_json_record_keeps_the_output(self):
+        self.selection_paths()
+        record = self.write_record('{not json')
+        answer = self.apply_roots(self.target, record)
+        self.assertIn('cargo-selection-unknown', answer)
+        self.assertTrue(self.target.exists())
+
+    def test_missing_schema_record_keeps_the_output(self):
+        runtime, config, manifest = self.selection_paths()
+        fields = self.selection_record(runtime, config, manifest)
+        del fields['schema']
+        record = self.write_record(json.dumps(fields, separators=(',', ':')))
+        answer = self.apply_roots(self.target, record)
+        self.assertIn('cargo-selection-unknown', answer)
+        self.assertTrue(self.target.exists())
+
+    def test_missing_required_runtime_keeps_the_output(self):
+        runtime, config, manifest = self.selection_paths()
+        fields = self.selection_record(runtime, config, manifest)
+        del fields['runtime']
+        record = self.write_record(json.dumps(fields, separators=(',', ':')))
+        answer = self.apply_roots(self.target, record)
+        self.assertIn('cargo-selection-unknown', answer)
+        self.assertTrue(self.target.exists())
+
+    def test_truncated_record_keeps_the_output(self):
+        runtime, config, manifest = self.selection_paths()
+        text = json.dumps(self.selection_record(runtime, config, manifest), separators=(',', ':'))
+        record = self.write_record(text[:len(text) // 2])
+        answer = self.apply_roots(self.target, record)
+        self.assertIn('cargo-selection-unknown', answer)
+        self.assertTrue(self.target.exists())
+
+    def test_selected_ancestor_runtime_directory_retains_nested_output(self):
+        runtime, config, manifest = self.selection_paths()
+        nested = runtime / 'nested' / 'target'
+        nested.parent.mkdir(parents=True)
+        shutil.copytree(self.target, nested)
+        record = self.write_record(json.dumps(self.selection_record(runtime, config, manifest), separators=(',', ':')))
+        answer = self.apply_roots(nested, record)
+        self.assertIn('cargo-runtime-selected', answer)
+        self.assertTrue(nested.exists())
 
     def test_missing_selection_record_keeps_the_output(self):
         env = dict(self.environment,

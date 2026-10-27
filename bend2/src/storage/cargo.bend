@@ -12,7 +12,9 @@ import ./policy.bend as P
 import ./apply.bend as A
 import ../host/storage.bend as H
 import ../host/files.bend as F
+import ../host/sqlite.bend as DB
 import ../host/session-lock.bend as Lock
+import ../git/text.bend as Tx
 
 type Output is Data:
   Cargo{identity: String, origin: String}
@@ -199,41 +201,124 @@ def baton_selection(+directory: String, +path: String) -> IO(T.Presence):
     baton_selection_result(directory, path, canonical)
 
 # The ACP FFrames artifact service registers the current deployment in a
-# selection record (schema acp.fframes-service-selection/v1): a flat JSON
-# object whose runtime, config and manifest fields name the retained paths.
+# selection record (schema acp.fframes-service-selection/v1): a JSON object
+# whose runtime, config and manifest text fields name the retained paths.
 # The running service's own process evidence holds active producer custody;
-# this reader answers only whether the record retains the candidate.
-def json_field_parts(parts: List<String>, +key: String) -> Maybe<String>:
-  match parts:
-    case Nil{}: None{}
-    case head <> tail:
-      match tail:
-        case ":" <> value <> rest:
-          Bool.pick(Maybe<String>, String.eq(head, key), Some{value}, json_field_parts(rest, key))
-        case other: json_field_parts(tail, key)
+# this reader answers only whether the record retains the candidate. Any
+# invalid, truncated, unreadable or unresolvable evidence is unknown, which
+# preserves the allocation.
+def sql_quote(+text: String) -> String:
+  "'" ++ String.join(String.split(text, Char.from_u32(39)), "''") ++ "'"
 
-def json_field(+text: String, +key: String) -> Maybe<String>:
-  json_field_parts(String.split(text, Char.from_u32(34)), key)
+def record_read(+record: String, +position: String, +acc: String) -> IO(Maybe<String>):
+  do IO<Maybe<String>>:
+    chunk : Result<&1,&1,U32 & String,String & String> <- F.Files.text_chunk(record, position)
+    record_step(record, acc, chunk)
 
-def path_overlap(+a: String, +b: String) -> Bool:
-  Bool.or(path_contains(a, b), path_contains(b, a))
+def record_step(+record: String, +acc: String, chunk: Result<&1,&1,U32 & String,String & String>) -> IO(Maybe<String>):
+  match chunk:
+    case Fail{error}: IO.pure(Maybe<String>, None{})
+    case Done{+pair}:
+      match pair:
+        case (text, next):
+          Bool.pick(IO<Maybe<String>>, String.is_empty(text),
+            IO.pure(Maybe<String>, Some{acc}),
+            record_read(record, next, acc ++ text))
 
-def selection_named(+text: String, +path: String, +key: String, hit: Bool) -> Bool:
-  match json_field(text, key):
-    case None{}: hit
-    case Some{named}: Bool.or(hit, path_overlap(path, named))
+def record_text(+record: String) -> IO(Maybe<String>):
+  record_read(record, "0", "")
 
-def acp_selection_retains(+text: String, +path: String) -> Bool:
-  selection_named(text, path, "runtime",
-    selection_named(text, path, "config",
-      selection_named(text, path, "manifest", False{})))
+# The maintained JSON reader is SQLite's json functions over the record text,
+# the same pattern the coordinator uses for stored JSON. The record must be a
+# valid object of schema acp.fframes-service-selection/v1 with text runtime,
+# config and manifest fields.
+def selection_sql(+text: String) -> String:
+  "WITH record(value) AS (VALUES(" ++ sql_quote(text) ++ ")) SELECT json_valid(value),"
+  ++ " CASE WHEN json_valid(value) THEN coalesce(json_type(value),'') ELSE '' END,"
+  ++ " CASE WHEN json_valid(value) THEN coalesce(json_type(value,'$.schema'),'') ELSE '' END,"
+  ++ " CASE WHEN json_valid(value) THEN coalesce(hex(json_extract(value,'$.schema')),'') ELSE '' END,"
+  ++ " CASE WHEN json_valid(value) THEN coalesce(json_type(value,'$.runtime'),'') ELSE '' END,"
+  ++ " CASE WHEN json_valid(value) THEN coalesce(hex(json_extract(value,'$.runtime')),'') ELSE '' END,"
+  ++ " CASE WHEN json_valid(value) THEN coalesce(json_type(value,'$.config'),'') ELSE '' END,"
+  ++ " CASE WHEN json_valid(value) THEN coalesce(hex(json_extract(value,'$.config')),'') ELSE '' END,"
+  ++ " CASE WHEN json_valid(value) THEN coalesce(json_type(value,'$.manifest'),'') ELSE '' END,"
+  ++ " CASE WHEN json_valid(value) THEN coalesce(hex(json_extract(value,'$.manifest')),'') ELSE '' END;"
 
-def acp_selection_chunk(+record: String, +path: String, result: Result<&1,&1,U32 & String,String & String>) -> IO(T.Presence):
-  match result:
-    case Fail{error}: unknown_selection(path)
-    case Done{text}: IO.pure(T.Presence, Bool.pick(T.Presence, acp_selection_retains(text, path), T.Present{"acp-selection"}, T.Absent{}))
+def selection_field_text(+kind: String, +hex: String) -> Bool:
+  Bool.and(String.eq(kind, "text"), Bool.not(String.is_empty(hex)))
 
-def acp_selection(+record: String, +path: String) -> IO(T.Presence):
+def selection_valid(valid: String, root_kind: String, schema_kind: String, schema_hex: String,
+                    runtime_kind: String, runtime_hex: String, config_kind: String, config_hex: String,
+                    manifest_kind: String, manifest_hex: String) -> Bool:
+  Bool.and(String.eq(valid, "1"),
+    Bool.and(String.eq(root_kind, "object"),
+      Bool.and(String.eq(schema_kind, "text"),
+        Bool.and(String.eq(Tx.hex_decode(schema_hex), "acp.fframes-service-selection/v1"),
+          Bool.and(selection_field_text(runtime_kind, runtime_hex),
+            Bool.and(selection_field_text(config_kind, config_hex),
+              selection_field_text(manifest_kind, manifest_hex)))))))
+
+def canonical_overlap_pair(left: Result<&1,&1,U32 & String,String>, right: Result<&1,&1,U32 & String,String>) -> Maybe<Bool>:
+  match left:
+    case Fail{error}: None{}
+    case Done{+a}:
+      match right:
+        case Fail{error}: None{}
+        case Done{+b}: Some{Bool.or(path_contains(a, b), path_contains(b, a))}
+
+def canonical_overlap(+path: String, +named: String) -> IO(Maybe<Bool>):
+  do IO<Maybe<Bool>>:
+    left : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(path)
+    right : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(named)
+    IO.pure(Maybe<Bool>, canonical_overlap_pair(left, right))
+
+type SelectionVerdict is Data:
+  SvSelected{}
+  SvReleased{}
+  SvUnknown{}
+
+def merge_verdict(acc: SelectionVerdict, next: Maybe<Bool>) -> SelectionVerdict:
+  match next:
+    case Some{hit}: Bool.pick(SelectionVerdict, hit, SvSelected{}, acc)
+    case None{}:
+      match acc:
+        case SvSelected{}: SvSelected{}
+        case other: SvUnknown{}
+
+def selection_presence(+path: String, verdict: SelectionVerdict) -> IO(T.Presence):
+  match verdict:
+    case SvSelected{}: IO.pure(T.Presence, T.Present{"acp-selection"})
+    case SvReleased{}: IO.pure(T.Presence, T.Absent{})
+    case SvUnknown{}: unknown_selection(path)
+
+def acp_selection_compare(+path: String, runtime_hex: String, config_hex: String, manifest_hex: String) -> IO(T.Presence):
   do IO<T.Presence>:
-    chunk : Result<&1,&1,U32 & String,String & String> <- F.Files.text_chunk(record, "0")
-    acp_selection_chunk(record, path, chunk)
+    runtime : Maybe<Bool> <- canonical_overlap(path, Tx.hex_decode(runtime_hex))
+    config : Maybe<Bool> <- canonical_overlap(path, Tx.hex_decode(config_hex))
+    manifest : Maybe<Bool> <- canonical_overlap(path, Tx.hex_decode(manifest_hex))
+    +verdict : SelectionVerdict = merge_verdict(merge_verdict(merge_verdict(SvReleased{}, runtime), config), manifest)
+    selection_presence(path, verdict)
+
+def acp_selection_row(+db: String, +path: String, row_result: Result<&1,&1,U32 & String,String>) -> IO(T.Presence):
+  match row_result:
+    case Fail{error}: unknown_selection(path)
+    case Done{row}:
+      match Tx.split_tabs(Tx.trim_nl(row)):
+        case valid <> root_kind <> schema_kind <> schema_hex <> runtime_kind <> runtime_hex <> config_kind <> config_hex <> manifest_kind <> manifest_hex <> Nil{}:
+          Bool.pick(IO<T.Presence>, selection_valid(valid, root_kind, schema_kind, schema_hex,
+            runtime_kind, runtime_hex, config_kind, config_hex, manifest_kind, manifest_hex),
+            acp_selection_compare(path, runtime_hex, config_hex, manifest_hex),
+            unknown_selection(path))
+        case other: unknown_selection(path)
+
+def acp_selection_text(+db: String, +path: String, text: Maybe<String>) -> IO(T.Presence):
+  match text:
+    case None{}: unknown_selection(path)
+    case Some{value}: do IO<T.Presence>:
+      row_result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db, selection_sql(value))
+      acp_selection_row(db, path, row_result)
+
+def acp_selection(+db: String, +record: String, +path: String) -> IO(T.Presence):
+  do IO<T.Presence>:
+    text : Maybe<String> <- record_text(record)
+    acp_selection_text(db, path, text)
