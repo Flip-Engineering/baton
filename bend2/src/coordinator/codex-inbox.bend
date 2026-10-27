@@ -226,7 +226,7 @@ def queue_for_live_tui(+link: Proxy.Link, +state: State, +thread: String, +notic
 def deliver_resumed(+link: Proxy.Link, +thread: String, +notice: Notice, result: Admission) -> Outcome.Checked(Admission):
   match result:
     case Accepted{state}: Outcome.Checked.pure(Admission,Accepted{state})
-    case Refused{state,code,cause}:
+    case Refused{+state,code,+cause}:
       Bool.pick(Outcome.Checked(Admission),String.contains(cause,"already has an active writer"),
         queue_for_live_tui(link,state,thread,notice,"notLoaded"),
         Outcome.Checked.pure(Admission,Refused{state,code,cause}))
