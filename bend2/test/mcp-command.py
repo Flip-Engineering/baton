@@ -156,12 +156,16 @@ class McpCommand(unittest.TestCase):
                 self.assertEqual('baton2_repl' in self.tools, available)
                 self.assertEqual('Use baton2_repl' in self.instructions, available)
                 self.assertIn('repl', self.tools['baton2_action']['description'])
+                if available:
+                    operations = self.tools['baton2_repl']['inputSchema']['properties']['operation']['enum']
+                    self.assertNotIn('interactive', operations)
 
     def test_context_eval_requires_advertised_coordinator_surface(self):
         self.command(context_eval=False)
         self.assertNotIn('baton2_context_eval', self.tools)
         self.command(context_eval=True)
         self.assertIn('baton2_context_eval', self.tools)
+        self.assertNotIn('owner', self.tools['baton2_context_eval']['inputSchema']['properties'])
 
     def test_contextual_action_preserves_complete_bodies_for_independent_batch_items(self):
         first = '\ufeffFull first body λ🙂\nLiteral quotes " and tabs\t.\n' * 10000
