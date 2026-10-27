@@ -172,3 +172,65 @@ verification remains before deletion; everything else is a direct verdict.
 - Main merged 769 commits since 2026-10-19, 40+ PRs on 10-27 alone. The branch fleet is
   downstream of a main that outran it; supersession-by-rewrite is the dominant failure mode,
   which the patch-id method detects directly.
+
+## Pass 3: source-level review of the compiler/build candidates (2026-10-27, post-cleanup)
+
+Re-verified against main 2313bb399 after root removed 33 heads and 38 tags. Candidate heads
+unchanged on the remote.
+
+### fix/1089-main-reuse-closure-20261026 (d33c6dd43) — READY; PR #1173 opened
+
+Main's `production_inputs` still selects every file under `bend2/src/` for the native Main C
+reuse proof; any unrelated edit forces the full 2h20m cgen. The branch replaces whole-directory
+selection with the transitive import closure of the Main entry, recomputed from current bytes on
+both sides, fail-closed on unknown import shapes, untracked dependencies and closure escapes
+(symlinks inside the closure refused; manifests record mode-120000 rows). Clean merge onto
+2313bb399 (merge-tree 633f42d62b3b); the touched functions have no drift on main. Validation:
+`bend2/test/reuse-closure-select.py` (new, no compiler launch) drives the real
+`production_inputs` and `select`; all five assertions pass at this head, run from a branch
+archive. PR #1173 opened from the existing head; refs #1089 (rebuild-invalidation half).
+
+### claude/cgen-stack-20261026 (f724a6d7e) — UNIQUE; NEEDS MECHANICAL REPAIR
+
+Main still caps `BUN_JSC_maxPerThreadStackUsage` at 64 MiB everywhere (workflow lines 101, 291,
+532; check-native.sh lines 20, 24) and build-native.sh has no JSC export at all. The branch's
+1 GiB default is grounded in a named failing run (40389480370, queue key 8f5c564e, C emission).
+Repair needed: check-native.sh conflicts because main added queue-driver routing with two JSC
+call sites plus `ulimit -s unlimited`; apply the new default to both. Coherence: the Darwin
+packaging job pins the OS stack at `chosen_stack_kib=65536`; exporting a 1 GiB JSC cap there
+without raising `requested_stack_kib` risks segfaults instead of JS RangeErrors — raise the OS
+request alongside or keep that one export at 64 MiB with a comment. No PR opened.
+
+### fix/term-higher-iterative-20261026 (f347c6f3a) — MOSTLY SUPERSEDED; term_higher PORT REMAINS
+
+Already integrated on main: iterative `term_lower` (bend.ts:853, identical rationale comment),
+iterative `lay_of` with the `lay_cached` split (comp.ts:1236/1259; main evolved string keys to
+numeric `lay_key`), and the datatype layout walks (patch-id match for 23cb98006). Still unique
+in main: `term_higher` recurses (`term_higher_inner`, bend.ts:720; Sub self-recursion; Let
+binder closures re-enter per nesting level — the branch's comment cites pass 1's v_live
+overflow on deep let-nesting). The branch's iterative task-stack body must be ported onto
+main's `ClosedCtrCache`-threading signature (the branch predates it); a deep-let book fixture
+is the meaningful test to add at port time, since the branch ships no test. The branch's
+comp.ts, runtime-pin (f5185e38 line, require_cgen_cache=0 — main is fe882a28, cache required)
+and reuse-script commits are obsolete. fix/compiler-lay-iterative-20261026 (70d12b7ed) is a
+strict ancestor of this branch and fully superseded; delete after the port decision.
+
+### fix/1146-receiver-harness-probe-20261027 (6d124c039) — READY; PR #1174 opened
+
+Main's `receiver` (control.bend:227) registers any executable with no behavioral validation;
+#1146 is open. The new `receiver-probe.bend` runs the recorded command through the receiver's
+non-session rpc argv (no prompt, no resume identity) and admits it only when the first stdout
+line is a JSON object with `"type":"ready"` (read-only SQLite JSON1 check). Bounded: 10 s
+watchdog, SIGTERM at 5 s, SIGKILL at the limit, group-signal reaping on every path, stderr
+file removed on every path, 64-line transcript cap. The probe runs before the endpoint
+transaction, so a refusal writes nothing and returns a typed JSON error with remediation;
+non-OMP routes skip it. Clean merge onto 2313bb399 (merge-tree cf93f694315f). All ten API
+dependencies exist on main with matching signatures (process.bend 5/90/115/118/121,
+control.bend:9, session-lock.bend:21, omp-player.bend:25, canonical.bend string_literal).
+Validation rides CI's affected-candidate selection: focused-receiver-register.py gains probe
+coverage against the real focused binary, and control.py's mock omp harness now answers the
+ready frame so existing fixtures pass under the probe. PR #1174 opened from the existing head;
+implements #1146. Local run skipped deliberately: the test needs the focused native binary.
+
+PR creation used the repository's own push credential path; no token was displayed, stored in
+the artifact, or passed to any other agent. No merges performed; root owns review and merge.
