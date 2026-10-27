@@ -78,7 +78,24 @@ if [ "$recovery" = 1 ] && { [ "$focused" = 1 ] || [ "$router" = 1 ]; }; then
   exit 78
 fi
 . "$root/bend2/scripts/queue-entry.sh"
-generated=${BEND_GENERATED_C:-}
+generated=
+if [ "$recovery" = 1 ]; then
+  if [ -n "${BEND_GENERATED_C:-}" ]; then
+    printf '%s\n' '{"error":"unverified-recovery-generated-c","entry":"focused recovery C requires a reuse proof"}' >&2
+    exit 78
+  fi
+  if [ -n "${BATON2_RECOVERY_C_PROOF:-}" ]; then
+    generated=$(python3 "$root/.github/scripts/reuse-native-recovery.py" select \
+      --source "$root" --compiler "$compiler" \
+      --proof "$BATON2_RECOVERY_C_PROOF" \
+      --proof-sha256 "${BATON2_RECOVERY_C_PROOF_SHA256:?}" \
+      --generated-c "${BATON2_RECOVERY_GENERATED_C:?}" \
+      --generator-root "${BATON2_RECOVERY_C_GENERATOR_ROOT:?}" \
+      --output "$output.recovery-c-reuse.json")
+  fi
+else
+  generated=${BEND_GENERATED_C:-}
+fi
 if [ -z "$generated" ] && [ -n "${BATON2_MAIN_GENERATED_C:-}" ] &&
    [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
   generated=$(python3 "${BATON2_MAIN_C_VERIFIER:?}" select \
