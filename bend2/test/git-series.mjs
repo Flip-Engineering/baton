@@ -1,10 +1,10 @@
 // Controlled public identities, synthetic signing keys and HTTP responses.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { generateKeyPairSync, verify } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -58,12 +58,13 @@ function installation_api(github, installed, tamper = {}, permissions = model.PE
       const found = installed.find(entry => entry.owner === lookup[1]);
       if (!found) throw new model.Missing('GitHub reported no matching resource.');
       return answer('lookup', { id: found.id, app_id: github.appId, app_slug: github.slug,
-        account: { login: found.owner }, suspended_at: null, permissions: { ...permissions } });
+        account: { login: found.owner }, suspended_at: null, permissions: { ...(found.permissions ?? permissions) } });
     }
     const access = /^\/app\/installations\/([0-9]+)\/access_tokens$/.exec(api_path);
     assert.ok(access, api_path);
     const owner = installed.find(entry => String(entry.id) === access[1]).owner;
-    return answer('issue', { token: 'fixture-token-' + access[1], permissions: { ...body.permissions },
+    const granted = installed.find(entry => String(entry.id) === access[1])?.permissions ?? permissions;
+    return answer('issue', { token: 'fixture-token-' + access[1], permissions: { ...(body?.permissions ?? granted) },
       repository_selection: body.repositories ? 'selected' : 'all',
       repositories: body.repositories?.map(name => ({ full_name: owner + '/' + name })),
       expires_at: new Date(Date.now() + 86400000).toISOString() });
@@ -204,6 +205,188 @@ test('missing or weaker Git permissions are refused by name in identities, insta
       }
     }
   }
+});
+
+test('Git tokens keep their permission subset after an installation gains seat CLI permissions', async () => {
+  const grants = { ...model.GH_PERMISSIONS, workflows: 'write' };
+  const fixture = installation_api(identities.gpt, [{ owner: 'Flip-Engineering', id: 5100 }], {}, grants);
+  await model.installation_token(series.gpt, identities.gpt, REPOSITORY, () => 'fixture-jwt', fixture.request);
+  assert.deepEqual(fixture.calls.at(-1).body,
+    { permissions: { contents: 'write', pull_requests: 'write', metadata: 'read' } });
+});
+
+test('gh tokens request the full installation grant and accept stronger permissions', async () => {
+  assert.deepEqual(model.GH_PERMISSIONS, { contents: 'write', pull_requests: 'write', metadata: 'read',
+    issues: 'write', actions: 'read', checks: 'read', statuses: 'read' });
+  for (const grants of [model.GH_PERMISSIONS,
+    { ...model.GH_PERMISSIONS, actions: 'write', checks: 'write', statuses: 'write', workflows: 'write' }]) {
+    const fixture = installation_api(identities.gpt, [{ owner: 'Flip-Engineering', id: 5100 }], {}, grants);
+    assert.ok(await model.gh_installation_token(series.gpt, identities.gpt, REPOSITORY,
+      () => 'fixture-jwt', fixture.request));
+    assert.deepEqual(fixture.calls.at(-1).body, {});
+  }
+});
+
+test('gh refuses each missing or weaker installation and token grant with its permission name', async () => {
+  for (const [permission, required] of Object.entries(model.GH_PERMISSIONS)) {
+    for (const level of [undefined, 'none', ...(required === 'write' ? ['read'] : [])]) {
+      const grants = { ...model.GH_PERMISSIONS };
+      if (level === undefined) delete grants[permission];
+      else grants[permission] = level;
+      for (const name of ['lookup', 'issue']) {
+        const fixture = installation_api(identities.gpt, [{ owner: 'Flip-Engineering', id: 5100 }],
+          { name, field: 'permissions', value: grants }, model.GH_PERMISSIONS);
+        await assert.rejects(model.gh_installation_token(series.gpt, identities.gpt, REPOSITORY,
+          () => 'fixture-jwt', fixture.request), error => error instanceof model.Refusal
+            && error.message.includes(permission + ':' + required));
+        if (name === 'lookup') assert.ok(!fixture.calls.some(call => call.api_path.endsWith('/access_tokens')));
+      }
+    }
+  }
+});
+
+test('gh checks the target owner installation while narrow Git installations remain usable', async () => {
+  const fixture = installation_api(identities.gpt, [
+    { owner: 'Flip-Engineering', id: 5100, permissions: model.GH_PERMISSIONS },
+    { owner: 'flip-engineer', id: 5200, permissions: model.PERMISSIONS }]);
+  await model.gh_installation_token(series.gpt, identities.gpt, REPOSITORY, () => 'fixture-jwt', fixture.request);
+  await assert.rejects(model.gh_installation_token(series.gpt, identities.gpt,
+    'flip-engineer/automated-content-pipeline', () => 'fixture-jwt', fixture.request), /issues:write/);
+  assert.ok(!fixture.calls.some(call => call.api_path === '/app/installations/5200/access_tokens'));
+  await model.installation_token(series.gpt, identities.gpt,
+    'flip-engineer/automated-content-pipeline', () => 'fixture-jwt', fixture.request);
+  assert.equal(fixture.calls.at(-1).api_path, '/app/installations/5200/access_tokens');
+  assert.deepEqual(fixture.calls.at(-1).body, { permissions: model.PERMISSIONS });
+});
+
+test('gh selects repository arguments, GH_REPO and GitHub origin in order', () => {
+  const origin = () => 'origin-owner/project';
+  for (const flags of [['-R', 'explicit/project'], ['--repo', 'explicit/project'],
+    ['--repo=explicit/project'], ['-Rexplicit/project']]) {
+    assert.equal(model.gh_repository(['pr', 'checks', ...flags], { GH_REPO: 'environment/project' },
+      () => assert.fail('origin queried')), 'explicit/project');
+  }
+  assert.equal(model.gh_repository(['api', 'repos/{owner}/{repo}/checks'], { GH_REPO: 'environment/project' },
+    () => assert.fail('origin queried')), 'environment/project');
+  assert.equal(model.gh_repository(['issue', 'comment', '--', '-Rignored/project'], {}, origin), 'origin-owner/project');
+  const repository = join(directory, 'gh-origin'); mkdirSync(repository);
+  const git = (...command) => execFileSync('git', ['-C', repository, ...command], { env: credentialEnvironment() });
+  git('init', '-q');
+  for (const remote of ['https://github.com/origin-owner/project.git', 'git@github.com:origin-owner/project.git',
+    'ssh://git@github.com/origin-owner/project.git']) {
+    git('config', 'remote.origin.url', remote);
+    const saved = process.cwd();
+    try {
+      process.chdir(repository);
+      assert.equal(model.gh_repository(['pr', 'checks'], credentialEnvironment()), 'origin-owner/project');
+    } finally { process.chdir(saved); }
+  }
+  for (const command of [['auth', 'status'], ['api', '/user']]) {
+    assert.throws(() => model.gh_repository(command, {}, () => null), /owner could not be resolved/);
+  }
+  for (const command of [['pr', 'checks', '-R'], ['pr', 'checks', '--repo='], ['pr', 'checks', '-R', 'invalid']]) {
+    assert.throws(() => model.gh_repository(command, {}, origin), model.Refusal);
+  }
+});
+
+test('gh requests a fresh owner token per command and keeps it in the gh child environment', async () => {
+  const bin = join(directory, 'real-gh'); mkdirSync(bin);
+  const program = join(bin, 'gh');
+  writeFileSync(program, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const inherited = { PATH: bin, GH_TOKEN: 'fixture-sender', GITHUB_TOKEN: 'fixture-sender' };
+  const environment = execution(args(null, ['seat'], false, 'gpt'), inherited)[2];
+  assert.equal(environment.PATH.split(delimiter)[0], join(dirname(SOURCE), 'git-series-bin') + '/');
+  assert.ok(!('GH_TOKEN' in environment) && !('GITHUB_TOKEN' in environment));
+  const original = { ...environment };
+  const fixture = installation_api(identities.gpt, [{ owner: 'Flip-Engineering', id: 5100 },
+    { owner: 'flip-engineer', id: 5200 }], {}, model.GH_PERMISSIONS);
+  const issue = (home, github, repository) => model.gh_installation_token(home, github, repository,
+    () => 'fixture-jwt-no-key', fixture.request);
+  const observed = [];
+  for (const repository of ['Flip-Engineering/baton', 'flip-engineer/flip', 'flip-engineer/flip']) {
+    const command = ['pr', 'checks', '-R', repository];
+    await model.gh(command, environment, (selected, argv, childEnvironment) => {
+      assert.equal(selected, program);
+      assert.deepEqual(argv, [program, ...command]);
+      assert.ok(!('GITHUB_TOKEN' in childEnvironment));
+      observed.push(childEnvironment.GH_TOKEN);
+    }, issue);
+    assert.deepEqual(environment, original);
+    assert.ok(inherited.GH_TOKEN === 'fixture-sender');
+  }
+  assert.ok(observed[0] !== observed[1]);
+  assert.equal(fixture.calls.filter(call => call.api_path.endsWith('/access_tokens')).length, 3);
+  await assert.rejects(model.gh(['auth', 'status'], environment,
+    () => assert.fail('executed'), () => assert.fail('token issued'), () => null), /owner could not be resolved/);
+});
+
+test('the executable gh wrapper reaches real gh and preserves its arguments, PID, streams and exit', async () => {
+  const home = join(directory, 'gh-executable'); mkdirSync(home);
+  const bin = join(home, 'bin'); mkdirSync(bin);
+  const github = identities.gpt;
+  save(join(home, 'identity-series.json'), { seriesKey: 'gpt', displaySeries: 'GPT', github });
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  writeFileSync(join(home, 'private-key.pem'), privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
+  const alternative = join(home, 'registry.json'); save(alternative, { models, series: { gpt: home } });
+  const preload = join(home, 'fake-api.mjs');
+  writeFileSync(preload, `import https from 'node:https';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+https.request = (url, options, received) => {
+  const outgoing = new EventEmitter();
+  outgoing.end = body => {
+    const path = new URL(url).pathname;
+    let response;
+    if (path === '/app') response = ${JSON.stringify({ id: github.appId, slug: github.slug })};
+    else if (path === '/repos/flip-engineer/flip/installation') response = ${JSON.stringify({
+      id: 5200, app_id: github.appId, app_slug: github.slug, account: { login: 'flip-engineer' },
+      permissions: model.GH_PERMISSIONS })};
+    else if (path === '/app/installations/5200/access_tokens' && body === '{}') {
+      response = { token: 'fixture-' + 5200, permissions: ${JSON.stringify(model.GH_PERMISSIONS)},
+        expires_at: new Date(Date.now() + 3600000).toISOString() };
+    } else throw Error('Unexpected fixture request');
+    const incoming = new PassThrough(); incoming.statusCode = 200;
+    queueMicrotask(() => { received(incoming); incoming.end(JSON.stringify(response)); });
+  };
+  return outgoing;
+};\n`);
+  writeFileSync(join(bin, 'gh'), `#!${process.execPath}
+let input = ''; for await (const chunk of process.stdin) input += chunk;
+process.stdout.write(JSON.stringify({ pid: process.pid, argv: process.argv.slice(2), input,
+  authenticated: process.env.GH_TOKEN === 'fixture-' + 5200,
+  senderRemoved: !('GITHUB_TOKEN' in process.env) }));
+process.stderr.write('gh fixture diagnostic\\n'); process.exitCode = 7;\n`, { mode: 0o755 });
+  const wrapper = join(dirname(SOURCE), 'git-series-bin/gh');
+  const previous = join(home, 'previous-prefix/git-series-bin'); mkdirSync(previous, { recursive: true });
+  copyFileSync(SOURCE, join(dirname(previous), 'git-series.mjs'));
+  copyFileSync(wrapper, join(previous, 'gh')); chmodSync(join(previous, 'gh'), 0o755);
+  // Nested source and installed launches share the seat's PATH.
+  const environment = { PATH: [dirname(wrapper), previous, dirname(wrapper), bin, dirname(process.execPath)].join(delimiter),
+    NODE_OPTIONS: '--import=' + pathToFileURL(preload).href, GH_REPO: 'flip-engineer/flip' };
+  const result = await child([SOURCE, 'launch', '--registry', alternative, '--series-key', 'gpt',
+    '--', 'gh', 'pr', 'checks', '--json', 'name,state'], { env: environment, input: 'fixture input\n' });
+  assert.equal(result.code, 7, result.stderr); assert.equal(result.signal, null);
+  const observed = JSON.parse(result.stdout);
+  assert.equal(observed.pid, result.pid);
+  assert.deepEqual(observed.argv, ['pr', 'checks', '--json', 'name,state']);
+  assert.equal(observed.input, 'fixture input\n');
+  assert.ok(observed.authenticated && observed.senderRemoved);
+  assert.ok(result.stderr.endsWith('gh fixture diagnostic\n'));
+  for (const command of [['issue', 'view', '291'], ['issue', 'view', '292'],
+    ['issue', 'comment', '291', '--body', 'Fixture comment'], ['pr', 'view', '1'],
+    ['pr', 'create', '--title', 'Fixture PR', '--body', 'Fixture body'],
+    ['run', 'list'], ['run', 'view', '123', '--log']]) {
+    const result = await child([wrapper, ...command], {
+      env: { ...environment, BATON2_GH_REGISTRY: alternative, BATON2_GH_SERIES: 'gpt' } });
+    assert.equal(result.code, 7, result.stderr);
+    const observed = JSON.parse(result.stdout);
+    assert.deepEqual(observed.argv, command);
+    assert.ok(observed.authenticated && observed.senderRemoved);
+    assert.ok(!result.stdout.includes('fixture-' + 5200));
+  }
+  const refusal = await child([wrapper, 'auth', 'status'], { env: { PATH: environment.PATH } });
+  assert.equal(refusal.code, 1); assert.equal(refusal.stdout, '');
+  assert.match(refusal.stderr, /owner could not be resolved/);
 });
 
 test('a retained repositories map is not read and the series directory serves every repository', () => {
