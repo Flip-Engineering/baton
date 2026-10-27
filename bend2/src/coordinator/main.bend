@@ -522,29 +522,40 @@ def observe_context_runtime_cli(+flag: String, +db: String, +owner: String,
     normal_cli([flag, db, owner, launch_query, target_dir, adapter_dir]))
 
 def legacy_cli(args: List<String>) -> IO(Unit):
-  match args:
-    case Nil{}: normal_cli(Nil{})
-    case "--project" <> tail: normal_cli(Con{"--project",tail})
-    case "--stop-hook" <> Nil{}: StopHook.run()
-    case flag <> database <> Nil{}: instance_owner_cli(database,flag)
-    case flag <> db <> owner <> launch_query <> target_dir <> adapter_dir <> Nil{}:
-      observe_context_runtime_cli(flag, db, owner, launch_query, target_dir, adapter_dir)
-    case flag <> db <> owner <> query <> directory <> worktree <> bootstrap_file <> Nil{}:
-      recover_context_query_cli(flag, db, owner, query, directory, worktree,
-        bootstrap_file)
-    case "--wake-message" <> +db <> +id <> Nil{}:
-      Wake.message_cli(db,id)
-    case "--redeliver-message" <> +db <> +id <> Nil{}:
-      Control.redeliver(db,id)
-    case +flag <> +directory <> +lock <> Nil{}:
-      dispatch_cli(directory,lock,[flag,directory,lock],String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"))
-    case flag <> db <> player <> id <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:
-      recover_direct_cli(flag, db, player, id, cmd, model, effort, cwd, log, harness, directory, native)
-    case flag <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:
-      recover_cli(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,String.eq(flag,"--recover-receive"))
-    case +flag <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> input_messages <> Nil{}:
-      recover_receive_input_cli(String.eq(flag,"--recover-receive"),flag,db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,input_messages)
-    case other: normal_cli(other)
+  match List.length(&1, String, args):
+    case 0: normal_cli(Nil{})
+    case n:
+      match List.head(&1, String, args):
+        case Some{head}:
+          match String.eq(head, "--project"):
+            case True{}: normal_cli(Con{"--project",List.tail(&1, String, args)})
+            case False{}:
+              match n:
+                case 1:
+                  match String.eq(head, "--stop-hook"):
+                    case True{}: StopHook.run()
+                    case False{}: normal_cli(args)
+                case 2:
+                  instance_owner_cli(List.head(&1, String, List.tail(&1, String, args)), head)
+                case 3:
+                  match String.eq(head, "--wake-message"):
+                    case True{}: Wake.message_cli(List.head(&1, String, List.tail(&1, String, args)), List.head(&1, String, List.tail(&1, String, List.tail(&1, String, args))))
+                    case False{}:
+                      match String.eq(head, "--redeliver-message"):
+                        case True{}: Control.redeliver(List.head(&1, String, List.tail(&1, String, args)), List.head(&1, String, List.tail(&1, String, List.tail(&1, String, args))))
+                        case False{}: dispatch_cli(List.head(&1, String, List.tail(&1, String, args)), List.head(&1, String, List.tail(&1, String, List.tail(&1, String, args))), args, String.eq(head, "--host-process-keeper"), String.eq(head, "--dispatch-message"))
+                case 6:
+                  observe_context_runtime_cli(head, List.head(&1, String, List.tail(&1, String, args)), List.head(&1, String, List.tail(&1, String, List.tail(&1, String, args))), List.head(&1, String, List.tail(&1, String, List.tail(&1, String, List.tail(&1, String, args)))), List.head(&1, String, List.drop(&1, String, args, 4)), List.head(&1, String, List.drop(&1, String, args, 5)))
+                case 7:
+                  recover_context_query_cli(head, List.head(&1, String, List.tail(&1, String, args)), List.head(&1, String, List.tail(&1, String, List.tail(&1, String, args))), List.head(&1, String, List.drop(&1, String, args, 3)), List.head(&1, String, List.drop(&1, String, args, 4)), List.head(&1, String, List.drop(&1, String, args, 5)), List.head(&1, String, List.drop(&1, String, args, 6)))
+                case 12:
+                  recover_direct_cli(head, List.head(&1, String, List.tail(&1, String, args)), List.head(&1, String, List.drop(&1, String, args, 2)), List.head(&1, String, List.drop(&1, String, args, 3)), List.head(&1, String, List.drop(&1, String, args, 4)), List.head(&1, String, List.drop(&1, String, args, 5)), List.head(&1, String, List.drop(&1, String, args, 6)), List.head(&1, String, List.drop(&1, String, args, 7)), List.head(&1, String, List.drop(&1, String, args, 8)), List.head(&1, String, List.drop(&1, String, args, 9)), List.head(&1, String, List.drop(&1, String, args, 10)), List.head(&1, String, List.drop(&1, String, args, 11)))
+                case 13:
+                  recover_cli(List.head(&1, String, List.tail(&1, String, args)), List.head(&1, String, List.drop(&1, String, args, 2)), List.head(&1, String, List.drop(&1, String, args, 3)), List.head(&1, String, List.drop(&1, String, args, 4)), List.head(&1, String, List.drop(&1, String, args, 5)), List.head(&1, String, List.drop(&1, String, args, 6)), List.head(&1, String, List.drop(&1, String, args, 7)), List.head(&1, String, List.drop(&1, String, args, 8)), List.head(&1, String, List.drop(&1, String, args, 9)), List.head(&1, String, List.drop(&1, String, args, 10)), List.head(&1, String, List.drop(&1, String, args, 11)), List.head(&1, String, List.drop(&1, String, args, 12)), String.eq(head, "--recover-receive"))
+                case 14:
+                  recover_receive_input_cli(String.eq(head, "--recover-receive"), head, List.head(&1, String, List.tail(&1, String, args)), List.head(&1, String, List.drop(&1, String, args, 2)), List.head(&1, String, List.drop(&1, String, args, 3)), List.head(&1, String, List.drop(&1, String, args, 4)), List.head(&1, String, List.drop(&1, String, args, 5)), List.head(&1, String, List.drop(&1, String, args, 6)), List.head(&1, String, List.drop(&1, String, args, 7)), List.head(&1, String, List.drop(&1, String, args, 8)), List.head(&1, String, List.drop(&1, String, args, 9)), List.head(&1, String, List.drop(&1, String, args, 10)), List.head(&1, String, List.drop(&1, String, args, 11)), List.head(&1, String, List.drop(&1, String, args, 12)), List.head(&1, String, List.drop(&1, String, args, 13)))
+                case other: normal_cli(args)
+        case None{}: normal_cli(args)
 
 def cli_route(route: AgentRoute.Route) -> IO(Unit):
   match route:
