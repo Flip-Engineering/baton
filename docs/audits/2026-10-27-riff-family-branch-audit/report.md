@@ -251,3 +251,105 @@ pointing at main ancestors.
 Verdict data: `fclient-verdicts.tsv` shape (branch, commits-ahead, last-commit-date, files,
 insertions, deletions, files-byte-equal-to-main) covers the 212; the tree test covers all 526.
 Both derive from `Flip-Engineering/flip-client` clones at main `7c0d858b`.
+
+## Addendum 4: PR90 readiness, superseded-head proofs, flip-client final buckets, flip-platform (2026-10-27T08:45Z)
+
+### Riff PR90 readiness
+
+PR #90 (open, draft): head `f076b669b683b9ef57918ffbbb156d21349d`, base `main@2886e1dc`, 25
+commits, 54 changed files, `mergeable=true` (no conflicts), `mergeable_state=unstable`. Check runs
+on the head: control, browser, application (3.9), application (3.14), and native (riff-linux,
+cpu) succeed; `native (riff-linux, metal)` fails — the same check fails on `main@2886e1dc`, so
+the failure is inherited from main and not introduced by the branch. The PR body states the
+consolidation target is `feature/riff-ardour-composition-20261026` and that a merge to main is
+not authorized. Content: `daw.compose`/`daw.render` (ABC to session build, Lua
+instrument/tempo/reopen chain on the hash-verified pinned Ardour 9.8 runtime), `riff-arrangement-v1`
+artifacts, per-track stem render with a stems-reconstruct-mix guard (1 LSB) and fail-closed
+runtime gate. Recorded validation: Q1-Q10 battery pass with receipt
+`docs/evidence/ardour-qualification-20261026/qualification-unified-20261026.json`
+(SHA-256 `0af9434155cb8a69869b6c0c5abc6a5636ad1867afa0ede0d01ef81ef597da47`); focused tests
+(`test_daw_runtime.py` 14 cases, `test_daw_operations.py`, `test_studio.py`) pass on Python 3.12;
+35-test integration pass on the PR #94 merge commit `c38f16e`; review history: root review fixes
+(`1766de4`, `4617c53`), DeepSeek-seat fix `0c64f1a`. Residual non-blocking observation: the
+packaged `tools/daw` qualification scripts expect a `probes/` tree that the curated release
+package does not ship. Readiness for consolidation into the DAW feature branch: no conflicts, no
+new check regressions; the open gates are the draft policy itself and the inherited metal check.
+
+### Four superseded riff heads (fresh proofs against current main `2886e1dc`)
+
+1. `codex/riff-artwork-flake-20261024` @ `f4353828` — PR #53 squash-merged 2026-10-25;
+   `git diff --stat main <head> -- web/artwork.js tests/artwork-webgl.mjs tests/video.mjs` is
+   empty: byte-equal to main.
+2. `codex/riff-issue31-routing-20261021` @ `9ffe6e3d` — PR #40 merged 2026-10-23; all 13 touched
+   files exist on main (0 missing); main evolved those files +850/-80 since the merge base.
+3. `codex/riff-issue60-sha-options-20261025` @ `5ed5955c` — PR #71 closed unmerged; `git cherry`
+   reports the patch present in main; `main:docs/acoustic-source-pinning.md` exists via the
+   merged issue60 work.
+4. `codex/saved-sound-determinism-20261019` @ `a520a3bc` — superseded by `183e5fc` (merged on
+   `codex/saved-sound-determinism-20261023`, an ancestor of main); same three files; the merged
+   version hardens the test hold to `startsWith("/api/state")`.
+
+### flip-client final buckets
+
+Corrections to Addendum 2/3: an early pull-request lookup ran `jq` against raw API array pages
+and silently returned nothing, so the first backup mapping undercounted PR links. Corrected
+against the flat PR dataset:
+
+- 66 `backup/*` heads: tip tree already in main history — delete.
+- 12 `backup/*` with a still-live mirror branch: 1 tree-identical (`agent/macos-desktop-release-v1-20260831`),
+  11 older divergent snapshots (backup tip date earlier than the live mirror in every case) —
+  delete as stale snapshots; the live branch is authoritative.
+- 27 `backup/*` whose mirror name is exactly a merged PR head (e.g. `agent/about-updater-apply-20260831`
+  to PR #1024, `fix/562-scoped-release-refresh-token` to PR #757, `spec/726-access-refresh-authority`
+  to PR #842; full list in the session record) — content landed by squash merge — delete.
+- 5 `backup/*` snapshots of open-PR branches (`#1017`, `#1015`, `#1028` families) — stale
+  snapshots of live work — delete; the open branch is authoritative.
+- 5 `backup/*` whose mirror name is a closed-unmerged PR head — rejected work, diff preserved by
+  the PR record — delete unless the owner wants pre-close states.
+- 122 `backup/*` with no pull request under any name variant — snapshots of never-submitted work
+  branches, all dated 2026-08-27..09-01. Genuine unique-state set; owner decision (default:
+  delete after an owner-objection window, or keep as cold history — repository size impact is
+  small either way).
+
+- 17 `archive/*`: 5 snapshot merged PRs #998/#1002 (4 already tree-in-main) — delete; 8 snapshot
+  closed-unmerged PRs #999/#1001/#1003 — delete unless the owner wants pre-rebase states; 4
+  snapshot open PRs #1000/#1004 — retain until those PRs resolve, then delete with them.
+
+- 51 closed-unmerged heads: 41 have every changed file byte-equal to current main (including all
+  sixteen 2026-09-22 same-day closures), 9 have exact tip trees in main, and 1 remains:
+  `feat/remote-ios-x64-runner-20260911` (PR #1079, 53 commits, +3991/-206, 31 of 71 files matching
+  main) — the single reviewable-completed-work candidate in the closed set: return to a conductor
+  for re-review or explicit rejection.
+
+- 161 PR-less heads: 12 exact trees in main plus 2 all-file matches (`fix/macos-unattended-gui-20260922`,
+  `fix/macos-worker-ancestor-20260922`) are landed — delete. The My Flip cluster
+  (`ensemble/flip-myflip-luna3-2212-cards-client-20261023`, `fix/native-app-admission-1115-20261026`,
+  `fix/enrichment-mocks-20261022`) is live or near-live work — keep with its conductor. The
+  remainder are dated August WIP (`ci/864-bundle-selfhosted` +9290, `ci/849-linux-core` +8745,
+  `ci/942-kvm-research-a1` +8375, `fix/native-gallery-metadata-20260922` 76 commits +4769 are the
+  largest) — per-branch conductor decisions; none is protected by an open PR.
+
+### flip-platform issue branches against the deployed runner configuration
+
+Deployed evidence on this host (read-only, 2026-10-27T08:30Z): live `Runner.Listener` processes at
+`flip-client-general-v2-1/2/3` and `flip-android-kvm-ephemeral-1/2` plus
+`/home/atari2036/actions-runner-flip-client/runsvc.sh` — matching exactly the listener groups
+recorded in `config/capacity/acp-compute-cluster-001.json` (client-general-v2 runners 22-24,
+client-android-kvm-v1 runners 27-28, client-legacy-atari-v1 runner 21, client-windows-guest-v1
+runner 26, plus `wahargis/flip` server-build runners 21-28). The deployed fleet is direct-registered
+GitHub runners; no flip-platform code is in the live path, exactly as main's README requires
+("installed listeners remain unchanged"; imports stay inactive until a paired-client cutover).
+
+- `agent/capacity-authority-migration-issue7-20260901`: its
+  `config/capacity/acp-compute-cluster-001.json` is byte-identical to main's (landed via merged
+  PR #16); main's version of the test file is 274 lines larger, and the spec/source-transfer docs
+  were further edited on main. Superseded by merged #16 — delete.
+- `agent/adaptive-admission-consumer-issue4-20260901`: unique inactive build-ahead for issue #4
+  (fleet-canary consumer/production authority; 15 files, +4733). Its own spec records activation
+  as blocked on an organization-scope pool cutover that has not occurred; the deployed listeners
+  do not use it and do not conflict with it. Not superseded. Recommendation: keep until the flip-platform
+  owner decides issue #4's fate; deletion would discard the only ref of that design. On repository
+  retirement: main carries the observed-capacity record and the general-v2 source authority pinned
+  to flip-client main `870abd8d`; retiring the repository would orphan records the deployed
+  migration path references, so retirement should preserve `config/`, `docs/`, and the runner
+  authority manifests even if the code is never activated.
