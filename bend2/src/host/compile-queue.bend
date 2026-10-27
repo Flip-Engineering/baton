@@ -337,6 +337,7 @@ def parse_common(args: List<&2,String>, config: Config) -> IO(Config):
     case "--version" <> value <> rest: parse_common(rest, config_line(config, "version", value))
     case "--receipt" <> value <> rest: parse_common(rest, config_line(config, "receipt", value))
     case "--token" <> value <> rest: parse_common(rest, config_line(config, "token", value))
+    case "--priority" <> value <> rest: parse_common(rest, config_line(config, "priority", value))
     case "--input" <> value <> rest: parse_common(rest, config_input(config, value))
     case "--aux" <> value <> rest: parse_common(rest, config_line(config, "aux", value))
     case "--option" <> value <> rest: parse_common(rest, config_line(config, "option", value))
@@ -567,13 +568,18 @@ def copy_identity_tokens(args: List<&1,String>, +acc: List<&2,String>) -> List<&
     case Nil{}: List.reverse(&2,String,acc)
     case Con{+token, rest}: copy_identity_tokens(rest, Con{token,acc})
 
+def priority_text(+text: String) -> String:
+  Bool.pick(String, String.is_empty(field(text, "priority")), "0", field(text, "priority"))
+
 def meta_text(config: Config, key: String, keydir: String, attempt: String, artifacts: List<&2,Artifact>) -> String:
   match config:
     case Config{+text, command}:
       "kind=" ++ field(text, "kind") ++ "\n"
       ++ "cwd=" ++ field(text, "cwd") ++ "\n"
+      ++ "state_root=" ++ field(text, "state_root") ++ "\n"
       ++ "source_root=" ++ field(text, "source_root") ++ "\n"
       ++ "entry=" ++ field(text, "entry") ++ "\n"
+      ++ "priority=" ++ priority_text(text) ++ "\n"
       ++ "key=" ++ key ++ "\n"
       ++ "keydir=" ++ keydir ++ "\n"
       ++ "attempt=" ++ attempt ++ "\n"
@@ -893,48 +899,6 @@ def supervise_marker_result(signaled: Result<&1,&1,U32 & String,Unit>, +attempt:
     case Done{value}:
       supervise_kind(kind, source_root, entry, attempt, keydir, key, started, names, cwd)
 
-def supervise_owned(+attempt: String, +keydir: String, +kind: String, source_root: String,
-                    entry: String, key: String, +started: String, names: List<&2,String>,
-                    cwd: String, pid: U32, start: String, +gate: U32) -> IO(Unit):
-  do IO<Unit>:
-    active_text : String <- IO.pure(String, "pid=" ++ U32.show(pid)
-      ++ "\nstarttime=" ++ start ++ "\nkind=" ++ kind ++ "\nsetsid=1\nstarted_ns=" ++ started ++ "\n")
-    active : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(keydir ++ "/active", active_text))
-    released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
-    locked : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_fd_acquire(8))
-    signaled : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.set_env(
-      "BATON_COMPILE_QUEUE_COMPILED", attempt ++ "/compiled")
-    supervise_marker_result(signaled, attempt, keydir, kind, source_root, entry, key, started, names, cwd)
-
-def supervise_owner_count(owners: U32, +attempt: String, +keydir: String, +kind: String,
-                          source_root: String, entry: String, +key: String, +started: String,
-                          +names: List<&2,String>, cwd: String, pid: U32, start: String,
-                          +gate: U32) -> IO(Unit):
-  Bool.pick(IO(Unit), U32.is_eq(owners, 0),
-    do IO<Unit>:
-      released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
-      write_failure(attempt, keydir, "canceled", 130, kind, key, started,
-        "all requesters canceled before execution", names),
-    supervise_owned(attempt, keydir, kind, source_root, entry, key, started, names, cwd, pid, start, gate))
-
-def supervise(+attempt: String) -> IO(Unit):
-  do IO<Unit>:
-    +meta : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/meta"))
-    kind : String <- IO.pure(String, field(meta, "kind"))
-    cwd : String <- IO.pure(String, field(meta, "cwd"))
-    source_root : String <- IO.pure(String, field(meta, "source_root"))
-    entry : String <- IO.pure(String, field(meta, "entry"))
-    key : String <- IO.pure(String, field(meta, "key"))
-    +keydir : String <- IO.pure(String, field(meta, "keydir"))
-    names : List<&2,String> <- IO.pure(List<&2,String>, fields_all(meta, "artifact_name"))
-    started : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
-    +pid : U32 <- IO.try(U32, L.CompileQueueLifecycle.pid())
-    start : String <- IO.try(String, L.CompileQueueLifecycle.starttime(pid))
-    gate : U32 <- owner_lock(keydir)
-    owners : U32 <- owner_count(keydir)
-    supervise_owner_count(owners, attempt, keydir, kind, source_root, entry, key,
-      started, names, cwd, pid, start, gate)
-
 def status_number_parsed(parsed: Maybe<&2,U32>) -> U32:
   match parsed:
     case None{}: 0
@@ -942,6 +906,136 @@ def status_number_parsed(parsed: Maybe<&2,U32>) -> U32:
 
 def status_number(text: String) -> U32:
   status_number_parsed(U32.read(text))
+
+# Scheduling tickets
+# ==================
+# A supervisor publishes a ticket under $state/waiters before it competes
+# for the shared heavy lock. It defers while a live ticket with a strictly
+# higher priority exists, so a lower-priority waiter never enters the
+# kernel flock queue ahead of a higher-priority product. Equal priorities
+# queue in the kernel's arrival order; after acquiring, the supervisor
+# rescans and releases the lock if a higher-priority live ticket appeared
+# while it waited. A ticket is live only while its recorded pid and start
+# time still identify the same process. Priority is scheduling metadata
+# and never enters the identity material.
+
+def waiters_dir(+state: String) -> String:
+  state ++ "/waiters"
+
+def waiters_ticket_text(priority: U32, pid: U32, start: String, key: String, token: String) -> String:
+  "priority=" ++ U32.show(priority) ++ "\npid=" ++ U32.show(pid)
+  ++ "\nstarttime=" ++ start ++ "\nkey=" ++ key ++ "\ntoken=" ++ token ++ "\n"
+
+def waiters_ticket_higher(text: String, +token: String, +priority: U32) -> IO(Bool):
+  do IO<Bool>:
+    contender : Bool <- IO.pure(Bool,
+      Bool.and(U32.is_gt(status_number(field(text, "priority")), priority),
+        Bool.not(Tx.str_eq(field(text, "token"), token))))
+    Bool.pick(IO(Bool), contender,
+      do IO<Bool>:
+        alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(
+          status_number(field(text, "pid")), field(text, "starttime")))
+        IO.pure(Bool, U32.is_eq(alive, 1)),
+      IO.pure(Bool, False))
+
+def waiters_scan_read(~next_scan: (@+names: List<&1,String> -> @+dir: String -> @+token: String -> @+priority: U32 -> IO(Bool)), read: Result<&1,&1,U32 & String,String>, +names: List<&1,String>, +dir: String, +token: String, +priority: U32) -> IO(Bool):
+  match read:
+    case Fail{error}: next_scan(names, dir, token, priority)
+    case Done{+text}:
+      do IO<Bool>:
+        higher : Bool <- waiters_ticket_higher(text, token, priority)
+        Bool.pick(IO(Bool), higher, IO.pure(Bool, True), next_scan(names, dir, token, priority))
+
+@unsafe
+def waiters_next(~again_scan: (@+read: Result<&1,&1,U32 & String,String> -> @+names: List<&1,String> -> @+dir: String -> @+token: String -> @+priority: U32 -> IO(Bool)), +names: List<&1,String>, +dir: String, +token: String, +priority: U32) -> IO(Bool):
+  match names:
+    case Nil{}: IO.pure(Bool, False)
+    case Con{+name, rest}:
+      do IO<Bool>:
+        read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(dir ++ "/" ++ name)
+        again_scan(read, rest, dir, token, priority)
+
+def waiters_higher(+dir: String, +token: String, +priority: U32) -> IO(Bool):
+  do IO<Bool>:
+    names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(dir))
+    waiters_next(waiters_scan_read, Tx.split_nul(names), dir, token, priority)
+
+def acquire_heavy(~again_acquire: (@+dir: String -> @+token: String -> @+priority: U32 -> @+delay: U32 -> IO(Unit)), +dir: String, +token: String, +priority: U32, +delay: U32) -> IO(Unit):
+  do IO<Unit>:
+    higher : Bool <- waiters_higher(dir, token, priority)
+    Bool.pick(IO(Unit), higher,
+      do IO<Unit>:
+        slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(delay))
+        again_acquire(dir, token, priority, U32.min(U32.mul(delay, 2), 64)),
+      do IO<Unit>:
+        locked : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_fd_acquire(8))
+        higher_after : Bool <- waiters_higher(dir, token, priority)
+        Bool.pick(IO(Unit), higher_after,
+          do IO<Unit>:
+            released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(8))
+            slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(delay))
+            again_acquire(dir, token, priority, U32.min(U32.mul(delay, 2), 64)),
+          do IO<Unit>:
+            removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(dir ++ "/" ++ token))
+            IO.pure(Unit, Unit{})))
+
+def acquire_heavy_loop(+dir: String, +token: String, +priority: U32, +delay: U32) -> IO(Unit):
+  acquire_heavy(acquire_heavy, dir, token, priority, delay)
+
+def supervise_owned(+attempt: String, +keydir: String, +kind: String, source_root: String,
+                    entry: String, key: String, +started: String, names: List<&2,String>,
+                    cwd: String, pid: U32, start: String, +gate: U32,
+                    +state: String, +token: String, +priority: U32) -> IO(Unit):
+  do IO<Unit>:
+    active_text : String <- IO.pure(String, "pid=" ++ U32.show(pid)
+      ++ "\nstarttime=" ++ start ++ "\nkind=" ++ kind ++ "\nsetsid=1\nstarted_ns=" ++ started ++ "\n")
+    active : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(keydir ++ "/active", active_text))
+    released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
+    acquired : Unit <- acquire_heavy_loop(waiters_dir(state), token, priority, 4)
+    signaled : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.set_env(
+      "BATON_COMPILE_QUEUE_COMPILED", attempt ++ "/compiled")
+    supervise_marker_result(signaled, attempt, keydir, kind, source_root, entry, key, started, names, cwd)
+
+def supervise_owner_count(owners: U32, +attempt: String, +keydir: String, +kind: String,
+                          source_root: String, entry: String, +key: String, +started: String,
+                          +names: List<&2,String>, cwd: String, pid: U32, start: String,
+                          +gate: U32, +state: String, +token: String, +priority: U32) -> IO(Unit):
+  Bool.pick(IO(Unit), U32.is_eq(owners, 0),
+    do IO<Unit>:
+      released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
+      removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(waiters_dir(state) ++ "/" ++ token))
+      write_failure(attempt, keydir, "canceled", 130, kind, key, started,
+        "all requesters canceled before execution", names),
+    supervise_owned(attempt, keydir, kind, source_root, entry, key, started, names, cwd, pid, start, gate,
+      state, token, priority))
+
+def supervise(+attempt: String) -> IO(Unit):
+  do IO<Unit>:
+    +meta : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/meta"))
+    kind : String <- IO.pure(String, field(meta, "kind"))
+    cwd : String <- IO.pure(String, field(meta, "cwd"))
+    +state : String <- IO.pure(String, field(meta, "state_root"))
+    source_root : String <- IO.pure(String, field(meta, "source_root"))
+    entry : String <- IO.pure(String, field(meta, "entry"))
+    +priority : U32 <- IO.pure(U32, status_number(field(meta, "priority")))
+    key : String <- IO.pure(String, field(meta, "key"))
+    +keydir : String <- IO.pure(String, field(meta, "keydir"))
+    names : List<&2,String> <- IO.pure(List<&2,String>, fields_all(meta, "artifact_name"))
+    started : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
+    +pid : U32 <- IO.try(U32, L.CompileQueueLifecycle.pid())
+    start : String <- IO.try(String, L.CompileQueueLifecycle.starttime(pid))
+    +token : String <- IO.pure(String, started ++ "-" ++ U32.show(pid))
+    published : Unit <- Bool.pick(IO(Unit), String.is_empty(state), IO.pure(Unit, Unit{}),
+      do IO<Unit>:
+        made : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(waiters_dir(state)))
+        wrote : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(
+          waiters_dir(state) ++ "/" ++ token,
+          waiters_ticket_text(priority, pid, start, key, token)))
+        IO.pure(Unit, Unit{}))
+    gate : U32 <- owner_lock(keydir)
+    owners : U32 <- owner_count(keydir)
+    supervise_owner_count(owners, attempt, keydir, kind, source_root, entry, key,
+      started, names, cwd, pid, start, gate, state, token, priority)
 
 def start_attempt_result_exists(exists: Bool, +text: String, +key: String, +keydir: String,
                                 +attempt: String, +owner: String, now: String, +waited: String) -> IO(Unit):
