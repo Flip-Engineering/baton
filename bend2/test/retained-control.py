@@ -316,6 +316,7 @@ class RetainedControl(unittest.TestCase):
             'liveDisconnectedRecoveredOnce': True,
             'exitedDisconnectRecoveredOnceNoRetry': True,
             'terminalStatusPreserved': True,
+            'failedStatusWriteRetainedAndRetried': True,
         })
 
     def test_observer_and_control_writes_preserve_complete_frames(self):
