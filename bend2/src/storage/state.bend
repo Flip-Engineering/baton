@@ -500,7 +500,7 @@ def commit_named(lines: List<String>, +commit: String) -> Bool:
     case Con{head, tail}:
       Bool.or(String.eq(Tx.trim_nl(head), commit), commit_named(tail, commit))
 
-def published_head(head: Maybe<String>, listed: Maybe<String>) -> T.Presence:
+def published_head(+head: Maybe<String>, +listed: Maybe<String>) -> T.Presence:
   match head:
     case None{}: T.Unknown{}
     case Some{value}:
