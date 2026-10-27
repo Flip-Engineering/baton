@@ -1,6 +1,7 @@
-"""Qualify production focused Codex handlers with a retained backend and fake proxy.
+"""Qualify production Codex inbox handlers with a retained backend and fake proxy.
 
-BATON2_CODEX_FOCUSED_BINARY names the production receive-focused executable.
+BATON2_CODEX_FOCUSED_BINARY names a native test entry that calls the production
+Codex inbox handlers. Build it from focused-codex-inbox-entry.bend.
 BATON2_CODEX_BACKEND_PREFIX names a retained native installation with its helpers.
 No provider, user daemon or live database is used.
 """
