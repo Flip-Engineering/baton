@@ -327,9 +327,9 @@ def connect_sql(+id: String, native: String, +endpoint: String) -> String:
   ++ session_result_where("id=" ++ q(id) ++ " AND " ++ endpoint_admitted(endpoint))
 
 # Configuration records the harness, model and effort for future turns.
-# Saving effort on the same harness and model keeps the existing endpoint.
-# The expected route identifies the session configuration being changed.
-# The predicate is a subquery so it also stands in a SELECT with no FROM clause,
+# An effort-only same-route save preserves the existing endpoint. Explicit
+# --command and --output-log rebind it. A command without a log is refused; a
+# log without a command preserves the recorded endpoint.
 # which is where the refusal answer is built.
 def configure_matches(session: String, harness: String, model: String, effort: String) -> String:
   "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(session) ++ " AND harness=" ++ q(harness) ++ " AND model=" ++ q(model) ++ " AND effort=" ++ q(effort) ++ ")"
@@ -343,7 +343,7 @@ def configure_admitted(+session: String, +harness: String, +model: String, +endp
 
 def configure_update_sql(+session: String, +harness: String, +model: String, +effort: String, +endpoint: String, +expected_harness: String, +expected_model: String, expected_effort: String, +admitted: String) -> String:
   "UPDATE sessions SET harness=" ++ q(harness) ++ ",model=" ++ q(model) ++ ",effort=" ++ q(effort) ++ ",endpoint=CASE WHEN " ++ q(endpoint) ++ "<>'' THEN " ++ q(endpoint) ++ " WHEN " ++ q(harness) ++ "=" ++ q(expected_harness) ++ " AND " ++ q(model) ++ "=" ++ q(expected_model) ++ " THEN endpoint ELSE " ++ q(endpoint) ++ " END WHERE id=" ++ q(session) ++ " AND " ++ admitted ++ ";"
-  ++ "SELECT json_object('error','configure-refused','session'," ++ q(session) ++ ",'expected',json_object('harness'," ++ q(expected_harness) ++ ",'model'," ++ q(expected_model) ++ ",'effort'," ++ q(expected_effort) ++ "),'requested',json_object('harness'," ++ q(harness) ++ ",'model'," ++ q(model) ++ ",'effort'," ++ q(effort) ++ "),'condition','Configuration requires the recorded harness, model and effort to match the expected route. Saving effort on the same harness and model preserves the receiver, current attempt and stop. Changing harness or model requires a launchable receiver, no owned attempt and no stop.','next','Read session ID and pass its recorded harness, model and effort as the expected route. Change provider after the current attempt exits. Resume SESSION --lift-stop explicitly lifts a stop.') WHERE changes()=0;"
+  ++ "SELECT json_object('error','configure-refused','session'," ++ q(session) ++ ",'expected',json_object('harness'," ++ q(expected_harness) ++ ",'model'," ++ q(expected_model) ++ ",'effort'," ++ q(expected_effort) ++ "),'requested',json_object('harness'," ++ q(harness) ++ ",'model'," ++ q(model) ++ ",'effort'," ++ q(effort) ++ "),'condition','Configuration requires the recorded harness, model and effort to match the expected route. Saving effort on the same harness and model preserves the receiver, current attempt and stop. A same-route --command with --output-log rebinds the endpoint; --command without --output-log is refused; --output-log without --command preserves the recorded endpoint. Changing harness or model requires a launchable receiver, no owned attempt and no stop.','next','Read session ID and pass its recorded harness, model and effort as the expected route. Change provider after the current attempt exits. Resume SESSION --lift-stop explicitly lifts a stop.') WHERE changes()=0;"
   ++ session_result_where("id=" ++ q(session) ++ " AND changes()=1")
 
 def configure_sql(+session: String, +harness: String, +model: String, +effort: String, +endpoint: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> String:
