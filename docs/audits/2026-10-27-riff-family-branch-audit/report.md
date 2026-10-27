@@ -182,9 +182,14 @@ above the user-reported 205 for "Flip". Classification pending a scope claim.
 
 ### baton fresh counts
 
-`git ls-remote` at 2026-10-27T05:45Z: 181 heads, 420 tags (no peeled `^{}` duplicates), 242 pull
-refs. Branch arithmetic: 213 reported − 33 removed by root + 1 audit branch = 181. The tag count
-does not match the reported 305 baseline.
+`git ls-remote --heads --tags` recount at 2026-10-27T08:05Z: 182 heads, 267 real tag refs plus 153
+peeled `^{}` lines (420 tag-ref lines total), 242 pull refs. An earlier line in this audit
+reported "420 tags, no peeled duplicates"; that was a grep error — the pattern `\^{}` never
+matched in basic regular expressions, so the peel filter selected nothing. Root's independent
+count (182 / 267 / 153) is authoritative. Branch arithmetic: 213 reported − 33 removed by root +
+2 audit-ensemble branches = 182. Tag composition of the 267: 160 `archive/2026-10-05/*`, 102
+`recovery/*`, 4 `baton2-v*` release tags, 1 `stall-qualified-*`. The user-reported 305-tag
+baseline predates these namespaces; the peer session's 267 was correct.
 
 ## Addendum 2: flip-client classification (2026-10-27T06:20Z)
 
@@ -216,9 +221,10 @@ repositories until root changes the grant or supplies other credentials.
 
 ### Baton count reconciliation
 
-Fresh `ls-remote` at 2026-10-27T05:45Z: 181 heads, 420 tag refs (no `^{}` duplicates), 242 pull
-refs. The peer session working baton refs reports 267 tags from its clone and the user-reported
-baseline is 305; the numbers should be reconciled from a fresh remote read before any tag action.
+Resolved by recount: 267 real tag refs plus 153 peeled `^{}` lines (420 tag-ref lines total), 182
+heads, 242 pull refs at 2026-10-27T08:05Z. The peer session's 267 was correct; this audit's
+earlier "420 real tags" came from a grep pattern that never matched `^{}` in basic regular
+expressions. Root independently verified the same numbers.
 
 ## Addendum 3: flip-client content verdicts (2026-10-27T07:30Z)
 
