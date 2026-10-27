@@ -713,7 +713,15 @@ export function term_strip<X>(tm: TermOf<X>): TermOf<X> {
   return t;
 }
 
+type ClosedCtrEntry = { id: number, value: WeakRef<HTerm> };
+type ClosedCtrCache = { spans: WeakMap<Span, Map<string, ClosedCtrEntry>>, ids: WeakMap<HTerm, number>, next: number };
+const STRING_LITERAL_CTRS = new Set<Name>(["SCon", "SNil", "Chr", "U32", "WCon", "WNil", "True", "False"]);
+
 export function term_higher(tm: LTerm, env: Env = null): HTerm {
+  return term_higher_inner(tm, env, { spans: new WeakMap(), ids: new WeakMap(), next: 0 });
+}
+
+function term_higher_inner(tm: LTerm, env: Env, cache: ClosedCtrCache): HTerm {
   switch (tm.$) {
     case "Var": {
       if (tm.i < 0) {
@@ -740,81 +748,104 @@ export function term_higher(tm: LTerm, env: Env = null): HTerm {
     case "Sub": {
       const x = tm.v;
       const v = x.$ === "PVar" || x.$ === "PCtr"
-        ? (s?: Span) => term_higher(patt_term(x, s), env)
-        : term_higher(x, env);
-      return term_higher(tm.f, list_set(env, tm.i, v));
+        ? (s?: Span) => term_higher_inner(patt_term(x, s), env, cache)
+        : term_higher_inner(x, env, cache);
+      return term_higher_inner(tm.f, list_set(env, tm.i, v), cache);
     }
     case "Let": {
       const b = tm;
-      const v = b.v.map((x) => term_higher(x, env));
+      const v = b.v.map((x) => term_higher_inner(x, env, cache));
       return Let(b.k, b.i, v, (xs: HTerm[]) => {
         let e = env;
         for (let j = 0; j < xs.length; j++) {
           e = list_set(e, b.i[j], xs[j]);
         }
-        return term_higher(b.f, e);
+        return term_higher_inner(b.f, e, cache);
       }, b.s, b.q);
     }
     case "All": {
       const b = tm;
-      const A = term_higher(b.A, env);
+      const A = term_higher_inner(b.A, env, cache);
       return All(b.q, b.k, b.i, A, (x: HTerm) => {
-        return term_higher(b.B, list_set(env, b.i, x));
+        return term_higher_inner(b.B, list_set(env, b.i, x), cache);
       }, b.s);
     }
     case "Lam": {
       const b = tm;
       return Lam(b.k, b.i, (x: HTerm) => {
-        return term_higher(b.f, list_set(env, b.i, x));
+        return term_higher_inner(b.f, list_set(env, b.i, x), cache);
       }, b.s, b.q);
     }
     case "Typ": {
-      return Typ(term_higher(tm.g, env), tm.s);
+      return Typ(term_higher_inner(tm.g, env, cache), tm.s);
     }
     case "Qnt":
     case "Qua": {
       return tm;
     }
     case "Min": {
-      return Min(term_higher(tm.a, env), term_higher(tm.b, env), tm.s);
+      return Min(term_higher_inner(tm.a, env, cache), term_higher_inner(tm.b, env, cache), tm.s);
     }
     case "App": {
-      const f = term_higher(tm.f, env);
-      const x = term_higher(tm.x, env);
+      const f = term_higher_inner(tm.f, env, cache);
+      const x = term_higher_inner(tm.x, env, cache);
       if (f.$ === "Lam") {
         return f.f(x);
       }
       return App(f, x, tm.s);
     }
     case "ADT": {
-      return ADT(tm.k, tm.x.map((x) => term_higher(x, env)), tm.s, tm.r);
+      return ADT(tm.k, tm.x.map((x) => term_higher_inner(x, env, cache)), tm.s, tm.r);
     }
     case "Ctr": {
-      return Ctr(tm.k, tm.x.map((x) => term_higher(x, env)), tm.s);
+      const xs = tm.x.map((x) => term_higher_inner(x, env, cache));
+      // String patterns expand to closed constructor chains. Pattern
+      // substitution can copy the same chain into each fallback branch;
+      // intern those closed subtrees while preserving their source spans.
+      if (tm.s !== undefined && STRING_LITERAL_CTRS.has(tm.k)) {
+        const child_ids = xs.map((x) => cache.ids.get(x));
+        if (child_ids.every((id) => id !== undefined)) {
+          let table = cache.spans.get(tm.s);
+          if (table === undefined) {
+            table = new Map();
+            cache.spans.set(tm.s, table);
+          }
+          const key = `${tm.k}|${tm.s.beg}:${tm.s.end}|${child_ids.join(",")}`;
+          const entry = table.get(key);
+          const prior = entry?.value.deref();
+          if (prior !== undefined) return prior;
+          const out = Ctr(tm.k, xs, tm.s);
+          const id = entry?.id ?? cache.next++;
+          cache.ids.set(out, id);
+          table.set(key, { id, value: new WeakRef(out) });
+          return out;
+        }
+      }
+      return Ctr(tm.k, xs, tm.s);
     }
     case "Lit": {
       return tm;
     }
     case "Mat": {
-      return Mat(tm.k, term_higher(tm.h, env), term_higher(tm.m, env), tm.s);
+      return Mat(tm.k, term_higher_inner(tm.h, env, cache), term_higher_inner(tm.m, env, cache), tm.s);
     }
     case "Efq": {
       return Efq(tm.s);
     }
     case "Eql": {
-      return Eql(term_higher(tm.a, env), term_higher(tm.b, env), term_higher(tm.T, env), tm.s);
+      return Eql(term_higher_inner(tm.a, env, cache), term_higher_inner(tm.b, env, cache), term_higher_inner(tm.T, env, cache), tm.s);
     }
     case "Rfl": {
       return Rfl(tm.s);
     }
     case "Rwt": {
-      return Rwt(term_higher(tm.e, env), term_higher(tm.p, env), term_higher(tm.f, env), tm.s);
+      return Rwt(term_higher_inner(tm.e, env, cache), term_higher_inner(tm.p, env, cache), term_higher_inner(tm.f, env, cache), tm.s);
     }
     case "Hol": {
       return Hol(tm.k, tm.s);
     }
     case "Ann": {
-      return Ann(term_higher(tm.x, env), term_higher(tm.T, env), tm.s);
+      return Ann(term_higher_inner(tm.x, env, cache), term_higher_inner(tm.T, env, cache), tm.s);
     }
   }
 }
