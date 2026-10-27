@@ -12,6 +12,35 @@ compiler=${BEND:-"$root/.bend/bin/bend"}
 if [ ! -x "$compiler" ]; then
   compiler="$root/node_modules/.bend/bin/bend"
 fi
+# Homelab checks use the shared compilation queue by default, matching
+# build-native.sh: an explicit driver wins; otherwise a present queue
+# adapter, client and state root synthesize the queue configuration.
+if [ -z "${BATON2_NATIVE_QUEUE_DRIVER:-}" ]; then
+  queue_adapter="$root/.github/scripts/queue-native-checks.py"
+  queue_state=${BATON_COMPILE_QUEUE_ROOT:-/var/tmp/baton2-compile-queue}
+  queue_client=${BATON2_COMPILE_QUEUE_BIN:-}
+  if [ -z "$queue_client" ] && [ -x "$queue_state/compile-queue-runner" ]; then
+    queue_client="$queue_state/compile-queue-runner"
+  fi
+  if [ -f "$queue_adapter" ] && [ -n "$queue_client" ] && [ -x "$queue_client" ] && [ -d "$queue_state" ]; then
+    queue_run="$root/.scratch/bend2/queue-run"
+    mkdir -p "$queue_run"
+    if "$PYTHON3" - "$queue_run" "$compiler" "${CC:-clang}" "$queue_client" "$queue_state" <<'PY'
+import json, pathlib, shutil, sys
+run, bend, cc, client, state = sys.argv[1:6]
+config = {"run": str(pathlib.Path(run).resolve()),
+          "bend": str(pathlib.Path(bend).resolve()),
+          "cc": shutil.which(cc) or cc,
+          "client": client, "state": state}
+pathlib.Path(run, "queue-config.json").write_text(json.dumps(config, indent=2) + "\n")
+PY
+    then
+      BATON2_NATIVE_QUEUE="$queue_run/queue-config.json"
+      BATON2_NATIVE_QUEUE_DRIVER="$queue_adapter"
+      export BATON2_NATIVE_QUEUE BATON2_NATIVE_QUEUE_DRIVER
+    fi
+  fi
+fi
 (
   ulimit -s unlimited 2>/dev/null || true
   if [ -n "${BATON2_NATIVE_QUEUE_DRIVER:-}" ]; then

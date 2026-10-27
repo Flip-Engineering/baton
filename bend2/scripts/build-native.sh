@@ -57,6 +57,42 @@ compiler=${BEND:-"$root/.bend/bin/bend"}
 if [ ! -x "$compiler" ]; then
   compiler="$root/node_modules/.bend/bin/bend"
 fi
+# Homelab builds use the shared compilation queue by default. An explicit
+# BATON2_NATIVE_QUEUE_DRIVER (CI) always wins. Without one, when the repo
+# queue adapter, a queue client and the shared state root are all present,
+# synthesize the same queue configuration the adapter consumes and route
+# through it, so a plain build-native.sh invocation cannot bypass the
+# queue by forgetting an environment hook. Hosts without an installed
+# queue keep the direct path.
+if [ -z "${BATON2_NATIVE_QUEUE_DRIVER:-}" ]; then
+  queue_adapter="$root/.github/scripts/queue-native-checks.py"
+  queue_state=${BATON_COMPILE_QUEUE_ROOT:-/var/tmp/baton2-compile-queue}
+  queue_client=${BATON2_COMPILE_QUEUE_BIN:-}
+  if [ -z "$queue_client" ] && [ -x "$queue_state/compile-queue-runner" ]; then
+    queue_client="$queue_state/compile-queue-runner"
+  fi
+  if [ -z "$queue_client" ] && [ -n "${BATON2_PREFIX:-}" ] && [ -x "$BATON2_PREFIX/bin/baton-compile-queue" ]; then
+    queue_client="$BATON2_PREFIX/bin/baton-compile-queue"
+  fi
+  if [ -f "$queue_adapter" ] && [ -n "$queue_client" ] && [ -x "$queue_client" ] && [ -d "$queue_state" ]; then
+    queue_run="$root/.scratch/bend2/queue-run"
+    mkdir -p "$queue_run"
+    if python3 - "$queue_run" "$compiler" "${CC:-clang}" "$queue_client" "$queue_state" <<'PY'
+import json, pathlib, shutil, sys
+run, bend, cc, client, state = sys.argv[1:6]
+config = {"run": str(pathlib.Path(run).resolve()),
+          "bend": str(pathlib.Path(bend).resolve()),
+          "cc": shutil.which(cc) or cc,
+          "client": client, "state": state}
+pathlib.Path(run, "queue-config.json").write_text(json.dumps(config, indent=2) + "\n")
+PY
+    then
+      BATON2_NATIVE_QUEUE="$queue_run/queue-config.json"
+      BATON2_NATIVE_QUEUE_DRIVER="$queue_adapter"
+      export BATON2_NATIVE_QUEUE BATON2_NATIVE_QUEUE_DRIVER
+    fi
+  fi
+fi
 if [ "$focused" = 1 ] && [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
   printf '{"error":"build-mode-conflict","condition":"focused-native-entry-with-main","entry":"%s"}\n' "$entry_path" >&2
   exit 78
