@@ -185,3 +185,37 @@ above the user-reported 205 for "Flip". Classification pending a scope claim.
 `git ls-remote` at 2026-10-27T05:45Z: 181 heads, 420 tags (no peeled `^{}` duplicates), 242 pull
 refs. Branch arithmetic: 213 reported − 33 removed by root + 1 audit branch = 181. The tag count
 does not match the reported 305 baseline.
+
+## Addendum 2: flip-client classification (2026-10-27T06:20Z)
+
+`main` = `7c0d858b` ("fix(native): await the owned D-Bus readiness announcement", 2026-10-26).
+527 heads, 17 tags, 733 pull requests: 612 merged, 60 open, 61 closed unmerged.
+
+- No merged-PR residue heads survive: every one of the 526 non-ancestor heads is an open-PR head
+  (60), a closed-unmerged-PR head (51), or has no pull request (415).
+- The 60 open PRs are the live review surface. Newest cluster (2026-10-26): #1117 native state
+  volume, #1112/#1111/#1110 My Flip topics/memory/owner-connection ensemble. Stale open tail:
+  #1108/#1107 (2026-09-22), #1088/#1086/#1077 (2026-09-12/13), and open PRs from 2026-08-15
+  through 2026-09-06.
+- The 415 PR-less heads split by namespace: 237 `backup/*` (dated safety copies of other work
+  branches, almost all `backup/20260901/<type>/<name>` mirroring work as of 2026-09-01), 17
+  `archive/*` (pre-rebase snapshots around merged PRs #1000-#1002), and 161 unclassified (55
+  codex, 50 agent, 22 fix, 18 wip, 5 feat, 2 rescue, 2 docs, 1 test). Per-branch content
+  classification for the unclassified set and uniqueness checks for the backups are the next
+  pass; backups may be the only refs of pre-merge states, so deletion follows a per-branch
+  comparison against the mirrored branch and main.
+
+### Credential finding
+
+The `flip-baton-glm` installation grant covers exactly: baton, riff, Riff-ChatGPT-Plugin,
+baton-cli, flip-client, flip-platform, riff-private-archive-20260911.
+`automated-content-pipeline`, `acp-fframes`, `bend`, `bend-kit`, and
+`automated-content-pipeline-video-studies-archive` return 404 with the installation token and are
+unreachable anonymously. No recorded session in this ensemble can inventory those five
+repositories until root changes the grant or supplies other credentials.
+
+### Baton count reconciliation
+
+Fresh `ls-remote` at 2026-10-27T05:45Z: 181 heads, 420 tag refs (no `^{}` duplicates), 242 pull
+refs. The peer session working baton refs reports 267 tags from its clone and the user-reported
+baseline is 305; the numbers should be reconciled from a fresh remote read before any tag action.
