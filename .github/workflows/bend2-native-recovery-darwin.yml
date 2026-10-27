@@ -21,9 +21,11 @@ jobs:
   recovery-darwin-arm64:
     timeout-minutes: 4320
     runs-on: [self-hosted, macOS, ARM64, baton2-native-darwin-arm64]
+    defaults:
+      run:
+        shell: bash --noprofile --norc -e -o pipefail "{0}"
     steps:
       - name: Validate source and runner identity
-        shell: bash
         run: |
           set -euo pipefail
           test "$BATON2_SOURCE_SHA" = ef0b8a5eb4da5d13f253ebe79b289dc22b2836cb
@@ -52,7 +54,6 @@ jobs:
           persist-credentials: false
 
       - name: Confirm the source contains the portable proof selector
-        shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$BATON2_SOURCE_SHA"
@@ -61,7 +62,6 @@ jobs:
           rg -q 'validate_source_proof' .github/scripts/reuse-native-recovery.py
 
       - name: Install pinned Darwin Bend toolchain
-        shell: bash
         run: |
           set -euo pipefail
           run="$RUNNER_TEMP/baton2-recovery-darwin-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -81,7 +81,6 @@ jobs:
           shasum -a 256 "$run/toolchain-home/bin/bend" > "$run/toolchain/compiler.sha256"
 
       - name: Verify retained recovery C selection
-        shell: bash
         run: |
           set -euo pipefail
           unset BEND_LIB
@@ -106,7 +105,6 @@ jobs:
           ' "$BATON2_RECOVERY_RUN/recovery-c-selection.json"
 
       - name: Prepare the maintained shared compile queue
-        shell: bash
         run: |
           set -euo pipefail
           queue_root="${BATON_COMPILE_QUEUE_ROOT:-/var/tmp/baton2-compile-queue}"
@@ -138,7 +136,6 @@ jobs:
           shasum -a 256 "$queue_client" > "$BATON2_RECOVERY_RUN/queue-client.sha256"
 
       - name: Build only the recovery native component
-        shell: bash
         env:
           BATON2_RECOVERY_HELPER: '1'
           BATON2_RECOVERY_C_PROOF: ${{ env.BATON2_RECOVERY_BUNDLE }}/recovery-c-reuse.json
@@ -172,7 +169,6 @@ jobs:
             "$(basename "$BATON2_RECOVERY_GENERATOR_ROOT")"
 
       - name: Bind recovery component evidence
-        shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
