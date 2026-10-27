@@ -485,6 +485,18 @@ static int baton_storage_mount_boundary(int fd, const char *name) {
   }
   if (!(parent.stx_mask & STATX_MNT_ID) || !(child.stx_mask & STATX_MNT_ID)) return ENOTSUP;
   return parent.stx_mnt_id == child.stx_mnt_id ? 0 : EXDEV;
+#elif defined(__APPLE__)
+  /* macOS has no bind mounts; a filesystem identity comparison still verifies
+     that the entry lives on the same mounted volume before removal. */
+  struct statfs parent, child;
+  if (fstatfs(fd, &parent)) return ENOTSUP;
+  int entry = openat(fd, name, baton_storage_dir_flags());
+  if (entry < 0) return ENOTSUP;
+  int error = fstatfs(entry, &child) ? ENOTSUP : 0;
+  close(entry);
+  if (error) return error;
+  if (parent.f_fsid.val[0] != child.f_fsid.val[0] || parent.f_fsid.val[1] != child.f_fsid.val[1]) return EXDEV;
+  return 0;
 #else
   return ENOTSUP;
 #endif

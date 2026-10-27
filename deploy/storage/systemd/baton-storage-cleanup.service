@@ -26,8 +26,11 @@ Group=batonci
 EnvironmentFile=-/etc/baton/storage-roots.env
 ExecStart=/path/to/qualified-release/libexec/baton2/storage-clean /path/to/state.db storage-sweep
 StandardOutput=journal
-MemoryMax=2G
-MemorySwapMax=0
+# Soft memory throttle only: the pass is throttled above this mark and keeps
+# running, with swap available. No hard memory limit and no forced zero swap;
+# a settled large scan is never cancelled for its size. A soft limit does not
+# detect a leak.
+MemoryHigh=2G
 TimeoutStartSec=infinity
 Nice=10
 IOSchedulingClass=idle

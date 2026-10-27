@@ -115,12 +115,16 @@ The repository templates are:
 - `deploy/storage/launchd/com.flip.baton.storage-cleanup.plist`.
 
 They run under the database owner with the standard Baton environment and
-carry no credentials. The service carries `MemoryMax=2G`, `MemorySwapMax=0`
-and `TimeoutStartSec=infinity`, the same bounds as the log-clean service.
+carry no credentials. The service carries `MemoryHigh=2G`, a soft throttle
+that keeps the pass running above the mark with swap available, and
+`TimeoutStartSec=infinity`. It sets no hard memory limit and no forced zero
+swap. A soft limit throttles pressure; it does not detect a leak.
 
-On macOS the mount identity of a candidate cannot be established, so every
-directory removal is preserved. The Darwin agent is wired for file and log
-cleanup only; no Darwin directory removal is validated.
+On macOS the mount identity of a candidate and its parent is compared through
+the mounted filesystem identity (`f_fsid`) before any removal. Darwin
+directory removal is implemented from source but has not been validated on a
+Darwin runner; files and logs on the same filesystem are removed, and any
+identity that cannot be established preserves the entry.
 
 ### Staging and activation
 

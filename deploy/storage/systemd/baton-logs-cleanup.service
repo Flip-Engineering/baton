@@ -20,8 +20,11 @@ User=batonci
 Group=batonci
 ExecStart=/path/to/qualified-release/libexec/baton2/logs-clean-all /path/to/state.db
 StandardOutput=journal
-MemoryMax=2G
-MemorySwapMax=0
+# Soft memory throttle only: the pass is throttled above this mark and keeps
+# running, with swap available. No hard memory limit and no forced zero swap;
+# a settled large scan is never cancelled for its size. A soft limit does not
+# detect a leak.
+MemoryHigh=2G
 TimeoutStartSec=infinity
 Nice=10
 IOSchedulingClass=idle
