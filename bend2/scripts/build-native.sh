@@ -5,6 +5,15 @@ cd "$root"
 entry=${1:-bend2/src/coordinator/main.bend}
 output=${2:-.scratch/bend2/baton2}
 mkdir -p "$(dirname -- "$output")"
+native_compile() {
+  compile_kind=$1
+  shift
+  if [ -n "${BATON2_NATIVE_QUEUE_DRIVER:-}" ]; then
+    python3 "$BATON2_NATIVE_QUEUE_DRIVER" stage "$compile_kind" "$@"
+  else
+    "$@"
+  fi
+}
 if [ -n "${TMPDIR:-}" ]; then
   scratch_base=$TMPDIR
 elif [ -n "${BATON2_SCRATCH_ROOT:-}" ]; then
@@ -68,18 +77,7 @@ if [ "$recovery" = 1 ] && { [ "$focused" = 1 ] || [ "$router" = 1 ]; }; then
   printf '{"error":"build-mode-conflict","condition":"recovery-helper-with-other-native-entry","entry":"%s"}\n' "$entry_path" >&2
   exit 78
 fi
-if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
-  compiler_path=$(readlink -f -- "$compiler" 2>/dev/null || printf '%s' "$compiler")
-  case "$compiler_path" in
-    */bin/bend) ;;
-    *) printf '{"error":"build-admission-required","condition":"compiler-not-guarded","compiler":"%s"}\n' "$compiler_path" >&2; exit 78 ;;
-  esac
-  grep -q 'build-admission-required' "$compiler_path" 2>/dev/null || {
-    printf '{"error":"build-admission-required","condition":"compiler-not-guarded","compiler":"%s"}\n' "$compiler_path" >&2
-    exit 78
-  }
-  BATON2_ADMISSION_CHECK_ONLY=1 "$compiler" "$entry" -o "$output.c" >/dev/null || exit $?
-fi
+. "$root/bend2/scripts/queue-entry.sh"
 generated=${BEND_GENERATED_C:-}
 if [ -z "$generated" ] && [ -n "${BATON2_MAIN_GENERATED_C:-}" ] &&
    [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
@@ -103,7 +101,21 @@ else
     echo 'This native binding requires Bend 2.0.25.' >&2
     exit 1
   fi
-  "$compiler" "$entry" -o "$output.c"
+  sh "$root/bend2/scripts/bend-lineage-guard.sh" "$compiler"
+  native_compile bend "$compiler" "$entry" -o "$output.c"
+fi
+if grep -Fq '#include "persistent-path.h"' "$output.c"; then
+  persistent_header_dir=$(dirname "$output.c")
+  persistent_header="$persistent_header_dir/persistent-path.h"
+  expected_persistent_header=$(readlink -f "$root/bend2/src/host/persistent-path.h")
+  if [ -e "$persistent_header" ] || [ -L "$persistent_header" ]; then
+    if [ "$(readlink -f "$persistent_header")" != "$expected_persistent_header" ]; then
+      echo "generated C input resolves persistent-path.h to an unexpected file: $persistent_header" >&2
+      exit 1
+    fi
+  else
+    ln -s "$expected_persistent_header" "$persistent_header"
+  fi
 fi
 build_native_shards() {
   native_link_flags="-O1 -pthread -lsqlite3 -lm"
@@ -118,14 +130,14 @@ build_native_shards() {
     --outdir "$native_binary.parallel" \
     --binary "$native_binary" \
     --shards 4 --jobs 4 --cc "${CC:-clang}" \
-    --cflag=-O1 --cflag=-pthread --main-rename \
+    --cflag=-O1 --cflag=-pthread --cflag=-I"$root/bend2/src/host" --main-rename \
     --link-extra "$root/bend2/src/host/native-entry.c" \
     --link-flags="$native_link_flags" \
     --max-aggregate-rss-mb 0 --build-only
   if [ -n "${BATON2_CCACHE:-}" ]; then
     set -- "$@" --ccache "$BATON2_CCACHE"
   fi
-  python3 "$root/tools/cgen-clang-parallel/build_and_measure.py" "$@"
+  native_compile cc python3 "$root/tools/cgen-clang-parallel/build_and_measure.py" "$@"
 }
 if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
   if [ "$router" = 1 ]; then
@@ -141,7 +153,13 @@ else
   extra_libs=
   case "$entry_path" in
     */bend2/harness/claude-credit-observe.bend) extra_libs=-lcurl ;;
+    */bend2/harness/usage-read.bend) extra_libs=-lcurl ;;
   esac
-  "${CC:-clang}" -O1 -pthread "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
+  storage_test_flag=
+  case "$entry_path" in
+    */bend2/tests/storage.bend) storage_test_flag="-DBATON_STORAGE_TEST_PROC" ;;
+    */bend2/tests/storage-cargo.bend) storage_test_flag=-DBATON_STORAGE_CARGO_TEST ;;
+  esac
+  native_compile cc "${CC:-clang}" -O1 -pthread -I "$root/bend2/src/host" $storage_test_flag "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
 fi
 printf '%s\n' "$output"

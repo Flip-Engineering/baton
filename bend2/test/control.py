@@ -1,4 +1,5 @@
 """Native control commands with retained fixture processes and real Git worktrees."""
+import errno
 import json
 import os
 import pathlib
@@ -10,6 +11,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import traceback
 import unittest
@@ -97,14 +99,8 @@ def fixture_completion(body):
     assert state['code']==0,state
     completion=json.loads(state['stdout'])['taskCompletion']
     if not completion['open']: return
-    with sqlite3.connect(pathlib.Path(config['db']).as_uri()+'?mode=ro',uri=True) as database:
-        receipt=database.execute('SELECT receipt FROM messages WHERE id=? AND recipient=?',
-                                 (completion['assignmentId'],session)).fetchone()
-    assert receipt is not None,completion
-    if receipt[0] is None: return
     assignment=command('delivery',completion['assignmentId'])
     assert assignment['code']==0,assignment
-    if json.loads(assignment['stdout'])['receipt'] is None: return
     parent=completion['coordinator']
     request=completion['requestId'] or ('fixture-completion-'+str(os.getpid()))
     if not completion['requestId']:
@@ -112,19 +108,15 @@ def fixture_completion(body):
         assert sent['code']==0,sent
     read=command('delivery',request)
     assert read['code']==0,read
-    reviewed=command('ack',request,parent,'Fixture coordinator reviewed the result.')
-    assert reviewed['code']==0,reviewed
     confirmation=request+':confirmed'
     sent=command('message',confirmation,parent,session,'completion-confirmed',request)
     assert sent['code']==0,sent
     read=command('delivery',confirmation)
     assert read['code']==0,read
-    handled=command('ack',confirmation,session,'Fixture worker handled confirmation.')
-    assert handled['code']==0,handled
-def acknowledge():
+def read_prompt_inputs():
     for ident in re.findall(r'^Message \([^\n]*\) from [^\n]* \[id: (.*?)\]:$',prompt,re.M):
-        accepted=command('ack',ident,session,'fixture-native-reviewed')
-        assert accepted['code']==0,accepted
+        read=command('read',ident)
+        assert read['code']==0,read
 reply({'pid':os.getpid(),'ppid':os.getppid(),'pgid':os.getpgrp(),'session':session,
        'native':native,'resume':resume,'args':args,'prompt':prompt,'cwd':os.getcwd(),
        'apiKeyVariablesPresent':[key for key in ('OPENAI_API_KEY','CODEX_API_KEY') if key in os.environ]})
@@ -133,15 +125,15 @@ while True:
     if not line: break
     action=json.loads(line)
     if action.get('exit_fixture'): break
-    if action.get('ack'):
-        acknowledge()
-        reply({'acknowledged':True})
+    if action.get('read_prompt'):
+        read_prompt_inputs()
+        reply({'read':True})
         continue
-    if action.get('ack_message'):
-        ident=action['ack_message']
-        accepted=command('ack',ident,session,'fixture-native-reviewed')
-        assert accepted['code']==0,accepted
-        reply({'acknowledged':ident})
+    if action.get('read_message'):
+        ident=action['read_message']
+        read=command('read',ident)
+        assert read['code']==0,read
+        reply({'read':ident})
         continue
     if action.get('public_report'):
         ident,body=action['public_report']
@@ -160,7 +152,15 @@ while True:
         print('fixture diagnostic',file=sys.stderr,flush=True)
         reply({'output_written':len(text)})
         continue
-    acknowledge()
+    if action.get('git_commit'):
+        name,body=action['git_commit']
+        pathlib.Path(name).write_text(body)
+        run=subprocess.run(['git','add',name],capture_output=True,text=True)
+        if run.returncode==0:
+            run=subprocess.run(['git','commit','-q','-m','fixture worker commit'],capture_output=True,text=True)
+        reply({'git_commit':{'code':run.returncode,'stdout':run.stdout,'stderr':run.stderr}})
+        continue
+    read_prompt_inputs()
     body=action['finish']
     failure=action.get('fail',False)
     if not failure and action.get('complete_task',True): fixture_completion(body)
@@ -201,6 +201,7 @@ class Control(unittest.TestCase):
         self.home = self.directory / 'isolated-home'
         self.home.mkdir()
         self.environment = dict(os.environ, HOME=str(self.home),
+                                GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1',
                                 OPENAI_API_KEY='fixture-unused', CODEX_API_KEY='fixture-unused')
         self.environment.pop('BATON2_GIT_REGISTRY', None)
         self.repo = self.directory / 'repository'
@@ -233,10 +234,10 @@ class Control(unittest.TestCase):
         return subprocess.run(['git', '-C', str(self.repo), *args], env=self.environment,
                               check=True, capture_output=True, text=True)
 
-    def call(self, *args, ok=True, raw=False):
+    def call(self, *args, ok=True, raw=False, env=None):
         child = subprocess.Popen([str(EXE), str(self.db), *map(str, args)],
-                                 env=self.environment, stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE, text=True)
+                                 env=self.environment if env is None else env,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = child.communicate()
         record = {'argv': list(map(str, args)), 'pid': child.pid, 'code': child.returncode,
                   'stdout': stdout, 'stderr': stderr, 'direct_wait_completed': True}
@@ -249,7 +250,7 @@ class Control(unittest.TestCase):
         return record if raw or not ok else json.loads(stdout)
 
     def root(self):
-        self.call('attach', 'root', 'codex', 'saved-root', '')
+        self.call('attach', 'root', 'codex', 'saved-root', json.dumps(['/usr/bin/true']))
         self.call('role', 'root', 'principal-conductor')
         self.call('attach', 'operator', 'operator', '', '')
         self.call('role', 'operator', 'operator')
@@ -385,6 +386,13 @@ class Control(unittest.TestCase):
             database.row_factory = sqlite3.Row
             return [dict(row) for row in database.execute(sql, parameters)]
 
+    def read_count(self, ident, recipient=None):
+        if recipient is None:
+            return self.rows('SELECT count(*) AS n FROM message_reads WHERE message=?',
+                             (ident,))[0]['n']
+        return self.rows('SELECT count(*) AS n FROM message_reads WHERE message=? AND recipient=?',
+                         (ident, recipient))[0]['n']
+
     def eventually(self, observation):
         while True:
             result = observation()
@@ -419,10 +427,102 @@ class Control(unittest.TestCase):
         self.server.close()
         configured = json.loads((self.directory / 'fixture.json').read_text())['exe']
         owner = f'{pathlib.Path(configured).resolve()} --instance-owner {self.db.resolve()}'
-        self.eventually(lambda: [row.split(None, 3)[3] for row in self.process_rows()]
-                        in ([], [owner]))
+        def settled_processes():
+            rows = self.process_rows()
+            if [row.split(None, 3)[3] for row in rows] in ([], [owner]):
+                return {'rows': rows}
+        settled = self.eventually(settled_processes)['rows']
+        if settled:
+            selected = receive_fixture.Receive.selected_process(self, int(settled[0].split()[0]))
+            self.assertIsNotNone(selected)
+            self.assertEqual(selected['command'], owner)
+            argv = [configured, str(self.db), 'owner-status']
+            result = subprocess.run(argv, env=self.environment, capture_output=True, text=True)
+            current = receive_fixture.Receive.selected_process(self, selected['pid'])
+            with (self.directory / 'commands.jsonl').open('a') as output:
+                output.write(json.dumps({'argv': argv, 'code': result.returncode,
+                    'stdout': result.stdout, 'stderr': result.stderr,
+                    'selected_owner': selected, 'owner_after_readiness': current,
+                    'direct_wait_completed': True}) + '\n')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIsNotNone(current)
+            self.assertFalse(current['state'].startswith('Z'))
+            for field in ('pid', 'start', 'command'):
+                self.assertEqual(current[field], selected[field])
         shutdown_fixture_owner(self)
         self.eventually(lambda: not self.process_rows())
+
+    def test_cleanup_waits_for_owner_publication(self):
+        self.db.touch()
+        with tempfile.TemporaryDirectory(prefix='b758-', dir='/tmp') as runtime:
+            self.environment['XDG_RUNTIME_DIR'] = runtime
+            ipc = pathlib.Path(runtime) / 'baton2'
+            ipc.mkdir(mode=0o700)
+            info = self.db.stat()
+            generation = ipc / f'owner-{info.st_dev:x}-{info.st_ino:x}.generation'
+            record = generation.with_suffix('.record')
+            os.mkfifo(generation, 0o600)
+            owner = subprocess.Popen([str(EXE), '--instance-owner', str(self.db)],
+                env=self.environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            writer = None
+            cleanup = None
+            failures = []
+            try:
+                def waiting_for_generation():
+                    self.assertIsNone(owner.poll(), 'The fixture owner exited before publication.')
+                    try:
+                        return {'fd': os.open(generation, os.O_WRONLY | os.O_NONBLOCK)}
+                    except OSError as error:
+                        if error.errno != errno.ENXIO:
+                            raise
+                writer = self.eventually(waiting_for_generation)['fd']
+                selected = receive_fixture.Receive.selected_process(self, owner.pid)
+                self.assertIsNotNone(selected)
+                self.assertFalse(record.exists())
+                shutdown_fixture_owner(self)
+                self.assertIsNone(owner.poll())
+                self.assertFalse(record.exists())
+                def close():
+                    try:
+                        self.close_fixtures()
+                    except BaseException:
+                        failures.append(traceback.format_exc())
+                cleanup = threading.Thread(target=close)
+                cleanup.start()
+                def readiness_started():
+                    self.assertFalse(failures, '\n'.join(failures))
+                    self.assertTrue(cleanup.is_alive())
+                    command = f'{EXE} {self.db} owner-status'
+                    return next((row for row in self.process_rows()
+                                 if row.split(None, 3)[3] == command), None)
+                waiting = self.eventually(readiness_started)
+                self.assertFalse(record.exists())
+                (self.directory / 'owner-publication-boundary.json').write_text(json.dumps({
+                    'selected_owner': selected, 'generation_fifo': str(generation),
+                    'readiness_process': waiting, 'record_published': False}, indent=2) + '\n')
+            finally:
+                if writer is not None:
+                    os.write(writer, b'0\n')
+                    os.close(writer)
+                if cleanup is not None:
+                    cleanup.join()
+                else:
+                    self.close_fixtures()
+                stdout, stderr = owner.communicate()
+                (self.directory / 'publication-owner.stdout').write_text(stdout)
+                (self.directory / 'publication-owner.stderr').write_text(stderr)
+                (self.directory / 'publication-owner-execution.json').write_text(json.dumps({
+                    'argv': owner.args, 'pid': owner.pid, 'code': owner.returncode,
+                    'direct_wait_completed': True, 'natural_wait_completed': True}, indent=2) + '\n')
+            self.assertEqual(failures, [])
+            self.assertEqual(owner.returncode, 0, stderr)
+            self.assertEqual(self.process_rows(), [])
+            commands = [json.loads(line) for line in
+                        (self.directory / 'commands.jsonl').read_text().splitlines()]
+            readiness = next(item for item in commands if item['argv'][-1] == 'owner-status')
+            self.assertGreater(json.loads(readiness['stdout'])['generation'], 0)
+            for field in ('pid', 'start', 'command'):
+                self.assertEqual(readiness['selected_owner'][field], readiness['owner_after_readiness'][field])
 
     def test_start_detaches_native_subscription_and_operator_report(self):
         for harness in ('codex', 'omp'):
@@ -462,9 +562,9 @@ class Control(unittest.TestCase):
                 self.assertIsNone(saved['receipt'])
                 inbox = self.call('inbox', 'operator')
                 self.assertEqual(next(row for row in inbox if row['id'] == saved['id'])['body'], report)
-                self.call('ack', saved['id'], 'operator', 'operator-reviewed-native-result')
-                self.assertEqual(self.call('delivery', saved['id'])['receipt'], 'operator-reviewed-native-result')
-                self.assertEqual(self.call('delivery', name + '-task')['receipt'], 'fixture-native-reviewed')
+                self.call('as', 'operator', 'read', saved['id'])
+                self.assertGreater(self.read_count(saved['id'], 'operator'), 0)
+                self.assertGreater(self.read_count(name + '-task', name), 0)
 
     def test_start_upgrades_compatible_parentless_assignment_and_resumes_saved_native(self):
         self.call('attach', 'principal', 'codex', 'saved-native', '')
@@ -641,7 +741,7 @@ class Control(unittest.TestCase):
         answer = self.project_resume_result(stdout)
         self.assertEqual((answer['session'], answer['message']), (session, ident))
         self.assertEqual(answer['delivery']['id'], ident)
-        self.assertEqual(answer['delivery']['receipt'], 'fixture-native-reviewed')
+        self.assertGreater(self.read_count(ident, session), 0)
         self.exited(session)
         self.assertEqual(answer['latestReport'], 'Resumed project work completed.')
         self.assertEqual(answer['latestReportId'], self.call('turns', session)[-1]['id'])
@@ -651,10 +751,10 @@ class Control(unittest.TestCase):
             self.assertEqual(final[field], original[field])
         self.assertEqual(unfinished.read_text(), 'Retained unfinished project source.\n')
         refusal = self.project_call(self.repo, 'resume', session, ok=False)
-        self.assertIn('no unacknowledged input or failed turn', refusal['stderr'])
+        self.assertIn('no unread input or failed turn', refusal['stderr'])
         self.assertEqual(self.call('inbox', session), [])
 
-    def test_project_resume_continues_acknowledged_task_after_native_failure(self):
+    def test_project_resume_continues_read_task_after_native_failure(self):
         self.root()
         self.call('project', self.repo)
         for harness in ('omp', 'muse', 'codex', 'claude-code'):
@@ -665,8 +765,7 @@ class Control(unittest.TestCase):
                 task_id = session + '-task'
                 self.dispatch('dispatch-file', task_id, 'root', session, 'task', self.task)
                 stream, first = self.accept(session)
-                self.assertEqual(self.action(stream, ack=True), {'acknowledged': True})
-                receipt = self.call('delivery', task_id)['receipt']
+                self.assertEqual(self.action(stream, read_prompt=True), {'read': True})
                 unfinished = pathlib.Path(assignment['workspace']) / 'unfinished.txt'
                 unfinished.write_text('Source retained before a provider error.\n')
                 self.finish(stream, 'The provider request failed after task acceptance.', fail=True)
@@ -709,7 +808,7 @@ class Control(unittest.TestCase):
                         self.assertIn(failed['id'], start['prompt'])
                         self.assertIn('Continue unfinished work', start['prompt'])
                         self.assertIn('The latest accepted task is ' + task_id + '.', start['prompt'])
-                        self.assertEqual(self.call('delivery', task_id)['receipt'], receipt)
+                        self.assertGreater(self.read_count(task_id, session), 0)
                         self.assertEqual(self.call('turns', session), original_turns)
                     finally:
                         evidence['assertion_failure'] = traceback.format_exc() if sys.exc_info()[0] else None
@@ -726,11 +825,11 @@ class Control(unittest.TestCase):
                     self.assertEqual(evidence['unexpected_successors'], [], evidence)
                     answer = self.project_resume_result(stdout)
                     self.assertEqual(answer['delivery']['kind'], 'recovery')
-                    self.assertEqual(answer['delivery']['receipt'], 'fixture-native-reviewed')
+                    self.assertGreater(self.read_count(answer['delivery']['id'], session), 0)
                     self.exited(session)
                     self.assertEqual(self.call('turns', session)[0], original_turns[0])
                     self.assertEqual(self.call('session', session)['native'], first['native'])
-                    self.assertEqual(self.call('delivery', task_id)['receipt'], receipt)
+                    self.assertGreater(self.read_count(task_id, session), 0)
                     self.assertEqual(unfinished.read_text(), 'Source retained before a provider error.\n')
                     self.assertEqual(self.call('inbox', session), [])
                     self.assertEqual(self.rows('SELECT * FROM session_stops WHERE session=?', (session,)), [])
@@ -759,7 +858,7 @@ class Control(unittest.TestCase):
         self.dispatch('dispatch-file', 'project-active-task', 'root', session, 'task', self.task)
         active, started = self.accept(session)
         self.assertEqual(started['resume'], first['native'])
-        self.assertEqual(self.action(active, ack=True), {'acknowledged': True})
+        self.assertEqual(self.action(active, read_prompt=True), {'read': True})
         self.call('message', 'project-next-task', 'root', session, 'task',
                   'Input queued behind the active project turn.')
         queued = self.project_call(self.repo, 'resume', session)
@@ -777,8 +876,7 @@ class Control(unittest.TestCase):
         self.assertIn('[id: project-next-task]', later['prompt'])
         self.finish(continued, 'The queued project task completed.')
         self.exited(session)
-        self.assertEqual(self.call('delivery', 'project-next-task')['receipt'],
-                         'fixture-native-reviewed')
+        self.assertGreater(self.read_count('project-next-task', session), 0)
         self.assertEqual(self.call('inbox', session), [])
 
         stopped = 'project-stopped-muse'
@@ -830,7 +928,7 @@ class Control(unittest.TestCase):
         self.finish(continued, 'Explicitly resumed stopped project work.')
         stdout, stderr = lifted.communicate()
         self.assertEqual(lifted.returncode, 0, stdout + stderr)
-        self.assertEqual(self.project_resume_result(stdout)['delivery']['receipt'], 'fixture-native-reviewed')
+        self.assertGreater(self.read_count(self.project_resume_result(stdout)['delivery']['id'], stopped), 0)
         self.assertEqual(self.rows('SELECT * FROM session_stops WHERE session=?', (stopped,)), [])
         self.assertEqual(self.call('delivery', report_id)['body'], stop_report['body'])
         self.assertEqual(self.call('session', stopped)['native'], stopped_native['native'])
@@ -897,7 +995,7 @@ class Control(unittest.TestCase):
             'Completed contribution is ready to integrate.',
             'Original conversation continued in the shared checkout.'})
         for ident in ('completed-task', 'shared-task'):
-            self.assertEqual(self.call('delivery', ident)['receipt'], 'fixture-native-reviewed')
+            self.assertGreater(self.read_count(ident, 'completed'), 0)
 
     def test_receiver_empty_cwd_keeps_assignment_and_non_git_cwd_is_supported(self):
         self.root()
@@ -929,7 +1027,7 @@ class Control(unittest.TestCase):
         stream, native = self.accept('leaf')
         self.assertEqual(native['cwd'], assignment['workspace'])
         self.assertEqual(native['args'][native['args'].index('--thinking') + 1], 'low')
-        self.assertEqual(self.action(stream, ack=True), {'acknowledged': True})
+        self.assertEqual(self.action(stream, read_prompt=True), {'read': True})
         guidance = self.directory / 'guidance.txt'
         guidance.write_text('Preserve existing work.\nApply this mid-task correction λ.')
         self.dispatch('dispatch-file', 'leaf-guidance', 'root', 'leaf', 'guidance', guidance)
@@ -937,12 +1035,10 @@ class Control(unittest.TestCase):
         self.assertIn(guidance.read_text(), accepted['message'])
         self.assertIsNone(self.call('delivery', 'leaf-guidance')['receipt'])
         self.assertEqual(
-            self.action(stream, ack_message='leaf-guidance'),
-            {'acknowledged': 'leaf-guidance'},
+            self.action(stream, read_message='leaf-guidance'),
+            {'read': 'leaf-guidance'},
         )
-        self.eventually(
-            lambda: self.call('delivery', 'leaf-guidance')['receipt'] == 'fixture-native-reviewed'
-        )
+        self.eventually(lambda: self.read_count('leaf-guidance', 'leaf') > 0)
         self.assertEqual(self.call('player', 'leaf')['native'], native['native'])
         self.finish(stream, 'Live guidance applied.')
         self.exited('leaf')
@@ -982,6 +1078,15 @@ class Control(unittest.TestCase):
 
     def dispatch_log(self, ident, suffix='.stdout'):
         return pathlib.Path(str(self.db) + '.dispatch-' + ident.encode().hex() + suffix)
+
+    def test_dispatch_long_message_identity_bounds_the_control_log_name(self):
+        self.root()
+        self.recruit('leaf')
+        ident = 'message:' + 'x' * 114
+        self.dispatch('dispatch-file', ident, 'root', 'leaf', 'guidance', self.task)
+        logs = list(self.db.parent.glob(self.db.name + '.dispatch-*.stdout'))
+        self.assertTrue(logs)
+        self.assertTrue(all(len(path.name) <= 255 for path in logs), logs)
 
     def report_logged(self, body):
         log = pathlib.Path(str(self.db) + '.root.log')
@@ -1055,7 +1160,7 @@ class Control(unittest.TestCase):
     def instant_direct_harness(self, name):
         executable = self.directory / name
         completion_code = FIXTURE[FIXTURE.index('def command(*value):'):
-                                  FIXTURE.index('def acknowledge():')]
+                                  FIXTURE.index('def read_prompt_inputs():')]
         executable.write_text('#!' + sys.executable + '\n' + r'''
 import json,os,pathlib,sqlite3,subprocess,sys,time
 home=pathlib.Path(__file__).resolve().parent
@@ -1088,7 +1193,7 @@ body=assignment['body']
 assert prompt.endswith('\n'+body),prompt
 assert 'Message (task-assignment) from '+session+' [id: '+assignment['id']+']:' in prompt,prompt
 pathlib.Path(__file__).with_suffix('.effect').write_text(body)
-accepted=command('ack',assignment['id'],session,'fixture-native-reviewed')
+accepted=command('read',assignment['id'])
 assert accepted['code']==0,accepted
 fixture_completion(body)
 state=command('session',session)
@@ -1098,11 +1203,11 @@ assert completion['confirmed'] and not completion['open'],completion
 request=command('delivery',completion['requestId'])
 assert request['code']==0,request
 request=json.loads(request['stdout'])
-assert (request['sender'],request['recipient'],request['kind'],request['body'],request['receipt'])==(session,completion['coordinator'],'completion-request',body,'Fixture coordinator reviewed the result.'),request
+assert (request['sender'],request['recipient'],request['kind'],request['body'],request['receipt'])==(session,completion['coordinator'],'completion-request',body,None),request
 confirmation=command('delivery',request['id']+':confirmed')
 assert confirmation['code']==0,confirmation
 confirmation=json.loads(confirmation['stdout'])
-assert (confirmation['sender'],confirmation['recipient'],confirmation['kind'],confirmation['body'],confirmation['receipt'])==(completion['coordinator'],session,'completion-confirmed',request['id'],'Fixture worker handled confirmation.'),confirmation
+assert (confirmation['sender'],confirmation['recipient'],confirmation['kind'],confirmation['body'],confirmation['receipt'])==(completion['coordinator'],session,'completion-confirmed',request['id'],None),confirmation
 if '--prompt-file' in args:
     print(json.dumps({'stream':{'kind':'session','id':'instant-native'},
                       'payload_type':'run.terminal.completed',
@@ -1273,13 +1378,13 @@ else:
                 os.kill(observer, signal.SIGKILL)
                 self.eventually(lambda: not any(row.split(None, 1)[0] == str(observer)
                                                for row in self.process_rows()))
-                self.assertEqual(self.action(stream, ack=True), {'acknowledged': True})
+                self.assertEqual(self.action(stream, read_prompt=True), {'read': True})
                 recovery = self.eventually(lambda: next((row for row in self.process_rows()
                     if '--recover-direct' in row and first_id in row and str(self.db) in row), None))
                 result = self.call(*argv, ok=False)
                 after = self.rows('SELECT * FROM executions WHERE session=?', (session,))[0]
-                survived = self.action(stream, ack=True)
-                self.assertEqual(survived, {'acknowledged': True})
+                survived = self.action(stream, read_prompt=True)
+                self.assertEqual(survived, {'read': True})
                 self.assertFalse(replacement.with_suffix('.effect').exists())
                 self.assertEqual((after['id'], after['directory']), (before['id'], before['directory']))
                 self.assertEqual(self.rows('SELECT id FROM messages WHERE id=?', (first_id,)), [])
@@ -1300,6 +1405,7 @@ else:
 
     def test_direct_turn_delivers_pending_input_after_native_exit(self):
         self.root()
+        root_endpoint = self.call('session', 'root')['endpoint']
         for launch in ('dispatch-turn', 'turn'):
             for harness in ('muse', 'omp', 'claude-code', 'codex'):
                 with self.subTest(launch=launch, harness=harness):
@@ -1307,6 +1413,9 @@ else:
                     assignment = self.recruit(session, harness)
                     native = 'saved-' + session
                     self.call('connect', session, native, '')
+                    if harness == 'codex':
+                        self.receiver(session)
+                        configured_endpoint = self.call('session', session)['endpointArgv']
                     ident = session + '-initial'
                     log = self.directory / (ident + '.jsonl')
                     child = None
@@ -1321,9 +1430,12 @@ else:
                     stream, start = self.accept(session)
                     self.assertEqual(start['resume'], native)
                     endpoint = self.call('session', session)['endpointArgv']
-                    self.assertEqual(endpoint, [str(EXE.resolve()), str(self.db.resolve()),
-                                               'receive', session, str(self.fixture), session,
-                                               'low', assignment['workspace'], str(log.resolve())])
+                    if harness == 'codex':
+                        self.assertEqual(endpoint, configured_endpoint)
+                    else:
+                        self.assertEqual(endpoint, [str(EXE.resolve()), str(self.db.resolve()),
+                                                   'receive', session, str(self.fixture), session,
+                                                   'low', assignment['workspace'], str(log.resolve())])
                     messages = [(session + '-pending-first', 'Finish the first pending task λ.'),
                                 (session + '-pending-second', 'Finish the second pending task 🙂.')]
                     for message, body in messages:
@@ -1340,11 +1452,10 @@ else:
                     self.finish(continued, 'Both pending tasks were handled.')
                     self.exited(session)
                     for message, _ in messages:
-                        self.assertEqual(self.call('delivery', message)['receipt'],
-                                         'fixture-native-reviewed')
+                        self.assertGreater(self.read_count(message, session), 0)
                     self.assertEqual(self.call('inbox', session), [])
                     self.assertEqual(self.call('session', session)['endpointArgv'], endpoint)
-                    self.assertEqual(self.call('session', 'root')['endpoint'], '')
+                    self.assertEqual(self.call('session', 'root')['endpoint'], root_endpoint)
                     if child is not None:
                         stdout, stderr = child.communicate()
                         self.assertEqual(child.returncode, 0, stderr)
@@ -1403,7 +1514,7 @@ else:
                 self.assertIsNone(self.call('delivery', message)['receipt'])
                 self.finish(stream, 'The input present before registration is complete.')
                 self.exited(session)
-                self.assertEqual(self.call('delivery', message)['receipt'], 'fixture-native-reviewed')
+                self.assertGreater(self.read_count(message, session), 0)
                 self.assertEqual(self.call('inbox', session), [])
                 self.assertEqual(self.call('session', session)['native'], native)
                 self.assertEqual(len(self.call('turns', session)), 1)
@@ -1443,8 +1554,7 @@ else:
         self.assertEqual(replay.returncode, 0, replay_stderr)
         self.assertEqual(json.loads(replay_stdout)['id'], 'completed-legacy-turn')
         self.exited('legacy-muse')
-        self.assertEqual(self.call('delivery', 'owed-legacy-input')['receipt'],
-                         'fixture-native-reviewed')
+        self.assertGreater(self.read_count('owed-legacy-input', 'legacy-muse'), 0)
         self.assertEqual(self.call('inbox', 'legacy-muse'), [])
 
         self.call('connect', 'legacy-muse', native, '')
@@ -1462,10 +1572,10 @@ else:
         event.write_text(json.dumps({'type': 'result', 'session_id': 'native-pretty',
                                      'result': body, 'is_error': False}))
         self.call('observe-file', 'review-report', 'leaf', event)
-        queued = [json.loads(line) for line in self.public_queue_calls.read_text().splitlines()]
-        self.assertTrue(any(request['method'] == 'turn/steer'
-                            and request['params']['threadId'] == 'saved-root'
-                            for request in queued))
+        retained = next(row for row in self.call('inbox', 'root') if row['id'] == 'review-report')
+        self.assertEqual((retained['sender'], retained['recipient'], retained['kind'], retained['body']),
+                         ('leaf', 'root', 'report', body))
+        self.assertEqual(self.call('session', 'root')['endpointArgv'], ['/usr/bin/true'])
         for args in (('status',), ('players',), ('orchestra',), ('pending',), ('player', 'leaf'),
                      ('session', 'leaf'), ('inbox', 'root'), ('delivery', 'review-report'), ('turns', 'leaf')):
             with self.subTest(args=args):
@@ -1495,10 +1605,10 @@ else:
         self.assertEqual(session['endpoint'], endpoint)
         self.assertEqual(session['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
         self.assertEqual(self.call('player', 'leaf')['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
-        self.assertIsNone(self.call('session', 'root')['endpointArgv'])
+        self.assertEqual(self.call('session', 'root')['endpointArgv'], ['/usr/bin/true'])
         rows = {row['id']: row for row in self.call('status')}
         self.assertEqual(rows['leaf']['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
-        self.assertIsNone(rows['root']['endpointArgv'])
+        self.assertEqual(rows['root']['endpointArgv'], ['/usr/bin/true'])
         self.assertEqual(self.call('delivery', 'leaf-guide')['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
         pending = {row['id']: row for row in self.call('pending')}
         self.assertEqual(pending['leaf-guide']['endpointArgv'], ['/usr/bin/true', 'leaf', ''])

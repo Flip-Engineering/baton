@@ -46,8 +46,10 @@ static const char *const baton_change_schema[] = {
   "CREATE TRIGGER IF NOT EXISTS native_changes_stops_update AFTER UPDATE ON session_stops WHEN OLD.id IS NOT NEW.id OR OLD.reason IS NOT NEW.reason OR OLD.attempt IS NOT NEW.attempt OR OLD.directory IS NOT NEW.directory OR OLD.signal IS NOT NEW.signal OR OLD.applied_signal IS NOT NEW.applied_signal OR OLD.control_error IS NOT NEW.control_error OR OLD.outcome IS NOT NEW.outcome OR OLD.native_status IS NOT NEW.native_status OR OLD.report_id IS NOT NEW.report_id BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('stop',NEW.session,NEW.session,'update','stop',NEW.outcome); END;",
   "CREATE TRIGGER IF NOT EXISTS native_changes_stops_delete AFTER DELETE ON session_stops BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('stop',OLD.session,OLD.session,'delete','stop',OLD.outcome); END;",
   "CREATE TRIGGER IF NOT EXISTS native_changes_messages_insert AFTER INSERT ON messages BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('message',NEW.id,NEW.recipient,'insert','message:' || NEW.kind,NEW.kind || ' from ' || NEW.sender); END;",
-  "CREATE TRIGGER IF NOT EXISTS native_changes_messages_update AFTER UPDATE ON messages WHEN OLD.sender IS NOT NEW.sender OR OLD.recipient IS NOT NEW.recipient OR OLD.kind IS NOT NEW.kind OR OLD.body IS NOT NEW.body OR OLD.receipt IS NOT NEW.receipt BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('message',NEW.id,NEW.recipient,'update',CASE WHEN OLD.receipt IS NOT NEW.receipt THEN 'receipt' ELSE 'message:' || NEW.kind END,CASE WHEN OLD.receipt IS NOT NEW.receipt THEN 'acknowledged' ELSE NEW.kind || ' from ' || NEW.sender END); END;",
+  "DROP TRIGGER IF EXISTS native_changes_messages_update;",
+  "CREATE TRIGGER IF NOT EXISTS native_changes_messages_update AFTER UPDATE ON messages WHEN OLD.sender IS NOT NEW.sender OR OLD.recipient IS NOT NEW.recipient OR OLD.kind IS NOT NEW.kind OR OLD.body IS NOT NEW.body BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('message',NEW.id,NEW.recipient,'update','message:' || NEW.kind,NEW.kind || ' from ' || NEW.sender); END;",
   "CREATE TRIGGER IF NOT EXISTS native_changes_messages_delete AFTER DELETE ON messages BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('message',OLD.id,OLD.recipient,'delete','message:' || OLD.kind,OLD.kind || ' from ' || OLD.sender); END;",
+  "CREATE TRIGGER IF NOT EXISTS native_changes_message_reads_insert AFTER INSERT ON message_reads WHEN NOT (NEW.attempt='legacy' AND NEW.identity='receipt') BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('message',NEW.message,NEW.recipient,'update','read','read'); END;",
   "CREATE TRIGGER IF NOT EXISTS native_changes_turns_insert AFTER INSERT ON turns BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('turn',NEW.id,NEW.worker,'insert','report','turn report recorded'); END;",
   "CREATE TRIGGER IF NOT EXISTS native_changes_turns_update AFTER UPDATE ON turns WHEN OLD.worker IS NOT NEW.worker OR OLD.event IS NOT NEW.event BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('turn',NEW.id,NEW.worker,'update','report','turn report updated'); END;",
   "CREATE TRIGGER IF NOT EXISTS native_changes_turns_delete AFTER DELETE ON turns BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('turn',OLD.id,OLD.worker,'delete','report','turn report removed'); END;",
@@ -279,6 +281,17 @@ static int baton_sql_busy(void *context, int tries) {
   return 1;
 }
 
+/* Write-ahead logging lets one writer commit while readers hold their
+   transactions; under the rollback journal a reader blocks every commit, and
+   wakes and observations failed with SQLITE_BUSY (#1054). The mode is stored in
+   the database file, so the first read-write open by this binary converts an
+   existing rollback-journal database. A conversion that cannot take its lock
+   leaves the database in its current mode, and the next read-write open tries
+   again; the caller's statement runs either way. */
+static void baton_sql_wal(sqlite3 *db) {
+  sqlite3_exec(db, "PRAGMA journal_mode=WAL;", NULL, NULL, NULL);
+}
+
 static void baton_sql_json_pretty(sqlite3_context *context, int argc, sqlite3_value **argv);
 
 static void baton_sql_call(IoWork *w) {
@@ -289,6 +302,7 @@ static void baton_sql_call(IoWork *w) {
     call->error = strdup(db ? sqlite3_errmsg(db) : "cannot open database");
   } else {
     sqlite3_busy_handler(db, baton_sql_busy, NULL);
+    baton_sql_wal(db);
     char *error = NULL;
     call->code = sqlite3_create_function_v2(db, "baton_json_pretty", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_json_pretty, NULL, NULL, NULL);
     if (call->code == SQLITE_OK)
@@ -423,6 +437,7 @@ static void baton_sql_span_call(IoWork *w) {
     call->error = strdup(db ? sqlite3_errmsg(db) : "cannot open database");
   } else {
     sqlite3_busy_handler(db, baton_sql_busy, NULL);
+    baton_sql_wal(db);
     char *error = NULL;
     call->code = sqlite3_create_function_v2(db, "baton_json_pretty", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_json_pretty, NULL, NULL, NULL);
     if (call->code == SQLITE_OK)
@@ -1135,6 +1150,7 @@ static void baton_sql_bound_call(IoWork *w) {
     return;
   }
   sqlite3_busy_handler(db, baton_sql_busy, NULL);
+  baton_sql_wal(db);
   char *error = NULL;
   call->code = sqlite3_create_function_v2(db, "baton_ref_entry", 2, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_ref_entry, NULL, NULL, NULL);
   if (call->code == SQLITE_OK)
@@ -1401,10 +1417,14 @@ static void baton_sql_read_call(IoWork *w) {
     }
     if (call->code == SQLITE_OK)
       call->code = sqlite3_exec(db, call->sql, baton_sql_row, call, &error);
-    if (call->code != SQLITE_OK) {
+    if (call->code != SQLITE_OK)
       call->error = strdup(error ? error : sqlite3_errmsg(db));
-      sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
-    }
+    /* A caller SQL text can leave a transaction open. A read-only connection
+       that keeps it holds SHARED and blocks every writer's commit, including a
+       writer in this same process. Roll back unconditionally before close so
+       the read lock is released at the call boundary, not at process exit.
+       SQLite reports no transaction as a harmless error here. */
+    sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
     sqlite3_free(error);
   }
   if (db) sqlite3_close(db);

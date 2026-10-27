@@ -91,15 +91,11 @@ def main():
             (seed / dependency).symlink_to((ROOT / dependency).resolve(), target_is_directory=True)
     scratch = seed / '.scratch/bend2'
     scratch.mkdir(parents=True)
-    for name in ('baton2', 'process-test', 'process-test.c', 'instance-test', 'git-test', 'land-test'):
+    for name in ('baton2', 'process-test', 'process-test.c', 'codex-proxy-test', 'instance-test', 'git-test', 'land-test'):
         shutil.copy2(ROOT / '.scratch/bend2' / name, scratch / name)
     python = sys.argv[1]
-    # The real delegated cgroup test requires a privileged systemd scope and
-    # refuses without it; it is run separately by the operator.
-    privileged = {'cgroup-confinement-real.py'}
     queue = [{'label': path.name, 'argv': [python, 'bend2/test/' + path.name]}
-             for path in sorted((seed / 'bend2/test').glob('*.py'))
-             if path.name not in privileged]
+             for path in sorted((seed / 'bend2/test').glob('*.py'))]
     queue.extend([
         {'label': 'node-git-series', 'argv': ['node', '--test', 'bend2/test/git-series.mjs']},
         {'label': 'node-api-key-exec', 'argv': ['node', '--test', 'bend2/test/api-key-exec.test.mjs']},

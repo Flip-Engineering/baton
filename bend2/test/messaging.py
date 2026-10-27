@@ -8,16 +8,23 @@ import sys
 import tempfile
 import unittest
 
+import receive as receive_fixture
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
 
 
 class Messaging(unittest.TestCase):
+    owned_processes = receive_fixture.Receive.owned_processes
+    eventually = receive_fixture.Receive.eventually
+    shutdown_idle_database_owner = receive_fixture.Receive.shutdown_idle_database_owner
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
         self.addCleanup(self.temp.cleanup)
         self.directory = pathlib.Path(self.temp.name)
         self.db = self.directory / 'state.db'
+        self.addCleanup(self.shutdown_idle_database_owner, 'Messaging fixture endpoints did not settle.')
         self.repo = self.directory / 'repo'
         self.repo.mkdir()
         for args in [('init', '-q'), ('config', 'user.name', 'Messaging fixture'),
@@ -47,14 +54,29 @@ class Messaging(unittest.TestCase):
                 self.call('role', name, role)
             self.call('connect', name, '', self.endpoint)
 
+    def read_count(self, ident, recipient=None):
+        with closing(sqlite3.connect(self.db)) as database:
+            if recipient is None:
+                return database.execute(
+                    'SELECT count(*) FROM message_reads WHERE message=?', (ident,)).fetchone()[0]
+            return database.execute(
+                'SELECT count(*) FROM message_reads WHERE message=? AND recipient=?',
+                (ident, recipient)).fetchone()[0]
+
     def call(self, *args, success=True, stdin=None):
         result = subprocess.run([str(EXE), str(self.db), *args], input=stdin,
                                 text=True, capture_output=True)
+        self.wait_endpoint_completion()
         if success:
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             return json.loads(result.stdout)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
+
+    def wait_endpoint_completion(self):
+        owner = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        self.eventually(lambda: all(process['command'] == owner for process in self.owned_processes()),
+                        'The fixture endpoint did not finish its detached delivery.')
 
     def state(self):
         with closing(sqlite3.connect(self.db)) as db:
@@ -271,9 +293,10 @@ class Messaging(unittest.TestCase):
         self.assertEqual(self.endpoint_output(), b'retained\nretained\n')
         self.assertEqual(self.call('inbox', 'leaf-b')[0]['id'], 'retained')
         self.refused('new-message', 'leaf-a', 'leaf-b')
-        self.call('ack', 'retained', 'leaf-b', 'native accepted')
+        self.call('as', 'leaf-b', 'read', 'retained')
         delivered = self.endpoint_output()
-        self.assertEqual(self.send('retained', 'leaf-a', 'leaf-b')['receipt'], 'native accepted')
+        self.assertIsNone(self.send('retained', 'leaf-a', 'leaf-b')['receipt'])
+        self.assertGreater(self.read_count('retained', 'leaf-b'), 0)
         self.assertEqual(self.endpoint_output(), delivered)
 
     def test_batch_send_and_selected_reads_keep_item_results_and_complete_records(self):
@@ -292,7 +315,7 @@ class Messaging(unittest.TestCase):
         result = self.call('message-batch', 'root',
                            json.dumps(messages, ensure_ascii=False, separators=(',', ':')))
         self.assertEqual([row['status'] for row in result],
-                         ['admitted', 'refused', 'pending', 'refused'])
+                         ['admitted', 'refused', 'admitted', 'refused'])
         self.assertEqual(result[0]['admission']['status'], 'admitted')
         self.assertEqual(result[0]['wake']['status'], 'accepted')
         self.assertEqual(result[0]['receiptStatus'], 'pending')
@@ -300,8 +323,11 @@ class Messaging(unittest.TestCase):
         self.assertEqual(result[0]['detailRead'], ['delivery', 'batch-first'])
         self.assertIn('message-route-denied', result[1]['admission']['cause'])
         self.assertEqual(result[2]['admission']['status'], 'admitted')
-        self.assertEqual(result[2]['wake']['status'], 'refused')
-        self.assertIn('exit 7', result[2]['wake']['cause'])
+        self.assertEqual(result[2]['wake']['status'], 'accepted')
+        failure = pathlib.Path(str(self.db) + '.dispatch-' + 'batch-second'.encode().hex() + '.stderr')
+        self.assertIn('session delivery failed', failure.read_text())
+        self.assertIn('exit 7', failure.read_text())
+        self.assertIsNone(result[2]['delivery']['receipt'])
         self.assertEqual(result[2]['delivery']['body'], "Second recipient's body.")
         self.assertEqual(result[3]['admission']['cause'], 'batchItem:itemNotObject')
         self.assertEqual(self.endpoint_output().splitlines(), [b'batch-first'])
@@ -310,7 +336,7 @@ class Messaging(unittest.TestCase):
         replay = self.call('message-batch', 'root',
                            json.dumps(messages, ensure_ascii=False, separators=(',', ':')))
         self.assertEqual([row['status'] for row in replay],
-                         ['admitted', 'refused', 'pending', 'refused'])
+                         ['admitted', 'refused', 'admitted', 'refused'])
         with closing(sqlite3.connect(self.db)) as db:
             after = db.execute("SELECT count(*) FROM messages WHERE id LIKE 'batch-%'").fetchone()[0]
         self.assertEqual((before, after), (2, 2))
@@ -319,7 +345,7 @@ class Messaging(unittest.TestCase):
         self.assertEqual(outbox[0]['body'], first_body)
         self.assertEqual(outbox[0]['detailRead'], ['delivery', 'batch-first'])
         self.assertTrue(all(row['sender'] == 'root' for row in outbox))
-        self.call('ack', 'batch-first', 'leaf-a', 'handled by fixture actor')
+        self.call('as', 'leaf-a', 'read', 'batch-first')
         ids = ['batch-second', 'batch-first', 'missing-batch', 'batch-first']
         selected = self.call('delivery-batch-file', '-',
                              stdin=json.dumps(ids, separators=(',', ':')))
@@ -327,9 +353,9 @@ class Messaging(unittest.TestCase):
         self.assertEqual([row['status'] for row in selected],
                          ['found', 'found', 'absent', 'found'])
         self.assertEqual([row.get('receiptStatus') for row in selected],
-                         ['pending', 'acknowledged', None, 'acknowledged'])
+                         ['pending', 'read', None, 'read'])
         self.assertIsNone(selected[0]['delivery']['receipt'])
-        self.assertEqual(selected[1]['delivery']['receipt'], 'handled by fixture actor')
+        self.assertIsNone(selected[1]['delivery']['receipt'])
         self.assertEqual(selected[1]['delivery']['body'], first_body)
         self.assertEqual(selected[2]['detailRead'], ['delivery', 'missing-batch'])
 
@@ -372,11 +398,10 @@ class Messaging(unittest.TestCase):
             'inbox': ['inbox', 'leaf-a', '--index', '--state', 'all'],
         })
 
-        self.call('ack', 'input-detail', 'leaf-a', 'handled by leaf-a')
+        self.call('as', 'leaf-a', 'read', 'input-detail')
         settled = self.call('input', 'input-detail')
         self.assertEqual(settled['handling'], {
-            'status': 'acknowledged', 'owner': 'leaf-a',
-            'receipt': 'handled by leaf-a',
+            'status': 'read', 'owner': 'leaf-a', 'receipt': None,
         })
         self.assertEqual(settled['wake']['current']['pending'], 0)
         self.assertEqual(settled['attemptRelation']['status'], 'unrecorded')

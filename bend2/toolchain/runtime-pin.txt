@@ -1,0 +1,17 @@
+# The compiler a baton2 build must run.
+#
+# `bend version` answers "bend 2.0.25" for the upstream release and for every
+# Baton fork line, so a version check cannot tell them apart. This file names
+# the line by the commit its release manifest records, and the guards compare.
+#
+# lineage_commit        the fork line: fork-manifest.json source_commit
+# release_name          the release an operator is expected to select
+# cache_ts_sha256       bend2/cache.ts of that release; empty skips the check
+# require_cgen_cache    1: a compiler without the emitted-C cache is refused
+#                       0: it is reported on stderr and the build continues
+#
+# Flip require_cgen_cache to 1 in the commit that selects the release above.
+lineage_commit=fe882a2829ae1bcfb00ca9a1a32a06cff04dfb88
+release_name=2.0.25-compiler-main-literal-prefix-capacity-cid-final-20261027
+cache_ts_sha256=30950fb56d75056e3c1b46ac6ce8209d49f01e556a950f18e005a55cdb06396e
+require_cgen_cache=1

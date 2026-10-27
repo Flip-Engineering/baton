@@ -1,10 +1,18 @@
 import Base
+import ./clear-stop-focused.bend as ClearStop
+import ./stop.bend as Stop
+import ./store.bend as Store
+import ./accounts.bend as Accounts
+import ../host/session-lock.bend as Lock
 import ./receive.bend as Receive
 import ../host/instance.bend as Custody
 import ../host/process.bend as P
 import ./control.bend as Control
+import ./stop-hook.bend as StopHook
 import ./turn.bend as Turn
 import ./native-input.bend as NativeInput
+import ./codex-inbox.bend as CodexInbox
+import ./agent-command.bend as AgentCommand
 import ../git/process.bend as GitProcess
 import ../git/text.bend as Tx
 import ../git/types.bend as T
@@ -14,7 +22,9 @@ def dispatch_receive(selected: Bool, +db: String, +session: String, +cmd: String
   match selected:
     case True{}: do IO<Unit>:
       result : Result<&1,&1,U32 & String,Unit> & String <- Receive.run(db,session,cmd,model,effort,cwd,log,message)
-      Receive.report_result(db,session,message,result)
+      reported : Unit <- Receive.report_result(db,session,message,result)
+      collected : Unit <- StoragePolicy.collect_settled(db,session)
+      IO.pure(Unit, collected)
     case False{}: IO.die(Unit,2,"expected receive")
 
 def dispatch_instance(owner: Bool, shutdown: Bool, +db: String) -> IO(Unit):
@@ -24,6 +34,16 @@ def dispatch_instance(owner: Bool, shutdown: Bool, +db: String) -> IO(Unit):
       match shutdown:
         case True{}: IO.try(Unit,Custody.Instance.shutdown(db))
         case False{}: IO.die(Unit,2,"expected instance lifecycle command")
+
+# Package maintenance installs the same schema preflight used by coordinator writes.
+def dispatch_schema(selected: Bool, +flag: String, +db: String) -> IO(Unit):
+  match selected:
+    case True{}: do IO<Unit>:
+      +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+      ensured : Unit <- Store.ensure_before_begin(canonical)
+      accounts_schema : String <- IO.try(String,Accounts.commit_read(canonical,""))
+      IO.write("{\"schema\":\"baton2-schema-ensure-v1\",\"status\":\"ready\"}\n")
+    case False{}: dispatch_instance(String.eq(flag,"--instance-owner"),String.eq(flag,"--instance-shutdown"),db)
 
 def dispatch_observer(selected: Bool, +db: String, +session: String, +observer: String) -> IO(Unit):
   match selected:
@@ -55,20 +75,28 @@ def dispatch_message(selected: Bool, +db: String, +id: String) -> IO(Unit):
     case True{}: Control.deliver(db,id)
     case False{}: IO.die(Unit,2,"expected dispatch message")
 
-def dispatch_three_route(host_keeper: Bool, message: Bool, +first: String, +second: String) -> IO(Unit):
+def dispatch_redelivery(selected: Bool, +db: String, +id: String) -> IO(Unit):
+  match selected:
+    case True{}: Control.redeliver(db,id)
+    case False{}: IO.die(Unit,2,"unsupported focused receive command")
+
+def dispatch_three_route(host_keeper: Bool, message: Bool, redelivery: Bool, +first: String, +second: String) -> IO(Unit):
   match host_keeper:
     case True{}: dispatch_host_keeper(True{},first,second)
     case False{}:
       match message:
         case True{}: dispatch_message(True{},first,second)
-        case False{}: IO.die(Unit,2,"unsupported focused receive command")
+        case False{}: dispatch_redelivery(redelivery,first,second)
 
 def dispatch_three(+flag: String, +first: String, +second: String) -> IO(Unit):
-  dispatch_three_route(String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"),first,second)
+  dispatch_three_route(String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"),String.eq(flag,"--redeliver-message"),first,second)
 
 def dispatch_turn(selected: Bool, +db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String) -> IO(Unit):
   match selected:
-    case True{}: Turn.run(db,player,id,cmd,model,effort,cwd,task,log,session)
+    case True{}: do IO<Unit>:
+      ran : Unit <- Turn.run(db,player,id,cmd,model,effort,cwd,task,log,session)
+      collected : Unit <- StoragePolicy.collect_settled(db,session)
+      IO.pure(Unit, collected)
     case False{}: IO.die(Unit,2,"expected turn")
 
 def focused_fallback_result(result: T.RunRes) -> IO(Unit):
@@ -93,7 +121,10 @@ def focused_native_receive(selected: Bool, +full: String, +db: String, +verb: St
 
 def focused_native_turn(turn_text: Bool, turn: Bool, +full: String, +db: String, +verb: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String) -> IO(Unit):
   match turn_text:
-    case True{}: Turn.run_text(db,player,id,cmd,model,effort,cwd,task,log,session)
+    case True{}: do IO<Unit>:
+      ran : Unit <- Turn.run_text(db,player,id,cmd,model,effort,cwd,task,log,session)
+      collected : Unit <- StoragePolicy.collect_settled(db,session)
+      IO.pure(Unit, collected)
     case False{}:
       match turn:
         case True{}: dispatch_turn(True{},db,player,id,cmd,model,effort,cwd,task,log,session)
@@ -110,13 +141,20 @@ def focused_native_args(+full: String, +db: String, args: List<String>) -> IO(Un
     case +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
       focused_native_receive(String.eq(verb,"receive"),full,db,verb,session,cmd,model,effort,cwd,log,message)
     case +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
-      focused_native_turn(String.eq(verb,"turn-text"),String.eq(verb,"turn"),full,db,verb,player,id,cmd,model,effort,cwd,task,log,session)
+      Bool.pick(IO(Unit),String.eq(verb,"recruit"),
+        Control.recruit(db,player,id,cmd,model,effort,cwd,task,log,session),
+        focused_native_turn(String.eq(verb,"turn-text"),String.eq(verb,"turn"),full,db,verb,player,id,cmd,model,effort,cwd,task,log,session))
+    case +verb <> +session <> +parent <> +harness <> +model <> +effort <> +path <> Nil{}:
+      Bool.pick(IO(Unit),String.eq(verb,"join"),Control.join(db,session,parent,harness,model,effort,path),
+        focused_fallback(full,db,[verb,session,parent,harness,model,effort,path]))
     case +verb <> +session <> +observer <> Nil{}:
       focused_native_observer(String.eq(verb,"recover-observer"),full,db,verb,session,observer)
     case +verb <> +session <> Nil{}:
-      Bool.pick(IO(Unit), String.eq(verb,"storage-preview"), StoragePolicy.run_preview(db,session),
+      Bool.pick(IO(Unit), String.eq(verb,"clear-stop"), Stop.clear(db,session),
+        Bool.pick(IO(Unit), String.eq(verb,"storage-preview"), StoragePolicy.run_preview(db,session),
         Bool.pick(IO(Unit), String.eq(verb,"storage-apply"), StoragePolicy.run_apply(db,session),
-          focused_fallback(full,db,Con{verb,Con{session,Nil{}}})))
+          Bool.pick(IO(Unit), String.eq(verb,"storage-collect"), StoragePolicy.run_collect(db,session),
+            focused_fallback(full,db,Con{verb,Con{session,Nil{}}})))))
     case +verb <> Nil{}:
       Bool.pick(IO(Unit), String.eq(verb,"storage-policy"), StoragePolicy.run_policy(db),
         focused_fallback(full,db,Con{verb,Nil{}}))
@@ -145,14 +183,26 @@ def register_receiver_cwd(selected: Bool, +db: String, +session: String, +cmd: S
 
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
+    case +db <> "agent-worker-context" <> Nil{}: AgentCommand.worker_context(db)
+    case +db <> "codex-inbox-session" <> +session <> +native <> +message <> +token <> Nil{}:
+      IO.try(Unit,CodexInbox.session(db,session,native,message,token))
+    case +db <> "codex-inbox-session" <> +session <> +native <> +message <> Nil{}:
+      IO.try(Unit,CodexInbox.session(db,session,native,message,""))
+    case +db <> "codex-inbox-follow" <> +session <> +native <> Nil{}:
+      IO.try(Unit,CodexInbox.follow(db,session,native))
+    case +db <> "codex-inbox-deliver" <> +native <> +pointer <> Nil{}:
+      IO.try(Unit,CodexInbox.deliver(db,native,pointer))
+    case +db <> "codex-input-witness" <> +native <> Nil{}:
+      IO.try(Unit,CodexInbox.witness(db,native))
     case +db <> +verb <> Nil{}:
       Bool.pick(IO(Unit), String.eq(verb,"storage-policy"), StoragePolicy.run_policy(db),
-        dispatch_instance(String.eq(db,"--instance-owner"),String.eq(db,"--instance-shutdown"),verb))
+        dispatch_schema(String.eq(db,"--ensure-schema"),db,verb))
     case +db <> +verb <> +third <> Nil{}:
       Bool.pick(IO(Unit), String.eq(verb,"storage-preview"), StoragePolicy.run_preview(db,third),
         Bool.pick(IO(Unit), String.eq(verb,"storage-apply"), StoragePolicy.run_apply(db,third),
-          Bool.pick(IO(Unit), String.eq(verb,"agent-native-input"), focused_native_input(db,third),
-            dispatch_three(db,verb,third))))
+          Bool.pick(IO(Unit), String.eq(verb,"storage-collect"), StoragePolicy.run_collect(db,third),
+            Bool.pick(IO(Unit), String.eq(verb,"agent-native-input"), focused_native_input(db,third),
+              dispatch_three(db,verb,third)))))
     case +db <> +route <> +session <> +cmd <> +log <> Nil{}:
       register_receiver(String.eq(route,"register-receiver"),db,session,cmd,log)
     case +db <> +route <> +session <> +cmd <> +log <> +cwd <> Nil{}:
@@ -160,7 +210,11 @@ def dispatch(args: List<String>) -> IO(Unit):
     case +db <> +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
       dispatch_receive(String.eq(verb,"receive"),db,session,cmd,model,effort,cwd,log,message)
     case +db <> +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
-      Bool.pick(IO(Unit),String.eq(verb,"turn-text"),Turn.run_text(db,player,id,cmd,model,effort,cwd,task,log,session),dispatch_turn(String.eq(verb,"turn"),db,player,id,cmd,model,effort,cwd,task,log,session))
+      Bool.pick(IO(Unit),String.eq(verb,"recruit"),Control.recruit(db,player,id,cmd,model,effort,cwd,task,log,session),
+        Bool.pick(IO(Unit),String.eq(verb,"turn-text"),Turn.run_text(db,player,id,cmd,model,effort,cwd,task,log,session),dispatch_turn(String.eq(verb,"turn"),db,player,id,cmd,model,effort,cwd,task,log,session)))
+    case +db <> +verb <> +session <> +parent <> +harness <> +model <> +effort <> +path <> Nil{}:
+      Bool.pick(IO(Unit),String.eq(verb,"join"),Control.join(db,session,parent,harness,model,effort,path),
+        IO.die(Unit,2,"unsupported focused receive command"))
     case +first <> +second <> +session <> +observer <> Nil{}:
       dispatch_observer_argv(String.eq(first,"--recover-observer"),first,second,session,observer)
     case +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> Nil{}:
@@ -169,7 +223,23 @@ def dispatch(args: List<String>) -> IO(Unit):
       dispatch_recover(String.eq(flag,"--recover-receive"),db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,inputs)
     case other: IO.die(Unit,2,"unsupported focused receive command")
 
+def focused_entry_hook(hook: Bool, flag: String, rest: List<String>) -> IO(Unit):
+  match hook:
+    case True{}: StopHook.run()
+    case False{}: dispatch(Con{flag,rest})
+
+def focused_entry_route(selected: Bool, hook: Bool, flag: String, rest: List<String>) -> IO(Unit):
+  match selected:
+    case True{}: ClearStop.run(rest)
+    case False{}: focused_entry_hook(hook,flag,rest)
+
+def focused_entry(args: List<String>) -> IO(Unit):
+  match args:
+    case +flag <> rest:
+      focused_entry_route(String.eq(flag,"--focused-clear-stop"),String.eq(flag,"--stop-hook"),flag,rest)
+    case Nil{}: dispatch(Nil{})
+
 def main() -> IO(Unit):
   do IO<Unit>:
     args : List<String> <- IO.args()
-    dispatch(args)
+    focused_entry(args)

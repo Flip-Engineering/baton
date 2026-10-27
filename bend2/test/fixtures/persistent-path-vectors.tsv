@@ -1,0 +1,11 @@
+# Input path | expected recorded path. Prefixes are the constants in bend2/src/host/persistent-path.h.
+/run/baton2-native-homelab|/mnt/nvme4tb/ci-runners/baton2-native-homelab
+/run/baton2-native-homelab/|/mnt/nvme4tb/ci-runners/baton2-native-homelab/
+/run/baton2-native-homelab/home/worktrees/worktree-paths-972-20261022|/mnt/nvme4tb/ci-runners/baton2-native-homelab/home/worktrees/worktree-paths-972-20261022
+/run/baton2-native-homelab-old/x|/run/baton2-native-homelab-old/x
+/run/baton2-native-homelab2|/run/baton2-native-homelab2
+/run/baton2|/run/baton2
+/run/other/x|/run/other/x
+/mnt/nvme4tb/ci-runners/baton2-native-homelab/x|/mnt/nvme4tb/ci-runners/baton2-native-homelab/x
+/home/batonci/x|/home/batonci/x
+/|/

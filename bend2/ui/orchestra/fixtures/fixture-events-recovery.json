@@ -16,7 +16,7 @@
    "respond": {
     "frames": [
      { "data": { "contractVersion": 1, "cursor": "fixture-events-1-hello", "generation": "fixture-events-gen-1" }, "event": "hello", "id": "fixture-events-1-hello" },
-     { "data": { "pendingCount": 1, "session": "fixture-player-1", "unacknowledgedCount": 0 }, "event": "pending", "id": "fixture-events-2-pending" },
+     { "data": { "pendingCount": 1, "session": "fixture-player-1", "unreadCount": 0 }, "event": "pending", "id": "fixture-events-2-pending" },
      { "data": { "id": "fixture-transition-1", "kind": "report", "session": "fixture-player-1" }, "event": "transition", "id": "fixture-events-3-transition" }
     ],
     "headers": { "content-type": "text/event-stream" },

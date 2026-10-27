@@ -2,17 +2,19 @@ name: bend2-native-development
 
 'on':
   pull_request:
-    branches: [bend2-rewrite, main]
     paths:
       - '.github/workflows/bend2-native.yml'
       - '.github/scripts/record-native-checks.py'
+      - '.github/scripts/queue-native-checks.py'
       - '.github/scripts/reuse-native-target.py'
+      - '.github/scripts/package-native-target-handoff.py'
       - '.github/scripts/reuse-native-main.py'
       - '.github/scripts/prepare-native-compiler.py'
       - '.github/scripts/repl-package.py'
       - 'LICENSE'
       - 'NOTICE'
       - 'bend2/src/**'
+      - 'bend2/test/**'
       - 'bend2/scripts/build-native.sh'
       - 'bend2/scripts/package-native.py'
       - 'bend2/scripts/stage-repl-compiler.py'
@@ -44,11 +46,6 @@ name: bend2-native-development
         description: 'Exact target commit for the affected behavior comparison'
         required: true
         type: string
-      target_build_run:
-        description: 'Completed workflow run containing the exact target build evidence; leave blank to build target'
-        required: false
-        default: ''
-        type: string
       retained_main_handoff:
         description: 'Homelab completed Main handoff path or single-match glob; $HOME uses the selected runner home'
         required: false
@@ -62,26 +59,37 @@ name: bend2-native-development
       retained_compiler_archive:
         description: 'Pinned compiler archive on the homelab; $RUNNER_TEMP uses the selected runner namespace'
         required: false
-        default: ''
+        default: '/var/tmp/baton2-compile-queue/toolchains/compiler-main-literal-prefix-capacity-cid-final-20261027/bend-2.0.25-linux-x64-compiler-main-literal-prefix-capacity-cid-final-20261027.tar.gz'
         type: string
       retained_compiler_archive_sha256:
         description: 'Exact SHA256 of the selected pinned compiler archive'
         required: false
-        default: ''
+        default: '3f0c31436e3f39e3ffc581496de34ef5077faf5dd0b106438de0049f0e7e8f75'
         type: string
       retained_ccache:
         description: 'Measured private ccache wrapper on the homelab; leave blank for direct native compilation'
         required: false
         default: ''
         type: string
+      compiler_diagnostics:
+        description: 'Record compiler stages and memory observations during this run'
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: read
 
+concurrency:
+  group: bend2-native-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   BATON2_SOURCE_SHA: ${{ inputs.source_commit || (github.event_name == 'pull_request' && github.event.pull_request.head.sha) || github.sha }}
+  BEND_COMPILER_DIAGNOSTICS: ${{ inputs.compiler_diagnostics && '1' || '' }}
 
 jobs:
   linux-candidate:
+    timeout-minutes: 4320
     runs-on:
       group: baton2-native-homelab
       labels: [self-hosted, Linux, X64, baton2-native-linux-x64]
@@ -108,8 +116,8 @@ jobs:
       - name: Prepare candidate toolchain and TypeScript runtime
         shell: bash
         env:
-          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive }}
-          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 }}
+          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-literal-prefix-capacity-cid-final-20261027/bend-2.0.25-linux-x64-compiler-main-literal-prefix-capacity-cid-final-20261027.tar.gz' }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '3f0c31436e3f39e3ffc581496de34ef5077faf5dd0b106438de0049f0e7e8f75' }}
           BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
           BATON2_LINUX_RUNNER: homelab
         run: |
@@ -170,7 +178,8 @@ jobs:
           recorder = root / '.github/scripts/record-native-checks.py'
           selected = runpy.run_path(str(recorder))['SELECTED']
           subprocess.run([sys.executable, str(recorder), 'shim', str(run / 'python-shim'), str(evidence / 'selected')], check=True)
-          check_environment = dict(os.environ, PATH=str(run / 'python-shim') + os.pathsep + os.environ['PATH'])
+          check_environment = runpy.run_path(str(root / '.github/scripts/queue-native-checks.py'))['environment'](run)
+          check_environment['PATH'] = str(run / 'python-shim') + os.pathsep + check_environment['PATH']
           records = []
           def record(label, argv):
               started = time.time()
@@ -218,6 +227,14 @@ jobs:
                      'checks': records, 'selected_results': selected_results, 'main_c_reuse': main_c_reuse}
           (run / 'generated/handoff-manifest.json').write_text(json.dumps(handoff, indent=2) + '\n')
           PY
+      - name: Cancel candidate compile queue requests
+        if: cancelled() && env.BATON2_LINUX_RUN != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f "$BATON2_LINUX_RUN/queue-config.json" ]]; then
+            python3 .github/scripts/queue-native-checks.py cancel "$BATON2_LINUX_RUN"
+          fi
       - name: Retain required REPL compiler source inputs
         shell: bash
         run: |
@@ -259,6 +276,7 @@ jobs:
           if-no-files-found: error
 
   linux-target:
+    timeout-minutes: 4320
     permissions:
       contents: read
       actions: read
@@ -270,7 +288,8 @@ jobs:
       BEND_NO_TELEMETRY: '1'
       BUN_JSC_maxPerThreadStackUsage: '67108864'
       BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.target_commit }}
-      BATON2_TARGET_BUILD_RUN: ${{ inputs.target_build_run }}
+      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-literal-prefix-capacity-cid-final-20261027/bend-2.0.25-linux-x64-compiler-main-literal-prefix-capacity-cid-final-20261027.tar.gz' }}
+      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '3f0c31436e3f39e3ffc581496de34ef5077faf5dd0b106438de0049f0e7e8f75' }}
     steps:
       - name: Validate exact source commit
         shell: bash
@@ -288,34 +307,22 @@ jobs:
       - name: Select homelab browser executable
         shell: bash
         run: printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Download completed target build evidence
-        if: inputs.target_build_run != ''
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          github-token: ${{ github.token }}
-          run-id: ${{ inputs.target_build_run }}
-          pattern: baton2-linux-target-*-1
-          merge-multiple: true
-          path: ${{ runner.temp }}/baton2-target-build-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Build exact target and measure affected candidate tests
         shell: bash
         run: |
           set -euo pipefail
           run="$RUNNER_TEMP/baton2-target-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           test ! -e "$run"
-          mkdir -p "$run/toolchain-home" "$run/evidence"
+          mkdir -p "$run/toolchain-home" "$run/evidence" "$run/generated"
           printf 'BATON2_TARGET_RUN=%s\n' "$run" >> "$GITHUB_ENV"
           [[ "$BATON2_TARGET_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           git clone --no-hardlinks --no-checkout "$GITHUB_WORKSPACE" "$run/source" > "$run/evidence/clone.stdout" 2> "$run/evidence/clone.stderr"
           git -C "$run/source" checkout --detach "$BATON2_TARGET_COMMIT" >> "$run/evidence/clone.stdout" 2>> "$run/evidence/clone.stderr"
           test "$(git -C "$run/source" rev-parse HEAD)" = "$BATON2_TARGET_COMMIT"
-          archive="$run/bend-2.0.25-linux-x64.tar.gz"
-          curl --proto '=https' --tlsv1.2 -fsSL \
-            https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-linux-x64.tar.gz \
-            -o "$archive" > "$run/evidence/compiler-download.stdout" 2> "$run/evidence/compiler-download.stderr"
-          printf '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4  %s\n' "$archive" | \
-            sha256sum -c - > "$run/evidence/compiler-archive-check.stdout"
-          tar -xzf "$archive" -C "$run/toolchain-home" --strip-components=1
+          python3 .github/scripts/prepare-native-compiler.py --run "$run" \
+            --archive "$BATON2_RETAINED_COMPILER_ARCHIVE" \
+            --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" --runner homelab \
+            > "$run/evidence/compiler-selection.stdout" 2> "$run/evidence/compiler-selection.stderr"
           export BEND="$run/toolchain-home/bin/bend"
           sha256sum "$BEND" > "$run/evidence/compiler.sha256"
           export BATON2_TARGET_RUN="$run"
@@ -335,23 +342,20 @@ jobs:
           recorder = candidate / '.github/scripts/record-native-checks.py'
           selected = runpy.run_path(str(recorder))['SELECTED']
           subprocess.run([sys.executable, str(recorder), 'shim', str(run / 'python-shim'), str(evidence / 'selected')], check=True)
-          check_environment = dict(os.environ, PATH=str(run / 'python-shim') + os.pathsep + os.environ['PATH'])
+          queue = runpy.run_path(str(candidate / '.github/scripts/queue-native-checks.py'))
+          check_environment = queue['environment'](run)
+          check_environment['PATH'] = str(run / 'python-shim') + os.pathsep + check_environment['PATH']
           records = []
-          def record(label, argv):
+          def record(label, argv, environment=check_environment):
               started = time.time()
               with (evidence / (label + '.stdout')).open('wb') as stdout, (evidence / (label + '.stderr')).open('wb') as stderr:
-                  result = subprocess.run(argv, cwd=target, stdout=stdout, stderr=stderr, env=check_environment)
+                  result = subprocess.run(argv, cwd=target, stdout=stdout, stderr=stderr, env=environment)
               records.append({'label': label, 'argv': argv, 'cwd': str(target), 'exit_code': result.returncode,
                               'elapsed_seconds': time.time() - started, 'stdout': label + '.stdout', 'stderr': label + '.stderr'})
               (evidence / 'results.json').write_text(json.dumps(records, indent=2) + '\n')
               return result.returncode
-          previous = os.environ.get('BATON2_TARGET_BUILD_RUN')
-          if previous:
-              transfer = pathlib.Path(os.environ['RUNNER_TEMP']) / ('baton2-target-build-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'])
-              status = record('target-build-reuse', [sys.executable, str(candidate / '.github/scripts/reuse-native-target.py'),
-                              str(transfer), str(target), str(evidence), os.environ['BATON2_TARGET_COMMIT'], previous])
-          else:
-              status = record('target-build', ['sh', 'bend2/scripts/build-native.sh'])
+          status = record('target-build', [sys.executable, str(candidate / '.github/scripts/reuse-native-target.py'),
+                          str(target), str(evidence)])
           if status:
               raise SystemExit(status)
           contracts = {}
@@ -370,6 +374,26 @@ jobs:
           outcomes = {name: json.loads((evidence / 'selected' / (name + '.json')).read_text()) for name in selected}
           assert all(result['judged'] for result in outcomes.values()), 'Target comparison is incomplete'
           PY
+      - name: Retain reusable exact target build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/package-native-target-handoff.py \
+            --source "$BATON2_TARGET_RUN/source" --run "$BATON2_TARGET_RUN" \
+            --target-commit "$BATON2_TARGET_COMMIT" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --compiler "$BEND" --compiler-archive "$BATON2_TARGET_RUN/bend-2.0.25-linux-x64.tar.gz" \
+            --cc "$CC" \
+            > "$BATON2_TARGET_RUN/evidence/target-handoff.stdout" \
+            2> "$BATON2_TARGET_RUN/evidence/target-handoff.stderr"
+      - name: Cancel target compile queue requests
+        if: cancelled() && env.BATON2_TARGET_RUN != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f "$BATON2_TARGET_RUN/queue-config.json" ]]; then
+            python3 .github/scripts/queue-native-checks.py cancel "$BATON2_TARGET_RUN"
+          fi
       - name: Retain complete target comparison
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

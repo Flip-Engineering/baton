@@ -18,6 +18,17 @@ def admit(+db: String, +session: String, +id: String, +mode: String, +directory:
     result : String <- IO.try(String,DB.Sql.query(db,admit_sql(session,id,mode,directory)))
     IO.pure(Bool,String.eq(result,"1\n"))
 
+# A held start admitted under the session lock never launches, so the row that
+# admission wrote for it is removed. The id and phase guards leave any row that
+# a later admission has already replaced.
+def held_release_sql(+session: String, +id: String) -> String:
+  "DELETE FROM executions WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(id) ++ " AND phase='starting';"
+
+def held_release(+db: String, +session: String, +id: String) -> IO(Unit):
+  do IO<Unit>:
+    saved : String <- IO.try(String,DB.Sql.query(db,held_release_sql(session,id)))
+    IO.pure(Unit,Unit{})
+
 def stopped_sql(+session: String) -> String:
   "SELECT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ");"
 
@@ -42,6 +53,69 @@ def lift(+db: String, +session: String) -> IO(Unit):
     released : Result<&1,&1,U32 & String,Unit> <- Lock.SessionLock.release(lock)
     lift_completed(lifted,released)
 
+# A clear-only operation removes a terminal stop without continuing the
+# conversation: it delivers no input, drives no wake, starts no native and
+# makes no provider request. The terminal predicate keeps a stop that still
+# owns a live attempt; that stop is cleared only after its attempt exits.
+def clear_terminal_sql() -> String:
+  "(attempt='' OR EXISTS(SELECT 1 FROM executions e WHERE e.session=session_stops.session AND e.id=session_stops.attempt AND e.phase='exited'))"
+
+def clear_result_sql(+session: String) -> String:
+  +s = C.q(session)
+  "json_object('schema','baton2-clear-stop-v1','cleared',json('true'),'session'," ++ s
+  ++ ",'stopId',id,'reason',reason,'stopStatus',outcome,'attempt',nullif(attempt,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,'')"
+  ++ ",'native',(SELECT native FROM sessions WHERE id=" ++ s ++ ")"
+  ++ ",'workspace',(SELECT workspace FROM sessions WHERE id=" ++ s ++ ")"
+  ++ ",'branch',(SELECT branch FROM sessions WHERE id=" ++ s ++ ")"
+  ++ ",'base',(SELECT base FROM sessions WHERE id=" ++ s ++ ")"
+  ++ ",'preserved',json_object("
+  ++ "'native',(SELECT native FROM sessions WHERE id=" ++ s ++ ")"
+  ++ ",'workspace',(SELECT workspace FROM sessions WHERE id=" ++ s ++ ")"
+  ++ ",'branch',(SELECT branch FROM sessions WHERE id=" ++ s ++ ")"
+  ++ ",'base',(SELECT base FROM sessions WHERE id=" ++ s ++ ")"
+  ++ ",'messages',(SELECT count(*) FROM messages WHERE recipient=" ++ s ++ ")"
+  ++ ",'retainedInputs',(SELECT count(*) FROM messages WHERE recipient=" ++ s ++ " AND " ++ C.owed_sql("messages") ++ ")"
+  ++ ",'executions',(SELECT count(*) FROM executions WHERE session=" ++ s ++ "))"
+  ++ ",'execution',(SELECT json_object('attempt',id,'mode',mode,'phase',phase,'status',status) FROM executions WHERE session=" ++ s ++ " ORDER BY rowid DESC LIMIT 1)"
+  ++ ",'executionCreated',json('false'),'providerRequest',json('false'))"
+
+# The refusal names the observed condition after the delete matched no row.
+# changes() belongs to the delete above, so a successful clear emits only the
+# RETURNING row and no refusal row.
+def clear_refusal_sql(+session: String) -> String:
+  +s = C.q(session)
+  "SELECT json_object('error','clear-stop-refused','session'," ++ s
+  ++ ",'condition',CASE WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ s ++ ") THEN 'session-not-registered'"
+  ++ " WHEN NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ s ++ ") THEN 'no-terminal-stop'"
+  ++ " WHEN EXISTS(SELECT 1 FROM session_stops st JOIN executions e ON e.session=st.session AND e.id=st.attempt WHERE st.session=" ++ s ++ " AND e.phase<>'exited') THEN 'stop-owns-live-attempt'"
+  ++ " ELSE 'stop-not-terminal' END"
+  ++ ",'next','Inspect the session. Only a terminal stop whose attempt has no live execution can be cleared without continuing the conversation; wait for its report, use force-stop for a live attempt, or use resume --lift-stop to continue after it exits.')"
+  ++ " WHERE changes()=0;"
+
+def clear_sql(+session: String) -> String:
+  "BEGIN IMMEDIATE;DELETE FROM session_stops WHERE session=" ++ C.q(session) ++ " AND " ++ clear_terminal_sql()
+  ++ " RETURNING " ++ clear_result_sql(session) ++ ";" ++ clear_refusal_sql(session) ++ "COMMIT;"
+
+def clear_release(saved: Result<&1,&1,U32 & String,String>, released: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match saved:
+    case Done{+output}: do IO<Unit>:
+      released_ok : Unit <- IO.pass(Unit,released)
+      Bool.pick(IO(Unit),Tx.starts_with(output,"{\"error\""),IO.die(Unit,2,Tx.trim_nl(output)),IO.write(output))
+    case Fail{(code,cause)}: match released:
+      case Done{unit}: IO.die(Unit,code,cause)
+      case Fail{(release_code,release_cause)}: IO.die(Unit,code,cause ++ "\nSession lock release failed: " ++ U32.show(release_code) ++ ": " ++ release_cause)
+
+# Explicit clear waits for the current owner, removes the terminal stop and
+# stops there. The caller observes the returned preserved state; no delivery,
+# wake, launch or provider query follows.
+def clear(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    lock : U32 <- IO.try(U32,Lock.SessionLock.wait_acquire(canonical,session))
+    cleared : Result<&1,&1,U32 & String,String> <- Store.transact_sql(canonical,clear_sql(session))
+    released : Result<&1,&1,U32 & String,Unit> <- Lock.SessionLock.release(lock)
+    clear_release(cleared,released)
+
 def require_open(closed: Bool) -> IO(Unit):
   match closed:
     case False{}: IO.pure(Unit,Unit{})
@@ -51,11 +125,11 @@ def admitted(allowed: Bool) -> IO(Unit):
   require_open(Bool.not(allowed))
 
 def result_sql(+session: String) -> String:
-  "SELECT json_object('session',session,'stopId',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''),'stoppedInputs',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND receipt IS NULL AND kind IN ('task','guidance','recovery')),'pendingReports',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND receipt IS NULL AND kind IN ('report','question'))) FROM session_stops WHERE session=" ++ C.q(session) ++ ";"
+  "SELECT json_object('session',session,'stopId',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''),'stoppedInputs',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND " ++ C.owed_sql("messages") ++ " AND kind IN ('task','guidance','recovery')),'pendingReports',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND " ++ C.owed_sql("messages") ++ " AND kind IN ('report','question'))) FROM session_stops WHERE session=" ++ C.q(session) ++ ";"
 
 # Legacy direct attempts have no keeper directory. Refusal preserves their rows.
 def supported_sql(+session: String) -> String:
-  "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('omp','codex','muse','claude-code','dsh')) AND NOT EXISTS(SELECT 1 FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='direct' AND phase<>'exited' AND directory='')"
+  "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('omp','codex','muse','claude-code','dsh','antigravity')) AND NOT EXISTS(SELECT 1 FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='direct' AND phase<>'exited' AND directory='')"
 
 # The operator resolution of a stopped session's wake obligation: the admitted
 # stop clears the claim, so no driver hands the retained input on, and the input
@@ -121,6 +195,21 @@ def observing(+db: String, +session: String, +attempt: String, +directory: Strin
   do IO<Unit>:
     saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE executions SET phase='running',status='' WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ " AND directory=" ++ C.q(directory) ++ ";"))
     reconcile(db,session,attempt,directory)
+
+# The same observation resume, with the first database failure returned as a
+# result. The recovery path uses it so SQLITE_BUSY reaches its typed cause
+# handler instead of aborting the executing call with the database code.
+def observing_after_query(+db: String, +session: String, +attempt: String, +directory: String, saved: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match saved:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+    case Done{unit}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      reconciled : Unit <- reconcile(db,session,attempt,directory)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+
+def observing_result(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    saved : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"UPDATE executions SET phase='running',status='' WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ " AND directory=" ++ C.q(directory) ++ ";")
+    observing_after_query(db,session,attempt,directory,saved)
 
 # Completion preserves the native event and status. Its stop report is committed
 # before the owner releases custody; native acceptance receipts are unchanged.

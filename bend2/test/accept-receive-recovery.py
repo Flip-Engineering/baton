@@ -65,8 +65,8 @@ else:
 git('add',str(document.relative_to(repo)))
 git('commit','-q','-m',ident)
 commit=git('rev-parse','HEAD')
-ack=subprocess.run([str(out/'baton2'),str(out/'state.db'),'ack',ident,'worker',
-                    'controlled native reviewed '+ident],check=True,text=True,capture_output=True)
+read_result=subprocess.run([str(out/'baton2'),str(out/'state.db'),'as','worker','read',ident],
+                    check=True,text=True,capture_output=True)
 text=marker+' '+previous+' '+commit+'; controlled native protocol, no model or login store.'
 emit({'type':'item.completed','item':{'id':'answer','type':'agent_message','text':text}})
 emit({'type':'turn.completed','usage':{'input_tokens':0,'output_tokens':0}})
@@ -132,7 +132,8 @@ class ReceiveAcceptance(unittest.TestCase):
         native = [json.loads(line) for line in (directory / 'native-observations.jsonl').read_text().splitlines()]
         self.assertEqual([row['resume'] for row in native], ['', 'controlled-receive-thread'])
         self.assertTrue(all(row['cwd'] == str(repo) and row['api_keys_absent'] for row in native))
-        self.assertTrue(all(row['receipt'] for row in evidence['state']['messages']))
+        read_ids = {row['message'] for row in evidence['state']['message_reads']}
+        self.assertTrue(all(row['id'] in read_ids for row in evidence['state']['messages']))
         observation['evidence_sha256'] = hashlib.sha256((out / 'evidence.json').read_bytes()).hexdigest()
 
 

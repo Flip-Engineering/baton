@@ -409,6 +409,11 @@ def credit_admission_cap_after(admission: CreditAdmission) -> String:
 # the reservation totals the caller records; it does not start a request. The
 # launch hold stays in account_binding until a caller wires this decision into
 # the request path and that wiring is qualified.
+# A local estimate of what is left after a charge. It floors at zero and is never a
+# gate: admission follows the provider's response, and this value is recorded only.
+def estimate_left(+available: String, +spent: String) -> String:
+  Bool.pick(String,decimal_is_gt(spent,available),"0",decimal_sub(available,spent))
+
 def credit_request_admission(+account: AccountRecord, +meter: CreditMeter, +current_cycle: String, +current_cap_period: String, +max_charge: String) -> CreditAdmission:
   Bool.pick(CreditAdmission,Bool.not(Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key")))),CRefused{"notPromotionalCreditRoute"},
   Bool.pick(CreditAdmission,Bool.or(String.is_empty(account_organization(account)),Bool.not(String.eq(account_organization(account),meter_organization(meter)))),CRefused{"organizationUnverified"},
@@ -416,10 +421,7 @@ def credit_request_admission(+account: AccountRecord, +meter: CreditMeter, +curr
   Bool.pick(CreditAdmission,Bool.or(String.is_empty(meter_cycle(meter)),Bool.not(String.eq(meter_cycle(meter),current_cycle))),CRefused{"creditCycleMismatch"},
   Bool.pick(CreditAdmission,Bool.or(String.is_empty(meter_cap_period(meter)),Bool.not(String.eq(meter_cap_period(meter),current_cap_period))),CRefused{"monthlyCapPeriodMismatch"},
   Bool.pick(CreditAdmission,Bool.not(Bool.and(decimal_text(meter_balance(meter)),Bool.and(decimal_text(meter_monthly_cap(meter)),Bool.and(decimal_text(meter_cycle_spent(meter)),Bool.and(decimal_text(meter_reserved(meter)),Bool.and(decimal_text(max_charge),Bool.not(String.is_empty(meter_unit(meter))))))))),CRefused{"creditAmountMalformed"},
-  Bool.pick(CreditAdmission,decimal_is_zero(max_charge),CRefused{"requestChargeUnbounded"},
-  Bool.pick(CreditAdmission,decimal_is_gt(decimal_add(meter_reserved(meter),max_charge),meter_balance(meter)),CRefused{"promotionalCreditInsufficient"},
-  Bool.pick(CreditAdmission,decimal_is_gt(decimal_add(decimal_add(meter_cycle_spent(meter),meter_reserved(meter)),max_charge),meter_monthly_cap(meter)),CRefused{"monthlyCapInsufficient"},
-  CAdmitted{meter_organization(meter),meter_cycle(meter),decimal_add(meter_reserved(meter),max_charge),decimal_sub(meter_balance(meter),decimal_add(meter_reserved(meter),max_charge)),decimal_sub(meter_monthly_cap(meter),decimal_add(decimal_add(meter_cycle_spent(meter),meter_reserved(meter)),max_charge))})))))))))
+  CAdmitted{meter_organization(meter),meter_cycle(meter),decimal_add(meter_reserved(meter),max_charge),estimate_left(meter_balance(meter),decimal_add(meter_reserved(meter),max_charge)),estimate_left(meter_monthly_cap(meter),decimal_add(decimal_add(meter_cycle_spent(meter),meter_reserved(meter)),max_charge))}))))))
 
 def launch_binding(+harness: String, +funding: String, +secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
   Bool.pick(Maybe<List<String>>,Bool.and(String.eq(funding,"api_key"),Bool.not(String.eq(harness,"claude-code"))),None{},Bool.pick(Maybe<List<String>>,String.eq(funding,"api_key"),api_key_binding(secret_ref,helper),Some{Subs.store_binding(harness,secret_ref)}))
@@ -462,6 +464,10 @@ def schema() -> String:
   ++ "CREATE TABLE IF NOT EXISTS credit_observations (id TEXT PRIMARY KEY NOT NULL,organization TEXT NOT NULL DEFAULT '',fact TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('reported','unavailable')),balance TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '',expires TEXT NOT NULL DEFAULT '',cycle TEXT NOT NULL DEFAULT '',source TEXT NOT NULL,detail TEXT NOT NULL DEFAULT '',observed_at TEXT NOT NULL,authority TEXT NOT NULL);"
   ++ "CREATE INDEX IF NOT EXISTS credit_observations_pool ON credit_observations(organization,fact);"
   ++ "CREATE TABLE IF NOT EXISTS credit_authorizations (attempt TEXT PRIMARY KEY NOT NULL,session TEXT NOT NULL DEFAULT '',account TEXT NOT NULL DEFAULT '',organization TEXT NOT NULL DEFAULT '',cycle TEXT NOT NULL DEFAULT '',balance TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '',secret_ref TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT 'authorized',consumed TEXT NOT NULL DEFAULT '',created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
+  ++ "CREATE TABLE IF NOT EXISTS credit_reservations (request TEXT PRIMARY KEY NOT NULL,session TEXT NOT NULL DEFAULT '',attempt TEXT NOT NULL DEFAULT '',account TEXT NOT NULL DEFAULT '',organization TEXT NOT NULL,cycle TEXT NOT NULL DEFAULT '',cap_period TEXT NOT NULL DEFAULT '',balance TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '',max_charge TEXT NOT NULL DEFAULT '',balance_after TEXT NOT NULL DEFAULT '',cap_after TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT 'reserved' CHECK(state IN ('reserved','settled','failed')),actual_cost TEXT NOT NULL DEFAULT '',outcome TEXT NOT NULL DEFAULT '',created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,settled_at TEXT NOT NULL DEFAULT '');"
+  ++ "DROP INDEX IF EXISTS credit_reservations_active;"
+  ++ "CREATE INDEX IF NOT EXISTS credit_reservations_cycle ON credit_reservations(organization,cycle,cap_period,state);"
+  ++ "CREATE INDEX IF NOT EXISTS credit_reservations_org ON credit_reservations(organization,cap_period,state);"
   ++ "CREATE INDEX IF NOT EXISTS account_attempts_session ON account_attempts(session,recorded);"
 
 # One transaction that installs the collaboration schema and this module's tables
@@ -544,17 +550,515 @@ def ensure_schema(+db: String, present: Bool) -> IO(Unit):
       made : String <- IO.try(String,commit_read(db,""))
       IO.pure(Unit,Unit{})
 
+# The stored account order (operator decision 2026-10-24). The priority column is the
+# single stored order: lower sorts first, and an empty priority sorts after every set one.
+# The four values are written only where the priority is still empty, so an operator
+# change is never overwritten. credit-incognito's position takes effect only after its
+# auto-reload is confirmed off; that fact is an operator check, not enforced here.
+def accounts_priority_order() -> String:
+  "UPDATE accounts SET priority='1' WHERE id='claude-credit-primary' AND priority='';"
+  ++ "UPDATE accounts SET priority='2' WHERE id='claude-credit-incognito' AND priority='';"
+  ++ "UPDATE accounts SET priority='3' WHERE id='claude-max-incognito' AND priority='';"
+  ++ "UPDATE accounts SET priority='4' WHERE id='claude-max-primary' AND priority='';"
+
+def accounts_priority_added(+db: String, missing: Bool) -> IO(Unit):
+  match missing:
+    case False{}: IO.pure(Unit,Unit{})
+    case True{}: do IO<Unit>:
+      added : String <- IO.try(String,DB.Sql.query(db,"ALTER TABLE accounts ADD COLUMN priority TEXT NOT NULL DEFAULT '';"))
+      IO.pure(Unit,Unit{})
+
+def accounts_priority_ensured(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    found : String <- IO.try(String,DB.Sql.read(db,"SELECT EXISTS(SELECT 1 FROM pragma_table_info('accounts') WHERE name='priority');"))
+    added : Unit <- accounts_priority_added(db,String.eq(Tx.trim_nl(found),"0"))
+    ordered : String <- IO.try(String,DB.Sql.query(db,accounts_priority_order()))
+    IO.pure(Unit,Unit{})
+
+# The legacy label is merged only when the destination has the same credential
+# identity. Session sidecars are advanced before the legacy account is removed.
+def credit_rename_sidecars(paths: List<String>) -> IO(Unit):
+  match paths:
+    case Nil{}: IO.pure(Unit,Unit{})
+    case +path <> rest: do IO<Unit>:
+      read : Result<&1,&1,U32 & String,String> <- Text.Text.read(path)
+      +text : String <- IO.pass(String,Subs.optional_text(read))
+      +label : String <- IO.pure(String,Tx.trim_nl(Subs.last_line(Tx.split_lines(text))))
+      advanced : Unit <- Bool.pick(IO(Unit),String.eq(label,"claude-credit-normal"),IO.try(Unit,Text.Text.append(path,"claude-credit-primary\n")),IO.pure(Unit,Unit{}))
+      credit_rename_sidecars(rest)
+
+def credit_rename_rows_sql() -> String:
+  "UPDATE account_attempts SET account='claude-credit-primary' WHERE account='claude-credit-normal';"
+  ++ "UPDATE credit_reservations SET account='claude-credit-primary' WHERE account='claude-credit-normal';"
+  ++ "UPDATE credit_authorizations SET account='claude-credit-primary' WHERE account='claude-credit-normal';"
+  ++ "UPDATE OR IGNORE credit_observations SET id='claude-credit-primary:'||substr(id,length('claude-credit-normal:')+1) WHERE substr(id,1,length('claude-credit-normal:'))='claude-credit-normal:';"
+  ++ "DELETE FROM accounts WHERE id='claude-credit-normal';"
+
+def credit_rename_compatible(+db: String, compatible: Bool) -> IO(Unit):
+  match compatible:
+    case False{}: IO.pure(Unit,Unit{})
+    case True{}: do IO<Unit>:
+      copied : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO accounts(id,provider,harness,funding,secret_ref,organization,verified_at,priority) SELECT 'claude-credit-primary',provider,harness,funding,secret_ref,organization,verified_at,priority FROM accounts WHERE id='claude-credit-normal';"))
+      paths : String <- IO.try(String,DB.Sql.read(db,"SELECT " ++ C.q(db ++ ".account-") ++ "||lower(hex(id)) FROM sessions;"))
+      advanced : Unit <- credit_rename_sidecars(Tx.split_lines(Tx.trim_nl(paths)))
+      migrated : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ credit_rename_rows_sql() ++ "COMMIT;"))
+      IO.pure(Unit,Unit{})
+
+def credit_rename(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    compatible : String <- IO.try(String,DB.Sql.read(db,"SELECT EXISTS(SELECT 1 FROM accounts legacy WHERE legacy.id='claude-credit-normal' AND NOT EXISTS(SELECT 1 FROM accounts current WHERE current.id='claude-credit-primary' AND (current.provider<>legacy.provider OR current.harness<>legacy.harness OR current.funding<>legacy.funding OR current.secret_ref<>legacy.secret_ref OR current.organization<>legacy.organization)));"))
+    credit_rename_compatible(db,String.eq(Tx.trim_nl(compatible),"1"))
+
 def ensure(+db: String) -> IO(Unit):
   do IO<Unit>:
     present : Bool <- accounts_present(db)
     made : Unit <- ensure_schema(db,present)
     columns : Unit <- attempt_columns_ensured(db)
+    priority : Unit <- accounts_priority_ensured(db)
+    renamed : Unit <- credit_rename(db)
     IO.pure(Unit,Unit{})
+
+# --- the durable request reservation -----------------------------------------
+# One retained launch is the request unit this runtime can observe. The guard
+# reserves the whole lower bound that launch could consume: the smaller of the
+# newest reported promotional balance and the unspent monthly ceiling after
+# every recorded reservation for the organization. Settlement replaces the
+# reserved bound with the actual cost when one is reported. A unique active
+# reservation per organization, cycle and cap period serializes launches, and a
+# repeated request returns its recorded decision without reserving again.
+def credit_cycle_ceiling() -> String:
+  "200"
+
+type CreditObs is Data:
+  CObs{state: String, balance: String, unit: String, cycle: String, expires: String}
+
+type ReservationRow is Data:
+  RRow{request: String, state: String, max_charge: String, actual_cost: String, cycle: String, cap_period: String}
+
+type ReservationFull is Data:
+  RFull{request: String, state: String, max_charge: String, actual_cost: String, organization: String, cycle: String, cap_period: String, balance: String, balance_after: String, cap_after: String}
+
+def credit_observation_fields(fields: List<&2,String>) -> CreditObs:
+  match fields:
+    case state <> balance <> unit <> cycle <> expires <> rest:
+      CObs{state,balance,unit,cycle,expires}
+    case other: CObs{"unavailable","","","",""}
+
+def credit_obs_cycle(observation: CreditObs) -> String:
+  match observation:
+    case CObs{state,balance,unit,cycle,expires}: cycle
+
+def credit_obs_expires(observation: CreditObs) -> String:
+  match observation:
+    case CObs{state,balance,unit,cycle,expires}: expires
+
+def credit_observation_sql(+organization: String) -> String:
+  "SELECT state||char(31)||balance||char(31)||unit||char(31)||cycle||char(31)||expires FROM credit_observations WHERE organization=" ++ C.q(organization) ++ " AND fact='promotional_credit' ORDER BY observed_at DESC,rowid DESC LIMIT 1;"
+
+def credit_conflict_sql(+organization: String, +cycle: String) -> String:
+  "WITH latest AS (SELECT observed_at FROM credit_observations WHERE organization=" ++ C.q(organization) ++ " AND fact='promotional_credit' AND state='reported' ORDER BY observed_at DESC,rowid DESC LIMIT 1) SELECT count(DISTINCT balance) FROM credit_observations WHERE organization=" ++ C.q(organization) ++ " AND fact='promotional_credit' AND state='reported' AND balance<>'' AND cycle=" ++ C.q(cycle) ++ " AND observed_at=(SELECT observed_at FROM latest);"
+
+def credit_conflict_ok(+text: String) -> Bool:
+  Bool.or(String.eq(text,"0"),String.eq(text,"1"))
+
+def credit_observed_spend_sql(+organization: String, +cap_period: String) -> String:
+  "SELECT state||char(31)||balance||char(31)||unit FROM credit_observations WHERE organization=" ++ C.q(organization) ++ " AND fact='external_spend' AND cycle=" ++ C.q(cap_period) ++ " ORDER BY observed_at DESC,rowid DESC LIMIT 1;"
+
+def expiry_digits(+text: String) -> Bool:
+  match text:
+    case SNil{}: True{}
+    case SCon{head,tail}: Bool.and(digit_code(Char.to_u32(head)),expiry_digits(tail))
+
+def expiry_valid(+text: String) -> Bool:
+  Bool.and(Nat.is_eq(String.length(text),13n),expiry_digits(text))
+
+# The observed expiry text is preserved exactly. Reservation accounting uses
+# a verified 13-digit epoch millisecond boundary. Other expiry formats leave
+# the current balance unknown.
+def credit_expiry_deadline_sql(+expires: String) -> String:
+  "SELECT CASE WHEN length(" ++ C.q(expires) ++ ")=13 AND " ++ C.q(expires) ++ " NOT GLOB '*[^0-9]*' THEN " ++ C.q(expires) ++ " ELSE '0' END;"
+
+def expiry_deadline_reason(+deadline: String, +now_text: String) -> String:
+  Bool.pick(String,Bool.or(String.is_empty(deadline),String.eq(deadline,"0")),"creditObservationExpiryUnverified",
+    Bool.pick(String,expiry_valid(deadline),
+      Bool.pick(String,String.is_gt(deadline,now_text),"","creditObservationExpired"),
+      "creditObservationExpiryUnverified"))
+
+def decimal_max(+a: String, +b: String) -> String:
+  Bool.pick(String,decimal_is_gt(a,b),a,b)
+
+def decimal_min(+a: String, +b: String) -> String:
+  Bool.pick(String,decimal_is_gt(a,b),b,a)
+
+def reservation_row_fields(fields: List<&2,String>) -> ReservationRow:
+  match fields:
+    case request <> state <> max_charge <> actual_cost <> cycle <> cap_period <> rest:
+      RRow{request,state,max_charge,actual_cost,cycle,cap_period}
+    case other: RRow{"","malformed","","","",""}
+
+def reservation_rows_lines(lines: List<String>, acc: List<&2,ReservationRow>) -> List<&2,ReservationRow>:
+  match lines:
+    case Nil{}: acc
+    case line <> rest:
+      reservation_rows_lines(rest,Con{reservation_row_fields(String.split(Tx.trim_nl(line),Char.from_u32(31))),acc})
+
+def reservation_rows(+text: String) -> List<&2,ReservationRow>:
+  reservation_rows_lines(Tx.split_lines(text),Nil{})
+
+def reservation_row_amount_valid(state: String, max_charge: String, +actual_cost: String) -> Bool:
+  match state:
+    case "reserved": decimal_text(max_charge)
+    case "settled": decimal_text(actual_cost)
+    case "failed": Bool.or(decimal_text(actual_cost),Bool.and(String.is_empty(actual_cost),decimal_text(max_charge)))
+    case other: False{}
+
+
+
+def reservation_row_spend(+row: ReservationRow) -> String:
+  match row:
+    case RRow{request,state,max_charge,+actual_cost,cycle,cap_period}:
+      match state:
+        case "reserved": max_charge
+        case "settled": actual_cost
+        case "failed": Bool.pick(String,String.is_empty(actual_cost),max_charge,actual_cost)
+        case other: "malformed"
+
+def reservation_spend_sum(+rows: List<&2,ReservationRow>, acc: String) -> String:
+  match rows:
+    case Nil{}: acc
+    case +row <> rest: reservation_spend_sum(rest,decimal_add(acc,reservation_row_spend(row)))
+
+
+
+def reservation_row_in_cycle(+row: ReservationRow, +cycle: String) -> Bool:
+  match row:
+    case RRow{request,state,max_charge,actual_cost,row_cycle,cap_period}: String.eq(row_cycle,cycle)
+
+def reservation_row_in_cap(+row: ReservationRow, +cap_period: String) -> Bool:
+  match row:
+    case RRow{request,state,max_charge,actual_cost,cycle,row_cap}: String.eq(row_cap,cap_period)
+
+def reservation_spend_sum_cycle(+rows: List<&2,ReservationRow>, +cycle: String, +acc: String) -> String:
+  match rows:
+    case Nil{}: acc
+    case +row <> rest:
+      Bool.pick(String,reservation_row_in_cycle(row,cycle),
+        reservation_spend_sum_cycle(rest,cycle,decimal_add(acc,reservation_row_spend(row))),
+        reservation_spend_sum_cycle(rest,cycle,acc))
+
+def reservation_spend_sum_cap(+rows: List<&2,ReservationRow>, +cap_period: String, +acc: String) -> String:
+  match rows:
+    case Nil{}: acc
+    case +row <> rest:
+      Bool.pick(String,reservation_row_in_cap(row,cap_period),
+        reservation_spend_sum_cap(rest,cap_period,decimal_add(acc,reservation_row_spend(row))),
+        reservation_spend_sum_cap(rest,cap_period,acc))
+
+def spend_reason(+state: String, +balance: String, +unit: String) -> String:
+  Bool.pick(String,Bool.or(String.is_empty(state),String.eq(state,"unavailable")),"",
+    Bool.pick(String,String.eq(state,"reported"),
+      Bool.pick(String,Bool.not(String.eq(unit,"USD")),"creditSpendUnitNotUSD",
+        Bool.pick(String,Bool.not(decimal_text(balance)),"creditSpendMalformed","")),
+      "creditSpendMalformed"))
+
+def credit_cycle_spent(+ledger: String, +state: String, +balance: String) -> String:
+  Bool.pick(String,String.eq(state,"reported"),decimal_max(ledger,balance),ledger)
+
+def credit_reserve_arithmetic(+account: AccountRecord, +observation: CreditObs, +conflict: String, +grant_spend: String, +monthly_spend: String, +current_cap_period: String, +expiry_deadline: String, +now_text: String, +request_charge: String) -> CreditAdmission:
+  match observation:
+    case CObs{state,balance,unit,cycle,expires}:
+      +available : String = Bool.pick(String,decimal_is_gt(grant_spend,balance),"0",decimal_sub(balance,grant_spend))
+      +headroom : String = decimal_min(decimal_sub(credit_cycle_ceiling(),grant_spend),decimal_sub(credit_cycle_ceiling(),monthly_spend))
+      +bound : String = Bool.pick(String,String.is_empty(request_charge),decimal_min(available,headroom),request_charge)
+      Bool.pick(CreditAdmission,Bool.not(Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key")))),CRefused{"notPromotionalCreditRoute"},
+      Bool.pick(CreditAdmission,String.is_empty(account_organization(account)),CRefused{"organizationUnverified"},
+      Bool.pick(CreditAdmission,Bool.not(String.eq(state,"reported")),CRefused{"creditObservationUnavailable"},
+      Bool.pick(CreditAdmission,String.is_empty(cycle),CRefused{"creditCycleMissing"},
+      Bool.pick(CreditAdmission,String.is_empty(current_cap_period),CRefused{"monthlyCapPeriodMismatch"},
+      Bool.pick(CreditAdmission,Bool.not(credit_conflict_ok(conflict)),CRefused{"creditReadingsConflict"},
+      Bool.pick(CreditAdmission,Bool.not(String.eq(unit,"USD")),CRefused{"creditUnitNotUSD"},
+      Bool.pick(CreditAdmission,Bool.not(decimal_text(balance)),CRefused{"creditAmountMalformed"},
+      Bool.pick(CreditAdmission,Bool.not(String.is_empty(expiry_deadline_reason(expiry_deadline,now_text))),CRefused{expiry_deadline_reason(expiry_deadline,now_text)},
+      credit_request_admission(account,CMeter{account_organization(account),state,cycle,available,unit,credit_cycle_ceiling(),current_cap_period,decimal_max(grant_spend,monthly_spend),"0"},cycle,current_cap_period,bound))))))))))
+
+def credit_reserve_decided(+account: AccountRecord, +observation: CreditObs, +conflict: String, +rows: List<&2,ReservationRow>, +spend_state: String, +spend_balance: String, +spend_unit: String, +current_cap_period: String, +expiry_deadline: String, +now_text: String, +request_charge: String) -> CreditAdmission:
+  Bool.pick(CreditAdmission,Bool.not(String.is_empty(spend_reason(spend_state,spend_balance,spend_unit))),CRefused{spend_reason(spend_state,spend_balance,spend_unit)},
+  credit_reserve_arithmetic(account,observation,conflict,reservation_spend_sum_cycle(rows,credit_obs_cycle(observation),"0"),credit_cycle_spent(reservation_spend_sum_cap(rows,current_cap_period,"0"),spend_state,spend_balance),current_cap_period,expiry_deadline,now_text,request_charge))
+
+def credit_reserve_decision_fields(+account: AccountRecord, +observation: CreditObs, +conflict: String, +rows: List<&2,ReservationRow>, fields: List<&2,String>, +current_cap_period: String, +expiry_deadline: String, +now_text: String, +request_charge: String) -> CreditAdmission:
+  match fields:
+    case state <> balance <> unit <> rest:
+      credit_reserve_decided(account,observation,conflict,rows,state,balance,unit,current_cap_period,expiry_deadline,now_text,request_charge)
+    case other:
+      credit_reserve_decided(account,observation,conflict,rows,"","","",current_cap_period,expiry_deadline,now_text,request_charge)
+
+def reservation_request_sql(+request: String) -> String:
+  "SELECT request||char(31)||state||char(31)||max_charge||char(31)||actual_cost||char(31)||organization||char(31)||cycle||char(31)||cap_period||char(31)||balance||char(31)||balance_after||char(31)||cap_after FROM credit_reservations WHERE request=" ++ C.q(request) ++ ";"
+
+
+def reservation_full_fields(fields: List<&2,String>) -> ReservationFull:
+  match fields:
+    case request <> state <> max_charge <> actual_cost <> organization <> cycle <> cap_period <> balance <> balance_after <> cap_after <> rest:
+      RFull{request,state,max_charge,actual_cost,organization,cycle,cap_period,balance,balance_after,cap_after}
+    case other: RFull{"","absent","","","","","","","",""}
+
+def credit_reservation_admission(row: ReservationFull) -> CreditAdmission:
+  match row:
+    case RFull{request,state,max_charge,actual_cost,organization,cycle,cap_period,balance,balance_after,cap_after}:
+      match state:
+        case "reserved": CAdmitted{organization,cycle,max_charge,balance_after,cap_after}
+        case "settled": CRefused{"creditRequestSettled"}
+        case "failed": CRefused{"creditRequestFailed"}
+        case other: CRefused{"creditReservationLedgerMalformed"}
+
+def credit_reservation_insert_sql(+session: String, +attempt: String, +account: AccountRecord, +current_cap_period: String, +balance: String, +unit: String, +decision: CreditAdmission) -> String:
+  match decision:
+    case CAdmitted{organization,cycle,reserved_total,balance_after_reserve,cap_after_reserve}:
+      "INSERT OR IGNORE INTO credit_reservations(request,session,attempt,account,organization,cycle,cap_period,balance,unit,max_charge,balance_after,cap_after,state) VALUES(" ++ C.q(attempt) ++ "," ++ C.q(session) ++ "," ++ C.q(attempt) ++ "," ++ C.q(account_id(account)) ++ "," ++ C.q(organization) ++ "," ++ C.q(cycle) ++ "," ++ C.q(current_cap_period) ++ "," ++ C.q(balance) ++ "," ++ C.q(unit) ++ "," ++ C.q(reserved_total) ++ "," ++ C.q(balance_after_reserve) ++ "," ++ C.q(cap_after_reserve) ++ ",'reserved');SELECT changes();"
+    case CRefused{reason}: "SELECT 0;"
+
+def credit_reserve_reread_fields(+db: String, +attempt: String, +organization: String, +cycle: String, +cap_period: String, fields: List<&2,String>) -> IO(CreditAdmission):
+  match fields:
+    case request <> state <> max_charge <> actual_cost <> row_organization <> row_cycle <> row_cap <> balance <> balance_after <> cap_after <> rest:
+      IO.pure(CreditAdmission,credit_reservation_admission(RFull{request,state,max_charge,actual_cost,row_organization,row_cycle,row_cap,balance,balance_after,cap_after}))
+    case other:
+      do IO<CreditAdmission>:
+        IO.pure(CreditAdmission,CRefused{"creditReservationConflict"})
+
+def credit_reserve_reread(+db: String, +attempt: String, +organization: String, +cycle: String, +cap_period: String) -> IO(CreditAdmission):
+  do IO<CreditAdmission>:
+    existing : String <- IO.try(String,DB.Sql.read(db,reservation_request_sql(attempt)))
+    +fields : List<&2,String> <- IO.pure(List<&2,String>,String.split(Tx.trim_nl(existing),Char.from_u32(31)))
+    credit_reserve_reread_fields(db,attempt,organization,cycle,cap_period,fields)
+
+def credit_reserve_saved(+db: String, +attempt: String, +organization: String, +cycle: String, +cap_period: String, +decision: CreditAdmission, +changed: String) -> IO(CreditAdmission):
+  match changed:
+    case "1": IO.pure(CreditAdmission,decision)
+    case other: credit_reserve_reread(db,attempt,organization,cycle,cap_period)
+
+def credit_reserve_observed(+db: String, +session: String, +attempt: String, +account: AccountRecord, +current_cap_period: String, observed: CreditObs, +decision: CreditAdmission) -> IO(CreditAdmission):
+  match observed:
+    case CObs{state,balance,unit,cycle,expires}:
+      do IO<CreditAdmission>:
+        saved : String <- Bool.pick(IO(String),credit_admission_admitted(decision),IO.try(String,commit_read(db,credit_reservation_insert_sql(session,attempt,account,current_cap_period,balance,unit,decision))),IO.pure(String,"refused"))
+        Bool.pick(IO(CreditAdmission),credit_admission_admitted(decision),credit_reserve_saved(db,attempt,account_organization(account),cycle,current_cap_period,decision,Tx.trim_nl(saved)),IO.pure(CreditAdmission,decision))
+
+def credit_reserve_existing(+db: String, +session: String, +attempt: String, +account: AccountRecord, +current_cap_period: String, +request_charge: String, fields: List<&2,String>) -> IO(CreditAdmission):
+  match fields:
+    case request <> state <> max_charge <> actual_cost <> organization <> cycle <> cap_period <> balance <> balance_after <> cap_after <> rest:
+      IO.pure(CreditAdmission,credit_reservation_admission(RFull{request,state,max_charge,actual_cost,organization,cycle,cap_period,balance,balance_after,cap_after}))
+    case other:
+      do IO<CreditAdmission>:
+        observation : String <- IO.try(String,DB.Sql.read(db,credit_observation_sql(account_organization(account))))
+        +observation_fields : List<&2,String> <- IO.pure(List<&2,String>,String.split(Tx.trim_nl(observation),Char.from_u32(31)))
+        +observed : CreditObs <- IO.pure(CreditObs,credit_observation_fields(observation_fields))
+        conflict : String <- IO.try(String,DB.Sql.read(db,credit_conflict_sql(account_organization(account),credit_obs_cycle(observed))))
+        rows : String <- IO.try(String,DB.Sql.read(db,"SELECT request||char(31)||state||char(31)||max_charge||char(31)||actual_cost||char(31)||cycle||char(31)||cap_period FROM credit_reservations WHERE organization=" ++ C.q(account_organization(account)) ++ " AND (cycle=" ++ C.q(credit_obs_cycle(observed)) ++ " OR cap_period=" ++ C.q(current_cap_period) ++ ") ORDER BY rowid;"))
+        +reservations : List<&2,ReservationRow> <- IO.pure(List<&2,ReservationRow>,reservation_rows(rows))
+        spend : String <- IO.try(String,DB.Sql.read(db,credit_observed_spend_sql(account_organization(account),current_cap_period)))
+        +spend_fields : List<&2,String> <- IO.pure(List<&2,String>,String.split(Tx.trim_nl(spend),Char.from_u32(31)))
+        now_text : String <- IO.try(String,DB.Sql.read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000;"))
+        deadline : String <- IO.try(String,DB.Sql.read(db,credit_expiry_deadline_sql(credit_obs_expires(observed))))
+        +decision : CreditAdmission <- IO.pure(CreditAdmission,credit_reserve_decision_fields(account,observed,Tx.trim_nl(conflict),reservations,spend_fields,current_cap_period,Tx.trim_nl(deadline),Tx.trim_nl(now_text),request_charge))
+        credit_reserve_observed(db,session,attempt,account,current_cap_period,observed,decision)
+
+def credit_reserve_for(+db: String, +session: String, +attempt: String, +account: AccountRecord, +current_cap_period: String) -> IO(CreditAdmission):
+  do IO<CreditAdmission>:
+    ready : Unit <- ensure(db)
+    existing : String <- IO.try(String,DB.Sql.read(db,reservation_request_sql(attempt)))
+    +existing_fields : List<&2,String> <- IO.pure(List<&2,String>,String.split(Tx.trim_nl(existing),Char.from_u32(31)))
+    credit_reserve_existing(db,session,attempt,account,current_cap_period,"",existing_fields)
+
+def credit_reserve_bounded_for(+db: String, +session: String, +attempt: String, +account: AccountRecord, +current_cap_period: String, +request_charge: String) -> IO(CreditAdmission):
+  do IO<CreditAdmission>:
+    ready : Unit <- ensure(db)
+    existing : String <- IO.try(String,DB.Sql.read(db,reservation_request_sql(attempt)))
+    +existing_fields : List<&2,String> <- IO.pure(List<&2,String>,String.split(Tx.trim_nl(existing),Char.from_u32(31)))
+    credit_reserve_existing(db,session,attempt,account,current_cap_period,request_charge,existing_fields)
+
+def reserve_state_sql(+request: String) -> String:
+  "SELECT state||char(31)||max_charge||char(31)||actual_cost FROM credit_reservations WHERE request=" ++ C.q(request) ++ ";"
+
+def settle_state(+cost: String, +max_charge: String) -> String:
+  Bool.pick(String,String.is_empty(cost),"failed",
+    Bool.pick(String,decimal_text(cost),
+      Bool.pick(String,decimal_is_gt(cost,max_charge),"failed","settled"),
+      "failed"))
+
+def settle_cost(+cost: String, +max_charge: String) -> String:
+  Bool.pick(String,String.is_empty(cost),"",
+    Bool.pick(String,decimal_text(cost),cost,""))
+
+def credit_settle_sql(+request: String, +outcome: String, +state: String, +cost: String, allow_failed: Bool) -> String:
+  "UPDATE credit_reservations SET state=" ++ C.q(state) ++ ",actual_cost=" ++ C.q(cost) ++ ",outcome=" ++ C.q(outcome) ++ ",settled_at=CURRENT_TIMESTAMP WHERE request=" ++ C.q(request) ++ " AND state IN ('reserved'" ++ Bool.pick(String,allow_failed,",'failed'","") ++ ");SELECT changes();"
+
+def credit_settle_apply(+db: String, +request: String, +outcome: String, +cost: String, allow_failed: Bool, +max_charge: String) -> IO(String):
+  do IO<String>:
+    +state : String <- IO.pure(String,settle_state(cost,max_charge))
+    +stored : String <- IO.pure(String,settle_cost(cost,max_charge))
+    changed : String <- IO.try(String,commit_read(db,credit_settle_sql(request,outcome,state,stored,allow_failed)))
+    IO.pure(String,Bool.pick(String,String.eq(Tx.trim_nl(changed),"1"),state,"unchanged"))
+
+def credit_settle_decided(+db: String, +request: String, +outcome: String, +cost: String, +allow_failed: Bool, +current_state: String, +max_charge: String) -> IO(String):
+  match current_state:
+    case "reserved": credit_settle_apply(db,request,outcome,cost,allow_failed,max_charge)
+    case "failed": Bool.pick(IO(String),allow_failed,credit_settle_apply(db,request,outcome,cost,allow_failed,max_charge),IO.pure(String,"already-failed"))
+    case "settled": IO.pure(String,"already-settled")
+    case other: IO.pure(String,"absent")
+
+def credit_settle_fields(+db: String, +request: String, +outcome: String, +cost: String, allow_failed: Bool, fields: List<&2,String>) -> IO(String):
+  match fields:
+    case state <> max_charge <> actual_cost <> rest:
+      credit_settle_decided(db,request,outcome,cost,allow_failed,state,max_charge)
+    case other:
+      IO.pure(String,"absent")
+
+def credit_settle_for(+db: String, +request: String, +outcome: String, +cost: String, allow_failed: Bool) -> IO(String):
+  do IO<String>:
+    ready : Unit <- ensure(db)
+    current : String <- IO.try(String,DB.Sql.read(db,reserve_state_sql(request)))
+    +fields : List<&2,String> <- IO.pure(List<&2,String>,String.split(Tx.trim_nl(current),Char.from_u32(31)))
+    credit_settle_fields(db,request,outcome,cost,allow_failed,fields)
+
+# --- request price -----------------------------------------------------------
+
+# Prices are the Anthropic first-party USD list rates, held in nanos per token
+# (one USD per million tokens is 1000 nanos per token). The host transport
+# supplies upper bounds for the request tokens and the request flags; this
+# function is the whole pricing policy.
+type CreditRequestFacts is Data:
+  CRF{model: String, input_tokens: String, output_tokens: String, cache_5m: String, cache_1h: String, cache_hit: String, geo: String, fast_mode: Bool, server_actions: String, tools: Bool}
+
+type CreditRequestPrice is Data:
+  Priced{max_charge: String}
+  PriceRefused{reason: String}
+
+type CreditRates is Data:
+  Rates{base_in: Nat, base_out: Nat, cache_5m: Nat, cache_1h: Nat, cache_hit_rate: Nat, tool_tokens: Nat, fast_allowed: Bool, fast_in: Nat, fast_out: Nat}
+
+def rates_opus() -> CreditRates:
+  Rates{4000n,20000n,5000n,8000n,200n,406n,True{},8000n,40000n}
+
+def rates_sonnet() -> CreditRates:
+  Rates{2000n,10000n,2500n,4000n,100n,286n,False{},0n,0n}
+
+def rates_haiku_low() -> CreditRates:
+  Rates{100n,500n,125n,200n,10n,406n,False{},0n,0n}
+
+def rates_haiku_high() -> CreditRates:
+  Rates{500n,2500n,625n,1000n,50n,406n,False{},0n,0n}
+
+def credit_rates_for(+model: String, +prompt: Nat) -> Maybe<&2,CreditRates>:
+  Bool.pick(Maybe<&2,CreditRates>,String.eq(model,"claude-opus-5-5"),Some{rates_opus()},
+    Bool.pick(Maybe<&2,CreditRates>,String.eq(model,"claude-sonnet-5-5"),Some{rates_sonnet()},
+      Bool.pick(Maybe<&2,CreditRates>,String.eq(model,"claude-haiku-5-5"),
+        Bool.pick(Maybe<&2,CreditRates>,Nat.is_lt(100000n,prompt),Some{rates_haiku_high()},Some{rates_haiku_low()}),
+        None{})))
+
+def credit_pad9(+text: String) -> String:
+  String.repeat("0",Nat.sub(9n,String.length(text))) ++ text
+
+def credit_nanos_usd(+nanos: Nat) -> String:
+  Nat.show(Nat.div(nanos,1000000000n)) ++ "." ++ credit_pad9(Nat.show(Nat.mod(nanos,1000000000n)))
+
+def credit_price_billed(+nanos: Nat, +premium: Bool) -> Nat:
+  match premium:
+    case True{}: Nat.div(Nat.add(Nat.mul(nanos,11n),9n),10n)
+    case False{}: nanos
+
+def credit_price_priced(+base_in: Nat, +base_out: Nat, +cache_5m: Nat, +cache_1h: Nat, +cache_hit_rate: Nat, +tool_tokens: Nat, +fast_in: Nat, +fast_out: Nat, +i: Nat, +o: Nat, +w5: Nat, +w1: Nat, +h: Nat, +fast: Bool, +premium: Bool, +tools: Bool) -> CreditRequestPrice:
+  in_rate = Bool.pick(Nat,fast,fast_in,base_in)
+  out_rate = Bool.pick(Nat,fast,fast_out,base_out)
+  w5_rate = Bool.pick(Nat,fast,Nat.div(Nat.mul(fast_in,5n),4n),cache_5m)
+  w1_rate = Bool.pick(Nat,fast,Nat.mul(fast_in,2n),cache_1h)
+  hit_rate = Bool.pick(Nat,fast,Nat.div(Nat.mul(fast_in,5n),100n),cache_hit_rate)
+  i2 = Bool.pick(Nat,tools,Nat.add(i,tool_tokens),i)
+  nanos = Nat.add(Nat.mul(i2,in_rate),Nat.add(Nat.mul(o,out_rate),Nat.add(Nat.mul(w5,w5_rate),Nat.add(Nat.mul(w1,w1_rate),Nat.mul(h,hit_rate)))))
+  billed = credit_price_billed(nanos,premium)
+  Priced{credit_nanos_usd(billed)}
+
+def credit_price_compute(+rates: CreditRates, +i: Nat, +o: Nat, +w5: Nat, +w1: Nat, +h: Nat, +fast: Bool, +premium: Bool, +tools: Bool) -> CreditRequestPrice:
+  match rates:
+    case Rates{base_in,base_out,cache_5m,cache_1h,cache_hit_rate,tool_tokens,fast_allowed,fast_in,fast_out}:
+      Bool.pick(CreditRequestPrice,Bool.and(fast,Bool.not(fast_allowed)),PriceRefused{"creditFastModeUnpriced"},
+        credit_price_priced(base_in,base_out,cache_5m,cache_1h,cache_hit_rate,tool_tokens,fast_in,fast_out,i,o,w5,w1,h,fast,premium,tools))
+
+def credit_price_rates_decided(+known: Maybe<&2,CreditRates>, +i: Nat, +o: Nat, +w5: Nat, +w1: Nat, +h: Nat, +fast: Bool, +premium: Bool, +tools: Bool) -> CreditRequestPrice:
+  match known:
+    case Some{+rates}: credit_price_compute(rates,i,o,w5,w1,h,fast,premium,tools)
+    case None{}: PriceRefused{"creditModelUnpriced"}
+
+def credit_price_rates(+model: String, +i: Nat, +o: Nat, +w5: Nat, +w1: Nat, +h: Nat, +fast: Bool, +premium: Bool, +tools: Bool) -> CreditRequestPrice:
+  prompt = Nat.add(i,Nat.add(w5,Nat.add(w1,h)))
+  credit_price_rates_decided(credit_rates_for(model,prompt),i,o,w5,w1,h,fast,premium,tools)
+
+def credit_price_tokens_decided(+input: Maybe<&2,Nat>, +output: Maybe<&2,Nat>, +cache_5m: Maybe<&2,Nat>, +cache_1h: Maybe<&2,Nat>, +cache_hit: Maybe<&2,Nat>, +model: String, +fast: Bool, +premium: Bool, +tools: Bool) -> CreditRequestPrice:
+  match input:
+    case Some{+i}:
+      match output:
+        case Some{+o}:
+          match cache_5m:
+            case Some{+w5}:
+              match cache_1h:
+                case Some{+w1}:
+                  match cache_hit:
+                    case Some{+h}: credit_price_rates(model,i,o,w5,w1,h,fast,premium,tools)
+                    case None{}: PriceRefused{"creditRequestMalformed"}
+                case None{}: PriceRefused{"creditRequestMalformed"}
+            case None{}: PriceRefused{"creditRequestMalformed"}
+        case None{}: PriceRefused{"creditRequestMalformed"}
+    case None{}: PriceRefused{"creditRequestMalformed"}
+
+def credit_price_tokens(+model: String, +input: String, +output: String, +cache_5m: String, +cache_1h: String, +cache_hit: String, +fast: Bool, +premium: Bool, +tools: Bool) -> CreditRequestPrice:
+  credit_price_tokens_decided(Nat.read(input),Nat.read(output),Nat.read(cache_5m),Nat.read(cache_1h),Nat.read(cache_hit),model,fast,premium,tools)
+
+def credit_price_geo(+model: String, +input: String, +output: String, +cache_5m: String, +cache_1h: String, +cache_hit: String, +geo: String, +fast: Bool, +tools: Bool) -> CreditRequestPrice:
+  Bool.pick(CreditRequestPrice,Bool.or(String.is_empty(geo),String.eq(geo,"global")),
+    credit_price_tokens(model,input,output,cache_5m,cache_1h,cache_hit,fast,False{},tools),
+    Bool.pick(CreditRequestPrice,String.eq(geo,"us"),
+      credit_price_tokens(model,input,output,cache_5m,cache_1h,cache_hit,fast,True{},tools),
+      PriceRefused{"creditResidencyUnpriced"}))
+
+def credit_request_price_server(+actions: Maybe<&2,Nat>, +model: String, +input: String, +output: String, +cache_5m: String, +cache_1h: String, +cache_hit: String, +geo: String, +fast: Bool, +tools: Bool) -> CreditRequestPrice:
+  match actions:
+    case Some{+count}:
+      Bool.pick(CreditRequestPrice,Nat.is_eq(count,0n),
+        credit_price_geo(model,input,output,cache_5m,cache_1h,cache_hit,geo,fast,tools),
+        PriceRefused{"creditServerToolUnpriced"})
+    case None{}: PriceRefused{"creditRequestMalformed"}
+
+def credit_request_price(+facts: CreditRequestFacts) -> CreditRequestPrice:
+  match facts:
+    case CRF{model,input_tokens,output_tokens,cache_5m,cache_1h,cache_hit,geo,fast_mode,server_actions,tools}:
+      credit_request_price_server(Nat.read(server_actions),model,input_tokens,output_tokens,cache_5m,cache_1h,cache_hit,geo,fast_mode,tools)
+
+# The actual Anthropic Messages request body supplies the price facts. The host
+# transport passes the body unchanged; this reader takes the model, the output
+# bound, a byte upper bound for input, cache-control presence, geography, fast
+# mode and tool flags. The byte length is an upper bound on the request's token
+# count; the policy prices it conservatively.
+def credit_request_facts_sql(+body: String) -> String:
+  +b = C.q(body)
+  "WITH frame(value) AS (VALUES(" ++ b ++ ")), facts(model,input,output,cache5,cache1,cachehit,geo,fast,server,tools) AS (SELECT coalesce(json_extract(value,'$.model'),''),CAST(length(CAST(value AS BLOB)) AS TEXT),coalesce(CAST(json_extract(value,'$.max_tokens') AS TEXT),''),CASE WHEN EXISTS(SELECT 1 FROM json_tree(frame.value) WHERE key='cache_control') THEN CAST(length(CAST(value AS BLOB)) AS TEXT) ELSE '0' END,CASE WHEN EXISTS(SELECT 1 FROM json_tree(frame.value) WHERE key='ttl' AND value='1h') THEN CAST(length(CAST(value AS BLOB)) AS TEXT) ELSE '0' END,'0',coalesce(json_extract(value,'$.inference_geo'),'global'),CASE WHEN json_extract(value,'$.speed')='fast' OR json_extract(value,'$.fast')=1 THEN '1' ELSE '0' END,CASE WHEN EXISTS(SELECT 1 FROM json_tree(frame.value) WHERE key='type' AND (value LIKE 'web_search%' OR value LIKE 'web_fetch%' OR value LIKE 'code_execution%' OR value LIKE 'computer%' OR value LIKE 'bash%')) THEN '1' ELSE '0' END,CASE WHEN json_type(value,'$.tools')='array' AND json_array_length(value,'$.tools')>0 THEN '1' ELSE '0' END FROM frame WHERE json_valid(value)) SELECT model||char(31)||input||char(31)||output||char(31)||cache5||char(31)||cache1||char(31)||cachehit||char(31)||geo||char(31)||fast||char(31)||server||char(31)||tools FROM facts;"
+
+def credit_request_facts_fields(fields: List<&2,String>) -> CreditRequestFacts:
+  match fields:
+    case model <> input <> output <> cache5 <> cache1 <> cachehit <> geo <> fast <> server <> tools <> rest:
+      CRF{model,input,output,cache5,cache1,cachehit,geo,String.eq(fast,"1"),server,String.eq(tools,"1")}
+    case other:
+      CRF{"","","","","","","global",False{},"0",False{}}
+
+def credit_request_facts_for(+db: String, +body: String) -> IO(CreditRequestFacts):
+  do IO<CreditRequestFacts>:
+    ready : Unit <- ensure(db)
+    text : String <- IO.try(String,DB.Sql.read(db,credit_request_facts_sql(body)))
+    +fields : List<&2,String> <- IO.pure(List<&2,String>,String.split(Tx.trim_nl(text),Char.from_u32(31)))
+    IO.pure(CreditRequestFacts,credit_request_facts_fields(fields))
 
 # One row per account, fields separated by the ASCII unit separator, in operator
 # recording order.
 def account_row_sql() -> String:
-  "SELECT id||char(31)||provider||char(31)||harness||char(31)||funding||char(31)||secret_ref||char(31)||organization||char(31)||verified_at FROM accounts ORDER BY rowid;"
+  "SELECT id||char(31)||provider||char(31)||harness||char(31)||funding||char(31)||secret_ref||char(31)||organization||char(31)||verified_at FROM accounts ORDER BY CASE WHEN priority='' THEN 9999 ELSE CAST(priority AS INTEGER) END,rowid;"
 
 def account_rows_flat(fields: List<&2,String>, tail: List<&2,AccountRecord>) -> List<&2,AccountRecord>:
   match fields:
@@ -672,6 +1176,7 @@ def account_by_label(+db: String, +label: String, +harness: String) -> IO(Maybe<
 
 def current_account(+db: String, +session: String, +harness: String) -> IO(Maybe<&2,AccountRecord>):
   do IO<Maybe<&2,AccountRecord>>:
+    ready : Unit <- ensure(db)
     +sidecar : String <- account_sidecar(db,session)
     +labelled : String <- file_text(Tx.trim_nl(sidecar))
     +label : String <- IO.pure(String,Tx.trim_nl(Subs.last_line(Tx.split_lines(labelled))))
@@ -687,6 +1192,7 @@ def current_account(+db: String, +session: String, +harness: String) -> IO(Maybe
 # handoff it already had.
 def bound_account(+db: String, +session: String, +harness: String) -> IO(Maybe<&2,AccountRecord>):
   do IO<Maybe<&2,AccountRecord>>:
+    ready : Unit <- ensure(db)
     +sidecar : String <- account_sidecar(db,session)
     +labelled : String <- file_text(Tx.trim_nl(sidecar))
     +label : String <- IO.pure(String,Tx.trim_nl(Subs.last_line(Tx.split_lines(labelled))))
@@ -704,11 +1210,39 @@ def next_account_after(accounts: List<&2,AccountRecord>, +harness: String, +curr
         case True{}: Bool.pick(Maybe<&2,AccountRecord>,account_matches(harness,"",account),Some{account},next_account_after(rest,harness,current,True{}))
         case False{}: Bool.pick(Maybe<&2,AccountRecord>,String.eq(account_id(account),current),next_account_after(rest,harness,current,True{}),next_account_after(rest,harness,current,False{}))
 
+# Continue past an account that a live read holds. An open or unknown read leaves
+# the configured account selectable.
+def gate_held(gate: UW.Gate) -> Bool:
+  match gate:
+    case UW.GateHeld{window,resets_at,source,receipt}: True{}
+    case other: False{}
+
+def account_candidates_after(accounts: List<&2,AccountRecord>, +harness: String, +current: String, seen: Bool) -> List<&2,AccountRecord>:
+  match accounts:
+    case Nil{}: Nil{}
+    case +account <> +rest:
+      match seen:
+        case True{}: Bool.pick(List<&2,AccountRecord>,account_matches(harness,"",account),Con{account,account_candidates_after(rest,harness,current,True{})},account_candidates_after(rest,harness,current,True{}))
+        case False{}: account_candidates_after(rest,harness,current,String.eq(account_id(account),current))
+
+def first_account_available(+db: String, +session: String, accounts: List<&2,AccountRecord>) -> IO(Maybe<&2,AccountRecord>):
+  match accounts:
+    case Nil{}: IO.pure(Maybe<&2,AccountRecord>,None{})
+    case +account <> +rest: do IO<Maybe<&2,AccountRecord>>:
+      gate : UW.Gate <- UW.window_gate(db,session,account_id(account))
+      Bool.pick(IO(Maybe<&2,AccountRecord>),gate_held(gate),first_account_available(db,session,rest),IO.pure(Maybe<&2,AccountRecord>,Some{account}))
+
+def next_account_available(db: String, session: String, accounts: List<&2,AccountRecord>, harness: String, current: String) -> IO(Maybe<&2,AccountRecord>):
+  first_account_available(db,session,account_candidates_after(accounts,harness,current,False{}))
+
 def account_handoff_body(+harness: String, +refused: String, +bound: String, +cause: String) -> String:
   "account handoff: harness=" ++ harness ++ "; refused account=" ++ refused ++ "; bound account=" ++ bound ++ "; original cause: " ++ cause
 
 def account_exhausted_body(+harness: String, +refused: String, +cause: String) -> String:
-  "accounts exhausted: harness=" ++ harness ++ "; account=" ++ refused ++ " was the last operator-recorded account for this harness and the provider reported usage exhaustion; cause: " ++ cause
+  "accounts exhausted: harness=" ++ harness ++ "; account=" ++ refused ++ " reported usage exhaustion and no later selectable operator-recorded account remains for this harness; cause: " ++ cause
+
+def account_history_needed(+refused: AccountRecord, +next: AccountRecord) -> Bool:
+  Bool.and(String.eq(account_funding(refused),"subscription"),Bool.and(String.eq(account_funding(next),"subscription"),Bool.not(String.eq(account_secret_ref(refused),account_secret_ref(next)))))
 
 def advance_append_observed(+db: String, +session: String, +id: String, +harness: String, +refused: AccountRecord, +next: AccountRecord, +cause: String, appended: Result<&1,&1,U32 & String,Unit>) -> IO(Bool):
   match appended:
@@ -719,28 +1253,33 @@ def advance_append_observed(+db: String, +session: String, +id: String, +harness
       noted : Unit <- Subs.report_body(db,session,id,"account-append-failed","account record append failed: " ++ U32.show(code) ++ ": " ++ detail ++ "; the provider cause stands and no account was advanced.")
       IO.pure(Bool,False{})
 
-def advance_account_decided(+db: String, +session: String, +id: String, +harness: String, +refused: AccountRecord, +cause: String, decided: Maybe<&2,AccountRecord>) -> IO(Bool):
+def advance_account_append(+db: String, +session: String, +id: String, +harness: String, +refused: AccountRecord, +next: AccountRecord, +cause: String) -> IO(Bool):
+  do IO<Bool>:
+    path : String <- account_sidecar(db,session)
+    appended : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(Tx.trim_nl(path),account_id(next) ++ "\n")
+    advance_append_observed(db,session,id,harness,refused,next,cause,appended)
+
+def advance_account_decided(+db: String, +session: String, +id: String, +harness: String, +refused: AccountRecord, +cause: String, native: String, cmd: String, cwd: String, decided: Maybe<&2,AccountRecord>) -> IO(Bool):
   match decided:
     case None{}: do IO<Bool>:
-      noted : Unit <- Subs.report_body(db,session,id,"account-exhausted",account_exhausted_body(harness,account_id(refused),cause))
+      noted : Unit <- Subs.report_account_exhausted(db,session,id,account_id(refused),account_exhausted_body(harness,account_id(refused),cause))
       IO.pure(Bool,False{})
     case Some{+next}: do IO<Bool>:
-      path : String <- account_sidecar(db,session)
-      appended : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(Tx.trim_nl(path),account_id(next) ++ "\n")
-      advance_append_observed(db,session,id,harness,refused,next,cause,appended)
+      prepared : Bool <- Bool.pick(IO(Bool),account_history_needed(refused,next),Subs.prepare_account_history(db,session,id,harness,account_secret_ref(refused),account_secret_ref(next),cmd,cwd,native),IO.pure(Bool,True{}))
+      Bool.pick(IO(Bool),prepared,advance_account_append(db,session,id,harness,refused,next,cause),IO.pure(Bool,False{}))
 
-def advance_account(+db: String, +session: String, +id: String, +harness: String, +refused: AccountRecord, +cause: String) -> IO(Bool):
+def advance_account(+db: String, +session: String, +id: String, +harness: String, +refused: AccountRecord, +cause: String, native: String, cmd: String, cwd: String) -> IO(Bool):
   do IO<Bool>:
     rows : String <- IO.try(String,DB.Sql.read(db,account_row_sql()))
     +accounts : List<&2,AccountRecord> <- IO.pure(List<&2,AccountRecord>,account_lines(Tx.split_lines(rows),Nil{}))
-    +decided : Maybe<&2,AccountRecord> <- IO.pure(Maybe<&2,AccountRecord>,next_account_after(accounts,harness,account_id(refused),False{}))
-    advanced : Bool <- advance_account_decided(db,session,id,harness,refused,cause,decided)
+    +decided : Maybe<&2,AccountRecord> <- next_account_available(db,session,accounts,harness,account_id(refused))
+    advanced : Bool <- advance_account_decided(db,session,id,harness,refused,cause,native,cmd,cwd,decided)
     IO.pure(Bool,advanced)
 
 def handoff_decided(+db: String, +session: String, +id: String, +event: String, native: String, cmd: String, cwd: String, +cause: String, +harness: String, bound: Maybe<&2,AccountRecord>) -> IO(Bool):
   match bound:
     case None{}: Subs.profile_handoff(db,session,id,event,native,cmd,cwd)
-    case Some{+refused}: Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),advance_account(db,session,id,harness,refused,cause))
+    case Some{+refused}: Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),advance_account(db,session,id,harness,refused,cause,native,cmd,cwd))
 
 # The account label in force: the bound account's own label, or the operator's
 # profile label when no account record exists. The handoff's usage-window record
@@ -759,13 +1298,341 @@ def handoff_label_io(+db: String, +session: String) -> IO(String):
     label : String <- label_for_bound(db,session,bound)
     IO.pure(String,label)
 
+# --- the operator's account order (#1059) --------------------------------------
+#
+# The recorded accounts of the session's harness, in the operator's order, are the
+# one fallback order whenever that harness has recorded accounts. A refusal moves
+# the seat to the first entry, scanned from the head of the order, that is not the
+# refused account, is launchable and is not held by a live usage read (#1025).
+# Scanning from the head reaches the listed accounts when the refused label is not a
+# recorded account (observed 2026-10-24: Riff seats bound by profile records to
+# claude-credit-primary, which the profile list did not contain, were reported
+# exhausted with two Max accounts listed), and an account that a live read reopens
+# regains its place. An Anthropic API-key account is not launchable while the
+# promotional-credit guard is false. The order states no availability; each
+# entry's live read does.
+def harness_accounts(accounts: List<&2,AccountRecord>, +harness: String) -> List<&2,AccountRecord>:
+  match accounts:
+    case Nil{}: Nil{}
+    case +account <> +rest: Bool.pick(List<&2,AccountRecord>,account_matches(harness,"",account),Con{account,harness_accounts(rest,harness)},harness_accounts(rest,harness))
+
+def accounts_count(accounts: List<&2,AccountRecord>) -> U32:
+  match accounts:
+    case Nil{}: 0
+    case account <> rest: U32.add(1,accounts_count(rest))
+
+def accounts_empty(accounts: List<&2,AccountRecord>) -> Bool:
+  match accounts:
+    case Nil{}: True{}
+    case account <> rest: False{}
+
+def ordered_accounts(+db: String, +harness: String) -> IO(List<&2,AccountRecord>):
+  do IO<List<&2,AccountRecord>>:
+    rows : String <- IO.try(String,DB.Sql.read(db,account_row_sql()))
+    IO.pure(List<&2,AccountRecord>,harness_accounts(account_lines(Tx.split_lines(rows),Nil{}),harness))
+
+# The request-level promotional-credit guard. It stays false until the release
+# qualification records the guard as proven; the launch gate below reads it too.
+def credit_guard_qualified() -> Bool:
+  False{}
+
+def credit_route(+account: AccountRecord) -> Bool:
+  Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key")))
+
+def credit_unlaunchable(+account: AccountRecord) -> Bool:
+  Bool.and(credit_route(account),Bool.not(credit_guard_qualified()))
+
+# One entry's state: its class, the stated detail and the live read that decided it.
+type EntryState is Data:
+  Es{kind: String, detail: String, receipt: String}
+
+def gate_state(gate: UW.Gate) -> EntryState:
+  match gate:
+    case UW.GateHeld{window,resets_at,source,+receipt}: Es{"held","held by live read " ++ receipt ++ ": window " ++ window ++ ", provider reset " ++ resets_at ++ ", source " ++ source,receipt}
+    case UW.GateUnknown{source,reason,+receipt}: Es{"unknown","usage unreadable by live read " ++ receipt ++ ": " ++ source ++ ": " ++ reason,receipt}
+    case UW.GateNone{}: Es{"open","open: no live read holds it",""}
+
+# read selects a live read of the entry before the decision. A launch that follows a
+# wake decides from the reads the wake already made.
+def entry_gate(+db: String, +session: String, +provider: String, +model: String, +helper: String, +trigger: String, +label: String, read: Bool) -> IO(UW.Gate):
+  do IO<UW.Gate>:
+    done : Unit <- Bool.pick(IO(Unit),Bool.or(Bool.not(read),String.is_empty(provider)),IO.pure(Unit,Unit{}),UW.read_with(db,session,provider,label,helper,trigger))
+    Bool.pick(IO(UW.Gate),String.is_empty(provider),IO.pure(UW.Gate,UW.GateNone{}),UW.decide(db,provider,label,model))
+
+def account_state(+db: String, +session: String, +provider: String, +model: String, +helper: String, +read: Bool, +refused: String, +refused_detail: String, +account: AccountRecord) -> IO(EntryState):
+  Bool.pick(IO(EntryState),String.eq(account_id(account),refused),
+    IO.pure(EntryState,Es{"refused",refused_detail,""}),
+    Bool.pick(IO(EntryState),credit_unlaunchable(account),
+      IO.pure(EntryState,Es{"not-launchable","not launchable: promotional-credit guard is false",""}),
+      do IO<EntryState>:
+        gate : UW.Gate <- entry_gate(db,session,provider,model,helper,"account-order:" ++ refused,account_id(account),read)
+        IO.pure(EntryState,gate_state(gate))))
+
+# held lists the labels of the held entries one per line; receipts joins their reads.
+type Scan is Data:
+  Found{account: AccountRecord, position: U32, states: String}
+  Missing{states: String, held: String, receipts: String}
+
+def states_joined(+states: String, +line: String, +separator: String) -> String:
+  Bool.pick(String,String.is_empty(states),line,states ++ separator ++ line)
+
+# The operator reserves claude-max-primary for an open live read. Other accounts
+# can resume with an unknown read, including an expired incognito OAuth token
+# whose own Claude Code process renews it.
+def entry_chosen(+kind: String, +protected: Bool) -> Bool:
+  Bool.or(String.eq(kind,"open"),Bool.and(String.eq(kind,"unknown"),Bool.not(protected)))
+
+def protected_note(+kind: String, +protected: Bool) -> String:
+  Bool.pick(String,Bool.and(String.eq(kind,"unknown"),protected)," (claude-max-primary is taken only on an open live read)","")
+
+# One scanned entry's outcome: whether the seat takes it, and the states, held labels
+# and hold reads accumulated through it.
+type Step is Data:
+  St{taken: Bool, states: String, held: String, receipts: String}
+
+def step_taken(step: Step) -> Bool:
+  match step:
+    case St{taken,states,held,receipts}: taken
+
+def step_states(step: Step) -> String:
+  match step:
+    case St{taken,states,held,receipts}: states
+
+def step_held(step: Step) -> String:
+  match step:
+    case St{taken,states,held,receipts}: held
+
+def step_receipts(step: Step) -> String:
+  match step:
+    case St{taken,states,held,receipts}: receipts
+
+def scan_step(+account: AccountRecord, +position: U32, +states: String, +held: String, +receipts: String, +protected: Bool, state: EntryState) -> Step:
+  match state:
+    case Es{+kind,+detail,+receipt}:
+      +line = U32.show(position) ++ " " ++ account_id(account) ++ " " ++ detail ++ protected_note(kind,protected)
+      +is_held = String.eq(kind,"held")
+      St{entry_chosen(kind,protected),states_joined(states,line,"; "),Bool.pick(String,is_held,held ++ account_id(account) ++ "\n",held),Bool.pick(String,is_held,states_joined(receipts,receipt,","),receipts)}
+
+def order_scan(+db: String, +session: String, +provider: String, +model: String, +helper: String, +read: Bool, +refused: String, +refused_detail: String, accounts: List<&2,AccountRecord>, +position: U32, +states: String, +held: String, +receipts: String) -> IO(Scan):
+  match accounts:
+    case Nil{}: IO.pure(Scan,Missing{states,held,receipts})
+    case +account <> +rest: do IO<Scan>:
+      state : EntryState <- account_state(db,session,provider,model,helper,read,refused,refused_detail,account)
+      +step : Step <- IO.pure(Step,scan_step(account,position,states,held,receipts,String.eq(account_id(account),"claude-max-primary"),state))
+      Bool.pick(IO(Scan),step_taken(step),
+        IO.pure(Scan,Found{account,position,step_states(step)}),
+        order_scan(db,session,provider,model,helper,read,refused,refused_detail,rest,U32.add(position,1),step_states(step),step_held(step),step_receipts(step)))
+
+def scan_order(+db: String, +session: String, +helper: String, +read: Bool, +refused: String, +refused_detail: String, ordered: List<&2,AccountRecord>) -> IO(Scan):
+  do IO<Scan>:
+    +provider : String <- UW.seat_provider_io(db,session)
+    +model : String <- UW.seat_model_io(db,session)
+    order_scan(db,session,provider,model,helper,read,refused,refused_detail,ordered,1,"","","")
+
+# Each announcement goes to the seat's orchestrator and, under the same identity
+# with ':root' appended, to the root of the seat's parent chain when that root is
+# another session.
+def chain_root_sql(+seat: String) -> String:
+  "(WITH RECURSIVE up(id,parent) AS (SELECT id,parent FROM sessions WHERE id=" ++ seat ++ " UNION ALL SELECT s.id,s.parent FROM sessions s JOIN up ON s.id=up.parent) SELECT id FROM up WHERE parent IS NULL LIMIT 1)"
+
+def announce_sql(+id: String, +session: String, +body: String) -> String:
+  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id) ++ ",s.id," ++ C.report_recipient("s.id") ++ ",'report'," ++ C.q(body) ++ " FROM sessions s WHERE s.id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL;"
+  ++ "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":root") ++ ",s.id," ++ chain_root_sql("s.id") ++ ",'report'," ++ C.q(body) ++ " FROM sessions s WHERE s.id=" ++ C.q(session) ++ " AND " ++ chain_root_sql("s.id") ++ " IS NOT NULL AND " ++ chain_root_sql("s.id") ++ "<>s.id AND " ++ chain_root_sql("s.id") ++ "<>coalesce(" ++ C.report_recipient("s.id") ++ ",'');"
+
+def announce(+db: String, +id: String, +session: String, +body: String) -> IO(Unit):
+  do IO<Unit>:
+    noted : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ announce_sql(id,session,body) ++ "COMMIT;"))
+    IO.pure(Unit,Unit{})
+
+def from_text(+label: String) -> String:
+  Bool.pick(String,String.is_empty(label),"(no recorded account)",label)
+
+def move_body(+session: String, +harness: String, +from: String, +to: String, +position: U32, +total: U32, +states: String) -> String:
+  "account move: seat " ++ session ++ " (" ++ harness ++ ") selected move from " ++ from_text(from) ++ " to " ++ to ++ ", entry " ++ U32.show(position) ++ " of " ++ U32.show(total) ++ " in the operator order. Entry states: " ++ states ++ ". The binding is verified before owed input resumes on " ++ to ++ "."
+
+def hold_body(+session: String, +harness: String, +states: String) -> String:
+  "account order held: seat " ++ session ++ " (" ++ harness ++ ") has no available account in the operator order. Entry states: " ++ states ++ ". Owed input stays queued. A live usage read that opens any listed account resumes the seat on it."
+
+# Every held entry also records the seat's #1025 hold for that account, so a live
+# read that opens any of them drives the seat's owed input through the wake entry.
+def announce_holds(+db: String, +session: String, +provider: String, +model: String, labels: List<String>) -> IO(Unit):
+  match labels:
+    case Nil{}: IO.pure(Unit,Unit{})
+    case +label <> rest: do IO<Unit>:
+      +gate : UW.Gate <- Bool.pick(IO(UW.Gate),String.is_empty(label),IO.pure(UW.Gate,UW.GateNone{}),UW.decide(db,provider,label,model))
+      noted : Unit <- Bool.pick(IO(Unit),Bool.or(String.is_empty(label),Bool.not(UW.gate_held(gate))),IO.pure(Unit,Unit{}),UW.announce(db,session,provider,label,model,gate))
+      announce_holds(db,session,provider,model,rest)
+
+# The hold identity derives from the reads that hold the entries, so a repeated gate
+# adds no second announcement. A hold with no held entry uses the caller's identity.
+def announce_hold(+db: String, +session: String, +harness: String, +fallback: String, +states: String, +held: String, +receipts: String) -> IO(Unit):
+  do IO<Unit>:
+    +provider : String <- UW.seat_provider_io(db,session)
+    +model : String <- UW.seat_model_io(db,session)
+    holds : Unit <- Bool.pick(IO(Unit),String.is_empty(provider),IO.pure(Unit,Unit{}),announce_holds(db,session,provider,model,Tx.split_lines(held)))
+    announce(db,Bool.pick(String,String.is_empty(receipts),fallback ++ ":account-hold","account-hold:" ++ session ++ ":" ++ receipts),session,hold_body(session,harness,states))
+
+# The store in force before the move: the bound account's own store, or the profile
+# record's store for a seat bound by a profile record.
+def store_in_force(+db: String, +session: String, +harness: String, bound: Maybe<&2,AccountRecord>) -> IO(String):
+  match bound:
+    case Some{+account}: IO.pure(String,account_secret_ref(account))
+    case None{}: do IO<String>:
+      +path : String <- IO.try(String,DB.Sql.query(db,Subs.profile_record_sql(db,session)))
+      recorded : String <- file_text(Tx.trim_nl(path))
+      IO.pure(String,Subs.record_source(harness,Subs.last_line(Tx.split_lines(recorded))))
+
+def binding_matches(+label: String, bound: Maybe<&2,AccountRecord>) -> Bool:
+  match bound:
+    case None{}: False{}
+    case Some{+account}: String.eq(label,account_id(account))
+
+def move_binding_verified(+db: String, +session: String, +id: String, +label: String, matches: Bool) -> IO(Bool):
+  match matches:
+    case True{}: IO.pure(Bool,True{})
+    case False{}: do IO<Bool>:
+      +detail : String <- IO.pure(String,"Account binding does not match selected account " ++ label ++ "; owed input remains retained.")
+      noted : Unit <- Subs.report_body(db,session,id,"account-binding-failed",detail)
+      IO.die(Bool,1,detail)
+
+def move_appended(+db: String, +session: String, +id: String, +harness: String, +label: String, appended: Result<&1,&1,U32 & String,Unit>) -> IO(Bool):
+  match appended:
+    case Done{unit}: do IO<Bool>:
+      bound : Maybe<&2,AccountRecord> <- current_account(db,session,harness)
+      move_binding_verified(db,session,id,label,binding_matches(label,bound))
+    case Fail{(code,detail)}: do IO<Bool>:
+      noted : Unit <- Subs.report_body(db,session,id,"account-append-failed","account record append failed: " ++ U32.show(code) ++ ": " ++ detail ++ "; the provider cause stands and no account was advanced.")
+      IO.pure(Bool,False{})
+
+# The selection notices commit together before the binding changes. A database
+# failure leaves the binding in force. The notices describe the selected move;
+# an append failure has its own report and leaves the input owed.
+def move_recorded(+db: String, +session: String, +id: String, +harness: String, +account: AccountRecord, +body: String, prepared: Bool) -> IO(Bool):
+  match prepared:
+    case False{}: IO.pure(Bool,False{})
+    case True{}: do IO<Bool>:
+      noted : Unit <- announce(db,id ++ ":account-move",session,body)
+      path : String <- account_sidecar(db,session)
+      appended : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(Tx.trim_nl(path),account_id(account) ++ "\n")
+      move_appended(db,session,id,harness,account_id(account),appended)
+
+# The native history is prepared for the next store before the account record names
+# it, so a failed preparation leaves the account unadvanced with its own report. A
+# session with no native conversation has no history to carry.
+def move_to(+db: String, +session: String, +id: String, +harness: String, +from: String, +from_store: String, +native: String, cmd: String, cwd: String, +account: AccountRecord, +position: U32, +total: U32, +states: String) -> IO(Bool):
+  do IO<Bool>:
+    prepared : Bool <- Bool.pick(IO(Bool),Bool.or(String.is_empty(native),String.eq(from_store,account_secret_ref(account))),IO.pure(Bool,True{}),Subs.prepare_account_history(db,session,id,harness,from_store,account_secret_ref(account),cmd,cwd,native))
+    move_recorded(db,session,id,harness,account,move_body(session,harness,from,account_id(account),position,total,states),prepared)
+
+def order_decided(+db: String, +session: String, +id: String, +harness: String, +from: String, +from_store: String, native: String, cmd: String, cwd: String, +total: U32, scan: Scan) -> IO(Bool):
+  match scan:
+    case Found{+account,+position,+states}: move_to(db,session,id,harness,from,from_store,native,cmd,cwd,account,position,total,states)
+    case Missing{+states,+held,+receipts}: do IO<Bool>:
+      +base : String <- Subs.refusal_report_base(db,session,id)
+      noted : Unit <- announce_hold(db,session,harness,base,states,held,receipts)
+      IO.pure(Bool,False{})
+
+def advance_in_order(+db: String, +session: String, +id: String, +harness: String, +from: String, native: String, cmd: String, cwd: String, +cause: String, +helper: String, bound: Maybe<&2,AccountRecord>, +ordered: List<&2,AccountRecord>) -> IO(Bool):
+  do IO<Bool>:
+    +from_store : String <- store_in_force(db,session,harness,bound)
+    scan : Scan <- scan_order(db,session,helper,True{},from,"refused: " ++ cause,ordered)
+    order_decided(db,session,id,harness,from,from_store,native,cmd,cwd,accounts_count(ordered),scan)
+
+# A harness with recorded accounts follows their order. A harness without recorded
+# accounts keeps the operator profile list.
+def handoff_ordered(+db: String, +session: String, +id: String, +event: String, +native: String, +cmd: String, +cwd: String, +cause: String, +harness: String, +label: String, +helper: String, +bound: Maybe<&2,AccountRecord>, +ordered: List<&2,AccountRecord>) -> IO(Bool):
+  Bool.pick(IO(Bool),Bool.or(String.is_empty(cause),accounts_empty(ordered)),
+    handoff_decided(db,session,id,event,native,cmd,cwd,cause,harness,bound),
+    advance_in_order(db,session,id,harness,label,native,cmd,cwd,cause,helper,bound,ordered))
+
+# --- the order at a wake and at a launch ------------------------------------------
+#
+# A seat whose current account is held by a live read is admitted when another entry
+# of its order is available; the launch then moves it. When no entry is available
+# the hold stands and is announced with every entry's state.
+def held_receipt(gate: UW.Gate) -> String:
+  match gate:
+    case UW.GateHeld{window,resets_at,source,receipt}: receipt
+    case other: ""
+
+def order_gate_scan(+db: String, +session: String, +harness: String, +gate: UW.Gate, scan: Scan) -> IO(UW.Gate):
+  match scan:
+    case Found{account,position,states}: IO.pure(UW.Gate,UW.GateNone{})
+    case Missing{+states,+held,+receipts}: do IO<UW.Gate>:
+      noted : Unit <- announce_hold(db,session,harness,"account-order:" ++ session ++ ":" ++ held_receipt(gate),states,held,receipts)
+      IO.pure(UW.Gate,gate)
+
+def order_gate_held(+db: String, +session: String, +helper: String, +gate: UW.Gate) -> IO(UW.Gate):
+  do IO<UW.Gate>:
+    +harness_text : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +harness : String <- IO.pure(String,Tx.trim_nl(harness_text))
+    +ordered : List<&2,AccountRecord> <- ordered_accounts(db,harness)
+    +label : String <- handoff_label_io(db,session)
+    Bool.pick(IO(UW.Gate),accounts_empty(ordered),IO.pure(UW.Gate,gate),do IO<UW.Gate>:
+      scan : Scan <- scan_order(db,session,helper,True{},label,"current account, held by live read " ++ held_receipt(gate),ordered)
+      order_gate_scan(db,session,harness,gate,scan))
+
+def order_gate_with(+db: String, +session: String, +helper: String, gate: UW.Gate) -> IO(UW.Gate):
+  match gate:
+    case UW.GateHeld{+window,+resets_at,+source,+receipt}: order_gate_held(db,session,helper,UW.GateHeld{window,resets_at,source,receipt})
+    case other: IO.pure(UW.Gate,other)
+
+def order_gate(+db: String, +session: String, gate: UW.Gate) -> IO(UW.Gate):
+  do IO<UW.Gate>:
+    +helper : String <- UW.read_helper()
+    order_gate_with(db,session,helper,gate)
+
+# A failed required move terminates this launch with the recorded failure report.
+# Callers return from the move only after its selected binding was verified.
+def launch_move_result(moved: Bool) -> IO(Bool):
+  match moved:
+    case True{}: IO.pure(Bool,True{})
+    case False{}: IO.die(Bool,1,"Account move failed; read the account history or append failure report. Owed input remains retained.")
+
+def order_move_decided(+db: String, +session: String, +harness: String, +label: String, native: String, cmd: String, cwd: String, +receipt: String, +total: U32, +from_store: String, scan: Scan) -> IO(Bool):
+  match scan:
+    case Found{+account,+position,+states}: do IO<Bool>:
+      moved : Bool <- move_to(db,session,"account-order:" ++ session ++ ":" ++ receipt,harness,label,from_store,native,cmd,cwd,account,position,total,states)
+      launch_move_result(moved)
+    case Missing{states,held,receipts}: IO.pure(Bool,False{})
+
+def order_move_scan(+db: String, +session: String, +harness: String, +label: String, native: String, cmd: String, cwd: String, +receipt: String, +ordered: List<&2,AccountRecord>) -> IO(Bool):
+  do IO<Bool>:
+    bound : Maybe<&2,AccountRecord> <- bound_account(db,session,harness)
+    +from_store : String <- store_in_force(db,session,harness,bound)
+    scan : Scan <- scan_order(db,session,"",False{},label,"current account, held by live read " ++ receipt,ordered)
+    order_move_decided(db,session,harness,label,native,cmd,cwd,receipt,accounts_count(ordered),from_store,scan)
+
+# Before a launch, a seat whose current account is held moves to the first
+# available entry from the wake gate's recorded reads. Returns whether it moved.
+# A selected move that fails exits with its retained failure.
+def order_move_with(+db: String, +session: String, +native: String, +cmd: String, +cwd: String) -> IO(Bool):
+  do IO<Bool>:
+    +harness_text : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +harness : String <- IO.pure(String,Tx.trim_nl(harness_text))
+    +ordered : List<&2,AccountRecord> <- ordered_accounts(db,harness)
+    +label : String <- handoff_label_io(db,session)
+    +provider : String <- UW.seat_provider_io(db,session)
+    +model : String <- UW.seat_model_io(db,session)
+    +gate : UW.Gate <- Bool.pick(IO(UW.Gate),Bool.or(String.is_empty(provider),accounts_empty(ordered)),IO.pure(UW.Gate,UW.GateNone{}),UW.decide(db,provider,label,model))
+    Bool.pick(IO(Bool),UW.gate_held(gate),order_move_scan(db,session,harness,label,native,cmd,cwd,held_receipt(gate),ordered),IO.pure(Bool,False{}))
+
+def order_move(+db: String, +session: String, +native: String, +cmd: String, +cwd: String) -> IO(Unit):
+  do IO<Unit>:
+    moved : Bool <- order_move_with(db,session,native,cmd,cwd)
+    IO.pure(Unit,Unit{})
+
 # Provider-reported exhaustion advances the account in force when a binding
-# put one in force, and the operator's profile list otherwise. The usage-window
-# observation is recorded before any advance, under the refused account label,
-# so the provider reset survives even when the advance fails; the advance is
-# recorded before the caller relaunches, so the next attempt records the next
-# account beside its own attempt identity. An empty cause records nothing.
-def handoff(+db: String, +session: String, +id: String, +event: String, native: String, cmd: String, cwd: String) -> IO(Bool):
+# put one in force, and the operator's profile list otherwise. The refusal
+# evidence is recorded before any advance, under the refused account label, and
+# the refusal starts a live read of that account's provider usage (#1025); the
+# read, not the refusal text, decides whether the account is held. For two
+# subscription accounts with distinct credential stores, the native-history
+# helper materializes the next store before the sidecar records the advance.
+# The advance is recorded before the caller relaunches, so the next attempt
+# records the next account beside its own attempt identity. An empty cause
+# records nothing.
+def handoff_with(+db: String, +session: String, +id: String, +event: String, native: String, cmd: String, cwd: String, +helper: String) -> IO(Bool):
   do IO<Bool>:
     +cause : String <- Subs.exhaustion_cause(db,event)
     +harness_text : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
@@ -773,8 +1640,19 @@ def handoff(+db: String, +session: String, +id: String, +event: String, native: 
     +bound : Maybe<&2,AccountRecord> <- bound_account(db,session,harness)
     +label : String <- label_for_bound(db,session,bound)
     recorded : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.record_cause(db,session,id,label,cause))
-    advanced : Bool <- handoff_decided(db,session,id,event,native,cmd,cwd,cause,harness,bound)
-    IO.pure(Bool,advanced)
+    read : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.read_refused_with(db,session,label,id,helper))
+    +ordered : List<&2,AccountRecord> <- ordered_accounts(db,harness)
+    advanced : Bool <- handoff_ordered(db,session,id,event,native,cmd,cwd,cause,harness,label,helper,bound,ordered)
+    +next_label : String <- handoff_label_io(db,session)
+    gate : UW.Gate <- UW.window_state(db,session,next_label)
+    held : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(cause)),gate_held(gate)))
+    IO.pure(Bool,Bool.and(advanced,Bool.not(held)))
+
+# helper is the usage-read executable installed beside the runtime identity helper.
+def handoff(+db: String, +session: String, +id: String, +event: String, native: String, cmd: String, cwd: String) -> IO(Bool):
+  do IO<Bool>:
+    +helper : String <- UW.read_helper()
+    handoff_with(db,session,id,event,native,cmd,cwd,helper)
 
 # --- the account selected for each attempt -----------------------------------
 
@@ -793,7 +1671,48 @@ def attempt_completed_sql(+attempt: String, +outcome: String, +error_text: Strin
 def attempt_completed(+db: String, +attempt: String, +outcome: String, +error_text: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,commit_read(db,attempt_completed_sql(attempt,outcome,error_text)))
+    settled : String <- credit_settle_for(db,attempt,outcome,"",False{})
+    IO.pure(Unit,Unit{})
+
+# The settlement of one finished attempt records its outcome. A successful attempt
+# does not release a usage hold; only a live read does (#1025).
+def attempt_settled(+db: String, +session: String, +attempt: String, +failed: Bool, +error_text: String) -> IO(Unit):
+  do IO<Unit>:
+    recorded : Unit <- attempt_completed(db,attempt,Bool.pick(String,failed,"failed","completed"),error_text)
+    IO.pure(Unit,Unit{})
+
+
+# The cumulative total_cost_usd is read from a valid Claude result frame at the
+# root object. The raw text is scanned at object depth to find the one root
+# total_cost_usd key; a nested same-named key is ignored and a duplicate root
+# key is refused as ambiguous. The exact decimal token is taken whole, so 1e2,
+# malformed, non-result and non-number values yield unknown cost; the
+# observation text is unchanged and a missing token keeps the bound counted.
+def credit_result_cost_sql(+event: String) -> String:
+  +e : String = C.q(event)
+  +k : String = "'\"total_cost_usd\"'"
+  +ws : String = "' '||char(9)||char(10)||char(13)"
+  "WITH RECURSIVE v0(e) AS (SELECT " ++ e ++ "), v(e,ok) AS (SELECT e,CASE WHEN json_valid(e) THEN CASE WHEN json_type(e)='object' AND (SELECT count(*) FROM json_tree(e) WHERE path='$' AND key='type')=1 AND (SELECT value FROM json_tree(e) WHERE path='$' AND key='type')='result' AND (SELECT count(*) FROM json_tree(e) WHERE path='$' AND key='total_cost_usd')=1 AND (SELECT type FROM json_tree(e) WHERE path='$' AND key='total_cost_usd') IN ('integer','real') THEN 1 ELSE 0 END ELSE 0 END FROM v0), "
+  ++ "pos(i,ch,in_str,esc,depth) AS (SELECT 1,substr(e,1,1),0,0,0 FROM v UNION ALL SELECT i+1,substr(e,i+1,1),CASE WHEN in_str=1 AND esc=1 THEN 1 WHEN in_str=1 AND ch='\"' THEN 0 WHEN in_str=0 AND ch='\"' THEN 1 ELSE in_str END,CASE WHEN in_str=1 AND esc=1 THEN 0 WHEN in_str=1 AND ch='\\' THEN 1 ELSE 0 END,depth + CASE WHEN in_str=0 AND ch='{' THEN 1 WHEN in_str=0 AND ch='[' THEN 1 WHEN in_str=0 AND ch='}' THEN -1 WHEN in_str=0 AND ch=']' THEN -1 ELSE 0 END FROM pos,v WHERE i<length(e)), "
+  ++ "keys(i) AS (SELECT i FROM pos,v WHERE ok=1 AND in_str=0 AND depth=1 AND substr(v.e,i,length(" ++ k ++ "))=" ++ k ++ " AND substr(ltrim(substr(v.e,i+length(" ++ k ++ "))," ++ ws ++ "),1,1)=':'), "
+  ++ "t(s) AS (SELECT CASE WHEN (SELECT count(*) FROM keys)=1 AND substr(ltrim(substr(v.e,(SELECT i FROM keys)+length(" ++ k ++ "))," ++ ws ++ "),1,1)=':' THEN ltrim(substr(ltrim(substr(v.e,(SELECT i FROM keys)+length(" ++ k ++ "))," ++ ws ++ "),2)," ++ ws ++ ") ELSE '' END FROM v), "
+  ++ "scan(s,n) AS (SELECT s,0 FROM t UNION ALL SELECT s,n+1 FROM scan WHERE n<length(s) AND substr(s,n+1,1) GLOB '[0-9.]') "
+  ++ "SELECT CASE WHEN s='' OR n=0 THEN '' WHEN n=length(s) OR instr(','||'}'||char(9)||char(10)||char(13)||' ',substr(s,n+1,1))>0 THEN substr(s,1,n) ELSE '' END FROM scan ORDER BY n DESC LIMIT 1;"
+
+def credit_result_cost_io(+db: String, +event: String) -> IO(String):
+  do IO<String>:
+    cost : String <- IO.try(String,DB.Sql.read(db,credit_result_cost_sql(event)))
+    +text : String <- IO.pure(String,Tx.trim_nl(cost))
+    IO.pure(String,Bool.pick(String,decimal_text(text),text,""))
+
+
+def attempt_completed_event(+db: String, +attempt: String, +outcome: String, +error_text: String, +event: String) -> IO(Unit):
+  do IO<Unit>:
+    cost : String <- credit_result_cost_io(db,event)
+    saved : String <- IO.try(String,commit_read(db,attempt_completed_sql(attempt,outcome,error_text)))
+    settled : String <- credit_settle_for(db,attempt,outcome,cost,False{})
     IO.print(Tx.trim_nl(saved))
+
 
 # The launch records the selected account beside the attempt. A failed record
 # reports its own cause to the session's coordinator and leaves the launch to
@@ -909,6 +1828,39 @@ def import_credit(+db: String, +authority: String, +account: String, +organizati
     returned : Unit <- import_fields(db,authority,account,organization,detail,String.split(Tx.trim_nl(fields),Char.from_u32(31)))
     IO.pure(Unit,Unit{})
 
+# An external spend reading is the provider's Admin cost report for one
+# organization and cap period. It is recorded as a numeric observation so the
+# reservation guard can reconcile its own ledger against the provider's report.
+def import_spend_insert_sql(+authority: String, +account: String, +organization: String, +detail: String) -> String:
+  "INSERT OR IGNORE INTO credit_observations(id,organization,fact,state,balance,unit,expires,cycle,source,detail,observed_at,authority) SELECT " ++ import_id_sql(account,detail) ++ "," ++ C.q(organization) ++ ",'external_spend',coalesce(json_extract(" ++ C.q(detail) ++ ",'$.state'),'reported'),coalesce(json_extract(" ++ C.q(detail) ++ ",'$.balance'),''),coalesce(json_extract(" ++ C.q(detail) ++ ",'$.unit'),'USD'),coalesce(json_extract(" ++ C.q(detail) ++ ",'$.expires'),''),coalesce(json_extract(" ++ C.q(detail) ++ ",'$.cycle'),''),coalesce(nullif(json_extract(" ++ C.q(detail) ++ ",'$.source'),''),'unsourcedObservation')," ++ C.q(detail) ++ "," ++ observe_observed_at(detail) ++ "," ++ C.q(authority) ++ ";"
+  ++ "SELECT json_object('observation',(SELECT " ++ observation_object_sql() ++ " FROM credit_observations WHERE id=" ++ import_id_sql(account,detail) ++ "));"
+
+def import_spend_admitted(+db: String, +authority: String, +account: String, +organization: String, +detail: String, present: Bool) -> IO(Unit):
+  match present:
+    case False{}: IO.die(Unit,2,"A spend import requires a JSON document, a recorded account whose verified organization is the imported organization, a fact of external_spend, a state of reported, a canonical USD balance, a named source and a cycle. No reading was recorded.")
+    case True{}: do IO<Unit>:
+      +saved : String <- IO.try(String,commit_read(db,import_spend_insert_sql(authority,account,organization,detail)))
+      IO.print(Tx.trim_nl(saved))
+
+def import_spend_selected(+db: String, +authority: String, +account: String, +organization: String, +detail: String, fact: String, +state: String, balance: String, unit: String, source: String, valid_json: Bool) -> IO(Unit):
+  do IO<Unit>:
+    verified : String <- IO.try(String,DB.Sql.read(db,"SELECT EXISTS(SELECT 1 FROM accounts WHERE id=" ++ C.q(account) ++ " AND organization=" ++ C.q(organization) ++ " AND organization<>'');"))
+    reported : Bool <- IO.pure(Bool,Bool.and(decimal_text(balance),Bool.and(String.eq(unit,"USD"),Bool.not(String.is_empty(source)))))
+    admitted : Bool <- IO.pure(Bool,Bool.and(valid_json,Bool.and(String.eq(fact,"external_spend"),Bool.and(String.eq(state,"reported"),Bool.and(String.eq(Tx.trim_nl(verified),"1"),reported)))))
+    import_spend_admitted(db,authority,account,organization,detail,admitted)
+
+def import_spend_fields(+db: String, +authority: String, +account: String, +organization: String, +detail: String, fields: List<&2,String>) -> IO(Unit):
+  match fields:
+    case valid <> fact <> state <> balance <> unit <> source <> rest: import_spend_selected(db,authority,account,organization,detail,fact,state,balance,unit,source,String.eq(valid,"1"))
+    case other: import_spend_admitted(db,authority,account,organization,detail,False{})
+
+def import_spend(+db: String, +authority: String, +account: String, +organization: String, +detail: String) -> IO(Unit):
+  do IO<Unit>:
+    +fields : String <- IO.try(String,DB.Sql.read(db,import_fields_sql(detail)))
+    returned : Unit <- import_spend_fields(db,authority,account,organization,detail,String.split(Tx.trim_nl(fields),Char.from_u32(31)))
+    IO.pure(Unit,Unit{})
+
+
 # --- the pooled read ---------------------------------------------------------
 
 # The newest observation of each fact for each organization, the accounts that
@@ -921,7 +1873,7 @@ def pool_answer_sql(+clause: String) -> String:
   ++ " organizations AS (SELECT organization FROM credit_observations WHERE " ++ clause ++ " UNION SELECT organization FROM accounts WHERE organization<>'' AND " ++ clause ++ ")"
   ++ " SELECT json_object('organizations',coalesce(json_group_array(json_object('organization',o.organization,'observationState',CASE WHEN EXISTS(SELECT 1 FROM ranked r2 WHERE r2.organization=o.organization AND r2.fact='promotional_credit' AND r2.rank=1 AND r2.state='reported') THEN 'reported' WHEN EXISTS(SELECT 1 FROM ranked r3 WHERE r3.organization=o.organization AND r3.fact='promotional_credit' AND r3.rank=1) THEN 'unavailable' ELSE 'unknown' END,'facts',json(o.facts),'accounts',json(o.accounts))),json('[]'))) FROM ("
   ++ " SELECT organization AS organization,"
-  ++ " (SELECT coalesce(json_group_array(json_object('fact',r.fact,'state',r.state,'balance',r.balance,'unit',r.unit,'expires',r.expires,'cycle',r.cycle,'source',r.source,'observedAt',r.observed_at,'previous',CASE WHEN r.state='unavailable' THEN (SELECT json_object('balance',p.balance,'unit',p.unit,'cycle',p.cycle,'observedAt',p.observed_at,'source',p.source) FROM credit_observations p WHERE p.organization=r.organization AND p.fact=r.fact AND p.state='reported' ORDER BY p.observed_at DESC,p.rowid DESC LIMIT 1) END,'conflict',json(CASE WHEN (SELECT count(DISTINCT balance) FROM credit_observations WHERE organization=r.organization AND fact=r.fact AND state='reported' AND balance<>'' AND cycle=r.cycle)>1 THEN 'true' ELSE 'false' END),'readings',(SELECT coalesce(json_group_array(json_object('balance',balance,'unit',unit,'source',source,'observedAt',observed_at,'authority',authority)),json('[]')) FROM (SELECT DISTINCT balance,unit,source,observed_at,authority FROM credit_observations WHERE organization=r.organization AND fact=r.fact AND state='reported' AND balance<>'' AND cycle=r.cycle)))),json('[]')) FROM ranked r WHERE r.rank=1 AND r.organization=o.organization) AS facts,"
+  ++ " (SELECT coalesce(json_group_array(json_object('fact',r.fact,'state',r.state,'balance',r.balance,'unit',r.unit,'expires',r.expires,'cycle',r.cycle,'source',r.source,'observedAt',r.observed_at,'previous',CASE WHEN r.state='unavailable' THEN (SELECT json_object('balance',p.balance,'unit',p.unit,'cycle',p.cycle,'observedAt',p.observed_at,'source',p.source) FROM credit_observations p WHERE p.organization=r.organization AND p.fact=r.fact AND p.state='reported' ORDER BY p.observed_at DESC,p.rowid DESC LIMIT 1) END,'conflict',json(CASE WHEN (SELECT count(DISTINCT balance) FROM credit_observations WHERE organization=r.organization AND fact=r.fact AND state='reported' AND balance<>'' AND cycle=r.cycle AND observed_at=r.observed_at)>1 THEN 'true' ELSE 'false' END),'readings',(SELECT coalesce(json_group_array(json_object('balance',balance,'unit',unit,'source',source,'observedAt',observed_at,'authority',authority)),json('[]')) FROM (SELECT DISTINCT balance,unit,source,observed_at,authority FROM credit_observations WHERE organization=r.organization AND fact=r.fact AND state='reported' AND balance<>'' AND cycle=r.cycle)))),json('[]')) FROM ranked r WHERE r.rank=1 AND r.organization=o.organization) AS facts,"
   ++ " (SELECT coalesce(json_group_array(id),json('[]')) FROM accounts a WHERE a.organization=o.organization) AS accounts"
   ++ " FROM organizations o) o;"
 
@@ -960,6 +1912,7 @@ def select_answer(+db: String, +harness: String, +funding: String, chosen: Maybe
 
 def select(+db: String, +harness: String, +funding: String) -> IO(Unit):
   do IO<Unit>:
+    ready : Unit <- ensure(db)
     rows : String <- IO.try(String,DB.Sql.read(db,account_row_sql()))
     +accounts : List<&2,AccountRecord> <- IO.pure(List<&2,AccountRecord>,account_lines(Tx.split_lines(rows),Nil{}))
     +blocked_text : String <- IO.try(String,DB.Sql.read(db,blocked_organizations_sql()))
@@ -969,11 +1922,20 @@ def select(+db: String, +harness: String, +funding: String) -> IO(Unit):
 # --- the command -------------------------------------------------------------
 
 def unknown_action(action: String) -> IO(Unit):
-  IO.die(Unit,2,"Unknown account action " ++ action ++ ". Use record, read, bind, attempts, select, pool, observe or import-credit.")
+  IO.die(Unit,2,"Unknown account action " ++ action ++ ". Use record, read, bind, attempts, select, pool, observe, import-credit, import-spend or reconcile.")
 
 # The verb's argv carries one action and the eight named options in a fixed
 # order: action, id, provider, harness, funding, secret-ref, organization,
 # detail, session. Each action reads the options it names.
+def reconcile_cost_sql(+detail: String) -> String:
+  "SELECT CASE WHEN json_valid(" ++ C.q(detail) ++ ") THEN coalesce(json_extract(" ++ C.q(detail) ++ ",'$.cost'),'') ELSE '' END;"
+
+def reconcile_action(+db: String, +request: String, +detail: String) -> IO(Unit):
+  do IO<Unit>:
+    +cost : String <- IO.try(String,DB.Sql.read(db,reconcile_cost_sql(detail)))
+    state : String <- credit_settle_for(db,request,"reconciled",Tx.trim_nl(cost),True{})
+    IO.print(state)
+
 def run(+db: String, +action: String, +id: String, +provider: String, +harness: String, +funding: String, +secret_ref: String, +organization: String, +detail: String, +session: String) -> IO(Unit):
   do IO<Unit>:
     ready : Unit <- ensure(db)
@@ -985,7 +1947,9 @@ def run(+db: String, +action: String, +id: String, +provider: String, +harness: 
       Bool.pick(IO(Unit),String.eq(action,"pool"),pool(db,organization),
       Bool.pick(IO(Unit),String.eq(action,"observe"),observe(db,authority_of(session),id,detail),
       Bool.pick(IO(Unit),String.eq(action,"import-credit"),import_credit(db,authority_of(session),id,organization,detail),
-      unknown_action(action)))))))))
+      Bool.pick(IO(Unit),String.eq(action,"import-spend"),import_spend(db,authority_of(session),id,organization,detail),
+      Bool.pick(IO(Unit),String.eq(action,"reconcile"),reconcile_action(db,id,detail),
+      unknown_action(action)))))))))))
     IO.pure(Unit,Unit{})
 
 # The launch path records the account and funding route for the attempt it is
@@ -1043,22 +2007,17 @@ def credit_launch_refusal_for(+db: String, chosen: Maybe<&2,AccountRecord>) -> I
       status : String <- credit_status_for(db,account)
       IO.pure(String,credit_launch_refusal_decided(account,status))
 
+# Authorization records the selected credential route. Retained balances are
+# observations; an expired or unverified reading contributes empty amount fields.
 def credit_authorization_sql(+session: String, +attempt: String, +account: AccountRecord) -> String:
-  "INSERT OR IGNORE INTO credit_authorizations(attempt,session,account,organization,cycle,balance,unit,secret_ref,state) SELECT " ++ C.q(attempt) ++ "," ++ C.q(session) ++ "," ++ C.q(account_id(account)) ++ "," ++ C.q(account_organization(account)) ++ ",cycle,balance,unit," ++ C.q(account_secret_ref(account)) ++ ",'authorized' FROM credit_observations WHERE organization=" ++ C.q(account_organization(account)) ++ " AND fact='promotional_credit' AND state='reported' ORDER BY observed_at DESC,rowid DESC LIMIT 1;"
+  "WITH latest AS (SELECT * FROM credit_observations WHERE organization=" ++ C.q(account_organization(account)) ++ " AND fact='promotional_credit' ORDER BY observed_at DESC,rowid DESC LIMIT 1), usable AS (SELECT * FROM latest WHERE state='reported' AND length(expires)=13 AND expires NOT GLOB '*[^0-9]*' AND CAST(expires AS INTEGER)>CAST(strftime('%s','now') AS INTEGER)*1000) INSERT OR IGNORE INTO credit_authorizations(attempt,session,account,organization,cycle,balance,unit,secret_ref,state) SELECT " ++ C.q(attempt) ++ "," ++ C.q(session) ++ "," ++ C.q(account_id(account)) ++ "," ++ C.q(account_organization(account)) ++ ",coalesce((SELECT cycle FROM usable),''),coalesce((SELECT balance FROM usable),''),coalesce((SELECT unit FROM usable),'')," ++ C.q(account_secret_ref(account)) ++ ",'authorized';"
   ++ "SELECT count(*) FROM credit_authorizations WHERE attempt=" ++ C.q(attempt) ++ " AND account=" ++ C.q(account_id(account)) ++ " AND organization=" ++ C.q(account_organization(account)) ++ " AND secret_ref=" ++ C.q(account_secret_ref(account)) ++ " AND state='authorized';"
-
-def credit_record_authorization_decided(+db: String, +session: String, +attempt: String, +account: AccountRecord, +status: String) -> IO(Bool):
-  match status:
-    case "eligible": do IO<Bool>:
-      migrated : Unit <- auth_columns_ensured(db)
-      saved : String <- IO.try(String,commit_read(db,credit_authorization_sql(session,attempt,account)))
-      IO.pure(Bool,String.eq(Tx.trim_nl(saved),"1"))
-    case other: IO.pure(Bool,False{})
 
 def credit_record_authorization(+db: String, +session: String, +attempt: String, +account: AccountRecord) -> IO(Bool):
   do IO<Bool>:
-    status : String <- credit_status_for(db,account)
-    credit_record_authorization_decided(db,session,attempt,account,status)
+    migrated : Unit <- auth_columns_ensured(db)
+    saved : String <- IO.try(String,commit_read(db,credit_authorization_sql(session,attempt,account)))
+    IO.pure(Bool,String.eq(Tx.trim_nl(saved),"1"))
 
 def credit_launch_binding_account(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, helper: Maybe<String>, +profile_store: String) -> IO(Maybe<List<String>>):
   Bool.pick(IO(Maybe<List<String>>),Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key"))),IO.pure(Maybe<List<String>>,None{}),IO.pure(Maybe<List<String>>,account_binding(harness,Some{account},helper,profile_store)))
@@ -1067,3 +2026,89 @@ def credit_launch_binding(+db: String, +session: String, +attempt: String, +harn
   match chosen:
     case None{}: IO.pure(Maybe<List<String>>,account_binding(harness,None{},helper,profile_store))
     case Some{+account}: credit_launch_binding_account(db,session,attempt,harness,account,helper,profile_store)
+
+# --- the qualified launch gate ------------------------------------------------
+# The launch gate is the production caller before send. It records a reservation
+# from a usable observation, records the credential authorization and returns
+# the packaged resolver binding. Unknown funding permits a qualified launch.
+# The source keeps the gate held until the release
+# qualification records the request-level guard as proven; a held gate creates
+# no reservation, writes no authorization and starts no launch.
+def credit_guard_route_account(+account: AccountRecord) -> Bool:
+  Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key")))
+
+def credit_current_period_io(db: String) -> IO(String):
+  do IO<String>:
+    text : String <- IO.try(String,DB.Sql.read(db,"SELECT strftime('%Y-%m','now');"))
+    IO.pure(String,Tx.trim_nl(text))
+
+def credit_reserved_sql(+attempt: String) -> String:
+  "SELECT EXISTS(SELECT 1 FROM credit_reservations WHERE request=" ++ C.q(attempt) ++ " AND state='reserved');"
+
+def credit_reserved_for(+db: String, +attempt: String) -> IO(Bool):
+  do IO<Bool>:
+    found : String <- IO.try(String,DB.Sql.read(db,credit_reserved_sql(attempt)))
+    IO.pure(Bool,String.eq(Tx.trim_nl(found),"1"))
+
+# The launch gate returns (binding, refusal). A binding that is Some with an
+# empty refusal is usable; a nonempty refusal is the full sentence the caller
+# reports and no launch starts.
+def credit_guard_refusal_status(+reason: String) -> String:
+  "Anthropic API-key launch refused by the request-level promotional-credit guard (" ++ reason ++ "); the attempt was not started and its input stays owed."
+
+def credit_launch_helper_text(helper: Maybe<String>) -> String:
+  match helper:
+    case None{}: ""
+    case Some{path}: path
+
+def credit_launch_authorized(+db: String, +session: String, +attempt: String, +account: AccountRecord, +helper: String) -> IO(Maybe<List<String>> & String):
+  do IO<Maybe<List<String>> & String>:
+    authorized : Bool <- credit_record_authorization(db,session,attempt,account)
+    Bool.pick(IO(Maybe<List<String>> & String),authorized,
+      IO.pure(Maybe<List<String>> & String,(api_key_binding(account_secret_ref(account),api_key_resolver_value(helper)),"")),
+      IO.pure(Maybe<List<String>> & String,(None{},"The promotional-credit authorization for this attempt could not be recorded; the attempt was not started and its input stays owed.")))
+
+def credit_launch_reserved(+db: String, +session: String, +attempt: String, +account: AccountRecord, +helper: String) -> IO(Maybe<List<String>> & String):
+  do IO<Maybe<List<String>> & String>:
+    +period : String <- credit_current_period_io(db)
+    observed : CreditAdmission <- credit_reserve_for(db,session,attempt,account,period)
+    credit_launch_authorized(db,session,attempt,account,helper)
+
+def credit_launch_price_reserved(+db: String, +session: String, +attempt: String, +account: AccountRecord, +helper: String, +max_charge: String) -> IO(Maybe<List<String>> & String):
+  do IO<Maybe<List<String>> & String>:
+    +period : String <- credit_current_period_io(db)
+    observed : CreditAdmission <- credit_reserve_bounded_for(db,session,attempt,account,period,max_charge)
+    credit_launch_authorized(db,session,attempt,account,helper)
+
+def credit_launch_price_decided(+db: String, +session: String, +attempt: String, +account: AccountRecord, +helper: String, +decision: CreditRequestPrice) -> IO(Maybe<List<String>> & String):
+  match decision:
+    case Priced{max_charge}: credit_launch_price_reserved(db,session,attempt,account,helper,max_charge)
+    case PriceRefused{reason}: IO.pure(Maybe<List<String>> & String,(None{},credit_guard_refusal_status(reason)))
+
+def credit_launch_gate_priced_account(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, +helper: String, +profile_store: String, +facts: CreditRequestFacts, qualified: Bool) -> IO(Maybe<List<String>> & String):
+  Bool.pick(IO(Maybe<List<String>> & String),credit_guard_route_account(account),
+    Bool.pick(IO(Maybe<List<String>> & String),qualified,
+      credit_launch_price_decided(db,session,attempt,account,helper,credit_request_price(facts)),
+      IO.pure(Maybe<List<String>> & String,(None{},credit_api_key_refusal(account)))),
+    IO.pure(Maybe<List<String>> & String,(account_binding(harness,Some{account},api_key_resolver_value(helper),profile_store),"")))
+
+def credit_launch_gate_priced(+db: String, +session: String, +attempt: String, +harness: String, +chosen: Maybe<&2,AccountRecord>, helper: Maybe<String>, +profile_store: String, +facts: CreditRequestFacts, qualified: Bool) -> IO(Maybe<List<String>> & String):
+  match chosen:
+    case None{}: IO.pure(Maybe<List<String>> & String,(account_binding(harness,None{},helper,profile_store),""))
+    case Some{+account}: do IO<Maybe<List<String>> & String>:
+      +helper_path : String = credit_launch_helper_text(helper)
+      credit_launch_gate_priced_account(db,session,attempt,harness,account,helper_path,profile_store,facts,qualified)
+
+def credit_launch_gate_account(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, +helper: String, +profile_store: String, qualified: Bool) -> IO(Maybe<List<String>> & String):
+  Bool.pick(IO(Maybe<List<String>> & String),credit_guard_route_account(account),
+    Bool.pick(IO(Maybe<List<String>> & String),qualified,
+      credit_launch_reserved(db,session,attempt,account,helper),
+      IO.pure(Maybe<List<String>> & String,(None{},credit_api_key_refusal(account)))),
+    IO.pure(Maybe<List<String>> & String,(account_binding(harness,Some{account},api_key_resolver_value(helper),profile_store),"")))
+
+def credit_launch_gate(+db: String, +session: String, +attempt: String, +harness: String, +chosen: Maybe<&2,AccountRecord>, helper: Maybe<String>, +profile_store: String, qualified: Bool) -> IO(Maybe<List<String>> & String):
+  match chosen:
+    case None{}: IO.pure(Maybe<List<String>> & String,(account_binding(harness,None{},helper,profile_store),""))
+    case Some{+account}: do IO<Maybe<List<String>> & String>:
+      +helper_path : String = credit_launch_helper_text(helper)
+      credit_launch_gate_account(db,session,attempt,harness,account,helper_path,profile_store,qualified)

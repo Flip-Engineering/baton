@@ -2,7 +2,7 @@
    Text is assigned through textContent.
 
    window.OversightDocument.render(data, opts)
-     data.players    [{id, parent, role, model, status, pendingCount, unacknowledgedCount,
+     data.players    [{id, parent, role, model, status, pendingCount, unreadCount,
                       owedTotal, owesWork, notProgressing, action, actionAt, stale, ensembles[],
                       taskTitle, authored, shared, received, live}]
      data.ensembles  [{id, owner, coupling, members[]}]

@@ -72,6 +72,21 @@ receipt. `install-receipt.json` binds the manifest hash and binary pins.
 sibling and all three role binaries, and the required REPL payload. It refuses a missing, non-executable, altered or
 unrecorded binary and reports the verified binary pins in its result.
 
+## Upgrade an existing coordination schema
+
+After the complete package check passes, apply its canonical schema to an
+existing coordination database:
+
+```sh
+"$BATON2_PREFIX/bin/baton" --ensure-schema "$BATON2_DATABASE"
+```
+
+This operation resolves the existing database path and runs the schema preflight
+used by coordinator writes, including the native change projection. It reports
+`{"schema":"baton2-schema-ensure-v1","status":"ready"}` after completion.
+The operation preserves session, message, native observation and stop records.
+Existing owners and receivers retain their admitted executable paths.
+
 ## Install or update a published release
 
 Select the published version and download its complete Darwin arm64 payload.
@@ -140,7 +155,7 @@ arguments select another recorded context.
 
 Verify ordinary read commands against the existing database. After each actor's
 owned turn completes, refresh its receiver using the procedure below. Preserve
-the recorded native identity, parent, workspace, pending input, receipts and
+the recorded native identity, parent, workspace, pending input, read records and
 explicit stops. Record any process that continues to use an earlier prefix;
 selecting the command symlink does not reload that process.
 
@@ -266,9 +281,11 @@ Omitting CWD retains the actor's workspace and branch. `receiver` retains its
 native conversation, parent, model, effort, pending input and explicit stops;
 stopped actors can refresh their receiver while the stop remains recorded.
 `resume SESSION --lift-stop` explicitly lifts the stop and continues pending
-input through the same conversation. An accepted registration for an unstopped
-actor can continue its pending input. Existing observers and
-attempt recovery commands finish under their admitted executable.
+input through the same conversation. `resume SESSION --clear-stop` (also
+`clear-stop SESSION`) removes a terminal stop without continuing: pending input
+stays owed, and no wake, native or provider request follows. An accepted
+registration for an unstopped actor can continue its pending input. Existing
+observers and attempt recovery commands finish under their admitted executable.
 
 The [historical installation qualification](native-installation-2026-10-02/README.md)
 measured an earlier source build and staged only `bin/baton2`. Its original build
@@ -339,7 +356,7 @@ returns literal commands for the request, message, session and turns. For an
 existing open assignment, use `--to SESSION`; Baton selects continuation
 automatically. In the actor context, `task-input-read --current` reads its latest
 complete dispatch input and setup outcome. Its native conversation,
-parent, workspace, pending input, receipts and explicit stops remain recorded.
+parent, workspace, pending input, read records and explicit stops remain recorded.
 Create a scratchpad deliberately when working notes need a file. Dispatch source
 is retained as database text. Native transcripts remain separate runtime files.
 The [dispatch interface](task-start-716.md) describes defaults, authority and
