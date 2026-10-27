@@ -126,7 +126,18 @@ class Configure(unittest.TestCase):
         self.assertEqual(changed['endpointArgv'], self.receiver_endpoint('leaf', 'kimi-code/k3', log))
 
 
+    def test_same_route_command_without_log_is_refused(self):
+        self.root()
+        self.recruit('leaf')
+        before = self.assignment('leaf')
+        refused = self.call('configure', 'leaf', 'omp', 'kimi-code/k3', 'low',
+                            self.fixture, '', 'omp', 'kimi-code/k3', 'low', ok=False)
+        self.assertEqual(refused['code'], 2)
+        self.assertIn('requires both --command and --output-log', refused['stderr'])
+        self.assertEqual(self.assignment('leaf'), before)
+
     def test_route_change_fences_a_delayed_expected_route_and_leaves_the_row_alone(self):
+
         self.root()
         self.recruit('leaf')
         before = self.assignment('leaf')
