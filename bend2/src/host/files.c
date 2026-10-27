@@ -730,6 +730,21 @@ static void baton_data_work(IoWork *work) {
     if(!call->error && rename(temporary,call->first)) call->error=errno;
     if(call->error) unlink(temporary);
     free(temporary);
+  } else if(call->operation==9) {
+    size_t length=strlen(call->first)+48;
+    char *temporary=malloc(length);
+    if(!temporary) {call->error=ENOMEM;return;}
+    snprintf(temporary,length,"%s.tmp.%u",call->first,(unsigned)getpid());
+    unlink(temporary);
+    int fd=open(temporary,O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,0640);
+    if(fd<0) {call->error=errno;free(temporary);return;}
+    if(fchmod(fd,0640)) call->error=errno;
+    if(!call->error) call->error=baton_data_write(fd,call->second,call->length);
+    if(!call->error && fsync(fd)) call->error=errno;
+    if(close(fd) && !call->error) call->error=errno;
+    if(!call->error && rename(temporary,call->first)) call->error=errno;
+    if(call->error) unlink(temporary);
+    free(temporary);
   } else if(call->operation==7) {
     int fd=open(call->first,O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
     if(fd<0) {call->error=errno;return;}
@@ -779,9 +794,9 @@ static Term baton_data_run(Env env,Term *fields,IoWork *work,int operation) {
   call->first=io_cstr(env,fields[0],&length);
   if(!call->first || strlen(call->first)!=length) call->error=EINVAL;
   if(operation==1 || operation==2) call->mode=(u32)fields[1];
-  if(operation==4 || operation==5 || operation==6 || operation==8) {
+  if(operation==4 || operation==5 || operation==6 || operation==8 || operation==9) {
     call->second=io_cstr(env,fields[1],&length);call->length=(size_t)length;
-    if(!call->second || (operation!=6 && strlen(call->second)!=length)) call->error=EINVAL;
+    if(!call->second || (operation!=6 && operation!=9 && strlen(call->second)!=length)) call->error=EINVAL;
   }
   work->data=(char *)call;
   if(call->error) return baton_data_pack(env,work);
@@ -811,6 +826,10 @@ static void __attribute__((constructor)) baton_data_copy_use(void) {io_eff(CID_F
 #ifdef CID_FILES_WRITE_SHARED
 static Term baton_data_write_run(Env e,Term *f,IoWork *w) {return baton_data_run(e,f,w,6);}
 static void __attribute__((constructor)) baton_data_write_use(void) {io_eff(CID_FILES_WRITE_SHARED,baton_data_write_run,0);}
+#endif
+#ifdef CID_FILES_WRITE_GROUP_READ
+static Term baton_data_write_group_read_run(Env e,Term *f,IoWork *w) {return baton_data_run(e,f,w,9);}
+static void __attribute__((constructor)) baton_data_write_group_read_use(void) {io_eff(CID_FILES_WRITE_GROUP_READ,baton_data_write_group_read_run,0);}
 #endif
 #ifdef CID_FILES_BYTE_PROPERTIES
 static Term baton_data_properties(Env e,Term *f,IoWork *w) {return baton_data_run(e,f,w,7);}

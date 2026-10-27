@@ -317,8 +317,10 @@ static int host_posix_spawn_held(const char *text,size_t length,const char *cwd,
   if(error) return error;
   int out=open(stdout_path,O_WRONLY|O_CREAT|O_APPEND,0660);
   if(out<0) {free(argv);return errno;}
+  if(fchmod(out,0640)) {error=errno;close(out);free(argv);return error;}
   int err=open(stderr_path,O_WRONLY|O_CREAT|O_APPEND,0660);
   if(err<0) {error=errno;close(out);free(argv);return error;}
+  if(fchmod(err,0640)) {error=errno;close(out);close(err);free(argv);return error;}
   int release[2],status[2];
   if(pipe(release)) {error=errno;close(out);close(err);free(argv);return error;}
   if(pipe(status)) {

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import signal
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -18,6 +19,9 @@ T = Path(tempfile.mkdtemp(prefix='compile-queue-custody-'))
 STATE = T / 'queue'
 STATE.mkdir()
 STATE.chmod(0o2770)
+# The queue owns its output modes; exercise that contract under a restrictive
+# caller umask used by the homelab runner.
+os.umask(0o077)
 SOURCE = T / 'source'
 SCRIPTS = SOURCE / 'bend2/scripts'
 SCRIPTS.mkdir(parents=True)
@@ -133,6 +137,17 @@ def wait(p, expected=0):
 def records():
     return list((STATE / 'bootstrap-runs').glob('*/telemetry'))
 
+def assert_group_readable_outputs():
+    result_paths = list((STATE / 'keys').glob('*/runs/*/result'))
+    result_paths.extend((STATE / 'keys').glob('*/completed/result'))
+    log_paths = list((STATE / 'keys').glob('*/runs/*/stdout'))
+    log_paths.extend((STATE / 'keys').glob('*/runs/*/stderr'))
+    assert result_paths, 'fixture queue did not publish result records'
+    assert log_paths, 'fixture queue did not create compiler logs'
+    for path in result_paths + log_paths:
+        mode = stat.S_IMODE(path.stat().st_mode)
+        assert mode == 0o640, (path, oct(mode))
+
 def wait_event(tag, name):
     # This deadline detects a broken disposable fixture; it does not run a compiler.
     deadline = time.monotonic() + 20
@@ -159,6 +174,7 @@ try:
     wait(launch('bootstrap', True))
     assert all((T / name).is_file() for name in ('native.c', 'retained-reference.c', 'bootstrap'))
     assert not any(r['event'] == 'overlap' for r in events())
+    assert_group_readable_outputs()
     print('PASS native and maintained retained launcher serialize; bootstrap completes')
 
     wait(launch('explicit-runtime-separator', separated=True))
