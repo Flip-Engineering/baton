@@ -987,20 +987,21 @@ def start_attempt_missing_result(text: String, key: String, keydir: String,
     exists : Bool <- regular(attempt ++ "/result")
     start_attempt_result_exists(exists, text, key, keydir, attempt, owner, now, waited)
 
-def wait_supervisor_result(result: Result<&1,&1,U32 & String,String>, +pid: U32, +delay: U32) -> IO(String):
+@unsafe
+def wait_supervisor_result(~again_wait: (@+pid: U32 -> @+delay: U32 -> IO(String)), +pid: U32, +delay: U32, result: Result<&1,&1,U32 & String,String>) -> IO(String):
   match result:
     case Fail{error}: IO.pure(String, "")
     case Done{+status}:
       Bool.pick(IO(String), Tx.str_eq(field(status, "running"), "1"),
         do IO<String>:
           slept : Unit <- IO.sleep(delay)
-          wait_supervisor_poll(pid, U32.min(U32.mul(delay, 2), 128)),
+          again_wait(pid, U32.min(U32.mul(delay, 2), 128)),
         IO.pure(String, status))
 
-def wait_supervisor_poll(pid: U32, delay: U32) -> IO(String):
+def wait_supervisor_poll(+pid: U32, +delay: U32) -> IO(String):
   do IO<String>:
     result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.try_wait(pid)
-    wait_supervisor_result(result, pid, delay)
+    wait_supervisor_result(wait_supervisor_poll, pid, delay, result)
 
 def wait_supervisor(pid: U32) -> IO(String):
   wait_supervisor_poll(pid, 2)
