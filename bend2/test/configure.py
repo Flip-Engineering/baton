@@ -137,7 +137,6 @@ class Configure(unittest.TestCase):
         self.assertEqual(self.assignment('leaf'), before)
 
     def test_route_change_fences_a_delayed_expected_route_and_leaves_the_row_alone(self):
-
         self.root()
         self.recruit('leaf')
         before = self.assignment('leaf')

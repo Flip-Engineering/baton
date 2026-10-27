@@ -330,6 +330,8 @@ def connect_sql(+id: String, native: String, +endpoint: String) -> String:
 # An effort-only same-route save preserves the existing endpoint. Explicit
 # --command and --output-log rebind it. A command without a log is refused; a
 # log without a command preserves the recorded endpoint.
+# The expected route identifies the session configuration being changed.
+# The predicate is a subquery so it also stands in a SELECT with no FROM clause,
 # which is where the refusal answer is built.
 def configure_matches(session: String, harness: String, model: String, effort: String) -> String:
   "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(session) ++ " AND harness=" ++ q(harness) ++ " AND model=" ++ q(model) ++ " AND effort=" ++ q(effort) ++ ")"
