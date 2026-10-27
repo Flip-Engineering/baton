@@ -277,13 +277,15 @@ type SelectionVerdict is Data:
   SvReleased{}
   SvUnknown{}
 
+def verdict_unknown(acc: SelectionVerdict) -> SelectionVerdict:
+  match acc:
+    case SvSelected{}: SvSelected{}
+    case other: SvUnknown{}
+
 def merge_verdict(acc: SelectionVerdict, next: Maybe<Bool>) -> SelectionVerdict:
   match next:
     case Some{hit}: Bool.pick(SelectionVerdict, hit, SvSelected{}, acc)
-    case None{}:
-      match acc:
-        case SvSelected{}: SvSelected{}
-        case other: SvUnknown{}
+    case None{}: verdict_unknown(acc)
 
 def selection_presence(+path: String, verdict: SelectionVerdict) -> IO(T.Presence):
   match verdict:
