@@ -227,6 +227,13 @@ def one(fields, key):
     return values[0]
 
 
+def cgen_request_valid(request, result_key, cwd):
+    key_argv = request.get('key_argv', [])
+    return (request.get('key') == result_key and request.get('cwd') == cwd
+            and ENTRY in key_argv and '--kind' in key_argv
+            and key_argv[key_argv.index('--kind') + 1] == 'cgen')
+
+
 def verify_generator(generator_root, diagnostics):
     generator_root = pathlib.Path(generator_root).resolve()
     manifest_path = generator_root / 'fork-manifest.json'
@@ -304,11 +311,8 @@ def verify_capture(origin, generator_root):
             and one(receipt, 'key') == one(result, 'key')
             and one(receipt, 'reused') == '0', 'Cgen wrapper receipt differs.')
     request = json.loads((evidence / 'request.json').read_text())
-    require(request['key'] == one(result, 'key') and request['cwd'] == diagnostics['queue_attempt']['meta']['cwd'],
-            'Cgen request does not bind the completed result.')
-    key_argv = request['key_argv']
-    require('receive-recovery-focused.bend' in key_argv and '--kind' in key_argv
-            and key_argv[key_argv.index('--kind') + 1] == 'cgen', 'Cgen request entry or kind differs.')
+    require(cgen_request_valid(request, one(result, 'key'), diagnostics['queue_attempt']['meta']['cwd']),
+            'Cgen request does not bind the completed recovery entry and result.')
     generator = verify_generator(generator_root, diagnostics)
     return {'cgen_result_sha256': CAPTURED_FILES['result'],
             'cgen_diagnostics_sha256': GENERATOR['diagnostics_sha256'],

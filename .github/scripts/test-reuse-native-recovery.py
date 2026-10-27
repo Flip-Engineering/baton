@@ -79,6 +79,13 @@ class FocusedRecoveryReuseTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'exactly once'):
                     REUSE.substitute_fragment(original, b'old', b'current')
 
+    def test_cgen_request_binds_worktree_relative_entry_and_completed_key(self):
+        request = {'key': 'captured-key', 'cwd': '/source',
+                   'key_argv': ['--entry', REUSE.ENTRY, '--kind', 'cgen']}
+        self.assertTrue(REUSE.cgen_request_valid(request, 'captured-key', '/source'))
+        request['key_argv'][1] = 'receive-recovery-focused.bend'
+        self.assertFalse(REUSE.cgen_request_valid(request, 'captured-key', '/source'))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='baton-focused-reuse-fixture-')
         self.root = pathlib.Path(self.temp.name)
