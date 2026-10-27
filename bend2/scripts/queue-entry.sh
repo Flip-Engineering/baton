@@ -30,8 +30,16 @@ if [ ! -f "$queue_adapter" ] || [ -z "$queue_client" ] || [ ! -x "$queue_client"
     "Then rerun this command. An explicit BATON2_NATIVE_QUEUE or BATON2_NATIVE_QUEUE_DRIVER overrides this selection." >&2
   exit 2
 fi
-queue_run="$root/.scratch/bend2/queue-run"
-mkdir -p "$queue_run"
+# Each invocation owns an immutable configuration. Concurrent builds in one
+# checkout must not change each other's compiler, client or state path while
+# their queue request still refers to it. Keep the invocation directory after
+# the build so its evidence and request identity stay readable.
+queue_root=${BATON2_QUEUE_RUN_ROOT:-"$root/.scratch/bend2/queue-run"}
+mkdir -p "$queue_root"
+if ! queue_run=$(mktemp -d "$queue_root/invocation.XXXXXXXX"); then
+  printf 'queue-entry: could not create an owned queue run directory under %s\n' "$queue_root" >&2
+  exit 2
+fi
 if ! "${PYTHON3:-python3}" - "$queue_run" "$compiler" "${CC:-clang}" "$queue_client" "$queue_state" <<'PY'
 import json, pathlib, shutil, sys
 run, bend, cc, client, state = sys.argv[1:6]
