@@ -196,12 +196,13 @@ def queue_receipt(+link: Proxy.Link, +state: State, +thread: String, result: Res
   match result:
     case Fail{(code,cause)}: Outcome.Checked.pure(Admission,Refused{state,code,cause})
     case Done{+output}:
-      +accepted : Bool <- IO.pure(Bool, Bool.and(String.contains(output,"Queued message "),String.contains(output," for thread " ++ thread ++ ".")))
-      match accepted:
-        case True{}: do Outcome.Checked<Admission>:
-          recorded : Unit <- Proxy.record("{\"type\":\"codexInboxAdmission\",\"threadId\":" ++ J.string_literal(thread) ++ ",\"method\":\"codex queue\",\"result\":{\"receipt\":" ++ J.string_literal(output) ++ "}}")
-          Outcome.Checked.pure(Admission,Accepted{state})
-        case False{}: Outcome.Checked.pure(Admission,Refused{state,1,"Codex queue returned no matching admission receipt: " ++ output})
+      do Outcome.Checked<Admission>:
+        +accepted : Bool <- IO.pure(Bool, Bool.and(String.contains(output,"Queued message "),String.contains(output," for thread " ++ thread ++ ".")))
+        match accepted:
+          case True{}: do Outcome.Checked<Admission>:
+            recorded : Unit <- Proxy.record("{\"type\":\"codexInboxAdmission\",\"threadId\":" ++ J.string_literal(thread) ++ ",\"method\":\"codex queue\",\"result\":{\"receipt\":" ++ J.string_literal(output) ++ "}}")
+            Outcome.Checked.pure(Admission,Accepted{state})
+          case False{}: Outcome.Checked.pure(Admission,Refused{state,1,"Codex queue returned no matching admission receipt: " ++ output})
 
 def queue_refreshed(+link: Proxy.Link, +state: State, +thread: String, +token: String, +pointer: String, +empty: Bool) -> Outcome.Checked(Admission):
   match empty:
