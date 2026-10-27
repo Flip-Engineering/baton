@@ -2311,10 +2311,11 @@ def retained_receive_admitted(recovery: Maybe<String>) -> IO(Unit):
     case Some{args}: IO.die(Unit,2,"Session retains an interrupted native receive; run receive to observe its output and completion before starting a direct turn.")
 
 # The acquired canonical guard protects this check before direct admission.
-# An exited execution can still retain an unfinished receive checkpoint.
+# An exited execution can still retain an unfinished receive checkpoint, so
+# only a recorded terminal start failure is excluded from the recovery check.
 def retained_receive_guard(+db: String, player: String) -> IO(Unit):
   do IO<Unit>:
-    directory : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(player) ++ " AND mode='retained'),'');"))
+    directory : String <- IO.try(String,DB.Sql.query(db,Store.recorded_retained_sql(player)))
     recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(Tx.trim_nl(directory)))
     retained_receive_admitted(recovery)
 

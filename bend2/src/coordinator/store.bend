@@ -239,6 +239,14 @@ def delete_ticket_sql(+session: String, +directory: String) -> String:
 def record_owner_death_sql(+session: String) -> String:
   "UPDATE executions SET phase='exited',status='owner-death' WHERE session=" ++ C.q(session) ++ " AND phase<>'exited';"
 
+# The recorded retained attempt that may still hold live custody. A terminal
+# start failure has no native birth, so no recovery invocation can attach to
+# it; the next admission replaces the row and starts a fresh attempt. Other
+# exited attempts still pass this selection because their keeper may hold an
+# unacknowledged checkpoint that recovery must observe first.
+def recorded_retained_sql(+session: String) -> String:
+  "SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='retained' AND NOT (phase='exited' AND status='start failed')),'');"
+
 # Absent-tolerant claim read. SQLite resolves every named table when it
 # prepares a statement, so one statement cannot guard on sqlite_master and
 # read the guarded table at once. The read is two steps: presence check, then
