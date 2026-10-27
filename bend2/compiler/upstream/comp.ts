@@ -52,6 +52,20 @@ function diagnostic_join(site: string, values: (string | number)[],
   return result;
 }
 
+// Reclaim garbage at an emission-pass boundary. Under `bun --smol` JSC runs
+// few full collections on this workload, so the previous pass's emitted
+// lines and temporary terms otherwise stay in the old generation while the
+// next pass allocates. A forced collection at the boundary keeps the peak
+// near the live set. Memory management only: the emitted C is unchanged.
+function collect_full(): void {
+  // Bun installs gc; this compiler has no ambient Bun type. The cast names
+  // the one host member read here.
+  const runtime = globalThis as typeof globalThis & {
+    Bun?: { gc(force: boolean): void };
+  };
+  runtime.Bun?.gc(true);
+}
+
 // Facts-only passes are OFF by default. They converge own/hot/stat before
 // emitting C, but on the large fixtures they measured 22-24% slower than
 // the full passes they replace, with identical output (paired interleaved
@@ -4213,6 +4227,7 @@ export function compile_book(book: Bend.Book): string {
       own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size, dry });
     [cb.lend, BRWS].forEach((m) => m.clear());
     file_reset(fl, cb, "Term");
+    collect_full();
     fl.dry = dry;
     diagnostic_stage("pass.layouts", { pass: pass_number });
     for (const k of SRCS.keys()) {
@@ -4236,6 +4251,10 @@ export function compile_book(book: Bend.Book): string {
       [emission_defs, defs].forEach((ps) => ps.forEach((p) => {
         p[1] = cb.book.tlds[p[0]] as Def;
       }));
+      // The dropped parsed bodies are unreachable now. Collect them before
+      // the emission loop allocates, so the first-pass peak excludes the
+      // pre-drop graph instead of carrying it to the next pass boundary.
+      collect_full();
     }
     for (const [k, tld] of defs) {
       compile_def(fl, k, tld);
@@ -4289,8 +4308,11 @@ export function compile_book(book: Bend.Book): string {
       pass(emission_defs, false);
     } while (was !== facts());
   }
-  // Foreign source text and request stubs do not contribute to own/hot/stat/lend facts.
-  // Emit them once after the fixed point reaches its stable pass.
+  // The fixed point's last pass leaves its temporary terms and maps dead
+  // before the assembly builds the final source string.
+  collect_full();
+  // Foreign source text and request stubs do not contribute to own/hot/stat/lend
+  // facts. Emit them once after the fixed point reaches its stable pass.
   diagnostic("requests.begin", { pass: diagnostic_pass, segments: fl.segs.length });
   compile_reqs(fl, foreign_defs);
   diagnostic("requests.end", { pass: diagnostic_pass, code_units: fl.reqs.length });
