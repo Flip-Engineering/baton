@@ -86,6 +86,12 @@ def read(+db: String, +session: String, +thread: String) -> Outcome.Checked(Snap
     +row : Snapshot <- row_fields(Tx.split_tabs(Tx.trim_nl(value)))
     checked_native(row,session,thread,String.eq(native(row),thread))
 
+def message_read(+db: String, +session: String, +thread: String, +message: String) -> Outcome.Checked(Bool):
+  do Outcome.Checked<Bool>:
+    +ensured : String <- DB.Sql.query(db,schema_sql())
+    +found : String <- DB.Sql.read(db,"SELECT EXISTS(SELECT 1 FROM message_reads WHERE message=" ++ C.q(message) ++ " AND recipient=" ++ C.q(session) ++ " AND native=" ++ C.q(thread) ++ ");")
+    Outcome.Checked.pure(Bool,String.eq(found,"1\n"))
+
 def metadata_sql(+value: String) -> String:
   "CASE WHEN json_valid(" ++ value ++ ") THEN json_type(" ++ value ++ ")='object' AND json_type(" ++ value ++ ",'$.inputSeq') IN ('integer','real') AND json_extract(" ++ value ++ ",'$.inputSeq')=CAST(json_extract(" ++ value ++ ",'$.inputSeq') AS INTEGER) ELSE 0 END"
 
