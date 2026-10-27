@@ -121,7 +121,10 @@ sys.stdin.read()
         with peer(script, self.root):
             for _ in range(8):
                 run = self.scan()
-                self.assertEqual(run.stdout.strip(), 'absent', run.stderr)
+                # An unrelated same-uid process that disables inspection makes
+                # the whole scan unknown; that evidence still never names an
+                # exited fixture peer as present.
+                self.assertFalse(run.stdout.strip().startswith('present:'), run.stdout + run.stderr)
 
     @unittest.skipUnless(LINUX, 'proc scan is Linux only')
     def test_twelve_released_worktrees_and_a_live_checkout(self):

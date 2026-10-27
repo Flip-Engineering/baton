@@ -278,7 +278,8 @@ def selection_sql(+text: String) -> String:
   ++ " CASE WHEN json_valid(value) THEN coalesce(json_type(value,'$.config'),'') ELSE '' END,"
   ++ " CASE WHEN json_valid(value) THEN coalesce(hex(json_extract(value,'$.config')),'') ELSE '' END,"
   ++ " CASE WHEN json_valid(value) THEN coalesce(json_type(value,'$.manifest'),'') ELSE '' END,"
-  ++ " CASE WHEN json_valid(value) THEN coalesce(hex(json_extract(value,'$.manifest')),'') ELSE '' END;"
+  ++ " CASE WHEN json_valid(value) THEN coalesce(hex(json_extract(value,'$.manifest')),'') ELSE '' END"
+  ++ " FROM record;"
 
 def selection_field_text(+kind: String, +hex: String) -> Bool:
   Bool.and(String.eq(kind, "text"), Bool.not(String.is_empty(hex)))

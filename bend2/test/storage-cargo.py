@@ -568,6 +568,8 @@ CREATE TABLE log_generations(session TEXT,log TEXT,base TEXT,attempt TEXT);
         nested = runtime / 'nested' / 'target'
         nested.parent.mkdir(parents=True)
         shutil.copytree(self.target, nested)
+        with sqlite3.connect(self.db) as db:
+            db.execute("INSERT INTO executions VALUES('owner','admit-nested',?,'exited','')", (str(nested),))
         record = self.write_record(json.dumps(self.selection_record(runtime, config, manifest), separators=(',', ':')))
         answer = self.apply_roots(nested, record)
         self.assertIn('cargo-runtime-selected', answer)
