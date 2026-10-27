@@ -927,7 +927,7 @@ def sweep_row(+db: String, +session: String) -> IO(String):
           IO.pure(String, "{\"session\":" ++ J.string_literal(session) ++ ",\"result\":" ++ collect_skipped_json(session, reason) ++ "}")),
       IO.pure(String, "{\"session\":" ++ J.string_literal(session) ++ ",\"result\":" ++ collect_refused_json(session, 2, "unknown session: " ++ session) ++ "}"))
 
-def sweep_append(empty: Bool, +acc: String, head: String) -> String:
+def sweep_append(empty: Bool, +acc: String, +head: String) -> String:
   Bool.pick(String, empty, head, acc ++ "," ++ head)
 
 def sweep_join(sessions: List<&2,S.SessionRow>, +db: String, +acc: String, empty: Bool) -> IO(String):

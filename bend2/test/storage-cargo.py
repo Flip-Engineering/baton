@@ -698,6 +698,58 @@ CREATE TABLE log_generations(session TEXT,log TEXT,base TEXT,attempt TEXT);
         self.assertIn('unpublished-object', answer)
         self.assertTrue(clone.exists())
 
+    def test_staging_source_reflog_only_commit_is_preserved(self):
+        upstream, staging, clone, remote = self.staging_clone()
+        (clone / 'local-only.txt').write_text('unique commit retained by reflog\n')
+        subprocess.run(['git', '-C', str(clone), 'add', 'local-only.txt'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(clone), 'commit', '-qm', 'reflog-only work'],
+                       check=True, capture_output=True)
+        unique = subprocess.check_output(['git', '-C', str(clone), 'rev-parse', 'HEAD'], text=True).strip()
+        published = subprocess.check_output(['git', '-C', str(clone), 'rev-parse', 'HEAD^'], text=True).strip()
+        subprocess.run(['git', '-C', str(clone), 'reset', '--hard', 'HEAD^'],
+                       check=True, capture_output=True)
+
+        self.assertEqual(subprocess.check_output(
+            ['git', '-C', str(clone), 'status', '--porcelain'], text=True), '')
+        self.assertIn(unique, subprocess.check_output(
+            ['git', '-C', str(clone), 'reflog', '--format=%H'], text=True).splitlines())
+        self.assertEqual(subprocess.check_output(
+            ['git', '-C', str(clone), 'rev-parse', 'HEAD'], text=True).strip(), published)
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('unpublished-object', answer)
+        self.assertTrue(clone.exists())
+
+    def test_staging_source_unreachable_object_is_preserved(self):
+        upstream, staging, clone, remote = self.staging_clone()
+        dangling = subprocess.run(['git', '-C', str(clone), 'hash-object', '-w', '--stdin'],
+                                  input=b'unreachable unique development data\n',
+                                  check=True, capture_output=True, text=False).stdout.decode().strip()
+        fsck = subprocess.check_output(
+            ['git', '-C', str(clone), 'fsck', '--no-progress', '--no-reflogs', '--unreachable'],
+            text=True)
+        self.assertIn('unreachable blob ' + dangling, fsck)
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('unpublished-object', answer)
+        self.assertTrue(clone.exists())
+
+    def test_staging_source_reflog_of_published_history_is_collectable(self):
+        upstream, staging, clone, remote = self.staging_clone()
+        (upstream / 'next.txt').write_text('published follow-up\n')
+        subprocess.run(['git', '-C', str(upstream), 'add', 'next.txt'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(upstream), 'commit', '-qm', 'published follow-up'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(upstream), 'push', '-q', 'origin', 'HEAD:refs/heads/main'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(clone), 'fetch', '-q', 'origin'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(clone), 'reset', '--hard', 'origin/main'],
+                       check=True, capture_output=True)
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('staging-source-released', answer)
+        self.assertFalse(clone.exists())
+
     def test_staging_source_same_name_diverged_ref_is_preserved(self):
         # The remote feature branch stays at the published commit while the
         # local branch of the same name carries a unique commit. HEAD remains

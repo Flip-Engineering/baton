@@ -494,114 +494,88 @@ def staging_text(result: G.RunRes) -> Maybe<String>:
     case G.RRun{G.SSignal{num}, out}: None{}
     case G.RSpawn{detail}: None{}
 
-def nth_field(values: List<String>, remaining: Nat, +acc: String) -> String:
-  match values:
-    case Nil{}: acc
-    case Con{+head, tail}:
-      Bool.pick(String, Nat.is_gt(remaining, 0n), nth_field(tail, Nat.sub(remaining, 1n), acc), head)
+def first_tab_field(fields: List<&2,String>) -> String:
+  match fields:
+    case Nil{}: ""
+    case Con{head, tail}: head
 
-def field_lines(lines: List<String>, index: Nat, +acc: List<String>) -> List<String>:
+def field_lines(lines: List<String>) -> List<&2,String>:
   match lines:
-    case Nil{}: List.reverse(&1, String, acc)
+    case Nil{}: Nil{}
     case Con{+head, tail}:
-      field_lines(tail, index, Con{nth_field(Tx.split_tabs(head), index, ""), acc})
+      Con{first_tab_field(String.split(head, Char.from_u32(9))), field_lines(tail)}
 
-def contains_value(values: List<String>, +value: String) -> Bool:
+def staging_unreachable_evidence(unreachable: Maybe<String>) -> T.Presence:
+  match unreachable:
+    case None{}: T.Unknown{}
+    case Some{local_text}:
+      Bool.pick(T.Presence, String.is_empty(Tx.trim_nl(local_text)),
+        T.Absent{}, T.Present{"unpublished-object"})
+
+def contains_value(values: List<&2,String>, +value: String) -> Bool:
   match values:
     case Nil{}: False{}
     case Con{head, tail}: Bool.or(String.eq(head, value), contains_value(tail, value))
 
-def first_missing(values: List<String>, set: List<String>, +missing: String) -> String:
-  match values:
-    case Nil{}: missing
-    case Con{+head, tail}:
-      Bool.pick(String, contains_value(set, head), first_missing(tail, set, missing), head)
-
-def prefixed_values(lines: List<String>, +prefix: String, +acc: List<String>) -> List<String>:
-  match lines:
-    case Nil{}: List.reverse(&1, String, acc)
-    case Con{+head, tail}:
-      Bool.pick(List<String>, String.starts_with(head, prefix),
-        prefixed_values(tail, prefix, Con{String.drop(head, String.length(prefix)), acc}),
-        prefixed_values(tail, prefix, acc))
-
-def all_equal(values: List<String>, +expected: String) -> Bool:
+def all_advertised(values: List<&2,String>, +set: List<&2,String>) -> Bool:
   match values:
     case Nil{}: True{}
-    case Con{head, tail}: Bool.and(String.eq(head, expected), all_equal(tail, expected))
+    case Con{+head, tail}:
+      Bool.and(contains_value(set, head), all_advertised(tail, set))
+
+def single_worktree(+worklist: String, +toplevel: String) -> Bool:
+  +prefix = "worktree " ++ toplevel ++ "\n"
+  Bool.and(String.starts_with(worklist, prefix),
+    Bool.not(String.contains(String.drop(worklist, String.length(prefix)), "\nworktree ")))
+
+def staging_worktree_evidence(toplevel: String, gitdir: String, commondir: String, worklist: String) -> T.Presence:
+  Bool.pick(T.Presence,
+    Bool.or(Bool.not(String.eq(Tx.trim_nl(gitdir), Tx.trim_nl(commondir))),
+      Bool.not(single_worktree(worklist, toplevel))),
+    T.Present{"worktree-dependency"}, T.Absent{})
+
+def staging_publication_after_worktree(worktree: T.Presence, unreachable: Maybe<String>) -> T.Presence:
+  match worktree:
+    case T.Absent{}: staging_unreachable_evidence(unreachable)
+    case other: other
+
+def staging_publication_evidence(toplevel: String, gitdir: String, commondir: String, worklist: String,
+                                 unreachable: Maybe<String>) -> T.Presence:
+  staging_publication_after_worktree(staging_worktree_evidence(toplevel, gitdir, commondir, worklist),
+    unreachable)
+
+def staging_remote_evidence(remote_text: String, refs: String, +head: String, toplevel: String,
+                            gitdir: String, commondir: String, worklist: String,
+                            unreachable: Maybe<String>) -> T.Presence:
+  +commits : List<&2,String> = field_lines(Tx.split_lines(remote_text))
+  +local : List<&2,String> = field_lines(Tx.split_lines(refs))
+  Bool.pick(T.Presence, String.is_empty(head),
+    T.Unknown{},
+    Bool.pick(T.Presence, Bool.not(all_advertised(local, commits)),
+      T.Present{"unpublished-object"},
+      Bool.pick(T.Presence, Bool.not(contains_value(commits, Tx.trim_nl(head))),
+        T.Present{"unpublished-object"},
+        staging_publication_evidence(Tx.trim_nl(toplevel), gitdir, commondir, worklist,
+          unreachable))))
 
 # A staging source is an ownership-ending checkout. Removal requires the
 # candidate origin to be the authenticated repository, every local ref object
-# in every namespace to be advertised by that remote (a same-name ref that
-# points at a different object preserves the candidate), HEAD to be among the
-# advertised objects, and every worktree registration to point at the
-# candidate itself. Any command failure or parse failure is unknown evidence
-# and preserves the candidate.
-def staging_evidence(source_url: String, candidate_url: String, remote_text: String,
+# in every namespace and HEAD to be advertised by that remote, no objects
+# unreachable from local refs (including reflog-only objects), and every
+# worktree registration to point at the candidate itself. Any command failure
+# preserves the candidate.
+def staging_evidence(+source_url: String, +candidate_url: String, remote_text: String,
                      refs: String, head: String, toplevel: String, gitdir: String,
-                     commondir: String, worklist: String) -> T.Presence:
+                     commondir: String, worklist: String, unreachable: Maybe<String>) -> T.Presence:
   Bool.pick(T.Presence, Bool.or(String.is_empty(source_url), String.is_empty(candidate_url)),
     T.Unknown{},
     Bool.pick(T.Presence, Bool.not(String.eq(source_url, candidate_url)),
       T.Present{"remote-identity-mismatch"},
-      staging_remote_evidence(remote_text, refs, head, toplevel, gitdir, commondir, worklist)))
+      staging_remote_evidence(remote_text, refs, head, toplevel, gitdir, commondir, worklist,
+        unreachable)))
 
-def staging_remote_evidence(remote_text: String, refs: String, head: String, toplevel: String,
-                            gitdir: String, commondir: String, worklist: String) -> T.Presence:
-  +commits : List<String> = field_lines(Tx.split_lines(remote_text), 0n, Nil{})
-  +local : List<String> = Tx.split_lines(refs)
-  Bool.pick(T.Presence, String.is_empty(head),
-    T.Unknown{},
-    Bool.pick(T.Presence, Bool.not(String.is_empty(first_missing(local, commits, ""))),
-      T.Present{"unpublished-object"},
-      Bool.pick(T.Presence, Bool.not(contains_value(commits, Tx.trim_nl(head))),
-        T.Present{"unpublished-object"},
-        staging_worktree_evidence(Tx.trim_nl(toplevel), gitdir, commondir, worklist))))
-
-def staging_worktree_evidence(toplevel: String, gitdir: String, commondir: String, worklist: String) -> T.Presence:
-  +registered : List<String> = prefixed_values(Tx.split_lines(worklist), "worktree ", Nil{})
-  Bool.pick(T.Presence,
-    Bool.or(Bool.not(String.eq(Tx.trim_nl(gitdir), Tx.trim_nl(commondir))),
-      Bool.not(all_equal(registered, toplevel))),
-    T.Present{"worktree-dependency"}, T.Absent{})
-
-def staging_unpublished(+source: String, +path: String) -> IO(T.Presence):
-  do IO<T.Presence>:
-    source_url_git : G.GitOut <- Git.runGit(source, ["config", "--get", "remote.origin.url"])
-    candidate_url_git : G.GitOut <- Git.runGit(path, ["config", "--get", "remote.origin.url"])
-    head_git : G.GitOut <- Git.runGit(path, ["rev-parse", "HEAD"])
-    toplevel_git : G.GitOut <- Git.runGit(path, ["rev-parse", "--show-toplevel"])
-    gitdir_git : G.GitOut <- Git.runGit(path, ["rev-parse", "--git-dir"])
-    commondir_git : G.GitOut <- Git.runGit(path, ["rev-parse", "--git-common-dir"])
-    refs_git : G.GitOut <- Git.runGit(path, ["for-each-ref", "--format=%(objectname)"])
-    worklist_git : G.GitOut <- Git.runGit(path, ["worktree", "list", "--porcelain"])
-    staging_remote_reads(git_text(source_url_git), git_text(candidate_url_git), git_text(head_git),
-      git_text(toplevel_git), git_text(gitdir_git), git_text(commondir_git), git_text(refs_git), git_text(worklist_git))
-
-def staging_remote_reads(source_url: Maybe<String>, candidate_url: Maybe<String>, head: Maybe<String>,
-                         toplevel: Maybe<String>, gitdir: Maybe<String>, commondir: Maybe<String>,
-                         refs: Maybe<String>, worklist: Maybe<String>) -> IO(T.Presence):
-  do IO<T.Presence>:
-    listed : Maybe<String> <- staging_listing(source_url)
-    staging_finish(listed, source_url, candidate_url, head, toplevel, gitdir, commondir, refs, worklist)
-
-def staging_listing(source_url: Maybe<String>) -> IO(Maybe<String>):
-  match source_url:
-    case None{}: IO.pure(Maybe<String>, None{})
-    case Some{url}:
-      do IO<Maybe<String>>:
-        listed : G.RunRes <- Git.runFull(["/usr/bin/env", "git", "ls-remote", url], ".")
-        IO.pure(Maybe<String>, staging_text(listed))
-
-def staging_finish(listed: Maybe<String>, source_url: Maybe<String>, candidate_url: Maybe<String>,
-                   head: Maybe<String>, toplevel: Maybe<String>, gitdir: Maybe<String>,
-                   commondir: Maybe<String>, refs: Maybe<String>, worklist: Maybe<String>) -> IO(T.Presence):
-  match listed:
-    case None{}: IO.pure(T.Presence, T.Unknown{})
-    case Some{remote_text}:
-      staging_finish_rest(remote_text, source_url, candidate_url, head, toplevel, gitdir, commondir, refs, worklist)
-
-def staging_finish_rest(remote_text: String, source_url: Maybe<String>, candidate_url: Maybe<String>,
+def staging_finish_rest(remote_text: String, unreachable: Maybe<String>, source_url: Maybe<String>,
+                        candidate_url: Maybe<String>,
                         head: Maybe<String>, toplevel: Maybe<String>, gitdir: Maybe<String>,
                         commondir: Maybe<String>, refs: Maybe<String>, worklist: Maybe<String>) -> IO(T.Presence):
   match source_url:
@@ -629,7 +603,36 @@ def staging_finish_rest(remote_text: String, source_url: Maybe<String>, candidat
                                 case None{}: IO.pure(T.Presence, T.Unknown{})
                                 case Some{worklist_value}:
                                   IO.pure(T.Presence, staging_evidence(source_value, candidate_value, remote_text,
-                                    refs_value, head_value, toplevel_value, gitdir_value, commondir_value, worklist_value))
+                                    refs_value, head_value, toplevel_value, gitdir_value, commondir_value,
+                                    worklist_value, unreachable))
+
+def staging_finish(listed: Maybe<String>, unreachable: Maybe<String>, source_url: Maybe<String>,
+                   candidate_url: Maybe<String>,
+                   head: Maybe<String>, toplevel: Maybe<String>, gitdir: Maybe<String>,
+                   commondir: Maybe<String>, refs: Maybe<String>, worklist: Maybe<String>) -> IO(T.Presence):
+  match listed:
+    case None{}: IO.pure(T.Presence, T.Unknown{})
+    case Some{remote_text}:
+      staging_finish_rest(remote_text, unreachable, source_url, candidate_url,
+        head, toplevel, gitdir, commondir, refs, worklist)
+
+def staging_unpublished(+source: String, +path: String) -> IO(T.Presence):
+  do IO<T.Presence>:
+    source_url_git : G.GitOut <- Git.runGit(source, ["config", "--get", "remote.origin.url"])
+    candidate_url_git : G.GitOut <- Git.runGit(path, ["config", "--get", "remote.origin.url"])
+    head_git : G.GitOut <- Git.runGit(path, ["rev-parse", "HEAD"])
+    toplevel_git : G.GitOut <- Git.runGit(path, ["rev-parse", "--show-toplevel"])
+    gitdir_git : G.GitOut <- Git.runGit(path, ["rev-parse", "--git-dir"])
+    commondir_git : G.GitOut <- Git.runGit(path, ["rev-parse", "--git-common-dir"])
+    refs_git : G.GitOut <- Git.runGit(path, ["for-each-ref", "--format=%(objectname)"])
+    worklist_git : G.GitOut <- Git.runGit(path, ["worktree", "list", "--porcelain"])
+    listed_git : G.RunRes <- Git.runFull(["/usr/bin/env", "git", "-C", source, "ls-remote"], ".")
+    unreachable_git : G.RunRes <- Git.runFull(["/usr/bin/env", "git", "-C", path, "fsck",
+      "--no-progress", "--no-reflogs", "--unreachable"], ".")
+    staging_finish(staging_text(listed_git), staging_text(unreachable_git),
+      git_text(source_url_git), git_text(candidate_url_git), git_text(head_git),
+      git_text(toplevel_git), git_text(gitdir_git), git_text(commondir_git),
+      git_text(refs_git), git_text(worklist_git))
 
 def unpublished_fact(+cls: T.StorageClass, +source: String, +path: String, +state: State, +owner: String) -> IO(T.Presence):
   match cls:
