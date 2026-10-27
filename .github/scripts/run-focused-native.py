@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import re
+import signal
 import shutil
 import subprocess
 import sys
@@ -62,6 +63,46 @@ def tracked_manifest(root):
             for path in paths if path and (pathlib.Path(root) / path).is_file()}
 
 
+def process_group_exists(pgid):
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def terminate_process_group(process, evidence, reason, poll_seconds=0.1, attempts=50):
+    pgid = process.pid
+    record = {'pid': process.pid, 'pgid': pgid, 'term_sent': False,
+              'kill_sent': False, 'group_exists': None, 'exit_code': None}
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+        record['term_sent'] = True
+    except ProcessLookupError:
+        pass
+    for _ in range(attempts):
+        process.poll()
+        if not process_group_exists(pgid):
+            break
+        time.sleep(poll_seconds)
+    process.poll()
+    if process_group_exists(pgid):
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+            record['kill_sent'] = True
+        except ProcessLookupError:
+            pass
+        while process_group_exists(pgid):
+            process.poll()
+            time.sleep(poll_seconds)
+    record['exit_code'] = process.wait()
+    record['group_exists'] = process_group_exists(pgid)
+    write_json(pathlib.Path(evidence) / (reason + '.json'), record)
+    return record
+
+
 def run_command(label, argv, cwd, env, evidence, records):
     stdout_path = evidence / (label + '.stdout')
     stderr_path = evidence / (label + '.stderr')
@@ -69,7 +110,19 @@ def run_command(label, argv, cwd, env, evidence, records):
     with stdout_path.open('wb') as stdout, stderr_path.open('wb') as stderr:
         process = subprocess.Popen(argv, cwd=cwd, env=env, stdout=stdout, stderr=stderr,
                                    start_new_session=True)
-        code = process.wait()
+        try:
+            code = process.wait()
+        except BaseException:
+            cleanup = terminate_process_group(process, evidence,
+                                              label + '-launcher-cancel')
+            row = {'label': label, 'argv': argv, 'cwd': str(cwd), 'started_at': started,
+                   'ended_at': time.time(), 'exit_code': cleanup['exit_code'],
+                   'cancelled': True, 'process_group_cleanup': cleanup,
+                   'stdout': stdout_path.name, 'stdout_sha256': digest(stdout_path),
+                   'stderr': stderr_path.name, 'stderr_sha256': digest(stderr_path)}
+            records.append(row)
+            write_json(evidence / 'commands.json', records)
+            raise
     row = {'label': label, 'argv': argv, 'cwd': str(cwd), 'started_at': started,
            'ended_at': time.time(), 'exit_code': code,
            'stdout': stdout_path.name, 'stdout_sha256': digest(stdout_path),
@@ -224,6 +277,11 @@ def run_qualification(args):
         write_json(evidence / 'host-observation.json', observations)
 
 
+def handle_sigterm(signum, frame):
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    raise SystemExit(128 + signum)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--run', required=True)
@@ -234,6 +292,7 @@ def main():
     parser.add_argument('--compiler', required=True)
     parser.add_argument('--full-runtime', required=True)
     parser.add_argument('--full-runtime-sha256', required=True)
+    signal.signal(signal.SIGTERM, handle_sigterm)
     run_qualification(parser.parse_args())
 
 
