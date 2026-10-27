@@ -548,18 +548,21 @@ def live_tui_wait(+link: Proxy.Link, +db: String, +session: String, +thread: Str
       next_link => next_db => next_session => next_thread => next_state => next_target =>
         live_tui_wait(next_link,next_db,next_session,next_thread,next_state,next_target))
 
+def resumed_or_live_decided(+link: Proxy.Link, +db: String, +session: String, +thread: String, +next: State, +row: Inbox.Snapshot, code: U32, +cause: String) -> Outcome.Checked(Unit):
+  Bool.pick(Outcome.Checked(Unit),String.contains(cause,"already has an active writer"),
+    live_tui_snapshot(link,db,session,thread,next,Inbox.message(row),
+      next_link => next_db => next_session => next_thread => next_state => next_target =>
+        live_tui_wait(next_link,next_db,next_session,next_thread,next_state,next_target)),
+    Outcome.Checked.fail(Unit,code,cause))
+
 def resumed_or_live_tui(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +state: State, +row: Inbox.Snapshot, result: Proxy.Pending & Result<&1,&1,U32 & String,String>) -> Outcome.Checked(Unit):
   match result:
     case (pending,Done{+response}): do Outcome.Checked<Unit>:
       +next : State <- synced(replace_pending(state,pending),thread)
       following(link,executable,db,session,thread,row,(next,response))
-    case (pending,Fail{(code,+cause)}): do Outcome.Checked<Unit>:
+    case (pending,Fail{(code,cause)}): do Outcome.Checked<Unit>:
       +next : State <- synced(replace_pending(state,pending),thread)
-      Bool.pick(Outcome.Checked(Unit),String.contains(cause,"already has an active writer"),
-        live_tui_snapshot(link,db,session,thread,next,Inbox.message(row),
-          next_link => next_db => next_session => next_thread => next_state => next_target =>
-            live_tui_wait(next_link,next_db,next_session,next_thread,next_state,next_target)),
-        Outcome.Checked.fail(Unit,code,cause))
+      resumed_or_live_decided(link,db,session,thread,next,row,code,cause)
 
 def follow_loaded(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +state: State, +row: Inbox.Snapshot, +stopped: Bool) -> Outcome.Checked(Unit):
   match stopped:
