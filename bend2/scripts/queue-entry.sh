@@ -1,25 +1,42 @@
 # Shared compilation-queue selection for the native build and check entry
 # points. Source this file after `root` and `compiler` are set.
 #
-# An explicit BATON2_NATIVE_QUEUE_DRIVER always wins. A caller that supplies a
-# readable BATON2_NATIVE_QUEUE owns that route too: the CI target comparison
-# supplies its own queue wrappers with the driver deliberately empty, and
-# synthesizing another driver around those wrappers would recurse through the
-# adapter. A non-empty but unreadable supplied path is refused, so a typo or
-# stale export cannot silently compile outside the queue. Otherwise an
-# installed adapter, client and shared state root synthesize the queue
-# configuration and route every compilation through it. A host without an
-# installed queue is refused with the one-time bootstrap command.
-if [ -n "${BATON2_NATIVE_QUEUE:-}" ]; then
-  if [ ! -r "$BATON2_NATIVE_QUEUE" ]; then
-    printf '%s\n' \
-      "queue-entry: BATON2_NATIVE_QUEUE is set but not readable: $BATON2_NATIVE_QUEUE" \
-      "Correct the path, unset it, or set BATON2_NATIVE_QUEUE_DRIVER explicitly." >&2
-    exit 2
-  fi
+# An explicit BATON2_NATIVE_QUEUE_DRIVER wins: when it is non-empty the
+# helper returns before the supplied queue is validated. A non-empty
+# BATON2_NATIVE_QUEUE must name a readable regular file holding a queue
+# configuration with non-empty run, bend, cc, client and state strings. That
+# file is used unchanged; a directory, device, unreadable file, invalid JSON
+# or missing key is refused with exit 2. Otherwise an installed adapter,
+# client and shared state root synthesize the queue configuration and route
+# every compilation through it. A host without an installed queue is refused
+# with the one-time bootstrap command.
+if [ -n "${BATON2_NATIVE_QUEUE_DRIVER:-}" ]; then
   return 0
 fi
-if [ -n "${BATON2_NATIVE_QUEUE_DRIVER:-}" ]; then
+if [ -n "${BATON2_NATIVE_QUEUE:-}" ]; then
+  if ! "${PYTHON3:-python3}" - "$BATON2_NATIVE_QUEUE" <<'PY'
+import json, os, sys
+path = sys.argv[1]
+if not os.path.isfile(path):
+    raise SystemExit(1)
+try:
+    with open(path, encoding='utf-8') as stream:
+        config = json.load(stream)
+except (OSError, ValueError):
+    raise SystemExit(1)
+if not isinstance(config, dict):
+    raise SystemExit(1)
+for key in ('run', 'bend', 'cc', 'client', 'state'):
+    value = config.get(key)
+    if not isinstance(value, str) or not value:
+        raise SystemExit(1)
+PY
+  then
+    printf '%s\n' \
+      "queue-entry: BATON2_NATIVE_QUEUE must name a readable regular file with a queue configuration containing non-empty run, bend, cc, client and state strings: $BATON2_NATIVE_QUEUE" \
+      "Correct the path, unset it, or set BATON2_NATIVE_QUEUE_DRIVER explicitly to use a different route." >&2
+    exit 2
+  fi
   return 0
 fi
 queue_adapter="$root/.github/scripts/queue-native-checks.py"
