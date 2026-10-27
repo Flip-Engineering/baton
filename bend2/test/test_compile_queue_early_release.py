@@ -43,7 +43,7 @@ class QueueEarlyReleaseTests(unittest.TestCase):
             "  previous=$argument\n"
             "done\n"
             "if [ -n \"$BATON_COMPILE_QUEUE_COMPILED\" ]; then : > \"$BATON_COMPILE_QUEUE_COMPILED\"; fi\n"
-            "sleep 4\n"
+            "sleep 20\n"
             "if [ -n \"$out\" ]; then : > \"$out\"; fi\n"
             "exit 0\n")
         self.compiler.chmod(0o755)
@@ -77,7 +77,7 @@ class QueueEarlyReleaseTests(unittest.TestCase):
         lock = (self.state / "heavy.lock").open("w")
         self.addCleanup(lock.close)
         acquired = False
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
