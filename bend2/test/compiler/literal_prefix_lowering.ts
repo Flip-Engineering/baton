@@ -1,9 +1,10 @@
 // Usage: bun test ./bend2/test/compiler/literal_prefix_lowering.ts
-// Explicit baseline for the literal-prefix String lowering: each hot verb
-// dispatcher's stored term must match the lowered hash and node count. The
-// Lone-list path in the fixture keeps the generic decision tree and its own
-// baseline. The 11 existing compiler fixtures stay byte-identical; this test
-// records the one fixture whose C changed.
+// Explicit baseline for the literal-prefix lowerings. The Many String path
+// replaces one String.eq per row. The Lone List<String> path generates helper
+// defs for the row continuations and one for the remaining rows, so each body
+// is checked and emitted once and the Lone tail reaches one helper per path.
+// The 11 existing compiler fixtures stay byte-identical; this test records the
+// one fixture whose C changed.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -91,9 +92,17 @@ const hot: Record<string, [string, number]> = {
 for (const [name, [hash, nodes]] of Object.entries(hot)) check(codex, name, hash, nodes);
 console.log(`PASS codex-inbox literal-prefix String lowering: ${Object.keys(hot).length} defs`);
 
+const helperNames = (book: Bend.Book): string[] =>
+  book.order.filter((name) => name.includes("$lit"));
+
 const fixture = await load(path.join(import.meta.dir, "fixtures/literal_prefix_frames.bend"));
+Bend.book_valid(fixture);
+const helpers = helperNames(fixture);
+assert.deepEqual(helpers, ["classify$litsuffix0", "classify$litrow1",
+  "classify$litchain2", "classify$litrow3", "classify$litchain4"],
+  "one helper per prefix row and literal group plus the remaining rows");
 check(fixture, "classify_text",
-  "59939ff52c99855525c0f195bb713a89b84a119af32a7cd37dfb7f73260fb68d", 172);
+  "a9fa7d1673394bc32b4b433558bbff62bf6ac45182eb0a8dfa8a73fb3b8a2ffc", 172);
 check(fixture, "classify",
-  "ee4b55e986eb9b17183601bead667f95b1791a82cb656eb46ef2c9f2514b3f2d", 4348);
-console.log("PASS literal prefix fixture: Many String lowered, Lone list unchanged");
+  "f62145be40593ce8ec1844516efdd942e334f7ca9eb5693b609239b8f992c9cb", 41);
+console.log("PASS literal prefix fixture: Many String and Lone list lowered");

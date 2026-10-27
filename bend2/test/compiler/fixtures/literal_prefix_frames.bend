@@ -9,6 +9,7 @@ def classify(xs: List<String>) -> String:
   match xs:
     case +a <> "x" <> +rest <> Nil{}: a
     case +a <> "y" <> Nil{}: a
+    case +a <> +b <> Nil{}: a
     case other: describe(other)
 
 def classify_text(+s: String) -> String:
@@ -24,6 +25,7 @@ def main() -> IO(Unit):
     IO.print(classify(["a","y"]))
     IO.print(classify(["z"]))
     IO.print(classify(Nil{}))
+    IO.print(classify(["a","z"]))
     IO.print(classify_text("a"))
     IO.print(classify_text("ab"))
     IO.print(classify_text("abc"))
