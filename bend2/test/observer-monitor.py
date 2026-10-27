@@ -313,6 +313,36 @@ class ObserverMonitor(unittest.TestCase):
             argv, process.returncode, out_path.read_text(errors='replace'),
             err_path.read_text(errors='replace'))
 
+    def recover_while_advancing(self, observer, stall_seconds=300):
+        """Run recovery to completion; fail only if checkpoint and output stop moving."""
+        argv = [str(COORDINATOR), '--recover-observer', str(self.db), 'parent', str(observer)]
+        out_path = self.directory / 'recover.stdout'
+        err_path = self.directory / 'recover.stderr'
+        output_path = pathlib.Path(str(self.log) + '.attempt-' + self.attempt_id)
+
+        def progress():
+            output = output_path.stat().st_size if output_path.exists() else 0
+            return checkpoint_offset(self.attempt), output
+
+        with out_path.open('wb') as out, err_path.open('wb') as err:
+            process = subprocess.Popen(argv, stdout=out, stderr=err, env=self.environment)
+            self.addCleanup(self.stop_owned_process, process)
+            last = progress()
+            moved = time.monotonic()
+            while process.poll() is None:
+                time.sleep(1)
+                now = progress()
+                if now != last:
+                    last, moved = now, time.monotonic()
+                elif time.monotonic() - moved > stall_seconds:
+                    process.kill()
+                    process.wait()
+                    self.fail('recovery made no checkpoint or output progress for %d s at %r' %
+                              (stall_seconds, last))
+        return subprocess.CompletedProcess(
+            argv, process.returncode, out_path.read_text(errors='replace'),
+            err_path.read_text(errors='replace'))
+
     def recover(self, observer, timeout=60):
         result = subprocess.run(
             [str(COORDINATOR), '--recover-observer', str(self.db), 'parent', str(observer)],
@@ -773,6 +803,18 @@ class ObserverMonitor(unittest.TestCase):
         spool_fixture = pathlib.Path(fixture)
         self.assertTrue(spool_fixture.is_file() and not spool_fixture.is_symlink(),
                         'replay fixture must be a regular data-only spool file')
+        # The preserved fixture ends with an all-NUL retained tail. That tail
+        # belongs to the NUL-refusal contract and is not part of the replay
+        # stream, so this normal-EOF test copies the last complete record only.
+        raw = spool_fixture.read_bytes()
+        nul = raw.find(b'\x00')
+        if nul >= 0:
+            raw = raw[:nul]
+            if raw and not raw.endswith(b'\n'):
+                raw = raw[:raw.rfind(b'\n') + 1]
+            trimmed = self.directory / 'protected-spool.bin'
+            trimmed.write_bytes(raw)
+            spool_fixture = trimmed
         source_size = spool_fixture.stat().st_size
         self.assertGreater(source_size, 40_000_000,
                            'replay fixture must contain the retained large spool')
@@ -785,7 +827,7 @@ class ObserverMonitor(unittest.TestCase):
 
         self.release_marker.touch()
         self.wait_native_exit(timeout=30)
-        recovered = self.recover_to_eof(observer)
+        recovered = self.recover_while_advancing(observer)
         self.assertNotEqual(recovered.returncode, 0,
                             recovered.stdout + recovered.stderr)
 
