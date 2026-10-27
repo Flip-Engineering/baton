@@ -4146,8 +4146,8 @@ export function book_owned(src: Bend.Book, ks = OWNED): void {
 function compile_tables(fl: File, entries: Seg[]): string[] {
   const defs: string[] = [];
   const tables: [string, string[], number][] = [
-    ["CID", [...fl.cids.keys()].map(cid_mac), 65536],
-    ["FID", [...entries.map((s) => s.fid), "FID_EXIT", "FID_ENTER"], 65532],
+    ["CID", [...fl.cids.keys()].map(cid_mac), 1 << 20],
+    ["FID", [...entries.map((s) => s.fid), "FID_EXIT", "FID_ENTER"], 1 << 20],
   ];
   for (const [ns, ms, limit] of tables) {
     const dup = [...ms, ...TABLES].find((m, i, a) => a.indexOf(m) < i);
@@ -5352,7 +5352,7 @@ INLINE void spare_free(Env e, Cls cls, Loc loc) {
 // ====
 
 #define term_make(tag, aux, loc) \
-  (((u64)(tag) << 56) | ((u64)(aux) << 40) | (u64)(loc))
+  (((u64)(tag) << 60) | ((u64)(aux) << 40) | (u64)(loc))
 
 #define term_ctr(cid, loc) term_make(TAG_CTR, cid, loc)
 #define term_pak(cid, loc) term_make(TAG_PAK, cid, loc)
@@ -5361,11 +5361,11 @@ INLINE void spare_free(Env e, Cls cls, Loc loc) {
 #define term_tsk(fid, loc) term_make(TAG_TSK, fid, loc)
 
 INLINE Term term_blk(bool arr, Cls cls, Loc loc) {
-  return term_buf(cls, loc) | ((u64)arr << 57);
+  return term_buf(cls, loc) | ((u64)arr << 61);
 }
 
 INLINE u64 term_tag(Term t) {
-  return (t >> 56) & 0x7f;
+  return (t >> 60) & 0x7;
 }
 
 INLINE bool term_rfc(Term t) {
@@ -5373,7 +5373,7 @@ INLINE bool term_rfc(Term t) {
 }
 
 INLINE u64 term_aux(Term t) {
-  return (t >> 40) & 0xFFFF;
+  return (t >> 40) & 0xFFFFF;
 }
 
 INLINE Loc term_loc(Term t) {
