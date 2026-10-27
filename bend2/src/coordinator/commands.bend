@@ -336,12 +336,13 @@ def configure_matches(session: String, harness: String, model: String, effort: S
 
 def configure_admitted(+session: String, +harness: String, +model: String, +endpoint: String, +expected_harness: String, +expected_model: String, expected_effort: String) -> String:
   "(" ++ q(harness) ++ " IN ('codex','omp','muse','claude-code','dsh','antigravity') AND " ++ q(model) ++ "<>'' AND " ++ configure_matches(session,expected_harness,expected_model,expected_effort)
+  ++ " AND (" ++ q(endpoint) ++ "='' OR " ++ endpoint_admitted(endpoint) ++ ")"
   ++ " AND ((" ++ q(harness) ++ "=" ++ q(expected_harness) ++ " AND " ++ q(model) ++ "=" ++ q(expected_model) ++ ") OR (NOT " ++ stopped_session_sql(q(session))
   ++ " AND NOT EXISTS(SELECT 1 FROM executions WHERE session=" ++ q(session) ++ " AND phase<>'exited')"
   ++ " AND " ++ endpoint_admitted(endpoint) ++ ")))"
 
 def configure_update_sql(+session: String, +harness: String, +model: String, +effort: String, +endpoint: String, +expected_harness: String, +expected_model: String, expected_effort: String, +admitted: String) -> String:
-  "UPDATE sessions SET harness=" ++ q(harness) ++ ",model=" ++ q(model) ++ ",effort=" ++ q(effort) ++ ",endpoint=CASE WHEN " ++ q(harness) ++ "=" ++ q(expected_harness) ++ " AND " ++ q(model) ++ "=" ++ q(expected_model) ++ " THEN endpoint ELSE " ++ q(endpoint) ++ " END WHERE id=" ++ q(session) ++ " AND " ++ admitted ++ ";"
+  "UPDATE sessions SET harness=" ++ q(harness) ++ ",model=" ++ q(model) ++ ",effort=" ++ q(effort) ++ ",endpoint=CASE WHEN " ++ q(endpoint) ++ "<>'' THEN " ++ q(endpoint) ++ " WHEN " ++ q(harness) ++ "=" ++ q(expected_harness) ++ " AND " ++ q(model) ++ "=" ++ q(expected_model) ++ " THEN endpoint ELSE " ++ q(endpoint) ++ " END WHERE id=" ++ q(session) ++ " AND " ++ admitted ++ ";"
   ++ "SELECT json_object('error','configure-refused','session'," ++ q(session) ++ ",'expected',json_object('harness'," ++ q(expected_harness) ++ ",'model'," ++ q(expected_model) ++ ",'effort'," ++ q(expected_effort) ++ "),'requested',json_object('harness'," ++ q(harness) ++ ",'model'," ++ q(model) ++ ",'effort'," ++ q(effort) ++ "),'condition','Configuration requires the recorded harness, model and effort to match the expected route. Saving effort on the same harness and model preserves the receiver, current attempt and stop. Changing harness or model requires a launchable receiver, no owned attempt and no stop.','next','Read session ID and pass its recorded harness, model and effort as the expected route. Change provider after the current attempt exits. Resume SESSION --lift-stop explicitly lifts a stop.') WHERE changes()=0;"
   ++ session_result_where("id=" ++ q(session) ++ " AND changes()=1")
 

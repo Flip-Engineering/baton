@@ -313,9 +313,10 @@ def configure_write(+db: String, +id: String, +harness: String, +model: String, 
     migrated : String <- Bool.pick(IO(String),Bool.and(String.eq(harness,"codex"),Bool.not(Tx.starts_with(saved,"{\"error\":\"configure-refused\""))),CodexRoute.normalize(db,id),IO.pure(String,""))
     IO.pure(String,saved)
 
-def configure_same_route(+db: String, +id: String, +harness: String, +model: String, +effort: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> IO(String):
+def configure_same_route(+db: String, +id: String, +harness: String, +model: String, +effort: String, cmd: String, log: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> IO(String):
   do IO<String>:
-    +saved : String <- configure_write(db,id,harness,model,effort,"",expected_harness,expected_model,expected_effort)
+    endpoint : String <- Bool.pick(IO(String),Bool.and(String.is_empty(cmd),String.is_empty(log)),IO.pure(String,""),configure_endpoint(db,id,harness,cmd,log,model))
+    +saved : String <- configure_write(db,id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort)
     configure_result(saved,Tx.starts_with(saved,"{\"error\":\"configure-refused\""))
 
 def configure_locked(+db: String, +id: String, +harness: String, +model: String, +effort: String, cmd: String, +log: String, +expected_harness: String, +expected_model: String, +expected_effort: String, lock: U32) -> IO(String):
@@ -340,7 +341,7 @@ def configure(+db: String, +id: String, +harness: String, +model: String, +effor
     accepted : String <- registered(found)
     same : Bool = Bool.and(String.eq(harness,expected_harness),String.eq(model,expected_model))
     Bool.pick(IO(String),same,
-      configure_same_route(db,id,harness,model,effort,expected_harness,expected_model,expected_effort),
+      configure_same_route(db,id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort),
       do IO<String>:
         canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
         lock : Maybe<U32> <- IO.try(Maybe<U32>,Lock.SessionLock.try_acquire(canonical,id))
