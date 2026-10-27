@@ -315,7 +315,7 @@ def configure_write(+db: String, +id: String, +harness: String, +model: String, 
 
 def configure_same_route(+db: String, +id: String, +harness: String, +model: String, +effort: String, +cmd: String, +log: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> IO(String):
   do IO<String>:
-    rebind : Bool = Bool.not(String.is_empty(cmd))
+    +rebind : Bool = Bool.not(String.is_empty(cmd))
     checked : Unit <- Bool.pick(IO(Unit),Bool.and(rebind,String.is_empty(log)),IO.die(Unit,2,"Explicit same-route receiver rebinding requires both --command and --output-log. An output log alone preserves the recorded executable and endpoint."),IO.pure(Unit,Unit{}))
     endpoint : String <- Bool.pick(IO(String),rebind,configure_endpoint(db,id,harness,cmd,log,model),IO.pure(String,""))
     +saved : String <- configure_write(db,id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort)
