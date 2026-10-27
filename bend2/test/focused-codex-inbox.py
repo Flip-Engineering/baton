@@ -1,6 +1,7 @@
-"""Qualify production focused Codex handlers with a retained backend and fake proxy.
+"""Qualify production Codex inbox handlers with a retained backend and fake proxy.
 
-BATON2_CODEX_FOCUSED_BINARY names the production receive-focused executable.
+BATON2_CODEX_FOCUSED_BINARY names a native test entry that calls the production
+Codex inbox handlers. Build it from focused-codex-inbox-entry.bend.
 BATON2_CODEX_BACKEND_PREFIX names a retained native installation with its helpers.
 No provider, user daemon or live database is used.
 """
@@ -12,6 +13,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 import unittest
 
 
@@ -112,6 +114,17 @@ class FocusedCodexInbox(unittest.TestCase):
                           'expectedTurnId': 'fixture-turn'})
         self.assertEqual(self.reads(), [])
 
+    def test_unloaded_active_writer_uses_supported_codex_queue(self):
+        self.env['BATON_FIXTURE_RESUME_CONFLICT'] = '1'
+        self.run_cli(self.focused, 'codex-inbox-session', 'worker', NATIVE, 'owed', '')
+        calls = self.proxy_calls()
+        self.assertEqual([call['method'] for call in calls],
+                         ['thread/read', 'thread/resume', 'codex queue'])
+        self.assertEqual(calls[-1]['threadId'], NATIVE)
+        self.assertIn('owed', calls[-1]['message'])
+        self.assertNotIn(self.body, calls[-1]['message'])
+        self.assertEqual(self.reads(), [])
+
     def test_witness_reports_existing_active_native_turn(self):
         output = self.run_cli(self.focused, 'codex-input-witness', NATIVE)
         self.assertEqual(json.loads(output),
@@ -129,6 +142,46 @@ class FocusedCodexInbox(unittest.TestCase):
         self.assertEqual(self.reads(), [])
         with sqlite3.connect(self.db) as db:
             self.assertEqual(db.execute('SELECT id FROM session_stops WHERE session=\'worker\'').fetchall(), [('stop',)])
+
+    def test_live_writer_follow_waits_for_matching_native_read(self):
+        env = {**self.env, 'BATON_FIXTURE_RESUME_CONFLICT': '1'}
+        follower = subprocess.Popen(
+            [str(self.focused), str(self.db), 'codex-inbox-follow', 'worker', NATIVE],
+            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        def finish_follower():
+            if follower.poll() is None:
+                follower.terminate()
+                follower.communicate(timeout=5)
+        self.addCleanup(finish_follower)
+
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            methods = [call['method'] for call in self.proxy_calls()]
+            if 'thread/resume' in methods:
+                break
+            self.assertIsNone(follower.poll(), 'the follower exited before the active-writer response')
+            time.sleep(0.02)
+        else:
+            self.fail('the follower did not attempt to resume the active thread')
+
+        self.assertIsNone(follower.poll(), 'the follower exited before Baton recorded a read')
+        self.assertEqual(self.reads(), [])
+        output = self.run_cli(self.full, 'as', 'worker', 'read', 'owed',
+                              env={**env, 'CODEX_THREAD_ID': NATIVE})
+        self.assertEqual(json.loads(output)[0]['delivery']['body'], self.body)
+
+        stdout, stderr = follower.communicate(timeout=5)
+        self.assertEqual(follower.returncode, 0, stdout + stderr)
+        events = [json.loads(line) for line in stdout.splitlines()]
+        self.assertTrue(any(event.get('type') == 'codexInboxMessageRead'
+                            and event.get('session') == 'worker'
+                            and event.get('threadId') == NATIVE
+                            and event.get('messageId') == 'owed'
+                            for event in events), stdout)
+        rows = self.reads()
+        self.assertEqual([(row[0], row[1], json.loads(row[2]), row[3]) for row in rows],
+                         [('owed', NATIVE, ['codex', NATIVE, 'fixture-turn'], None)])
 
 
 if __name__ == '__main__':
