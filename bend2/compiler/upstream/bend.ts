@@ -319,7 +319,7 @@ export type Ctx = PMap<Ann>;
 
 // Body
 export type PVar  = { $: "PVar"; k: Name; i: number; q: Quant; s?: Span };
-export type PCtr  = { $: "PCtr"; k: Name; x: Patt[]; s?: Span };
+export type PCtr  = { $: "PCtr"; k: Name; x: Patt[]; s?: Span; lit?: string };
 export type Patt  = PVar | PCtr;
 export type Case  = { p: Patt[]; f: Body };
 export type Rows  = Array<Case>;
@@ -2042,7 +2042,8 @@ export function parse_patt(p: Parse, t: LTerm): Patt {
       return { $: "PCtr", k: t.k, x: t.x.map((x) => parse_patt(p, x)), s: t.s };
     }
     case "Lit": {
-      return parse_patt(p, lit_full(t));
+      const q = parse_patt(p, lit_full(t));
+      return typeof t.v !== "string" ? q : { ...(q as PCtr), lit: t.v };
     }
     default: {
       throw Err(book, ctx_nil(), "a pattern (a binder or a constructor)", term_show(term_lower(term_higher(t), 0)), t.s);
@@ -2823,10 +2824,12 @@ export function parse_def(p: Parse, book: Book, u: Bool = false): void {
     }
   } else {
     const vars = tele.map((cell): PVar => ({ $: "PVar", k: cell[1], i: cell[2], q: Lone(), s: cell[4] }));
+    const body = parse_body(p);
     // term_higher applies body_flatten's substitutions and interns the closed
     // constructor chains. The lower/raise round trip that followed rebuilt the
     // same normalized term and held a second LTerm and HTerm during the load.
-    def.v = term_higher(body_flatten(parse_body(p), vars, () => p.sc.frs++));
+    def.v = term_higher(literal_chain(p, body, vars, def, k)
+      ?? body_flatten(body, vars, () => p.sc.frs++));
   }
   parse_close(p, n0);
   book.order.push(k);
@@ -3120,6 +3123,348 @@ export function body_flatten(b: Body, vars: PVar[], fr: () => number): LTerm {
       return match_flatten(b, vars, fr);
     }
   }
+}
+
+// A top-level match on a Many String parameter whose rows are string literal
+// patterns plus an optional final binder lowers to one String.eq test per row.
+// Each row body appears once; no character decision tree is built. The Mat on
+// the computed Bool is annotated with the branch type, so the checker and
+// emitter see the compiler-lowered case form.
+function literal_chain(p: Parse, b: Body, vars: PVar[], def: Def,
+  k: Name): LTerm | null {
+  // The lowering binds only the matched first parameter. A definition with
+  // later top-level parameters stays on the ordinary lowering: its helpers
+  // would abstract those parameters without carrying them in the signatures.
+  if (b.$ !== "Match" || b.e.length !== 1 || vars.length !== 1) return null;
+  const scrut = b.e[0];
+  if (scrut.$ !== "Var" || scrut.i !== vars[0].i) return null;
+  const all = def.T;
+  if (all.$ !== "All" || all.i !== vars[0].i || all.q.$ === "None") return null;
+  if (all.q.$ === "Many" && all.A.$ === "Ref" && all.A.k === "String") {
+    return literal_chain_string(p, b, vars, all, scrut);
+  }
+  if (all.q.$ === "Lone" && all.A.$ === "ADT" && all.A.k === "List") {
+    return literal_chain_list_helpers(p, b, vars, def, k, all, scrut);
+  }
+  return null;
+}
+
+function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
+  vars: PVar[], all: Extract<HTerm, { $: "All" }>, scrut: LTerm): LTerm | null {
+  if (p.book.tlds["String.eq"] === undefined || p.book.tlds["Bool"] === undefined
+    || p.book.ctrs["False"] === undefined || p.book.ctrs["True"] === undefined) {
+    return null;
+  }
+  let fallback: { f: Body; i: number } | null = null;
+  let literals = 0;
+  for (let j = 0; j < b.r.length; j++) {
+    const row = b.r[j];
+    if (row.p.length !== 1) return null;
+    const q = row.p[0];
+    if (q.$ === "PCtr" && q.lit !== undefined) {
+      literals += 1;
+    } else if (j === b.r.length - 1 && q.$ === "PVar") {
+      fallback = { f: row.f, i: q.i };
+    } else {
+      return null;
+    }
+  }
+  if (literals === 0) return null;
+  const fr = () => p.sc.frs++;
+  const A = term_lower_shared(all.B(Var(all.k, all.i)) as HTerm);
+  const boolIndex = p.sc.frs++;
+  let tail: LTerm;
+  if (fallback !== null) {
+    const binder: PVar = { $: "PVar", k: vars[0].k, i: vars[0].i,
+      q: Lone(), s: vars[0].s };
+    tail = body_flatten(body_sub(fallback.f, fallback.i, binder),
+      vars.slice(1), fr);
+  } else {
+    tail = Efq(b.s);
+  }
+  const span = b.s;
+  for (let j = b.r.length - 1; j >= 0; j--) {
+    const row = b.r[j];
+    const q = row.p[0];
+    if (q.$ !== "PCtr" || q.lit === undefined) continue;
+    const hit = body_flatten(row.f, vars.slice(1), fr);
+    const cond = App(App(Ref("String.eq", q.s), scrut, q.s),
+      patt_term(q), q.s);
+    const inner = Mat("True", hit, Efq(row.s ?? span), row.s ?? span);
+    const mat = Mat("False", tail, inner, span);
+    tail = App(Ann(mat, All(Lone(), "c", boolIndex, Ref("Bool"), A), span),
+      cond, span);
+  }
+  return Lam(all.k, all.i, tail, all.s, all.q);
+}
+// A top-level match on a Lone List<String> parameter whose leading rows are
+// `head0 <> "literal" <> fields.. <> Nil` frames lowers to a single-traversal
+// decision tree whose row continuations and remaining rows are generated
+// helper defs. A Ref is unrestricted, so each body is checked and emitted once
+// even though it is selected at several failure sites; the Lone tail reaches
+// one helper per path.
+type LitParam = { k: string; i: number; q: Quant; ty: LTerm };
+type LitHelper = { name: string; def: Def };
+
+function lit_body_terms(b: Body, f: (t: LTerm) => void): void {
+  const seen = new WeakSet<object>();
+  const stack: LTerm[] = [];
+  const add = (t: LTerm | null | undefined): void => {
+    if (t !== null && t !== undefined) stack.push(t);
+  };
+  const pushBody = (x: Body): void => {
+    switch (x.$) {
+      case "Match": stack.push(...x.e); x.r.forEach((r) => pushBody(r.f)); break;
+      case "Local": stack.push(...x.v); pushBody(x.f); break;
+      case "Reply": stack.push(x.x); break;
+    }
+  };
+  pushBody(b);
+  while (stack.length > 0) {
+    const t = stack.pop() as LTerm;
+    if (seen.has(t)) continue;
+    seen.add(t);
+    f(t);
+    switch (t.$) {
+      case "Sub": if (t.v.$ !== "PVar" && t.v.$ !== "PCtr") add(t.v); add(t.f); break;
+      case "Let": stack.push(...t.v); add(t.f); break;
+      case "All": add(t.A); add(t.B); break;
+      case "Lam": add(t.f); break;
+      case "Typ": add(t.g); break;
+      case "Min": add(t.a); add(t.b); break;
+      case "App": add(t.f); add(t.x); break;
+      case "ADT": case "Ctr": stack.push(...t.x); break;
+      case "Mat": add(t.h); add(t.m); break;
+      case "Eql": add(t.a); add(t.b); add(t.T); break;
+      case "Rwt": add(t.e); add(t.p); add(t.f); break;
+      case "Ann": add(t.x); add(t.T); break;
+      default: break;
+    }
+  }
+}
+function lit_body_uses(b: Body, i: number): boolean {
+  let hit = false;
+  lit_body_terms(b, (t) => { if (t.$ === "Var" && t.i === i) hit = true; });
+  return hit;
+}
+function lit_body_refs(b: Body, k: Name): boolean {
+  let hit = false;
+  lit_body_terms(b, (t) => { if (t.$ === "Ref" && t.k === k) hit = true; });
+  return hit;
+}
+
+function literal_chain_list_helpers(p: Parse, b: Extract<Body, { $: "Match" }>,
+  vars: PVar[], def: Def, k: Name, all: Extract<HTerm, { $: "All" }>,
+  scrut: LTerm): LTerm | null {
+  const list = all.A;
+  const elem = list.$ === "ADT" && list.k === "List"
+    ? list.x[list.x.length - 1] : null;
+  if (elem === null || elem.$ !== "Ref" || elem.k !== "String") return null;
+  if (all.q.$ !== "Lone") return null;
+  if (p.book.tlds["String.eq"] === undefined || p.book.tlds["Bool"] === undefined
+    || p.book.ctrs["False"] === undefined || p.book.ctrs["True"] === undefined
+    || p.book.ctrs["Con"] === undefined || p.book.ctrs["Nil"] === undefined) {
+    return null;
+  }
+  const frames = (q: Patt): { heads: Patt[]; rest: PVar | null } | null => {
+    const heads: Patt[] = [];
+    let cur: Patt = q;
+    while (cur.$ === "PCtr" && cur.k === "Con" && cur.x.length === 2) {
+      heads.push(cur.x[0]);
+      cur = cur.x[1];
+    }
+    if (cur.$ === "PVar") return { heads, rest: cur };
+    if (cur.$ === "PCtr" && cur.k === "Nil" && cur.x.length === 0) {
+      return { heads, rest: null };
+    }
+    return null;
+  };
+  type Frame = { h0: PVar; lit: PCtr; fields: PVar[]; f: Body };
+  const rows: Frame[] = [];
+  let prefixLen = 0;
+  for (; prefixLen < b.r.length; prefixLen++) {
+    const row = b.r[prefixLen];
+    if (row.p.length !== 1) break;
+    const q = row.p[0];
+    if (q.$ !== "PCtr" || q.k !== "Con") break;
+    const frame = frames(q);
+    if (frame === null || frame.rest !== null || frame.heads.length < 2) break;
+    const h0 = frame.heads[0];
+    const lit = frame.heads[1];
+    if (h0.$ !== "PVar" || lit.$ !== "PCtr" || lit.lit === undefined) break;
+    if (!frame.heads.slice(2).every((h): h is PVar => h.$ === "PVar")) break;
+    rows.push({ h0, lit, fields: frame.heads.slice(2) as PVar[], f: row.f });
+  }
+  if (rows.length === 0) return null;
+  const suffixRows = b.r.slice(prefixLen);
+  if (suffixRows.length === 0) return null;
+  const bodies = [...rows.map((r) => r.f), ...suffixRows.map((r) => r.f)];
+  if (bodies.some((body) => lit_body_refs(body, k)
+    || lit_body_uses(body, all.i))) return null;
+  const fr = () => p.sc.frs++;
+  const span = b.s;
+  const A = term_lower_shared(all.B(Var(all.k, all.i)) as HTerm);
+  const listType = term_lower_shared(list as HTerm);
+  const strType = Ref("String");
+  const helpers: LitHelper[] = [];
+  let seq = 0;
+  const helperName = (stem: string): string => {
+    let name: string;
+    do {
+      name = k + "$lit" + stem + seq++;
+    } while (p.book.tlds[name] !== undefined);
+    return name;
+  };
+  const addHelper = (stem: string, params: LitParam[], body: LTerm,
+    wrap = true): string => {
+    const name = helperName(stem);
+    let T: LTerm = A;
+    for (let i = params.length - 1; i >= 0; i--) {
+      const pr = params[i];
+      T = All(pr.q, pr.k, pr.i, pr.ty, T);
+    }
+    let V: LTerm = body;
+    if (wrap) {
+      for (let i = params.length - 1; i >= 0; i--) {
+        const pr = params[i];
+        V = Lam(pr.k, pr.i, V, span, pr.q);
+      }
+    }
+    const hd: Def = { $: "Def", n: params.length, x: 0,
+      T: term_higher(T), v: term_higher(V), u: def.u };
+    helpers.push({ name, def: hd });
+    return name;
+  };
+  const listA = (cur: LTerm, arm: LTerm, nilBody: LTerm): LTerm =>
+    App(Ann(Mat("Con", arm, Mat("Nil", nilBody, Efq(span), span), span),
+      All(Lone(), "l", fr(), listType, A), span), cur, span);
+  const con2 = (hK: string, hI: number, hQ: Quant, tK: string, tI: number,
+    body: LTerm): LTerm =>
+    Lam(hK, hI, Lam(tK, tI, body, span, Lone()), span, hQ);
+  const recon = (vals: LTerm[], tail: LTerm): LTerm => {
+    let out = tail;
+    for (let i = vals.length - 1; i >= 0; i--) {
+      out = Ctr("Con", [vals[i], out], span);
+    }
+    return out;
+  };
+  const wholeI = fr();
+  const wholeK = "_w";
+  const whole: PVar = { $: "PVar", k: wholeK, i: wholeI, q: Lone(), s: span };
+  const suffixBody = body_flatten({
+    $: "Match", e: [Var(wholeK, wholeI)], r: suffixRows, s: span,
+  }, [whole, ...vars.slice(1)], fr);
+  const suffixName = addHelper("suffix",
+    [{ k: wholeK, i: wholeI, q: Lone(), ty: listType }], suffixBody, false);
+  const failWhole = (w: LTerm): LTerm => App(Ref(suffixName), w, span);
+  const rowHelper = (row: Frame, next: { whole: boolean; name: string }): string => {
+    const h0K = "_a", h0I = fr();
+    const h1K = "_l", h1I = fr();
+    const tK = "_t", tI = fr();
+    const H0 = Var(h0K, h0I), H1 = Var(h1K, h1I), T = Var(tK, tI);
+    let body = row.f;
+    body = body_sub(body, row.h0.i, { $: "PVar", k: h0K, i: h0I,
+      q: Many(), s: row.h0.s });
+    const hIdx = row.fields.map(() => fr());
+    const tIdx = row.fields.map(() => fr());
+    row.fields.forEach((f, i) => {
+      body = body_sub(body, f.i, { $: "PVar", k: "_f" + hIdx[i],
+        i: hIdx[i], q: Many(), s: f.s });
+    });
+    const success = body_flatten(body, vars.slice(1), fr);
+    const fail = (prefix: LTerm[], current: LTerm): LTerm => {
+      const t1 = recon(prefix, current);
+      if (next.whole) {
+        return App(Ref(next.name), Ctr("Con", [H0,
+          Ctr("Con", [H1, t1], span)], span), span);
+      }
+      return App(App(App(Ref(next.name), H0, span), H1, span), t1, span);
+    };
+    const build = (i: number, current: LTerm, prefix: LTerm[]): LTerm => {
+      if (i === row.fields.length) {
+        const eh = fr(), et = fr();
+        const EH = Var("_x" + eh, eh), ET = Var("_t" + et, et);
+        return listA(current,
+          con2("_x" + eh, eh, Many(), "_t" + et, et,
+            fail([...prefix, EH], ET)), success);
+      }
+      const fh = hIdx[i], ft = tIdx[i];
+      const H = Var("_f" + fh, fh), TT = Var("_t" + ft, ft);
+      return listA(current,
+        con2("_f" + fh, fh, Many(), "_t" + ft, ft,
+          build(i + 1, TT, [...prefix, H])),
+        fail(prefix, Ctr("Nil", [], span)));
+    };
+    return addHelper("row",
+      [{ k: h0K, i: h0I, q: Many(), ty: strType },
+        { k: h1K, i: h1I, q: Many(), ty: strType },
+        { k: tK, i: tI, q: Lone(), ty: listType }],
+      build(0, T, []));
+  };
+  const chainHelper = (literal: PCtr, hitName: string,
+    nextChain: string | null): string => {
+    const h0K = "_c0", h0I = fr();
+    const h1K = "_c1", h1I = fr();
+    const tK = "_c2", tI = fr();
+    const H0 = Var(h0K, h0I), H1 = Var(h1K, h1I), T = Var(tK, tI);
+    const fnType = All(Lone(), "t", fr(), listType, A);
+    const hit = App(App(Ref(hitName), H0, span), H1, span);
+    let miss: LTerm;
+    if (nextChain !== null) {
+      miss = App(App(Ref(nextChain), H0, span), H1, span);
+    } else {
+      const mI = fr();
+      const MV = Var("_m" + mI, mI);
+      miss = Lam("_m" + mI, mI,
+        failWhole(Ctr("Con", [H0, Ctr("Con", [H1, MV], span)], span)),
+        span, Lone());
+    }
+    const select = App(Ann(
+      Mat("False", miss, Mat("True", hit, Efq(span), span), span),
+      All(Lone(), "c", fr(), Ref("Bool"), fnType), span),
+      App(App(Ref("String.eq"), H1, span), patt_term(literal), span), span);
+    return addHelper("chain",
+      [{ k: h0K, i: h0I, q: Many(), ty: strType },
+        { k: h1K, i: h1I, q: Many(), ty: strType },
+        { k: tK, i: tI, q: Lone(), ty: listType }],
+      App(select, T, span));
+  };
+  const groups: { lit: PCtr; rows: number[] }[] = [];
+  rows.forEach((row, idx) => {
+    const found = groups.find((g) => g.lit.lit === row.lit.lit);
+    if (found === undefined) groups.push({ lit: row.lit, rows: [idx] });
+    else found.rows.push(idx);
+  });
+  const chainNames: string[] = new Array(groups.length);
+  for (let g = groups.length - 1; g >= 0; g--) {
+    const group = groups[g];
+    let next: { whole: boolean; name: string } = g === groups.length - 1
+      ? { whole: true, name: suffixName }
+      : { whole: false, name: chainNames[g + 1] };
+    const names: string[] = new Array(group.rows.length);
+    for (let r = group.rows.length - 1; r >= 0; r--) {
+      names[r] = rowHelper(rows[group.rows[r]], next);
+      next = { whole: false, name: names[r] };
+    }
+    chainNames[g] = chainHelper(group.lit, names[0],
+      g === groups.length - 1 ? null : chainNames[g + 1]);
+  }
+  const chain0 = chainNames[0];
+  const h0I = fr(), t0I = fr(), h1I = fr(), t1I = fr();
+  const H0 = Var("_h0", h0I), T0 = Var("_t0", t0I);
+  const H1 = Var("_h1", h1I), T1 = Var("_t1", t1I);
+  const node1 = listA(T0,
+    con2("_h1", h1I, Many(), "_t1", t1I,
+      App(App(App(Ref(chain0), H0, span), H1, span), T1, span)),
+    failWhole(Ctr("Con", [H0, Ctr("Nil", [], span)], span)));
+  const root = listA(scrut,
+    con2("_h0", h0I, Many(), "_t0", t0I, node1),
+    failWhole(Ctr("Nil", [], span)));
+  for (const helper of helpers) {
+    p.book.tlds[helper.name] = helper.def;
+    p.book.order.push(helper.name);
+  }
+  return Lam(all.k, all.i, root, span, all.q);
 }
 
 // WNF
