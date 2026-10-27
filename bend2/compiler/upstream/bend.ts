@@ -2823,8 +2823,10 @@ export function parse_def(p: Parse, book: Book, u: Bool = false): void {
     }
   } else {
     const vars = tele.map((cell): PVar => ({ $: "PVar", k: cell[1], i: cell[2], q: Lone(), s: cell[4] }));
-    def.v = term_higher(term_lower_shared(term_higher(
-      body_flatten(parse_body(p), vars, () => p.sc.frs++))));
+    // term_higher applies body_flatten's substitutions and interns the closed
+    // constructor chains. The lower/raise round trip that followed rebuilt the
+    // same normalized term and held a second LTerm and HTerm during the load.
+    def.v = term_higher(body_flatten(parse_body(p), vars, () => p.sc.frs++));
   }
   parse_close(p, n0);
   book.order.push(k);

@@ -95,6 +95,9 @@ for (const fixture of fixtures) {
   const checked_shape = Bend.term_higher(Bend.term_lower(book.tlds.test.v as Bend.HTerm));
   assert.ok(term_nodes(checked_shape) < fixture.max_nodes, `${fixture.name} node bound`);
   assert.equal(term_hash(Bend.term_lower(checked_shape)), fixture.hash, `${fixture.name} term structure`);
+  const stored = book.tlds.test.v as Bend.HTerm;
+  assert.equal(term_hash(Bend.term_lower_shared(stored)), fixture.hash,
+    `${fixture.name} stored parsed term`);
   console.log(`PASS ${fixture.name}: ${term_nodes(checked_shape)} visits`);
 }
 
