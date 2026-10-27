@@ -192,17 +192,17 @@ def send_admission(+link: Proxy.Link, +state: State, +thread: String, +method: S
   match refreshed:
     case (token,+pointer): send_refreshed(link,state,thread,method,turn,notice,token,pointer,String.is_empty(pointer))
 
+def queue_receipt_accepted(+link: Proxy.Link, +state: State, +thread: String, +output: String, accepted: Bool) -> Outcome.Checked(Admission):
+  match accepted:
+    case True{}: do Outcome.Checked<Admission>:
+      recorded : Unit <- Proxy.record("{\"type\":\"codexInboxAdmission\",\"threadId\":" ++ J.string_literal(thread) ++ ",\"method\":\"codex queue\",\"result\":{\"receipt\":" ++ J.string_literal(output) ++ "}}")
+      Outcome.Checked.pure(Admission,Accepted{state})
+    case False{}: Outcome.Checked.pure(Admission,Refused{state,1,"Codex queue returned no matching admission receipt: " ++ output})
+
 def queue_receipt(+link: Proxy.Link, +state: State, +thread: String, result: Result<&1,&1,U32 & String,String>) -> Outcome.Checked(Admission):
   match result:
     case Fail{(code,cause)}: Outcome.Checked.pure(Admission,Refused{state,code,cause})
-    case Done{+output}:
-      do Outcome.Checked<Admission>:
-        +accepted : Bool <- IO.pure(Bool, Bool.and(String.contains(output,"Queued message "),String.contains(output," for thread " ++ thread ++ ".")))
-        match accepted:
-          case True{}: do Outcome.Checked<Admission>:
-            recorded : Unit <- Proxy.record("{\"type\":\"codexInboxAdmission\",\"threadId\":" ++ J.string_literal(thread) ++ ",\"method\":\"codex queue\",\"result\":{\"receipt\":" ++ J.string_literal(output) ++ "}}")
-            Outcome.Checked.pure(Admission,Accepted{state})
-          case False{}: Outcome.Checked.pure(Admission,Refused{state,1,"Codex queue returned no matching admission receipt: " ++ output})
+    case Done{+output}: queue_receipt_accepted(link,state,thread,output,Bool.and(String.contains(output,"Queued message "),String.contains(output," for thread " ++ thread ++ ".")))
 
 def queue_refreshed(+link: Proxy.Link, +state: State, +thread: String, +token: String, +pointer: String, +empty: Bool) -> Outcome.Checked(Admission):
   match empty:
