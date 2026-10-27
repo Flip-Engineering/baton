@@ -1019,7 +1019,7 @@ def acquire_heavy(~again_acquire: (@+dir: String -> @+lock: String -> @+token: S
 def acquire_heavy_loop(+dir: String, +lock: String, +token: String, +priority: U32, +delay: U32) -> IO(U32):
   acquire_heavy(acquire_heavy_loop, dir, lock, token, priority, delay)
 
-def transfer_heavy(held: U32) -> IO(Unit):
+def transfer_heavy(+held: U32) -> IO(Unit):
   do IO<Unit>:
     duped : Unit <- IO.try(Unit, L.CompileQueueLifecycle.dup_to(held, 8))
     closed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.close_fd(held))
