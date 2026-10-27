@@ -963,7 +963,7 @@ def waiters_reap_stale(+dir: String, +name: String) -> IO(Unit):
     read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(dir ++ "/" ++ name)
     waiters_reap_first(read, dir ++ "/" ++ name)
 
-def waiters_ticket_higher(text: String, +token: String, +priority: U32) -> IO(Bool):
+def waiters_ticket_higher(+text: String, +token: String, +priority: U32) -> IO(Bool):
   do IO<Bool>:
     contender : Bool <- IO.pure(Bool,
       Bool.and(U32.is_gt(status_number(field(text, "priority")), priority),
