@@ -103,6 +103,7 @@ type Seg = {
   ks: Kind[];
   frame: { pop: number; at: number[] } | null;
   refs: Set<string>;
+  cids: Map<string, number>;
   host?: boolean;
   spin?: boolean;
   fork?: boolean;
@@ -1570,6 +1571,7 @@ function ctr_build(fl: File, k: Bend.Name, exprs: string[],
   stat = false): string {
   const cid = cid_mac(k);
   const node = lay_node(fl.book, k);
+  fl.seg.cids.set(k, node.ks.length);
   if (exprs.length === 0 || (node.ks.length === 1 && node.ks[0] === "w32")) {
     return `term_pak(${cid}, ${exprs[0] ?? 0})`;
   }
@@ -2383,7 +2385,7 @@ function spare_flush(fl: File): void {
 function seg_new(name: string, ret: Lay, params: string[],
   ks: Kind[] = params.map(() => "w64"), frame: Seg["frame"] = null): Seg {
   return { fid: seg_fid(name), def: name, ret, lines: [], params, ks, frame,
-    refs: new Set() };
+    refs: new Set(), cids: new Map() };
 }
 
 function seg_fid(k: Bend.Name): string {
@@ -2722,8 +2724,11 @@ function val_unbox(fl: File, v: Val, lay: Lay): Val {
     return val_new(v.ws, lay);
   }
   const t = emit_alias(fl, v.ws[0], "u");
-  return val_arms(fl, lay, t, (_, i) =>
-    `term_aux(${t}) == ${cid_mac(lay.arms![i].k)}`, (arm) => {
+  return val_arms(fl, lay, t, (_, i) => {
+    const k = lay.arms![i].k;
+    fl.seg.cids.set(k, lay_node(fl.book, k).ks.length);
+    return `term_aux(${t}) == ${cid_mac(k)}`;
+  }, (arm) => {
     const fs = node_fields(fl, t, lay_node(fl.book, arm.k));
     return arm.fs.map((f, j) => val_to(fl, fs[j], f.lay));
   });
@@ -4011,6 +4016,7 @@ function emit_match(fl: File, x: Of<"Mat"> | Of<"Efq">,
             "h").map((w) => val_new([w], BOX)))];
       }
       if (lay_box(lay)) {
+        fl.seg.cids.set(k, lay_node(fl.book, k).ks.length);
         return [`term_aux(${sw}) == ${cid_mac(k)}`, h,
           () => node_fields(fl, sw, lay_node(fl.book, k), true)];
       }
@@ -4106,8 +4112,9 @@ function compile_reqs(fl: File, defs: [Bend.Name, Def][]): void {
       name_local(fl, n));
     fl.seg = seg_new(k, BOX, qp);
     fl.segs.push(fl.seg);
-    fl.cids.set(k, qp.length);
+    for (const c of own) fl.seg.cids.set(c, lay_node(fl.book, c).ks.length);
     file_push(fl, `r0 = ${ctr_build(fl, k, qp)};`);
+    fl.seg.cids.set(k, qp.length);
     file_push(fl, "WL_RETN(1);");
   }
 }
@@ -4116,7 +4123,7 @@ const TABLES = ["CID_ARITY_T", "CID_HOT_T", "FID_ARITY_T", "FID_FLAG_T", "FID_RE
 
 // The datatypes whose constructors the runtime or the elaborator lays itself.
 const RUNTIME_ADTS = ["Sigma", "String", "Word.Con", "IO.OP", "Result",
-  "Maybe", "Bool", "Unit"];
+  "Maybe", "Bool", "Unit", "List"];
 
 // The compiler knows base.bend's types by their names alone, and applies
 // a closure through CLO_APPLY, a def it synthesizes. SYNTH is the name no
@@ -4134,14 +4141,40 @@ export function book_owned(src: Bend.Book, ks = OWNED): void {
   }
 }
 
-function compile_tables(fl: File, entries: Seg[]): string[] {
+export function check_id_limit(namespace: string, count: number,
+  limit: number): void {
+  if (count > limit) {
+    die(namespace + ": " + String(count) + " over " + String(limit));
+  }
+}
+
+function compile_tables(fl: File, entries: Seg[], show: Show | null): string[] {
   const defs: string[] = [];
-  for (const ms of [[...fl.cids.keys()].map(cid_mac),
+  const cids = new Map<string, number>();
+  const add = (k: string, arity: number): void => {
+    if (!cids.has(k)) cids.set(k, arity);
+  };
+  for (const seg of entries) {
+    for (const [k, arity] of seg.cids) add(k, arity);
+  }
+  if (show !== null) {
+    for (const c of show.cells) {
+      if (typeof c === "string") add(c, lay_node(fl.book, c).ks.length);
+    }
+  }
+  for (const a of RUNTIME_ADTS) {
+    const tld = fl.book.tlds[a];
+    if (tld !== undefined && tld.$ === "ADT") {
+      for (const c of tld.c) add(c.k, lay_node(fl.book, c.k).ks.length);
+    }
+  }
+  check_id_limit("CID", cids.size, 65536);
+  check_id_limit("FID live segments", entries.length - 2, 65532);
+  for (const ms of [[...cids.keys()].map(cid_mac),
     [...entries.map((s) => s.fid), "FID_EXIT", "FID_ENTER"]]) {
     const dup = [...ms, ...TABLES].find((m, i, a) => a.indexOf(m) < i);
-    if (ms.length > 65536 || dup !== undefined) {
-      die(dup === undefined ? "an id over 65535"
-        : "two names mangle to " + dup);
+    if (dup !== undefined) {
+      die("two names mangle to " + dup);
     }
     defs.push(...ms.map((m, i) => `#define ${m} ${i}`));
   }
@@ -4167,8 +4200,9 @@ function compile_tables(fl: File, entries: Seg[]): string[] {
     | Number(!forky.has(s.fid)) << 1));
   table("FID_RESW_T", entries.map((s) =>
     s.frame === null ? 0 : s.params.length - s.frame.at.length));
-  table("CID_ARITY_T", [...fl.cids.values()]);
-  table("CID_HOT_T", [...fl.cids.keys()].map((k) => Number(fl.hot.has(k))));
+  table("CID_ARITY_T", [...cids.values()]);
+  table("CID_HOT_T", [...cids.keys()].map((k) => Number(fl.hot.has(k))));
+  fl.cids = cids;
   defs.push(`#define STAT_LEN ${fl.img.length}`, "");
   // One bank for both lanes, as wide as the widest segment or return; rp
   // pads the host's twelfth slot so rax stays free for the tail call.
@@ -4239,11 +4273,6 @@ export function compile_book(book: Bend.Book): string {
     collect_full();
     fl.dry = dry;
     diagnostic_stage("pass.layouts", { pass: pass_number });
-    for (const k of SRCS.keys()) {
-      for (const c of (cb.book.tlds[k] as Bend.ADT).c ?? []) {
-        fl.cids.set(c.k, lay_node(fl.book, c.k).ks.length);
-      }
-    }
     if (!v_dropped) {
       // show_main has read main.v and the constructor preamble has laid
       // every reachable ADT out, so the type closure is complete here: a
@@ -4380,7 +4409,7 @@ export function compile_book(book: Bend.Book): string {
     `static const char* SHOW_NAMES[] = { ${show.names.map((n) =>
       JSON.stringify(n)).join(", ")} };`, "#endif"];
   diagnostic("tables.begin", { entries: entries.length });
-  const defs = compile_tables(fl, entries);
+  const defs = compile_tables(fl, entries, show);
   diagnostic("tables.end", { definitions: defs.length });
   defs.push(`#define MAIN_FID ${seg_fid("main")}`, `#define MAIN_PURE ${
     Number(show !== null)}`,
