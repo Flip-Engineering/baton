@@ -76,6 +76,18 @@ def file_sha256(path):
             digest.update(chunk)
     return digest.hexdigest()
 
+def replay_stream(raw):
+    """Return the complete-record prefix before an all-NUL retained tail."""
+    nul = raw.find(b'\x00')
+    if nul < 0:
+        return raw
+    suffix = raw[nul:]
+    if suffix.strip(b'\x00'):
+        raise ValueError('retained NUL tail contains a non-NUL byte')
+    if nul and raw[nul - 1:nul] != b'\n':
+        raise ValueError('retained NUL tail does not start at a record boundary')
+    return raw[:nul]
+
 
 def custody_flags(directory):
     path = pathlib.Path(directory) / 'custody'
@@ -122,6 +134,22 @@ def owner_pid(database):
         if b'--instance-owner' in argv and str(database).encode() in argv:
             return int(entry.name)
     return None
+
+
+class ReplayFixtureNormalization(unittest.TestCase):
+    def test_trailing_zero_tail_is_removed_without_losing_the_record(self):
+        record = b'{"type":"agent_end"}\n'
+        self.assertEqual(replay_stream(record + b'\x00' * 32), record)
+
+    def test_embedded_nul_cannot_hide_a_later_record(self):
+        raw = b'{"type":"turn_end"}\n\x00\x00{"type":"agent_end"}\n'
+        with self.assertRaises(ValueError):
+            replay_stream(raw)
+
+    def test_nul_inside_a_partial_record_is_refused(self):
+        raw = b'{"type":"turn_end"}\n{"type":"agent_end"\x00\x00'
+        with self.assertRaises(ValueError):
+            replay_stream(raw)
 
 
 class ObserverMonitor(unittest.TestCase):
@@ -803,18 +831,15 @@ class ObserverMonitor(unittest.TestCase):
         spool_fixture = pathlib.Path(fixture)
         self.assertTrue(spool_fixture.is_file() and not spool_fixture.is_symlink(),
                         'replay fixture must be a regular data-only spool file')
-        # The preserved fixture ends with an all-NUL retained tail. That tail
-        # belongs to the NUL-refusal contract and is not part of the replay
-        # stream, so this normal-EOF test copies the last complete record only.
+        # The preserved fixture ends with an all-NUL retained tail at a record
+        # boundary. That tail belongs to the NUL-refusal contract and is not
+        # part of the replay stream.
         raw = spool_fixture.read_bytes()
-        nul = raw.find(b'\x00')
-        if nul >= 0:
-            raw = raw[:nul]
-            if raw and not raw.endswith(b'\n'):
-                raw = raw[:raw.rfind(b'\n') + 1]
-            trimmed = self.directory / 'protected-spool.bin'
-            trimmed.write_bytes(raw)
-            spool_fixture = trimmed
+        trimmed = replay_stream(raw)
+        if trimmed != raw:
+            copy = self.directory / 'protected-spool.bin'
+            copy.write_bytes(trimmed)
+            spool_fixture = copy
         source_size = spool_fixture.stat().st_size
         self.assertGreater(source_size, 40_000_000,
                            'replay fixture must contain the retained large spool')
