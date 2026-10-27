@@ -64,18 +64,23 @@ name: bend2-native-development
       retained_compiler_archive:
         description: 'Pinned compiler archive on the homelab; $RUNNER_TEMP uses the selected runner namespace'
         required: false
-        default: '/var/tmp/baton2-compile-queue/toolchains/compiler-main-7261-weakset-20261027/bend-2.0.25-linux-x64-compiler-main-7261-weakset-20261027.tar.gz'
+        default: '/var/tmp/baton2-compile-queue/toolchains/compiler-main-shared-types-20261027/bend-2.0.25-linux-x64-compiler-main-shared-types-20261027.tar.gz'
         type: string
       retained_compiler_archive_sha256:
         description: 'Exact SHA256 of the selected pinned compiler archive'
         required: false
-        default: '9439438bcf409f1ab4714e27016042153e4045ee8b9353370718f4b19e91749d'
+        default: 'ebdf6505992f6e1c5b6b143350b324c9395fc90610ccda10300a7b0d80f426cd'
         type: string
       retained_ccache:
         description: 'Measured private ccache wrapper on the homelab; leave blank for direct native compilation'
         required: false
         default: ''
         type: string
+      compiler_diagnostics:
+        description: 'Record compiler stages and memory observations during this run'
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: read
 
@@ -85,6 +90,7 @@ concurrency:
 
 env:
   BATON2_SOURCE_SHA: ${{ inputs.source_commit || (github.event_name == 'pull_request' && github.event.pull_request.head.sha) || github.sha }}
+  BEND_COMPILER_DIAGNOSTICS: ${{ inputs.compiler_diagnostics && '1' || '' }}
 
 jobs:
   linux-candidate:
@@ -115,8 +121,8 @@ jobs:
       - name: Prepare candidate toolchain and TypeScript runtime
         shell: bash
         env:
-          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-7261-weakset-20261027/bend-2.0.25-linux-x64-compiler-main-7261-weakset-20261027.tar.gz' }}
-          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '9439438bcf409f1ab4714e27016042153e4045ee8b9353370718f4b19e91749d' }}
+          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-shared-types-20261027/bend-2.0.25-linux-x64-compiler-main-shared-types-20261027.tar.gz' }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || 'ebdf6505992f6e1c5b6b143350b324c9395fc90610ccda10300a7b0d80f426cd' }}
           BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
           BATON2_LINUX_RUNNER: homelab
         run: |
@@ -288,8 +294,8 @@ jobs:
       BUN_JSC_maxPerThreadStackUsage: '67108864'
       BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.target_commit }}
       BATON2_TARGET_BUILD_RUN: ${{ inputs.target_build_run }}
-      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-7261-weakset-20261027/bend-2.0.25-linux-x64-compiler-main-7261-weakset-20261027.tar.gz' }}
-      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '9439438bcf409f1ab4714e27016042153e4045ee8b9353370718f4b19e91749d' }}
+      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-shared-types-20261027/bend-2.0.25-linux-x64-compiler-main-shared-types-20261027.tar.gz' }}
+      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || 'ebdf6505992f6e1c5b6b143350b324c9395fc90610ccda10300a7b0d80f426cd' }}
     steps:
       - name: Validate exact source commit
         shell: bash
