@@ -31,6 +31,53 @@ If the App is not installed for `OWNER`, the helper refuses with a message that
 names the App slug and the owner. The helper does not fall back to another
 installation.
 
+## GitHub CLI access
+
+The launcher adds `git-series-bin/gh` to the child `PATH` and supplies the
+selected registry and series to the wrapper. The wrapper resolves the target
+repository from `-R` or `--repo`, then `GH_REPO`, then the GitHub `origin`
+remote. It looks up that repository owner's App installation for every command
+and gives the real `gh` process a fresh `GH_TOKEN`. It removes an inherited
+`GITHUB_TOKEN` from that process environment.
+
+The CLI token requires `contents:write`, `pull_requests:write`, `metadata:read`,
+`issues:write`, `actions:read`, `checks:read` and `statuses:read`. The token
+request omits the `permissions` field, so GitHub returns the installation's full
+permission grant. The token can access every repository selected for that App
+installation. Git credential requests continue to use the three-permission
+subset described above. [GitHub's installation-token API](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app)
+documents these token permissions.
+
+## GitHub App permissions
+
+Set the CLI permissions on each series App in **Settings > Developer settings >
+GitHub Apps > Permissions & events**:
+
+| Series | App |
+| --- | --- |
+| GPT | [Flip Baton - GPT](https://github.com/apps/flip-baton-gpt) |
+| Muse | [Flip Baton - Muse](https://github.com/apps/flip-baton-muse) |
+| DeepSeek | [Flip Baton - DeepSeek](https://github.com/apps/flip-baton-deepseek) |
+| Claude | [Flip Baton - Claude](https://github.com/apps/flip-baton-claude) |
+| GLM | [Flip Baton - GLM](https://github.com/apps/flip-baton-glm) |
+| Kimi | [Flip Baton - Kimi](https://github.com/apps/flip-baton-kimi) |
+
+| Repository permission | Level | Seat operation |
+| --- | --- | --- |
+| Contents | Read and write | Git pushes and repository contents |
+| Pull requests | Read and write | Read and create pull requests |
+| Metadata | Read-only | Repository metadata |
+| Issues | Read and write | Read issues and post comments |
+| Actions | Read-only | Read workflow runs and logs |
+| Checks | Read-only | Read check runs and annotations |
+| Commit statuses | Read-only | Read commit status contexts |
+| Workflows | Read and write | Push changes under `.github/workflows` with the `workflow-write` profile |
+
+When permissions are added to an App, each installation owner must approve the
+updated grant before the installation receives it. Approve changes for each
+account where the App is installed. [GitHub documents App permission
+updates](https://docs.github.com/en/apps/maintaining-github-apps/modifying-a-github-app-registration#about-changes-to-permissions).
+
 ## Configuration
 
 Create an owned registry file and an App directory for each configured series.
