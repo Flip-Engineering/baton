@@ -401,6 +401,16 @@ class ObserverMonitor(unittest.TestCase):
         self.assertEqual(frame.encode()[4095:4097], b'\\n')
         self.assert_codex_frames_report(frame, {'type': 'turn.completed'}, text)
 
+    def test_codex_escaped_backslash_boundary_reports_latest_assistant(self):
+        header = '{"type":"item.completed","item":{"id":"valid-span-escape","type":"agent_message","text":"'
+        text = ('a' * (4095 - len(header))) + '\\' + ('b' * 1200)
+        frame = json.dumps({'type': 'item.completed', 'item': {
+            'id': 'valid-span-escape', 'type': 'agent_message', 'text': text}},
+            separators=(',', ':'))
+        self.assertEqual(len(frame.encode()), 5300)
+        self.assertEqual(frame.encode()[4095:4097], b'\\\\')
+        self.assert_codex_frames_report(frame, {'type': 'turn.completed'}, text)
+
     def test_codex_metadata_after_text_reports_latest_assistant(self):
         text = ('latest "quoted" body\\path\n' * 400) + '完整'
         frame = json.dumps({'item': {'text': text, 'type': 'agent_message', 'id': 'latest'},
