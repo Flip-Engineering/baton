@@ -93,6 +93,11 @@ COMPILER_ARCHIVES = {
         'official_release_artifact': False,
         'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
     },
+    '5d3e79f021dc544dc2c2e075427b5adfd6858c4a0efd8aa28d0d463a9394850e': {
+        'name': 'Bend 2.0.25 compiler main with literal-prefix lowering, 20-bit FID/CID capacity, strong CID value reach and Metal term-tag decode',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
     ARCHIVE_SHA: {'name': 'Bend 2.0.25', 'official_release_artifact': True},
     '38bb1813d52ddc7b816a8a01f971fe8503959fef54795ca22eb346b5cfc069a7': {
         'name': 'Bend 2.0.25 with the Baton #741 pure memo patch',
