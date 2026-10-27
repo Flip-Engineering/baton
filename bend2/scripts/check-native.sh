@@ -14,7 +14,14 @@ if [ ! -x "$compiler" ]; then
 fi
 (
   ulimit -s unlimited 2>/dev/null || true
-  BEND_NO_TELEMETRY=1 BUN_JSC_maxPerThreadStackUsage="${BUN_JSC_maxPerThreadStackUsage:-67108864}" "$compiler" bend2/src/coordinator/laws.bend --check-only
+  if [ -n "${BATON2_NATIVE_QUEUE_DRIVER:-}" ]; then
+    BEND_NO_TELEMETRY=1 BUN_JSC_maxPerThreadStackUsage="${BUN_JSC_maxPerThreadStackUsage:-67108864}" \
+      "$PYTHON3" "$BATON2_NATIVE_QUEUE_DRIVER" compiler bend "$compiler" \
+      bend2/src/coordinator/laws.bend --check-only
+  else
+    BEND_NO_TELEMETRY=1 BUN_JSC_maxPerThreadStackUsage="${BUN_JSC_maxPerThreadStackUsage:-67108864}" \
+      "$compiler" bend2/src/coordinator/laws.bend --check-only
+  fi
 )
 sh bend2/scripts/build-native.sh
 "$PYTHON3" bend2/test/package-receiver-layout.py
