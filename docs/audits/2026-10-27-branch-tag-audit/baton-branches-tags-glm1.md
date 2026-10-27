@@ -161,11 +161,7 @@ verification remains before deletion; everything else is a direct verdict.
 | Coordinator laws (PR #782 era) | codex/hosted-laws-782-20261017 (3), codex/coordinator-law-gate-782-20261016 (1 of 6) | laws qualification; check against current law fixtures |
 | Storage policy continuation | codex/storage-policy-core-20261019 (1), codex/storage-policy-core-continuation-20261019 (1), codex/storage-policy-20261019 (1) | all three are root-seat "wip: preserve uncommitted work" captures from 2026-10-22; root decides |
 | PR1165 follow-ups | ensemble/critical-native-package-kimi-20261027 (2), codex/pr1165-darwin-recovery-workflow-20261027 (5) | confirm whether the #1166/#1167 chain consumed the workflow branch; kimi branch has an unknown ensemble owner |
-| Residual singles | codex/storage-reflog-preservation-20261027 (9, feeds PR #1157), fix/graph-answer-fix-20261019, fix/issue937-{terminal-policy,replay-guard,legacy,live-attach}-202610xx, fix/inotify-909-ds-20261019, fix/stop-dsh-1015-20261022, fix/native-ci-{launch-guard-stubs,bun144}-20261023, codex/{canonical-owner-ipc,host-inspector-bounded,runtime-frame-span-review,frontend-check-custody-20261021}, consol/{string-eq,frame-span-tests}-20261022, compiler-knowledge-ds-20261019, baton/knowledge-attach-hang-ds-20261018 (5), qual/composite-reap-ports-20261022 (14) | each 1–5 unique commits; individually triaged in later passes |
-
-`codex/frontend-check-custody-20261021` (93 unique) is listed under residuals pending one
-check: its check-kind routing may be the same problem main's merged "Resolve check entries
-from the source root" line already handles.
+| Residual singles | codex/storage-reflog-preservation-20261027 (9, feeds PR #1157); open-issue fixers: fix/issue937-{terminal-policy,replay-guard-c021089a,legacy,live-attach}-202610xx (#937 open, SQLite projection stalls), fix/inotify-909-ds-20261019 (#909 open, D-Bus inotify exhaustion), fix/stop-dsh-1015-20261022 (#1015 open, dsh stop refusal); qual/composite-reap-ports-20261022 (14, host recovery tests); others: fix/graph-answer-fix-20261019, fix/native-ci-{launch-guard-stubs,bun144}-20261023, codex/{canonical-owner-ipc,host-inspector-bounded,runtime-frame-span-review,frontend-check-custody-20261021}, consol/{string-eq,frame-span-tests}-20261022, compiler-knowledge-ds-20261019, baton/knowledge-attach-hang-ds-20261018 (5) | each 1–5 unique commits; issue anchors verified 2026-10-27 |
 
 ## Process observations
 
