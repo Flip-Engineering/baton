@@ -258,7 +258,7 @@ def main():
             'platform': {'system': platform.system(), 'machine': platform.machine()},
             'source': default_source,
             'binaries': records,
-            'binary': {'path': focused['path'], 'alias': focused['alias'],
+            'binary': {'path': focused['path'], 'alias': focused.get('alias'),
                        'sha256': focused['sha256'], 'source': focused['source']},
             'selected_modules': modules, 'selected_dependencies': dependencies,
             'required_system_dependencies': package.system_dependencies(platform.system()),

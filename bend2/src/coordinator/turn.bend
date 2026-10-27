@@ -1,4 +1,5 @@
 import Base
+import ./agent-guidance.bend as AgentGuidance
 import ./agent-input.bend as AgentInput
 import ../coordinator/commands.bend as C
 import ./store.bend as Store
@@ -12,6 +13,7 @@ import ../host/control.bend as HostControl
 import ./guidance.bend as Guidance
 import ./native-requests.bend as NativeRequests
 import ./native-initial-input.bend as NativeInitialInput
+import ./usage-windows.bend as UW
 import ./observer-checkpoint.bend as Observer
 import ./../coordinator/logs.bend as Logs
 import ../host/log-checkpoint.bend as Checkpoint
@@ -25,8 +27,10 @@ import ../harness/omp-player.bend as Omp
 import ../harness/muse-player.bend as Muse
 import ../harness/codex-player.bend as Codex
 import ../harness/dsh-player.bend as Dsh
+import ../harness/agy-player.bend as Agy
 import ../git/process.bend as GitProc
 import ../git/types.bend as G
+import ../storage/lifecycle.bend as Storage
 import ../context/request.bend as Req
 import ../json/canonical.bend as J
 import ./../coordinator/frame-span.bend as Frame
@@ -109,10 +113,12 @@ def result_missing(db: String, player: String, id: String, log: String, stderr: 
     case True{}: IO.pure(Unit,Unit{})
     case False{}: report(db,player,id,"Player process ended without a native result (" ++ status ++ "). Output: " ++ log ++ ". Stderr: " ++ stderr)
 
-def exit_failure(db: String, player: String, id: String, status: String, success: Bool) -> IO(Unit):
+def exit_failure(+db: String, +player: String, id: String, status: String, success: Bool, event: String) -> IO(Unit):
   match success:
     case True{}: IO.pure(Unit,Unit{})
-    case False{}: report(db,player,id ++ ":exit","Player process ended with " ++ status)
+    case False{}: do IO<Unit>:
+      +message_id : String <- Subs.exit_report_id(db,player,id,event)
+      report(db,player,message_id,"Player process ended with " ++ status)
 
 def failed(+status: String, +event: String, error: String) -> Bool:
   Bool.or(Bool.not(String.eq(status,"exit 0")),Bool.or(String.is_empty(event),Bool.not(String.is_empty(error))))
@@ -149,7 +155,7 @@ def prepare_finished(+db: String, +player: String, +id: String, log: String, std
     result : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM turns WHERE id=" ++ C.q(id) ++ ";"))
     noted : Unit <- diagnostic(db,player,id,error,event,String.is_empty(error))
     missing : Unit <- result_missing(db,player,id,log,stderr,status,String.eq(result,"1\n"))
-    exit_failure(db,player,id,status,String.eq(status,"exit 0"))
+    exit_failure(db,player,id,status,String.eq(status,"exit 0"),event)
 
 def prepare_player(db: String, player: String, id: String, log: String, stderr: String, error: String, status: String, event: String, early: Bool) -> IO(Unit):
   match early:
@@ -171,27 +177,73 @@ def settlement_success(db: String, outcome: Outcome) -> IO(Bool):
 
 # A failed Direct turn retains its original input for supported recovery.
 # Later input still reaches the current receiver through the ordinary wake.
+# A seat held by a live read keeps that wake owed and starts the reset-time
+# continuation; the continuation's wake reads the provider again.
+def direct_wake_gate(+db: String, +player: String, +message: String, gate: UW.Gate) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match gate:
+    case UW.GateHeld{+window,+resets_at,+source,+receipt}:
+      Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.is_empty(message),
+        IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
+        do IO<Result<&1,&1,U32 & String,Unit>>:
+          held : Unit <- UW.held(db,player,message,"direct wake",UW.GateHeld{window,resets_at,source,receipt})
+          IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
+    case other: Delivery.wake_pending(db,player,message)
+
+def direct_wake_gated(+db: String, +player: String, cursor: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    +label : String <- Accounts.handoff_label_io(db,player)
+    current : UW.Gate <- UW.window_gate(db,player,Tx.trim_nl(label))
+    gate : UW.Gate <- Accounts.order_gate(db,player,current)
+    found : String <- IO.try(String,DB.Sql.query(db,Delivery.wake_sql(player,cursor)))
+    next : Result<&1,&1,U32 & String,Unit> <- direct_wake_gate(db,player,Tx.trim_nl(found),gate)
+    IO.pure(Result<&1,&1,U32 & String,Unit>,next)
+
 def direct_wake(+db: String, +player: String, id: String, outcome: Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     success : Bool <- settlement_success(db,outcome)
     cursor : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT CAST(seq AS TEXT) FROM messages WHERE id=" ++ C.q(id ++ ":task-input") ++ " AND recipient=" ++ C.q(player) ++ "),'0');"))
-    Delivery.wake_pending(db,player,Bool.pick(String,success,"0",Tx.trim_nl(cursor)))
+    next : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),success,Delivery.wake_pending(db,player,"0"),direct_wake_gated(db,player,Tx.trim_nl(cursor)))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,next)
+
+def direct_window_gate(+db: String, +player: String) -> IO(UW.Gate):
+  do IO<UW.Gate>:
+    +label : String <- Accounts.handoff_label_io(db,player)
+    UW.window_gate(db,player,Tx.trim_nl(label))
+
+def direct_gate_held(gate: UW.Gate) -> Bool:
+  match gate:
+    case UW.GateHeld{window,resets_at,source,receipt}: True{}
+    case other: False{}
+
+def direct_gate_refusal(gate: UW.Gate) -> String:
+  match gate:
+    case UW.GateHeld{window,resets_at,source,receipt}: "Provider usage held by a live read: window=" ++ window ++ "; provider resetsAt=" ++ resets_at ++ "; source=" ++ source ++ "; the direct task remains retained."
+    case other: "Provider usage window held; the direct task remains retained."
 
 def task_instructions() -> String:
   "Carry out the coordinator-authorized assignment. Keep unfinished work and outstanding qualification in your reports and project state. Direct operator instructions and explicit stops remain effective.\n"
 
 def knowledge_instructions() -> String:
-  "Record authored evidence, findings, hypotheses, experiments, decisions and principles with knowledge record --kind KIND --claim TEXT --evidence TEXT --limits TEXT. Baton generates the finding identity. Optional --links JSON records authored source, relation and target references. Use Supports, Contradicts, Produced, Informed, DerivedFrom, TestedBy and Supersedes for the corresponding evidence relationships. knowledge search --query TEXT reads scoped findings and retained evidence; knowledge traverse --reference REFERENCE --direction in|out|both follows their recorded relations. Use help knowledge for the available actions. Preserve uncertainty and complete evidence.\n"
+  "Use baton knowledge to record and read scoped findings and evidence. Preserve uncertainty and complete evidence; baton help knowledge describes the actions.\n"
 
 def direct_task_prompt(+db: String, +player: String, +id: String, prompt: String) -> IO(String):
   do IO<String>:
     executable : String <- IO.try(String,Lock.SessionLock.executable())
     parent : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(parent,'') FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     header : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":task-input") ++ " AND recipient=" ++ C.q(player) ++ " AND kind='task-assignment') THEN 'Message (task-assignment) from ' || " ++ C.q(player) ++ " || ' [id: ' || " ++ C.q(id ++ ":task-input") ++ " || ']:' ELSE '' END;"))
-    IO.pure(String,task_instructions() ++ knowledge_instructions() ++ "Coordinator executable, database and session argv: [" ++ J.string_literal(executable) ++ "," ++ J.string_literal(db) ++ "," ++ J.string_literal(player) ++ "]. Recorded parent: " ++ Tx.trim_nl(parent) ++ ".\nUse baton inbox to read complete owed input. Baton resolves your session and database from the launch context. Use baton acknowledge to record handling of the current native turn's complete owned reads. Use baton completion-request --text SUMMARY when the assignment is ready; your recorded parent resolves and confirms the current request.\n" ++ Tx.trim_nl(header) ++ "\n" ++ prompt)
+    IO.pure(String,task_instructions() ++ knowledge_instructions() ++ AgentGuidance.actions() ++ "Coordinator executable, database and session argv: [" ++ J.string_literal(executable) ++ "," ++ J.string_literal(db) ++ "," ++ J.string_literal(player) ++ "]. Recorded parent: " ++ Tx.trim_nl(parent) ++ ".\nUse baton inbox to read complete owed input. Baton resolves your session and database from the launch context. Baton records delivery and complete reads internally. Use baton completion-request --text SUMMARY when the assignment is ready; your recorded parent resolves and confirms the current request.\n" ++ Tx.trim_nl(header) ++ "\n" ++ prompt)
 
 def generation_log(+log: String, +id: String) -> String:
   Logs.attempt_log(log,id)
+
+# After settlement, a seat whose assignment is still open with no completion
+# request and no owed input has nothing that starts its next turn (#1054). Its
+# coordinator receives that state as a report beside the turn report. When the
+# write fails, the ordinary turn report remains the coordinator's input.
+def note_open_assignment(+db: String, +player: String, +id: String) -> IO(Unit):
+  do IO<Unit>:
+    noted : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,C.open_assignment_report_sql(id,player))
+    IO.pure(Unit,Unit{})
 
 # Failure reports are committed while this invocation still owns the session.
 # finish delivers the settled turn to its recorded coordinator.
@@ -200,36 +252,45 @@ def prepare(+db: String, +player: String, +id: String, log: String, stderr: Stri
     +generation : String <- IO.pure(String,generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     reported : Unit <- prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
-    success : Bool <- settlement_success(db,outcome)
-    AgentInput.settle_if(db,player,id,success)
+    read : Unit <- AgentInput.record_initial_reads(db,player,id)
+    note_open_assignment(db,player,id)
 
 def record_exit(db: String, player: String, +id: String, log: String, outcome: Outcome) -> IO(Unit):
   match outcome:
     case Ended{status,event,error,incomplete}: Stop.exited(db,player,id,status,event,error,generation_log(log,id))
 
-def player_finished(+db: String, player: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def settle_account_attempt(+db: String, +attempt: String, +outcome: Outcome) -> IO(Unit):
+  match outcome:
+    case Ended{status,event,error,incomplete}: Accounts.attempt_completed_event(db,attempt,status,error,event)
+
+def player_finished(+db: String, +player: String, +id: String, quiet: Bool, failed: Bool, event: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
+    exit_id : String <- Bool.pick(IO(String),failed,Subs.exit_report_id(db,player,id,event),IO.pure(String,id ++ ":exit"))
     diagnostic_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":observation","1","")
     delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id,"1",saved)
-    exit_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":exit","1","")
+    assignment_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":assignment","1","")
+    exit_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,exit_id,"1","")
     stopped : Result<&1,&1,U32 & String,Unit> <- Stop.deliver(db,player,id)
-    written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)
-    IO.pure(Result<&1,&1,U32 & String,Unit>,combine(delivery_result(remember(remember(remember("",diagnostic_delivery),delivered),exit_delivery)),combine(stopped,written)))
+    written : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),quiet,
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),T.Text.control_output(saved))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,combine(delivery_result(remember(remember(remember(remember("",diagnostic_delivery),delivered),assignment_delivery),exit_delivery)),combine(stopped,written)))
 
-def finish_parent(db: String, player: String, id: String, log: String, outcome: Outcome, parent: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def finish_parent(db: String, player: String, id: String, log: String, outcome: Outcome, parent: Bool, quiet: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match outcome:
     case Ended{+status,+event,error,incomplete}:
       match parent:
-        case True{}: player_finished(db,player,id)
-        case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-          output : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN value='' THEN NULL ELSE json(value) END,'error'," ++ C.q(error) ++ ") FROM frame;"))
-          T.Text.control_output(output)
+        case True{}: player_finished(db,player,id,quiet,Bool.not(String.eq(status,"exit 0")),event)
+        case False{}: Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),quiet,
+          IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
+          do IO<Result<&1,&1,U32 & String,Unit>>:
+            output : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN value='' THEN NULL ELSE json(value) END,'error'," ++ C.q(error) ++ ") FROM frame;"))
+            T.Text.control_output(output))
 
-def finish(+db: String, +player: String, id: String, log: String, outcome: Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):
+def finish(+db: String, +player: String, id: String, log: String, outcome: Outcome, quiet: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
-    finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"))
+    finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"),quiet)
 
 def status_text(result: Result<&1,&1,U32 & String,String>) -> String:
   match result:
@@ -254,7 +315,9 @@ def input(+handle: U32, +prompt: String, +harness: String, level: String) -> IO(
     Codex.input(handle,prompt),
   Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.eq(harness,"dsh\n"),
     Dsh.input(handle,prompt),
-    Claude.input(handle,prompt)))))
+  Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.eq(harness,"antigravity\n"),
+    Agy.input(handle,prompt),
+    Claude.input(handle,prompt))))))
 
 def stdin_kept_open(+harness: String) -> Bool:
   String.eq(harness,"omp\n")
@@ -282,7 +345,7 @@ def codex_report(+db: String, +player: String, +id: String, event: String, empty
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
       recorded : String <- IO.try(String,DB.Sql.query(db,codex_report_recorded_sql(player,id)))
-      saved : String <- IO.try(String,Store.apply(db,C.Observe{id,player,event,Bool.or(sealed,String.eq(recorded,"1\n"))}))
+      saved : String <- IO.try(String,Store.apply(db,C.Observe{id,player,event,Bool.or(sealed,String.eq(recorded,"1\n")),"codex"}))
       IO.pure(Unit,Unit{})
 
 def codex_result_sql(source: String) -> String:
@@ -290,14 +353,117 @@ def codex_result_sql(source: String) -> String:
   "WITH frames(value) AS (SELECT " ++ events ++ ") SELECT json_object('type','result','is_error',json_extract(e.value,'$.type')='turn.failed','nativeEvent',json(e.value),'result',CASE WHEN json_extract(e.value,'$.type')='turn.failed' THEN json_extract(e.value,'$.error.message') ELSE (SELECT json_extract(m.value,'$.item.text') FROM json_each(frames.value) m WHERE m.key<e.key AND json_extract(m.value,'$.type')='item.completed' AND json_extract(m.value,'$.item.type')='agent_message' ORDER BY m.key DESC LIMIT 1) END) FROM frames,json_each(frames.value) e WHERE json_extract(e.value,'$.type') IN ('turn.completed','turn.failed') ORDER BY e.key DESC LIMIT 1;"
 
 # Keep this invocation's latest Codex assistant message and terminal event.
+type CodexState is Type:
+  CodexSpanState{message: String, terminal: String}
+  CodexLegacyState{value: String}
+
+def codex_state_decode(+value: String, lines: List<&2,String>) -> CodexState:
+  match lines:
+    case tag <> message <> terminal <> Nil{}:
+      Bool.pick(CodexState,String.eq(tag,"codex-span-v1"),CodexSpanState{message,terminal},CodexLegacyState{value})
+    case other: CodexLegacyState{value}
+
+def codex_state_parts(+value: String) -> CodexState:
+  codex_state_decode(value,String.split(value,Char.from_u32(10)))
+
+def codex_state_encode(+message: String, +terminal: String) -> String:
+  "codex-span-v1\n" ++ Bool.pick(String,String.is_empty(message),"-",message) ++ "\n" ++ Bool.pick(String,String.is_empty(terminal),"-",terminal)
+
+def codex_state_replace_message(state: CodexState, token: String) -> String:
+  match state:
+    case CodexSpanState{message,+terminal}: codex_state_encode(token,Bool.pick(String,String.eq(terminal,"-"),"",terminal))
+    case CodexLegacyState{value}: codex_state_encode(token,"")
+
+def codex_state_replace_terminal(state: CodexState, +terminal_value: String) -> String:
+  match state:
+    case CodexSpanState{+message,terminal}: codex_state_encode(Bool.pick(String,String.eq(message,"-"),"",message),terminal_value)
+    case CodexLegacyState{+value}: Bool.pick(String,String.is_empty(value),terminal_value,value ++ "\n" ++ terminal_value)
+
+def codex_span_result_sql(+message_value: String, +terminal_value: String) -> String:
+  "WITH message(value) AS (VALUES(" ++ message_value ++ ")), terminal(value) AS (VALUES(" ++ terminal_value ++ ")) SELECT json_object('type','result','is_error',json_extract(terminal.value,'$.type')='turn.failed','nativeEvent',json(terminal.value),'result',CASE WHEN json_extract(terminal.value,'$.type')='turn.failed' THEN json_extract(terminal.value,'$.error.message') ELSE json_extract(message.value,'$.item.text') END) AS value FROM message,terminal WHERE json_valid(terminal.value) AND json_extract(terminal.value,'$.type') IN ('turn.completed','turn.failed')"
+
+def codex_span_observe_sql(+id: String, +player: String, +message_value: String, +terminal_value: String, sealed: Bool) -> String:
+  +frame = C.observation_frame()
+  +event = codex_span_result_sql(message_value,terminal_value)
+  "BEGIN IMMEDIATE;CREATE TEMP TABLE baton_observation_frame(value TEXT NOT NULL);"
+  ++ "INSERT INTO temp.baton_observation_frame(value) SELECT value FROM (" ++ event ++ ") WHERE json_valid(value);"
+  ++ C.observe_identity_sql_expr(player,frame,"codex")
+  ++ Bool.pick(String,sealed,"",C.completion_sql_expr(id,player,frame))
+  ++ "SELECT coalesce((SELECT json_object('type','result','is_error',json_extract(value,'$.is_error')) FROM temp.baton_observation_frame),'');"
+  ++ "DROP TABLE temp.baton_observation_frame;COMMIT;"
+
+def codex_span_commit(+db: String, spool: String, offset: String, length: String, sql: String, ensured: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match ensured:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{installed}: do IO<Result<&1,&1,U32 & String,String>>:
+      committed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_span(db,spool,offset,length,sql)
+      Store.publish_after_commit(db,committed)
+
+# The span writer retries SQLITE_BUSY and SQLITE_LOCKED for the held-writer
+# failure recorded in #1054, instance B2.
+@unsafe
+def codex_span_write(+db: String, +spool: String, +offset: String, +length: String, +sql: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    ensured : Result<&1,&1,U32 & String,String> <- DB.Sql.ensure_projection(db,C.schema())
+    result : Result<&1,&1,U32 & String,String> <- codex_span_commit(db,spool,offset,length,sql,ensured)
+    Store.busy_again(result,unit => codex_span_write(db,spool,offset,length,sql))
+
+def codex_span_observe_fields(+db: String, +player: String, +id: String, +spool: String, +offset: String, +length: String, +message_value: String, +terminal_value: String, sealed: Bool) -> IO(String):
+  do IO<String>:
+    recorded : String <- IO.try(String,DB.Sql.query(db,codex_report_recorded_sql(player,id)))
+    +effective_seal : Bool <- IO.pure(Bool,Bool.or(sealed,String.eq(recorded,"1\n")))
+    +saved : String <- IO.try(String,codex_span_write(db,spool,offset,length,codex_span_observe_sql(id,player,message_value,terminal_value,effective_seal)))
+    IO.pure(String,Subs.last_line(Tx.split_lines(Tx.trim_nl(saved))))
+
+def codex_span_observe(db: String, player: String, id: String, span: Frame.FrameSpan, terminal: String, sealed: Bool) -> IO(String):
+  match span:
+    case Frame.FrameSpan{spool,offset,length}: codex_span_observe_fields(db,player,id,spool,offset,length,"?1",C.q(terminal),sealed)
+
+def codex_span_observe_terminal(db: String, player: String, id: String, span: Frame.FrameSpan, sealed: Bool) -> IO(String):
+  match span:
+    case Frame.FrameSpan{spool,offset,length}: codex_span_observe_fields(db,player,id,spool,offset,length,"NULL","?1",sealed)
+
+def codex_span_finished_event_span(db: String, span: Maybe<Frame.FrameSpan>, +terminal: String) -> IO(String):
+  match span:
+    case Some{+span}: do IO<String>:
+      value : String <- IO.try(String,DB.Sql.query_span(db,Frame.spool(span),Frame.offset(span),Frame.length(span),codex_span_result_sql("?1",C.q(terminal))))
+      IO.pure(String,Tx.trim_nl(value))
+    case None{}: do IO<String>:
+      value : String <- IO.try(String,DB.Sql.query(db,codex_span_result_sql("NULL",C.q(terminal))))
+      IO.pure(String,Tx.trim_nl(value))
+
+def codex_span_finished_event(db: String, +message: String, +terminal: String) -> IO(String):
+  codex_span_finished_event_span(db,Frame.span_of(message),terminal)
+
+def codex_span_finished_dispatch(+db: String, +player: String, +id: String, span: Maybe<Frame.FrameSpan>, +terminal: String, sealed: Bool) -> IO(String):
+  match span:
+    case Some{+value}: codex_span_observe(db,player,id,value,terminal,sealed)
+    case None{}: do IO<String>:
+      +event : String <- codex_span_finished_event_span(db,None{},terminal)
+      saved : Unit <- codex_report(db,player,id,event,String.is_empty(event),sealed)
+      IO.pure(String,event)
+
+def codex_span_terminal_dispatch(+db: String, +player: String, +id: String, message: String, terminal_span: Maybe<Frame.FrameSpan>, +terminal: String, sealed: Bool) -> IO(String):
+  match terminal_span:
+    case Some{+span}: codex_span_observe_terminal(db,player,id,span,sealed)
+    case None{}: codex_span_finished_dispatch(db,player,id,Frame.span_of(message),terminal,sealed)
+
+def codex_finished_span(+db: String, player: String, id: String, state: CodexState, previous: String, sealed: Bool) -> IO(String):
+  match state:
+    case CodexSpanState{+message,+terminal}:
+      +terminal_value = Bool.pick(String,String.eq(terminal,"-"),previous,terminal)
+      codex_span_terminal_dispatch(db,player,id,message,Frame.span_of(terminal_value),terminal_value,sealed)
+    case CodexLegacyState{+value}:
+      do IO<String>:
+        +bounded_source : String <- IO.pure(String,Bool.pick(String,String.is_empty(value),previous,value))
+        +event : String <- IO.try(String,DB.Sql.query(db,codex_result_sql(bounded_source)))
+        saved : Unit <- codex_report(db,player,id,event,String.is_empty(event),sealed)
+        IO.pure(String,event)
+
 def codex_finished(+db: String, player: String, id: String, +source: String, previous: String, codex: Bool, sealed: Bool) -> IO(String):
   match codex:
     case False{}: IO.pure(String,previous)
-    case True{}: do IO<String>:
-      +bounded_source : String <- IO.pure(String,Bool.pick(String,String.is_empty(source),previous,source))
-      +event : String <- IO.try(String,DB.Sql.query(db,codex_result_sql(bounded_source)))
-      saved : Unit <- codex_report(db,player,id,event,String.is_empty(event),sealed)
-      IO.pure(String,event)
+    case True{}: codex_finished_span(db,player,id,codex_state_parts(source),previous,sealed)
 
 # The live issue-608-reclaim turn emitted its report in message_end, then an
 # agent_end with messages=[] and messageCount=352. Keep the latest assistant
@@ -421,6 +587,12 @@ def dsh_event(+db: String, +line: String, enabled: Bool, event: String) -> IO(St
     case True{}: Dsh.event(db,line)
     case False{}: IO.pure(String,event)
 
+# agy `init` and `result` frames are projected the same way.
+def agy_event(+db: String, +line: String, enabled: Bool, event: String) -> IO(String):
+  match enabled:
+    case True{}: Agy.event(db,line)
+    case False{}: IO.pure(String,event)
+
 
 # The root turn input identifies the admitted Muse invocation. Nested task
 # streams can complete while that invocation is still running.
@@ -526,10 +698,10 @@ def observed_initial(db: String, player: String, id: String, line: String, resul
       observed : Unit <- AgentInput.initial_observed(db,player,id,line)
       IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
 
-def observe_event(+db: String, +player: String, +id: String, +event: String, relevant: Bool, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def observe_event(+db: String, +player: String, +id: String, +event: String, relevant: Bool, sealed: Bool, +harness: String) -> IO(Result<&1,&1,U32 & String,String>):
   match relevant:
     case True{}: do IO<Result<&1,&1,U32 & String,String>>:
-      stored : Result<&1,&1,U32 & String,String> <- Store.apply(db,C.Observe{id,player,event,sealed})
+      stored : Result<&1,&1,U32 & String,String> <- Store.apply_through_busy(db,C.Observe{id,player,event,sealed,harness})
       observed_initial(db,player,id,event,stored)
     case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
 
@@ -574,7 +746,7 @@ def deferred_report_id_sql(+id: String, +event: String, +episode: String) -> Str
   +failed = "coalesce(json_extract(frame.value,'$.is_error'),0)=1 OR (json_extract(frame.value,'$.payload.kind')='run_terminal' AND json_extract(frame.value,'$.payload.terminal')<>'completed') OR " ++ C.omp_terminal_error_sql_expr("frame.value")
   "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT CASE WHEN coalesce(" ++ text ++ ",'')<>'' OR " ++ failed ++ " THEN " ++ C.q(id ++ ":episode:" ++ episode) ++ " ELSE '' END FROM frame;"
 
-def publish_deferred(+db: String, +player: String, +id: String, +event: String, +report_id: String, substantive: Bool) -> IO(Unit):
+def publish_deferred(+db: String, +player: String, +id: String, +event: String, +report_id: String, substantive: Bool, +harness: String) -> IO(Unit):
   match substantive:
     case False{}: do IO<Unit>:
       presence : String <- IO.try(String,DB.Sql.query(db,deferred_recorded_sql(id)))
@@ -582,12 +754,12 @@ def publish_deferred(+db: String, +player: String, +id: String, +event: String, 
       failure : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(" ++ C.omp_terminal_error_text_sql(event) ++ ",'');"))
       write_deferred(db,player,id,Tx.trim_nl(failure),Tx.trim_nl(pending),String.eq(presence,"1\n"))
     case True{}: do IO<Unit>:
-      +saved : String <- IO.try(String,Store.apply(db,C.Observe{report_id,player,event,False{}}))
+      +saved : String <- IO.try(String,Store.apply(db,C.Observe{report_id,player,event,False{},harness}))
       delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,report_id,"1",saved)
       written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)
       IO.pure(Unit,Unit{})
 
-def record_deferred(+db: String, +player: String, +id: String, +event: String, +episode: String, later: Bool) -> IO(String):
+def record_deferred(+db: String, +player: String, +id: String, +event: String, +episode: String, later: Bool, +harness: String) -> IO(String):
   match later:
     case False{}: IO.pure(String,episode)
     case True{}: do IO<String>:
@@ -595,7 +767,7 @@ def record_deferred(+db: String, +player: String, +id: String, +event: String, +
       +next_episode : String <- IO.pure(String,Tx.trim_nl(incremented))
       found : String <- IO.try(String,DB.Sql.query(db,deferred_report_id_sql(id,event,next_episode)))
       +report_id : String <- IO.pure(String,Tx.trim_nl(found))
-      published : Unit <- publish_deferred(db,player,id,event,report_id,Bool.not(String.is_empty(report_id)))
+      published : Unit <- publish_deferred(db,player,id,event,report_id,Bool.not(String.is_empty(report_id)),harness)
       IO.pure(String,next_episode)
 
 def deferred_query(event: String, terminal: String, primary: String, current: String, muse: Bool) -> String:
@@ -605,13 +777,13 @@ def deferred_query(event: String, terminal: String, primary: String, current: St
 
 # Only a later terminal can produce this note. Progress frames keep draining
 # without constructing a query that embeds the saved terminal.
-def deferred_note(+db: String, player: String, id: String, +event: String, terminal: String, primary: String, current: String, episode: String, enabled: Bool, muse: Bool) -> IO(String):
+def deferred_note(+db: String, player: String, id: String, +event: String, terminal: String, primary: String, current: String, episode: String, enabled: Bool, muse: Bool, +harness: String) -> IO(String):
   match enabled:
     case False{}: IO.pure(String,episode)
     case True{}: do IO<String>:
       query : String <- IO.pure(String,deferred_query(event,terminal,primary,current,muse))
       later : String <- IO.try(String,DB.Sql.query(db,query))
-      record_deferred(db,player,id,event,episode,String.eq(later,"1\n"))
+      record_deferred(db,player,id,event,episode,String.eq(later,"1\n"),harness)
 # Read the OMP frame type once for level filtering and event observation.
 def omp_frame_kind_sql(+value: String) -> String:
   "WITH frame(value) AS (VALUES(" ++ value ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE json_extract(value,'$.type') WHEN 'message_update' THEN 'message_update' WHEN 'tool_execution_update' THEN 'tool_execution_update' WHEN 'message_start' THEN 'message_start' WHEN 'response' THEN 'response' WHEN 'message_end' THEN 'message_end' WHEN 'tool_execution_start' THEN 'tool_execution_start' WHEN 'tool_execution_end' THEN 'tool_execution_end' WHEN 'turn_end' THEN 'turn_end' WHEN 'agent_end' THEN 'agent_end' WHEN 'extension_ui_request' THEN 'extension_ui_request' ELSE '' END ELSE '' END FROM frame;"
@@ -627,9 +799,19 @@ def omp_frame_kind(+db: String, decoded: Frame.FrameDecoded, omp: Bool) -> IO(St
     case False{}: IO.pure(String,"")
     case True{}: omp_frame_kind_decoded(db,decoded)
 
-def codex_frame_kind(db: String, line: String) -> IO(String):
-  IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.item.type')='command_execution' AND json_type(value,'$.item.id')='text' AND json_extract(value,'$.item.id')<>'' THEN CASE json_extract(value,'$.type') WHEN 'item.started' THEN 'codex_command_start' WHEN 'item.completed' THEN 'codex_command_end' ELSE '' END ELSE '' END ELSE '' END FROM frame;"))
+def codex_frame_kind_sql(+value: String) -> String:
+  "WITH frame(value) AS (VALUES(" ++ value ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.item.type')='command_execution' AND json_type(value,'$.item.id')='text' AND json_extract(value,'$.item.id')<>'' THEN CASE json_extract(value,'$.type') WHEN 'item.started' THEN 'codex_command_start' WHEN 'item.completed' THEN 'codex_command_end' ELSE '' END ELSE '' END ELSE '' END FROM frame;"
 
+def codex_frame_kind_decoded(db: String, decoded: Frame.FrameDecoded, +line: String) -> IO(String):
+  match decoded:
+    case Frame.TextFrame{line}: IO.try(String,DB.Sql.query(db,codex_frame_kind_sql(C.q(line))))
+    case Frame.SpanFrame{spool,offset,length}: IO.try(String,DB.Sql.query_span(db,spool,offset,length,codex_frame_kind_sql("?1")))
+    case Frame.InvalidFrame{line}: IO.pure(String,"")
+
+
+
+def codex_frame_kind(db: String, decoded: Frame.FrameDecoded, +line: String) -> IO(String):
+  codex_frame_kind_decoded(db,decoded,line)
 
 # The requested selection is active only when the server answered the
 # set_event_filter request successfully with that exact selection: the echoed
@@ -648,25 +830,29 @@ def codex_frame_kind(db: String, line: String) -> IO(String):
 def dsh_frame_kind(line: String) -> IO(String):
   IO.pure(String,Dsh.kind(line))
 
+def agy_frame_kind(line: String) -> IO(String):
+  IO.pure(String,Agy.kind(line))
+
 def frame_kind_other(+db: String, decoded: Frame.FrameDecoded, +line: String, +harness: String) -> IO(String):
   match harness:
     case "dsh\n": dsh_frame_kind(line)
+    case "antigravity\n": agy_frame_kind(line)
     case other: omp_frame_kind(db,decoded,String.eq(harness,"omp\n"))
 
 def frame_kind_selected(+db: String, decoded: Frame.FrameDecoded, +line: String, harness: String, codex: Bool) -> IO(String):
   match codex:
-    case True{}: codex_frame_kind(db,line)
+    case True{}: codex_frame_kind(db,decoded,line)
     case False{}: frame_kind_other(db,decoded,line,harness)
 
 def frame_kind(+db: String, decoded: Frame.FrameDecoded, +line: String, +harness: String) -> IO(String):
   frame_kind_selected(db,decoded,line,harness,String.eq(harness,"codex\n"))
 
-def filter_mode_sql(+value: String, +requested: String) -> String:
-  "SELECT CASE WHEN json_valid(" ++ value ++ ") THEN CASE WHEN json_extract(" ++ value ++ ",'$.type')='response' AND json_extract(" ++ value ++ ",'$.command')='set_event_filter' AND coalesce(json_extract(" ++ value ++ ",'$.success'),1)=0 THEN 'refused' WHEN json_extract(" ++ value ++ ",'$.type')='response' AND json_extract(" ++ value ++ ",'$.id')='baton:filter' AND json_extract(" ++ value ++ ",'$.command')='set_event_filter' THEN CASE WHEN json_extract(" ++ value ++ ",'$.success')=1 THEN CASE WHEN CASE WHEN " ++ C.q(requested) ++ "='unknown' THEN 0 WHEN " ++ C.q(requested) ++ "='null' THEN json_type(" ++ value ++ ",'$.data.events')='null' AND json_extract(" ++ value ++ ",'$.data.messageUpdates')='full' ELSE CASE WHEN json_type(" ++ value ++ ",'$.data.events')='array' THEN json(json_extract(" ++ value ++ ",'$.data.events'))=json(" ++ C.q(requested) ++ ") AND json_extract(" ++ value ++ ",'$.data.messageUpdates')='delta' ELSE 0 END END THEN CASE WHEN " ++ C.q(requested) ++ "='null' THEN 'null+full' ELSE 'array+delta' END ELSE 'unconfirmed' END ELSE 'refused' END ELSE '' END ELSE '' END;"
+def filter_mode_sql(+value: String, +requested_sql: String) -> String:
+  "SELECT CASE WHEN json_valid(" ++ value ++ ") THEN CASE WHEN json_extract(" ++ value ++ ",'$.type')='response' AND json_extract(" ++ value ++ ",'$.command')='set_event_filter' AND coalesce(json_extract(" ++ value ++ ",'$.success'),1)=0 THEN 'refused' WHEN json_extract(" ++ value ++ ",'$.type')='response' AND json_extract(" ++ value ++ ",'$.id')='baton:filter' AND json_extract(" ++ value ++ ",'$.command')='set_event_filter' THEN CASE WHEN json_extract(" ++ value ++ ",'$.success')=1 THEN CASE WHEN CASE WHEN " ++ requested_sql ++ "='unknown' THEN 0 WHEN " ++ requested_sql ++ "='null' THEN json_type(" ++ value ++ ",'$.data.events')='null' AND json_extract(" ++ value ++ ",'$.data.messageUpdates')='full' ELSE CASE WHEN json_type(" ++ value ++ ",'$.data.events')='array' THEN json(json_extract(" ++ value ++ ",'$.data.events'))=json(" ++ requested_sql ++ ") AND json_extract(" ++ value ++ ",'$.data.messageUpdates')='delta' ELSE 0 END END THEN CASE WHEN " ++ requested_sql ++ "='null' THEN 'null+full' ELSE 'array+delta' END ELSE 'unconfirmed' END ELSE 'refused' END ELSE '' END ELSE '' END;"
 
 def filter_mode_decoded(+db: String, decoded: Frame.FrameDecoded, +requested: String) -> IO(String):
   match decoded:
-    case Frame.TextFrame{line}: IO.try(String,DB.Sql.query(db,filter_mode_sql(C.q(line),requested)))
+    case Frame.TextFrame{line}: IO.try(String,DB.Sql.query(db,filter_mode_sql(C.q(line),C.q(requested))))
     case Frame.SpanFrame{spool,offset,length}: IO.try(String,DB.Sql.query_span_text(db,spool,offset,length,filter_mode_sql("?1","?2"),requested))
     case Frame.InvalidFrame{line}: IO.pure(String,"")
 
@@ -685,12 +871,112 @@ def terminal_event(event: String, previous: String, selected: Bool) -> IO(String
     case False{}: IO.pure(String,previous)
     case True{}: IO.pure(String,event)
 
-def codex_frames(db: String, +previous: String, +line: String, codex: Bool) -> IO(String):
+def codex_frame_role_sql(+value: String) -> String:
+  "WITH frame(value) AS (VALUES(" ++ value ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.type')='item.completed' AND json_extract(value,'$.item.type')='agent_message' THEN 'assistant' WHEN json_extract(value,'$.type')='turn.failed' THEN 'terminal-error' WHEN json_extract(value,'$.type')='turn.completed' THEN 'terminal' ELSE '' END ELSE '' END FROM frame;"
+
+def codex_span_small_parsed(parsed: Maybe<&2,U32>) -> Bool:
+  match parsed:
+    case Some{+value}: U32.is_lt(value,4097)
+    case None{}: False{}
+
+def codex_span_small(+length: String) -> Bool:
+  codex_span_small_parsed(U32.read(length))
+
+def codex_frames_span_role(previous: String, decoded: Frame.FrameDecoded, spool: String, offset: String, length: String, role: String) -> IO(String):
+  match role:
+    case "assistant": IO.pure(String,codex_state_replace_message(codex_state_parts(previous),Frame.token_of(spool,offset,length)))
+    case "terminal-error": IO.pure(String,codex_state_encode("",Frame.token_of(spool,offset,length)))
+    case "terminal": do IO<String>:
+      frame_text : String <- IO.try(String,Frame.text_result_decoded(decoded))
+      IO.pure(String,codex_state_replace_terminal(codex_state_parts(previous),frame_text))
+    case other: IO.pure(String,previous)
+
+# A small frame that follows a span state replaces the message or the terminal
+# slot of that state. The legacy form appends the frame to the previous value,
+# which would turn the three-line span state into an undecodable value.
+def codex_text_span_role(previous: String, +line: String, role: String) -> String:
+  match role:
+    case "assistant": line
+    case "terminal-error": codex_state_encode("",line)
+    case "terminal": codex_state_replace_terminal(codex_state_parts(previous),line)
+    case other: previous
+
+def codex_frames_text_legacy(db: String, +previous: String, +line: String) -> IO(String):
+  do IO<String>:
+    value : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")), prior(value) AS (VALUES(" ++ C.q(previous) ++ ")) SELECT CASE WHEN json_valid(frame.value) THEN CASE WHEN json_extract(frame.value,'$.type')='item.completed' AND json_extract(frame.value,'$.item.type')='agent_message' THEN frame.value WHEN json_extract(frame.value,'$.type') IN ('turn.completed','turn.failed') THEN CASE WHEN prior.value='' THEN frame.value ELSE prior.value || char(10) || frame.value END ELSE prior.value END ELSE prior.value END FROM frame,prior;"))
+    IO.pure(String,Tx.trim_nl(value))
+
+def codex_frames_text_state(db: String, +previous: String, +line: String, state: CodexState) -> IO(String):
+  match state:
+    case CodexSpanState{message,terminal}: do IO<String>:
+      role : String <- IO.try(String,DB.Sql.query(db,codex_frame_role_sql(C.q(line))))
+      IO.pure(String,codex_text_span_role(previous,line,Tx.trim_nl(role)))
+    case CodexLegacyState{value}: codex_frames_text_legacy(db,previous,line)
+
+def codex_frames_text(db: String, +previous: String, +line: String) -> IO(String):
+  codex_frames_text_state(db,previous,line,codex_state_parts(previous))
+
+def codex_frames_span_branch(+db: String, +previous: String, +decoded: Frame.FrameDecoded, +spool: String, +offset: String, +length: String, small: Bool) -> IO(String):
+  match small:
+    case True{}: do IO<String>:
+      frame_text : String <- IO.try(String,Frame.text_result_decoded(decoded))
+      codex_frames_text(db,previous,frame_text)
+    case False{}: do IO<String>:
+      role : String <- IO.try(String,DB.Sql.query_span(db,spool,offset,length,codex_frame_role_sql("?1")))
+      +normalized_role : String <- IO.pure(String,Tx.trim_nl(role))
+      codex_frames_span_role(previous,decoded,spool,offset,length,normalized_role)
+
+def codex_frames_span(db: String, previous: String, +decoded: Frame.FrameDecoded) -> IO(String):
+  match decoded:
+    case Frame.SpanFrame{spool,offset,length}: codex_frames_span_branch(db,previous,decoded,spool,offset,length,codex_span_small(length))
+    case other: IO.pure(String,previous)
+
+
+def codex_frames_selected(db: String, +previous: String, +decoded: Frame.FrameDecoded, +line: String) -> IO(String):
+  match decoded:
+    case Frame.SpanFrame{spool,offset,length}: codex_frames_span(db,previous,decoded)
+    case Frame.TextFrame{line}: codex_frames_text(db,previous,line)
+    case Frame.InvalidFrame{line}: IO.pure(String,previous)
+
+def codex_frames(db: String, +previous: String, decoded: Frame.FrameDecoded, +line: String, codex: Bool) -> IO(String):
   match codex:
     case False{}: IO.pure(String,previous)
+    case True{}: codex_frames_selected(db,previous,decoded,line)
+
+# Generic Codex observation classifies the complete retained JSON. Small spans
+# keep their exact text; large spans return the event type used by observation.
+# The result and report read the body from the retained span at EOF.
+def codex_observation_span_sql(+value: String) -> String:
+  "WITH frame(value) AS (VALUES(" ++ value ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.type')='item.completed' AND json_extract(value,'$.item.type')='agent_message' THEN json_object('type','item.completed','item',json_object('type','agent_message')) WHEN json_extract(value,'$.type')='turn.failed' THEN json_object('type','turn.failed') WHEN json_extract(value,'$.type')='turn.completed' THEN json_object('type','turn.completed') ELSE '' END ELSE '' END FROM frame;"
+
+def codex_observation_span_parsed(+db: String, +decoded: Frame.FrameDecoded, +spool: String, +offset: String, +length: String, small: Bool) -> IO(String):
+  match small:
     case True{}: do IO<String>:
-      value : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(line) ++ ") THEN CASE WHEN json_extract(" ++ C.q(line) ++ ",'$.type')='item.completed' AND json_extract(" ++ C.q(line) ++ ",'$.item.type')='agent_message' THEN " ++ C.q(line) ++ " WHEN json_extract(" ++ C.q(line) ++ ",'$.type') IN ('turn.completed','turn.failed') THEN CASE WHEN " ++ C.q(previous) ++ "='' THEN " ++ C.q(line) ++ " ELSE " ++ C.q(previous) ++ " || char(10) || " ++ C.q(line) ++ " END ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END;"))
+      value : String <- IO.try(String,Frame.text_result_decoded(decoded))
+      IO.pure(String,value)
+    case False{}: do IO<String>:
+      value : String <- IO.try(String,DB.Sql.query_span(db,spool,offset,length,codex_observation_span_sql("?1")))
       IO.pure(String,Tx.trim_nl(value))
+
+def codex_observation_span_branch(+db: String, +decoded: Frame.FrameDecoded) -> IO(String):
+  match decoded:
+    case Frame.SpanFrame{spool,offset,length}: codex_observation_span_parsed(db,decoded,spool,offset,length,codex_span_small(length))
+    case other: IO.pure(String,"")
+
+def codex_observation_decoded(+db: String, decoded: Frame.FrameDecoded, +line: String) -> IO(String):
+  match decoded:
+    case Frame.TextFrame{line}: IO.pure(String,line)
+    case other: codex_observation_span_branch(db,other)
+
+def frame_is_span(+decoded: Frame.FrameDecoded) -> Bool:
+  match decoded:
+    case Frame.SpanFrame{spool,offset,length}: True{}
+    case other: False{}
+
+def observed_frame_event(db: String, decoded: Frame.FrameDecoded, +line: String, +message: String, +activity: String, codex: Bool, omp: Bool, relevant: Bool) -> IO(String):
+  match codex:
+    case True{}: codex_observation_decoded(db,decoded,line)
+    case False{}: omp_terminal(db,decoded,message,activity,omp,relevant)
 
 # The checkpoint contains each incomplete identity's newest frame and stays
 # available when the native observer exits before its EOF handler runs.
@@ -883,20 +1169,22 @@ def question_frame_failed(result: Result<&1,&1,U32 & String,String>) -> Bool:
 @unsafe
 def consume_frame(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, +spool: String, +spanned: Bool, +cursor: String, +last_message: String, +primary: String, +current: String, +terminal: String, +filter: String, +requested: String, +codex_log: String, +first_error: String, +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, +monitor: Bool, +wake_sub: U32, +alive: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, +line: String, +notice: String) -> IO(WakeRead):
   do IO<WakeRead>:
-    +drained : String <- Guidance.awake_pending(db,player,handle,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
+    +drained : String <- Guidance.awake_pending(db,player,handle,attempt,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
     +decoded : Frame.FrameDecoded <- IO.pure(Frame.FrameDecoded,Frame.decode(line,spool,spanned))
     +invalid : Bool <- IO.pure(Bool,Frame.is_invalid(decoded))
     +decode_error : String <- IO.pure(String,Bool.pick(String,invalid,Frame.invalid_error(),""))
     +kind : String <- frame_kind(db,decoded,line,harness)
     +dsh : Bool <- IO.pure(Bool,String.eq(harness,"dsh\n"))
+    +agy : Bool <- IO.pure(Bool,String.eq(harness,"antigravity\n"))
     +frame_key_raw : String <- Logs.frame_identity(db,decoded,line,Tx.trim_nl(kind),String.eq(harness,"omp\n"))
     +frame_key : String <- IO.pure(String,Tx.trim_nl(frame_key_raw))
     +message_frame : Bool <- IO.pure(Bool,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"message_end")))
     +message : String <- omp_message(db,decoded,last_message,message_frame)
     +activity_frame : Bool <- IO.pure(Bool,Bool.and(String.eq(harness,"omp\n"),Bool.or(String.eq(Tx.trim_nl(kind),"message_start"),String.eq(Tx.trim_nl(kind),"message_end"))))
     +activity : String <- omp_activity(db,decoded,Observer.omp_activity(checkpoint_state),activity_frame)
-    +raw_event : String <- omp_terminal(db,decoded,message,activity,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"agent_end")),Guidance.relevant(kind,String.eq(harness,"omp\n")))
-    +event : String <- dsh_event(db,line,Bool.and(dsh,Dsh.admitted(Tx.trim_nl(kind))),raw_event)
+    +raw_event : String <- observed_frame_event(db,decoded,line,message,activity,String.eq(harness,"codex\n"),Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"agent_end")),Guidance.relevant(kind,String.eq(harness,"omp\n")))
+    +dsh_projected : String <- dsh_event(db,line,Bool.and(dsh,Dsh.admitted(Tx.trim_nl(kind))),raw_event)
+    +event : String <- agy_event(db,line,Bool.and(agy,Agy.admitted(Tx.trim_nl(kind))),dsh_projected)
     +kept : String <- Logs.retained(db,policy,Tx.trim_nl(kind),decoded,event,log)
     step : List<String> & String <- IO.pure(List<String> & String,Logs.frame_step(policy,Tx.trim_nl(kind),frame_key,kept,held))
     with_frame_step(WakeRead,step,lines => next_held_value => do IO<WakeRead>:
@@ -908,7 +1196,7 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
       +failed : Bool <- IO.pure(Bool,Logs.failed_now(log_failed,unshared_result(Unit,written)))
       +relevant : Bool <- IO.pure(Bool,Guidance.relevant(kind,String.eq(harness,"omp\n")))
       +sealed : Bool <- IO.pure(Bool,Bool.not(String.is_empty(terminal)))
-      +next_cursor : String <- Guidance.observe(db,player,handle,decoded,line,drained,Bool.and(String.eq(harness,"omp\n"),relevant))
+      +next_cursor : String <- Guidance.observe(db,player,handle,attempt,decoded,line,drained,Bool.and(String.eq(harness,"omp\n"),relevant),monitor)
       +next_primary : String <- primary_command(db,event,primary,String.eq(harness,"muse\n"))
       +next_current : String <- current_command(db,event,current,String.eq(harness,"muse\n"))
       +terminal_frame : Bool <- primary_terminal(db,event,"",False{})
@@ -916,13 +1204,13 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
       +state : String <- completion_state_event(db,id,player,event,Bool.and(admitted,Bool.not(sealed)))
       +observation_sealed : Bool <- IO.pure(Bool,terminal_observation_sealed(sealed,terminal_frame,admitted,state))
       conflict_note : Unit <- completion_conflict_note(db,player,id,event,String.eq(state,"conflict"))
-      +episode : String <- deferred_note(db,player,id,event,terminal,next_primary,next_current,Observer.episode(checkpoint_state),Bool.and(sealed,terminal_frame),String.eq(harness,"muse\n"))
-      +observed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,observe_event(db,player,id,event,relevant,Bool.or(observation_sealed,failed)))
+      +episode : String <- deferred_note(db,player,id,event,terminal,next_primary,next_current,Observer.episode(checkpoint_state),Bool.and(sealed,terminal_frame),String.eq(harness,"muse\n"),Tx.trim_nl(harness))
+      +observed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,observe_event(db,player,id,event,relevant,Bool.or(observation_sealed,failed),Tx.trim_nl(harness)))
       +terminal_selected : Bool <- IO.pure(Bool,Bool.and(relevant,Bool.and(admitted,Bool.not(sealed))))
       +ended : String <- terminal_event(event,terminal,terminal_selected)
-      +closed_input : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,close_input(handle,Bool.and(String.eq(harness,"omp\n"),Bool.and(String.is_empty(terminal),Bool.not(String.is_empty(ended))))))
+      +closed_input : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,close_input(handle,Bool.and(Bool.not(monitor),Bool.and(String.eq(harness,"omp\n"),Bool.and(String.is_empty(terminal),Bool.not(String.is_empty(ended)))))))
       +codex_frame : Bool <- IO.pure(Bool,String.eq(harness,"codex\n"))
-      +codex_state : String <- codex_frames(db,codex_log,line,codex_frame)
+      +codex_state : String <- codex_frames(db,codex_log,decoded,line,codex_frame)
       +question_needed : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(attempt)),String.eq(kind,"extension_ui_request\n")))
       +question_result : Result<&1,&1,U32 & String,String> <- question_frame_result(question_needed,decoded,line)
       +question_frame : String <- IO.pure(String,question_frame_text(question_result))
@@ -933,7 +1221,10 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
       NativeRequests.with_observation(WakeRead,questions,wakes => question_error => question_incomplete => do IO<WakeRead>:
         +question_text : String <- IO.pure(String,question_error)
         +request_incomplete : Bool <- IO.pure(Bool,question_incomplete)
-        +checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(incomplete_observation),Bool.and(Bool.not(failed),Bool.and(Bool.not(request_incomplete),Bool.and(Bool.not(invalid),Bool.and(Bool.not(observation_store_failed(unshared_result(String,observed))),Bool.and(Bool.not(String.is_empty(attempt)),Observer.checkpoint_due_fields(checkpoint_state,next_checkpoint,message_frame,terminal_selected,codex_frame))))))))
+        # A first output span commits its cursor; later progress-only spans
+        # replay from the previous durable checkpoint. A terminal is the next
+        # durable result boundary; after it, EOF commits the final cursor.
+        +checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(incomplete_observation),Bool.and(Bool.not(failed),Bool.and(Bool.not(request_incomplete),Bool.and(Bool.not(invalid),Bool.and(Bool.not(observation_store_failed(unshared_result(String,observed))),Bool.and(Bool.not(String.is_empty(attempt)),Observer.checkpoint_due_span(checkpoint_state,next_checkpoint,message_frame,terminal_selected,codex_frame,frame_is_span(decoded)))))))))
         +next_checkpoint_state : Observer.State <- Observer.checkpoint_state(spool,next_checkpoint,checkpoint_enabled)
         +checkpointed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,Observer.after_materialized_observation(db,handle,next_checkpoint_state,checkpoint_enabled,monitor,unshared_result(String,observed)))
         checkpoint_notice : Unit <- checkpoint_failure_notice(db,player,id,attempt,checkpoint_enabled,unshared_result(Unit,checkpointed))
@@ -948,7 +1239,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
   match result:
     case Fail{error}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
       wake_closed : Result<&1,&1,U32 & String,Unit> <- wake_close(wake_sub,wake_on)
-      closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
+      closed : Result<&1,&1,U32 & String,Unit> <- close_input(handle,Bool.not(monitor))
       sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
       +waited : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,P.ProcessChild.wait(handle))
       +positioned : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,Logs.write_positioned(log,Logs.flush(held),Observer.output(checkpoint_state),log_failed,Bool.not(String.is_empty(attempt)),False{}))
@@ -964,7 +1255,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
       IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(unshared_result(String,waited)),terminal,error,True{}},deliveries))
     case Done{Again{policy,held,log_failed,cursor,last_message,primary,current,terminal,filter,codex_log,first_error,checkpoint_state,incomplete,alive,deliveries,next}}: consume(db,player,id,log,policy,held,log_failed,handle,harness,spool,spanned,cursor,last_message,primary,current,terminal,filter,requested,codex_log,first_error,sender,attempt,checkpoint_state,incomplete,monitor,wake_sub,alive,deliveries,next)
     case Done{AwakeEnd{+notice,+alive}}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
-      +drained : String <- Guidance.awake_pending(db,player,handle,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
+      +drained : String <- Guidance.awake_pending(db,player,handle,attempt,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
       continuation : (List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>)) <- IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>),Bool.pick(List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>),String.is_empty(notice),
         pending => consume_exhausted(db,player,id,log,spool,held,log_failed,handle,harness,codex_log,terminal,filter,requested,first_error,sender,attempt,checkpoint_state,incomplete_observation,monitor,pending,wake_sub,alive),
         pending => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
@@ -1013,15 +1304,10 @@ def observed_result(monitor: Bool, observation: Outcome & List<Chan(Result<&1,&1
 
 # The retained process sends its initial input once. Reattachment reads the same
 # attempt from its first frame so native completion can be reconstructed.
-@unsafe
-def retained_output(+db: String, +player: String, +id: String, +log: String, +harness: String, +attempt: String, +directory: String, +handle: U32, +supplied_requested: String) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def retained_output_state(+db: String, +player: String, +id: String, +log: String, +harness: String, +attempt: String, +directory: String, +handle: U32, +supplied_requested: String, +generation: String, +monitor: Bool, +checkpoint_state: Observer.State) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
-    +generation : String <- IO.pure(String,generation_log(log,id))
-    +monitor : Bool <- Observer.monitor_handle(db,handle)
     +policy : Logs.Policy <- Logs.open_attempt(db,player,log,id)
     sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
-    output_present : Bool <- Logs.prepare_retained_output(generation)
-    +checkpoint_state : Observer.State <- Bool.pick(IO(Observer.State),Bool.or(monitor,output_present),Observer.restore(db,handle,monitor),Observer.reset_empty(db,handle,monitor))
     +resumed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,NativeRequests.resume(db,player,id,attempt,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(attempt)),String.is_empty(Observer.terminal(checkpoint_state))))))
     +resume_error : String <- IO.pure(String,append_write_error("",unshared_result(Unit,resumed)))
     +resume_failed : Bool <- IO.pure(Bool,checkpoint_write_failed(unshared_result(Unit,resumed)))
@@ -1030,7 +1316,7 @@ def retained_output(+db: String, +player: String, +id: String, +log: String, +ha
     +wake_sub : U32 <- IO.pure(U32,subscribe_handle(subscription))
     +wake_on : Bool <- IO.pure(Bool,subscribe_active(subscription))
     +spool : String <- IO.pure(String,directory ++ "/stdout")
-    +spanned : Bool <- IO.pure(Bool,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(attempt))))
+    +spanned : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(attempt)),Bool.or(String.eq(harness,"omp\n"),String.eq(harness,"codex\n"))))
     first : Result<&1,&1,U32 & String,WakeRead> <- next_wake(spool,handle,wake_sub,wake_on,spanned)
     cursor : String <- IO.pure(String,Observer.cursor(checkpoint_state))
     last_message : String <- IO.pure(String,Observer.last_message(checkpoint_state))
@@ -1044,13 +1330,28 @@ def retained_output(+db: String, +player: String, +id: String, +log: String, +ha
     observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,generation,policy,held,False{},handle,harness,spool,spanned,cursor,last_message,primary,current,terminal,filter,requested,codex_log,resume_error,sender,attempt,checkpoint_state,resume_failed,monitor,wake_sub,wake_on,Nil{},first)
     observed_result(monitor,observation)
 
+def retained_output_restored(+db: String, +player: String, +id: String, +log: String, +harness: String, +attempt: String, +directory: String, +handle: U32, +supplied_requested: String, +generation: String, +monitor: Bool, restored: Observer.RestoreOutcome) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+  match restored:
+    case Observer.Restored{+state}: retained_output_state(db,player,id,log,harness,attempt,directory,handle,supplied_requested,generation,monitor,state)
+    case Observer.Rejected{+reason}: IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{"checkpoint rejected","",reason,True{}},Nil{}))
+
+@unsafe
+def retained_output(+db: String, +player: String, +id: String, +log: String, +harness: String, +attempt: String, +directory: String, +handle: U32, +supplied_requested: String) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+  do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
+    +generation : String <- IO.pure(String,generation_log(log,id))
+    +monitor : Bool <- Observer.monitor_handle(db,handle)
+    output_present : Bool <- Logs.prepare_retained_output(generation)
+    restored : Observer.RestoreOutcome <- Bool.pick(IO(Observer.RestoreOutcome),Bool.or(monitor,output_present),Observer.restore(db,handle,monitor),Observer.empty_checkpoint_outcome(db,handle,monitor))
+    retained_output_restored(db,player,id,log,harness,attempt,directory,handle,supplied_requested,generation,monitor,restored)
+
 def muse_retained_arguments(cmd: String, model: String, effort: String, prompt_file: String, +session: String) -> List<String>:
   Muse.resume_arguments(cmd,model,effort,prompt_file,session)
 
-def retained_arguments(omp: Bool, claude: Bool, +cmd: String, +model: String, +effort: String, sessions: String, +native: String) -> String:
+def retained_arguments(omp: Bool, claude: Bool, muse: Bool, +cmd: String, +model: String, +effort: String, sessions: String, +prompt_file: String, +native: String) -> String:
   Bool.pick(String,claude,
     Claude.argv(cmd,model,effort,native,String.is_empty(native)),
-  Bool.pick(String,omp,Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),Codex.argv(cmd,model,effort,native,String.is_empty(native))))
+  Bool.pick(String,omp,Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),
+  Bool.pick(String,muse,P.argv(muse_retained_arguments(cmd,model,effort,prompt_file,native)),Codex.argv(cmd,model,effort,native,String.is_empty(native)))))
 
 def profile_path(+db: String, player: String) -> IO(String):
   do IO<String>:
@@ -1093,16 +1394,20 @@ def current_history(+db: String, player: String) -> IO(String):
 # The recorded route with the profile's credential store bound into the spawn argv and
 # the preserved provider history home carried as an ordinary config argument; an empty
 # binding keeps today's argv through retained_arguments, so a session with no record
-# spawns exactly as before.
-def retained_profile_other(omp: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, +native: String) -> String:
+# spawns exactly as before. OMP binds PI_CODING_AGENT_DIR and Muse binds
+# XDG_CONFIG_HOME; a selected profile assignment overrides an inherited store.
+def retained_profile_other(omp: Bool, muse: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String) -> String:
   match omp:
-    case True{}: Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native))
-    case False{}: Codex.argv_profile(binding,override,cmd,model,effort,native,String.is_empty(native))
+    case True{}: Omp.argv_profile(binding,cmd,model,effort,sessions,native,String.is_empty(native))
+    case False{}:
+      match muse:
+        case True{}: Muse.argv_profile(binding,cmd,model,effort,prompt_file,native,String.is_empty(native))
+        case False{}: Codex.argv_profile(binding,override,cmd,model,effort,native,String.is_empty(native))
 
-def retained_profile_arguments(omp: Bool, claude: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, +native: String) -> String:
+def retained_profile_arguments(omp: Bool, claude: Bool, muse: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String) -> String:
   match claude:
     case True{}: Claude.argv_profile(binding,cmd,model,effort,native,String.is_empty(native))
-    case False{}: retained_profile_other(omp,binding,override,cmd,model,effort,sessions,native)
+    case False{}: retained_profile_other(omp,muse,binding,override,cmd,model,effort,sessions,prompt_file,native)
 
 def retained_identity_prefix(model: String, identity: String & String) -> String:
   (registry,helper)=identity
@@ -1154,8 +1459,17 @@ def dsh_home_if(dsh: Bool, +db: String, +base: String, +player: String) -> IO(St
 
 def dsh_prepare_if(dsh: Bool, +directory: String, +model: String, +effort: String) -> IO(Result<&1,&1,U32 & String,Dsh.Prepared>):
   match dsh:
-    case True{}: Dsh.prepare(directory,model,effort)
+    # Native custody creates the attempt directory and seals its prompt. Keep
+    # the per-attempt patches in a sibling directory referenced by the argv.
+    case True{}: Dsh.prepare(directory ++ ".dsh",model,effort)
     case False{}: IO.pure(Result<&1,&1,U32 & String,Dsh.Prepared>,Done{Dsh.Prepared{"",""}})
+
+def dsh_worker_helper(dsh: Bool, executable: String) -> IO(String):
+  match dsh:
+    case False{}: IO.pure(String,"")
+    case True{}: do IO<String>:
+      helper : String <- IO.try(String,HostControl.Control.agent_helper(executable))
+      IO.pure(String,Subs.directory_of(helper) ++ "/dsh-worker.mjs")
 
 type IdentityParts is Data:
   IdParts{prefix: String, resolver: String}
@@ -1185,26 +1499,40 @@ def identity_products(model: String, identity: String & String) -> IdentityParts
   +resolver = maybe_text(Accounts.api_key_resolver_value(Accounts.api_key_helper(helper)))
   IdParts{prefix,resolver}
 
-def retained_launch_checked(prepared: Result<&1,&1,U32 & String,Dsh.Prepared>, +dsh: Bool, +prefix: String, +home: String, +cmd: String, +model: String, +effort: String, +native: String, +muse: Bool, +muse_args: String, +args: String, +initial: String, +omp: Bool, +claude: Bool, +level: String, seal_prompt: Bool) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
+def retained_launch_result(checked: Result<&1,&1,U32 & String,Unit>, arguments: String, input: String, initial: String, keep_stdin: U32, file_input: Bool) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
+  match checked:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Fail{error})
+    case Done{made}: IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Done{Prepared{arguments,input,initial,keep_stdin,file_input}})
+
+def retained_launch_checked(prepared: Result<&1,&1,U32 & String,Dsh.Prepared>, +dsh: Bool, +agy: Bool, +prefix: String, +home: String, +cmd: String, +model: String, +effort: String, +native: String, +muse: Bool, +args: String, +initial: String, +omp: Bool, +claude: Bool, +level: String, seal_prompt: Bool) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   match prepared:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Fail{error})
-    case Done{Dsh.Prepared{tools, model_patch}}:
-      IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Done{Prepared{
-        Bool.pick(String,dsh,prefix ++ Dsh.argv(home,cmd,model,effort,tools,model_patch,native,String.is_empty(native)),Bool.pick(String,muse,muse_args,args)),
-        retained_input(muse,omp,claude,initial,level),
-        initial,
-        retained_keep_stdin(muse,omp,claude),
-        Bool.or(muse,seal_prompt)}})
+    case Done{Dsh.Prepared{tools, model_patch}}: do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
+      +arguments : String = Bool.pick(String,dsh,prefix ++ Dsh.argv(home,cmd,model,effort,tools,model_patch,native,String.is_empty(native)),Bool.pick(String,agy,prefix ++ Agy.argv(cmd,model,effort,native,String.is_empty(native)),args))
+      checked : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),omp,Omp.preflight_arguments(arguments),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
+      retained_launch_result(checked,arguments,Bool.pick(String,agy,Agy.user_frame(initial),retained_input(muse,omp,claude,initial,level)),initial,retained_keep_stdin(muse,omp,claude),Bool.or(muse,seal_prompt))
 
-def retained_launch_plain(omp: Bool, claude: Bool, cmd: String, model: String, effort: String, sessions: String, +native: String, +prefix: String, account: Maybe<&2,Accounts.AccountRecord>) -> Result<&1,&1,U32 & String,String>:
+def retained_launch_plain(omp: Bool, claude: Bool, muse: Bool, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +prefix: String, account: Maybe<&2,Accounts.AccountRecord>, +credit_refusal: String) -> Result<&1,&1,U32 & String,String>:
   match account:
-    case None{}: Done{prefix ++ retained_arguments(omp,claude,cmd,model,effort,sessions,native)}
-    case Some{+refused}: Fail{(2,"The account " ++ Accounts.account_id(refused) ++ " funds its work through an API key and this deployment installs no api-key resolver beside the resolved identity helper; the attempt was not started and its input stays owed.")}
+    case None{}: Done{prefix ++ retained_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native)}
+    case Some{+refused}: Fail{(2,Bool.pick(String,String.is_empty(credit_refusal),Accounts.credit_api_key_refusal(refused),credit_refusal))}
 
-def retained_launch_arguments(omp: Bool, claude: Bool, cmd: String, model: String, effort: String, sessions: String, +native: String, +prefix: String, +history: String, harness: String, account: Maybe<&2,Accounts.AccountRecord>, binding: Maybe<List<String>>) -> Result<&1,&1,U32 & String,String>:
+def retained_launch_arguments(omp: Bool, claude: Bool, muse: Bool, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +prefix: String, +history: String, harness: String, account: Maybe<&2,Accounts.AccountRecord>, launch_credit: Maybe<List<String>> & String) -> Result<&1,&1,U32 & String,String>:
+  (binding,credit_refusal)=launch_credit
   match binding:
-    case Some{bound}: Done{prefix ++ retained_profile_arguments(omp,claude,bound,Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,native)}
-    case None{}: retained_launch_plain(omp,claude,cmd,model,effort,sessions,native,prefix,account)
+    case Some{bound}: Done{prefix ++ retained_profile_arguments(omp,claude,muse,bound,Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,prompt_file,native)}
+    case None{}: retained_launch_plain(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,account,credit_refusal)
+
+
+def retained_identity_result(identity: Result<&1,&1,U32 & String,String & String>, next: String & String -> IO(Result<&1,&1,U32 & String,RetainedLaunch>)) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
+  match identity:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Fail{error})
+    case Done{value}: next(value)
+
+def retained_identity(executable: String, next: String & String -> IO(Result<&1,&1,U32 & String,RetainedLaunch>)) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
+  do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
+    identity : Result<&1,&1,U32 & String,String & String> <- HostControl.Control.identity(executable)
+    retained_identity_result(identity,next)
 
 def retained_prepare_checked(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool, +predecessor: String, checked: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   match checked:
@@ -1214,41 +1542,46 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
       +native : String <- retained_native(db,player,sessions,session,harness)
       +prompt_file : String <- IO.pure(String,directory ++ "/prompt.txt")
       +executable : String <- IO.try(String,Lock.SessionLock.executable())
-      identity : String & String <- IO.try(String & String,HostControl.Control.identity(executable))
-      +absolute_db : String <- IO.try(String,Lock.SessionLock.canonical(db))
-      +parts : IdentityParts <- IO.pure(IdentityParts,identity_products(model,identity))
-      +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory]) ++ identity_prefix(parts))
-      muse_args : String <- IO.pure(String,prefix ++ P.argv(muse_retained_arguments(cmd,model,effort,prompt_file,session)))
-      +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
-      +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
-      +dsh : Bool <- IO.pure(Bool,String.eq(harness,"dsh\n"))
-      +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
-      home : String <- dsh_home_if(dsh,db,absolute_db,player)
-      prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort)
-      +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
-      store : String <- current_store(db,player,harness)
-      history : String <- current_history(db,player)
-      binding : Maybe<List<String>> <- IO.pure(Maybe<List<String>>,Accounts.account_binding(Tx.trim_nl(harness),account,identity_resolver(parts),store))
-      recorded : Unit <- Accounts.record_current_attempt(db,player,directory,predecessor,account)
-      +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,cmd,model,effort,sessions,native,prefix,history,Tx.trim_nl(harness),account,binding)))
-      launch : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_launch_checked(prepared,dsh,prefix,home,cmd,model,effort,native,muse,muse_args,args,initial,omp,claude,level,seal_prompt)
-      IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,launch)
+      retained_identity(executable, identity => do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
+        +absolute_db : String <- IO.try(String,Lock.SessionLock.canonical(db))
+        +parts : IdentityParts <- IO.pure(IdentityParts,identity_products(model,identity))
+        +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
+        +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
+        +dsh : Bool <- IO.pure(Bool,String.eq(harness,"dsh\n"))
+        +agy : Bool <- IO.pure(Bool,String.eq(harness,"antigravity\n"))
+        +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
+        home : String <- dsh_home_if(dsh,db,absolute_db,player)
+        prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort)
+        bridge : String <- dsh_worker_helper(dsh,executable)
+        +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory,"BATON_STOP_HOOK=" ++ executable,"BATON_COORDINATOR=" ++ executable,"BATON_DSH_WORKER_BRIDGE=" ++ bridge]) ++ identity_prefix(parts))
+        +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
+        store : String <- current_store(db,player,harness)
+        history : String <- current_history(db,player)
+        launch_credit : Maybe<List<String>> & String <- Accounts.credit_launch_gate(db,player,directory,Tx.trim_nl(harness),account,identity_resolver(parts),store,Accounts.credit_guard_qualified())
+        recorded : Unit <- Accounts.record_current_attempt(db,player,directory,predecessor,account)
+        +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,history,Tx.trim_nl(harness),account,launch_credit)))
+        launch : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_launch_checked(prepared,dsh,agy,prefix,home,cmd,model,effort,native,muse,args,initial,omp,claude,level,seal_prompt)
+        IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,launch))
 
 def retained_prepare(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool, predecessor: String) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
-    +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
-    checked : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),omp,Omp.preflight(),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
-    retained_prepare_checked(db,player,directory,cmd,model,effort,session,harness,sessions,prompt,level,seal_prompt,predecessor,checked)
+    retained_prepare_checked(db,player,directory,cmd,model,effort,session,harness,sessions,prompt,level,seal_prompt,predecessor,Done{Unit{}})
 
 def retained_admit(+db: String, +directory: String, +cwd: String, +prompt: String, +lock: U32, +recovery: String, launch: RetainedLaunch) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   match launch:
     case Prepared{+arguments,+input,+initial,+keep_stdin,file_input}:
       Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),file_input,Custody.Instance.admit_with_file(db,directory,arguments,cwd,directory ++ "/native.stderr","prompt.txt",initial,input,keep_stdin,Some{lock},recovery),Custody.Instance.admit(db,directory,arguments,cwd,directory ++ "/native.stderr",input,keep_stdin,Some{lock},recovery))
 
+
+def retained_mode_result(launch: Result<&1,&1,U32 & String,RetainedLaunch>, +db: String, +directory: String, +cwd: String, +prompt: String, +lock: U32, +recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
+  match launch:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Fail{error})
+    case Done{+value}: retained_admit(db,directory,cwd,prompt,lock,recovery,value)
+
 def retained_mode(+db: String, player: String, +directory: String, cmd: String, model: String, effort: String, cwd: String, session: String, harness: String, sessions: String, +prompt: String, lock: U32, recovery: String, level: String, seal_prompt: Bool, predecessor: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
-    launch : RetainedLaunch <- IO.try(RetainedLaunch,retained_prepare(db,player,directory,cmd,model,effort,session,harness,sessions,prompt,level,seal_prompt,predecessor))
-    retained_admit(db,directory,cwd,prompt,lock,recovery,launch)
+    launch_result : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_prepare(db,player,directory,cmd,model,effort,session,harness,sessions,prompt,level,seal_prompt,predecessor)
+    retained_mode_result(launch_result,db,directory,cwd,prompt,lock,recovery)
 
 def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, +lock: U32, +recovery: String, +level: String, predecessor: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   retained_mode(db,player,directory,cmd,model,effort,cwd,session,harness,sessions,prompt,lock,recovery,level,True{},predecessor)
@@ -1271,14 +1604,25 @@ def direct_setup_failure(-A: Type, +db: String, +player: String, +id: String, lo
 
 def direct_retained_prepared(+db: String, +player: String, +directory: String, +cwd: String, +prompt: String, +lock: U32, +recovery: String, prepared: Result<&1,&1,U32 & String,RetainedLaunch>) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   match prepared:
-    case Done{launch}: retained_admit(db,directory,cwd,prompt,lock,recovery,launch)
+    case Done{launch}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
+      +gate : UW.Gate <- direct_window_gate(db,player)
+      Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),direct_gate_held(gate),
+        IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Done{P.Unstarted{direct_gate_refusal(gate)}}),
+        retained_admit(db,directory,cwd,prompt,lock,recovery,launch))
     case Fail{error}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
       id : String <- IO.try(String,DB.Sql.query(db,"SELECT id FROM executions WHERE session=" ++ C.q(player) ++ " AND mode='direct';"))
       log : String <- IO.try(String,DB.Sql.query(db,"SELECT r.output FROM direct_turn_requests r JOIN executions e ON e.id=r.id AND e.session=r.session WHERE e.session=" ++ C.q(player) ++ " AND e.mode='direct';"))
       direct_setup_failure(Result<&1,&1,U32 & String,P.RetainedStart>,db,player,Tx.trim_nl(id),Tx.trim_nl(log),lock,error)
 
+def direct_conversation(+db: String, +player: String, +session: String) -> IO(String):
+  do IO<String>:
+    recorded : String <- IO.try(String,DB.Sql.query(db,"SELECT native FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+    IO.pure(String,Bool.pick(String,String.is_empty(Tx.trim_nl(session)),Tx.trim_nl(recorded),Tx.trim_nl(session)))
+
 def direct_retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, +lock: U32, +recovery: String, +level: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
+    +conversation : String <- direct_conversation(db,player,session)
+    checked : Unit <- Accounts.order_move(db,player,conversation,cmd,cwd)
     prepared : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_prepare(db,player,directory,cmd,model,effort,session,harness,sessions,prompt,level,True{},"")
     direct_retained_prepared(db,player,directory,cwd,prompt,lock,recovery,prepared)
 
@@ -1302,6 +1646,35 @@ def omp_launch(sessions: String, cmd: String, model: String, effort: String, cwd
     checked : Result<&1,&1,U32 & String,Unit> <- Omp.preflight()
     omp_launch_checked(sessions,cmd,model,effort,cwd,stderr,session,checked)
 
+def binding_list(binding: Maybe<List<String>>) -> List<String>:
+  match binding:
+    case None{}: Nil{}
+    case Some{bound}: bound
+
+def direct_binding(+db: String, +player: String, +harness: String) -> IO(Maybe<List<String>>):
+  do IO<Maybe<List<String>>>:
+    account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
+    store : String <- current_store(db,player,harness)
+    executable : String <- IO.try(String,Lock.SessionLock.executable())
+    identity : String & String <- IO.try(String & String,HostControl.Control.identity(executable))
+    binding : Maybe<List<String>> <- Accounts.credit_launch_binding(db,player,"",Tx.trim_nl(harness),account,Accounts.api_key_resolver(identity),store)
+    IO.pure(Maybe<List<String>>,binding)
+
+def omp_launch_configured(+db: String, +player: String, sessions: String, cmd: String, model: String, effort: String, cwd: String, stderr: String, +session: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  do IO<Result<&1,&1,U32 & String,U32>>:
+    binding : Maybe<List<String>> <- direct_binding(db,player,"omp\n")
+    Omp.start_player_profile(binding_list(binding),cmd,model,effort,cwd,sessions,session,String.is_empty(session),stderr)
+
+def muse_launch_configured(+db: String, +player: String, cmd: String, model: String, effort: String, cwd: String, stderr: String, +session: String, task: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  do IO<Result<&1,&1,U32 & String,U32>>:
+    binding : Maybe<List<String>> <- direct_binding(db,player,"muse\n")
+    Muse.start_player_profile(binding_list(binding),cmd,model,effort,cwd,stderr,task,session,String.is_empty(session))
+
+def agy_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
+  match fresh:
+    case True{}: Agy.start_player(cmd,model,effort,cwd,stderr)
+    case False{}: Agy.resume_player(cmd,model,effort,cwd,stderr,session)
+
 def dsh_launch_prepared(prepared: Result<&1,&1,U32 & String,Dsh.Prepared>, +home: String, +cmd: String, +model: String, +effort: String, +cwd: String, +stderr: String, +session: String) -> IO(Result<&1,&1,U32 & String,U32>):
   match prepared:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})
@@ -1320,14 +1693,16 @@ def dsh_launch(+db: String, +player: String, +log: String, +cmd: String, +model:
 
 def launch(+db: String, +player: String, sessions: String, +cmd: String, +model: String, +effort: String, +cwd: String, +stderr: String, +session: String, +harness: String, +log: String, task: String) -> IO(Result<&1,&1,U32 & String,U32>):
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"omp\n"),
-    omp_launch(sessions,cmd,model,effort,cwd,stderr,session),
+    omp_launch_configured(db,player,sessions,cmd,model,effort,cwd,stderr,session),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"muse\n"),
-    muse_launch(cmd,model,effort,cwd,stderr,session,task,String.is_empty(session)),
+    muse_launch_configured(db,player,cmd,model,effort,cwd,stderr,session,task),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"dsh\n"),
     dsh_launch(db,player,log,cmd,model,effort,cwd,stderr,session),
+  Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"antigravity\n"),
+    agy_launch(cmd,model,effort,cwd,stderr,session,String.is_empty(session)),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"codex\n"),
     Codex.start_player(cmd,model,effort,cwd,stderr,session,String.is_empty(session)),
-    claude_launch(cmd,model,effort,cwd,stderr,session,String.is_empty(session))))))
+    claude_launch(cmd,model,effort,cwd,stderr,session,String.is_empty(session)))))))
 
 # The state the workspace holds when a turn restarts: the work an interrupted
 # turn had already written.
@@ -1454,11 +1829,6 @@ def direct_recovery_checked(+db: String, +player: String, +id: String, +harness:
     Stop.error_result("Recorded direct recovery arguments differ from the retained request; preserve the attempt and inspect its manifest.",String.eq(found,"1\n"))
 
 # Continue the requested conversation or the conversation recorded by the attempt.
-def direct_conversation(+db: String, +player: String, +session: String) -> IO(String):
-  do IO<String>:
-    recorded : String <- IO.try(String,DB.Sql.query(db,"SELECT native FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
-    IO.pure(String,Bool.pick(String,String.is_empty(Tx.trim_nl(session)),Tx.trim_nl(recorded),Tx.trim_nl(session)))
-
 # Each account continuation uses a separate retained attempt directory.
 def direct_continued_directory(+db: String, +player: String, +directory: String) -> IO(String):
   do IO<String>:
@@ -1480,6 +1850,13 @@ def direct_release_lock(lock: Maybe<U32>) -> IO(Unit):
   match lock:
     case None{}: IO.pure(Unit,Unit{})
     case Some{handle}: IO.try(Unit,Lock.SessionLock.release(handle))
+
+def direct_lease_refused(-A: Type, +db: String, +player: String, +id: String, +log: String, lock: Maybe<U32>, error: U32 & String) -> IO(A):
+  (code, +detail) = error
+  do IO<A>:
+    noted : Result<&1,&1,U32 & String,Unit> <- direct_setup_note(db,player,id,log,detail)
+    released : Unit <- direct_release_lock(lock)
+    IO.die(A,code,append_write_error(detail,noted))
 
 def direct_acknowledge(+handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -1525,7 +1902,7 @@ def route_reported(+db: String, +player: String, +id: String, event: String, err
   match error_clear:
     case True{}: do IO<Bool>:
       closed : Bool <- Stop.stopped(db,player)
-      triggered : Bool <- Subs.route_trigger(db,id,event)
+      triggered : Bool <- Subs.route_trigger(db,player,id,event)
       IO.pure(Bool,Bool.and(Bool.not(closed),triggered))
     case False{}: IO.pure(Bool,False{})
 
@@ -1567,41 +1944,71 @@ def direct_route_wake(+db: String, +player: String, +id: String, +log: String, o
     case False{}: direct_wake(db,player,id,outcome)
     case True{}: direct_route_continue(db,player,id,log,outcome)
 
+def direct_failure_text(+db: String, +player: String, +id: String, +label: String, code: U32, +text: String) -> IO(Unit):
+  Delivery.failure_report(db,player,id ++ ":" ++ label ++ "-failure",
+    "Direct " ++ label ++ " of turn " ++ id ++ " failed: " ++ U32.show(code) ++ ": " ++ text)
+
+def direct_failure_pass(+db: String, +player: String, +id: String, +label: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match result:
+    case Done{unit}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{unit})
+    case Fail{(+code,+text)}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      reported : Unit <- direct_failure_text(db,player,id,label,code,text)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,text)})
+
 # A route launches only on clean settlement: any native release, finish, question or
 # acknowledgment failure keeps its own failed result and wakes ordinarily, matching
 # the receive route_after_advance gate.
 def direct_settled_wake(+db: String, +player: String, +id: String, +log: String, +outcome: Outcome, settled: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match settled:
-    case Fail{error}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      wake : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
-      IO.pure(Result<&1,&1,U32 & String,Unit>,combine(Fail{error},wake))
+    case Fail{(+code,+text)}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      settled_report : Unit <- direct_failure_text(db,player,id,"settled",code,text)
+      wake0 : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
+      wake : Result<&1,&1,U32 & String,Unit> <- direct_failure_pass(db,player,id,"wake",wake0)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,combine(Fail{(code,text)},wake))
     case Done{unit}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      routed : Bool <- direct_route_decided(db,player,id,outcome)
-      wake : Result<&1,&1,U32 & String,Unit> <- direct_route_wake(db,player,id,log,outcome,routed)
-      IO.pure(Result<&1,&1,U32 & String,Unit>,combine(Done{unit},wake))
+      +routed : Bool <- direct_route_decided(db,player,id,outcome)
+      normal : Bool <- settlement_success(db,outcome)
+      reminder_source : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>),Bool.and(normal,Bool.not(routed)),
+        DB.Sql.query(db,C.task_continuation_sql(player,id)),
+        IO.pure(Result<&1,&1,U32 & String,String>,Done{""}))
+      reminder0 : Result<&1,&1,U32 & String,Unit> = Delivery.wake_result(reminder_source)
+      reminder : Result<&1,&1,U32 & String,Unit> <- direct_failure_pass(db,player,id,"reminder",reminder0)
+      wake0 : Result<&1,&1,U32 & String,Unit> <- direct_route_wake(db,player,id,log,outcome,routed)
+      wake : Result<&1,&1,U32 & String,Unit> <- direct_failure_pass(db,player,id,"wake",wake0)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,combine(reminder,combine(Done{unit},wake)))
+
+def outcome_event(outcome: Outcome) -> String:
+  match outcome:
+    case Ended{status,+event,error,incomplete}: event
+    case other: ""
 
 def direct_completed(+db: String, +player: String, +id: String, +log: String, +directory: String, +handle: U32, lock: Maybe<U32>, observation: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> IO(Unit):
   (+outcome,deliveries)=observation
   do IO<Unit>:
     exited : Unit <- record_exit(db,player,id,log,outcome)
+    account_settled : Unit <- settle_account_attempt(db,directory,outcome)
     prepared : Unit <- prepare(db,player,id,log,directory ++ "/native.stderr",outcome)
+    success : Bool <- settlement_success(db,outcome)
+    settled : Unit <- Accounts.attempt_settled(db,player,directory,Bool.not(success),outcome_event(outcome))
     observer_released : Unit <- direct_release_lock(lock)
     native_released : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.release(handle)
-    finished : Result<&1,&1,U32 & String,Unit> <- finish(db,player,id,log,outcome)
+    finished : Result<&1,&1,U32 & String,Unit> <- finish(db,player,id,log,outcome,False{})
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     acknowledged : Result<&1,&1,U32 & String,Unit> <- direct_acknowledge(handle)
     settled : Result<&1,&1,U32 & String,Unit> <- IO.pure(Result<&1,&1,U32 & String,Unit>,combine(native_released,combine(finished,combine(questions,acknowledged))))
     wake : Result<&1,&1,U32 & String,Unit> <- direct_settled_wake(db,player,id,log,outcome,settled)
     IO.pass(Unit,wake)
 
-def direct_unstarted(+db: String, +player: String, +id: String, +log: String, +directory: String, lock: Maybe<U32>, error: String) -> IO(Unit):
+def direct_unstarted(+db: String, +player: String, +id: String, +log: String, +directory: String, lock: Maybe<U32>, +error: String) -> IO(Unit):
   do IO<Unit>:
     +outcome : Outcome <- IO.pure(Outcome,Ended{"start failed","","Player process could not start: " ++ error,True{}})
     exited : Unit <- record_exit(db,player,id,log,outcome)
+    account_settled : Unit <- Accounts.attempt_completed_event(db,directory,"start failed","Player process could not start: " ++ error,"")
     prepared : Unit <- prepare(db,player,id,log,directory ++ "/native.stderr",outcome)
     released : Unit <- direct_release_lock(lock)
-    finished : Result<&1,&1,U32 & String,Unit> <- finish(db,player,id,log,outcome)
-    wake : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
+    finished : Result<&1,&1,U32 & String,Unit> <- finish(db,player,id,log,outcome,False{})
+    wake0 : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
+    wake : Result<&1,&1,U32 & String,Unit> <- direct_failure_pass(db,player,id,"wake",wake0)
     IO.pass(Unit,combine(finished,wake))
 
 # Pass the delivery channels and lock to the selected continuation: the verdict is the
@@ -1651,8 +2058,11 @@ def direct_second_started(+db: String, +player: String, +id: String, +log: Strin
                   +recovery : String <- IO.pure(String,direct_recovery_argv(executable,db,player,id,cmd,model,effort,cwd,log,harness,retry,conversation))
                   +policy : Logs.Policy <- Logs.policy(db,player)
                   +level : String <- IO.pure(String,policy_level(policy))
-                  next : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,retry,cmd,model,effort,cwd,conversation,harness,db ++ ".sessions",prompt,held,recovery,level))
-                  direct_second_started(db,player,id,log,retry,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,conversation,inner_lock,next)),
+                  Storage.with_writer_leases(Unit, log, retry,
+                    error => direct_lease_refused(Unit,db,player,id,log,None{},error),
+                    unit => do IO<Unit>:
+                      next : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,retry,cmd,model,effort,cwd,conversation,harness,db ++ ".sessions",prompt,held,recovery,level))
+                      direct_second_started(db,player,id,log,retry,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,conversation,inner_lock,next))),
             moved_deliveries => moved_lock => do IO<Unit>:
               cleaned : Unit <- direct_cleanup(handle,moved_deliveries)
               +continued : String <- direct_continued_directory(db,player,directory)
@@ -1662,8 +2072,11 @@ def direct_second_started(+db: String, +player: String, +id: String, +log: Strin
               +recovery : String <- IO.pure(String,direct_recovery_argv(executable,db,player,id,cmd,model,effort,cwd,log,harness,continued,conversation))
               +policy : Logs.Policy <- Logs.policy(db,player)
               +level : String <- IO.pure(String,policy_level(policy))
-              next : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,continued,cmd,model,effort,cwd,conversation,harness,db ++ ".sessions",prompt,held,recovery,level))
-              direct_second_started(db,player,id,log,continued,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,conversation,Some{held},next)))
+              Storage.with_writer_leases(Unit, log, continued,
+                error => direct_lease_refused(Unit,db,player,id,log,None{},error),
+                unit => do IO<Unit>:
+                  next : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,continued,cmd,model,effort,cwd,conversation,harness,db ++ ".sessions",prompt,held,recovery,level))
+                  direct_second_started(db,player,id,log,continued,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,conversation,Some{held},next))))
     case P.Unstarted{error}: direct_unstarted(db,player,id,log,directory,lock,error)
 
 def direct_restart_with_lock(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +prompt: String, +outcome: Outcome, +lock: U32) -> IO(Unit):
@@ -1678,8 +2091,11 @@ def direct_restart_with_lock(+db: String, +player: String, +id: String, +cmd: St
     +recovery : String <- IO.pure(String,direct_recovery_argv(executable,db,player,id,cmd,model,effort,cwd,log,harness,fresh,""))
     +policy : Logs.Policy <- Logs.policy(db,player)
     +level : String <- IO.pure(String,policy_level(policy))
-    start : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,fresh,cmd,model,effort,cwd,"",harness,db ++ ".sessions",note,lock,recovery,level))
-    direct_second_started(db,player,id,log,fresh,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,"",Some{lock},start)
+    Storage.with_writer_leases(Unit, log, fresh,
+      error => direct_lease_refused(Unit,db,player,id,log,None{},error),
+      unit => do IO<Unit>:
+        start : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,fresh,cmd,model,effort,cwd,"",harness,db ++ ".sessions",note,lock,recovery,level))
+        direct_second_started(db,player,id,log,fresh,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,"",Some{lock},start))
 
 def direct_restart_acquired(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +prompt: String, +outcome: Outcome, lock: Maybe<U32>) -> IO(Unit):
   match lock:
@@ -1701,8 +2117,11 @@ def direct_handoff_relaunch_locked(+db: String, +player: String, +id: String, +c
     +recovery : String <- IO.pure(String,direct_recovery_argv(executable,db,player,id,cmd,model,effort,cwd,log,harness,continued,conversation))
     +policy : Logs.Policy <- Logs.policy(db,player)
     +level : String <- IO.pure(String,policy_level(policy))
-    start : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,continued,cmd,model,effort,cwd,conversation,harness,db ++ ".sessions",prompt,lock,recovery,level))
-    direct_second_started(db,player,id,log,continued,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,conversation,Some{lock},start)
+    Storage.with_writer_leases(Unit, log, continued,
+      error => direct_lease_refused(Unit,db,player,id,log,None{},error),
+      unit => do IO<Unit>:
+        start : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,continued,cmd,model,effort,cwd,conversation,harness,db ++ ".sessions",prompt,lock,recovery,level))
+        direct_second_started(db,player,id,log,continued,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,conversation,Some{lock},start))
 
 # Keeper recovery reacquires the session lock before starting the next account.
 def direct_handoff_acquired(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +prompt: String, +conversation: String, lock: Maybe<U32>) -> IO(Unit):
@@ -1728,8 +2147,11 @@ def direct_transient_relaunch_locked(+db: String, +player: String, +id: String, 
     +recovery : String <- IO.pure(String,direct_recovery_argv(executable,db,player,id,cmd,model,effort,cwd,log,harness,retry,conversation))
     +policy : Logs.Policy <- Logs.policy(db,player)
     +level : String <- IO.pure(String,policy_level(policy))
-    start : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,retry,cmd,model,effort,cwd,conversation,harness,db ++ ".sessions",prompt,lock,recovery,level))
-    direct_second_started(db,player,id,log,retry,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,conversation,Some{lock},start)
+    Storage.with_writer_leases(Unit, log, retry,
+      error => direct_lease_refused(Unit,db,player,id,log,None{},error),
+      unit => do IO<Unit>:
+        start : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,retry,cmd,model,effort,cwd,conversation,harness,db ++ ".sessions",prompt,lock,recovery,level))
+        direct_second_started(db,player,id,log,retry,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,conversation,Some{lock},start))
 
 # Keeper recovery reacquires the session lock before retrying the same account.
 def direct_transient_acquired(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +retry: String, +prompt: String, +conversation: String, lock: Maybe<U32>) -> IO(Unit):
@@ -1791,7 +2213,8 @@ def direct_first_started(+db: String, +player: String, +id: String, +cmd: String
 # the saved input available for an explicit resume of the same turn.
 def direct_setup(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +session: String, +harness: String, +directory: String, prompt: String) -> IO(Result<&1,&1,U32 & String,DirectSetup>):
   do IO<Result<&1,&1,U32 & String,DirectSetup>>:
-    receiver : Unit <- Control.default_receiver(db,player,cmd,model,effort,cwd,log)
+    output : String <- IO.try(String,HostControl.Control.output(log))
+    receiver : Unit <- Control.default_receiver(db,player,cmd,model,effort,cwd,output)
     executable : String <- IO.try(String,Lock.SessionLock.executable())
     recovery : String <- IO.pure(String,direct_recovery_argv(executable,db,player,id,cmd,model,effort,cwd,log,harness,directory,session))
     policy : Logs.Policy <- Logs.policy(db,player)
@@ -1814,11 +2237,14 @@ def choose(+db: String, +player: String, +id: String, +cmd: String, +model: Stri
         +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
         written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)
         direct_replay_finished(db,player,lock,written)
-    case False{}: do IO<Unit>:
-      allowed : Bool <- Stop.admit(db,player,id,"direct",directory)
-      admitted : Unit <- Stop.admitted(allowed)
-      setup : Result<&1,&1,U32 & String,DirectSetup> <- direct_setup(db,player,id,cmd,model,effort,cwd,log,session,harness,directory,prompt)
-      direct_setup_result(db,player,id,cmd,model,effort,cwd,task,log,session,harness,directory,prompt,lock,setup)
+    case False{}:
+      Storage.with_writer_leases(Unit, log, directory,
+        error => direct_lease_refused(Unit,db,player,id,log,Some{lock},error),
+        unit => do IO<Unit>:
+          allowed : Bool <- Stop.admit(db,player,id,"direct",directory)
+          admitted : Unit <- Stop.admitted(allowed)
+          setup : Result<&1,&1,U32 & String,DirectSetup> <- direct_setup(db,player,id,cmd,model,effort,cwd,log,session,harness,directory,prompt)
+          direct_setup_result(db,player,id,cmd,model,effort,cwd,task,log,session,harness,directory,prompt,lock,setup))
 
 def supported_harness(supported: Bool) -> IO(Unit):
   match supported:
@@ -1849,7 +2275,7 @@ def player_checked(+db: String, +player: String, +id: String, +cmd: String, +mod
     case True{}: IO.die(Unit,2,"Player is not registered; register it before starting a turn.")
     case False{}:
       do IO<Unit>:
-        supported : Unit <- supported_harness(Bool.or(String.eq(harness,"omp\n"),Bool.or(String.eq(harness,"codex\n"),Bool.or(String.eq(harness,"claude-code\n"),Bool.or(String.eq(harness,"muse\n"),String.eq(harness,"dsh\n"))))))
+        supported : Unit <- supported_harness(Bool.or(String.eq(harness,"omp\n"),Bool.or(String.eq(harness,"codex\n"),Bool.or(String.eq(harness,"claude-code\n"),Bool.or(String.eq(harness,"muse\n"),Bool.or(String.eq(harness,"dsh\n"),String.eq(harness,"antigravity\n")))))))
         foreign : String <- IO.try(String,DB.Sql.query(db,id_owner_sql(id,player)))
         identity : Unit <- matching_turn(String.eq(foreign,"0\n"))
         +prompt : String <- supplied_task(task,supplied)
@@ -1872,7 +2298,7 @@ def complete_outcome_locked(+db: String, +player: String, +id: String, +log: Str
       exited : Unit <- record_exit(db,player,id,log,outcome)
       prepared : Unit <- prepare(db,player,id,log,log ++ ".stderr",outcome)
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
-      delivery_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,finish(db,player,id,log,outcome))
+      delivery_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,finish(db,player,id,log,outcome,False{}))
       wake : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
       finished : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,delivery_task)
       IO.pass(Unit,combine(finished,wake))
@@ -1888,10 +2314,11 @@ def retained_receive_admitted(recovery: Maybe<String>) -> IO(Unit):
     case Some{args}: IO.die(Unit,2,"Session retains an interrupted native receive; run receive to observe its output and completion before starting a direct turn.")
 
 # The acquired canonical guard protects this check before direct admission.
-# An exited execution can still retain an unfinished receive checkpoint.
+# An exited execution can still retain an unfinished receive checkpoint, so
+# only a recorded terminal start failure is excluded from the recovery check.
 def retained_receive_guard(+db: String, player: String) -> IO(Unit):
   do IO<Unit>:
-    directory : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(player) ++ " AND mode='retained'),'');"))
+    directory : String <- IO.try(String,DB.Sql.query(db,Store.recorded_retained_sql(player)))
     recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(Tx.trim_nl(directory)))
     retained_receive_admitted(recovery)
 
@@ -2032,11 +2459,14 @@ def recover_retained(+db: String, +player: String, +id: String, +cmd: String, +m
   do IO<Unit>:
     +recorded_harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     valid_harness : Unit <- Stop.error_result("Recorded direct recovery harness differs from the current session; preserve the attempt and inspect its manifest.",String.eq(Tx.trim_nl(recorded_harness),harness))
-    prompt : String <- IO.try(String,NativeInitialInput.guidance(db,directory))
-    +handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
-    reconciled : Unit <- Stop.observing(db,player,id,directory)
-    observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- retained_output(db,player,id,log,recorded_harness,directory,directory,handle,"unknown")
-    direct_first_observed(db,player,id,cmd,model,effort,cwd,"",log,recorded_harness,directory,session,prompt,handle,None{},observation)
+    Storage.with_writer_leases(Unit, log, directory,
+      error => direct_lease_refused(Unit,db,player,id,log,None{},error),
+      unit => do IO<Unit>:
+        prompt : String <- IO.try(String,NativeInitialInput.guidance(db,directory))
+        +handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
+        reconciled : Unit <- Stop.observing(db,player,id,directory)
+        observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- retained_output(db,player,id,log,recorded_harness,directory,directory,handle,"unknown")
+        direct_first_observed(db,player,id,cmd,model,effort,cwd,"",log,recorded_harness,directory,session,prompt,handle,None{},observation))
 
 def recover_launch(+db: String, +player: String, +id: String, cmd: String, model: String, effort: String, cwd: String, log: String, harness: String, directory: String, session: String, launch: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match launch:

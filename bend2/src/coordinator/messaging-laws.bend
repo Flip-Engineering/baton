@@ -23,6 +23,14 @@ law ensemble_commands_apply_the_owner_and_coupling_declaration:
 def ensemble_commands_apply_the_owner_and_coupling_declaration(id,owner,coupling):
   {==}
 
+law ensemble_ensure_commands_preserve_recorded_coupling:
+  for id: String
+  for owner: String
+  {C.sql(C.EnsembleEnsure{id,owner}) == C.ensemble_ensure_sql(id,owner) : String}
+
+def ensemble_ensure_commands_preserve_recorded_coupling(id,owner):
+  {==}
+
 law ensemble_member_commands_apply_explicit_membership:
   for id: String
   for owner: String
@@ -33,12 +41,12 @@ law ensemble_member_commands_apply_explicit_membership:
 def ensemble_member_commands_apply_explicit_membership(id,owner,session,action):
   {==}
 
-law ensemble_creation_defaults_to_loose:
+law ensemble_commands_without_coupling_select_ensure:
   for id: String
   for owner: String
-  {C.parse(["ensemble",id,owner]) == C.Ensemble{id,owner,"loose"} : C.Command}
+  {C.parse(["ensemble",id,owner]) == C.EnsembleEnsure{id,owner} : C.Command}
 
-def ensemble_creation_defaults_to_loose(id,owner):
+def ensemble_commands_without_coupling_select_ensure(id,owner):
   {==}
 
 law message_policy_schema_records_roles_coupling_and_membership:
@@ -79,18 +87,18 @@ law peer_routes_require_shared_tight_membership:
 def peer_routes_require_shared_tight_membership(sender,recipient):
   {==}
 
-law operator_routes_admit_a_top_level_or_recorded_conductor:
+law operator_routes_admit_immediate_children_and_top_level_conductors:
   for +sender: String
   for +recipient: String
-  {C.operator_route(sender,recipient) == "((" ++ C.assigned_role(sender) ++ "='operator' AND " ++ C.assigned_role(recipient) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ " AND (parent IS NULL OR parent=" ++ sender ++ "))) OR (" ++ C.assigned_role(recipient) ++ "='operator' AND " ++ C.assigned_role(sender) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ " AND parent IS NULL)))" : String}
+  {C.operator_route(sender,recipient) == "((" ++ C.assigned_role(sender) ++ "='operator' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ " AND (parent=" ++ sender ++ " OR (parent IS NULL AND " ++ C.assigned_role(recipient) ++ "='conductor')))) OR (" ++ C.assigned_role(recipient) ++ "='operator' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ " AND (parent=" ++ recipient ++ " OR (parent IS NULL AND " ++ C.assigned_role(sender) ++ "='conductor')))))" : String}
 
-def operator_routes_admit_a_top_level_or_recorded_conductor(sender,recipient):
+def operator_routes_admit_immediate_children_and_top_level_conductors(sender,recipient):
   {==}
 
 law message_routes_require_registered_distinct_sessions_and_a_permitted_relation:
   for +sender: String
   for +recipient: String
-  {C.message_route(sender,recipient) == "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ ") AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ ") AND " ++ sender ++ "<>" ++ recipient ++ " AND ((" ++ C.assigned_role(sender) ++ "<>'operator' AND " ++ C.assigned_role(recipient) ++ "<>'operator' AND (coalesce((SELECT parent FROM sessions WHERE id=" ++ sender ++ ")=" ++ recipient ++ ",0) OR (" ++ C.assigned_role(sender) ++ "='conductor' AND " ++ C.descendant(sender,recipient) ++ ") OR " ++ C.tight_peers(sender,recipient) ++ ")) OR " ++ C.operator_route(sender,recipient) ++ "))" : String}
+  {C.message_route(sender,recipient) == "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ ") AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ ") AND " ++ sender ++ "<>" ++ recipient ++ " AND ((" ++ C.assigned_role(sender) ++ "<>'operator' AND " ++ C.assigned_role(recipient) ++ "<>'operator' AND (coalesce((SELECT parent FROM sessions WHERE id=" ++ sender ++ ")=" ++ recipient ++ ",0) OR coalesce((SELECT parent FROM sessions WHERE id=" ++ recipient ++ ")=" ++ sender ++ ",0) OR (" ++ C.assigned_role(sender) ++ "='conductor' AND " ++ C.descendant(sender,recipient) ++ ") OR " ++ C.tight_peers(sender,recipient) ++ ")) OR " ++ C.operator_route(sender,recipient) ++ "))" : String}
 
 def message_routes_require_registered_distinct_sessions_and_a_permitted_relation(sender,recipient):
   {==}
@@ -135,7 +143,7 @@ law ensemble_membership_requires_the_owner_and_registered_agent_members:
   for +action: String
   {C.ensemble_member_sql(id,owner,session,action) == "DELETE FROM ensemble_members WHERE ensemble=" ++ C.q(id) ++ " AND session=" ++ C.q(session) ++ " AND " ++ C.q(action) ++ "='remove' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ C.q(id) ++ " AND owner=" ++ C.q(owner) ++ ");"
   ++ "INSERT OR IGNORE INTO ensemble_members(ensemble,session) SELECT " ++ C.q(id) ++ "," ++ C.q(session) ++ " WHERE " ++ C.q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ C.q(id) ++ " AND owner=" ++ C.q(owner) ++ ") AND " ++ C.assigned_role(C.q(session)) ++ "<>'operator' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ");"
-  ++ "SELECT json_object('ensemble'," ++ C.q(id) ++ ",'owner'," ++ C.q(owner) ++ ",'session'," ++ C.q(session) ++ ",'membership'," ++ C.q(action) ++ ") WHERE EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ C.q(id) ++ " AND owner=" ++ C.q(owner) ++ ") AND ((" ++ C.q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ C.q(id) ++ " AND session=" ++ C.q(session) ++ ")) OR (" ++ C.q(action) ++ "='remove' AND NOT EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ C.q(id) ++ " AND session=" ++ C.q(session) ++ ")));" : String}
+  ++ C.ensemble_member_result_sql(id,owner,session,action) : String}
 
 def ensemble_membership_requires_the_owner_and_registered_agent_members(id,owner,session,action):
   {==}
@@ -162,7 +170,7 @@ law committed_message_routes_refuse_before_endpoint_delivery:
   for db: String
   for command: C.Command
   for +saved: String
-  {Store.committed(Done{saved}) == Store.route_accepted(saved,Bool.or(Store.naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""))))) : IO(Result<&1,&1,U32 & String,String>)}
+  {Store.committed(Done{saved}) == Store.route_accepted(saved,Bool.or(Store.naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-id-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"relation-id-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"finding-id-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"knowledge-notice-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"promotion-id-conflict\""),Tx.starts_with(saved,"{\"error\":\"promotion-notice-conflict\""))))))))))) : IO(Result<&1,&1,U32 & String,String>)}
 
 def committed_message_routes_refuse_before_endpoint_delivery(db,command,saved):
   {==}

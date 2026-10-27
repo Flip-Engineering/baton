@@ -101,12 +101,20 @@ identities. They remain available for integrations and exact replay:
 .scratch/bend2/baton2 state.db push /path/to/repo target-branch origin
 .scratch/bend2/baton2 state.db remote-tip /path/to/repo target-branch origin
 .scratch/bend2/baton2 state.db status
+.scratch/bend2/baton2 state.db stall
+.scratch/bend2/baton2 state.db stall-wake
 ```
 
 Commands return JSON. `report` saves the full
 body and pending parent delivery in one SQLite transaction. A matching retry
 returns the stored message with its current delivery receipt. Conflicting reuse of
 an ID fails. The explicit `ack` form records the supplied recipient handling receipt.
+`stall` reports every pending-input candidate with its recorded state. `stall-wake`
+drives the oldest owed message for each candidate whose attempt exited, whose
+endpoint is present, and which has no explicit stop or existing wake claim. Both
+commands use the vocabulary of the coordinator database. A live attempt with
+owed input is reported as `active`; the wake command selects `stalled`
+candidates.
 
 `observe-file ID PLAYER PATH` consumes one
 native harness event. An initialization event (type `session`) updates the
@@ -463,8 +471,14 @@ provider resends while a message or a tool call is running, and holds the newest
 `message_end` arrives. The coordinator appends complete retained frames to a
 per-turn log and writes native stderr to a separate per-run file. `logs` reads
 and sets the concise level, `logs-storage` reports registered files, and
-`logs-clean` removes eligible completed attempt artifacts. [The log policy](../docs/bend2/logging.md)
-describes the levels and file ownership.
+`logs-clean` removes eligible completed attempt artifacts. `storage-policy`
+reports the configured root classes, `storage-preview SESSION` names one
+session's cleanup candidates, and `storage-apply SESSION` runs the locked
+apply for that session. `BATON_STORAGE_ROOTS` names each root and class;
+`BATON_STORAGE_EXCLUSIVE_ROOTS` names the roots dedicated to cleanup.
+[The log policy](../docs/bend2/logging.md) describes the levels and file ownership,
+and [the storage policy](../docs/bend2/storage-policy-core.md) describes the
+classes, preservation evidence and approved-root contract.
 New supervisors use
 the selected coordinator executable. Keep existing logs at their recorded paths
 when changing the installed coordinator between lanes.
@@ -732,6 +746,66 @@ It can inspect Git state with `worktree`, read a declared remote's advertised
 branch with `remote-tip`, and land and publish reviewed work with `land`,
 `land-checked` and `push`. Report receipts retain input handling; completion
 decisions retain the coordinator's task review.
+
+### Root on another host
+
+The conductor server runs on the host that holds the orchestra database. Its
+delivery socket is created beside that database, and report writers on that
+host connect to it. A Claude Code session on another machine reaches the
+server through an SSH stdio stream: the MCP server command is `ssh`, and the
+remote command starts `mcp-conductor.mjs` on the database host.
+
+`bend2/scripts/root-channel-config.mjs` prints the configuration. Run it on the
+database host. It resolves the database, the coordinator executable and
+`mcp-conductor.mjs` to absolute paths and refuses a path that does not exist:
+
+```sh
+node bend2/scripts/root-channel-config.mjs /data/orchestra.db /opt/baton/bin/baton --session operator --ssh homelab --name baton-homelab
+```
+
+It writes the server entry to stdout and the launch command to stderr:
+
+```json
+{"mcpServers":{"baton-homelab":{"command":"ssh","args":["-T","homelab","'exec' 'node' '/opt/baton/bend2/scripts/mcp-conductor.mjs' '/data/orchestra.db' '/opt/baton/bin/baton' '--session' 'operator'"]}}}
+```
+
+```sh
+claude --mcp-config FILE --dangerously-load-development-channels server:baton-homelab
+```
+
+Save the entry as `FILE` on the machine that runs Claude Code. `ssh homelab`
+must log in without a prompt. `--node PATH` selects the Node executable on the
+database host. Each orchestra database has its own server entry and its own
+server name. `--dangerously-load-development-channels` takes several values;
+pass one `server:NAME` value for each orchestra.
+
+The root attaches as the `operator` session. The operator keeps its operator
+role, so reports and questions from parentless Conductors select it as their
+recipient. The channel retains pending input for automatic delivery and read
+tracking. Attachment must preserve unread input and the native conversation.
+
+The JavaScript resident `impl/scripts/mcp-web.mjs` has been removed. A Claude
+Code configuration that still names it starts no server and receives no
+Baton notifications. Replace that entry with the conductor entry above.
+
+### Unattached root error
+
+A root is a parentless session with the operator role, or one whose endpoint
+runs `mcp-conductor.mjs`. A root with owed input is unattached when
+its endpoint is not a conductor `--deliver` endpoint or when a connection to
+its delivery socket fails. Baton connects from the database directory and
+closes the connection after checking it. Each check uses the current session
+row, messages and socket connection result.
+
+`status`, `session` and `orchestra` print one line on stderr for each
+unattached root:
+
+```text
+Baton error: root session operator has 7136 owed inputs and no attached channel: no channel endpoint is registered. Attach a Claude Code channel with bend2/scripts/mcp-conductor.mjs as described in bend2/README.md, section "Root on another host".
+```
+
+A message, report or question committed to an unattached root prints the same
+line on its sender's stderr and appends it to the database's `.root.log`.
 
 ## OMP Associate Conductors and Players
 

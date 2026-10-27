@@ -194,9 +194,9 @@ def prepare_identity(+db: String, +session: String, +verb: String, +options: Lis
     select_identity(db,reply_identity_sql(session,options),"--request",options,"Select --to WORKER for exactly one pending unanswered native request addressed to this actor."),
     Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(String.eq(verb,"context-result"),Bool.not(D.present(options,"--id"))),
       select_identity(db,query_identity_sql(session),"--id",options,"This actor has no retained context query."),
-      Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(D.member(verb,["stop","force-stop"]),Bool.not(D.present(options,"--id"))),
+      Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(D.member(verb,["stop","force-stop"]),Bool.and(Bool.not(D.present(options,"--id")),Bool.not(D.present(options,"--clear")))),
         select_identity(db,stop_identity_sql(D.value(options,"--session",session),String.eq(verb,"force-stop")),"--id",options,"The selected session has no existing stop to force."),
-        Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(D.member(verb,Tx.split_spaces("continue-task turn report ask dispatch knowledge-record knowledge-relate knowledge-promote context-query")),Bool.not(D.present(options,"--id"))),
+        Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(D.member(verb,Tx.split_spaces("continue-task turn report ask dispatch knowledge-record knowledge-relate knowledge-promote context-query context-eval")),Bool.not(D.present(options,"--id"))),
           select_identity(db,new_identity_sql(verb),"--id",options,"The native operation identity could not be generated."),
           IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,Done{options})))))
 
@@ -293,9 +293,6 @@ def contextual_args(+session: String, verb: String, +options: List<&2,D.Option>)
       request = optional_arg(["agent-contextual-input",session,"completion-confirmed"],"--request",D.value(options,"--request",""),D.present(options,"--request"))
       args = optional_arg(request,"--to",D.value(options,"--to",""),D.present(options,"--to"))
       optional_arg(args,"--id",D.value(options,"--id",""),D.present(options,"--id"))
-    case "acknowledge":
-      args = Bool.pick(List<String>,D.present(options,"--message"),["agent-contextual-input",session,"acknowledge",D.value(options,"--message","")],["agent-contextual-input",session,"acknowledge"])
-      optional_arg(args,"--receipt",D.value(options,"--receipt",""),D.present(options,"--receipt"))
     case "guide":
       optional_arg(["agent-contextual-input",session,"guide","--to",D.value(options,"--to",""),"--text",D.value(options,"--text","")],"--id",D.value(options,"--id",""),D.present(options,"--id"))
     case other: Nil{}
@@ -309,7 +306,6 @@ def legacy_args_selected(+session: String, verb: String, +options: List<&2,D.Opt
     case "completion-request": contextual_args(session,"completion-request",options)
     case "completion-confirmed": contextual_args(session,"completion-confirmed",options)
     case "guide": contextual_args(session,"guide",options)
-    case "acknowledge": contextual_args(session,"acknowledge",options)
     case "status": native_flags(["--pretty"],options,["status"])
     case "pending": native_flags(Tx.split_spaces("--index --sender --recipient --kind --state --after-seq --through-seq --pretty"),options,["pending"])
     case "orchestra": native_flags(["--pretty"],options,["orchestra"])
@@ -327,9 +323,11 @@ def legacy_args_selected(+session: String, verb: String, +options: List<&2,D.Opt
       ["receiver",target,D.value(options,"--command",""),D.value(options,"--output-log",""),D.value(options,"--cwd","")],
       ["receiver",target,D.value(options,"--command",""),D.value(options,"--output-log","")])
     case "configure": ["configure",target,actual(options,saved,"--harness"),actual(options,saved,"--model"),actual(options,saved,"--effort"),actual(options,saved,"--command"),actual(options,saved,"--output-log"),D.value(options,"--expected-harness",D.value(saved,"--harness","")),D.value(options,"--expected-model",D.value(saved,"--model","")),D.value(options,"--expected-effort",D.value(saved,"--effort",""))]
-    case "resume": Bool.pick(List<String>,D.present(options,"--lift-stop"),["resume",target,"--lift-stop"],["resume",target])
-    case "stop": ["stop",target,D.value(options,"--id",""),D.value(options,"--reason","")]
+    case "resume": Bool.pick(List<String>,D.present(options,"--clear-stop"),["clear-stop",target],
+      Bool.pick(List<String>,D.present(options,"--lift-stop"),["resume",target,"--lift-stop"],["resume",target]))
+    case "stop": Bool.pick(List<String>,D.present(options,"--clear"),["clear-stop",target],["stop",target,D.value(options,"--id",""),D.value(options,"--reason","")])
     case "force-stop": ["force-stop",target,D.value(options,"--id","")]
+    case "clear-stop": ["clear-stop",target]
     case "recover-observer": ["recover-observer",target,D.value(options,"--observer","")]
     case "continue-task": ["continue-task",target,D.value(options,"--id","")]
     case "turn": Bool.pick(List<String>,D.present(options,"--text"),
@@ -369,6 +367,7 @@ def legacy_args_selected(+session: String, verb: String, +options: List<&2,D.Opt
     case "context-engines": ["context-engines",target]
     case "context-install": ["context-install",D.value(options,"--module",""),D.value(options,"--path","")]
     case "context-query": ["context-query-file",D.value(options,"--owner",session),D.value(options,"--id",""),D.value(options,"--file","")]
+    case "context-eval": ["context-eval",D.value(options,"--owner",session),D.value(options,"--id",""),D.value(options,"--session",""),D.value(options,"--expression",""),D.value(options,"--frame",""),D.value(options,"--cwd",D.value(saved,"--cwd",""))]
     case "context-result": ["context-result",D.value(options,"--id","")]
     case "models": Bool.pick(List<String>,D.present(options,"--all"),["models",target,"--all"],["models",target])
     case "harness-inventory": ["harness-inventory"]

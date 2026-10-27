@@ -6,23 +6,53 @@ import https from 'node:https';
 import { homedir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isDeepStrictEqual } from 'node:util';
 
-export const REPOSITORY = 'Flip-Engineering/baton';
+export const REPOSITORY_PATTERN = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 export const PERMISSIONS = { contents: 'write', pull_requests: 'write', metadata: 'read' };
+export const WORKFLOW_PERMISSIONS = { ...PERMISSIONS, workflows: 'write' };
 export const API_ROOT = 'https://api.github.com';
 export const SERIES = ['gpt', 'muse', 'deepseek', 'claude', 'glm', 'kimi'];
 export const SERIES_LABELS = { gpt: 'GPT', muse: 'Muse', deepseek: 'DeepSeek',
   claude: 'Claude', glm: 'GLM', kimi: 'Kimi' };
 
 export class Refusal extends Error {}
+// GitHub answered 404 for the requested resource.
+export class Missing extends Refusal {}
 
 function require(condition, message) {
   if (!condition) throw new Refusal(message);
 }
 
+export function repository_path(value) {
+  require(typeof value === 'string' && REPOSITORY_PATTERN.test(value) && !value.endsWith('.git'),
+    'The repository must be an owner/name GitHub repository.');
+  return value;
+}
+
+export function same_repository(left, right) {
+  return left.toLowerCase() === right.toLowerCase();
+}
+
 function object(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function profile_permissions(profile = 'git', repository = null) {
+  require(['git', 'workflow-write'].includes(profile), 'Select the git or workflow-write permission profile.');
+  if (profile === 'workflow-write') {
+    require(repository !== null, 'The workflow-write profile requires --repository OWNER/NAME.');
+    repository_path(repository);
+    return WORKFLOW_PERMISSIONS;
+  }
+  return PERMISSIONS;
+}
+
+function minimum_permissions(granted, source, permissions = PERMISSIONS) {
+  for (const [permission, level] of Object.entries(permissions)) {
+    require(object(granted) && Object.hasOwn(granted, permission)
+      && (granted[permission] === level || (level === 'read' && granted[permission] === 'write')),
+    `${source} requires ${permission}:${level} permission.`);
+  }
 }
 
 function path(value) {
@@ -37,7 +67,9 @@ export function public_json(filename) {
   return JSON.parse(readFileSync(filename, 'utf8'));
 }
 
-export function selected_identity(registry_path, model_key = null, series_key = null) {
+export function selected_identity(registry_path, model_key = null, series_key = null,
+  profile = 'git', repository = null) {
+  const permissions = profile_permissions(profile, repository);
   const registry = public_json(registry_path);
   require(object(registry) && object(registry.models) && object(registry.series),
     'The series registry is incomplete.');
@@ -45,21 +77,24 @@ export function selected_identity(registry_path, model_key = null, series_key = 
     'The exact model key is invalid.');
   const configured = model_key !== null && Object.hasOwn(registry.models, model_key);
   const mapped = configured ? registry.models[model_key] : null;
+  if (configured && mapped === null) require(false,
+    'The model ' + model_key + ' is registered without a GitHub identity series.');
   if (configured) require(SERIES.includes(mapped),
     'The exact-model mapping names an invalid series.');
   series_key ??= mapped;
-  require(SERIES.includes(series_key) && Object.hasOwn(registry.series, series_key),
-    'Select an explicitly configured model mapping or registered series.');
+  require(SERIES.includes(series_key), 'Select an explicitly configured model mapping or registered series.');
   require(mapped === null || mapped === series_key,
     'The explicit series differs from the configured exact-model mapping.');
-  require(typeof registry.series[series_key] === 'string', 'The series registry entry must name a directory.');
-  const directory = path(registry.series[series_key]);
+  require(Object.hasOwn(registry.series, series_key), 'The series registry has no ' + series_key + ' route.');
+  const entry = registry.series[series_key];
+  require(typeof entry === 'string' && entry, 'The series registry entry must name a directory.');
+  const directory = path(entry);
   const identity = public_json(join(directory, 'identity-series.json'));
   require(identity.seriesKey === series_key, 'The selected identity belongs to another series.');
   require(identity.displaySeries === SERIES_LABELS[series_key],
     'The public displaySeries must match its selected series label.');
   const github = identity.github ?? {};
-  for (const field of ['appId', 'botId', 'installationId', 'repositoryId']) {
+  for (const field of ['appId', 'botId']) {
     require(Number.isSafeInteger(github[field]) && github[field] > 0,
       'The public identity requires verified positive numeric GitHub IDs.');
   }
@@ -71,9 +106,7 @@ export function selected_identity(registry_path, model_key = null, series_key = 
   require(github.botLogin === github.slug + '[bot]', 'The bot login differs from the App slug.');
   require(github.commitEmail === `${github.botId}+${github.botLogin}@users.noreply.github.com`,
     'The commit email differs from the verified bot identity.');
-  require(github.repositoryFullName === REPOSITORY, 'The App identity must name Flip-Engineering/baton.');
-  require(isDeepStrictEqual(github.permissions, PERMISSIONS),
-    'The App identity permissions differ from the approved permissions.');
+  minimum_permissions(github.permissions, 'The App identity', permissions);
   let author_name = 'Flip Baton - ' + SERIES_LABELS[series_key];
   let author_email = Object.hasOwn(identity, 'authorEmail') ? identity.authorEmail : github.commitEmail;
   if (Object.hasOwn(registry, 'attribution')) {
@@ -152,8 +185,13 @@ export function runtime_pairs(environment) {
   return pairs;
 }
 
+// An assigned repository limits the helper to that repository. Without one, the
+// helper takes the repository from each credential request's path.
 export function scoped_environment(registry_path, series_key, github, inherited,
-  author_email = github.commitEmail, author_name = 'Flip Baton - ' + SERIES_LABELS[series_key]) {
+  author_email = github.commitEmail, author_name = 'Flip Baton - ' + SERIES_LABELS[series_key],
+  repository = null, profile = 'git') {
+  profile_permissions(profile, repository);
+  const selected = repository === null ? null : repository_path(repository);
   const environment = { ...inherited }, pairs = runtime_pairs(environment);
   for (const key of Object.keys(environment)) {
     if (/^GIT_CONFIG_(KEY|VALUE)_[0-9]+$/.test(key)) delete environment[key];
@@ -161,13 +199,15 @@ export function scoped_environment(registry_path, series_key, github, inherited,
   for (const key of ['GIT_CONFIG_PARAMETERS', 'GH_TOKEN', 'GITHUB_TOKEN']) delete environment[key];
   Object.assign(environment, { GIT_AUTHOR_NAME: author_name, GIT_AUTHOR_EMAIL: author_email,
     GIT_COMMITTER_NAME: author_name, GIT_COMMITTER_EMAIL: author_email });
+  const scope = selected === null ? [] : ['--repository', selected];
+  if (profile !== 'git') scope.push('--profile', profile);
   const helper = '!' + [process.execPath, fileURLToPath(import.meta.url), 'helper',
-    '--registry', registry_path, '--series-key', series_key].map(shell_quote).join(' ');
-  const deny = [process.execPath, fileURLToPath(import.meta.url), 'deny-askpass'].map(shell_quote).join(' ');
-  const context = 'https://github.com/' + REPOSITORY;
+    '--registry', registry_path, '--series-key', series_key, ...scope].map(shell_quote).join(' ');
+  const contexts = selected === null ? ['https://github.com']
+    : ['https://github.com/' + selected, 'https://github.com/' + selected + '.git'];
   pairs.push(['credential.helper', ''], ['credential.interactive', 'false'],
     ['http.extraHeader', ''], ['http.https://github.com/.extraHeader', '']);
-  for (const repository_context of [context, context + '.git']) {
+  for (const repository_context of contexts) {
     pairs.push([`credential.${repository_context}.helper`, helper],
       [`credential.${repository_context}.useHttpPath`, 'true'],
       [`credential.${repository_context}.username`, 'x-access-token'],
@@ -179,7 +219,7 @@ export function scoped_environment(registry_path, series_key, github, inherited,
     environment[`GIT_CONFIG_VALUE_${index}`] = value;
   });
   environment.GIT_TERMINAL_PROMPT = '0';
-  environment.GIT_ASKPASS = deny;
+  environment.GIT_ASKPASS = 'false';
   return environment;
 }
 
@@ -213,8 +253,11 @@ export function launch(args, inherited = process.env, execute = exec_command) {
     require(observed.length && observed.every(model => model === args.model_key),
       'The native model option differs from the explicit exact model key.');
   }
-  const [series_key, , github, author_email, author_name] = selected_identity(registry_path, args.model_key, args.series_key);
-  const environment = scoped_environment(registry_path, series_key, github, inherited, author_email, author_name);
+  const profile = args.profile ?? 'git';
+  const [series_key, , github, author_email, author_name] = selected_identity(registry_path,
+    args.model_key, args.series_key, profile, args.repository ?? null);
+  const environment = scoped_environment(registry_path, series_key, github, inherited,
+    author_email, author_name, args.repository, profile);
   if (series_key === 'gpt') {
     delete environment.OPENAI_API_KEY;
     delete environment.CODEX_API_KEY;
@@ -227,7 +270,7 @@ export function launch(args, inherited = process.env, execute = exec_command) {
 // a native turn that embeds the key, so an unmapped model is reported at the
 // configuration command that names it.
 export function check(args) {
-  selected_identity(path(args.registry), args.model_key);
+  selected_identity(path(args.registry), args.model_key, null, args.profile ?? 'git', args.repository ?? null);
 }
 
 export async function api(api_path, authorization, body = null, request = https.request) {
@@ -242,6 +285,11 @@ export async function api(api_path, authorization, body = null, request = https.
       }, incoming => {
         if (incoming.statusCode >= 300 && incoming.statusCode < 400) {
           refuse(new Refusal('GitHub authentication responses must not redirect.'));
+          incoming.resume();
+          return;
+        }
+        if (incoming.statusCode === 404) {
+          refuse(new Missing('GitHub reported no matching resource.'));
           incoming.resume();
           return;
         }
@@ -277,15 +325,15 @@ export function app_jwt(directory, github, now = Math.floor(Date.now() / 1000)) 
   return unsigned + '.' + signature.toString('base64url');
 }
 
-function verify_installation(installation, github) {
-  require(installation.id === github.installationId && installation.app_id === github.appId
+function verify_installation(installation, github, owner, permissions) {
+  require(Number.isSafeInteger(installation.id) && installation.id > 0 && installation.app_id === github.appId
     && installation.app_slug === github.slug,
     'The GitHub installation differs from the selected App identity.');
-  require(installation.account?.login === REPOSITORY.split('/')[0]
+  require(typeof installation.account?.login === 'string'
+    && same_repository(installation.account.login, owner)
     && (installation.suspended_at ?? null) === null,
     'The GitHub installation account is incorrect or suspended.');
-  require(isDeepStrictEqual(installation.permissions, PERMISSIONS),
-    'The GitHub installation permissions differ from the approved permissions.');
+  minimum_permissions(installation.permissions, 'The GitHub installation', permissions);
 }
 
 function valid_expiration(value) {
@@ -302,28 +350,40 @@ function valid_expiration(value) {
     && Date.parse(value) > Date.now();
 }
 
-export async function installation_token(directory, github, jwt = app_jwt, request = api) {
+// Each account owner has its own installation. The workflow-write profile
+// requests a token restricted to the selected repository.
+export async function installation_token(directory, github, repository, jwt = app_jwt, request = api, profile = 'git') {
+  const permissions = profile_permissions(profile, repository);
+  minimum_permissions(github.permissions, 'The App identity', permissions);
   const signed = jwt(directory, github), app = await request('/app', signed);
   require(app.id === github.appId && app.slug === github.slug,
     'The signing key authenticated another GitHub App.');
   if (Object.hasOwn(app, 'client_id')) require(app.client_id === github.clientId, 'The GitHub App client ID differs.');
-  verify_installation(await request(`/app/installations/${github.installationId}`, signed), github);
-  verify_installation(await request('/repos/' + REPOSITORY + '/installation', signed), github);
-  const issued = await request(`/app/installations/${github.installationId}/access_tokens`, signed,
-    { repository_ids: [github.repositoryId], permissions: PERMISSIONS });
-  require(isDeepStrictEqual(issued.permissions, PERMISSIONS),
-    'The issued token permissions differ from the approved permissions.');
+  if (profile === 'workflow-write') minimum_permissions(app.permissions, 'The GitHub App registration', permissions);
+  const owner = repository_path(repository).split('/')[0];
+  const installation = await request('/repos/' + repository + '/installation', signed).catch(error => {
+    if (error instanceof Missing) throw new Refusal(`The GitHub App ${github.slug} is not installed for ${owner}; `
+      + `install it on ${owner} to grant access to ${repository}.`);
+    throw error;
+  });
+  verify_installation(installation, github, owner, permissions);
+  const body = { permissions };
+  if (profile === 'workflow-write') body.repositories = [repository.split('/')[1]];
+  const issued = await request(`/app/installations/${installation.id}/access_tokens`, signed, body);
+  minimum_permissions(issued.permissions, 'The issued token', permissions);
+  if (profile === 'workflow-write') {
+    require(issued.repository_selection === 'selected' && Array.isArray(issued.repositories)
+      && issued.repositories.length === 1 && typeof issued.repositories[0]?.full_name === 'string'
+      && same_repository(issued.repositories[0].full_name, repository),
+    'The issued workflow-write token must be restricted to ' + repository + '.');
+  }
   require(typeof issued.token === 'string' && issued.token && !/[\r\n\0]/.test(issued.token),
     'GitHub returned an invalid installation token.');
   require(valid_expiration(issued.expires_at), 'GitHub returned an expired installation token.');
-  const repositories = await request('/installation/repositories', issued.token);
-  const actual = new Map((repositories.repositories ?? []).map(repo => [repo.id, repo.full_name]));
-  require(isDeepStrictEqual(actual, new Map([[github.repositoryId, REPOSITORY]])) && repositories.total_count === 1,
-    'The issued token repository access differs from the approved repository.');
   return issued.token;
 }
 
-export function credential_context(input) {
+function credential_fields(input) {
   const fields = new Map();
   for (const line of input.split('\n')) {
     if (!line) break;
@@ -335,9 +395,27 @@ export function credential_context(input) {
     fields.set(key, value);
   }
   require(fields.get('protocol') === 'https' && fields.get('host') === 'github.com'
-    && [REPOSITORY, REPOSITORY + '.git'].includes(fields.get('path'))
     && (fields.get('username') ?? 'x-access-token') === 'x-access-token',
-    'Git credentials are restricted to the approved HTTPS repository.');
+    'Git credentials are restricted to the approved HTTPS host and username.');
+  return fields;
+}
+
+function credential_repository(fields, repository) {
+  const selected = repository_path(repository);
+  require([selected, selected + '.git'].some(candidate => same_repository(fields.get('path'), candidate)),
+    'Git credentials are restricted to the assigned HTTPS repository.');
+}
+
+// The request path names the repository as OWNER/NAME or OWNER/NAME.git.
+function credential_path(fields) {
+  const value = fields.get('path') ?? '';
+  return repository_path(value.endsWith('.git') ? value.slice(0, -4) : value);
+}
+
+export function credential_context(input, repository = null) {
+  const fields = credential_fields(input);
+  if (repository === null) credential_path(fields);
+  else credential_repository(fields, repository);
 }
 
 export async function helper(args, input = process.stdin, output = process.stdout, issue = installation_token) {
@@ -349,9 +427,13 @@ export async function helper(args, input = process.stdin, output = process.stdou
     if (context.startsWith('\n') || context.includes('\n\n')) break;
   }
   input.pause();
-  credential_context(context);
-  const [, directory, github] = selected_identity(path(args.registry), null, args.series_key);
-  const token = await issue(directory, github);
+  const fields = credential_fields(context), assigned = args.repository ?? null;
+  const profile = args.profile ?? 'git';
+  profile_permissions(profile, assigned);
+  if (assigned !== null) credential_repository(fields, assigned);
+  const repository = assigned ?? credential_path(fields);
+  const [, directory, github] = selected_identity(path(args.registry), null, args.series_key, profile, assigned);
+  const token = await issue(directory, github, repository, undefined, undefined, profile);
   output.write('username=x-access-token\npassword=' + token + '\n\n');
 }
 
@@ -359,13 +441,13 @@ export function parse(argv) {
   const [verb, ...options] = argv;
   if (['--help', '-h'].includes(verb)) return { help: true };
   require(['launch', 'helper', 'deny-askpass', 'check'].includes(verb), 'Select launch, helper, deny-askpass or check.');
-  const args = { verb, model_key: null, series_key: null, native_model: false, command: [] };
+  const args = { verb, model_key: null, series_key: null, repository: null, profile: 'git', native_model: false, command: [] };
   if (verb === 'deny-askpass') return args;
   for (let index = 0; index < options.length; index++) {
     const option = options[index], separator = option.indexOf('='), name = option.split('=')[0];
     if (['--help', '-h'].includes(option)) return { help: true };
-    if (['--registry', '--model-key', '--series-key'].includes(name)) {
-      require(verb === 'launch' || verb === 'check' || name !== '--model-key',
+    if (['--registry', '--model-key', '--series-key', '--repository', '--profile'].includes(name)) {
+      require(verb === 'launch' || verb === 'check' || ['--registry', '--series-key', '--repository', '--profile'].includes(name),
         'The helper does not take an exact model option.');
       const value = separator === -1 ? options[++index] : option.slice(separator + 1);
       require(value !== undefined, 'The selected option requires a value.');
@@ -381,6 +463,8 @@ export function parse(argv) {
     }
   }
   require(args.registry !== undefined, 'The registry option is required.');
+  if (args.repository !== null) repository_path(args.repository);
+  profile_permissions(args.profile, args.repository);
   if (args.series_key !== null) require(SERIES.includes(args.series_key), 'The selected series is invalid.');
   if (verb === 'helper') require(args.series_key !== null && args.operation, 'The helper requires a series and operation.');
   if (verb === 'check') require(args.model_key !== null && args.series_key === null,
@@ -392,9 +476,9 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     const args = parse(argv);
     if (args.help) {
-      process.stdout.write('git-series.mjs launch --registry FILE [--model-key MODEL] [--series-key SERIES] [--native-model] -- COMMAND...\n'
-        + 'git-series.mjs check --registry FILE --model-key MODEL\n'
-        + 'git-series.mjs helper --registry FILE --series-key SERIES get|store|erase\n');
+      process.stdout.write('git-series.mjs launch --registry FILE [--model-key MODEL] [--series-key SERIES] [--repository OWNER/REPO] [--profile git|workflow-write] [--native-model] -- COMMAND...\n'
+        + 'git-series.mjs check --registry FILE --model-key MODEL [--repository OWNER/REPO] [--profile git|workflow-write]\n'
+        + 'git-series.mjs helper --registry FILE --series-key SERIES [--repository OWNER/REPO] [--profile git|workflow-write] get|store|erase\n');
     } else if (args.verb === 'launch') launch(args);
     else if (args.verb === 'check') check(args);
     else if (args.verb === 'helper') await helper(args);

@@ -68,7 +68,7 @@ static const char* window_msl =
   "  texture2d<float, access::write> out [[texture(0)]],\n"
   "  uint2 p [[thread_position_in_grid]]) {\n"
   "  ulong t = a.root;\n"
-  "  for (uint i = a.k; ((t >> 56) & 0x7f) == TAG_CTR;) {\n"
+  "  for (uint i = a.k; ((t >> 60) & 0x7) == TAG_CTR;) {\n"
   "    uint j = 0;\n"
   "    if (i > 0) {\n"
   "      i -= 1;\n"

@@ -34,6 +34,25 @@ def prepare(+db: String, session: String, attempt: String, guidance: String, pre
     Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(Tx.trim_nl(encoded)),
       IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"Native initialization requires the recorded current execution and attempt.")}),decoded(encoded))
 
+# Managed Codex admissions retain their complete prompting and share the
+# recorded native conversation's seed. Each admission keeps its actual guidance.
+def managed_sql(+session: String, +thread: String, input_seq: String, guidance: String) -> String:
+  +turn : String = "'codex-inbox:'||hex(" ++ C.q(thread) ++ ")"
+  attempt : String = "'codex-inbox:'||hex(" ++ C.q(session) ++ ")||':'||hex(" ++ C.q(thread) ++ ")||':'||" ++ C.q(input_seq) ++ "||':'||lower(hex(randomblob(16)))"
+  "BEGIN IMMEDIATE;" ++ schema()
+  ++ "INSERT INTO native_initial_inputs(attempt,session,turn,seed,instruction,guidance) SELECT " ++ attempt ++ "," ++ C.q(session) ++ "," ++ turn ++ ",coalesce((SELECT seed FROM native_initial_inputs WHERE session=" ++ C.q(session) ++ " AND turn=" ++ turn ++ " ORDER BY rowid LIMIT 1),lower(hex(randomblob(64))))," ++ C.q(instruction()) ++ "," ++ C.q(guidance) ++ ";"
+  ++ "SELECT hex(seed||char(10,10)||instruction||char(10,10)||guidance) FROM native_initial_inputs WHERE rowid=last_insert_rowid();COMMIT;"
+
+def managed_recorded(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match result:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{encoded}: decoded(encoded)
+
+def managed(+db: String, session: String, thread: String, input_seq: String, guidance: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    result : Result<&1,&1,U32 & String,String> <- Store.transact_sql(db,managed_sql(session,thread,input_seq,guidance))
+    managed_recorded(result)
+
 # Claude attachments retain separate authored components on their active
 # managed attempt or recorded external native conversation and share its seed.
 def attachment_sql(+session: String, +component: String, +guidance: String) -> String:
@@ -76,11 +95,11 @@ def profile_predecessor_sql(+inputs: String) -> String:
   +cursor : String = "CAST(substr(e.id,length(" ++ prefix ++ ")+1) AS INTEGER)"
   "e.mode='retained' AND substr(e.id,1,length(" ++ prefix ++ "))=" ++ prefix
   ++ " AND EXISTS(SELECT 1 FROM messages h WHERE h.sender=e.session AND h.recipient=" ++ C.report_recipient("e.session") ++ " AND h.kind='report' AND substr(h.id,1,length(e.id||':profile-handoff-'))=e.id||':profile-handoff-')"
-  ++ " AND EXISTS(SELECT 1 FROM messages m WHERE m.recipient=e.session AND m.receipt IS NULL AND m.id IN(SELECT value FROM json_each(" ++ C.q(inputs) ++ ")) AND m.seq<=" ++ cursor ++ ")"
-  ++ " AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.recipient=e.session AND m.receipt IS NULL AND m.id IN(SELECT value FROM json_each(" ++ C.q(inputs) ++ ")) AND m.kind IN('task','task-assignment') AND m.seq>" ++ cursor ++ ")"
+  ++ " AND EXISTS(SELECT 1 FROM messages m WHERE m.recipient=e.session AND " ++ C.owed_sql("m") ++ " AND m.id IN(SELECT value FROM json_each(" ++ C.q(inputs) ++ ")) AND m.seq<=" ++ cursor ++ ")"
+  ++ " AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.recipient=e.session AND " ++ C.owed_sql("m") ++ " AND m.id IN(SELECT value FROM json_each(" ++ C.q(inputs) ++ ")) AND m.kind IN('task','task-assignment') AND m.seq>" ++ cursor ++ ")"
 
 def predecessor_sql(+session: String, +inputs: String) -> String:
-  "SELECT hex(coalesce((SELECT e.directory FROM executions e JOIN native_initial_inputs n ON n.session=e.session AND n.turn=e.id AND n.attempt=e.directory WHERE e.session=" ++ C.q(session) ++ " AND e.phase='exited' AND (EXISTS(SELECT 1 FROM messages m WHERE m.sender=e.session AND m.recipient=e.session AND m.receipt IS NULL AND m.id IN(SELECT value FROM json_each(" ++ C.q(inputs) ++ ")) AND ((m.kind='recovery' AND m.id=e.id||':recovery-input') OR (m.kind='guidance' AND m.id IN(e.id||':handoff-guidance',e.id||':transient-guidance',e.id||':route-guidance')))) OR (" ++ profile_predecessor_sql(inputs) ++ "))),''));"
+  "SELECT hex(coalesce((SELECT e.directory FROM executions e JOIN native_initial_inputs n ON n.session=e.session AND n.turn=e.id AND n.attempt=e.directory WHERE e.session=" ++ C.q(session) ++ " AND e.phase='exited' AND (EXISTS(SELECT 1 FROM messages m WHERE m.sender=e.session AND m.recipient=e.session AND " ++ C.owed_sql("m") ++ " AND m.id IN(SELECT value FROM json_each(" ++ C.q(inputs) ++ ")) AND ((m.kind='recovery' AND m.id=e.id||':recovery-input') OR (m.kind='guidance' AND m.id IN(e.id||':handoff-guidance',e.id||':transient-guidance',e.id||':route-guidance')))) OR (" ++ profile_predecessor_sql(inputs) ++ "))),''));"
 
 def predecessor(+db: String, session: String, inputs: String, explicit: String) -> IO(String):
   match explicit:

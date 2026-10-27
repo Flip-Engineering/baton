@@ -1,0 +1,35 @@
+--- a/bend2/comp.ts
++++ b/bend2/comp.ts
+@@ -36,6 +36,16 @@
+   return result;
+ }
+ 
++// A full collection between emission passes. Under `bun --smol` JSC runs
++// few full collections on this workload, so each pass's garbage stays in the
++// old generation: on bend2/src/coordinator/main.bend the heap grew by 6-27 GB
++// a pass until libpas exhausted its fixed 128 MiB compact-heap reservation
++// for page metadata (Baton #1017). A forced collection at each pass boundary
++// keeps the heap near the live set.
++function collect_full(): void {
++  (globalThis as { Bun?: { gc(force: boolean): void } }).Bun?.gc(true);
++}
++
+ // Facts-only passes are OFF by default on this lineage. They converge
+ // own/hot/stat before emitting C, but on the large fixtures they measured
+ // 22-24% slower than the two full passes they replace, with identical output
+@@ -3624,6 +3634,7 @@
+   let v_dropped = false;
+   const pass = (defs: [Bend.Name, Def][], dry = false): File => {
+     const pass_number = ++diagnostic_pass;
++    collect_full();
+     diagnostic("pass.begin", { pass: pass_number, definitions: defs.length,
+       own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size, dry });
+     [cb.lend, BRWS].forEach((m) => m.clear());
+@@ -3688,6 +3699,7 @@
+     was = facts();
+     fl = pass(emission_defs, false);
+   } while (was !== facts());
++  collect_full();
+   // Foreign source text and request stubs do not contribute to own/hot/stat/lend facts.
+   // Emit them once after the fixed point reaches its stable pass.
+   diagnostic("requests.begin", { pass: diagnostic_pass, segments: fl.segs.length });

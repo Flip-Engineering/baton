@@ -32,6 +32,14 @@ law held_prefix_progress_keeps_the_prior_replay_offset:
   for +prefix: String
   {Observer.checkpoint_due(Observer.empty(),Observer.make("0\n","","","","","","",prefix)) == False{} : Bool}
 
+law output_cursor_progress_keeps_the_prior_replay_offset:
+  for +offset: String
+  {Observer.checkpoint_due_fields(Observer.with_output(Observer.make("0\n","","","","same terminal","","",""),"0"),Observer.with_output(Observer.make("0\n","","","","same terminal","","",""),offset),True{},True{},True{}) == False{} : Bool}
+
+law terminal_change_advances_reducer_checkpoint:
+  for +terminal: String
+  {Observer.checkpoint_due_fields(Observer.make("0\n","","","","","","",""),Observer.make("0\n","","","",terminal,"","",""),True{},True{},True{}) == Bool.or(Bool.not(String.eq("",terminal)),False{}) : Bool}
+
 law omp_completed_message_advances_reducer_checkpoint:
   for +message: String
   {Observer.checkpoint_due(Observer.empty(),Observer.make("0\n",message,"","","","","","")) == Bool.or(Bool.not(String.eq("",message)),False{}) : Bool}
@@ -39,6 +47,24 @@ law omp_completed_message_advances_reducer_checkpoint:
 law muse_primary_identity_advances_reducer_checkpoint:
   for +command: String
   {Observer.checkpoint_due(Observer.empty(),Observer.make("0\n","",command,"","","","","")) == Bool.or(Bool.not(String.eq("",command)),False{}) : Bool}
+
+law first_spanned_output_advances_checkpoint:
+  {Observer.checkpoint_due_span(Observer.empty(),Observer.with_output(Observer.empty(),"1"),True{},True{},True{},True{}) == True{} : Bool}
+
+law later_progress_span_keeps_the_prior_checkpoint:
+  {Observer.checkpoint_due_span(Observer.with_output(Observer.empty(),"10"),Observer.with_output(Observer.empty(),"20"),True{},True{},True{},True{}) == False{} : Bool}
+
+law retained_terminal_seals_later_span_checkpoints:
+  {Observer.checkpoint_due_span(Observer.make("0\n","","","","terminal","","",""),Observer.make("0\n","","","","terminal","","",""),True{},True{},True{},True{}) == False{} : Bool}
+
+def first_spanned_output_advances_checkpoint():
+  {==}
+
+def later_progress_span_keeps_the_prior_checkpoint():
+  {==}
+
+def retained_terminal_seals_later_span_checkpoints():
+  {==}
 
 def failed_store_observation_does_not_advance_the_native_cursor(db,handle,state,spool,code,text):
   {==}
@@ -53,6 +79,12 @@ def reducer_schema_version_is_explicit():
   {==}
 
 def held_prefix_progress_keeps_the_prior_replay_offset(prefix):
+  {==}
+
+def output_cursor_progress_keeps_the_prior_replay_offset(offset):
+  {==}
+
+def terminal_change_advances_reducer_checkpoint(terminal):
   {==}
 
 def omp_completed_message_advances_reducer_checkpoint(message):

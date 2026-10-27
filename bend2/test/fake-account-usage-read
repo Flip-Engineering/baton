@@ -1,0 +1,18 @@
+#!/bin/sh
+# Test usage-read helper for test/account-order-fallback.py. The core runs it as
+# HELPER PROVIDER CREDENTIAL_REF. A Claude subscription account's reference is
+# claude-oauth:STORE/.credentials.json; the fixture writes the windows of that
+# account's next read to STORE/usage-windows.json. Any other reference has no
+# readable usage endpoint and prints an unreadable document.
+now=$(date +%s)000
+case "$2" in
+  claude-oauth:*)
+    store=$(dirname "${2#claude-oauth:}")
+    if [ -f "$store/usage-windows.json" ]; then
+      printf '{"schema":"baton2-usage-read-v1","provider":"%s","source":"fixture %s","observedAt":%s,"state":"read","windows":%s}\n' "$1" "$store" "$now" "$(cat "$store/usage-windows.json")"
+    else
+      printf '{"schema":"baton2-usage-read-v1","provider":"%s","source":"fixture %s","observedAt":%s,"state":"unreadable","reason":"no fixture windows"}\n' "$1" "$store" "$now"
+    fi ;;
+  *)
+    printf '{"schema":"baton2-usage-read-v1","provider":"%s","source":"fixture %s","observedAt":%s,"state":"unreadable","reason":"no remaining-balance endpoint"}\n' "$1" "$2" "$now" ;;
+esac

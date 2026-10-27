@@ -17,12 +17,12 @@ type Action is Type:
   Send{items: List<&2,Message>}
   CompletionRequest{id: String, body: Body}
   CompletionConfirmed{recipient: String, request: String, id: String}
-  Acknowledge{ids: List<String>, receipt: String}
   Session{id: String}
   Player{id: String}
   Players{}
   Assignment{id: String}
   Native{items: List<&2,Domain.Operation>}
+  Branch{args: List<String>}
   Repl{args: List<String>}
   Help{action: String}
   Invalid{cause: String}
@@ -30,12 +30,13 @@ type Action is Type:
 type Verb is Data:
   ReadVerb{}
   SendVerb{}
-  AcknowledgeVerb{}
   SessionVerb{}
   PlayerVerb{}
   AssignmentVerb{}
   CompletionRequestVerb{}
   CompletionConfirmedVerb{}
+  FinishVerb{}
+  ConfirmVerb{}
   GuideVerb{}
   UnknownVerb{}
 
@@ -55,15 +56,18 @@ def body_option(body: Body, value: Body) -> Body:
     case Bad{cause}: Bad{cause}
     case other: Bad{"send accepts exactly one --text TEXT or --file PATH per message."}
 
+def send_kind(+kind: String) -> String:
+  Bool.pick(String,String.is_empty(kind),"report",kind)
+
 def send_done(+recipient: String, id: String, +kind: String, body: Body,
               items: List<&2,Message>) -> Action:
   match body:
     case Missing{}: Invalid{"send requires --text TEXT or --file PATH."}
     case Bad{cause}: Invalid{cause}
     case value:
-      Bool.pick(Action,Bool.or(String.is_empty(recipient),String.is_empty(kind)),
-        Invalid{"send requires a recipient and --kind KIND for each message."},
-        Send{reverse_items(Con{Item{recipient,id,kind,value},items},Nil{})})
+      Bool.pick(Action,String.is_empty(recipient),
+        Invalid{"send requires a recipient for each message."},
+        Send{reverse_items(Con{Item{recipient,id,send_kind(kind),value},items},Nil{})})
 
 def send_options(args: List<String>, +recipient: String, +id: String,
                  +kind: String, body: Body, items: List<&2,Message>) -> Action:
@@ -85,37 +89,22 @@ def send_options(args: List<String>, +recipient: String, +id: String,
         case Missing{}: Invalid{"send requires --text TEXT or --file PATH."}
         case Bad{cause}: Invalid{cause}
         case value:
-          Bool.pick(Action,Bool.or(String.is_empty(recipient),String.is_empty(kind)),
-            Invalid{"send requires a recipient and --kind KIND for each message."},
-            send_options(rest,target,"","",Missing{},Con{Item{recipient,id,kind,value},items}))
+          Bool.pick(Action,String.is_empty(recipient),
+            Invalid{"send requires a recipient for each message."},
+            send_options(rest,target,"","",Missing{},Con{Item{recipient,id,send_kind(kind),value},items}))
     case "and" <> Nil{}: Invalid{"send requires a recipient after and."}
     case "--and" <> target <> rest:
       match body:
         case Missing{}: Invalid{"send requires --text TEXT or --file PATH."}
         case Bad{cause}: Invalid{cause}
         case value:
-          Bool.pick(Action,Bool.or(String.is_empty(recipient),String.is_empty(kind)),
-            Invalid{"send requires a recipient and --kind KIND for each message."},
-            send_options(rest,target,"","",Missing{},Con{Item{recipient,id,kind,value},items}))
+          Bool.pick(Action,String.is_empty(recipient),
+            Invalid{"send requires a recipient for each message."},
+            send_options(rest,target,"","",Missing{},Con{Item{recipient,id,send_kind(kind),value},items}))
     case "--and" <> Nil{}: Invalid{"send requires a recipient after --and."}
     case Nil{}: send_done(recipient,id,kind,body,items)
     case other: Invalid{"send expects --kind KIND, --text TEXT or --file PATH, optional --id ID, and optional and RECIPIENT."}
 
-def acknowledge_ids(args: List<String>, ids: List<String>) -> Action:
-  match args:
-    case "--message" <> +id <> rest:
-      Bool.pick(Action,String.is_empty(id),
-        Invalid{"acknowledge requires a nonempty supplied --message ID."},
-        acknowledge_ids(rest,Con{id,ids}))
-    case "--receipt" <> +receipt <> Nil{}:
-      Bool.pick(Action,String.is_empty(receipt),
-        Invalid{"acknowledge requires a nonempty supplied --receipt TEXT."},
-        Acknowledge{reverse_ids(ids,Nil{}),receipt})
-    case Nil{}: Acknowledge{reverse_ids(ids,Nil{}),""}
-    case +id <> rest:
-      Bool.pick(Action,Bool.or(String.is_empty(id),Tx.starts_with(id,"--")),
-        Invalid{"acknowledge accepts optional message selectors followed by --receipt TEXT."},
-        acknowledge_ids(rest,Con{id,ids}))
 
 def read_ids(args: List<String>, ids: List<String>) -> Action:
   match args:
@@ -222,27 +211,48 @@ def parse_action(action: Verb, args: List<String>) -> Action:
     case ReadVerb{}: read_ids(args,Nil{})
     case SendVerb{}:
       match args:
+        case +recipient <> +text <> Nil{}:
+          Bool.pick(Action,Tx.starts_with(text,"--"),
+            send_options([text],recipient,"","",Missing{},Nil{}),
+            send_done(recipient,"","",Text{text},Nil{}))
         case recipient <> rest: send_options(rest,recipient,"","",Missing{},Nil{})
-        case Nil{}: Invalid{"Choose inbox, read, session, player, players, assignment, send, completion-request, completion-confirmed, guide or acknowledge; use help ACTION for usage."}
-    case AcknowledgeVerb{}: acknowledge_ids(args,Nil{})
+        case Nil{}: Invalid{"Choose inbox, send, report, ask, guide, finish or confirm; use help ACTION for usage."}
     case SessionVerb{}: inspect_id("session",args)
     case PlayerVerb{}: player_args(args)
     case AssignmentVerb{}: inspect_id("assignment",args)
     case CompletionRequestVerb{}: completion_request_options(args,"",Missing{})
     case CompletionConfirmedVerb{}: confirmation_args(args,"","","")
-    case GuideVerb{}: decision_args("guide","guidance",args,"","","",Missing{})
-    case UnknownVerb{}: Invalid{"Choose inbox, read, session, player, players, assignment, send, completion-request, completion-confirmed, guide or acknowledge; use help ACTION for usage."}
+    case FinishVerb{}:
+      match args:
+        case summary <> Nil{}: CompletionRequest{"",Text{summary}}
+        case other: Invalid{"finish requires one quoted summary; use finish --help."}
+    case ConfirmVerb{}:
+      match args:
+        case player <> Nil{}: CompletionConfirmed{player,"",""}
+        case Nil{}: CompletionConfirmed{"","",""}
+        case other: Invalid{"confirm accepts one Player; use confirm --help."}
+    case GuideVerb{}:
+      match args:
+        case +player <> +text <> Nil{}:
+          Bool.pick(Action,Tx.starts_with(player,"--"),
+            decision_args("guide","guidance",[player,text],"","","",Missing{}),
+            Send{[Item{player,"","guidance",Text{text}}]})
+        case other: decision_args("guide","guidance",other,"","","",Missing{})
+    case UnknownVerb{}: Invalid{"Choose inbox, send, report, ask, guide, finish or confirm; use help ACTION for usage."}
 
-def classify_verb(+verb: String) -> Verb:
-  Bool.pick(Verb,String.eq(verb,"read"),ReadVerb{},
-    Bool.pick(Verb,String.eq(verb,"send"),SendVerb{},
-      Bool.pick(Verb,String.eq(verb,"acknowledge"),AcknowledgeVerb{},
-        Bool.pick(Verb,String.eq(verb,"session"),SessionVerb{},
-          Bool.pick(Verb,String.eq(verb,"player"),PlayerVerb{},
-            Bool.pick(Verb,String.eq(verb,"assignment"),AssignmentVerb{},
-              Bool.pick(Verb,String.eq(verb,"completion-request"),CompletionRequestVerb{},
-                Bool.pick(Verb,String.eq(verb,"completion-confirmed"),CompletionConfirmedVerb{},
-                  Bool.pick(Verb,String.eq(verb,"guide"),GuideVerb{},UnknownVerb{})))))))))
+def classify_verb(verb: String) -> Verb:
+  match verb:
+    case "read": ReadVerb{}
+    case "send": SendVerb{}
+    case "session": SessionVerb{}
+    case "player": PlayerVerb{}
+    case "assignment": AssignmentVerb{}
+    case "completion-request": CompletionRequestVerb{}
+    case "completion-confirmed": CompletionConfirmedVerb{}
+    case "finish": FinishVerb{}
+    case "confirm": ConfirmVerb{}
+    case "guide": GuideVerb{}
+    case other: UnknownVerb{}
 
 def domain_action(parsed: Domain.Parsed) -> Action:
   match parsed:
@@ -272,7 +282,7 @@ def inspection_single(args: List<&2,String>) -> Bool:
     case other: False{}
 
 def original_form(+verb: String, +args: List<&2,String>) -> Bool:
-  Bool.and(Domain.member(verb,["session","player","players","assignment","completion-request","completion-confirmed","guide","acknowledge"]),
+  Bool.and(Domain.member(verb,["session","player","players","assignment","completion-request","completion-confirmed","guide"]),
     Bool.or(Bool.and(Domain.member(verb,["session","player","assignment"]),
       Bool.and(inspection_single(args),Bool.not(named_inspection(args)))),
       Bool.and(Bool.not(batch_tokens(args,False{})),
@@ -285,10 +295,20 @@ def parse_verb_selected(selected: Bool, verb: String, args: List<&2,String>) -> 
 
 def parse_verb_shared(+verb: String, +args: List<&2,String>) -> Action:
   Bool.pick(Action,String.eq(verb,"repl"),Repl{Domain.affine_strings(args)},
-    parse_verb_selected(Bool.and(Domain.known(verb),Bool.not(original_form(verb,args))),verb,args))
+    Bool.pick(Action,String.eq(verb,"branch"),Branch{Domain.affine_strings(args)},
+      parse_verb_selected(Bool.and(Domain.known(verb),Bool.not(original_form(verb,args))),verb,args)))
 
-def parse_verb(verb: String, args: List<String>) -> Action:
-  parse_verb_shared(verb,Domain.shared_strings(args))
+def parse_verb(+verb: String, args: List<String>) -> Action:
+  match args:
+    case +text <> Nil{}:
+      Bool.pick(Action,Bool.and(Domain.member(verb,["report","ask"]),Bool.not(Tx.starts_with(text,"--"))),
+        domain_action(Domain.parse([verb,"--text",text])),
+        parse_verb_shared(verb,Domain.shared_strings([text])))
+    case +player <> +text <> Nil{}:
+      Bool.pick(Action,Bool.and(String.eq(verb,"guide"),Bool.not(Tx.starts_with(player,"--"))),
+        parse_action(GuideVerb{},[player,text]),
+        parse_verb_shared(verb,Domain.shared_strings([player,text])))
+    case other: parse_verb_shared(verb,Domain.shared_strings(other))
 
 def parse_one(+verb: String) -> Action:
   Bool.pick(Action,Bool.or(String.eq(verb,"help"),Bool.or(String.eq(verb,"--help"),String.eq(verb,"-h"))),
@@ -316,22 +336,25 @@ def parse_args(+verb: String, args: List<String>) -> Action:
 
 def parse(args: List<String>) -> Action:
   match args:
-    case Nil{}: Invalid{"Choose inbox, read, session, player, players, assignment, send, completion-request, completion-confirmed, guide or acknowledge; use help ACTION for usage."}
+    case Nil{}: Invalid{"Choose inbox, send, report, ask, guide, finish or confirm; use help ACTION for usage."}
     case +verb <> rest: parse_args(verb,rest)
 
 def help(action: String) -> String:
   match action:
-    case "inbox": "inbox\nRead every pending message for the current agent with complete bodies. Reading preserves pending receipts.\n"
-    case "read": "read ID...\nRead complete stored messages in argument order. Acknowledged messages remain readable. Each ID has its own result.\n"
+    case "repl": "repl define|eval|bind|read|recover|share|import|interactive [OPTIONS]\nUse help repl for Bend source, notebook, result and interactive operations.\n"
+    case "branch": "branch start|evaluate|select|continue|status|recover|stop [--ensemble NAME]\nUse help branch or branch --help for source defaults, workspace, evaluator, selection and continuation arguments.\n"
+    case "inbox": "inbox\nRead every pending message for the current agent with complete bodies. Pending means delivered but not yet read.\n"
+    case "read": "read ID...\nRead complete stored messages in argument order; the read is recorded as a real read event. Already read messages remain readable. Each ID has its own result.\n"
     case "session": "session [SESSION]\nRead the complete registered session record. Omitted SESSION selects the current agent.\n" ++ Domain.help("session")
     case "player": "player SESSION\nRead the complete registered Player record.\n" ++ Domain.help("player")
     case "players": "players\nRead the current Players projection.\n" ++ Domain.help("players")
     case "assignment": "assignment [SESSION]\nRead the registered session record, including its assignment and task-completion state. Omitted SESSION selects the current agent.\n" ++ Domain.help("assignment")
+    case "finish": "finish SUMMARY\nSend the completion summary to your recorded coordinator. Baton selects the assignment and creates the request identity.\n"
+    case "confirm": "confirm [PLAYER]\nConfirm the Player's current completion request. Omitted PLAYER selects the sole current request addressed to you.\n"
     case "completion-request": "completion-request (--text TEXT | --file PATH) [--id ID]\nSend the request to the current session's recorded immediate parent. The message body carries the completion report. A parentless session receives a structured refusal. Each mixed --and item retains its actual process result and complete admission result in stdout.\n"
     case "completion-confirmed": "completion-confirmed [--to PLAYER] [--request REQUEST_ID] [--id ID]\nResolve the selected Player's current completion request. Omitted --to selects the sole current request addressed to this coordinator. Baton generates the action identity and links the exact retained request. Explicit selectors retain their native authority checks. Supports mixed and or --and batches.\n"
-    case "guide": "guide --to PLAYER (--text TEXT | --file PATH) [--id ID]\nSend guidance to a Player through the ordinary message admission path. Supports mixed and or --and batches.\n"
-    case "send": "send RECIPIENT --kind KIND (--text TEXT | --file PATH) [--id ID] [and RECIPIENT ...]\nEach clause supplies its own recipient, kind, body and optional ID. Omitted IDs are generated and returned. Explicit IDs retain existing exact-retry behavior. Each message reports admission, wake and receipt. PATH - reads stdin.\n"
-    case "acknowledge": "acknowledge [ID... | --message ID] [--receipt TEXT]\nRecord handling for the current native attempt's complete recipient-owned read inputs. Baton generates the native receipt. Explicit message selectors and receipts remain available; the first receipt remains retained. A standalone administrative command requires an explicit message selection.\n"
+    case "guide": "guide PLAYER TEXT\nguide --to PLAYER (--text TEXT | --file PATH) [--id ID]\nSend guidance to a Player through the ordinary message admission path. The named form supports mixed batches.\n"
+    case "send": "send PLAYER TEXT\nsend PLAYER [--kind KIND] (--text TEXT | --file PATH) [--id ID] [and PLAYER ...]\nSend a complete report to a Player. The named form selects an explicit kind and supports independent messages. Baton generates omitted identities. PATH - reads stdin.\n"
     case +other:
       +domain = Domain.help(other)
-      Bool.pick(String,String.is_empty(domain),"usage: baton ACTION ARGS\n       baton --project PATH ACTION ARGS\n       baton as SESSION ACTION ARGS\n       baton DATABASE as SESSION ACTION ARGS\nActions: inbox, read, session, player, players, assignment, send, completion-request, completion-confirmed, guide, acknowledge, status, pending, orchestra, role, ensemble, ensemble-member, section, section-member, attempt, attempts, outbox, receiver, configure, resume, stop, force-stop, recover-observer, continue-task, turn, receive, profile-bind, connect, bind, report, ask, native-reply, dispatch, recruit, join, worktree, land, push, remote-tip, knowledge, project, context, models, observed-usage, logs, harness-inventory, repl.\nBaton reads its registered project database and recorded session from the launch context. --project PATH selects a registered project; as SESSION selects an explicit actor. Use help ACTION for named arguments. Multiple message reads, sends and acknowledgements retain individual outcomes. Named inspections, coordinator decisions and domain actions can be separated by and or --and; context resolves once, each operation retains full stdout, stderr and its actual wait result, and failed items preserve other outcomes. Completion and stop decisions retain their native authority and history.\n",domain)
+      Bool.pick(String,String.is_empty(domain),"usage: baton ACTION ARGS\nActions: inbox, read, send, report, ask, guide, finish, confirm, dispatch, players, assignment, status, role, ensemble, ensemble-member, section, section-member, orchestra, branch, knowledge, repl, clear-stop.\nBaton resolves your project and session. Baton records delivery and complete reads internally. Use help ACTION for usage and explicit context options. Use help role for responsibilities, help ensemble for team coupling, help section for capability groups, help branch for alternatives, score-based selection and continuation, and help repl for Bend expressions, definitions and saved results.\n",domain)

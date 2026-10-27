@@ -1,5 +1,8 @@
 import Base
 import ./receive.bend as Receive
+import ./control.bend as Control
+import ../host/instance.bend as Custody
+import ../host/process.bend as P
 
 @unsafe
 def recover_observer_command(+db: String, +session: String, observer: String) -> IO(Unit):
@@ -32,8 +35,39 @@ def dispatch_observer(flag_form: Bool, +first: String, +second: String, +session
         IO.die(Unit,2,"expected observer recovery command"))
 
 @unsafe
+def run_host_keeper(+directory: String, lock: Maybe<&2,U32>) -> IO(Unit):
+  match lock:
+    case Some{handle}: IO.try(Unit,P.ProcessChild.keeper(directory,handle))
+    case None{}: IO.die(Unit,2,"invalid host process keeper lock")
+
+@unsafe
+def dispatch_host_keeper(+directory: String, +lock: String) -> IO(Unit):
+  run_host_keeper(directory,U32.read(lock))
+
+@unsafe
+def dispatch_host_keeper_command(selected: Bool, +directory: String, +lock: String) -> IO(Unit):
+  match selected:
+    case True{}: dispatch_host_keeper(directory,lock)
+    case False{}: IO.die(Unit,2,"observer recovery entry expects a recovery command")
+
+@unsafe
+def dispatch_instance(owner: Bool, shutdown: Bool, +db: String) -> IO(Unit):
+  match owner:
+    case True{}: IO.try(Unit,Custody.Instance.owner(db))
+    case False{}:
+      match shutdown:
+        case True{}: IO.try(Unit,Custody.Instance.shutdown(db))
+        case False{}: IO.die(Unit,2,"expected instance lifecycle command")
+
+@unsafe
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
+    case "--dispatch-message" <> +db <> +id <> Nil{}:
+      Control.deliver(db,id)
+    case +flag <> +directory <> +lock <> Nil{}:
+      dispatch_host_keeper_command(String.eq(flag,"--host-process-keeper"),directory,lock)
+    case +flag <> +db <> Nil{}:
+      dispatch_instance(String.eq(flag,"--instance-owner"),String.eq(flag,"--instance-shutdown"),db)
     case +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> Nil{}:
       dispatch_recover(String.eq(flag,"--recover-receive"),db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,"")
     case +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> +inputs <> Nil{}:

@@ -1,8 +1,10 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <spawn.h>
+#include <stdint.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "persistent-path.h"
 
 extern char **environ;
 
@@ -20,18 +22,51 @@ static char *baton_control_join(const char *a, const char *b) {
   return s;
 }
 
+#define BATON_CONTROL_NAME_MAX 255
+
+static uint64_t baton_control_hash(const char *text,uint64_t seed) {
+  uint64_t value=seed;
+  for(const unsigned char *cursor=(const unsigned char *)text;*cursor;cursor++) {
+    value^=*cursor;
+    value*=1099511628211ULL;
+  }
+  return value;
+}
+
+static void baton_control_digest(const char *text,char digest[33]) {
+  static const char hex[]="0123456789abcdef";
+  uint64_t first=baton_control_hash(text,1469598103934665603ULL);
+  uint64_t second=baton_control_hash(text,1099511628211ULL);
+  for(int i=15;i>=0;i--) {
+    digest[i]=hex[first&15];first>>=4;
+    digest[16+i]=hex[second&15];second>>=4;
+  }
+  digest[32]=0;
+}
+
 static char *baton_control_log(const char *database,const char *id,const char *suffix) {
   size_t dn=strlen(database),in=strlen(id),sn=strlen(suffix);
+  const char *base=strrchr(database,'/');
+  size_t bn=strlen(base?base+1:database);
+  if(in>SIZE_MAX/2) return NULL;
+  int bounded=bn+10+in*2+sn>BATON_CONTROL_NAME_MAX;
+  size_t encoded=bounded?32:in*2;
   if(in>(SIZE_MAX-dn-sn-12)/2) return NULL;
-  char *path=malloc(dn+11+in*2+sn+1);
+  char *path=malloc(dn+11+encoded+sn+1);
   if(!path) return NULL;
   memcpy(path,database,dn);memcpy(path+dn,".dispatch-",10);
-  for(size_t i=0;i<in;i++) {
-    unsigned char c=(unsigned char)id[i];
-    path[dn+10+i*2]="0123456789abcdef"[c>>4];
-    path[dn+11+i*2]="0123456789abcdef"[c&15];
+  if(bounded) {
+    char digest[33];
+    baton_control_digest(id,digest);
+    memcpy(path+dn+10,digest,32);
+  } else {
+    for(size_t i=0;i<in;i++) {
+      unsigned char c=(unsigned char)id[i];
+      path[dn+10+i*2]="0123456789abcdef"[c>>4];
+      path[dn+11+i*2]="0123456789abcdef"[c&15];
+    }
   }
-  memcpy(path+dn+10+in*2,suffix,sn+1);
+  memcpy(path+dn+10+encoded,suffix,sn+1);
   return path;
 }
 
@@ -55,6 +90,7 @@ static void baton_control_identity(BatonControl *call) {
   } else {
     call->path=realpath(candidate,NULL);free(candidate);
     if(!call->path) {call->error=errno;return;}
+    if((call->error=BATON_REMAP_RESOLVED(&call->path))) {free(call->path);call->path=NULL;return;}
   }
   char *directory=strdup(call->input);
   if(!directory) {call->error=ENOMEM;return;}
@@ -72,7 +108,8 @@ static void baton_control_identity(BatonControl *call) {
   free(directory);
   if(!call->helper && !*call->path) {call->helper=installed;installed=NULL;}
   free(installed);
-  if(!call->helper) call->error=ENOENT;
+  if(call->helper && (call->error=BATON_REMAP_RESOLVED(&call->helper))) {free(call->helper);call->helper=NULL;}
+  if(!call->helper && !call->error) call->error=ENOENT;
 }
 
 static void baton_control_free_argv(char **argv) {
@@ -206,6 +243,7 @@ static void baton_control_call(IoWork *w) {
       }
       free(path);
     }
+    if(call->path && !call->error && (call->error=BATON_REMAP_RESOLVED(&call->path))) {free(call->path);call->path=NULL;}
     if(!call->path && !call->error) call->error=ENOENT;
     struct stat info;
     if(call->path && (stat(call->path,&info) || !S_ISREG(info.st_mode) || access(call->path,X_OK))) call->error=EACCES;
@@ -223,7 +261,9 @@ static void baton_control_call(IoWork *w) {
     char *directory=realpath(slash?(*copy?copy:"/"):".",NULL);
     if(!directory) call->error=errno;
     else {
+      int remap=BATON_REMAP_RESOLVED(&directory);
       struct stat info;
+      if(remap) {call->error=remap;free(directory);free(base);free(copy);return;}
       if(stat(directory,&info) || !S_ISDIR(info.st_mode)) {call->error=ENOTDIR;free(directory);free(base);free(copy);return;}
       char *prefix=baton_control_join(directory,"/");
       if(prefix) call->path=baton_control_join(prefix,base);
@@ -234,6 +274,7 @@ static void baton_control_call(IoWork *w) {
   }
   call->path=realpath(call->input,NULL);
   if(!call->path) {call->error=errno;return;}
+  if((call->error=BATON_REMAP_RESOLVED(&call->path))) {free(call->path);call->path=NULL;return;}
   struct stat info;
   if(stat(call->path,&info)) call->error=errno;
   else if(!S_ISDIR(info.st_mode)) call->error=ENOTDIR;

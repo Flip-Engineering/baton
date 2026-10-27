@@ -16,15 +16,20 @@ import sys
 import time
 
 values = json.loads(Path(__file__).with_suffix('.json').read_text())
-if sys.argv[1:] == ['--help'] or (len(sys.argv) > 2 and sys.argv[2] == 'help'):
-    if values.get('batch', True):
-        sys.stdout.write('outbox\\ndelivery-batch\\nmessage-batch\\ninput MESSAGE_ID\\ntask --stdin\\nusage: baton2 as SESSION ACTION ARGS\\n')
-        if values.get('dispatch', True):
-            sys.stdout.write('dispatch --stdin\\n')
-        if values.get('repl', False):
-            sys.stdout.write('Actions: inbox, read, send, report, ask, guide, finish, confirm, dispatch, players, assignment, status, role, ensemble, section, orchestra, branch, knowledge, repl\\n')
-    else:
-        sys.stdout.write('delivery\\nmessage\\n')
+args = sys.argv[1:]
+if args == ['--help'] or (args and args[0] == 'help'):
+    if args == ['help', 'context']:
+        if values.get('context_eval', True):
+            sys.stdout.write('context engines|install|query|eval|result NAMED_ARGS\\n')
+    elif args == ['--help']:
+        if values.get('batch', True):
+            sys.stdout.write('outbox\\ndelivery-batch\\nmessage-batch\\ninput MESSAGE_ID\\ntask --stdin\\nusage: baton2 as SESSION ACTION ARGS\\n')
+            if values.get('dispatch', True):
+                sys.stdout.write('dispatch --stdin\\n')
+            if values.get('repl', False):
+                sys.stdout.write('Actions: inbox, read, send, report, ask, guide, finish, confirm, dispatch, players, assignment, status, role, ensemble, section, orchestra, branch, knowledge, repl\\n')
+        else:
+            sys.stdout.write('delivery\\nmessage\\n')
     sys.exit(0)
 time.sleep(values['delay'])
 sys.stdout.write(values['stdout'])
@@ -44,7 +49,8 @@ sys.exit(values['code'])
 class McpCommand(unittest.TestCase):
     def command(self, stdout='', stderr='', code=0, delay=0, *,
                 tool='baton2_status', arguments=None, session=None, expected_args=None,
-                expected_stdin='', expected_context=None, dispatch=True, repl=False):
+                expected_stdin='', expected_context=None, dispatch=True, repl=False,
+                context_eval=True):
         with tempfile.TemporaryDirectory() as home:
             home = pathlib.Path(home)
             executable = home / 'fixture-coordinator'
@@ -54,7 +60,7 @@ class McpCommand(unittest.TestCase):
             executable.with_suffix('.json').write_text(json.dumps({
                 'stdout': stdout, 'stderr': stderr, 'code': code,
                 'delay': delay, 'completed': str(completed), 'batch': True,
-                'dispatch': dispatch, 'repl': repl,
+                'dispatch': dispatch, 'repl': repl, 'context_eval': context_eval,
             }))
             requests = [
                 {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}},
@@ -151,6 +157,12 @@ class McpCommand(unittest.TestCase):
                 self.assertEqual('Use baton2_repl' in self.instructions, available)
                 self.assertIn('repl', self.tools['baton2_action']['description'])
 
+    def test_context_eval_requires_advertised_coordinator_surface(self):
+        self.command(context_eval=False)
+        self.assertNotIn('baton2_context_eval', self.tools)
+        self.command(context_eval=True)
+        self.assertIn('baton2_context_eval', self.tools)
+
     def test_contextual_action_preserves_complete_bodies_for_independent_batch_items(self):
         first = '\ufeffFull first body λ🙂\nLiteral quotes " and tabs\t.\n' * 10000
         second = 'Second body Ω\n'
@@ -235,9 +247,9 @@ class McpCommand(unittest.TestCase):
     def test_inferred_mutation_schemas_keep_explicit_compatibility_fields(self):
         self.command()
         selectors = {
-            'baton2_ack': ('id', 'receipt'),
             'baton2_guide': ('id', 'request'),
             'baton2_context_query_file': ('query',),
+            'baton2_context_eval': ('query',),
             'baton2_context_result': ('query',),
             'baton2_knowledge_record': ('id',),
             'baton2_knowledge_relate': ('id',),
@@ -251,7 +263,6 @@ class McpCommand(unittest.TestCase):
                 for field in fields:
                     self.assertNotIn(field, schema.get('required', []))
                     self.assertEqual(schema['properties'][field]['type'], 'string')
-        self.assertEqual(self.tools['baton2_ack']['inputSchema'].get('required', []), [])
         self.assertEqual(self.tools['baton2_guide']['inputSchema']['required'], ['player'])
         link = self.tools['baton2_knowledge_record']['inputSchema']['properties']['links']['items']
         self.assertNotIn('id', link['required'])
@@ -260,8 +271,6 @@ class McpCommand(unittest.TestCase):
     def test_inferred_actions_delegate_current_authority_to_attached_native_context(self):
         body = '\ufeffComplete authored input.\nλ🙂\nTrailing spaces  '
         cases = (
-            ('baton2_ack', None, ['acknowledge']),
-            ('baton2_ack', {'id': 'selected input'}, ['acknowledge', 'selected input']),
             ('baton2_guide', {'player': 'worker', 'body': body},
              ['send', 'worker', '--kind', 'guidance', '--text', body]),
             ('baton2_guide', {'player': 'worker', 'kind': 'completion-confirmed'},
@@ -290,6 +299,10 @@ class McpCommand(unittest.TestCase):
                                        'log': '/retained output', 'task': "/tasks/task's λ.txt"},
              ['turn', '--session', 'worker', '--command', '/native command',
               '--output-log', '/retained output', '--file', "/tasks/task's λ.txt"]),
+            ('baton2_context_eval', {'session': 'rt:installed', 'expression': '1 + 1',
+                                     'frame': 'frame-1', 'cwd': '/work'},
+             ['context', 'eval', '--session', 'rt:installed', '--expression', '1 + 1',
+              '--frame', 'frame-1', '--cwd', '/work']),
         )
         for tool, arguments, contextual in cases:
             with self.subTest(tool=tool, arguments=arguments):
@@ -299,15 +312,12 @@ class McpCommand(unittest.TestCase):
                 self.assertEqual(result['content'],
                                  [{'type': 'text', 'text': '{"retained":"native decision λ"}'}])
                 self.assertNotIn('isError', result)
-        self.command(tool='baton2_ack', arguments={'id': 'selected input',
-                     'receipt': 'First complete handling.'}, session='attached-λ',
-                     expected_args=['ack', 'selected input', 'attached-λ', 'First complete handling.'])
-
-    def test_inferred_handling_keeps_native_refusal_and_complete_diagnostic(self):
-        diagnostic = json.dumps({'error': 'handling-context',
-                                 'condition': 'No live owned input context.\nλ🙂'}) + '\n'
-        self.failure('', diagnostic, code=2, tool='baton2_ack', session='attached-λ',
-                     expected_context=['acknowledge'])
+        self.command(tool='baton2_context_eval',
+                     arguments={'session': 'rt:installed', 'expression': '1 + 1',
+                                'query': 'eval-one'},
+                     session='attached-λ',
+                     expected_args=['context-eval', 'attached-λ', 'eval-one',
+                                    'rt:installed', '1 + 1', '', ''])
 
     def test_semantic_report_evidence_uses_native_context_with_an_explicit_record_id(self):
         body = '\ufeffComplete source fact.\nλ🙂\nTrailing spaces  '
@@ -434,9 +444,12 @@ class McpCommand(unittest.TestCase):
             self.assertTrue({'baton2_delivery_batch', 'baton2_outbox',
                              'baton2_message_batch'}.isdisjoint(tools))
             self.assertNotIn('baton2_input', tools)
+            self.assertNotIn('baton2_ack', tools)
             instructions = replies[0]['result']['instructions']
             self.assertIn('baton2_delivery reads one complete stored message', instructions)
             self.assertNotIn('baton2_delivery_batch', instructions)
+            self.assertNotIn('baton2_ack', instructions)
+            self.assertIn('Baton records each complete read internally', instructions)
 
     def test_native_control_tools_advertise_typed_arguments(self):
         self.command()
@@ -597,7 +610,7 @@ class McpCommand(unittest.TestCase):
                             'baton2_knowledge_promote': {'destination', 'finding'}}.get(
                                 tool, set(arguments))
                 self.assertEqual(set(schema.get('required', [])), required)
-                optional = {'baton2_resume': {'liftStop'},
+                optional = {'baton2_resume': {'liftStop', 'clearStop'},
                             'baton2_knowledge': {'scope', 'subject', 'index', 'id', 'pretty'},
                             'baton2_knowledge_relations': {'scope', 'subject', 'pretty'},
                             'baton2_knowledge_search': {'scope', 'subject', 'pretty'},
@@ -611,6 +624,9 @@ class McpCommand(unittest.TestCase):
         self.command(stdout='{"session":"recorded consumer"}\n', tool='baton2_resume',
                      arguments={'session': 'recorded consumer', 'liftStop': True}, session=session,
                      expected_args=['resume', 'recorded consumer', '--lift-stop'])
+        self.command(stdout='{"cleared":true}\n', tool='baton2_resume',
+                     arguments={'session': 'recorded consumer', 'clearStop': True}, session=session,
+                     expected_args=['resume', 'recorded consumer', '--clear-stop'])
         self.command(tool='baton2_knowledge_record', session=session,
                      arguments={'id': 'corrected-λ', 'kind': 'correction', 'claim': 'Corrected\nclaim',
                                 'evidence': 'message:retained-message', 'limits': 'One run'},
@@ -690,9 +706,9 @@ class McpCommand(unittest.TestCase):
              ['inbox', '', '--index', '--sender', '--index', '--kind', '--pretty',
               '--state', 'all', '--after-seq', wide, '--through-seq', '9007199254740994', '--pretty']),
             ('baton2_pending', {'recipient': 'root', 'sender': '', 'kind': "report's λ",
-                                'state': 'acknowledged', 'afterSeq': wide},
+                                'state': 'read', 'afterSeq': wide},
              ['pending', '--index', '--recipient', 'root', '--sender', '', '--kind', "report's λ",
-              '--state', 'acknowledged', '--after-seq', wide]),
+              '--state', 'read', '--after-seq', wide]),
         ]
         for tool, arguments, argv in cases:
             with self.subTest(tool=tool, arguments=arguments):

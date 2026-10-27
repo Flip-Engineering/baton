@@ -1,5 +1,6 @@
 #include <sqlite3.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -45,8 +46,10 @@ static const char *const baton_change_schema[] = {
   "CREATE TRIGGER IF NOT EXISTS native_changes_stops_update AFTER UPDATE ON session_stops WHEN OLD.id IS NOT NEW.id OR OLD.reason IS NOT NEW.reason OR OLD.attempt IS NOT NEW.attempt OR OLD.directory IS NOT NEW.directory OR OLD.signal IS NOT NEW.signal OR OLD.applied_signal IS NOT NEW.applied_signal OR OLD.control_error IS NOT NEW.control_error OR OLD.outcome IS NOT NEW.outcome OR OLD.native_status IS NOT NEW.native_status OR OLD.report_id IS NOT NEW.report_id BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('stop',NEW.session,NEW.session,'update','stop',NEW.outcome); END;",
   "CREATE TRIGGER IF NOT EXISTS native_changes_stops_delete AFTER DELETE ON session_stops BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('stop',OLD.session,OLD.session,'delete','stop',OLD.outcome); END;",
   "CREATE TRIGGER IF NOT EXISTS native_changes_messages_insert AFTER INSERT ON messages BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('message',NEW.id,NEW.recipient,'insert','message:' || NEW.kind,NEW.kind || ' from ' || NEW.sender); END;",
-  "CREATE TRIGGER IF NOT EXISTS native_changes_messages_update AFTER UPDATE ON messages WHEN OLD.sender IS NOT NEW.sender OR OLD.recipient IS NOT NEW.recipient OR OLD.kind IS NOT NEW.kind OR OLD.body IS NOT NEW.body OR OLD.receipt IS NOT NEW.receipt BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('message',NEW.id,NEW.recipient,'update',CASE WHEN OLD.receipt IS NOT NEW.receipt THEN 'receipt' ELSE 'message:' || NEW.kind END,CASE WHEN OLD.receipt IS NOT NEW.receipt THEN 'acknowledged' ELSE NEW.kind || ' from ' || NEW.sender END); END;",
+  "DROP TRIGGER IF EXISTS native_changes_messages_update;",
+  "CREATE TRIGGER IF NOT EXISTS native_changes_messages_update AFTER UPDATE ON messages WHEN OLD.sender IS NOT NEW.sender OR OLD.recipient IS NOT NEW.recipient OR OLD.kind IS NOT NEW.kind OR OLD.body IS NOT NEW.body BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('message',NEW.id,NEW.recipient,'update','message:' || NEW.kind,NEW.kind || ' from ' || NEW.sender); END;",
   "CREATE TRIGGER IF NOT EXISTS native_changes_messages_delete AFTER DELETE ON messages BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('message',OLD.id,OLD.recipient,'delete','message:' || OLD.kind,OLD.kind || ' from ' || OLD.sender); END;",
+  "CREATE TRIGGER IF NOT EXISTS native_changes_message_reads_insert AFTER INSERT ON message_reads WHEN NOT (NEW.attempt='legacy' AND NEW.identity='receipt') BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('message',NEW.message,NEW.recipient,'update','read','read'); END;",
   "CREATE TRIGGER IF NOT EXISTS native_changes_turns_insert AFTER INSERT ON turns BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('turn',NEW.id,NEW.worker,'insert','report','turn report recorded'); END;",
   "CREATE TRIGGER IF NOT EXISTS native_changes_turns_update AFTER UPDATE ON turns WHEN OLD.worker IS NOT NEW.worker OR OLD.event IS NOT NEW.event BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('turn',NEW.id,NEW.worker,'update','report','turn report updated'); END;",
   "CREATE TRIGGER IF NOT EXISTS native_changes_turns_delete AFTER DELETE ON turns BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('turn',OLD.id,OLD.worker,'delete','report','turn report removed'); END;",
@@ -63,8 +66,151 @@ static const char *const baton_change_schema[] = {
   NULL
 };
 
+/* Durable install marker. The fingerprint covers the exact caller schema
+   text and every baton_change_schema entry, so a schema or projection change
+   in a new binary changes the fingerprint and forces a reinstall. The stored
+   schema_version changes on any later DDL by any process, so dropping an
+   application table or trigger also forces the full installer and repairs it.
+   The marker row is written in the same BEGIN IMMEDIATE..COMMIT transaction
+   as the DDL it certifies, so it is visible only when the whole projection
+   committed. A database created or replaced by another process carries no
+   matching marker and is installed again. */
+static void baton_sql_projection_fingerprint(const char *schema, char out[17]) {
+  uint64_t hash = 14695981039346656037ULL;
+  const unsigned char *at;
+  for (at = (const unsigned char *)(schema ? schema : ""); *at; at++) {
+    hash ^= *at;
+    hash *= 1099511628211ULL;
+  }
+  hash ^= 0xffU;
+  hash *= 1099511628211ULL;
+  for (size_t i = 0; baton_change_schema[i]; i++) {
+    for (at = (const unsigned char *)baton_change_schema[i]; *at; at++) {
+      hash ^= *at;
+      hash *= 1099511628211ULL;
+    }
+    hash ^= 0xffU;
+    hash *= 1099511628211ULL;
+  }
+  snprintf(out, 17, "%016" PRIx64, hash);
+}
+
+static int baton_sql_scalar_int(sqlite3 *db, const char *sql, sqlite3_int64 *value) {
+  sqlite3_stmt *stmt = NULL;
+  int code = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+  if (code != SQLITE_OK) return code;
+  code = sqlite3_step(stmt);
+  if (code == SQLITE_ROW) {
+    *value = sqlite3_column_int64(stmt, 0);
+    code = SQLITE_OK;
+  } else if (code == SQLITE_DONE) {
+    code = SQLITE_MISUSE;
+  }
+  sqlite3_finalize(stmt);
+  return code;
+}
+
+/* Copies the name from a CREATE TRIGGER statement. Projection statements use
+   plain identifiers; any other form fails the check and runs the installer. */
+static int baton_sql_trigger_name(const char *statement, char *out, size_t size) {
+  if (strncmp(statement, "CREATE TRIGGER ", 15) != 0) return 0;
+  const char *at = statement + 15;
+  if (strncmp(at, "IF NOT EXISTS ", 14) == 0) at += 14;
+  size_t n = 0;
+  while (at[n] && at[n] != ' ' && at[n] != '\t' && at[n] != '\n') {
+    char c = at[n];
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+          || (c >= '0' && c <= '9') || c == '_')
+        || n + 1 >= size)
+      return 0;
+    out[n++] = c;
+  }
+  out[n] = 0;
+  return n > 0;
+}
+
+/* Cheap read-only completeness check against durable in-database state:
+   the marker fingerprint and schema version, the projection tables, the
+   migrated columns and the exact projection trigger names recorded in
+   sqlite_master. Triggers owned by other modules are outside this check.
+   Returns 1 only on a positive match; any missing object or read failure
+   returns 0 and the caller runs the full installer, which surfaces the real
+   error. */
+static int baton_sql_projection_is_current(sqlite3 *db, const char *schema,
+                                           const char fingerprint[17]) {
+  (void)schema;
+  if (sqlite3_table_column_metadata(db, NULL, "knowledge", "kind", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
+    return 0;
+  if (sqlite3_table_column_metadata(db, NULL, "knowledge_promotions", "source_kind", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
+    return 0;
+  if (sqlite3_table_column_metadata(db, NULL, "knowledge_promotions", "destination_kind", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
+    return 0;
+  if (sqlite3_table_column_metadata(db, NULL, "baton_projection_state", "schema_version", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
+    return 0;
+  sqlite3_int64 tables = 0;
+  if (baton_sql_scalar_int(db, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('native_changes','knowledge','knowledge_promotions','knowledge_relations','baton_projection_state');", &tables) != SQLITE_OK || tables != 5)
+    return 0;
+  char trigger_query[4096];
+  int used = snprintf(trigger_query, sizeof trigger_query,
+                      "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN (");
+  int expected_triggers = 0;
+  if (used < 0 || (size_t)used >= sizeof trigger_query)
+    return 0;
+  for (size_t i = 0; baton_change_schema[i]; i++) {
+    if (strncmp(baton_change_schema[i], "CREATE TRIGGER", 14) != 0)
+      continue;
+    char name[64];
+    if (!baton_sql_trigger_name(baton_change_schema[i], name, sizeof name))
+      return 0;
+    int written = snprintf(trigger_query + used,
+                           sizeof trigger_query - (size_t)used,
+                           "%s'%s'", expected_triggers ? "," : "", name);
+    if (written < 0 || (size_t)written >= sizeof trigger_query - (size_t)used)
+      return 0;
+    used += written;
+    expected_triggers++;
+  }
+  if (expected_triggers == 0)
+    return 0;
+  int closing = snprintf(trigger_query + used,
+                         sizeof trigger_query - (size_t)used, ");");
+  if (closing < 0 || (size_t)closing >= sizeof trigger_query - (size_t)used)
+    return 0;
+  sqlite3_int64 triggers = 0;
+  if (baton_sql_scalar_int(db, trigger_query, &triggers) != SQLITE_OK || triggers != expected_triggers)
+    return 0;
+  sqlite3_int64 schema_version = 0;
+  if (baton_sql_scalar_int(db, "PRAGMA schema_version;", &schema_version) != SQLITE_OK)
+    return 0;
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(db, "SELECT fingerprint, schema_version FROM baton_projection_state WHERE id=1;", -1, &stmt, NULL) != SQLITE_OK)
+    return 0;
+  int current = 0;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    const unsigned char *stored = sqlite3_column_text(stmt, 0);
+    current = stored && strcmp((const char *)stored, fingerprint) == 0
+              && sqlite3_column_int64(stmt, 1) == schema_version;
+  }
+  sqlite3_finalize(stmt);
+  return current;
+}
+
 static int baton_sql_install_projection(sqlite3 *db, const char *schema, char **error) {
+  char fingerprint[17];
+  baton_sql_projection_fingerprint(schema, fingerprint);
+  /* Steady state: a previous install committed the marker, so this call
+     takes no write transaction and no write lock. */
+  if (baton_sql_projection_is_current(db, schema, fingerprint))
+    return SQLITE_OK;
   int code = sqlite3_exec(db, "BEGIN IMMEDIATE", NULL, NULL, error);
+  /* A concurrent first installer may have committed while this call waited
+     for the write lock; re-check under the lock and skip the DDL then. */
+  if (code == SQLITE_OK && baton_sql_projection_is_current(db, schema, fingerprint)) {
+    code = sqlite3_exec(db, "COMMIT", NULL, NULL, error);
+    if (code != SQLITE_OK)
+      sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+    return code;
+  }
   if (code == SQLITE_OK)
     code = sqlite3_exec(db, schema, NULL, NULL, error);
   if (code == SQLITE_OK)
@@ -79,6 +225,20 @@ static int baton_sql_install_projection(sqlite3 *db, const char *schema, char **
     code = sqlite3_exec(db, "ALTER TABLE knowledge_promotions ADD COLUMN destination_kind TEXT NOT NULL DEFAULT 'session';", NULL, NULL, error);
   for (size_t i = 0; code == SQLITE_OK && baton_change_schema[i]; i++)
     code = sqlite3_exec(db, baton_change_schema[i], NULL, NULL, error);
+  if (code == SQLITE_OK)
+    code = sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS baton_projection_state (id INTEGER PRIMARY KEY CHECK(id=1), fingerprint TEXT NOT NULL, schema_version INTEGER NOT NULL DEFAULT 0);", NULL, NULL, error);
+  /* A marker table written before schema_version existed is migrated in the
+     same transaction; the next check then compares the durable version. */
+  if (code == SQLITE_OK && sqlite3_table_column_metadata(db, NULL, "baton_projection_state", "schema_version", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
+    code = sqlite3_exec(db, "ALTER TABLE baton_projection_state ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 0;", NULL, NULL, error);
+  sqlite3_int64 schema_version = 0;
+  if (code == SQLITE_OK)
+    code = baton_sql_scalar_int(db, "PRAGMA schema_version;", &schema_version);
+  if (code == SQLITE_OK) {
+    char marker_sql[160];
+    snprintf(marker_sql, sizeof(marker_sql), "INSERT OR REPLACE INTO baton_projection_state(id,fingerprint,schema_version) VALUES(1,'%s',%lld);", fingerprint, (long long)schema_version);
+    code = sqlite3_exec(db, marker_sql, NULL, NULL, error);
+  }
   if (code == SQLITE_OK)
     code = sqlite3_exec(db, "COMMIT", NULL, NULL, error);
   if (code != SQLITE_OK)
@@ -112,9 +272,24 @@ static int baton_sql_row(void *context, int count, char **values, char **columns
 }
 
 static int baton_sql_busy(void *context, int tries) {
-  (void)context; (void)tries;
+  (void)context;
+  /* Bounded wait: at most 3000 retries of 10ms for one lock acquisition.
+     A caller that cannot acquire the lock receives SQLITE_BUSY and reports
+     that cause; no caller waits without a bound. */
+  if (tries >= 3000) return 0;
   sqlite3_sleep(10);
   return 1;
+}
+
+/* Write-ahead logging lets one writer commit while readers hold their
+   transactions; under the rollback journal a reader blocks every commit, and
+   wakes and observations failed with SQLITE_BUSY (#1054). The mode is stored in
+   the database file, so the first read-write open by this binary converts an
+   existing rollback-journal database. A conversion that cannot take its lock
+   leaves the database in its current mode, and the next read-write open tries
+   again; the caller's statement runs either way. */
+static void baton_sql_wal(sqlite3 *db) {
+  sqlite3_exec(db, "PRAGMA journal_mode=WAL;", NULL, NULL, NULL);
 }
 
 static void baton_sql_json_pretty(sqlite3_context *context, int argc, sqlite3_value **argv);
@@ -127,6 +302,7 @@ static void baton_sql_call(IoWork *w) {
     call->error = strdup(db ? sqlite3_errmsg(db) : "cannot open database");
   } else {
     sqlite3_busy_handler(db, baton_sql_busy, NULL);
+    baton_sql_wal(db);
     char *error = NULL;
     call->code = sqlite3_create_function_v2(db, "baton_json_pretty", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_json_pretty, NULL, NULL, NULL);
     if (call->code == SQLITE_OK)
@@ -261,6 +437,7 @@ static void baton_sql_span_call(IoWork *w) {
     call->error = strdup(db ? sqlite3_errmsg(db) : "cannot open database");
   } else {
     sqlite3_busy_handler(db, baton_sql_busy, NULL);
+    baton_sql_wal(db);
     char *error = NULL;
     call->code = sqlite3_create_function_v2(db, "baton_json_pretty", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_json_pretty, NULL, NULL, NULL);
     if (call->code == SQLITE_OK)
@@ -973,6 +1150,7 @@ static void baton_sql_bound_call(IoWork *w) {
     return;
   }
   sqlite3_busy_handler(db, baton_sql_busy, NULL);
+  baton_sql_wal(db);
   char *error = NULL;
   call->code = sqlite3_create_function_v2(db, "baton_ref_entry", 2, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_ref_entry, NULL, NULL, NULL);
   if (call->code == SQLITE_OK)
@@ -1239,10 +1417,14 @@ static void baton_sql_read_call(IoWork *w) {
     }
     if (call->code == SQLITE_OK)
       call->code = sqlite3_exec(db, call->sql, baton_sql_row, call, &error);
-    if (call->code != SQLITE_OK) {
+    if (call->code != SQLITE_OK)
       call->error = strdup(error ? error : sqlite3_errmsg(db));
-      sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
-    }
+    /* A caller SQL text can leave a transaction open. A read-only connection
+       that keeps it holds SHARED and blocks every writer's commit, including a
+       writer in this same process. Roll back unconditionally before close so
+       the read lock is released at the call boundary, not at process exit.
+       SQLite reports no transaction as a harmless error here. */
+    sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
     sqlite3_free(error);
   }
   if (db) sqlite3_close(db);

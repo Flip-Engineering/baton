@@ -45,12 +45,27 @@ def binding_is(binding: Maybe<List<String>>, +label: String, +expected_head: Str
     case None{}: IO.die(Unit,1,"fixture-account " ++ label ++ ": no binding")
     case Some{values}: binding_value(List.head(&1,String,values),label,expected_head)
 
+def binding_refuses(binding: Maybe<List<String>>, +label: String) -> IO(Unit):
+  match binding:
+    case None{}: check(label,True{})
+    case Some{values}: IO.die(Unit,1,"fixture-account " ++ label ++ ": unexpected binding")
+
 def binding_checks() -> IO(Unit):
   do IO<Unit>:
     codex : Unit <- binding_is(A.launch_binding("codex","subscription","/fixture/stores/codex alt",None{}),"subscription-codex-store","CODEX_HOME=/fixture/stores/codex alt")
     claude : Unit <- binding_is(A.launch_binding("claude-code","subscription","/fixture/stores/claude",None{}),"subscription-claude-store","CLAUDE_CONFIG_DIR=/fixture/stores/claude")
-    resolver : Unit <- binding_is(A.launch_binding("claude-code","api_key","file:/fixture/secrets/api",Some{"/fixture/libexec/api-key-exec"}),"api-key-runs-the-resolver","/fixture/libexec/api-key-exec")
+    resolver : Unit <- binding_is(A.launch_binding("claude-code","api_key","file:/fixture/secrets/api",Some{"/fixture/libexec/api-key-exec"}),"api-key-helper-binding-for-admitted-route","/fixture/libexec/api-key-exec")
     profile : Unit <- binding_is(A.account_binding("codex",None{},None{},"/fixture/stores/codex"),"no-account-keeps-the-profile-store","CODEX_HOME=/fixture/stores/codex")
+    anthropic_api : Unit <- binding_refuses(A.account_binding("claude-code",Some{A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"}},Some{"/fixture/libexec/api-key-exec"},""),"anthropic-api-key-is-held-without-request-admission")
+    anthropic_subscription : Unit <- binding_is(A.account_binding("claude-code",Some{A.Ac{"claude-max","anthropic","claude-code","subscription","/fixture/stores/claude","org-fixture","2026-10-18"}},None{},""),"anthropic-subscription-binding-is-preserved","CLAUDE_CONFIG_DIR=/fixture/stores/claude")
+    other_provider : Unit <- binding_is(A.account_binding("codex",Some{A.Ac{"openai-codex","openai","codex","subscription","/fixture/stores/codex","org-openai","2026-10-18"}},None{},""),"other-provider-subscription-binding-is-unchanged","CODEX_HOME=/fixture/stores/codex")
+    unsupported_api : Unit <- binding_refuses(A.account_binding("codex",Some{A.Ac{"openai-api","openai","codex","api_key","file:/fixture/secrets/openai","org-openai","2026-10-18"}},Some{"/fixture/libexec/api-key-exec"},""),"unsupported-api-key-harness-remains-unbound")
+    IO.pure(Unit,Unit{})
+
+def refusal_checks() -> IO(Unit):
+  do IO<Unit>:
+    anthropic : Unit <- check("api-key-credit-hold-refusal",String.eq(A.credit_api_key_refusal(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"}),"Anthropic API-key launches are held because request-level promotional-credit admission is unavailable; the attempt was not started and its input stays owed."))
+    other : Unit <- check("other-provider-resolver-refusal",String.eq(A.credit_api_key_refusal(A.Ac{"openai-api","openai","codex","api_key","file:/fixture/secrets/openai","org-openai","2026-10-18"}),"This API-key launch has no installed resolver beside the resolved identity helper; the attempt was not started and its input stays owed."))
     IO.pure(Unit,Unit{})
 
 def decimal_checks() -> IO(Unit):
@@ -63,6 +78,50 @@ def decimal_checks() -> IO(Unit):
     negative : Unit <- check("balance-sign-refused",Bool.not(A.decimal_text("-5")))
     exponent : Unit <- check("balance-exponent-refused",Bool.not(A.decimal_text("1e3")))
     words : Unit <- check("balance-prose-refused",Bool.not(A.decimal_text("about two hundred dollars")))
+    IO.pure(Unit,Unit{})
+
+def decimal_arith_checks() -> IO(Unit):
+  do IO<Unit>:
+    add_cents : Unit <- check("decimal-add-carries-cents",String.eq(A.decimal_add("200.00","0.50"),"200.5"))
+    add_precise : Unit <- check("decimal-add-keeps-precision",String.eq(A.decimal_add("0.12345678901234567890","0.00000000000000000001"),"0.12345678901234567891"))
+    add_carry : Unit <- check("decimal-add-carries-integer",String.eq(A.decimal_add("999.99","0.01"),"1000"))
+    sub_cents : Unit <- check("decimal-sub-borrows-cents",String.eq(A.decimal_sub("200.00","199.99"),"0.01"))
+    sub_whole : Unit <- check("decimal-sub-to-whole",String.eq(A.decimal_sub("200.50","0.50"),"200"))
+    lte_int : Unit <- check("decimal-lte-by-length",A.decimal_lte("2","10"))
+    lte_frac : Unit <- check("decimal-lte-trailing-zero",A.decimal_lte("0.50","0.5"))
+    gt_frac : Unit <- check("decimal-gt-fraction",Bool.not(A.decimal_lte("10.01","10")))
+    zero : Unit <- check("decimal-zero-recognized",A.decimal_is_zero("0.00"))
+    nonzero : Unit <- check("decimal-nonzero-recognized",Bool.not(A.decimal_is_zero("0.01")))
+    IO.pure(Unit,Unit{})
+
+def admission_reason_is(admission: A.CreditAdmission, +expected: String, +label: String) -> IO(Unit):
+  check(label,String.eq(A.credit_admission_reason(admission),expected))
+
+def admission_checks() -> IO(Unit):
+  do IO<Unit>:
+    admitted : Unit <- check("admission-admits-bounded-request",A.credit_admission_admitted(A.credit_request_admission(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10-cycle","200","USD","500","2026-10","450","40"},"2026-10-cycle","2026-10","10")))
+    reserved : Unit <- check("admission-reserved-total",String.eq(A.credit_admission_reserved_total(A.credit_request_admission(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10-cycle","200","USD","500","2026-10","450","40"},"2026-10-cycle","2026-10","10")),"50"))
+    balance_after : Unit <- check("admission-balance-after-reserve",String.eq(A.credit_admission_balance_after(A.credit_request_admission(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10-cycle","200","USD","500","2026-10","450","40"},"2026-10-cycle","2026-10","10")),"150"))
+    cap_after : Unit <- check("admission-cap-after-reserve",String.eq(A.credit_admission_cap_after(A.credit_request_admission(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10-cycle","200","USD","500","2026-10","450","40"},"2026-10-cycle","2026-10","10")),"0"))
+    route : Unit <- admission_reason_is(A.credit_request_admission(A.Ac{"claude-max","anthropic","claude-code","subscription","/fixture/stores/claude","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10-cycle","200","USD","500","2026-10","0","0"},"2026-10-cycle","2026-10","10"),"notPromotionalCreditRoute","admission-refuses-subscription-route")
+    org : Unit <- admission_reason_is(A.credit_request_admission(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10-cycle","200","USD","500","2026-10","0","0"},"2026-10-cycle","2026-10","10"),"organizationUnverified","admission-refuses-unverified-organization")
+    unavailable : Unit <- admission_reason_is(A.credit_request_admission(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","unavailable","2026-10-cycle","","USD","500","2026-10","0","0"},"2026-10-cycle","2026-10","10"),"creditObservationUnavailable","admission-refuses-unavailable-observation")
+    cycle : Unit <- admission_reason_is(A.credit_request_admission(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-09-cycle","200","USD","500","2026-10","0","0"},"2026-10-cycle","2026-10","10"),"creditCycleMismatch","admission-refuses-stale-cycle")
+    cap_period : Unit <- admission_reason_is(A.credit_request_admission(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10-cycle","200","USD","500","2026-09","0","0"},"2026-10-cycle","2026-10","10"),"monthlyCapPeriodMismatch","admission-refuses-stale-cap-period")
+    malformed : Unit <- admission_reason_is(A.credit_request_admission(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10-cycle","200","USD","500","2026-10","0","0"},"2026-10-cycle","2026-10","1e3"),"creditAmountMalformed","admission-refuses-malformed-charge")
+    unbounded : Unit <- check("admission-refuses-zero-charge-bound",A.credit_admission_admitted(A.credit_request_admission(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10-cycle","200","USD","500","2026-10","0","0"},"2026-10-cycle","2026-10","0")))
+    balance : Unit <- check("admission-charge-over-estimate-admitted",A.credit_admission_admitted(A.credit_request_admission(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10-cycle","200","USD","500","2026-10","0","195"},"2026-10-cycle","2026-10","10")))
+    cap : Unit <- check("admission-charge-over-cap-estimate-admitted",A.credit_admission_admitted(A.credit_request_admission(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10-cycle","200","USD","500","2026-10","495","0"},"2026-10-cycle","2026-10","10")))
+    held : Unit <- binding_refuses(A.account_binding("claude-code",Some{A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"}},Some{"/fixture/libexec/api-key-exec"},""),"admission-does-not-lift-launch-hold")
+    IO.pure(Unit,Unit{})
+
+def eligibility_checks() -> IO(Unit):
+  do IO<Unit>:
+    eligible : Unit <- check("eligibility-reported-balance",String.eq(A.credit_route_eligibility(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10","200.00","USD","","","",""}),"eligible"))
+    exhausted : Unit <- check("eligibility-reported-zero-is-exhausted",String.eq(A.credit_route_eligibility(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10","0.00","USD","","","",""}),"promotionalCreditExhausted"))
+    unavailable : Unit <- check("eligibility-unavailable-observation",String.eq(A.credit_route_eligibility(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","unavailable","2026-10","","USD","","","",""}),"creditObservationUnavailable"))
+    unverified : Unit <- check("eligibility-unverified-organization",String.eq(A.credit_route_eligibility(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10","200.00","USD","","","",""}),"organizationUnverified"))
+    subscription : Unit <- check("eligibility-subscription-is-distinct",String.eq(A.credit_route_eligibility(A.Ac{"claude-max","anthropic","claude-code","subscription","/fixture/stores/claude","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10","200.00","USD","","","",""}),"notPromotionalCreditRoute"))
     IO.pure(Unit,Unit{})
 
 def vocabulary_checks() -> IO(Unit):
@@ -111,9 +170,13 @@ def authority_checks() -> IO(Unit):
 def main() -> IO(Unit):
   do IO<Unit>:
     dec : Unit <- decimal_checks()
+    arith : Unit <- decimal_arith_checks()
+    admission : Unit <- admission_checks()
+    eligibility : Unit <- eligibility_checks()
     vocab : Unit <- vocabulary_checks()
     operations : Unit <- operation_checks()
     binds : Unit <- binding_checks()
+    refusals : Unit <- refusal_checks()
     states : Unit <- state_checks()
     selections : Unit <- selection_checks()
     authority : Unit <- authority_checks()

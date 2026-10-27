@@ -138,6 +138,18 @@ K3 in the qualified workflow uses OMP's `kimi-code` provider. The native OMP
 adapter launches `--mode rpc`, queries `get_state` and retains conversation
 files beside the coordinator database.
 
+OMP binds a configured profile store through `PI_CODING_AGENT_DIR`, the supported
+agent directory (default `~/.omp/agent`). The OMP profile store is the agent
+directory that holds `agent.db`. Muse binds a configured profile store through
+`XDG_CONFIG_HOME`, the parent of `muse/auth.json`. The selected profile
+assignment overrides an inherited value. A launch with no selected profile adds
+no store binding and inherits the receiver environment. `HOME`, native session
+paths and the receiver UID are unchanged. OMP's preflight checks the inherited
+`HOME` and the selected `PI_CODING_AGENT_DIR` directory. Muse has no preflight;
+its `XDG_CONFIG_HOME` store is checked by Muse at startup. Codex and Claude bind
+their configured credential directories, and DSH binds `DSH_HOME`; those
+launches are unchanged.
+
 Muse uses its existing authenticated installation. The native adapter requires
 `exec --json --prompt-file` and resumes through `--session-id`. Preserve Muse's
 conversation storage when reconnecting the recorded native identity.
@@ -250,6 +262,37 @@ provider and model and sets `reasoningEffort`. Inspect the composed tree with
 `--dump-config`; the model row, the tool-fs switches and the inserted shell
 rows are visible there.
 
+## Antigravity CLI
+
+Install the Google Antigravity CLI for the account that runs the coordinator.
+Google's installer downloads a release for the platform, checks its SHA-512
+against the release manifest and copies `agy` to `~/.local/bin`:
+
+```sh
+curl -fsSL https://antigravity.google/cli/install.sh | bash
+agy --version
+```
+
+The installer ends with `agy install`, which edits shell profile files. To
+avoid that, download the manifest at
+`https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json`,
+fetch the `url` it names, compare the file with its `sha512`, and copy the
+`antigravity` member of the archive to `~/.local/bin/agy`.
+
+Sign in once as the coordinator's account, in a terminal: run `agy`, choose
+`Google OAuth`, open the printed URL in a browser on any machine, sign in and
+paste the authorization code back. The Antigravity documentation states that
+the token is kept in the operating system keyring (Secret Service on Linux). A
+headless account needs a keyring that stays unlocked. The alternative route is
+`{"modelProvider": "gemini"}` in `~/.gemini/antigravity-cli/settings.json` with
+`GEMINI_API_KEY` in the environment; it reaches only Gemini models. After
+signing in, `agy models` lists the models the account can use.
+
+Record the route with `--harness antigravity`, `--model MODEL_ID` and the tier word of
+that id as `--effort`, for example `claude-sonnet-5-5-high` and `high`. The
+[Antigravity CLI adapter](agy-adapter.md) lists the protocol facts and the
+unverified items.
+
 ## Status and report inspection
 
 A worker's assignment remains open across successful native turns. When its
@@ -258,11 +301,11 @@ The parent reviews the result with `completion-confirmed --to PLAYER`, or sends
 `guide --to PLAYER --text TEXT` for remaining work. Baton resolves the current
 request addressed to that coordinator. The worker's current request remains
 available while the parent reviews it. New
-tasks and guidance begin further work. Message receipts record the worker's
-handling of retained input. Explicit operator stops remain effective.
+tasks and guidance begin further work. Stored read rows record the worker's
+complete read of retained input. Explicit operator stops remain effective.
 Parentless Principal Conductors follow their operator input.
 
-Codex, OMP, Muse, DeepSeek Harness and Claude native receivers preserve the
+Codex, OMP, Muse, DeepSeek Harness, Antigravity CLI and Claude native receivers preserve the
 recorded conversation when further input arrives. Native settlement delivers the turn report to the
 recorded coordinator, which decides whether further work is needed. The
 managed Codex App watcher observes public turn settlement and delivers owed
@@ -284,13 +327,12 @@ baton2 /absolute/path/orchestra.db turns worker1 --pretty
 baton2 /absolute/path/orchestra.db delivery REPORT_ID --pretty
 ```
 
-`delivery` returns the complete message, receipt and recipient endpoint.
+`delivery` returns the complete message, read state and recipient endpoint.
 `turns` includes native turn history and report bodies. Inspect complete parent
-reports, native logs and handling receipts before landing work. Successful native
-turn settlement records consumed input handling, and `acknowledge` records it
-explicitly from the current native owned reads. Administrative commands retain
-explicit message and receipt selectors. Git review and landing have their own
-results. Capture complete stdout when a harness tool display truncates a long report.
+reports, native logs and read records before landing work. Baton records each
+complete recipient-owned read when the recipient reads the input; the record
+persists when the turn later fails or is interrupted. Git review and landing
+have their own results. Capture complete stdout when a harness tool display truncates a long report.
 
 ## Recovery
 

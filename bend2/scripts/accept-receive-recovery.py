@@ -6,7 +6,7 @@ kills the active Bend receive observer, queues a second task and verifies a norm
 receive retry returns queued before allowing the tool call to return. Codex then
 edits and commits a usage example. The queued follow-up edits it in the same native
 conversation after the first native process exits. A local parent endpoint records
-and acknowledges the complete reports. This command starts real model sessions.
+and reads the complete reports. This command starts real model sessions.
 
 All coordinator state, cloned source, process records and logs remain below
 --output. --coordinator and --build-log identify an already built executable; this
@@ -73,7 +73,7 @@ def snapshot(db):
     with sqlite3.connect(f'{db.as_uri()}?mode=ro', uri=True) as connection:
         connection.row_factory = sqlite3.Row
         return {table: [dict(row) for row in connection.execute(f'SELECT * FROM {table}')]
-                for table in ['sessions', 'messages', 'turns', 'executions']}
+                for table in ['sessions', 'messages', 'turns', 'executions', 'message_reads']}
 
 
 def json_lines(path):
@@ -192,7 +192,7 @@ elif kind=='parent':
         row=dict(connection.execute('SELECT * FROM messages WHERE id=?',(ident,)).fetchone())
     assert row['kind']=='report' and row['recipient']=='root',row
     receipt='parent received complete report '+ident
-    subprocess.run([config['exe'],config['db'],'ack',ident,'root',receipt],
+    subprocess.run([config['exe'],config['db'],'as','root','read',ident],
                    check=True,stdout=subprocess.DEVNULL)
     event={'kind':'parent-report','pid':os.getpid(),'unix':time.time(),
            'message':row,'receipt':receipt}
@@ -344,9 +344,9 @@ Read AGENTS.md. Change only {DOCUMENT}. Do not alter runtime source, run the
 full test suites, build, recruit agents, install tools, change authentication,
 change global configuration, or push. Use the existing Git identity.
 Do not send a report command: receive forwards your final assistant text.
-Acknowledge only the task assigned in this turn, using the coordinator CLI
-provided in the receive prompt: use the acknowledge action after handling its
-complete text. End the turn after your task and report.
+Read only the task assigned in this turn with the coordinator CLI
+provided in the receive prompt; Baton records the complete read internally.
+End the turn after your task and report.
 '''
     initial_task = common + f'''
 Your first tool command must be exactly:
@@ -354,10 +354,10 @@ Your first tool command must be exactly:
 This local tool completes the driver's observer-loss injection and returns.
 After it returns, inspect bend2/src/coordinator/receive.bend and main.bend.
 Create {DOCUMENT} as a short useful usage example covering a registered Codex
-Player's receive command, pending inbox inspection and message acknowledgment.
+Player's receive command, pending inbox inspection and internal read recording.
 Use shell placeholders for paths. Check every documented command against the
-current parser. Commit this one document with a clear commit message, acknowledge
-the assigned input, then return a final response beginning RECOVERY_INITIAL_DONE with the
+current parser. Commit this one document with a clear commit message, read
+the assigned input completely, then return a final response beginning RECOVERY_INITIAL_DONE with the
 commit hash, the commands checked, and any limitation. Leave any later incoming
 message for the next native turn; this turn handles the initial assignment.
 '''
@@ -366,8 +366,8 @@ Continue your existing conversation and inspect your previous committed example.
 Extend {DOCUMENT} with a brief contributor note explaining what a busy receive
 returns and how an observer recovery uses the retained attempt. Cite the relevant
 source paths, and state the implemented recovery scope precisely. Verify the
-claims against the runtime source, then commit the document update. Acknowledge
-the assigned input, then return a final response beginning RECOVERY_FOLLOWUP_DONE with
+claims against the runtime source, then commit the document update and return
+a final response beginning RECOVERY_FOLLOWUP_DONE with
 both your previous commit hash and the new one. Do not repeat the checkpoint tool.
 '''
     receive = ['receive', 'worker', str(wrapper), args.model, args.effort,
@@ -521,7 +521,7 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
                                 input=json.dumps(['message', FOLLOWUP, 'root', 'worker', 'task',
                                                   followup_task], ensure_ascii=False))
                             retry = json.loads(checkpoint_command('normal-receive-retry', *receive, INITIAL))
-                            assert retry == {'session': 'worker', 'status': 'queued'}, retry
+                            assert retry['receive'] == 'none' and retry['attempt'] == '', retry
                             assert len(json_lines(out / 'launches.jsonl')) == 1
                             assert alive(first_pid)
                             loss = record('observer-killed-retry-queued', observer_pid=observer.pid,
@@ -603,7 +603,8 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
             assert all(frame['type'] == 'turn.completed' for frame in terminal), terminal
             assert native_ids and set(native_ids) == {first_native}, native_ids
             assert [row['body'] for row in reports] == texts
-            assert all(row['receipt'] for row in final['messages']), final
+            read_ids = {row['message'] for row in final['message_reads']}
+            assert {row['id'] for row in reports} <= read_ids, final
             assert [row['body'].startswith(marker) for row, marker in zip(
                 reports, ['RECOVERY_INITIAL_DONE', 'RECOVERY_FOLLOWUP_DONE'])] == [True, True]
             received = {event['message']['id']: event for event in receipts}
@@ -640,7 +641,7 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
                 ],
                 'limitations': [
                     'One receive observer was killed while its keeper and native Codex process survived.',
-                    'The parent endpoint records and acknowledges reports; it is a local deterministic process.',
+                    'The parent endpoint records and reads reports; it is a local deterministic process.',
                     'No keeper loss, host restart, direct-turn loss, landing or remote publication is exercised.',
                 ],
             })

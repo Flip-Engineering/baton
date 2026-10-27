@@ -1,0 +1,20 @@
+#!/bin/sh
+# Test usage-read helper for test/usage-live-reads.bend. The core runs it as
+# HELPER PROVIDER CREDENTIAL_REF. The fixture gives each account the reference
+# file:PATH and writes the next read document to PATH; this prints that document.
+# serial:DIR records overlapping requests while returning DIR/answer.
+case "$2" in
+  serial:*)
+    directory=${2#serial:}
+    if mkdir "$directory/active" 2>/dev/null; then
+      sleep 0.3
+      cat "$directory/answer"
+      rmdir "$directory/active"
+    else
+      touch "$directory/overlap"
+      cat "$directory/answer"
+    fi
+    ;;
+  file:*) cat "${2#file:}" ;;
+  *) echo "unexpected reference" >&2; exit 2 ;;
+esac

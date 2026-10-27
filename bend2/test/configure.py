@@ -1,6 +1,8 @@
 """A configured provider-route change keeps an existing Player's assignment, work and pending input."""
 import importlib.util
+import fcntl
 import json
+import os
 import pathlib
 import sqlite3
 import unittest
@@ -22,6 +24,7 @@ identity = load('control-identity')
 
 class Configure(unittest.TestCase):
     # The shared fixture harness is reused without inheriting its own cases.
+    read_count = identity.ControlIdentity.read_count
     git = identity.ControlIdentity.git
     call = identity.ControlIdentity.call
     root = identity.ControlIdentity.root
@@ -71,6 +74,20 @@ class Configure(unittest.TestCase):
             return db.execute('SELECT id, sender, recipient, kind, body, receipt '
                               'FROM messages ORDER BY seq').fetchall()
 
+    def session_lock_path(self, session):
+        info = os.stat(self.db)
+        key = 'owner-%x-%x' % (info.st_dev, info.st_ino)
+        return pathlib.Path(os.environ['XDG_RUNTIME_DIR']) / 'baton2' / (
+            key + '.lock-' + session.encode().hex())
+
+    def hold_session_lock(self, session):
+        path = self.session_lock_path(session)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        held = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(lambda: (fcntl.flock(held, fcntl.LOCK_UN), os.close(held)))
+        return held
+
     def test_route_change_rebuilds_the_endpoint_and_preserves_the_assignment(self):
         self.root()
         self.recruit('leaf')
@@ -98,7 +115,7 @@ class Configure(unittest.TestCase):
         self.assertIsNone(self.call('delivery', 'retained-task')['receipt'])
         self.finish(stream)
         self.exited('leaf')
-        self.assertEqual(self.call('delivery', 'retained-task')['receipt'], 'fixture-native-reviewed')
+        self.assertGreater(self.read_count('retained-task'), 0)
 
     def test_route_change_fences_a_delayed_expected_route_and_leaves_the_row_alone(self):
         self.root()
@@ -154,6 +171,101 @@ class Configure(unittest.TestCase):
         self.assertEqual(missing['code'], 2)
         self.assertIn('not registered', missing['stderr'])
 
+    def test_route_change_retires_a_starting_attempt_without_its_recorded_directory(self):
+        self.root()
+        self.recruit('leaf')
+        missing = self.directory / 'missing-attempt'
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
+                       "VALUES('leaf','attempt-missing','retained',?,'starting','')",
+                       (str(missing),))
+            db.commit()
+        changed = self.route('leaf', 'omp', 'gpt-6-astra', 'high',
+                             ('omp', 'kimi-code/k3', 'low'))
+        self.assertEqual(changed['model'], 'gpt-6-astra')
+        self.assertFalse(missing.exists())
+        execution = self.rows("SELECT * FROM executions WHERE session='leaf'")
+        self.assertEqual([(row['id'], row['phase'], row['status']) for row in execution],
+                         [('attempt-missing', 'exited', 'start failed')])
+
+    def test_route_change_retires_a_held_starting_attempt_without_a_launch(self):
+        self.root()
+        self.recruit('leaf')
+        held = self.directory / 'held-attempt'
+        held.mkdir()
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
+                       "VALUES('leaf','attempt-held','retained',?,'starting','')",
+                       (str(held),))
+            db.commit()
+        changed = self.route('leaf', 'omp', 'gpt-6-astra', 'high',
+                             ('omp', 'kimi-code/k3', 'low'))
+        self.assertEqual(changed['model'], 'gpt-6-astra')
+        execution = self.rows("SELECT * FROM executions WHERE session='leaf'")
+        self.assertEqual([(row['id'], row['phase'], row['status']) for row in execution],
+                         [('attempt-held', 'exited', 'start failed')])
+
+    def test_route_change_preserves_a_locked_prelaunch_attempt(self):
+        self.root()
+        self.recruit('leaf')
+        attempt = self.directory / 'prelaunch-attempt'
+        attempt.mkdir()
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
+                       "VALUES('leaf','attempt-prelaunch','retained',?,'starting','')",
+                       (str(attempt),))
+            db.commit()
+        self.hold_session_lock('leaf')
+        before = self.assignment('leaf')
+        refused = self.route('leaf', 'omp', 'gpt-6-astra', 'high',
+                             ('omp', 'kimi-code/k3', 'low'), ok=False)
+        self.assertEqual(refused['code'], 2)
+        self.assertIn('configure-refused', refused['stderr'])
+        self.assertEqual(self.assignment('leaf'), before)
+        execution = self.rows("SELECT * FROM executions WHERE session='leaf'")
+        self.assertEqual([(row['id'], row['phase'], row['status']) for row in execution],
+                         [('attempt-prelaunch', 'starting', '')])
+
+    def test_same_route_effort_change_preserves_a_stranded_attempt(self):
+        self.root()
+        self.recruit('leaf')
+        missing = self.directory / 'effort-missing-attempt'
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
+                       "VALUES('leaf','attempt-effort','retained',?,'starting','')",
+                       (str(missing),))
+            db.commit()
+        changed = self.route('leaf', 'omp', 'kimi-code/k3', 'max',
+                             ('omp', 'kimi-code/k3', 'low'))
+        self.assertEqual(changed['effort'], 'max')
+        execution = self.rows("SELECT * FROM executions WHERE session='leaf'")
+        self.assertEqual([(row['id'], row['phase'], row['status']) for row in execution],
+                         [('attempt-effort', 'starting', '')])
+
+    @unittest.skipIf(os.geteuid() == 0, 'requires an unprivileged owner')
+    def test_route_change_keeps_an_attempt_with_unreadable_status(self):
+        self.root()
+        self.recruit('leaf')
+        attempt = self.directory / 'unreadable-attempt'
+        attempt.mkdir()
+        (attempt / 'status').write_text('')
+        attempt.chmod(0)
+        self.addCleanup(attempt.chmod, 0o700)
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
+                       "VALUES('leaf','attempt-unreadable','retained',?,'starting','')",
+                       (str(attempt),))
+            db.commit()
+        before = self.assignment('leaf')
+        refused = self.route('leaf', 'omp', 'gpt-6-astra', 'high',
+                             ('omp', 'kimi-code/k3', 'low'), ok=False)
+        self.assertEqual(refused['code'], 2)
+        self.assertIn('configure-refused', refused['stderr'])
+        self.assertEqual(self.assignment('leaf'), before)
+        execution = self.rows("SELECT * FROM executions WHERE session='leaf'")
+        self.assertEqual([(row['id'], row['phase'], row['status']) for row in execution],
+                         [('attempt-unreadable', 'starting', '')])
+
     def test_effort_change_keeps_the_running_turn_and_launches_the_next_turn_with_max(self):
         self.root()
         self.recruit('leaf', effort='high')
@@ -194,7 +306,7 @@ class Configure(unittest.TestCase):
         self.assertIn('[id: next-task]', next_native['prompt'])
         self.finish(next_stream)
         self.exited('leaf')
-        self.assertEqual(self.call('delivery', 'next-task')['receipt'], 'fixture-native-reviewed')
+        self.assertGreater(self.read_count('next-task'), 0)
 
     def test_effort_change_on_a_stopped_session_preserves_its_stop_and_pending_input(self):
         self.root()
@@ -255,7 +367,7 @@ class Configure(unittest.TestCase):
                 self.assertEqual(native['args'][native['args'].index('--model') + 1], 'gpt-6-astra')
                 self.finish(stream)
                 self.exited('leaf')
-                self.assertEqual(self.call('delivery', message)['receipt'], 'fixture-native-reviewed')
+                self.assertGreater(self.read_count(message), 0)
                 expected = (harness, 'gpt-6-astra', 'high')
 
     def test_the_configured_route_launches_its_next_receive_with_the_new_model(self):
@@ -271,12 +383,12 @@ class Configure(unittest.TestCase):
         self.assertEqual(native['args'][native['args'].index('--thinking') + 1], 'high')
         self.assertEqual(native['cwd'], changed['workspace'])
         self.assertIn('retained-task', native['prompt'])
-        self.assertEqual(self.action(stream, ack=True), {'acknowledged': True})
+        self.assertEqual(self.action(stream, read_prompt=True), {'read': True})
         body = 'The selected provider executed the retained input.'
         self.finish(stream, body)
         self.exited('leaf')
         self.eventually(lambda: any(row['reportBody'] == body for row in self.call('turns', 'leaf')))
-        self.assertEqual(self.call('delivery', 'retained-task')['receipt'], 'fixture-native-reviewed')
+        self.assertGreater(self.read_count('retained-task'), 0)
 
 
 if __name__ == '__main__':

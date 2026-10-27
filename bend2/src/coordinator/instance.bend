@@ -5,7 +5,7 @@ import ../host/session-lock.bend as Lock
 import ../host/sqlite.bend as DB
 import ../host/instance.bend as Custody
 import ../git/text.bend as Tx
-import ../harness/codex-player.bend as Codex
+import ./codex-route.bend as CodexRoute
 import ./delivery.bend as Delivery
 
 # The fixed coordinator drives every session with actionable pending input as
@@ -33,7 +33,7 @@ type Event is Type:
 def coordinator_role_key() -> String:
   "676b676b676b676b676b676b676b676b676b676b676b676b676b676b676b676b"
 
-# Sessions holding actionable pending input: unacknowledged messages on live
+# Sessions holding actionable pending input: unread messages on live
 # sessions with a registered receiver endpoint, excluding terminally stopped
 # sessions like the wake path. The harness travels with the session so every
 # task keeps its native identity down to the route.
@@ -49,13 +49,13 @@ def recorded_endpoint(+db: String, +session: String, index: String) -> IO(String
     IO.pure(String, Tx.trim_nl(saved))
 
 def managed_receiver_sql() -> String:
-  "s.harness='codex' AND s.native<>'' AND CASE WHEN s.endpoint='' THEN 1 WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND (json_array_length(s.endpoint)=0 OR (json_extract(s.endpoint,'$[1]') LIKE '%/codex-inbox-wake.mjs' AND json_extract(s.endpoint,'$[#-5]')='--session' AND json_extract(s.endpoint,'$[#-2]')=s.id AND json_extract(s.endpoint,'$[#-1]')=s.native)) ELSE 0 END"
+  "s.harness='codex' AND s.native<>'' AND (s.endpoint='' OR " ++ CodexRoute.managed_sql("s.endpoint","s.id","s.native") ++ ")"
 
 def native_receiver_sql() -> String:
   Delivery.native_receiver_sql()
 
 def dirty_session_sql() -> String:
-  "SELECT DISTINCT m.recipient || '|' || s.harness || '|' || CASE WHEN (" ++ native_receiver_sql() ++ ") OR (" ++ managed_receiver_sql() ++ ") THEN 'serve' ELSE 'refuse' END FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL AND m.recipient <> '' AND NOT " ++ C.stopped_session_sql("m.recipient") ++ " AND s.harness IN ('codex','omp','muse','claude-code','dsh') ORDER BY m.recipient;"
+  "SELECT DISTINCT m.recipient || '|' || s.harness || '|' || CASE WHEN (" ++ native_receiver_sql() ++ ") OR (" ++ managed_receiver_sql() ++ ") THEN 'serve' ELSE 'refuse' END FROM messages m JOIN sessions s ON s.id=m.recipient WHERE " ++ C.owed_sql("m") ++ " AND m.recipient <> '' AND NOT " ++ C.stopped_session_sql("m.recipient") ++ " AND s.harness IN ('codex','omp','muse','claude-code','dsh','antigravity') ORDER BY m.recipient;"
 
 def split_triple_parts(parts: List<&2,String>, +line: String) -> (String & String) & String:
   match parts:
@@ -170,8 +170,7 @@ def managed_result(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1
 def serve_managed(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     row : String <- IO.try(String,DB.Sql.query(db,"SELECT native FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
-    executable : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.executable()
-    run : Result<&1,&1,U32 & String,String> <- Codex.inbox_follow(executable,db,session,Tx.trim_nl(row))
+    run : Result<&1,&1,U32 & String,String> <- CodexRoute.follow(db,session,Tx.trim_nl(row))
     logged : Result<&1,&1,U32 & String,String> <- Delivery.completed(db,"",run)
     managed_result(logged)
 

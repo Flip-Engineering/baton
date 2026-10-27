@@ -4,7 +4,7 @@
 Preparation copies a selected source revision, supplied coordinator, build log
 and this driver into a new output directory. It starts no native sessions.
 The parent endpoint records notifications; the operator reviews evidence,
-acknowledges messages and promotes findings with the coordinator CLI.
+reads messages and promotes findings with the coordinator CLI.
 Native capture retains every stdout byte, including cumulative message updates.
 """
 import argparse
@@ -59,7 +59,7 @@ def state(db):
             "SELECT name FROM sqlite_master WHERE type='table'")}
         return {table: [dict(row) for row in connection.execute(f'SELECT * FROM {table}')]
                 for table in ['sessions', 'messages', 'turns', 'knowledge',
-                              'knowledge_promotions', 'executions', 'session_stops']
+                              'knowledge_promotions', 'executions', 'session_stops', 'message_reads']
                 if table in tables}
 
 
@@ -209,8 +209,8 @@ def task_text(out, phase):
 Read AGENTS.md. Do not recruit, push, promote findings, change credentials or
 global configuration, stop processes, or run model sessions yourself. Preserve
 the existing source. Use the scoped knowledge command for retrieval; do not read
-the coordinator SQLite file or another Player's workspace. Acknowledge this
-task after reading and handling it with `{cli} acknowledge`.
+the coordinator SQLite file or another Player's workspace. Read this
+task completely with `{cli} inbox`; Baton records the read internally.
 End your native turn after completing the task so the parent receives its report.
 '''
     if phase == 'produce':
@@ -317,13 +317,15 @@ def verify_phase(out, phase, run, before):
     assert call(out, 'inbox', session) == []
     new = [row for row in records(out) if row['wrapper_pid'] not in before]
     assert len(new) == 1 and new[0]['native_exit_code'] == 0, new
-    messages = state(out / 'state.db')['messages']
+    snapshot_state = state(out / 'state.db')
+    messages = snapshot_state['messages']
+    read_ids = {row['message'] for row in snapshot_state['message_reads']}
     seen = visible_finding(out, 'root' if phase == 'produce' else 'consumer')
     evidence_ids = {row['evidenceMessage']['id'] for row in seen
                     if row['id'] in (FINDING, LOCAL_FINDING)}
     reports = [row for row in messages if row['sender'] == session
                and row['kind'] == 'report' and row['id'] not in evidence_ids
-               and row['receipt'] is None]
+               and row['id'] not in read_ids]
     assert reports and all(row['body'].strip() for row in reports)
     deliveries = [json.loads(line) for line in (out / 'parent-deliveries.jsonl').read_text().splitlines()]
     delivered = {row['message']['id']: row['message'] for row in deliveries}
@@ -377,7 +379,7 @@ def run_phase(out, phase):
             if not (out / f'{predecessor}-result.json').exists():
                 raise RuntimeError(f'Complete {predecessor} before {phase}')
             if call(out, 'inbox', 'root'):
-                raise RuntimeError('Root must review and acknowledge its pending messages before the next phase')
+                raise RuntimeError('Root must review and read its pending messages before the next phase')
             if phase == 'consume':
                 recruit(out, run, 'consumer')
             else:
@@ -427,7 +429,7 @@ def collect(out, ident):
         message = dict(row)
     append(out / 'parent-deliveries.jsonl',
            {'received_unix': time.time(), 'pid': os.getpid(), 'message': message})
-    print(json.dumps({'received': ident, 'receipt_written': False}))
+    print(json.dumps({'received': ident, 'read_recorded': False}))
 
 
 def observe_frame(frame, number, offset):

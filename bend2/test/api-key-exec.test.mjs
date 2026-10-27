@@ -16,13 +16,38 @@ import path from 'node:path';
 const execFileAsync = promisify(execFile);
 
 function run(reference, commandArgs, options = {}) {
-  const native = process.env.BATON2_API_KEY_EXEC;
-  if (!native) throw new Error('BATON2_API_KEY_EXEC must name the built native api-key-exec helper');
+  const native = process.env.BATON2_API_KEY_EXEC_TEST;
+  if (!native) throw new Error('BATON2_API_KEY_EXEC_TEST must name the test-only resolver entry');
   return execFileSync(native, [reference, ...commandArgs], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     ...options,
   });
+}
+
+function runProduction(reference, commandArgs, env) {
+  const native = process.env.BATON2_API_KEY_EXEC;
+  if (!native) throw new Error('BATON2_API_KEY_EXEC must name the production api-key-exec helper');
+  return execFileSync(native, [reference, ...commandArgs], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env,
+  });
+}
+
+function assertProductionRefusal(reference, commandArgs) {
+  try {
+    runProduction(reference, commandArgs);
+    assert.fail('the production API-key helper must refuse while credit admission is unavailable');
+  } catch (error) {
+    assert.equal(error.status, 2);
+    assert.equal(error.stdout, '');
+    const refusal = JSON.parse(error.stderr.trim());
+    assert.equal(refusal.condition, 'creditAdmissionUnavailable');
+    assert.equal(refusal.state, 'unavailable');
+    assert.equal(refusal.schema, 'baton2-api-key-exec-v1');
+    return error.stderr;
+  }
 }
 
 async function withSecret(directory, name, content, mode = 0o600) {
@@ -184,7 +209,7 @@ test('a signaled child is re-raised by the helper', async () => {
 test('concurrent forced spec paths never disclose another secret', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'api-key-exec-'));
   try {
-    const native = process.env.BATON2_API_KEY_EXEC;
+    const native = process.env.BATON2_API_KEY_EXEC_TEST;
     const spec = path.join(directory, 'shared-spec');
     const probe = path.join(directory, 'print.mjs');
     await writeFile(probe, 'process.stdout.write(process.env.ANTHROPIC_API_KEY ?? "")');
@@ -226,5 +251,62 @@ test('the child exit code passes through unchanged', async () => {
     assert.equal(error.status, 3);
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('the production helper refuses before reading a secret or starting a child', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'api-key-held-'));
+  try {
+    const secret = 'sk-fixture-never-read';
+    const reference = await withSecret(directory, 'secret', secret);
+    const marker = path.join(directory, 'child-started');
+    const child = path.join(directory, 'child.mjs');
+    await writeFile(child, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, 'started')`);
+    const stderr = assertProductionRefusal(reference, [process.execPath, child]);
+    assert.equal(stderr.includes(secret), false);
+    assert.equal(existsSync(marker), false);
+    assert.equal(await readFile(path.join(directory, 'secret'), 'utf8'), secret + '\n');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('the production helper refuses a marker without a durable authorization source', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'api-key-marker-only-'));
+  try {
+    const reference = await withSecret(directory, 'secret', '[REDACTED]');
+    const attempt = path.join(directory, 'attempt-1');
+    try {
+      runProduction(reference, [process.execPath, path.join(directory, 'child.mjs')], {
+        PATH: process.env.PATH, BATON2_CREDIT_RESERVATION: attempt, BATON_ATTEMPT_DIRECTORY: attempt,
+      });
+      assert.fail('a marker without a database must refuse');
+    } catch (error) {
+      assert.equal(error.status, 2);
+      assert.equal(JSON.parse(error.stderr.trim()).condition, 'creditAdmissionUnavailable');
+    }
+    try {
+      runProduction(reference, [process.execPath, path.join(directory, 'child.mjs')], {
+        PATH: process.env.PATH, BATON2_CREDIT_RESERVATION: path.join(directory, 'other'), BATON_ATTEMPT_DIRECTORY: attempt,
+      });
+      assert.fail('a mismatched marker must refuse');
+    } catch (error) {
+      assert.equal(error.status, 2);
+      assert.equal(JSON.parse(error.stderr.trim()).condition, 'creditAdmissionUnavailable');
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('the production helper refuses missing references without probing them', async () => {
+  const missing = path.join(tmpdir(), 'api-key-held-missing-' + process.pid);
+  const child = path.join(tmpdir(), 'api-key-held-child-' + process.pid + '.mjs');
+  await writeFile(child, 'process.exit(0)');
+  try {
+    assertProductionRefusal('file:' + missing, [process.execPath, child]);
+    assert.equal(existsSync(missing), false);
+  } finally {
+    await rm(child, { force: true });
   }
 });

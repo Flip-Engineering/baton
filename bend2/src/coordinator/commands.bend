@@ -35,7 +35,7 @@ type Command is Data:
   MessageBatch{sender: String, input: String}
   MessageBatchFile{sender: String, path: String}
   TaskContinue{session: String, id: String}
-  Observe{id: String, player: String, event: String, sealed: Bool}
+  Observe{id: String, player: String, event: String, sealed: Bool, harness: String}
   ObserveFile{id: String, player: String, path: String}
   Report{id: String, sender: String, body: String}
   ReportFile{id: String, sender: String, path: String}
@@ -43,7 +43,6 @@ type Command is Data:
   AskFile{id: String, player: String, path: String}
   NativeReply{parent: String, id: String, response: String}
   NativeReplyFile{parent: String, id: String, path: String}
-  Ack{id: String, recipient: String, receipt: String}
   Session{id: String}
   Delivery{id: String}
   InputDetail{id: String}
@@ -67,11 +66,15 @@ type Command is Data:
   ModelsAll{session: String}
   HarnessInventory{}
   UsageWindows{session: String}
-  UsageWindowObserve{session: String, window: String, resets: String, source: String}
   UsageWindowRefresh{session: String}
   Logs{session: String, level: String}
   LogsStorage{}
   LogsClean{session: String}
+  LogsCleanAll{}
+  StoragePolicy{}
+  StoragePreview{session: String}
+  StorageApply{session: String}
+  StorageCollect{session: String}
   Status{}
   Players{}
   LegacySubordinates{}
@@ -84,6 +87,7 @@ type Command is Data:
   Project{path: String}
   ProjectSessions{path: String}
   Resume{session: String, lift_stop: Bool}
+  ClearStop{session: String}
   KnowledgeRecord{id: String, author: String, claim: String, evidence: String, limits: String}
   KnowledgeRecordTyped{id: String, author: String, kind: String, claim: String, evidence: String, limits: String}
   KnowledgeRecordLinked{id: String, author: String, kind: String, claim: String, evidence: String, limits: String, links: String}
@@ -104,8 +108,11 @@ type Command is Data:
   ContextEngines{session: String}
   ContextInstall{module_id: String, source: String}
   ContextQueryFile{owner: String, query: String, path: String}
+  ContextEval{owner: String, query: String, session: String, expression: String, frame: String, cwd: String}
   ContextResult{query: String}
   Serve{}
+  Stall{}
+  StallWake{}
   OwnerStatus{}
   Help{}
   Invalid{}
@@ -144,22 +151,25 @@ def log_schema() -> String:
 # session while it evaluates the pending obligation, so two drivers cannot
 # satisfy one obligation at once and an exit during evaluation does not lose
 # it. States are claimed and unclaimed; the row is deleted when
-# acknowledgement clears the obligation. A separate table keeps existing
+# a recorded read clears the obligation. A separate table keeps existing
 # databases upgrade-safe: every commit runs schema(), so the table
 # self-creates on first commit after upgrade, and readers tolerate absence.
 def wake_claim_schema() -> String:
   "CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);"
+  ++ "CREATE TABLE IF NOT EXISTS wake_claim_tickets (session TEXT NOT NULL REFERENCES sessions(id), directory TEXT NOT NULL, owner TEXT NOT NULL, generation INTEGER NOT NULL, PRIMARY KEY(session,directory));"
 
 def task_input_schema() -> String:
   "CREATE TABLE IF NOT EXISTS task_input_requests (id TEXT PRIMARY KEY NOT NULL,request TEXT NOT NULL CHECK(json_valid(request) AND json_type(request)='object'),result TEXT CHECK(result IS NULL OR (json_valid(result) AND json_type(result)='object')));"
 
-# Usage window observations (#797): one row per observed provider window
-# event, bound to the session's harness, the provider prefix of its model, and
-# the subscription profile label in force (an empty label is account-wide).
-# resets_at NULL is the explicit unknown; the store never invents a reset.
+# Provider refusal evidence (#797): one row per provider exhaustion terminal,
+# bound to the session's harness, the provider prefix of its model, and the
+# account label in force. usage_reads (#1025) keeps one row per live read of a
+# provider's usage API; the seat's hold derives from those rows only.
 def usage_windows_schema() -> String:
   "CREATE TABLE IF NOT EXISTS usage_windows (id INTEGER PRIMARY KEY AUTOINCREMENT, recorded_at INTEGER NOT NULL, harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', account TEXT NOT NULL DEFAULT '', window TEXT NOT NULL, resets_at INTEGER, reset_source TEXT NOT NULL, used_fraction REAL, receipt TEXT NOT NULL, message TEXT NOT NULL DEFAULT '');"
   ++ "CREATE INDEX IF NOT EXISTS idx_usage_windows_match ON usage_windows(harness, provider, account, recorded_at);"
+  ++ "CREATE TABLE IF NOT EXISTS usage_reads (id INTEGER PRIMARY KEY AUTOINCREMENT, observed_at INTEGER NOT NULL, provider TEXT NOT NULL, account TEXT NOT NULL DEFAULT '', session TEXT NOT NULL DEFAULT '', trigger TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('read','unreadable')), source TEXT NOT NULL DEFAULT '', reason TEXT NOT NULL DEFAULT '', document TEXT NOT NULL CHECK(json_valid(document)));"
+  ++ "CREATE INDEX IF NOT EXISTS idx_usage_reads_scope ON usage_reads(provider, account, id);"
 
 def schema() -> String:
   wake_claim_schema()
@@ -167,6 +177,7 @@ def schema() -> String:
   ++ usage_windows_schema()
   ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);"
+  ++ "DROP INDEX IF EXISTS messages_pending;CREATE INDEX IF NOT EXISTS messages_recipient_seq ON messages(recipient,seq,id);"
   ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);"
   ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
   ++ MessageStatus.schema()
@@ -177,11 +188,19 @@ def schema() -> String:
 def stopped_session_sql(session: String) -> String:
   "EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ session ++ ")"
 
+# Message lifecycle is delivered/read; the canonical predicates live in
+# message-status.bend so every gate derives from the same expression.
+def owed_sql(+row: String) -> String:
+  MessageStatus.owed_sql(row)
+
+def read_sql(+row: String) -> String:
+  MessageStatus.read_sql(row)
+
 def execution_input_sql(kind: String) -> String:
   kind ++ " IN ('task','guidance','recovery','task-assignment','task-continuation','completion-confirmed')"
 
 def input_state_sql(+row: String) -> String:
-  "CASE WHEN " ++ stopped_session_sql(row ++ ".recipient") ++ " THEN json_object('stopId',(SELECT id FROM session_stops WHERE session=" ++ row ++ ".recipient),'executionDisposition',CASE WHEN " ++ row ++ ".receipt IS NOT NULL THEN 'accepted' WHEN " ++ execution_input_sql(row ++ ".kind") ++ " THEN 'stopped' ELSE 'retained-for-stopped-session' END) ELSE json('{}') END"
+  "CASE WHEN " ++ stopped_session_sql(row ++ ".recipient") ++ " THEN json_object('stopId',(SELECT id FROM session_stops WHERE session=" ++ row ++ ".recipient),'executionDisposition',CASE WHEN " ++ read_sql(row) ++ " THEN 'accepted' WHEN " ++ execution_input_sql(row ++ ".kind") ++ " THEN 'stopped' ELSE 'retained-for-stopped-session' END) ELSE json('{}') END"
 
 # Session-state cause for a terminal stop, unsupported route, absent receiver,
 # or failed provider attempt.
@@ -208,17 +227,18 @@ def omp_terminal_error_sql_expr(+event: String) -> String:
 
 def blocked_cause_sql(+session: String) -> String:
   "CASE WHEN " ++ stopped_session_sql(session) ++ " THEN 'terminal-stop'"
-  ++ " WHEN (SELECT route.harness FROM sessions AS route WHERE route.id=" ++ session ++ ") NOT IN ('codex','omp','muse','claude-code','dsh') THEN 'harness-unsupported'"
+  ++ " WHEN (SELECT route.harness FROM sessions AS route WHERE route.id=" ++ session ++ ") NOT IN ('codex','omp','muse','claude-code','dsh','antigravity') THEN 'harness-unsupported'"
   ++ " WHEN " ++ blocked_endpoint_absent_sql(session) ++ " AND NOT " ++ direct_app_route_sql(session) ++ " THEN 'endpoint-absent'"
   ++ " WHEN EXISTS(SELECT 1 FROM executions e WHERE e.session=" ++ session ++ " AND e.phase='exited' AND (e.status<>'exit 0' OR EXISTS(SELECT 1 FROM turns t WHERE t.id=e.id AND t.worker=e.session AND (coalesce(json_extract(t.event,'$.is_error'),0)=1 OR " ++ omp_terminal_error_sql_expr("t.event") ++ " OR (json_extract(t.event,'$.payload.kind')='run_terminal' AND json_extract(t.event,'$.payload.terminal')<>'completed'))))) THEN 'provider-failure'"
   ++ " ELSE '' END"
 
 # Wake and ownership projection shared by every session surface. Pending input
-# uses the continuation count: unacknowledged input on an unstopped session.
+# uses the continuation count: owed (delivered, not yet read) input on an
+# unstopped session.
 # The claim reads the wake_claims table, which every commit creates through
 # schema() before any surface query runs in the same transaction.
 def wake_state_sql(+session: String) -> String:
-  "json_object('pending',(SELECT count(*) FROM messages WHERE recipient=" ++ session ++ " AND receipt IS NULL AND NOT " ++ stopped_session_sql(session) ++ "),'claim',coalesce((SELECT state FROM wake_claims WHERE session=" ++ session ++ "),'') )"
+  "json_object('pending',(SELECT count(*) FROM messages WHERE recipient=" ++ session ++ " AND " ++ owed_sql("messages") ++ " AND NOT " ++ stopped_session_sql(session) ++ "),'claim',coalesce((SELECT state FROM wake_claims WHERE session=" ++ session ++ "),'') )"
 
 # The accountable owner for blocked input: the recorded parent, else the
 # registered operator. This mirrors report_recipient without naming it, which
@@ -249,8 +269,10 @@ def task_state_sql(+session: String) -> String:
 
 # A current completion request delivers the finished work to its coordinator.
 # Further input wakes the worker; a newer assignment can generate continuation.
+# A normal terminal with no other input uses this continuation to keep an open
+# assignment active and remind the worker to request completion.
 def task_continuation_sql(+session: String, +id: String) -> String:
-  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id ++ ":task-continuation") ++ ",worker.id,worker.id,'task-continuation','Continue assignment ' || (SELECT id FROM messages WHERE seq=" ++ task_assignment_sql("worker.id") ++ ") || '. Review the complete stored assignment and current inbox, and carry out the coordinator-authorized work. Explicit operator stops remain effective.' FROM sessions worker WHERE worker.id=" ++ q(session) ++ " AND " ++ task_open_sql("worker.id") ++ " AND " ++ task_request_sql("worker.id") ++ " IS NULL AND NOT EXISTS(SELECT 1 FROM messages owed WHERE owed.recipient=worker.id AND owed.receipt IS NULL);"
+  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id ++ ":task-continuation") ++ ",worker.id,worker.id,'task-continuation','Continue assignment ' || (SELECT id FROM messages WHERE seq=" ++ task_assignment_sql("worker.id") ++ ") || '. Review the complete stored assignment and current inbox, and carry out the coordinator-authorized work. Before ending this turn, use completion-request --text SUMMARY to request the conductor completion decision. Explicit operator stops remain effective.' FROM sessions worker WHERE worker.id=" ++ q(session) ++ " AND " ++ task_open_sql("worker.id") ++ " AND " ++ task_request_sql("worker.id") ++ " IS NULL AND NOT EXISTS(SELECT 1 FROM messages owed WHERE owed.recipient=worker.id AND " ++ owed_sql("owed") ++ ");"
 
 def session_state_sql(+session: String) -> String:
   "json_patch(coalesce((SELECT json_object('stop',json_object('id',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''))) FROM session_stops WHERE session=" ++ session ++ "),json('{}'))"
@@ -313,7 +335,7 @@ def configure_matches(session: String, harness: String, model: String, effort: S
   "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(session) ++ " AND harness=" ++ q(harness) ++ " AND model=" ++ q(model) ++ " AND effort=" ++ q(effort) ++ ")"
 
 def configure_admitted(+session: String, +harness: String, +model: String, +endpoint: String, +expected_harness: String, +expected_model: String, expected_effort: String) -> String:
-  "(" ++ q(harness) ++ " IN ('codex','omp','muse','claude-code','dsh') AND " ++ q(model) ++ "<>'' AND " ++ configure_matches(session,expected_harness,expected_model,expected_effort)
+  "(" ++ q(harness) ++ " IN ('codex','omp','muse','claude-code','dsh','antigravity') AND " ++ q(model) ++ "<>'' AND " ++ configure_matches(session,expected_harness,expected_model,expected_effort)
   ++ " AND ((" ++ q(harness) ++ "=" ++ q(expected_harness) ++ " AND " ++ q(model) ++ "=" ++ q(expected_model) ++ ") OR (NOT " ++ stopped_session_sql(q(session))
   ++ " AND NOT EXISTS(SELECT 1 FROM executions WHERE session=" ++ q(session) ++ " AND phase<>'exited')"
   ++ " AND " ++ endpoint_admitted(endpoint) ++ ")))"
@@ -340,13 +362,13 @@ def message_conflict_sql(+id: String, +sender: String, +recipient: String, +kind
 def delivery_row() -> String:
   "json_patch(json_object('id',m.id,'sender',m.sender,'recipient',m.recipient,'kind',m.kind,'body',m.body,'receipt',m.receipt,'harness',s.harness,'native',s.native,'endpoint',s.endpoint,'endpointArgv'," ++ endpoint_argv("s.endpoint") ++ ")," ++ input_state_sql("m") ++ ")"
 
-# An input detail keeps the exact stored message and recipient-owned receipt
+# An input detail keeps the exact stored message and its delivered/read state
 # beside current recipient state. Historical wake outcomes and the ordinary
 # input-to-attempt relation are not stored, so both remain explicit unknowns.
 def input_detail_row() -> String:
   "json_object('message',json_patch(" ++ delivery_row() ++ ",json_object('seq',m.seq))"
   ++ ",'admission',json_object('status','admitted','sequence',m.seq)"
-  ++ ",'handling',json_object('status',CASE WHEN m.receipt IS NULL THEN 'pending' ELSE 'acknowledged' END,'owner',m.recipient,'receipt',m.receipt)"
+  ++ ",'handling',json_object('status',CASE WHEN " ++ read_sql("m") ++ " THEN 'read' ELSE 'pending' END,'owner',m.recipient,'receipt',m.receipt)"
   ++ ",'wake',json_object('historicalStatus','unrecorded','condition','Historical per-input wake outcomes are not stored.','current'," ++ wake_state_sql("s.id") ++ ")"
   ++ ",'recipientCurrent',json_patch(json_object('scope','current','id',s.id,'parent',s.parent,'role'," ++ public_role("s.id") ++ ",'route',json_object('harness',s.harness,'native',s.native,'endpoint',s.endpoint,'endpointArgv'," ++ endpoint_argv("s.endpoint") ++ "),'execution',(SELECT json_object('attempt',id,'mode',mode,'directory',directory,'phase',phase,'status',status,'qualification','recorded') FROM executions WHERE session=s.id),'taskCompletion'," ++ task_state_sql("s.id") ++ ")," ++ session_state_sql("s.id") ++ ")"
   ++ ",'attemptRelation',json_object('status','unrecorded','condition','No durable input-to-attempt relation is stored for ordinary retained input. The recipient current execution is a current-state reference.')"
@@ -369,6 +391,13 @@ def terminal_span(+event: String) -> String:
 def report_recipient(+session: String) -> String:
   "(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN report_sender.parent WHEN " ++ assigned_role("report_sender.id") ++ "='conductor' THEN (SELECT report_operator.id FROM sessions report_operator WHERE report_operator.id='operator' AND report_operator.parent IS NULL AND " ++ assigned_role("report_operator.id") ++ "='operator') END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")"
 
+# A worker whose turn ends with its assignment open, no completion request and
+# no owed input has nothing that starts its next turn (#1054). This report goes
+# to the coordinator beside the turn report, so the coordinator decides whether
+# to continue the work or to wait for a completion request.
+def open_assignment_report_sql(+id: String, +session: String) -> String:
+  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id ++ ":assignment") ++ ",worker.id," ++ report_recipient("worker.id") ++ ",'report','Turn ' || " ++ q(id) ++ " || ' ended with assignment ' || (SELECT id FROM messages WHERE seq=" ++ task_assignment_sql("worker.id") ++ ") || ' still open. ' || worker.id || ' sent no completion request and has no owed input, so no further turn starts until its coordinator acts. Run continue-task --session ' || worker.id || ' to continue the work, or send guidance asking for a completion request.' FROM sessions worker WHERE worker.id=" ++ q(session) ++ " AND " ++ report_recipient("worker.id") ++ " IS NOT NULL AND " ++ task_open_sql("worker.id") ++ " AND " ++ task_request_sql("worker.id") ++ " IS NULL AND NOT EXISTS(SELECT 1 FROM messages owed WHERE owed.recipient=worker.id AND " ++ owed_sql("owed") ++ ");"
+
 def last_assistant_sql(+event: String) -> String:
   "(SELECT " ++ last_assistant_sql_expr("native_frame.value") ++ " FROM (SELECT " ++ q(event) ++ " AS value) native_frame)"
 
@@ -378,7 +407,7 @@ def omp_terminal_error_sql(+event: String) -> String:
 # The report carries the observed provider status and diagnostic. The native
 # log retains the complete terminal frame.
 def omp_terminal_error_text_sql_expr(+event: String) -> String:
-  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN (SELECT 'OMP provider failure: stopReason=error, errorStatus=' || coalesce(CAST(json_extract(m.value,'$.errorStatus') AS TEXT),'unknown') || '; ' || coalesce(json_extract(m.value,'$.errorMessage'),'the retained frame carries no provider diagnostic') FROM (SELECT " ++ last_assistant_sql_expr(event) ++ " AS value) m WHERE json_extract(m.value,'$.stopReason')='error') END"
+  "CASE WHEN json_valid(" ++ event ++ ") THEN CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN (SELECT 'OMP provider failure: stopReason=error, errorStatus=' || coalesce(CAST(json_extract(m.value,'$.errorStatus') AS TEXT),'unknown') || '; ' || coalesce(json_extract(m.value,'$.errorMessage'),'the retained frame carries no provider diagnostic') FROM (SELECT " ++ last_assistant_sql_expr(event) ++ " AS value) m WHERE json_extract(m.value,'$.stopReason')='error') END END"
 
 def omp_terminal_error_text_sql(+event: String) -> String:
   "(SELECT " ++ omp_terminal_error_text_sql_expr("native_frame.value") ++ " FROM (SELECT " ++ q(event) ++ " AS value) native_frame)"
@@ -389,18 +418,21 @@ def assistant_text_sql_expr(+event: String) -> String:
 def terminal_body_expr(+event: String) -> String:
   "coalesce(" ++ omp_terminal_error_text_sql_expr(event) ++ ",CASE WHEN json_extract(" ++ event ++ ",'$.is_error')=1 OR (json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ event ++ ",'$.payload.terminal')<>'completed') THEN " ++ event ++ " ELSE coalesce(json_extract(" ++ event ++ ",'$.result'),CASE WHEN json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ event ++ ",'$.payload.text') END," ++ assistant_text_sql_expr(event) ++ "," ++ event ++ ") END)"
 
-def observe_identity_sql_expr(+player: String, +event: String) -> String:
-  "UPDATE sessions SET native=coalesce(CASE WHEN json_extract(" ++ event ++ ",'$.type')='response' AND json_extract(" ++ event ++ ",'$.command')='get_state' AND json_extract(" ++ event ++ ",'$.success')=1 THEN json_extract(" ++ event ++ ",'$.data.sessionId') END,CASE WHEN json_extract(" ++ event ++ ",'$.type')='thread.started' THEN json_extract(" ++ event ++ ",'$.thread_id') END,json_extract(" ++ event ++ ",'$.session_id'),CASE WHEN json_extract(" ++ event ++ ",'$.type')='session' THEN json_extract(" ++ event ++ ",'$.id') END,CASE WHEN json_extract(" ++ event ++ ",'$.stream.kind')='session' THEN json_extract(" ++ event ++ ",'$.stream.id') END,native),observed_model=coalesce(CASE WHEN json_extract(" ++ event ++ ",'$.type')='response' AND json_extract(" ++ event ++ ",'$.command')='get_state' AND json_extract(" ++ event ++ ",'$.success')=1 THEN json_extract(" ++ event ++ ",'$.data.model.provider') || '/' || json_extract(" ++ event ++ ",'$.data.model.id') END,CASE WHEN json_extract(" ++ event ++ ",'$.payload_type')='run.model.configured' THEN json_extract(" ++ event ++ ",'$.payload.model_id') END,CASE WHEN json_extract(" ++ event ++ ",'$.message.provider') IS NOT NULL AND json_extract(" ++ event ++ ",'$.message.model') IS NOT NULL THEN json_extract(" ++ event ++ ",'$.message.provider') || '/' || json_extract(" ++ event ++ ",'$.message.model') END,json_extract(" ++ event ++ ",'$.message.model'),json_extract(" ++ event ++ ",'$.model'),observed_model) WHERE id=" ++ q(player) ++ ";"
+# Identity and model frames update the session only when the attempt ran under the
+# session's configured harness. A replayed frame of an earlier harness, after a route
+# change, matches no row, so it cannot write its conversation id back to the session.
+def observe_identity_sql_expr(+player: String, +event: String, +harness: String) -> String:
+  "UPDATE sessions SET native=coalesce(CASE WHEN json_extract(" ++ event ++ ",'$.type')='response' AND json_extract(" ++ event ++ ",'$.command')='get_state' AND json_extract(" ++ event ++ ",'$.success')=1 THEN json_extract(" ++ event ++ ",'$.data.sessionId') END,CASE WHEN json_extract(" ++ event ++ ",'$.type')='thread.started' THEN json_extract(" ++ event ++ ",'$.thread_id') END,json_extract(" ++ event ++ ",'$.session_id'),CASE WHEN json_extract(" ++ event ++ ",'$.type')='session' THEN json_extract(" ++ event ++ ",'$.id') END,CASE WHEN json_extract(" ++ event ++ ",'$.stream.kind')='session' THEN json_extract(" ++ event ++ ",'$.stream.id') END,native),observed_model=coalesce(CASE WHEN json_extract(" ++ event ++ ",'$.type')='response' AND json_extract(" ++ event ++ ",'$.command')='get_state' AND json_extract(" ++ event ++ ",'$.success')=1 THEN json_extract(" ++ event ++ ",'$.data.model.provider') || '/' || json_extract(" ++ event ++ ",'$.data.model.id') END,CASE WHEN json_extract(" ++ event ++ ",'$.payload_type')='run.model.configured' THEN json_extract(" ++ event ++ ",'$.payload.model_id') END,CASE WHEN json_extract(" ++ event ++ ",'$.message.provider') IS NOT NULL AND json_extract(" ++ event ++ ",'$.message.model') IS NOT NULL THEN json_extract(" ++ event ++ ",'$.message.provider') || '/' || json_extract(" ++ event ++ ",'$.message.model') END,json_extract(" ++ event ++ ",'$.message.model'),json_extract(" ++ event ++ ",'$.model'),observed_model) WHERE id=" ++ q(player) ++ " AND harness=" ++ q(harness) ++ ";"
 
 # Completion record for issue #685. Every terminal observation records its
 # completion report and turn row. The answer carries the pending-input
-# reconciliation state, counted over unacknowledged input on unstopped
+# reconciliation state, counted over unread input on unstopped
 # sessions.
 def completion_pending_sql(+player: String) -> String:
-  "(SELECT count(*) FROM messages WHERE recipient=" ++ q(player) ++ " AND receipt IS NULL AND NOT " ++ stopped_session_sql(q(player)) ++ ")"
+  "(SELECT count(*) FROM messages WHERE recipient=" ++ q(player) ++ " AND " ++ owed_sql("messages") ++ " AND NOT " ++ stopped_session_sql(q(player)) ++ ")"
 
 def completion_oldest_sql(+player: String) -> String:
-  "(SELECT id FROM messages WHERE recipient=" ++ q(player) ++ " AND receipt IS NULL AND NOT " ++ stopped_session_sql(q(player)) ++ " ORDER BY seq LIMIT 1)"
+  "(SELECT id FROM messages WHERE recipient=" ++ q(player) ++ " AND " ++ owed_sql("messages") ++ " AND NOT " ++ stopped_session_sql(q(player)) ++ " ORDER BY seq LIMIT 1)"
 
 def completion_sql_expr(+id: String, +player: String, +event: String) -> String:
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ ",id," ++ report_recipient("sessions.id") ++ ",'report'," ++ terminal_body_expr(event) ++ " FROM sessions WHERE id=" ++ q(player) ++ " AND " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ message_upsert() ++ message_conflict_sql(q(id),q(player),report_recipient(q(player)),"'report'",terminal_body_expr(event),report_recipient(q(player)) ++ " IS NOT NULL AND " ++ terminal_expr(event))
@@ -421,9 +453,9 @@ def completion_sql(+id: String, +player: String, +event: String) -> String:
 def observe_completion_sql(+id: String, +player: String, +event: String, sealed: Bool) -> String:
   Bool.pick(String,sealed,"",completion_sql(id,player,event))
 
-def observe_sql(+id: String, +player: String, +event: String, sealed: Bool) -> String:
+def observe_sql(+id: String, +player: String, +event: String, sealed: Bool, +harness: String) -> String:
   observation_frame_sql(event)
-  ++ observe_identity_sql_expr(player,observation_frame())
+  ++ observe_identity_sql_expr(player,observation_frame(),harness)
   ++ Bool.pick(String,sealed,"",completion_sql_expr(id,player,observation_frame()))
   ++ "DROP TABLE temp.baton_observation_frame;"
 
@@ -441,7 +473,7 @@ def tight_peers(+sender: String, +recipient: String) -> String:
   "(" ++ peers(sender,recipient) ++ " AND " ++ assigned_role(sender) ++ "<>'operator' AND " ++ assigned_role(recipient) ++ "<>'operator' AND EXISTS(SELECT 1 FROM ensemble_members a JOIN ensemble_members b ON b.ensemble=a.ensemble JOIN ensembles e ON e.id=a.ensemble WHERE a.session=" ++ sender ++ " AND b.session=" ++ recipient ++ " AND e.coupling='tight'))"
 
 def operator_route(+sender: String, +recipient: String) -> String:
-  "((" ++ assigned_role(sender) ++ "='operator' AND " ++ assigned_role(recipient) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ " AND (parent IS NULL OR parent=" ++ sender ++ "))) OR (" ++ assigned_role(recipient) ++ "='operator' AND " ++ assigned_role(sender) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ " AND parent IS NULL)))"
+  "((" ++ assigned_role(sender) ++ "='operator' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ " AND (parent=" ++ sender ++ " OR (parent IS NULL AND " ++ assigned_role(recipient) ++ "='conductor')))) OR (" ++ assigned_role(recipient) ++ "='operator' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ " AND (parent=" ++ recipient ++ " OR (parent IS NULL AND " ++ assigned_role(sender) ++ "='conductor')))))"
 
 def message_route(+sender: String, +recipient: String) -> String:
   "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ ") AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ ") AND " ++ sender ++ "<>" ++ recipient ++ " AND ((" ++ assigned_role(sender) ++ "<>'operator' AND " ++ assigned_role(recipient) ++ "<>'operator' AND (coalesce((SELECT parent FROM sessions WHERE id=" ++ sender ++ ")=" ++ recipient ++ ",0) OR coalesce((SELECT parent FROM sessions WHERE id=" ++ recipient ++ ")=" ++ sender ++ ",0) OR (" ++ assigned_role(sender) ++ "='conductor' AND " ++ descendant(sender,recipient) ++ ") OR " ++ tight_peers(sender,recipient) ++ ")) OR " ++ operator_route(sender,recipient) ++ "))"
@@ -530,7 +562,7 @@ def section_member_sql(+ensemble: String, +id: String, +owner: String, +player: 
   ++ "SELECT json_object('ensemble'," ++ q(ensemble) ++ ",'section'," ++ q(id) ++ ",'player'," ++ q(player) ++ ",'membership'," ++ q(action) ++ ") WHERE " ++ section_member_admitted(ensemble,id,owner,player,action) ++ ";"
 
 def players_json(condition: String) -> String:
-  "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',s.id,'kind'," ++ session_kind("s.id") ++ ",'role'," ++ public_role("s.id") ++ ",'parent',s.parent,'harness',s.harness,'model',s.model,'effort',s.effort,'workspace',s.workspace,'branch',s.branch,'base',s.base,'native',s.native,'observedHarness',s.observed_harness,'observedModel',s.observed_model,'observedEffort',s.observed_effort,'execution',(SELECT json_object('attempt',id,'mode',mode,'phase',phase,'status',status) FROM executions WHERE session=s.id),'lastTurnId',(SELECT t.id FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'lastTurnEvent',(SELECT coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')) FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'latestReport',(SELECT m.body FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'latestReportId',(SELECT m.id FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'pendingCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL AND NOT (" ++ stopped_session_sql("s.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ task_state_sql("s.id") ++ ")," ++ session_state_sql("s.id") ++ ") AS item FROM sessions s WHERE " ++ condition ++ " ORDER BY s.id))"
+  "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',s.id,'kind'," ++ session_kind("s.id") ++ ",'role'," ++ public_role("s.id") ++ ",'parent',s.parent,'harness',s.harness,'model',s.model,'effort',s.effort,'workspace',s.workspace,'branch',s.branch,'base',s.base,'native',s.native,'observedHarness',s.observed_harness,'observedModel',s.observed_model,'observedEffort',s.observed_effort,'execution',(SELECT json_object('attempt',id,'mode',mode,'phase',phase,'status',status) FROM executions WHERE session=s.id),'lastTurnId',(SELECT t.id FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'lastTurnEvent',(SELECT coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')) FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'latestReport',(SELECT m.body FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'latestReportId',(SELECT m.id FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'pendingCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND " ++ owed_sql("messages") ++ " AND NOT (" ++ stopped_session_sql("s.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ task_state_sql("s.id") ++ ")," ++ session_state_sql("s.id") ++ ") AS item FROM sessions s WHERE " ++ condition ++ " ORDER BY s.id))"
 
 # The per-session orchestra surface, computed once per row. The item JSON is
 # the players surface item over sessions s; role carries the raw assigned
@@ -539,7 +571,7 @@ def players_json(condition: String) -> String:
 # clause in orchestra_sql, so the enlarged session state is assembled once
 # instead of once per role array.
 def surface_item() -> String:
-  "json_patch(json_object('id',s.id,'kind'," ++ session_kind("s.id") ++ ",'role'," ++ public_role("s.id") ++ ",'parent',s.parent,'harness',s.harness,'model',s.model,'effort',s.effort,'workspace',s.workspace,'branch',s.branch,'base',s.base,'native',s.native,'observedHarness',s.observed_harness,'observedModel',s.observed_model,'observedEffort',s.observed_effort,'execution',(SELECT json_object('attempt',id,'mode',mode,'phase',phase,'status',status) FROM executions WHERE session=s.id),'lastTurnId',(SELECT t.id FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'lastTurnEvent',(SELECT coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')) FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'latestReport',(SELECT m.body FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'latestReportId',(SELECT m.id FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'pendingCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL AND NOT (" ++ stopped_session_sql("s.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ task_state_sql("s.id") ++ ")," ++ session_state_sql("s.id") ++ ")"
+  "json_patch(json_object('id',s.id,'kind'," ++ session_kind("s.id") ++ ",'role'," ++ public_role("s.id") ++ ",'parent',s.parent,'harness',s.harness,'model',s.model,'effort',s.effort,'workspace',s.workspace,'branch',s.branch,'base',s.base,'native',s.native,'observedHarness',s.observed_harness,'observedModel',s.observed_model,'observedEffort',s.observed_effort,'execution',(SELECT json_object('attempt',id,'mode',mode,'phase',phase,'status',status) FROM executions WHERE session=s.id),'lastTurnId',(SELECT t.id FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'lastTurnEvent',(SELECT coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')) FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'latestReport',(SELECT m.body FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'latestReportId',(SELECT m.id FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'pendingCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND " ++ owed_sql("messages") ++ " AND NOT (" ++ stopped_session_sql("s.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ task_state_sql("s.id") ++ ")," ++ session_state_sql("s.id") ++ ")"
 
 def orchestra_surface() -> String:
   String.concat(["(SELECT ", surface_item(), " AS item,", assigned_role("s.id"), " AS role,s.id AS id FROM sessions s)"])
@@ -553,8 +585,8 @@ def orchestra_sql() -> String:
 def sql(command: Command) -> String:
   match command:
     case TaskContinue{+session,+id}:
-      task_continuation_sql(session,id) ++ "SELECT json_object('session',id,'continuationId',(SELECT id FROM messages WHERE id=" ++ q(id ++ ":task-continuation") ++ " AND recipient=" ++ q(session) ++ " AND receipt IS NULL),'taskCompletion'," ++ task_state_sql("sessions.id") ++ ") FROM sessions WHERE id=" ++ q(session) ++ ";"
-    case Observe{id,player,event,sealed}: observe_sql(id,player,event,sealed)
+      task_continuation_sql(session,id) ++ "SELECT json_object('session',id,'continuationId',(SELECT id FROM messages WHERE id=" ++ q(id ++ ":task-continuation") ++ " AND recipient=" ++ q(session) ++ " AND " ++ owed_sql("messages") ++ "),'taskCompletion'," ++ task_state_sql("sessions.id") ++ ") FROM sessions WHERE id=" ++ q(session) ++ ";"
+    case Observe{id,player,event,sealed,harness}: observe_sql(id,player,event,sealed,harness)
     case Attach{+id, harness, native, endpoint}:
       "INSERT INTO sessions(id,harness,native,endpoint) VALUES(" ++ q(id) ++ "," ++ q(harness) ++ "," ++ q(native) ++ "," ++ q(endpoint) ++ ") ON CONFLICT(id) DO UPDATE SET harness=excluded.harness,native=excluded.native,endpoint=excluded.endpoint WHERE sessions.parent IS NULL;"
       ++ "SELECT json_object('error','attach-parent-conflict','session',id,'parent',parent,'condition','The session is already registered with a parent.','next','Read session ID and use connect or receiver to update its native endpoint.') FROM sessions WHERE id=" ++ q(id) ++ " AND parent IS NOT NULL;"
@@ -578,28 +610,26 @@ def sql(command: Command) -> String:
       parent_message_sql(id,sender,"report",body)
     case Ask{+id, +player, +body}:
       parent_message_sql(id,player,"question",body)
-    case Ack{+id, +recipient, receipt}:
-      "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";DELETE FROM wake_claims WHERE session=" ++ q(recipient) ++ " AND NOT EXISTS(SELECT 1 FROM messages WHERE recipient=" ++ q(recipient) ++ " AND receipt IS NULL);SELECT json_object('id',id,'receipt',receipt) FROM messages WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";"
     case Session{id}: session_result(id)
     case Delivery{id}:
       "SELECT " ++ delivery_row() ++ " FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ q(id) ++ ";"
     case InputDetail{id}:
       "SELECT " ++ input_detail_row() ++ " FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ q(id) ++ ";"
     case Pending{}:
-      "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ delivery_row() ++ " AS item FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL ORDER BY m.seq);"
-    case PendingIndex{}: message_index_sql("messages m JOIN sessions s ON s.id=m.recipient","1","m.receipt IS NULL")
+      "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ delivery_row() ++ " AS item FROM messages m JOIN sessions s ON s.id=m.recipient WHERE " ++ owed_sql("m") ++ " ORDER BY m.seq);"
+    case PendingIndex{}: message_index_sql("messages m JOIN sessions s ON s.id=m.recipient","1",owed_sql("m"))
     case Inbox{id}:
-      "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body)," ++ input_state_sql("messages") ++ ") AS item FROM messages WHERE recipient=" ++ q(id) ++ " AND receipt IS NULL ORDER BY seq);"
-    case InboxIndex{id}: message_index_sql("messages m","m.recipient=" ++ q(id),"m.receipt IS NULL")
+      "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body)," ++ input_state_sql("messages") ++ ") AS item FROM messages WHERE recipient=" ++ q(id) ++ " AND " ++ owed_sql("messages") ++ " ORDER BY seq);"
+    case InboxIndex{id}: message_index_sql("messages m","m.recipient=" ++ q(id),owed_sql("m"))
     case Outbox{id}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(" ++ delivery_row() ++ ",json_object('detailRead',json_array('delivery',m.id))) AS item FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.sender=" ++ q(id) ++ " ORDER BY m.seq);"
     case MessageIndex{inbox,condition,state}:
       message_index_sql(Bool.pick(String,inbox,"messages m","messages m JOIN sessions s ON s.id=m.recipient"),condition,state)
     case Status{}:
-      "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ session_kind("sessions.id") ++ ",'role'," ++ public_role("sessions.id") ++ ",'pending',(SELECT count(*) FROM messages WHERE recipient=sessions.id AND receipt IS NULL AND NOT (" ++ stopped_session_sql("sessions.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ task_state_sql("sessions.id") ++ ")," ++ session_state_sql("sessions.id") ++ ") AS item FROM sessions ORDER BY id);"
+      "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ session_kind("sessions.id") ++ ",'role'," ++ public_role("sessions.id") ++ ",'pending',(SELECT count(*) FROM messages WHERE recipient=sessions.id AND " ++ owed_sql("messages") ++ " AND NOT (" ++ stopped_session_sql("sessions.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ task_state_sql("sessions.id") ++ ")," ++ session_state_sql("sessions.id") ++ ") AS item FROM sessions ORDER BY id);"
     case Players{}: "SELECT " ++ players_json(assigned_role("s.id") ++ "<>'operator'") ++ ";"
     case LegacySubordinates{}:
-      "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',s.id,'parent',s.parent,'harness',s.harness,'model',s.model,'effort',s.effort,'workspace',s.workspace,'branch',s.branch,'base',s.base,'native',s.native,'lastTurnId',(SELECT t.id FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'lastTurnEvent',(SELECT coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')) FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'latestReport',(SELECT m.body FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'latestReportId',(SELECT m.id FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'pendingCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL AND NOT (" ++ stopped_session_sql("s.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ task_state_sql("s.id") ++ ")," ++ session_state_sql("s.id") ++ ") AS item FROM sessions s WHERE s.parent IS NOT NULL ORDER BY s.id);"
+      "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',s.id,'parent',s.parent,'harness',s.harness,'model',s.model,'effort',s.effort,'workspace',s.workspace,'branch',s.branch,'base',s.base,'native',s.native,'lastTurnId',(SELECT t.id FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'lastTurnEvent',(SELECT coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')) FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'latestReport',(SELECT m.body FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'latestReportId',(SELECT m.id FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'pendingCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND " ++ owed_sql("messages") ++ " AND NOT (" ++ stopped_session_sql("s.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ task_state_sql("s.id") ++ ")," ++ session_state_sql("s.id") ++ ") AS item FROM sessions s WHERE s.parent IS NOT NULL ORDER BY s.id);"
     case PlayerRead{id}: session_result_where("id=" ++ q(id) ++ " AND " ++ assigned_role("sessions.id") ++ "<>'operator'")
     case Section{ensemble,id,owner,capability}: section_sql(ensemble,id,owner,capability)
     case SectionRead{ensemble,id}: "SELECT " ++ section_row("sections") ++ " FROM sections WHERE ensemble=" ++ q(ensemble) ++ " AND id=" ++ q(id) ++ ";"
@@ -610,6 +640,7 @@ def sql(command: Command) -> String:
     case Project{path}: ""
     case ProjectSessions{path}: ""
     case Resume{session,lift_stop}: ""
+    case ClearStop{session}: ""
     case ObserveFile{id,player,path}: ""
     case ReportFile{id,sender,path}: ""
     case MessageFile{id,sender,recipient,kind,path}: ""
@@ -646,11 +677,15 @@ def sql(command: Command) -> String:
     case ModelsAll{session}: ""
     case HarnessInventory{}: ""
     case UsageWindows{session}: ""
-    case UsageWindowObserve{session,window,resets,source}: ""
     case UsageWindowRefresh{session}: ""
     case Logs{session,level}: ""
     case LogsStorage{}: ""
+    case StoragePolicy{}: ""
+    case StoragePreview{session}: ""
+    case StorageApply{session}: ""
+    case StorageCollect{session}: ""
     case LogsClean{session}: ""
+    case LogsCleanAll{}: ""
     case Recruit{id,parent,harness,model,effort,repo,branch,path,base}: ""
     case Join{id,parent,harness,model,effort,path}: ""
     case Worktree{id}: ""
@@ -674,7 +709,10 @@ def sql(command: Command) -> String:
     case ContextEngines{session}: ""
     case ContextInstall{module_id,source}: ""
     case ContextQueryFile{owner,query,path}: ""
+    case ContextEval{owner,query,session,expression,frame,cwd}: ""
     case ContextResult{query}: ""
+    case Stall{}: ""
+    case StallWake{}: ""
     case Serve{}: ""
     case OwnerStatus{}: ""
     case Help{}: ""
@@ -684,6 +722,8 @@ def parse_verb_only(+verb: String) -> Command:
   match verb:
     case "context-engines": ContextEngines{""}
     case "logs-storage": LogsStorage{}
+    case "logs-clean-all": LogsCleanAll{}
+    case "storage-policy": StoragePolicy{}
     case "help": Help{}
     case "--help": Help{}
     case "status": Status{}
@@ -691,6 +731,8 @@ def parse_verb_only(+verb: String) -> Command:
     case "workers": LegacySubordinates{}
     case "players": Players{}
     case "orchestra": Orchestra{}
+    case "stall": Stall{}
+    case "stall-wake": StallWake{}
     case "pending": Pending{}
     case "serve": Serve{}
     case "owner-status": OwnerStatus{}
@@ -702,6 +744,9 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
     case "context-result": ContextResult{id}
     case "logs": Logs{id,""}
     case "logs-clean": LogsClean{id}
+    case "storage-preview": StoragePreview{id}
+    case "storage-apply": StorageApply{id}
+    case "storage-collect": StorageCollect{id}
     case "players": match id:
       case "--pretty": Pretty{Players{}}
       case _: Invalid{}
@@ -730,6 +775,7 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
     case "project": Project{id}
     case "project-sessions": ProjectSessions{id}
     case "resume": Resume{id,False{}}
+    case "clear-stop": ClearStop{id}
     case "knowledge": KnowledgeRead{id}
     case "knowledge-relations": KnowledgeRelations{id,"worker",id}
     case "observed-usage": ObservedUsage{id}
@@ -747,6 +793,10 @@ def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Comma
     case "pending": Bool.pick(Command,Bool.or(Bool.and(String.eq(session,"--index"),String.eq(id,"--pretty")),Bool.and(String.eq(session,"--pretty"),String.eq(id,"--index"))),Pretty{PendingIndex{}},Invalid{})
     case "resume": match id:
       case "--lift-stop": Resume{session,True{}}
+      case "--clear-stop": ClearStop{session}
+      case _: Invalid{}
+    case "stop": match id:
+      case "--clear": ClearStop{session}
       case _: Invalid{}
     case "models": match id:
       case "--all": ModelsAll{session}
@@ -810,7 +860,6 @@ def parse_verb_three_args(+verb: String, +id: String, +one: String, +two: String
     case "stop": Stop{id,one,two}
     case "report": Report{id,one,two}
     case "report-file": ReportFile{id,one,two}
-    case "ack": Ack{id,one,two}
     case "observe-file": ObserveFile{id,one,two}
     case "connect": Connect{id,one,two}
     case "land": Land{id,one,two}
@@ -824,7 +873,6 @@ def parse_verb_three_args(+verb: String, +id: String, +one: String, +two: String
 def parse_verb_four_args(+verb: String, +id: String, +one: String, +two: String, +three: String) -> Command:
   match verb:
     case "profile-bind": ProfileBind{id,one,two,three}
-    case "usage-window-observe": UsageWindowObserve{id,one,two,three}
     case "knowledge-search": KnowledgeSearch{id,one,two,three}
     case "knowledge":
       Bool.pick(Command,Bool.and(String.eq(one,"--id"),String.eq(three,"--pretty")),Pretty{KnowledgeDetail{id,two}},
@@ -884,6 +932,7 @@ def parse_basic_seven(+verb: String, +one: String, +two: String, +three: String,
           Pretty{KnowledgeScopeDetail{one,two,three,six}},Invalid{}))
     case "record-typed": KnowledgeRecordTyped{one,two,three,four,five,six}
     case "join": Join{one,two,three,four,five,six}
+    case "context-eval": ContextEval{one,two,three,four,five,six}
     case _: Invalid{}
 
 def parse_basic_eight(+verb: String, +one: String, +two: String, +three: String, +four: String, +five: String, +six: String, +seven: String) -> Command:
@@ -989,8 +1038,8 @@ def index_options(args: List<String>, +base: Command, +inbox: Bool, +condition: 
       index_options(rest,base,inbox,condition ++ " AND m.kind=" ++ q(value),state,index,pretty,True{})
     case "--state" <> value <> rest:
       match value:
-        case "pending": index_options(rest,base,inbox,condition,"m.receipt IS NULL",index,pretty,True{})
-        case "acknowledged": index_options(rest,base,inbox,condition,"m.receipt IS NOT NULL",index,pretty,True{})
+        case "pending": index_options(rest,base,inbox,condition,owed_sql("m"),index,pretty,True{})
+        case "read": index_options(rest,base,inbox,condition,read_sql("m"),index,pretty,True{})
         case "all": index_options(rest,base,inbox,condition,"1",index,pretty,True{})
         case _: Invalid{}
     case "--after-seq" <> value <> rest:
@@ -1004,9 +1053,9 @@ def index_options(args: List<String>, +base: Command, +inbox: Bool, +condition: 
 def parse(args: List<String>) -> Command:
   match args:
     case "pending" <> rest:
-      index_options(rest,Pending{},False{},"1","m.receipt IS NULL",False{},False{},False{})
+      index_options(rest,Pending{},False{},"1",owed_sql("m"),False{},False{},False{})
     case "inbox" <> +id <> rest:
-      index_options(rest,Inbox{id},True{},"m.recipient=" ++ q(id),"m.receipt IS NULL",False{},False{},False{})
+      index_options(rest,Inbox{id},True{},"m.recipient=" ++ q(id),owed_sql("m"),False{},False{},False{})
     case other: parse_basic(other)
 
 law help_word_selects_the_help_command:
@@ -1162,4 +1211,16 @@ law owner_status_parser_rejects_extra_arguments:
   {parse(["owner-status",extra]) == Invalid{} : Command}
 
 def owner_status_parser_rejects_extra_arguments(extra):
+  {==}
+
+law stall_parser_selects_the_candidate_report:
+  {parse(["stall"]) == Stall{} : Command}
+
+def stall_parser_selects_the_candidate_report():
+  {==}
+
+law stall_wake_parser_selects_the_wake:
+  {parse(["stall-wake"]) == StallWake{} : Command}
+
+def stall_wake_parser_selects_the_wake():
   {==}

@@ -4,14 +4,20 @@ import ../host/sqlite.bend as DB
 import ../host/instance.bend as Custody
 import ../git/text.bend as Tx
 import ../context/text.bend as ContextText
-import ../context/request.bend as Request
 import ./../coordinator/logs.bend as Logs
+import ./checkpoint-codec.bend as CheckpointCodec
 
 # Reducer state committed with the host spool cursor for one retained native
 # attempt. The host binds the encoded value to its attempt identity and byte
 # offset in the same atomic checkpoint record.
 type State is Data:
   State{guidance_cursor: String, last_message: String, muse_primary: String, muse_current: String, terminal: String, filter_mode: String, codex_log: String, held: String, omp_activity: String, output: String, output_done: Bool, episode: String}
+
+# The reducer state restored from an attempt checkpoint. Rejected preserves the
+# existing checkpoint and custody; it writes no state and moves no cursor.
+type RestoreOutcome is Data:
+  Restored{state: State}
+  Rejected{reason: String}
 
 def schema_version() -> U32:
   1
@@ -118,30 +124,47 @@ def changed_when(enabled: Bool, previous: String, next: String) -> Bool:
 
 # Turn supplies the payload fields its reducer can change on this frame.
 # Cursor, command and filter changes always participate in the decision.
-def checkpoint_due_next(+previous_episode: String, +previous_cursor: String, +previous_message: String, +previous_output: String, +previous_activity: String, +previous_primary: String, +previous_current: String, +previous_terminal: String, +previous_filter: String, +previous_codex: String, next: State, message_enabled: Bool, terminal_enabled: Bool, codex_enabled: Bool) -> Bool:
+def checkpoint_due_next(+previous_episode: String, +previous_cursor: String, +previous_message: String, +previous_activity: String, +previous_primary: String, +previous_current: String, +previous_terminal: String, +previous_filter: String, +previous_codex: String, next: State, message_enabled: Bool, terminal_enabled: Bool, codex_enabled: Bool) -> Bool:
   match next:
     case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity,output,output_done,episode}:
       +episode_changed = Bool.not(String.eq(previous_episode,episode))
       +guidance_changed = Bool.not(String.eq(previous_cursor,guidance_cursor))
       +message_changed = changed_when(message_enabled,previous_message,last_message)
-      +output_changed = Bool.not(String.eq(previous_output,output))
+      # The spool byte cursor is committed with the next semantic snapshot.
+      # Positioned replay rewrites the same bytes from the prior durable offset.
       +activity_changed = Bool.not(String.eq(previous_activity,omp_activity))
       +primary_changed = Bool.not(String.eq(previous_primary,muse_primary))
       +current_changed = Bool.not(String.eq(previous_current,muse_current))
       +terminal_changed = changed_when(terminal_enabled,previous_terminal,terminal)
       +filter_changed = Bool.not(String.eq(previous_filter,filter_mode))
       +codex_changed = changed_when(codex_enabled,previous_codex,codex_log)
-      Bool.or(episode_changed,Bool.or(output_changed,Bool.or(activity_changed,Bool.or(guidance_changed,Bool.or(message_changed,Bool.or(primary_changed,Bool.or(current_changed,Bool.or(terminal_changed,Bool.or(filter_changed,codex_changed)))))))))
+      Bool.or(episode_changed,Bool.or(activity_changed,Bool.or(guidance_changed,Bool.or(message_changed,Bool.or(primary_changed,Bool.or(current_changed,Bool.or(terminal_changed,Bool.or(filter_changed,codex_changed))))))))
 
 # Destructure each state once. The previous accessor chain matched the whole
 # state for every field, copying the terminal and message strings repeatedly.
 def checkpoint_due_fields(+previous: State, +next: State, message_enabled: Bool, terminal_enabled: Bool, codex_enabled: Bool) -> Bool:
   match previous:
     case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity,output,output_done,episode}:
-      checkpoint_due_next(episode,guidance_cursor,last_message,output,omp_activity,muse_primary,muse_current,terminal,filter_mode,codex_log,next,message_enabled,terminal_enabled,codex_enabled)
+      checkpoint_due_next(episode,guidance_cursor,last_message,omp_activity,muse_primary,muse_current,terminal,filter_mode,codex_log,next,message_enabled,terminal_enabled,codex_enabled)
 
 def checkpoint_due(previous: State, next: State) -> Bool:
   checkpoint_due_fields(previous,next,True{},True{},True{})
+
+# A terminal is the durable result boundary. The first output span commits the
+# initial cursor; after that, progress-only spans replay from the previous
+# semantic checkpoint. A terminal commit seals further intermediate checkpoints
+# so later frames cannot rewrite the retained terminal; EOF commits the final
+# output cursor. Semantic changes before the terminal still commit immediately.
+# The initial output position is either absent (older schema) or the empty
+# stream's position zero. It is the only progress span that must commit without
+# a semantic change so a first retained frame has a durable cursor.
+def output_unestablished(+output: String) -> Bool:
+  Bool.or(String.is_empty(output),String.eq(output,"0"))
+
+def checkpoint_due_span(+previous: State, next: State, message_enabled: Bool, terminal_enabled: Bool, codex_enabled: Bool, span: Bool) -> Bool:
+  match previous:
+    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity,output,output_done,episode}:
+      Bool.and(String.is_empty(terminal),Bool.or(checkpoint_due_fields(previous,next,message_enabled,terminal_enabled,codex_enabled),Bool.and(span,output_unestablished(output))))
 
 # SQLite encodes every reducer field as a JSON string, including raw provider
 # frames and the newline-delimited held log state.
@@ -171,26 +194,8 @@ def without_query_newline_reversed(+reversed: String, +raw: String) -> String:
 def without_query_newline(+raw: String) -> String:
   without_query_newline_reversed(Tx.str_rev(raw),raw)
 
-# Checkpoint fields retain NUL code points. Other bytes use the existing UTF-8
-# decoder, including its pending multi-byte state.
-def decode_byte(state: Request.DState, +byte: U32) -> Request.DState:
-  match state:
-    case Request.DStart{+acc}:
-      Bool.pick(Request.DState,U32.is_eq(byte,0),Request.DStart{SCon{Char.from_u32(0),acc}},Request.step_state(Request.DStart{acc},byte))
-    case other: Request.step_state(other,byte)
-
-def decode_bytes(bytes: String, +state: Request.DState) -> Request.DState:
-  match bytes:
-    case SNil{}: state
-    case SCon{+head,+tail}: decode_bytes(tail,decode_byte(state,Char.to_u32(head)))
-
-def decode_scalar(scalar: Request.Scalar) -> IO(String):
-  match scalar:
-    case Request.ScalarText{value}: IO.pure(String,value)
-    case other: IO.die(String,3,"Native observer checkpoint field decode failed: " ++ Request.scalar_reason(other))
-
 def decode_field(hex: String) -> IO(String):
-  decode_scalar(Request.state_scalar(decode_bytes(ContextText.hex_decode(hex),Request.DStart{SNil{}})))
+  CheckpointCodec.decode_field(hex)
 
 def decode_fields(fields: List<String>) -> IO(State):
   match fields:
@@ -236,34 +241,44 @@ def commit(db: String, handle: U32, +state: State, enabled: Bool, monitor: Bool)
       saved : String <- IO.try(String,DB.Sql.query(db,encode_sql(state)))
       commit_with(monitor,handle,saved)
 
-def reset_empty_case(db: String, +handle: U32, monitor: Bool) -> IO(State):
-  match monitor:
-    case True{}: do IO<State>:
-      committed : Unit <- IO.try(Unit,commit(db,handle,empty(),True{},True{}))
-      IO.pure(State,empty())
-    case False{}: do IO<State>:
-      reset : Unit <- IO.try(Unit,Custody.Instance.replay(handle))
-      committed : Unit <- IO.try(Unit,commit(db,handle,empty(),True{},False{}))
-      IO.pure(State,empty())
-
-def reset_empty(db: String, +handle: U32, monitor: Bool) -> IO(State):
-  reset_empty_case(db,handle,monitor)
-
-def decode_nonempty(+db: String, handle: U32, +value: String, monitor: Bool) -> IO(State):
+def reset_nonmonitor(db: String, +handle: U32) -> IO(State):
   do IO<State>:
-    valid : String <- IO.try(String,DB.Sql.query(db,valid_sql(value)))
-    Bool.pick(IO(State),String.eq(Tx.trim_nl(valid),"1"),decode_valid(db,value),reset_empty(db,handle,monitor))
+    reset : Unit <- IO.try(Unit,Custody.Instance.replay(handle))
+    committed : Unit <- IO.try(Unit,commit(db,handle,empty(),True{},False{}))
+    IO.pure(State,empty())
 
-def decode_nonempty_choice(db: String, handle: U32, +value: String, monitor: Bool, empty_value: Bool) -> IO(State):
+def empty_checkpoint_outcome(db: String, +handle: U32, monitor: Bool) -> IO(RestoreOutcome):
+  match monitor:
+    case True{}: IO.pure(RestoreOutcome,Rejected{"Native observer checkpoint state is empty or invalid at its retained cursor."})
+    case False{}: do IO<RestoreOutcome>:
+      state : State <- reset_nonmonitor(db,handle)
+      IO.pure(RestoreOutcome,Restored{state})
+
+def decode_valid_outcome(+db: String, +value: String) -> IO(RestoreOutcome):
+  do IO<RestoreOutcome>:
+    state : State <- decode_valid(db,value)
+    IO.pure(RestoreOutcome,Restored{state})
+
+def decode_invalid(db: String, +handle: U32, monitor: Bool) -> IO(RestoreOutcome):
+  match monitor:
+    case True{}: IO.pure(RestoreOutcome,Rejected{"Native observer checkpoint state is invalid at its retained cursor."})
+    case False{}: empty_checkpoint_outcome(db,handle,monitor)
+
+def decode_nonempty(+db: String, handle: U32, +value: String, monitor: Bool) -> IO(RestoreOutcome):
+  do IO<RestoreOutcome>:
+    valid : String <- IO.try(String,DB.Sql.query(db,valid_sql(value)))
+    Bool.pick(IO(RestoreOutcome),String.eq(Tx.trim_nl(valid),"1"),decode_valid_outcome(db,value),decode_invalid(db,handle,monitor))
+
+def decode_nonempty_choice(db: String, handle: U32, +value: String, monitor: Bool, empty_value: Bool) -> IO(RestoreOutcome):
   match empty_value:
-    case True{}: reset_empty(db,handle,monitor)
+    case True{}: empty_checkpoint_outcome(db,handle,monitor)
     case False{}: decode_nonempty(db,handle,value,monitor)
 
-def decode(db: String, handle: U32, +value: String, monitor: Bool) -> IO(State):
+def decode(db: String, handle: U32, +value: String, monitor: Bool) -> IO(RestoreOutcome):
   decode_nonempty_choice(db,handle,value,monitor,String.is_empty(value))
 
-def restore(db: String, +handle: U32, monitor: Bool) -> IO(State):
-  do IO<State>:
+def restore(db: String, +handle: U32, monitor: Bool) -> IO(RestoreOutcome):
+  do IO<RestoreOutcome>:
     saved : String <- IO.try(String,Custody.Instance.restore(handle,schema_version()))
     decode(db,handle,without_query_newline(saved),monitor)
 

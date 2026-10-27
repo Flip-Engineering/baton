@@ -319,7 +319,7 @@ export type Ctx = PMap<Ann>;
 
 // Body
 export type PVar  = { $: "PVar"; k: Name; i: number; q: Quant; s?: Span };
-export type PCtr  = { $: "PCtr"; k: Name; x: Patt[]; s?: Span };
+export type PCtr  = { $: "PCtr"; k: Name; x: Patt[]; s?: Span; lit?: string };
 export type Patt  = PVar | PCtr;
 export type Case  = { p: Patt[]; f: Body };
 export type Rows  = Array<Case>;
@@ -713,7 +713,15 @@ export function term_strip<X>(tm: TermOf<X>): TermOf<X> {
   return t;
 }
 
+type ClosedCtrEntry = { id: number, value: WeakRef<HTerm> };
+type ClosedCtrCache = { spans: WeakMap<Span, Map<string, ClosedCtrEntry>>, ids: WeakMap<HTerm, number>, next: number };
+const STRING_LITERAL_CTRS = new Set<Name>(["SCon", "SNil", "Chr", "U32", "WCon", "WNil", "True", "False"]);
+
 export function term_higher(tm: LTerm, env: Env = null): HTerm {
+  return term_higher_inner(tm, env, { spans: new WeakMap(), ids: new WeakMap(), next: 0 });
+}
+
+function term_higher_inner(tm: LTerm, env: Env, cache: ClosedCtrCache): HTerm {
   switch (tm.$) {
     case "Var": {
       if (tm.i < 0) {
@@ -740,154 +748,384 @@ export function term_higher(tm: LTerm, env: Env = null): HTerm {
     case "Sub": {
       const x = tm.v;
       const v = x.$ === "PVar" || x.$ === "PCtr"
-        ? (s?: Span) => term_higher(patt_term(x, s), env)
-        : term_higher(x, env);
-      return term_higher(tm.f, list_set(env, tm.i, v));
+        ? (s?: Span) => term_higher_inner(patt_term(x, s), env, cache)
+        : term_higher_inner(x, env, cache);
+      return term_higher_inner(tm.f, list_set(env, tm.i, v), cache);
     }
     case "Let": {
       const b = tm;
-      const v = b.v.map((x) => term_higher(x, env));
+      const v = b.v.map((x) => term_higher_inner(x, env, cache));
       return Let(b.k, b.i, v, (xs: HTerm[]) => {
         let e = env;
         for (let j = 0; j < xs.length; j++) {
           e = list_set(e, b.i[j], xs[j]);
         }
-        return term_higher(b.f, e);
+        return term_higher_inner(b.f, e, cache);
       }, b.s, b.q);
     }
     case "All": {
       const b = tm;
-      const A = term_higher(b.A, env);
+      const A = term_higher_inner(b.A, env, cache);
       return All(b.q, b.k, b.i, A, (x: HTerm) => {
-        return term_higher(b.B, list_set(env, b.i, x));
+        return term_higher_inner(b.B, list_set(env, b.i, x), cache);
       }, b.s);
     }
     case "Lam": {
       const b = tm;
       return Lam(b.k, b.i, (x: HTerm) => {
-        return term_higher(b.f, list_set(env, b.i, x));
+        return term_higher_inner(b.f, list_set(env, b.i, x), cache);
       }, b.s, b.q);
     }
     case "Typ": {
-      return Typ(term_higher(tm.g, env), tm.s);
+      return Typ(term_higher_inner(tm.g, env, cache), tm.s);
     }
     case "Qnt":
     case "Qua": {
       return tm;
     }
     case "Min": {
-      return Min(term_higher(tm.a, env), term_higher(tm.b, env), tm.s);
+      return Min(term_higher_inner(tm.a, env, cache), term_higher_inner(tm.b, env, cache), tm.s);
     }
     case "App": {
-      const f = term_higher(tm.f, env);
-      const x = term_higher(tm.x, env);
+      const f = term_higher_inner(tm.f, env, cache);
+      const x = term_higher_inner(tm.x, env, cache);
       if (f.$ === "Lam") {
         return f.f(x);
       }
       return App(f, x, tm.s);
     }
     case "ADT": {
-      return ADT(tm.k, tm.x.map((x) => term_higher(x, env)), tm.s, tm.r);
+      return ADT(tm.k, tm.x.map((x) => term_higher_inner(x, env, cache)), tm.s, tm.r);
     }
     case "Ctr": {
-      return Ctr(tm.k, tm.x.map((x) => term_higher(x, env)), tm.s);
+      const xs = tm.x.map((x) => term_higher_inner(x, env, cache));
+      // String patterns expand to closed constructor chains. Pattern
+      // substitution can copy the same chain into each fallback branch;
+      // intern those closed subtrees while preserving their source spans.
+      if (tm.s !== undefined && STRING_LITERAL_CTRS.has(tm.k)) {
+        const child_ids = xs.map((x) => cache.ids.get(x));
+        if (child_ids.every((id) => id !== undefined)) {
+          let table = cache.spans.get(tm.s);
+          if (table === undefined) {
+            table = new Map();
+            cache.spans.set(tm.s, table);
+          }
+          const key = `${tm.k}|${tm.s.beg}:${tm.s.end}|${child_ids.join(",")}`;
+          const entry = table.get(key);
+          const prior = entry?.value.deref();
+          if (prior !== undefined) return prior;
+          const out = Ctr(tm.k, xs, tm.s);
+          const id = entry?.id ?? cache.next++;
+          cache.ids.set(out, id);
+          table.set(key, { id, value: new WeakRef(out) });
+          return out;
+        }
+      }
+      return Ctr(tm.k, xs, tm.s);
     }
     case "Lit": {
       return tm;
     }
     case "Mat": {
-      return Mat(tm.k, term_higher(tm.h, env), term_higher(tm.m, env), tm.s);
+      return Mat(tm.k, term_higher_inner(tm.h, env, cache), term_higher_inner(tm.m, env, cache), tm.s);
     }
     case "Efq": {
       return Efq(tm.s);
     }
     case "Eql": {
-      return Eql(term_higher(tm.a, env), term_higher(tm.b, env), term_higher(tm.T, env), tm.s);
+      return Eql(term_higher_inner(tm.a, env, cache), term_higher_inner(tm.b, env, cache), term_higher_inner(tm.T, env, cache), tm.s);
     }
     case "Rfl": {
       return Rfl(tm.s);
     }
     case "Rwt": {
-      return Rwt(term_higher(tm.e, env), term_higher(tm.p, env), term_higher(tm.f, env), tm.s);
+      return Rwt(term_higher_inner(tm.e, env, cache), term_higher_inner(tm.p, env, cache), term_higher_inner(tm.f, env, cache), tm.s);
     }
     case "Hol": {
       return Hol(tm.k, tm.s);
     }
     case "Ann": {
-      return Ann(term_higher(tm.x, env), term_higher(tm.T, env), tm.s);
+      return Ann(term_higher_inner(tm.x, env, cache), term_higher_inner(tm.T, env, cache), tm.s);
     }
   }
 }
 
 export function term_lower(term: HTerm, d: number = 0): LTerm {
-  const tm = term_force(term);
-  switch (tm.$) {
-    case "Var": {
-      return Var(tm.k, tm.i, tm.s);
+  // An explicit post-order stack keeps deep terms off the JavaScript call
+  // stack: the recursive form recursed one frame per App/ADT/All level,
+  // which overflowed at pass entry when the layout walk lowered every
+  // datatype type on the combined book. Children are lowered in the same
+  // order and every node is forced exactly as the recursion forced it.
+  type Task =
+    | { visit: HTerm, depth: number }
+    | { build: HTerm, depth: number, count: number }
+    | { deferred: () => HTerm, depth: number }
+    | { value: LTerm };
+  const results: LTerm[] = [];
+  const tasks: Task[] = [{ visit: term, depth: d }];
+  while (tasks.length > 0) {
+    const task = tasks.pop() as Task;
+    if ("value" in task) {
+      results.push(task.value);
+      continue;
     }
-    case "Ref": {
-      return Ref(tm.k, tm.s, tm.b);
+    if ("deferred" in task) {
+      tasks.push({ visit: task.deferred(), depth: task.depth });
+      continue;
     }
-    case "Sub": {
-      return Sub(tm.i, tm.v.$ === "PVar" || tm.v.$ === "PCtr" ? tm.v : term_lower(tm.v, d), term_lower(tm.f, d), tm.s);
+    if ("build" in task) {
+      const tm = task.build;
+      const at = results.length - task.count;
+      const kids = results.splice(at, task.count);
+      switch (tm.$) {
+        case "Sub": results.push(Sub(tm.i, kids[0], kids[1], tm.s)); break;
+        case "Let": results.push(Let(tm.k, tm.k.map((_, j) => task.depth + j),
+          kids.slice(0, tm.v.length), kids[tm.v.length], tm.s, tm.q)); break;
+        case "Typ": results.push(Typ(kids[0], tm.s)); break;
+        case "Min": results.push(Min(kids[0], kids[1], tm.s)); break;
+        case "All": results.push(All(tm.q, tm.k, task.depth, kids[0], kids[1], tm.s)); break;
+        case "Lam": results.push(Lam(tm.k, task.depth, kids[0], tm.s, tm.q)); break;
+        case "App": results.push(App(kids[0], kids[1], tm.s)); break;
+        case "ADT": results.push(ADT(tm.k, kids, tm.s, tm.r)); break;
+        case "Ctr": results.push(Ctr(tm.k, kids, tm.s)); break;
+        case "Mat": results.push(Mat(tm.k, kids[0], kids[1], tm.s)); break;
+        case "Eql": results.push(Eql(kids[0], kids[1], kids[2], tm.s)); break;
+        case "Rwt": results.push(Rwt(kids[0], kids[1], kids[2], tm.s)); break;
+        case "Ann": results.push(Ann(kids[0], kids[1], tm.s)); break;
+        default: throw new Error("term_lower build task for a leaf term");
+      }
+      continue;
     }
-    case "Let": {
-      const xs = tm.k.map((k, j): HTerm => Var(k, d + j));
-      const vs = tm.v.map((v) => term_lower(v, d));
-      return Let(tm.k, xs.map((_, j) => d + j), vs, term_lower(tm.f(xs), d + tm.k.length), tm.s, tm.q);
-    }
-    case "Typ": {
-      return Typ(term_lower(tm.g, d), tm.s);
-    }
-    case "Qnt":
-    case "Qua": {
-      return tm;
-    }
-    case "Min": {
-      return Min(term_lower(tm.a, d), term_lower(tm.b, d), tm.s);
-    }
-    case "All": {
-      const x: HTerm = Var(tm.k, d);
-      return All(tm.q, tm.k, d, term_lower(tm.A, d), term_lower(tm.B(x), d + 1), tm.s);
-    }
-    case "Lam": {
-      const x: HTerm = Var(tm.k, d);
-      return Lam(tm.k, d, term_lower(tm.f(x), d + 1), tm.s, tm.q);
-    }
-    case "App": {
-      return App(term_lower(tm.f, d), term_lower(tm.x, d), tm.s);
-    }
-    case "ADT": {
-      return ADT(tm.k, tm.x.map((x) => term_lower(x, d)), tm.s, tm.r);
-    }
-    case "Ctr": {
-      return Ctr(tm.k, tm.x.map((x) => term_lower(x, d)), tm.s);
-    }
-    case "Lit": {
-      return tm;
-    }
-    case "Mat": {
-      return Mat(tm.k, term_lower(tm.h, d), term_lower(tm.m, d), tm.s);
-    }
-    case "Efq": {
-      return Efq(tm.s);
-    }
-    case "Eql": {
-      return Eql(term_lower(tm.a, d), term_lower(tm.b, d), term_lower(tm.T, d), tm.s);
-    }
-    case "Rfl": {
-      return Rfl(tm.s);
-    }
-    case "Rwt": {
-      return Rwt(term_lower(tm.e, d), term_lower(tm.p, d), term_lower(tm.f, d), tm.s);
-    }
-    case "Hol": {
-      return Hol(tm.k, tm.s);
-    }
-    case "Ann": {
-      return Ann(term_lower(tm.x, d), term_lower(tm.T, d), tm.s);
+    const tm = term_force(task.visit);
+    const depth = task.depth;
+    const visit = (t: HTerm, dd: number): void => {
+      tasks.push({ visit: t, depth: dd });
+    };
+    const expand = (kids: HTerm[], depths: number[]): void => {
+      tasks.push({ build: tm, depth, count: kids.length });
+      for (let i = kids.length - 1; i >= 0; i -= 1) {
+        visit(kids[i], depths[i]);
+      }
+    };
+    switch (tm.$) {
+      case "Var": results.push(Var(tm.k, tm.i, tm.s)); break;
+      case "Ref": results.push(Ref(tm.k, tm.s, tm.b)); break;
+      case "Sub": {
+        if (tm.v.$ === "PVar" || tm.v.$ === "PCtr") {
+          // The pattern is already a lowered term: emit it as the first
+          // kid, then lower the body above it.
+          tasks.push({ build: tm, depth, count: 2 });
+          visit(tm.f, depth);
+          tasks.push({ value: tm.v as LTerm });
+        } else {
+          expand([tm.v, tm.f], [depth, depth]);
+        }
+        break;
+      }
+      case "Let": {
+        const xs = tm.k.map((k, j): HTerm => Var(k, depth + j));
+        tasks.push({ build: tm, depth, count: tm.v.length + 1 });
+        tasks.push({ deferred: () => tm.f(xs), depth: depth + tm.k.length });
+        for (let i = tm.v.length - 1; i >= 0; i -= 1) {
+          visit(tm.v[i], depth);
+        }
+        break;
+      }
+      case "Typ": expand([tm.g], [depth]); break;
+      case "Qnt": case "Qua": case "Lit": results.push(tm); break;
+      case "Min": expand([tm.a, tm.b], [depth, depth]); break;
+      case "All": {
+        const x: HTerm = Var(tm.k, depth);
+        tasks.push({ build: tm, depth, count: 2 });
+        tasks.push({ deferred: () => tm.B(x), depth: depth + 1 });
+        visit(tm.A, depth);
+        break;
+      }
+      case "Lam": {
+        const x: HTerm = Var(tm.k, depth);
+        expand([tm.f(x)], [depth + 1]);
+        break;
+      }
+      case "App": expand([tm.f, tm.x], [depth, depth]); break;
+      case "ADT": case "Ctr":
+        expand(tm.x, tm.x.map(() => depth)); break;
+      case "Mat": expand([tm.h, tm.m], [depth, depth]); break;
+      case "Efq": results.push(Efq(tm.s)); break;
+      case "Eql": expand([tm.a, tm.b, tm.T], [depth, depth, depth]); break;
+      case "Rfl": results.push(Rfl(tm.s)); break;
+      case "Rwt": expand([tm.e, tm.p, tm.f], [depth, depth, depth]); break;
+      case "Hol": results.push(Hol(tm.k, tm.s)); break;
+      case "Ann": expand([tm.x, tm.T], [depth, depth]); break;
     }
   }
+  return results[0];
+}
+
+type TermLowerMemo = WeakMap<HTerm, Map<number, LTerm>>;
+
+type SharedLowerFrame = {
+  tm: HTerm;
+  d: number;
+  stage: number;
+  children: LTerm[];
+  xs?: HTerm[];
+  x?: HTerm;
+};
+
+function shared_lower_frame(term: HTerm, d: number): SharedLowerFrame {
+  const tm = term_force(term);
+  return {
+    tm, d, stage: 0, children: [],
+    xs: tm.$ === "Let" ? tm.k.map((k, j): HTerm => Var(k, d + j)) : undefined,
+    x: tm.$ === "All" || tm.$ === "Lam" ? Var(tm.k, d) : undefined,
+  };
+}
+
+function shared_lower_next(frame: SharedLowerFrame): [HTerm, number] | null {
+  const { tm, d } = frame;
+  switch (tm.$) {
+    case "Sub": {
+      if (frame.stage === 0) {
+        frame.stage = 1;
+        if (tm.v.$ !== "PVar" && tm.v.$ !== "PCtr") {
+          return [tm.v, d];
+        }
+      }
+      if (frame.stage === 1) {
+        frame.stage = 2;
+        return [tm.f, d];
+      }
+      return null;
+    }
+    case "Let": {
+      if (frame.stage < tm.v.length) {
+        return [tm.v[frame.stage++], d];
+      }
+      if (frame.stage === tm.v.length) {
+        frame.stage += 1;
+        return [tm.f(frame.xs as HTerm[]), d + tm.k.length];
+      }
+      return null;
+    }
+    case "Typ":
+      return frame.stage++ === 0 ? [tm.g, d] : null;
+    case "All": {
+      if (frame.stage === 0) {
+        frame.stage = 1;
+        return [tm.A, d];
+      }
+      if (frame.stage === 1) {
+        frame.stage = 2;
+        return [tm.B(frame.x as HTerm), d + 1];
+      }
+      return null;
+    }
+    case "Lam":
+      return frame.stage++ === 0 ? [tm.f(frame.x as HTerm), d + 1] : null;
+    case "App":
+      if (frame.stage === 0) { frame.stage = 1; return [tm.f, d]; }
+      if (frame.stage === 1) { frame.stage = 2; return [tm.x, d]; }
+      return null;
+    case "ADT": case "Ctr":
+      return frame.stage < tm.x.length ? [tm.x[frame.stage++], d] : null;
+    case "Min":
+      if (frame.stage === 0) { frame.stage = 1; return [tm.a, d]; }
+      if (frame.stage === 1) { frame.stage = 2; return [tm.b, d]; }
+      return null;
+    case "Mat":
+      if (frame.stage === 0) { frame.stage = 1; return [tm.h, d]; }
+      if (frame.stage === 1) { frame.stage = 2; return [tm.m, d]; }
+      return null;
+    case "Eql":
+      if (frame.stage === 0) { frame.stage = 1; return [tm.a, d]; }
+      if (frame.stage === 1) { frame.stage = 2; return [tm.b, d]; }
+      if (frame.stage === 2) { frame.stage = 3; return [tm.T, d]; }
+      return null;
+    case "Rwt":
+      if (frame.stage === 0) { frame.stage = 1; return [tm.e, d]; }
+      if (frame.stage === 1) { frame.stage = 2; return [tm.p, d]; }
+      if (frame.stage === 2) { frame.stage = 3; return [tm.f, d]; }
+      return null;
+    case "Ann":
+      if (frame.stage === 0) { frame.stage = 1; return [tm.x, d]; }
+      if (frame.stage === 1) { frame.stage = 2; return [tm.T, d]; }
+      return null;
+    case "Var": case "Ref": case "Qnt": case "Qua": case "Lit":
+    case "Efq": case "Rfl": case "Hol":
+      return null;
+  }
+}
+
+function shared_lower_build(frame: SharedLowerFrame): LTerm {
+  const { tm, d, children } = frame;
+  switch (tm.$) {
+    case "Var": return Var(tm.k, tm.i, tm.s);
+    case "Ref": return Ref(tm.k, tm.s, tm.b);
+    case "Sub": {
+      const pattern = tm.v.$ === "PVar" || tm.v.$ === "PCtr";
+      return Sub(tm.i, pattern ? tm.v : children[0], children[pattern ? 0 : 1], tm.s);
+    }
+    case "Let":
+      return Let(tm.k, (frame.xs as HTerm[]).map((_, j) => d + j),
+        children.slice(0, tm.v.length), children[tm.v.length], tm.s, tm.q);
+    case "Typ": return Typ(children[0], tm.s);
+    case "Qnt": case "Qua": return tm;
+    case "Min": return Min(children[0], children[1], tm.s);
+    case "All": return All(tm.q, tm.k, d, children[0], children[1], tm.s);
+    case "Lam": return Lam(tm.k, d, children[0], tm.s, tm.q);
+    case "App": return App(children[0], children[1], tm.s);
+    case "ADT": return ADT(tm.k, children, tm.s, tm.r);
+    case "Ctr": return Ctr(tm.k, children, tm.s);
+    case "Lit": return tm;
+    case "Mat": return Mat(tm.k, children[0], children[1], tm.s);
+    case "Efq": return Efq(tm.s);
+    case "Eql": return Eql(children[0], children[1], children[2], tm.s);
+    case "Rfl": return Rfl(tm.s);
+    case "Rwt": return Rwt(children[0], children[1], children[2], tm.s);
+    case "Hol": return Hol(tm.k, tm.s);
+    case "Ann": return Ann(children[0], children[1], tm.s);
+  }
+}
+
+// Preserve shared nodes for callers that encode the lowered structure by identity.
+export function term_lower_shared(term: HTerm, d: number = 0): LTerm {
+  const memo: TermLowerMemo = new WeakMap();
+  const stack: SharedLowerFrame[] = [shared_lower_frame(term, d)];
+  const active = new WeakSet<HTerm>([stack[0].tm]);
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1];
+    const child = shared_lower_next(frame);
+    if (child !== null) {
+      const tm = term_force(child[0]);
+      const lowered = memo.get(tm)?.get(child[1]);
+      if (lowered !== undefined) {
+        frame.children.push(lowered);
+      } else {
+        if (active.has(tm)) {
+          throw new RangeError("Maximum call stack size exceeded");
+        }
+        const next = shared_lower_frame(tm, child[1]);
+        active.add(next.tm);
+        stack.push(next);
+      }
+      continue;
+    }
+    const lowered = shared_lower_build(frame);
+    let depths = memo.get(frame.tm);
+    if (depths === undefined) {
+      depths = new Map();
+      memo.set(frame.tm, depths);
+    }
+    depths.set(frame.d, lowered);
+    active.delete(frame.tm);
+    stack.pop();
+    if (stack.length > 0) {
+      stack[stack.length - 1].children.push(lowered);
+    } else {
+      return lowered;
+    }
+  }
+  throw new Error("term_lower_shared completed without a root term");
 }
 
 export function term_descend(q: Quant, arg: HTerm, col: HTerm): Cmp {
@@ -1804,7 +2042,8 @@ export function parse_patt(p: Parse, t: LTerm): Patt {
       return { $: "PCtr", k: t.k, x: t.x.map((x) => parse_patt(p, x)), s: t.s };
     }
     case "Lit": {
-      return parse_patt(p, lit_full(t));
+      const q = parse_patt(p, lit_full(t));
+      return typeof t.v !== "string" ? q : { ...(q as PCtr), lit: t.v };
     }
     default: {
       throw Err(book, ctx_nil(), "a pattern (a binder or a constructor)", term_show(term_lower(term_higher(t), 0)), t.s);
@@ -2585,7 +2824,12 @@ export function parse_def(p: Parse, book: Book, u: Bool = false): void {
     }
   } else {
     const vars = tele.map((cell): PVar => ({ $: "PVar", k: cell[1], i: cell[2], q: Lone(), s: cell[4] }));
-    def.v = term_higher(term_lower(term_higher(body_flatten(parse_body(p), vars, () => p.sc.frs++))));
+    const body = parse_body(p);
+    // term_higher applies body_flatten's substitutions and interns the closed
+    // constructor chains. The lower/raise round trip that followed rebuilt the
+    // same normalized term and held a second LTerm and HTerm during the load.
+    def.v = term_higher(literal_chain(p, body, vars, def, k)
+      ?? body_flatten(body, vars, () => p.sc.frs++));
   }
   parse_close(p, n0);
   book.order.push(k);
@@ -2879,6 +3123,348 @@ export function body_flatten(b: Body, vars: PVar[], fr: () => number): LTerm {
       return match_flatten(b, vars, fr);
     }
   }
+}
+
+// A top-level match on a Many String parameter whose rows are string literal
+// patterns plus an optional final binder lowers to one String.eq test per row.
+// Each row body appears once; no character decision tree is built. The Mat on
+// the computed Bool is annotated with the branch type, so the checker and
+// emitter see the compiler-lowered case form.
+function literal_chain(p: Parse, b: Body, vars: PVar[], def: Def,
+  k: Name): LTerm | null {
+  // The lowering binds only the matched first parameter. A definition with
+  // later top-level parameters stays on the ordinary lowering: its helpers
+  // would abstract those parameters without carrying them in the signatures.
+  if (b.$ !== "Match" || b.e.length !== 1 || vars.length !== 1) return null;
+  const scrut = b.e[0];
+  if (scrut.$ !== "Var" || scrut.i !== vars[0].i) return null;
+  const all = def.T;
+  if (all.$ !== "All" || all.i !== vars[0].i || all.q.$ === "None") return null;
+  if (all.q.$ === "Many" && all.A.$ === "Ref" && all.A.k === "String") {
+    return literal_chain_string(p, b, vars, all, scrut);
+  }
+  if (all.q.$ === "Lone" && all.A.$ === "ADT" && all.A.k === "List") {
+    return literal_chain_list_helpers(p, b, vars, def, k, all, scrut);
+  }
+  return null;
+}
+
+function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
+  vars: PVar[], all: Extract<HTerm, { $: "All" }>, scrut: LTerm): LTerm | null {
+  if (p.book.tlds["String.eq"] === undefined || p.book.tlds["Bool"] === undefined
+    || p.book.ctrs["False"] === undefined || p.book.ctrs["True"] === undefined) {
+    return null;
+  }
+  let fallback: { f: Body; i: number } | null = null;
+  let literals = 0;
+  for (let j = 0; j < b.r.length; j++) {
+    const row = b.r[j];
+    if (row.p.length !== 1) return null;
+    const q = row.p[0];
+    if (q.$ === "PCtr" && q.lit !== undefined) {
+      literals += 1;
+    } else if (j === b.r.length - 1 && q.$ === "PVar") {
+      fallback = { f: row.f, i: q.i };
+    } else {
+      return null;
+    }
+  }
+  if (literals === 0) return null;
+  const fr = () => p.sc.frs++;
+  const A = term_lower_shared(all.B(Var(all.k, all.i)) as HTerm);
+  const boolIndex = p.sc.frs++;
+  let tail: LTerm;
+  if (fallback !== null) {
+    const binder: PVar = { $: "PVar", k: vars[0].k, i: vars[0].i,
+      q: Lone(), s: vars[0].s };
+    tail = body_flatten(body_sub(fallback.f, fallback.i, binder),
+      vars.slice(1), fr);
+  } else {
+    tail = Efq(b.s);
+  }
+  const span = b.s;
+  for (let j = b.r.length - 1; j >= 0; j--) {
+    const row = b.r[j];
+    const q = row.p[0];
+    if (q.$ !== "PCtr" || q.lit === undefined) continue;
+    const hit = body_flatten(row.f, vars.slice(1), fr);
+    const cond = App(App(Ref("String.eq", q.s), scrut, q.s),
+      patt_term(q), q.s);
+    const inner = Mat("True", hit, Efq(row.s ?? span), row.s ?? span);
+    const mat = Mat("False", tail, inner, span);
+    tail = App(Ann(mat, All(Lone(), "c", boolIndex, Ref("Bool"), A), span),
+      cond, span);
+  }
+  return Lam(all.k, all.i, tail, all.s, all.q);
+}
+// A top-level match on a Lone List<String> parameter whose leading rows are
+// `head0 <> "literal" <> fields.. <> Nil` frames lowers to a single-traversal
+// decision tree whose row continuations and remaining rows are generated
+// helper defs. A Ref is unrestricted, so each body is checked and emitted once
+// even though it is selected at several failure sites; the Lone tail reaches
+// one helper per path.
+type LitParam = { k: string; i: number; q: Quant; ty: LTerm };
+type LitHelper = { name: string; def: Def };
+
+function lit_body_terms(b: Body, f: (t: LTerm) => void): void {
+  const seen = new WeakSet<object>();
+  const stack: LTerm[] = [];
+  const add = (t: LTerm | null | undefined): void => {
+    if (t !== null && t !== undefined) stack.push(t);
+  };
+  const pushBody = (x: Body): void => {
+    switch (x.$) {
+      case "Match": stack.push(...x.e); x.r.forEach((r) => pushBody(r.f)); break;
+      case "Local": stack.push(...x.v); pushBody(x.f); break;
+      case "Reply": stack.push(x.x); break;
+    }
+  };
+  pushBody(b);
+  while (stack.length > 0) {
+    const t = stack.pop() as LTerm;
+    if (seen.has(t)) continue;
+    seen.add(t);
+    f(t);
+    switch (t.$) {
+      case "Sub": if (t.v.$ !== "PVar" && t.v.$ !== "PCtr") add(t.v); add(t.f); break;
+      case "Let": stack.push(...t.v); add(t.f); break;
+      case "All": add(t.A); add(t.B); break;
+      case "Lam": add(t.f); break;
+      case "Typ": add(t.g); break;
+      case "Min": add(t.a); add(t.b); break;
+      case "App": add(t.f); add(t.x); break;
+      case "ADT": case "Ctr": stack.push(...t.x); break;
+      case "Mat": add(t.h); add(t.m); break;
+      case "Eql": add(t.a); add(t.b); add(t.T); break;
+      case "Rwt": add(t.e); add(t.p); add(t.f); break;
+      case "Ann": add(t.x); add(t.T); break;
+      default: break;
+    }
+  }
+}
+function lit_body_uses(b: Body, i: number): boolean {
+  let hit = false;
+  lit_body_terms(b, (t) => { if (t.$ === "Var" && t.i === i) hit = true; });
+  return hit;
+}
+function lit_body_refs(b: Body, k: Name): boolean {
+  let hit = false;
+  lit_body_terms(b, (t) => { if (t.$ === "Ref" && t.k === k) hit = true; });
+  return hit;
+}
+
+function literal_chain_list_helpers(p: Parse, b: Extract<Body, { $: "Match" }>,
+  vars: PVar[], def: Def, k: Name, all: Extract<HTerm, { $: "All" }>,
+  scrut: LTerm): LTerm | null {
+  const list = all.A;
+  const elem = list.$ === "ADT" && list.k === "List"
+    ? list.x[list.x.length - 1] : null;
+  if (elem === null || elem.$ !== "Ref" || elem.k !== "String") return null;
+  if (all.q.$ !== "Lone") return null;
+  if (p.book.tlds["String.eq"] === undefined || p.book.tlds["Bool"] === undefined
+    || p.book.ctrs["False"] === undefined || p.book.ctrs["True"] === undefined
+    || p.book.ctrs["Con"] === undefined || p.book.ctrs["Nil"] === undefined) {
+    return null;
+  }
+  const frames = (q: Patt): { heads: Patt[]; rest: PVar | null } | null => {
+    const heads: Patt[] = [];
+    let cur: Patt = q;
+    while (cur.$ === "PCtr" && cur.k === "Con" && cur.x.length === 2) {
+      heads.push(cur.x[0]);
+      cur = cur.x[1];
+    }
+    if (cur.$ === "PVar") return { heads, rest: cur };
+    if (cur.$ === "PCtr" && cur.k === "Nil" && cur.x.length === 0) {
+      return { heads, rest: null };
+    }
+    return null;
+  };
+  type Frame = { h0: PVar; lit: PCtr; fields: PVar[]; f: Body };
+  const rows: Frame[] = [];
+  let prefixLen = 0;
+  for (; prefixLen < b.r.length; prefixLen++) {
+    const row = b.r[prefixLen];
+    if (row.p.length !== 1) break;
+    const q = row.p[0];
+    if (q.$ !== "PCtr" || q.k !== "Con") break;
+    const frame = frames(q);
+    if (frame === null || frame.rest !== null || frame.heads.length < 2) break;
+    const h0 = frame.heads[0];
+    const lit = frame.heads[1];
+    if (h0.$ !== "PVar" || lit.$ !== "PCtr" || lit.lit === undefined) break;
+    if (!frame.heads.slice(2).every((h): h is PVar => h.$ === "PVar")) break;
+    rows.push({ h0, lit, fields: frame.heads.slice(2) as PVar[], f: row.f });
+  }
+  if (rows.length === 0) return null;
+  const suffixRows = b.r.slice(prefixLen);
+  if (suffixRows.length === 0) return null;
+  const bodies = [...rows.map((r) => r.f), ...suffixRows.map((r) => r.f)];
+  if (bodies.some((body) => lit_body_refs(body, k)
+    || lit_body_uses(body, all.i))) return null;
+  const fr = () => p.sc.frs++;
+  const span = b.s;
+  const A = term_lower_shared(all.B(Var(all.k, all.i)) as HTerm);
+  const listType = term_lower_shared(list as HTerm);
+  const strType = Ref("String");
+  const helpers: LitHelper[] = [];
+  let seq = 0;
+  const helperName = (stem: string): string => {
+    let name: string;
+    do {
+      name = k + "$lit" + stem + seq++;
+    } while (p.book.tlds[name] !== undefined);
+    return name;
+  };
+  const addHelper = (stem: string, params: LitParam[], body: LTerm,
+    wrap = true): string => {
+    const name = helperName(stem);
+    let T: LTerm = A;
+    for (let i = params.length - 1; i >= 0; i--) {
+      const pr = params[i];
+      T = All(pr.q, pr.k, pr.i, pr.ty, T);
+    }
+    let V: LTerm = body;
+    if (wrap) {
+      for (let i = params.length - 1; i >= 0; i--) {
+        const pr = params[i];
+        V = Lam(pr.k, pr.i, V, span, pr.q);
+      }
+    }
+    const hd: Def = { $: "Def", n: params.length, x: 0,
+      T: term_higher(T), v: term_higher(V), u: def.u };
+    helpers.push({ name, def: hd });
+    return name;
+  };
+  const listA = (cur: LTerm, arm: LTerm, nilBody: LTerm): LTerm =>
+    App(Ann(Mat("Con", arm, Mat("Nil", nilBody, Efq(span), span), span),
+      All(Lone(), "l", fr(), listType, A), span), cur, span);
+  const con2 = (hK: string, hI: number, hQ: Quant, tK: string, tI: number,
+    body: LTerm): LTerm =>
+    Lam(hK, hI, Lam(tK, tI, body, span, Lone()), span, hQ);
+  const recon = (vals: LTerm[], tail: LTerm): LTerm => {
+    let out = tail;
+    for (let i = vals.length - 1; i >= 0; i--) {
+      out = Ctr("Con", [vals[i], out], span);
+    }
+    return out;
+  };
+  const wholeI = fr();
+  const wholeK = "_w";
+  const whole: PVar = { $: "PVar", k: wholeK, i: wholeI, q: Lone(), s: span };
+  const suffixBody = body_flatten({
+    $: "Match", e: [Var(wholeK, wholeI)], r: suffixRows, s: span,
+  }, [whole, ...vars.slice(1)], fr);
+  const suffixName = addHelper("suffix",
+    [{ k: wholeK, i: wholeI, q: Lone(), ty: listType }], suffixBody, false);
+  const failWhole = (w: LTerm): LTerm => App(Ref(suffixName), w, span);
+  const rowHelper = (row: Frame, next: { whole: boolean; name: string }): string => {
+    const h0K = "_a", h0I = fr();
+    const h1K = "_l", h1I = fr();
+    const tK = "_t", tI = fr();
+    const H0 = Var(h0K, h0I), H1 = Var(h1K, h1I), T = Var(tK, tI);
+    let body = row.f;
+    body = body_sub(body, row.h0.i, { $: "PVar", k: h0K, i: h0I,
+      q: Many(), s: row.h0.s });
+    const hIdx = row.fields.map(() => fr());
+    const tIdx = row.fields.map(() => fr());
+    row.fields.forEach((f, i) => {
+      body = body_sub(body, f.i, { $: "PVar", k: "_f" + hIdx[i],
+        i: hIdx[i], q: Many(), s: f.s });
+    });
+    const success = body_flatten(body, vars.slice(1), fr);
+    const fail = (prefix: LTerm[], current: LTerm): LTerm => {
+      const t1 = recon(prefix, current);
+      if (next.whole) {
+        return App(Ref(next.name), Ctr("Con", [H0,
+          Ctr("Con", [H1, t1], span)], span), span);
+      }
+      return App(App(App(Ref(next.name), H0, span), H1, span), t1, span);
+    };
+    const build = (i: number, current: LTerm, prefix: LTerm[]): LTerm => {
+      if (i === row.fields.length) {
+        const eh = fr(), et = fr();
+        const EH = Var("_x" + eh, eh), ET = Var("_t" + et, et);
+        return listA(current,
+          con2("_x" + eh, eh, Many(), "_t" + et, et,
+            fail([...prefix, EH], ET)), success);
+      }
+      const fh = hIdx[i], ft = tIdx[i];
+      const H = Var("_f" + fh, fh), TT = Var("_t" + ft, ft);
+      return listA(current,
+        con2("_f" + fh, fh, Many(), "_t" + ft, ft,
+          build(i + 1, TT, [...prefix, H])),
+        fail(prefix, Ctr("Nil", [], span)));
+    };
+    return addHelper("row",
+      [{ k: h0K, i: h0I, q: Many(), ty: strType },
+        { k: h1K, i: h1I, q: Many(), ty: strType },
+        { k: tK, i: tI, q: Lone(), ty: listType }],
+      build(0, T, []));
+  };
+  const chainHelper = (literal: PCtr, hitName: string,
+    nextChain: string | null): string => {
+    const h0K = "_c0", h0I = fr();
+    const h1K = "_c1", h1I = fr();
+    const tK = "_c2", tI = fr();
+    const H0 = Var(h0K, h0I), H1 = Var(h1K, h1I), T = Var(tK, tI);
+    const fnType = All(Lone(), "t", fr(), listType, A);
+    const hit = App(App(Ref(hitName), H0, span), H1, span);
+    let miss: LTerm;
+    if (nextChain !== null) {
+      miss = App(App(Ref(nextChain), H0, span), H1, span);
+    } else {
+      const mI = fr();
+      const MV = Var("_m" + mI, mI);
+      miss = Lam("_m" + mI, mI,
+        failWhole(Ctr("Con", [H0, Ctr("Con", [H1, MV], span)], span)),
+        span, Lone());
+    }
+    const select = App(Ann(
+      Mat("False", miss, Mat("True", hit, Efq(span), span), span),
+      All(Lone(), "c", fr(), Ref("Bool"), fnType), span),
+      App(App(Ref("String.eq"), H1, span), patt_term(literal), span), span);
+    return addHelper("chain",
+      [{ k: h0K, i: h0I, q: Many(), ty: strType },
+        { k: h1K, i: h1I, q: Many(), ty: strType },
+        { k: tK, i: tI, q: Lone(), ty: listType }],
+      App(select, T, span));
+  };
+  const groups: { lit: PCtr; rows: number[] }[] = [];
+  rows.forEach((row, idx) => {
+    const found = groups.find((g) => g.lit.lit === row.lit.lit);
+    if (found === undefined) groups.push({ lit: row.lit, rows: [idx] });
+    else found.rows.push(idx);
+  });
+  const chainNames: string[] = new Array(groups.length);
+  for (let g = groups.length - 1; g >= 0; g--) {
+    const group = groups[g];
+    let next: { whole: boolean; name: string } = g === groups.length - 1
+      ? { whole: true, name: suffixName }
+      : { whole: false, name: chainNames[g + 1] };
+    const names: string[] = new Array(group.rows.length);
+    for (let r = group.rows.length - 1; r >= 0; r--) {
+      names[r] = rowHelper(rows[group.rows[r]], next);
+      next = { whole: false, name: names[r] };
+    }
+    chainNames[g] = chainHelper(group.lit, names[0],
+      g === groups.length - 1 ? null : chainNames[g + 1]);
+  }
+  const chain0 = chainNames[0];
+  const h0I = fr(), t0I = fr(), h1I = fr(), t1I = fr();
+  const H0 = Var("_h0", h0I), T0 = Var("_t0", t0I);
+  const H1 = Var("_h1", h1I), T1 = Var("_t1", t1I);
+  const node1 = listA(T0,
+    con2("_h1", h1I, Many(), "_t1", t1I,
+      App(App(App(Ref(chain0), H0, span), H1, span), T1, span)),
+    failWhole(Ctr("Con", [H0, Ctr("Nil", [], span)], span)));
+  const root = listA(scrut,
+    con2("_h0", h0I, Many(), "_t0", t0I, node1),
+    failWhole(Ctr("Nil", [], span)));
+  for (const helper of helpers) {
+    p.book.tlds[helper.name] = helper.def;
+    p.book.order.push(helper.name);
+  }
+  return Lam(all.k, all.i, root, span, all.q);
 }
 
 // WNF

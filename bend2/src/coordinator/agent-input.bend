@@ -1,7 +1,9 @@
 import Base
+import ./codex-inbox-result.bend as Outcome
 import ../coordinator/commands.bend as C
 import ../coordinator/message-status.bend as Status
 import ./store.bend as Store
+import ./codex-route.bend as CodexRoute
 import ../context/request.bend as Req
 import ../host/sqlite.bend as DB
 import ../host/instance.bend as Custody
@@ -55,54 +57,6 @@ def context(+db: String, +session: String) -> IO(String):
     selected : String <- environment("BATON_SESSION")
     +selected_db : String <- environment("BATON_DATABASE")
     context_if(db,selected_db,directory,Bool.and(Bool.not(String.is_empty(directory)),Bool.and(String.eq(selected,session),Bool.not(String.is_empty(selected_db)))))
-
-def handling_fields(fields: List<String>, +db: String, +session: String, +directory: String) -> IO(HandlingScope):
-  match fields:
-    case attempt_hex <> native_hex <> Nil{}: do IO<HandlingScope>:
-      +attempt : String <- field(attempt_hex)
-      +native : String <- field(native_hex)
-      +witness : String <- IO.try(String,Custody.Instance.input_witness(db,directory))
-      live : String <- IO.try(String,DB.Sql.read(db,"SELECT json_extract(" ++ C.q(witness) ++ ",'$.live');"))
-      identity : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(json_extract(" ++ C.q(witness) ++ ",'$.identity'));"))
-      Bool.pick(IO(HandlingScope),String.eq(live,"1\n"),
-        (do IO<HandlingScope>:
-          bound : String <- field(identity)
-          IO.pure(HandlingScope,Handling{attempt,native,bound,"EXISTS(SELECT 1 FROM executions e WHERE e.session=" ++ C.q(session) ++ " AND e.id=" ++ C.q(attempt) ++ " AND e.directory=" ++ C.q(directory) ++ " AND e.phase='running')"})),
-        handling_invalid("Handling requires the current live native process birth."))
-    case other: handling_invalid("Handling requires the current active execution, native conversation and effective stop state.")
-
-def codex_handling_witness(+db: String, +session: String, +native: String, +witness: String) -> IO(HandlingScope):
-  do IO<HandlingScope>:
-    +bound : String <- IO.try(String,DB.Sql.read(db,"SELECT CASE WHEN json_valid(" ++ C.q(witness) ++ ") THEN CASE WHEN json_extract(" ++ C.q(witness) ++ ",'$.threadId')=" ++ C.q(native) ++ " AND json_extract(" ++ C.q(witness) ++ ",'$.active')=1 AND json_type(" ++ C.q(witness) ++ ",'$.turnId')='text' AND json_extract(" ++ C.q(witness) ++ ",'$.turnId')<>'' THEN hex(json_extract(" ++ C.q(witness) ++ ",'$.turnId')) ELSE '' END ELSE '' END;"))
-    Bool.pick(IO(HandlingScope),String.is_empty(Tx.trim_nl(bound)),
-      handling_invalid("Handling requires a matching active native turn witness."),
-      (do IO<HandlingScope>:
-        +turn : String <- field(bound)
-        encoded : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(" ++ Status.codex_identity(native,turn) ++ ");"))
-        identity : String <- field(encoded)
-        IO.pure(HandlingScope,Handling{Status.codex_attempt(turn),native,identity,"NOT EXISTS(SELECT 1 FROM messages terminal WHERE terminal.id=" ++ C.q("codex-inbox-turn:" ++ session ++ ":" ++ native ++ ":" ++ turn) ++ " AND terminal.sender=" ++ C.q(session) ++ " AND terminal.kind='report')"})))
-
-def codex_handling_result(db: String, session: String, native: String, result: G.RunRes) -> IO(HandlingScope):
-  match result:
-    case G.RRun{G.SExit{+code},+witness}:
-      Bool.pick(IO(HandlingScope),U32.is_eq(code,0),codex_handling_witness(db,session,native,witness),IO.die(HandlingScope,code,"Native handling witness failed: " ++ witness))
-    case G.RRun{G.SSignal{signal},output}: IO.die(HandlingScope,2,"Native handling witness was interrupted: " ++ output)
-    case G.RSpawn{cause}: IO.die(HandlingScope,2,"Native handling witness could not start: " ++ cause)
-
-def codex_handling_if(+db: String, +session: String, +native: String, owned: Bool) -> IO(HandlingScope):
-  match owned:
-    case False{}: IO.pure(HandlingScope,NoHandling{})
-    case True{}: do IO<HandlingScope>:
-      executable : String <- IO.try(String,Lock.SessionLock.executable())
-      helper : String <- IO.try(String,Host.Control.agent_helper(executable))
-      witness : G.RunRes <- Process.runFull(["node",helper,"--input-witness",native],".")
-      codex_handling_result(db,session,native,witness)
-
-def codex_handling(+db: String, +session: String) -> IO(HandlingScope):
-  do IO<HandlingScope>:
-    +native : String <- environment("CODEX_THREAD_ID")
-    known : String <- Bool.pick(IO(String),String.is_empty(native),IO.pure(String,"0\n"),IO.try(String,DB.Sql.read(db,Status.codex_context_sql(session,native))))
-    codex_handling_if(db,session,native,String.eq(known,"1\n"))
 
 def mcp_witness_fields(fields: List<String>, +session: String) -> IO(HandlingScope):
   match fields:
@@ -164,25 +118,6 @@ def mcp_handling(+db: String, +session: String, context: String) -> IO(HandlingS
     selected : String <- environment("BATON_SESSION")
     mcp_handling_owned(String.eq(selected,session),db,session,context)
 
-def external_handling_if(empty: Bool, db: String, session: String, context: String) -> IO(HandlingScope):
-  match empty:
-    case True{}: codex_handling(db,session)
-    case False{}: mcp_handling(db,session,context)
-
-def external_handling(+db: String, +session: String) -> IO(HandlingScope):
-  do IO<HandlingScope>:
-    +context : String <- environment("BATON_MCP_INPUT")
-    external_handling_if(String.is_empty(context),db,session,context)
-
-def handling_scope(+db: String, +session: String) -> IO(HandlingScope):
-  do IO<HandlingScope>:
-    +directory : String <- context(db,session)
-    Bool.pick(IO(HandlingScope),String.is_empty(directory),external_handling(db,session),
-      (do IO<HandlingScope>:
-        ensured : Unit <- Store.ensure_before_begin(db)
-        fields : String <- IO.try(String,DB.Sql.read(db,Status.current_sql(session,directory)))
-        handling_fields(Tx.split_tabs(Tx.trim_nl(fields)),db,session,directory)))
-
 def present(+db: String) -> IO(Bool):
   do IO<Bool>:
     value : String <- IO.try(String,DB.Sql.read(db,Status.present_sql()))
@@ -220,6 +155,38 @@ def record(+db: String, +session: String, +directory: String, saved: String, rea
     fields : String <- IO.try(String,DB.Sql.read(db,Status.current_sql(session,directory)))
     record_fields(db,session,directory,saved,read,Tx.split_tabs(Tx.trim_nl(fields)))
 
+# The read event for one forwarded guidance frame: the running execution's own
+# witness binds the native identity. A missing or stale witness skips the
+# record; the frame stays owed and forwards again on a later turn.
+def forward_read_witness(+db: String, +session: String, +attempt: String, +native: String, +next: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Fail{error}: IO.pure(Unit,Unit{})
+    case Done{+witness}: do IO<Unit>:
+      live : String <- IO.try(String,DB.Sql.read(db,"SELECT json_extract(" ++ C.q(witness) ++ ",'$.live');"))
+      encoded : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(json_extract(" ++ C.q(witness) ++ ",'$.identity'));"))
+      identity : String <- field(Tx.trim_nl(encoded))
+      Bool.pick(IO(Unit),String.eq(live,"1\n"),
+        (do IO<Unit>:
+          stored : String <- IO.try(String,Store.transact_sql(db,Status.forwarded_read_sql(session,attempt,native,identity,next)))
+          IO.pure(Unit,Unit{})),
+        IO.pure(Unit,Unit{}))
+
+def forward_read_fields(+db: String, +session: String, +next: String, fields: List<String>) -> IO(Unit):
+  match fields:
+    case attempt_hex <> directory_hex <> native_hex <> Nil{}: do IO<Unit>:
+      +attempt : String <- field(attempt_hex)
+      +directory : String <- field(directory_hex)
+      +native : String <- field(native_hex)
+      witness : Result<&1,&1,U32 & String,String> <- Custody.Instance.input_witness(db,directory)
+      forward_read_witness(db,session,attempt,native,next,witness)
+    case other: IO.pure(Unit,Unit{})
+
+def forward_read(+db: String, +session: String, +next: String) -> IO(Unit):
+  do IO<Unit>:
+    ensured : Unit <- Store.ensure_before_begin(db)
+    fields : String <- IO.try(String,DB.Sql.read(db,Status.forward_scope_sql(session)))
+    forward_read_fields(db,session,next,Tx.split_tabs(Tx.trim_nl(fields)))
+
 def codex_witness(+db: String, +session: String, +native: String, +saved: String, +read: Bool, +witness: String) -> IO(Unit):
   do IO<Unit>:
     +bound : String <- IO.try(String,DB.Sql.read(db,"SELECT CASE WHEN json_valid(" ++ C.q(witness) ++ ") THEN CASE WHEN json_extract(" ++ C.q(witness) ++ ",'$.threadId')=" ++ C.q(native) ++ " AND json_extract(" ++ C.q(witness) ++ ",'$.active')=1 AND json_type(" ++ C.q(witness) ++ ",'$.turnId')='text' AND json_extract(" ++ C.q(witness) ++ ",'$.turnId')<>'' THEN hex(json_extract(" ++ C.q(witness) ++ ",'$.turnId')) ELSE '' END ELSE '' END;"))
@@ -238,13 +205,13 @@ def codex_witness_result(db: String, session: String, native: String, saved: Str
     case G.RRun{G.SSignal{signal},output}: IO.die(Unit,2,"Native input witness was interrupted: " ++ output)
     case G.RSpawn{cause}: IO.die(Unit,2,"Native input witness could not start: " ++ cause)
 
-def codex_record_if(+db: String, session: String, +native: String, saved: String, read: Bool, owned: Bool) -> IO(Unit):
+def codex_record_if(+db: String, +session: String, +native: String, saved: String, read: Bool, owned: Bool) -> IO(Unit):
   match owned:
     case False{}: IO.pure(Unit,Unit{})
     case True{}: do IO<Unit>:
       executable : String <- IO.try(String,Lock.SessionLock.executable())
-      helper : String <- IO.try(String,Host.Control.agent_helper(executable))
-      witness : G.RunRes <- Process.runFull(["node",helper,"--input-witness",native],".")
+      args : List<String> <- CodexRoute.command(db,session,[executable,db,"codex-input-witness",native])
+      witness : G.RunRes <- Process.runFull(args,".")
       codex_witness_result(db,session,native,saved,read,witness)
 
 def codex_record(+db: String, +session: String, +saved: String, read: Bool) -> IO(Unit):
@@ -265,7 +232,8 @@ def mcp_record_scope(scope: HandlingScope, +db: String, +session: String, saved:
         ++ " AND m.recipient=" ++ C.q(session) ++ " AND m.recipient=" ++ Status.exposed(read,"recipient")
         ++ " AND m.body=" ++ Status.exposed(read,"body") ++ " AND " ++ current
         ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session)
-        ++ ") ON CONFLICT(attempt,identity,message) DO NOTHING;COMMIT;"))
+        ++ ") ON CONFLICT(attempt,identity,message) DO NOTHING;"
+        ++ "DELETE FROM wake_claims WHERE session=" ++ C.q(session) ++ " AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.recipient=" ++ C.q(session) ++ " AND " ++ Status.owed_sql("m") ++ ");COMMIT;"))
       IO.pure(Unit,Unit{})
 
 def external_record_if(empty: Bool, +db: String, +session: String, +saved: String, +read: Bool, context: String) -> IO(Unit):
@@ -280,11 +248,22 @@ def external_record(+db: String, +session: String, +saved: String, +read: Bool) 
     +context : String <- environment("BATON_MCP_INPUT")
     external_record_if(String.is_empty(context),db,session,saved,read,context)
 
+def cli_read(+db: String, +session: String, +saved: String) -> IO(Unit):
+  do IO<Unit>:
+    ensured : Unit <- Store.ensure_before_begin(db)
+    stored : String <- IO.try(String,Store.transact_sql(db,Status.cli_read_sql(session,saved)))
+    IO.pure(Unit,Unit{})
+
+def external_read(+db: String, +session: String, +saved: String, +read: Bool) -> IO(Unit):
+  do IO<Unit>:
+    external : Unit <- external_record(db,session,saved,read)
+    Bool.pick(IO(Unit),read,cli_read(db,session,saved),IO.pure(Unit,Unit{}))
+
 def after_output(+db: String, +session: String, +directory: String, +saved: String, +read: Bool, output: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   match output:
     case Fail{error}: IO.pass(Unit,Fail{error})
     case Done{unit}:
-      Bool.pick(IO(Unit),String.is_empty(directory),external_record(db,session,saved,read),record(db,session,directory,saved,read))
+      Bool.pick(IO(Unit),String.is_empty(directory),external_read(db,session,saved,read),record(db,session,directory,saved,read))
 
 def output(+db: String, +session: String, +saved: String, +read: Bool) -> IO(Unit):
   do IO<Unit>:
@@ -339,15 +318,6 @@ def batch_output(+db: String, saved: String) -> IO(Unit):
     session : String <- batch_session(db)
     output(db,session,saved,True{})
 
-def settled_witness(+db: String, +session: String, +attempt: String, +witness: String, complete: Bool) -> IO(Unit):
-  match complete:
-    case False{}: IO.pure(Unit,Unit{})
-    case True{}: do IO<Unit>:
-      raw : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(json_extract(" ++ C.q(witness) ++ ",'$.identity'));"))
-      identity : String <- field(Tx.trim_nl(raw))
-      handled : String <- IO.try(String,Store.transact_sql(db,Status.settle_sql(session,attempt,identity)))
-      IO.pure(Unit,Unit{})
-
 def retained_failure(db: String, session: String, attempt: String, code: U32, cause: String) -> IO(Unit):
   do IO<Unit>:
     retained : String <- IO.try(String,Store.apply(db,C.Report{attempt ++ ":input-status-error",session,"Native input observation failed (" ++ U32.show(code) ++ "): " ++ cause}))
@@ -370,54 +340,43 @@ def prompt_if(+db: String, +session: String, +attempt: String, +directory: Strin
       input : Result<&1,&1,U32 & String,String> <- Custody.Instance.input_prompt(db,directory)
       prompt_result(db,session,attempt,native,identity,input)
 
-def retained_witness(+db: String, +session: String, +attempt: String, +path: String, +native: String, harness: String, success: Bool, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+# Prompt-carried reads are recorded from the delivery witness alone: the
+# initial input was written to the native process. Turn success is a separate
+# task lifecycle fact and never gates the read record. The muse witness
+# evidences the read only once its complete marker is recorded.
+def retained_witness(+db: String, +session: String, +attempt: String, +path: String, +native: String, harness: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match result:
     case Fail{(+code,cause)}:
       Bool.pick(IO(Unit),U32.is_eq(code,2),IO.pure(Unit,Unit{}),retained_failure(db,session,attempt,code,cause))
     case Done{+witness}: do IO<Unit>:
       complete : String <- IO.try(String,DB.Sql.read(db,"SELECT json_extract(" ++ C.q(witness) ++ ",'$.complete');"))
       delivered : String <- IO.try(String,DB.Sql.read(db,"SELECT json_extract(" ++ C.q(witness) ++ ",'$.initialInputDelivered') AND json_extract(" ++ C.q(witness) ++ ",'$.initialInputBytes')<>'0';"))
-      +settled : Bool <- IO.pure(Bool,Bool.and(success,String.eq(complete,"1\n")))
-      exposed : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(native)),Bool.pick(Bool,String.eq(harness,"muse"),settled,String.eq(delivered,"1\n"))))
-      recorded : Unit <- prompt_if(db,session,attempt,path,native,witness,exposed)
-      settled_witness(db,session,attempt,witness,settled)
+      exposed : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(native)),Bool.pick(Bool,String.eq(harness,"muse"),String.eq(complete,"1\n"),String.eq(delivered,"1\n"))))
+      prompt_if(db,session,attempt,path,native,witness,exposed)
 
-def settled_fields(+db: String, +session: String, +attempt: String, success: Bool, fields: List<String>) -> IO(Unit):
+def initial_fields(+db: String, +session: String, +attempt: String, fields: List<String>) -> IO(Unit):
   match fields:
     case directory_hex <> native_hex <> harness_hex <> Nil{}: do IO<Unit>:
       +path : String <- field(directory_hex)
       +native : String <- field(native_hex)
       harness : String <- field(harness_hex)
       witness : Result<&1,&1,U32 & String,String> <- Custody.Instance.input_witness(db,path)
-      retained_witness(db,session,attempt,path,native,harness,success,witness)
+      retained_witness(db,session,attempt,path,native,harness,witness)
     case other: IO.pure(Unit,Unit{})
 
-def settle_reads(+db: String, +session: String, +attempt: String, +success: Bool, known: Bool) -> IO(Unit):
+def initial_reads(+db: String, +session: String, +attempt: String, known: Bool) -> IO(Unit):
   match known:
     case False{}: IO.pure(Unit,Unit{})
     case True{}: do IO<Unit>:
       fields : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(e.directory) || char(9) || hex(s.native) || char(9) || hex(s.harness) FROM executions e JOIN sessions s ON s.id=e.session WHERE e.session=" ++ C.q(session) ++ " AND e.id=" ++ C.q(attempt) ++ ";"))
-      settled_fields(db,session,attempt,success,Tx.split_tabs(Tx.trim_nl(fields)))
+      initial_fields(db,session,attempt,Tx.split_tabs(Tx.trim_nl(fields)))
 
-def settle_if(+db: String, session: String, attempt: String, success: Bool) -> IO(Unit):
+def record_initial_reads(+db: String, session: String, attempt: String) -> IO(Unit):
   do IO<Unit>:
     known : Bool <- present(db)
-    settle_reads(db,session,attempt,success,known)
+    initial_reads(db,session,attempt,known)
 
 def initial_observed(+db: String, +session: String, +attempt: String, +event: String) -> IO(Unit):
   do IO<Unit>:
     identity : String <- IO.try(String,DB.Sql.read(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN coalesce(CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='thread.started' THEN json_extract(" ++ C.q(event) ++ ",'$.thread_id') END,json_extract(" ++ C.q(event) ++ ",'$.session_id'),CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='response' AND json_extract(" ++ C.q(event) ++ ",'$.command')='get_state' AND json_extract(" ++ C.q(event) ++ ",'$.success')=1 THEN json_extract(" ++ C.q(event) ++ ",'$.data.sessionId') END,CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.stream.kind')='session' THEN json_extract(" ++ C.q(event) ++ ",'$.stream.id') END,'')<>'' ELSE 0 END;"))
-    Bool.pick(IO(Unit),String.eq(identity,"1\n"),settle_if(db,session,attempt,False{}),IO.pure(Unit,Unit{}))
-
-def settle_codex_if(+db: String, +session: String, +native: String, +turn: String, +status: String, known: Bool) -> IO(Unit):
-  match known:
-    case False{}: IO.write("{\"status\":\"unrecorded\"}\n")
-    case True{}: do IO<Unit>:
-      stored : String <- Bool.pick(IO(String),String.eq(status,"completed"),IO.try(String,Store.transact_sql(db,Status.settle_codex_sql(session,native,turn))),IO.pure(String,""))
-      result : String <- IO.try(String,DB.Sql.read(db,"SELECT json_object('session'," ++ C.q(session) ++ ",'native'," ++ C.q(native) ++ ",'turnId'," ++ C.q(turn) ++ ",'nativeStatus'," ++ C.q(status) ++ ",'status',CASE WHEN EXISTS(SELECT 1 FROM message_reads WHERE recipient=" ++ C.q(session) ++ " AND native=" ++ C.q(native) ++ " AND attempt=" ++ C.q(Status.codex_attempt(turn)) ++ " AND identity=" ++ Status.codex_identity(native,turn) ++ " AND handled IS NOT NULL) THEN 'settled' WHEN EXISTS(SELECT 1 FROM message_reads WHERE recipient=" ++ C.q(session) ++ " AND native=" ++ C.q(native) ++ " AND attempt=" ++ C.q(Status.codex_attempt(turn)) ++ ") THEN 'incomplete' ELSE 'unrecorded' END);"))
-      IO.write(Tx.trim_nl(result) ++ "\n")
-
-def settle_codex(+db: String, session: String, native: String, turn: String, status: String) -> IO(Unit):
-  do IO<Unit>:
-    known : Bool <- present(db)
-    settle_codex_if(db,session,native,turn,status,known)
+    Bool.pick(IO(Unit),String.eq(identity,"1\n"),record_initial_reads(db,session,attempt),IO.pure(Unit,Unit{}))

@@ -31,10 +31,11 @@ def refused(+saved: String) -> Bool:
       Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),
         Bool.or(Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""),
           Bool.or(Tx.starts_with(saved,"{\"error\":\"message-id-conflict\""),
-            Bool.or(Tx.starts_with(saved,"{\"error\":\"finding-id-conflict\""),
-              Bool.or(Tx.starts_with(saved,"{\"error\":\"knowledge-notice-conflict\""),
-                Bool.or(Tx.starts_with(saved,"{\"error\":\"promotion-id-conflict\""),
-                  Tx.starts_with(saved,"{\"error\":\"promotion-notice-conflict\"")))))))))
+            Bool.or(Tx.starts_with(saved,"{\"error\":\"relation-id-conflict\""),
+              Bool.or(Tx.starts_with(saved,"{\"error\":\"finding-id-conflict\""),
+                Bool.or(Tx.starts_with(saved,"{\"error\":\"knowledge-notice-conflict\""),
+                  Bool.or(Tx.starts_with(saved,"{\"error\":\"promotion-id-conflict\""),
+                    Tx.starts_with(saved,"{\"error\":\"promotion-notice-conflict\""))))))))))
 
 # Change-publication contract for the coordinator queue. The projection
 # installer runs before the writer's own transaction begins; the committed
@@ -87,12 +88,21 @@ def publish_after_commit(db: String, committed: Result<&1,&1,U32 & String,String
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
     case Done{+saved}: publish_committed(db,saved)
 
+# Preflight installation takes BEGIN IMMEDIATE when the projection is stale, so
+# it can meet a held write lock too. Its failure reaches the caller's result,
+# where a busy answer goes through the same retry as the command (#1054 review,
+# item 2).
+def transact_ensured(+db: String, sql: String, ensured: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match ensured:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{installed}: do IO<Result<&1,&1,U32 & String,String>>:
+      committed : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,sql)
+      publish_after_commit(db,committed)
+
 def transact_sql(+db: String, sql: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    ensured : Unit <- ensure_before_begin(db)
-    committed : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,sql)
-    publish_after_commit(db,committed)
-
+    ensured : Result<&1,&1,U32 & String,String> <- DB.Sql.ensure_projection(db,C.schema())
+    transact_ensured(db,sql,ensured)
 
 law rolled_back_transaction_publishes_nothing:
   for db: String
@@ -131,11 +141,11 @@ def message_projection_value(+saved: String, shape: U32, known: Bool, status: St
     case 1: "SELECT coalesce(json_group_array(json(item)),'[]') FROM (SELECT json_patch(j.value,json_object('nativeInputStatus'," ++ status ++ ")) AS item FROM json_each(" ++ C.q(saved) ++ ") j ORDER BY CAST(j.key AS INTEGER));"
     case 2: "SELECT json_patch(j.value,json_object('nativeInputStatus'," ++ status ++ ")) FROM (SELECT " ++ C.q(Tx.trim_nl(saved)) ++ " AS value) j;"
     case 3:
-      Bool.pick(String,known,MessageStatus.decorate_detail_sql(saved),"SELECT json_set(" ++ C.q(Tx.trim_nl(saved)) ++ ",'$.message.nativeInputStatus',json_object('delivered','unrecorded','read','unrecorded','handled','unrecorded','attempts',json('[]')),'$.attemptRelation',json_object('status','unrecorded','attempts',json('[]')));")
+      Bool.pick(String,known,MessageStatus.decorate_detail_sql(saved),"SELECT json_set(" ++ C.q(Tx.trim_nl(saved)) ++ ",'$.message.nativeInputStatus',json_object('delivered','unrecorded','read','unrecorded','attempts',json('[]')),'$.attemptRelation',json_object('status','unrecorded','attempts',json('[]')));")
     case other: ""
 
 def message_projection(saved: String, shape: U32, +known: Bool) -> String:
-  message_projection_value(saved,shape,known,Bool.pick(String,known,MessageStatus.projection("json_extract(j.value,'$.id')"),"json_object('delivered','unrecorded','read','unrecorded','handled','unrecorded','attempts',json('[]'))"))
+  message_projection_value(saved,shape,known,Bool.pick(String,known,MessageStatus.projection("json_extract(j.value,'$.id')"),"json_object('delivered','unrecorded','read','unrecorded','attempts',json('[]'))"))
 
 def message_read_result(+db: String, +shape: U32, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match result:
@@ -147,7 +157,8 @@ def message_read_result(+db: String, +shape: U32, result: Result<&1,&1,U32 & Str
           DB.Sql.read(db,message_projection(saved,shape,String.eq(exists,"1\n")))))
 
 def read(+db: String, +command: C.Command) -> IO(Result<&1, &1, U32 & String, String>):
-  do IO<Result<&1,&1,U32 & String,String>>:
+  do IO<Result<&1, &1, U32 & String, String>>:
+    ensured : Unit <- ensure_before_begin(db)
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,C.sql(command))
     message_read_result(db,message_shape(command),result)
 
@@ -155,6 +166,28 @@ def apply(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, Str
   do IO<Result<&1,&1,U32 & String,String>>:
     result : Result<&1,&1,U32 & String,String> <- commit(db,command)
     committed(result)
+
+# SQLITE_BUSY (5) and SQLITE_LOCKED (6) mean the connection's busy handler gave
+# up on a lock another connection held; the transaction committed nothing.
+def busy(+code: U32) -> Bool:
+  Bool.or(U32.is_eq(code,5),U32.is_eq(code,6))
+
+def busy_again(result: Result<&1,&1,U32 & String,String>, again: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Result<&1,&1,U32 & String,String>):
+  match result:
+    case Fail{(+code,+text)}: Bool.pick(IO(Result<&1,&1,U32 & String,String>),busy(code),again(Unit{}),IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,text)}))
+    case Done{saved}: IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
+
+# Applies a command whose statements are idempotent, again after each busy
+# answer, until the store commits it or reports another failure. Each attempt
+# waits in the busy handler first. The native observer records frames through
+# it: a busy write had stopped the span read, and turn 225958 of
+# compiler-crash-1017-opus-20261022 ended 'without a native result' although
+# its native turn finished (#1054, instance B2).
+@unsafe
+def apply_through_busy(+db: String, +command: C.Command) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    result : Result<&1,&1,U32 & String,String> <- apply(db,command)
+    busy_again(result,unit => apply_through_busy(db,command))
 
 
 # Wake-claim transitions for issue #685. The table is owned by this module:
@@ -166,10 +199,11 @@ def apply(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, Str
 # obligation hands over; the generation fences takeovers so a late finisher
 # can never mistake an older write for the live row. Released to unclaimed
 # only by a lock holder when no input is owed and no retained attempt is
-# recorded live. Deleted when acknowledgement clears every owed input, or
+# recorded live. Deleted when a recorded read clears every owed input, or
 # when an admitted stop resolves the obligation.
 def claim_schema_sql() -> String:
   "CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);"
+  ++ "CREATE TABLE IF NOT EXISTS wake_claim_tickets (session TEXT NOT NULL REFERENCES sessions(id), directory TEXT NOT NULL, owner TEXT NOT NULL, generation INTEGER NOT NULL, PRIMARY KEY(session,directory));"
 
 def claim_sql(+session: String, +owner: String) -> String:
   "INSERT OR REPLACE INTO wake_claims(session,state,owner,generation) VALUES(" ++ C.q(session) ++ ",'claimed'," ++ C.q(owner) ++ ",coalesce((SELECT generation FROM wake_claims WHERE session=" ++ C.q(session) ++ "),0)+1);"
@@ -177,9 +211,25 @@ def claim_sql(+session: String, +owner: String) -> String:
 # A release names the exact row it settles: the owner and generation written
 # at admission, read back under the same held lock. A delete that names a
 # stale ticket removes nothing, so a late settler can never clear a newer
-# owner's row that an acknowledgement, a stop, or a takeover left behind.
+# owner's row that a read, a stop, or a takeover left behind.
 def release_ticket_sql(+session: String, +owner: String, +generation: String) -> String:
   "DELETE FROM wake_claims WHERE session=" ++ C.q(session) ++ " AND owner=" ++ C.q(owner) ++ " AND generation=CAST(" ++ C.q(generation) ++ " AS INTEGER);"
+
+# The durable ticket names the admission one attempt recorded: the session,
+# the attempt directory and the owner and generation the claim carried when
+# that attempt was admitted. A later recovery settles that exact ticket under
+# the session guard; a newer claim has another owner or generation and is
+# preserved.
+def retain_ticket_sql(+session: String, +directory: String, +owner: String, +generation: String) -> String:
+  "INSERT OR REPLACE INTO wake_claim_tickets(session,directory,owner,generation) VALUES(" ++ C.q(session) ++ "," ++ C.q(directory) ++ "," ++ C.q(owner) ++ ",CAST(" ++ C.q(generation) ++ " AS INTEGER));"
+
+def ticket_sql(+session: String, +directory: String) -> String:
+  "SELECT coalesce((SELECT owner || char(9) || generation FROM wake_claim_tickets WHERE session=" ++ C.q(session) ++ " AND directory=" ++ C.q(directory) ++ "),'');"
+
+# The ticket row is removed when the exact claim is released or the attempt is
+# acknowledged, so a settled attempt leaves no row behind.
+def delete_ticket_sql(+session: String, +directory: String) -> String:
+  "DELETE FROM wake_claim_tickets WHERE session=" ++ C.q(session) ++ " AND directory=" ++ C.q(directory) ++ ";"
 
 # Stale execution metadata recovery. When host custody observes the recorded
 # attempt dead, the takeover marks its row exited with a fixed owner-death
@@ -188,6 +238,14 @@ def release_ticket_sql(+session: String, +owner: String, +generation: String) ->
 # The phase guard keeps the write idempotent.
 def record_owner_death_sql(+session: String) -> String:
   "UPDATE executions SET phase='exited',status='owner-death' WHERE session=" ++ C.q(session) ++ " AND phase<>'exited';"
+
+# The recorded retained attempt that may still hold live custody. A terminal
+# start failure has no native birth, so no recovery invocation can attach to
+# it; the next admission replaces the row and starts a fresh attempt. Other
+# exited attempts still pass this selection because their keeper may hold an
+# unacknowledged checkpoint that recovery must observe first.
+def recorded_retained_sql(+session: String) -> String:
+  "SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='retained' AND NOT (phase='exited' AND status='start failed')),'');"
 
 # Absent-tolerant claim read. SQLite resolves every named table when it
 # prepares a statement, so one statement cannot guard on sqlite_master and
@@ -254,6 +312,24 @@ def release_ticket(+db: String, session: String, owner: String, generation: Stri
     released : String <- IO.try(String,DB.Sql.query(db,release_ticket_sql(session,owner,Tx.trim_nl(generation))))
     IO.pure(Unit,Unit{})
 
+def retain_ticket(+db: String, +session: String, +directory: String, +owner: String, +generation: String) -> IO(Unit):
+  do IO<Unit>:
+    ensured : String <- IO.try(String,DB.Sql.query(db,claim_schema_sql()))
+    saved : String <- IO.try(String,DB.Sql.query(db,retain_ticket_sql(session,directory,owner,Tx.trim_nl(generation))))
+    IO.pure(Unit,Unit{})
+
+def ticket(+db: String, +session: String, +directory: String) -> IO(String):
+  do IO<String>:
+    ensured : String <- IO.try(String,DB.Sql.query(db,claim_schema_sql()))
+    saved : String <- IO.try(String,DB.Sql.query(db,ticket_sql(session,directory)))
+    IO.pure(String,Tx.trim_nl(saved))
+
+def delete_ticket(+db: String, +session: String, +directory: String) -> IO(Unit):
+  do IO<Unit>:
+    ensured : String <- IO.try(String,DB.Sql.query(db,claim_schema_sql()))
+    removed : String <- IO.try(String,DB.Sql.query(db,delete_ticket_sql(session,directory)))
+    IO.pure(Unit,Unit{})
+
 def record_owner_death(db: String, session: String) -> IO(Unit):
   do IO<Unit>:
     recorded : String <- IO.try(String,DB.Sql.query(db,record_owner_death_sql(session)))
@@ -268,7 +344,7 @@ def claim_sql_writes_a_claimed_row(session,owner):
   {==}
 
 law claim_schema_creates_the_claim_table:
-  {claim_schema_sql() == "CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);" : String}
+  {claim_schema_sql() == "CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);" ++ "CREATE TABLE IF NOT EXISTS wake_claim_tickets (session TEXT NOT NULL REFERENCES sessions(id), directory TEXT NOT NULL, owner TEXT NOT NULL, generation INTEGER NOT NULL, PRIMARY KEY(session,directory));" : String}
 
 def claim_schema_creates_the_claim_table():
   {==}

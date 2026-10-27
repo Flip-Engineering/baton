@@ -265,33 +265,19 @@ class McpContract(unittest.TestCase):
         self.assertEqual(delivery, json.loads(self.coord('delivery', 'turn-1').stdout))
         self.assertEqual(delivery['body'], self.body)
         self.assertIsNone(delivery['receipt'])
-        self.tool('baton2_ack', {'id': 'turn-1', 'receipt': ''})
+        read = self.coord('as', 'root', 'read', 'turn-1')
+        self.assertEqual(read.returncode, 0, read.stderr)
         index = self.tool('baton2_inbox', {'index': True})
         self.assertEqual(json.loads(index['content'][0]['text']), [])
         delivered = self.tool('baton2_delivery', {'id': 'turn-1'})
         row = json.loads(delivered['content'][0]['text'])
         self.assertEqual(row['body'], self.body)
-        self.assertEqual(row['receipt'], '')
-
-    def test_ack_refusal_returns_the_native_cli_output(self):
-        cli = self.coord('ack', 'missing-ack', 'root', 'receipt', ok=False)
-        self.assertNotEqual(cli.returncode, 0)
-        result = self.tool('baton2_ack', {'id': 'missing-ack', 'receipt': 'receipt'})
-        self.assertTrue(result['isError'])
-        text = result['content'][0]['text']
-        self.assertIn(f'exit code: {cli.returncode}', text)
-        prefix, stdout_separator, body = text.partition('\nstdout:\n')
-        self.assertTrue(stdout_separator, 'the refusal omitted captured stdout')
-        stdout, stderr_separator, stderr = body.partition('\nstderr:\n')
-        self.assertTrue(stderr_separator, 'the refusal omitted captured stderr')
-        self.assertIn('Error: Command failed:', prefix)
-        self.assertEqual(stdout, cli.stdout)
-        self.assertEqual(stderr, cli.stderr)
+        self.assertIsNone(row['receipt'])
 
     def test_is_error_result_carries_its_error_content(self):
-        cli = self.coord('ack', 'contentless-refusal', 'root', 'receipt', ok=False)
+        cli = self.coord('delivery', 'contentless-refusal', ok=False)
         self.assertNotEqual(cli.returncode, 0)
-        result = self.tool('baton2_ack', {'id': 'contentless-refusal', 'receipt': 'receipt'})
+        result = self.tool('baton2_delivery', {'id': 'contentless-refusal'})
         self.assertTrue(result['isError'])
         self.assertTrue(result.get('content'), 'an isError result must still carry its content')
         text = result['content'][0]['text']

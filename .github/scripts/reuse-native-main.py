@@ -18,11 +18,101 @@ import traceback
 
 ARCHIVE_SHA = '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4'
 COMPILER_ARCHIVES = {
+    '6609a2de031417fe4ad149d77afd9282c76237aa0b70dfb48416f4ccfe1ad876': {
+        'name': 'Bend 2.0.25 with the Baton #1017 pass collection patch and Malloc=1 launcher',
+        'official_release_artifact': False,
+        'binary_sha256': 'fad2561b1050ad86d748b3889115362b7d95b5c38a718bfc9bc3c2539d5269a9',
+    },
+    'db42e8726f9f8e8049b9651a9cedf5f9994a530ef1ad606019a2faf881136fa1': {
+        'name': 'Bend 2.0.25 with the Baton #1017 pass collection patch and Bun 1.4.4 launcher',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    'f22a9bc5d42ebe57d0e46240a5ca407e673bc84a4ba21e6ad2c693cf44b8d651': {
+        'name': 'Bend 2.0.25 with PR1087 arm sharing, the CONSTS insertion bound and the iterative pass-1 emitter (Bun 1.4.4 launcher)',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    'b4fc1e5dc357c60b6d683bcdf29c63c2c479c5c5e4d21adb01afdc1ca60d79a3': {
+        'name': 'Bend 2.0.25 with compiler main from Baton PR #1101 (Bun 1.4.4 launcher)',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    'e14dcc05b6bdde4f5727e9e384e15cd1a9f6164a059b817c1e48fd76bd8a2b1b': {
+        'name': 'Bend 2.0.25 compiler main from Baton PR #1101 with runtime lineage metadata',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    'fd99eb8446b32b2ab80a5deef1813644f6bb09f472b49bdfad4d14d8367b7cf9': {
+        'name': 'Bend 2.0.25 compiler main from Baton source f9356fd with iterative public term lowering',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    '9439438bcf409f1ab4714e27016042153e4045ee8b9353370718f4b19e91749d': {
+        'name': 'Bend 2.0.25 compiler main from Baton source 7261c8f with WeakSet liveness tracking',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    'ebdf6505992f6e1c5b6b143350b324c9395fc90610ccda10300a7b0d80f426cd': {
+        'name': 'Bend 2.0.25 compiler main from Baton source c2cc984 with shared type liveness tracking',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    '5b8ae4da56ec4103a9c5042f6a834931d0c6fc8d4ed2fb145481d01f8152ed3d': {
+        'name': 'Bend 2.0.25 compiler main from Baton PR #1122 with shared string-pattern literals',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    'be457f1bb221df434a685506b18c0dd7fe55464ab82257a58189078374bc6f0f': {
+        'name': 'Bend 2.0.25 compiler main from Baton PR #1131 with shared parser lowering',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    'f5b2c7588b0b4728bd9d0893904a1074469cb2946a1c07cf400ce30d9a8f2333': {
+        'name': 'Bend 2.0.25 compiler main from Baton PR #1139 with per-pass collection reuse',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    '4a3a566f3dc6ed5e88a872ea37133a655e52b4abca97d31ee97417bb36a2d542': {
+        'name': 'Bend 2.0.25 compiler main from Baton PR #1144 with reusable emission buffers and direct parse lowering',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    'cad6a74192b7121b932fb7c5856760dfc1e6f7139053930e1fda19dc0e90aada': {
+        'name': 'Bend 2.0.25 compiler main with bounded C indentation',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    '8388e439ee642cbee177fcff0c0139cc69f8ece561735006dda02b68ff4cc91c': {
+        'name': 'Bend 2.0.25 compiler main with literal-prefix lowering and 20-bit FID/CID capacity',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    '5bf1999806f90f194041f01285cb831fdde1761df6726a745c333a0b971e5685': {
+        'name': 'Bend 2.0.25 compiler main with literal-prefix lowering, 20-bit FID/CID capacity and strong CID value reach',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    '5d3e79f021dc544dc2c2e075427b5adfd6858c4a0efd8aa28d0d463a9394850e': {
+        'name': 'Bend 2.0.25 compiler main with literal-prefix lowering, 20-bit FID/CID capacity, strong CID value reach and Metal term-tag decode',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    '3f0c31436e3f39e3ffc581496de34ef5077faf5dd0b106438de0049f0e7e8f75': {
+        'name': 'Bend 2.0.25 compiler main with literal-prefix lowering, the restored 1 << 20 CID ceiling, 20-bit FID capacity, strong CID value reach, List collection and Metal term-tag decode',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
     ARCHIVE_SHA: {'name': 'Bend 2.0.25', 'official_release_artifact': True},
     '38bb1813d52ddc7b816a8a01f971fe8503959fef54795ca22eb346b5cfc069a7': {
         'name': 'Bend 2.0.25 with the Baton #741 pure memo patch',
         'official_release_artifact': False,
         'binary_sha256': 'b929035652cba78ba1b034b7214a14bbc2f64f0e6c27265c64c53895d24890c0',
+    },
+    'ca9f19566db10332c56d5253ad4944d05e675b64ce07b3e12d6ff335c6485d8a': {
+        'name': 'Bend 2.0.25 with Baton memoization, the Cgen cache and the emit-lits fixpoint patch',
+        'official_release_artifact': False,
+        'binary_sha256': '94383bb15b262f5bcd34ae2684d74a06e0f81e88736a75e17c9d8cbe9dbb79dc',
     },
 }
 ENTRY = 'bend2/src/coordinator/main.bend'

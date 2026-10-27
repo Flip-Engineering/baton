@@ -6,6 +6,7 @@ import ../host/process.bend as P
 import ../host/session-lock.bend as Lock
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
+import ../context/native-runtime.bend as ContextRuntime
 
 # These equations bind command admission and keeper control effects. SQLite
 # transaction isolation and native process lifetime remain host obligations;
@@ -18,10 +19,12 @@ law stopped_receive_cannot_acquire_an_owner:
   for effort: String
   for cwd: String
   for log: String
-  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.available(db,session,cmd,model,effort,cwd,log,again,True{}) == IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.")}) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  for predecessor: String
+  for -updates: Chan(String)
+  {Receive.available(db,session,cmd,model,effort,cwd,log,again,True{},predecessor,updates) == IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.")}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def stopped_receive_cannot_acquire_an_owner(db,session,cmd,model,effort,cwd,log,again):
+def stopped_receive_cannot_acquire_an_owner(db,session,cmd,model,effort,cwd,log,again,predecessor,updates):
   {==}
 
 def refused_admission_releases(lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -46,10 +49,11 @@ law stopped_admission_releases_without_launch:
   for storage: String
   for prompt: String
   for recovery: String
-  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.start_admitted(db,session,id,cmd,route,thinking,workspace,log,lock,cursor,native,attempt,harness,storage,prompt,recovery,again,False{}) == refused_admission_releases(lock) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for predecessor: String
+  for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.start_admitted(db,session,id,cmd,route,thinking,workspace,log,lock,cursor,native,attempt,harness,storage,prompt,recovery,predecessor,again,False{}) == refused_admission_releases(lock) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def stopped_admission_releases_without_launch(db,session,id,cmd,route,thinking,workspace,log,lock,cursor,native,attempt,harness,storage,prompt,recovery,again):
+def stopped_admission_releases_without_launch(db,session,id,cmd,route,thinking,workspace,log,lock,cursor,native,attempt,harness,storage,prompt,recovery,predecessor,again):
   {==}
 
 # Both direct turns and retained receives call this transaction while holding
@@ -121,6 +125,7 @@ def accepted_stop(+db: String, +session: String, id: String, reason: String, for
     error : String <- IO.try(String,Stop.request(db,session,id,reason,force))
     checked : Unit <- Stop.validate(error)
     reconciled : Unit <- Stop.reconcile_request(db,session)
+    runtime_stopped : Unit <- ContextRuntime.runtime_stop_owner(db,session)
     result : String <- IO.try(String,DB.Sql.query(db,Stop.result_sql(session)))
     IO.write(result)
 
@@ -156,7 +161,7 @@ def stop_reconcile_selects_the_recorded_signal_and_attempt(db,session,attempt,di
 # requested native signal. SQLite rendering is exercised by the idle fixture.
 law stop_result_reads_recorded_execution_status:
   for +session: String
-  {Stop.result_sql(session) == "SELECT json_object('session',session,'stopId',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''),'stoppedInputs',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND receipt IS NULL AND kind IN ('task','guidance','recovery')),'pendingReports',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND receipt IS NULL AND kind IN ('report','question'))) FROM session_stops WHERE session=" ++ C.q(session) ++ ";" : String}
+  {Stop.result_sql(session) == "SELECT json_object('session',session,'stopId',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''),'stoppedInputs',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=messages.id AND owed_read.recipient=messages.recipient) AND kind IN ('task','guidance','recovery')),'pendingReports',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=messages.id AND owed_read.recipient=messages.recipient) AND kind IN ('report','question'))) FROM session_stops WHERE session=" ++ C.q(session) ++ ";" : String}
 
 def stop_result_reads_recorded_execution_status(session):
   {==}
@@ -178,9 +183,9 @@ def stopped_completion_reports_to_the_recorded_upstream_recipient(session,attemp
   {==}
 
 law admitted_stop_clears_only_its_own_claim:
-  for session: String
-  for id: String
-  for reason: String
+  for +session: String
+  for +id: String
+  for +reason: String
   {Stop.stop_claim_sql(session,id,reason) == "DELETE FROM wake_claims WHERE session=" ++ C.q(session) ++ " AND EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(id) ++ " AND reason=" ++ C.q(reason) ++ ");" : String}
 
 def admitted_stop_clears_only_its_own_claim(session,id,reason):
