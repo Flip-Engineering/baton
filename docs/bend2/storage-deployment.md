@@ -8,10 +8,11 @@ validation placement, [#920](https://github.com/Flip-Engineering/baton/issues/92
 unlinked owner protection.
 
 The platform slice owns operating-system service and timer wiring for the
-qualified log-clean helper. It does not configure storage roots and does not
-invoke a storage preview or apply command. The generic storage lifecycle is an
-unqualified work in progress and this document does not describe it as shipped
-policy.
+qualified log-clean helper and the qualified storage-clean helper. The storage
+policy, preview and apply commands are merged on main (PR #934, PR #1128) and
+this document describes the qualified storage scheduler built on them. The
+units do not name storage roots; the deployment owner supplies
+`BATON_STORAGE_ROOTS` in the environment file described below.
 
 ## Qualified log-clean scheduler
 
@@ -49,10 +50,101 @@ credentials. Root deploys from a release that contains the helper; the
 templates do not name a branch head and do not require further permission.
 
 The cleanup lock serializes cleanup invocations. It does not exclude other
-writers. A future platform change that enables an apply command must protect
-every active coordinator database and its ancestors, and must use writer
-coordination for each approved root. A root is not a cleanup candidate because
-a path exists.
+writers. The storage-clean scheduler below adds the per-root writer leases,
+database-reference admission and mount-identity checks that an apply command
+needs.
+
+## Qualified storage-clean scheduler
+
+The qualified command is the immutable packaged helper:
+
+```
+RELEASE/libexec/baton2/storage-clean DATABASE COMMAND ARG...
+```
+
+It exposes the product administration commands and calls the same
+`StoragePolicy` implementation the complete Baton binary uses:
+
+```
+storage-clean DATABASE storage-policy
+storage-clean DATABASE storage-preview SESSION
+storage-clean DATABASE storage-apply SESSION
+storage-clean DATABASE storage-collect SESSION
+storage-clean DATABASE storage-sweep
+```
+
+`storage-sweep` is the scheduled command. It enumerates session IDs from the
+selected database and runs the settled-session collection for each one. Every
+session uses the same settled gate, the same collectable-root selection and
+the same apply pipeline as the product commands. Each session contributes one
+object:
+
+```
+{"results":[{"session":SESSION,"result":<collect response>}]}
+```
+
+A settled session whose configured roots are admitted removes the eligible
+generated entries under those roots. A root that is not referenced by the
+database, not canonical, overlapping another root, or held by a writer lease
+is refused and its files stay. A directory whose mount identity cannot be
+verified, or that is itself a mount boundary, is preserved before any
+deletion. A skipped or refused session is reported in its own object and does
+not stop the sweep.
+
+Roots come from the environment. The deployment owner writes
+`/etc/baton/storage-roots.env`:
+
+```
+BATON_STORAGE_ROOTS=build-output=/path/to/generated-output|selection:/etc/acp-fframes-artifact/selection.json
+```
+
+An ownership-ending staging root names the authenticated repository that must
+contain each candidate commit:
+
+```
+BATON_STORAGE_ROOTS=staging-source=/mnt/large/agent-scratch/acp390-install|<authenticated-repo>
+```
+
+`BATON_STORAGE_EXCLUSIVE_ROOTS` may be added for the same roots when the
+operator declares them exclusive to cleanup. Without the environment file no
+roots are configured and the pass removes nothing.
+
+The repository templates are:
+
+- `deploy/storage/systemd/baton-storage-cleanup.service` and `.timer`;
+- `deploy/storage/launchd/com.flip.baton.storage-cleanup.plist`.
+
+They run under the database owner with the standard Baton environment and
+carry no credentials. The service carries `MemoryMax=2G`, `MemorySwapMax=0`
+and `TimeoutStartSec=infinity`, the same bounds as the log-clean service.
+
+On macOS the mount identity of a candidate cannot be established, so every
+directory removal is preserved. The Darwin agent is wired for file and log
+cleanup only; no Darwin directory removal is validated.
+
+### Staging and activation
+
+The helper is staged like the log-clean helper. Build the entry with the
+shared queue, then stage a source-pinned release directory:
+
+```sh
+sh bend2/scripts/build-native.sh bend2/src/coordinator/storage-focused.bend   .scratch/bend2/storage-focused
+python3 bend2/scripts/stage-storage-clean.py   --binary .scratch/bend2/storage-focused   --bend "$BEND" --clang "$CLANG"   --source-root "$BATON2_SOURCE"   --source-commit "$(git -C "$BATON2_SOURCE" rev-parse HEAD)"   --destination "$RELEASE/storage-clean"
+```
+
+The staged directory contains `libexec/baton2/storage-clean`,
+`storage-clean-manifest.json`, `SHA256SUMS` and `stage-receipt.json`. Install
+the service and timer templates with `ExecStart` and `ProgramArguments`
+pointed at the staged helper, write the environment file, then:
+
+```sh
+systemctl daemon-reload
+systemctl enable --now baton-storage-cleanup.timer
+systemctl start baton-storage-cleanup.service
+```
+
+The first service start is the live pass. Read the journal for the per-session
+results before enabling the timer on a production database.
 
 ## Deployed host layout, 2026-10-19
 

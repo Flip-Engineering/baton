@@ -25,6 +25,7 @@ A storage root declares one class:
 | `shared-immutable` | Shared immutable | Reusable assets and caches. |
 | `git-object` | Git objects | A loose-object prefix store. |
 | `log-evidence` | Log evidence | Coordination logs, reports and continuation evidence. |
+| `staging-source` | Ownership-ending staging source | Generated installer and staging clones whose owning lifecycle ended. |
 
 An unrecognised marker becomes `unclassified`, and an unclassified candidate
 stays in the preview.
@@ -43,9 +44,10 @@ log-evidence=/mnt/large/baton-logs
 ```
 
 The marker before `=` selects the class. The optional `|source` names a Git
-repository for a `git-object` root. Empty configuration performs no scan and
-no deletion. The process reads the configured roots; it does not adopt a
-homelab path or relocate existing files.
+repository for a `git-object` root, and the authenticated repository for a
+`staging-source` root. Empty configuration performs no scan and no deletion.
+The process reads the configured roots; it does not adopt a homelab path or
+relocate existing files.
 
 storage-policy reports each configured root, its class and whether it appears
 in BATON_STORAGE_EXCLUSIVE_ROOTS. That setting records an operator declaration;
@@ -54,7 +56,14 @@ is covered when the coordinator database records a registered log, a retained
 generation (`log` or `base`), or an execution directory under it. A transient
 `scratch`, `build-output`, `export` or `checkout` root is covered when a
 session workspace or execution directory is recorded under it. An absolute root
-with no such reference is arbitrary and is refused. The policy reports
+with no such reference is arbitrary and is refused. A `staging-source` root
+is admitted when the operator records the authenticated repository as its
+source; its candidates carry no session record. A staging candidate is removed
+only when it is a clean worktree whose commit the authenticated repository
+contains (its `rev-list --all` names the commit), no process, runtime input,
+lease, live reference, database path or pending attempt names it, and every
+other preservation fact is absent. A dirty worktree, a commit the authenticated
+repository does not contain, or any unknown fact preserves it. The policy reports
 `covered` per root, `apply:"lease-gated"` when every configured root is covered,
 `apply:"refused"` when any root is not covered, and `apply:"ready"` when the
 root list is empty. storage-apply SESSION acquires the per-root writer lease

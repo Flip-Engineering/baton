@@ -63,6 +63,12 @@ case "$(uname -s)" in
     echo "Cargo release fixture runs on Linux only; Darwin validation not performed here" >&2
     ;;
 esac
+sh bend2/scripts/build-native.sh bend2/src/coordinator/storage-focused.bend .scratch/bend2/storage-focused
+if .scratch/bend2/storage-focused > /dev/null 2>&1; then
+  echo "storage-focused accepted no arguments" >&2
+  exit 1
+fi
+"$PYTHON3" bend2/test/stage-storage-clean.py
 sh bend2/scripts/build-native.sh bend2/test/subscription-profiles.bend .scratch/bend2/subscription-profiles-test
 .scratch/bend2/subscription-profiles-test
 sh bend2/scripts/build-native.sh bend2/test/focused-reads.bend .scratch/bend2/focused-reads

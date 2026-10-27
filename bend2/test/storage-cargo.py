@@ -639,5 +639,61 @@ CREATE TABLE log_generations(session TEXT,log TEXT,base TEXT,attempt TEXT);
         self.assertTrue(self.target.exists())
         self.build()
 
+    def staging_clone(self):
+        upstream = self.root / 'upstream'
+        upstream.mkdir()
+        def git(*args, cwd=None):
+            return subprocess.run(['git', '-C', str(cwd or upstream), *args],
+                                  check=True, capture_output=True, text=True)
+        git('init', '-q')
+        git('config', 'user.email', 'fixture@example.invalid')
+        git('config', 'user.name', 'Fixture')
+        (upstream / 'file.txt').write_text('published\n')
+        git('add', '.')
+        git('commit', '-qm', 'published')
+        staging = self.root / 'staging'
+        staging.mkdir()
+        clone = staging / 'root-source'
+        subprocess.run(['git', 'clone', '-q', str(upstream), str(clone)],
+                       check=True, capture_output=True)
+        return upstream, staging, clone
+
+    def staging_apply(self, staging, source=None):
+        roots = 'staging-source=' + str(staging) + (('|' + str(source)) if source else '')
+        env = dict(self.environment, BATON_STORAGE_ROOTS=roots)
+        return self.call('apply', self.db, 'owner', environment=env)
+
+    def test_staging_source_clone_is_collected_when_published_and_clean(self):
+        upstream, staging, clone = self.staging_clone()
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('staging-source-released', answer)
+        self.assertFalse(clone.exists())
+        self.assertTrue(upstream.exists())
+
+    def test_staging_source_dirty_clone_is_preserved(self):
+        upstream, staging, clone = self.staging_clone()
+        (clone / 'local-change.txt').write_text('uncommitted\n')
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('worktree-dirty', answer)
+        self.assertTrue(clone.exists())
+        self.assertEqual((clone / 'local-change.txt').read_text(), 'uncommitted\n')
+
+    def test_staging_source_unpublished_commit_is_preserved(self):
+        upstream, staging, clone = self.staging_clone()
+        subprocess.run(['git', '-C', str(clone), 'commit', '--allow-empty', '-qm', 'local'],
+                       check=True, capture_output=True)
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('unpublished-commits', answer)
+        self.assertTrue(clone.exists())
+
+    def test_staging_source_root_without_authenticated_repo_is_refused(self):
+        upstream, staging, clone = self.staging_clone()
+        env = dict(self.environment, BATON_STORAGE_ROOTS='staging-source=' + str(staging))
+        run = subprocess.run([str(BINARY), 'apply', str(self.db), 'owner'],
+                             cwd=ROOT, env=env, text=True, capture_output=True)
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIn('no participating writer covers root', run.stderr)
+        self.assertTrue(clone.exists())
+
 if __name__ == '__main__':
     unittest.main()

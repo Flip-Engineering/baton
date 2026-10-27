@@ -23,6 +23,7 @@ def class_name(+c: T.StorageClass) -> String:
     case T.SharedImmutable{}: "shared-immutable"
     case T.GitObject{}: "git-object"
     case T.LogEvidence{}: "log-evidence"
+    case T.StagingSource{}: "staging-source"
     case T.Unclassified{}: "unclassified"
 
 # The layout table's marker names. An unrecognised marker is Unclassified and
@@ -35,7 +36,8 @@ def classify(+marker: String) -> T.StorageClass:
   Bool.pick(T.StorageClass, String.eq(marker, "shared-immutable"), T.SharedImmutable{},
   Bool.pick(T.StorageClass, String.eq(marker, "git-object"), T.GitObject{},
   Bool.pick(T.StorageClass, String.eq(marker, "log-evidence"), T.LogEvidence{},
-    T.Unclassified{})))))))
+  Bool.pick(T.StorageClass, String.eq(marker, "staging-source"), T.StagingSource{},
+    T.Unclassified{}))))))))
 
 def owner_reason_of(+expected: String, +owner: T.Owner) -> String:
   match owner:
@@ -72,6 +74,7 @@ def class_reason(+c: T.StorageClass) -> String:
     case T.SharedImmutable{}: ""
     case T.GitObject{}: "git-object-report-only"
     case T.LogEvidence{}: ""
+    case T.StagingSource{}: ""
 
 # A transient candidate is admitted only after its owning session has no
 # non-exited execution. Unknown execution evidence preserves the candidate,
@@ -79,12 +82,20 @@ def class_reason(+c: T.StorageClass) -> String:
 def execution_reason(+cls: T.StorageClass, +execution: T.Presence) -> String:
   Bool.pick(String, transient_class(cls), presence_reason(execution, "execution-live", "execution-unknown"), "")
 
+# An ownership-ending staging lifecycle has no recorded owner by premise: the
+# operator declares the root and the authenticated repository that must contain
+# the candidate's commit. Every other class requires its recorded owner.
+def ownership_reason(+cls: T.StorageClass, +expected: String, +owner: T.Owner) -> String:
+  match cls:
+    case T.StagingSource{}: ""
+    case other: owner_reason(expected, owner)
+
 def preserve_reason(+cls: T.StorageClass, +owner: String, +facts: T.Facts) -> String:
   match facts:
     case T.Facts{o, execution, database, lease, process, dirty, unpublished, runtime_input, ref, pending_attempt}:
       first_reason([
         presence_reason(database, "database-path", "database-path-unknown"),
-        owner_reason(owner, o),
+        ownership_reason(cls, owner, o),
         execution_reason(cls, execution),
         presence_reason(lease, "lease-live", "lease-unknown"),
         presence_reason(process, "process-live", "process-unknown"),
@@ -105,6 +116,7 @@ def remove_reason(+c: T.StorageClass) -> String:
     case T.SharedImmutable{}: "shared-reference-absent"
     case T.GitObject{}: "git-object-report-only"
     case T.LogEvidence{}: "evidence-settled"
+    case T.StagingSource{}: "staging-source-released"
     case T.Unclassified{}: "unclassified"
 
 def decide(+cls: T.StorageClass, +owner: String, +facts: T.Facts) -> T.Decision:

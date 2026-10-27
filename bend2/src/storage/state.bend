@@ -449,6 +449,10 @@ def dirty_fact(+cls: T.StorageClass, +path: String) -> IO(T.Presence):
       do IO<T.Presence>:
         status : Result<&1, &1, G.GitFail, G.WtStatus> <- WS.worktreeStatus(path)
         IO.pure(T.Presence, dirty_result(status))
+    case T.StagingSource{}:
+      do IO<T.Presence>:
+        status : Result<&1, &1, G.GitFail, G.WtStatus> <- WS.worktreeStatus(path)
+        IO.pure(T.Presence, dirty_result(status))
     case other:
       IO.pure(T.Presence, T.Absent{})
 
@@ -484,13 +488,41 @@ def unpublished_command(+base: String, +path: String) -> IO(T.Presence):
     count_git : G.GitOut <- Git.runGit(path, ["rev-list", "--count", base ++ "..HEAD"])
     IO.pure(T.Presence, unpublished_result(base, git_text(current_git), git_text(count_git)))
 
-def unpublished_fact(+cls: T.StorageClass, +path: String, +state: State, +owner: String) -> IO(T.Presence):
+def staging_text(result: G.RunRes) -> Maybe<String>:
+  match result:
+    case G.RRun{G.SExit{code}, out}: Bool.pick(Maybe<String>, U32.is_eq(code, 0), Some{out}, None{})
+    case G.RRun{G.SSignal{num}, out}: None{}
+    case G.RSpawn{detail}: None{}
+
+def published_head(head: Maybe<String>, listed: Maybe<String>) -> T.Presence:
+  match head:
+    case None{}: T.Unknown{}
+    case Some{value}:
+      match listed:
+        case None{}: T.Unknown{}
+        case Some{text}:
+          Bool.pick(T.Presence, String.is_empty(value), T.Unknown{},
+            Bool.pick(T.Presence, reachable_walk(Tx.split_lines(text), value),
+              T.Absent{}, T.Present{"unpublished-commit"}))
+
+# A staging source is an ownership-ending checkout. Its commit must be present
+# in the authenticated repository the root records; a commit that repository
+# does not contain is unpublished work and preserves the candidate.
+def staging_unpublished(+source: String, +path: String) -> IO(T.Presence):
+  do IO<T.Presence>:
+    head_git : G.GitOut <- Git.runGit(path, ["rev-parse", "HEAD"])
+    listed : G.RunRes <- Git.runFull(["/usr/bin/env", "git", "-C", source, "rev-list", "--all"], ".")
+    IO.pure(T.Presence, published_head(git_text(head_git), staging_text(listed)))
+
+def unpublished_fact(+cls: T.StorageClass, +source: String, +path: String, +state: State, +owner: String) -> IO(T.Presence):
   match cls:
     case T.Checkout{}:
       match state:
         case State{sessions, executions, logs, pending, databases, retained, valid}:
           +base = session_base(sessions, owner)
           unpublished_command(base, path)
+    case T.StagingSource{}:
+      staging_unpublished(source, path)
     case other:
       IO.pure(T.Presence, T.Absent{})
 
@@ -573,7 +605,7 @@ def facts_choice(+cls: T.StorageClass, +source: String, +path: String, +state: S
         process : T.Presence <- O.process_presence(path)
         runtime : T.Presence <- O.runtime_presence(path)
         dirty : T.Presence <- dirty_fact(cls, path)
-        unpublished : T.Presence <- unpublished_fact(cls, path, state, owner)
+        unpublished : T.Presence <- unpublished_fact(cls, source, path, state, owner)
         ref : T.Presence <- ref_fact(cls, source, path)
         database : T.Presence <- database_fact(state, path)
         lease : T.Presence = lease_fact(state, path)

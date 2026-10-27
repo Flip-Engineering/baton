@@ -23,6 +23,7 @@ type StorageClass is Data:
   SharedImmutable{}
   GitObject{}
   LogEvidence{}
+  StagingSource{}
   Unclassified{}
 
 def is_transient(+c: StorageClass) -> Bool:
