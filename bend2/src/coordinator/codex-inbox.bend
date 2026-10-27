@@ -192,15 +192,17 @@ def send_admission(+link: Proxy.Link, +state: State, +thread: String, +method: S
   match refreshed:
     case (token,+pointer): send_refreshed(link,state,thread,method,turn,notice,token,pointer,String.is_empty(pointer))
 
+def queue_receipt_accepted(+link: Proxy.Link, +state: State, +thread: String, +output: String, accepted: Bool) -> Outcome.Checked(Admission):
+  match accepted:
+    case True{}: do Outcome.Checked<Admission>:
+      recorded : Unit <- Proxy.record("{\"type\":\"codexInboxAdmission\",\"threadId\":" ++ J.string_literal(thread) ++ ",\"method\":\"codex queue\",\"result\":{\"receipt\":" ++ J.string_literal(output) ++ "}}")
+      Outcome.Checked.pure(Admission,Accepted{state})
+    case False{}: Outcome.Checked.pure(Admission,Refused{state,1,"Codex queue returned no matching admission receipt: " ++ output})
+
 def queue_receipt(+link: Proxy.Link, +state: State, +thread: String, result: Result<&1,&1,U32 & String,String>) -> Outcome.Checked(Admission):
   match result:
     case Fail{(code,cause)}: Outcome.Checked.pure(Admission,Refused{state,code,cause})
-    case Done{+output}:
-      match Bool.and(String.contains(output,"Queued message "),String.contains(output," for thread " ++ thread ++ ".")):
-        case True{}: do Outcome.Checked<Admission>:
-          recorded : Unit <- Proxy.record("{\"type\":\"codexInboxAdmission\",\"threadId\":" ++ J.string_literal(thread) ++ ",\"method\":\"codex queue\",\"result\":{\"receipt\":" ++ J.string_literal(output) ++ "}}")
-          Outcome.Checked.pure(Admission,Accepted{state})
-        case False{}: Outcome.Checked.pure(Admission,Refused{state,1,"Codex queue returned no matching admission receipt: " ++ output})
+    case Done{+output}: queue_receipt_accepted(link,state,thread,output,Bool.and(String.contains(output,"Queued message "),String.contains(output," for thread " ++ thread ++ ".")))
 
 def queue_refreshed(+link: Proxy.Link, +state: State, +thread: String, +token: String, +pointer: String, +empty: Bool) -> Outcome.Checked(Admission):
   match empty:
@@ -212,11 +214,14 @@ def queue_refreshed(+link: Proxy.Link, +state: State, +thread: String, +token: S
         result : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(["codex","queue","--thread",thread,"--message",pointer]),".")
         queue_receipt(link,state,thread,result)
 
+def queue_refreshed_result(+link: Proxy.Link, +state: State, +thread: String, refreshed: String & String) -> Outcome.Checked(Admission):
+  match refreshed:
+    case (token,+pointer): queue_refreshed(link,state,thread,token,pointer,String.is_empty(pointer))
+
 def queue_for_live_tui(+link: Proxy.Link, +state: State, +thread: String, +notice: Notice, +status: String) -> Outcome.Checked(Admission):
   do Outcome.Checked<Admission>:
     refreshed : String & String <- refresh(notice,status)
-    match refreshed:
-      case (token,+pointer): queue_refreshed(link,state,thread,token,pointer,String.is_empty(pointer))
+    queue_refreshed_result(link,state,thread,refreshed)
 
 def deliver_resumed(+link: Proxy.Link, +thread: String, +notice: Notice, result: Admission) -> Outcome.Checked(Admission):
   match result:
@@ -515,8 +520,8 @@ def observed_live_read(+session: String, +thread: String, +message: String, +row
     recorded : Unit <- Proxy.record("{\"type\":\"codexInboxMessageRead\",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"messageId\":" ++ J.string_literal(message) ++ "}")
     released(session,thread,row)
 
-def live_tui_observed(+link: Proxy.Link, +db: String, +session: String, +thread: String, +state: State, +target: String, +row: Inbox.Snapshot, +read: Bool) -> Outcome.Checked(Unit):
-  match Inbox.stopped(row):
+def live_tui_observed(+link: Proxy.Link, +db: String, +session: String, +thread: String, +state: State, +target: String, +row: Inbox.Snapshot, stopped: Bool, +read: Bool) -> Outcome.Checked(Unit):
+  match stopped:
     case True{}: released(session,thread,row)
     case False{}:
       Bool.pick(Outcome.Checked(Unit),read,
@@ -528,7 +533,8 @@ def live_tui_snapshot(+link: Proxy.Link, +db: String, +session: String, +thread:
   do Outcome.Checked<Unit>:
     +row : Inbox.Snapshot <- Inbox.read(db,session,thread)
     +read : Bool <- Inbox.message_read(db,session,thread,target)
-    live_tui_observed(link,db,session,thread,state,target,row,read)
+    +stopped : Bool = Inbox.stopped(row)
+    live_tui_observed(link,db,session,thread,state,target,row,stopped,read)
 
 def live_tui_next(+link: Proxy.Link, +db: String, +session: String, +thread: String, +state: State, +target: String, result: Proxy.Pending & String) -> Outcome.Checked(Unit):
   match result:
@@ -569,13 +575,15 @@ def cleanup_status(+status: String, stdout: Bool) -> Outcome.Checked(Unit):
     logged : Unit <- Bool.pick(Outcome.Checked(Unit),stdout,Proxy.record(event),Outcome.Checked.lift(Unit,IO.print_err(event)))
     Bool.pick(Outcome.Checked(Unit),String.eq(status,"exit 0"),Outcome.Checked.pure(Unit,Unit{}),Outcome.Checked.fail(Unit,1,"Public Codex proxy exit: " ++ status))
 
+def combined_failed(code: U32, +cause: String, cleaned: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 & String,Unit>:
+  match cleaned:
+    case Done{value}: Fail{(code,cause)}
+    case Fail{(cleanup_code,detail)}: Fail{(code,cause ++ "\nCodex proxy cleanup: " ++ detail)}
+
 def combined(result: Result<&1,&1,U32 & String,Unit>, cleaned: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 & String,Unit>:
   match result:
     case Done{value}: cleaned
-    case Fail{(code,+cause)}:
-      match cleaned:
-        case Done{value}: Fail{(code,cause)}
-        case Fail{(cleanup_code,detail)}: Fail{(code,cause ++ "\nCodex proxy cleanup: " ++ detail)}
+    case Fail{(code,+cause)}: combined_failed(code,cause,cleaned)
 
 def cleanup_closed(result: Result<&1,&1,U32 & String,String>, stdout: Bool) -> Outcome.Checked(Unit):
   match result:
@@ -598,12 +606,14 @@ def finished(+link: Proxy.Link, stdout: Bool, result: Result<&1,&1,U32 & String,
     cleaned : Result<&1,&1,U32 & String,Unit> <- cleanup(link,stdout)
     IO.pure(Result<&1,&1,U32 & String,Unit>,combined(result,cleaned))
 
+def failure_retained_cause(+db: String, +session: String, +thread: String, +cause: String, retained: Result<&1,&1,U32 & String,Unit>) -> Outcome.Checked(Unit):
+  match retained:
+    case Done{value}: notify_failure(db,session,thread,cause)
+    case Fail{(retention_code,detail)}: notify_failure(db,session,thread,cause ++ "\nAdmission failure custody could not be updated: " ++ detail)
+
 def failure_retained(+db: String, +session: String, +thread: String, original: U32 & String, retained: Result<&1,&1,U32 & String,Unit>) -> Outcome.Checked(Unit):
   match original:
-    case (code,+cause):
-      match retained:
-        case Done{value}: notify_failure(db,session,thread,cause)
-        case Fail{(retention_code,detail)}: notify_failure(db,session,thread,cause ++ "\nAdmission failure custody could not be updated: " ++ detail)
+    case (code,+cause): failure_retained_cause(db,session,thread,cause,retained)
 
 def follow_failed(+db: String, +session: String, +thread: String, result: Result<&1,&1,U32 & String,Unit>) -> Outcome.Checked(Unit):
   match result:
