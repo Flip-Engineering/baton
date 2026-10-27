@@ -13,6 +13,7 @@ compiler=${BEND:-"$root/.bend/bin/bend"}
 if [ ! -x "$compiler" ]; then
   compiler="$root/node_modules/.bend/bin/bend"
 fi
+. "$root/bend2/scripts/queue-entry.sh"
 (
   ulimit -s unlimited 2>/dev/null || true
   if [ -n "${BATON2_NATIVE_QUEUE_DRIVER:-}" ]; then
