@@ -216,6 +216,7 @@ def sql_quote(+text: String) -> String:
 type RecordStep is Data:
   RsMore{next: String, acc: String}
   RsDone{acc: String}
+  RsFailed{}
 
 def record_empty_step(+acc: String, +text: String, +next: String) -> RecordStep:
   Bool.pick(RecordStep, String.is_empty(text), RsDone{acc}, RsMore{next, acc ++ text})
@@ -291,13 +292,15 @@ def selection_valid(valid: String, root_kind: String, schema_kind: String, schem
             Bool.and(selection_field_text(config_kind, config_hex),
               selection_field_text(manifest_kind, manifest_hex)))))))
 
+def canonical_overlap_right(+a: String, right: Result<&1,&1,U32 & String,String>) -> Maybe<Bool>:
+  match right:
+    case Fail{error}: None{}
+    case Done{+b}: Some{Bool.or(path_contains(a, b), path_contains(b, a))}
+
 def canonical_overlap_pair(left: Result<&1,&1,U32 & String,String>, right: Result<&1,&1,U32 & String,String>) -> Maybe<Bool>:
   match left:
     case Fail{error}: None{}
-    case Done{+a}:
-      match right:
-        case Fail{error}: None{}
-        case Done{+b}: Some{Bool.or(path_contains(a, b), path_contains(b, a))}
+    case Done{+a}: canonical_overlap_right(a, right)
 
 def canonical_overlap(+path: String, +named: String) -> IO(Maybe<Bool>):
   do IO<Maybe<Bool>>:
@@ -336,7 +339,7 @@ def acp_selection_compare(+path: String, runtime_hex: String, config_hex: String
 
 def acp_selection_fields(+db: String, +path: String, fields: List<String>) -> IO(T.Presence):
   match fields:
-    case valid <> root_kind <> schema_kind <> schema_hex <> runtime_kind <> runtime_hex <> config_kind <> config_hex <> manifest_kind <> manifest_hex <> Nil{}:
+    case valid <> root_kind <> schema_kind <> schema_hex <> runtime_kind <> +runtime_hex <> config_kind <> +config_hex <> manifest_kind <> +manifest_hex <> Nil{}:
       Bool.pick(IO<T.Presence>, selection_valid(valid, root_kind, schema_kind, schema_hex,
         runtime_kind, runtime_hex, config_kind, config_hex, manifest_kind, manifest_hex),
         acp_selection_compare(path, runtime_hex, config_hex, manifest_hex),
