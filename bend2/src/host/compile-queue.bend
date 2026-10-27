@@ -939,6 +939,8 @@ def start_attempt_result_exists(exists: Bool, +text: String, +key: String, +keyd
                                 +attempt: String, +owner: String, now: String) -> IO(Unit):
   Bool.pick(IO(Unit), exists,
     do IO<Unit>:
+      receipt : Unit <- IO.try(Unit, Result.CompileQueueResult.receipt_write_failure(
+        field(text, "receipt"), attempt ++ "/result", owner))
       removed : Unit <- remove_token(keydir, owner)
       Result.CompileQueueResult.report_failure(attempt ++ "/result"),
     do IO<Unit>:
@@ -951,6 +953,8 @@ def start_attempt_result_exists(exists: Bool, +text: String, +key: String, +keyd
           "all requesters canceled before a terminal result",
           "supervisor exited before publishing a terminal result"),
         artifact_names(artifact_rows(text)))
+      receipt : Unit <- IO.try(Unit, Result.CompileQueueResult.receipt_write_failure(
+        field(text, "receipt"), attempt ++ "/result", owner))
       removed : Unit <- remove_token(keydir, owner)
       Result.CompileQueueResult.report_failure(attempt ++ "/result"))
 

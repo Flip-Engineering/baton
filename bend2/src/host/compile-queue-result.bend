@@ -529,6 +529,43 @@ def CompileQueueResult.receipt_write(+receipt: String, +status: String, +key: St
   +missing = String.is_empty(receipt)
   CompileQueueResult.receipt_write_missing(missing, receipt, status, key, reused, owner, rows)
 
+def CompileQueueResult.receipt_failure_text(status: String, key: String, owner: String,
+                                            exit: String, detail: String) -> String:
+  "status=" ++ status ++ "\n"
+    ++ "key=" ++ key ++ "\n"
+    ++ "reused=0\n"
+    ++ "owner=" ++ owner ++ "\n"
+    ++ "exit=" ++ exit ++ "\n"
+    ++ "detail=" ++ detail ++ "\n"
+
+def CompileQueueResult.receipt_failure_missing(missing: Bool, +receipt: String,
+                                               status: String, key: String,
+                                               owner: String, exit: String,
+                                               detail: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match missing:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}})
+    case False{}:
+      CompileQueueResult.write_text(receipt,
+        CompileQueueResult.receipt_failure_text(status, key, owner, exit, detail),
+        receipt ++ ".tmp")
+
+def CompileQueueResult.receipt_failure_result(read: Result<&1,&1,U32 & String,String>,
+                                              +receipt: String, owner: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match read:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>, Fail{error})
+    case Done{+result}:
+      CompileQueueResult.receipt_failure_missing(String.is_empty(receipt), receipt,
+        CompileQueueResult.field(result, "status"),
+        CompileQueueResult.field(result, "key"), owner,
+        CompileQueueResult.field(result, "exit"),
+        CompileQueueResult.field(result, "detail"))
+
+def CompileQueueResult.receipt_write_failure(+receipt: String, +result_path: String,
+                                             owner: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    read : Result<&1,&1,U32 & String,String> <- T.Text.read(result_path)
+    CompileQueueResult.receipt_failure_result(read, receipt, owner)
+
 def CompileQueueResult.run_name_parts(parts: List<&2,String>) -> String:
   match parts:
     case kind <> name <> tail:
