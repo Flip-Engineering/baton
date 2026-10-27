@@ -713,11 +713,12 @@ export function term_strip<X>(tm: TermOf<X>): TermOf<X> {
   return t;
 }
 
-type ClosedCtrCache = { terms: Map<string, WeakRef<HTerm>>, ids: WeakMap<HTerm, number>, spans: WeakMap<Span, number>, next: number };
+type ClosedCtrEntry = { id: number, value: WeakRef<HTerm> };
+type ClosedCtrCache = { spans: WeakMap<Span, Map<string, ClosedCtrEntry>>, ids: WeakMap<HTerm, number>, next: number };
 const STRING_LITERAL_CTRS = new Set<Name>(["SCon", "SNil", "Chr", "U32", "WCon", "WNil", "True", "False"]);
 
 export function term_higher(tm: LTerm, env: Env = null): HTerm {
-  return term_higher_inner(tm, env, { terms: new Map(), ids: new WeakMap(), spans: new WeakMap(), next: 0 });
+  return term_higher_inner(tm, env, { spans: new WeakMap(), ids: new WeakMap(), next: 0 });
 }
 
 function term_higher_inner(tm: LTerm, env: Env, cache: ClosedCtrCache): HTerm {
@@ -804,17 +805,19 @@ function term_higher_inner(tm: LTerm, env: Env, cache: ClosedCtrCache): HTerm {
       if (tm.s !== undefined && STRING_LITERAL_CTRS.has(tm.k)) {
         const child_ids = xs.map((x) => cache.ids.get(x));
         if (child_ids.every((id) => id !== undefined)) {
-          let span = cache.spans.get(tm.s);
-          if (span === undefined) {
-            span = cache.next++;
-            cache.spans.set(tm.s, span);
+          let table = cache.spans.get(tm.s);
+          if (table === undefined) {
+            table = new Map();
+            cache.spans.set(tm.s, table);
           }
-          const key = `${tm.k}|${span}|${tm.s.beg}:${tm.s.end}|${child_ids.join(",")}`;
-          const prior = cache.terms.get(key)?.deref();
+          const key = `${tm.k}|${tm.s.beg}:${tm.s.end}|${child_ids.join(",")}`;
+          const entry = table.get(key);
+          const prior = entry?.value.deref();
           if (prior !== undefined) return prior;
           const out = Ctr(tm.k, xs, tm.s);
-          cache.ids.set(out, cache.next++);
-          cache.terms.set(key, new WeakRef(out));
+          const id = entry?.id ?? cache.next++;
+          cache.ids.set(out, id);
+          table.set(key, { id, value: new WeakRef(out) });
           return out;
         }
       }
