@@ -935,8 +935,16 @@ def supervise(+attempt: String) -> IO(Unit):
     supervise_owner_count(owners, attempt, keydir, kind, source_root, entry, key,
       started, names, cwd, pid, start, gate)
 
+def status_number_parsed(parsed: Maybe<&2,U32>) -> U32:
+  match parsed:
+    case None{}: 0
+    case Some{value}: value
+
+def status_number(text: String) -> U32:
+  status_number_parsed(U32.read(text))
+
 def start_attempt_result_exists(exists: Bool, +text: String, +key: String, +keydir: String,
-                                +attempt: String, +owner: String, now: String) -> IO(Unit):
+                                +attempt: String, +owner: String, now: String, +waited: String) -> IO(Unit):
   Bool.pick(IO(Unit), exists,
     do IO<Unit>:
       receipt : Unit <- IO.try(Unit, Result.CompileQueueResult.receipt_write_failure(
@@ -946,12 +954,27 @@ def start_attempt_result_exists(exists: Bool, +text: String, +key: String, +keyd
     do IO<Unit>:
       left : U32 <- owner_count(keydir)
       +was_canceled : Bool <- IO.pure(Bool, U32.is_eq(left, 0))
+      +signal : U32 <- IO.pure(U32, status_number(field(waited, "signal")))
+      +exit_code : U32 <- IO.pure(U32, status_number(field(waited, "exit")))
+      +signaled : Bool <- IO.pure(Bool, U32.is_gt(signal, 0))
+      +observed : Bool <- IO.pure(Bool, non_empty(waited))
+      +missing_code : U32 <- IO.pure(U32,
+        Bool.pick(U32, signaled, U32.add(128, signal),
+          Bool.pick(U32, U32.is_eq(exit_code, 0), 1, exit_code)))
+      +missing_detail : String <- IO.pure(String,
+        Bool.pick(String, signaled,
+          "supervisor exited before publishing a terminal result; supervisor terminated by signal "
+            ++ U32.show(signal) ++ " (wait status " ++ U32.show(U32.add(128, signal)) ++ ")",
+          Bool.pick(String, observed,
+            "supervisor exited before publishing a terminal result; supervisor exit "
+              ++ U32.show(exit_code),
+            "supervisor exited before publishing a terminal result")))
       wrote : Unit <- write_failure(attempt, keydir,
         Bool.pick(String, was_canceled, "canceled", "failed"),
-        Bool.pick(U32, was_canceled, 130, 1), field(text, "kind"), key, now,
+        Bool.pick(U32, was_canceled, 130, missing_code), field(text, "kind"), key, now,
         Bool.pick(String, was_canceled,
           "all requesters canceled before a terminal result",
-          "supervisor exited before publishing a terminal result"),
+          missing_detail),
         artifact_names(artifact_rows(text)))
       receipt : Unit <- IO.try(Unit, Result.CompileQueueResult.receipt_write_failure(
         field(text, "receipt"), attempt ++ "/result", owner))
@@ -959,13 +982,31 @@ def start_attempt_result_exists(exists: Bool, +text: String, +key: String, +keyd
       Result.CompileQueueResult.report_failure(attempt ++ "/result"))
 
 def start_attempt_missing_result(text: String, key: String, keydir: String,
-                                +attempt: String, +owner: String, now: String) -> IO(Unit):
+                                +attempt: String, +owner: String, now: String, waited: String) -> IO(Unit):
   do IO<Unit>:
     exists : Bool <- regular(attempt ++ "/result")
-    start_attempt_result_exists(exists, text, key, keydir, attempt, owner, now)
+    start_attempt_result_exists(exists, text, key, keydir, attempt, owner, now, waited)
+
+def wait_supervisor_result(result: Result<&1,&1,U32 & String,String>, +pid: U32, +delay: U32) -> IO(String):
+  match result:
+    case Fail{error}: IO.pure(String, "")
+    case Done{+status}:
+      Bool.pick(IO(String), Tx.str_eq(field(status, "running"), "1"),
+        do IO<String>:
+          slept : Unit <- IO.sleep(delay)
+          wait_supervisor_poll(pid, U32.min(U32.mul(delay, 2), 128)),
+        IO.pure(String, status))
+
+def wait_supervisor_poll(pid: U32, delay: U32) -> IO(String):
+  do IO<String>:
+    result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.try_wait(pid)
+    wait_supervisor_result(result, pid, delay)
+
+def wait_supervisor(pid: U32) -> IO(String):
+  wait_supervisor_poll(pid, 2)
 
 def start_attempt_completed(completed: Bool, +text: String, +key: String,
-                            +keydir: String, +attempt: String, +owner: String, now: String) -> IO(Unit):
+                            +keydir: String, +attempt: String, +owner: String, now: String, waited: String) -> IO(Unit):
   match completed:
     case True{}:
       do IO<Unit>:
@@ -973,7 +1014,7 @@ def start_attempt_completed(completed: Bool, +text: String, +key: String,
         receipt : Unit <- IO.try(Unit, Result.CompileQueueResult.receipt_write(field(text, "receipt"), "completed", key, "0", owner, artifact_pairs_text(artifact_rows(text))))
         removed : Unit <- remove_token(keydir, owner)
         IO.pure(Unit, Unit{})
-    case False{}: start_attempt_missing_result(text, key, keydir, attempt, owner, now)
+    case False{}: start_attempt_missing_result(text, key, keydir, attempt, owner, now, waited)
 
 def start_attempt_config(config: Config, +text: String, +key: String, +keydir: String,
                          +lock: U32, owner: String) -> IO(Unit):
@@ -989,9 +1030,9 @@ def start_attempt_config(config: Config, +text: String, +key: String, +keydir: S
     supervisor : U32 <- IO.try(U32, L.CompileQueueLifecycle.spawn_detached(args, lock, heavy))
     released_lock : Unit <- IO.try(Unit, L.CompileQueueLifecycle.close_fd(lock))
     released_heavy : Unit <- IO.try(Unit, L.CompileQueueLifecycle.close_fd(heavy))
-    waited : U32 <- IO.try(U32, L.CompileQueueLifecycle.wait_pid(supervisor))
+    waited : String <- wait_supervisor(supervisor)
     completed : Bool <- IO.try(Bool, Result.CompileQueueResult.verify_completed(keydir))
-    start_attempt_completed(completed, text, key, keydir, attempt, owner, now)
+    start_attempt_completed(completed, text, key, keydir, attempt, owner, now, waited)
 
 def start_attempt(+config: Config, key: String, keydir: String, lock: U32, owner: String) -> IO(Unit):
   match config:
