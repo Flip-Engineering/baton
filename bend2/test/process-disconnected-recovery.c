@@ -149,6 +149,56 @@ static int run_status_write_retry(const char *directory) {
   return 0;
 }
 
+static int run_unknown_status_guards(const char *directory) {
+  BrKeeper keeper={0};pid_t native=0;int status=0;
+  REQUIRE(spawn_native(&native,"exit 17")==0);
+  REQUIRE(waitpid(native,&status,0)==native);
+  REQUIRE(WIFEXITED(status) && WEXITSTATUS(status)==17);
+  REQUIRE(setup_recovery(&keeper,directory)==0);
+  keeper.native_pid=native;keeper.native_waiting=1;keeper.ready=1;keeper.client=1;
+  REQUIRE(br_native_exit_event(&keeper)==0);
+  REQUIRE(!keeper.exited && keeper.native_waiting);
+  REQUIRE(keeper.outgoing==NULL);
+
+  /* A recovered keeper can know that the process ended while its wait status
+     remains unavailable. Controls and reconciliation must preserve that state. */
+  keeper.exited=1;keeper.status_unavailable=1;keeper.native_waiting=0;
+  REQUIRE(br_command(&keeper,(BrFrame){.op=BR_RELEASE,.serial=4},"")==0);
+  REQUIRE(!keeper.released && keeper.outgoing && keeper.outgoing->length==sizeof(BrFrame));
+  BrFrame reply;memcpy(&reply,keeper.outgoing->data,sizeof(reply));
+  REQUIRE(reply.op==BR_REPLY && reply.error==ECHILD);
+  br_buffer_free(&keeper.outgoing,&keeper.outgoing_tail);
+  keeper.released=1;
+  REQUIRE(br_command(&keeper,(BrFrame){.op=BR_ACK,.serial=5},"")==0);
+  REQUIRE(!keeper.finishing && keeper.outgoing && keeper.outgoing->length==sizeof(BrFrame));
+  memcpy(&reply,keeper.outgoing->data,sizeof(reply));
+  REQUIRE(reply.op==BR_REPLY && reply.error==ECHILD);
+  br_buffer_free(&keeper.outgoing,&keeper.outgoing_tail);
+  char status_path[PATH_MAX];snprintf(status_path,sizeof(status_path),"%s/status",directory);
+  REQUIRE(access(status_path,F_OK)<0 && errno==ENOENT);
+
+  BrKeeper recovered={0};pid_t live=0;BrBirth birth;
+  REQUIRE(spawn_native(&live,"sleep 30")==0);
+  REQUIRE(setup_recovery(&recovered,directory)==0);
+  REQUIRE(br_birth(live,&birth)==0);
+  recovered.native_pid=live;recovered.native_birth=birth;
+  recovered.exited=1;recovered.status_unavailable=1;
+  REQUIRE(br_file(directory,"native.birth",&birth,sizeof(birth),1)==0);
+  REQUIRE(br_reconcile_native(&recovered,birth)==ECHILD);
+  REQUIRE(access(status_path,F_OK)<0 && errno==ENOENT);
+  REQUIRE(kill(live,SIGTERM)==0);
+  REQUIRE(waitpid(live,&status,0)==live);
+  REQUIRE(WIFSIGNALED(status) && WTERMSIG(status)==SIGTERM);
+
+  br_buffer_free(&recovered.outgoing,&recovered.outgoing_tail);
+  br_manifest_free(&recovered.manifest);free(recovered.directory);
+  br_buffer_free(&keeper.outgoing,&keeper.outgoing_tail);
+  br_manifest_free(&keeper.manifest);free(keeper.directory);
+  char birth_path[PATH_MAX];snprintf(birth_path,sizeof(birth_path),"%s/native.birth",directory);
+  unlink(birth_path);
+  return 0;
+}
+
 int main(void) {
   char template[]="/tmp/baton-disconnected-recovery-XXXXXX";
   char *directory=mkdtemp(template);
@@ -162,7 +212,9 @@ int main(void) {
   unlink(marker); unlink(status_path);
   REQUIRE(run_status_write_retry(directory)==0);
   unlink(marker);unlink(status_path);
+  REQUIRE(run_unknown_status_guards(directory)==0);
+  unlink(marker);unlink(status_path);
   rmdir(directory);
-  puts("{\"liveDisconnectedRecoveredOnce\":true,\"exitedDisconnectRecoveredOnceNoRetry\":true,\"terminalStatusPreserved\":true,\"failedStatusWriteRetainedAndRetried\":true}");
+  puts("{\"liveDisconnectedRecoveredOnce\":true,\"exitedDisconnectRecoveredOnceNoRetry\":true,\"terminalStatusPreserved\":true,\"failedStatusWriteRetainedAndRetried\":true,\"unknownWaitStatusNeverReportedOrPersisted\":true,\"unknownStatusReleaseAckAndReconcileRejected\":true}");
   return 0;
 }

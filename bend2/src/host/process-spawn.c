@@ -1673,11 +1673,15 @@ static int br_native_exited(BrKeeper *keeper) {
 static int br_native_exit_event(BrKeeper *keeper) {
   int error=br_native_exited(keeper);
   if(error) {
-    /* A failed status commit leaves the actual wait status in this keeper.
-       Deliver it on the existing exit frame and keep serving the attempt so a
-       later control request can retry the durable write. */
+    /* A failed status commit after waitpid leaves the actual status in this
+       keeper. Deliver that known status on the existing exit frame and keep
+       serving the attempt so a later control request can retry the durable write. */
     br_note(keeper,"native-exit-error",error);
-    if(keeper->ready) {
+    /* Only a successfully reaped wait status can be reported as terminal.
+       waitpid failures leave the native outcome unknown and status may still
+       contain its zero-initialized value. */
+    if(keeper->ready && keeper->exited && !keeper->status_unavailable &&
+       !keeper->native_waiting) {
       int send_error=br_send(keeper,(BrFrame){.op=BR_EXIT,.value=keeper->status},NULL);
       if(send_error)br_note(keeper,"native-exit-send-error",send_error);
     }
@@ -1727,6 +1731,7 @@ static int br_command(BrKeeper *keeper,BrFrame frame,const char *payload) {
   }
   else if(frame.op==BR_RELEASE) {
     if(!keeper->exited) error=EBUSY;
+    else if(keeper->status_unavailable || keeper->native_waiting) error=ECHILD;
     else if((error=br_status_store(keeper->directory,keeper->status))) {}
     else if(!keeper->released) {
       error=br_marker_store(keeper->directory,"released","released\n",9);
@@ -1735,6 +1740,7 @@ static int br_command(BrKeeper *keeper,BrFrame frame,const char *payload) {
     }
   } else if(frame.op==BR_ACK) {
     if(!keeper->exited || !keeper->released) error=EBUSY;
+    else if(keeper->status_unavailable || keeper->native_waiting) error=ECHILD;
     else if((error=br_status_store(keeper->directory,keeper->status))) {}
     else {
       error=br_marker_store(keeper->directory,"acknowledged","acknowledged\n",13);
@@ -1849,6 +1855,7 @@ static int br_reconcile_native(BrKeeper *keeper,BrBirth requested) {
   if(error)return error;
   if(!br_same_birth(recorded,keeper->native_birth))return ESTALE;
   if(keeper->exited) {
+    if(keeper->status_unavailable || keeper->native_waiting)return ECHILD;
     int status=0;
     error=br_status_store(keeper->directory,keeper->status);
     if(error)return error;
