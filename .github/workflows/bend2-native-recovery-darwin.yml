@@ -13,6 +13,7 @@ concurrency:
 env:
   BATON2_SOURCE_SHA: ef0b8a5eb4da5d13f253ebe79b289dc22b2836cb
   BATON2_RECOVERY_BUNDLE: /tmp/recovery-c-1165/generated
+  BATON2_RECOVERY_DIAGNOSTICS_ROOT: /Users/wahargis/Library/Application Support/Baton/recovery-diagnostics
   BATON2_RECOVERY_PROOF_SHA256: 7c824f00d831fd9a8d0d305b899f6153416973337a1c3248984cd141a1b368a7
   BATON2_RECOVERY_GENERATOR_ROOT: /var/tmp/baton2-compile-queue/toolchains/compiler-main-bounded-indent-20261027/package/bend-2.0.25
   BEND_NO_TELEMETRY: '1'
@@ -260,4 +261,34 @@ jobs:
           name: baton2-recovery-darwin-arm64-ef0b8a5eb4da5d13f253ebe79b289dc22b2836cb-${{ github.run_attempt }}
           path: ${{ runner.temp }}/baton2-recovery-darwin-${{ github.run_id }}-${{ github.run_attempt }}/artifact/
           if-no-files-found: error
+          include-hidden-files: true
+
+      - name: Persist recovery failure diagnostics
+        if: ${{ failure() || cancelled() }}
+        run: |
+          set -euo pipefail
+          umask 077
+          run="${BATON2_RECOVERY_RUN:-$RUNNER_TEMP/baton2-recovery-darwin-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT}"
+          helper="$RUNNER_TEMP/package-recovery-failure-diagnostics.py"
+          git cat-file -e "$GITHUB_SHA^{commit}"
+          git cat-file -e "$GITHUB_SHA:.github/scripts/package-recovery-failure-diagnostics.py"
+          git show "$GITHUB_SHA:.github/scripts/package-recovery-failure-diagnostics.py" > "$helper"
+          chmod 700 "$helper"
+          python3 "$helper" \
+            --run-root "$run" \
+            --destination-root "$BATON2_RECOVERY_DIAGNOSTICS_ROOT" \
+            --proof "$BATON2_RECOVERY_BUNDLE/recovery-c-reuse.json" \
+            --run-id "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" \
+            --source-sha "$BATON2_SOURCE_SHA" \
+            --proof-sha256 "$BATON2_RECOVERY_PROOF_SHA256"
+
+      - name: Upload recovery failure diagnostics
+        if: ${{ failure() || cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: baton2-recovery-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}-failure-diagnostics
+          path: ${{ env.BATON2_RECOVERY_DIAGNOSTICS_ROOT }}/${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: warn
           include-hidden-files: true
