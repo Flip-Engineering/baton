@@ -10,7 +10,7 @@ import * as Bend from "../../compiler/upstream/bend.ts";
 
 type Module = {
   term_const(t: Bend.HTerm): boolean;
-  term_uses(cb: { book: Bend.Book }, t: Bend.HTerm): number[];
+  test_uses(cb: { book: Bend.Book }, t: Bend.HTerm): number[];
   term_any(cb: { book: Bend.Book }, t: Bend.HTerm,
     p: (t: Bend.HTerm, tail: boolean) => boolean): boolean;
   probe(k: string): Bend.HTerm;
@@ -58,6 +58,18 @@ const reference_uses = `function term_uses(cb: Carb, tm: HTerm): UMap {
 `;
 const hooks = `
 export { term_const, term_uses, term_any, probe, DUMMY };
+export function test_uses(cb: Carb, t: HTerm): number[] {
+  const u = term_uses(cb, t);
+  if (Array.isArray(u)) return u;
+  const out: number[] = [];
+  const stack = [];
+  let node = u;
+  while (node !== null || stack.length > 0) {
+    if (node !== null) { stack.push(node); node = node.l; }
+    else { node = stack.pop(); out.push(node.i, node.n); node = node.r; }
+  }
+  return out;
+}
 export function test_reset(): void { memo_gc(); SIGS.clear(); }
 export function test_state() {
   return { consts: [...CONSTS].map(([t, value]) => [(t as Of<"Ctr">).k, value]),
@@ -80,7 +92,9 @@ try {
   }
   const source = fs.readFileSync(path.join(source_dir, "comp.ts"), "utf8");
   let reference = replace_function(source, "term_const", "use_get", reference_const);
-  reference = replace_function(reference, "term_uses", "rest_use", reference_uses);
+  reference = replace_function(reference, "term_uses", "rest_use",
+    source.includes("function use_node(")
+      ? reference_uses.replace("[p.i, 1]", "use_node(p.i, 1, null, null)") : reference_uses);
   fs.writeFileSync(path.join(tmp, "iterative.ts"), source + hooks);
   fs.writeFileSync(path.join(tmp, "reference.ts"), reference + hooks);
   const iterative = await import(pathToFileURL(path.join(tmp, "iterative.ts")).href) as Module;
@@ -133,8 +147,8 @@ try {
       m.test_reset();
       const book = Bend.book_nil();
       const t = build(m, book);
-      assert.deepEqual(m.term_uses({ book }, t), want, name);
-      assert.deepEqual(m.term_uses({ book }, t), want, name + " repeated");
+      assert.deepEqual(m.test_uses({ book }, t), want, name);
+      assert.deepEqual(m.test_uses({ book }, t), want, name + " repeated");
     }
   }
   console.log("PASS " + uses_cases.length + " use-map cases and repeated queries");
@@ -199,7 +213,7 @@ try {
   assert.equal(iterative.term_any({ book: Bend.book_nil() }, nested,
     () => { visited++; return false; }), false);
   assert.equal(visited, depth + 2);
-  assert.deepEqual(iterative.term_uses({ book: Bend.book_nil() }, nested), []);
+  assert.deepEqual(iterative.test_uses({ book: Bend.book_nil() }, nested), []);
   console.log("PASS " + depth + " let levels through term_any and term_uses; reference="
     + let_reference);
 } finally {

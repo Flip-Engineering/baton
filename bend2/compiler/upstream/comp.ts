@@ -224,10 +224,9 @@ type HAdt = Of<"ADT">;
 
 type HLet = Of<"Let">;
 
-// A use map: probe index and use count pairs, ascending by index. The indexes
-// reach the millions, so a binary trie over them costs one node per bit of the
-// index; the maps are only ever read, so the pairs are all that is kept.
-type UMap = number[];
+// Immutable balanced maps share unchanged branches between subtree summaries.
+type UNode = { i: number; n: number; l: UMap; r: UMap; h: number; size: number };
+type UMap = UNode | null;
 
 type Level = [string, HTerm, () => Val[], boolean?];
 
@@ -272,7 +271,7 @@ const FOLD_FUEL = 8192;
 // of Metal compile, 2.6 s so); at 128 raytrace lost 31% on PAR-CPU.
 const SPIN_FAR = 256;
 
-const USE0: UMap = [];
+const USE0: UMap = null;
 
 const W32: Lay = { ks: ["w32"], arms: null };
 
@@ -700,7 +699,8 @@ const OPENS: Map<Of<"Lam"> | HLet, { ps: Probe[]; b: HTerm }> = new Map();
 
 const USES: Map<HTerm, UMap> = new Map();
 
-type TermSum = { probes: number[]; jump: boolean; shape: number };
+type Captures = number | Captures[] | null;
+type TermSum = { probes: Captures; jump: boolean; shape: number };
 const SUMS = new Map<HTerm, TermSum>();
 const SHAPES = new Map<string, number>();
 const HINT_INNER = new Map<HTerm, HTerm>();
@@ -759,7 +759,12 @@ const SIGS: Map<Bend.Name, Sig> = new Map();
 
 const BRWS: Map<Bend.Name, boolean[]> = new Map();
 
-const SPINES: Map<HTerm, Spine> = new Map();
+type SpineHead = { h: HTerm; t: HTerm; tld: TLD | undefined; qs: Dom[];
+  def: string | null; need: number };
+type SpineChain = { prev: SpineChain | null; app: Of<"App">; live: boolean;
+  all: number; count: number; last: Of<"App"> | null };
+type SpineInfo = { head: SpineHead; chain: SpineChain | null };
+const SPINES: Map<HTerm, SpineInfo> = new Map();
 
 const NODES: Map<Bend.Name, Lay> = new Map();
 
@@ -917,37 +922,82 @@ function let_live(cb: Carb, t: HLet): boolean[] {
 // call when the live arguments meet the def's, else, when over-applied or
 // on no def (a variable, a lambda, a match), Clo.apply over the outermost
 // live application.
-function term_spine(cf: Carb, tm: HTerm): Spine {
-  return memo(SPINES, tm, () => {
-    const apps: Of<"App">[] = [];
-    let h = tm;
-    let c = term_force(tm);
-    while (c.$ === "Ann" || c.$ === "App") {
-      if (c.$ === "App") {
-        apps.push(c);
-        h = c.f;
-      }
-      c = term_force(c.$ === "App" ? c.f : c.x);
+function spine_head(cf: Carb, h: HTerm, t: HTerm): SpineHead {
+  const tld = t.$ === "Ref" ? def_body(cf, t.k) : undefined;
+  const T = tld?.$ === "Def" ? tld.T : ty_ann(h);
+  const qs = T === null ? [] : (tld?.$ === "Def"
+    ? tele_unbind(cf.book, T) : Bend.tele_unbind(cf.book, T)).doms;
+  const def = t.$ === "Ref" && intr_of(cf, t.k) === undefined
+    && (done_live(tld) || def_foreign(tld)) ? t.k : null;
+  return { h, t, tld, qs, def, need: def === null ? 0 : sig_def(cf, def).lays.length };
+}
+
+// Each prefix retains its last application and the preceding prefix. Argument
+// arrays belong to the returned view and are released with that view.
+function spine_info(cf: Carb, tm: HTerm): SpineInfo {
+  const got = SPINES.get(tm);
+  if (got !== undefined) return got;
+  const path: HTerm[] = [];
+  let t = term_force(tm);
+  let info: SpineInfo;
+  for (;;) {
+    const got = SPINES.get(t);
+    if (got !== undefined) { info = got; break; }
+    if (t.$ !== "Ann" && t.$ !== "App") {
+      info = { head: spine_head(cf, t, t), chain: null };
+      SPINES.set(t, info);
+      break;
     }
-    apps.reverse();
-    const tld = c.$ === "Ref" ? def_body(cf, c.k) : undefined;
-    const T = tld?.$ === "Def" ? tld.T : ty_ann(h);
-    const qs = T === null ? [] : (tld?.$ === "Def"
-      ? tele_unbind(cf.book, T) : Bend.tele_unbind(cf.book, T)).doms;
-    const live = apps.map((_, i) => i >= qs.length || quant_live(qs[i][0]));
-    const all = apps.map((a) => a.x);
-    const args = all.filter((_, i) => live[i]);
-    const def = c.$ === "Ref" && intr_of(cf, c.k) === undefined
-      && (done_live(tld) || def_foreign(tld)) ? c.k : null;
-    const need = def === null ? 0 : sig_def(cf, def).lays.length;
-    const dyn = def !== null ? args.length > need
-      : c.$ !== "Ref" && args.length > 0;
-    const a = apps[live.lastIndexOf(true)];
-    const call = def !== null && args.length === need
-      ? { k: def, args, all, bang: (c as Of<"Ref">).b }
-      : dyn ? { k: CLO_APPLY, args: [a.f, a.x], all: [a.f, a.x] } : null;
-    return { h, t: c, all, args, tld, call };
-  });
+    path.push(t);
+    t = term_force(t.$ === "App" ? t.f : t.x);
+  }
+  while (path.length > 0) {
+    const t = path.pop()!;
+    if (t.$ === "Ann") {
+      if (info.chain === null) info = { head: spine_head(cf, t, info.head.t), chain: null };
+    } else if (t.$ === "App") {
+      const prev = info.chain;
+      const all = prev?.all ?? 0;
+      const live = all >= info.head.qs.length || quant_live(info.head.qs[all][0]);
+      const head = prev === null ? { ...info.head, h: t.f } : info.head;
+      info = { head, chain: { prev, app: t, live, all: all + 1,
+        count: (prev?.count ?? 0) + Number(live), last: live ? t : prev?.last ?? null } };
+    }
+    SPINES.set(t, info);
+  }
+  SPINES.set(tm, info);
+  return info;
+}
+
+function spine_args(chain: SpineChain | null, live: boolean): HTerm[] {
+  const out: HTerm[] = [];
+  for (let c = chain; c !== null; c = c.prev) {
+    if (!live || c.live) out.push(c.app.x);
+  }
+  return out.reverse();
+}
+
+function term_spine(cf: Carb, tm: HTerm): Spine {
+  const { head, chain } = spine_info(cf, tm);
+  let all: HTerm[] | undefined, args: HTerm[] | undefined;
+  const all_args = () => all ??= spine_args(chain, false);
+  const live_args = () => args ??= spine_args(chain, true);
+  const count = chain?.count ?? 0;
+  const dyn = head.def !== null ? count > head.need : head.t.$ !== "Ref" && count > 0;
+  const call = head.def !== null && count === head.need
+    ? { k: head.def, get args() { return live_args(); }, get all() { return all_args(); },
+        bang: (head.t as Of<"Ref">).b }
+    : dyn ? { k: CLO_APPLY, args: [chain!.last!.f, chain!.last!.x],
+        all: [chain!.last!.f, chain!.last!.x] } : null;
+  return { h: head.h, t: head.t, tld: head.tld,
+    get all() { return all_args(); }, get args() { return live_args(); }, call };
+}
+
+// Summaries follow application prefixes so adjacent summaries share their
+// preceding arguments. The public spine view still presents a flat argument list.
+function summary_kids(cf: Carb, t: HTerm): HTerm[] {
+  if (t.$ !== "App") return term_kids(cf, t);
+  return spine_info(cf, t).chain!.live ? [t.f, t.x] : [t.f];
 }
 
 function term_eta(book: Bend.Book, t: HTerm, T: HTerm, n: number): HTerm {
@@ -979,12 +1029,12 @@ function term_kids(cf: Carb, tm: HTerm): HTerm[] {
   }
 }
 
-// Runtime summaries share single-child probe lists and visit each node once.
+// Runtime summaries retain shared capture edges and visit each node once.
 // The shape omits erased structure; equal arms always have equal shapes and
 // arm_eq still verifies the full term before sharing code.
 function term_sum(cf: Carb, tm: HTerm): TermSum {
   type Frame = { t: HTerm; kids: HTerm[]; next: number };
-  const open = (t: HTerm): Frame => ({ t, kids: term_kids(cf, t).map(term_force), next: 0 });
+  const open = (t: HTerm): Frame => ({ t, kids: summary_kids(cf, t).map(term_force), next: 0 });
   const root = term_force(tm);
   const got = SUMS.get(root);
   if (got !== undefined) return got;
@@ -998,14 +1048,9 @@ function term_sum(cf: Carb, tm: HTerm): TermSum {
     }
     const t = f.t;
     const kids = f.kids.map((k) => SUMS.get(k)!);
-    let probes: number[] = t.$ === "Var" ? [t.i] : [];
-    let seen: Set<number> | null = null;
-    for (const child of kids) {
-      if (probes.length === 0) { probes = child.probes; continue; }
-      if (child.probes.length === 0 || child.probes === probes) continue;
-      if (seen === null) { seen = new Set(probes); probes = probes.slice(); }
-      for (const i of child.probes) if (!seen.has(i)) { seen.add(i); probes.push(i); }
-    }
+    const parts = kids.map((s) => s.probes).filter((s) => s !== null);
+    const probes: Captures = t.$ === "Var" ? t.i
+      : parts.length === 0 ? null : parts.length === 1 ? parts[0] : parts;
     const ck = call_kind(cf, t);
     const jump = (ck !== null && !flat_call(cf, t)) || kids.some((s) => s.jump);
     const detail = t.$ === "Ref" ? [t.k, t.b === true]
@@ -1115,67 +1160,71 @@ function term_const(t: HTerm): boolean {
 }
 
 function use_get(u: UMap, i: number): number {
-  let lo = 0;
-  let hi = (u.length >> 1) - 1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    const k = u[mid << 1];
-    if (k === i) {
-      return u[(mid << 1) + 1];
-    }
-    if (k < i) {
-      lo = mid + 1;
-    } else {
-      hi = mid - 1;
-    }
+  while (u !== null) {
+    if (i === u.i) return u.n;
+    u = i < u.i ? u.l : u.r;
   }
   return 0;
 }
 
-// The union of two maps: a probe in both folds its counts, a probe in one is
-// kept. Neither input is written, and the result is an input when the other is
-// empty, so a node with one live child shares that child's map.
+function use_node(i: number, n: number, l: UMap, r: UMap): UNode {
+  return { i, n, l, r, h: 1 + Math.max(l?.h ?? 0, r?.h ?? 0),
+    size: 1 + (l?.size ?? 0) + (r?.size ?? 0) };
+}
+
+function use_balance(i: number, n: number, l: UMap, r: UMap): UNode {
+  if ((l?.h ?? 0) > (r?.h ?? 0) + 1) {
+    const a = l!;
+    if ((a.l?.h ?? 0) >= (a.r?.h ?? 0)) {
+      return use_node(a.i, a.n, a.l, use_node(i, n, a.r, r));
+    }
+    const b = a.r!;
+    return use_node(b.i, b.n, use_node(a.i, a.n, a.l, b.l),
+      use_node(i, n, b.r, r));
+  }
+  if ((r?.h ?? 0) > (l?.h ?? 0) + 1) {
+    const a = r!;
+    if ((a.r?.h ?? 0) >= (a.l?.h ?? 0)) {
+      return use_node(a.i, a.n, use_node(i, n, l, a.l), a.r);
+    }
+    const b = a.l!;
+    return use_node(b.i, b.n, use_node(i, n, l, b.l),
+      use_node(a.i, a.n, b.r, a.r));
+  }
+  return use_node(i, n, l, r);
+}
+
+function use_put(u: UMap, i: number, n: number,
+  f: (x: number, y: number) => number): UNode {
+  if (u === null) return use_node(i, n, null, null);
+  if (i === u.i) {
+    const value = f(u.n, n);
+    return value === u.n ? u : { ...u, n: value };
+  }
+  if (i < u.i) {
+    const l = use_put(u.l, i, n, f);
+    return l === u.l ? u : use_balance(u.i, u.n, l, u.r);
+  }
+  const r = use_put(u.r, i, n, f);
+  return r === u.r ? u : use_balance(u.i, u.n, u.l, r);
+}
+
+// Merge the smaller map into the larger map. Insertions copy the search path
+// and share every unchanged branch. Counts retain the caller's fold order.
 function use_union(a: UMap, b: UMap,
   f: (x: number, y: number) => number): UMap {
-  if (a.length === 0) {
-    return b;
+  if (a === null) return b;
+  if (b === null) return a;
+  const swap = a.size < b.size;
+  let out = swap ? b : a;
+  const fold = swap ? (x: number, y: number) => f(y, x) : f;
+  const stack = [swap ? a : b];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    out = use_put(out, node.i, node.n, fold);
+    if (node.r !== null) stack.push(node.r);
+    if (node.l !== null) stack.push(node.l);
   }
-  if (b.length === 0) {
-    return a;
-  }
-  const out: number[] = new Array(a.length + b.length);
-  let i = 0;
-  let j = 0;
-  let n = 0;
-  while (i < a.length && j < b.length) {
-    const ka = a[i];
-    const kb = b[j];
-    if (ka === kb) {
-      out[n++] = ka;
-      out[n++] = f(a[i + 1], b[j + 1]);
-      i += 2;
-      j += 2;
-    } else if (ka < kb) {
-      out[n++] = ka;
-      out[n++] = a[i + 1];
-      i += 2;
-    } else {
-      out[n++] = kb;
-      out[n++] = b[j + 1];
-      j += 2;
-    }
-  }
-  while (i < a.length) {
-    out[n++] = a[i];
-    out[n++] = a[i + 1];
-    i += 2;
-  }
-  while (j < b.length) {
-    out[n++] = b[j];
-    out[n++] = b[j + 1];
-    j += 2;
-  }
-  out.length = n;
   return out;
 }
 
@@ -1204,7 +1253,7 @@ function term_uses(cb: Carb, tm: HTerm): UMap {
       const t = term_force(current);
       if (t.$ === "Var") {
         const p = probe_of(t);
-        out = p === DUMMY ? USE0 : [p.i, 1];
+        out = p === DUMMY ? USE0 : use_node(p.i, 1, null, null);
         use_hold(current, out);
       } else if (t.$ === "Let") {
         // The body determines the live values before their uses are folded.
@@ -1214,7 +1263,7 @@ function term_uses(cb: Carb, tm: HTerm): UMap {
         current = o.b;
         continue;
       } else {
-        const kids = t.$ === "Mat" ? [t.h, t.m] : term_kids(cb, t);
+        const kids = t.$ === "Mat" ? [t.h, t.m] : summary_kids(cb, t);
         if (kids.length === 0) {
           out = USE0;
           use_hold(current, out);
@@ -3973,10 +4022,21 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
 function capture_order(fl: File, h: HTerm, u: UMap): [Probe, Bind][] {
   const by_idx = new Map<number, [Probe, Bind]>();
   for (const e of fl.uses) by_idx.set(e[0].i, e);
-  return term_sum(fl, h).probes.flatMap((i) => {
-    const entry = by_idx.get(i);
-    return entry !== undefined && use_get(u, i) > 0 ? [entry] : [];
-  });
+  const out: [Probe, Bind][] = [];
+  const seen = new Set<Captures>();
+  const stack = [term_sum(fl, h).probes];
+  while (stack.length > 0) {
+    const part = stack.pop()!;
+    if (part === null || seen.has(part)) continue;
+    seen.add(part);
+    if (typeof part === "number") {
+      const entry = by_idx.get(part);
+      if (entry !== undefined && use_get(u, part) > 0) out.push(entry);
+    } else {
+      for (let j = part.length - 1; j >= 0; j--) stack.push(part[j]);
+    }
+  }
+  return out;
 }
 
 // A literal word match's default continuation is the same source body at
@@ -3994,7 +4054,7 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
   def: boolean, lit = false): boolean {
   const diagnostic_before = DIAGNOSTICS ? performance.now() : 0;
   const u = term_uses(fl, h);
-  const closed = u.length === 0;
+  const closed = u === USE0;
   if (!def && !closed) return false;
   // A shared arm is emitted as an ordinary C helper with only its explicit
   // parameters. WL_JMP uses the register bank declared for its segment, so
@@ -4005,7 +4065,7 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
     return false;
   }
   const caps = capture_order(fl, h, u);
-  if ((u.length >> 1) > caps.length) return false;
+  if ((u?.size ?? 0) > caps.length) return false;
   const capKs = caps.flatMap(([, b]) => b.val.lay.ks);
   const avKs = av.flatMap((v) => v.lay.ks);
   const lay = dst?.lay ?? fl.seg.ret;

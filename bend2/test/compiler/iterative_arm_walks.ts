@@ -14,7 +14,7 @@ try {
   }
   fs.writeFileSync(path.join(temporary, "comp.ts"),
     fs.readFileSync(path.join(source, "comp.ts"), "utf8")
-      + "\nexport { arm_eq, capture_order, probe, memo_gc };\n");
+      + "\nexport { arm_eq, capture_order, probe, memo_gc, term_uses };\n");
   const Bend = await import(pathToFileURL(path.join(temporary, "bend.ts")).href);
   const Comp = await import(pathToFileURL(path.join(temporary, "comp.ts")).href);
   const A = Bend.Ref("U32");
@@ -28,7 +28,7 @@ try {
   const binding = { val: { ws: ["x"], lay: { ks: ["box"], arms: null }, stat: false },
     n: 1, A };
   const fl = { book: Bend.book_nil(), uses: new Map([[p, binding]]) };
-  assert.deepEqual(Comp.capture_order(fl, a, [p.i, 1]), [[p, binding]],
+  assert.deepEqual(Comp.capture_order(fl, a, Comp.term_uses(fl, a)), [[p, binding]],
     "a deep arm preserves the first-use capture order");
   console.log("PASS deep arm equality and capture discovery");
 } finally {
