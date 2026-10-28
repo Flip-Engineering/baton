@@ -159,8 +159,8 @@ test('renamed private repositories resolve through an App installation and canon
     assert.equal(token, 'fixture-5200');
     assert.ok(fixture.calls.some(call => call.path === '/repositories/7000'));
     assert.ok(fixture.calls.some(call => call.path === '/repositories/7000/installation'));
-    assert.ok(fixture.calls.some(call => call.path === '/app/installations/5100/access_tokens'));
     assert.ok(fixture.calls.some(call => call.path === '/app/installations/5200/access_tokens'));
+    assert.equal(fixture.calls.some(call => call.path === '/app/installations/5100/access_tokens'), options.lookup === 404);
   }
   const fixture = renamed_api();
   let output = '';
