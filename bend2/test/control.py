@@ -460,8 +460,12 @@ class Control(unittest.TestCase):
         self.db.touch()
         with tempfile.TemporaryDirectory(prefix='b758-', dir='/tmp') as runtime:
             self.environment['XDG_RUNTIME_DIR'] = runtime
-            ipc = pathlib.Path(runtime) / 'baton2'
-            ipc.mkdir(mode=0o700)
+            ipc = pathlib.Path('/tmp/baton2-%u' % os.geteuid())
+            ipc.mkdir(mode=0o700, exist_ok=True)
+            self.assertFalse(ipc.is_symlink())
+            self.assertTrue(ipc.is_dir())
+            self.assertEqual(ipc.stat().st_uid, os.geteuid())
+            ipc.chmod(0o700)
             info = self.db.stat()
             generation = ipc / f'owner-{info.st_dev:x}-{info.st_ino:x}.generation'
             record = generation.with_suffix('.record')
