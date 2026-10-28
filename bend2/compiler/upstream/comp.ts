@@ -5,6 +5,7 @@
 import * as fs from "node:fs";
 
 import * as Bend from "./bend.ts";
+import * as Fact from "./facts.ts";
 import { canonical_helpers, c_identifiers, content_name } from "./link.ts";
 
 const DIAGNOSTICS = process.env.BEND_COMPILER_DIAGNOSTICS === "1";
@@ -14,7 +15,7 @@ const heap_stats = DIAGNOSTICS && "Bun" in globalThis
       heapSize: number; heapCapacity: number; extraMemorySize: number;
       objectCount: number; objectTypeCounts: Record<string, number>;
     } : null;
-let diagnostic_facts: { reads: Set<string>; writes: Set<string> } | null = null;
+let diagnostic_facts: Fact.Trace | null = null;
 let diagnostic_literals: { word_leaves: number; word_nodes: number } | null = null;
 const diagnostic_columns = new Map<string, number>();
 let diagnostic_context: { event: string; details: Record<string, unknown> } | null = null;
@@ -182,6 +183,8 @@ type Carb = {
 
 type File = Carb & {
   unit: string;
+  heated: Set<string>;
+  obligations: Map<string, Set<string>>;
   spares: { words: number; name: string; z: boolean }[];
   fresh: Map<string, number>;
   uses: Map<Probe, Bind>;
@@ -2524,7 +2527,7 @@ function cid_mac(k: string): string {
 // share the checked source, signatures and monotone facts.
 function file_reset(fl: File, cb: Carb, decl: string): File {
   return Object.assign(fl, cb, {
-    unit: "", decl, segs: [], seg: seg_new("", BOX, []), tab: 2,
+    unit: "", heated: new Set(), obligations: new Map(), decl, segs: [], seg: seg_new("", BOX, []), tab: 2,
     cids: new Map(), tabs: new Map(), spins: [], spun: new Map(), armSeq: 0,
     armBusy: new Set(), armHints: new Map(), clos: new Set(),
     img: [], statics: new Map(), lits: new Map(), consts: new Map(), reqs: "", fuel: 0,
@@ -2606,6 +2609,9 @@ function seg_take(seg: Seg): string[] {
 
 function seg_ref(fl: File, fid: string): string {
   fl.seg.refs.add(fid);
+  let refs = fl.obligations.get(fl.def);
+  if (refs === undefined) fl.obligations.set(fl.def, refs = new Set());
+  refs.add(fid);
   return fid;
 }
 
@@ -2690,7 +2696,7 @@ function node_fields(fl: File, t: string, node: Lay,
 // lent to a parameter, or a parameter no holder asks to lend (lend) owns
 // it (own); an owned use of a value used later shares it and heats its
 // type (hot); a shared value of an erased parameter's type marks it
-// (poly). compile_book emits the book until a pass changes nothing.
+// (poly). Unit barriers publish writes from immutable snapshots.
 
 function facts_hot(fl: File, B: HTerm | null, force: boolean,
   local = false): void {
@@ -2717,9 +2723,10 @@ function facts_hot(fl: File, B: HTerm | null, force: boolean,
   const tk = "t:" + w.k;
   const hot = force || fl.hot.has(tk);
   w.x.forEach((x) => facts_hot(fl, x, hot, local));
-  if (!hot || fl.hot.has(tk)) {
+  if (!hot || fl.heated.has(tk)) {
     return;
   }
+  fl.heated.add(tk);
   fl.hot.add(tk);
   const tld = fl.book.tlds[w.k];
   if (tld?.$ === "ADT") {
@@ -2743,7 +2750,8 @@ function facts_fam(fl: File, w: HTerm, local: boolean): boolean {
   }
   m.all.forEach((x) => facts_hot(fl, x, true, local));
   const key = "m:" + (m.t as Of<"Ref">).k;
-  if (!fl.hot.has(key)) {
+  if (!fl.heated.has(key)) {
+    fl.heated.add(key);
     fl.hot.add(key);
     facts_hot(fl, fam, true, local);
   }
@@ -2756,48 +2764,6 @@ function facts_fam(fl: File, w: HTerm, local: boolean): boolean {
 function facts_ctr(fl: File, c: Bend.Ctr, xs: HTerm[]): void {
   const own = ctr_tail(fl.book, c, xs).some((d) => !live_dom(d));
   ctr_doms(fl.book, c, xs).forEach((A) => facts_hot(fl, A, true, own));
-}
-
-// A lend is asked by a holder or passed on from a lent root (k~i<j~q); a
-// parameter nobody asks to lend is owned.
-function facts_lend(cb: Carb): void {
-  for (let n = -1; n !== cb.lend.size;) {
-    n = cb.lend.size;
-    cb.lend.forEach((l) => {
-      const [a, r] = l.split("<");
-      r !== undefined && cb.lend.has(r) && cb.lend.add(a);
-    });
-  }
-  BRWS.forEach((bs, k) => bs.forEach((b, i) =>
-    b && !cb.lend.has(k + "~" + i) && cb.own.add(k + "~" + i)));
-}
-
-// facts_lend only reads the BRWS memo; brw_of fills it during emission.
-// Snapshot the keys, clear the memo, and recompute those defs against the
-// current own before closing lend again.
-//
-// Termination: every own key has the form k~i for a BRWS slot (k, i), and
-// facts_lend only adds such keys for slots brw_of has already filled. brw_of
-// fills each def's slots deterministically from that def's compiled term,
-// so the slot set is finite and fixed by the program under compilation, and
-// a round that re-adds no key returns. Each continuing round adds at least
-// one previously absent own key, so the number of productive rounds is at
-// most the total number of BRWS slots in the program.
-function facts_converge(cb: Carb): void {
-  for (let round = 0; ; round++) {
-    const before = new Set(cb.own);
-    const ks = [...BRWS.keys()];
-    BRWS.clear();
-    for (const k of ks) brw_of(cb, k);
-    facts_lend(cb);
-    const added = [...cb.own].filter((k) => !before.has(k));
-    diagnostic("facts.round", { round, own: cb.own.size,
-      hot: cb.hot.size, stat: cb.stat.size, added: added.length,
-      keys: added.slice(0, 32) });
-    if (added.length === 0) {
-      return;
-    }
-  }
 }
 
 // A value with no heap: a constructor packed into its word.
@@ -4295,8 +4261,8 @@ function compile_def(fl: File, k: Bend.Name, tld: Def): void {
     segments: fl.segs.length, spins: fl.spins.length, tables: fl.tabs.size,
     image_words: fl.unit === "" ? fl.img.length
       : [...fl.statics.values()].reduce((n, words) => n + words.length, 0),
-    absent_reads: diagnostic_facts?.reads.size ?? 0,
-    writes: diagnostic_facts?.writes.size ?? 0, lend: fl.lend.size, file_maps: { fresh: fl.fresh.size, uses: fl.uses.size,
+    absent_reads: diagnostic_facts === null ? 0 : [...diagnostic_facts.reads.values()].filter(v => !v).length,
+    reads: diagnostic_facts?.reads.size ?? 0, writes: diagnostic_facts?.wrote.size ?? 0, lend: fl.lend.size, file_maps: { fresh: fl.fresh.size, uses: fl.uses.size,
       brwl: fl.brwl.size, cids: fl.cids.size, tabs: fl.tabs.size, spun: fl.spun.size,
       clos: fl.clos.size, lits: fl.lits.size, consts: fl.consts.size } });
   diagnostic("term.summary", { name: k, nodes: SUMS.size, shapes: SHAPES.size });
@@ -4490,7 +4456,7 @@ export function compile_book(book: Bend.Book, workspace?: string): string {
   const Store = require("./store.ts") as typeof import("./store.ts");
   const identity = Store.compiler_identity([new URL(import.meta.url),
     new URL("./bend.ts", import.meta.url), new URL("./store.ts", import.meta.url),
-    new URL("./link.ts", import.meta.url),
+    new URL("./link.ts", import.meta.url), new URL("./facts.ts", import.meta.url),
     new URL("./base.bend", import.meta.url)]);
   const inputs = (SOURCE_FILES.get(book) ?? []).map(([path, namespace]) =>
     ({ path, namespace, sha256: Store.file_digest(path) }));
@@ -4590,53 +4556,11 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
   const roots = [seg_fid("main"), ...[...cb.bangs].map(seg_fid)];
   type Unit = Pick<File, "unit" | "segs" | "spins" | "statics" | "tabs" | "clos" | "lend">;
   const units = new Map<string, Unit>();
-  type FactsUnit = { lend: Set<string>; wrote: Set<string> };
+  type FactsUnit = { lend: Set<string> };
   const facts_units = new Map<string, FactsUnit>();
   const generic = new Set([...defs].filter(([, [, def]]) =>
     tele_unbind(cb.book, def.T).doms.some((dom) => !live_dom(dom)))
     .map(([fid]) => fid));
-  const writes = new Map<string, Set<string>>();
-  const reads = new Map<string, Set<string>>();
-  const readers = new Map<string, Set<string>>();
-  const dirty = new Set<string>();
-  let reading: string | null = null;
-  class Facts extends Set<string> {
-    constructor(readonly kind: string, initial: Set<string>) {
-      super();
-      for (const key of initial) super.add(key);
-    }
-    has(key: string): boolean {
-      const found = super.has(key);
-      if (!found && reading !== null) {
-        const fact = this.kind + ":" + key;
-        const dependencies = reads.get(reading)!;
-        dependencies.add(fact);
-        let dependents = readers.get(fact);
-        if (dependents === undefined) readers.set(fact, dependents = new Set());
-        dependents.add(reading);
-      }
-      return found;
-    }
-    add(key: string): this {
-      if (reading !== null) writes.get(reading)!.add(this.kind + ":" + key);
-      if (!super.has(key)) {
-        super.add(key);
-        diagnostic("fact.write", { kind: this.kind, key, unit: reading,
-          writer: reading === null ? "facts.lend" : defs.get(reading)![0] });
-        for (const fid of readers.get(this.kind + ":" + key) ?? []) dirty.add(fid);
-      }
-      return this;
-    }
-  }
-  cb.own = new Facts("own", cb.own);
-  cb.hot = new Facts("hot", cb.hot);
-  cb.stat = new Facts("stat", cb.stat);
-  const forget = (fid: string): void => {
-    for (const fact of reads.get(fid) ?? []) readers.get(fact)?.delete(fid);
-    reads.delete(fid);
-    writes.delete(fid);
-    dirty.delete(fid);
-  };
   const fl = file_new(cb, "Term");
   const tables: [string, string][] = [];
   const offsets: string[] = [];
@@ -4690,30 +4614,17 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
       helpers_after: fl.spins.length, static_words_before,
       static_words_after: fl.img.length, tables_before, tables_after: tables.length });
   };
-  const emit_unit = (fid: string, facts_only: boolean): Unit => {
+  const emit_unit: Fact.Emit<Unit> = (fid, facts_only, initial, record) => {
     const [k, def] = defs.get(fid)!;
-    forget(fid);
-    reads.set(fid, new Set());
-    writes.set(fid, new Set());
-    const previous = units.get(fid);
-    if (previous !== undefined) {
-      previous.segs = [];
-      previous.spins = [];
-      previous.statics.clear();
-      previous.tabs.clear();
-      previous.clos.clear();
-      previous.lend.clear();
-    }
-    facts_units.delete(fid);
-    const output = file_new({ ...cb, lend: new Set() }, "Term");
+    BRWS.clear();
+    const views = Fact.views(initial, record);
+    const output = file_new({ ...cb, ...views, lend: new Set() }, "Term");
     output.unit = "u" + Buffer.from(k).toString("hex") + "_";
-    reading = fid;
     const begin = performance.now();
     diagnostic("unit.begin", { name: k, facts_only });
-    if (DIAGNOSTICS) diagnostic_facts = { reads: reads.get(fid)!, writes: writes.get(fid)! };
+    if (DIAGNOSTICS) diagnostic_facts = record;
     compile_def(output, k, def);
     diagnostic_facts = null;
-    reading = null;
     if (!facts_only) {
       const start = performance.now();
       const table_names = new Map([...output.tabs].map(([row, id]) =>
@@ -4733,89 +4644,120 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
     const unit: Unit = { unit: output.unit, segs: output.segs,
       spins: output.spins, statics: output.statics, tabs: output.tabs,
       clos: output.clos, lend: output.lend };
-    if (facts_only) {
-      facts_units.set(fid, { lend: unit.lend, wrote: writes.get(fid)! });
-    } else {
-      units.set(fid, unit);
+    const local = new Set([...output.segs.map(seg => seg.fid), ...output.spins.map(spin => spin[0])]);
+    const refs = new Set<string>(), external = (ref: string): boolean => {
+      if (local.has(ref) || ref === seg_fid("io_emit") || ref === seg_fid("clo_apply")) return false;
+      if (!defs.has(ref) && !foreign.has(ref)) die("unresolved external reference from " + k + ": " + ref);
+      return true;
+    };
+    for (const ref of file_reach(output, [seg_fid(k)])) if (external(ref)) refs.add(ref);
+    const edges: [string, string][] = [];
+    for (const [origin, obligations] of output.obligations) {
+      for (const ref of obligations) if (defs.has(ref) || foreign.has(ref)) {
+        const from = cb.book.tlds[origin] === undefined ? k : origin;
+        edges.push([from, (defs.get(ref) ?? foreign.get(ref))![0]]);
+      }
     }
+    const masks: Fact.BorrowMask[] = [...BRWS.keys()].map(name =>
+      [name, cb.masks!.get(name) ?? brw_mask(cb, name)]);
     diagnostic("unit.end", { name: k, facts_only,
-      duration_ms: performance.now() - begin, reads: reads.get(fid)!.size,
-      writes: writes.get(fid)!.size, lend: unit.lend.size, decode_ms: stored.decode_ms });
+      duration_ms: performance.now() - begin, reads: record.reads.size,
+      writes: record.wrote.size, lend: unit.lend.size, decode_ms: stored.decode_ms,
+      external_def_fids: refs.size, closure_targets: unit.clos.size,
+      local_segments: unit.segs.length, helper_refs: unit.spins.length });
     stored.release();
     memo_gc();
-    return unit;
+    BRWS.clear();
+    const code: Unit = facts_only ? { unit: unit.unit, lend: unit.lend,
+      segs: [], spins: [], statics: new Map(), tabs: new Map(), clos: new Set() } : unit;
+    return { code, lend: unit.lend, masks, refs, edges };
   };
-  let diagnostic_pass = 0;
-  let needed = new Set(roots);
-  do {
-    const pass_number = ++diagnostic_pass;
-    diagnostic("pass.begin", { pass: pass_number, definitions: needed.size,
-      own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size });
-    file_reset(fl, cb, "Term");
-    tables.length = 0;
-    offsets.length = 0;
-    collect_full();
-    const queue = [...needed].filter((fid) => !units.has(fid) || dirty.has(fid));
-    const queued = new Set(queue);
-    for (let i = 0; i < queue.length; i++) {
-      const fid = queue[i];
-      if (!defs.has(fid)) continue;
-      const unit = emit_unit(fid, false);
-      const referenced = new Set<string>();
-      for (const seg of unit.segs) for (const ref of seg.refs) referenced.add(ref);
-      for (const spin of unit.spins) for (const ref of spin[2]) referenced.add(ref);
-      for (const ref of referenced) {
-        if (!queued.has(ref) && (!units.has(ref) || dirty.has(ref))) {
-          queued.add(ref);
-          queue.push(ref);
-        }
+  // Scan checked bodies and signatures before scheduling. Store-backed bodies
+  // are released after each scan; generated helper names never enter the graph.
+  const graph = new Map<string, Set<string>>();
+  for (const [name, tld] of Object.entries(cb.book.tlds)) {
+    const refs = new Set<string>(SRCS.get(name)?.refs ?? []);
+    for (const ref of source_refs(cb.book, name)) refs.add(ref);
+    const seen = new Set<object>(), stack: unknown[] = [tld.T];
+    if (tld.$ === "ADT") for (const ctr of tld.c) stack.push(ctr.T);
+    else { stack.push((tld as Def).h, tld.v); }
+    while (stack.length) {
+      let value = stack.pop();
+      if (value !== null && typeof value === "object" && "$" in value) value = Bend.term_force(value as HTerm);
+      if (value === null || typeof value !== "object" || seen.has(value)) continue;
+      seen.add(value);
+      const term = value as { [key: string]: any };
+      if (term.$ === "Ref" || term.$ === "ADT") refs.add(term.k);
+      for (const field of Object.keys(term)) {
+        if (field === "s") continue;
+        const child = term[field];
+        if (typeof child !== "function") stack.push(child);
+        else if (term.$ === "Let" && field === "f") stack.push(child(term.k.map(() => DUMMY)));
+        else if ((term.$ === "Lam" && field === "f") || (term.$ === "All" && field === "B")) stack.push(child(DUMMY));
       }
     }
-    let facts_reemitted = 0;
-    for (const fid of generic) {
-      if (!units.has(fid) && (!facts_units.has(fid) || dirty.has(fid))) {
-        // These standalone generic bodies produce poly keys even when all
-        // their calls are fused or spun. Their code and refs are discarded.
-        emit_unit(fid, true);
-        facts_reemitted += 1;
+    refs.delete(name);
+    graph.set(name, new Set([...refs].filter(ref => cb.book.tlds[ref] !== undefined)));
+    stored.release(); memo_gc();
+  }
+  collect_full();
+  const names = new Map([...defs].map(([fid, [name]]) => [fid, name]));
+  const by_name = new Map([...names].map(([fid, name]) => [name, fid]));
+  const fact_directory = writer.directory + "/facts";
+  fs.mkdirSync(fact_directory);
+  const solved = Fact.solve<Unit>({ graph, entries: new Set(names.values()),
+    generic: new Set([...generic].map(fid => names.get(fid)!)),
+    roots: roots.flatMap(fid => names.has(fid) ? [names.get(fid)!] : []),
+    directory: fact_directory, observe: diagnostic,
+    emit: (name, facts_only, initial, record) => {
+      const result = emit_unit(by_name.get(name)!, facts_only, initial, record);
+      return { ...result, refs: new Set([...result.refs].flatMap(fid => names.has(fid) ? [names.get(fid)!] : [])) };
+    },
+    barrier: (pass_number, records, facts, reemitted, facts_reemitted, pending) => {
+      Object.assign(cb, facts);
+      units.clear(); facts_units.clear();
+      const live_names = new Set<string>(), queue = roots.flatMap(fid => names.has(fid) ? [names.get(fid)!] : []);
+      while (queue.length) {
+        const name = queue.pop()!;
+        if (live_names.has(name)) continue;
+        live_names.add(name);
+        const record = records.get(name);
+        if (record !== undefined && !record.facts_only) for (const ref of record.refs) queue.push(ref);
       }
-    }
-    assemble();
-    needed = file_reach(fl, roots);
-    for (const fid of units.keys()) {
-      if (!needed.has(fid)) {
-        units.delete(fid);
-        forget(fid);
+      for (const [name, record] of records) {
+        const fid = by_name.get(name)!;
+        if (record.facts_only) facts_units.set(fid, { lend: record.lend });
+        else if (live_names.has(name)) units.set(fid, record.code);
       }
-    }
-    assemble();
-    facts_converge(cb);
-    for (const fid of dirty) {
-      if (!needed.has(fid) && !facts_units.has(fid)) dirty.delete(fid);
-    }
-    compile_reqs(fl, [...needed].flatMap((fid) => foreign.has(fid) ? [foreign.get(fid)!] : [])
-      .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
-    const live = file_reach(fl, roots);
-    fl.segs = fl.segs.filter((seg) => live.has(seg.fid));
-    fl.spins = fl.spins.filter(([fid]) => live.has(fid));
-    let lines = 0, line_code_units = 0, spin_code_units = 0;
-    for (const seg of fl.segs) {
-      lines += seg.lines.length;
-      for (const line of seg.lines) line_code_units += line.length;
-    }
-    for (const spin of fl.spins) spin_code_units += spin[1].length;
-    diagnostic("pass.end", { pass: pass_number, definitions: units.size,
-      reemitted: queue.filter((fid) => defs.has(fid)).length, pending: dirty.size,
-      facts_definitions: facts_units.size, facts_reemitted,
-      segments: fl.segs.length, spins: fl.spins.length, tables: tables.length,
-      image_words: fl.img.length, lines, line_code_units, spin_code_units,
-      own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size });
-    if (DIAGNOSTICS) {
+      assemble();
+      const needed = file_reach(fl, roots);
+      let removed = false;
+      for (const fid of units.keys()) if (!needed.has(fid)) { units.delete(fid); removed = true; }
+      if (removed) assemble();
+      compile_reqs(fl, [...needed].flatMap(fid => foreign.has(fid) ? [foreign.get(fid)!] : [])
+        .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+      const live = file_reach(fl, [...roots, ...fl.clos]);
+      fl.segs = fl.segs.filter(seg => live.has(seg.fid));
+      fl.spins = fl.spins.filter(([fid]) => live.has(fid));
+      let lines = 0, line_code_units = 0, spin_code_units = 0;
+      for (const seg of fl.segs) { lines += seg.lines.length; for (const line of seg.lines) line_code_units += line.length; }
+      for (const spin of fl.spins) spin_code_units += spin[1].length;
+      diagnostic("pass.end", { pass: pass_number, definitions: units.size, reemitted, pending,
+        facts_definitions: facts_units.size, facts_reemitted,
+        segments: fl.segs.length, spins: fl.spins.length, tables: tables.length,
+        image_words: fl.img.length, lines, line_code_units, spin_code_units,
+        own: facts.own.size, hot: facts.hot.size, stat: facts.stat.size });
       collect_full();
-      diagnostic_heap("pass.end", { pass: pass_number });
-    }
-  } while (dirty.size > 0 || [...needed].some((fid) => defs.has(fid) && !units.has(fid))
-    || [...generic].some((fid) => !units.has(fid) && !facts_units.has(fid)));
+      if (DIAGNOSTICS) diagnostic_heap("pass.end", { pass: pass_number });
+    },
+  });
+  Object.assign(cb, solved.facts);
+  if (DIAGNOSTICS) {
+    const retained = writer.directory + ".facts";
+    fs.cpSync(fact_directory, retained, { recursive: true });
+    diagnostic("facts.history", { path: retained,
+      files: fs.readdirSync(retained).map(name => ({ name, bytes: fs.statSync(retained + "/" + name).size })) });
+  }
   memo_gc();
   collect_full();
   const reach = (from: string[]): Set<string> => file_reach(fl, from);
