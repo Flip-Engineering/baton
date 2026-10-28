@@ -96,6 +96,7 @@ sh bend2/scripts/build-native.sh bend2/test/codex-rate-limits.bend .scratch/bend
 sh bend2/scripts/build-native.sh bend2/test/deepseek-usage.bend .scratch/bend2/deepseek-usage-test
 rm -f .scratch/bend2/deepseek-usage.db
 .scratch/bend2/deepseek-usage-test .scratch/bend2/deepseek-usage.db
+"$PYTHON3" bend2/test/usage-read-deepseek.py "$root/.scratch/bend2/usage-read"
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-store.bend .scratch/bend2/usage-windows-store-test
 rm -f .scratch/bend2/usage-windows-store.db
 .scratch/bend2/usage-windows-store-test .scratch/bend2/usage-windows-store.db
