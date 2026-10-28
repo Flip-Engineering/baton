@@ -97,6 +97,83 @@ def safe() -> U32:
                                          'BEND_NO_TELEMETRY': '1'})
                 self.assertEqual(run.returncode, 0, run.stderr)
 
+    def test_request_scalar_cids(self):
+        script = ROOT / 'bend2/test/compiler/request_scalar_cids.ts'
+        run = subprocess.run([self.bun, '--smol', str(script), str(ROOT)],
+                             capture_output=True, text=True, env={
+                                 **os.environ, 'BEND_COMPILER_SOURCE': str(SOURCE),
+                                 'BEND_NO_TELEMETRY': '1'})
+        self.assertEqual(run.returncode, 0, run.stderr)
+
+    def test_report_cycles_and_foreign_dependencies(self):
+        with tempfile.TemporaryDirectory(prefix='bend-report-cycles-') as temporary:
+            fixture = Path(temporary) / 'report.bend'
+            fixture.write_text('''import Base
+
+@unsafe
+def unsafe_loop(value: U32) -> U32:
+  unsafe_loop(value)
+
+def calls_cycle(value: U32) -> U32:
+  unsafe_loop(value)
+
+def host_read() -> IO(U32):
+  import "./missing.js"
+  import "./missing.c"
+
+def calls_host() -> IO(U32):
+  host_read()
+
+def safe() -> U32:
+  0
+''')
+            run = subprocess.run([self.bun, '--smol', str(SOURCE / 'main.ts'),
+                                  str(fixture), '--check-only'],
+                                 capture_output=True, text=True,
+                                 env={**os.environ, 'BEND_NO_TELEMETRY': '1'})
+            self.assertEqual(run.returncode, 0, run.stderr)
+            claims = {line[2:] for line in run.stdout.splitlines() if line.startswith('- ')}
+            self.assertEqual(claims,
+                             {'unsafe_loop', 'calls_cycle', 'host_read', 'calls_host'})
+
+    def test_report_deep_and_wide_dependencies(self):
+        with tempfile.TemporaryDirectory(prefix='bend-report-graph-') as temporary:
+            fixture = Path(temporary) / 'report.bend'
+            definitions = ['import Base', '@unsafe\ndef seed() -> U32:\n  0']
+            expected = {'seed'}
+            for index in range(400):
+                name = f'wide_{index}'
+                definitions.append(f'def {name}() -> U32:\n  seed()')
+                expected.add(name)
+            previous = 'seed'
+            for index in range(96):
+                name = f'deep_{index}'
+                definitions.append(f'def {name}() -> U32:\n  {previous}()')
+                expected.add(name)
+                previous = name
+            definitions.append('def safe() -> U32:\n  0')
+            fixture.write_text('\n\n'.join(definitions) + '\n')
+            run = subprocess.run([self.bun, '--smol', str(SOURCE / 'main.ts'),
+                                  str(fixture), '--check-only'],
+                                 capture_output=True, text=True,
+                                 env={**os.environ, 'BEND_NO_TELEMETRY': '1'})
+            self.assertEqual(run.returncode, 0, run.stderr)
+            claims = {line[2:] for line in run.stdout.splitlines() if line.startswith('- ')}
+            self.assertEqual(claims, expected)
+
+    def test_report_clean_output(self):
+        with tempfile.TemporaryDirectory(prefix='bend-report-clean-') as temporary:
+            fixture = Path(temporary) / 'report.bend'
+            fixture.write_text('import Base\n\ndef safe() -> U32:\n  0\n')
+            run = subprocess.run([self.bun, '--smol', str(SOURCE / 'main.ts'),
+                                  str(fixture), '--check-only'],
+                                 capture_output=True, text=True,
+                                 env={**os.environ, 'BEND_NO_TELEMETRY': '1',
+                                      'BEND_COMPILER_DIAGNOSTICS': '0'})
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertEqual(run.stdout, 'All terms check.\n')
+            self.assertEqual(run.stderr, '')
+
     def test_process_units(self):
         script = ROOT / 'bend2/test/compiler/process_units.ts'
         run = subprocess.run([self.bun, '--smol', str(script), str(ROOT)],

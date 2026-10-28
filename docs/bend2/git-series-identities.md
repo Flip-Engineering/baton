@@ -212,7 +212,10 @@ to resolve the recorded model key without launching a command:
 node "$GIT_SERIES" check --registry "$REGISTRY" --model-key MODEL [--repository OWNER/REPO]
 ```
 
-The check exits 0 when the registry resolves the key and refuses otherwise.
+The check resolves the model and, when a repository is supplied, verifies the
+selected App installation for that repository. It exits 0 when both checks
+succeed and refuses otherwise. An unavailable repository refusal names the
+repository, App and account checked, with GitHub's HTTP response cause.
 `start`, `receiver` and `dispatch-turn` report that refusal with exit status 2,
 keep the session's stored endpoint unchanged, and leave any pending input
 unaccepted, so an unmapped model refuses where it is configured.
@@ -266,8 +269,9 @@ credential command.
 The selected public identity's `github.permissions` must include
 `workflows:write`. The credential helper also checks the App registration,
 the repository owner's installation and the issued token for all four grants.
-Permission refusals name the required level and its source. `check`
-validates local identity metadata; credential issuance performs the remote checks.
+Permission refusals name the required level and its source. With a repository,
+`check` and credential issuance both verify the repository owner's App
+installation and required permissions.
 
 The token request includes `repositories: ["REPO"]` and the four permissions.
 The helper verifies that GitHub returns a selected token covering exactly

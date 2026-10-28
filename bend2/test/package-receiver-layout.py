@@ -355,6 +355,58 @@ class ReceiverLayout(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'requires exactly three binaries'):
             STAGE.stage_binaries(prefix, specs[:1], PACKAGE)
 
+    def test_darwin_target_metadata_is_independent_of_linux_host(self):
+        args = self.args(target_system='Darwin', target_machine='arm64')
+        with mock.patch.object(PACKAGE.platform, 'system', return_value='Linux'), \
+                mock.patch.object(PACKAGE.platform, 'machine', return_value='x86_64'):
+            self.assertEqual(PACKAGE.artifact_target(args), ('Darwin', 'arm64'))
+
+    def test_cross_host_build_selects_the_staged_sdk_and_queue_compiler(self):
+        args = self.args(target_system='Darwin', target_machine='arm64',
+                         focused_binary=None, full_binary=None, recovery_binary=None)
+        llvm = self.home / 'llvm'
+        (llvm / 'bin').mkdir(parents=True)
+        (llvm / 'bin/clang').touch()
+        (llvm / 'bin/ld64.lld').touch()
+        sdk = self.home / 'sdk'
+        (sdk / 'usr/include').mkdir(parents=True)
+        sdk_tree_sha = 'f' * 64
+        sdk_manifest = sdk.with_name(sdk.name + '.transfer-manifest.json')
+        sdk_manifest.write_text(json.dumps({
+            'schema': 'baton2-private-sdk-transfer-v1', 'destination': str(sdk.resolve()),
+            'verification': {'destination_tree_sha256': sdk_tree_sha},
+        }))
+        sdk_manifest_sha = PACKAGE.sha256(sdk_manifest)
+        args.darwin_llvm_root = llvm
+        args.darwin_sdkroot = sdk
+        with mock.patch.object(PACKAGE.platform, 'system', return_value='Linux'), \
+                mock.patch.object(PACKAGE.platform, 'machine', return_value='x86_64'), \
+                mock.patch.object(PACKAGE, 'DARWIN_SDK_TREE_SHA256', sdk_tree_sha), \
+                mock.patch.object(PACKAGE, 'DARWIN_SDK_MANIFEST_SHA256', sdk_manifest_sha):
+            environment, cross_host = PACKAGE.configure_cross_host_build(
+                args, {}, 'Darwin', 'arm64')
+        self.assertTrue(cross_host)
+        self.assertEqual(environment['CC'],
+                         str(ROOT / 'bend2/scripts/darwin-arm64-clang.sh'))
+        self.assertEqual(environment['BATON2_DARWIN_LLVM_ROOT'], str(llvm.resolve()))
+        self.assertEqual(environment['BATON2_DARWIN_SDKROOT'], str(sdk.resolve()))
+        self.assertEqual(environment['BATON2_DARWIN_SDK_TREE_SHA256'], sdk_tree_sha)
+
+    def test_cross_host_build_refuses_an_unqueued_compiler_override(self):
+        args = self.args(target_system='Darwin', target_machine='arm64',
+                         focused_binary=None, full_binary=None, recovery_binary=None,
+                         darwin_llvm_root=self.home, darwin_sdkroot=self.home)
+        with mock.patch.object(PACKAGE.platform, 'system', return_value='Linux'), \
+                mock.patch.object(PACKAGE.platform, 'machine', return_value='x86_64'):
+            with self.assertRaisesRegex(RuntimeError, 'shared homelab compile queue'):
+                PACKAGE.configure_cross_host_build(args, {'BATON2_NATIVE_QUEUE_DRIVER': '/tmp/direct'},
+                                                   'Darwin', 'arm64')
+
+    def test_non_darwin_artifact_target_is_refused(self):
+        args = self.args(target_system='Linux', target_machine='x86_64')
+        with self.assertRaisesRegex(RuntimeError, 'requires a Darwin arm64 target'):
+            PACKAGE.artifact_target(args)
+
 
     def test_full_retained_c_hash_is_recorded_and_checked(self):
         namespace = self.args(full_c_sha256='f' * 64)

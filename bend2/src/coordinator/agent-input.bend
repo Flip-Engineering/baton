@@ -293,20 +293,21 @@ def batch_session(+db: String) -> IO(String):
     +native : String <- environment("CODEX_THREAD_ID")
     connection : String <- environment("BATON_MCP_INPUT")
     selected_hex : String <- Bool.pick(IO(String),String.is_empty(native),IO.pure(String,"\n"),IO.try(String,DB.Sql.read(db,"SELECT CASE WHEN count(*)=1 THEN hex(min(id)) ELSE '' END FROM sessions WHERE native=" ++ C.q(native) ++ " AND harness='codex';")))
-    codex : String <- field(selected_hex)
-    IO.pure(String,Bool.pick(String,Bool.and(String.is_empty(directory),String.is_empty(connection)),codex,selected))
+    +codex : String <- field(selected_hex)
+    fallback : String = Bool.pick(String,String.is_empty(codex),selected,codex)
+    IO.pure(String,Bool.pick(String,Bool.and(String.is_empty(directory),String.is_empty(connection)),fallback,selected))
 
 def command_pending_output(+db: String, +saved: String) -> IO(Unit):
   do IO<Unit>:
     session : String <- batch_session(db)
-    command_owned_output(db,session,saved,saved,False{})
+    command_owned_output(db,session,saved,saved,True{})
 
 def command_output_value(+db: String, command: C.Command, +saved: String) -> IO(Unit):
   match command:
     case C.Pretty{inner}: command_output_value(db,inner,saved)
     case C.Delivery{id}: command_message_output(db,saved,False{})
     case C.InputDetail{id}: command_message_output(db,saved,True{})
-    case C.Inbox{session}: command_owned_output(db,session,saved,saved,False{})
+    case C.Inbox{session}: command_owned_output(db,session,saved,saved,True{})
     case C.Pending{}: command_pending_output(db,saved)
     case other: IO.try(Unit,Text.Text.control_output(saved))
 

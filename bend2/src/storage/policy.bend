@@ -23,6 +23,8 @@ def class_name(+c: T.StorageClass) -> String:
     case T.SharedImmutable{}: "shared-immutable"
     case T.GitObject{}: "git-object"
     case T.LogEvidence{}: "log-evidence"
+    case T.StagingSource{}: "staging-source"
+    case T.StagingSourceReleased{}: "staging-source-released"
     case T.Unclassified{}: "unclassified"
 
 # The layout table's marker names. An unrecognised marker is Unclassified and
@@ -35,7 +37,9 @@ def classify(+marker: String) -> T.StorageClass:
   Bool.pick(T.StorageClass, String.eq(marker, "shared-immutable"), T.SharedImmutable{},
   Bool.pick(T.StorageClass, String.eq(marker, "git-object"), T.GitObject{},
   Bool.pick(T.StorageClass, String.eq(marker, "log-evidence"), T.LogEvidence{},
-    T.Unclassified{})))))))
+  Bool.pick(T.StorageClass, String.eq(marker, "staging-source"), T.StagingSource{},
+  Bool.pick(T.StorageClass, String.eq(marker, "staging-source-released"), T.StagingSourceReleased{},
+    T.Unclassified{})))))))))
 
 def owner_reason_of(+expected: String, +owner: T.Owner) -> String:
   match owner:
@@ -72,6 +76,8 @@ def class_reason(+c: T.StorageClass) -> String:
     case T.SharedImmutable{}: ""
     case T.GitObject{}: "git-object-report-only"
     case T.LogEvidence{}: ""
+    case T.StagingSource{}: "staging-source-release-required"
+    case T.StagingSourceReleased{}: ""
 
 # A transient candidate is admitted only after its owning session has no
 # non-exited execution. Unknown execution evidence preserves the candidate,
@@ -79,18 +85,36 @@ def class_reason(+c: T.StorageClass) -> String:
 def execution_reason(+cls: T.StorageClass, +execution: T.Presence) -> String:
   Bool.pick(String, transient_class(cls), presence_reason(execution, "execution-live", "execution-unknown"), "")
 
+# The staging-source-released class records the operator's explicit ownership
+# release decision. The staging-source class remains report-only until that
+# decision is recorded.
+def ownership_reason(+cls: T.StorageClass, +expected: String, +owner: T.Owner) -> String:
+  match cls:
+    case T.StagingSourceReleased{}: ""
+    case T.StagingSource{}: "staging-source-release-required"
+    case other: owner_reason(expected, owner)
+
+def unpublished_reason(+cls: T.StorageClass, +fact: T.Presence) -> String:
+  match cls:
+    case T.StagingSourceReleased{}:
+      match fact:
+        case T.Present{detail}: detail
+        case T.Absent{}: ""
+        case T.Unknown{}: "publication-unknown"
+    case other: presence_reason(fact, "unpublished-commits", "publication-unknown")
+
 def preserve_reason(+cls: T.StorageClass, +owner: String, +facts: T.Facts) -> String:
   match facts:
     case T.Facts{o, execution, database, lease, process, dirty, unpublished, runtime_input, ref, pending_attempt}:
       first_reason([
         presence_reason(database, "database-path", "database-path-unknown"),
-        owner_reason(owner, o),
+        ownership_reason(cls, owner, o),
         execution_reason(cls, execution),
         presence_reason(lease, "lease-live", "lease-unknown"),
         presence_reason(process, "process-live", "process-unknown"),
         presence_reason(runtime_input, "runtime-input-live", "runtime-input-unknown"),
         presence_reason(dirty, "worktree-dirty", "worktree-unknown"),
-        presence_reason(unpublished, "unpublished-commits", "publication-unknown"),
+        unpublished_reason(cls, unpublished),
         presence_reason(ref, "ref-live", "ref-unknown"),
         presence_reason(pending_attempt, "pending-attempt", "attempt-unknown"),
         class_reason(cls)
@@ -105,6 +129,8 @@ def remove_reason(+c: T.StorageClass) -> String:
     case T.SharedImmutable{}: "shared-reference-absent"
     case T.GitObject{}: "git-object-report-only"
     case T.LogEvidence{}: "evidence-settled"
+    case T.StagingSource{}: "staging-source-release-required"
+    case T.StagingSourceReleased{}: "staging-source-released"
     case T.Unclassified{}: "unclassified"
 
 def decide(+cls: T.StorageClass, +owner: String, +facts: T.Facts) -> T.Decision:

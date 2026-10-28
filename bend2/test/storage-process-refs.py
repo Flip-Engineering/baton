@@ -1,4 +1,4 @@
-"""Current-user process evidence for released worktrees and live consumers.
+"""Process evidence for released worktrees and live consumers.
 
 The proc-based cases run on Linux only: the production scan reads /proc and
 answers unknown:non-linux elsewhere, preserving every candidate. No Darwin
@@ -105,6 +105,27 @@ class StorageProcessRefs(unittest.TestCase):
             self.assertIn(f'/proc/{child.pid}/', run.stderr)
             self.assertIn('error=13', run.stderr)
         self.assertEqual(self.scan().stdout.strip(), 'absent')
+
+    @unittest.skipUnless(LINUX and os.geteuid() == 0,
+                         'foreign uid process fixture requires Linux root')
+    def test_foreign_uid_process_with_open_descendant_keeps_runtime_reference(self):
+        tracked = self.candidate / 'tracked.txt'
+        tracked.write_text('another uid has this file open\n')
+        script = """import os,sys
+fd=os.open(sys.argv[1], os.O_RDONLY)
+os.setgid(int(sys.argv[3]))
+os.setuid(int(sys.argv[2]))
+print('ready', flush=True)
+sys.stdin.read()
+os.close(fd)
+"""
+        with peer(script, self.root, tracked, 65534, 65534) as child:
+            run = self.scan()
+            self.assertNotEqual(run.stdout.strip(), 'absent', run.stdout + run.stderr)
+            if run.stdout.startswith('present:'):
+                self.assertIn(str(child.pid), run.stdout.split(':', 1)[1].strip().split(','))
+            else:
+                self.assertTrue(run.stdout.startswith('unknown:'), run.stdout + run.stderr)
 
     @unittest.skipUnless(LINUX, 'proc scan is Linux only')
     def test_exiting_processes_release_their_references(self):

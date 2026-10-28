@@ -70,6 +70,7 @@ def main():
                 output.write('CCACHE_DIR=' + cache['directory'] + '\n')
                 output.write('CCACHE_LOGFILE=' + cache['log'] + '\n')
     path = run / 'generated/compiler-selection.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(selection, indent=2) + '\n')
     print(json.dumps({key: value for key, value in selection.items() if key != 'distribution'}))
 
