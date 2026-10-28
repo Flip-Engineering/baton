@@ -162,9 +162,10 @@ class QueueCommandTests(unittest.TestCase):
 class QueueExecutionIdentityTests(unittest.TestCase):
     """Paired cache-key qualification against the installed native queue client.
 
-    The adapter's own diagnostic-only edits must leave the key unchanged, while
-    source, compiler and argv changes must produce different keys. Key requests
-    only: no compiler runs, no queue record is written or adopted.
+    Diagnostic-only edits to the queue adapter must leave the key unchanged,
+    an edit to the executed module must change it, and source, compiler and
+    argv changes must produce different keys. Key requests only: no compiler
+    runs, no queue record is written or adopted.
     """
 
     def setUp(self):
@@ -178,6 +179,7 @@ class QueueExecutionIdentityTests(unittest.TestCase):
         self.sys = sys
         repo = pathlib.Path(__file__).resolve().parents[2]
         self.adapter_source = repo / '.github' / 'scripts' / 'queue-native-checks.py'
+        self.exec_source = repo / '.github' / 'scripts' / 'compile-cgen-exec.py'
         self.root = pathlib.Path(tempfile.mkdtemp(prefix='queue-identity-pair-'))
         self.addCleanup(shutil.rmtree, self.root, True)
         self.compiler = self.root / 'fake-cc'
@@ -198,16 +200,21 @@ class QueueExecutionIdentityTests(unittest.TestCase):
             'client': str(pathlib.Path(self.native).resolve()), 'state': str(self.state)}))
 
     def materialize_adapter(self):
+        import hashlib
         target = self.root / '.github' / 'scripts'
         target.mkdir(parents=True, exist_ok=True)
-        adapter = target / 'queue-native-checks.py'
-        adapter.write_text(self.adapter_source.read_text())
-        return adapter
+        for source in (self.adapter_source, self.exec_source):
+            (target / source.name).write_text(source.read_text())
+        self.materialized_digest = hashlib.sha256(
+            (target / self.adapter_source.name).read_bytes()).hexdigest()
+        return target / self.adapter_source.name
 
-    def key_of(self, mode, argv):
+    def key_of(self, mode, argv, adapt=True):
         import subprocess
         import sys
-        adapter = self.materialize_adapter()
+        if adapt:
+            self.materialize_adapter()
+        adapter = self.root / '.github' / 'scripts' / self.adapter_source.name
         environment = dict(os.environ,
                            BEND=str(self.compiler), CC=str(self.compiler),
                            BATON2_NATIVE_QUEUE=str(self.config),
@@ -221,32 +228,43 @@ class QueueExecutionIdentityTests(unittest.TestCase):
         return key
 
     def cgen_argv(self):
-        return [str(self.compiler), 'entry.bend', '-o', 'out.c']
+        return ['entry.bend', '-o', 'out.c']
 
     def cc_argv(self):
-        return [str(self.compiler), '-o', 'out.bin', 'input.c']
+        return ['-o', 'out.bin', 'input.c']
 
     def test_diagnostic_only_adapter_edit_keeps_key_equal(self):
-        for mode, argv in [('cgen', self.cgen_argv()), ('cc', self.cc_argv())]:
+        import hashlib
+        for mode, argv in [('bend', self.cgen_argv()), ('cc', self.cc_argv())]:
             with self.subTest(mode=mode):
-                base = self.key_of(mode, argv)
-                adapter = self.root / '.github' / 'scripts' / 'queue-native-checks.py'
+                adapter = self.materialize_adapter()
+                base = self.key_of(mode, argv, adapt=False)
                 adapter.write_text(adapter.read_text()
                                    + '\n# diagnostic-retention fixture variant\n')
-                self.assertEqual(base, self.key_of(mode, argv))
+                edited_digest = hashlib.sha256(adapter.read_bytes()).hexdigest()
+                self.assertNotEqual(edited_digest, self.materialized_digest,
+                                    'the paired run did not exercise edited adapter bytes')
+                self.assertEqual(base, self.key_of(mode, argv, adapt=False))
+
+    def test_execution_wrapper_edit_changes_key(self):
+        base = self.key_of('bend', self.cgen_argv())
+        executed = self.root / '.github' / 'scripts' / self.exec_source.name
+        executed.write_text(executed.read_text().replace(
+            'completed successfully', 'completed fixture'))
+        self.assertNotEqual(base, self.key_of('bend', self.cgen_argv(), adapt=False))
 
     def test_cgen_source_change_changes_key(self):
-        base = self.key_of('cgen', self.cgen_argv())
+        base = self.key_of('bend', self.cgen_argv())
         self.entry.write_text('law main() { 1 }\n')
-        self.assertNotEqual(base, self.key_of('cgen', self.cgen_argv()))
+        self.assertNotEqual(base, self.key_of('bend', self.cgen_argv()))
 
     def test_cgen_argv_change_changes_key(self):
-        base = self.key_of('cgen', self.cgen_argv())
-        changed = [str(self.compiler), 'entry.bend', '-o', 'out.c', '--extra-fact']
-        self.assertNotEqual(base, self.key_of('cgen', changed))
+        base = self.key_of('bend', self.cgen_argv())
+        changed = ['entry.bend', '-o', 'out.c', '--extra-fact']
+        self.assertNotEqual(base, self.key_of('bend', changed))
 
     def test_compiler_change_changes_key(self):
-        for mode, argv in [('cgen', self.cgen_argv()), ('cc', self.cc_argv())]:
+        for mode, argv in [('bend', self.cgen_argv()), ('cc', self.cc_argv())]:
             with self.subTest(mode=mode):
                 base = self.key_of(mode, argv)
                 self.compiler.write_text(

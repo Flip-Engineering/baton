@@ -19,6 +19,7 @@ import uuid
 CLIENT = '/var/tmp/baton2-compile-queue/compile-queue-runner'
 STATE = '/var/tmp/baton2-compile-queue'
 SCRIPT = str(Path(__file__).resolve())
+EXEC_SCRIPT = str(Path(__file__).resolve().parent / 'compile-cgen-exec.py')
 DIAGNOSTIC_FILE = 'compiler-diagnostics.json'
 
 # These exact names are read by the pinned Bend compiler source or its Bun/JSC
@@ -102,17 +103,6 @@ def environment_observation(name, environment):
     return {'state': 'set', 'value': 'non-decimal value omitted'}
 
 
-def compiler_attempt_directory(output):
-    artifact = Path(output).resolve()
-    if artifact.parent.name != 'work':
-        return None
-    attempt = artifact.parent.parent
-    if not all((attempt / name).is_file()
-               for name in ('meta', 'argv', 'command', 'source-digest')):
-        return None
-    return attempt
-
-
 def read_queue_meta(attempt):
     values = {}
     for line in (attempt / 'meta').read_text(errors='replace').splitlines():
@@ -182,23 +172,22 @@ def toolchain_identity(compiler_path):
     return result
 
 
-def compiler_diagnostics(output, command):
-    """Best-effort metadata at the compiler launch boundary; never gates execution."""
+def compiler_diagnostics(attempt, compiler_argv):
+    """Best-effort execution evidence, written when the attempt is retained."""
     try:
-        attempt = compiler_attempt_directory(output)
-        if attempt is None or not command:
+        if not (attempt / 'meta').is_file() or not compiler_argv:
             return
         source_digest = (attempt / 'source-digest').read_text(errors='replace').strip()
         metadata = {
             'schema': 'baton2-compiler-execution-observation-v1',
             'observed_at': datetime.now(timezone.utc).isoformat(),
-            'boundary': 'queue adapter immediately before compiler launcher subprocess',
+            'boundary': 'queue adapter evidence retention after the executed wrapper returned',
             'process': {'pid': os.getpid(), 'cwd': str(Path.cwd())},
             'cpu_affinity': {'status': 'unavailable'},
             'environment': {name: environment_observation(name, os.environ)
                             for name in COMPILER_ENVIRONMENT},
-            'compiler_argv': command,
-            'toolchain': toolchain_identity(command[0]),
+            'compiler_argv': compiler_argv,
+            'toolchain': toolchain_identity(compiler_argv[0]),
             'queue_attempt': {
                 'meta': read_queue_meta(attempt),
                 'meta_sha256': hashlib.sha256((attempt / 'meta').read_bytes()).hexdigest(),
@@ -207,6 +196,7 @@ def compiler_diagnostics(output, command):
                 'source_digest': source_digest,
             },
             'queue_adapter': file_identity(SCRIPT),
+            'queue_exec': file_identity(EXEC_SCRIPT),
         }
         if hasattr(os, 'sched_getaffinity'):
             try:
@@ -349,6 +339,12 @@ def retain(config, key, directory, success):
         source = attempt / name
         if source.is_file():
             shutil.copyfile(source, directory / name)
+    request_path = directory / 'request.json'
+    if request_path.is_file():
+        request_command = json.loads(request_path.read_text()).get('command') or []
+        executed = len(request_command) > 3 and Path(request_command[1]).name == Path(EXEC_SCRIPT).name
+        compiler_argv = request_command[3:] if executed else request_command
+        compiler_diagnostics(attempt, compiler_argv)
     diagnostics = attempt / DIAGNOSTIC_FILE
     try:
         if diagnostics.is_file():
@@ -481,7 +477,11 @@ def compiler(mode, argv, key_only=False):
             entry = next(str(Path(a).resolve()) for a in argv if a.endswith('.bend') and Path(a).is_file())
             options = ['--kind', 'cgen', '--source-root', str(Path.cwd()), '--entry', os.path.relpath(entry),
                        '--compiler', argv[0], '--artifact', 'output.c=' + str(output)]
-            command = [sys.executable, SCRIPT, 'execute-cgen', str(output), *argv]
+            # The executed module rides as a queue input: staging verifies its
+            # bytes against the key's input digest and the command names the
+            # staged copy, so executed bytes and keyed bytes are the same bytes.
+            options.extend(['--input', EXEC_SCRIPT])
+            command = [sys.executable, EXEC_SCRIPT, str(output), *argv]
         return submit(config, directory, options, command, key_only)
 
 
@@ -496,21 +496,6 @@ def main():
         return compiler(argv[0], [config_tool(argv[0]), *argv[1:]])
     if mode == 'key':
         return compiler(argv[0], [config_tool(argv[0]), *argv[1:]], key_only=True)
-    if mode == 'execute-cgen':
-        output, *command = argv
-        compiler_diagnostics(output, command)
-        code = subprocess.run(command).returncode
-        if code < 0:
-            # OOM #1068 killed the compiler with SIGKILL. Preserve its signal
-            # disposition when the queue observes this adapter process.
-            signum = -code
-            if signum not in (signal.SIGKILL, signal.SIGSTOP):
-                signal.signal(signum, signal.SIG_DFL)
-            os.kill(os.getpid(), signum)
-            return 128 + signum
-        if not code and '-o' not in command:
-            Path(output).write_text('/* Compiler check completed successfully. */\n')
-        return code
     if mode == 'stage':
         return compiler(argv[0], argv[1:])
     if mode == 'key-stage':
