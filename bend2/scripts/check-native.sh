@@ -28,6 +28,9 @@ fi
 sh bend2/scripts/build-native.sh
 sh bend2/scripts/build-native.sh bend2/test/stop-hook-entry.bend .scratch/bend2/stop-hook-entry
 "$PYTHON3" bend2/test/sqlite-read-reuse.py
+BATON2_EXE="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/stop.py \
+  Stop.test_retained_dsh_stop_preserves_work_and_exits_native_and_tool \
+  Stop.test_explicit_force_reconciles_dsh_attempt_after_observer_loss
 "$PYTHON3" bend2/test/package-receiver-layout.py
 "$PYTHON3" bend2/test/omp-completion-extension.py
 "$PYTHON3" bend2/test/package-licenses.py
@@ -159,6 +162,8 @@ rm -f .scratch/bend2/route-change-identity.db
 sh bend2/scripts/build-native.sh bend2/test/quota-exhaustion-reset.bend .scratch/bend2/quota-exhaustion-reset-test
 rm -f .scratch/bend2/quota-exhaustion-reset.db
 .scratch/bend2/quota-exhaustion-reset-test .scratch/bend2/quota-exhaustion-reset.db
+sh bend2/scripts/build-native.sh bend2/test/stop-dsh.bend .scratch/bend2/stop-dsh-test
+BATON2_EXE="$root/.scratch/bend2/stop-dsh-test" "$PYTHON3" bend2/test/stop-dsh.py
 BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
 sh bend2/scripts/build-native.sh bend2/test/omp-home-preflight.bend .scratch/bend2/omp-home-preflight-test
 BATON2_EXE="$root/.scratch/bend2/omp-home-preflight-test" "$PYTHON3" bend2/test/omp-home-preflight.py
