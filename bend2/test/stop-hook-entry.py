@@ -98,6 +98,8 @@ class StopHook(unittest.TestCase):
         self.env = {key: value for key, value in os.environ.items()
                     if key not in ('BATON_ATTEMPT_DIRECTORY', 'BATON_MCP_INPUT', 'CODEX_THREAD_ID')}
         self.env.update(BATON_SESSION='worker', BATON_DATABASE=self.path)
+        if self._testMethodName.startswith('test_codex'):
+            self.db.execute("UPDATE sessions SET harness='codex' WHERE id='worker'")
 
     def owe(self, ident='message:coordinator:mid-turn', kind='guidance', body='New detail.'):
         self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,'coordinator','worker',?,?)",
@@ -509,12 +511,12 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         self.request()
         self.assertIsNone(self.codex_tool())
 
-    def test_codex_admitted_tool_loop_records_the_read_and_then_allows_stop(self):
+    def codex_admitted(self, body):
         directory = self.home / 'codex-attempt'
         self.db.execute("UPDATE sessions SET native='thread-1' WHERE id='worker'")
         self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained',?,'running')", (str(directory),))
         script = self.home / 'codex-admitted.py'
-        script.write_text(r'''import json, os, sqlite3, subprocess, sys
+        script.write_text(r'''import json, os, pathlib, sqlite3, subprocess, sys
 config = json.loads(sys.argv[1])
 env = dict(os.environ, BATON_DATABASE=config['db'], BATON_SESSION='worker', BATON_ATTEMPT_DIRECTORY=config['directory'])
 def hook(event, **fields):
@@ -529,15 +531,17 @@ def reads():
 results = {}
 results['quiet'] = hook('PostToolUse', tool_name='Bash', tool_input={}, tool_response='')
 with sqlite3.connect(config['db']) as db:
-    db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('admitted-message','coordinator','worker','question','Admitted full body.')")
+    db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('admitted-message','coordinator','worker','question',?)", (pathlib.Path(config['bodyPath']).read_text(encoding='utf-8'),))
 results['unread_before'] = reads()
 results['stop_held'] = hook('Stop', stop_hook_active=False, last_assistant_message='Done.')
+results['read_after_stop'] = reads()
 results['injected'] = hook('PostToolUse', tool_name='Bash', tool_input={}, tool_response='')
 results['read_after'] = reads()
 results['again'] = hook('PostToolUse', tool_name='Bash', tool_input={}, tool_response='')
 print(json.dumps(results), flush=True)
 ''')
-        config = {'db': self.path, 'directory': str(directory),
+        (self.home / 'codex-body.txt').write_text(body, encoding='utf-8')
+        config = {'db': self.path, 'directory': str(directory), 'bodyPath': str(self.home / 'codex-body.txt'),
                   'Stop': self.codex_handler('Stop')[1]['command'], 'PostToolUse': self.codex_handler('PostToolUse')[1]['command']}
         self.request()
         env = dict(self.env, BATON_STOP_HOOK=self.binary)
@@ -551,13 +555,32 @@ print(json.dumps(results), flush=True)
             self.assertIsNone(results['quiet'])
             self.assertEqual(results['unread_before'], [])
             self.assertEqual(results['stop_held']['decision'], 'block')
-            self.assertIn('Admitted full body.', results['stop_held']['reason'])
-            self.assertIn('Admitted full body.', results['injected']['hookSpecificOutput']['additionalContext'])
+            self.assertIn(body, results['stop_held']['reason'])
+            self.assertEqual(results['read_after_stop'], [])
+            self.assertIn(body, results['injected']['hookSpecificOutput']['additionalContext'])
             self.assertEqual(results['read_after'], [['attempt-1', 'thread-1']])
             self.assertIsNone(results['again'])
         finally:
             subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True)
         self.assertIsNone(self.codex_stop(True))
+
+    def test_codex_admitted_tool_loop_records_the_read_and_then_allows_stop(self):
+        self.codex_admitted('Admitted full body.')
+
+    def test_codex_large_input_stays_owed_through_stop_until_a_tool_delivers_it_whole(self):
+        # Codex previews a Stop reason over its size limit and records no read for it.
+        self.codex_admitted('Large admitted body λ🙂.\n' + 'abcdef' * 40000 + '\nend of body')
+
+    def test_codex_conductor_receives_a_completion_request_whole(self):
+        self.db.executescript("""
+            INSERT INTO sessions(id,parent,harness) VALUES('lead',NULL,'codex');
+            INSERT INTO session_roles(session,role) VALUES('lead','conductor');""")
+        body = 'Completion summary λ🙂.\n' + 'xyz' * 40000 + '\nend of summary'
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('request:worker:1','worker','lead','completion-request',?)", (body,))
+        env = dict(self.env, BATON_SESSION='lead', BATON_STOP_HOOK=self.binary)
+        context = self.codex_tool(env=env)['hookSpecificOutput']['additionalContext']
+        self.assertIn('Message (completion-request) from worker [id: request:worker:1]:\n' + body, context)
+        self.assertEqual(self.codex_stop(True, env=env)['decision'], 'block')
 
 
 if __name__ == '__main__':
