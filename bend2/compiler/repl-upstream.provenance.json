@@ -3,7 +3,7 @@
   "upstream": "Baton fork of Bend 2.0.25",
   "compiler_archive_sha256": "2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065",
   "official_release_artifact": false,
-  "lock_sha256": "a1eef390cdd76eb378d7ab8ce3c1c0c01c41c839aef97455916e4a2c9b50bfe6",
+  "lock_sha256": "0d48361faea6790ae364fceaafd0df1f171e943b23957c000d2be5557463c800",
   "files": [
     {
       "bytes": 66363,
@@ -16,9 +16,9 @@
       "sha256": "b6d010f7728dcfccb33b9e7565e89d616dd87b8afbbdb618106d8e1d2bfc8146"
     },
     {
-      "bytes": 261102,
+      "bytes": 263991,
       "path": "comp.ts",
-      "sha256": "1f9f5bb75c7d411573d65d839ee88ab222bcec62ef53bfedb1f2b4940a8d496c"
+      "sha256": "6d7c63ed1d052ce0fb1db80b5b79970ab9f2d98638dbc403a9d66a53a837647f"
     },
     {
       "bytes": 351,
@@ -381,9 +381,14 @@
       "sha256": "09ba117d9de2520f284b4ad5f5657b74b5105ab78c55fbd774a552bd2ebdc420"
     },
     {
-      "bytes": 23451,
+      "bytes": 23836,
       "path": "facts.ts",
-      "sha256": "581ba61d4020e94aa7f45f0d21b2e1fad50b90848bda11b7cd356662f2a6e072"
+      "sha256": "4b47508a6868f24434312215898cc403e8890bce8ed2806fce4efef8cb9fd97c"
+    },
+    {
+      "bytes": 5200,
+      "path": "fragments.ts",
+      "sha256": "9186e81dcfd1eb351fea0728aa587f8c8432875877c6ab16cea2a4bc3aac8b2f"
     },
     {
       "bytes": 3778,
@@ -391,14 +396,14 @@
       "sha256": "65a08a61eae157ab2ca505578a27b0f6e50fb46a44baa43bf8df20670b865c6a"
     },
     {
-      "bytes": 24604,
+      "bytes": 24953,
       "path": "main.ts",
-      "sha256": "c04461ebbad51892f4dcbb955ed6202213a895e1b72d301ddb1600ca31c3cfc2"
+      "sha256": "4bdaf0aa0fd793cf28c65d4b7a55a31cc8d082626bf52f59547cb9833682bbe1"
     },
     {
-      "bytes": 20551,
+      "bytes": 23418,
       "path": "store.ts",
-      "sha256": "5f9e1cf68ca5e778096f689553fd9a0095dfba4ba0f4680fd063eeb3a1ba444c"
+      "sha256": "e7be6b2054e048ac39d5f7e8308f1e529c8cbd2693347a26e75e76718d2660fd"
     }
   ],
   "license": {

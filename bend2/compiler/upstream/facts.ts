@@ -353,7 +353,7 @@ export type Emit<T> = (key: string, facts_only: boolean, initial: Snapshot, reco
 
 export function solve<T>(options: {
   graph: Map<string, Set<string>>; entries: Set<string>; generic: Set<string>; roots: string[];
-  directory: string; emit: Emit<T>; observe: Observe;
+  directory: string; emit: Emit<T>; observe: Observe; release?: (code: T) => void;
   barrier?: (round: number, records: ReadonlyMap<string, UnitRecord<T>>, facts: MutableFacts,
     emitted: number, facts_emitted: number, pending: number) => void;
 }): { facts: MutableFacts; records: Map<string, UnitRecord<T>>; history: string } {
@@ -376,7 +376,10 @@ export function solve<T>(options: {
     };
     const replace = (record: UnitRecord<T>): void => {
       const old = records.get(record.key);
-      if (old) for (const name of old.trace.reads.keys()) readers.get(name)?.delete(record.key);
+      if (old) {
+        for (const name of old.trace.reads.keys()) readers.get(name)?.delete(record.key);
+        options.release?.(old.code);
+      }
       records.set(record.key, record);
       for (const [name, present] of record.trace.reads) if (!present) {
         let list = readers.get(name);
@@ -416,6 +419,8 @@ export function solve<T>(options: {
               const record = trace(), result = emit(key, facts_only, facts, record);
               const revision = (outputs.get(key)?.revision ?? records.get(key)?.revision ?? 0) + 1;
               const output = { ...result, key, facts_only, revision, trace: record };
+              const previous = outputs.get(key);
+              if (previous) options.release?.(previous.code);
               outputs.set(key, output); emissions.push(output);
               facts_only ? facts_emitted++ : emitted++;
               history.append({ kind: "unit", key, revision, events: record.events, lend: [...result.lend], masks: result.masks });
@@ -440,7 +445,10 @@ export function solve<T>(options: {
                 }
               }
             }
-            if (restart) break;
+            if (restart) {
+              for (const output of outputs.values()) options.release?.(output.code);
+              break;
+            }
             const changed = new Set<string>(), producers: [string, string, number, number][] = [];
             for (const output of outputs.values()) replace(output);
             for (const output of emissions.sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : a.revision - b.revision)) {
@@ -497,5 +505,6 @@ export function solve<T>(options: {
         }
       }
     } finally { history.close(); }
+    for (const record of records.values()) options.release?.(record.code);
   }
 }

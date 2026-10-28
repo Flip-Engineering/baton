@@ -295,17 +295,28 @@ function cli_emit(book: Bend.Book, out: string): void {
   if (/\.c?js$/.test(out)) {
     fs.writeFileSync(out, Comp.js_book(book));
   } else if (out.endsWith(".c")) {
-    fs.writeFileSync(out, Comp.compile_book(book, path.dirname(path.resolve(out))));
+    cli_emit_c(book, out);
   } else {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bend-"));
     const c   = path.join(dir, path.basename(out) + ".c");
-    fs.writeFileSync(c, Comp.compile_book(book, path.dirname(path.resolve(c))));
+    cli_emit_c(book, c);
     try {
       cli_build(out, c);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   }
+}
+
+function cli_emit_c(book: Bend.Book, out: string): void {
+  const target = path_real(out), parent = path.dirname(target);
+  const temporary = fs.mkdtempSync(path.join(parent, ".bend-output-"));
+  const partial = path.join(temporary, "output.c"), fd = fs.openSync(partial, "wx");
+  try {
+    Comp.compile_book_to(book, chunk => fs.writeFileSync(fd, chunk), parent);
+  } finally { fs.closeSync(fd); }
+  fs.renameSync(partial, target);
+  fs.rmdirSync(temporary);
 }
 
 // cc_find is the first of $CC, clang and every clang-NN on PATH (newest

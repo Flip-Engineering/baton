@@ -453,6 +453,63 @@ export class CheckedReader {
     return value;
   }
 
+  // Dependency discovery reads encoded roots, including callback templates and
+  // checker-cell values. It leaves decoded terms and constructor interns untouched.
+  dependencies(): Map<string, Set<string>> {
+    const begin = performance.now(), strings = this.tables.data.strings;
+    const header = this.read<TermGraph>(this.index.header);
+    const field = (value: Value, key: string): Value => {
+      if (value === null || typeof value !== "object" || !("node" in value)) {
+        throw new Error("Checked header dependency path is unavailable: " + key);
+      }
+      const row = header.rows[value.node];
+      for (let at = 2; at < row.length; at += 3) if (strings[row[at]] === key) {
+        if (row[at + 1] === NODE) return { node: row[at + 2] };
+        throw new Error("Checked header dependency path is not a node: " + key);
+      }
+      throw new Error("Checked header dependency field is unavailable: " + key);
+    };
+    const tlds = field(field(header.root, "book"), "tlds") as { node: number };
+    const graph = new Map<string, Set<string>>();
+    const references = (graph: TermGraph, root: Value): Set<string> => {
+      const refs = new Set<string>(), seen = new Uint8Array(graph.rows.length);
+      const stack = root !== null && typeof root === "object" && "node" in root ? [root.node] : [];
+      while (stack.length) {
+        const id = stack.pop()!;
+        if (seen[id]) continue;
+        seen[id] = 1;
+        const row = graph.rows[id];
+        if (row[1] === OBJECT || row[1] === DICTIONARY) {
+          let kind: string | undefined, name: string | undefined;
+          for (let at = 2; at < row.length; at += 3) if (row[at + 1] === STRING) {
+            const key = strings[row[at]];
+            if (key === "$") kind = strings[row[at + 2]];
+            else if (key === "k") name = strings[row[at + 2]];
+          }
+          if ((kind === "Ref" || kind === "ADT") && name !== undefined) refs.add(name);
+        }
+        for (const child of row_children(row)) stack.push(child);
+      }
+      return refs;
+    };
+    const row = header.rows[tlds.node];
+    for (let at = 2; at < row.length; at += 3) {
+      if (row[at + 1] !== NODE) throw new Error("Checked top-level dependency root is not a node");
+      graph.set(strings[row[at]], references(header, { node: row[at + 2] }));
+    }
+    for (const [name, section] of this.bodies) {
+      const body = this.read<TermGraph>(section), refs = graph.get(name)!;
+      for (const ref of references(body, body.root)) refs.add(ref);
+    }
+    for (const [name, refs] of graph) {
+      refs.delete(name);
+      for (const ref of refs) if (!graph.has(ref)) refs.delete(ref);
+    }
+    this.observe?.("store.dependencies", { duration_ms: performance.now() - begin,
+      definitions: graph.size, edges: [...graph.values()].reduce((n, refs) => n + refs.size, 0) });
+    return graph;
+  }
+
   body(name: string): Bend.HTerm | undefined {
     const found = this.decoded.get(name);
     if (found !== undefined) return found;

@@ -3,9 +3,12 @@
 // bugs ARE expected. It will take some time for the compiler to be stable.
 
 import * as fs from "node:fs";
+import { createHash } from "node:crypto";
 
 import * as Bend from "./bend.ts";
 import * as Fact from "./facts.ts";
+import { Fragments, chunks as fragment_chunks, equal as fragment_equal } from "./fragments.ts";
+import type { Fragment, Range as CodeRange } from "./fragments.ts";
 import { canonical_helpers, c_identifiers, content_name } from "./link.ts";
 
 const DIAGNOSTICS = process.env.BEND_COMPILER_DIAGNOSTICS === "1";
@@ -130,7 +133,7 @@ type Bind = { val: Val; n: number; A: HTerm };
 
 type Dst = Val | null;
 
-type Seg = {
+export type Seg = {
   fid: string;
   def: Bend.Name;
   ret: Lay;
@@ -144,6 +147,8 @@ type Seg = {
   spin?: boolean;
   fork?: boolean;
 };
+
+export type CodeUnit = Pick<File, "unit" | "segs" | "spins" | "statics" | "tabs" | "clos" | "lend">;
 
 type Spine = {
   h: HTerm;
@@ -1901,7 +1906,9 @@ function eff_src(path: string, seen: Set<string>): string {
     return "";
   }
   seen.add(path);
-  return fs.readFileSync(path, "utf8");
+  const data = fs.readFileSync(path);
+  diagnostic("foreign.read", { path, sha256: createHash("sha256").update(data).digest("hex"), bytes: data.length });
+  return data.toString("utf8");
 }
 
 // Io
@@ -4331,7 +4338,7 @@ export function check_id_limit(namespace: string, count: number,
   }
 }
 
-function compile_tables(fl: File, entries: Seg[], show: Show | null): string[] {
+function compile_tables(fl: File, entries: Seg[], show: Show | null, image_words = fl.img.length): string[] {
   const defs: string[] = [];
   const cids = new Map<string, number>();
   const add = (k: string, arity: number): void => {
@@ -4395,7 +4402,7 @@ function compile_tables(fl: File, entries: Seg[], show: Show | null): string[] {
   table("CID_ARITY_T", [...cids.values()]);
   table("CID_HOT_T", [...cids.keys()].map((k) => Number(fl.hot.has(k))));
   fl.cids = cids;
-  defs.push(`#define STAT_LEN ${fl.img.length}`, "");
+  defs.push(`#define STAT_LEN ${image_words}`, "");
   // One bank for both lanes, as wide as the widest segment or return; rp
   // pads the host's twelfth slot so rax stays free for the tail call.
   const resw = Math.max(...entries.map((s) => s.ret.ks.length));
@@ -4453,18 +4460,35 @@ function file_reach(fl: File, from: Iterable<string>): Set<string> {
 
 // Compilation consumes checked bodies and keeps parsed bodies needed by types.
 export function compile_book(book: Bend.Book, workspace?: string): string {
+  const chunks: string[] = [];
+  compile_book_to(book, chunk => chunks.push(chunk), workspace);
+  return chunks.join("");
+}
+
+export function compile_book_to(book: Bend.Book, write: (chunk: string) => void, workspace?: string): void {
   const Store = require("./store.ts") as typeof import("./store.ts");
-  const identity = Store.compiler_identity([new URL(import.meta.url),
-    new URL("./bend.ts", import.meta.url), new URL("./store.ts", import.meta.url),
-    new URL("./link.ts", import.meta.url), new URL("./facts.ts", import.meta.url),
-    new URL("./base.bend", import.meta.url)]);
-  const inputs = (SOURCE_FILES.get(book) ?? []).map(([path, namespace]) =>
+  const files: URL[] = [];
+  const walk = (directory: URL): void => {
+    for (const name of fs.readdirSync(directory).sort()) {
+      const file = new URL(name, directory);
+      if (fs.statSync(file).isDirectory()) {
+        if (directory.pathname !== new URL("./", import.meta.url).pathname || name === "effs") {
+          walk(new URL(name + "/", directory));
+        }
+      } else if (/\.(ts|bend|js)$/.test(name) || (directory.pathname !== new URL("./", import.meta.url).pathname && name.endsWith(".c"))) {
+        files.push(file);
+      }
+    }
+  };
+  walk(new URL("./", import.meta.url));
+  const identity = Store.compiler_identity(files);
+  const source_inputs = new Map(SOURCE_FILES.get(book) ?? []);
+  const inputs = [...source_inputs].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([path, namespace]) =>
     ({ path, namespace, sha256: Store.file_digest(path) }));
   const writer = new Store.CheckedWriter(identity, workspace, inputs, diagnostic);
   diagnostic("store.begin", { directory: writer.directory, compiler: identity });
-  const result = compile_stored(book, writer);
+  compile_stored(book, writer, write);
   writer.remove();
-  return result;
 }
 
 type StoredHeader = {
@@ -4530,7 +4554,7 @@ function prepare_store(cb: Carb, writer: import("./store.ts").CheckedWriter,
   return { reader: stored.reader, show: decoded.show, wide: decoded.wide };
 }
 
-function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWriter): string {
+function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWriter, write: (chunk: string) => void): void {
   diagnostic_columns.clear();
   diagnostic("book.begin", { definitions: Object.keys(book.tlds).length });
   diagnostic("carb.begin");
@@ -4554,7 +4578,8 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
   const foreign = new Map(done_defs(cb, def_foreign).map(([k, tld]) =>
     [seg_fid(k), [k, tld] as [Bend.Name, Def]]));
   const roots = [seg_fid("main"), ...[...cb.bangs].map(seg_fid)];
-  type Unit = Pick<File, "unit" | "segs" | "spins" | "statics" | "tabs" | "clos" | "lend">;
+  type Unit = Fragment;
+  const fragments = new Fragments(writer.directory + "/fragments");
   const units = new Map<string, Unit>();
   type FactsUnit = { lend: Set<string> };
   const facts_units = new Map<string, FactsUnit>();
@@ -4562,16 +4587,20 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
     tele_unbind(cb.book, def.T).doms.some((dom) => !live_dom(dom)))
     .map(([fid]) => fid));
   const fl = file_new(cb, "Term");
-  const tables: [string, string][] = [];
+  const tables: [string, CodeRange][] = [];
+  const seg_bodies = new Map<string, { body: CodeRange; lines: number }>();
+  const helper_bodies = new Map<string, Fragment["spins"][number]>();
+  const image = new Map<string, Fragment["statics"][number]>();
+  let image_words = 0;
   const offsets: string[] = [];
   const assemble = (): void => {
     file_reset(fl, cb, "Term");
     tables.length = 0;
     offsets.length = 0;
     cb.lend.clear();
+    seg_bodies.clear(); helper_bodies.clear(); image.clear(); image_words = 0;
     const helpers = new Map<string, File["spins"][number]>();
-    const statics = new Map<string, string[]>();
-    const tab_rows = new Map<string, string>();
+    const tab_rows = new Map<string, CodeRange>();
     let helpers_before = 0, static_words_before = 0, tables_before = 0;
     for (const unit of facts_units.values()) {
       for (const key of unit.lend) cb.lend.add(key);
@@ -4581,38 +4610,46 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
     for (const unit of ordered) {
       helpers_before += unit.spins.length;
       tables_before += unit.tabs.size;
-      for (const seg of unit.segs) fl.segs.push(seg);
+      for (const seg of unit.segs) {
+        fl.segs.push({ ...seg, lines: [] });
+        seg_bodies.set(seg.fid, { body: seg.body, lines: seg.lines });
+      }
       for (const spin of unit.spins) {
-        const found = helpers.get(spin[0]);
+        const found = helpers.get(spin.name);
         if (found === undefined) {
-          helpers.set(spin[0], [spin[0], spin[1], new Set(spin[2]), new Map(spin[3])]);
+          helpers.set(spin.name, [spin.name, "", new Set(spin.refs), new Map(spin.cids)]);
+          helper_bodies.set(spin.name, spin);
         } else {
-          if (found[1] !== spin[1]) die("different helper text for " + spin[0]);
-          for (const ref of spin[2]) found[2].add(ref);
-          for (const [name, arity] of spin[3]) found[3].set(name, arity);
+          if (!fragment_equal(helper_bodies.get(spin.name)!.body, spin.body)) die("different helper text for " + spin.name);
+          for (const ref of spin.refs) found[2].add(ref);
+          for (const [name, arity] of spin.cids) found[3].set(name, arity);
         }
       }
       for (const fid of unit.clos) fl.clos.add(fid);
       for (const key of unit.lend) cb.lend.add(key);
-      for (const [name, words] of unit.statics) {
-        static_words_before += words.length;
-        const found = statics.get(name);
-        if (found !== undefined && JSON.stringify(found) !== JSON.stringify(words)) {
-          die("different static words for " + name);
+      for (const node of unit.statics) {
+        static_words_before += node.words;
+        const found = image.get(node.name);
+        if (found !== undefined && (found.words !== node.words || !fragment_equal(found.body, node.body))) {
+          die("different static words for " + node.name);
         }
-        statics.set(name, words);
+        image.set(node.name, node);
       }
-      for (const [row] of unit.tabs) tab_rows.set(content_name("TAB", row), row);
+      for (const row of unit.tabs) {
+        const found = tab_rows.get(row.name);
+        if (found !== undefined && !fragment_equal(found, row.body)) die("different table row for " + row.name);
+        tab_rows.set(row.name, row.body);
+      }
     }
     fl.spins = [...helpers.values()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
-    for (const [name, words] of [...statics].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
-      offsets.push(`#define ${name} ${fl.img.length}`);
-      fl.img.push(...words);
+    for (const [name, node] of [...image].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
+      offsets.push(`#define ${name} ${image_words}`);
+      image_words += node.words;
     }
     tables.push(...[...tab_rows].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
     diagnostic("link.canonical", { units: ordered.length, helpers_before,
       helpers_after: fl.spins.length, static_words_before,
-      static_words_after: fl.img.length, tables_before, tables_after: tables.length });
+      static_words_after: image_words, tables_before, tables_after: tables.length });
   };
   const emit_unit: Fact.Emit<Unit> = (fid, facts_only, initial, record) => {
     const [k, def] = defs.get(fid)!;
@@ -4641,7 +4678,7 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
       diagnostic("unit.canonical", { name: k, duration_ms: performance.now() - start,
         helpers_before: output.spins.length, helpers_after: new Set(canonical.names.values()).size });
     }
-    const unit: Unit = { unit: output.unit, segs: output.segs,
+    const unit: CodeUnit = { unit: output.unit, segs: output.segs,
       spins: output.spins, statics: output.statics, tabs: output.tabs,
       clos: output.clos, lend: output.lend };
     const local = new Set([...output.segs.map(seg => seg.fid), ...output.spins.map(spin => spin[0])]);
@@ -4668,37 +4705,17 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
     stored.release();
     memo_gc();
     BRWS.clear();
-    const code: Unit = facts_only ? { unit: unit.unit, lend: unit.lend,
+    const code: CodeUnit = facts_only ? { unit: unit.unit, lend: unit.lend,
       segs: [], spins: [], statics: new Map(), tabs: new Map(), clos: new Set() } : unit;
-    return { code, lend: unit.lend, masks, refs, edges };
+    const fragment = fragments.write(code);
+    diagnostic("fragment.write", { name: k, facts_only, directory: fragment.directory, bytes: fragment.bytes });
+    return { code: fragment, lend: unit.lend, masks, refs, edges };
   };
-  // Scan checked bodies and signatures before scheduling. Store-backed bodies
-  // are released after each scan; generated helper names never enter the graph.
-  const graph = new Map<string, Set<string>>();
-  for (const [name, tld] of Object.entries(cb.book.tlds)) {
-    const refs = new Set<string>(SRCS.get(name)?.refs ?? []);
-    for (const ref of source_refs(cb.book, name)) refs.add(ref);
-    const seen = new Set<object>(), stack: unknown[] = [tld.T];
-    if (tld.$ === "ADT") for (const ctr of tld.c) stack.push(ctr.T);
-    else { stack.push((tld as Def).h, tld.v); }
-    while (stack.length) {
-      let value = stack.pop();
-      if (value !== null && typeof value === "object" && "$" in value) value = Bend.term_force(value as HTerm);
-      if (value === null || typeof value !== "object" || seen.has(value)) continue;
-      seen.add(value);
-      const term = value as { [key: string]: any };
-      if (term.$ === "Ref" || term.$ === "ADT") refs.add(term.k);
-      for (const field of Object.keys(term)) {
-        if (field === "s") continue;
-        const child = term[field];
-        if (typeof child !== "function") stack.push(child);
-        else if (term.$ === "Let" && field === "f") stack.push(child(term.k.map(() => DUMMY)));
-        else if ((term.$ === "Lam" && field === "f") || (term.$ === "All" && field === "B")) stack.push(child(DUMMY));
-      }
-    }
-    refs.delete(name);
-    graph.set(name, new Set([...refs].filter(ref => cb.book.tlds[ref] !== undefined)));
-    stored.release(); memo_gc();
+  const graph = stored.dependencies();
+  for (const [name, source] of SRCS) {
+    const refs = graph.get(name)!;
+    for (const ref of source.refs) if (graph.has(ref)) refs.add(ref);
+    for (const ref of source.claims ?? []) if (graph.has(ref)) refs.add(ref);
   }
   collect_full();
   const names = new Map([...defs].map(([fid, [name]]) => [fid, name]));
@@ -4709,6 +4726,10 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
     generic: new Set([...generic].map(fid => names.get(fid)!)),
     roots: roots.flatMap(fid => names.has(fid) ? [names.get(fid)!] : []),
     directory: fact_directory, observe: diagnostic,
+    release: fragment => {
+      Fragments.remove(fragment);
+      diagnostic("fragment.release", { directory: fragment.directory, bytes: fragment.bytes });
+    },
     emit: (name, facts_only, initial, record) => {
       const result = emit_unit(by_name.get(name)!, facts_only, initial, record);
       return { ...result, refs: new Set([...result.refs].flatMap(fid => names.has(fid) ? [names.get(fid)!] : [])) };
@@ -4740,12 +4761,16 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
       fl.segs = fl.segs.filter(seg => live.has(seg.fid));
       fl.spins = fl.spins.filter(([fid]) => live.has(fid));
       let lines = 0, line_code_units = 0, spin_code_units = 0;
-      for (const seg of fl.segs) { lines += seg.lines.length; for (const line of seg.lines) line_code_units += line.length; }
-      for (const spin of fl.spins) spin_code_units += spin[1].length;
+      for (const seg of fl.segs) {
+        const body = seg_bodies.get(seg.fid);
+        if (body) { lines += body.lines; line_code_units += body.body.code_units - Math.max(0, body.lines - 1); }
+        else { lines += seg.lines.length; for (const line of seg.lines) line_code_units += line.length; }
+      }
+      for (const [name] of fl.spins) spin_code_units += helper_bodies.get(name)!.body.code_units;
       diagnostic("pass.end", { pass: pass_number, definitions: units.size, reemitted, pending,
         facts_definitions: facts_units.size, facts_reemitted,
         segments: fl.segs.length, spins: fl.spins.length, tables: tables.length,
-        image_words: fl.img.length, lines, line_code_units, spin_code_units,
+        image_words, lines, line_code_units, spin_code_units,
         own: facts.own.size, hot: facts.hot.size, stat: facts.stat.size });
       collect_full();
       if (DIAGNOSTICS) diagnostic_heap("pass.end", { pass: pass_number });
@@ -4780,41 +4805,81 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
     `static const char* SHOW_NAMES[] = { ${show.names.map((n) =>
       JSON.stringify(n)).join(", ")} };`, "#endif"];
   diagnostic("tables.begin", { entries: entries.length });
-  const table_defs = compile_tables(fl, entries, show);
+  const table_defs = compile_tables(fl, entries, show, image_words);
   diagnostic("tables.end", { definitions: table_defs.length });
   table_defs.push(`#define MAIN_FID ${seg_fid("main")}`, `#define MAIN_PURE ${
     Number(show !== null)}`,
     `#define BLK_SHR ${Number(cb.hot.has("t:Array"))}`);
-  const fills: [string, string[]][] = [
-    ["Tables", [diagnostic_join("fills.tables", [...table_defs, ...offsets], "\n"), ...tables.map(([name, row]) =>
-      `CONSTV u64 ${name}[] = { ${row} };`)]],
-    ["Spins", [`CONSTV u64 STAT_IMG[] = { ${diagnostic_join("fills.image", fl.img, ", ") || 0} };`,
-      // A spin may call one emitted later (a nested spin is pushed before its
-      // caller's body is joined), so every spin is declared before the block.
-      ...fl.spins.map(([_, src]) => {
-        const sig = src.slice(0, src.indexOf("\n"))
-          .replace(/^(INLINE|FAR)\s+/, "").replace(/\s*\{\s*$/, "");
-        return `static ${sig};`;
-      }),
-      ...fl.spins.map((s) => s[1])]],
-    ["Segments", [compile_segs(fl)]],
-    ["Requests", [fl.reqs]],
-  ];
-  if (fills.some(([mark, parts]) => /\bundefined\b/.test(
-    diagnostic_join("validate." + mark, parts, "\n")))) {
-    die("an unbound name in the emitted C");
+  function* separated(parts: Iterable<string>, separator: string): Generator<string> {
+    let first = true;
+    for (const part of parts) { if (!first) yield separator; first = false; yield part; }
   }
-  fills[0][1].push(...desc);
-  const result = fills.reduce((src, [mark, parts]) => {
-    diagnostic("template.begin", { mark, source_code_units: src.length });
-    const next = src.replace(
-      new RegExp("^// " + mark + "\\n// " + "=".repeat(mark.length) + "$", "m"),
-      (m) => diagnostic_join("template." + mark, [m, ...parts], "\n\n"));
-    diagnostic("template.end", { mark, code_units: next.length });
-    return next;
-  }, TEMPLATE);
-  diagnostic("book.end", { code_units: result.length });
-  return result;
+  function* table_parts(): Generator<Iterable<string>> {
+    yield separated([...table_defs, ...offsets], "\n");
+    for (const [name, row] of tables) yield (function* () {
+      yield `CONSTV u64 ${name}[] = { `; yield* fragment_chunks(row); yield " };";
+    })();
+    for (const part of desc) yield [part];
+  }
+  function* spin_parts(): Generator<Iterable<string>> {
+    yield (function* () {
+      yield "CONSTV u64 STAT_IMG[] = { ";
+      let first = true;
+      for (const [, node] of [...image].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
+        if (!first) yield ", "; first = false; yield* fragment_chunks(node.body);
+      }
+      if (first) yield "0";
+      yield " };";
+    })();
+    for (const [name] of fl.spins) yield [`static ${helper_bodies.get(name)!.signature};`];
+    for (const [name] of fl.spins) yield fragment_chunks(helper_bodies.get(name)!.body);
+  }
+  function* segment_parts(): Generator<Iterable<string>> {
+    yield (function* () {
+      let first = true;
+      for (const seg of fl.segs) {
+        if (!first) yield "\n\n"; first = false;
+        if (seg.host) yield "#if !DEVICE\n";
+        yield* separated([`  WL_CASE(${seg.fid})`, "  {", ...seg_take(seg).map(line => "    " + line),
+          "    WL_OPEN", ...seg.spin ? ["    WL_SPIN"] : []], "\n");
+        const body = seg_bodies.get(seg.fid);
+        if (body?.lines) { yield "\n"; yield* fragment_chunks(body.body); }
+        else for (const line of seg.lines) { yield "\n"; yield line; }
+        if (seg.spin) yield "\n    WL_SPUN";
+        yield "\n  }}";
+        if (seg.host) yield "\n#endif";
+      }
+    })();
+  }
+  const fills = new Map<string, () => Iterable<Iterable<string>>>([
+    ["Tables", table_parts], ["Spins", spin_parts], ["Segments", segment_parts],
+    ["Requests", () => [[fl.reqs]]],
+  ]);
+  let written = 0;
+  const emit = (chunk: string): void => { write(chunk); written += chunk.length; };
+  const markers = /^\/\/ (Tables|Spins|Segments|Requests)\n\/\/ =+$/gm;
+  let begin = 0;
+  for (const match of TEMPLATE.matchAll(markers)) {
+    const end = match.index! + match[0].length, mark = match[1];
+    emit(TEMPLATE.slice(begin, end)); emit("\n\n"); begin = end;
+    diagnostic("template.begin", { mark, streamed: true, written });
+    let first = true, tail = "";
+    const section_emit = (chunk: string): void => {
+      const checked = tail + chunk;
+      for (const found of checked.matchAll(/\bundefined\b/g)) {
+        if (found.index! + found[0].length < checked.length) die("an unbound name in the emitted C");
+      }
+      tail = checked.slice(-10); emit(chunk);
+    };
+    for (const part of fills.get(mark)!()) {
+      if (!first) section_emit("\n\n"); first = false;
+      for (const chunk of part) section_emit(chunk);
+    }
+    if (/\bundefined\b/.test(tail)) die("an unbound name in the emitted C");
+    diagnostic("template.end", { mark, streamed: true, written });
+  }
+  emit(TEMPLATE.slice(begin));
+  diagnostic("book.end", { code_units: written, streamed: true });
 }
 
 // Js
