@@ -1246,12 +1246,28 @@ def run_completed_fresh(+state: U32, +keydir: String, +text: String, +parsed: Co
     do IO<Unit>:
       +completed_path : String <- IO.pure(String, keydir ++ "/completed/result")
       existing : Bool <- regular(completed_path)
-      Bool.pick(IO(Unit), existing,
+      external_keep : Bool <- Bool.pick(Bool, existing,
+        do IO<Bool>:
+          result : String <- IO.try(String, L.CompileQueueLifecycle.read_text(completed_path))
+          Bool.pick(Bool, Tx.str_eq(field(result, "external"), "1"),
+            do IO<Bool>:
+              adoption_exists : Bool <- regular(keydir ++ "/adoption")
+              Bool.pick(IO(Bool), adoption_exists,
+                do IO<Bool>:
+                  adoption : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/adoption"))
+                  Bool.pick(Bool, non_empty(adoption),
+                    IO.try(Bool, Result.CompileQueueResult.verify_adoption(keydir, adoption)),
+                    IO.pure(Bool, False{})),
+                IO.pure(Bool, False{})),
+            IO.pure(Bool, False{})),
+        IO.pure(Bool, False{}))
+      Bool.pick(IO(Unit), external_keep,
         do IO<Unit>:
           removed : Unit <- remove_token(keydir, owner)
           released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
-          IO.die(Unit, 1, "compile-queue: completed result exists but is not reusable; only adopt may reuse an external result"),
+          IO.die(Unit, 1, "compile-queue: completed result is a verified external adoption; only adopt may reuse it"),
         do IO<Unit>:
+          cleaned : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove_tree(keydir ++ "/completed"))
           latest : String <- IO.try(String, Result.CompileQueueResult.latest_result(keydir, wait_start, Bool.pick(String, present, "1", "0")))
           run_latest_result(latest, parsed, key, keydir, lock, owner)),
     do IO<Unit>:
