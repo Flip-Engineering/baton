@@ -1,0 +1,53 @@
+[Unit]
+Description=Baton2 isolated homelab Linux validation runner 3
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/mnt/nvme4tb/ci-runners/baton2-native-homelab-3 /var/tmp/baton2-compile-queue
+
+[Service]
+Type=simple
+User=batonci3
+Group=batonci3
+SupplementaryGroups=baton-compile
+RuntimeDirectory=baton2-native-homelab-3
+RuntimeDirectoryMode=0700
+BindPaths=/mnt/nvme4tb/ci-runners/baton2-native-homelab-3:/run/baton2-native-homelab-3
+BindPaths=/var/tmp/baton2-compile-queue
+WorkingDirectory=/run/baton2-native-homelab-3/runner
+ExecStartPre=/bin/sh -c "printf '%%s' \"$$PATH\" > /run/baton2-native-homelab-3/runner/.path"
+ExecStart=/bin/sh -c "exec /run/baton2-native-homelab-3/runner/runsvc.sh"
+Restart=on-failure
+KillMode=control-group
+KillSignal=SIGINT
+TimeoutStopSec=infinity
+UMask=0077
+Environment=HOME=/run/baton2-native-homelab-3/home
+Environment=TMPDIR=/run/baton2-native-homelab-3/temp
+Environment=RUNNER_TOOL_CACHE=/run/baton2-native-homelab-3/tool-cache
+Environment=DOTNET_CLI_HOME=/run/baton2-native-homelab-3/home
+Environment=XDG_CACHE_HOME=/run/baton2-native-homelab-3/home/.cache
+Environment=PATH=/run/baton2-native-homelab-3/runner/externals/node24/bin:/usr/local/bin:/usr/bin:/bin
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+ReadWritePaths=/mnt/nvme4tb/ci-runners/baton2-native-homelab-3
+ReadWritePaths=/run/baton2-native-homelab-3
+CPUAccounting=yes
+MemoryAccounting=yes
+TasksAccounting=yes
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target
