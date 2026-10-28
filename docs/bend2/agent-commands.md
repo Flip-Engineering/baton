@@ -180,14 +180,18 @@ native receiver. Explicit fields take precedence. The native configuration
 operation enforces the expected route, current attempt and explicit stop rules.
 
 For an OMP session, `receiver` runs the harness command before the endpoint is
-recorded. The command starts with the recorded model, effort and session
-directory in rpc mode, and its first stdout line must be a JSON object with
-`"type":"ready"`. The command is terminated when no frame arrives within five
-seconds, and killed five seconds later if it has not stopped. A refused
-command answers `receiver-refused` with the captured `stdout` and `stderr`.
-A refusal leaves the endpoint, workspace, model, native identity and pending
-input as recorded, and creates no execution row and no output log. A wrapper
-script is accepted when it delivers the frame.
+recorded. The command starts in rpc mode with the recorded model and effort and
+a fresh token-named session directory beside the database, so the recorded
+session store is never an input to the probe. Its first stdout line must be a
+JSON object with `"type":"ready"`; that line, read to its natural end, decides
+admission and refusal, and no deadline or output-size limit gates the answer.
+After the outcome the probe stops only its own child — stdin ends, then the
+terminate signal, then the wait that reaps it — and removes its scratch files.
+A refused command answers `receiver-refused` with the offending line as
+`stdout` and the captured `stderr`. A refusal leaves the endpoint, workspace,
+model, native identity and pending input as recorded, and creates no execution
+row and no output log. A wrapper script is accepted when it delivers the
+frame.
 
 `resume --lift-stop` explicitly lifts an existing stop and resumes its recorded
 conversation. `resume --clear-stop` (also `clear-stop`) removes a terminal stop
