@@ -12,9 +12,9 @@
       "sha256": "b6d010f7728dcfccb33b9e7565e89d616dd87b8afbbdb618106d8e1d2bfc8146"
     },
     {
-      "bytes": 253830,
+      "bytes": 258104,
       "path": "comp.ts",
-      "sha256": "4283b9c46f73a23246e31649da154260be9e73f28441a23a947f4a213951d632"
+      "sha256": "84fb34fb0fc59e83907590ad6edb9ba58957af94b8725c33488e908710224624"
     },
     {
       "bytes": 351,
@@ -377,9 +377,14 @@
       "sha256": "09ba117d9de2520f284b4ad5f5657b74b5105ab78c55fbd774a552bd2ebdc420"
     },
     {
-      "bytes": 24503,
+      "bytes": 24604,
       "path": "main.ts",
-      "sha256": "8a636b59f0decb86490766542aef2beb87c630b253e9caf097961f42b37b6ba8"
+      "sha256": "c04461ebbad51892f4dcbb955ed6202213a895e1b72d301ddb1600ca31c3cfc2"
+    },
+    {
+      "bytes": 20551,
+      "path": "store.ts",
+      "sha256": "5f9e1cf68ca5e778096f689553fd9a0095dfba4ba0f4680fd063eeb3a1ba444c"
     }
   ],
   "license": {
