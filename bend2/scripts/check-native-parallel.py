@@ -91,7 +91,7 @@ def main():
             (seed / dependency).symlink_to((ROOT / dependency).resolve(), target_is_directory=True)
     scratch = seed / '.scratch/bend2'
     scratch.mkdir(parents=True)
-    for name in ('baton2', 'process-test', 'process-test.c', 'codex-proxy-test', 'instance-test', 'git-test', 'land-test'):
+    for name in ('baton2', 'process-test', 'process-test.c', 'codex-proxy-test', 'instance-test', 'git-test', 'land-test', 'stop-hook-entry'):
         shutil.copy2(ROOT / '.scratch/bend2' / name, scratch / name)
     python = sys.argv[1]
     queue = [{'label': path.name, 'argv': [python, 'bend2/test/' + path.name]}
@@ -134,6 +134,7 @@ def main():
             native_evidence.mkdir(mode=0o700)
             environment = dict(os.environ, TMPDIR=str(runtime / 'tmp'),
                                XDG_RUNTIME_DIR=str(runtime / 'runtime'),
+                               BATON2_STOP_HOOK_FIXTURE=str(source / '.scratch/bend2/stop-hook-entry'),
                                FINAL_NATIVE_CONTEXT_EVIDENCE=str(native_evidence))
             # The inherited Python shim records each selected suite in its original output directory.
             with (evidence / 'stdout').open('wb') as stdout, (evidence / 'stderr').open('wb') as stderr:
