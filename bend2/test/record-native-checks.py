@@ -4,7 +4,6 @@ import importlib.util
 import inspect
 import json
 import os
-import re
 from pathlib import Path
 import socket
 import sqlite3
@@ -18,7 +17,6 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[2]
 RECORDER = Path(os.environ.get('BATON2_RECORDER', ROOT / '.github/scripts/record-native-checks.py'))
 CODEX_ROOT = Path(os.environ.get('BATON2_CODEX_ROOT_FIXTURE', ROOT / 'bend2/test/codex-root.py'))
-RECEIVE = ROOT / 'bend2/src/coordinator/receive.bend'
 sys.path.insert(0, str(CODEX_ROOT.parent))
 spec = importlib.util.spec_from_file_location('codex_root_fixture', CODEX_ROOT)
 fixture = importlib.util.module_from_spec(spec)
@@ -223,13 +221,16 @@ class Recorder(Evidence):
 
 
 class FixtureFailure(Evidence):
-    def guidance(self, database):
-        # Execute the existing receiver's selection SQL on these private messages.
-        line = next(line for line in RECEIVE.read_text().splitlines() if '+selection : String' in line)
-        expression = line.split('DB.Sql.query(db,', 1)[1].removesuffix('))')
-        parts = [json.loads(token) for token in re.findall(r'"(?:[^"\\]|\\.)*"', expression)]
-        selection = database.execute('?'.join(parts), (self.delivery['recipient'], '1')).fetchone()[0]
-        return 'Receive instructions.\n\n' + json.loads(selection)['text']
+    def guidance(self):
+        # These fixtures specify the two input forms consumed by the producer diagnostic.
+        message = self.delivery
+        header = f"Message ({message['kind']}) from {message['sender']} [id: {message['id']}]"
+        if message['kind'] in ('task', 'task-assignment'):
+            selected = header + ':\n' + message['body']
+        else:
+            selected = (header + ' retained ' + str(len(message['body'].encode('utf-8')))
+                        + ' bytes; read the complete body with baton read ' + message['id'] + '.')
+        return 'Receive instructions.\n\n' + selected
 
     def make_case(self, phase='exited', status='exit 17', related=True, kind='report'):
         case = fixture.CodexRootAdapter('runTest')
@@ -249,7 +250,7 @@ class FixtureFailure(Evidence):
             database.execute('INSERT INTO executions VALUES(?,?,?,?,?)',
                 (self.delivery['recipient'], 'fixture-turn', str(attempt), phase, status))
             database.execute('INSERT INTO native_initial_inputs VALUES(?,?,?,?)',
-                (self.delivery['recipient'], 'fixture-turn', str(attempt), self.guidance(database) if related else 'Older unrelated input.'))
+                (self.delivery['recipient'], 'fixture-turn', str(attempt), self.guidance() if related else 'Older unrelated input.'))
         return case, attempt
 
     def run_delivery(self, *args, **kwargs):
@@ -416,7 +417,7 @@ class FixtureFailure(Evidence):
             database.execute("UPDATE executions SET id=?,directory=?,phase='running',status=''",
                              ('retry-turn', str(new)))
             database.execute('INSERT INTO native_initial_inputs VALUES(?,?,?,?)',
-                (self.delivery['recipient'], 'retry-turn', str(new), self.guidance(database)))
+                (self.delivery['recipient'], 'retry-turn', str(new), self.guidance()))
         released = []
         def turns(*args):
             return json.dumps([{'reportBody': 'Expected complete result.'}] if released else [])
