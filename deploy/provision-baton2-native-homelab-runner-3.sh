@@ -21,6 +21,7 @@ readonly ARCHIVE_SHA256=70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d00
 readonly DARWIN_LLVM_SOURCE=/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm
 readonly DARWIN_SDK_SOURCE=/mnt/nvme4tb/ci-runners/baton2-native-homelab/toolchains/apple/MacOSX15.5.sdk
 readonly DARWIN_SDK_MANIFEST_SOURCE=/mnt/nvme4tb/ci-runners/baton2-native-homelab/toolchains/apple/MacOSX15.5.sdk.transfer-manifest.json
+readonly DARWIN_SDK_MANIFEST_SHA256=f6d597415b05891fb8666415757f4a9c851df942421cd42c8d1a4234a88c132f
 readonly CONFIG_STDOUT=$BASE/.provision-config.stdout
 readonly CONFIG_STDERR=$BASE/.provision-config.stderr
 
@@ -132,6 +133,9 @@ getent group baton-compile >/dev/null || fail 'shared compile queue group baton-
     || fail 'staged Darwin LLVM compiler and linker are unavailable'
 [[ -d $DARWIN_SDK_SOURCE/usr/include && -f $DARWIN_SDK_MANIFEST_SOURCE ]] \
     || fail 'staged Darwin SDK and transfer manifest are unavailable'
+printf '%s  %s\n' "$DARWIN_SDK_MANIFEST_SHA256" "$DARWIN_SDK_MANIFEST_SOURCE" \
+    | sha256sum --check --status \
+    || fail 'Darwin SDK transfer manifest does not match the pinned digest'
 
 printf '%s  %s\n' "$ARCHIVE_SHA256" "$ARCHIVE" | sha256sum --check --status \
     || fail 'runner archive digest does not match the pinned 2.337.0 release'
@@ -153,6 +157,13 @@ if [[ $mode == fresh ]]; then
     chown -R "$RUNNER_USER:$RUNNER_GROUP" "$BASE"
     chmod 0700 "$RUNNER_DIR"
 fi
+
+command -v setfacl >/dev/null 2>&1 || fail 'setfacl is required to grant exact-file SDK manifest access'
+command -v getfacl >/dev/null 2>&1 || fail 'getfacl is required to verify exact-file SDK manifest access'
+setfacl -m "u:$RUNNER_USER:r--" "$DARWIN_SDK_MANIFEST_SOURCE"
+getfacl --numeric --omit-header "$DARWIN_SDK_MANIFEST_SOURCE" \
+    | grep -Fx "user:$(id -u "$RUNNER_USER"):r--" >/dev/null \
+    || fail 'runner account does not have read access to the pinned SDK transfer manifest'
 
 for ancestor in "$BASE" "$RUNNER_DIR"; do
     runuser --user "$RUNNER_USER" -- /usr/bin/test -r "$ancestor" \
