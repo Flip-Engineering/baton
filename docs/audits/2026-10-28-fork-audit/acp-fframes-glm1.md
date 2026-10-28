@@ -221,3 +221,25 @@ Open-PR uses: not readable unauthenticated — for Terra.
   (suggest the consts-insertion-cap name, which states the distinctive P6 CONSTS-bound
   change); deleting the other removes nothing. The stack itself remains live work
   (tip Oct-26) feeding the pinned compiler line.
+
+## Bend fork — substantive review of the five remaining topic refs (2026-10-28)
+
+Fresh ref state verified: main 7a7e6505 == bendlang/bend main (fast-forwarded); four
+removed refs confirmed gone. Main history on the compiler selection: baton main 8b02f8fe
+pins the native compiler lineage fe882a28 (cid-final) and separately carries
+bend2/compiler/repl-upstream.provenance.json (schema baton2-repl-vendored-source-v1,
+source_root bend2/compiler/upstream) with source_commit a7abe784 — a baton-side vendored
+state, confirmed absent from the fork repository. Relationship of a7abe784 to the five
+fork heads: unresolved (root's open reconciliation under #1089/#1017/#776).
+
+| Ref | Head | Unique vs main | Review finding | Disposition |
+|---|---|---|---|---|
+| codex/baton-pinned-2025-comp-optimizations-20261017 | 2569c350 | 5 | Aggregate stack: 5c06b66f fixed-point+report pass improvements, 18092822 report reference regression fixtures, bebcce4b memo state limited to the current definition, 27629713 facts-prepass overhead removal (tree-identical to facts-prepass 3ea42d4), 16b84e13 P6 CONSTS bound at insertion. Consumer proven: 27629713 is the installed release 2.0.25-27629713-20261018 (baton-bend-memo-lifetime-v2, #741 line). Upstream PR #1650 closed directing the old-release patch set to remain on the fork. | RETAIN (aggregate). Vendored-line overlap: comp.ts carries 41 memo/MEMOS sites — the memo concept evolved in the vendored line; byte-relationship unestablished. |
+| codex/cli-report-cache-20261017 | 51cbe383 | 9 | +2377/−7 over 7 files: typed cache receipts, fail-closed malformed C cache receipts, UTF-8 artifact size validation, redundant compiler report tree removal, structural term memos retained across definitions/passes, OPEN_LET clearing. Upstream PR #1649 closed unmerged (size/gate/memory objections). | NOT integrated (confirmed). Receipt-hardening may port onto the vendored cache receipt path; the memo-retention commits collide conceptually with the vendored line's own memo work (41 sites) — reconcile under #1089/#1017/#776 before any integration. |
+| fix-1236-ctor-shadow | da49ccd0 | 1 | 25/−3 over 3 files: parse_reso gains a ctr parameter so a module-local def shadows a Base constructor when used above its def; two regression fixtures (laws.bend, ctor_named_law.bend). Verified bendlang main 7a7e6505 still calls parse_reso(p,k) at bend.ts:1682/1693 without the parameter — the defect persists upstream. | READY for focused integration as a current-main port (3-line code change + tests apply to the upstream file); the port target is upstream (bendlang owns bend.ts; #1236 open, #1564 closed unmerged). Authority: root decides upstream submission vs fork-carry. |
+| naming/uniform-identities | 757389ae | 19 | 191 files, +3806/−2518: canonical/uniform naming rework across parser, compiler, FFI and tooling (stable emitted names, fresh-name allocation, template argument storage) with repeated upstream-rebase checkpoints. ALL 19 commits authored by Paulo Cavalcanti (bendlang's author). | Upstream-author work hosted fork-side — the disposition authority is the upstream author/upstream, exactly as root requires; do not integrate fork-side. Owner disposition pending. |
+| preserve/homelab-20261022/fixpoint-cold-path | 01494354 | 3 of 4 (one commit patch-id-duplicate) | +463/−6 over 4 files: 5c3715b7 word-match leaves walked once per pass (perf), d37af25d emitted-C cache by proven inputs default-on, 8657944e apply the pinned #741 pure-memo fork patch. | d37af25d overlaps the selected toolchain's own emitted-C cache (bend2/cache.ts; require_cgen_cache=1 in the selected pin) — superseded with that proof. 8657944e is redundant with the aggregate's PR2 memo merge (release 2.0.25-27629713). 5c3715b7 is the only possibly-unique perf change — reconcile against the vendored line's word-match traversal under #1089/#1017/#776. |
+
+Worktree/session uses: NO local worktree checks out flip-engineer/bend or bend-kit
+(census over ~/worktrees). Consumers of the bend fork are the installed compiler
+releases derived from its commits.
