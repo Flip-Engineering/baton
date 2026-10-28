@@ -470,7 +470,9 @@ async function renamed_repository(github, signed, repository, request, permissio
       try { return await repository_metadata('/repos/' + repository, token, request); }
       catch (error) { if (!(error instanceof Missing)) throw error; }
     }
-    if (installations.length < 100) throw new Missing('GitHub reported no matching resource.');
+    if (installations.length < 100) {
+      throw new Missing(`GitHub API GET /repos/${repository} returned HTTP 404: Not Found.`);
+    }
   }
 }
 
