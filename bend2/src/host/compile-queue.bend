@@ -708,16 +708,21 @@ def clean_stale_active(keydir: String) -> IO(Unit):
     start : String <- IO.pure(String, field(text, "starttime"))
     clean_stale_active_pid(U32.read(pid_text), active, start)
 
+def write_failure_stage(+attempt: String, +keydir: String, status: String, code: U32,
+                        kind: String, key: String, started: String, detail: String,
+                        stage: String, +names: List<&2,String>) -> IO(Unit):
+  do IO<Unit>:
+    finished : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
+    wrote : Unit <- IO.try(Unit, Result.CompileQueueResult.write_with_stage(attempt ++ "/result", status, U32.show(code), kind, key, started,
+      finished, attempt, attempt ++ "/work", attempt ++ "/stdout", attempt ++ "/stderr",
+      detail, stage, artifact_paths_text(names)))
+    removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(keydir ++ "/active"))
+    IO.pure(Unit, Unit{})
+
 def write_failure(+attempt: String, +keydir: String, status: String, code: U32,
                   kind: String, key: String, started: String, detail: String,
                   +names: List<&2,String>) -> IO(Unit):
-  do IO<Unit>:
-    finished : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
-    wrote : Unit <- IO.try(Unit, Result.CompileQueueResult.write(attempt ++ "/result", status, U32.show(code), kind, key, started,
-      finished, attempt, attempt ++ "/work", attempt ++ "/stdout", attempt ++ "/stderr",
-      detail, artifact_paths_text(names)))
-    removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(keydir ++ "/active"))
-    IO.pure(Unit, Unit{})
+  write_failure_stage(attempt, keydir, status, code, kind, key, started, detail, "", names)
 
 def finish_success(+attempt: String, +keydir: String, +kind: String, +key: String,
                     +started: String, +names: List<&2,String>) -> IO(Unit):
@@ -737,10 +742,10 @@ def finish_success(+attempt: String, +keydir: String, +kind: String, +key: Strin
     removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(keydir ++ "/active"))
     IO.pure(Unit, Unit{})
 
-def artifact_mode_check(mode: Result<&1,&1,U32 & String,U32>, name: String) -> IO(Unit):
+def missing_artifact_name(mode: Result<&1,&1,U32 & String,U32>, name: String) -> String:
   match mode:
-    case Done{value}: IO.pure(Unit, Unit{})
-    case Fail{error}: IO.die(Unit, 1, "compile-queue: artifact " ++ name ++ " was not written")
+    case Done{value}: ""
+    case Fail{error}: name
 
 def cgen_content_valid(path: String) -> IO(Bool):
   do IO<Bool>:
@@ -785,21 +790,25 @@ def finish_validated_artifacts(kind: String, invalid: String, +attempt: String,
     case "cgen": finish_cgen_validation(invalid, attempt, keydir, kind, key, started, names)
     case _: finish_success(attempt, keydir, kind, key, started, names)
 
-def verify_artifacts(+work: String, names: List<&2,String>) -> IO(Unit):
+def verify_artifacts(+work: String, names: List<&2,String>) -> IO(String):
   match names:
-    case Nil{}: IO.pure(Unit, Unit{})
+    case Nil{}: IO.pure(String, "")
     case Con{+name, rest}:
-      do IO<Unit>:
+      do IO<String>:
         mode : Result<&1,&1,U32 & String,U32> <- F.Files.mode_of(work ++ "/" ++ name)
-        checked : Unit <- artifact_mode_check(mode, name)
-        verify_artifacts(work, rest)
+        +missing : String <- IO.pure(String, missing_artifact_name(mode, name))
+        Bool.pick(IO(String), String.is_empty(missing), verify_artifacts(work, rest), IO.pure(String, missing))
 
 def verify_and_finish(+attempt: String, +keydir: String, +kind: String, +key: String,
                        +started: String, +names: List<&2,String>) -> IO(Unit):
   do IO<Unit>:
-    checked : Unit <- verify_artifacts(attempt ++ "/work", names)
-    invalid : String <- invalid_artifact_name(kind, names, attempt ++ "/work")
-    finish_validated_artifacts(kind, invalid, attempt, keydir, key, started, names)
+    +missing : String <- verify_artifacts(attempt ++ "/work", names)
+    Bool.pick(IO(Unit), String.is_empty(missing),
+      do IO<Unit>:
+        invalid : String <- invalid_artifact_name(kind, names, attempt ++ "/work")
+        finish_validated_artifacts(kind, invalid, attempt, keydir, key, started, names),
+      write_failure_stage(attempt, keydir, "failed", 1, kind, key, started,
+        "declared artifact " ++ missing ++ " was not written", "artifact-verification", names))
 
 def supervised_completion(canceled: Bool, failed: Bool, +code: U32, disposition: String,
                           +attempt: String, +keydir: String, +kind: String, +key: String,
