@@ -11,7 +11,7 @@
 #                       0: it is reported on stderr and the build continues
 #
 # Flip require_cgen_cache to 1 in the commit that selects the release above.
-lineage_commit=3d9c83b65e3fe2375f767ba332397033b93da3e5
-release_name=2.0.25-compiler-census-sol-20261028
+lineage_commit=1830716f35fe2bd9a2d5b7e54f7ae2353e94e35f
+release_name=2.0.25-compiler-arms-sol-20261028
 cache_ts_sha256=30950fb56d75056e3c1b46ac6ce8209d49f01e556a950f18e005a55cdb06396e
 require_cgen_cache=1
