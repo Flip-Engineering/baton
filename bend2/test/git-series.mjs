@@ -64,7 +64,7 @@ function installation_api(github, installed, tamper = {}, permissions = model.PE
         account: { login: found.owner }, suspended_at: null, permissions: { ...(found.permissions ?? permissions) } });
     }
     if (/^\/app\/installations\?per_page=100&page=\d+$/.test(api_path)) {
-      const page = Number(api_path.split('page=')[1]);
+      const page = Number(new URLSearchParams(api_path.split('?')[1]).get('page'));
       return installed.slice((page - 1) * 100, page * 100).map(found => ({
         id: found.id, app_id: github.appId, app_slug: github.slug,
         account: { login: found.owner }, suspended_at: null,
