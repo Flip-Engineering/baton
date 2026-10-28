@@ -1,0 +1,5131 @@
+{
+  "n": 1117,
+  "state": "open",
+  "merged": false,
+  "ref": "codex/native-state-volume-dependency-20261026",
+  "title": "Manage native WDIO state volume in installed authority"
+}
+{
+  "n": 1116,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/native-app-admission-1115-20261026",
+  "title": "Admit the approved App to the self-hosted native runner"
+}
+{
+  "n": 1114,
+  "state": "closed",
+  "merged": true,
+  "ref": "ensemble/flip-myflip-memory-client-token-reviewed-20261026",
+  "title": "feat(my-flip): manage saved memory in client settings"
+}
+{
+  "n": 1112,
+  "state": "open",
+  "merged": false,
+  "ref": "ensemble/flip-myflip-client-integration-20261026",
+  "title": "feat(my-flip): manage topics, saved memory and computer connections"
+}
+{
+  "n": 1111,
+  "state": "open",
+  "merged": false,
+  "ref": "ensemble/flip-myflip-cua-owner-client-stop-20261026",
+  "title": "feat(my-flip): manage private owner computer connections"
+}
+{
+  "n": 1110,
+  "state": "open",
+  "merged": false,
+  "ref": "ensemble/flip-myflip-topic-client-main-final-20261025",
+  "title": "Show and correct My Flip conversation topics"
+}
+{
+  "n": 1109,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/thread-enrichments-mock-b46f5ece",
+  "title": "test(forum): mock getThreadEnrichments in the ThreadView api mocks"
+}
+{
+  "n": 1108,
+  "state": "open",
+  "merged": false,
+  "ref": "feat/redstar-cards-delivery-20260922",
+  "title": "Complete settings, mobile chat, media loading, and runner fixes"
+}
+{
+  "n": 1107,
+  "state": "open",
+  "merged": false,
+  "ref": "fix/admin-settings-results-20260922",
+  "title": "Fix settings results and adopt shared runner source"
+}
+{
+  "n": 1106,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/macos-unattended-gui-20260922",
+  "title": "Persist unattended Intel macOS desktop recovery"
+}
+{
+  "n": 1105,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/macos-worker-ancestor-20260922",
+  "title": "fix(ci): include the macOS runner ancestor in worker lookup"
+}
+{
+  "n": 1104,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/provider-pwa-delivery-20260921",
+  "title": "Integrate video providers, shared media playback, and PWA delivery"
+}
+{
+  "n": 1103,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/pwa-build-update-provenance-20260921",
+  "title": "fix(pwa): ship complete builds and detect application updates"
+}
+{
+  "n": 1102,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/mobile-pr-test-concurrency-20260921",
+  "title": "Cancel superseded Mobile E2E unit-test jobs"
+}
+{
+  "n": 1101,
+  "state": "closed",
+  "merged": false,
+  "ref": "feat/admin-video-providers-20260921",
+  "title": "Expose video provider models and stored keys in admin settings"
+}
+{
+  "n": 1100,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/tauri-native-gui-keep-awake-20260915",
+  "title": "fix(native): restore GUI wakefulness and stale-base admission"
+}
+{
+  "n": 1099,
+  "state": "closed",
+  "merged": false,
+  "ref": "docs/record-poll-ci-repair-20260915",
+  "title": "docs(client): record poll acknowledgement CI repair"
+}
+{
+  "n": 1098,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/poll-acknowledgement-test-stability-20260915",
+  "title": "fix(client): preserve poll votes through StrictMode mount"
+}
+{
+  "n": 1097,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/native-macos-focus-20260915",
+  "title": "fix(e2e): reliably activate native macOS window"
+}
+{
+  "n": 1096,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/native-linux-admission-queue",
+  "title": "fix: prevent post-merge native admission contention"
+}
+{
+  "n": 1095,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/native-wdio-stability",
+  "title": "fix: stabilize native macOS evidence lane"
+}
+{
+  "n": 1094,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/native-wdio-budget",
+  "title": "ci: keep native macOS lane focused and bounded"
+}
+{
+  "n": 1093,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/repair-macos-runner-plist",
+  "title": "fix(ci): provide explicit Intel runner plist repair"
+}
+{
+  "n": 1092,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/macos-runner-rustup-path",
+  "title": "fix(ci): expose runner rustup on macOS LaunchAgent"
+}
+{
+  "n": 1091,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/macos-system-events-warmup",
+  "title": "Retry transient macOS System Events startup"
+}
+{
+  "n": 1090,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/windows-runner-node-path",
+  "title": "Restore embedded Node path on Windows release runner"
+}
+{
+  "n": 1089,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/native-admission-base-snapshot-20260913",
+  "title": "Fix stale PR-base rejection in native admission and allocation"
+}
+{
+  "n": 1088,
+  "state": "open",
+  "merged": false,
+  "ref": "fix/practical-release-gates-20260913",
+  "title": "Accept original unsigned Windows installers for predecessor testing"
+}
+{
+  "n": 1087,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/linux-native-session-cleanup-20260913",
+  "title": "Fix native Linux session capabilities and TCP cleanup checks"
+}
+{
+  "n": 1086,
+  "state": "open",
+  "merged": false,
+  "ref": "fix/room-settings-native-layer-20260913",
+  "title": "Fix mobile room-dialog stacking and validate native lightbox controls"
+}
+{
+  "n": 1085,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/arm-cross-release-policy-main-20260913",
+  "title": "Allow disclosed macOS ARM cross-build releases on remote Intel infrastructure"
+}
+{
+  "n": 1084,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/native-media-acceptance-20260913",
+  "title": "fix: native touch focus, media acceptance, Linux startup and Windows signing"
+}
+{
+  "n": 1083,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-native-followups-20260913",
+  "title": "fix: remote native startup, iOS appearance, and browser evidence"
+}
+{
+  "n": 1082,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-reconnect-release-followup-20260912",
+  "title": "fix(client): reconnect history, verify media UI, and resume remote releases"
+}
+{
+  "n": 1081,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/native-wdio-precreated-parent-opath",
+  "title": "fix(native-wdio): open the precreated run-root parent with O_PATH"
+}
+{
+  "n": 1080,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/native-runtime-traversal-20260911",
+  "title": "fix(native-wdio): traverse private runtime parent without read access"
+}
+{
+  "n": 1079,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/remote-ios-x64-runner-20260911",
+  "title": "infra: reproduce remote Intel iOS runner and private canary"
+}
+{
+  "n": 1077,
+  "state": "open",
+  "merged": false,
+  "ref": "feat/redstar-embed-card",
+  "title": "Red Star forum posts render as rich cards; provider cards load on demand"
+}
+{
+  "n": 1075,
+  "state": "closed",
+  "merged": false,
+  "ref": "feat/link-share-kinds",
+  "title": "Voice link share: play twitch, kick, hls and embed shares, and the live mode"
+}
+{
+  "n": 1074,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/native-trusted-node-bootstrap-20260911",
+  "title": "fix(ci): unblock trusted native runner bootstrap with pinned Node"
+}
+{
+  "n": 1071,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/windows-candidate-validation-20260911",
+  "title": "fix(infra): complete browser authority and isolate remote Linux KVM scaffold"
+}
+{
+  "n": 1070,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/composer-next-draft-20260911",
+  "title": "fix(chat): preserve next-draft readiness and navigation safety"
+}
+{
+  "n": 1069,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/ios-device-install-20260911",
+  "title": "fix(ios): unblock Swift push plugin compilation for device builds"
+}
+{
+  "n": 1068,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/windows-candidate-validation-20260911",
+  "title": "ci(windows): validate signed installed candidates without publishing"
+}
+{
+  "n": 1066,
+  "state": "closed",
+  "merged": true,
+  "ref": "docs/iphone-dev-testing-20260911",
+  "title": "docs(ios): add practical iPhone development install guide"
+}
+{
+  "n": 1065,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/perf-content-prefetch-20260911",
+  "title": "perf(boot): remove eager markdown engines from authentication startup"
+}
+{
+  "n": 1063,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/pwa-share-audio",
+  "title": "voice: screen share with sound, and a shared video stage"
+}
+{
+  "n": 1062,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/1038-android-boot-evidence-20260910",
+  "title": "fix(android): unblock unsigned packages and retain boot failure evidence"
+}
+{
+  "n": 1061,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/native-delivery-resume-20260910",
+  "title": "fix(client): complete delivery repairs and reduce authentication boot cost"
+}
+{
+  "n": 1060,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/vitest-contention-budget",
+  "title": "ci(vitest): a contention-sized test budget on the shared runner (#964)"
+}
+{
+  "n": 1059,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/voice-rooms",
+  "title": "feat(voice): voice rooms — stage, occupancy, tray, rooms-column glyphs (#903)"
+}
+{
+  "n": 1058,
+  "state": "open",
+  "merged": false,
+  "ref": "fix/953-test-surfaces-child-exit",
+  "title": "test(ci): the provisioner's ready-wait says why a child never got ready"
+}
+{
+  "n": 1056,
+  "state": "open",
+  "merged": false,
+  "ref": "feat/game-commands-reachable-directly",
+  "title": "feat(chat): a game's command typed directly opens its own row, without /games first"
+}
+{
+  "n": 1055,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/settings-console-d2",
+  "title": "Settings structure D2: five settings pages, a profile editor, and the tests moved with the controls"
+}
+{
+  "n": 1054,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/games-command-list-prefill",
+  "title": "/games lists the registered games and choosing one prefills the draft"
+}
+{
+  "n": 1052,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/native-wdio-candidate-revalidate-pinned-node",
+  "title": "fix(native-wdio): run the candidate revalidation with the pinned authority Node"
+}
+{
+  "n": 1050,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/native-wdio-reaper-timer-onactivesec",
+  "title": "fix(native-wdio): schedule the reaper timer from its own activation"
+}
+{
+  "n": 1048,
+  "state": "open",
+  "merged": false,
+  "ref": "feat/inline-image-viewport-loading",
+  "title": "feat(media): chat image display tiers and viewport-order loading"
+}
+{
+  "n": 1047,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/emoji-grid-viewport-window",
+  "title": "perf(chat): open the emoji grid with one viewport of buttons instead of 361"
+}
+{
+  "n": 1045,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/android-unsigned-package-runner-identities-input",
+  "title": "fix(ci): pass the release runner identities into the unsigned Android package action"
+}
+{
+  "n": 1044,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/native-wdio-mount-readback-dedupe",
+  "title": "fix(native-wdio): accept one runtime mount seen twice inside the broker service's namespace"
+}
+{
+  "n": 1041,
+  "state": "closed",
+  "merged": false,
+  "ref": "ci/windows-runner-trust-signing-ca-20260902",
+  "title": "ci(windows): trust the release code-signing CA on the Windows runner"
+}
+{
+  "n": 1040,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/android-canary-node-before-receipts-20260902",
+  "title": "fix(ci): select Node before the Android canary receipt validation"
+}
+{
+  "n": 1037,
+  "state": "closed",
+  "merged": false,
+  "ref": "agent/macos-desktop-release-v1-20260831",
+  "title": "feat(release): add hosted macOS desktop producer"
+}
+{
+  "n": 1036,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/native-installed-systemd-verify-v1",
+  "title": "fix(ci): verify installed native units in isolation"
+}
+{
+  "n": 1035,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/ios-hosted-vm-runner-v1",
+  "title": "ci: add ephemeral hosted iOS Simulator authority"
+}
+{
+  "n": 1034,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/macos-icon-optical-size-20260831",
+  "title": "fix(macos): add spacing around the app icon"
+}
+{
+  "n": 1032,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/android-package-canary-source-20260831",
+  "title": "ci: prove Android package capability on exact slots"
+}
+{
+  "n": 1031,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/release-mobile-mode-split-20260831",
+  "title": "ci: split Android release custody modes"
+}
+{
+  "n": 1030,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/native-runner-private-alias-v1",
+  "title": "fix(ci): isolate native runner listener paths"
+}
+{
+  "n": 1029,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/native-mount-traversal-v1",
+  "title": "fix(ci): grant exact native mount traversal"
+}
+{
+  "n": 1028,
+  "state": "open",
+  "merged": false,
+  "ref": "agent/platform-runner-authority-pointer-20260831",
+  "title": "Point general-v2 runner authority to flip-platform"
+}
+{
+  "n": 1027,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/webkit-baseline-2-52-6-20260831",
+  "title": "fix(ci): refresh exact WebKit host baseline"
+}
+{
+  "n": 1025,
+  "state": "open",
+  "merged": false,
+  "ref": "agent/capability-runner-routing-desktop-20260831",
+  "title": "Route Desktop CI through capability pool"
+}
+{
+  "n": 1024,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/about-updater-apply-20260831",
+  "title": "fix(updater): expose ready update apply control"
+}
+{
+  "n": 1023,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/updater-mount-bind-recovery-20260830",
+  "title": "fix(ci): bind pinned updater mount compatibly"
+}
+{
+  "n": 1022,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/installed-systemd-template-verify-20260830",
+  "title": "fix(ci): verify installed systemd units safely"
+}
+{
+  "n": 1021,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/systemd-template-load-probe-20260830",
+  "title": "fix(ci): instantiate systemd template load probes"
+}
+{
+  "n": 1020,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/rust-host-state-hermetic-20260830",
+  "title": "test(release): isolate Linux updater capacity"
+}
+{
+  "n": 1019,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/native-lock-recovery-20260830",
+  "title": "fix(ci): reuse provisioner authority lock"
+}
+{
+  "n": 1018,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/partial-runner-authority-on-ios-20260830",
+  "title": "fix(ci): admit truthful partial runner authorities"
+}
+{
+  "n": 1017,
+  "state": "open",
+  "merged": false,
+  "ref": "agent/ios-signing-on-native-stack-20260830",
+  "title": "fix(ios): harden Simulator release and optional signing"
+}
+{
+  "n": 1016,
+  "state": "closed",
+  "merged": false,
+  "ref": "agent/macos-isolation-on-linux-20260830",
+  "title": "fix(ci): isolate macOS native package subjects"
+}
+{
+  "n": 1015,
+  "state": "open",
+  "merged": false,
+  "ref": "agent/linux-updater-on-android-20260830",
+  "title": "fix(release): isolate Linux updater subjects and bootstrap predecessor custody"
+}
+{
+  "n": 1014,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/android-owner-on-1013-20260830",
+  "title": "fix(ci): preserve Android installed evidence in owner storage"
+}
+{
+  "n": 1013,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/native-broker-recovery-20260830",
+  "title": "fix(ci): recover native broker registration"
+}
+{
+  "n": 1012,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/native-npm-config-fix-20260830",
+  "title": "fix(ci): isolate native authority npm configs"
+}
+{
+  "n": 1011,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/native-install-mode-fix-20260830",
+  "title": "fix(ci): canonicalize native Linux install modes"
+}
+{
+  "n": 1010,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/postmerge-native-admission-fixes-20260830",
+  "title": "Unblock native authority activation"
+}
+{
+  "n": 1009,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/957-958-release-authority-current-20260827",
+  "title": "Bind complete v2 client publication authority"
+}
+{
+  "n": 1008,
+  "state": "closed",
+  "merged": false,
+  "ref": "agent/linux-wdio-after-installed-protocol-20260827",
+  "title": "test(native): add inert Linux WDIO source"
+}
+{
+  "n": 1007,
+  "state": "closed",
+  "merged": false,
+  "ref": "agent/installed-protocol-after-workspace-binding-20260827",
+  "title": "ci: add disabled installed runner protocol"
+}
+{
+  "n": 1006,
+  "state": "closed",
+  "merged": false,
+  "ref": "agent/788-workspace-binding-after-foundation-20260827",
+  "title": "ci: bind workspace plans to external state"
+}
+{
+  "n": 1005,
+  "state": "closed",
+  "merged": false,
+  "ref": "agent/runner-foundation-after-client-train-20260827",
+  "title": "ci: land source-only native runner capacity foundation"
+}
+{
+  "n": 1004,
+  "state": "open",
+  "merged": false,
+  "ref": "agent/577-android-installed-after-artifact-20260827",
+  "title": "fix(ci): isolate Windows installed updater proof"
+}
+{
+  "n": 1003,
+  "state": "closed",
+  "merged": false,
+  "ref": "agent/564-ios-simulator-development-20260827",
+  "title": "iOS: run development E2E with an unsigned Simulator app (#564)"
+}
+{
+  "n": 1002,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/765-general-pool-browser-ports-20260827",
+  "title": "ci: run browsers on proven mixed runner routes"
+}
+{
+  "n": 1001,
+  "state": "closed",
+  "merged": false,
+  "ref": "agent/984-owner-artifact-after-ios-20260827",
+  "title": "feat(ci): add Flip-owned Android package storage (#984)"
+}
+{
+  "n": 1000,
+  "state": "open",
+  "merged": false,
+  "ref": "agent/564-ios-signing-after-windows-20260827",
+  "title": "fix(ios): enforce App Store release signing checks (#564)"
+}
+{
+  "n": 999,
+  "state": "closed",
+  "merged": false,
+  "ref": "agent/853-windows-evidence-after-pool-20260827",
+  "title": "feat(ci): add owned Windows VM runner and package validation (#853)"
+}
+{
+  "n": 998,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/765-general-pool-mobile-route-20260827",
+  "title": "ci: run Mobile tests on the three-runner pool (#765)"
+}
+{
+  "n": 997,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/765-atari-concurrent-runner-20260827",
+  "title": "ci: add and use three concurrent atari runner slots (#765)"
+}
+{
+  "n": 996,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/980-desktop-shadow-20260825",
+  "title": "release: mint readiness-backed desktop publication v2 shadow (#980)"
+}
+{
+  "n": 995,
+  "state": "closed",
+  "merged": true,
+  "ref": "codex/runner-pool-canary-20260825",
+  "title": "ci: add disabled general-v2 runner provisioner and canary (#765)"
+}
+{
+  "n": 994,
+  "state": "closed",
+  "merged": true,
+  "ref": "codex/release-integration-after-757-20260824",
+  "title": "release: integrate v0.2.8 custody and publication chain"
+}
+{
+  "n": 992,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/midnight-message-grouping-fixture",
+  "title": "test(chat): stabilize grouping fixtures across midnight"
+}
+{
+  "n": 991,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/989-bundle-no-publication",
+  "title": "fix(ci): isolate Bundle verdict from GitHub publishers (#989)"
+}
+{
+  "n": 986,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/981-playwright-receipts",
+  "title": "CI: aggregate source-bound Playwright receipts"
+}
+{
+  "n": 985,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/983-android-repository-authority",
+  "title": "CI: bind Android APK guard to canonical repository"
+}
+{
+  "n": 979,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/975-a0-evidence-classification",
+  "title": "CI: classify aggregate evidence failures (#975 A0)"
+}
+{
+  "n": 978,
+  "state": "closed",
+  "merged": false,
+  "ref": "feat/958-desktop-plan-schema",
+  "title": "feat(release): define desktop publication matrix v2"
+}
+{
+  "n": 977,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/957-browser-projection",
+  "title": "fix(release): close browser projection authority bypass"
+}
+{
+  "n": 976,
+  "state": "closed",
+  "merged": false,
+  "ref": "feat/954-release-catalog",
+  "title": "feat(release): bind catalog refresh to release identity"
+}
+{
+  "n": 973,
+  "state": "closed",
+  "merged": false,
+  "ref": "ci/bound-mobile-artifact-retention",
+  "title": "ci: bound retention on the four unbounded mobile build artifacts"
+}
+{
+  "n": 972,
+  "state": "open",
+  "merged": false,
+  "ref": "fix/jsdom-load-tail-968",
+  "title": "test: close the measured load-sensitivity tail (72 → 39 failures under load)"
+}
+{
+  "n": 971,
+  "state": "closed",
+  "merged": false,
+  "ref": "docs/837-current-work-ledger",
+  "title": "docs(tasks): reconcile the active client work ledger (#837)"
+}
+{
+  "n": 969,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/967-artifact-lifecycle",
+  "title": "ci: add inert artifact lifecycle authority"
+}
+{
+  "n": 968,
+  "state": "open",
+  "merged": false,
+  "ref": "fix/961-load-sensitive-tests",
+  "title": "refactor(chat): isolate load-sensitive rendering seams"
+}
+{
+  "n": 962,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/960-bundle-cold-cache",
+  "title": "CI: make Bundle cold-cache deadline coherent (#960)"
+}
+{
+  "n": 959,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/jsdom-load-sensitive-flakes",
+  "title": "test: remove the irrelevant work behind four load-sensitive timeouts"
+}
+{
+  "n": 955,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/953-linux-webkit-baseline",
+  "title": "ci: track Linux WebKit driver host baseline"
+}
+{
+  "n": 952,
+  "state": "closed",
+  "merged": false,
+  "ref": "ci/951-native-linux-wdio",
+  "title": "ci: run Tauri-native WDIO on self-hosted Linux"
+}
+{
+  "n": 950,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/944-coherent-msrv-toolchain",
+  "title": "CI Rust: replace Bash gate authority with a typed executor (#947)"
+}
+{
+  "n": 949,
+  "state": "closed",
+  "merged": false,
+  "ref": "ci/942-kvm-research-a1",
+  "title": "ci: add bounded Linux KVM prerequisite research lane (#942 A1)"
+}
+{
+  "n": 948,
+  "state": "open",
+  "merged": false,
+  "ref": "codex/504-dompurify-detached-subtree-red",
+  "title": "RED: capture current DOMPurify detached-subtree advisory (#504)"
+}
+{
+  "n": 945,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/703-pr-apk-diagnostic",
+  "title": "ci: preserve validated PR APK evidence under quota"
+}
+{
+  "n": 943,
+  "state": "open",
+  "merged": false,
+  "ref": "fix/927-data-export-authority",
+  "title": "Trust Phoenix data-export enqueue acceptance"
+}
+{
+  "n": 938,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/919-protected-verdict-impact-planner",
+  "title": "CI: add fail-closed protected-verdict impact planner"
+}
+{
+  "n": 937,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/933-selfhost-source-aggregation",
+  "title": "Consolidate source aggregation on isolated self-hosted CI"
+}
+{
+  "n": 934,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/932-mobile-source-receipt",
+  "title": "Reuse exact Mobile evidence for ordinary-main package canaries"
+}
+{
+  "n": 931,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/924-selfhost-aggregate",
+  "title": "Route the cross-tier aggregate through Flip self-hosted CI"
+}
+{
+  "n": 922,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/917-safe-pr-supersession",
+  "title": "ci: safely supersede stale pull request runs"
+}
+{
+  "n": 921,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/918-protected-context-manifest",
+  "title": "CI: version protected status-context authority"
+}
+{
+  "n": 920,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/915-transform-gated-readiness",
+  "title": "WIP: preserve compiled-preview readiness investigation (#915)"
+}
+{
+  "n": 913,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/908-selfhost-required-contexts",
+  "title": "Route every required Linux context through Flip self-hosted CI"
+}
+{
+  "n": 912,
+  "state": "open",
+  "merged": false,
+  "ref": "feat/907-reasoning-policy-parity",
+  "title": "Admin LLM provider-correct reasoning controls"
+}
+{
+  "n": 906,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/905-installed-pwa-contracts",
+  "title": "Fix installed-PWA and release workflow contracts (#905)"
+}
+{
+  "n": 904,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/900-witness-release-intent",
+  "title": "CI host: witness one-shot capsule root release intent"
+}
+{
+  "n": 898,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/879-deterministic-cgroup-creation",
+  "title": "CI host: create deterministic assignment cgroups"
+}
+{
+  "n": 897,
+  "state": "closed",
+  "merged": true,
+  "ref": "prep/pwa-release-0.2.8-1786471623",
+  "title": "chore(release): bump client to 0.2.8"
+}
+{
+  "n": 896,
+  "state": "closed",
+  "merged": true,
+  "ref": "test/818-pwa-live-evidence",
+  "title": "test(pwa): require live installed Auth evidence"
+}
+{
+  "n": 895,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/886-durable-capsule-root-ack",
+  "title": "CI host: durably witness capsule transitions"
+}
+{
+  "n": 894,
+  "state": "closed",
+  "merged": false,
+  "ref": "ci/canary-883-selfhosted-20260810",
+  "title": "ci: disposable self-hosted Linux canary for #883"
+}
+{
+  "n": 892,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/817-browser-auth-storage",
+  "title": "feat(auth): add dark browser session v2 adapter"
+}
+{
+  "n": 891,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/816-native-auth-command-authority",
+  "title": "feat(auth): switch native session authority to Rust"
+}
+{
+  "n": 890,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/716-pwa-archive-publication",
+  "title": "feat(pwa): publish deterministic release archive"
+}
+{
+  "n": 889,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/883-clone3-cgroup-fixture",
+  "title": "CI host Slice 2i-b: add a fail-closed clone3 birth fixture"
+}
+{
+  "n": 888,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/843-native-auth-domain",
+  "title": "Auth v2: ship guarded native session authority"
+}
+{
+  "n": 885,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/882-preworker-capsule-domain",
+  "title": "ci: model recoverable pre-Worker capsules"
+}
+{
+  "n": 884,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/856-service-worker-cache-safety",
+  "title": "fix(pwa): keep protected data out of service-worker caches"
+}
+{
+  "n": 881,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/878-linux-worker-cgroup-capture",
+  "title": "CI host Slice 2g: borrow-scoped cgroup placement planning"
+}
+{
+  "n": 877,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/876-linux-cgroup-observer",
+  "title": "feat(ci): attest descriptor-bound cgroup evidence"
+}
+{
+  "n": 875,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/874-cgroup-binding",
+  "title": "ci: bind admission leases to exact cgroup identities"
+}
+{
+  "n": 873,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/870-durable-journal",
+  "title": "CI host Slice 2c: durably witness admission transitions"
+}
+{
+  "n": 871,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/869-hook-protocol",
+  "title": "feat(ci): authenticate bounded hook requests with SO_PEERCRED (#869)"
+}
+{
+  "n": 868,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/841-linux-worker-observer",
+  "title": "feat(ci): derive Worker identity from bounded Linux observation (#841)"
+}
+{
+  "n": 866,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/820-host-assignment-admission",
+  "title": "feat(ci): model worker-bound host assignment admission (#820)"
+}
+{
+  "n": 865,
+  "state": "closed",
+  "merged": false,
+  "ref": "ci/864-bundle-selfhosted",
+  "title": "ci: canary Bundle Size on scoped self-hosted npm cache (#864)"
+}
+{
+  "n": 863,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/862-tooling-cache",
+  "title": "ci: isolate task-owned tooling Cargo sources (#862)"
+}
+{
+  "n": 861,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/860-browserless-real-api",
+  "title": "ci: make real API lanes provably browserless (#860)"
+}
+{
+  "n": 858,
+  "state": "closed",
+  "merged": false,
+  "ref": "ci/849-linux-core",
+  "title": "Canary Rust tooling on versioned self-hosted Linux routing"
+}
+{
+  "n": 855,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/848-runner-inventory",
+  "title": "Inventory exact self-hosted client CI authority"
+}
+{
+  "n": 846,
+  "state": "closed",
+  "merged": false,
+  "ref": "feat/816-native-auth-commands",
+  "title": "feat(auth): switch native session authority to Rust (#816)"
+}
+{
+  "n": 844,
+  "state": "closed",
+  "merged": false,
+  "ref": "feat/843-native-auth-domain",
+  "title": "Auth v2: add dark guarded NativeAuthManager domain"
+}
+{
+  "n": 842,
+  "state": "closed",
+  "merged": true,
+  "ref": "spec/726-access-refresh-authority",
+  "title": "docs(auth): define native access and refresh authority"
+}
+{
+  "n": 840,
+  "state": "closed",
+  "merged": false,
+  "ref": "docs/837-current-active-work-ledger",
+  "title": "docs: publish current active-work ledger"
+}
+{
+  "n": 838,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/836-playwright-aggregate-producers",
+  "title": "CI: require Playwright producer evidence in E2E aggregates"
+}
+{
+  "n": 835,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/828-source-scoped-aggregate",
+  "title": "CI: scope aggregate evidence to each source workflow"
+}
+{
+  "n": 834,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/833-mobile-drawer-open-convergence",
+  "title": "Fix mobile drawer activation convergence"
+}
+{
+  "n": 832,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/831-base-palette-parity",
+  "title": "fix(theme): enforce canonical base-palette release parity"
+}
+{
+  "n": 830,
+  "state": "closed",
+  "merged": true,
+  "ref": "test/829-theme-network-hermetic",
+  "title": "Tests: isolate ThemeContext network authority"
+}
+{
+  "n": 827,
+  "state": "closed",
+  "merged": true,
+  "ref": "test/826-notification-shape-fixture",
+  "title": "E2E: align notification REST and Electric fixtures"
+}
+{
+  "n": 824,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/823-android-contract-subprocess-bound",
+  "title": "CI: bound Android archive contract subprocess lifecycle"
+}
+{
+  "n": 822,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/813-client-timeout",
+  "title": "Give complete Client CI gate finite 45-minute headroom"
+}
+{
+  "n": 815,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/806-hosted-cross-tier",
+  "title": "CI: move cross-tier summary to hosted capacity"
+}
+{
+  "n": 811,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/810-return-latest-convergence",
+  "title": "fix(chat): follow late virtual floor growth"
+}
+{
+  "n": 808,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/807-tauri-window-readiness",
+  "title": "fix(e2e): bound Tauri native-window bootstrap"
+}
+{
+  "n": 803,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/802-client-shard-planner",
+  "title": "Add deterministic Rust Client shard plans (#802)"
+}
+{
+  "n": 799,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/798-protected-merge-train",
+  "title": "CI: land the protected queue-relief merge train (#798)"
+}
+{
+  "n": 796,
+  "state": "closed",
+  "merged": false,
+  "ref": "ci/795-hosted-client-gates",
+  "title": "CI: move uncredentialed client core gates to hosted Linux"
+}
+{
+  "n": 794,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/793-bare-candidate-constructor",
+  "title": "Construct deterministic CI candidate trees in Rust"
+}
+{
+  "n": 792,
+  "state": "closed",
+  "merged": false,
+  "ref": "ci/791-hosted-bundle",
+  "title": "CI: move the bundle gate to hosted Linux (#791)"
+}
+{
+  "n": 790,
+  "state": "closed",
+  "merged": false,
+  "ref": "ci/789-hosted-browser",
+  "title": "CI: move browser E2E to hosted parallel lanes (#789)"
+}
+{
+  "n": 788,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/784-bound-plan-verifier",
+  "title": "feat(ci): bind workspace plans to external authority"
+}
+{
+  "n": 787,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/784-linux-handle-proof",
+  "title": "feat(ci): add read-only Linux workspace handle proof"
+}
+{
+  "n": 786,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/784-workspace-leases",
+  "title": "feat(ci): add create-new workspace lease ownership"
+}
+{
+  "n": 785,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/784-workspace-planner",
+  "title": "feat(ci): add fail-closed workspace planning authority"
+}
+{
+  "n": 783,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/764-candidate-bundle",
+  "title": "Add immutable client CI candidate bundle authority"
+}
+{
+  "n": 782,
+  "state": "closed",
+  "merged": false,
+  "ref": "ci/780-pinned-app-toolchain",
+  "title": "CI: pin the application Rust toolchain (#780)"
+}
+{
+  "n": 781,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/736-updater-qualified-target",
+  "title": "Fix packaged updater target qualification (#736)"
+}
+{
+  "n": 779,
+  "state": "closed",
+  "merged": false,
+  "ref": "ci/778-aggregation-admission",
+  "title": "ci: admit and coalesce test aggregation"
+}
+{
+  "n": 777,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/775-xcode-budget-bridge",
+  "title": "feat(ci): enforce admitted Xcode job budgets"
+}
+{
+  "n": 776,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/775-tauri-native-budget-bridge",
+  "title": "feat(ci): bridge native budgets through Tauri"
+}
+{
+  "n": 774,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/765-tool-budget-consumers",
+  "title": "feat(ci): consume Rust-generated tool budgets"
+}
+{
+  "n": 773,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/765-typed-resource-profiles",
+  "title": "feat(ci): add typed runner resource profiles"
+}
+{
+  "n": 772,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/761-closed-pr-run-reaper",
+  "title": "CI: reap exact closed-PR workflow runs (#761)"
+}
+{
+  "n": 771,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/763-shadow-diff-collector",
+  "title": "Emit exact non-enforcing CI impact shadow plans"
+}
+{
+  "n": 770,
+  "state": "open",
+  "merged": false,
+  "ref": "ci/763-impact-planner",
+  "title": "Add fail-closed client CI impact planner authority"
+}
+{
+  "n": 769,
+  "state": "closed",
+  "merged": false,
+  "ref": "docs/active-work-staleness-20260808",
+  "title": "docs: reconcile active client work"
+}
+{
+  "n": 768,
+  "state": "closed",
+  "merged": true,
+  "ref": "agent/h3-native-response-fixtures",
+  "title": "Fix Node 22 protected-media response fixtures"
+}
+{
+  "n": 762,
+  "state": "closed",
+  "merged": false,
+  "ref": "chore/chess-emotes-catalog",
+  "title": "chore(emoji): regenerate catalog with the six chess emotes (#1410-#1415)"
+}
+{
+  "n": 760,
+  "state": "open",
+  "merged": false,
+  "ref": "feat/735-updater-evidence-foundation",
+  "title": "Establish Rust-owned destructive updater evidence authority"
+}
+{
+  "n": 759,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/586-shared-capacity-foundation",
+  "title": "Harden shared-runner cancellation and add capacity supervisor foundation"
+}
+{
+  "n": 758,
+  "state": "open",
+  "merged": false,
+  "ref": "fix/742-app-theme-toggle-remount-flake",
+  "title": "Make shuffled App theme tests lifecycle-deterministic"
+}
+{
+  "n": 757,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/562-scoped-release-refresh-token",
+  "title": "Use scoped release-cache refresh credential"
+}
+{
+  "n": 755,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/716-validation-state-skips",
+  "title": "Preserve honest validation-state test outcomes"
+}
+{
+  "n": 754,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/753-optimistic-send-order",
+  "title": "Fix rapid optimistic-send FIFO ordering"
+}
+{
+  "n": 752,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/740-android-release-publication",
+  "title": "Publish validated Android release assets into self-updating downloads"
+}
+{
+  "n": 751,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/750-unique-aggregate-count",
+  "title": "Count each logical test producer once"
+}
+{
+  "n": 749,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/748-network-subscription-reconcile",
+  "title": "Fix missed browser network transitions"
+}
+{
+  "n": 746,
+  "state": "open",
+  "merged": false,
+  "ref": "docs/564-ios-provisioning-runbook",
+  "title": "docs(ios): add provisioning and release runbook"
+}
+{
+  "n": 747,
+  "state": "open",
+  "merged": false,
+  "ref": "docs/903-live-room-client-integration",
+  "title": "docs(calls): scope modular live-room client integration"
+}
+{
+  "n": 741,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/728-recursive-wdio-evidence",
+  "title": "Make native WDIO evidence recursively fail closed"
+}
+{
+  "n": 739,
+  "state": "closed",
+  "merged": false,
+  "ref": "spec/577-android-installed-e2e-capacity",
+  "title": "Specify trusted Android installed E2E capacity"
+}
+{
+  "n": 734,
+  "state": "closed",
+  "merged": false,
+  "ref": "chore/721-pin-release-node",
+  "title": "Pin release Node to repository authority"
+}
+{
+  "n": 733,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/732-mermaid-source-retirement",
+  "title": "Stabilize strict lifecycle E2E convergence"
+}
+{
+  "n": 730,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/729-webkit-history-feed-races",
+  "title": "Make strict browser lifecycle gates race-free"
+}
+{
+  "n": 725,
+  "state": "closed",
+  "merged": true,
+  "ref": "test/662-e2e-taxonomy",
+  "title": "Complete deterministic cross-browser E2E taxonomy"
+}
+{
+  "n": 724,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/723-native-updater-e2e-contract",
+  "title": "Align native updater E2E with process-global Rust authority"
+}
+{
+  "n": 722,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/567-deterministic-auth-refresh",
+  "title": "Make browser auth refresh E2E deterministic"
+}
+{
+  "n": 720,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/719-android-activity-authority",
+  "title": "Move Android Activity authority into native domains"
+}
+{
+  "n": 718,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/716-release-evidence-workflows",
+  "title": "Gate every client release on exact cross-platform evidence"
+}
+{
+  "n": 717,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/716-release-evidence-matrix",
+  "title": "Validate cross-variant release evidence fail closed"
+}
+{
+  "n": 715,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/714-native-mobile-credential-authority",
+  "title": "Make Android credential persistence durable"
+}
+{
+  "n": 713,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/712-forum-subscription-identity",
+  "title": "Fix forum subscription identity authority"
+}
+{
+  "n": 711,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/710-main-window-crash-spool-authority",
+  "title": "fix: make main authoritative for native crash spool"
+}
+{
+  "n": 709,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/708-main-window-external-link-authority",
+  "title": "Make main authoritative for native external-link drains"
+}
+{
+  "n": 707,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/703-test-aggregation-upload",
+  "title": "Keep test aggregation diagnostic upload best-effort"
+}
+{
+  "n": 706,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/705-updater-rust-coordinator",
+  "title": "Make desktop updater process-global in Rust"
+}
+{
+  "n": 704,
+  "state": "closed",
+  "merged": true,
+  "ref": "codex/703-artifact-upload-resilience",
+  "title": "Make diagnostic artifact uploads non-gating"
+}
+{
+  "n": 702,
+  "state": "closed",
+  "merged": true,
+  "ref": "codex/700-realtime-recovery",
+  "title": "Recover realtime lifecycles after official Phoenix adoption"
+}
+{
+  "n": 701,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/1167-reaction-hover-preview",
+  "title": "Enlarge reaction previews and consume the canonical emote catalog"
+}
+{
+  "n": 698,
+  "state": "closed",
+  "merged": true,
+  "ref": "codex/695-official-phoenix-client",
+  "title": "Replace custom Phoenix wire client with official Phoenix 1.8.9"
+}
+{
+  "n": 696,
+  "state": "closed",
+  "merged": true,
+  "ref": "codex/694-electric-foundation-ownership",
+  "title": "Remove unused Electric foundation shape and SQLite façade"
+}
+{
+  "n": 693,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/691-theme-authority-review-remediation",
+  "title": "Fix device-local theme authority review gaps"
+}
+{
+  "n": 692,
+  "state": "closed",
+  "merged": true,
+  "ref": "codex/691-theme-preference-authority",
+  "title": "Make Web storage authoritative for device-local theme preferences"
+}
+{
+  "n": 690,
+  "state": "closed",
+  "merged": true,
+  "ref": "codex/689-native-notification-authority",
+  "title": "Make Rust the desktop notification delivery authority"
+}
+{
+  "n": 688,
+  "state": "closed",
+  "merged": true,
+  "ref": "codex/715-crash-spool-client",
+  "title": "feat(telemetry): acknowledge native crash reports exactly (#715)"
+}
+{
+  "n": 687,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/652-flakiness-runner-contract",
+  "title": "Bound flakiness diagnostics to deliberate runner use"
+}
+{
+  "n": 686,
+  "state": "closed",
+  "merged": true,
+  "ref": "docs/architecture-recovery-20260721",
+  "title": "Recover functional architecture program"
+}
+{
+  "n": 685,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/644-vitest-teardown-lifecycle",
+  "title": "Eliminate Vitest teardown lifecycle race"
+}
+{
+  "n": 684,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/603-toast-live-region-semantics",
+  "title": "Fix toast live-region semantics"
+}
+{
+  "n": 683,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/682-external-link-lifecycle",
+  "title": "Fix native external-link lifecycle and forum authority"
+}
+{
+  "n": 681,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/678-notification-activation",
+  "title": "Implement authoritative mobile notification activation"
+}
+{
+  "n": 680,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/679-mobile-e2e-disposable-origin",
+  "title": "Gate native E2E to disposable origins"
+}
+{
+  "n": 677,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/676-coverage-source-glob",
+  "title": "Fix coverage discovery for non-code assets"
+}
+{
+  "n": 675,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/10-synthesis-digest",
+  "title": "Load authoritative synthesis digest detail"
+}
+{
+  "n": 674,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/581-push-session-authority",
+  "title": "Clean the current device push subscription on logout"
+}
+{
+  "n": 673,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/1189-inline-emote-size",
+  "title": "Increase ordinary inline emote size"
+}
+{
+  "n": 672,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/669-artifact-transclusions",
+  "title": "Render authorized artifact transclusions"
+}
+{
+  "n": 670,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/665-token-compliance",
+  "title": "Fix token compliance delta gate"
+}
+{
+  "n": 668,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/presence-join-test-order",
+  "title": "Make Presence join acknowledgements deterministic in tests"
+}
+{
+  "n": 667,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/569-generous-playwright-budget",
+  "title": "Give Playwright a generous CI completion budget"
+}
+{
+  "n": 664,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/1173-follow-hydration-race",
+  "title": "Preserve immediate optimistic Follow on cold profiles"
+}
+{
+  "n": 663,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/660-auth-hydration",
+  "title": "Stabilize authenticated AppShell hydration assertion"
+}
+{
+  "n": 661,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/on-accent",
+  "title": "Derive readable foregrounds for theme accent fills"
+}
+{
+  "n": 659,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/658-automated-release-changelog",
+  "title": "Automate deterministic client release changelogs"
+}
+{
+  "n": 657,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/602-auth-contrast",
+  "title": "Fix auth route text contrast and link distinction"
+}
+{
+  "n": 656,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/560-forum-integer-boundary",
+  "title": "Fix forum Electric integer boundary"
+}
+{
+  "n": 655,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/654-android-verifier-pipefail",
+  "title": "Fix signed Android verifier pipefail false negative"
+}
+{
+  "n": 653,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/651-desktop-wdio-screenshot-latency",
+  "title": "Fix desktop native lifecycle and bounded visual validation"
+}
+{
+  "n": 650,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/577-android-emulator-current-main",
+  "title": "Fix Android package E2E emulator provisioning"
+}
+{
+  "n": 649,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/563-android-release-current-main",
+  "title": "Fix Android release packaging from current main"
+}
+{
+  "n": 648,
+  "state": "closed",
+  "merged": true,
+  "ref": "architecture/tray-presence-authority",
+  "title": "Converge native tray presence through Phoenix"
+}
+{
+  "n": 647,
+  "state": "closed",
+  "merged": true,
+  "ref": "architecture/native-upload-transport",
+  "title": "Remove native attachment byte transport"
+}
+{
+  "n": 646,
+  "state": "closed",
+  "merged": true,
+  "ref": "architecture/auth-refresh-boundary",
+  "title": "fix(auth): restore refresh authority boundaries"
+}
+{
+  "n": 645,
+  "state": "closed",
+  "merged": true,
+  "ref": "codex/remove-arc-governance",
+  "title": "Revert off-task source ownership governance"
+}
+{
+  "n": 643,
+  "state": "closed",
+  "merged": true,
+  "ref": "codex/arc-023-governance",
+  "title": "[ARC-023] Enforce source ownership governance"
+}
+{
+  "n": 606,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/604-budget-boundary-test",
+  "title": "Make apt retry budget test deterministic"
+}
+{
+  "n": 605,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/604-apt-lock-reliability",
+  "title": "Make CI package installs tolerate apt maintenance locks"
+}
+{
+  "n": 600,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/592-a11y-aggregation",
+  "title": "Aggregate axe reports across Playwright projects"
+}
+{
+  "n": 599,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/589-bundle-report-schema",
+  "title": "Fix bundle report schema contract"
+}
+{
+  "n": 598,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/595-vitest-count-reporting",
+  "title": "Fix Vitest JSON count reporting"
+}
+{
+  "n": 597,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/596-chatpage-websocket-isolation",
+  "title": "Isolate ChatPage unit tests from native WebSockets"
+}
+{
+  "n": 594,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/570-digest-title-race",
+  "title": "Stabilize digest document-title test isolation"
+}
+{
+  "n": 591,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/590-axe-browser-install",
+  "title": "Install every browser used by the axe CI audit"
+}
+{
+  "n": 588,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/587-announcement-timer-lifecycle",
+  "title": "Fix MessageList announcement timer lifecycle"
+}
+{
+  "n": 585,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/584-generous-client-ci-timeout",
+  "title": "CI: give the complete client gate a generous safety ceiling"
+}
+{
+  "n": 583,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/573-deterministic-aggregate-tests",
+  "title": "Fix chat aggregate lifecycle races"
+}
+{
+  "n": 582,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/559-interleaved-transclusion-order",
+  "title": "Preserve authored transclusion order"
+}
+{
+  "n": 580,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/568-admin-moderation-quick-nav",
+  "title": "Test the admin Moderation quick-nav contract"
+}
+{
+  "n": 579,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/572-network-loss-determinism",
+  "title": "test: isolate network-loss SyncBanner coverage"
+}
+{
+  "n": 576,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/557-auth-click-target",
+  "title": "fix: stabilize auth blur click targets"
+}
+{
+  "n": 575,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/563-deterministic-android-signing",
+  "title": "Make Android release signing deterministic"
+}
+{
+  "n": 574,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/564-deterministic-tauri-cli",
+  "title": "Release: make iOS packaging deterministic and fail closed"
+}
+{
+  "n": 571,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/485-reply-composer-lifecycle",
+  "title": "fix: stabilize ReplyComposer completion and retry layout"
+}
+{
+  "n": 566,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/565-personal-ai-unmount",
+  "title": "fix(chat): retire personal AI requests on unmount (#565)"
+}
+{
+  "n": 561,
+  "state": "closed",
+  "merged": true,
+  "ref": "security/504-production-advisories",
+  "title": "Security: clear production DOMPurify and React Router advisories"
+}
+{
+  "n": 558,
+  "state": "closed",
+  "merged": true,
+  "ref": "docs/513-banstable-closeout",
+  "title": "Document BansTable lifecycle release"
+}
+{
+  "n": 555,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/513-banstable-unmount",
+  "title": "Fix BansTable request lifecycle isolation"
+}
+{
+  "n": 554,
+  "state": "closed",
+  "merged": true,
+  "ref": "docs/530-katex-css-readiness-closeout",
+  "title": "docs: close KaTeX stylesheet release"
+}
+{
+  "n": 553,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/530-katex-css-readiness",
+  "title": "Fix KaTeX stylesheet readiness race"
+}
+{
+  "n": 552,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/530-katex-placeholder-isolation",
+  "title": "Fix pending KaTeX preview placeholder leak"
+}
+{
+  "n": 551,
+  "state": "closed",
+  "merged": true,
+  "ref": "docs/540-release-closeout",
+  "title": "docs: close mobile composer density release"
+}
+{
+  "n": 550,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/540-mobile-composer-density",
+  "title": "Fix mobile chat composer density"
+}
+{
+  "n": 549,
+  "state": "closed",
+  "merged": true,
+  "ref": "docs/545-threadview-closeout",
+  "title": "docs: record issue 545 release evidence"
+}
+{
+  "n": 548,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/545-threadview-update-loop",
+  "title": "fix: stop ThreadView tag update loop"
+}
+{
+  "n": 547,
+  "state": "closed",
+  "merged": true,
+  "ref": "docs/539-style-sweep-closeout",
+  "title": "docs: record browser-verified release evidence"
+}
+{
+  "n": 546,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/539-style-warning-sweep",
+  "title": "Fix style transitions and mobile interaction regressions"
+}
+{
+  "n": 542,
+  "state": "closed",
+  "merged": true,
+  "ref": "docs/536-composer-style-closeout",
+  "title": "Document #536 production verification"
+}
+{
+  "n": 541,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/536-chat-home-border-style",
+  "title": "Fix chat composer style reconciliation warnings"
+}
+{
+  "n": 538,
+  "state": "closed",
+  "merged": true,
+  "ref": "docs/535-browser-auth-hydration-closeout",
+  "title": "Document #535 production release"
+}
+{
+  "n": 537,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/535-browser-auth-hydration",
+  "title": "Fix browser cold-boot auth hydration (#535)"
+}
+{
+  "n": 534,
+  "state": "closed",
+  "merged": true,
+  "ref": "docs/532-gif-preload-closeout",
+  "title": "docs: record #532 client merge"
+}
+{
+  "n": 533,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/532-gif-preload-auth-ordering",
+  "title": "Fix authenticated GIF preload ordering"
+}
+{
+  "n": 531,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/814-chat-home-visible-rooms",
+  "title": "Fix authorized chat home room discovery"
+}
+{
+  "n": 529,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/968-synthesis-notification-provenance",
+  "title": "feat: render synthesis notification provenance"
+}
+{
+  "n": 528,
+  "state": "closed",
+  "merged": true,
+  "ref": "test/997-presence-prototype-keys",
+  "title": "Test native presence parsing against prototype-colliding keys"
+}
+{
+  "n": 527,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/919-943-idempotent-delete-client",
+  "title": "test: preserve tombstone on idempotent delete retry"
+}
+{
+  "n": 526,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/967-canonical-notification-navigation",
+  "title": "Resolve exact notification destinations"
+}
+{
+  "n": 525,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/966-notification-read-convergence",
+  "title": "Converge notification reads after source presentation"
+}
+{
+  "n": 524,
+  "state": "closed",
+  "merged": true,
+  "ref": "release/0.2.7",
+  "title": "chore: bump client version to 0.2.7"
+}
+{
+  "n": 523,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/199-admonition-rbac",
+  "title": "Gate privileged admonitions by source authority"
+}
+{
+  "n": 522,
+  "state": "closed",
+  "merged": true,
+  "ref": "release/0.2.6",
+  "title": "chore: bump client version to 0.2.6"
+}
+{
+  "n": 521,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/943-my-flip-delete-recurrence",
+  "title": "Fix recurring My Flip owner actions"
+}
+{
+  "n": 520,
+  "state": "closed",
+  "merged": true,
+  "ref": "release/0.2.5",
+  "title": "Release Flip client v0.2.5"
+}
+{
+  "n": 519,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/943-my-flip-owner-capability-race",
+  "title": "Fix late My Flip owner message actions"
+}
+{
+  "n": 518,
+  "state": "closed",
+  "merged": true,
+  "ref": "release/0.2.4",
+  "title": "Release Flip client v0.2.4"
+}
+{
+  "n": 517,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/511-my-flip-owner-content-admin",
+  "title": "Grant My Flip owner content admin actions"
+}
+{
+  "n": 516,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/515-real-api-workflow",
+  "title": "Fix invalid real API workflow expression"
+}
+{
+  "n": 514,
+  "state": "closed",
+  "merged": true,
+  "ref": "release/0.2.3",
+  "title": "Release Flip client v0.2.3"
+}
+{
+  "n": 512,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/511-personal-delete-clear-parity",
+  "title": "Fix My Flip delete and bare clear parity"
+}
+{
+  "n": 510,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/468-fixture-matcher-eof",
+  "title": "fix: narrow integration fixture matchers"
+}
+{
+  "n": 509,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/907-terminal-rich-media",
+  "title": "feat(media): add managed rich media wrappers"
+}
+{
+  "n": 508,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/468-fixture-lifecycle",
+  "title": "Make mutating test fixture cleanup fail closed"
+}
+{
+  "n": 507,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/888-twitch-click-to-load",
+  "title": "feat: add Twitch click-to-load wrapper card"
+}
+{
+  "n": 506,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/814-password-recovery-parity",
+  "title": "fix(auth): distinguish reset token and field errors"
+}
+{
+  "n": 505,
+  "state": "closed",
+  "merged": true,
+  "ref": "test/oauth-redirect-uri-invariant-guard-483",
+  "title": "test: client OAuth redirect_uri invariant guard (#483 regression backstop)"
+}
+{
+  "n": 503,
+  "state": "closed",
+  "merged": true,
+  "ref": "docs/814-email-confirmation-closeout",
+  "title": "docs(auth): close email confirmation hardening"
+}
+{
+  "n": 502,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/814-confirm-email-error-copy",
+  "title": "fix(auth): harden email confirmation states"
+}
+{
+  "n": 501,
+  "state": "closed",
+  "merged": true,
+  "ref": "docs/499-register-network-closeout",
+  "title": "docs(auth): close registration network isolation"
+}
+{
+  "n": 500,
+  "state": "closed",
+  "merged": true,
+  "ref": "test/499-register-network-isolation",
+  "title": "test(auth): isolate registration unit network"
+}
+{
+  "n": 498,
+  "state": "closed",
+  "merged": true,
+  "ref": "docs/493-auth-theme-closeout",
+  "title": "docs(theme): close auth-route mode fix"
+}
+{
+  "n": 497,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/493-auth-theme",
+  "title": "fix(theme): honor persisted mode on auth routes"
+}
+{
+  "n": 496,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/lockfile-drift",
+  "title": "release: revert lockfile dependency drift from the v0.2.2 bump"
+}
+{
+  "n": 495,
+  "state": "closed",
+  "merged": true,
+  "ref": "release/v0.2.2",
+  "title": "release: v0.2.2"
+}
+{
+  "n": 494,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/460-submenu-theming",
+  "title": "fix(#460): theme ReactionPicker — the context-menu submenu #791 sibling work missed"
+}
+{
+  "n": 492,
+  "state": "closed",
+  "merged": true,
+  "ref": "docs/479-skeleton-timing-closeout",
+  "title": "docs: close skeleton timing task"
+}
+{
+  "n": 491,
+  "state": "closed",
+  "merged": true,
+  "ref": "test/479-skeleton-timing",
+  "title": "test: stabilize skeleton render timing gate"
+}
+{
+  "n": 489,
+  "state": "closed",
+  "merged": true,
+  "ref": "chore/park-live-ci",
+  "title": "chore: park live-targeting CI suites to manual dispatch"
+}
+{
+  "n": 488,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/468-integration-suite-teardown-guard",
+  "title": "fix: guard integration suite against live origins, add room/thread teardown"
+}
+{
+  "n": 487,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/settings-segmentation-client",
+  "title": "Settings segmentation (client): drop Appearance tab + restore Support Flip chip on the top-right entry"
+}
+{
+  "n": 486,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/483-server-redirect-uri",
+  "title": "fix: use server-provided HTTPS redirect_uri for Google OAuth (client half of #483)"
+}
+{
+  "n": 484,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/482-follow-initialization-ownership",
+  "title": "Await pending optimistic Follow paint"
+}
+{
+  "n": 481,
+  "state": "closed",
+  "merged": true,
+  "ref": "test/480-follow-rollback",
+  "title": "Control optimistic follow rollback test settlement"
+}
+{
+  "n": 478,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/476-theme-bundle-unmount",
+  "title": "Fix stale Theme Designer bundle requests"
+}
+{
+  "n": 477,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/474-mute-refresh-unmount",
+  "title": "Invalidate mute refreshes after unmount"
+}
+{
+  "n": 475,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/473-embed-action-contrast",
+  "title": "Fix dark-theme embed action contrast"
+}
+{
+  "n": 472,
+  "state": "closed",
+  "merged": true,
+  "ref": "feature/matrix-remediation-470-471",
+  "title": "Matrix remediation: native media and residual parity"
+}
+{
+  "n": 469,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/745-personal-ai-parity",
+  "title": "Add personal Flip AI space client parity (#745)"
+}
+{
+  "n": 467,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/user-profile-email-privacy",
+  "title": "Fix profile email privacy in public surfaces"
+}
+{
+  "n": 465,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/463-464-admin-auth-gates",
+  "title": "Auth-gate admin settings routes"
+}
+{
+  "n": 462,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/458-459-member-count-profile-settings",
+  "title": "Fix Flip AI member counts and self profile settings"
+}
+{
+  "n": 461,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/743-llm-settings-admin-client",
+  "title": "feat(#743): move LLM settings into platform AdminDashboard; remove llm tab from user settings"
+}
+{
+  "n": 456,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/932-release-entitlements-sigkill",
+  "title": "fix: v0.2.0 macOS artifact SIGKILLed at launch — strip restricted entitlements from release builds (v0.2.1)"
+}
+{
+  "n": 455,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/454-mobile-nav",
+  "title": "Fix mobile top nav clipping"
+}
+{
+  "n": 453,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/447-postmerge-stabilization",
+  "title": "test(#447): stabilize post-merge parity coverage"
+}
+{
+  "n": 452,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/889-client-observability",
+  "title": "feat(#889): fleet observability client — Rust crash hook, JS error/update beacons, bug-report UI"
+}
+{
+  "n": 451,
+  "state": "closed",
+  "merged": true,
+  "ref": "chore/932-domain-bake",
+  "title": "chore: bake flip.engineering as primary domain (dual-host universal links)"
+}
+{
+  "n": 450,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/930-apk-release",
+  "title": "feat(#930): attach signed Android APK/AAB to GitHub releases on tag builds (closes #448)"
+}
+{
+  "n": 449,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/928-parity-batch",
+  "title": "fix(#928): vision-audit parity batch — tz fix, prose density, forum rail groupings, invented-affordance removals (closes #447)"
+}
+{
+  "n": 446,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/forum-index-360-edge-residual",
+  "title": "Fix forum index mobile control spacing"
+}
+{
+  "n": 445,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/forum-index-360-residual-chrome",
+  "title": "Tighten forum index mobile residual chrome"
+}
+{
+  "n": 444,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/forum-index-360-mobile-nav-chrome",
+  "title": "Patch forum index first-page baseline"
+}
+{
+  "n": 443,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/forum-index-mobile-chrome-parity",
+  "title": "Tighten forum index mobile chrome parity"
+}
+{
+  "n": 442,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/forum-index-mobile-layout-parity",
+  "title": "Fix forum index mobile layout parity"
+}
+{
+  "n": 441,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/forum-index-initial-feed-baseline",
+  "title": "[codex] Stabilize forum index initial feed"
+}
+{
+  "n": 439,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/forum-thread-reply-chrome-parity",
+  "title": "Match forum thread reply chrome to web"
+}
+{
+  "n": 437,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/chat-rich-media-card-parity",
+  "title": "Match chat rich media cards to Phoenix"
+}
+{
+  "n": 435,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/chat-room-entry-pin",
+  "title": "Pin direct chat room loads to latest"
+}
+{
+  "n": 434,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/chat-bounded-message-window",
+  "title": "Seed chat rooms from bounded message window"
+}
+{
+  "n": 433,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/account-settings-stacked-parity",
+  "title": "Align account settings route with web"
+}
+{
+  "n": 432,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/digest-index-empty-parity",
+  "title": "Align digest index empty state with web"
+}
+{
+  "n": 431,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/mobile-login-form-parity",
+  "title": "Align mobile login form controls with web"
+}
+{
+  "n": 430,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/user-profile-layout-parity",
+  "title": "Align user profile layout with web"
+}
+{
+  "n": 429,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/forum-index-mobile-hamburger-parity",
+  "title": "Remove mobile forum sidebar drawer"
+}
+{
+  "n": 428,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/forum-index-main-tag-filter",
+  "title": "Fix forum index tag filter parity"
+}
+{
+  "n": 427,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/forum-chrome-accent-parity",
+  "title": "Fix forum chrome accent parity"
+}
+{
+  "n": 426,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/canonical-chat-room-route-state",
+  "title": "Fix canonical chat route hydration state"
+}
+{
+  "n": 425,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/visual-ab-auth-state-and-settle",
+  "title": "Fix visual audit auth isolation"
+}
+{
+  "n": 424,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/forum-thread-rest-detail-fallback",
+  "title": "fix(forum): seed thread detail from REST"
+}
+{
+  "n": 423,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/shared-ci-workflow-contracts",
+  "title": "Fix shared CI workflow contracts"
+}
+{
+  "n": 422,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/forum-thread-composer-autofocus",
+  "title": "Fix forum thread initial composer focus"
+}
+{
+  "n": 421,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/keyboard-shortcuts-system",
+  "title": "Fix keyboard slash search shortcuts"
+}
+{
+  "n": 420,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/real-api-e2e-thread-subforum",
+  "title": "fix(ci): update real api e2e thread contract"
+}
+{
+  "n": 419,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/room-server-creation-flow",
+  "title": "Fix room creation navigation"
+}
+{
+  "n": 418,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/core-unit-coverage",
+  "title": "Stabilize core unit gate"
+}
+{
+  "n": 417,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/error-boundaries-offline",
+  "title": "Add offline indicator shell status"
+}
+{
+  "n": 416,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/visual-parity-cv-audit",
+  "title": "Add visual parity CV audit gate"
+}
+{
+  "n": 415,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/chat-read-state-client",
+  "title": "Add chat unread count sync"
+}
+{
+  "n": 414,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/forum-subscribed-feed-source",
+  "title": "Fix forum subscribed feed source"
+}
+{
+  "n": 413,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/shared-poll-widget-timeouts",
+  "title": "Extract shared poll widget primitives"
+}
+{
+  "n": 412,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/typing-indicator-3s-timeout",
+  "title": "Fix typing indicator auto-clear timeout"
+}
+{
+  "n": 411,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/supporter-native-linkout",
+  "title": "feat(supporter): add native support linkout"
+}
+{
+  "n": 410,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/248-mermaid-highlight-noise",
+  "title": "Fix Mermaid highlight.js console noise"
+}
+{
+  "n": 409,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/304-mermaid-boot-budget",
+  "title": "Fix Mermaid boot graph budget breach"
+}
+{
+  "n": 407,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/615-remove-embeds-client",
+  "title": "Add client remove/restore embed controls"
+}
+{
+  "n": 406,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/612-profile-author-supporter",
+  "title": "fix(#612): show supporter badges in settings profile header"
+}
+{
+  "n": 405,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/client-mobile-gesture-safety",
+  "title": "fix(mobile): harden gesture safety"
+}
+{
+  "n": 404,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/client-storage-migration-registry",
+  "title": "feat(storage): add client migration registry"
+}
+{
+  "n": 403,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/client-citation-chips-pdf-overlay",
+  "title": "Render AI citation chips and PDF previews"
+}
+{
+  "n": 402,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/forum-user-edit-delete",
+  "title": "feat(forum): expose owned edit delete actions"
+}
+{
+  "n": 397,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/ci-unit-test-gates",
+  "title": "fix(ci): keep unit gates off real-api tests"
+}
+{
+  "n": 396,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/chat-message-hash-deeplink",
+  "title": "fix(chat): scroll hash deep links through virtualized feed"
+}
+{
+  "n": 395,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/forum-thread-shape-server-id",
+  "title": "Fix forum thread provenance shape mapping"
+}
+{
+  "n": 394,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/google-oauth-auth-session",
+  "title": "Fix native Google OAuth session adoption"
+}
+{
+  "n": 393,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/session-expiry-force-logout",
+  "title": "Fix session expiry logout cleanup"
+}
+{
+  "n": 392,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-latex-like-gate",
+  "title": "fix(markdown): gate inline math on LaTeX signals"
+}
+{
+  "n": 391,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-wikipedia-embed-card",
+  "title": "fix(media): render Wikipedia rich cards"
+}
+{
+  "n": 390,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-tweet-legacy-body",
+  "title": "fix(media): render legacy tweet body text"
+}
+{
+  "n": 389,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-action-row-supporter-badges",
+  "title": "fix(parity): show supporter badges in action rows"
+}
+{
+  "n": 388,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-search-content-type",
+  "title": "fix(search): align content type filters"
+}
+{
+  "n": 387,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-at-bottom-threshold",
+  "title": "fix(parity): align at-bottom threshold"
+}
+{
+  "n": 386,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-remove-frozen-color-tokens",
+  "title": "fix(parity): remove frozen design color tokens"
+}
+{
+  "n": 385,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-remove-user-presence-poller",
+  "title": "fix(parity): remove user presence poller"
+}
+{
+  "n": 384,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-remove-latex-delimiters",
+  "title": "fix(parity): remove latex-style math delimiters"
+}
+{
+  "n": 383,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-remove-admonition-fences",
+  "title": "fix(parity): remove admonition fence extension"
+}
+{
+  "n": 382,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-remove-channel-autocomplete",
+  "title": "fix(parity): remove channel autocomplete"
+}
+{
+  "n": 381,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p2-navbar-height-token",
+  "title": "fix(parity): align navbar height token"
+}
+{
+  "n": 380,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p2-registration-flash",
+  "title": "fix(parity): redirect registration success to login"
+}
+{
+  "n": 379,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p2-google-border",
+  "title": "fix(parity): brighten Google auth border"
+}
+{
+  "n": 378,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p2-forum-badge-tint",
+  "title": "fix(parity): tint forum subforum badges"
+}
+{
+  "n": 377,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p2-remove-list-bookmark",
+  "title": "fix(parity): remove forum list bookmark action"
+}
+{
+  "n": 376,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p2-hover-toolbar-size",
+  "title": "fix(parity): size chat hover toolbar buttons"
+}
+{
+  "n": 375,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p2-deleted-message-tombstone",
+  "title": "fix(parity): render deleted chat tombstones"
+}
+{
+  "n": 374,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p2-remove-unread-divider",
+  "title": "fix(parity): remove chat unread divider"
+}
+{
+  "n": 373,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p2-remove-date-separators",
+  "title": "fix(parity): remove chat date separators"
+}
+{
+  "n": 372,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p1-auth-submit-hover",
+  "title": "fix(parity): match auth submit hover"
+}
+{
+  "n": 371,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p1-self-profile",
+  "title": "fix(parity): route self profile to enriched profile"
+}
+{
+  "n": 370,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p1-settings-notifications",
+  "title": "fix(parity): remove settings notifications tab"
+}
+{
+  "n": 369,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p1-settings-privacy",
+  "title": "fix(parity): remove invented privacy controls"
+}
+{
+  "n": 368,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p1-hide-flip-mute",
+  "title": "fix(parity): hide Flip bot mute controls"
+}
+{
+  "n": 367,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p1-remove-synthesis-world",
+  "title": "fix(parity): remove synthesis world overrides"
+}
+{
+  "n": 366,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p1-x-article-card",
+  "title": "fix(parity): style X article rich cards"
+}
+{
+  "n": 365,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p1-social-skeleton",
+  "title": "fix(parity): show rich social skeleton while loading"
+}
+{
+  "n": 364,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p1-oembed-generic-icon",
+  "title": "fix(parity): use generic oEmbed play icon"
+}
+{
+  "n": 363,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p1-katex-overflow",
+  "title": "fix(parity): constrain KaTeX display overflow"
+}
+{
+  "n": 362,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p1-composer-send-hover",
+  "title": "fix(parity): add composer send hover feedback"
+}
+{
+  "n": 361,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p1-composer-preview-mounted",
+  "title": "fix(parity): keep composer input mounted in preview"
+}
+{
+  "n": 360,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p1-remove-headline-canvas",
+  "title": "fix(parity): remove CanvasKit forum title renderer"
+}
+{
+  "n": 359,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/parity-p0-media-mentions",
+  "title": "Fix P0 media and mention parity"
+}
+{
+  "n": 358,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/release-mac-identity-validation",
+  "title": "fix(release): require valid mac Developer ID identity"
+}
+{
+  "n": 357,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/release-use-imported-identity",
+  "title": "fix(release): use imported macOS signing identity"
+}
+{
+  "n": 356,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/release-signing-setup-diagnostics",
+  "title": "fix(release): let tauri-action arbitrate macOS signing"
+}
+{
+  "n": 355,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/release-keychain-partition-fallback",
+  "title": "fix(release): tolerate key partition rewrite failure"
+}
+{
+  "n": 354,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/release-macos-cert-setup",
+  "title": "fix(release): harden macOS certificate setup"
+}
+{
+  "n": 353,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/925-updater-client",
+  "title": "fix(#925): ship signed desktop updater path"
+}
+{
+  "n": 352,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/updater-pubkey-67aee0d0",
+  "title": "fix(#887): trust regenerated updater pubkey (67AEE0D0)"
+}
+{
+  "n": 351,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/776-single-step-room-load",
+  "title": "perf(#776): single-step room load — render cache + lib prewarm + reserved media + author pre-resolve + embed pre-hydrate + scroll-defer"
+}
+{
+  "n": 350,
+  "state": "closed",
+  "merged": true,
+  "ref": "chore/visual-parity-2026-07-04",
+  "title": "chore(parity): flip-client visual/design parity vs web gold standard (P1+P2)"
+}
+{
+  "n": 349,
+  "state": "closed",
+  "merged": true,
+  "ref": "chore/rename-wormhole-to-thread-hovercard",
+  "title": "chore: rename WormholePreview hovercard -> ThreadHovercard"
+}
+{
+  "n": 348,
+  "state": "closed",
+  "merged": true,
+  "ref": "chore/remove-gravity-flip",
+  "title": "chore: remove invented gravity-flip WebGL world-transition (no web counterpart)"
+}
+{
+  "n": 347,
+  "state": "closed",
+  "merged": true,
+  "ref": "parity/2026-07-04-web-parity",
+  "title": "feat: client visual parity vs web gold standard (2026-07-04 audit)"
+}
+{
+  "n": 346,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/badge-tooltip-label-only",
+  "title": "fix(#903): badge tooltips = role label only (parity with web)"
+}
+{
+  "n": 345,
+  "state": "closed",
+  "merged": true,
+  "ref": "native/887-release-v0.2.0",
+  "title": "feat(#887): v0.2.0 release-prep — real updater pubkey + version bump + ship-gate live"
+}
+{
+  "n": 344,
+  "state": "closed",
+  "merged": true,
+  "ref": "client/903-badge-tooltip",
+  "title": "feat(#903): styled hover tooltip on supporter badge pips (client parity)"
+}
+{
+  "n": 343,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/896-slice5-client-badges",
+  "title": "feat(#896 slice5): Flip Supporter badge pips — web-parity port"
+}
+{
+  "n": 342,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/888-client-compat-handshake",
+  "title": "feat(#888): Slot 2b — X-Flip-Client version header + 426 Update-Required gate"
+}
+{
+  "n": 340,
+  "state": "closed",
+  "merged": true,
+  "ref": "ship/887b-update-orchestration",
+  "title": "feat(#887): Slot 1b — client update-check orchestration (working auto-update)"
+}
+{
+  "n": 339,
+  "state": "closed",
+  "merged": true,
+  "ref": "ship/887a-release-config-version-sourcing",
+  "title": "feat(#887): Slot 1a — release-pipeline config correctness + version single-sourcing"
+}
+{
+  "n": 338,
+  "state": "closed",
+  "merged": true,
+  "ref": "sec/886-remove-shell-exec-capability",
+  "title": "sec(#886): remove shell:allow-execute/spawn `sh -c` webview capability (NAT-01)"
+}
+{
+  "n": 337,
+  "state": "closed",
+  "merged": true,
+  "ref": "sec/remove-shell-exec-capability",
+  "title": "sec(NAT-01): remove shell:allow-execute/spawn sh -c webview capability"
+}
+{
+  "n": 336,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/ticker-logo-theme",
+  "title": "fix(ticker): logo tile matches popover panel + request theme-matched logo (mirrors web)"
+}
+{
+  "n": 335,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/flipmd-directives-client",
+  "title": "fix(flip-markdown): complete client directive parity — admonition blank-line bug + remove bare-name auto-mention"
+}
+{
+  "n": 334,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/829-yt-wrapper-client",
+  "title": "fix(#829): point native YouTube embed at the https wrapper (kills Error 153)"
+}
+{
+  "n": 333,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/828-829-video-embeds",
+  "title": "fix(#828,#829): TikTok no longer oversizes on play + YouTube avoids Error 153 (referrerpolicy)"
+}
+{
+  "n": 332,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/796-ipc-connect-src",
+  "title": "fix(#796): allow Tauri v2 IPC custom-protocol in CSP connect-src"
+}
+{
+  "n": 331,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/779-runtime-arming",
+  "title": "fix(#779): mermaid diagrams render black — WKWebView drops fill from the style ATTRIBUTE too; bake paint to SVG presentation attributes"
+}
+{
+  "n": 330,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/797-hover-toolbar-clipping",
+  "title": "fix(#797): hover toolbar overlays preceding message un-clipped (completes #327 popover pass)"
+}
+{
+  "n": 329,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/779-mermaid-verbatim-port",
+  "title": "fix(#779): verbatim port of the web mermaid pipeline + WKWebView <style> bake-down — fixes native black-blob diagrams"
+}
+{
+  "n": 328,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/786-own-message-author",
+  "title": "fix(#786): own messages render real display name + deduplicate optimistic/Electric echo"
+}
+{
+  "n": 327,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/787-791-792-popover-menu-batch",
+  "title": "fix(#787,#791,#792): popover/menu batch — z-index clipping, bundle-token chrome, viewport-aware picker"
+}
+{
+  "n": 326,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/782-server-rooted-urls",
+  "title": "feat(#782): server-rooted URLs — mirror web's /server/:id/chat + /server/:id/forum/f/:slug contract (routes, deep-links, link generation)"
+}
+{
+  "n": 325,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/779-mermaid-node-fills",
+  "title": "fix(#779): mermaid node fills = bundle accent (web parity) — kill the black-blob fills on WKWebView"
+}
+{
+  "n": 324,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/747-message-action-registry",
+  "title": "refactor(#747): unified message action registry — one source of truth for More menu + context menu"
+}
+{
+  "n": 323,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/773-forum-literal-vars",
+  "title": "fix(#773): forum world derives from the ACTIVE bundle — reactive literal vars break WKWebKit var() freeze"
+}
+{
+  "n": 322,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/775-me-action-row",
+  "title": "feat(#775): /me action row — isActionMessage + inline rendering"
+}
+{
+  "n": 321,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/769v2-video-load-suppression",
+  "title": "fix(#769v2): video load (CSP media-src) + suppression + error fallback links"
+}
+{
+  "n": 320,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/761-762-765-youtube-card",
+  "title": "fix(#761,#762,#765): YouTube card — button-scoped hover, smaller play button, contain-fit thumbnail"
+}
+{
+  "n": 319,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/771-breadcrumb-server-context",
+  "title": "feat(#771): breadcrumb 'Forum' crumb navigates to the current server's forum"
+}
+{
+  "n": 318,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/766-767-forum-title-header",
+  "title": "feat(#766,#767): forum title header restored + subforum-aware"
+}
+{
+  "n": 317,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/760-pin-unpin",
+  "title": "feat(#760): board-level unpin affordance for moderators + deletion cascade"
+}
+{
+  "n": 316,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/769-video-embed-labeled-links",
+  "title": "fix(#769): video embeds render again — labeled-link extractor pattern"
+}
+{
+  "n": 315,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/759-more-menu-flicker-close",
+  "title": "fix(#759): More menu survives open — pointer-events cascade from .message-hover-toolbar"
+}
+{
+  "n": 314,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/756-forum-dark-bundle-fallthrough",
+  "title": "fix(#756): forum default+dark bundle fallthrough + button alignment"
+}
+{
+  "n": 313,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/758-market-cap",
+  "title": "feat(#758): market cap in ticker popover (client)"
+}
+{
+  "n": 312,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/754-tiktok-click-to-play",
+  "title": "feat(#754): TikTok click-to-play — web parity for the oembed card"
+}
+{
+  "n": 311,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/757-webkit-mermaid-labels",
+  "title": "fix(#757): engine-agnostic SVG label styling (WebKit<619 drops setProperty-important) + revive render-contract e2e tripwire"
+}
+{
+  "n": 310,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/755-url-suppress-actions",
+  "title": "feat(#755): suppress raw URLs under embed cards + Copy/Open actions on every card"
+}
+{
+  "n": 309,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/753-notification-deeplink",
+  "title": "fix(#753): notification clicks deep-link to the message/reply"
+}
+{
+  "n": 308,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/752-accent-fallback",
+  "title": "feat(#752): accent-tinted server fallback (web contract mirror)"
+}
+{
+  "n": 307,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/751-chip-tooltip",
+  "title": "fix(#751): reaction chip reactor tooltip (web parity)"
+}
+{
+  "n": 306,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/742-theme-p3",
+  "title": "fix(#742): theme P3 nits — landing bg fallback, lightbox close, mermaid remap check, hover derivation"
+}
+{
+  "n": 305,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/741-theme-p2",
+  "title": "fix(#741): theme P2 clusters — C-02/04/06/07/08/09/10/13/16/17 + C-19 residual (C-14/15/18/22 verified cured)"
+}
+{
+  "n": 303,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/750-hero-slogan",
+  "title": "feat(#750): move slogan into hero — purple subtitle, remove bottom bridge (client)"
+}
+{
+  "n": 302,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/749-logo-revert",
+  "title": "fix(#749): remove in-UI logo (web nav is text) — brand art belongs in favicon/app icon"
+}
+{
+  "n": 300,
+  "state": "closed",
+  "merged": true,
+  "ref": "chore/new-slogan",
+  "title": "chore: new slogan — \"Good conversations shouldn't disappear — Flip turns your best chats into lasting discussions.\""
+}
+{
+  "n": 299,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/746-server-splash",
+  "title": "fix(#746): server splash landing — web-matched scaling + centering"
+}
+{
+  "n": 298,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/740-theme-p1",
+  "title": "fix(#740): theme P1 clusters — role dots, mention chips, footnote targets, synthesis hint, poll colors"
+}
+{
+  "n": 297,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/739-root-token-context",
+  "title": "fix(#739): context-correct root token snapshot — stop poisoning documentElement readers"
+}
+{
+  "n": 296,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/737-server-context-nav",
+  "title": "fix(#737): chat↔forum nav preserves the selected server context (web #500 parity)"
+}
+{
+  "n": 295,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/721-ticker-convergence",
+  "title": "fix(#721): tickers v2 — hljs re-render race strands chips"
+}
+{
+  "n": 294,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/729-youtube-parity",
+  "title": "fix(#729): YouTube embed — web-exact DOM/styling/params"
+}
+{
+  "n": 293,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/292-tsc-test-types",
+  "title": "fix: tsc errors in clipboardText.test.ts breaking npm run build (post-#292)"
+}
+{
+  "n": 292,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/726-copy-feedback",
+  "title": "fix(#726): copy feedback on every path — throw on failure, error toast"
+}
+{
+  "n": 291,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/728-keychain-free-testing",
+  "title": "feat(#728): keychain-free test auth (gated shim) + stable dev signing identity"
+}
+{
+  "n": 290,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/725-server-icon-fallback",
+  "title": "fix(#725): one theme-bundle-driven server-icon fallback across all surfaces"
+}
+{
+  "n": 289,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/694-phase2-rich-cards",
+  "title": "feat(#694): phase 2 — rich Twitter/Instagram/TikTok cards via /api/v1/embeds"
+}
+{
+  "n": 287,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/687-server-picker-landing",
+  "title": "fix(#687): /chat lands on the server picker (web parity) — remove single-server auto-enter"
+}
+{
+  "n": 286,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/721-tickers",
+  "title": "fix(#721): real ticker rendering — visible rows, web-parity chip/chart + pop-out"
+}
+{
+  "n": 285,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/722-724-sweep-smalls",
+  "title": "fix(#722,#723,#724): sweep smalls — dedupe embed cards, Esc closes subforum modal, remove invented per-reply Block"
+}
+{
+  "n": 284,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/720-ai-message-truncation",
+  "title": "fix(#720): render @flip AI messages in full — remove bubble container and body clamp"
+}
+{
+  "n": 283,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/719-mermaid-bundle-tokens",
+  "title": "fix(#719): mermaid consumes live theme-bundle tokens + re-themes on change"
+}
+{
+  "n": 282,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/682-title-single-writer",
+  "title": "fix(#682): single-writer document.title manager"
+}
+{
+  "n": 281,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/280-unused-decl",
+  "title": "fix: remove merge-artifact unused declaration breaking tsc -b (post-#280 rebase)"
+}
+{
+  "n": 280,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/716-rust-refresh-mutex",
+  "title": "fix(#716): Rust-side mutex serializes token refresh across Tauri windows"
+}
+{
+  "n": 279,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/713-copy-flip-link",
+  "title": "feat(#713): Copy flip-link in message context menu"
+}
+{
+  "n": 278,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/688-thread-surface",
+  "title": "fix(#688): forum thread surface web parity (meta order, mod toolbar, reply deep-links)"
+}
+{
+  "n": 277,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/715-subforum-admin-contract",
+  "title": "refactor(#715): remove invented SubforumAdminPage (no web CRUD backend)"
+}
+{
+  "n": 276,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/687-picker-nav-batch",
+  "title": "fix(#687): emoji grid layout, nav cluster mobile click-dead, server-picker nav reachability"
+}
+{
+  "n": 275,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/678-composer-remount",
+  "title": "fix(#678): stop full-Composer remount on room load-storm (popover state survives)"
+}
+{
+  "n": 273,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/685-theme-persist",
+  "title": "fix(#685): persist theme-bundle selection across full reloads"
+}
+{
+  "n": 271,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/686-refresh-singleflight",
+  "title": "fix(#686): single-flight token refresh + backoff + dead-session cutoff"
+}
+{
+  "n": 270,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/708-burst-custom-art",
+  "title": "fix(#708): reaction burst clones custom-emote art instead of unicode fallback"
+}
+{
+  "n": 269,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/707-create-subforum",
+  "title": "feat(#707): admin-only create-subforum UI (web #706 parity)"
+}
+{
+  "n": 267,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/690-global-scaling",
+  "title": "fix(#690): global oversized scaling — replace bare h1-h6 rules with preflight reset"
+}
+{
+  "n": 266,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/704-logo-wordmark",
+  "title": "fix(#704): add FlipLogoMark wordmark to nav button (web favicon parity)"
+}
+{
+  "n": 265,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/694-social-embeds",
+  "title": "feat(#694): social embeds parity — YouTube + Instagram/TikTok in MarkdownRenderer"
+}
+{
+  "n": 264,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/683-684-forum-palette-titles",
+  "title": "fix(#683,#684): forum world palette + visible titles"
+}
+{
+  "n": 263,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/ticker-ranges-6m-ytd",
+  "title": "feat(#705): ticker range tabs — swap 3M→6M, 6M→YTD (web parity)"
+}
+{
+  "n": 262,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/703-rip-chat-bubble",
+  "title": "fix(#703,#702): rip the chat-message bubble container — flat rows + web-parity code blocks"
+}
+{
+  "n": 261,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/692-693-client-ui",
+  "title": "fix(#692,#693): drop Forum h1, fix server-name label scale, wrap code lines (user rulings)"
+}
+{
+  "n": 260,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/td-a3-async",
+  "title": "fix(tests): a3-async — warm heavy import graphs, derived per-file budgets for full-suite load flakes, deterministic data-export loading window"
+}
+{
+  "n": 259,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/252-253-composer-p1s",
+  "title": "fix(#252,#253): composer picker uploads nothing (live FileList reset) + draft echo wipes attachments / reverses typing"
+}
+{
+  "n": 258,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/td-a1-timing",
+  "title": "fix(tests): a1-timing — de-flake perf-baseline/spring (#106), ThemeContext (#131), ReactionPicker (#156), ReactionBar/VirtualizedMessageList (#214)"
+}
+{
+  "n": 257,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/td-b3-shell",
+  "title": "fix(tests): b3-shell — hermetic fetch + arrival-path delivery un-flake the tab-title badge suite (#222, #142); #71/#88/#29 closed with evidence"
+}
+{
+  "n": 255,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/250-toolbar-click-swallow",
+  "title": "fix(#250): composer toolbar icon remounts no longer swallow real mouse clicks (hoist icons to module scope)"
+}
+{
+  "n": 254,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/td-a2-pollution",
+  "title": "fix(tests): a2-pollution — src/auth full-suite flakes (closes #196); #177 closed as obsolete"
+}
+{
+  "n": 251,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/663-664-test-fixes",
+  "title": "fix(#663,#664): emoji-insert regression + refresh stale integration contracts"
+}
+{
+  "n": 247,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/635-token-burndown",
+  "title": "fix(#635): frozen token burndown — live CSS vars everywhere + guard warn→error"
+}
+{
+  "n": 246,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/665-members-action-menu",
+  "title": "feat(#665): members-panel action menu + mute controls (web parity)"
+}
+{
+  "n": 245,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/223-newthread-mention-chips",
+  "title": "fix(#223): NewThread preview mention tests — regular @username fixture, pin bare-@everyone-stays-text parity"
+}
+{
+  "n": 244,
+  "state": "closed",
+  "merged": true,
+  "ref": "chore/respectful-probe-naming",
+  "title": "chore(native-smoke): respectful neutral naming for the probe field"
+}
+{
+  "n": 242,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/654-no-body-truncation",
+  "title": "fix(#654/#659/#660/#661): feed contract batch 2 — no body truncation, working sticky author header, un-wedged return pill, web-true mermaid scale"
+}
+{
+  "n": 241,
+  "state": "closed",
+  "merged": true,
+  "ref": "revert/656-avatar-faces-v1-client",
+  "title": "revert(flip#656): restore server-stored avatar previews — remove the local v2 face generator (mirror of web revert)"
+}
+{
+  "n": 240,
+  "state": "closed",
+  "merged": true,
+  "ref": "revert/657-emote-pack-client",
+  "title": "revert(#657): restore pre-#227 reaction emotes (user veto of the flip-avatar pack, client mirror)"
+}
+{
+  "n": 238,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/636-client-profile",
+  "title": "feat(#636): enriched profile page — two-column activity, Follow, Block, mod Kick/Ban"
+}
+{
+  "n": 235,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/639-client-mutes",
+  "title": "feat(#639): client mutes — /mute //unmute on the server mutes API + muted composer state"
+}
+{
+  "n": 233,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/652-650-moderation-followups",
+  "title": "fix(#652,#650): /clear //delete on the real bulk-delete contract + blocked-author rail-preview masking"
+}
+{
+  "n": 231,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/603-619-visual-smalls",
+  "title": "fix(#603,#619): rail geometry parity across chat/forum + stray Forum literal audit"
+}
+{
+  "n": 230,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/655-chatroom-contract",
+  "title": "fix(#655): rebuild chat-room feed to the web DOM contract — de-sticky meta, drop invented chrome, mermaid web parity"
+}
+{
+  "n": 229,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/609-mermaid-paint-convergence",
+  "title": "fix(#609): mermaid paint convergence — svg cache + mutation-driven re-apply (the real root cause)"
+}
+{
+  "n": 228,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/609-mermaid-single-chunk",
+  "title": "fix(#609): single mermaid-engine chunk — eliminate the WKWebView dynamic-import burst stall"
+}
+{
+  "n": 227,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/643-avatar-emotes",
+  "title": "feat(#643): avatar-style SVG reaction emotes on reaction surfaces (client mirror)"
+}
+{
+  "n": 226,
+  "state": "closed",
+  "merged": true,
+  "ref": "docs/keychain-only-token-source",
+  "title": "docs: native token source is keychain-ONLY — fix misleading fallback comment + native-smoke auth requirements"
+}
+{
+  "n": 225,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/647-blocks-api",
+  "title": "feat(#647): server-backed user blocks — replace localStorage store with /api/v1/blocks"
+}
+{
+  "n": 224,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/637-ruled-rips",
+  "title": "fix(#637): USER-RULED rips — kaomoji/GIF slash commands + full-page /search; role-gate moderator slash commands"
+}
+{
+  "n": 221,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/646-special-mention-gating",
+  "title": "fix(#646): role-gate @everyone/@here/@channel — member autocomplete hidden, inbound chips only for moderator+ authors (web PR #418 parity)"
+}
+{
+  "n": 220,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/avatar-picker-bugs",
+  "title": "fix(#641)+feat(#642): avatar picker bugs + username-seeded v2 system (client mirror)"
+}
+{
+  "n": 219,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/644-reaction-animations",
+  "title": "feat(#644): reaction-chip animation redesign — press, flip, grace notes (web parity)"
+}
+{
+  "n": 218,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/632-rip-notifications-page",
+  "title": "fix(#632): RIP the client-only full-page /notifications — the nav-bell popover is the ONLY notifications surface (web parity)"
+}
+{
+  "n": 217,
+  "state": "closed",
+  "merged": true,
+  "ref": "test/wdio-desktop-e2e-manual-only",
+  "title": "test: fix stale wdio-config trigger assertion for manual-only desktop-e2e.yml"
+}
+{
+  "n": 216,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/630-composer-parity",
+  "title": "fix(#630): composer + pickers parity vs web composer/1 (popover anchoring, GIF send/recents/folders/paging, preview-eye placement, placeholder, docked poll panel, unified emoji picker)"
+}
+{
+  "n": 215,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/602-633-parity-batch",
+  "title": "Parity batch: room-list previews (#602) + members roles / mention chips / pin menu (#633a-c)"
+}
+{
+  "n": 213,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/593-adhoc-signing",
+  "title": "fix(#593): stock `npm run tauri build` is launchable — plain ad-hoc signing, no manual re-sign"
+}
+{
+  "n": 212,
+  "state": "closed",
+  "merged": true,
+  "ref": "ci/self-hosted-only",
+  "title": "ci: self-hosted runner is the CI of record — macOS GitHub-hosted workflows manual-only"
+}
+{
+  "n": 211,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/628-settings-parity",
+  "title": "fix(#628): settings parity vs web /account/settings — live accent underline, no tab clip/wrap, web-mirrored tab structure"
+}
+{
+  "n": 208,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/629-rail-message-search",
+  "title": "fix(#629): chat-rail search is server-side MESSAGE search, not a room-name filter"
+}
+{
+  "n": 207,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/609-mermaid-native",
+  "title": "fix(#609): mermaid renders raw text on native Tauri — boot-preload the mermaid chunk closure + surface load stalls inline"
+}
+{
+  "n": 206,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/631-forum-chrome",
+  "title": "fix(#631): forum/rail chrome parity — accent New Thread CTA, Create Room button, delete client-only inventions"
+}
+{
+  "n": 205,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/627-world-component-vars",
+  "title": "fix(#627): inline world/feature component vars as literals (forum chrome + synthesis color on old WebKit)"
+}
+{
+  "n": 204,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/597-gravity-flip-gate",
+  "title": "fix(#597): rip out ThresholdZone — invented forum banner that played the gravity-flip flash"
+}
+{
+  "n": 202,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/nav-live-tokens",
+  "title": "fix(#626): top-nav paints live CSS vars, not the frozen token snapshot"
+}
+{
+  "n": 201,
+  "state": "closed",
+  "merged": true,
+  "ref": "test/parity-guards",
+  "title": "test(parity): standing guards from the 2026-06-09 visual audit (frozen-token lint, render contract, native-smoke rig, parity checklist)"
+}
+{
+  "n": 200,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/webkit-custom-prop-cascade-540",
+  "title": "fix(#540): inline JS-resolved root tokens so the selected bundle applies in WKWebView"
+}
+{
+  "n": 199,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/theme-cascade-layer-defect",
+  "title": "fix(theme): preserve boot-injected bundle style during the pre-fetch window (theme selection reverts to brand purple)"
+}
+{
+  "n": 198,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/theme-switch-reapply",
+  "title": "fix(theme): boot bundle rehydration uses CORS-aware fetch — the real \"theme switching does nothing\" root cause"
+}
+{
+  "n": 197,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/auth-boot-keychain-hang",
+  "title": "fix(auth): bound the boot keychain read so a re-signed WKWebView can't hang the app (the #1 native bug)"
+}
+{
+  "n": 195,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/wkwebview-message-overlap-remeasure",
+  "title": "fix(chat): re-measure virtual rows on async growth so WKWebView can't overlap messages (#629)"
+}
+{
+  "n": 194,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/chat-meta-compact-stacking-615",
+  "title": "fix(chat): compact message rows — sticky author meta floated inside the virtualized (transformed) row (#615)"
+}
+{
+  "n": 193,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/chat-render-bundle-610-614",
+  "title": "fix(chat): web-parity render bundle — scaling, room-list icons, meta position, order, markdown (#610-#614)"
+}
+{
+  "n": 192,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/tauri-real-upload-progress",
+  "title": "fix(uploads): real upload progress in the Tauri shell (XHR instead of HTTP-plugin fetch)"
+}
+{
+  "n": 191,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-forum-server-route",
+  "title": "fix(#587): client per-server forum URL /forum/server/:serverId (web parity)"
+}
+{
+  "n": 190,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/theme-bundle-boot-apply-parity",
+  "title": "fix(theme): apply user's server-side selected_theme_id bundle on boot (web parity)"
+}
+{
+  "n": 189,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-scaling-mermaid-607-609",
+  "title": "fix(#607,#609): chat message body base font-size + mermaid render"
+}
+{
+  "n": 188,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-chat-prose-parity-607",
+  "title": "fix(#607): chat message prose byte-level parity with the web"
+}
+{
+  "n": 187,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-media-upload-ux-604-605",
+  "title": "fix(#604,#605): real multipart media uploads + all-family accept + mobile picker + rich in-composer preview"
+}
+{
+  "n": 186,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-media-inline-render-606",
+  "title": "feat(#606): inline flip-styled AUDIO player + rich media-render dispatch"
+}
+{
+  "n": 185,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-forum-sidebar-parity",
+  "title": "fix(#601): forum server rail is the SAME flush far-left rail as chat"
+}
+{
+  "n": 184,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-msg-flat-rows-meta-above",
+  "title": "fix(#594/#595): de-bubble chat message rows to web-parity flat rows"
+}
+{
+  "n": 183,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-theme-apply",
+  "title": "fix(#596): deterministic theme-bundle cascade order (single authority)"
+}
+{
+  "n": 182,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-rip-red-flash",
+  "title": "fix(#597): rip the red flash out of view changes (gravity-flip overlay removed from core nav)"
+}
+{
+  "n": 181,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-jump-to-latest",
+  "title": "fix(#600): web-parity \"Return to latest\" jump-to-bottom pill"
+}
+{
+  "n": 180,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/tauri-local-build-adhoc-signing-525",
+  "title": "fix(#525): tauri.conf macOS signingIdentity '-' so local builds don't fail codesign"
+}
+{
+  "n": 179,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-mermaid-theme-tokens-590",
+  "title": "fix(#590): mirror web mermaid cluster/edge theme tokens"
+}
+{
+  "n": 178,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-scroll-scaling-512-513",
+  "title": "fix(client): residual chat scroll + safe-area scaling parity (#512/#513)"
+}
+{
+  "n": 176,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-parity-forum-settings-532",
+  "title": "test(parity): close coverage gaps for forum/settings/auth parity (#532/#514/#518)"
+}
+{
+  "n": 175,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/mermaid-edgelabel-mirror",
+  "title": "fix(mermaid): edge/link labels legible in both modes (mirror wahargis/flip #404)"
+}
+{
+  "n": 174,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/mermaid-longtext-mirror",
+  "title": "fix(mermaid): keep diagram text legible at any length (mirror wahargis/flip #395)"
+}
+{
+  "n": 173,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/poll-dismiss-keeps-draft",
+  "title": "feat(#581): poll click-off/Escape keep the draft; X/Cancel discard"
+}
+{
+  "n": 172,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/poll-close-escape",
+  "title": "fix(#581): enforce + harden create-poll close (X/Cancel/backdrop/Escape)"
+}
+{
+  "n": 171,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/mention-candidates-participants",
+  "title": "feat(#579): widen @-mention candidates to recent participants"
+}
+{
+  "n": 170,
+  "state": "closed",
+  "merged": true,
+  "ref": "parity/chat-chrome",
+  "title": "fix(chat-chrome): strict web parity — server rail default, room sidebar width/collapse, header buttons"
+}
+{
+  "n": 169,
+  "state": "closed",
+  "merged": true,
+  "ref": "parity/forum",
+  "title": "fix(parity): forum sort/CTA/breadcrumb/poll web-parity (#577 forum cluster)"
+}
+{
+  "n": 168,
+  "state": "closed",
+  "merged": true,
+  "ref": "parity/settings",
+  "title": "fix(settings): strict web parity for the Appearance pane (parity #6,#7,#17,#19,#27,#28,#29)"
+}
+{
+  "n": 167,
+  "state": "closed",
+  "merged": true,
+  "ref": "parity/message",
+  "title": "fix(parity): message presentation — drop invented AI pill, web-parity reply context + reactor avatar (#577)"
+}
+{
+  "n": 166,
+  "state": "closed",
+  "merged": true,
+  "ref": "parity/auth",
+  "title": "fix(auth): web-parity on forgot-password success banner, register inputs, reset footer"
+}
+{
+  "n": 165,
+  "state": "closed",
+  "merged": true,
+  "ref": "parity/avatar",
+  "title": "fix(parity #5): typing-indicator avatar uses the self-healing geometric SVG"
+}
+{
+  "n": 164,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/audit-p2p3-functional",
+  "title": "fix(parity): P2 functional drain from hostile audit"
+}
+{
+  "n": 163,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/audit-p2p3-drain",
+  "title": "fix(parity): P3 visual-polish drain from hostile audit"
+}
+{
+  "n": 162,
+  "state": "closed",
+  "merged": true,
+  "ref": "perf/message-shape-projection",
+  "title": "perf(sync): project the messages shape columns, dropping search_vector (PERF-CONN #16)"
+}
+{
+  "n": 161,
+  "state": "closed",
+  "merged": true,
+  "ref": "perf/animation-jank",
+  "title": "perf(anim): eliminate animation/interaction jank (PERF-ANIM cluster + P3 tail)"
+}
+{
+  "n": 160,
+  "state": "closed",
+  "merged": true,
+  "ref": "perf/render-rest",
+  "title": "perf(render): virtualization + Flip-avatar parity (PERF-RENDER #158+#159 rescue)"
+}
+{
+  "n": 159,
+  "state": "closed",
+  "merged": false,
+  "ref": "perf/presentation-avatar",
+  "title": "fix(#572): Flip (AI) avatar matches the web's circular geometric treatment"
+}
+{
+  "n": 158,
+  "state": "closed",
+  "merged": false,
+  "ref": "perf/virtualization",
+  "title": "perf(render): fix virtualization — stable keys, scrollMargin, no reflow, bounded scroll writes (PERF-RENDER #569)"
+}
+{
+  "n": 157,
+  "state": "closed",
+  "merged": true,
+  "ref": "perf/render-churn",
+  "title": "perf(render): eliminate message-feed re-render churn (PERF-RENDER #569)"
+}
+{
+  "n": 155,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/session-expiry-redirect-loop",
+  "title": "fix(#576): bound the session-expiry redirect — stop exponentially-nested /login URLs"
+}
+{
+  "n": 154,
+  "state": "closed",
+  "merged": true,
+  "ref": "perf/cold-boot-runtime",
+  "title": "perf(boot): native instant-launch — optimistic hydration + window-on-first-paint + reduced-motion skeleton (#567)"
+}
+{
+  "n": 153,
+  "state": "closed",
+  "merged": true,
+  "ref": "perf/boot-graph",
+  "title": "perf(boot): code-split chat boot off forum/admin/settings + real boot-graph gates (#567)"
+}
+{
+  "n": 152,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/unknown-user-enrichment",
+  "title": "fix(#573): resolve non-member chat authors instead of perpetual \"Unknown User\""
+}
+{
+  "n": 151,
+  "state": "closed",
+  "merged": true,
+  "ref": "perf/connection-storm",
+  "title": "perf(conn): eliminate the Electric/WebSocket connection storm (PERF-CONN #568)"
+}
+{
+  "n": 150,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/reply-preview-author",
+  "title": "fix(#571): reply-preview author renders [deleted user] (not Unknown User) via getDisplayName"
+}
+{
+  "n": 149,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/auth-route-neutral-world",
+  "title": "fix(#540): auth routes render neutral Flip purple, not chat-world red"
+}
+{
+  "n": 148,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/p2-functional-batch",
+  "title": "fix: drain P2 FUNCTIONAL flip-client bugs from hostile audit (unread source, push auth, notif room-name, phantom PATCH, dead code)"
+}
+{
+  "n": 147,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/forum-sort-stale-docs",
+  "title": "fix(forum): web-parity Hot/Unanswered sort + drop stale settings docs & dead presence sidebar"
+}
+{
+  "n": 146,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/url-contract-aasa-parity",
+  "title": "fix(deeplinks): align client URL contract to web router + AASA (Root Theme 8)"
+}
+{
+  "n": 145,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/theme9-tokens-iso",
+  "title": "fix(theme): hardcoded non-message colors → web design tokens (Root Theme 9)"
+}
+{
+  "n": 144,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/theme-default-bundle-and-allowlist-a03ed",
+  "title": "fix(theme): default bundle only on is_default + bundle-CSS token allowlist (#547, Root Theme 10)"
+}
+{
+  "n": 143,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/delete-invented-ui-theme7",
+  "title": "fix: delete invented UI the web omits + gate admin-only controls (audit theme 7)"
+}
+{
+  "n": 140,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/synthesis-provenance-client",
+  "title": "fix(synthesis): real feedback_type + synthesis_run_id contract; correct digest link; drop fabricated card (Theme 6)"
+}
+{
+  "n": 139,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/chat-message-presentation",
+  "title": "fix(chat): flat chronological message presentation matching the web app"
+}
+{
+  "n": 138,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/avatar-fallback-parity",
+  "title": "fix(#557): centralize avatar fallback on the server's geometric SVG (Root Theme 2)"
+}
+{
+  "n": 136,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/554-unify-auth-state-iso",
+  "title": "fix(#554): unify split auth state behind one atomic forceLogout"
+}
+{
+  "n": 135,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/media-upload-contract-iso",
+  "title": "fix(#553): match the real media-upload server contract"
+}
+{
+  "n": 134,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/551-synthesis-filtered-not-bot-identity",
+  "title": "fix(#551): stop synthesis_filtered from impersonating the Flip AI bot"
+}
+{
+  "n": 133,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/552-typing-protocol-mismatch",
+  "title": "fix(#552): align typing indicator to the server's real `typing` protocol"
+}
+{
+  "n": 132,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/theme-bundle-surface-intermingle",
+  "title": "fix(theme): stop flip-world-vars pinning a :root surface snapshot that intermingled theme bundles"
+}
+{
+  "n": 130,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/548-session-dead-redirect",
+  "title": "fix(#548): redirect to /login when an authenticated 401 can't be refreshed"
+}
+{
+  "n": 129,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/duplicate-connection-banner",
+  "title": "fix: remove duplicate connection banner (SyncBanner + OfflineBanner both rendered)"
+}
+{
+  "n": 128,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/forum-shape-token-race",
+  "title": "fix(#546/#528): forum & membership shape hooks lose the electric-token race → no data"
+}
+{
+  "n": 127,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/message-stream-token-race",
+  "title": "fix(#545): load chat messages when the electric token hasn't propagated yet (empty-list race)"
+}
+{
+  "n": 126,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/user-channel-topic",
+  "title": "fix(#544): join the user channel as user:<id>, not the :notifications pubsub topic"
+}
+{
+  "n": 125,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/phoenix-heartbeat-1011",
+  "title": "fix(#543): Phoenix heartbeat wire-format — stop the socket closing 1011 every ~25s"
+}
+{
+  "n": 124,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-parity-batch6",
+  "title": "fix(#542): service worker only in production browser builds (stop serving stale cached assets in dev/Tauri)"
+}
+{
+  "n": 123,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-parity-batch5",
+  "title": "fix(#540): login/auth pages use the neutral Flip brand default (not the persisted bundle accent)"
+}
+{
+  "n": 122,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-parity-batch4",
+  "title": "fix(#516/#539): rail expand-collapse works on desktop + remove the PWA install prompt entirely"
+}
+{
+  "n": 121,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-parity-batch3",
+  "title": "fix(#536/#538): graceful error/connection degrade — no logout-on-blip, no jarring forum error screen"
+}
+{
+  "n": 120,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-parity-batch2",
+  "title": "fix: client parity batch 2 — message stacking, theme namespace bridge, presence collapse+field, mark-read best-effort"
+}
+{
+  "n": 119,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/installbanner-duphome",
+  "title": "fix(#534/#535): suppress PWA install banner in Tauri + remove duplicate Home in chat rail"
+}
+{
+  "n": 118,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-polish-batch",
+  "title": "fix(#532/#529): flat cards + tight geometry + emoji-SVG finish + members start-collapsed"
+}
+{
+  "n": 117,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/color-cascade-sweep",
+  "title": "fix(#532 #1): color-cascade sweep — ~60 hardcoded literals → live vars/color-mix (the 'feels like a different app' root cause)"
+}
+{
+  "n": 116,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/activestate-votecolor",
+  "title": "fix(#532): active/selected state solid-fill parity + neutral vote-score color (web recipes)"
+}
+{
+  "n": 115,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/footer-thememenu-parity",
+  "title": "fix(#530/#527): remove bottom Flip footer bar + dedup the theme-popover light/dark selector (web parity)"
+}
+{
+  "n": 114,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-layout-chain",
+  "title": "fix(#513/#512/#508-B2): real layout chain — scaling self-subtraction, scroll/PTR, double scrollbar, brand-logo flip"
+}
+{
+  "n": 113,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/theme-all-surfaces",
+  "title": "fix(#511): theme-bundle applies on ALL surfaces — specificity parity with web (light+dark) + config.base"
+}
+{
+  "n": 112,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/emoji-to-svg",
+  "title": "fix(#515): remove all 41 chrome emoji glyphs → heroicon SVGs via the token system"
+}
+{
+  "n": 111,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/rendering-throughout",
+  "title": "fix(#509): message/markdown rendering parity throughout — kill ungated drop-cap/justify, re-key prose to all paths"
+}
+{
+  "n": 110,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-nav-menu-dedupe",
+  "title": "fix(#510): nav/menu dedupe + heroicon parity (remove Copy-link + dead ServerContextMenu; add Add-reaction/Quote-to-forum; emoji→SVG)"
+}
+{
+  "n": 109,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/theme-bundle-apply",
+  "title": "fix(#511): theme-bundle selection applies + persists (cascade order + rehydration)"
+}
+{
+  "n": 108,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/client-unbreak-phase1",
+  "title": "fix(#508/#509/#512/#513): client visual unbreak — window/scaling, scroll chain, post-login routing, markdown rendering"
+}
+{
+  "n": 107,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/ci-debt-cleanup",
+  "title": "fix(#450): clear 6 CI-debt failures (+ real / -search-shortcut bug); green-able gate"
+}
+{
+  "n": 105,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/export-copy",
+  "title": "fix(#466 client): data-export copy — JSON email (not ZIP), expanded contents list"
+}
+{
+  "n": 104,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/snap-p3-leftovers",
+  "title": "perf(#505): final #485 snappiness P3 leftovers — hover-prefetch, inline-style hoist, lazy auth pages"
+}
+{
+  "n": 103,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/ci-gate-hang",
+  "title": "fix(#487): social-link regex infinite loop — hangs CI gate AND freezes client UI on any IG/TikTok/X link"
+}
+{
+  "n": 102,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/cold-boot-shell",
+  "title": "perf(#493): cold-boot — branded layout-matched shell + optimistic user hydration"
+}
+{
+  "n": 101,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/forum-server-sidebar-parity",
+  "title": "fix(#501): forum mirrors chat's expandable server sidebar + nav server-context (parity)"
+}
+{
+  "n": 99,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/escape-cancels-reply",
+  "title": "fix(#502): Escape cancels an in-progress reply (client chat composer)"
+}
+{
+  "n": 98,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/reaction-tooltip-viewport",
+  "title": "fix(#503): reaction 'who reacted' tooltip stays on-screen in narrow windows"
+}
+{
+  "n": 97,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/theme-tooling-regen-gate",
+  "title": "feat(#480): theme tooling — generate base seed from canonical snapshot + CI regen-diff gate"
+}
+{
+  "n": 96,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/theme-sot-client-consume",
+  "title": "feat(#479): consume GET /api/v1/themes/base + restore the [data-theme=light] cascade"
+}
+{
+  "n": 95,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/snappiness-batch-a",
+  "title": "perf(client): snappiness batch A — instant cached paints + auto-save + render polish"
+}
+{
+  "n": 94,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/token-drift-correct",
+  "title": "fix(theme): correct drifted no-bundle fallback palette to match live web CSS"
+}
+{
+  "n": 93,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/toast-parity",
+  "title": "fix(ui): toast matches web flash treatment (semi-transparent + ring, w-80, p-3)"
+}
+{
+  "n": 92,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/ux-parity-batch",
+  "title": "fix(ui): UX/aesthetic parity batch (light surface, typing wave, checkboxes, modal radius, polish)"
+}
+{
+  "n": 91,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/data-export-copy",
+  "title": "fix(settings): correct DataExportSection copy (JSON attachment, not ZIP/download link)"
+}
+{
+  "n": 90,
+  "state": "closed",
+  "merged": true,
+  "ref": "chore/audit-batch2",
+  "title": "chore(audit): elevation→web parity + Apple-OAuth tests + idle-prefetch markdown libs"
+}
+{
+  "n": 89,
+  "state": "closed",
+  "merged": true,
+  "ref": "chore/cruft-triage-2",
+  "title": "chore(audit): remove confirmed client cruft (RSS feeds + bookmarklet)"
+}
+{
+  "n": 87,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/tauri-linux-build",
+  "title": "fix(ci): cfg-gate macOS-only on_web_content_process_terminate for the Linux build"
+}
+{
+  "n": 86,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/mermaid-xss-clean",
+  "title": "fix(security): escape user mermaid title — stored XSS (clean carve of #78)"
+}
+{
+  "n": 85,
+  "state": "closed",
+  "merged": true,
+  "ref": "test/electric-401-refresh",
+  "title": "test(electric): 401-refresh coverage + untrack node_modules symlink (#84 wart)"
+}
+{
+  "n": 84,
+  "state": "closed",
+  "merged": true,
+  "ref": "chore/remove-forum-cruft-a11y",
+  "title": "chore(audit): remove forum cruft (/following, /reading-list) + fix NewThread focus-ring a11y"
+}
+{
+  "n": 83,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/newthread-parity",
+  "title": "feat(forum): NewThread media toolbar (upload/GIF/emoji) + persist poll draft"
+}
+{
+  "n": 82,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/parity-batch1",
+  "title": "feat(parity): ticker #434 web port + native-client fixes"
+}
+{
+  "n": 81,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/tauri-macos-webview-cfg",
+  "title": "fix(ci): cfg-gate macOS-only Tauri WKWebView callback for the Linux build"
+}
+{
+  "n": 80,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/pwa-console-log",
+  "title": "fix(ci): route production console.log through the logger"
+}
+{
+  "n": 79,
+  "state": "closed",
+  "merged": true,
+  "ref": "chore/ci-self-hosted-runner",
+  "title": "ci: run flip-client CI on the self-hosted atari-homelab runner"
+}
+{
+  "n": 78,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/mermaid-title-xss",
+  "title": "fix(security): escape user mermaid title — stored XSS"
+}
+{
+  "n": 77,
+  "state": "closed",
+  "merged": true,
+  "ref": "chore/harness-test-cleanup-444",
+  "title": "test(#444): relocate jsdom mobile/PWA/PDF theater to Playwright; fix logic units"
+}
+{
+  "n": 76,
+  "state": "closed",
+  "merged": true,
+  "ref": "integrate/345-onto-main",
+  "title": "Integrate the parked #345 body of work onto current main (snappy/parity/features) + keep main's M10 fixes"
+}
+{
+  "n": 75,
+  "state": "closed",
+  "merged": true,
+  "ref": "docs/m10-validation-derived-deliverables",
+  "title": "docs(M10): preserve blocked-issues spec + derive per-assertion user-testing + override synthesis"
+}
+{
+  "n": 74,
+  "state": "closed",
+  "merged": true,
+  "ref": "test/mobile-viewport-playwright-442",
+  "title": "test(mobile): Playwright device-emulation coverage for 4 unverified mobile assertions (VAL-MOBILE-001/015/016, VAL-CROSS-013)"
+}
+{
+  "n": 73,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/search-shortcut-crash-440",
+  "title": "fix(search): error-isolate keyboard search-open so a bad render can't blank the app (VAL-CROSS-022)"
+}
+{
+  "n": 72,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/landing-dataworld-race-441",
+  "title": "fix(VAL-CROSS-007): route owns global data-world (landing accent race)"
+}
+{
+  "n": 70,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/web-parity-345",
+  "title": "feat(#345): web-parity — room ai_briefing admin field + code-line/mermaid parity tests"
+}
+{
+  "n": 69,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat-votes-shape-reauthor",
+  "title": "feat(forum): consume /sync/votes Electric shape (reauthor of audit follow-up C / closed #54)"
+}
+{
+  "n": 68,
+  "state": "closed",
+  "merged": true,
+  "ref": "chat-parity-3307f35",
+  "title": "fix(chat-parity): focus composer on mount, trailing space after emoji, reply preview at 61 chars"
+}
+{
+  "n": 67,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix-stale-tests-26-27-29",
+  "title": "test: resolve remaining pre-existing failures (closes #26 #27 #29)"
+}
+{
+  "n": 66,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix-stale-tests-49-59",
+  "title": "test: fix tauri-http mock + stale assertions across pre-existing failing suites (closes #28 #30 #49 #56 #59)"
+}
+{
+  "n": 65,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-followup-J-admin-warnings",
+  "title": "feat(moderation): warnings tab on /admin/moderation (audit follow-up J)"
+}
+{
+  "n": 64,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-followup-I-admin-automod",
+  "title": "feat(moderation): automod CRUD on /admin/moderation (audit follow-up I)"
+}
+{
+  "n": 63,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-followup-K-admin-actions",
+  "title": "feat(moderation): actions audit log on /admin/moderation (audit follow-up K)"
+}
+{
+  "n": 62,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-followup-H-admin-mutes",
+  "title": "feat(moderation): mutes tab on /admin/moderation (audit follow-up H)"
+}
+{
+  "n": 61,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-followup-G-admin-bans",
+  "title": "feat(moderation): bans tab on /admin/moderation (audit follow-up G)"
+}
+{
+  "n": 60,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-followup-F-server-memberships-shape",
+  "title": "feat(chat): consume /sync/server_memberships Electric shape (audit follow-up F)"
+}
+{
+  "n": 58,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-followup-E-bookmark-folders-shape",
+  "title": "feat(forum): consume /sync/bookmark_folders Electric shape (audit follow-up E)"
+}
+{
+  "n": 57,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-followup-B-replies-shape",
+  "title": "feat(forum): consume /sync/replies Electric shape (audit follow-up B)"
+}
+{
+  "n": 55,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-followup-P-visual-ab-harness",
+  "title": "tooling: Playwright-based visual A/B harness (audit follow-up P)"
+}
+{
+  "n": 54,
+  "state": "closed",
+  "merged": false,
+  "ref": "audit-followup-C-votes-shape",
+  "title": "feat(forum): consume /sync/votes Electric shape (audit follow-up C)"
+}
+{
+  "n": 53,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-followup-L-server-stats",
+  "title": "feat(chat-server): show members count on hero (audit follow-up L)"
+}
+{
+  "n": 52,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-followup-S-global-subforums",
+  "title": "feat(forum): consume global subforums when no server selected (audit follow-up S)"
+}
+{
+  "n": 51,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-followup-M-llm-saved",
+  "title": "feat(llm-settings): persistent \"Saved Xs ago\" indicator (audit follow-up M)"
+}
+{
+  "n": 50,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-followup-D-bookmarks-shape",
+  "title": "feat(forum): consume /sync/bookmarks Electric shape (audit follow-up D)"
+}
+{
+  "n": 48,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-followup-N-max-tokens-min",
+  "title": "fix(llm-settings): max_tokens client min matches server validation (audit follow-up N)"
+}
+{
+  "n": 47,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-followup-O-new-threads-banner",
+  "title": "feat(forum): \"new threads available\" banner (audit follow-up O)"
+}
+{
+  "n": 46,
+  "state": "closed",
+  "merged": true,
+  "ref": "fix/audit-A-useSubreddits",
+  "title": "fix(forum): remove useSubreddits fabrication (audit #222 follow-up A)"
+}
+{
+  "n": 45,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-201-new-thread",
+  "title": "fix(new-thread): submit copy parity (audit #201)"
+}
+{
+  "n": 44,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-206-llm-settings",
+  "title": "feat(llm-settings): AI Reply Caps subsection (audit #206)"
+}
+{
+  "n": 43,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-205-account-settings",
+  "title": "feat(settings): AboutSection tab (audit #205)"
+}
+{
+  "n": 42,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-212-notifications-panel",
+  "title": "fix(notifications): unread dot uses purple accent (audit #212)"
+}
+{
+  "n": 41,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-203-digest",
+  "title": "fix(digest): synthesis digest header + empty state parity (audit #203)"
+}
+{
+  "n": 40,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-214-toasts-offline",
+  "title": "fix(toast): top-right + per-type dismiss policy (audit #214)"
+}
+{
+  "n": 39,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-197-chat-server",
+  "title": "feat(chat-server): hero card on server-selected view (audit #197)"
+}
+{
+  "n": 38,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-196-chat-picker",
+  "title": "fix(chat-picker): grid + initials + empty state parity (audit #196)"
+}
+{
+  "n": 37,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-193-register",
+  "title": "fix(register): restore input padding + match loading copy (audit #193)"
+}
+{
+  "n": 36,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-192-login",
+  "title": "fix(login): restore input padding + match loading copy (audit #192)"
+}
+{
+  "n": 35,
+  "state": "closed",
+  "merged": true,
+  "ref": "audit-191-landing",
+  "title": "fix(splash): scale wordmark + ambient glows (audit #191)"
+}
+{
+  "n": 34,
+  "state": "closed",
+  "merged": true,
+  "ref": "salvage-stash4-notif",
+  "title": "salvage: audit #194/#210/#218/#223 from stash@{4} after disk-fail"
+}
+{
+  "n": 33,
+  "state": "closed",
+  "merged": true,
+  "ref": "salvage-stash1-kbd",
+  "title": "docs(kbd): per-surface shortcuts in help modal (audit #213)"
+}
+{
+  "n": 32,
+  "state": "closed",
+  "merged": true,
+  "ref": "salvage-stash6-snapshot",
+  "title": "salvage: audit #195/#207/#216/#217 from stash@{6} after disk-fail"
+}
+{
+  "n": 31,
+  "state": "closed",
+  "merged": true,
+  "ref": "salvage-audit-204-profile",
+  "title": "fix(profile): align UserProfilePage with server contract (audit #204)"
+}
+{
+  "n": 25,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/remote-host-desktop-client",
+  "title": "feat: remote-host desktop client + brand assets"
+}
+{
+  "n": 24,
+  "state": "closed",
+  "merged": false,
+  "ref": "fix/bundled-bootstrap-index",
+  "title": "fix: add bundled bootstrap index.html so tauri build resolves frontendDist"
+}
+{
+  "n": 23,
+  "state": "closed",
+  "merged": true,
+  "ref": "feat/replace-with-tauri-stack",
+  "title": "feat: replace Capacitor scaffold with Tauri 2.x desktop/mobile shell"
+}
