@@ -879,16 +879,45 @@ def supervise_kind(+kind: String, source_root: String, entry: String, +attempt: 
     supervise_identity_matches(Tx.str_eq(current_key, key), kind, source_root, entry,
       attempt, keydir, key, started, names, cwd)
 
+# The child exited but the supervisor is still alive. A healthy supervisor
+# publishes its result and exits within a bounded fifty-poll reconciliation window;
+# a wedged supervisor never does, and its inherited lane descriptor would
+# hold the heavy lock forever (named failure: key 4cd0c3ca..., 2026-10-28).
+# Releasing here drains the lane; a late supervisor publication still lands
+# in the attempt directory and requester custody is unchanged.
+def watch_child_gone(+attempt: String, +supervisor_pid: U32, +grace: U32) -> IO(Unit):
+  do IO<Unit>:
+    active_present : Bool <- regular(attempt ++ "/active")
+    Bool.pick(IO(Unit), Bool.or(U32.is_eq(grace, 0), Bool.not(active_present)),
+      do IO<Unit>:
+        released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(8))
+        IO.pure(Unit, Unit{}),
+      do IO<Unit>:
+        +active : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/active"))
+        +supervisor_start : String <- IO.pure(String, field(active, "starttime"))
+        supervisor_alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(supervisor_pid, supervisor_start))
+        Bool.pick(IO(Unit), U32.is_eq(supervisor_alive, 0), IO.pure(Unit, Unit{}),
+          do IO<Unit>:
+            slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(100))
+            watch_child_gone(attempt, supervisor_pid, U32.sub(grace, 1))))
+
 @unsafe
 def watch_heavy(+attempt: String, +pid: U32, +start: String) -> IO(Unit):
   do IO<Unit>:
     alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(pid, start))
     compiled : Bool <- regular(attempt ++ "/compiled")
+    collected : Bool <- regular(attempt ++ "/exit_status")
     Bool.pick(IO(Unit), U32.is_eq(alive, 0), IO.pure(Unit, Unit{}),
-      Bool.pick(IO(Unit), compiled,
+      Bool.pick(IO(Unit), Bool.or(compiled, collected),
         do IO<Unit>:
-          released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(8))
-          IO.pure(Unit, Unit{}),
+          +collected : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/exit_status"))
+          +recorded : String <- IO.pure(String, field(collected, "child"))
+          matches : Bool <- Tx.str_eq(recorded, U32.show(pid))
+          Bool.pick(IO(Unit), matches,
+            do IO<Unit>:
+              released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(8))
+              IO.pure(Unit, Unit{}),
+            IO.pure(Unit, Unit{})),
         do IO<Unit>:
           slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(100))
           watch_heavy(attempt, pid, start)))
