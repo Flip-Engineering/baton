@@ -3063,8 +3063,9 @@ function emit_open(fl: File, k: Bend.Name): Val[] {
 }
 
 function emit_native(fl: File, ck: Call, ers: HTerm[]): string {
-  const key = [ck.k, ...ers.map((e) => JSON.stringify(lay_of(fl.book, e)))]
-    .join("|");
+  // Recursive types share BOX layout but need their own heating and access
+  // paths. Intern their erased terms with spans omitted, retaining DAG sharing.
+  const key = JSON.stringify([ck.k, ...ers.map((e) => lay_key(e))]);
   const got = fl.spun.get(key);
   if (got !== undefined) {
     return seg_ref(fl, got);
@@ -4316,6 +4317,12 @@ export function compile_book(book: Bend.Book): string {
   const roots = [seg_fid("main"), ...[...cb.bangs].map(seg_fid)];
   type Unit = Pick<File, "unit" | "segs" | "spins" | "img" | "tabs" | "clos" | "lend">;
   const units = new Map<string, Unit>();
+  type FactsUnit = { lend: Set<string>; wrote: Set<string> };
+  const facts_units = new Map<string, FactsUnit>();
+  const generic = new Set([...defs].filter(([, [, def]]) =>
+    tele_unbind(cb.book, def.T).doms.some((dom) => !live_dom(dom)))
+    .map(([fid]) => fid));
+  const writes = new Map<string, Set<string>>();
   const reads = new Map<string, Set<string>>();
   const readers = new Map<string, Set<string>>();
   const dirty = new Set<string>();
@@ -4338,6 +4345,7 @@ export function compile_book(book: Bend.Book): string {
       return found;
     }
     add(key: string): this {
+      if (reading !== null) writes.get(reading)!.add(this.kind + ":" + key);
       if (!super.has(key)) {
         super.add(key);
         for (const fid of readers.get(this.kind + ":" + key) ?? []) dirty.add(fid);
@@ -4351,6 +4359,7 @@ export function compile_book(book: Bend.Book): string {
   const forget = (fid: string): void => {
     for (const fact of reads.get(fid) ?? []) readers.get(fact)?.delete(fid);
     reads.delete(fid);
+    writes.delete(fid);
     dirty.delete(fid);
   };
   const fl = file_new(cb, "Term");
@@ -4361,6 +4370,9 @@ export function compile_book(book: Bend.Book): string {
     tables.length = 0;
     offsets.length = 0;
     cb.lend.clear();
+    for (const unit of facts_units.values()) {
+      for (const key of unit.lend) cb.lend.add(key);
+    }
     for (const unit of units.values()) {
       for (const seg of unit.segs) fl.segs.push(seg);
       for (const spin of unit.spins) fl.spins.push(spin);
@@ -4370,6 +4382,41 @@ export function compile_book(book: Bend.Book): string {
       for (const word of unit.img) fl.img.push(word);
       for (const [row, id] of unit.tabs) tables.push([`${unit.unit}TAB_${id}`, row]);
     }
+  };
+  const emit_unit = (fid: string, facts_only: boolean): Unit => {
+    const [k, def] = defs.get(fid)!;
+    forget(fid);
+    reads.set(fid, new Set());
+    writes.set(fid, new Set());
+    const previous = units.get(fid);
+    if (previous !== undefined) {
+      previous.segs = [];
+      previous.spins = [];
+      previous.img = [];
+      previous.tabs.clear();
+      previous.clos.clear();
+      previous.lend.clear();
+    }
+    facts_units.delete(fid);
+    const output = file_new({ ...cb, lend: new Set() }, "Term");
+    output.unit = "u" + Buffer.from(k).toString("hex") + "_";
+    reading = fid;
+    const begin = performance.now();
+    diagnostic("unit.begin", { name: k, facts_only });
+    compile_def(output, k, def);
+    reading = null;
+    const unit: Unit = { unit: output.unit, segs: output.segs,
+      spins: output.spins, img: output.img, tabs: output.tabs,
+      clos: output.clos, lend: output.lend };
+    if (facts_only) {
+      facts_units.set(fid, { lend: unit.lend, wrote: writes.get(fid)! });
+    } else {
+      units.set(fid, unit);
+    }
+    diagnostic("unit.end", { name: k, facts_only,
+      duration_ms: performance.now() - begin, reads: reads.get(fid)!.size,
+      writes: writes.get(fid)!.size, lend: unit.lend.size });
+    return unit;
   };
   let diagnostic_pass = 0;
   let needed = new Set(roots);
@@ -4385,28 +4432,8 @@ export function compile_book(book: Bend.Book): string {
     const queued = new Set(queue);
     for (let i = 0; i < queue.length; i++) {
       const fid = queue[i];
-      const def = defs.get(fid);
-      if (def === undefined) continue;
-      forget(fid);
-      reads.set(fid, new Set());
-      const previous = units.get(fid);
-      if (previous !== undefined) {
-        previous.segs = [];
-        previous.spins = [];
-        previous.img = [];
-        previous.tabs.clear();
-        previous.clos.clear();
-        previous.lend.clear();
-      }
-      const output = file_new({ ...cb, lend: new Set() }, "Term");
-      output.unit = "u" + Buffer.from(def[0]).toString("hex") + "_";
-      reading = fid;
-      compile_def(output, def[0], def[1]);
-      reading = null;
-      const unit: Unit = { unit: output.unit, segs: output.segs,
-        spins: output.spins, img: output.img, tabs: output.tabs,
-        clos: output.clos, lend: output.lend };
-      units.set(fid, unit);
+      if (!defs.has(fid)) continue;
+      const unit = emit_unit(fid, false);
       const referenced = new Set<string>();
       for (const seg of unit.segs) for (const ref of seg.refs) referenced.add(ref);
       for (const spin of unit.spins) for (const ref of spin[2]) referenced.add(ref);
@@ -4415,6 +4442,15 @@ export function compile_book(book: Bend.Book): string {
           queued.add(ref);
           queue.push(ref);
         }
+      }
+    }
+    let facts_reemitted = 0;
+    for (const fid of generic) {
+      if (!units.has(fid) && (!facts_units.has(fid) || dirty.has(fid))) {
+        // These standalone generic bodies produce poly keys even when all
+        // their calls are fused or spun. Their code and refs are discarded.
+        emit_unit(fid, true);
+        facts_reemitted += 1;
       }
     }
     assemble();
@@ -4427,7 +4463,9 @@ export function compile_book(book: Bend.Book): string {
     }
     assemble();
     facts_converge(cb);
-    for (const fid of dirty) if (!needed.has(fid)) dirty.delete(fid);
+    for (const fid of dirty) {
+      if (!needed.has(fid) && !facts_units.has(fid)) dirty.delete(fid);
+    }
     compile_reqs(fl, [...needed].flatMap((fid) => foreign.has(fid) ? [foreign.get(fid)!] : []));
     const live = file_reach(fl, roots);
     fl.segs = fl.segs.filter((seg) => live.has(seg.fid));
@@ -4440,10 +4478,12 @@ export function compile_book(book: Bend.Book): string {
     for (const spin of fl.spins) spin_code_units += spin[1].length;
     diagnostic("pass.end", { pass: pass_number, definitions: units.size,
       reemitted: queue.filter((fid) => defs.has(fid)).length, pending: dirty.size,
+      facts_definitions: facts_units.size, facts_reemitted,
       segments: fl.segs.length, spins: fl.spins.length, tables: tables.length,
       image_words: fl.img.length, lines, line_code_units, spin_code_units,
       own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size });
-  } while (dirty.size > 0 || [...needed].some((fid) => defs.has(fid) && !units.has(fid)));
+  } while (dirty.size > 0 || [...needed].some((fid) => defs.has(fid) && !units.has(fid))
+    || [...generic].some((fid) => !units.has(fid) && !facts_units.has(fid)));
   memo_gc();
   collect_full();
   const reach = (from: string[]): Set<string> => file_reach(fl, from);
