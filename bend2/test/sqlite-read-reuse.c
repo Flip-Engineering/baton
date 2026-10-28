@@ -447,6 +447,97 @@ static int test_multi(const char *database) {
   return failed;
 }
 
+static int test_connection_state_boundary(const char *database) {
+  baton_sql_read_test_forget();
+  BatonSqlReadTestResult before, pragma, after, fresh, attach, attached,
+      temporary, temp_read;
+  memset(&before, 0, sizeof(before));
+  memset(&pragma, 0, sizeof(pragma));
+  memset(&after, 0, sizeof(after));
+  memset(&fresh, 0, sizeof(fresh));
+  memset(&attach, 0, sizeof(attach));
+  memset(&attached, 0, sizeof(attached));
+  memset(&temporary, 0, sizeof(temporary));
+  memset(&temp_read, 0, sizeof(temp_read));
+  int failed = 0;
+  if (baton_sql_read_test_run(database, "SELECT 'A' LIKE 'a';", &before) != 0)
+    return 1;
+  failed |= check("connection-state-before", before.code, before.output, "1\n");
+  if (!failed && baton_sql_read_test_run(database,
+      "PRAGMA case_sensitive_like=ON;", &pragma) != 0) return 1;
+  if (!failed && pragma.code != SQLITE_OK) {
+    fprintf(stderr, "fail connection-state-pragma: code=%d error=%s\n",
+            pragma.code, pragma.error ? pragma.error : "(null)");
+    failed = 1;
+  }
+  if (!failed && pragma.connection != NULL) {
+    fprintf(stderr, "fail connection-state-pragma: connection state survived call\n");
+    failed = 1;
+  }
+  if (!failed && baton_sql_read_test_run(database,
+      "SELECT 'A' LIKE 'a';", &after) != 0) return 1;
+  if (!failed)
+    failed = check("connection-state-after", after.code, after.output, "1\n");
+  baton_sql_read_test_forget();
+  if (!failed && baton_sql_read_test_run(database,
+      "SELECT 'A' LIKE 'a';", &fresh) != 0) return 1;
+  if (!failed)
+    failed = check("connection-state-fresh", fresh.code, fresh.output, "1\n");
+
+  if (!failed && baton_sql_read_test_run(database,
+      "ATTACH ':memory:' AS call_local;", &attach) != 0)
+    return 1;
+  if (!failed && attach.code != SQLITE_OK) {
+    fprintf(stderr, "fail connection-state-attach: code=%d error=%s\n",
+            attach.code, attach.error ? attach.error : "(null)");
+    failed = 1;
+  }
+  if (!failed && attach.connection != NULL) {
+    fprintf(stderr, "fail connection-state-attach: attachment survived call\n");
+    failed = 1;
+  }
+  if (!failed && baton_sql_read_test_run(database,
+      "SELECT count(*) FROM call_local.sqlite_master;", &attached) != 0) return 1;
+  if (!failed && (attached.code == SQLITE_OK || !attached.error ||
+      !strstr(attached.error, "no such table"))) {
+    fprintf(stderr, "fail connection-state-attached: code=%d error=%s\n",
+            attached.code, attached.error ? attached.error : "(null)");
+    failed = 1;
+  }
+
+  if (!failed && baton_sql_read_test_run(database,
+      "CREATE TEMP TABLE call_local_temp(x); INSERT INTO call_local_temp VALUES(1);",
+      &temporary) != 0) return 1;
+  if (!failed && temporary.code != SQLITE_OK) {
+    fprintf(stderr, "fail connection-state-temp: code=%d error=%s\n",
+            temporary.code, temporary.error ? temporary.error : "(null)");
+    failed = 1;
+  }
+  if (!failed && temporary.connection != NULL) {
+    fprintf(stderr, "fail connection-state-temp: temporary state survived call\n");
+    failed = 1;
+  }
+  if (!failed && baton_sql_read_test_run(database,
+      "SELECT count(*) FROM call_local_temp;", &temp_read) != 0) return 1;
+  if (!failed && (temp_read.code == SQLITE_OK || !temp_read.error ||
+      !strstr(temp_read.error, "no such table"))) {
+    fprintf(stderr, "fail connection-state-temp-read: code=%d error=%s\n",
+            temp_read.code, temp_read.error ? temp_read.error : "(null)");
+    failed = 1;
+  }
+  if (!failed) printf("ok connection-state-boundary\n");
+  free(before.output); free(before.error);
+  free(pragma.output); free(pragma.error);
+  free(after.output); free(after.error);
+  free(fresh.output); free(fresh.error);
+  free(attach.output); free(attach.error);
+  free(attached.output); free(attached.error);
+  free(temporary.output); free(temporary.error);
+  free(temp_read.output); free(temp_read.error);
+  baton_sql_read_test_forget();
+  return failed;
+}
+
 typedef struct {
   const char *path;
   int ready;
@@ -552,6 +643,7 @@ static int mode_lifecycle(const char *work) {
   failed |= test_read_only(first);
   failed |= test_replacement(replacement, replacement_next);
   failed |= test_multi(first);
+  failed |= test_connection_state_boundary(first);
   failed |= test_busy(busy);
   failed |= test_encoding(utf16, plain);
   baton_sql_read_test_forget();
@@ -568,6 +660,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "usage: lifecycle WORKDIR\n");
     return 2;
   }
+  printf("sqlite-version=%s\n", sqlite3_libversion());
   if (strcmp(argv[1], "lifecycle") == 0) return mode_lifecycle(argv[2]);
   fprintf(stderr, "unknown mode: %s\n", argv[1]);
   return 2;
