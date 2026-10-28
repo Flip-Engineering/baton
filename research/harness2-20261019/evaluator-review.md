@@ -73,7 +73,9 @@ Recommendation: reject adoption of the Harness2 mechanisms on this evidence.
 Keep the source map as a design reference. A further prototype is justified
 only under the acceptance criteria in section 4, with model-driven proposals
 and composition, tasks that have headroom, equal oracle access in both arms,
-and recorded caps.
+and factual records of model usage and elapsed time. Those measurements are
+reported as study outcomes. Runtime actions follow the assignment and actual
+execution results.
 
 ## 2. Source-map critique
 
@@ -333,7 +335,7 @@ the same diff. The task2 reference already passes; the PPC final passes. The
 task3 baseline report meets the independent rubric; the PPC final report also
 meets it. The study has no task with headroom for the PPC arm to improve.
 
-## 4. Acceptance criteria for a valid bounded comparison
+## 4. Acceptance criteria for a valid comparative study
 
 A future run is valid only when every row below is observable in the committed
 artifacts. The "Current fixture" column records the state of this study.
@@ -343,8 +345,8 @@ artifacts. The "Current fixture" column records the state of this study.
 | A1 | Fixed execution identity | `jq '{model,model_version,harness,harness_version,effort,seed,manifest_sha256,baton_commit,harness2_commit}' results.json`; `sha256sum` of the fixture and manifest | Every field is present and non-empty. The model and harness values match the observed executable (`omp/17.4.0`). The manifest and fixture hashes match the committed files. | Partial: `omp/17.4.0` matches the executable; the values are recorded as literals; no executable or fixture hash; the seed is unused. |
 | A2 | Fixed task inputs and repository commits | `jq '.tasks' manifest.json`; each task has `prompt_sha256`, `repo_commit` and `oracle` or `test_command` | Three tasks. Each prompt and repository tree has a content hash. Each task names its oracle type and evaluation command. | Partial: three tasks; generated initial commits; no prompt hashes; the manifest pins Baton and Harness2 only. |
 | A3 | One recursion step | The call labels are exactly `reference`, `propose-invariant`, `propose-domain`, `probe-invariant`, `probe-domain`, `compose`, `final`. The results contain no library read or write. | One reference, two proposals, two probes, one composition, one final. No second round, no library. | Pass for the stage sequence; persistent lessons are disabled. |
-| A4 | Six model calls per task | Define "model call" as a provider request or a harness turn. `jq '.results[].turns' results.json` and a code path that refuses the seventh call. | Every task has at most six recorded model turns or provider requests. The refusal is recorded. | Fail: OMP PPC turns are 22, 39 and 30; the fixture counts process invocations and checks after the run. |
-| A5 | Thirty minutes per task | Record `task_started_at`, `task_finished_at` and `task_wall_s`. A task-level deadline stops the task. `jq '.results[].task_wall_s'`. | Every task wall time is at most 1800 s. The deadline is enforced. | Fail for enforcement: the timeout is per call; observed wall times are under 30 minutes. |
+| A4 | Observed model usage | Define whether each recorded unit is a provider request or a harness turn. Record per-task counts and inspect `jq '.results[].turns' results.json`. | Report the observed counts as study data. Runtime handling follows the assignment and execution results. | The OMP PPC runs recorded 22, 39 and 30 model turns. The fixture counts process invocations and records overage after each run; it does not enforce a cap. |
+| A5 | Observed task elapsed time | Record `task_started_at`, `task_finished_at` and `task_wall_s` when available. Inspect `jq '.results[].task_wall_s'`. | Report elapsed time alongside each task outcome. Runtime handling follows the assignment and execution state. | The fixture has no task-level wall-time field; observed PPC task durations are under 30 minutes. Its `max_seconds` timeout applies to each OMP process invocation. |
 | A6 | No expected answers or rubrics in model context | Scan every system prompt and user prompt for the answer strings, the test expected values and the task3 expected total. Inspect the composer input. | No expected value, rubric or test verdict enters the model context. The composer does not read a test outcome or an expected total. | Fail: domain memory contains solution text; the composer gates on `error_total == 5`. |
 | A7 | Equal oracle access in both arms | Read the baseline and PPC code. Count the selection opportunities and the oracle inputs. | The baseline and PPC arms have the same access to tests, evaluators and selection. The PPC composition uses behavioral evidence. | Fail: PPC composition uses test outcomes and the expected task3 total; the baseline has one execution. |
 | A8 | Test records for tasks with oracles | `jq '.results[].tests'`; each record has command, cwd, exit code, full stdout, full stderr, start and end. | Full command and output are retained. The target and candidate run the same command in the same environment. | Partial: command, exit code and pass flag are present; output is truncated. |
@@ -355,7 +357,7 @@ artifacts. The "Current fixture" column records the state of this study.
 | A13 | Fixture version identity | `sha256sum` of `run_fixture.py`, `stub_model.py`, `omp_model.py`, `task_manifest.json` and `seed.txt` in `results.json`. | Every arm records the same fixture hash. | Fail: no fixture hash; `run_fixture.py` changed after the baseline runs. |
 | A14 | Reviewer independence | The reviewer did not author the proposal, the fixture or the source map. The rubric is committed with the scores and was not given to the model or the coordinator before scoring. | The reviewer is independent. The rubric is committed and its distribution is recorded. | Pass: this evaluator did not author the fixture or map; the rubric is in `task3-rubric.md`. |
 | A15 | Task difficulty and headroom | Run the baseline first. Record a task outcome for every task. | At least one task has a measurable baseline failure or partial score. The PPC arm has room to improve. | Fail: the OMP baseline passes all three tasks. |
-| A16 | Cost report without budget control | `jq` the token, wall, peak and retry fields for every arm. Compute the ratios. | The report states the observed costs. No runtime rule refuses, pauses or truncates work based on a budget. | Pass for tokens, wall and peak; retries are missing; no budget control flow exists. |
+| A16 | Reported resource measurements | `jq` the token, wall, peak and retry fields for every arm. Compute the ratios. | Report available observations and label missing fields. Runtime actions follow assignment state and actual execution outcomes. | Token, wall and peak measurements are present; retries are missing; usage fields do not affect runtime actions. |
 
 ## 5. Task3 assessment
 
@@ -479,10 +481,12 @@ are the right limits.
 
 A further prototype is justified only under the acceptance criteria in section
 4. It must use model-driven proposals and composition, tasks with baseline
-headroom, equal oracle access in both arms, no expected-answer text in model
-context, and recorded task-level caps. The Baton-native experiments that use
-existing mechanisms are a branch comparison with a deterministic evaluator and
-an explicit Knowledge promotion of the resulting lesson. Those experiments can
+headroom, equal oracle access in both arms, and no expected-answer text in model
+context. It should report observed model usage and elapsed time as study
+outcomes. Runtime admission, continuation, completion, and validation follow
+the assignment and actual execution results. The Baton-native experiments that
+use existing mechanisms are a branch comparison with a deterministic evaluator
+and an explicit Knowledge promotion of the resulting lesson. Those experiments can
 run after the branch feature is qualified. They do not require an editable
 harness tree.
 
