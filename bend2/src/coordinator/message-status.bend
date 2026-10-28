@@ -28,17 +28,19 @@ def read_sql(+row: String) -> String:
 # attempt binds its own attempt and native witness before this path is reached;
 # this row is the recipient's CLI read, so it uses the stable CLI identity.
 def cli_read_sql(+session: String, saved: String) -> String:
-  "BEGIN IMMEDIATE;INSERT INTO message_reads(attempt,message,recipient,native,identity) SELECT 'cli',m.id,m.recipient,coalesce((SELECT s.native FROM sessions s WHERE s.id=m.recipient),''),'cli' FROM json_each(" ++ q(saved) ++ ") j JOIN messages m ON m.id=json_extract(j.value,'$.id') WHERE m.recipient=" ++ q(session) ++ " AND json_extract(j.value,'$.status')='found' ON CONFLICT(attempt,identity,message) DO NOTHING;"
+  "BEGIN IMMEDIATE;INSERT INTO message_reads(attempt,message,recipient,native,identity) SELECT 'cli',m.id,m.recipient,coalesce((SELECT s.native FROM sessions s WHERE s.id=m.recipient),''),'cli' FROM json_each(" ++ q(saved) ++ ") j JOIN messages m ON m.id=coalesce(json_extract(j.value,'$.delivery.id'),json_extract(j.value,'$.id')) WHERE m.recipient=" ++ q(session)
+  ++ " AND m.recipient=coalesce(json_extract(j.value,'$.delivery.recipient'),json_extract(j.value,'$.recipient')) AND m.body=coalesce(json_extract(j.value,'$.delivery.body'),json_extract(j.value,'$.body'))"
+  ++ " AND ((json_extract(j.value,'$.status')='found' AND json_type(j.value,'$.delivery')='object') OR (json_extract(j.value,'$.status') IS NULL AND json_type(j.value,'$.body')='text')) ON CONFLICT(attempt,identity,message) DO NOTHING;"
   ++ "DELETE FROM wake_claims WHERE session=" ++ q(session) ++ " AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.recipient=" ++ q(session) ++ " AND " ++ owed_sql("m") ++ ");COMMIT;"
 
 def present_sql() -> String:
   "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='message_reads';"
 
 def exposed(+read: Bool, +field: String) -> String:
-  Bool.pick(String,read,"json_extract(j.value,'$.delivery." ++ field ++ "')","json_extract(j.value,'$." ++ field ++ "')")
+  Bool.pick(String,read,"coalesce(json_extract(j.value,'$.delivery." ++ field ++ "'),json_extract(j.value,'$." ++ field ++ "'))","json_extract(j.value,'$." ++ field ++ "')")
 
 def found(read: Bool) -> String:
-  Bool.pick(String,read,"json_extract(j.value,'$.status')='found'","1")
+  Bool.pick(String,read,"((json_extract(j.value,'$.status')='found' AND json_type(j.value,'$.delivery')='object' AND json_type(j.value,'$.delivery.body')='text' AND json_type(j.value,'$.delivery.recipient')='text') OR (json_extract(j.value,'$.status') IS NULL AND json_type(j.value,'$.body')='text' AND json_type(j.value,'$.recipient')='text'))","1")
 
 def projection(+message: String) -> String:
   "json_object('delivered','recorded',"

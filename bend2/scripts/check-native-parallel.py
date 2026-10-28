@@ -103,6 +103,7 @@ def main():
         {'label': 'node-context-runtime', 'argv': ['node', '--test',
             'bend2/test/context-provider.test.mjs', 'bend2/test/context-project-policy.test.mjs',
             'bend2/test/ui-orchestra-server.test.mjs',
+            'bend2/test/ui-orchestra-subscription.test.mjs',
             *[str(path.relative_to(seed)) for path in sorted((seed / 'bend2/tests/context-models').glob('*.test.mjs'))],
             *[str(path.relative_to(seed)) for path in sorted((seed / 'bend2/tests/runtime').glob('*.test.mjs'))]]},
     ])

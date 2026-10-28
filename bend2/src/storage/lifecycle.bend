@@ -155,6 +155,8 @@ def covered_class(+cls: T.StorageClass) -> Bool:
     case T.BuildOutput{}: True{}
     case T.Export{}: True{}
     case T.Checkout{}: True{}
+    case T.StagingSource{}: True{}
+    case T.StagingSourceReleased{}: True{}
     case other: False{}
 
 def covered_root(+spec: RootSpec) -> Bool:
@@ -189,11 +191,7 @@ def retained_rows_under(rows: List<&2,String>, +root: String) -> Bool:
     case Nil{}: False{}
     case Con{+head, tail}: Bool.or(S.path_under(head, root), retained_rows_under(tail, root))
 
-# A covered root is admitted only when the database still references a
-# registered log, a retained generation (log or base), or an execution
-# directory under it. The class marker and an absolute path alone do not admit
-# an arbitrary root.
-def referenced_root(+spec: RootSpec, +state: S.State) -> Bool:
+def staging_referenced(+spec: RootSpec, +state: S.State) -> Bool:
   match spec:
     case RootSpec{cls, path, source}:
       match state:
@@ -204,6 +202,22 @@ def referenced_root(+spec: RootSpec, +state: S.State) -> Bool:
             Bool.or(transient,
               Bool.or(log_rows_under(logs, path),
                 Bool.or(execution_rows_under(executions, path), retained_rows_under(retained, path)))))
+
+# A covered root is admitted only when the database still references a
+# registered log, a retained generation (log or base), or an execution
+# directory under it. The class marker and an absolute path alone do not admit
+# an arbitrary root.
+def referenced_root(+spec: RootSpec, +state: S.State) -> Bool:
+  match spec:
+    case RootSpec{cls, path, source}:
+      match cls:
+        case T.StagingSourceReleased{}:
+          # This marker records the operator's explicit ownership release
+          # decision. The authenticated repository still has to contain each
+          # candidate commit before removal.
+          Bool.and(covered_root(spec), Bool.not(String.is_empty(source)))
+        case T.StagingSource{}: Bool.and(covered_root(spec), Bool.not(String.is_empty(source)))
+        case other: staging_referenced(spec, state)
 
 def uncovered_roots_state(specs: List<&2,RootSpec>, +state: S.State, +acc: String) -> String:
   match specs:
@@ -284,10 +298,19 @@ def candidate_member(+path: String, candidates: List<T.Candidate>) -> Bool:
 def add_candidate(+candidate: T.Candidate, candidates: List<T.Candidate>) -> List<T.Candidate>:
   Con{candidate, candidates}
 
+# A staging candidate has no recorded session owner. The class policy decides
+# whether its ownership release is recorded; both staging classes remain
+# available for preview and explicit apply decisions.
+def staging_class(+cls: T.StorageClass) -> Bool:
+  match cls:
+    case T.StagingSource{}: True{}
+    case T.StagingSourceReleased{}: True{}
+    case other: False{}
+
 def candidate_choice(+session: String, +cls: T.StorageClass, +path: String, +identity: String, +bytes: Nat, +facts: T.Facts, +choice: S.OwnerChoice) -> IO(Maybe<T.Candidate>):
   match choice:
     case S.OwnerChoice{owner, fact}:
-      +selected = Bool.or(String.is_empty(session), String.eq(owner, session))
+      +selected = Bool.or(Bool.or(String.is_empty(session), String.eq(owner, session)), staging_class(cls))
       Bool.pick(IO(Maybe<T.Candidate>), selected,
         do IO<Maybe<T.Candidate>>:
           proof : String = "owner:" ++ owner
@@ -821,10 +844,11 @@ def collect_receipts(result: Result<&1,&1,U32 & String,List<T.Receipt>>) -> List
     case Done{receipts}: receipts
     case Fail{error}: Nil{}
 
-# Triggered and deployment collection scans only the classes whose entries the
-# policy can remove: scratch, build output, export and log evidence. Checkout
-# roots stay for an explicit operator preview/apply, and the preserve-only
-# shared-immutable, git-object and unclassified classes never participate.
+# Triggered and deployment collection scans only the classes whose settled
+# lifecycle can be derived from recorded session state: scratch, build output,
+# export and log evidence. Staging roots require an explicit operator apply
+# after ownership release. Checkout, shared-immutable, git-object and
+# unclassified classes never participate.
 def collectable_root(+spec: RootSpec) -> Bool:
   match spec:
     case RootSpec{cls, path, source}:
@@ -833,6 +857,8 @@ def collectable_root(+spec: RootSpec) -> Bool:
         case T.BuildOutput{}: True{}
         case T.Export{}: True{}
         case T.LogEvidence{}: True{}
+        case T.StagingSourceReleased{}: False{}
+        case T.StagingSource{}: False{}
         case other: False{}
 
 def collectable_roots(specs: List<&2,RootSpec>, +acc: List<&2,RootSpec>) -> List<&2,RootSpec>:
@@ -889,6 +915,53 @@ def run_collect(+db: String, +session: String) -> IO(Unit):
             run_collect_result(session, result),
           IO.write(collect_skipped_json(session, reason))),
       IO.die(Unit, 2, "unknown session: " ++ session))
+
+# Scheduled collection for the qualified storage helper: every registered
+# session runs the same settled gate and collectable-root selection as
+# run_collect. Each session contributes one JSON object; a skip or refusal is
+# reported per session and never stops the sweep.
+def collect_outcome_json(+session: String, result: Result<&1,&1,U32 & String,List<T.Receipt>>) -> String:
+  match result:
+    case Done{receipts}: receipts_json(receipts)
+    case Fail{(+code, +detail)}: collect_refused_json(session, code, detail)
+
+def sweep_row(+db: String, +session: String) -> IO(String):
+  do IO<String>:
+    state : S.State <- S.load(db)
+    Bool.pick(IO(String), S.session_known(state, session),
+      do IO<String>:
+        settled_state : S.State <- S.load(db)
+        +reason : String = S.session_settled_reason(settled_state, session)
+        Bool.pick(IO(String), String.is_empty(reason),
+          do IO<String>:
+            specs : List<&2,RootSpec> <- configured_roots()
+            result : Result<&1,&1,U32 & String,List<T.Receipt>> <- apply_session_roots(db, session, collectable_roots(specs, Nil{}))
+            IO.pure(String, "{\"session\":" ++ J.string_literal(session) ++ ",\"result\":" ++ collect_outcome_json(session, result) ++ "}"),
+          IO.pure(String, "{\"session\":" ++ J.string_literal(session) ++ ",\"result\":" ++ collect_skipped_json(session, reason) ++ "}")),
+      IO.pure(String, "{\"session\":" ++ J.string_literal(session) ++ ",\"result\":" ++ collect_refused_json(session, 2, "unknown session: " ++ session) ++ "}"))
+
+def sweep_append(empty: Bool, +acc: String, +head: String) -> String:
+  Bool.pick(String, empty, head, acc ++ "," ++ head)
+
+def sweep_join(sessions: List<&2,S.SessionRow>, +db: String, +acc: String, empty: Bool) -> IO(String):
+  match sessions:
+    case Nil{}: IO.pure(String, "{\"results\":[" ++ acc ++ "]}")
+    case S.SessionRow{+id, workspace, branch, base} <> +rest:
+      do IO<String>:
+        row : String <- sweep_row(db, id)
+        +next : String = sweep_append(empty, acc, row)
+        sweep_join(rest, db, next, False{})
+
+def sweep_state(state: S.State, +db: String) -> IO(String):
+  match state:
+    case S.State{sessions, executions, logs, pending, databases, retained, valid}:
+      sweep_join(sessions, db, "", True{})
+
+def run_sweep(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    state : S.State <- S.load(db)
+    rows : String <- sweep_state(state, db)
+    IO.write(rows)
 
 def bool_json(+value: Bool) -> String:
   Bool.pick(String, value, "true", "false")

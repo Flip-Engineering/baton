@@ -940,7 +940,9 @@ static char *br_self(void) {
   if(buffer && !_NSGetExecutablePath(buffer,&size)) path=realpath(buffer,NULL);
   free(buffer);return path;
 #else
-  return realpath("/proc/self/exe",NULL);
+  /* This path is used to re-execute this process, so retain its loaded image
+     across an atomic replacement or unlink of the original pathname. */
+  return strdup("/proc/self/exe");
 #endif
 }
 
@@ -2395,31 +2397,16 @@ static int br_ipc_prepare(const char *path) {
   return error;
 }
 static int br_ipc_directory(char **directory_out) {
-  const char *runtime=getenv("XDG_RUNTIME_DIR"),*home=getenv("HOME");
   *directory_out=NULL;
-  if(runtime && runtime[0]) {
-    char *directory=br_path(runtime,"baton2");
-    if(!directory)return ENOMEM;
-    int error=br_ipc_prepare(directory);
-    if(!error){*directory_out=directory;return 0;}
-    free(directory);
-  }
-  int fallback_length=snprintf(NULL,0,"/tmp/baton2-%u",(unsigned)geteuid());
-  if(fallback_length<0)return EOVERFLOW;
-  char *fallback=malloc((size_t)fallback_length+1);
-  if(!fallback)return ENOMEM;
-  snprintf(fallback,(size_t)fallback_length+1,"/tmp/baton2-%u",(unsigned)geteuid());
-  int fallback_error=br_ipc_prepare(fallback);
-  if(!fallback_error){*directory_out=fallback;return 0;}
-  free(fallback);
-  if(home && home[0]) {
-    char *state=br_path(home,".local/state/baton2");
-    if(!state)return ENOMEM;
-    int error=br_ipc_prepare(state);
-    if(!error){*directory_out=state;return 0;}
-    free(state);
-  }
-  return fallback_error?fallback_error:EACCES;
+  int length=snprintf(NULL,0,"/tmp/baton2-%u",(unsigned)geteuid());
+  if(length<0)return EOVERFLOW;
+  char *directory=malloc((size_t)length+1);
+  if(!directory)return ENOMEM;
+  snprintf(directory,(size_t)length+1,"/tmp/baton2-%u",(unsigned)geteuid());
+  int error=br_ipc_prepare(directory);
+  if(error){free(directory);return error;}
+  *directory_out=directory;
+  return 0;
 }
 /* The election key is the physical database identity, so a hard link or a
    symlink alias elects the same owner. */

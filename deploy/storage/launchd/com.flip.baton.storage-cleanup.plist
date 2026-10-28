@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Deployment template for the qualified immutable storage-clean helper. Root
+  deploys it from a release that contains libexec/baton2/storage-clean.
+
+  Run as the database owner with the standard Baton environment. Do not add
+  credentials to this agent.
+
+  The helper prints one JSON object to stdout:
+    {"results":[{"session":SESSION,"result":<collect response>}]}
+  It enumerates session IDs from the database and runs the settled-session
+  collection for each one through the product StoragePolicy implementation.
+
+  Set BATON_STORAGE_ROOTS (and BATON_STORAGE_EXCLUSIVE_ROOTS when the operator
+  declares exclusivity) in EnvironmentVariables below. On macOS the mount
+  identity of a candidate cannot be established, so every directory removal is
+  preserved; this agent is wired for log and file cleanup only, and no Darwin
+  directory removal is validated.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.flip.baton.storage-cleanup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/path/to/qualified-release/libexec/baton2/storage-clean</string>
+    <string>/path/to/state.db</string>
+    <string>storage-sweep</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/path/to/PROJECT</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>BATON_STORAGE_ROOTS</key>
+    <string></string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/path/to/PROJECT/logs/baton-storage-cleanup.log</string>
+  <key>StandardErrorPath</key>
+  <string>/path/to/PROJECT/logs/baton-storage-cleanup.stderr</string>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
