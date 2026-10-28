@@ -106,8 +106,8 @@ class SqliteReadReuse(unittest.TestCase):
                       'write-before', 'write-after', 'autocommit-transaction',
                       'autocommit-after', 'read-only', 'read-only-after',
                       'replacement-before', 'replacement-after',
-                      'multi-statement', 'busy-read', 'fork-rejected',
-                      'fork-parent-after',
+                      'multi-statement', 'busy-read', 'fork-forget-inherited',
+                      'fork-tls-destructor', 'fork-parent-after',
                       'encoding-refusal', 'encoding-utf8',
                       'lifecycle'):
             self.assertIn('ok ' + label, result.stdout)
