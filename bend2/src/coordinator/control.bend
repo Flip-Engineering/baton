@@ -93,10 +93,15 @@ def identity_endpoint(executable: String, db: String, session: String, cmd: Stri
 def identity_check_args(+registry: String, +helper: String, +model: String, +repository: String) -> List<String>:
   List.append(&1,String,["node",helper,"check","--registry",registry,"--model-key",model],Bool.pick(List<String>,String.is_empty(repository),Nil{},["--repository",repository]))
 
+def identity_check_scope(model: String, repository: String) -> String:
+  "recorded model " ++ model ++ Bool.pick(String,String.is_empty(repository),""," for repository " ++ repository)
+
 def identity_check_refusal(+model: String, +repository: String, result: T.RunRes) -> IO(Unit):
   match result:
     case T.RRun{T.SExit{0}, out}: IO.pure(Unit,Unit{})
-    case other: IO.die(Unit,2,"The configured series registry does not resolve the recorded model " ++ model ++ Bool.pick(String,String.is_empty(repository),""," for repository " ++ repository) ++ "; the endpoint would refuse at delivery. Correct the registry mapping or record a mapped model, then retry.")
+    case T.RRun{T.SExit{+code}, out}: IO.die(Unit,2,"The configured series identity check failed for " ++ identity_check_scope(model,repository) ++ ": helper exited " ++ U32.show(code) ++ ": " ++ Tx.trim_nl(out) ++ ". Correct the model mapping or repository's App installation, then retry.")
+    case T.RRun{T.SSignal{+signal}, out}: IO.die(Unit,2,"The configured series identity check failed for " ++ identity_check_scope(model,repository) ++ ": helper ended by signal " ++ U32.show(signal) ++ ": " ++ Tx.trim_nl(out) ++ ". Correct the model mapping or repository's App installation, then retry.")
+    case T.RSpawn{detail}: IO.die(Unit,2,"The configured series identity check failed for " ++ identity_check_scope(model,repository) ++ ": helper could not run: " ++ detail ++ ". Correct the helper installation or repository's App installation, then retry.")
 
 def identity_check_body(+registry: String, +helper: String, +model: String, +repository: String, absent: Bool) -> IO(Unit):
   match absent:
