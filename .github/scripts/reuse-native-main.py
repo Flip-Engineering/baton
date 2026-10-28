@@ -184,19 +184,43 @@ def source_files(root, commit, tree):
 
 
 def production_inputs(root, rows):
-    selected = sorted((row for row in rows if row['path'].startswith('bend2/src/')), key=lambda row: row['path'])
-    expected = {row['path'] for row in selected}
-    actual = {str(path.relative_to(root)) for path in (root / 'bend2/src').rglob('*')
-              if path.is_file() or path.is_symlink()}
-    if expected != actual:
-        return selected, 'Production directory contains untracked or missing files.'
-    for row in selected:
-        path = root / row['path']
-        if row['mode'] == '120000':
-            return selected, 'A production symlink requires a normal compilation.'
-        if path.suffix != '.bend':
+    # Select the transitive import closure of the Main entry, not the whole
+    # source directory. A file outside the closure cannot reach the generated
+    # C: module imports are static relative paths, foreign inputs are static
+    # string imports, and Base comes from the compiler distribution, which is
+    # bound separately. Any import shape outside this model fails closed to a
+    # normal compilation, and the closure is recomputed from the current
+    # bytes on both sides, so a change that imports a previously unrelated
+    # file pulls that file into the compared set.
+    by_path = {row['path']: row for row in rows}
+    if len(by_path) != len(rows):
+        return [], 'A production path is recorded twice.'
+    selected = {}
+    pending = [ENTRY]
+    while pending:
+        relative = pending.pop()
+        if relative in selected:
             continue
-        # Current Main imports are local modules and Base. External imports need a normal build.
+        row = by_path.get(relative)
+        if row is None:
+            return [], 'A production dependency is not tracked: ' + relative
+        if row['mode'] == '120000':
+            return [], 'A production symlink requires a normal compilation.'
+        selected[relative] = row
+        path = root / relative
+        if not relative.endswith('.bend'):
+            if relative.endswith(('.c', '.h')):
+                # A quoted C include is a tracked production input exactly
+                # like a Bend foreign import: the generated C is compiled
+                # with this header through bend2/src/host, so its bytes
+                # belong to the reuse identity (persistent-path.h in
+                # host/control.c and host/process-spawn.c).
+                for match in re.finditer(r'#\s*include\s+"([^"]+)"', path.read_text()):
+                    child = os.path.normpath(os.path.join(os.path.dirname(relative), match[1]))
+                    if child not in ('bend2/src',) and not child.startswith('bend2/src/'):
+                        return [], 'A C include leaves the production inputs: ' + relative
+                    pending.append(child)
+            continue
         lines = path.read_text().splitlines()
         in_header = True
         for line in lines:
@@ -208,17 +232,19 @@ def production_inputs(root, rows):
                     continue
                 match = re.fullmatch(r'(\S+)\s+as\s+[A-Za-z_][A-Za-z0-9_]*(?:\s+#.*)?', value)
                 if not match:
-                    return selected, 'A module import requires a normal compilation: ' + row['path']
-                target = (path.parent / match[1]).resolve()
-                if not target.is_relative_to(root / 'bend2/src') or target.suffix != '.bend':
-                    return selected, 'A module import leaves the production directory: ' + row['path']
+                    return [], 'A module import requires a normal compilation: ' + relative
+                child = os.path.normpath(os.path.join(os.path.dirname(relative), match[1]))
+                if not (child.startswith('bend2/src/') and child.endswith('.bend')):
+                    return [], 'A module import leaves the production directory: ' + relative
+                pending.append(child)
                 continue
             in_header = False
             for match in re.finditer(r'\bimport\s+"([^"]+)"', line):
-                target = (path.parent / match[1]).resolve()
-                if not target.is_relative_to(root / 'bend2/src') or str(target.relative_to(root)) not in expected:
-                    return selected, 'A foreign import leaves the production inputs: ' + row['path']
-    return selected, None
+                child = os.path.normpath(os.path.join(os.path.dirname(relative), match[1]))
+                if not child.startswith('bend2/src/'):
+                    return [], 'A foreign import leaves the production inputs: ' + relative
+                pending.append(child)
+    return sorted(selected.values(), key=lambda row: row['path']), None
 
 
 def canonical_host_change(original, current):
@@ -349,16 +375,26 @@ def select(args, result):
     rows = []
     for path in sorted((root / 'bend2/src').rglob('*')):
         if path.is_symlink():
-            result['reason'] = 'A production symlink requires a normal compilation.'
-            return
-        if path.is_file():
+            body = os.fsencode(os.readlink(path))
+            rows.append({'path': str(path.relative_to(root)), 'mode': '120000',
+                         'git_blob': hashlib.sha1(b'blob ' + str(len(body)).encode() + b'\0' + body).hexdigest(),
+                         'size_bytes': len(body), 'sha256': hashlib.sha256(body).hexdigest()})
+        elif path.is_file():
             body = path.read_bytes()
             rows.append({'path': str(path.relative_to(root)),
                          'mode': '100755' if path.stat().st_mode & 0o111 else '100644',
                          'git_blob': hashlib.sha1(b'blob ' + str(len(body)).encode() + b'\0' + body).hexdigest(),
                          'size_bytes': len(body), 'sha256': hashlib.sha256(body).hexdigest()})
-    rows.sort(key=lambda row: row['path'])
+    # Select through the same entry-closure function that prepared the
+    # proof: the manifest records the closure rows, so this side compares
+    # the closure it recomputes from the actual checkout bytes against
+    # that manifest. Files outside the closure do not select or reject
+    # reuse; a changed file inside the closure changes its row.
+    rows, issue = production_inputs(root, rows)
     result['production_inputs'] = rows
+    if issue is not None:
+        result['reason'] = issue
+        return
     if rows != expected:
         result['reason'] = 'Actual Main production input membership, bytes or modes differ.'
         return
