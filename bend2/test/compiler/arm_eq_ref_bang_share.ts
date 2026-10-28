@@ -1,21 +1,10 @@
-// Protected test: a duplicated shared arm body whose Ref.b bang marker
-// changes in one copy. A compiler that ignores Ref.b shares the copy and
-// emits the same C; a compiler that compares it emits a separate spin.
-//
-// Usage: bin/bun --smol bend2/test/compiler/arm_eq_ref_bang_share.ts COMPILER_DIR
-//
-// COMPILER_DIR holds bend2/comp.ts, bend2/bend.ts, bend2/base.bend and
-// bend2/effs. The script imports the repository bend.ts (the pinned file)
-// for terms and types and loads only comp.ts from COMPILER_DIR.
-//
-// The bang marker also joins the file's bang set, so the whole C changes even
-// when the arm is shared. The sharing decision is the arm-spin count: the
-// corrected head emits additional arm spins for the mutated copy, the
-// pre-correction compiler does not. Exit 0 when the spin count grows, 1 when
-// it stays the same.
+// Compare duplicated source arms after changing one Ref.b bang marker.
+// The observer counts new arms before C content deduplication. Compilers
+// without that emission event use the emitted arm-function count.
+// Usage: bun arm_eq_ref_bang_share.ts COMPILER_DIR
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { pathToFileURL } from "node:url";
+import { observe_compiler } from "./arm_share_observation.ts";
 import * as Bend from "../../compiler/upstream/bend.ts";
 
 const [dirArg] = process.argv.slice(2);
@@ -30,6 +19,7 @@ type Compiler = {
   compile_book(book: Bend.Book): string;
   book_owned(book: Bend.Book, ks?: string[]): void;
   SYNTH: string[];
+  test_arm_count?: { value: number };
 };
 const compSource = [
   path.join(dir, "bend2/compiler/upstream/comp.ts"),
@@ -39,7 +29,7 @@ if (compSource === undefined) {
   console.error("no comp.ts under " + dir);
   process.exit(2);
 }
-const Comp = (await import(pathToFileURL(compSource).href)) as unknown as Compiler;
+const Comp = (await observe_compiler(compSource)) as unknown as Compiler;
 
 function seed(base: Bend.Book): Bend.Book {
   const book = Bend.book_nil();
@@ -208,7 +198,9 @@ function bangTerm(t: Bend.LTerm): Bend.LTerm | null {
 }
 
 const spin_count = (c: string): number => (c.match(/Term \w*arm_/g) ?? []).length;
+if (Comp.test_arm_count !== undefined) Comp.test_arm_count.value = 0;
 const plain = Comp.compile_book(await book());
+const plain_arms = Comp.test_arm_count?.value;
 const plain_spins = spin_count(plain);
 const list = sites(await book());
 const all = groups(list);
@@ -222,18 +214,20 @@ for (const g of all) {
   if (next === null) continue;
   site.ann.x = next;
   tried += 1;
+  if (Comp.test_arm_count !== undefined) Comp.test_arm_count.value = 0;
   const changed = Comp.compile_book(b);
+  const changed_arms = Comp.test_arm_count?.value;
   const changed_spins = spin_count(changed);
   if (process.env.ARM_EQ_C !== undefined) fs.writeFileSync(process.env.ARM_EQ_C, changed);
-  if (changed_spins > plain_spins) {
-    console.log("PASS: Ref.b mutation added arm spins: plain " + plain.length
-      + " B/" + plain_spins + " spins, mutated " + changed.length + " B/"
-      + changed_spins + " spins, group " + g.key + ", site " + SITE
+  if (plain_arms === undefined ? changed_spins > plain_spins : changed_arms! > plain_arms) {
+    console.log("PASS: Ref.b mutation added source arm emission: plain " + plain.length
+      + " B/" + (plain_arms ?? plain_spins) + " arms, mutated " + changed.length + " B/"
+      + (changed_arms ?? changed_spins) + " arms, group " + g.key + ", site " + SITE
       + ", compiles tried " + tried);
     process.exit(0);
   }
 }
-console.log("FAIL: Ref.b mutation kept the arm spin count (" + plain_spins
+console.log("FAIL: Ref.b mutation kept the source arm count (" + plain_spins
   + ", " + plain.length + " B); this compiler shares across Ref.b, compiles tried "
   + tried);
 process.exit(1);

@@ -84,7 +84,8 @@ const root = path.resolve(process.argv[2] ?? path.join(import.meta.dir, "../../.
 const upstream = path.join(root, "bend2/compiler/upstream");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bend-shared-type-discovery-"));
 try {
-  for (const name of ["bend.ts", "base.bend"]) {
+  for (const name of fs.readdirSync(upstream).filter(name =>
+    name.endsWith(".ts") || name === "base.bend")) {
     fs.copyFileSync(path.join(upstream, name), path.join(tmp, name));
   }
   const source = fs.readFileSync(path.join(upstream, "comp.ts"), "utf8");

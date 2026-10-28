@@ -39,7 +39,7 @@ const sites = [...source.matchAll(/term_(?:ctr|pak)\(CID_ARTIFACT\b/g)]
   .map((m) => m.index!);
 assert.ok(sites.length >= 1, "the fixture builds Artifact in the emitted C");
 for (const at of sites) {
-  assert.match(enclosing(at), /^\w*spin_\d+$/,
+  assert.match(enclosing(at), /^\w*spin_(?:\d+|[0-9a-f]{64})$/,
     "the Artifact construction must stay in a spin body");
 }
 assert.ok(defined.has("CID_ARTIFACT"), "CID_ARTIFACT is defined");
@@ -65,7 +65,8 @@ try {
   const baseCommit = "0ff762e55071bffd09b58d37fd4d4019da701e53";
   const baseDir = path.join(temp, "base");
   fs.mkdirSync(baseDir);
-  for (const name of ["bend.ts", "base.bend"]) {
+  for (const name of fs.readdirSync(upstream).filter(name =>
+    name.endsWith(".ts") || name === "base.bend")) {
     fs.copyFileSync(path.join(upstream, name), path.join(baseDir, name));
   }
   fs.symlinkSync(path.join(upstream, "effs"), path.join(baseDir, "effs"));
