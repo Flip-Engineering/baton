@@ -452,40 +452,18 @@ def denied_detached_input_cannot_launch_a_process(db,id,saved):
 def owed_after_sql(+id: String) -> String:
   "SELECT coalesce((SELECT owed.id FROM messages owed WHERE owed.recipient=(SELECT recipient FROM messages WHERE id=" ++ C.q(id) ++ ") AND " ++ C.owed_sql("owed") ++ " AND NOT " ++ C.stopped_session_sql("owed.recipient") ++ " ORDER BY owed.seq LIMIT 1),'');"
 
-# The report to the recipient's coordinator for input whose delivery failed
-# again after a redelivery.
+# The report to the recipient's coordinator when delivery or redelivery fails.
 def undelivered_report_sql(+id: String, +detail: String) -> String:
-  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":undelivered") ++ ",owed.recipient," ++ C.blocked_owner_sql("owed.recipient") ++ ",'report','Input ' || owed.id || ' for ' || owed.recipient || ' was not delivered: the receive endpoint failed again after a redelivery. Cause: ' || " ++ C.q(detail) ++ " || ' ' || owed.recipient || ' has ' || (SELECT count(*) FROM messages pending WHERE pending.recipient=owed.recipient AND " ++ C.owed_sql("pending") ++ ") || ' owed inputs and no turn started for them. Send it guidance to wake it again once the cause is cleared, or stop it.' FROM messages owed WHERE owed.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("owed") ++ " AND " ++ C.blocked_owner_sql("owed.recipient") ++ " IS NOT NULL;"
+  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":undelivered") ++ ",owed.recipient," ++ C.blocked_owner_sql("owed.recipient") ++ ",'report','Input ' || owed.id || ' for ' || owed.recipient || ' could not be delivered after a delivery failure. Cause: ' || " ++ C.q(detail) ++ " || ' ' || owed.recipient || ' has ' || (SELECT count(*) FROM messages pending WHERE pending.recipient=owed.recipient AND " ++ C.owed_sql("pending") ++ ") || ' owed inputs and no turn started for them. Send it guidance to wake it again once the cause is cleared, or stop it.' FROM messages owed WHERE owed.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("owed") ++ " AND " ++ C.blocked_owner_sql("owed.recipient") ++ " IS NOT NULL;"
 
-def redrive(+db: String, +next: String, empty: Bool) -> IO(Unit):
+def redrive(+db: String, +next: String, empty: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match empty:
-    case True{}: IO.pure(Unit,Unit{})
-    case False{}: do IO<Unit>:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
+    case False{}: do IO<Result<&1,&1,U32 & String,String>>:
       executable : String <- IO.try(String,Lock.SessionLock.executable())
       +database : String <- IO.try(String,Lock.SessionLock.canonical(db))
       launched : Result<&1,&1,U32 & String,String> <- Host.Control.launch(Tx.enc_argv([executable,"--redeliver-message",database,next]),database,next ++ ":redelivery")
-      IO.pure(Unit,Unit{})
-
-# A delivery whose recipient endpoint failed leaves its input owed with no turn
-# started for it (#1054): worktree-paths-972-haiku-20261022 never started after
-# its endpoint exited 5 on 'database is locked', and the coordinator kept 22
-# owed inputs after its receive process died. The dispatch derives the oldest
-# owed input from the pending inbox and starts a redelivery for it; the
-# receive endpoint's session lock and custody check decide whether a turn
-# starts. The dispatch still exits with the delivery failure.
-def delivered_or_redriven(+db: String, +id: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
-  match result:
-    case Done{output}: IO.pure(Unit,Unit{})
-    case Fail{(+code,+detail)}: do IO<Unit>:
-      owed : String <- IO.try(String,DB.Sql.query(db,owed_after_sql(id)))
-      +next : String <- IO.pure(String,Tx.trim_nl(owed))
-      redriven : Unit <- redrive(db,next,String.is_empty(next))
-      IO.die(Unit,code,detail)
-
-def deliver(+db: String, +id: String) -> IO(Unit):
-  do IO<Unit>:
-    delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id,"1","")
-    delivered_or_redriven(db,id,delivered)
+      IO.pure(Result<&1,&1,U32 & String,String>,launched)
 
 # A failure on a held write lock: SQLITE_BUSY or SQLITE_LOCKED from the store,
 # or a receive endpoint that exited with that code. A Baton endpoint exits 5
@@ -522,6 +500,35 @@ def escalated(+db: String, +id: String, +code: U32, +detail: String, reported: R
       notified : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":undelivered","1","")
       IO.die(Unit,code,detail)
     case Fail{(report_code,report_text)}: IO.die(Unit,code,detail ++ "\nThe undelivered report for " ++ id ++ " was not committed (" ++ U32.show(report_code) ++ ": " ++ report_text ++ "); the input stays owed in the pending inbox.")
+
+def redriven_or_escalated(+db: String, +id: String, +code: U32, +detail: String, redriven: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match redriven:
+    case Done{output}: IO.die(Unit,code,detail)
+    case Fail{(+redrive_code,+redrive_detail)}: do IO<Unit>:
+      reported : Result<&1,&1,U32 & String,String> <- undelivered_reported(db,id,redrive_detail)
+      escalated(db,id,redrive_code,redrive_detail,reported)
+
+# A delivery whose recipient endpoint failed leaves its input owed with no turn
+# started for it (#1054): worktree-paths-972-haiku-20261022 never started after
+# its endpoint exited 5 on 'database is locked', and the coordinator kept 22
+# owed inputs after its receive process died. The dispatch derives the oldest
+# owed input from the pending inbox and starts a redelivery for it; the
+# receive endpoint's session lock and custody check decide whether a turn
+# starts. A failure to start redelivery is reported to the recipient's
+# coordinator, and the dispatch still exits with its delivery failure.
+def delivered_or_redriven(+db: String, +id: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Done{output}: IO.pure(Unit,Unit{})
+    case Fail{(+code,+detail)}: do IO<Unit>:
+      owed : String <- IO.try(String,DB.Sql.query(db,owed_after_sql(id)))
+      +next : String <- IO.pure(String,Tx.trim_nl(owed))
+      redriven : Result<&1,&1,U32 & String,String> <- redrive(db,next,String.is_empty(next))
+      redriven_or_escalated(db,next,code,detail,redriven)
+
+def deliver(+db: String, +id: String) -> IO(Unit):
+  do IO<Unit>:
+    delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id,"1","")
+    delivered_or_redriven(db,id,delivered)
 
 def redelivery_failed(+db: String, +id: String, +code: U32, +detail: String, busy: Bool, again: Unit -> IO(Unit)) -> IO(Unit):
   match busy:
