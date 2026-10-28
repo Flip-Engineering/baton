@@ -274,10 +274,6 @@ def task_state_sql(+session: String) -> String:
 def task_continuation_sql(+session: String, +id: String) -> String:
   "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id ++ ":task-continuation") ++ ",worker.id,worker.id,'task-continuation','Continue assignment ' || (SELECT id FROM messages WHERE seq=" ++ task_assignment_sql("worker.id") ++ ") || '. Review the complete stored assignment and current inbox, and carry out the coordinator-authorized work. Before ending this turn, use completion-request --text SUMMARY to request the conductor completion decision. Explicit operator stops remain effective.' FROM sessions worker WHERE worker.id=" ++ q(session) ++ " AND " ++ task_open_sql("worker.id") ++ " AND " ++ task_request_sql("worker.id") ++ " IS NULL AND NOT EXISTS(SELECT 1 FROM messages owed WHERE owed.recipient=worker.id AND " ++ owed_sql("owed") ++ ");"
 
-# A settled turn records its continuation and the coordinator report together.
-def task_settlement_sql(+session: String, +id: String) -> String:
-  "BEGIN IMMEDIATE;" ++ task_continuation_sql(session,id) ++ open_assignment_report_sql(id,session) ++ "COMMIT;"
-
 def session_state_sql(+session: String) -> String:
   "json_patch(coalesce((SELECT json_object('stop',json_object('id',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''))) FROM session_stops WHERE session=" ++ session ++ "),json('{}'))"
   ++ ",json_object('blockedCause'," ++ blocked_cause_sql(session) ++ ",'blockedOwner'," ++ blocked_owner_sql(session) ++ ",'wake'," ++ wake_state_sql(session) ++ "))"
@@ -401,6 +397,10 @@ def report_recipient(+session: String) -> String:
 # The recorded continuation identifies the turn-end outcome sent to the coordinator.
 def open_assignment_report_sql(+id: String, +session: String) -> String:
   "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id ++ ":assignment") ++ ",worker.id," ++ report_recipient("worker.id") ++ ",'report','Turn ' || " ++ q(id) ++ " || ' ended with assignment ' || (SELECT id FROM messages WHERE seq=" ++ task_assignment_sql("worker.id") ++ ") || ' still open. ' || worker.id || ' sent no completion request. Baton queued continuation ' || continuation.id || ' to continue the assignment and request completion. Review the worker report and send guidance for any remaining work.' FROM sessions worker JOIN messages continuation ON continuation.id=" ++ q(id ++ ":task-continuation") ++ " AND continuation.sender=worker.id AND continuation.recipient=worker.id AND continuation.kind='task-continuation' WHERE worker.id=" ++ q(session) ++ " AND " ++ report_recipient("worker.id") ++ " IS NOT NULL AND " ++ task_open_sql("worker.id") ++ " AND " ++ task_request_sql("worker.id") ++ " IS NULL;"
+
+# A settled turn records its continuation and the coordinator report together.
+def task_settlement_sql(+session: String, +id: String) -> String:
+  "BEGIN IMMEDIATE;" ++ task_continuation_sql(session,id) ++ open_assignment_report_sql(id,session) ++ "COMMIT;"
 
 def last_assistant_sql(+event: String) -> String:
   "(SELECT " ++ last_assistant_sql_expr("native_frame.value") ++ " FROM (SELECT " ++ q(event) ++ " AS value) native_frame)"
