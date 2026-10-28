@@ -6,6 +6,7 @@ overlays and calls retained launch composition and custody with a local CLI stub
 import json
 import os
 import pathlib
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -37,6 +38,9 @@ class DshRetained(unittest.TestCase):
         self.link = self.root / 'link.db'
         self.attempt = self.root / 'attempt'
         self.patches = self.root / 'attempt.dsh'
+        self.receiver = self.root / 'receiver'
+        self.receiver_bin = self.receiver / 'bin' / 'baton2'
+        self.receiver_helpers = self.receiver / 'libexec' / 'baton2'
         with sqlite3.connect(self.db) as database:
             database.executescript(SCHEMA)
             database.execute(
@@ -101,15 +105,29 @@ class DshRetained(unittest.TestCase):
         self.assertFalse(self.attempt.exists())
 
     def test_retained_prepare_resolves_dsh_worker_bridge(self):
+        self.receiver_bin.parent.mkdir(parents=True)
+        self.receiver_helpers.mkdir(parents=True)
+        shutil.copyfile(EXE, self.receiver_bin)
+        self.receiver_bin.chmod(0o700)
+        shutil.copyfile(ROOT / 'bend2/scripts/dsh-worker.mjs',
+                        self.receiver_helpers / 'dsh-worker.mjs')
+        shutil.copyfile(ROOT / 'bend2/scripts/dsh-baton-hooks.mjs',
+                        self.receiver_helpers / 'dsh-baton-hooks.mjs')
         self.start_owner()
         result = subprocess.run(
-            [str(EXE), 'prepare', str(self.link), str(self.attempt), '/usr/bin/dsh',
+            [str(self.receiver_bin), 'prepare', str(self.link), str(self.attempt), '/usr/bin/dsh',
              'deepseek/deepseek-flash', 'max'],
             text=True, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         bridge = next((line.split('\t', 1)[1] for line in result.stdout.splitlines()
                        if line.startswith('arg\tBATON_DSH_WORKER_BRIDGE=')), '')
-        self.assertTrue(bridge.endswith('/dsh-worker.mjs'), result.stdout)
+        expected_bridge = str(self.receiver_helpers / 'dsh-worker.mjs')
+        expected_hooks = str(self.receiver_helpers / 'dsh-baton-hooks.mjs')
+        self.assertEqual(bridge, expected_bridge, result.stdout)
+        self.assertTrue((self.receiver_helpers / 'dsh-worker.mjs').is_file())
+        self.assertTrue((self.receiver_helpers / 'dsh-baton-hooks.mjs').is_file())
+        tools = (self.patches / 'dsh-tools.patch.yml').read_text()
+        self.assertIn('name: ' + repr(expected_hooks), tools)
         self.assertIn('input\tfixture task', result.stdout)
 
     def test_patch_inputs_are_the_minimal_roster_and_max_effort(self):
