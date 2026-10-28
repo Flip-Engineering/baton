@@ -67,6 +67,99 @@ class AdapterExitTests(unittest.TestCase):
         self.assertEqual(result.stderr, b'child stderr\n')
         self.assertFalse(self.output.exists())
 
+    def test_failed_queue_key_retains_process_and_source_evidence(self):
+        adapter_spec = importlib.util.spec_from_file_location('queue_native_checks_adapter', ADAPTER)
+        adapter = importlib.util.module_from_spec(adapter_spec)
+        adapter_spec.loader.exec_module(adapter)
+        root = Path(self.temp.name).resolve()
+        client = root / 'fake-queue-client'
+        client.write_text(
+            '#!/usr/bin/env python3\n'
+            'import sys\n'
+            'print("key stdout fixture")\n'
+            'print("key stderr fixture", file=sys.stderr)\n'
+            'raise SystemExit(29)\n')
+        client.chmod(0o755)
+        compiler = root / 'fake-compiler'
+        compiler.write_text('#!/bin/sh\nexit 0\n')
+        compiler.chmod(0o755)
+        source = root / 'input.c'
+        source.write_text('int fixture(void) { return 0; }\n')
+        directory = root / 'evidence'
+        directory.mkdir()
+        config = {'client': str(client), 'state': str(root / 'state')}
+        options = ['--kind', 'cc', '--compiler', str(compiler)]
+        command = [str(compiler), '-c', str(source)]
+
+        previous_cwd = Path.cwd()
+        try:
+            os.chdir(root)
+            with open(root / 'parent.stderr', 'wb') as stderr_file, \
+                    mock.patch.object(adapter.sys, 'stderr', mock.Mock(buffer=stderr_file)):
+                code = adapter.submit(config, directory, options, command, key_only=True)
+        finally:
+            os.chdir(previous_cwd)
+
+        self.assertEqual(code, 29)
+        self.assertEqual((directory / 'key.stdout').read_bytes(), b'key stdout fixture\n')
+        self.assertEqual((directory / 'key.stderr').read_bytes(), b'key stderr fixture\n')
+        metadata = json.loads((directory / 'failed-key.json').read_text())
+        expected_argv = [str(client), '--', 'key', '--state-root', str(root / 'state'),
+                         '--cwd', str(root), '--root', str(root), *options, '--', *command]
+        self.assertEqual(metadata['argv'], expected_argv)
+        self.assertEqual(metadata['cwd'], str(root))
+        self.assertEqual(metadata['exit_code'], 29)
+        self.assertEqual(metadata['queue_binary']['sha256'],
+                         hashlib.sha256(client.read_bytes()).hexdigest())
+        self.assertEqual(metadata['queue_adapter']['sha256'],
+                         hashlib.sha256(ADAPTER.read_bytes()).hexdigest())
+        source_identity = next(item['identity'] for item in metadata['sources']
+                               if item['identity'].get('path') == str(source))
+        self.assertEqual(source_identity['sha256'], hashlib.sha256(source.read_bytes()).hexdigest())
+        self.assertFalse((directory / 'request.json').exists())
+
+    def test_failed_queue_key_sigkill_retains_evidence_and_signal(self):
+        root = Path(self.temp.name).resolve()
+        client = root / 'fake-queue-client'
+        client.write_text(
+            '#!/usr/bin/env python3\n'
+            'import os, signal\n'
+            'print("key stdout before SIGKILL", flush=True)\n'
+            'print("key stderr before SIGKILL", file=__import__("sys").stderr, flush=True)\n'
+            'os.kill(os.getpid(), signal.SIGKILL)\n')
+        client.chmod(0o755)
+        compiler = root / 'fake-compiler'
+        compiler.write_text('#!/bin/sh\necho "fake compiler v1"\n')
+        compiler.chmod(0o755)
+        source = root / 'input.c'
+        source.write_text('int fixture(void) { return 0; }\n')
+        run = root / 'run'
+        run.mkdir()
+        config_path = root / 'queue.json'
+        config_path.write_text(json.dumps({
+            'client': str(client),
+            'cc': str(compiler),
+            'run': str(run),
+            'state': str(root / 'state'),
+        }))
+        environment = dict(os.environ, BATON2_NATIVE_QUEUE=str(config_path))
+
+        result = subprocess.run(
+            [sys.executable, str(ADAPTER), 'key', 'cc', '-c', str(source)],
+            cwd=root, env=environment, capture_output=True)
+
+        self.assertEqual(result.returncode, -signal.SIGKILL, result.stderr)
+        directories = list((run / 'evidence' / 'compile-queue').iterdir())
+        self.assertEqual(len(directories), 1)
+        directory = directories[0]
+        self.assertEqual((directory / 'key.stdout').read_bytes(),
+                         b'key stdout before SIGKILL\n')
+        self.assertEqual((directory / 'key.stderr').read_bytes(),
+                         b'key stderr before SIGKILL\n')
+        metadata = json.loads((directory / 'failed-key.json').read_text())
+        self.assertEqual(metadata['exit_code'], -signal.SIGKILL)
+        self.assertFalse((directory / 'request.json').exists())
+
     def test_successful_check_creates_its_artifact(self):
         result = self.run_child('pass')
         self.assertEqual(result.returncode, 0, result.stderr)
