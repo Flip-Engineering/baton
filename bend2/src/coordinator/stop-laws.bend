@@ -152,7 +152,7 @@ law stop_reconcile_uses_the_recorded_attempt_and_directory:
   for +directory: String
   {Stop.reconcile(db,session,attempt,directory) == reconcile_recorded_stop(db,session,attempt,directory) : IO(Unit)}
 
-def stop_reconcile_selects_the_recorded_signal_and_attempt(db,session,attempt,directory):
+def stop_reconcile_uses_the_recorded_attempt_and_directory(db,session,attempt,directory):
   {==}
 
 # The answer reads the stored operation and distinguishes an idle stop from a

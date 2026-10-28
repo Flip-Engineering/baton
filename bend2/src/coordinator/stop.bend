@@ -178,6 +178,38 @@ def selected_signal(value: Maybe<&2,U32>) -> U32:
     case None{}: 0
     case Some{signal}: signal
 
+# Completion preserves the native event and status. Its stop report is committed
+# before the owner releases custody; native acceptance receipts are unchanged.
+def exited_sql(+session: String, +attempt: String, +status: String, +event: String, +error: String, +log: String) -> String:
+  "BEGIN IMMEDIATE;UPDATE executions SET phase='exited',status=" ++ C.q(status) ++ " WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ ";"
+  ++ "UPDATE session_stops SET outcome='stopped',native_status=" ++ C.q(status) ++ " WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ ";"
+  ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT st.report_id,s.id," ++ C.report_recipient("s.id") ++ ",'report',json_object('type','session-stopped','session',s.id,'stopId',st.id,'reason',st.reason,'attempt',st.attempt,'requestedSignal',st.signal,'nativeStatus',st.native_status,'nativeEvent',CASE WHEN " ++ C.q(event) ++ "='' THEN NULL ELSE json(" ++ C.q(event) ++ ") END,'observationError',nullif(" ++ C.q(error) ++ ",''),'output'," ++ C.q(log) ++ ",'workspace',s.workspace,'branch',s.branch,'native',s.native) FROM session_stops st JOIN sessions s ON s.id=st.session WHERE st.session=" ++ C.q(session) ++ " AND st.attempt=" ++ C.q(attempt) ++ " AND st.report_id<>'' AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL" ++ C.message_upsert() ++ "COMMIT;"
+
+def exited(+db: String, +session: String, +attempt: String, +status: String, +event: String, +error: String, +log: String) -> IO(Unit):
+  do IO<Unit>:
+    saved : String <- IO.try(String,DB.Sql.query(db,exited_sql(session,attempt,status,event,error,log)))
+    IO.pure(Unit,Unit{})
+
+def deliver(+db: String, +session: String, +attempt: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    id : String <- IO.try(String,DB.Sql.query(db,"WITH reports AS (SELECT id,seq,CASE WHEN json_valid(body) THEN body ELSE '{}' END AS document FROM messages WHERE sender=" ++ C.q(session) ++ " AND kind='report') SELECT coalesce((SELECT id FROM reports WHERE json_extract(document,'$.type')='session-stopped' AND json_extract(document,'$.attempt')=" ++ C.q(attempt) ++ " ORDER BY seq DESC LIMIT 1),'');"))
+    result : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,Tx.trim_nl(id),"1","")
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Delivery.wake_result(result))
+
+def reconcile_request(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    attempt : String <- IO.try(String,DB.Sql.query(db,"SELECT attempt FROM session_stops WHERE session=" ++ C.q(session) ++ ";"))
+    directory : String <- IO.try(String,DB.Sql.query(db,"SELECT directory FROM session_stops WHERE session=" ++ C.q(session) ++ ";"))
+    outcome : String <- IO.try(String,DB.Sql.query(db,"SELECT outcome FROM session_stops WHERE session=" ++ C.q(session) ++ ";"))
+    +id : String = Tx.trim_nl(attempt)
+    +path : String = Tx.trim_nl(directory)
+    +state : String = Tx.trim_nl(outcome)
+    Bool.pick(IO(Unit),Bool.and(Bool.or(String.eq(state,"requested"),String.eq(state,"custody-missing")),Bool.not(String.is_empty(id))),
+      do IO<Unit>:
+        missing : Bool <- directory_missing(path)
+    Bool.pick(IO(Unit),missing,missing_custody_owner(db,session,id,path),reconcile_restored(db,session,id,path)),
+      IO.pure(Unit,Unit{}))
+
 # Every reconcile entry reads the current attempt and path from the durable stop
 # row. The caller's attempt and directory can be stale after observer recovery.
 def reconcile(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
@@ -281,38 +313,6 @@ def observing_result(+db: String, +session: String, +attempt: String, +directory
   do IO<Result<&1,&1,U32 & String,Unit>>:
     saved : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"UPDATE executions SET phase='running',status='' WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ " AND directory=" ++ C.q(directory) ++ ";")
     observing_after_query(db,session,saved)
-
-# Completion preserves the native event and status. Its stop report is committed
-# before the owner releases custody; native acceptance receipts are unchanged.
-def exited_sql(+session: String, +attempt: String, +status: String, +event: String, +error: String, +log: String) -> String:
-  "BEGIN IMMEDIATE;UPDATE executions SET phase='exited',status=" ++ C.q(status) ++ " WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ ";"
-  ++ "UPDATE session_stops SET outcome='stopped',native_status=" ++ C.q(status) ++ " WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ ";"
-  ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT st.report_id,s.id," ++ C.report_recipient("s.id") ++ ",'report',json_object('type','session-stopped','session',s.id,'stopId',st.id,'reason',st.reason,'attempt',st.attempt,'requestedSignal',st.signal,'nativeStatus',st.native_status,'nativeEvent',CASE WHEN " ++ C.q(event) ++ "='' THEN NULL ELSE json(" ++ C.q(event) ++ ") END,'observationError',nullif(" ++ C.q(error) ++ ",''),'output'," ++ C.q(log) ++ ",'workspace',s.workspace,'branch',s.branch,'native',s.native) FROM session_stops st JOIN sessions s ON s.id=st.session WHERE st.session=" ++ C.q(session) ++ " AND st.attempt=" ++ C.q(attempt) ++ " AND st.report_id<>'' AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL" ++ C.message_upsert() ++ "COMMIT;"
-
-def exited(+db: String, +session: String, +attempt: String, +status: String, +event: String, +error: String, +log: String) -> IO(Unit):
-  do IO<Unit>:
-    saved : String <- IO.try(String,DB.Sql.query(db,exited_sql(session,attempt,status,event,error,log)))
-    IO.pure(Unit,Unit{})
-
-def deliver(+db: String, +session: String, +attempt: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  do IO<Result<&1,&1,U32 & String,Unit>>:
-    id : String <- IO.try(String,DB.Sql.query(db,"WITH reports AS (SELECT id,seq,CASE WHEN json_valid(body) THEN body ELSE '{}' END AS document FROM messages WHERE sender=" ++ C.q(session) ++ " AND kind='report') SELECT coalesce((SELECT id FROM reports WHERE json_extract(document,'$.type')='session-stopped' AND json_extract(document,'$.attempt')=" ++ C.q(attempt) ++ " ORDER BY seq DESC LIMIT 1),'');"))
-    result : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,Tx.trim_nl(id),"1","")
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Delivery.wake_result(result))
-
-def reconcile_request(+db: String, +session: String) -> IO(Unit):
-  do IO<Unit>:
-    attempt : String <- IO.try(String,DB.Sql.query(db,"SELECT attempt FROM session_stops WHERE session=" ++ C.q(session) ++ ";"))
-    directory : String <- IO.try(String,DB.Sql.query(db,"SELECT directory FROM session_stops WHERE session=" ++ C.q(session) ++ ";"))
-    outcome : String <- IO.try(String,DB.Sql.query(db,"SELECT outcome FROM session_stops WHERE session=" ++ C.q(session) ++ ";"))
-    +id : String = Tx.trim_nl(attempt)
-    +path : String = Tx.trim_nl(directory)
-    +state : String = Tx.trim_nl(outcome)
-    Bool.pick(IO(Unit),Bool.and(Bool.or(String.eq(state,"requested"),String.eq(state,"custody-missing")),Bool.not(String.is_empty(id))),
-      do IO<Unit>:
-        missing : Bool <- directory_missing(path)
-    Bool.pick(IO(Unit),missing,missing_custody_owner(db,session,id,path),reconcile_restored(db,session,id,path)),
-      IO.pure(Unit,Unit{}))
 
 def request(+db: String, +session: String, +id: String, +reason: String, force: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   Store.transact_sql(db,Bool.pick(String,force,force_sql(session,id),request_sql(session,id,reason)))
