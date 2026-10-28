@@ -580,7 +580,7 @@ jobs:
     if: ${{ !cancelled() && (needs.linux-candidate.result == 'success' || inputs.reuse_generated_c_producer != '') }}
     runs-on:
       group: baton2-native-homelab
-      labels: [self-hosted, Linux, X64, baton2-native-linux-x64]
+      labels: [self-hosted, Linux, X64, baton2-native-linux-x64, baton2-native-darwin-cross]
     env:
       BATON2_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || '' }}
       BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-arms-shared-sol-20261028/bend-2.0.25-linux-x64-compiler-arms-shared-sol-20261028.tar.gz' }}
