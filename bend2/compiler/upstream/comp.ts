@@ -4497,8 +4497,8 @@ function checked_writer(book: Bend.Book, workspace?: string): import("./store.ts
 
 export function compile_book_to(book: Bend.Book, write: (chunk: string) => void, workspace?: string): void {
   const writer = checked_writer(book, workspace);
-  compile_stored(book, writer, write);
-  writer.remove();
+  try { compile_stored(book, writer, write); }
+  finally { writer.remove(); }
 }
 
 type StoredHeader = {
@@ -4589,7 +4589,8 @@ function open_checked(directory: string): Prepared {
 
 export function prepare_book(book: Bend.Book, workspace?: string): string {
   const writer = checked_writer(book, workspace);
-  prepare_checked(book, writer);
+  try { prepare_checked(book, writer); }
+  catch (error) { writer.remove(); throw error; }
   return writer.directory;
 }
 

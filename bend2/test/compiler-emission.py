@@ -58,7 +58,7 @@ def safe() -> U32:
                              {'Abstract', 'dependent', 'annotated', 'erased_use', 'Holder'})
 
     def test_checked_store(self):
-        for name in ['store_term_graph', 'store_release']:
+        for name in ['store_term_graph', 'store_release', 'store_cleanup']:
             with self.subTest(name=name):
                 script = ROOT / 'bend2/test/compiler' / (name + '.ts')
                 run = subprocess.run([self.bun, '--smol', str(script), str(ROOT)],
