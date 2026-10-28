@@ -56,24 +56,31 @@ A subscription account binds the credential directory the harness reads, through
 the existing `CODEX_HOME` or `CLAUDE_CONFIG_DIR` binding.
 
 An Anthropic API-key launch passes through `credit_launch_gate` in
-`bend2/src/coordinator/accounts.bend`. When the route qualification is enabled,
-the gate records the request reservation and a `credit_authorizations` row,
-then returns the packaged `api-key-exec` helper with the account secret
-reference. The helper requires the `BATON2_CREDIT_RESERVATION` environment
-marker naming the attempt to match `BATON_ATTEMPT_DIRECTORY`, then consumes the
-authorization with one guarded `UPDATE`: only `changes()=1` admits the launch.
-A consumed row refuses `creditAuthorizationConsumed`, a row naming another
-reference refuses `creditAuthorizationMismatch`, and a failed or zero-change
-consume refuses `creditAdmissionUnavailable` before any secret is resolved or
-child started. A marker by itself is not authorization. The SQLite busy handler
-in `bend2/src/host/sqlite.c` waits at most 3000 retries of 10ms for one lock and
-then returns `SQLITE_BUSY` to the caller.
+`bend2/src/coordinator/accounts.bend`. The operator admits these launches
+(ruling under #881, recorded in #1177). The gate records a `credit_authorizations`
+row for the attempt and returns the packaged `api-key-exec` helper with the
+account secret reference. No retained balance, expiry or organization reading
+decides the launch, because no endpoint reports the remaining credit balance.
+The helper reads `BATON_ATTEMPT_DIRECTORY` and `BATON_DATABASE`, which the
+retained launch exports, and consumes that attempt's authorization with one
+guarded `UPDATE`: only `changes()=1` admits the launch. A consumed row refuses
+`creditAuthorizationConsumed`, a row naming another reference refuses
+`creditAuthorizationMismatch`, and a failed or zero-change consume refuses
+`creditAdmissionUnavailable` before any secret is resolved or child started.
+The SQLite busy handler in `bend2/src/host/sqlite.c` waits at most 3000 retries
+of 10ms for one lock and then returns `SQLITE_BUSY` to the caller.
 
-`credit_guard_qualified` returns false in this source. The gate therefore
-returns the hold sentence, writes no reservation and writes no authorization.
-The SQLite busy handler in `bend2/src/host/sqlite.c` waits at most 3000 retries of 10ms for one lock and then returns `SQLITE_BUSY` to the caller.
-The attempt is not started and its input stays owed. Subscription routes and
-other harnesses keep their existing bindings.
+A failed authorization insert, or a missing resolver, returns a refusal
+sentence; the attempt is not started and its input stays owed. Subscription
+routes and other harnesses keep their existing bindings.
+
+The hold signal for a credit account is the provider's own refusal ("Your credit
+balance is too low to access the Anthropic API."). `handoff_with` records that
+refusal as a `usage_reads` row of the refused account: a readable read with one
+exhausted `balance` window, whose source names the refused attempt and carries
+the provider text. The account is then held like any account an exhausted read
+holds, and the account order moves to the next entry. The usage-read helper
+answers unreadable for a credit account, so no live read releases this hold.
 
 ## Request-level reservation
 
@@ -83,8 +90,12 @@ the session, attempt, account, organization, grant cycle, cap period, observed
 balance, unit, reserved maximum, balance after the reserve, cap after the
 reserve, state, actual cost and outcome.
 
-The grant cycle is the `cycle` value on the newest reported promotional-credit
-observation, for example `grant:2026-10-11`. The calendar does not create a
+The grant cycle is the `cycle` value of a reported promotional-credit
+observation, for example `grant:2026-10-11`. The grant in force is derived
+separately from every reported observation of the organization: it is the one
+cycle whose verified 13-digit expiry is later than the database clock. When no
+cycle or more than one cycle is in force, no grant is current and the newest
+observation refuses `creditCycleMismatch`. The calendar does not create a
 grant: a new allowance requires a new verified provider observation with its own
 cycle and expiry. The cap period is the current calendar month and remains a
 separate field.
@@ -114,10 +125,8 @@ ceilings: `min(balance, 200 - grant spend, 200 - monthly spend)`. Grant spend
 sums the reservations for the same grant cycle. Monthly spend sums the
 reservations for the same cap period and uses the larger of that ledger and the
 reconciled provider external spend. `credit_reserve_bounded_for` reserves a
-supplied request charge instead of the whole bound; `credit_launch_gate_priced`
-supplies the price of the actual request body. The unpriced launch gate keeps
-the full-bound path. The active reservation serializes launches, so a second
-launch cannot start until the first settles.
+supplied request charge instead of the whole bound. The active reservation
+serializes requests, so a second request cannot reserve until the first settles.
 `credit_reservations_active` is a unique index on the organization, grant cycle
 and cap period for rows in state `reserved`. A repeated request returns its
 recorded row and does not reserve again.
@@ -134,22 +143,14 @@ state `failed`; `account reconcile` settles that row with the provider's actual
 cost later. `account import-spend` records the Admin cost report's numeric USD
 amount for the organization and cap period.
 
-`credit_launch_gate` is the production caller before send. For an Anthropic
-`claude-code` `api_key` account it records the reservation, then the one-use
-authorization, and returns the packaged resolver binding.
-`credit_guard_qualified` returns false in this source, so the gate starts no
-paid launch and #884 remains in force. The release sets that qualification
-source true only after the installed qualification passes.
+The launch gate does not call the reservation ledger. The ledger functions
+above (`credit_reserve_for`, `credit_reserve_bounded_for`, `credit_settle_for`)
+and the request pricing (`credit_request_facts_for`, `credit_request_price`)
+have no production caller that creates a reservation; completion settlement
+finds no reservation for a launch.
 
 The provider enforces the promotional balance on each API request. A retained
-launch can contain more than one provider request. `credit_request_facts_for`
-reads the actual Messages request body the host supplies, and
-`credit_launch_gate_priced` reserves the priced charge before the host may
-forward it. The installed host transport that sees each request and calls this
-gate is not present in this source; the guard remains false until that native
-transport and the compiled qualification pass. Policy and persistent state stay
-in Bend2; host code provides the transport I/O, and a Node policy/proxy is not
-an approved boundary.
+launch can contain more than one provider request.
 
 ## Funded credit observations
 
@@ -195,10 +196,8 @@ account exists it returns the operator-ordered first matching account and says
 so, with `preferredByObservation` false.
 
 The rule is a preference over recorded facts. Selection never refuses work.
-The API-key launch reservation guard is the admission control for that route;
-subscription routes and continuation keep the provider-driven rule. The
-automatic route change stays driven by the provider's own refusal, which is the
-rule #702 established.
+The automatic route change is driven by the provider's own refusal, which is the
+rule #702 established, for subscription and API-key credit routes alike.
 
 ## Continuation after a refusal
 
@@ -241,9 +240,9 @@ configuration.
 
 - No balance is synthesized from model output, and subscription quota is never
   read as API credit.
-- Promotional-credit admission for one API-key launch uses the reservation
-  guard above. Subscription launches keep the selection and fallback rules in
-  the sections above.
+- An API-key credit launch is admitted without a retained balance decision; the
+  provider's credit refusal holds the account. Subscription launches keep the
+  selection and fallback rules in the sections above.
 - Linking a plan to a Console organization, accepting program terms, purchasing
   credits and changing billing settings remain operator setup actions.
 - The observed Muse wording `Subscription quota exhausted` classifies as

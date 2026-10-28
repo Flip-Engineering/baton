@@ -370,18 +370,20 @@ def release_sql(+seat: String, +provider: String, +account: String) -> String:
   +latest = latest_readable_sql(provider,account)
   "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT replace(h.id,':hold:',':release:'),h.sender,h.recipient,'report','usage hold released: seat " ++ C.escaped(seat) ++ " on " ++ C.escaped(scope_text(provider,account)) ++ ". ' || coalesce(" ++ read_text_sql(latest) ++ ",'No readable read is recorded for this provider and account') || '. Owed input is admitted.' FROM messages h, usage_reads e WHERE h.id GLOB 'usage-read:'||e.id||':hold:*' AND " ++ scope_sql("e.",provider,account) ++ " AND h.sender=" ++ C.q(seat) ++ " AND h.kind='report' AND NOT EXISTS(SELECT 1 FROM messages x WHERE x.id=replace(h.id,':hold:',':release:'));SELECT changes();"
 
+# A hold row is what held_seats_sql reads to wake the seat on release, so a failed
+# announcement insert propagates its database cause and ends the decision.
 def announce(+db: String, +seat: String, +provider: String, +account: String, +model: String, gate: Gate) -> IO(Unit):
   match gate:
     case GateHeld{window,resets_at,source,receipt}: do IO<Unit>:
-      held : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,hold_sql(seat,provider,account,model))
-      unread : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,unknown_sql(seat,provider,account))
+      held : String <- IO.try(String,DB.Sql.query(db,hold_sql(seat,provider,account,model)))
+      unread : String <- IO.try(String,DB.Sql.query(db,unknown_sql(seat,provider,account)))
       IO.pure(Unit,Unit{})
     case GateUnknown{source,reason,receipt}: do IO<Unit>:
-      unread : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,unknown_sql(seat,provider,account))
-      released : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,release_sql(seat,provider,account))
+      unread : String <- IO.try(String,DB.Sql.query(db,unknown_sql(seat,provider,account)))
+      released : String <- IO.try(String,DB.Sql.query(db,release_sql(seat,provider,account)))
       IO.pure(Unit,Unit{})
     case GateNone{}: do IO<Unit>:
-      released : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,release_sql(seat,provider,account))
+      released : String <- IO.try(String,DB.Sql.query(db,release_sql(seat,provider,account)))
       IO.pure(Unit,Unit{})
 
 # --- the seat -------------------------------------------------------------------------
@@ -475,6 +477,17 @@ def record_pair(+db: String, +session: String, +provider: String, +account: Stri
 def record_document(+db: String, +session: String, +provider: String, +account: String, +trigger: String, answer: String & String) -> IO(Unit):
   (document,fallback)=answer
   record_pair(db,session,provider,account,trigger,document,fallback)
+
+# An account with no usage read (an Anthropic API-credit key) is held by the
+# provider's own refusal. The refusal is recorded as a readable read of that account
+# with an exhausted balance window; its source carries the attempt and the
+# provider's text, and observed_at is the coordinator clock. Only a later readable
+# read that does not hold releases it.
+def refusal_hold_document(+provider: String, +attempt: String, +cause: String) -> String:
+  "{\"schema\":" ++ J.string_literal(UR.read_schema()) ++ ",\"provider\":" ++ J.string_literal(provider) ++ ",\"source\":" ++ J.string_literal("provider refusal of attempt " ++ attempt ++ ": " ++ cause) ++ ",\"state\":\"read\",\"windows\":[{\"window\":\"balance\",\"usedPercent\":null,\"resetsAt\":null,\"exhausted\":true}]}"
+
+def record_refusal_hold(+db: String, +session: String, +provider: String, +account: String, +attempt: String, +cause: String) -> IO(Unit):
+  record_pair(db,session,provider,account,"provider-refusal:" ++ attempt,refusal_hold_document(provider,attempt,cause),"")
 
 # One live read for a provider and account, recorded, followed by the release of the
 # other seats it no longer holds. One read serves every seat on the provider account.

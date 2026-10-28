@@ -313,20 +313,20 @@ def select_account(accounts: List<&2,AccountRecord>, +blocked: String, +harness:
 
 # A subscription account binds the credential directory the harness reads. The
 # API-key helper binding carries only a resolver path and secret reference. The
-# coordinator applies the credit-admission hold before returning that binding.
+# Anthropic claude-code API-key binding comes from credit_launch_gate, which records
+# the attempt's one-use authorization before returning it.
 def api_key_binding(+secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
   match helper:
     case None{}: None{}
     case Some{+script}: Some{Con{script,Con{secret_ref,Nil{}}}}
 
-# Anthropic Claude API-key funding is held until every request can reserve its
-# maximum charge before it reaches the provider. A CLI spend threshold does not
-# bound a request that is already in flight.
+# An API-key account yields no binding when no resolver is installed beside the
+# resolved identity helper.
 def credit_api_key_refusal(account: AccountRecord) -> String:
   match account:
     case Ac{id,provider,harness,funding,secret_ref,organization,verified_at}:
       match funding:
-        case "api_key": Bool.pick(String,Bool.and(String.eq(provider,"anthropic"),String.eq(harness,"claude-code")),"Anthropic API-key launches are held because request-level promotional-credit admission is unavailable; the attempt was not started and its input stays owed.","This API-key launch has no installed resolver beside the resolved identity helper; the attempt was not started and its input stays owed.")
+        case "api_key": "This API-key launch has no installed resolver beside the resolved identity helper; the attempt was not started and its input stays owed."
         case other: "The selected account has no available launch binding; the attempt was not started and its input stays owed."
 
 # --- request-level credit metering and admission -----------------------------
@@ -406,9 +406,7 @@ def credit_admission_cap_after(admission: CreditAdmission) -> String:
 # Fail-closed admission for one provider request. Every fact must be present
 # and current for its own clock before the bounded charge is reserved against
 # both the promotional balance and the monthly cap. An admitted result carries
-# the reservation totals the caller records; it does not start a request. The
-# launch hold stays in account_binding until a caller wires this decision into
-# the request path and that wiring is qualified.
+# the reservation totals the caller records; it does not start a request.
 # A local estimate of what is left after a charge. It floors at zero and is never a
 # gate: admission follows the provider's response, and this value is recorded only.
 def estimate_left(+available: String, +spent: String) -> String:
@@ -658,6 +656,12 @@ def credit_observation_sql(+organization: String) -> String:
 def credit_conflict_sql(+organization: String, +cycle: String) -> String:
   "WITH latest AS (SELECT observed_at FROM credit_observations WHERE organization=" ++ C.q(organization) ++ " AND fact='promotional_credit' AND state='reported' ORDER BY observed_at DESC,rowid DESC LIMIT 1) SELECT count(DISTINCT balance) FROM credit_observations WHERE organization=" ++ C.q(organization) ++ " AND fact='promotional_credit' AND state='reported' AND balance<>'' AND cycle=" ++ C.q(cycle) ++ " AND observed_at=(SELECT observed_at FROM latest);"
 
+# The grant in force: the one cycle named by the organization's reported
+# observations whose verified 13-digit expiry is later than the database clock.
+# No such grant, or more than one, answers empty, which matches no observation.
+def credit_current_cycle_sql(+organization: String) -> String:
+  "SELECT CASE WHEN count(DISTINCT cycle)=1 THEN max(cycle) ELSE '' END FROM credit_observations WHERE organization=" ++ C.q(organization) ++ " AND fact='promotional_credit' AND state='reported' AND cycle<>'' AND length(expires)=13 AND expires NOT GLOB '*[^0-9]*' AND CAST(expires AS INTEGER)>CAST(strftime('%s','now') AS INTEGER)*1000;"
+
 def credit_conflict_ok(+text: String) -> Bool:
   Bool.or(String.eq(text,"0"),String.eq(text,"1"))
 
@@ -764,7 +768,9 @@ def spend_reason(+state: String, +balance: String, +unit: String) -> String:
 def credit_cycle_spent(+ledger: String, +state: String, +balance: String) -> String:
   Bool.pick(String,String.eq(state,"reported"),decimal_max(ledger,balance),ledger)
 
-def credit_reserve_arithmetic(+account: AccountRecord, +observation: CreditObs, +conflict: String, +grant_spend: String, +monthly_spend: String, +current_cap_period: String, +expiry_deadline: String, +now_text: String, +request_charge: String) -> CreditAdmission:
+# current_cycle is the grant in force, derived from every reported observation of
+# the organization rather than from the observation being admitted.
+def credit_reserve_arithmetic(+account: AccountRecord, +observation: CreditObs, +conflict: String, +grant_spend: String, +monthly_spend: String, +current_cycle: String, +current_cap_period: String, +expiry_deadline: String, +now_text: String, +request_charge: String) -> CreditAdmission:
   match observation:
     case CObs{state,balance,unit,cycle,expires}:
       +available : String = Bool.pick(String,decimal_is_gt(grant_spend,balance),"0",decimal_sub(balance,grant_spend))
@@ -779,18 +785,18 @@ def credit_reserve_arithmetic(+account: AccountRecord, +observation: CreditObs, 
       Bool.pick(CreditAdmission,Bool.not(String.eq(unit,"USD")),CRefused{"creditUnitNotUSD"},
       Bool.pick(CreditAdmission,Bool.not(decimal_text(balance)),CRefused{"creditAmountMalformed"},
       Bool.pick(CreditAdmission,Bool.not(String.is_empty(expiry_deadline_reason(expiry_deadline,now_text))),CRefused{expiry_deadline_reason(expiry_deadline,now_text)},
-      credit_request_admission(account,CMeter{account_organization(account),state,cycle,available,unit,credit_cycle_ceiling(),current_cap_period,decimal_max(grant_spend,monthly_spend),"0"},cycle,current_cap_period,bound))))))))))
+      credit_request_admission(account,CMeter{account_organization(account),state,cycle,available,unit,credit_cycle_ceiling(),current_cap_period,decimal_max(grant_spend,monthly_spend),"0"},current_cycle,current_cap_period,bound))))))))))
 
-def credit_reserve_decided(+account: AccountRecord, +observation: CreditObs, +conflict: String, +rows: List<&2,ReservationRow>, +spend_state: String, +spend_balance: String, +spend_unit: String, +current_cap_period: String, +expiry_deadline: String, +now_text: String, +request_charge: String) -> CreditAdmission:
+def credit_reserve_decided(+account: AccountRecord, +observation: CreditObs, +conflict: String, +rows: List<&2,ReservationRow>, +spend_state: String, +spend_balance: String, +spend_unit: String, +current_cycle: String, +current_cap_period: String, +expiry_deadline: String, +now_text: String, +request_charge: String) -> CreditAdmission:
   Bool.pick(CreditAdmission,Bool.not(String.is_empty(spend_reason(spend_state,spend_balance,spend_unit))),CRefused{spend_reason(spend_state,spend_balance,spend_unit)},
-  credit_reserve_arithmetic(account,observation,conflict,reservation_spend_sum_cycle(rows,credit_obs_cycle(observation),"0"),credit_cycle_spent(reservation_spend_sum_cap(rows,current_cap_period,"0"),spend_state,spend_balance),current_cap_period,expiry_deadline,now_text,request_charge))
+  credit_reserve_arithmetic(account,observation,conflict,reservation_spend_sum_cycle(rows,credit_obs_cycle(observation),"0"),credit_cycle_spent(reservation_spend_sum_cap(rows,current_cap_period,"0"),spend_state,spend_balance),current_cycle,current_cap_period,expiry_deadline,now_text,request_charge))
 
-def credit_reserve_decision_fields(+account: AccountRecord, +observation: CreditObs, +conflict: String, +rows: List<&2,ReservationRow>, fields: List<&2,String>, +current_cap_period: String, +expiry_deadline: String, +now_text: String, +request_charge: String) -> CreditAdmission:
+def credit_reserve_decision_fields(+account: AccountRecord, +observation: CreditObs, +conflict: String, +rows: List<&2,ReservationRow>, fields: List<&2,String>, +current_cycle: String, +current_cap_period: String, +expiry_deadline: String, +now_text: String, +request_charge: String) -> CreditAdmission:
   match fields:
     case state <> balance <> unit <> rest:
-      credit_reserve_decided(account,observation,conflict,rows,state,balance,unit,current_cap_period,expiry_deadline,now_text,request_charge)
+      credit_reserve_decided(account,observation,conflict,rows,state,balance,unit,current_cycle,current_cap_period,expiry_deadline,now_text,request_charge)
     case other:
-      credit_reserve_decided(account,observation,conflict,rows,"","","",current_cap_period,expiry_deadline,now_text,request_charge)
+      credit_reserve_decided(account,observation,conflict,rows,"","","",current_cycle,current_cap_period,expiry_deadline,now_text,request_charge)
 
 def reservation_request_sql(+request: String) -> String:
   "SELECT request||char(31)||state||char(31)||max_charge||char(31)||actual_cost||char(31)||organization||char(31)||cycle||char(31)||cap_period||char(31)||balance||char(31)||balance_after||char(31)||cap_after FROM credit_reservations WHERE request=" ++ C.q(request) ++ ";"
@@ -859,7 +865,8 @@ def credit_reserve_existing(+db: String, +session: String, +attempt: String, +ac
         +spend_fields : List<&2,String> <- IO.pure(List<&2,String>,String.split(Tx.trim_nl(spend),Char.from_u32(31)))
         now_text : String <- IO.try(String,DB.Sql.read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000;"))
         deadline : String <- IO.try(String,DB.Sql.read(db,credit_expiry_deadline_sql(credit_obs_expires(observed))))
-        +decision : CreditAdmission <- IO.pure(CreditAdmission,credit_reserve_decision_fields(account,observed,Tx.trim_nl(conflict),reservations,spend_fields,current_cap_period,Tx.trim_nl(deadline),Tx.trim_nl(now_text),request_charge))
+        current_cycle : String <- IO.try(String,DB.Sql.read(db,credit_current_cycle_sql(account_organization(account))))
+        +decision : CreditAdmission <- IO.pure(CreditAdmission,credit_reserve_decision_fields(account,observed,Tx.trim_nl(conflict),reservations,spend_fields,Tx.trim_nl(current_cycle),current_cap_period,Tx.trim_nl(deadline),Tx.trim_nl(now_text),request_charge))
         credit_reserve_observed(db,session,attempt,account,current_cap_period,observed,decision)
 
 def credit_reserve_for(+db: String, +session: String, +attempt: String, +account: AccountRecord, +current_cap_period: String) -> IO(CreditAdmission):
@@ -1303,14 +1310,13 @@ def handoff_label_io(+db: String, +session: String) -> IO(String):
 # The recorded accounts of the session's harness, in the operator's order, are the
 # one fallback order whenever that harness has recorded accounts. A refusal moves
 # the seat to the first entry, scanned from the head of the order, that is not the
-# refused account, is launchable and is not held by a live usage read (#1025).
+# refused account and is not held by a recorded usage read (#1025).
 # Scanning from the head reaches the listed accounts when the refused label is not a
 # recorded account (observed 2026-10-24: Riff seats bound by profile records to
 # claude-credit-primary, which the profile list did not contain, were reported
 # exhausted with two Max accounts listed), and an account that a live read reopens
-# regains its place. An Anthropic API-key account is not launchable while the
-# promotional-credit guard is false. The order states no availability; each
-# entry's live read does.
+# regains its place. An Anthropic API-key credit account is held by its recorded
+# provider refusal. The order states no availability; each entry's reads do.
 def harness_accounts(accounts: List<&2,AccountRecord>, +harness: String) -> List<&2,AccountRecord>:
   match accounts:
     case Nil{}: Nil{}
@@ -1331,16 +1337,8 @@ def ordered_accounts(+db: String, +harness: String) -> IO(List<&2,AccountRecord>
     rows : String <- IO.try(String,DB.Sql.read(db,account_row_sql()))
     IO.pure(List<&2,AccountRecord>,harness_accounts(account_lines(Tx.split_lines(rows),Nil{}),harness))
 
-# The request-level promotional-credit guard. It stays false until the release
-# qualification records the guard as proven; the launch gate below reads it too.
-def credit_guard_qualified() -> Bool:
-  False{}
-
 def credit_route(+account: AccountRecord) -> Bool:
   Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key")))
-
-def credit_unlaunchable(+account: AccountRecord) -> Bool:
-  Bool.and(credit_route(account),Bool.not(credit_guard_qualified()))
 
 # One entry's state: its class, the stated detail and the live read that decided it.
 type EntryState is Data:
@@ -1362,11 +1360,9 @@ def entry_gate(+db: String, +session: String, +provider: String, +model: String,
 def account_state(+db: String, +session: String, +provider: String, +model: String, +helper: String, +read: Bool, +refused: String, +refused_detail: String, +account: AccountRecord) -> IO(EntryState):
   Bool.pick(IO(EntryState),String.eq(account_id(account),refused),
     IO.pure(EntryState,Es{"refused",refused_detail,""}),
-    Bool.pick(IO(EntryState),credit_unlaunchable(account),
-      IO.pure(EntryState,Es{"not-launchable","not launchable: promotional-credit guard is false",""}),
-      do IO<EntryState>:
-        gate : UW.Gate <- entry_gate(db,session,provider,model,helper,"account-order:" ++ refused,account_id(account),read)
-        IO.pure(EntryState,gate_state(gate))))
+    do IO<EntryState>:
+      gate : UW.Gate <- entry_gate(db,session,provider,model,helper,"account-order:" ++ refused,account_id(account),read)
+      IO.pure(EntryState,gate_state(gate)))
 
 # held lists the labels of the held entries one per line; receipts joins their reads.
 type Scan is Data:
@@ -1622,11 +1618,28 @@ def order_move(+db: String, +session: String, +native: String, +cmd: String, +cw
     moved : Bool <- order_move_with(db,session,native,cmd,cwd)
     IO.pure(Unit,Unit{})
 
+# An Anthropic API-key credit account has no usage read. Its provider refusal is
+# the hold signal and is recorded as that account's usage hold with the provider
+# text. The refused label names the account for an account binding and for a
+# profile record alike.
+def credit_refusal_decided(+db: String, +session: String, +label: String, +id: String, +cause: String, refused: Maybe<&2,AccountRecord>) -> IO(Unit):
+  match refused:
+    case None{}: IO.pure(Unit,Unit{})
+    case Some{+account}: Bool.pick(IO(Unit),Bool.not(credit_route(account)),IO.pure(Unit,Unit{}),do IO<Unit>:
+      +provider : String <- UW.seat_provider_io(db,session)
+      UW.record_refusal_hold(db,session,provider,label,id,cause))
+
+def credit_refusal_recorded(+db: String, +session: String, +harness: String, +label: String, +id: String, +cause: String) -> IO(Unit):
+  Bool.pick(IO(Unit),Bool.or(String.is_empty(cause),String.is_empty(label)),IO.pure(Unit,Unit{}),do IO<Unit>:
+    refused : Maybe<&2,AccountRecord> <- account_by_label(db,label,harness)
+    credit_refusal_decided(db,session,label,id,cause,refused))
+
 # Provider-reported exhaustion advances the account in force when a binding
 # put one in force, and the operator's profile list otherwise. The refusal
 # evidence is recorded before any advance, under the refused account label, and
 # the refusal starts a live read of that account's provider usage (#1025); the
-# read, not the refusal text, decides whether the account is held. For two
+# read, not the refusal text, decides whether the account is held, except for an
+# Anthropic API-key credit account, whose refusal records its hold. For two
 # subscription accounts with distinct credential stores, the native-history
 # helper materializes the next store before the sidecar records the advance.
 # The advance is recorded before the caller relaunches, so the next attempt
@@ -1641,6 +1654,7 @@ def handoff_with(+db: String, +session: String, +id: String, +event: String, nat
     +label : String <- label_for_bound(db,session,bound)
     recorded : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.record_cause(db,session,id,label,cause))
     read : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.read_refused_with(db,session,label,id,helper))
+    credit : Unit <- credit_refusal_recorded(db,session,harness,label,id,cause)
     +ordered : List<&2,AccountRecord> <- ordered_accounts(db,harness)
     advanced : Bool <- handoff_ordered(db,session,id,event,native,cmd,cwd,cause,harness,label,helper,bound,ordered)
     +next_label : String <- handoff_label_io(db,session)
@@ -1969,8 +1983,8 @@ def record_current_attempt(+db: String, +session: String, +attempt: String, +pre
 # does not prove that the provider will refuse billed usage. No charge bound is
 # derived and no reservation or settled amount is recorded from a launch.
 # Actual provider cost enters through external_spend observations from the
-# Admin cost report. Credit-only routing stays held until a per-request
-# accounting route is proven; the status names the actual reason.
+# Admin cost report. The status names the recorded reason; it does not decide a
+# launch.
 def credit_meter_sql(+organization: String) -> String:
   "SELECT state||char(31)||balance||char(31)||unit||char(31)||cycle FROM credit_observations WHERE organization=" ++ C.q(organization) ++ " AND fact='promotional_credit' ORDER BY observed_at DESC,rowid DESC LIMIT 1;"
 
@@ -1985,27 +1999,6 @@ def credit_route_eligibility(+account: AccountRecord, +meter: CreditMeter) -> St
   Bool.pick(String,Bool.not(String.eq(meter_state(meter),"reported")),"creditObservationUnavailable",
   Bool.pick(String,Bool.or(Bool.not(decimal_text(meter_balance(meter))),String.is_empty(meter_unit(meter))),"creditAmountMalformed",
   Bool.pick(String,decimal_is_zero(meter_balance(meter)),"promotionalCreditExhausted","eligible")))))
-
-def credit_status_fields(+db: String, +account: AccountRecord, meter_rows: String) -> IO(String):
-  IO.pure(String,credit_route_eligibility(account,credit_meter_fields(account_organization(account),String.split(Tx.trim_nl(meter_rows),Char.from_u32(31)))))
-
-def credit_status_for(+db: String, +account: AccountRecord) -> IO(String):
-  do IO<String>:
-    meter_rows : String <- IO.try(String,DB.Sql.read(db,credit_meter_sql(account_organization(account))))
-    credit_status_fields(db,account,meter_rows)
-
-def credit_launch_refusal_status(+status: String) -> String:
-  Bool.pick(String,String.eq(status,"eligible"),"Anthropic API-key launches are held because credit-only routing is not proven for this deployment; the attempt was not started and its input stays owed.","Anthropic API-key launch refused by promotional-credit eligibility (" ++ status ++ "); the attempt was not started and its input stays owed.")
-
-def credit_launch_refusal_decided(+account: AccountRecord, +status: String) -> String:
-  Bool.pick(String,Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key"))),credit_launch_refusal_status(status),"")
-
-def credit_launch_refusal_for(+db: String, chosen: Maybe<&2,AccountRecord>) -> IO(String):
-  match chosen:
-    case None{}: IO.pure(String,"")
-    case Some{+account}: do IO<String>:
-      status : String <- credit_status_for(db,account)
-      IO.pure(String,credit_launch_refusal_decided(account,status))
 
 # Authorization records the selected credential route. Retained balances are
 # observations; an expired or unverified reading contributes empty amount fields.
@@ -2027,35 +2020,11 @@ def credit_launch_binding(+db: String, +session: String, +attempt: String, +harn
     case None{}: IO.pure(Maybe<List<String>>,account_binding(harness,None{},helper,profile_store))
     case Some{+account}: credit_launch_binding_account(db,session,attempt,harness,account,helper,profile_store)
 
-# --- the qualified launch gate ------------------------------------------------
-# The launch gate is the production caller before send. It records a reservation
-# from a usable observation, records the credential authorization and returns
-# the packaged resolver binding. Unknown funding permits a qualified launch.
-# The source keeps the gate held until the release
-# qualification records the request-level guard as proven; a held gate creates
-# no reservation, writes no authorization and starts no launch.
-def credit_guard_route_account(+account: AccountRecord) -> Bool:
-  Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key")))
-
-def credit_current_period_io(db: String) -> IO(String):
-  do IO<String>:
-    text : String <- IO.try(String,DB.Sql.read(db,"SELECT strftime('%Y-%m','now');"))
-    IO.pure(String,Tx.trim_nl(text))
-
-def credit_reserved_sql(+attempt: String) -> String:
-  "SELECT EXISTS(SELECT 1 FROM credit_reservations WHERE request=" ++ C.q(attempt) ++ " AND state='reserved');"
-
-def credit_reserved_for(+db: String, +attempt: String) -> IO(Bool):
-  do IO<Bool>:
-    found : String <- IO.try(String,DB.Sql.read(db,credit_reserved_sql(attempt)))
-    IO.pure(Bool,String.eq(Tx.trim_nl(found),"1"))
-
-# The launch gate returns (binding, refusal). A binding that is Some with an
-# empty refusal is usable; a nonempty refusal is the full sentence the caller
-# reports and no launch starts.
-def credit_guard_refusal_status(+reason: String) -> String:
-  "Anthropic API-key launch refused by the request-level promotional-credit guard (" ++ reason ++ "); the attempt was not started and its input stays owed."
-
+# --- the launch gate ----------------------------------------------------------
+# The launch gate is the production caller before send. An Anthropic claude-code
+# API-key launch records the attempt's one-use credential authorization and
+# returns the packaged resolver binding. The provider's own credit refusal is the
+# hold signal for that account; handoff_with records it as a usage hold.
 def credit_launch_helper_text(helper: Maybe<String>) -> String:
   match helper:
     case None{}: ""
@@ -2068,47 +2037,17 @@ def credit_launch_authorized(+db: String, +session: String, +attempt: String, +a
       IO.pure(Maybe<List<String>> & String,(api_key_binding(account_secret_ref(account),api_key_resolver_value(helper)),"")),
       IO.pure(Maybe<List<String>> & String,(None{},"The promotional-credit authorization for this attempt could not be recorded; the attempt was not started and its input stays owed.")))
 
-def credit_launch_reserved(+db: String, +session: String, +attempt: String, +account: AccountRecord, +helper: String) -> IO(Maybe<List<String>> & String):
-  do IO<Maybe<List<String>> & String>:
-    +period : String <- credit_current_period_io(db)
-    observed : CreditAdmission <- credit_reserve_for(db,session,attempt,account,period)
-    credit_launch_authorized(db,session,attempt,account,helper)
-
-def credit_launch_price_reserved(+db: String, +session: String, +attempt: String, +account: AccountRecord, +helper: String, +max_charge: String) -> IO(Maybe<List<String>> & String):
-  do IO<Maybe<List<String>> & String>:
-    +period : String <- credit_current_period_io(db)
-    observed : CreditAdmission <- credit_reserve_bounded_for(db,session,attempt,account,period,max_charge)
-    credit_launch_authorized(db,session,attempt,account,helper)
-
-def credit_launch_price_decided(+db: String, +session: String, +attempt: String, +account: AccountRecord, +helper: String, +decision: CreditRequestPrice) -> IO(Maybe<List<String>> & String):
-  match decision:
-    case Priced{max_charge}: credit_launch_price_reserved(db,session,attempt,account,helper,max_charge)
-    case PriceRefused{reason}: IO.pure(Maybe<List<String>> & String,(None{},credit_guard_refusal_status(reason)))
-
-def credit_launch_gate_priced_account(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, +helper: String, +profile_store: String, +facts: CreditRequestFacts, qualified: Bool) -> IO(Maybe<List<String>> & String):
-  Bool.pick(IO(Maybe<List<String>> & String),credit_guard_route_account(account),
-    Bool.pick(IO(Maybe<List<String>> & String),qualified,
-      credit_launch_price_decided(db,session,attempt,account,helper,credit_request_price(facts)),
-      IO.pure(Maybe<List<String>> & String,(None{},credit_api_key_refusal(account)))),
+# The gate returns (binding, refusal). A binding that is Some with an empty
+# refusal is usable; a nonempty refusal is the full sentence the caller reports
+# and no launch starts.
+def credit_launch_gate_account(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, +helper: String, +profile_store: String) -> IO(Maybe<List<String>> & String):
+  Bool.pick(IO(Maybe<List<String>> & String),credit_route(account),
+    credit_launch_authorized(db,session,attempt,account,helper),
     IO.pure(Maybe<List<String>> & String,(account_binding(harness,Some{account},api_key_resolver_value(helper),profile_store),"")))
 
-def credit_launch_gate_priced(+db: String, +session: String, +attempt: String, +harness: String, +chosen: Maybe<&2,AccountRecord>, helper: Maybe<String>, +profile_store: String, +facts: CreditRequestFacts, qualified: Bool) -> IO(Maybe<List<String>> & String):
+def credit_launch_gate(+db: String, +session: String, +attempt: String, +harness: String, +chosen: Maybe<&2,AccountRecord>, helper: Maybe<String>, +profile_store: String) -> IO(Maybe<List<String>> & String):
   match chosen:
     case None{}: IO.pure(Maybe<List<String>> & String,(account_binding(harness,None{},helper,profile_store),""))
     case Some{+account}: do IO<Maybe<List<String>> & String>:
       +helper_path : String = credit_launch_helper_text(helper)
-      credit_launch_gate_priced_account(db,session,attempt,harness,account,helper_path,profile_store,facts,qualified)
-
-def credit_launch_gate_account(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, +helper: String, +profile_store: String, qualified: Bool) -> IO(Maybe<List<String>> & String):
-  Bool.pick(IO(Maybe<List<String>> & String),credit_guard_route_account(account),
-    Bool.pick(IO(Maybe<List<String>> & String),qualified,
-      credit_launch_reserved(db,session,attempt,account,helper),
-      IO.pure(Maybe<List<String>> & String,(None{},credit_api_key_refusal(account)))),
-    IO.pure(Maybe<List<String>> & String,(account_binding(harness,Some{account},api_key_resolver_value(helper),profile_store),"")))
-
-def credit_launch_gate(+db: String, +session: String, +attempt: String, +harness: String, +chosen: Maybe<&2,AccountRecord>, helper: Maybe<String>, +profile_store: String, qualified: Bool) -> IO(Maybe<List<String>> & String):
-  match chosen:
-    case None{}: IO.pure(Maybe<List<String>> & String,(account_binding(harness,None{},helper,profile_store),""))
-    case Some{+account}: do IO<Maybe<List<String>> & String>:
-      +helper_path : String = credit_launch_helper_text(helper)
-      credit_launch_gate_account(db,session,attempt,harness,account,helper_path,profile_store,qualified)
+      credit_launch_gate_account(db,session,attempt,harness,account,helper_path,profile_store)

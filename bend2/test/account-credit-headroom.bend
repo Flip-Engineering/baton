@@ -25,10 +25,10 @@ def headroom_checks() -> IO(Unit):
     IO.pure(Unit,Unit{})
 
 def reserve_fits(grant_spend: String, balance: String, request: String, +label: String, +expected_total: String) -> IO(Unit):
-  check(label,String.eq(A.credit_admission_reserved_total(A.credit_reserve_arithmetic(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CObs{"reported",balance,"USD","2026-10-cycle","1793000000000"},"1",grant_spend,"0","2026-10","1793000000000","1792600000000",request)),expected_total))
+  check(label,String.eq(A.credit_admission_reserved_total(A.credit_reserve_arithmetic(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CObs{"reported",balance,"USD","2026-10-cycle","1793000000000"},"1",grant_spend,"0","2026-10-cycle","2026-10","1793000000000","1792600000000",request)),expected_total))
 
 def reserve_reason_is(grant_spend: String, balance: String, request: String, +expected: String, +label: String) -> IO(Unit):
-  check(label,String.eq(A.credit_admission_reason(A.credit_reserve_arithmetic(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CObs{"reported",balance,"USD","2026-10-cycle","1793000000000"},"1",grant_spend,"0","2026-10","1793000000000","1792600000000",request)),expected))
+  check(label,String.eq(A.credit_admission_reason(A.credit_reserve_arithmetic(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CObs{"reported",balance,"USD","2026-10-cycle","1793000000000"},"1",grant_spend,"0","2026-10-cycle","2026-10","1793000000000","1792600000000",request)),expected))
 
 # The grant spend already holds open reservations and settled cost for the cycle, so
 # the balance left for a new request is the balance minus that spend.

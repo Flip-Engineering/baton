@@ -17,6 +17,7 @@ import ../src/git/text.bend as Tx
 #   account-order-entry DB handoff-with SESSION ID EVENT HELPER
 #   account-order-entry DB current SESSION HARNESS
 #   account-order-entry DB read SESSION ACCOUNT HELPER          (one live read)
+#   account-order-entry DB refusal-hold SESSION ACCOUNT ATTEMPT CAUSE  (a recorded credit refusal)
 #   account-order-entry DB wake SESSION HELPER                  (wake gate, then launch move)
 #   account-order-entry DB wake-native SESSION HELPER NATIVE
 #   account-order-entry --fixture-usage-read PROVIDER REFERENCE
@@ -35,10 +36,15 @@ def fixture_read_at(+provider: String, +reference: String, +observed: String) ->
     Reader.read_http(provider,Claude.claude_source(),observed,reference,key => fixture_request(reference),response => Claude.claude_windows_sql(response),response => Claude.claude_problem_sql(response)),
     Reader.read_claude(observed,reference))
 
+def fixture_read_clock(+provider: String, +reference: String, now: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match now:
+    case Fail{(code,detail)}: Reader.clock_failed(provider,code,detail)
+    case Done{+value}: fixture_read_at(provider,reference,Tx.trim_nl(value))
+
 def fixture_read(+provider: String, +reference: String) -> IO(Unit):
   do IO<Unit>:
     now : Result<&1,&1,U32 & String,String> <- Clock.Clock.millis()
-    fixture_read_at(provider,reference,Reader.time_value(now))
+    fixture_read_clock(provider,reference,now)
 
 def fixture_args(arguments: List<String>) -> IO(Unit):
   match arguments:
@@ -112,11 +118,16 @@ def command(+db: String, arguments: List<String>) -> IO(Unit):
         +provider : String <- UW.seat_provider_io(db,session)
         read : Unit <- UW.read_with(db,session,provider,account,helper,"usage-window-refresh")
         IO.print("read")
+    case "refusal-hold" <> +session <> +account <> +attempt <> +cause <> Nil{}:
+      do IO<Unit>:
+        +provider : String <- UW.seat_provider_io(db,session)
+        held : Unit <- UW.record_refusal_hold(db,session,provider,account,attempt,cause)
+        IO.print("recorded")
     case "wake" <> +session <> +helper <> Nil{}:
       do IO<Unit>:
         line : String <- wake(db,session,helper)
         IO.print(line)
-    case other: IO.die(Unit,2,"account-order-entry: account|handoff|handoff-with|current|read|wake|--wake-message")
+    case other: IO.die(Unit,2,"account-order-entry: account|handoff|handoff-with|current|read|refusal-hold|wake|--wake-message")
 
 def wake_args(arguments: List<String>) -> IO(Unit):
   match arguments:

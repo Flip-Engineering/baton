@@ -271,25 +271,16 @@ test('the production helper refuses before reading a secret or starting a child'
   }
 });
 
-test('the production helper refuses a marker without a durable authorization source', async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), 'api-key-marker-only-'));
+test('the production helper refuses an attempt without a durable authorization source', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'api-key-no-database-'));
   try {
     const reference = await withSecret(directory, 'secret', '[REDACTED]');
     const attempt = path.join(directory, 'attempt-1');
     try {
       runProduction(reference, [process.execPath, path.join(directory, 'child.mjs')], {
-        PATH: process.env.PATH, BATON2_CREDIT_RESERVATION: attempt, BATON_ATTEMPT_DIRECTORY: attempt,
+        PATH: process.env.PATH, BATON_ATTEMPT_DIRECTORY: attempt,
       });
-      assert.fail('a marker without a database must refuse');
-    } catch (error) {
-      assert.equal(error.status, 2);
-      assert.equal(JSON.parse(error.stderr.trim()).condition, 'creditAdmissionUnavailable');
-    }
-    try {
-      runProduction(reference, [process.execPath, path.join(directory, 'child.mjs')], {
-        PATH: process.env.PATH, BATON2_CREDIT_RESERVATION: path.join(directory, 'other'), BATON_ATTEMPT_DIRECTORY: attempt,
-      });
-      assert.fail('a mismatched marker must refuse');
+      assert.fail('an attempt without a database must refuse');
     } catch (error) {
       assert.equal(error.status, 2);
       assert.equal(JSON.parse(error.stderr.trim()).condition, 'creditAdmissionUnavailable');
