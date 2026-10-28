@@ -1,9 +1,9 @@
 {
   "schema": "baton2-repl-vendored-source-v1",
   "upstream": "Baton fork of Bend 2.0.25",
-  "compiler_archive_sha256": "1531397e083ae39bcd0e7955fcd54ff4c47c4f214a765fbd4fa15fce536eed58",
+  "compiler_archive_sha256": "1554306bde85194bf1271ba8048d8e752a4cba81d2a3d3213282923ece91a965",
   "official_release_artifact": false,
-  "lock_sha256": "1b8340a8508e22887abf64a894340ca1afa8528ac71b71e69364bd005a33f12e",
+  "lock_sha256": "bb94a753c68e9e92954d1629ccab1f1c8bdbc21ab7372f042c1afc326c3db336",
   "files": [
     {
       "bytes": 66363,
@@ -16,9 +16,9 @@
       "sha256": "113e596b88a6472077d65fbeb8707d05fde4c9de6635c9a3edfbe1dc8da88718"
     },
     {
-      "bytes": 245192,
+      "bytes": 248934,
       "path": "comp.ts",
-      "sha256": "243086724a952a2a9677ee0786aa7c02d3c92617db8adc03dc36eeee58b08359"
+      "sha256": "3e2921df1244ec3a6d1a8c44edd343df762b213b6eef797753e1139b6f64fdeb"
     },
     {
       "bytes": 351,
@@ -396,6 +396,6 @@
   "source_root": "bend2/compiler/upstream",
   "package_root": "bend2",
   "distribution_state": "packaged_not_installed",
-  "source_commit": "185206bb50ea77f8ab54a6e7da9af5f8a9e31a41",
-  "source_tree": "f4d94581295acbeedc1e6cabe248573120284dda"
+  "source_commit": "3d9c83b65e3fe2375f767ba332397033b93da3e5",
+  "source_tree": "3689dd1be34bbd88e1c48db44b3bc61be1ce1546"
 }

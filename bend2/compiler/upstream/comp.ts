@@ -8,6 +8,14 @@ import * as Bend from "./bend.ts";
 
 const DIAGNOSTICS = process.env.BEND_COMPILER_DIAGNOSTICS === "1";
 const diagnostic_started = performance.now();
+const heap_stats = DIAGNOSTICS && "Bun" in globalThis
+  ? require("bun:jsc").heapStats as () => {
+      heapSize: number; heapCapacity: number; extraMemorySize: number;
+      objectCount: number; objectTypeCounts: Record<string, number>;
+    } : null;
+let diagnostic_facts: { reads: Set<string>; writes: Set<string> } | null = null;
+let diagnostic_literals: { word_leaves: number; word_nodes: number } | null = null;
+const diagnostic_columns = new Map<string, number>();
 let diagnostic_context: { event: string; details: Record<string, unknown> } | null = null;
 function diagnostic_stage(event: string, details: Record<string, unknown> = {}): void {
   if (DIAGNOSTICS) diagnostic_context = { event, details };
@@ -25,6 +33,40 @@ export function diagnostic(event: string, details: Record<string, unknown> = {})
     ...details,
   }) + "\n");
 }
+function diagnostic_heap(phase: string, details: Record<string, unknown> = {}): void {
+  if (heap_stats === null) return;
+  const { heapSize, heapCapacity, extraMemorySize, objectCount, objectTypeCounts } = heap_stats();
+  diagnostic("heap.census", { phase, heapSize, heapCapacity, extraMemorySize,
+    objectCount, objectTypeCounts, ...details });
+}
+
+// Count the checked syntax without opening closures or normalizing cells.
+// String constructor matches identify the subgraphs containing their columns.
+function diagnostic_literal_columns(k: string, term: Bend.LTerm): void {
+  if (!DIAGNOSTICS) return;
+  const seen = new WeakMap<object, boolean>();
+  const counted = new WeakSet<object>();
+  const stack: [unknown, boolean][] = [[term, false]];
+  let nodes = 0;
+  while (stack.length > 0) {
+    const [value, inside] = stack.pop()!;
+    if (value === null || typeof value !== "object") continue;
+    const t = value as Record<string, unknown>;
+    const column = inside || (t.$ === "Mat" && t.k === "SCon");
+    const prior = seen.get(value);
+    if (prior === true || (prior === false && !column)) continue;
+    seen.set(value, column);
+    if (column && typeof t.$ === "string" && !counted.has(value)) {
+      counted.add(value);
+      nodes += 1;
+    }
+    for (const key of Object.keys(t)) {
+      if (key !== "s") stack.push([t[key], column]);
+    }
+  }
+  diagnostic_columns.set(k, nodes);
+}
+
 export function diagnostic_error(error: unknown): void {
   if (!DIAGNOSTICS) return;
   const last_operation = diagnostic_context;
@@ -1946,6 +1988,7 @@ function anf(cb: Carb, t: HTerm, ty: HTerm | null = null): HTerm {
 function def_body(cb: Carb, k: Bend.Name): TLD | undefined {
   const tld = cb.book.tlds[k];
   if (tld?.$ === "Def" && tld.e !== undefined && tld.h === undefined) {
+    diagnostic_literal_columns(k, tld.e);
     const h = Bend.term_higher(tld.e);
     const n = tld.n + Math.min(def_raise(cb.book, h, tld.n),
       tele_unbind(cb.book, tld.T).doms.length - tld.n);
@@ -3063,6 +3106,7 @@ function emit_open(fl: File, k: Bend.Name): Val[] {
 }
 
 function emit_native(fl: File, ck: Call, ers: HTerm[]): string {
+  const diagnostic_before = DIAGNOSTICS ? performance.now() : 0;
   // Recursive types share BOX layout but need their own heating and access
   // paths. Intern their erased terms with spans omitted, retaining DAG sharing.
   const key = JSON.stringify([ck.k, ...ers.map((e) => lay_key(e))]);
@@ -3092,6 +3136,14 @@ function emit_native(fl: File, ck: Call, ers: HTerm[]): string {
   const armSeq = fl.armSeq;
   Object.assign(fl, outer);
   fl.armSeq = armSeq;
+  if (DIAGNOSTICS) {
+    // Lowered copies keep diagnostic layout queries away from checked cells.
+    const layouts = ers.map((e) => JSON.stringify(lay_of(fl.book,
+      Bend.term_higher(Bend.term_lower_shared(e)))));
+    diagnostic("spin.emit", { kind: "native", name: ck.k, unit: fl.unit, helper: name,
+      layout_key: JSON.stringify([ck.k, ...layouts]), erased_key: key,
+      duration_ms: performance.now() - diagnostic_before, lines: seg.lines.length });
+  }
   return name;
 }
 
@@ -3654,6 +3706,7 @@ function emit_lits(x: HTerm): Leaf[] {
   const key = (t: HTerm): number => lay_key(t, true, nodes);
   const walk = (t: HTerm, j: number, n: number,
     cov: ((w: Of<"Ctr">) => HTerm) | null): void => {
+    if (diagnostic_literals !== null) diagnostic_literals.word_nodes += 1;
     const h = mat_arms(t).arms[0]?.[1];
     if (h !== undefined && j === 32) {
       ws.push([h, j, n, 0, false]);
@@ -3676,6 +3729,7 @@ function emit_lits(x: HTerm): Leaf[] {
     }
   };
   walk(mat_arms(x).arms[0][1], 0, 0, null);
+  if (diagnostic_literals !== null) diagnostic_literals.word_leaves += ws.length;
   return ws;
 }
 
@@ -3904,6 +3958,7 @@ function arm_body_hint(h: HTerm): string {
 
 function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
   def: boolean, lit = false): boolean {
+  const diagnostic_before = DIAGNOSTICS ? performance.now() : 0;
   const u = term_uses(fl, h);
   const closed = u.length === 0;
   if (!def && !closed) return false;
@@ -3976,6 +4031,9 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
     "  return 1;", "}"].join("\n"), seg.refs, seg.cids]);
   Object.assign(fl, outer);
   fl.armBusy.delete(name);
+  diagnostic("spin.emit", { kind: "arm", name: fl.def, unit: fl.unit, helper: name,
+    layout_key: base, erased_key: null, body_key: hint,
+    duration_ms: performance.now() - diagnostic_before, lines: seg.lines.length });
   const capWs = caps.flatMap(([p, b]) => {
     const use = term_use(u, p);
     fl.uses.set(p, { ...b, n: b.n - use + 1 });
@@ -4106,6 +4164,7 @@ function emit_chain(fl: File, cond: (i: number) => string,
 function compile_def(fl: File, k: Bend.Name, tld: Def): void {
   const diagnostic_before = performance.now();
   diagnostic("definition.begin", { name: k, segments: fl.segs.length });
+  if (DIAGNOSTICS) diagnostic_literals = { word_leaves: 0, word_nodes: 0 };
   Object.assign(fl, { fresh: new Map(), brwl: new Map(), rest: [] });
   memo_gc();
   diagnostic_stage("definition.open", { name: k });
@@ -4115,9 +4174,15 @@ function compile_def(fl: File, k: Bend.Name, tld: Def): void {
   emit_body(fl, tld.h as HTerm, tld.T, [], vals, null);
   diagnostic("definition.end", { name: k, duration_ms: performance.now() - diagnostic_before,
     segments: fl.segs.length, spins: fl.spins.length, tables: fl.tabs.size,
-    image_words: fl.img.length, file_maps: { fresh: fl.fresh.size, uses: fl.uses.size,
+    image_words: fl.img.length, absent_reads: diagnostic_facts?.reads.size ?? 0,
+    writes: diagnostic_facts?.writes.size ?? 0, lend: fl.lend.size, file_maps: { fresh: fl.fresh.size, uses: fl.uses.size,
       brwl: fl.brwl.size, cids: fl.cids.size, tabs: fl.tabs.size, spun: fl.spun.size,
       clos: fl.clos.size, lits: fl.lits.size, consts: fl.consts.size } });
+  if (diagnostic_literals !== null) {
+    diagnostic("literal.columns", { name: k, ...diagnostic_literals,
+      string_column_nodes: diagnostic_columns.get(k) ?? 0 });
+    diagnostic_literals = null;
+  }
 }
 
 function compile_reqs(fl: File, defs: [Bend.Name, Def][]): void {
@@ -4297,6 +4362,7 @@ function file_reach(fl: File, from: Iterable<string>): Set<string> {
 
 // Compilation consumes checked bodies and keeps parsed bodies needed by types.
 export function compile_book(book: Bend.Book): string {
+  diagnostic_columns.clear();
   diagnostic("book.begin", { definitions: Object.keys(book.tlds).length });
   diagnostic("carb.begin");
   const cb = carb_book(book, ["main", ...RUNTIME_ADTS]);
@@ -4311,6 +4377,7 @@ export function compile_book(book: Bend.Book): string {
   memo_gc();
   collect_full();
   diagnostic("checker.release", { type_definitions: live_types.size });
+  diagnostic_heap("checker.release");
   const defs = new Map(done_defs(cb).map(([k, tld]) => [seg_fid(k), [k, tld] as const]));
   const foreign = new Map(done_defs(cb, def_foreign).map(([k, tld]) =>
     [seg_fid(k), [k, tld] as [Bend.Name, Def]]));
@@ -4348,6 +4415,8 @@ export function compile_book(book: Bend.Book): string {
       if (reading !== null) writes.get(reading)!.add(this.kind + ":" + key);
       if (!super.has(key)) {
         super.add(key);
+        diagnostic("fact.write", { kind: this.kind, key, unit: reading,
+          writer: reading === null ? "facts.lend" : defs.get(reading)![0] });
         for (const fid of readers.get(this.kind + ":" + key) ?? []) dirty.add(fid);
       }
       return this;
@@ -4403,7 +4472,9 @@ export function compile_book(book: Bend.Book): string {
     reading = fid;
     const begin = performance.now();
     diagnostic("unit.begin", { name: k, facts_only });
+    if (DIAGNOSTICS) diagnostic_facts = { reads: reads.get(fid)!, writes: writes.get(fid)! };
     compile_def(output, k, def);
+    diagnostic_facts = null;
     reading = null;
     const unit: Unit = { unit: output.unit, segs: output.segs,
       spins: output.spins, img: output.img, tabs: output.tabs,
@@ -4482,6 +4553,10 @@ export function compile_book(book: Bend.Book): string {
       segments: fl.segs.length, spins: fl.spins.length, tables: tables.length,
       image_words: fl.img.length, lines, line_code_units, spin_code_units,
       own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size });
+    if (DIAGNOSTICS) {
+      collect_full();
+      diagnostic_heap("pass.end", { pass: pass_number });
+    }
   } while (dirty.size > 0 || [...needed].some((fid) => defs.has(fid) && !units.has(fid))
     || [...generic].some((fid) => !units.has(fid) && !facts_units.has(fid)));
   memo_gc();
