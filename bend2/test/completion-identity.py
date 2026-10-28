@@ -80,7 +80,9 @@ class CompletionIdentity(unittest.TestCase):
 
     def current_request(self):
         return self.db.execute("SELECT id FROM messages WHERE sender='worker' AND recipient='coordinator' "
-                               "AND kind='completion-request' AND seq>(SELECT seq FROM messages WHERE id='dispatch:assignment') "
+                               "AND kind='completion-request' AND seq>coalesce((SELECT max(seq) FROM messages "
+                               "WHERE recipient='worker' AND sender='coordinator' "
+                               "AND kind IN ('task','guidance','recovery','task-assignment')),0) "
                                "ORDER BY seq DESC LIMIT 1").fetchone()
 
     def stored_request(self):
