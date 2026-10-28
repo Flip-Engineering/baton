@@ -125,16 +125,17 @@ def report(+db: String) -> IO(Unit):
 def owed_fields(fields: List<String>) -> List<String>:
   match fields:
     case session <> pending <> attempt <> phase <> present <> +owed <> stopped <> claim <> +state <> Nil{}:
-      Bool.pick(List<String>, Bool.and(String.eq(state,"stalled"),Bool.not(String.is_empty(owed))), [owed], Nil{})
+      +stalled = String.eq(state,"stalled")
+      +claimed_exited = Bool.and(String.eq(claim,"claimed"),Bool.and(String.eq(phase,"exited"),Bool.and(String.eq(present,"1"),String.eq(stopped,"0"))))
+      Bool.pick(List<String>, Bool.and(Bool.or(stalled,claimed_exited),Bool.not(String.is_empty(owed))), [owed], Nil{})
     case other: Nil{}
 
 def owed_of(+line: String) -> List<String>:
   owed_fields(Tx.split_tabs(line))
 
-# The wake side drives only stalled candidates, one call per session through
-# the existing driver. The driver re-reads the pending count, takes the session
-# lock, observes the claim and host custody, and launches the oldest owed
-# message. The caller passes only stalled candidates here.
+# The wake side drives stalled candidates and exited sessions with a claim and
+# a runnable endpoint. The existing driver checks claim custody under the
+# session lock before it launches the oldest owed message.
 def wake_rows(lines: List<String>) -> List<String>:
   match lines:
     case Nil{}: Nil{}
