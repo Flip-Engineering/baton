@@ -293,7 +293,7 @@ def batch_session(+db: String) -> IO(String):
     +native : String <- environment("CODEX_THREAD_ID")
     connection : String <- environment("BATON_MCP_INPUT")
     selected_hex : String <- Bool.pick(IO(String),String.is_empty(native),IO.pure(String,"\n"),IO.try(String,DB.Sql.read(db,"SELECT CASE WHEN count(*)=1 THEN hex(min(id)) ELSE '' END FROM sessions WHERE native=" ++ C.q(native) ++ " AND harness='codex';")))
-    codex : String <- field(selected_hex)
+    +codex : String <- field(selected_hex)
     fallback : String = Bool.pick(String,String.is_empty(codex),selected,codex)
     IO.pure(String,Bool.pick(String,Bool.and(String.is_empty(directory),String.is_empty(connection)),fallback,selected))
 
