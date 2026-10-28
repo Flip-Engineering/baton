@@ -86,7 +86,7 @@ def route(args: List<String>) -> IO(Unit):
     case "completion-request" <> db <> body <> Nil{}: Agent.execute(db,"worker",Actions.CompletionRequest{"",Actions.Text{body}})
     case "completion-request-id" <> db <> id <> body <> Nil{}: Agent.execute(db,"worker",Actions.CompletionRequest{id,Actions.Text{body}})
     case "inbox" <> db <> session <> Nil{}: Agent.execute(db,session,Actions.Inbox{})
-    case "pending" <> db <> Nil{}: do IO<Unit>:
+    case "pending" <> +db <> Nil{}: do IO<Unit>:
       saved : String <- IO.try(String,Store.read(db,C.Pending{}))
       AgentInput.command_output(db,C.Pending{},saved)
     case "lifecycle" <> +database <> +directory <> cwd <> program: do IO<Unit>:
