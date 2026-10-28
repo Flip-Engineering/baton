@@ -255,6 +255,49 @@ db.close();
   after.close();
 });
 
+test('a parented Codex relay with a different thread exits before connecting or notifying', async (t) => {
+  const dir = scratch(t);
+  const database = orchestra(dir);
+  const db = new DatabaseSync(database);
+  db.prepare('INSERT INTO sessions(id,parent,harness,native) VALUES(?,?,?,?)')
+    .run('child', 'lead', 'codex', 'recorded-child-thread');
+  db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+    .run('owed-child-input', 'lead', 'child', 'report', 'Keep this child input owed.');
+  db.close();
+  const log = join(dir, 'coordinator.log');
+  const fake = executable(join(dir, 'baton'),
+    `#!${process.execPath}
+const args = process.argv.slice(2);
+require('fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + '\\n');
+const { DatabaseSync } = require('node:sqlite');
+if (args[0] === '--help' || args[0] === 'help') process.exit(0);
+const db = new DatabaseSync(args[0]);
+if (args[1] === 'connect') db.prepare('UPDATE sessions SET endpoint=? WHERE id=?').run(args[4],args[2]);
+db.close();
+`);
+  const child = spawn(process.execPath, [CONDUCTOR, database, fake, '--session', 'child',
+    '--root-harness', 'codex', '--thread', 'different-thread'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM'); });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  const initialized = once(child.stdout, 'data');
+  child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
+    protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'parented-thread-mismatch', version: '1' },
+  } }) + '\n');
+  const [chunk] = await initialized;
+  assert.equal(JSON.parse(chunk.toString().trim()).id, 1, stderr);
+  child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
+  const [code, signal] = await once(child, 'exit');
+  assert.equal(code, 1, `${signal ?? ''} ${stderr}`);
+  assert.match(stderr, /Codex relay thread must match the recorded root conversation/);
+  assert.deepEqual(readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse).filter((args) => args[1] === 'connect'), []);
+  const after = new DatabaseSync(database, { readOnly: true });
+  assert.equal(after.prepare('SELECT endpoint FROM sessions WHERE id=?').get('child').endpoint, null);
+  assert.equal(after.prepare('SELECT count(*) AS n FROM message_reads').get().n, 0);
+  assert.equal(after.prepare('SELECT receipt FROM messages WHERE id=?').get('owed-child-input').receipt, null);
+  after.close();
+});
+
 test('a parentless conductor attachment records the principal role', async (t) => {
   const calls = await attach(t, 'lead');
   assert.deepEqual(calls.filter((argv) => argv[0] === 'role'), [['role', 'lead', 'principal-conductor']]);

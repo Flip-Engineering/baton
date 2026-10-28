@@ -1001,6 +1001,16 @@ function observeNativeEvent(event, caller) {
 async function startDelivery() {
   const database = realpathSync(dbPath);
   const coordinator = realpathSync(coordinatorExe);
+  let existing;
+  try { existing = selectedSession(); } catch {}
+  if (rootHarness === 'codex') {
+    if (existing?.harness !== 'codex' || !existing?.native) {
+      throw new Error('A Codex root relay requires a recorded Codex conversation before attachment.');
+    }
+    if (!relayThread || relayThread !== existing.native) {
+      throw new Error('The Codex relay thread must match the recorded root conversation.');
+    }
+  }
   const connection = randomUUID();
   const socketName = `conductor-${process.pid}-${connection}.sock`;
   // A relative socket name also works in deeply nested repository worktrees.
@@ -1035,16 +1045,8 @@ async function startDelivery() {
     process.execPath, fileURLToPath(import.meta.url), database, coordinator,
     '--session', sessionId, '--deliver', socketName,
   ]);
-  let existing;
-  try { existing = selectedSession(); } catch {}
   if (hasParent(existing)) coord('connect', sessionId, existing.native || '', endpoint);
   else if (rootHarness === 'codex') {
-    if (existing?.harness !== 'codex' || !existing?.native) {
-      throw new Error('A Codex root relay requires a recorded Codex conversation before attachment.');
-    }
-    if (!relayThread || relayThread !== existing.native) {
-      throw new Error('The Codex relay thread must match the recorded root conversation.');
-    }
     coord('connect', sessionId, existing.native, endpoint);
   } else coord('attach', sessionId, 'claude-code', existing?.native || '', endpoint);
   // The operator session keeps its role: reports and questions from parentless
