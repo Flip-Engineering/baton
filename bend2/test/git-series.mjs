@@ -299,7 +299,8 @@ test('check accepts a repository in the selected App installation and refuses a 
       && error.message.includes('account Flip-Engineering') && error.message.includes('HTTP 404'));
   assert.deepEqual(fixture.calls.map(call => call.api_path), ['/app', '/repos/flip-engineer/flip/installation',
     '/app', '/repos/Flip-Engineering/flip/installation', '/app/installations?per_page=100&page=1',
-    '/app/installations/5100/access_tokens', '/repos/Flip-Engineering/flip']);
+    '/app/installations/5100/access_tokens', '/repos/Flip-Engineering/flip',
+    '/app/installations/5200/access_tokens', '/repos/Flip-Engineering/flip']);
 });
 
 test('Git credentials accept granted workflow and actions permissions and keep the token request subset', async () => {
