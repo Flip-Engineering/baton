@@ -1,0 +1,72 @@
+commit 18473340edbd46ad1b08729860c8f09cd0ac7360
+Author: Flip Baton - DeepSeek <337142705+flip-baton-deepseek[bot]@users.noreply.github.com>
+Date:   Wed Oct 21 08:43:29 2026 -0700
+
+    fix(fframes-3d): classify the fabric effects the port does not draw
+    
+    Two effects a garment scene can ask for were selectable without failing:
+    
+    - garmentCut. The source's colour pass discards outside the panel cut and
+      repeats exactly those cuts in a depth material (cloth/fabric_glsl.js:479-495,
+      fabricDepth: "hero.js shells are supersets of the garment cut ... this depth
+      material runs hero.js's own cuts"), so an uncut shell also casts a shadow it
+      should not. The cut depends on the garment construction (region, along, the
+      per-kind block), which this path does not carry: the path draws the whole
+      shell.
+    - wear.zones. The source's zone-driven abrasion (knees, seat, elbows, the lap,
+      zoneK in FAB_WEAR) is not carried; the wear here is crest and seam driven.
+    
+    Both are now in fabric's unsupported list with the citations above, so
+    require() fails and require_classified() accepts the names as considered. A
+    test pins that they are refused and classified, and that garmentCut is not
+    claimed as a feature.
+    
+    (Found while completing the fabric classification: wear.zones had been dropped
+    from the list in an earlier edit.)
+
+diff --git a/fframes-3d/src/material/paths.rs b/fframes-3d/src/material/paths.rs
+index 6b5b693d..80305845 100644
+--- a/fframes-3d/src/material/paths.rs
++++ b/fframes-3d/src/material/paths.rs
+@@ -85,11 +85,20 @@ pub fn fabric(dye: [f32; 4]) -> CustomMaterial {
+             "clothFold",
+         ])
+         .unsupported([
++            // The garment is drawn as its whole shell here: the source's colour pass discards
++            // outside the panel cut and repeats those cuts in a depth material
++            // (cloth/fabric_glsl.js:479-495, fabricDepth), so an uncut shell casts a shadow it
++            // should not. The cut depends on the garment construction (region, along, the
++            // per-kind block), which this path does not carry.
++            "garmentCut",
+             "folds.painted",
+             "plaid",
+             "retroreflectiveTape",
+             "openingTransmission",
+             "weave.leatherGrainTextures",
++            // The zone-driven abrasion of the source (knees, seat, elbows, the lap) is not
++            // carried: the wear here is crest and seam driven only.
++            "wear.zones",
+             "sheen",
+             "fibreLobe",
+             "asperity",
+diff --git a/fframes-3d/tests/materials.rs b/fframes-3d/tests/materials.rs
+index 08d282d4..569fcbbd 100644
+--- a/fframes-3d/tests/materials.rs
++++ b/fframes-3d/tests/materials.rs
+@@ -359,3 +359,16 @@ fn the_skinned_deform_is_spliced_where_the_marker_is() {
+     let stub = "fn fframes_deform(position: ptr<function, vec3f>, normal: ptr<function, vec3f>, vertex: u32, skin: vec4<u32>) {\n    *normal = *normal;\n    *position = *position;\n    _ = vertex + skin.x;\n}\n";
+     validate("skin/shadow-with-deform", &format!("{stub}{module}"));
+ }
++
++#[test]
++fn the_fabric_path_refuses_the_effects_it_does_not_carry() {
++    // The uncut shell and the zone-driven wear are the two effects a garment scene could ask for
++    // and silently not get; both are classified as unsupported, so require() fails and
++    // require_classified() accepts the name as considered.
++    let fabric = fframes_3d::fabric([0.2, 0.3, 0.4, 0.0]);
++    for feature in ["garmentCut", "wear.zones", "sheen", "fibreLobe", "asperity"] {
++        assert!(fabric.require(feature).is_err(), "{feature} must be refused");
++        assert!(fabric.require_classified(&[feature]).is_ok(), "{feature} must be classified");
++    }
++    assert!(!fabric.features.iter().any(|f| f == "garmentCut"));
++}
