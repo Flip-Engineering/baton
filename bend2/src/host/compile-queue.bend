@@ -1034,7 +1034,12 @@ def supervise_owned(+attempt: String, +keydir: String, +kind: String, source_roo
       ++ "\nstarttime=" ++ start ++ "\nkind=" ++ kind ++ "\nsetsid=1\nstarted_ns=" ++ started ++ "\n")
     active : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(keydir ++ "/active", active_text))
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
-    +held : U32 <- acquire_heavy_loop(waiters_dir(state), state ++ "/heavy.lock", token, priority, 4)
+    lock_path : String <- IO.pure(String,
+      Bool.pick(String, String.eq(kind, "cc"), state ++ "/cc.lock", state ++ "/heavy.lock"))
+    +waiters : String <- IO.pure(String,
+      Bool.pick(String, String.eq(kind, "cc"), waiters_dir(state) ++ "/cc", waiters_dir(state)))
+    made_waiters : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(waiters))
+    +held : U32 <- acquire_heavy_loop(waiters, lock_path, token, priority, 4)
     transferred : Unit <- transfer_heavy(held)
     signaled : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.set_env(
       "BATON_COMPILE_QUEUE_COMPILED", attempt ++ "/compiled")
