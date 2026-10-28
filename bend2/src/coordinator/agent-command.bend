@@ -161,7 +161,7 @@ def completion_state_sql(+session: String, +id: String) -> String:
   ++ "||char(9)||hex(CAST('x'||coalesce((SELECT body FROM messages WHERE id=" ++ current ++ "),'') AS TEXT))"
   ++ "||char(9)||hex(CAST('x'||coalesce((SELECT id FROM messages WHERE id=" ++ C.q(id) ++ "),'') AS TEXT));"
 
-def completion_field_value(value: String) -> IO(String):
+def completion_field_value(+value: String) -> IO(String):
   Bool.pick(IO(String),String.starts_with(value,"x"),
     IO.pure(String,String.drop(value,1n)),
     IO.die(String,2,"The completion-request identity field has no empty-value marker."))
