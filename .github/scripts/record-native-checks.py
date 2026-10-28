@@ -14,7 +14,7 @@ SELECTED = (
     'root-wake.py', 'coordinator.py', 'receive.py', 'turn.py',
     'receive-output.py', 'fixed-coordinator.py',
     'agent-actions.py', 'agent-input.py', 'task-start.py', 'mcp-command.py',
-    'mcp-contract.py', 'mcp-root.py',
+    'mcp-contract.py', 'mcp-root.py', 'stop-hook-entry.py',
     'control.py', 'control-identity.py', 'configure.py', 'account-credits.py',
 )
 
