@@ -97,19 +97,17 @@ def continued(db: String, player: String, +handle: U32, +attempt: String, cursor
       closed : U32 <- IO.try(U32,P.ProcessChild.input_closed(handle))
       pending_live(db,player,handle,attempt,cursor,closed)
 
-# A commit notice drains guidance while this native attempt accepts input.
+# A commit notice forwards one pending guidance message while this native
+# attempt accepts input. The next notice forwards the next message, so a
+# queued backlog does not fill the native input stream and preempt every
+# pending tool call in one turn.
 @unsafe
-def drain_pending(+db: String, +player: String, +handle: U32, +attempt: String, +cursor: String) -> IO(String):
-  do IO<String>:
-    +next : String <- continued(db,player,handle,attempt,cursor,False{},False{})
-    Bool.pick(IO(String),String.eq(next,cursor),IO.pure(String,cursor),drain_pending(db,player,handle,attempt,next))
-
 def awake_pending(+db: String, player: String, handle: U32, +attempt: String, +cursor: String, woke: Bool) -> IO(String):
   match woke:
     case False{}: IO.pure(String,cursor)
     case True{}: do IO<String>:
       start : String <- replay_cursor(db,attempt,cursor)
-      drain_pending(db,player,handle,attempt,start)
+      pending(db,player,handle,attempt,start)
 
 def terminal_sql(+value: String) -> String:
   "SELECT CASE WHEN " ++ C.terminal(value) ++ " THEN 1 ELSE 0 END;"
