@@ -40,7 +40,7 @@ def exposed(+read: Bool, +field: String) -> String:
   Bool.pick(String,read,"coalesce(json_extract(j.value,'$.delivery." ++ field ++ "'),json_extract(j.value,'$." ++ field ++ "'))","json_extract(j.value,'$." ++ field ++ "')")
 
 def found(read: Bool) -> String:
-  Bool.pick(String,read,"(json_extract(j.value,'$.status')='found' AND json_type(j.value,'$.delivery')='object' AND json_type(j.value,'$.delivery.body')='text' AND json_type(j.value,'$.delivery.recipient')='text') OR (json_extract(j.value,'$.status') IS NULL AND json_type(j.value,'$.body')='text' AND json_type(j.value,'$.recipient')='text')","1")
+  Bool.pick(String,read,"((json_extract(j.value,'$.status')='found' AND json_type(j.value,'$.delivery')='object' AND json_type(j.value,'$.delivery.body')='text' AND json_type(j.value,'$.delivery.recipient')='text') OR (json_extract(j.value,'$.status') IS NULL AND json_type(j.value,'$.body')='text' AND json_type(j.value,'$.recipient')='text'))","1")
 
 def projection(+message: String) -> String:
   "json_object('delivered','recorded',"

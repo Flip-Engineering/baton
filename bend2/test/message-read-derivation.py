@@ -5,6 +5,7 @@ read derivation names message_reads and never messages.receipt, checks that
 read recording is not gated on turn success, then exercises the legacy receipt
 backfill and the owed/read predicates over a scratch database.
 """
+import json
 import pathlib
 import re
 import sqlite3
@@ -36,6 +37,14 @@ def literal(path, prefix):
     return match.group(1)
 
 
+def read_predicate():
+    body = definition(STATUS, 'found')
+    match = re.search(r'Bool\.pick\(String,read,"((?:[^"\\]|\\.)*)","1"\)', body)
+    if not match:
+        raise AssertionError('read predicate not found')
+    return json.loads('"' + match.group(1) + '"')
+
+
 class SourceDerivation(unittest.TestCase):
     def test_complete_inbox_and_pending_bodies_record_owned_reads(self):
         agent_command = definition(COORD / 'agent-command.bend', 'execute')
@@ -46,7 +55,8 @@ class SourceDerivation(unittest.TestCase):
         self.assertIn('AgentInput.output(db,session,saved,True{})', agent_command)
         self.assertIn('command_owned_output(db,session,saved,saved,True{})', agent_input)
         self.assertIn('case C.Inbox{session}: command_owned_output(db,session,saved,saved,True{})', command_output)
-        self.assertIn("json_type(j.value,'$.body')='text'", definition(STATUS, 'found'))
+        found = definition(STATUS, 'found')
+        self.assertIn("json_type(j.value,'$.body')='text'", found)
         self.assertIn('m.recipient=' + '" ++ q(session) ++ "', record)
         self.assertIn('AND m.body=', record)
         self.assertIn('exposed(read,"body")', record)
@@ -57,6 +67,65 @@ class SourceDerivation(unittest.TestCase):
         self.assertIn("json_type(j.value,'$.body')='text'", cli)
         self.assertIn("m.body=coalesce(json_extract(j.value,'$.delivery.body'),json_extract(j.value,'$.body'))", cli)
         self.assertIn("m.recipient=coalesce(json_extract(j.value,'$.delivery.recipient'),json_extract(j.value,'$.recipient'))", cli)
+
+
+class ReadPredicateSql(unittest.TestCase):
+    def test_only_exact_owned_complete_rows_survive_all_sql_guards(self):
+        predicate = read_predicate()
+        sql = (
+            "INSERT INTO message_reads(attempt,message,recipient,native,identity) "
+            "SELECT ?,m.id,m.recipient,?,? FROM json_each(?) j "
+            "JOIN messages m ON m.id=coalesce(json_extract(j.value,'$.delivery.id'),json_extract(j.value,'$.id')) "
+            "JOIN executions e ON e.session=m.recipient JOIN sessions s ON s.id=e.session WHERE "
+            + predicate
+            + " AND m.recipient=? "
+            + "AND m.recipient=coalesce(json_extract(j.value,'$.delivery.recipient'),json_extract(j.value,'$.recipient')) "
+            + "AND m.body=coalesce(json_extract(j.value,'$.delivery.body'),json_extract(j.value,'$.body')) "
+            + "AND e.id=? AND e.directory=? AND e.phase='running' AND s.native=? "
+            + "AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=e.session) "
+            + "ON CONFLICT(attempt,identity,message) DO NOTHING;")
+        with sqlite3.connect(':memory:') as db:
+            db.executescript(
+                "CREATE TABLE sessions(id TEXT PRIMARY KEY,native TEXT NOT NULL);"
+                "CREATE TABLE messages(id TEXT PRIMARY KEY,recipient TEXT NOT NULL,body TEXT NOT NULL);"
+                "CREATE TABLE executions(id TEXT PRIMARY KEY,session TEXT NOT NULL,directory TEXT NOT NULL,phase TEXT NOT NULL);"
+                "CREATE TABLE session_stops(session TEXT PRIMARY KEY);"
+                "CREATE TABLE message_reads(attempt TEXT,message TEXT,recipient TEXT,native TEXT,identity TEXT,"
+                "PRIMARY KEY(attempt,identity,message));")
+            db.executemany('INSERT INTO sessions VALUES(?,?)', [
+                ('worker', 'native-1'), ('stale', 'native-2'),
+                ('stopped', 'native-3'), ('wrong-native', 'native-4')])
+            db.executemany('INSERT INTO executions VALUES(?,?,?,?)', [
+                ('current', 'worker', '/worker', 'running'),
+                ('old', 'stale', '/stale', 'running'),
+                ('current-stop', 'stopped', '/stopped', 'running'),
+                ('current-native', 'wrong-native', '/wrong-native', 'running')])
+            db.execute("INSERT INTO session_stops VALUES('stopped')")
+            db.executemany('INSERT INTO messages VALUES(?,?,?)', [
+                ('wrapped-good', 'worker', 'body-wrapped'),
+                ('flat-good', 'worker', 'body-flat'),
+                ('foreign-owner', 'worker', 'body-foreign'),
+                ('changed-body', 'worker', 'body-original'),
+                ('stale-attempt', 'stale', 'body-stale'),
+                ('stopped-input', 'stopped', 'body-stopped'),
+                ('native-mismatch', 'wrong-native', 'body-native')])
+            cases = [
+                ('worker', 'current', '/worker', 'native-1', [
+                    {'status': 'found', 'delivery': {'id': 'wrapped-good', 'recipient': 'worker', 'body': 'body-wrapped'}},
+                    {'id': 'flat-good', 'recipient': 'worker', 'body': 'body-flat'},
+                    {'status': 'found', 'delivery': {'id': 'foreign-owner', 'recipient': 'other', 'body': 'body-foreign'}},
+                    {'status': 'found', 'delivery': {'id': 'changed-body', 'recipient': 'worker', 'body': 'tampered'}}]),
+                ('stale', 'current', '/stale', 'native-2', [
+                    {'status': 'found', 'delivery': {'id': 'stale-attempt', 'recipient': 'stale', 'body': 'body-stale'}}]),
+                ('stopped', 'current-stop', '/stopped', 'native-3', [
+                    {'status': 'found', 'delivery': {'id': 'stopped-input', 'recipient': 'stopped', 'body': 'body-stopped'}}]),
+                ('wrong-native', 'current-native', '/wrong-native', 'native-expected', [
+                    {'status': 'found', 'delivery': {'id': 'native-mismatch', 'recipient': 'wrong-native', 'body': 'body-native'}}])]
+            for session, attempt, directory, native, rows in cases:
+                db.execute(sql, (attempt, native, 'identity', json.dumps(rows), session,
+                                 attempt, directory, native))
+            self.assertEqual(db.execute('SELECT message FROM message_reads ORDER BY message').fetchall(),
+                             [('flat-good',), ('wrapped-good',)])
 
     def test_owed_and_read_consult_read_rows_only(self):
         owed = definition(STATUS, 'owed_sql')
