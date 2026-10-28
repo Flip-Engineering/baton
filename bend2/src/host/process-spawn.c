@@ -940,7 +940,9 @@ static char *br_self(void) {
   if(buffer && !_NSGetExecutablePath(buffer,&size)) path=realpath(buffer,NULL);
   free(buffer);return path;
 #else
-  return realpath("/proc/self/exe",NULL);
+  /* This path is used to re-execute this process, so retain its loaded image
+     across an atomic replacement or unlink of the original pathname. */
+  return strdup("/proc/self/exe");
 #endif
 }
 
