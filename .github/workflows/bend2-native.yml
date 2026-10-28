@@ -45,16 +45,11 @@ name: bend2-native-development
         required: false
         default: ''
         type: string
-      reuse_generated_c_run_id:
-        description: 'Existing workflow run ID containing the exact-source generated C artifact; skips Linux candidate production'
+      reuse_generated_c_producer:
+        description: 'Existing generated-C producer run and attempt as RUN_ID/ATTEMPT; skips Linux candidate production'
         required: false
         default: ''
         type: string
-      reuse_generated_c_run_attempt:
-        description: 'Attempt number for the existing generated C artifact'
-        required: false
-        default: 0
-        type: number
       target_commit:
         description: 'Optional exact target commit for the post-package affected behavior comparison'
         required: false
@@ -104,7 +99,7 @@ env:
 
 jobs:
   linux-candidate:
-    if: ${{ inputs.reuse_generated_c_run_id == '' }}
+    if: ${{ inputs.reuse_generated_c_producer == '' }}
     timeout-minutes: 4320
     runs-on:
       group: baton2-native-homelab
@@ -312,7 +307,7 @@ jobs:
 
   linux-native-qualification:
     needs: [darwin-arm64]
-    if: ${{ !cancelled() && inputs.reuse_generated_c_run_id == '' }}
+    if: ${{ !cancelled() && inputs.reuse_generated_c_producer == '' }}
     timeout-minutes: 4320
     runs-on:
       group: baton2-native-homelab
@@ -576,10 +571,7 @@ jobs:
 
   darwin-arm64:
     needs: [linux-candidate]
-    if: ${{ !cancelled() && (needs.linux-candidate.result == 'success' || inputs.reuse_generated_c_run_id != '') }}
-    env:
-      BATON2_GENERATED_C_RUN_ID: ${{ inputs.reuse_generated_c_run_id || github.run_id }}
-      BATON2_GENERATED_C_RUN_ATTEMPT: ${{ inputs.reuse_generated_c_run_id != '' && inputs.reuse_generated_c_run_attempt || github.run_attempt }}
+    if: ${{ !cancelled() && (needs.linux-candidate.result == 'success' || inputs.reuse_generated_c_producer != '') }}
     runs-on:
       group: baton2-native-homelab
       labels: [self-hosted, Linux, X64, baton2-native-linux-x64]
@@ -590,18 +582,24 @@ jobs:
       CC: /usr/bin/clang-19
     steps:
       - name: Validate generated C reuse selection
+        id: generated-c-producer
         shell: bash
         env:
-          BATON2_REUSE_GENERATED_C_RUN_ID: ${{ inputs.reuse_generated_c_run_id }}
-          BATON2_REUSE_GENERATED_C_RUN_ATTEMPT: ${{ inputs.reuse_generated_c_run_attempt }}
+          BATON2_REUSE_GENERATED_C_PRODUCER: ${{ inputs.reuse_generated_c_producer }}
         run: |
           set -euo pipefail
-          if [[ -z "$BATON2_REUSE_GENERATED_C_RUN_ID" ]]; then
-            [[ -z "$BATON2_REUSE_GENERATED_C_RUN_ATTEMPT" || "$BATON2_REUSE_GENERATED_C_RUN_ATTEMPT" == 0 ]]
+          if [[ -z "$BATON2_REUSE_GENERATED_C_PRODUCER" ]]; then
+            producer_run_id="$GITHUB_RUN_ID"
+            producer_attempt="$GITHUB_RUN_ATTEMPT"
           else
-            [[ "$BATON2_REUSE_GENERATED_C_RUN_ID" =~ ^[1-9][0-9]*$ ]]
-            [[ "$BATON2_REUSE_GENERATED_C_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+            [[ "$BATON2_REUSE_GENERATED_C_PRODUCER" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]]
+            producer_run_id="${BASH_REMATCH[1]}"
+            producer_attempt="${BASH_REMATCH[2]}"
           fi
+          printf 'BATON2_GENERATED_C_RUN_ID=%s\nBATON2_GENERATED_C_RUN_ATTEMPT=%s\n' \
+            "$producer_run_id" "$producer_attempt" >> "$GITHUB_ENV"
+          printf 'run_id=%s\nattempt=%s\n' "$producer_run_id" "$producer_attempt" \
+            >> "$GITHUB_OUTPUT"
 
       - name: Checkout exact source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -617,10 +615,10 @@ jobs:
       - name: Download selected exact-source Main C and producer checks
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: baton2-generated-c-${{ env.BATON2_SOURCE_SHA }}-${{ env.BATON2_GENERATED_C_RUN_ATTEMPT }}
+          name: baton2-generated-c-${{ env.BATON2_SOURCE_SHA }}-${{ steps.generated-c-producer.outputs.attempt }}
           path: ${{ runner.temp }}/baton2-generated-c-${{ github.run_id }}-${{ github.run_attempt }}
           repository: ${{ github.repository }}
-          run-id: ${{ env.BATON2_GENERATED_C_RUN_ID }}
+          run-id: ${{ steps.generated-c-producer.outputs.run_id }}
           github-token: ${{ github.token }}
 
       - name: Create owned build clone and install pinned compiler
