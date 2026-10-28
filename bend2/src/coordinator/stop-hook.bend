@@ -3,6 +3,7 @@
 import Base
 import ../coordinator/commands.bend as C
 import ./native-input.bend as NativeInput
+import ./message-status.bend as Status
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
 import ./input-hook.bend as InputHook
@@ -11,7 +12,7 @@ def owed_sql() -> String:
   "(SELECT count(*) FROM json_each((SELECT value FROM owed)))"
 
 def owed_lines_sql() -> String:
-  "(SELECT group_concat(line,char(10)) FROM (SELECT 'Message (' || json_extract(j.value,'$.kind') || ') from ' || json_extract(j.value,'$.sender') || ' [id: ' || json_extract(j.value,'$.id') || ']:' || char(10) || json_extract(j.value,'$.body') || char(10) || 'The complete input is available in this turn.' AS line FROM json_each((SELECT value FROM owed)) j ORDER BY CAST(j.key AS INTEGER)))"
+  "(SELECT group_concat(line,char(10)) FROM (SELECT " ++ Status.complete_message_sql("json_extract(j.value,'$.id')","json_extract(j.value,'$.kind')","json_extract(j.value,'$.sender')","json_extract(j.value,'$.body')") ++ " || char(10) || 'Use inbox or read to record a complete read.' AS line FROM json_each((SELECT value FROM owed)) j ORDER BY CAST(j.key AS INTEGER)))"
 
 # The hook's answer: a JSON block decision, or empty to let the turn end.
 def decision_sql(+session: String) -> String:
