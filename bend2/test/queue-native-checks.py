@@ -91,9 +91,14 @@ class AdapterExitTests(unittest.TestCase):
         options = ['--kind', 'cc', '--compiler', str(compiler)]
         command = [str(compiler), '-c', str(source)]
 
-        with open(root / 'parent.stderr', 'wb') as stderr_file, \
-                mock.patch.object(adapter.sys, 'stderr', io.TextIOWrapper(stderr_file, encoding='utf-8')):
-            code = adapter.submit(config, directory, options, command, key_only=True)
+        previous_cwd = Path.cwd()
+        try:
+            os.chdir(root)
+            with open(root / 'parent.stderr', 'wb') as stderr_file, \
+                    mock.patch.object(adapter.sys, 'stderr', io.TextIOWrapper(stderr_file, encoding='utf-8')):
+                code = adapter.submit(config, directory, options, command, key_only=True)
+        finally:
+            os.chdir(previous_cwd)
 
         self.assertEqual(code, 29)
         self.assertEqual((directory / 'key.stdout').read_bytes(), b'key stdout fixture\n')
