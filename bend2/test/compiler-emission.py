@@ -21,6 +21,42 @@ class CompilerEmission(unittest.TestCase):
         if not cls.bun or not cls.cc:
             raise unittest.SkipTest('Bun and Clang are required')
 
+    def test_report_type_and_erased_dependencies(self):
+        with tempfile.TemporaryDirectory(prefix='bend-report-') as temporary:
+            fixture = Path(temporary) / 'report.bend'
+            fixture.write_text('''import Base
+
+@unsafe
+def Abstract(-n: Nat) -> Data:
+  U32
+
+def dependent(-n: Nat, value: Abstract(n)) -> U32:
+  value
+
+def annotated() -> U32:
+  {0 : Abstract(0n)}
+
+def erased(-T: Data, value: U32) -> U32:
+  value
+
+def erased_use() -> U32:
+  erased(Abstract(0n), 0)
+
+type Holder is Data:
+  Wrapped{value: Abstract(0n)}
+
+def safe() -> U32:
+  0
+''')
+            run = subprocess.run([self.bun, '--smol', str(SOURCE / 'main.ts'),
+                                  str(fixture), '--check-only'],
+                                 capture_output=True, text=True,
+                                 env={**os.environ, 'BEND_NO_TELEMETRY': '1'})
+            self.assertEqual(run.returncode, 0, run.stderr)
+            claims = {line[2:] for line in run.stdout.splitlines() if line.startswith('- ')}
+            self.assertEqual(claims,
+                             {'Abstract', 'dependent', 'annotated', 'erased_use', 'Holder'})
+
     def test_literal_chain(self):
         with tempfile.TemporaryDirectory(prefix='bend-emission-') as temporary:
             directory = Path(temporary)
