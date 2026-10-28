@@ -19,6 +19,7 @@ record each call and fail on request.
 BATON2_DELIVERY_REDRIVE_FIXTURE names a built bend2/test/delivery-redrive
 binary; otherwise the test builds it with bend2/scripts/build-native.sh.
 """
+import errno
 import json
 import os
 import pathlib
@@ -182,9 +183,11 @@ class DeliveryRedrive(unittest.TestCase):
         redelivery_stdout.mkdir()
 
         first = self.dispatch('root-nudge')
-        self.assertEqual(first.returncode, 2, first.stdout + first.stderr)
+        self.assertEqual(first.returncode, 1, first.stdout + first.stderr)
         self.assertIn('receive endpoint: no native conversation', first.stdout + first.stderr)
-        self.assertIn('Invalid argument', first.stdout + first.stderr)
+        self.assertIn('session delivery failed (exit 2)', first.stdout + first.stderr)
+        redrive_error = f'Redelivery launch failed (error code {errno.EISDIR})'
+        self.assertIn(redrive_error, first.stdout + first.stderr)
         self.assertTrue(self.wait_for(lambda: len(self.calls('coordinator')) >= 1), self.calls('coordinator'))
         self.assertEqual(self.calls('worker'), ['root-nudge'])
         self.assertEqual(self.calls('coordinator'), ['root-nudge:undelivered'])
@@ -193,7 +196,8 @@ class DeliveryRedrive(unittest.TestCase):
         self.assertEqual(row[:3], ('worker', 'coordinator', 'report'))
         self.assertIn('Input root-nudge for worker could not be delivered', row[3])
         self.assertIn('receive endpoint: no native conversation', row[3])
-        self.assertIn('Invalid argument', row[3])
+        self.assertIn('session delivery failed (exit 2)', row[3])
+        self.assertIn(redrive_error, row[3])
         self.assertEqual(self.db.execute(
             "SELECT count(*) FROM message_reads WHERE message='root-nudge'").fetchone()[0], 0)
 
