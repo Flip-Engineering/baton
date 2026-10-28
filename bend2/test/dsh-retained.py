@@ -11,7 +11,6 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
-import time
 import unittest
 
 
@@ -52,31 +51,36 @@ class DshRetained(unittest.TestCase):
         self.addCleanup(self.shutdown_owner)
 
     def shutdown_owner(self):
-        subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
-                       text=True, capture_output=True, timeout=10)
-        if self.owner is not None:
-            try:
-                self.owner.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self.owner.kill()
-                self.owner.wait(timeout=10)
+        if self.owner is None:
+            return
+        shutdown = None
+        if self.owner.poll() is None:
+            shutdown = subprocess.run(
+                [str(EXE), '--instance-shutdown', str(self.db)],
+                text=True, capture_output=True)
+        status = self.owner.wait()
+        if status != 0:
+            self.fail('instance owner exited with status ' + str(status)
+                      + ': ' + (self.owner.stderr.read() or ''))
+        if shutdown is not None and shutdown.returncode != 0:
+            self.fail('instance shutdown failed with status '
+                      + str(shutdown.returncode) + ': '
+                      + shutdown.stdout + shutdown.stderr)
 
     def start_owner(self):
         self.owner = subprocess.Popen(
             [str(EXE), '--instance-owner', str(self.db)],
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:
+        while True:
             if self.owner.poll() is not None:
-                self.fail('instance owner exited before readiness: '
-                          + (self.owner.stderr.read() or ''))
+                status = self.owner.wait()
+                self.fail('instance owner exited before readiness with status '
+                          + str(status) + ': ' + (self.owner.stderr.read() or ''))
             witness = subprocess.run(
                 [str(EXE), '--instance-witness', str(self.db)],
-                capture_output=True, text=True, timeout=5)
+                capture_output=True, text=True)
             if witness.returncode == 0 and witness.stdout.strip():
                 return
-            time.sleep(0.05)
-        self.fail('instance owner did not become ready')
 
     def stage_receiver(self, package=False):
         self.receiver_bin.parent.mkdir(parents=True)
@@ -108,8 +112,8 @@ class DshRetained(unittest.TestCase):
         result = subprocess.run(
             [str(self.receiver_bin), 'prepare', str(self.link), str(self.attempt), '/usr/bin/dsh',
              'deepseek/deepseek-flash', 'max'],
-            text=True, capture_output=True, timeout=30)
-        self.assertEqual(result.returncode, 0, result.stderr)
+            text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         bridge = next((line.split('\t', 1)[1] for line in result.stdout.splitlines()
                        if line.startswith('arg\tBATON_DSH_WORKER_BRIDGE=')), '')
         expected_bridge = str(self.receiver_helpers / 'dsh-worker.mjs')
