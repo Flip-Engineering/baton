@@ -124,3 +124,22 @@ fork main 474 ahead / 36 behind.
 - 1 unique, 2026-10-17, origin/preserve/homelab-20261023/pr4-chasm-c677-20261018
 - 1 unique, 2026-10-17, origin/preserve/homelab-20261023/pr3-api-integration-20261018
 - 1 unique, 2026-10-17, origin/fframes-port-skin-sss-parity-audit
+
+## Pass 2 — reclassified against current main 34844a998 (PR56 merged)
+
+Current-source basis: retained preparation clone (HEAD exactly 34844a998, verified), main
+history moved into the snapshot clone as refs/remotes/cur/main via local fetch by SHA.
+
+- night25/codex/film-studio-night25-parity-20261023: 0 unique — fully consumed; deletion candidate.
+- night25/codex/film-studio-night25-integration-20261023: 0 unique — fully consumed; deletion candidate.
+- night25/eyes-points: 1 residual — ed6590f2 "Archive the parity harness proposal as superseded…" (bookkeeping).
+- night25/paint-reference: 2 residuals — 3d3b2749 (closes five static-review findings, binds byte-gate denominator) + e407a4c2 (authored-semantics paint reference for Type/Hands/Closer). Real work; review candidate.
+- night25/layer-reference: 5 residuals — binary32 tie-semantics corrections, amberKey rule binding, CPU references for Print/World/Post layer semantics. Real work; review candidate.
+- Port line NOT consumed by PR56: fframes-port-build-runtime (31 unique), fframes-port-native-gpu (21), fframes-port-independent-review-codex (16), fframes-port-material-shader (4) — genuinely unmerged; conductor decides port-vs-private-source consolidation.
+- 56 branches now have zero content-unique commits vs 34844a998 (list /tmp/ff-zero2.txt) — deletion candidates after ownership check.
+
+## bend fork and bend-kit — identity findings
+
+- The maintained bend fork is VENDORED in Flip-Engineering/baton: bend2/compiler/upstream (fork-manifest schema baton-bend-distribution-fork-manifest-v1, upstream "Bend 2.0.25", 76 source inputs), consumed by every baton native build through bend2/toolchain/runtime-pin.txt and the lineage guard; compiler provenance source.json names repository Flip-Engineering/baton, source_commit fe882a28 for the cid-final release.
+- Flip-Engineering/bend and bend-kit are NOT readable from this host: git info/refs returns 401 and API 404 unauthenticated, while control probes bendlang/bend and paymog/bend-kit return 200/anonymous-clone OK. The "public" classification needs Terra re-verification or exact clone URLs; Terra should supply branch/PR lists for both.
+- Upstream status: bendlang/bend is at v2.0.39 while the vendored line pins the 2.0.25 era — the fork's delta is maintained inside baton, so Flip-Engineering/bend's role is at most an upstream capture/mirror (cf. worktree bend-upstream-capture-20261019, bendlang remote, tip c65bcb78 2026-09-21). paymog/bend-kit is public (200); no bend-kit reference exists in baton's maintained sources, scripts, or the installed release provenance — its consumer is unknown and must come from repo access or root.
