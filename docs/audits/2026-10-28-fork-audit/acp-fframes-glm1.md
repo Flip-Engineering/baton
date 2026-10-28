@@ -1,0 +1,126 @@
+# acp-fframes fork audit — 2026-10-28 (repository-audit-glm1)
+
+Snapshot: pub-fframes-ds2/repo @ 0691ea5 (2026-10-23, predates PR56 merge 34844a998).
+Upstream: dmtrKovalenko/fframes main; merge-base 0ac0f869 (2026-10-12);
+fork main 474 ahead / 36 behind.
+
+## Zero-content-unique branches (51) — deletion candidates after ownership check
+
+- origin/codex/acp-218-fframes-native-20261020
+- origin/codex/acp-khr-main-20261020
+- origin/codex/acp218-fframes-selfhosted-ci-20261020
+- origin/codex/chasm-instance-timeline-20261018
+- origin/codex/chasm-vulkan-example-pr2-20261018
+- origin/codex/fframes-chasm-item6-luna-20261022
+- origin/codex/fframes-gpu-canary-main
+- origin/codex/fframes-pr2-pr4-integration-20261018
+- origin/codex/fframes-renderer-contracts-b8cb1a0
+- origin/codex/film-studio-canvas-paint-20261023
+- origin/codex/film-studio-ff-sol-20261022
+- origin/codex/film-studio-live-three-ci-20261023
+- origin/codex/film-studio-native-glyph-outlines-20261022
+- origin/codex/film-studio-native-lint-20261022
+- origin/codex/film-studio-native-passes-ds-20261021
+- origin/codex/film-studio-native-passes-ds-rawlight-20261021
+- origin/codex/film-studio-native-text-paint-20261023
+- origin/codex/film-studio-night25-components-integration-20261023
+- origin/codex/film-studio-night25-composer-20261023
+- origin/codex/film-studio-night25-composer-43bacd09-preserved
+- origin/codex/film-studio-night25-composer-bridge-20261023
+- origin/codex/film-studio-night25-composer-repair-20261023
+- origin/codex/film-studio-night25-credit-sonnet-20261023
+- origin/codex/film-studio-night25-eyes-prepare-20261022
+- origin/codex/film-studio-night25-fonts-20261022
+- origin/codex/film-studio-night25-hands-20261023
+- origin/codex/film-studio-night25-luna-20261023
+- origin/codex/film-studio-night25-native-entry-20261023
+- origin/codex/film-studio-night25-post-binding-20261023
+- origin/codex/film-studio-night25-post-native-20261022
+- origin/codex/film-studio-night25-print-binding-credit-20261023
+- origin/codex/film-studio-night25-source-inputs-20261023
+- origin/codex/film-studio-night25-surface-plan-20261022
+- origin/codex/film-studio-night25-type-layer-20261023
+- origin/codex/film-studio-night25-world-20261023
+- origin/codex/film-studio-nightprint-native-20261022
+- origin/codex/strict-assets-shared-textures-20261016
+- origin/codex/studio-functional-receiver-integration-20261021
+- origin/feat/native-receiver-integration
+- origin/feat/no-render-timeout
+- origin/fframes-port-common-fx
+- origin/fframes-port-native-gap-fix
+- origin/fix/27-discover-all-farm-roots
+- origin/fix/crowd-scope-20261019
+- origin/fix/main-green-20261020
+- origin/integration/film-studio-night25-native-20261023
+- origin/material-gpu-proof-20261020
+- origin/port/integration-20261016-upstream
+- origin/port/material-sss-integration-20261019
+- origin/preserve/homelab-20261023/acp-fframes-c677-work-20261018
+- origin/retained/fframes-common-fx-20261018
+
+## Unmerged with content (per-branch unique counts, tips Oct-16..23)
+
+- 31 unique, 2026-10-21, origin/fframes-port-build-runtime
+- 24 unique, 2026-10-16, origin/preserve/homelab-20261023/fframes-port-lead-native
+- 21 unique, 2026-10-23, origin/codex/film-studio-night25-eyes-points-20261023
+- 21 unique, 2026-10-21, origin/fframes-port-native-gpu
+- 19 unique, 2026-10-23, origin/codex/film-studio-night25-parity-20261023
+- 17 unique, 2026-10-23, origin/codex/film-studio-night25-layer-reference-20261023
+- 16 unique, 2026-10-23, origin/codex/film-studio-night25-integration-20261023
+- 16 unique, 2026-10-16, origin/fframes-port-independent-review-codex
+- 14 unique, 2026-10-23, origin/codex/film-studio-night25-paint-reference-20261023
+- 9 unique, 2026-10-23, origin/codex/acp218-native-canvas-coverage-20261022
+- 9 unique, 2026-10-23, origin/codex/acp218-native-baseline-triage-20261023
+- 7 unique, 2026-10-23, origin/preserve/homelab-20261023/acp218-native-canvas-coverage-20261022
+- 5 unique, 2026-10-20, origin/fframes-chasm-fidelity-archive-1017
+- 5 unique, 2026-10-18, origin/preserve/homelab-20261023/fframes-pr2-pr4-main-a76
+- 4 unique, 2026-10-21, origin/fframes-port-material-shader
+- 4 unique, 2026-10-18, origin/codex/chasm-alpha-mask-integration-20261019
+- 3 unique, 2026-10-23, origin/preserve/homelab-20261023/gpu-residue-20261018
+- 3 unique, 2026-10-23, origin/codex/acp218-issue32-volume-vectors-20261023
+- 3 unique, 2026-10-22, origin/preserve/homelab-20261022/fframes-fg-ff41ab9-final
+- 3 unique, 2026-10-21, origin/codex/acp218-material-review-integration-20261021
+- 3 unique, 2026-10-21, origin/codex/acp218-ci-handoff-20261020
+- 2 unique, 2026-10-23, origin/preserve/homelab-20261023/pr4-shared-device-20261018
+- 2 unique, 2026-10-23, origin/preserve/homelab-20261023/acp218-authored-native-pr21-ds-20261020
+- 2 unique, 2026-10-23, origin/codex/film-studio-night25-bands-20261023
+- 2 unique, 2026-10-23, origin/codex/acp33-canvas-post-reference-20261023
+- 2 unique, 2026-10-23, origin/body/plate-gpu-hash-cpu-20261023
+- 2 unique, 2026-10-21, origin/preserve/homelab-20261023/fframes-stashes-20261023
+- 2 unique, 2026-10-21, origin/preserve/codex/acp-218-fframes-native-20261020-20261022
+- 2 unique, 2026-10-21, origin/fframes-port-independent-review
+- 2 unique, 2026-10-21, origin/fframes-port-chasm-render
+- 2 unique, 2026-10-20, origin/preserve/homelab-20261022/fframes-fg-ff41ab9-partial-7eff232
+- 2 unique, 2026-10-20, origin/fix/d3d-scene-loop
+- 2 unique, 2026-10-20, origin/fframes-chasm-instance-adapter-1017
+- 2 unique, 2026-10-17, origin/fframes-port-quality-sss-review
+- 1 unique, 2026-10-23, origin/preserve/homelab-20261023/pr3-merged-base-test-41a8171
+- 1 unique, 2026-10-23, origin/preserve/homelab-20261023/plate-switch-matrix-20261018
+- 1 unique, 2026-10-23, origin/preserve/homelab-20261023/material-sss-fixchecks
+- 1 unique, 2026-10-23, origin/preserve/homelab-20261023/hair-clean-base
+- 1 unique, 2026-10-23, origin/preserve/homelab-20261023/gpu-skin-validation
+- 1 unique, 2026-10-23, origin/preserve/homelab-20261023/gpu-skin-landed
+- 1 unique, 2026-10-23, origin/preserve/homelab-20261023/gpu-skin-candidate
+- 1 unique, 2026-10-23, origin/preserve/homelab-20261023/gpu-residue-h2h-merged
+- 1 unique, 2026-10-23, origin/preserve/homelab-20261023/gpu-residue-combined
+- 1 unique, 2026-10-23, origin/preserve/homelab-20261023/gpu-plate-release-20261017
+- 1 unique, 2026-10-23, origin/preserve/homelab-20261023/gpu-loader-landed
+- 1 unique, 2026-10-23, origin/preserve/homelab-20261023/gpu-inst-landed
+- 1 unique, 2026-10-23, origin/preserve/homelab-20261023/frame-cpu-residue-20261018
+- 1 unique, 2026-10-23, origin/preserve/homelab-20261023/chasm-ingest-adapter-20261017
+- 1 unique, 2026-10-23, origin/preserve/homelab-20261023/acp218-native-replay-sol-20261021
+- 1 unique, 2026-10-23, origin/codex/film-studio-night25-print-binding-20261023
+- 1 unique, 2026-10-23, origin/codex/film-studio-night25-layout-20261023
+- 1 unique, 2026-10-21, origin/preserve/homelab-20261023/codex-acp218-volume-repair-principal-20261021
+- 1 unique, 2026-10-21, origin/khr-tex-transform-20261020
+- 1 unique, 2026-10-21, origin/deepseek-direct-material-review
+- 1 unique, 2026-10-21, origin/codex/acp218-live-three-receiver-ds-20261020
+- 1 unique, 2026-10-21, origin/codex/acp218-authored-native-pr21-20261020
+- 1 unique, 2026-10-21, origin/clippy-199-bench-20261021
+- 1 unique, 2026-10-18, origin/preserve/homelab-20261023/backup-pre-rebase-compose
+- 1 unique, 2026-10-18, origin/codex/fframes-glass-successor-20261019
+- 1 unique, 2026-10-18, origin/chasm-capture-alpha-20261019
+- 1 unique, 2026-10-17, origin/preserve/homelab-20261023/sss-qualify-7999
+- 1 unique, 2026-10-17, origin/preserve/homelab-20261023/pr4-chasm-c677-20261018
+- 1 unique, 2026-10-17, origin/preserve/homelab-20261023/pr3-api-integration-20261018
+- 1 unique, 2026-10-17, origin/fframes-port-skin-sss-parity-audit
