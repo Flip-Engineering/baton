@@ -233,12 +233,16 @@ def missing_identity_signal_result(+db: String, +session: String, +attempt: Stri
 
 def missing_identity_signal(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
   do IO<Unit>:
-    signal_text : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT signal FROM session_stops WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ " AND outcome IN ('requested','custody-missing') AND applied_signal<>signal AND EXISTS(SELECT 1 FROM executions e WHERE e.session=session_stops.session AND e.id=session_stops.attempt AND e.phase<>'exited')),0);"))
-    +signal : U32 = U32.read(Tx.trim_nl(signal_text))
-    Bool.pick(IO(Unit),U32.is_eq(signal,0),mark_custody_missing(db,session,attempt,directory),
-      do IO<Unit>:
-        result : Result<&1,&1,U32 & String,String> <- P.ProcessChild.instance_attempt_signal(db,directory,signal)
-        missing_identity_signal_result(db,session,attempt,signal,directory,result))
+    state : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN st.applied_signal=st.signal THEN 'applied' ELSE cast(st.signal AS TEXT) END FROM session_stops st JOIN executions e ON e.session=st.session AND e.id=st.attempt WHERE st.session=" ++ C.q(session) ++ " AND st.attempt=" ++ C.q(attempt) ++ " AND st.outcome IN ('requested','custody-missing') AND e.phase<>'exited';"))
+    +value : String = Tx.trim_nl(state)
+    Bool.pick(IO(Unit),String.is_empty(value),IO.pure(Unit,Unit{}),
+      Bool.pick(IO(Unit),String.eq(value,"applied"),IO.pure(Unit,Unit{}),
+        do IO<Unit>:
+          +signal : U32 = U32.read(value)
+          Bool.pick(IO(Unit),U32.is_eq(signal,0),mark_custody_missing(db,session,attempt,directory),
+            do IO<Unit>:
+              result : Result<&1,&1,U32 & String,String> <- P.ProcessChild.instance_attempt_signal(db,directory,signal)
+              missing_identity_signal_result(db,session,attempt,signal,directory,result))))
 
 def missing_custody_owner_locked(+db: String, +session: String, +attempt: String, +directory: String, owner: Maybe<U32>) -> IO(Unit):
   match owner:

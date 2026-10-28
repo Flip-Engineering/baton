@@ -207,6 +207,7 @@ class Stop(unittest.TestCase):
         self.assertEqual(stopped['submittedSignal'], 15)
         self.assertTrue(hidden.is_dir())
         self.assertFalse(attempt_dir.exists())
+        self.assertEqual(self.stop(), stopped)
         shutil.move(str(hidden), str(attempt_dir))
         self.finish(observer, ok=False)
         completed = self.completed()
