@@ -1254,7 +1254,7 @@ def run_completed_fresh(+state: U32, +keydir: String, +text: String, +parsed: Co
               adoption_exists : Bool <- regular(keydir ++ "/adoption")
               Bool.pick(IO(Bool), adoption_exists,
                 do IO<Bool>:
-                  adoption : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/adoption"))
+                  +adoption : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/adoption"))
                   Bool.pick(IO(Bool), non_empty(adoption),
                     IO.try(Bool, Result.CompileQueueResult.verify_adoption(keydir, adoption)),
                     IO.pure(Bool, False{})),
