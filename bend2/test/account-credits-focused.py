@@ -557,6 +557,13 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(first, self.reserve('attempt-1'))
         self.assertEqual(self.query("SELECT count(*) FROM credit_reservations WHERE request='attempt-1'"), [(1,)])
 
+    def test_reservation_duplicate_requires_the_same_session_account_and_current_grant(self):
+        self.credit_account('200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.execute("UPDATE credit_reservations SET session='other' WHERE request='attempt-1'")
+        self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditReservationConflict'])
+        self.assertEqual(self.query("SELECT count(*) FROM credit_reservations WHERE request='attempt-1'"), [(1,)])
+
     def test_reservation_refuses_missing_observation_and_expired_grant(self):
         self.record('claude-api', funding='api_key', secret='file:/fixture/api')
         self.bind('claude-api', 'leaf')
