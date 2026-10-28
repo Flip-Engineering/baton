@@ -128,16 +128,6 @@ def print_stream(label, output):
         print('  ' + line)
 
 
-def objects(value):
-    if isinstance(value, dict):
-        yield value
-        for nested in value.values():
-            yield from objects(nested)
-    elif isinstance(value, list):
-        for nested in value:
-            yield from objects(nested)
-
-
 def main():
     if not FIXTURE.is_file():
         raise SystemExit(f'DSH fixture not built at {FIXTURE}')
@@ -171,16 +161,25 @@ def main():
         if composition.returncode != 0:
             print(composition.stderr, file=sys.stderr)
             raise SystemExit('canary: DSH config composition failed')
-        try:
-            composed = json.loads(composition.stdout)
-        except json.JSONDecodeError as error:
-            raise SystemExit('canary: DSH config composition was not JSON') from error
-        model_rows = [entry for entry in objects(composed) if entry.get('id') == 'agent-default-model']
+        composed = composition.stdout
+        model_rows = re.findall(
+            r'(?ms)^- id: agent-default-model\n(.*?)(?=^- id: |\Z)', composed)
         if len(model_rows) != 1:
             raise SystemExit('canary: composed config did not contain one agent-default-model row')
-        provider = model_rows[0].get('config', {}).get('provider')
+        def setting(name):
+            match = re.search(rf'(?m)^\s+{re.escape(name)}: ([^\n]+)$', model_rows[0])
+            return match.group(1) if match else None
+        provider = setting('provider')
+        composed_model = setting('model')
+        composed_effort = setting('reasoningEffort')
         if provider != 'deepseek-official':
             raise SystemExit('canary: provider did not compose as deepseek-official')
+        if composed_model != 'deepseek-flash' or composed_effort != 'max':
+            raise SystemExit('canary: model and reasoning effort did not compose as requested')
+        if f'- id: baton-hooks\n  name: {pathlib.Path(HOOKS).as_uri()}\n' not in composed:
+            raise SystemExit('canary: Baton input and completion plugin did not compose')
+        if '- id: baton-worker\n' not in composed:
+            raise SystemExit('canary: Baton worker bridge did not compose')
         real = os.environ.get('DSH_CANARY_REAL') == '1'
         if real:
             if not env.get('DEEPSEEK_API_KEY'):
