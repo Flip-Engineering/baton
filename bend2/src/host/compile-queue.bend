@@ -1246,16 +1246,16 @@ def run_completed_fresh(+state: U32, +keydir: String, +text: String, +parsed: Co
     do IO<Unit>:
       +completed_path : String <- IO.pure(String, keydir ++ "/completed/result")
       existing : Bool <- regular(completed_path)
-      external_keep : Bool <- Bool.pick(Bool, existing,
+      external_keep : Bool <- Bool.pick(IO(Bool), existing,
         do IO<Bool>:
           result : String <- IO.try(String, L.CompileQueueLifecycle.read_text(completed_path))
-          Bool.pick(Bool, Tx.str_eq(field(result, "external"), "1"),
+          Bool.pick(IO(Bool), Tx.str_eq(field(result, "external"), "1"),
             do IO<Bool>:
               adoption_exists : Bool <- regular(keydir ++ "/adoption")
               Bool.pick(IO(Bool), adoption_exists,
                 do IO<Bool>:
                   adoption : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/adoption"))
-                  Bool.pick(Bool, non_empty(adoption),
+                  Bool.pick(IO(Bool), non_empty(adoption),
                     IO.try(Bool, Result.CompileQueueResult.verify_adoption(keydir, adoption)),
                     IO.pure(Bool, False{})),
                 IO.pure(Bool, False{})),
