@@ -116,7 +116,64 @@ static int test_two_threads(const char *database) {
   return 0;
 }
 
-static int test_fork_rejects_inherited(const char *database) {
+static pid_t fork_close_owner_pid;
+static sqlite3 *fork_close_inherited_db;
+static int fork_close_report_fd = -1;
+static pthread_t fork_destructor_main_thread;
+static int fork_destructor_read_rejected;
+
+static int intercept_forked_close(sqlite3 *db) {
+  if (getpid() != fork_close_owner_pid && db == fork_close_inherited_db) {
+    const char marker = 'C';
+    if (fork_close_report_fd >= 0)
+      (void)write(fork_close_report_fd, &marker, 1);
+    return SQLITE_MISUSE;
+  }
+  return sqlite3_close(db);
+}
+
+static int intercept_forked_close_v2(sqlite3 *db) {
+  if (getpid() != fork_close_owner_pid && db == fork_close_inherited_db) {
+    const char marker = 'V';
+    if (fork_close_report_fd >= 0)
+      (void)write(fork_close_report_fd, &marker, 1);
+    return SQLITE_MISUSE;
+  }
+  return sqlite3_close_v2(db);
+}
+
+static int collect_child_report(pid_t child, int read_fd, char *report,
+                                size_t capacity) {
+  size_t used = 0;
+  for (;;) {
+    if (used == capacity) return 1;
+    ssize_t count = read(read_fd, report + used, capacity - used);
+    if (count > 0) {
+      used += (size_t)count;
+      continue;
+    }
+    if (count < 0 && errno == EINTR) continue;
+    if (count < 0) return 1;
+    break;
+  }
+  close(read_fd);
+  int status = 0;
+  pid_t waited;
+  do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
+  return waited != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0
+    ? 1 : (int)used;
+}
+
+static void *join_forked_main_and_report(void *unused) {
+  (void)unused;
+  int joined = pthread_join(fork_destructor_main_thread, NULL);
+  const char marker = joined == 0 && fork_destructor_read_rejected ? 'D' : 'E';
+  if (fork_close_report_fd >= 0)
+    (void)write(fork_close_report_fd, &marker, 1);
+  _exit(marker == 'D' ? 0 : 1);
+}
+
+static int test_fork_release_rejects_inherited(const char *database) {
   baton_sql_read_test_forget();
   BatonSqlReadTestResult before;
   memset(&before, 0, sizeof(before));
@@ -126,46 +183,118 @@ static int test_fork_rejects_inherited(const char *database) {
     free(before.output); free(before.error);
     return 1;
   }
-  uintptr_t parent_connection = (uintptr_t)before.connection;
+  fork_close_owner_pid = getpid();
+  fork_close_inherited_db = before.connection;
+  baton_sql_read_test_close_interceptor = intercept_forked_close;
+  baton_sql_read_test_close_v2_interceptor = intercept_forked_close_v2;
   free(before.output); free(before.error);
+
+  int failed = 0;
+  int pipe_fd[2];
+  if (pipe(pipe_fd) != 0) {
+    perror("fork forget pipe");
+    failed = 1;
+    goto done;
+  }
+  fork_close_report_fd = pipe_fd[1];
   pid_t child = fork();
   if (child < 0) {
-    perror("fork");
-    baton_sql_read_test_forget();
-    return 1;
+    perror("fork forget");
+    close(pipe_fd[0]); close(pipe_fd[1]);
+    failed = 1;
+    goto done;
   }
   if (child == 0) {
-    BatonSqlReadTestResult result;
-    int run = baton_sql_read_test_run(database, "SELECT count(*) FROM t;", &result);
-    int rejected = run == 0 && result.code == SQLITE_MISUSE && result.error &&
-      strstr(result.error, "cannot cross a fork boundary") && !result.connection;
-    free(result.output);
-    free(result.error);
-    /* The child must not call SQLite close on the parent's inherited handle. */
-    _exit(rejected ? 0 : 1);
+    close(pipe_fd[0]);
+    baton_sql_read_test_forget();
+    const char marker = 'F';
+    (void)write(pipe_fd[1], &marker, 1);
+    _exit(0);
   }
-  int status = 0;
-  pid_t waited;
-  do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
-  int failed = waited != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0;
-  if (failed) {
-    fprintf(stderr, "fail fork-rejected: child status=%d\n", status);
+  fork_close_report_fd = -1;
+  close(pipe_fd[1]);
+  char report[8] = {0};
+  int report_size = collect_child_report(child, pipe_fd[0], report, sizeof(report));
+  if (report_size != 1 || report[0] != 'F') {
+    fprintf(stderr, "fail fork-forget-inherited: report=%.*s size=%d\n",
+            report_size > 0 ? report_size : 0, report, report_size);
+    failed = 1;
   } else {
-    printf("ok fork-rejected\n");
+    printf("ok fork-forget-inherited\n");
   }
-  BatonSqlReadTestResult after;
-  memset(&after, 0, sizeof(after));
-  int run = baton_sql_read_test_run(database, "SELECT count(*) FROM t;", &after);
-  if (run != 0 || after.code != SQLITE_OK || !after.connection ||
-      (uintptr_t)after.connection != parent_connection ||
-      !after.output || strcmp(after.output, "1\n") != 0) {
-    fprintf(stderr, "fail fork-parent-after: code=%d output=%s\n", after.code,
-            after.output ? after.output : "(null)");
+
+  BatonSqlReadTestResult after_forget;
+  memset(&after_forget, 0, sizeof(after_forget));
+  int run = baton_sql_read_test_run(database, "SELECT count(*) FROM t;", &after_forget);
+  if (run != 0 || after_forget.code != SQLITE_OK ||
+      after_forget.connection != fork_close_inherited_db ||
+      !after_forget.output || strcmp(after_forget.output, "1\n") != 0) {
+    fprintf(stderr, "fail fork-parent-after-forget: code=%d output=%s\n",
+            after_forget.code, after_forget.output ? after_forget.output : "(null)");
+    failed = 1;
+  }
+  free(after_forget.output); free(after_forget.error);
+
+  if (pipe(pipe_fd) != 0) {
+    perror("fork destructor pipe");
+    failed = 1;
+    goto done;
+  }
+  fork_close_report_fd = pipe_fd[1];
+  child = fork();
+  if (child < 0) {
+    perror("fork destructor");
+    close(pipe_fd[0]); close(pipe_fd[1]);
+    failed = 1;
+    goto done;
+  }
+  if (child == 0) {
+    close(pipe_fd[0]);
+    fork_destructor_main_thread = pthread_self();
+    pthread_t reporter;
+    if (pthread_create(&reporter, NULL, join_forked_main_and_report, NULL) != 0)
+      _exit(2);
+    BatonSqlReadTestResult result;
+    memset(&result, 0, sizeof(result));
+    int child_run = baton_sql_read_test_run(database, "SELECT count(*) FROM t;", &result);
+    fork_destructor_read_rejected = child_run == 0 &&
+      result.code == SQLITE_MISUSE && result.error &&
+      strstr(result.error, "cannot cross a fork boundary") && !result.connection;
+    free(result.output); free(result.error);
+    pthread_exit(NULL);
+    _exit(3);
+  }
+  fork_close_report_fd = -1;
+  close(pipe_fd[1]);
+  memset(report, 0, sizeof(report));
+  report_size = collect_child_report(child, pipe_fd[0], report, sizeof(report));
+  if (report_size != 1 || report[0] != 'D') {
+    fprintf(stderr, "fail fork-tls-destructor: report=%.*s size=%d\n",
+            report_size > 0 ? report_size : 0, report, report_size);
+    failed = 1;
+  } else {
+    printf("ok fork-tls-destructor\n");
+  }
+
+  BatonSqlReadTestResult after_destructor;
+  memset(&after_destructor, 0, sizeof(after_destructor));
+  run = baton_sql_read_test_run(database, "SELECT count(*) FROM t;", &after_destructor);
+  if (run != 0 || after_destructor.code != SQLITE_OK ||
+      after_destructor.connection != fork_close_inherited_db ||
+      !after_destructor.output || strcmp(after_destructor.output, "1\n") != 0) {
+    fprintf(stderr, "fail fork-parent-after-destructor: code=%d output=%s\n",
+            after_destructor.code, after_destructor.output ? after_destructor.output : "(null)");
     failed = 1;
   } else {
     printf("ok fork-parent-after\n");
   }
-  free(after.output); free(after.error);
+  free(after_destructor.output); free(after_destructor.error);
+
+done:
+  fork_close_report_fd = -1;
+  baton_sql_read_test_close_interceptor = NULL;
+  baton_sql_read_test_close_v2_interceptor = NULL;
+  fork_close_inherited_db = NULL;
   baton_sql_read_test_forget();
   return failed;
 }
@@ -416,7 +545,7 @@ static int mode_lifecycle(const char *work) {
       create_simple_db(utf16, 1, 1) || create_simple_db(plain, 1, 0)) return 1;
   int failed = 0;
   failed |= test_two_threads(first);
-  failed |= test_fork_rejects_inherited(first);
+  failed |= test_fork_release_rejects_inherited(first);
   failed |= test_path_change(first, second);
   failed |= test_committed_write(first);
   failed |= test_autocommit(first);

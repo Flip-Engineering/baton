@@ -1410,6 +1410,26 @@ static pthread_key_t baton_sql_read_key;
 static pthread_once_t baton_sql_read_once = PTHREAD_ONCE_INIT;
 static int baton_sql_read_key_ready;
 static int baton_sql_read_live;
+#ifdef BATON_SQL_READ_TEST
+static int (*baton_sql_read_test_close_interceptor)(sqlite3 *db);
+static int (*baton_sql_read_test_close_v2_interceptor)(sqlite3 *db);
+#endif
+
+static int baton_sql_read_close_db(sqlite3 *db) {
+#ifdef BATON_SQL_READ_TEST
+  if (baton_sql_read_test_close_interceptor)
+    return baton_sql_read_test_close_interceptor(db);
+#endif
+  return sqlite3_close(db);
+}
+
+static int baton_sql_read_close_db_v2(sqlite3 *db) {
+#ifdef BATON_SQL_READ_TEST
+  if (baton_sql_read_test_close_v2_interceptor)
+    return baton_sql_read_test_close_v2_interceptor(db);
+#endif
+  return sqlite3_close_v2(db);
+}
 
 static void baton_sql_read_cache_destroy(void *value);
 
@@ -1439,10 +1459,15 @@ static void baton_sql_read_close(BatonSqlReadCache *cache) {
   cache->db = NULL;
   if (db) {
     __atomic_sub_fetch(&baton_sql_read_live, 1, __ATOMIC_RELAXED);
-    if (sqlite3_close(db) == SQLITE_BUSY) sqlite3_close_v2(db);
+    /* A forked child may free its copied cache metadata, but must not use or
+       close a SQLite connection opened by its parent process. */
+    if (cache->pid == getpid() &&
+        baton_sql_read_close_db(db) == SQLITE_BUSY)
+      baton_sql_read_close_db_v2(db);
   }
   free(cache->path);
   cache->path = NULL;
+  cache->pid = 0;
   cache->identity = 0;
 }
 
