@@ -1,0 +1,37 @@
+ci/1758-postgres-port-isolation	ALL-UNIQUE	0/6
+ci/1772-disjoint-control-labels	PARTIAL	1/6 (uniq=5)
+codex/deploy-process-supervision-315933d7	ALL-UNIQUE	0/1
+docs/1745-upscaling-scope	ALL-UNIQUE	0/1
+docs/dsh-spike-deepseek-tool-catalog-20261022	ALL-UNIQUE	0/2
+ensemble/flip-myflip-c2-candidate5-20261022	PARTIAL	1/2 (uniq=1)
+ensemble/flip-myflip-c2-pr-08-notes-steering-20261024	PARTIAL	1/7 (uniq=6)
+ensemble/flip-myflip-k3-lineage-20261020	PARTIAL	9/10 (uniq=1)
+ensemble/flip-myflip-k3-specs-20261023	ALL-UNIQUE	0/19
+ensemble/flip-myflip-luna-contractv4-20261022	ALL-UNIQUE	0/2
+ensemble/flip-myflip-luna1-reminders-20261020	PARTIAL	1/4 (uniq=3)
+ensemble/flip-myflip-luna2-ui-20261020	PARTIAL	1/2 (uniq=1)
+ensemble/flip-myflip-luna3-reminder-races-20261020	PARTIAL	3/4 (uniq=1)
+ensemble/flip-myflip-sol61-2169-contract-20261022	ALL-UNIQUE	0/1
+ensemble/flip-myflip-sol61-delivery-status-20261020	ALL-UNIQUE	0/7
+ensemble/flip-myflip-sol61-release-docs-20261020	ALL-UNIQUE	0/3
+fix/2156-test-pool-current-main-20261020	ALL-UNIQUE	0/4
+fix/2156-test-pool-override-20261019	ALL-UNIQUE	0/4
+fix/2158-colima-current-main-20261020	PARTIAL	2/3 (uniq=1)
+fix/2159-rustup-isolation-20261019	PARTIAL	1/3 (uniq=2)
+fix/2168-client-generated-artifacts-20261019	ALL-UNIQUE	0/2
+fix/2176-2177-deploy-custody-pins-20261021	ALL-UNIQUE	0/30
+fix/2218-ci-connection-budget-sol-20261023	ALL-UNIQUE	0/8
+fix/2306-guest-liveness	ALL-UNIQUE	0/1
+fix/936dda6e-docker-fallback-20261020	PARTIAL	5/8 (uniq=3)
+fix/origin-allowlist-contract	ALL-UNIQUE	0/1
+fix/queue-970-phase-scoped-custody-20261021	ALL-UNIQUE	0/1
+ops/baton-research-route-main-20261019	ALL-UNIQUE	0/1
+release/2155-integrated-20261019	PARTIAL	1/2 (uniq=1)
+rescue/2026-09-25-flip-music	PARTIAL	1/2 (uniq=1)
+rescue/2026-09-25-flip-voice	ALL-UNIQUE	0/1
+research/brushwork-conductor-20261019	ALL-UNIQUE	0/1
+research/ci-colima-repair-20261019	PARTIAL	1/2 (uniq=1)
+research/consolidation-audit-20261019	ALL-UNIQUE	0/1
+spike/dsh-anchored-tool-catalog	ALL-UNIQUE	0/2
+test/225-stage-b-red-exact-main	ALL-UNIQUE	0/3
+validation/flip-029-myflip-fmt-warm-20261022	ALL-UNIQUE	0/31
