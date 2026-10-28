@@ -9,6 +9,7 @@ import pathlib
 import sqlite3
 import subprocess
 import tempfile
+import time
 import unittest
 
 
@@ -41,12 +42,36 @@ class DshRetained(unittest.TestCase):
             database.execute(
                 "INSERT INTO sessions(id,harness,model,effort) VALUES"
                 "('dsh-fixture','dsh','deepseek-flash','max')")
+        self.owner = None
         self.link.symlink_to(self.db)
         self.addCleanup(self.shutdown_owner)
 
     def shutdown_owner(self):
-        subprocess.run([str(EXE), 'shutdown', str(self.db)],
+        subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
                        text=True, capture_output=True, timeout=10)
+        if self.owner is not None:
+            try:
+                self.owner.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.owner.kill()
+                self.owner.wait(timeout=10)
+
+    def start_owner(self):
+        self.owner = subprocess.Popen(
+            [str(EXE), '--instance-owner', str(self.db)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if self.owner.poll() is not None:
+                self.fail('instance owner exited before readiness: '
+                          + (self.owner.stderr.read() or ''))
+            witness = subprocess.run(
+                [str(EXE), '--instance-witness', str(self.db)],
+                capture_output=True, text=True, timeout=5)
+            if witness.returncode == 0 and witness.stdout.strip():
+                return
+            time.sleep(0.05)
+        self.fail('instance owner did not become ready')
 
     def run_fixture(self):
         result = subprocess.run(
@@ -74,6 +99,18 @@ class DshRetained(unittest.TestCase):
         self.assertIn('keep\t0', output)
         self.assertIn('file\tfalse', output)
         self.assertFalse(self.attempt.exists())
+
+    def test_retained_prepare_resolves_dsh_worker_bridge(self):
+        self.start_owner()
+        result = subprocess.run(
+            [str(EXE), 'prepare', str(self.link), str(self.attempt), '/usr/bin/dsh',
+             'deepseek/deepseek-flash', 'max'],
+            text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        bridge = next((line.split('\t', 1)[1] for line in result.stdout.splitlines()
+                       if line.startswith('arg\tBATON_DSH_WORKER_BRIDGE=')), '')
+        self.assertTrue(bridge.endswith('/dsh-worker.mjs'), result.stdout)
+        self.assertIn('input\tfixture task', result.stdout)
 
     def test_patch_inputs_are_the_minimal_roster_and_max_effort(self):
         self.run_fixture()
