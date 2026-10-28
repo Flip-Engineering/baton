@@ -1,0 +1,16 @@
+{
+  "baton-input": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "\"$BATON_COORDINATOR\" --stop-hook"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "\"$BATON_COORDINATOR\" --stop-hook"
+      }
+    ]
+  }
+}
