@@ -61,29 +61,34 @@ def setup(+db: String) -> IO(Unit):
 def request_cases(+db: String) -> IO(Unit):
   do IO<Unit>:
     requested : String <- request_error(db,"dsh-live","stop-live","operator stop",False{})
-    expect("dsh-request-accepted",String.is_empty(requested))
+    accepted : Unit <- expect("dsh-request-accepted",String.is_empty(requested))
     requested_row : Unit <- expect_read(db,"SELECT outcome || ':' || attempt || ':' || directory FROM session_stops WHERE session='dsh-live';","requested:attempt-live:/workspace/dsh-live.attempt\n","dsh-live-requested")
     retry : String <- request_error(db,"dsh-live","stop-live","operator stop",False{})
-    expect("dsh-exact-retry-accepted",String.is_empty(retry))
+    retried : Unit <- expect("dsh-exact-retry-accepted",String.is_empty(retry))
     other_id : String <- request_error(db,"dsh-live","stop-other","operator stop",False{})
-    expect("dsh-different-id-refused",String.eq(other_id,"Stop identity differs from the recorded operation; read the session and retry its exact stop ID and reason."))
+    refused_id : Unit <- expect("dsh-different-id-refused",String.eq(other_id,"Stop identity differs from the recorded operation; read the session and retry its exact stop ID and reason."))
     forced : String <- request_error(db,"dsh-live","stop-live","",True{})
-    expect("dsh-force-accepted",String.is_empty(forced))
+    force_accepted : Unit <- expect("dsh-force-accepted",String.is_empty(forced))
     signal : Unit <- expect_read(db,"SELECT signal FROM session_stops WHERE session='dsh-live';","9\n","dsh-force-records-kill")
     done : String <- request_error(db,"dsh-done","stop-done","operator stop",False{})
-    expect("dsh-terminal-accepted",String.is_empty(done))
+    terminal_accepted : Unit <- expect("dsh-terminal-accepted",String.is_empty(done))
     done_row : Unit <- expect_read(db,"SELECT outcome FROM session_stops WHERE session='dsh-done';","stopped\n","dsh-terminal-stopped")
     refused : String <- request_error(db,"shell-other","stop-shell","operator stop",False{})
-    expect("unsupported-harness-names-supported-retained-harnesses",String.eq(refused,"Stop supports retained OMP, Codex, Muse, Claude Code, DSH and Antigravity sessions; a legacy direct turn without a keeper directory was left unchanged."))
+    unsupported : Unit <- expect("unsupported-harness-names-supported-retained-harnesses",String.eq(refused,"Stop supports retained OMP, Codex, Muse, Claude Code, DSH and Antigravity sessions; a legacy direct turn without a keeper directory was left unchanged."))
     IO.pure(Unit,Unit{})
 
 def main_args(args: List<String>) -> IO(Unit):
   match args:
     case "--instance-owner" <> db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
     case "--instance-shutdown" <> db <> Nil{}: IO.try(Unit,Custody.Instance.shutdown(db))
+    case "--instance-witness" <> db <> Nil{}: do IO<Unit>:
+      witness : Result<&1,&1,U32 & String,String> <- Custody.Instance.owner_witness(db)
+      match witness:
+        case Fail{error}: IO.die(Unit,2,"owner witness failed")
+        case Done{value}: IO.print(value)
     case +path <> Nil{}: do IO<Unit>:
-      setup(path)
-      request_cases(path)
+      initialized : Unit <- setup(path)
+      exercised : Unit <- request_cases(path)
       IO.print("fixture-stop-dsh-ok")
     case other: IO.die(Unit,2,"usage: stop-dsh DB")
 

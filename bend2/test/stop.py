@@ -344,6 +344,9 @@ class Stop(unittest.TestCase):
     def test_retained_dsh_stop_preserves_work_and_exits_native_and_tool(self):
         self.retained_stop_preserves_work_native_identity_receipts_and_output('dsh')
 
+    def test_explicit_force_reaches_same_term_resistant_attempt_after_observer_loss(self):
+        self.explicit_force_reaches_same_term_resistant_attempt_after_observer_loss('omp')
+
     def explicit_force_reaches_same_term_resistant_attempt_after_observer_loss(self, harness='omp'):
         observer, stream, started = self.begin(harness=harness, resist=True)
         requested = self.stop()

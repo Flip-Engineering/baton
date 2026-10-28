@@ -20,12 +20,37 @@ class StopDsh(unittest.TestCase):
         directory = tempfile.TemporaryDirectory(prefix='stop-dsh-')
         self.addCleanup(directory.cleanup)
         self.database = str(pathlib.Path(directory.name) / 'state.db')
+        self.owner_witness = None
+        self.owner = subprocess.Popen(
+            [str(EXE), '--instance-owner', self.database],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         self.addCleanup(self.shutdown_owner)
+        while True:
+            if self.owner.poll() is not None:
+                status = self.owner.wait()
+                self.fail('instance owner exited before readiness with status '
+                          + str(status) + ': ' + (self.owner.stderr.read() or ''))
+            witness = subprocess.run(
+                [str(EXE), '--instance-witness', self.database],
+                text=True, capture_output=True)
+            if witness.returncode == 0 and witness.stdout.strip():
+                self.owner_witness = witness.stdout.strip()
+                break
 
     def shutdown_owner(self):
-        result = subprocess.run([str(EXE), '--instance-shutdown', self.database],
-                                text=True, capture_output=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        if self.owner is None:
+            return
+        shutdown = None
+        if self.owner.poll() is None:
+            shutdown = subprocess.run(
+                [str(EXE), '--instance-shutdown', self.database],
+                text=True, capture_output=True)
+        status = self.owner.wait()
+        if status != 0:
+            self.fail('instance owner exited with status ' + str(status)
+                      + ': ' + (self.owner.stderr.read() or ''))
+        if shutdown is not None:
+            self.assertEqual(shutdown.returncode, 0, shutdown.stderr + shutdown.stdout)
 
     def test_dsh_stop_request_force_and_terminal_cases(self):
         result = subprocess.run([str(EXE), self.database], text=True, capture_output=True)
