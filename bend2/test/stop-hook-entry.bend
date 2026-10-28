@@ -8,6 +8,7 @@ import ../src/harness/claude-player.bend as Claude
 import ../src/coordinator/commands.bend as C
 import ../src/coordinator/agent-actions.bend as Actions
 import ../src/coordinator/agent-command.bend as Agent
+import ../src/coordinator/agent-input.bend as AgentInput
 import ../src/coordinator/store.bend as Store
 import ../src/coordinator/stop.bend as Stop
 import ../src/host/instance.bend as Custody
@@ -83,6 +84,11 @@ def route(args: List<String>) -> IO(Unit):
     case "schema" <> Nil{}: IO.write(C.schema())
     case "read" <> db <> id <> Nil{}: Agent.execute(db,"worker",Actions.Read{[id]})
     case "completion-request" <> db <> body <> Nil{}: Agent.execute(db,"worker",Actions.CompletionRequest{"",Actions.Text{body}})
+    case "completion-request-id" <> db <> id <> body <> Nil{}: Agent.execute(db,"worker",Actions.CompletionRequest{id,Actions.Text{body}})
+    case "inbox" <> db <> session <> Nil{}: Agent.execute(db,session,Actions.Inbox{})
+    case "pending" <> +db <> Nil{}: do IO<Unit>:
+      saved : String <- IO.try(String,Store.read(db,C.Pending{}))
+      AgentInput.command_output(db,C.Pending{},saved)
     case "lifecycle" <> +database <> +directory <> cwd <> program: do IO<Unit>:
       start : P.RetainedStart <- IO.try(P.RetainedStart,Custody.Instance.admit(database,directory,P.argv(program),cwd,directory ++ "/native.stderr","",0,None{},P.argv(["/usr/bin/false"])))
       lifecycle_admitted(database,directory,start)

@@ -452,8 +452,21 @@ def main(argv: list[str]) -> int:
     split_wall = time.monotonic() - split_started
     (args.outdir / "split-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
-    shard_sources = sorted(split_dir.glob("shard_*.c"))
+    # The queue key walker resolves quoted includes relative to each emitted
+    # C file. Preserve the generated input's persistent-path.h beside the
+    # split core so its source closure matches the compiler's -I lookup.
     core_source = split_dir / "baton_core.c"
+    persistent_header = source.parent / "persistent-path.h"
+    if (persistent_header.is_file()
+            and '#include "persistent-path.h"' in core_source.read_text()):
+        split_header = split_dir / "persistent-path.h"
+        if split_header.exists() or split_header.is_symlink():
+            if split_header.resolve() != persistent_header.resolve():
+                raise SystemExit(f"unexpected split header: {split_header}")
+        else:
+            split_header.symlink_to(persistent_header.resolve())
+
+    shard_sources = sorted(split_dir.glob("shard_*.c"))
     spins_source = split_dir / "baton_spins.c"
 
     builder = Builder(args)

@@ -52,7 +52,7 @@ def start_obsolete(+db: String, +id: String, +directory: String, +workspace: Str
     allowed : Bool <- Stop.admit(canonical,session_name(),id,"retained",directory)
     admitted : Unit <- Stop.admitted(allowed)
     lock : U32 <- IO.try(U32,Lock.SessionLock.wait_acquire(canonical,session_name()))
-    started : Unit <- Stop.started(canonical,session_name(),id,directory)
+    started : Unit <- Stop.started(canonical,session_name(),id)
     +arguments : String = P.argv([python,native,observed,marker])
     +recovery : String = P.argv([recovery_executable,"--recover-receive",canonical,session_name(),id,cursor,native,model,effort,workspace,log,harness,directory,observed])
     launch : Turn.RetainedLaunch = Turn.Prepared{arguments,"","fixture task",0,False{}}

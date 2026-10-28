@@ -77,7 +77,7 @@ class Configure(unittest.TestCase):
     def session_lock_path(self, session):
         info = os.stat(self.db)
         key = 'owner-%x-%x' % (info.st_dev, info.st_ino)
-        return pathlib.Path(os.environ['XDG_RUNTIME_DIR']) / 'baton2' / (
+        return pathlib.Path('/tmp/baton2-%u' % os.geteuid()) / (
             key + '.lock-' + session.encode().hex())
 
     def hold_session_lock(self, session):
