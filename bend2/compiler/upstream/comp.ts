@@ -155,7 +155,7 @@ type File = Carb & {
   decl: string;
   cids: Map<string, number>;
   tabs: Map<string, number>;
-  spins: [string, string, Set<string>][];
+  spins: [string, string, Set<string>, Map<string, number>][];
   spun: Map<string, string>;
   armSeq: number;
   armBusy: Set<string>;
@@ -3053,7 +3053,7 @@ function emit_native(fl: File, ck: Call, ers: HTerm[]): string {
     ...seg_take(seg).map((l) => "  " + l),
     "  WL_SPIN", ...seg.lines, "  break;", "  }",
     ...dst.ws.map((v, j) => `  o[${j}] = ${v};`),
-    "  return 1;", "}"].join("\n"), seg.refs]);
+    "  return 1;", "}"].join("\n"), seg.refs, seg.cids]);
   }
   // The arm name counter is monotone across nested emission. Restoring the
   // whole file must not roll it back, or a spin body's arm name is reused.
@@ -3943,7 +3943,7 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
     ...seg_take(seg).map((l) => "  " + l),
     "  WL_SPIN", ...seg.lines, "  break;", "  }",
     ...d.ws.map((v, j) => `  o[${j}] = ${v};`),
-    "  return 1;", "}"].join("\n"), seg.refs]);
+    "  return 1;", "}"].join("\n"), seg.refs, seg.cids]);
   }
   Object.assign(fl, outer);
   fl.armBusy.delete(name);
@@ -4157,6 +4157,12 @@ function compile_tables(fl: File, entries: Seg[], show: Show | null): string[] {
   };
   for (const seg of entries) {
     for (const [k, arity] of seg.cids) add(k, arity);
+  }
+  // A spin body is emitted as a function rather than as a WL case, so its
+  // segment is not one of `entries`. The constructor references in that body
+  // still appear in the emitted C, so their CID macros must be defined here.
+  for (const spin of fl.spins) {
+    for (const [k, arity] of spin[3]) add(k, arity);
   }
   if (show !== null) {
     for (const c of show.cells) {
