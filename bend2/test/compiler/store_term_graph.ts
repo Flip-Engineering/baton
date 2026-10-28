@@ -44,6 +44,13 @@ assert.equal(cb.v, b);
 const captured = copy(Bend.Lam("x", 0, () => Bend.Ctr("Pair", [cell, cell])));
 assert.equal(captured.f(a).x[0], captured.f(b).x[0], "captured cells remain shared");
 
+const holder = Bend.Ctr("Holder", [cell]);
+const delayed = copy(Bend.Ctr("Pair", [cell, Bend.Lam("x", 0, () => holder)]));
+assert.equal(delayed.x[0], delayed.x[1].f(a).x[0],
+  "a delayed captured container retains aliases to earlier decoded cells");
+assert.equal(delayed.x[1].f(a), delayed.x[1].f(b),
+  "a captured container keeps its identity across callback invocations");
+
 const literal = Bend.Ctr("WNil", [], span);
 const nested = Bend.term_higher(Bend.Lam("x", 0, Bend.Lam("y", 1, literal)));
 const nested_copy = copy(nested);

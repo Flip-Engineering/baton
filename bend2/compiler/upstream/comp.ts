@@ -4678,6 +4678,7 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
       duration_ms: performance.now() - begin, reads: reads.get(fid)!.size,
       writes: writes.get(fid)!.size, lend: unit.lend.size, decode_ms: stored.decode_ms });
     stored.release();
+    memo_gc();
     return unit;
   };
   let diagnostic_pass = 0;

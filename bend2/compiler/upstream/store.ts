@@ -6,10 +6,31 @@ import * as crypto from "node:crypto";
 
 type Value = null | boolean | number | { string: number } | { node: number }
   | { span: number } | { undefined: true };
-type Row = { owner: number } & (
-  { object: [number, Value][]; null_prototype?: true } | { array: Value[] }
-  | { function: { scope: number; array: boolean; body: Value } }
-  | { bound: { scope: number; slot: number; span?: number } });
+// Rows begin with owner and kind. Object fields use key/tag/value triples;
+// arrays use tag/value pairs. Callback and binding rows have fixed fields.
+type Row = number[];
+const OBJECT = 0, DICTIONARY = 1, ARRAY = 2, CALLBACK = 3, BINDING = 4;
+const NIL = 0, BOOL = 1, NUMBER = 2, STRING = 3, NODE = 4, SPAN = 5, UNDEFINED = 6;
+
+function append_value(row: Row, value: Value): void {
+  if (value === null) row.push(NIL, 0);
+  else if (typeof value === "boolean") row.push(BOOL, Number(value));
+  else if (typeof value === "number") row.push(NUMBER, value);
+  else if ("string" in value) row.push(STRING, value.string);
+  else if ("node" in value) row.push(NODE, value.node);
+  else if ("span" in value) row.push(SPAN, value.span);
+  else row.push(UNDEFINED, 0);
+}
+
+function* row_children(row: Row): Generator<number> {
+  if (row[1] === CALLBACK) {
+    if (row[4] === NODE) yield row[5];
+  } else if (row[1] === OBJECT || row[1] === DICTIONARY) {
+    for (let at = 3; at < row.length; at += 3) if (row[at] === NODE) yield row[at + 1];
+  } else if (row[1] === ARRAY) {
+    for (let at = 2; at < row.length; at += 2) if (row[at] === NODE) yield row[at + 1];
+  }
+}
 export type TermGraph = { root: Value; rows: Row[]; scopes: number[] };
 export type Tables = { strings: string[]; spans: [number, number, number][] };
 
@@ -79,7 +100,8 @@ export function encode_term(term: Bend.LTerm | Bend.HTerm, tables: EncoderTables
   const ids = new WeakMap<object, number>();
   const anchors = new WeakMap<object, number>();
   const stable = new WeakSet<object>();
-  const pending: { value: object | Function; id: number; params?: Parameters }[] = [];
+  const pending: (object | Function)[] = [];
+  const parameters = new Map<number, Parameters>();
   let marker = 0;
   const ancestor = (a: number, b: number): number => {
     if (a === b) return a;
@@ -90,10 +112,13 @@ export function encode_term(term: Bend.LTerm | Bend.HTerm, tables: EncoderTables
     throw new Error("Checked term scopes have no common root");
   };
   const anchor = (value: object, scope: number): void => {
-    const old = anchors.get(value);
-    anchors.set(value, old === undefined ? scope : ancestor(old, scope));
     const id = ids.get(value);
-    if (id !== undefined) rows[id].owner = ancestor(rows[id].owner, scope);
+    if (id !== undefined) {
+      rows[id][0] = ancestor(rows[id][0], scope);
+    } else {
+      const old = anchors.get(value);
+      anchors.set(value, old === undefined ? scope : ancestor(old, scope));
+    }
   };
   const ref = (value: unknown, scope: number, params?: Parameters): Value => {
     if (value === null || typeof value === "boolean" || typeof value === "number") return value;
@@ -110,19 +135,20 @@ export function encode_term(term: Bend.LTerm | Bend.HTerm, tables: EncoderTables
     }
     const id = rows.length;
     ids.set(value, id);
-    rows.push({ owner: anchors.get(value) ?? scope, object: [] });
-    pending.push({ value, id, params });
+    rows.push([anchors.get(value) ?? scope, OBJECT]);
+    pending.push(value);
+    if (params !== undefined) parameters.set(id, params);
     return { node: id };
   };
   const root = ref(term, 0);
   for (let at = 0; at < pending.length; at++) {
-    const { value, id, params } = pending[at];
-    const scope = rows[id].owner;
+    const value = pending[at], id = at, params = parameters.get(id);
+    const scope = rows[id][0];
     const binding = (value as Marked)[BOUND];
     if (binding !== undefined) {
       const span = (value as Bend.HTerm).s;
-      rows[id] = { owner: scope, bound: { ...binding,
-        ...(span === undefined ? {} : { span: tables.span(span) }) } };
+      rows[id] = [scope, BINDING, binding.scope, binding.slot,
+        span === undefined ? -1 : tables.span(span)];
     } else if (typeof value === "function") {
       if (params === undefined) throw new Error("Checked term callback has no binder");
       const child = scopes.length;
@@ -136,58 +162,66 @@ export function encode_term(term: Bend.LTerm | Bend.HTerm, tables: EncoderTables
       for (const object of eager_objects(second, stable)) {
         if (objects.has(object)) { stable.add(object); anchor(object, scope); }
       }
-      rows[id] = { owner: scope, function: { scope: child, array: params.array,
-        body: ref(first, child) } };
+      rows[id] = [scope, CALLBACK, child, Number(params.array)];
+      append_value(rows[id], ref(first, child));
     } else if (Array.isArray(value)) {
-      rows[id] = { owner: scope, array: value.map(v => ref(v, scope)) };
+      rows[id] = [scope, ARRAY];
+      for (const child of value) append_value(rows[id], ref(child, scope));
     } else {
       const term = value as Record<string, unknown>;
-      const fields: [number, Value][] = [];
+      const fields: Row = [scope, Object.getPrototypeOf(value) === null ? DICTIONARY : OBJECT];
       for (const [key, child] of Object.entries(term)) {
         const params = typeof child !== "function" ? undefined
           : term.$ === "Let" && key === "f" ? { names: term.k as string[], array: true }
           : (term.$ === "Lam" && key === "f") || (term.$ === "All" && key === "B")
             ? { names: [term.k as string], array: false } : undefined;
-        fields.push([tables.string(key), ref(child, scope, params)]);
+        fields.push(tables.string(key));
+        append_value(fields, ref(child, scope, params));
       }
-      rows[id] = { owner: scope, object: fields,
-        ...(Object.getPrototypeOf(value) === null ? { null_prototype: true as const } : {}) };
+      rows[id] = fields;
     }
   }
   // Stable immutable values remain shared across callback instances. Cells
   // and values that depend on a binder keep their binding scope.
-  const dynamic = new Set<number>();
-  const parents = rows.map(() => [] as number[]);
+  const dynamic = new Uint8Array(rows.length);
+  const affected: number[] = [];
+  const offsets = new Uint32Array(rows.length + 1);
   for (let id = 0; id < rows.length; id++) {
-    const row = rows[id], value = pending[id].value as Marked;
-    if ("function" in row || "bound" in row
-      || (value.$ === "Var" && value.v !== undefined)) dynamic.add(id);
-    const children = "object" in row ? row.object.map(([, v]) => v)
-      : "array" in row ? row.array : "function" in row ? [row.function.body] : [];
-    for (const child of children) if (child !== null && typeof child === "object" && "node" in child) {
-      parents[child.node].push(id);
+    const row = rows[id], value = pending[id] as Marked;
+    if (row[1] === CALLBACK || row[1] === BINDING
+      || (value.$ === "Var" && value.v !== undefined)) {
+      dynamic[id] = 1;
+      affected.push(id);
+    }
+    for (const child of row_children(row)) offsets[child + 1]++;
+  }
+  for (let i = 1; i < offsets.length; i++) offsets[i] += offsets[i - 1];
+  const parents = new Uint32Array(offsets[rows.length]);
+  const next = offsets.slice(0, rows.length);
+  for (let id = 0; id < rows.length; id++) {
+    for (const child of row_children(rows[id])) parents[next[child]++] = id;
+  }
+  for (let at = 0; at < affected.length; at++) {
+    const child = affected[at];
+    for (let i = offsets[child]; i < offsets[child + 1]; i++) {
+      const id = parents[i];
+      if (!dynamic[id]) { dynamic[id] = 1; affected.push(id); }
     }
   }
-  const affected = [...dynamic];
-  for (let at = 0; at < affected.length; at++) for (const id of parents[affected[at]]) {
-    if (!dynamic.has(id)) { dynamic.add(id); affected.push(id); }
-  }
   for (let id = 0; id < rows.length; id++) {
-    if (stable.has(pending[id].value) && !dynamic.has(id)) rows[id].owner = 0;
+    if (stable.has(pending[id]) && !dynamic[id]) rows[id][0] = 0;
   }
   // A shared parent also shares its eagerly available children. Callback
   // bodies keep the separate scope that supplies their bound arguments.
   const queue = rows.map((_, i) => i);
   for (let at = 0; at < queue.length; at++) {
     const row = rows[queue[at]];
-    if ("function" in row) scopes[row.function.scope] = row.owner;
-    const owner = "function" in row ? row.function.scope : row.owner;
-    const children = "object" in row ? row.object.map(([, v]) => v)
-      : "array" in row ? row.array : "function" in row ? [row.function.body] : [];
-    for (const child of children) if (child !== null && typeof child === "object" && "node" in child) {
-      const target = rows[child.node];
-      const shared = ancestor(target.owner, owner);
-      if (shared !== target.owner) { target.owner = shared; queue.push(child.node); }
+    if (row[1] === CALLBACK) scopes[row[2]] = row[0];
+    const owner = row[1] === CALLBACK ? row[2] : row[0];
+    for (const child of row_children(row)) {
+      const target = rows[child];
+      const shared = ancestor(target[0], owner);
+      if (shared !== target[0]) { target[0] = shared; queue.push(child); }
     }
   }
   return { root, rows, scopes };
@@ -198,58 +232,94 @@ type Context = { scope: number; parent: Context | null; args: Bend.HTerm[];
 
 export function decode_term<T extends Bend.LTerm | Bend.HTerm>(graph: TermGraph,
   tables: DecoderTables): T {
+  const rows: (Row | null)[] = graph.rows.slice();
+  const owners = Uint32Array.from(graph.rows, row => row[0]);
+  const captured = new Uint8Array(rows.length);
+  const captured_roots: number[] = [];
+  const capture = (id: number): void => {
+    if (owners[id] === 0 && !captured[id]) {
+      captured[id] = 1;
+      captured_roots.push(id);
+    }
+  };
+  for (const row of graph.rows) {
+    if (row[0] !== 0 || row[1] === CALLBACK) {
+      for (const child of row_children(row)) capture(child);
+    }
+  }
+  for (let at = 0; at < captured_roots.length; at++) {
+    for (const child of row_children(graph.rows[captured_roots[at]])) capture(child);
+  }
+  const root_value: Row = [];
+  append_value(root_value, graph.root);
   const root: Context = { scope: 0, parent: null, args: [], values: new Map() };
   const context = (ctx: Context, scope: number): Context => {
     for (let e: Context | null = ctx; e !== null; e = e.parent) if (e.scope === scope) return e;
     throw new Error("Checked term binding scope is unavailable: " + scope);
   };
-  const read = (value: Value, ctx: Context,
-    pending: [Row, Context, Record<string, unknown> | unknown[]][]): unknown => {
-    if (value === null || typeof value !== "object") return value;
-    if ("undefined" in value) return undefined;
-    if ("string" in value) return tables.data.strings[value.string];
-    if ("span" in value) return tables.spans[value.span];
-    const row = graph.rows[value.node];
-    if ("bound" in row) {
-      const binding = row.bound;
-      const argument = context(ctx, binding.scope).args[binding.slot];
-      const span = binding.span === undefined ? undefined : tables.spans[binding.span];
+  type Pending = [number, Row, Context, Record<string, unknown> | unknown[]][];
+  const read = (tag: number, value: number, ctx: Context, pending: Pending,
+    created: number[]): unknown => {
+    switch (tag) {
+      case NIL: return null;
+      case BOOL: return Boolean(value);
+      case NUMBER: return value;
+      case STRING: return tables.data.strings[value];
+      case SPAN: return tables.spans[value];
+      case UNDEFINED: return undefined;
+    }
+    const owner = context(ctx, owners[value]);
+    if (owner.values.has(value)) return owner.values.get(value);
+    const row = rows[value]!;
+    if (row[1] === BINDING) {
+      const argument = context(ctx, row[2]).args[row[3]];
+      const span = row[4] < 0 ? undefined : tables.spans[row[4]];
       return argument.s !== undefined || span === undefined || (argument.$ === "Var" && argument.i < 0)
         ? argument : { ...argument, s: span };
     }
-    const owner = context(ctx, row.owner);
-    if (owner.values.has(value.node)) return owner.values.get(value.node);
-    if ("function" in row) {
-      const fn = row.function;
-      const result = (argument: Bend.HTerm | Bend.HTerm[]) => fill(fn.body,
-        { scope: fn.scope, parent: owner, args: fn.array ? argument as Bend.HTerm[]
+    if (row[1] === CALLBACK) {
+      const scope = row[2], array = row[3], tag = row[4], body = row[5];
+      const result = (argument: Bend.HTerm | Bend.HTerm[]) => fill(tag, body,
+        { scope, parent: owner, args: array ? argument as Bend.HTerm[]
           : [argument as Bend.HTerm], values: new Map() });
-      owner.values.set(value.node, result);
+      owner.values.set(value, result);
+      if (owner === root) { rows[value] = null; created.push(value); }
       return result;
     }
-    const result = "array" in row ? []
-      : Object.create("null_prototype" in row ? null : Object.prototype);
-    owner.values.set(value.node, result);
-    pending.push([row, owner, result]);
+    const result = row[1] === ARRAY ? []
+      : Object.create(row[1] === DICTIONARY ? null : Object.prototype);
+    owner.values.set(value, result);
+    if (owner === root) created.push(value);
+    pending.push([value, row, owner, result]);
     return result;
   };
-  const fill = (value: Value, ctx: Context): unknown => {
-    const pending: [Row, Context, Record<string, unknown> | unknown[]][] = [];
-    const result = read(value, ctx, pending);
+  const fill = (tag: number, value: number, ctx: Context): unknown => {
+    const pending: Pending = [];
+    const created: number[] = [];
+    const result = read(tag, value, ctx, pending, created);
     for (let at = 0; at < pending.length; at++) {
-      const [row, owner, value] = pending[at];
-      if ("array" in row) {
-        for (const child of row.array) (value as unknown[]).push(read(child, owner, pending));
-      } else if ("object" in row) {
-        for (const [key, child] of row.object) {
-          Object.defineProperty(value, tables.data.strings[key], {
-            value: read(child, owner, pending), enumerable: true, writable: true, configurable: true });
+      const [id, row, owner, value] = pending[at];
+      if (row[1] === ARRAY) {
+        for (let i = 2; i < row.length; i += 2) {
+          (value as unknown[]).push(read(row[i], row[i + 1], owner, pending, created));
+        }
+      } else {
+        for (let i = 2; i < row.length; i += 3) {
+          Object.defineProperty(value, tables.data.strings[row[i]], {
+            value: read(row[i + 1], row[i + 2], owner, pending, created),
+            enumerable: true, writable: true, configurable: true });
         }
       }
+      // Root-owned values are decoded once. Callback instances retain only
+      // the templates whose values depend on their binding scope.
+      if (owner === root) rows[id] = null;
     }
+    // Callbacks retain captured roots. Ordinary decoded fields retain their
+    // children directly and need no whole-body identity map after filling.
+    for (const id of created) if (!captured[id]) root.values.delete(id);
     return result;
   };
-  return fill(graph.root, root) as T;
+  return fill(root_value[0], root_value[1], root) as T;
 }
 
 type Section = { file: string; sha256: string; bytes: number; nodes: number };
@@ -260,8 +330,8 @@ export type StoreIndex = { compiler: string; tables: Section; header: Section;
   bodies: [string, BodySection][]; inputs: SourceInput[];
   input_manifest_sha256: string; program_sha256: string };
 
-function digest(text: string): string {
-  return crypto.createHash("sha256").update(text).digest("hex");
+function digest(data: string): string {
+  return crypto.createHash("sha256").update(data).digest("hex");
 }
 
 export function compiler_identity(files: URL[]): string {
@@ -293,19 +363,19 @@ export class CheckedWriter {
     this.directory = fs.mkdtempSync(path.join(workspace, "bend-checked-"));
   }
 
-  private write(text: string, nodes: number): Section {
-    const sha256 = digest(text), file = sha256 + ".json";
-    fs.writeFileSync(path.join(this.directory, file), text);
-    const bytes = Buffer.byteLength(text);
+  private write(data: string, nodes: number): Section {
+    const sha256 = digest(data), file = sha256 + ".json";
+    fs.writeFileSync(path.join(this.directory, file), data);
+    const bytes = Buffer.byteLength(data);
     return { file, sha256, bytes, nodes };
   }
 
   private graph(value: unknown, kind: string, name?: string): Section {
     const begin = performance.now();
     const graph = encode_term(value as Bend.LTerm, this.tables);
-    const text = JSON.stringify(graph);
+    const data = JSON.stringify(graph);
     const encoded = performance.now();
-    const section = this.write(text, graph.rows.length);
+    const section = this.write(data, graph.rows.length);
     this.observe?.("store.section", { kind, name, ...section,
       encode_ms: encoded - begin, write_ms: performance.now() - encoded });
     return section;
@@ -370,9 +440,9 @@ export class CheckedReader {
   }
 
   private read<T>(section: Section): T {
-    const text = fs.readFileSync(path.join(this.directory, section.file), "utf8");
-    if (digest(text) !== section.sha256) throw new Error("Checked store section changed: " + section.file);
-    return JSON.parse(text) as T;
+    const data = fs.readFileSync(path.join(this.directory, section.file), "utf8");
+    if (digest(data) !== section.sha256) throw new Error("Checked store section changed: " + section.file);
+    return JSON.parse(data) as T;
   }
 
   header<T>(): T {
