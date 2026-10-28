@@ -647,6 +647,36 @@ class TaskStart(unittest.TestCase):
         self.assertTrue(completion['confirmed'])
         self.assertFalse(completion['open'])
 
+    def test_missing_recorded_receiver_is_reported_before_admission_and_can_be_repaired(self):
+        session = 'repaired-receiver'
+        assignment = self.call('recruit', session, 'root', 'codex', 'gpt-6-astra', 'low',
+                               self.repo, 'repaired-receiver-branch', self.checkouts / session, self.base)
+        old = self.directory / 'removed-client'
+        shutil.copy2(self.fixture, old)
+        log = self.directory / 'repaired-receiver.jsonl'
+        self.call('receiver', session, old, log)
+        with self.held_session(session):
+            self.pending_input('repaired-receiver-assignment', 'root', session, 'task', 'Original receiver task.')
+            old.unlink()
+            body = 'Keep this input available while the recorded receiver is repaired.'
+            refused = self.task_call('--sender', 'root', '--session', session, '--continue',
+                                     '--text', body, ok=False)
+            self.assertEqual(refused['error']['reason'], 'taskCommandMissing')
+            self.assertIn(str(old), refused['error']['detail'])
+            self.assertIn('baton receiver', refused['error']['next'])
+            self.assertEqual(self.rows('SELECT id FROM messages WHERE id=?', (refused['task'],)), [])
+            self.assertEqual(self.call('delivery', 'repaired-receiver-assignment')['body'], 'Original receiver task.')
+            self.call('receiver', session, self.fixture, log)
+            result = self.task_call('--sender', 'root', '--session', session, '--continue', '--text', body)
+        self.assertEqual(result['status'], 'admitted')
+        self.assertEqual(result['currentSession']['workspace'], assignment['workspace'])
+        self.assert_retained_input(result, body)
+        stream, native = self.accept(session)
+        self.assertEqual(native['cwd'], assignment['workspace'])
+        self.assertIn(body, native['prompt'])
+        self.finish(stream, 'The repaired receiver delivered the continued task.')
+        self.exited(session)
+
     def test_stopped_session_and_explicit_new_assignment_leave_owned_state_unchanged(self):
         self.call('join', 'stopped', 'root', 'codex', 'gpt-6-astra', 'low', self.repo)
         self.pending_input('owed-original', 'root', 'stopped', 'task', 'Retain the stopped task.')

@@ -141,6 +141,18 @@ function executableInPath(harness) {
     'Install and authenticate the selected harness, or pass --command with its executable.');
 }
 
+function executableAvailable(command) {
+  const candidates = command.includes('/') ? [resolve(command)]
+    : (process.env.PATH ?? '/usr/bin:/bin').split(':').map((directory) => resolve(directory || '.', command));
+  for (const path of candidates) {
+    try {
+      accessSync(path, constants.X_OK);
+      if (statSync(path).isFile()) return true;
+    } catch {}
+  }
+  return false;
+}
+
 function canonicalFile(path) {
   const absolute = resolve(path);
   return existsSync(absolute) ? realpathSync(absolute) : absolute;
@@ -335,6 +347,12 @@ export function startTask(executable, database, argv) {
     const command = options.command ?? receiver?.command ?? (!selected ? executableInPath(route.harness) : undefined);
     result.command = { executable: command ?? null,
       source: options.command !== undefined ? 'explicit' : receiver ? 'recorded-receiver' : selected ? 'recorded-endpoint' : 'PATH' };
+    if (command && !executableAvailable(command)) {
+      const next = selected
+        ? `Re-register the receiver with baton receiver ${sessionId} COMMAND LOG ${workspace}, then retry this dispatch.`
+        : 'Install the selected harness or pass --command with an executable path.';
+      fail('taskCommandMissing', `The selected harness executable ${command} is absent or not executable.`, next);
+    }
     const log = resolve(options.log ?? receiver?.log ??
       join(`${database}.transcripts`, Buffer.from(sessionId).toString('hex'), requestId, 'native.jsonl'));
     result.outputLog = selected && !options.command && options.log === undefined ? receiver?.log ?? null : log;
