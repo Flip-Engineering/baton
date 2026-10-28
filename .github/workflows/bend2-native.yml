@@ -885,7 +885,7 @@ jobs:
 
   darwin-arm64-install:
     needs: [darwin-arm64]
-    runs-on: [self-hosted, macOS, ARM64, baton2-native-darwin-arm64]
+    runs-on: macos-15
     steps:
       - name: Checkout exact source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
