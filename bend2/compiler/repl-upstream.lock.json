@@ -7,14 +7,14 @@
       "sha256": "e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798"
     },
     {
-      "bytes": 164650,
+      "bytes": 164746,
       "path": "bend.ts",
-      "sha256": "113e596b88a6472077d65fbeb8707d05fde4c9de6635c9a3edfbe1dc8da88718"
+      "sha256": "4ec224b335b73310ec9b8d07acd1af2b613f95ba70763bcb7c207638fb5a2cdd"
     },
     {
-      "bytes": 243461,
+      "bytes": 253592,
       "path": "comp.ts",
-      "sha256": "02419cd36aca055b19e26cc3a29e17f68b34bace43babd5a02d270380ea1da2a"
+      "sha256": "b1c0ce0bfdc71535a4ba95f9cb148f29ea333586b687fb1e1a436e76ff4220e0"
     },
     {
       "bytes": 351,
@@ -377,9 +377,14 @@
       "sha256": "09ba117d9de2520f284b4ad5f5657b74b5105ab78c55fbd774a552bd2ebdc420"
     },
     {
-      "bytes": 24503,
+      "bytes": 24788,
       "path": "main.ts",
-      "sha256": "8a636b59f0decb86490766542aef2beb87c630b253e9caf097961f42b37b6ba8"
+      "sha256": "dd9fc1b1afe55148930874a08fa5cdf0670976e7ae2f058514b6fb5383c41461"
+    },
+    {
+      "path": "modules.ts",
+      "bytes": 25327,
+      "sha256": "60e498464186352e218026c75cba9db91111c292e4f69599f54a1680d43838a3"
     }
   ],
   "license": {

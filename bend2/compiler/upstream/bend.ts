@@ -308,8 +308,8 @@ export type Env = List<HTerm | ((s?: Span) => HTerm)>;
 // Definitions & Book
 export type Ctr  = { k: Name; n: number; T: HTerm }
 export type Ctrs = Array<Ctr>;
-export type ADT  = { $: "ADT"; n: number; g: number; T: HTerm; c: Ctrs; b?: Bool; };
-export type Def  = { $: "Def"; n: number; x: number; T: HTerm; v: HTerm | null; e?: LTerm; b?: Bool; u?: Bool; i?: string[]; };
+export type ADT  = { $: "ADT"; n: number; g: number; T: HTerm; c: Ctrs; b?: Bool; file?: string; };
+export type Def  = { $: "Def"; n: number; x: number; T: HTerm; v: HTerm | null; e?: LTerm; b?: Bool; u?: Bool; i?: string[]; file?: string; };
 export type TLD  = ADT | Def;
 export type Book = { tlds: Record<Name, TLD>; ctrs: Record<Name, Ctr>; order: Name[]; hols: number; open: number; tmps: Record<Name, Record<string, Name>>; };
 
@@ -1333,6 +1333,7 @@ export async function book_load(book: Book, file: string, ns: string, seen: Map<
   }
   const n0 = book.order.length;
   parse_book(book, dir, lines.join("\n"), ns, al);
+  for (const k of book.order.slice(n0)) book.tlds[k].file = real;
   if (real === BASE_BEND) {
     for (const k of book.order.slice(n0)) {
       book.tlds[k].b = true;

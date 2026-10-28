@@ -22,6 +22,7 @@ import type { BunPlugin } from "bun";
 
 import * as Bend from "./bend.ts";
 import * as Comp from "./comp.ts";
+import * as Modules from "./modules.ts";
 
 // Main
 // ====
@@ -243,12 +244,14 @@ async function cli_file(args: string[]): Promise<void> {
     }
     const ins = new Set([...seen.keys(), ...Object.values(book.tlds).flatMap((t) =>
       t.$ === "Def" && t.i !== undefined ? t.i.map(path_real) : [])]);
-    for (const out of outs) {
+    for (const [index, out] of outs.entries()) {
       const at = path_real(out);
       if (ins.has(at) || (fs.existsSync(at) && fs.statSync(at).isDirectory())) {
         cli_fail("-o " + out + " is a file the program reads, or a directory");
       }
-      cli_emit(book, out);
+      const sources = index === 0 ? seen : new Map<string, string | null>();
+      const input = index === 0 ? book : (await book_read(file, undefined, sources))[0];
+      await cli_emit(input, sources, out);
     }
   } catch (e) {
     cli_say(2, book_err(e) + "\n");
@@ -291,15 +294,15 @@ function path_real(p: string): string {
   return fs.existsSync(p) ? fs.realpathSync(p) : path.resolve(p);
 }
 
-function cli_emit(book: Bend.Book, out: string): void {
+async function cli_emit(book: Bend.Book, seen: Map<string, string | null>, out: string): Promise<void> {
   if (/\.c?js$/.test(out)) {
     fs.writeFileSync(out, Comp.js_book(book));
   } else if (out.endsWith(".c")) {
-    fs.writeFileSync(out, Comp.compile_book(book));
+    await Modules.compile_book(book, seen, out);
   } else {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bend-"));
     const c   = path.join(dir, path.basename(out) + ".c");
-    fs.writeFileSync(c, Comp.compile_book(book));
+    await Modules.compile_book(book, seen, c);
     try {
       cli_build(out, c);
     } finally {

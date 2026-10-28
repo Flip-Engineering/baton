@@ -8,10 +8,17 @@ import * as path from "node:path";
 const root = path.resolve(process.argv[2] ?? path.join(import.meta.dir, "../../.."));
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bend-incremental-"));
 try {
+  const compiler = path.join(directory, "compile.ts");
+  fs.writeFileSync(compiler, `import * as fs from "node:fs";
+import * as Bend from ${JSON.stringify(path.join(root, "bend2/compiler/upstream/bend.ts"))};
+import * as Comp from ${JSON.stringify(path.join(root, "bend2/compiler/upstream/comp.ts"))};
+const book = Bend.book_nil();
+await Bend.book_load(book, ${JSON.stringify(path.join(import.meta.dir, "fixtures/ref_bang_marked.bend"))}, "", new Map());
+Bend.book_valid(book);
+fs.writeFileSync(${JSON.stringify(path.join(directory, "main.c"))}, Comp.compile_book(book));
+`);
   const result = spawnSync(process.execPath, ["--smol",
-    path.join(root, "bend2/compiler/upstream/main.ts"),
-    path.join(import.meta.dir, "fixtures/ref_bang_marked.bend"),
-    "-o", path.join(directory, "main.c")], {
+    compiler], {
     encoding: "utf8", env: { ...process.env, BEND_NO_TELEMETRY: "1",
       BEND_COMPILER_DIAGNOSTICS: "1" },
   });

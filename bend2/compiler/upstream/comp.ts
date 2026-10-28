@@ -2423,7 +2423,7 @@ function seg_new(name: string, ret: Lay, params: string[],
     refs: new Set(), cids: new Map() };
 }
 
-function seg_fid(k: Bend.Name): string {
+export function seg_fid(k: Bend.Name): string {
   return "FID_" + name_clean(k).toUpperCase();
 }
 
@@ -3471,6 +3471,7 @@ function emit_body(fl: File, tm0: HTerm, ty0: HTerm | null,
         }
         const ret = sig_def(fl, ck.k).ret;
         const once = fl.sites.get(ck.k) === 1 && !ck.bang
+          && (fl.book.tlds[ck.k] as Def)?.h !== undefined
           && !def_foreign(fl.book.tlds[ck.k])
           && (!lay_box(ret) || lay_box(fl.seg.ret));
         if (fl.seg.def !== ck.k && (flat_call(fl, x) || (dst === null && once))) {
@@ -4119,31 +4120,43 @@ function compile_def(fl: File, k: Bend.Name, tld: Def): void {
       clos: fl.clos.size, lits: fl.lits.size, consts: fl.consts.size } });
 }
 
+export type ForeignRequest = { file: string; macros: [string, string][] };
+
+function request_info(fl: File, k: Bend.Name, tld: Def):
+  { request: ForeignRequest; constructors: Bend.Name[] } {
+  const ns = k.slice(0, k.length - LOCAL.get(k)!.length);
+  const constructors = ns === "" ? []
+    : Object.keys(fl.book.ctrs).filter((c) => c.startsWith(ns));
+  return { constructors, request: {
+    file: tld.i!.find((x) => x.endsWith(".c")) ?? die("no .c import: " + k),
+    macros: constructors.map((c) => [cid_mac(c.slice(ns.length)), cid_mac(c)]),
+  } };
+}
+
+export function request_text(request: ForeignRequest, seen: Set<string>): string {
+  return request.macros.map(([m, g]) => `#pragma push_macro("${m}")\n#define ${m} ${g}\n`).join("")
+    + eff_src(request.file, seen)
+    + request.macros.map(([m]) => `#pragma pop_macro("${m}")\n`).join("");
+}
+
+function compile_request(fl: File, k: Bend.Name, constructors: Bend.Name[]): void {
+  const qp = [...sig_def(fl, k).live.map(([, n]) => n), "k"].map((n) =>
+    name_local(fl, n));
+  fl.seg = seg_new(k, BOX, qp);
+  fl.segs.push(fl.seg);
+  for (const c of constructors) fl.seg.cids.set(c, lay_node(fl.book, c).ks.length);
+  file_push(fl, `r0 = ${ctr_build(fl, k, qp)};`);
+  fl.seg.cids.set(k, qp.length);
+  file_push(fl, "WL_RETN(1);");
+}
+
 function compile_reqs(fl: File, defs: [Bend.Name, Def][]): void {
   const seen = new Set<string>();
   fl.spares = [];
   for (const [k, tld] of defs) {
-    const ns = k.slice(0, k.length - LOCAL.get(k)!.length);
-    const own = ns === "" ? []
-      : Object.keys(fl.book.ctrs).filter((c) => c.startsWith(ns));
-    const macs = own.map((c) =>
-      [cid_mac(c.slice(ns.length)), cid_mac(c)]);
-    for (const [m, g] of macs) {
-      fl.reqs += `#pragma push_macro("${m}")\n#define ${m} ${g}\n`;
-    }
-    fl.reqs += eff_src(tld.i!.find((x) => x.endsWith(".c"))
-      ?? die("no .c import: " + k), seen);
-    for (const [m] of macs) {
-      fl.reqs += `#pragma pop_macro("${m}")\n`;
-    }
-    const qp = [...sig_def(fl, k).live.map(([, n]) => n), "k"].map((n) =>
-      name_local(fl, n));
-    fl.seg = seg_new(k, BOX, qp);
-    fl.segs.push(fl.seg);
-    for (const c of own) fl.seg.cids.set(c, lay_node(fl.book, c).ks.length);
-    file_push(fl, `r0 = ${ctr_build(fl, k, qp)};`);
-    fl.seg.cids.set(k, qp.length);
-    file_push(fl, "WL_RETN(1);");
+    const { request, constructors } = request_info(fl, k, tld);
+    fl.reqs += request_text(request, seen);
+    compile_request(fl, k, constructors);
   }
 }
 
@@ -4177,7 +4190,8 @@ export function check_id_limit(namespace: string, count: number,
   }
 }
 
-function compile_tables(fl: File, entries: Seg[], show: Show | null): string[] {
+function compile_tables(fl: File, entries: Seg[], show: Show | null,
+  runtime_cids?: Map<string, number>, image_words = fl.img.length): string[] {
   const defs: string[] = [];
   const cids = new Map<string, number>();
   const add = (k: string, arity: number): void => {
@@ -4192,15 +4206,19 @@ function compile_tables(fl: File, entries: Seg[], show: Show | null): string[] {
   for (const spin of fl.spins) {
     for (const [k, arity] of spin[3]) add(k, arity);
   }
-  if (show !== null) {
-    for (const c of show.cells) {
-      if (typeof c === "string") add(c, lay_node(fl.book, c).ks.length);
+  if (runtime_cids !== undefined) {
+    for (const [k, arity] of runtime_cids) add(k, arity);
+  } else {
+    if (show !== null) {
+      for (const c of show.cells) {
+        if (typeof c === "string") add(c, lay_node(fl.book, c).ks.length);
+      }
     }
-  }
-  for (const a of RUNTIME_ADTS) {
-    const tld = fl.book.tlds[a];
-    if (tld !== undefined && tld.$ === "ADT") {
-      for (const c of tld.c) add(c.k, lay_node(fl.book, c.k).ks.length);
+    for (const a of RUNTIME_ADTS) {
+      const tld = fl.book.tlds[a];
+      if (tld !== undefined && tld.$ === "ADT") {
+        for (const c of tld.c) add(c.k, lay_node(fl.book, c.k).ks.length);
+      }
     }
   }
   check_id_limit("CID", cids.size, 1 << 20);
@@ -4238,7 +4256,7 @@ function compile_tables(fl: File, entries: Seg[], show: Show | null): string[] {
   table("CID_ARITY_T", [...cids.values()]);
   table("CID_HOT_T", [...cids.keys()].map((k) => Number(fl.hot.has(k))));
   fl.cids = cids;
-  defs.push(`#define STAT_LEN ${fl.img.length}`, "");
+  defs.push(`#define STAT_LEN ${image_words}`, "");
   // One bank for both lanes, as wide as the widest segment or return; rp
   // pads the host's twelfth slot so rax stays free for the tail call.
   const resw = Math.max(...entries.map((s) => s.ret.ks.length));
@@ -4267,7 +4285,7 @@ function compile_tables(fl: File, entries: Seg[], show: Show | null): string[] {
   return defs;
 }
 
-function compile_segs(fl: File): string {
+export function compile_segs(fl: Pick<File, "segs">): string {
   diagnostic("segments.begin", { segments: fl.segs.length });
   return diagnostic_join("segments.all", fl.segs.map((seg) => {
     const out = [`  WL_CASE(${seg.fid})`, "  {",
@@ -4294,8 +4312,230 @@ function file_reach(fl: File, from: Iterable<string>): Set<string> {
   return live;
 }
 
-// Compilation consumes checked bodies and keeps parsed bodies needed by types.
-export function compile_book(book: Bend.Book): string {
+export type EmissionUnit = Pick<File, "unit" | "segs" | "spins" | "img" | "tabs" | "clos" | "lend">;
+
+export type EmissionPlan = {
+  cb: Carb;
+  show: Show | null;
+  defs: Map<string, readonly [Bend.Name, Def]>;
+  foreign: Map<string, [Bend.Name, Def]>;
+  roots: string[];
+};
+
+type ModuleDecl = {
+  k: Bend.Name; tag: "Def" | "ADT"; n: number; T: number;
+  x?: number; g?: number; v?: number | null; h?: number;
+  b?: boolean; u?: boolean; i?: string[];
+  c?: { k: Bend.Name; n: number; T: number }[];
+};
+
+export type ModuleSnapshot = {
+  terms: Bend.LTerm[];
+  declarations: ModuleDecl[];
+  sources: [Bend.Name, { refs: Bend.Name[]; deps: Bend.Name[]; flat: boolean }][];
+  local: [Bend.Name, string][];
+  sites: [Bend.Name, number][];
+};
+
+// Imported runtime definitions supply their signature. Bodies retained for
+// type reduction are included in the interface closure.
+export function emission_snapshot(plan: EmissionPlan, declared: Set<Bend.Name>): ModuleSnapshot {
+  const { cb } = plan;
+  const included = new Set<Bend.Name>();
+  const local = [...declared].filter((k) => SRCS.has(k));
+  const sites = new Map<Bend.Name, number>();
+  const wanted = [...local, ...RUNTIME_ADTS];
+  if (local.some((k) => def_foreign(cb.book.tlds[k]))) {
+    for (const k of declared) if (cb.book.tlds[k].$ === "ADT") wanted.push(k);
+  }
+  for (let i = 0; i < wanted.length; i++) {
+    const k = wanted[i];
+    if (included.has(k)) continue;
+    const tld = cb.book.tlds[k];
+    if (tld === undefined) continue;
+    included.add(k);
+    const refs = new Set<Bend.Name>();
+    type_live(tld.T, refs);
+    if (tld.$ === "ADT") for (const c of tld.c) type_live(c.T, refs);
+    else {
+      if (tld.v !== undefined && tld.v !== null) type_live(tld.v, refs);
+      if (declared.has(k) && tld.h !== undefined) {
+        type_live(tld.h, refs);
+        term_any(cb, tld.h, (s) => {
+          if (s.$ === "Ref" && intr_of(cb, s.k) === undefined)
+            sites.set(s.k, (sites.get(s.k) ?? 0) + 1);
+          return false;
+        });
+      }
+    }
+    for (const ref of refs) if (!included.has(ref)) wanted.push(ref);
+  }
+  const terms: HTerm[] = [];
+  const term = (t: HTerm): number => { terms.push(t); return terms.length - 1; };
+  const declarations = [...included].sort().map((k): ModuleDecl => {
+    const tld = cb.book.tlds[k];
+    const row: ModuleDecl = { k, tag: tld.$, n: tld.n, T: term(tld.T), b: tld.b };
+    if (tld.$ === "ADT") {
+      row.g = tld.g;
+      row.c = tld.c.map((c) => ({ k: c.k, n: c.n, T: term(c.T) }));
+    } else {
+      row.x = tld.x;
+      row.u = tld.u;
+      row.i = tld.i;
+      if (tld.v !== undefined) row.v = tld.v === null ? null : term(tld.v);
+      if (declared.has(k) && tld.h !== undefined) row.h = term(tld.h);
+    }
+    return row;
+  });
+  const lowered = Bend.term_lower_shared(Bend.Ctr("module_input", terms));
+  return { declarations, terms: (lowered as Extract<Bend.LTerm, { $: "Ctr" }>).x,
+    sources: local.sort().map((k) => [k, { refs: [...SRCS.get(k)!.refs],
+      deps: [...SRCS.get(k)!.deps], flat: SRCS.get(k)!.flat }]),
+    local: [...LOCAL].filter(([k]) => included.has(k)),
+    sites: [...sites] };
+}
+
+export function emission_restore(input: ModuleSnapshot,
+  facts: { own: Set<string>; hot: Set<string>; stat: Set<string> }): Carb {
+  memo_gc();
+  [SRCS, NODES, LAYS, CYCLES, FLATS, SIGS, BRWS, LOCAL].forEach((m) => m.clear());
+  LAY_KEY_NODES.clear();
+  LAY_KEY_NEXT = 0;
+  const terms = (Bend.term_higher(Bend.Ctr("module_input", input.terms)) as Of<"Ctr">).x;
+  const book = Bend.book_nil() as Book;
+  for (const row of input.declarations) {
+    const { k, tag, T, h, v, c, ...fields } = row;
+    const tld = { ...fields, $: tag, T: terms[T] } as TLD;
+    if (tld.$ === "ADT") {
+      tld.c = c!.map((ctr) => ({ ...ctr, T: terms[ctr.T] }));
+      for (const ctr of tld.c) book.ctrs[ctr.k] = ctr;
+    } else {
+      if (v !== undefined) tld.v = v === null ? null : terms[v];
+      if (h !== undefined) tld.h = terms[h];
+    }
+    book.tlds[k] = tld;
+    book.order.push(k);
+  }
+  for (const [k, src] of input.sources) SRCS.set(k,
+    { refs: new Set(src.refs), deps: new Set(src.deps), flat: src.flat });
+  for (const [k, name] of input.local) LOCAL.set(k, name);
+  return { book, src: book, bangs: new Set(), sites: new Map(input.sites),
+    lend: new Set(), ...facts };
+}
+
+export function emission_take_borrows(): [Bend.Name, boolean[]][] {
+  const borrows = [...BRWS];
+  BRWS.clear();
+  return borrows;
+}
+
+export function emission_discard_temps(): void {
+  memo_gc();
+  collect_full();
+}
+
+export type ModuleRuntime = {
+  roots: string[];
+  local: [Bend.Name, string][];
+  bangs: Set<Bend.Name>;
+  wide: boolean;
+  show: Show | null;
+  cids: Map<Bend.Name, number>;
+};
+
+export type LinkUnit = {
+  unit: string;
+  segs: Omit<Seg, "lines">[];
+  spins: { fid: string; refs: Set<string>; cids: Map<string, number> }[];
+  clos: Set<string>;
+  image_words: number;
+};
+
+export function emission_runtime(plan: EmissionPlan): ModuleRuntime {
+  const { cb, show } = plan;
+  const cids = new Map<Bend.Name, number>();
+  if (show !== null) for (const c of show.cells) {
+    if (typeof c === "string") cids.set(c, lay_node(cb.book, c).ks.length);
+  }
+  for (const a of RUNTIME_ADTS) {
+    const tld = cb.book.tlds[a];
+    if (tld?.$ === "ADT") for (const c of tld.c)
+      cids.set(c.k, lay_node(cb.book, c.k).ks.length);
+  }
+  return { roots: plan.roots, local: [...LOCAL], bangs: new Set(cb.bangs), show, cids,
+    wide: [...cb.bangs].some((k) => sig_def(cb, k).live.some(([, , A]) => ty_clo(cb.book, A))) };
+}
+
+export function emission_release(plan: EmissionPlan): void {
+  for (const book of [plan.cb.src, plan.cb.book]) {
+    book.tlds = Object.create(null);
+    book.ctrs = Object.create(null);
+    book.tmps = Object.create(null);
+    book.order = [];
+  }
+  plan.defs.clear();
+  plan.foreign.clear();
+  memo_gc();
+  [SRCS, NODES, LAYS, CYCLES, FLATS, SIGS, BRWS, LOCAL].forEach((m) => m.clear());
+  LAY_KEY_NODES.clear();
+  collect_full();
+  diagnostic("modules.checker.release");
+}
+
+export function emission_link_data(runtime: ModuleRuntime, units: LinkUnit[],
+  facts: { own: Set<string>; hot: Set<string>; stat: Set<string> }):
+  { tables: string; descriptors: string; live: Set<string>; device: Set<string>; image_words: number } {
+  LOCAL.clear();
+  for (const [k, name] of runtime.local) LOCAL.set(k, name);
+  const book = Bend.book_nil();
+  const fl = file_new({ book, src: book, bangs: runtime.bangs, sites: new Map(),
+    lend: new Set(), ...facts }, "Term");
+  for (const unit of units) {
+    fl.segs.push(...unit.segs.map((s) => ({ ...s, lines: [] })));
+    fl.spins.push(...unit.spins.map((s): File["spins"][number] => [s.fid, "", s.refs, s.cids]));
+    for (const fid of unit.clos) fl.clos.add(fid);
+  }
+  const live = file_reach(fl, runtime.roots);
+  fl.clos = new Set([...fl.clos].filter((fid) => live.has(fid)));
+  const device = file_reach(fl, [...[...runtime.bangs].map(seg_fid),
+    ...runtime.wide ? fl.clos : []]);
+  fl.segs = fl.segs.filter((s) => live.has(s.fid));
+  fl.spins = fl.spins.filter(([fid]) => live.has(fid));
+  const offsets: string[] = [];
+  let image_words = 0;
+  for (const unit of units) {
+    offsets.push(`#define ${unit.unit}STAT_BASE ${image_words}`);
+    image_words += unit.image_words;
+  }
+  const entries = [...fl.segs, seg_new("io_emit", BOX, [""]),
+    seg_new("clo_apply", BOX, ["", ""])];
+  const tables = compile_tables(fl, entries, runtime.show, runtime.cids, image_words);
+  tables.push(`#define MAIN_FID ${seg_fid("main")}`,
+    `#define MAIN_PURE ${Number(runtime.show !== null)}`,
+    `#define BLK_SHR ${Number(facts.hot.has("t:Array"))}`, ...offsets);
+  const descriptors = runtime.show === null ? "" : ["#if !DEVICE",
+    `static const u32 SHOW_DESC[] = { ${runtime.show.cells.map((c) =>
+      typeof c === "string" ? cid_mac(c) : c).join(", ")} };`,
+    `static const char* SHOW_NAMES[] = { ${runtime.show.names.map((n) =>
+      JSON.stringify(n)).join(", ")} };`, "#endif"].join("\n");
+  diagnostic("reach.end", { segments: fl.segs.length, spins: fl.spins.length });
+  return { tables: tables.join("\n"), descriptors, live, device, image_words };
+}
+
+export async function* emission_template(
+  fill: (mark: string) => AsyncIterable<string>): AsyncGenerator<string> {
+  let at = 0;
+  for (const mark of TEMPLATE.matchAll(/^\/\/ (Tables|Spins|Segments|Requests)\n\/\/ =+$/gm)) {
+    const end = mark.index! + mark[0].length;
+    yield TEMPLATE.slice(at, end) + "\n\n";
+    for await (const part of fill(mark[1])) yield part;
+    at = end;
+  }
+  yield TEMPLATE.slice(at);
+}
+
+// Preparation consumes checked bodies and keeps parsed bodies needed by types.
+export function emission_prepare(book: Bend.Book): EmissionPlan {
   diagnostic("book.begin", { definitions: Object.keys(book.tlds).length });
   diagnostic("carb.begin");
   const cb = carb_book(book, ["main", ...RUNTIME_ADTS]);
@@ -4314,8 +4554,30 @@ export function compile_book(book: Bend.Book): string {
   const foreign = new Map(done_defs(cb, def_foreign).map(([k, tld]) =>
     [seg_fid(k), [k, tld] as [Bend.Name, Def]]));
   const roots = [seg_fid("main"), ...[...cb.bangs].map(seg_fid)];
-  type Unit = Pick<File, "unit" | "segs" | "spins" | "img" | "tabs" | "clos" | "lend">;
-  const units = new Map<string, Unit>();
+  return { cb, show, defs, foreign, roots };
+}
+
+export function emission_definition(cb: Carb, k: Bend.Name, def: Def): EmissionUnit {
+  const output = file_new({ ...cb, lend: new Set() }, "Term");
+  output.unit = "u" + Buffer.from(k).toString("hex") + "_";
+  compile_def(output, k, def);
+  return { unit: output.unit, segs: output.segs, spins: output.spins,
+    img: output.img, tabs: output.tabs, clos: output.clos, lend: output.lend };
+}
+
+export function emission_foreign(cb: Carb, k: Bend.Name, def: Def):
+  { unit: EmissionUnit; request: ForeignRequest } {
+  const output = file_new({ ...cb, lend: new Set() }, "Term");
+  output.unit = "u" + Buffer.from(k).toString("hex") + "_";
+  const { request, constructors } = request_info(output, k, def);
+  compile_request(output, k, constructors);
+  return { request, unit: { unit: output.unit, segs: output.segs, spins: output.spins,
+    img: output.img, tabs: output.tabs, clos: output.clos, lend: output.lend } };
+}
+
+export function compile_book(book: Bend.Book): string {
+  const { cb, show, defs, foreign, roots } = emission_prepare(book);
+  const units = new Map<string, EmissionUnit>();
   const reads = new Map<string, Set<string>>();
   const readers = new Map<string, Set<string>>();
   const dirty = new Set<string>();
@@ -4398,14 +4660,9 @@ export function compile_book(book: Bend.Book): string {
         previous.clos.clear();
         previous.lend.clear();
       }
-      const output = file_new({ ...cb, lend: new Set() }, "Term");
-      output.unit = "u" + Buffer.from(def[0]).toString("hex") + "_";
       reading = fid;
-      compile_def(output, def[0], def[1]);
+      const unit = emission_definition(cb, def[0], def[1]);
       reading = null;
-      const unit: Unit = { unit: output.unit, segs: output.segs,
-        spins: output.spins, img: output.img, tabs: output.tabs,
-        clos: output.clos, lend: output.lend };
       units.set(fid, unit);
       const referenced = new Set<string>();
       for (const seg of unit.segs) for (const ref of seg.refs) referenced.add(ref);
