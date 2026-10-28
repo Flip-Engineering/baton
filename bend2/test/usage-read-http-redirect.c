@@ -11,49 +11,28 @@
      CURLOPT_URL, CURLOPT_CUSTOMREQUEST, CURLOPT_ACCEPT_ENCODING,
        CURLOPT_ERRORBUFFER, CURLOPT_POSTFIELDS        char *
      CURLOPT_HTTPHEADER                               struct curl_slist *
-     CURLOPT_WRITEFUNCTION                            curl_write_callback,
-       size_t (*)(char *, size_t, size_t, void *), the type of br_http_write
+     CURLOPT_WRITEFUNCTION                            curl_write_callback, the
+       type of br_http_write
+     CURLOPT_WRITEDATA                                void *
      CURLOPT_FOLLOWLOCATION, CURLOPT_NOSIGNAL,
        CURLOPT_POSTFIELDSIZE                          long
-     CURLOPT_WRITEDATA                                void *
-   CURLOPT_WRITEDATA is passed as BatonHttpRequest *, a type private to
-   credit-transport.c; the shim reads it as void *, which is how libcurl's
-   setopt reads that option. Each value is forwarded to libcurl with the type it
-   was read as. Any other option is
-   not read: the call records it as unsupported and returns CURLE_UNKNOWN_OPTION,
-   so a transport that sets a new option fails the test. With
+   Each value is forwarded to libcurl with the same type. Any other option is not
+   read: the call records it as unsupported and returns CURLE_UNKNOWN_OPTION, so
+   a transport that sets a new option fails the test. With
    BATON2_TEST_HTTP_OPTIONS set, each call appends its option number, the type it
-   was read as and a long option's value to that file.
-
-   This host has no curl headers, so the option numbers, CURLcode and the
-   callback type follow the libcurl ABI (curl.h CURLOPT(name, type, number)). */
+   was read as and a long option's value to that file. */
 #define _GNU_SOURCE
+#include <curl/curl.h>
 #include <dlfcn.h>
 #include <stdarg.h>
-#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-struct curl_slist;
-typedef size_t (*curl_write_callback)(char *buffer, size_t size, size_t nitems, void *outstream);
+/* curl.h defines curl_easy_setopt as a type-checking macro for GCC and clang. */
+#undef curl_easy_setopt
 
-enum {
-  FIXTURE_CURLOPT_WRITEDATA = 10001,
-  FIXTURE_CURLOPT_URL = 10002,
-  FIXTURE_CURLOPT_ERRORBUFFER = 10010,
-  FIXTURE_CURLOPT_WRITEFUNCTION = 20011,
-  FIXTURE_CURLOPT_POSTFIELDS = 10015,
-  FIXTURE_CURLOPT_HTTPHEADER = 10023,
-  FIXTURE_CURLOPT_CUSTOMREQUEST = 10036,
-  FIXTURE_CURLOPT_FOLLOWLOCATION = 52,
-  FIXTURE_CURLOPT_POSTFIELDSIZE = 60,
-  FIXTURE_CURLOPT_NOSIGNAL = 99,
-  FIXTURE_CURLOPT_ACCEPT_ENCODING = 10102,
-  FIXTURE_CURLE_UNKNOWN_OPTION = 48
-};
-
-typedef int (*setopt_function)(void *, int, ...);
+typedef CURLcode (*setopt_function)(CURL *, CURLoption, ...);
 
 static setopt_function library_setopt(void) {
   static setopt_function library;
@@ -61,20 +40,20 @@ static setopt_function library_setopt(void) {
   return library;
 }
 
-static void record_option(int option, const char *type, const char *value) {
+static void record_option(CURLoption option, const char *type, const char *value) {
   const char *path = getenv("BATON2_TEST_HTTP_OPTIONS");
   if (!path) return;
   FILE *file = fopen(path, "a");
   if (!file) return;
-  fprintf(file, "%d %s%s%s\n", option, type, value ? " " : "", value ? value : "");
+  fprintf(file, "%d %s%s%s\n", (int)option, type, value ? " " : "", value ? value : "");
   fclose(file);
 }
 
-static int redirected_url(void *handle, char *url) {
+static CURLcode redirected_url(CURL *handle, char *url) {
   const char *from = getenv("BATON2_TEST_HTTP_FROM");
   const char *to = getenv("BATON2_TEST_HTTP_TO");
   if (!url || !from || !to || strncmp(url, from, strlen(from)) != 0)
-    return library_setopt()(handle, FIXTURE_CURLOPT_URL, url);
+    return library_setopt()(handle, CURLOPT_URL, url);
   const char *record = getenv("BATON2_TEST_HTTP_RECORD");
   if (record) {
     FILE *file = fopen(record, "a");
@@ -85,55 +64,55 @@ static int redirected_url(void *handle, char *url) {
   }
   size_t length = strlen(to) + strlen(url + strlen(from)) + 1;
   char *rewritten = malloc(length);
-  if (!rewritten) return library_setopt()(handle, FIXTURE_CURLOPT_URL, url);
+  if (!rewritten) return library_setopt()(handle, CURLOPT_URL, url);
   snprintf(rewritten, length, "%s%s", to, url + strlen(from));
   /* libcurl copies a URL string option, so the buffer may be released. */
-  int result = library_setopt()(handle, FIXTURE_CURLOPT_URL, rewritten);
+  CURLcode result = library_setopt()(handle, CURLOPT_URL, rewritten);
   free(rewritten);
   return result;
 }
 
-int curl_easy_setopt(void *handle, int option, ...) {
+CURLcode curl_easy_setopt(CURL *handle, CURLoption option, ...) {
   va_list arguments;
   va_start(arguments, option);
-  int result;
+  CURLcode result;
   switch (option) {
-    case FIXTURE_CURLOPT_URL: {
+    case CURLOPT_URL: {
       char *value = va_arg(arguments, char *);
       record_option(option, "char*", NULL);
       result = redirected_url(handle, value);
       break;
     }
-    case FIXTURE_CURLOPT_CUSTOMREQUEST:
-    case FIXTURE_CURLOPT_ACCEPT_ENCODING:
-    case FIXTURE_CURLOPT_ERRORBUFFER:
-    case FIXTURE_CURLOPT_POSTFIELDS: {
+    case CURLOPT_CUSTOMREQUEST:
+    case CURLOPT_ACCEPT_ENCODING:
+    case CURLOPT_ERRORBUFFER:
+    case CURLOPT_POSTFIELDS: {
       char *value = va_arg(arguments, char *);
       record_option(option, "char*", NULL);
       result = library_setopt()(handle, option, value);
       break;
     }
-    case FIXTURE_CURLOPT_HTTPHEADER: {
+    case CURLOPT_HTTPHEADER: {
       struct curl_slist *value = va_arg(arguments, struct curl_slist *);
       record_option(option, "curl_slist*", NULL);
       result = library_setopt()(handle, option, value);
       break;
     }
-    case FIXTURE_CURLOPT_WRITEDATA: {
-      void *value = va_arg(arguments, void *);
-      record_option(option, "void*", NULL);
-      result = library_setopt()(handle, option, value);
-      break;
-    }
-    case FIXTURE_CURLOPT_WRITEFUNCTION: {
+    case CURLOPT_WRITEFUNCTION: {
       curl_write_callback value = va_arg(arguments, curl_write_callback);
       record_option(option, "curl_write_callback", NULL);
       result = library_setopt()(handle, option, value);
       break;
     }
-    case FIXTURE_CURLOPT_FOLLOWLOCATION:
-    case FIXTURE_CURLOPT_NOSIGNAL:
-    case FIXTURE_CURLOPT_POSTFIELDSIZE: {
+    case CURLOPT_WRITEDATA: {
+      void *value = va_arg(arguments, void *);
+      record_option(option, "void*", NULL);
+      result = library_setopt()(handle, option, value);
+      break;
+    }
+    case CURLOPT_FOLLOWLOCATION:
+    case CURLOPT_NOSIGNAL:
+    case CURLOPT_POSTFIELDSIZE: {
       long value = va_arg(arguments, long);
       char text[32];
       snprintf(text, sizeof text, "%ld", value);
@@ -143,7 +122,7 @@ int curl_easy_setopt(void *handle, int option, ...) {
     }
     default:
       record_option(option, "unsupported", NULL);
-      result = FIXTURE_CURLE_UNKNOWN_OPTION;
+      result = CURLE_UNKNOWN_OPTION;
       break;
   }
   va_end(arguments);
