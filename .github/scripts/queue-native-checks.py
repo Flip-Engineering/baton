@@ -88,6 +88,25 @@ def cancellation_marker(run):
     return Path(run) / 'evidence/compile-queue/cancel-all.json'
 
 
+def process_identity(pid):
+    try:
+        fields = Path('/proc') / str(pid) / 'stat'
+        raw = fields.read_text()
+        tail = raw[raw.rfind(')') + 2:].split()
+        return {'state': tail[0], 'starttime': tail[19]}
+    except (OSError, IndexError):
+        return None
+
+
+def publisher_alive(request):
+    pid = request.get('publisher_pid')
+    starttime = request.get('publisher_starttime')
+    if pid is None or starttime is None:
+        return True
+    current = process_identity(pid)
+    return current is not None and current['state'] != 'Z' and current['starttime'] == starttime
+
+
 def write_focused_queue_handoff(config, request, directory, state, **extra):
     """Record the exact queue token so focused cancellation preserves shared custody."""
     handoff_root = os.environ.get('BATON2_FOCUSED_QUEUE_HANDOFF_DIR')
@@ -300,23 +319,51 @@ def cancel(config, request, directory):
             current['cancel_requested_ns'] = time.time_ns()
             write_json_atomic(request_path, current)
 
+        cancel_argv = [config['client'], '--', 'cancel', '--state-root', config['state'],
+                       '--key', request['key'], '--token', request['token']]
+        owner_path = Path(config['state']) / 'keys' / request['key'] / 'owners' / request['token']
+        cancel_returncode = 0
+        cancel_result = []
+        attempted = False
         with (directory / 'cancel.stdout').open('wb') as stdout, \
                 (directory / 'cancel.stderr').open('wb') as stderr:
-            result = subprocess.run([config['client'], '--', 'cancel', '--state-root', config['state'],
-                                     '--key', request['key'], '--token', request['token']],
-                                    stdout=stdout, stderr=stderr)
-        output = (directory / 'cancel.stdout').read_text(errors='replace').splitlines()
-        cancel_result = [line for line in output if line.startswith('canceled=') or line.startswith('owners=')]
+            while True:
+                if attempted and not owner_path.is_file():
+                    with registry_lock(config['run']):
+                        try:
+                            current = json.loads(request_path.read_text())
+                        except (OSError, ValueError):
+                            current = {}
+                    if current.get('exit_code') is not None or not publisher_alive(current):
+                        cancel_result = ['canceled=publisher-finished-before-publication']
+                        break
+                    time.sleep(0.025)
+                    continue
+                result = subprocess.run(cancel_argv, capture_output=True)
+                attempted = True
+                stdout.write(result.stdout or b'')
+                stdout.flush()
+                stderr.write(result.stderr or b'')
+                stderr.flush()
+                output = (result.stdout or b'').decode(errors='replace').splitlines()
+                cancel_result = [line for line in output
+                                 if line.startswith('canceled=') or line.startswith('owners=')]
+                cancel_returncode = result.returncode
+                if result.returncode != 0:
+                    break
+                if 'canceled=unknown-token' in cancel_result or 'canceled=none' in cancel_result:
+                    continue
+                break
         with registry_lock(config['run']):
             current = json.loads(request_path.read_text()) if request_path.is_file() else dict(request)
-            current['cancel_returncode'] = result.returncode
+            current['cancel_returncode'] = cancel_returncode
             current['cancel_result'] = cancel_result
             write_json_atomic(request_path, current)
             write_focused_queue_handoff(config, current, directory, 'cancelled',
-                                        cancel_returncode=result.returncode,
+                                        cancel_returncode=cancel_returncode,
                                         cancel_result=cancel_result)
         request.update(current)
-        return result.returncode
+        return cancel_returncode
 
 def cancel_all(config):
     run = Path(config['run'])
@@ -500,6 +547,13 @@ def submit(config, directory, options, command, key_only=False):
             with (directory / 'client.stdout').open('wb') as stdout, \
                     (directory / 'client.stderr').open('wb') as stderr:
                 child = subprocess.Popen(argv, stdout=stdout, stderr=stderr)
+            publisher_pid = getattr(child, 'pid', None)
+            if publisher_pid is not None:
+                request['publisher_pid'] = publisher_pid
+                identity = process_identity(publisher_pid)
+                if identity is not None:
+                    request['publisher_starttime'] = identity['starttime']
+                write_json_atomic(directory / 'request.json', request)
         code = child.wait()
     except InterruptedError as error:
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
@@ -510,6 +564,13 @@ def submit(config, directory, options, command, key_only=False):
             child.wait()
         cancel(config, request, directory)
         code = 128 + error.args[0]
+    except OSError as error:
+        with registry_lock(config['run']):
+            request.update(exit_code=127, finished_ns=time.time_ns(),
+                           launch_error=str(error))
+            write_json_atomic(directory / 'request.json', request)
+            write_focused_queue_handoff(config, request, directory, 'finished', exit_code=127)
+        raise
     with registry_lock(config['run']):
         request_path = directory / 'request.json'
         try:

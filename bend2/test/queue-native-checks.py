@@ -481,15 +481,35 @@ if verb == 'key':
     print(hashlib.sha256(repr(args).encode()).hexdigest())
     raise SystemExit(0)
 if verb == 'cancel':
+    key = args[args.index('--key') + 1]
     token = args[args.index('--token') + 1]
+    owner = state / 'keys' / key / 'owners' / token
+    if not owner.is_file():
+        unknown = state / 'unknown-cancel-count'
+        unknown.write_text(str(int(unknown.read_text()) + 1) if unknown.exists() else '1')
+        print('canceled=unknown-token')
+        raise SystemExit(0)
+    owner.unlink()
     (state / 'cancelled' / token).write_text('cancelled')
     print('canceled=withdrawn')
-    print('owners=1')
+    print('owners=0')
     raise SystemExit(0)
 if verb != 'run':
     raise SystemExit('unknown queue verb: ' + verb)
 token = args[args.index('--token') + 1]
 (state / 'started' / token).write_text('started')
+common = args[5:]
+key = hashlib.sha256(repr(['key', *common]).encode()).hexdigest()
+owner = state / 'keys' / key / 'owners' / token
+if os.environ.get('QUEUE_FAKE_DELAY_PUBLISH') == '1':
+    release_publish = state / 'release-publish'
+    deadline = time.monotonic() + 8
+    while not release_publish.exists() and time.monotonic() < deadline:
+        time.sleep(0.005)
+    if not release_publish.exists():
+        raise SystemExit(76)
+owner.parent.mkdir(parents=True, exist_ok=True)
+owner.write_text('pid=fixture\n')
 with (state / 'active.lock').open('a') as lock:
     fcntl.flock(lock, fcntl.LOCK_EX)
     active_path = state / 'active'
@@ -547,12 +567,14 @@ with output.open('wb') as stream:
             'QUEUE_FAKE_STATE': str(self.state),
         })
 
-    def start_cc(self, label, output, wait_cancel=False):
+    def start_cc(self, label, output, wait_cancel=False, delay_publish=False):
         source = self.root / (label + '.c')
         source.write_bytes((label.encode() + b':' + label.encode() * 1024))
         environment = dict(self.env)
         if wait_cancel:
             environment['QUEUE_FAKE_WAIT_CANCEL'] = '1'
+        if delay_publish:
+            environment['QUEUE_FAKE_DELAY_PUBLISH'] = '1'
         return subprocess.Popen(
             [sys.executable, str(ADAPTER), 'compiler', 'cc', '-c', str(source),
              '-o', str(output)],
@@ -607,6 +629,41 @@ with output.open('wb') as stream:
             b'second:' + b'second' * 1024,
         ))
 
+    def test_cancel_all_waits_for_publisher_token_before_cancelling(self):
+        process = self.start_cc('delayed-publish', self.root / 'delayed-publish.o',
+                                wait_cancel=True, delay_publish=True)
+        evidence = self.run / 'evidence/compile-queue'
+        deadline = time.monotonic() + 3
+        request_paths = []
+        while time.monotonic() < deadline:
+            request_paths = list(evidence.glob('*/request.json'))
+            if request_paths:
+                break
+            time.sleep(0.005)
+        self.assertEqual(len(request_paths), 1, 'adapter did not register the publisher request')
+        request = json.loads(request_paths[0].read_text())
+        owner = self.state / 'keys' / request['key'] / 'owners' / request['token']
+        self.assertFalse(owner.exists(), 'fixture publisher must remain before owner publication')
+
+        cancel = subprocess.Popen(
+            [sys.executable, str(ADAPTER), 'cancel', str(self.run)],
+            cwd=self.root, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        deadline = time.monotonic() + 3
+        unknown = self.state / 'unknown-cancel-count'
+        while time.monotonic() < deadline and not unknown.exists():
+            time.sleep(0.005)
+        self.assertTrue(unknown.exists(), 'cancel did not observe the absent owner token')
+        (self.state / 'release-publish').touch()
+        stdout, stderr = cancel.communicate(timeout=12)
+        result = self.finish([process])[0]
+        self.assertEqual(cancel.returncode, 0, (stdout, stderr))
+        self.assertEqual(result[0], 130, result)
+        self.assertGreaterEqual(int(unknown.read_text()), 1)
+        request = json.loads(request_paths[0].read_text())
+        self.assertEqual(request['cancel_returncode'], 0)
+        self.assertEqual(request['cancel_result'], ['canceled=withdrawn', 'owners=0'])
+        self.assertFalse(owner.exists(), 'cancel must withdraw the exact published token')
+
     def test_cancel_all_covers_registered_requests_and_blocks_late_submit(self):
         first = self.start_cc('cancel-a', self.root / 'cancel-a.o', wait_cancel=True)
         second = self.start_cc('cancel-b', self.root / 'cancel-b.o', wait_cancel=True)
@@ -623,7 +680,7 @@ with output.open('wb') as stream:
         submitted = [request for request in active if not request.get('cancelled_before_submit')]
         self.assertEqual(len(submitted), 2)
         self.assertTrue(all(request.get('cancel_returncode') == 0 for request in submitted))
-        self.assertTrue(all(request.get('cancel_result') == ['canceled=withdrawn', 'owners=1']
+        self.assertTrue(all(request.get('cancel_result') == ['canceled=withdrawn', 'owners=0']
                             for request in submitted))
 
         late = self.start_cc('late', self.root / 'late.o')
