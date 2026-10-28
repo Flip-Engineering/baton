@@ -179,3 +179,45 @@ Flip-Engineering org) — bend and bend-kit are public there; org paths 404/401.
   risk; keep the fork only as a future contribution vehicle and resync main (261 behind)
   when contributions resume. No bend-kit consumer exists in baton's sources, scripts,
   or installed release provenance.
+
+## Pass 3 — machine-readable cleanup evidence (2026-10-28)
+
+`acp-fframes-zero-unique.tsv` (this directory): 56 rows, columns
+branch | tip_sha | nonmerge_commits | tip_date | worktree_use.
+Comparison main: 34844a998 (retained preparation clone, HEAD-verified). Evidence method:
+`git rev-list --count --no-merges --cherry-pick --right-only 34844a998...<branch>` = 0 for
+every row, computed in the snapshot clone whose branch refs are as of 2026-10-23
+(pub-fframes-ds2/repo); current remote tips need root's authorized read to certify — the
+snapshot tips are exact for that date. Worktree census (single pass over
+~/worktrees): NONE of the 56 branches is checked out locally; the acp-fframes worktree
+population (~30 trees) sits on other night25/port branches, with dirty trees at
+film-studio-night25-paint-reference-glm-20261023 (2 files, the paint-reference branch),
+film-studio-night25-worker-claims (7, ACP repo) and film-studio-font-uri-fix (1, ACP repo).
+Open-PR uses: not readable unauthenticated — for Terra.
+
+### bend-kit contribution mapping
+
+- origin/json-recursive-unique-keys-20261010 = 239f2710fd4d7a227cabcf89b5e421a6f3c21558
+  ("Add recursive decoded JSON key uniqueness" stack, 52 commits since the Oct-08 base).
+- origin/process-child-cwd = 7d4a25dfecde3ec431770a16897e6d760f93781c
+  ("process: add child working directories to run and …" stack, 52 commits since the same base).
+- Aggregate proof: `git rev-list --count --no-merges --cherry-pick --right-only ul/main…<ref>`
+  = 0 for both — every commit's patch-id is present in paymog/bend-kit main (261 ahead;
+  upstream squashed/reworded on merge, so subjects differ while content matches).
+- Per-commit mapping was not completed: the blob:none clone lazy-fetches on every
+  `git show`, and a full per-commit walk exceeded the execution window. The aggregate
+  zero is the decision-grade evidence; Terra can enumerate per-commit pairs from
+  upstream if needed.
+
+### bend P6 sibling tips — actual differences
+
+- codex/consts-insertion-cap-20261026 @ 16b84e13de3a (pushed 2026-10-26 08:26:13 -0700)
+- codex/baton-pinned-2025-comp-optimizations-20261017 @ 2569c350f98f (pushed 08:31:53 -0700)
+- `git diff` between the tips: empty. Tree hashes identical:
+  d9353bc8a15f784658b041d67824d7ab159da764 on both sides. Commit sets identical in both
+  directions (`--left-only`/`--right-only` both empty). The refs are two pushes of the
+  same stack five minutes apart under different names.
+- Recommendation: exactly one of the two refs is obsolete by identity — keep either
+  (suggest the consts-insertion-cap name, which states the distinctive P6 CONSTS-bound
+  change); deleting the other removes nothing. The stack itself remains live work
+  (tip Oct-26) feeding the pinned compiler line.
