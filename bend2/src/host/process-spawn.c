@@ -65,7 +65,7 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_READ_AWAKE, BP_WAIT, BP_SIGNAL,
        BP_INSTANCE_PREPARE_WITH_FILE, BP_INSTANCE_START, BP_INSTANCE_CANCEL,
        BP_INSTANCE_OWNER_WITNESS, BP_INSTANCE_ENSURE_OWNER_WITNESS,
        BP_INSTANCE_RECOVER, BP_INSTANCE_INPUT_WITNESS, BP_INSTANCE_INPUT_PROMPT,
-       BP_OBSERVER_RECOVERY, BP_READ_SPAN, BP_READ_AWAKE_SPAN, BP_SPAWN_ENV_FILE,
+       BP_INSTANCE_ATTEMPT_SIGNAL, BP_OBSERVER_RECOVERY, BP_READ_SPAN, BP_READ_AWAKE_SPAN, BP_SPAWN_ENV_FILE,
        BP_INSTANCE_MONITOR_COMMIT };
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
@@ -450,9 +450,10 @@ typedef struct {
 typedef struct {
   uint32_t directory_length,bootstrap_length,witness_length,reserved;
 } BrRecoveryRequest;
+typedef struct { int32_t disposition,status; } BrAttemptSignalResult;
 enum { BI_ENSURE=1, BI_ADMIT, BI_ATTACH, BI_SHUTDOWN, BI_STATE, BI_HELLO, BI_REPLY,
        BI_SUBSCRIBE, BI_COMMIT, BI_NOTICE, BI_READY, BI_PREPARE, BI_START, BI_CANCEL,
-       BI_RECOVER };
+       BI_RECOVER, BI_ATTEMPT_SIGNAL };
 /* A committed-change subscription. A process that committed a database
    transaction publishes the durable native_changes high-water cursor with
    BI_COMMIT after its commit; the owner records the highest published cursor and
@@ -2700,6 +2701,30 @@ static BrKeeper *br_owner_find(BrOwner *owner,const char *directory) {
     if(!strcmp(keeper->directory,directory))return keeper;
   return NULL;
 }
+/* A missing attempt path can still be controlled while its elected owner holds
+   the exact admitted keeper. The keeper's in-memory birth is the authority; a
+   PID copied from the attempt key or a database row is not sufficient. */
+static int br_owner_signal_attempt(BrOwner *owner,const char *directory,int signal,
+                                   BrAttemptSignalResult *result) {
+  BrKeeper *keeper=br_owner_find(owner,directory);
+  if(!keeper)return ENOENT;
+  if(signal<=0 || signal>=NSIG)return EINVAL;
+  if(keeper->monitor_only)return EPERM;
+  if(keeper->native_pid<=1 || keeper->native_birth.pid!=keeper->native_pid)return ENODATA;
+  if(keeper->exited) {
+    if(keeper->status_unavailable || keeper->native_waiting)return ECHILD;
+    *result=(BrAttemptSignalResult){.disposition=2,.status=keeper->status};
+    return 0;
+  }
+  if(!keeper->ready)return EAGAIN;
+  BrBirth current={0};
+  int error=br_birth(keeper->native_pid,&current);
+  if(error)return error;
+  if(!br_same_birth(current,keeper->native_birth))return ESTALE;
+  if(kill(-keeper->native_pid,signal))return errno;
+  *result=(BrAttemptSignalResult){.disposition=1};
+  return 0;
+}
 static uint64_t br_owner_attempts(BrOwner *owner) {
   uint64_t count=0;
   for(BrKeeper *keeper=owner->attempts;keeper;keeper=keeper->next)count++;
@@ -2989,6 +3014,18 @@ static int br_owner_command(BrOwner *owner,BrOwnerControl *control,BrInstanceFra
     return br_owner_reply(control,(BrInstanceFrame){.op=BI_HELLO,.owner=owner->token,
       .epoch=owner->epoch,.attempt=keeper->id,.generation=keeper->generation,
       .state=keeper->monitor_only?2u:1u,.length=sizeof(state)},&state);
+  }
+  if(frame.op==BI_ATTEMPT_SIGNAL) {
+    size_t path_length=strnlen(payload,(size_t)frame.length);
+    if(path_length+1+sizeof(int32_t)!=(size_t)frame.length)
+      return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.owner=owner->token,
+        .epoch=owner->epoch,.error=EPROTO},NULL);
+    int32_t signal=0;
+    memcpy(&signal,payload+path_length+1,sizeof(signal));
+    BrAttemptSignalResult result={0};
+    int error=br_owner_signal_attempt(owner,payload,signal,&result);
+    return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.owner=owner->token,
+      .epoch=owner->epoch,.error=error,.length=error?0:sizeof(result)},error?NULL:&result);
   }
   if(frame.op==BI_ATTACH) {
     /* Resolves the attempt that already owns this directory, so an attaching
@@ -4271,6 +4308,44 @@ static int br_instance_request_witness(const char *database,BrInstanceFrame fram
 static int br_instance_request(const char *database,BrInstanceFrame frame,const char *payload,int rights,BrInstanceFrame *reply) {
   return br_instance_request_witness(database,frame,payload,rights,reply,0,0);
 }
+static int br_instance_signal_attempt(BatonProcessCall *call) {
+  size_t path_length=strlen(call->directory);
+  if(path_length>SIZE_MAX-sizeof(int32_t)-1)return EOVERFLOW;
+  size_t payload_length=path_length+1+sizeof(int32_t);
+  char *payload=malloc(payload_length);
+  if(!payload)return ENOMEM;
+  memcpy(payload,call->directory,path_length+1);
+  int32_t signal=(int32_t)call->signal;
+  memcpy(payload+path_length+1,&signal,sizeof(signal));
+  BrOwnerRecord record={0};BrInstanceFrame reply={0};int socket_fd=-1;
+  int error=br_instance_connect(call->database,0,&record,&socket_fd);
+  if(!error)error=br_instance_exchange(socket_fd,
+    (BrInstanceFrame){.op=BI_ATTEMPT_SIGNAL,.owner=record.token,.epoch=record.epoch,
+      .length=payload_length},payload,-1,&reply);
+  if(!error && (reply.owner!=record.token || reply.epoch!=record.epoch))error=ESTALE;
+  BrAttemptSignalResult result={0};
+  if(!error && reply.error)error=reply.error;
+  if(!error && (reply.op!=BI_REPLY || reply.length!=sizeof(result)))error=EPROTO;
+  if(!error)error=br_read_all(socket_fd,&result,sizeof(result));
+  if(!error) {
+    char status[64];int length=-1;
+    if(result.disposition==1)length=snprintf(status,sizeof(status),"signaled");
+    else if(result.disposition==2 && WIFEXITED(result.status))
+      length=snprintf(status,sizeof(status),"exit %d",WEXITSTATUS(result.status));
+    else if(result.disposition==2 && WIFSIGNALED(result.status))
+      length=snprintf(status,sizeof(status),"signal %d",WTERMSIG(result.status));
+    else error=EPROTO;
+    if(!error && (length<0 || (size_t)length>=sizeof(status)))error=EOVERFLOW;
+    if(!error) {
+      call->text=strdup(status);
+      if(!call->text)error=ENOMEM;
+      else call->length=(size_t)length;
+    }
+  }
+  if(socket_fd>=0)close(socket_fd);
+  free(payload);
+  return error;
+}
 static void br_instance_owner_witness(BatonProcessCall *call,int spawn) {
   BrInstanceFrame reply={0};
   for(;;) {
@@ -5401,6 +5476,9 @@ static void baton_retained_begin_call(BatonProcessCall *call) {
 static void baton_process_call(IoWork *w) {
   BatonProcessCall *call=(BatonProcessCall *)w->data;
   BatonChild *child=call->child;
+  if(call->kind==BP_INSTANCE_ATTEMPT_SIGNAL) {
+    call->error=br_instance_signal_attempt(call);return;
+  }
   if(call->kind==BP_INSTANCE_RETIRE && child->retained &&
      child->retained->observer_only) { call->error=EPERM;return; }
   if(call->kind==BP_SPAWN) { baton_child_spawn(call);return; }
@@ -5479,7 +5557,8 @@ static Term baton_process_pack(Env e, IoWork *w) {
   BatonProcessCall *call=(BatonProcessCall *)w->data;
   Term value=term_pak(CID_UNIT,0);
   if(!call->error) {
-    if(call->kind==BP_SPAWN || call->kind==BP_SPAWN_ENV_FILE || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED ||
+    if(call->kind==BP_INSTANCE_ATTEMPT_SIGNAL) value=io_str(e,call->text?call->text:"",call->length);
+    else if(call->kind==BP_SPAWN || call->kind==BP_SPAWN_ENV_FILE || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED ||
        call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED) value=(Term)call->handle;
     else if(call->kind==BP_INPUT_CLOSED) value=(Term)call->signal;
     else if(call->kind==BP_WAIT) value=io_str(e,call->text,call->length);
@@ -5652,6 +5731,12 @@ static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int pr
     if(kind==BP_KEEPER || kind==BP_ATTACH_OWNED)call->lock=(u32)f[1];
     if(kind==BP_CONTROL_WRITE) {call->text=io_cstr(e,f[1],&length);call->length=length;}
     if(kind==BP_CONTROL_SIGNAL)call->signal=(u32)f[1];
+  } else if(kind==BP_INSTANCE_ATTEMPT_SIGNAL) {
+    u64 database_length=0,directory_length=0;
+    call->database=io_cstr(e,f[0],&database_length);
+    call->directory=io_cstr(e,f[1],&directory_length);call->signal=(u32)f[2];
+    if(!call->database || strlen(call->database)!=database_length || !call->directory ||
+       strlen(call->directory)!=directory_length)call->error=EINVAL;
   } else if(kind==BP_INSTANCE_OWNER || kind==BP_INSTANCE_SHUTDOWN ||
             kind==BP_INSTANCE_OWNER_WITNESS || kind==BP_INSTANCE_ENSURE_OWNER_WITNESS) {
     u64 length=0;call->database=io_cstr(e,f[0],&length);
@@ -5867,6 +5952,9 @@ BP_EFFECT(baton_instance_input_witness,CID_INSTANCE_INPUT_WITNESS,BP_INSTANCE_IN
 #endif
 #ifdef CID_INSTANCE_INPUT_PROMPT
 BP_EFFECT(baton_instance_input_prompt,CID_INSTANCE_INPUT_PROMPT,BP_INSTANCE_INPUT_PROMPT)
+#endif
+#ifdef CID_INSTANCE_ATTEMPT_SIGNAL
+BP_EFFECT(baton_instance_attempt_signal,CID_INSTANCE_ATTEMPT_SIGNAL,BP_INSTANCE_ATTEMPT_SIGNAL)
 #endif
 #ifdef CID_PROCESSCHILD_RETAIN_WITH_FILE
 BP_EFFECT(baton_process_retain_with_file,CID_PROCESSCHILD_RETAIN_WITH_FILE,BP_RETAIN_WITH_FILE)
