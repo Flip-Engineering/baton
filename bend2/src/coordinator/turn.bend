@@ -1973,9 +1973,11 @@ def direct_settled_wake(+db: String, +player: String, +id: String, +log: String,
         IO.pure(Result<&1,&1,U32 & String,String>,Done{""}))
       reminder0 : Result<&1,&1,U32 & String,Unit> = Delivery.wake_result(reminder_source)
       reminder : Result<&1,&1,U32 & String,Unit> <- direct_failure_pass(db,player,id,"reminder",reminder0)
+      assignment_task : Chan(Result<&1,&1,U32 & String,String>) <- IO.fork(Result<&1,&1,U32 & String,String>,Delivery.deliver(db,id ++ ":assignment","1",""))
       wake0 : Result<&1,&1,U32 & String,Unit> <- direct_route_wake(db,player,id,log,outcome,routed)
       wake : Result<&1,&1,U32 & String,Unit> <- direct_failure_pass(db,player,id,"wake",wake0)
-      IO.pure(Result<&1,&1,U32 & String,Unit>,combine(reminder,combine(Done{unit},wake)))
+      assignment : Result<&1,&1,U32 & String,String> <- IO.join(Result<&1,&1,U32 & String,String>,assignment_task)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,combine(reminder,combine(Delivery.wake_result(assignment),wake)))
 
 def outcome_event(outcome: Outcome) -> String:
   match outcome:

@@ -1366,6 +1366,11 @@ class Receive(unittest.TestCase):
                     self.assertIn('Baton queued continuation ' + reminders[0][0], assignment_reports[0][0])
                     self.assertNotIn('no further turn starts', assignment_reports[0][0])
                     self.assertNotIn('Run continue-task', assignment_reports[0][0])
+                    self.eventually(
+                        lambda: any(message['id'] == report['id'] + ':assignment' for message in
+                                    (json.loads(line) for line in
+                                     (self.directory / 'parent-deliveries.jsonl').read_text().splitlines())),
+                        'the continuation report was not delivered to the coordinator')
                     self.assertIn('[id: ' + reminders[0][0] + ']', continued['prompt'])
                     self.assertIn('baton read ' + reminders[0][0], continued['prompt'])
 
