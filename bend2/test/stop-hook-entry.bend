@@ -1,10 +1,11 @@
-# The Claude Code Stop hook entry and the Claude launch arguments (#1054,
-# instance B1). '--stop-hook' runs the hook; 'arguments' prints the Claude argv
-# one argument per line.
+# The Claude Code Stop hook entry and the Claude and Codex launch arguments (#1054,
+# #1212). '--stop-hook' runs the hook; 'arguments' and 'codex-arguments' print the
+# Claude and Codex argv one argument per line.
 import Base
 import ../src/coordinator/stop-hook.bend as StopHook
 import ../src/coordinator/message-status.bend as MessageStatus
 import ../src/harness/claude-player.bend as Claude
+import ../src/harness/codex-player.bend as Codex
 import ../src/coordinator/commands.bend as C
 import ../src/coordinator/agent-actions.bend as Actions
 import ../src/coordinator/agent-command.bend as Agent
@@ -81,6 +82,7 @@ def route(args: List<String>) -> IO(Unit):
     case "decision-sql" <> Nil{}: decision_statement()
     case "record-sql" <> rest: record_statement(rest)
     case "arguments" <> Nil{}: lines(Claude.arguments("claude","claude-opus-5-5","high"))
+    case "codex-arguments" <> Nil{}: lines(Codex.arguments("gpt-6-luna","high"))
     case "schema" <> Nil{}: IO.write(C.schema())
     case "read" <> db <> id <> Nil{}: Agent.execute(db,"worker",Actions.Read{[id]})
     case "completion-request" <> db <> body <> Nil{}: Agent.execute(db,"worker",Actions.CompletionRequest{"",Actions.Text{body}})
@@ -97,7 +99,7 @@ def route(args: List<String>) -> IO(Unit):
     case "admit" <> database <> +directory <> cwd <> program: do IO<Unit>:
       start : P.RetainedStart <- IO.try(P.RetainedStart,Custody.Instance.admit(database,directory,P.argv(program),cwd,directory ++ "/native.stderr","",0,None{},P.argv(["/usr/bin/false"])))
       admitted(start)
-    case other: IO.die(Unit,2,"usage: stop-hook-entry --stop-hook|arguments")
+    case other: IO.die(Unit,2,"usage: stop-hook-entry --stop-hook|arguments|codex-arguments")
 
 def main() -> IO(Unit):
   do IO<Unit>:

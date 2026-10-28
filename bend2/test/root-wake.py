@@ -1236,7 +1236,9 @@ while True:
         self.assertEqual(first[0]['args'][:2], ['-c', 'forced_login_method="chatgpt"'])
         configs = [first[0]['args'][index + 1] for index, arg in enumerate(first[0]['args'])
                    if arg == '-c']
-        self.assertEqual(configs, ['forced_login_method="chatgpt"', 'model_reasoning_effort="low"'])
+        self.assertEqual(configs[:2], ['forced_login_method="chatgpt"', 'model_reasoning_effort="low"'])
+        self.assertEqual([config.partition('=')[0] for config in configs[2:]], ['hooks.Stop', 'hooks.PostToolUse'])
+        self.assertIn('--dangerously-bypass-hook-trust', first[0]['args'])
         self.assertEqual(first[0]['args'][first[0]['args'].index('--model') + 1], 'root')
         self.assertEqual(first[0]['native'], 'native-root')
 

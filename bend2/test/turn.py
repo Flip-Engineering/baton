@@ -653,7 +653,9 @@ print(json.dumps({'type':'turn.completed','usage':{'input_tokens':42,'output_tok
             self.assertEqual(launch['args'][:2], ['-c','forced_login_method="chatgpt"'])
             self.assertEqual(launch['args'][2:2+len(subcommand)],subcommand)
             configs=[launch['args'][i+1] for i,arg in enumerate(launch['args']) if arg=='-c']
-            self.assertEqual(configs,['forced_login_method="chatgpt"','model_reasoning_effort="low"'])
+            self.assertEqual(configs[:2],['forced_login_method="chatgpt"','model_reasoning_effort="low"'])
+            self.assertEqual([config.partition('=')[0] for config in configs[2:]],['hooks.Stop','hooks.PostToolUse'])
+            self.assertIn('--dangerously-bypass-hook-trust',launch['args'])
             self.assertEqual(launch['args'][launch['args'].index('--model')+1],'gpt-6-astra')
             self.assertEqual(launch['apiKeyVariablesPresent'],[])
             self.assertEqual(launch['cwd'],str(self.cwd))
