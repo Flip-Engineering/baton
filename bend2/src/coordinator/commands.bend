@@ -474,7 +474,7 @@ def peers(+left: String, +right: String) -> String:
   "(" ++ left ++ "<>" ++ right ++ " AND NOT " ++ descendant(left,right) ++ " AND NOT " ++ descendant(right,left) ++ ")"
 
 def tight_peers(+sender: String, +recipient: String) -> String:
-  "(" ++ peers(sender,recipient) ++ " AND " ++ assigned_role(sender) ++ "<>'operator' AND " ++ assigned_role(recipient) ++ "<>'operator' AND EXISTS(SELECT 1 FROM ensemble_members a JOIN ensemble_members b ON b.ensemble=a.ensemble JOIN ensembles e ON e.id=a.ensemble WHERE a.session=" ++ sender ++ " AND b.session=" ++ recipient ++ " AND e.coupling='tight'))"
+  "(" ++ peers(sender,recipient) ++ " AND " ++ assigned_role(sender) ++ "<>'operator' AND " ++ assigned_role(recipient) ++ "<>'operator' AND EXISTS(SELECT 1 FROM ensembles e WHERE e.coupling='tight' AND (e.owner=" ++ sender ++ " OR EXISTS(SELECT 1 FROM ensemble_members a WHERE a.ensemble=e.id AND a.session=" ++ sender ++ ")) AND (e.owner=" ++ recipient ++ " OR EXISTS(SELECT 1 FROM ensemble_members b WHERE b.ensemble=e.id AND b.session=" ++ recipient ++ "))))"
 
 def operator_route(+sender: String, +recipient: String) -> String:
   "((" ++ assigned_role(sender) ++ "='operator' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ " AND (parent=" ++ sender ++ " OR (parent IS NULL AND " ++ assigned_role(recipient) ++ "='conductor')))) OR (" ++ assigned_role(recipient) ++ "='operator' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ " AND (parent=" ++ recipient ++ " OR (parent IS NULL AND " ++ assigned_role(sender) ++ "='conductor')))))"
