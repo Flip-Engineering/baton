@@ -550,7 +550,10 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         return hooks
 
     def codex_handler(self, event):
-        groups = self.codex_hooks()['hooks.' + event]
+        hooks = self.codex_hooks()
+        self.assertIn('hooks.' + event, hooks,
+                      'Codex launch must install a %s hook for mid-turn input and completion control.' % event)
+        groups = hooks['hooks.' + event]
         self.assertEqual(len(groups), 1)
         self.assertEqual(len(groups[0]['hooks']), 1)
         return groups[0], groups[0]['hooks'][0]
@@ -630,14 +633,14 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         self.request()
         self.assertIsNone(self.codex_tool())
 
-    def codex_admitted(self, body):
-        directory = self.home / 'codex-attempt'
-        self.db.execute("UPDATE sessions SET native='thread-1' WHERE id='worker'")
-        self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained',?,'running')", (str(directory),))
+    def codex_admitted(self, body, session='worker', ident='admitted-message', kind='question', sender='coordinator'):
+        directory = self.home / ('codex-attempt-' + session)
+        self.db.execute("UPDATE sessions SET harness='codex',native='thread-1' WHERE id=?", (session,))
+        self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES(?,'attempt-1','retained',?,'running')", (session, str(directory)))
         script = self.home / 'codex-admitted.py'
         script.write_text(r'''import json, os, pathlib, sqlite3, subprocess, sys
 config = json.loads(sys.argv[1])
-env = dict(os.environ, BATON_DATABASE=config['db'], BATON_SESSION='worker', BATON_ATTEMPT_DIRECTORY=config['directory'])
+env = dict(os.environ, BATON_DATABASE=config['db'], BATON_SESSION=config['session'], BATON_ATTEMPT_DIRECTORY=config['directory'])
 def hook(event, **fields):
     payload = dict(session_id='thread-1', turn_id='turn-1', cwd='/', hook_event_name=event, model='gpt-6-luna', **fields)
     result = subprocess.run(['/bin/sh', '-c', config[event]], input=json.dumps(payload), env=env, capture_output=True, text=True)
@@ -646,23 +649,26 @@ def hook(event, **fields):
     return json.loads(result.stdout) if result.stdout.strip() else None
 def reads():
     with sqlite3.connect(config['db']) as db:
-        return db.execute("SELECT attempt,native FROM message_reads WHERE message='admitted-message'").fetchall()
+        return db.execute("SELECT attempt,recipient,native FROM message_reads WHERE message=?", (config['message'],)).fetchall()
 results = {}
 results['quiet'] = hook('PostToolUse', tool_name='Bash', tool_input={}, tool_response='')
 with sqlite3.connect(config['db']) as db:
-    db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('admitted-message','coordinator','worker','question',?)", (pathlib.Path(config['bodyPath']).read_text(encoding='utf-8'),))
+    db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)", (config['message'],config['sender'],config['session'],config['kind'],pathlib.Path(config['bodyPath']).read_text(encoding='utf-8')))
 results['unread_before'] = reads()
 results['stop_held'] = hook('Stop', stop_hook_active=False, last_assistant_message='Done.')
 results['read_after_stop'] = reads()
 results['injected'] = hook('PostToolUse', tool_name='Bash', tool_input={}, tool_response='')
 results['read_after'] = reads()
 results['again'] = hook('PostToolUse', tool_name='Bash', tool_input={}, tool_response='')
+results['stop_after'] = hook('Stop', stop_hook_active=True, last_assistant_message='Done.')
 print(json.dumps(results), flush=True)
 ''')
         (self.home / 'codex-body.txt').write_text(body, encoding='utf-8')
         config = {'db': self.path, 'directory': str(directory), 'bodyPath': str(self.home / 'codex-body.txt'),
+                  'session': session, 'message': ident, 'kind': kind, 'sender': sender,
                   'Stop': self.codex_handler('Stop')[1]['command'], 'PostToolUse': self.codex_handler('PostToolUse')[1]['command']}
-        self.request()
+        if session == 'worker':
+            self.request()
         env = dict(self.env, BATON_STOP_HOOK=self.binary)
         try:
             result = subprocess.run([self.binary, 'admit', self.path, str(directory), str(self.home),
@@ -677,11 +683,14 @@ print(json.dumps(results), flush=True)
             self.assertIn(body, results['stop_held']['reason'])
             self.assertEqual(results['read_after_stop'], [])
             self.assertIn(body, results['injected']['hookSpecificOutput']['additionalContext'])
-            self.assertEqual(results['read_after'], [['attempt-1', 'thread-1']])
+            self.assertEqual(results['read_after'], [['attempt-1', session, 'thread-1']])
             self.assertIsNone(results['again'])
+            self.assertIsNone(results['stop_after'])
         finally:
             subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True)
-        self.assertIsNone(self.codex_stop(True))
+        if session == 'worker':
+            self.assertIsNone(self.codex_stop(True))
+        return results
 
     def test_codex_admitted_tool_loop_records_the_read_and_then_allows_stop(self):
         self.codex_admitted('Admitted full body.')
@@ -691,15 +700,16 @@ print(json.dumps(results), flush=True)
         self.codex_admitted('Large admitted body λ🙂.\n' + 'abcdef' * 40000 + '\nend of body')
 
     def test_codex_conductor_receives_a_completion_request_whole(self):
-        self.db.executescript("""
-            INSERT INTO sessions(id,parent,harness) VALUES('lead',NULL,'codex');
-            INSERT INTO session_roles(session,role) VALUES('lead','conductor');""")
         body = 'Completion summary λ🙂.\n' + 'xyz' * 40000 + '\nend of summary'
-        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('request:worker:1','worker','lead','completion-request',?)", (body,))
-        env = dict(self.env, BATON_SESSION='lead', BATON_STOP_HOOK=self.binary)
-        context = self.codex_tool(env=env)['hookSpecificOutput']['additionalContext']
-        self.assertIn('Message (completion-request) from worker [id: request:worker:1]:\n' + body, context)
-        self.assertEqual(self.codex_stop(True, env=env)['decision'], 'block')
+        results = self.codex_admitted(body, session='coordinator', ident='request:worker:1',
+                                      kind='completion-request', sender='worker')
+        self.assertIn('Message (completion-request) from worker [id: request:worker:1]:\n' + body,
+                      results['injected']['hookSpecificOutput']['additionalContext'])
+        self.assertIn(body[-32:] + "\nReview the work against worker's assignment and the supplied evidence. "
+                      "Confirm with completion-confirmed --to worker when the assignment is satisfied. "
+                      "Otherwise use guide --to worker --text TEXT to state what is missing and direct the remaining work.",
+                      results['injected']['hookSpecificOutput']['additionalContext'])
+        self.assertEqual(results['read_after'], [['attempt-1', 'coordinator', 'thread-1']])
 
 
 if __name__ == '__main__':
