@@ -22,6 +22,14 @@ UNWRITABLE = pathlib.Path('/proc')
 
 
 class RetainedStore(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        (ROOT / '.scratch/bend2').mkdir(parents=True, exist_ok=True)
+        if not EXE.is_file() and 'BATON2_EXE' not in os.environ:
+            subprocess.run(['sh', 'bend2/scripts/build-native.sh',
+                            'bend2/test/launch-store-retained.bend', str(EXE)],
+                           cwd=ROOT, check=True)
+
     def setUp(self):
         if not EXE.is_file():
             self.fail(f'retained store fixture not built at {EXE}')
@@ -54,10 +62,10 @@ class RetainedStore(unittest.TestCase):
         shutdown = subprocess.run(
             [str(EXE), '--instance-shutdown', str(self.db)],
             capture_output=True, text=True)
-        self.assertEqual(shutdown.returncode, 0, shutdown.stdout + shutdown.stderr)
         if self.owner is not None:
             status = self.owner.wait()
             self.assertEqual(status, 0, self.owner.stderr.read() or '')
+        self.assertEqual(shutdown.returncode, 0, shutdown.stdout + shutdown.stderr)
 
     def select(self, harness, store):
         (self.db.parent / (self.db.name + '.profiles')).write_text(
