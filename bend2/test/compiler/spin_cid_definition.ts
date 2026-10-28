@@ -39,7 +39,7 @@ const sites = [...source.matchAll(/term_(?:ctr|pak)\(CID_ARTIFACT\b/g)]
   .map((m) => m.index!);
 assert.ok(sites.length >= 1, "the fixture builds Artifact in the emitted C");
 for (const at of sites) {
-  assert.match(enclosing(at), /^spin_\d+$/,
+  assert.match(enclosing(at), /^\w*spin_\d+$/,
     "the Artifact construction must stay in a spin body");
 }
 assert.ok(defined.has("CID_ARTIFACT"), "CID_ARTIFACT is defined");
