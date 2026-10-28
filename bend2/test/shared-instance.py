@@ -1123,6 +1123,10 @@ class SharedInstance(unittest.TestCase):
         old_birth = (directory / 'native.birth').read_bytes()
         owners = self.owner_processes()
         self.assertEqual(len(owners), 1, owners)
+        old_owner = int(owners[0].split()[0])
+        if sys.platform.startswith('linux'):
+            self.assertEqual(len(self.inotify_instances(old_owner) or []), 1)
+        ticks_before = (directory / 'stdout').read_text(errors='replace').count('tick:')
 
         original.send_signal(signal.SIGTERM)
         original.wait()
@@ -1177,6 +1181,9 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(json.loads(native_line[len('recovery-line:'):])['pid'], pid)
         self.assertEqual((directory / 'stdout').read_text(errors='replace').count('"role": "native"'),
                          1, 'recovery launched a second native process')
+        self.eventually(
+            lambda: (directory / 'stdout').read_text(errors='replace').count('tick:') > ticks_before,
+            'the recovered attempt did not emit later output')
 
         rebound_owners = self.owner_processes()
         self.assertEqual(len(rebound_owners), 1, rebound_owners)
