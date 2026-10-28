@@ -1,6 +1,6 @@
 # Provision the additional Linux runner
 
-The native workflow's `darwin-arm64` job runs its cross-build on a Linux x64 self-hosted runner. It requests runner group `baton2-native-homelab` and labels `self-hosted`, `Linux`, `X64`, and `baton2-native-linux-x64`. The group restricts repository and workflow access. The runner service binds `/var/tmp/baton2-compile-queue` and runs as a dedicated account with the existing systemd isolation profile.
+The native workflow's `darwin-arm64` job runs its cross-build on a Linux x64 self-hosted runner. It requests runner group `baton2-native-homelab` and labels `self-hosted`, `Linux`, `X64`, `baton2-native-linux-x64`, and `baton2-native-darwin-cross`. The capability label is for runner accounts with verified read and execute access to the pinned Darwin LLVM tree and read access to the pinned SDK tree and transfer manifest. The primary runner and runner3 passed those checks; runner2 did not. Linux jobs continue to request only the Linux runner labels. The group restricts repository and workflow access. The runner service binds `/var/tmp/baton2-compile-queue` and runs as a dedicated account with the existing systemd isolation profile.
 
 `deploy/provision-baton2-native-homelab-runner-3.sh` provisions one additional runner on the homelab host. Before running it, confirm host capacity, verify the group policy for the exact workflow ref with `bend2/scripts/check-runner-group-readiness.py`, and confirm the target runner name is absent from the organization. For the current release workflow, run:
 
