@@ -59,7 +59,11 @@ if muse and resume:
               file=sys.stderr,flush=True)
         sys.exit(1)
 if omp:
-    json.loads(sys.stdin.readline())
+    print(json.dumps({'type':'ready','protocolVersion':1,'supported':[1,2],
+                      'maxFrameBytes':1048576,'maxReassembled':67108864}),flush=True)
+    filter_frame=sys.stdin.readline()
+    if not filter_frame.strip(): sys.exit(0)
+    json.loads(filter_frame)
     state=json.loads(sys.stdin.readline())
     prompt=json.loads(sys.stdin.readline())['message']
     storage=pathlib.Path(args[args.index('--session-dir')+1])
