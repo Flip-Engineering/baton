@@ -196,32 +196,26 @@ class Stop(unittest.TestCase):
         self.assertEqual(len(reports), 1)
         self.assertEqual(json.loads(reports[0]['body'])['stopId'], stopped['stopId'])
 
-    def test_live_native_with_absent_attempt_waits_for_restored_custody(self):
+    def test_live_native_with_absent_attempt_uses_owner_held_identity(self):
         observer, stream, started = self.begin()
         attempt_dir = pathlib.Path(self.rows(
             "SELECT directory FROM executions WHERE session='parent'")[0]['directory'])
         hidden = self.directory / 'held-stop-attempt'
         shutil.move(str(attempt_dir), str(hidden))
-        missing = self.stop()
-        self.assertEqual(missing['status'], 'custody-missing')
-        self.assertIsNone(missing['submittedSignal'])
-        self.assertIsNone(missing['nativeStatus'])
+        stopped = self.stop()
+        self.assertEqual(stopped['status'], 'requested')
+        self.assertEqual(stopped['submittedSignal'], 15)
         self.assertTrue(hidden.is_dir())
         self.assertFalse(attempt_dir.exists())
         shutil.move(str(hidden), str(attempt_dir))
-        restored = self.stop()
-        self.assertEqual(restored['status'], 'requested')
-        self.assertEqual(restored['submittedSignal'], 15)
         self.finish(observer, ok=False)
         completed = self.completed()
         self.assertEqual(completed['nativeStatus'], 'signal 15')
         reports = self.rows("SELECT id,body FROM messages WHERE recipient='root' "
                             "AND json_extract(body,'$.stopId')=?", [completed['stopId']])
-        self.assertEqual(len(reports), 2)
+        self.assertEqual(len(reports), 1)
         by_type = {json.loads(row['body'])['type']: row for row in reports}
-        self.assertEqual(set(by_type), {'session-stop-custody-missing', 'session-stopped'})
-        self.assertNotEqual(by_type['session-stop-custody-missing']['id'],
-                            by_type['session-stopped']['id'])
+        self.assertEqual(set(by_type), {'session-stopped'})
         self.assertEqual(by_type['session-stopped']['id'], completed['reportId'])
         self.assertEqual(json.loads(by_type['session-stopped']['body'])['nativeStatus'], 'signal 15')
         self.assertEqual(self.rows("SELECT phase,status FROM executions WHERE session='parent'"),
