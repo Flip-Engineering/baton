@@ -3,7 +3,7 @@
 import Base
 import ../coordinator/commands.bend as C
 import ./native-input.bend as NativeInput
-import ./message-status.bend as Status
+import ../coordinator/message-status.bend as Status
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
 import ./input-hook.bend as InputHook
