@@ -501,6 +501,13 @@ def escalated(+db: String, +id: String, +code: U32, +detail: String, reported: R
       IO.die(Unit,code,detail)
     case Fail{(report_code,report_text)}: IO.die(Unit,code,detail ++ "\nThe undelivered report for " ++ id ++ " was not committed (" ++ U32.show(report_code) ++ ": " ++ report_text ++ "); the input stays owed in the pending inbox.")
 
+def redriven_or_escalated(+db: String, +id: String, +code: U32, +detail: String, redriven: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match redriven:
+    case Done{output}: IO.die(Unit,code,detail)
+    case Fail{(+redrive_code,+redrive_detail)}: do IO<Unit>:
+      reported : Result<&1,&1,U32 & String,String> <- undelivered_reported(db,id,redrive_detail)
+      escalated(db,id,redrive_code,redrive_detail,reported)
+
 # A delivery whose recipient endpoint failed leaves its input owed with no turn
 # started for it (#1054): worktree-paths-972-haiku-20261022 never started after
 # its endpoint exited 5 on 'database is locked', and the coordinator kept 22
@@ -516,11 +523,7 @@ def delivered_or_redriven(+db: String, +id: String, result: Result<&1,&1,U32 & S
       owed : String <- IO.try(String,DB.Sql.query(db,owed_after_sql(id)))
       +next : String <- IO.pure(String,Tx.trim_nl(owed))
       redriven : Result<&1,&1,U32 & String,String> <- redrive(db,next,String.is_empty(next))
-      match redriven:
-        case Done{output}: IO.die(Unit,code,detail)
-        case Fail{(+redrive_code,+redrive_detail)}: do IO<Unit>:
-          reported : Result<&1,&1,U32 & String,String> <- undelivered_reported(db,next,redrive_detail)
-          escalated(db,next,redrive_code,redrive_detail,reported)
+      redriven_or_escalated(db,next,code,detail,redriven)
 
 def deliver(+db: String, +id: String) -> IO(Unit):
   do IO<Unit>:
