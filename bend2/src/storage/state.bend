@@ -533,41 +533,59 @@ def contains_value(values: List<&2,String>, +value: String) -> Bool:
     case Nil{}: False{}
     case Con{head, tail}: Bool.or(String.eq(head, value), contains_value(tail, value))
 
-def ancestor_answer(result: G.GitOut) -> Maybe<Bool>:
-  match result:
-    case G.GRun{code, out}:
-      Bool.pick(Maybe<Bool>, U32.is_eq(code, 0), Some{True{}},
-        Bool.pick(Maybe<Bool>, U32.is_eq(code, 1), Some{False{}}, None{}))
-    case G.GBroken{detail}: None{}
+type AncestorResult is Data:
+  AncestorPublished{}
+  AncestorUnpublished{}
+  AncestorUnknown{}
 
-def staging_ref_ancestor_result(+path: String, +local: String, tips: List<&2,String>, answer: Maybe<Bool>) -> IO(Maybe<Bool>):
-  match answer:
-    case Some{True{}}: IO.pure(Maybe<Bool>, Some{True{}})
-    case Some{False{}}: staging_ref_ancestor(path, local, tips)
-    case None{}: IO.pure(Maybe<Bool>, None{})
+def ancestor_answer(result: G.GitOut) -> AncestorResult:
+  match result:
+    case G.GRun{+code, out}:
+      Bool.pick(AncestorResult, U32.is_eq(code, 0), AncestorPublished{},
+        Bool.pick(AncestorResult, U32.is_eq(code, 1), AncestorUnpublished{}, AncestorUnknown{}))
+    case G.GBroken{detail}: AncestorUnknown{}
+
+def ancestor_is_published(result: AncestorResult) -> Bool:
+  match result:
+    case AncestorPublished{}: True{}
+    case AncestorUnpublished{}: False{}
+    case AncestorUnknown{}: False{}
+
+def ancestor_is_unpublished(result: AncestorResult) -> Bool:
+  match result:
+    case AncestorPublished{}: False{}
+    case AncestorUnpublished{}: True{}
+    case AncestorUnknown{}: False{}
 
 def staging_ref_ancestor(+path: String, +local: String, tips: List<&2,String>) -> IO(Maybe<Bool>):
   match tips:
     case Nil{}: IO.pure(Maybe<Bool>, Some{False{}})
     case Con{head, tail}:
-      do IO<Maybe<Bool>>:
-        check : G.GitOut <- Git.runGit(path, ["merge-base", "--is-ancestor", local, head])
-        staging_ref_ancestor_result(path, local, tail, ancestor_answer(check))
+      IO.bind(G.GitOut, Maybe<Bool>,
+        Git.runGit(path, ["merge-base", "--is-ancestor", local, head]),
+        +check => Bool.pick(IO(Maybe<Bool>), ancestor_is_published(ancestor_answer(check)),
+          IO.pure(Maybe<Bool>, Some{True{}}),
+          Bool.pick(IO(Maybe<Bool>), ancestor_is_unpublished(ancestor_answer(check)),
+            staging_ref_ancestor(path, local, tail), IO.pure(Maybe<Bool>, None{}))))
 
-def published_local_refs(+path: String, values: List<&2,String>, tips: List<&2,String>) -> IO(Maybe<Bool>):
+def published_ancestor_result(answer: Maybe<Bool>) -> AncestorResult:
+  match answer:
+    case Some{True{}}: AncestorPublished{}
+    case Some{False{}}: AncestorUnpublished{}
+    case None{}: AncestorUnknown{}
+
+def published_local_refs(+path: String, values: List<&2,String>, +tips: List<&2,String>) -> IO(Maybe<Bool>):
   match values:
     case Nil{}: IO.pure(Maybe<Bool>, Some{True{}})
-    case Con{head, tail}:
+    case Con{+head, +tail}:
       Bool.pick(IO(Maybe<Bool>), contains_value(tips, head), published_local_refs(path, tail, tips),
-        do IO<Maybe<Bool>>:
-          ancestor : Maybe<Bool> <- staging_ref_ancestor(path, head, tips)
-          published_local_ref_result(path, tail, tips, ancestor))
-
-def published_local_ref_result(+path: String, tail: List<&2,String>, tips: List<&2,String>, ancestor: Maybe<Bool>) -> IO(Maybe<Bool>):
-  match ancestor:
-    case Some{True{}}: published_local_refs(path, tail, tips)
-    case Some{False{}}: IO.pure(Maybe<Bool>, Some{False{}})
-    case None{}: IO.pure(Maybe<Bool>, None{})
+        IO.bind(AncestorResult, Maybe<Bool>,
+          IO.bind(Maybe<Bool>, AncestorResult, staging_ref_ancestor(path, head, tips),
+            answer => IO.pure(AncestorResult, published_ancestor_result(answer))),
+          +ancestor => Bool.pick(IO(Maybe<Bool>), ancestor_is_published(ancestor),
+            published_local_refs(path, tail, tips),
+            Bool.pick(IO(Maybe<Bool>), ancestor_is_unpublished(ancestor),
+              IO.pure(Maybe<Bool>, Some{False{}}), IO.pure(Maybe<Bool>, None{})))))
 
 def single_worktree(+worklist: String, +toplevel: String) -> Bool:
   +prefix = "worktree " ++ toplevel ++ "\n"
@@ -590,6 +608,15 @@ def staging_publication_evidence(toplevel: String, gitdir: String, commondir: St
   staging_publication_after_worktree(staging_worktree_evidence(toplevel, gitdir, commondir, worklist),
     unreachable)
 
+def staging_remote_result(published: Maybe<Bool>, toplevel: String, gitdir: String, commondir: String,
+                          worklist: String, unreachable: Maybe<String>) -> IO(T.Presence):
+  match published:
+    case None{}: IO.pure(T.Presence, T.Unknown{})
+    case Some{False{}}: IO.pure(T.Presence, T.Present{"unpublished-object"})
+    case Some{True{}}:
+      IO.pure(T.Presence, staging_publication_evidence(Tx.trim_nl(toplevel), gitdir, commondir,
+        worklist, unreachable))
+
 def staging_remote_evidence(+path: String, remote_text: String, refs: String, +head: String, toplevel: String,
                             gitdir: String, commondir: String, worklist: String,
                             unreachable: Maybe<String>) -> IO(T.Presence):
@@ -599,12 +626,7 @@ def staging_remote_evidence(+path: String, remote_text: String, refs: String, +h
     IO.pure(T.Presence, T.Unknown{}),
     do IO<T.Presence>:
       published : Maybe<Bool> <- published_local_refs(path, local, commits)
-      match published:
-        case None{}: IO.pure(T.Presence, T.Unknown{})
-        case Some{False{}}: IO.pure(T.Presence, T.Present{"unpublished-object"})
-        case Some{True{}}:
-          IO.pure(T.Presence, staging_publication_evidence(Tx.trim_nl(toplevel), gitdir, commondir,
-            worklist, unreachable)))
+      staging_remote_result(published, toplevel, gitdir, commondir, worklist, unreachable))
 
 # A released staging source is a checkout whose ownership release is recorded
 # in its root class. Removal requires the candidate origin to be the
@@ -668,10 +690,10 @@ def staging_finish(+path: String, listed: Maybe<String>, unreachable: Maybe<Stri
 # The host walks the candidate and every descendant without following symlinks.
 # Foreign-owned entries preserve the whole candidate because process evidence
 # for that uid may be unreadable.
-def uid_boundary_result(+result: Result<&1,&1,U32 & String,String>) -> T.Presence:
+def uid_boundary_result(result: Result<&1,&1,U32 & String,String>) -> T.Presence:
   match result:
     case Fail{error}: T.Unknown{}
-    case Done{value}:
+    case Done{+value}:
       Bool.pick(T.Presence, String.eq(Tx.trim_nl(value), "own"), T.Absent{},
         Bool.pick(T.Presence, String.starts_with(value, "foreign:"), T.Present{"cross-uid-descendant"}, T.Unknown{}))
 
@@ -679,16 +701,6 @@ def staging_same_uid(+path: String) -> IO(T.Presence):
   do IO<T.Presence>:
     boundary : Result<&1,&1,U32 & String,String> <- H.StorageHost.uid_boundary(path)
     IO.pure(T.Presence, uid_boundary_result(boundary))
-
-def staging_unpublished(+source: String, +path: String) -> IO(T.Presence):
-  do IO<T.Presence>:
-    cross : T.Presence <- staging_same_uid(path)
-    staging_gate(source, path, cross)
-
-def staging_gate(+source: String, +path: String, cross: T.Presence) -> IO(T.Presence):
-  match cross:
-    case T.Absent{}: staging_reads(source, path)
-    case other: IO.pure(T.Presence, other)
 
 def staging_reads(+source: String, +path: String) -> IO(T.Presence):
   do IO<T.Presence>:
@@ -707,6 +719,16 @@ def staging_reads(+source: String, +path: String) -> IO(T.Presence):
       git_text(source_url_git), git_text(candidate_url_git), git_text(head_git),
       git_text(toplevel_git), git_text(gitdir_git), git_text(commondir_git),
       git_text(refs_git), git_text(worklist_git))
+
+def staging_gate(+source: String, +path: String, cross: T.Presence) -> IO(T.Presence):
+  match cross:
+    case T.Absent{}: staging_reads(source, path)
+    case other: IO.pure(T.Presence, other)
+
+def staging_unpublished(+source: String, +path: String) -> IO(T.Presence):
+  do IO<T.Presence>:
+    cross : T.Presence <- staging_same_uid(path)
+    staging_gate(source, path, cross)
 
 def unpublished_fact(+cls: T.StorageClass, +source: String, +path: String, +state: State, +owner: String) -> IO(T.Presence):
   match cls:
