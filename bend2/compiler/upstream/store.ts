@@ -57,7 +57,7 @@ function is_span(value: object): value is Bend.Span {
 
 // Visit the eagerly available graph. Function bodies belong to their own
 // binding scope and are opened separately.
-function eager_objects(value: unknown): Set<object> {
+function eager_objects(value: unknown, stable: WeakSet<object>): Set<object> {
   const found = new Set<object>();
   const stack = [value];
   while (stack.length > 0) {
@@ -65,7 +65,7 @@ function eager_objects(value: unknown): Set<object> {
     if (value === null || (typeof value !== "object" && typeof value !== "function")
       || found.has(value)) continue;
     found.add(value);
-    if (typeof value === "function" || is_span(value)) continue;
+    if (typeof value === "function" || is_span(value) || stable.has(value)) continue;
     for (const child of Object.values(value)) stack.push(child);
   }
   return found;
@@ -82,6 +82,8 @@ export function encode_term(term: Bend.LTerm | Bend.HTerm, tables: EncoderTables
   const pending: { value: object | Function; id: number; params?: Parameters }[] = [];
   let marker = 0;
   const ancestor = (a: number, b: number): number => {
+    if (a === b) return a;
+    if (a === 0 || b === 0) return 0;
     const seen = new Set<number>();
     for (let s = a; s >= 0; s = scopes[s]) seen.add(s);
     for (let s = b; s >= 0; s = scopes[s]) if (seen.has(s)) return s;
@@ -130,8 +132,8 @@ export function encode_term(term: Bend.LTerm | Bend.HTerm, tables: EncoderTables
       const a = args(), b = args();
       const first = value(params.array ? a : a[0]);
       const second = value(params.array ? b : b[0]);
-      const objects = eager_objects(first);
-      for (const object of eager_objects(second)) {
+      const objects = eager_objects(first, stable);
+      for (const object of eager_objects(second, stable)) {
         if (objects.has(object)) { stable.add(object); anchor(object, scope); }
       }
       rows[id] = { owner: scope, function: { scope: child, array: params.array,
@@ -252,6 +254,7 @@ export function decode_term<T extends Bend.LTerm | Bend.HTerm>(graph: TermGraph,
 
 type Section = { file: string; sha256: string; bytes: number; nodes: number };
 type BodySection = Section & { mode: "checked" | "higher" };
+type Observe = (event: string, details: Record<string, unknown>) => void;
 export type SourceInput = { path: string; namespace: string | null; sha256: string };
 export type StoreIndex = { compiler: string; tables: Section; header: Section;
   bodies: [string, BodySection][]; inputs: SourceInput[];
@@ -286,7 +289,7 @@ export class CheckedWriter {
   private bodies = new Map<string, BodySection>();
   private pending = new Map<string, { value: Bend.LTerm | Bend.HTerm; mode: BodySection["mode"] }>();
   constructor(readonly compiler: string, workspace = os.tmpdir(),
-    readonly inputs: SourceInput[] = []) {
+    readonly inputs: SourceInput[] = [], private observe?: Observe) {
     this.directory = fs.mkdtempSync(path.join(workspace, "bend-checked-"));
   }
 
@@ -297,9 +300,15 @@ export class CheckedWriter {
     return { file, sha256, bytes, nodes };
   }
 
-  private graph(value: unknown): Section {
+  private graph(value: unknown, kind: string, name?: string): Section {
+    const begin = performance.now();
     const graph = encode_term(value as Bend.LTerm, this.tables);
-    return this.write(JSON.stringify(graph), graph.rows.length);
+    const text = JSON.stringify(graph);
+    const encoded = performance.now();
+    const section = this.write(text, graph.rows.length);
+    this.observe?.("store.section", { kind, name, ...section,
+      encode_ms: encoded - begin, write_ms: performance.now() - encoded });
+    return section;
   }
 
   has(name: string): boolean { return this.bodies.has(name) || this.pending.has(name); }
@@ -317,11 +326,14 @@ export class CheckedWriter {
     // Front-end walks normalize checker cells. Encode their completed state
     // before releasing the front-end graph.
     for (const [name, { value, mode }] of this.pending) {
-      this.bodies.set(name, { ...this.graph(value), mode });
+      this.bodies.set(name, { ...this.graph(value, "body", name), mode });
     }
     this.pending.clear();
-    const section = this.graph(header);
+    const section = this.graph(header, "header");
+    const begin = performance.now();
     const tables = this.write(JSON.stringify(this.tables.data), this.tables.data.spans.length);
+    this.observe?.("store.section", { kind: "tables", ...tables,
+      duration_ms: performance.now() - begin });
     const bodies = [...this.bodies];
     const input_manifest_sha256 = digest(JSON.stringify(this.inputs));
     const program_sha256 = digest(JSON.stringify({ compiler: this.compiler,
@@ -332,7 +344,7 @@ export class CheckedWriter {
     fs.writeFileSync(path.join(this.directory, "index.json"), JSON.stringify(index));
     const bytes = fs.readdirSync(this.directory).reduce((n, file) =>
       n + fs.statSync(path.join(this.directory, file)).size, 0);
-    return { index, reader: new CheckedReader(this.directory, this.compiler), bytes };
+    return { index, reader: new CheckedReader(this.directory, this.compiler, this.observe), bytes };
   }
 
   remove(): void { fs.rmSync(this.directory, { recursive: true }); }
@@ -347,11 +359,14 @@ export class CheckedReader {
   private decoded = new Map<string, Bend.HTerm>();
   decode_ms = 0;
 
-  constructor(readonly directory: string, compiler: string) {
+  constructor(readonly directory: string, compiler: string, private observe?: Observe) {
+    const begin = performance.now();
     this.index = JSON.parse(fs.readFileSync(path.join(directory, "index.json"), "utf8"));
     if (this.index.compiler !== compiler) throw new Error("Checked store compiler identity differs");
     this.tables = new DecoderTables(this.read<Tables>(this.index.tables));
     this.bodies = new Map(this.index.bodies);
+    this.observe?.("store.tables", { duration_ms: performance.now() - begin,
+      bytes: this.index.tables.bytes, spans: this.tables.spans.length });
   }
 
   private read<T>(section: Section): T {
@@ -361,7 +376,11 @@ export class CheckedReader {
   }
 
   header<T>(): T {
-    return decode_term(this.read<TermGraph>(this.index.header), this.tables) as T;
+    const begin = performance.now();
+    const value = decode_term(this.read<TermGraph>(this.index.header), this.tables) as T;
+    this.observe?.("store.header", { duration_ms: performance.now() - begin,
+      bytes: this.index.header.bytes, nodes: this.index.header.nodes });
+    return value;
   }
 
   body(name: string): Bend.HTerm | undefined {
@@ -374,7 +393,10 @@ export class CheckedReader {
     const value = decode_term(graph, this.tables);
     const h = section.mode === "checked" ? Bend.term_higher(value as Bend.LTerm) : value as Bend.HTerm;
     this.decoded.set(name, h);
-    this.decode_ms += performance.now() - begin;
+    const duration_ms = performance.now() - begin;
+    this.decode_ms += duration_ms;
+    this.observe?.("store.decode", { name, duration_ms, bytes: section.bytes,
+      nodes: section.nodes, mode: section.mode });
     return h;
   }
 

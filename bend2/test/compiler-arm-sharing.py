@@ -52,9 +52,7 @@ class CompilerArmSharing(unittest.TestCase):
         bend2 = cls.compiler / 'bend2'
         bend2.mkdir(parents=True)
         (cls.compiler / 'bin').mkdir()
-        for name in ('comp.ts', 'bend.ts', 'base.bend'):
-            shutil.copyfile(UPSTREAM / name, bend2 / name)
-        shutil.copytree(UPSTREAM / 'effs', bend2 / 'effs')
+        shutil.copytree(UPSTREAM, bend2, dirs_exist_ok=True)
         (cls.compiler / 'bin/bun').symlink_to(pathlib.Path(cls.bun).resolve())
 
     @classmethod

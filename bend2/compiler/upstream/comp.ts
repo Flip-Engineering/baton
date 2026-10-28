@@ -4478,7 +4478,7 @@ export function compile_book(book: Bend.Book, workspace?: string): string {
     new URL("./base.bend", import.meta.url)]);
   const inputs = (SOURCE_FILES.get(book) ?? []).map(([path, namespace]) =>
     ({ path, namespace, sha256: Store.file_digest(path) }));
-  const writer = new Store.CheckedWriter(identity, workspace, inputs);
+  const writer = new Store.CheckedWriter(identity, workspace, inputs, diagnostic);
   diagnostic("store.begin", { directory: writer.directory, compiler: identity });
   const result = compile_stored(book, writer);
   writer.remove();
