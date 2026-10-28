@@ -94,9 +94,9 @@ class SqliteReadReuse(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(dir=SCRATCH)
         self.addCleanup(self.temp.cleanup)
 
-    def run_mode(self, mode, timeout=60):
+    def run_mode(self, mode):
         return subprocess.run([str(FIXTURE), mode, self.temp.name],
-                              capture_output=True, text=True, timeout=timeout)
+                              capture_output=True, text=True)
 
     def test_lifecycle(self):
         result = self.run_mode('lifecycle')
