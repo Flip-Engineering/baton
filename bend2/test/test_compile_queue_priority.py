@@ -72,8 +72,8 @@ class QueuePriorityTests(unittest.TestCase):
             time.sleep(0.02)
         self.fail("queue request did not publish a scheduling ticket")
 
-    def hold_heavy(self):
-        lock = (self.state / "heavy.lock").open("w")
+    def hold_cc(self):
+        lock = (self.state / "cc.lock").open("w")
         self.addCleanup(lock.close)
         fcntl.flock(lock, fcntl.LOCK_EX)
         return lock
@@ -87,7 +87,7 @@ class QueuePriorityTests(unittest.TestCase):
         return self.log.read_text().split()
 
     def test_priority_request_precedes_waiting_default(self):
-        lock = self.hold_heavy()
+        lock = self.hold_cc()
         default = self.request("default")
         self.wait_ticket()
         flip = self.request("flip", priority=9)
@@ -101,7 +101,7 @@ class QueuePriorityTests(unittest.TestCase):
         self.assertEqual(list(waiters.iterdir()), [])
 
     def test_equal_priority_keeps_arrival_order(self):
-        lock = self.hold_heavy()
+        lock = self.hold_cc()
         first = self.request("first", priority=9)
         self.wait_ticket()
         second = self.request("second", priority=9)
@@ -132,7 +132,7 @@ class QueuePriorityTests(unittest.TestCase):
                          ["00000000000000000002-unknown"])
 
     def test_killed_supervisor_ticket_is_reaped(self):
-        lock = self.hold_heavy()
+        lock = self.hold_cc()
         blocked = self.request("blocked")
         active = None
         deadline = time.monotonic() + 30
