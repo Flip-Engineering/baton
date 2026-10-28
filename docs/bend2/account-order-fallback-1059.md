@@ -50,7 +50,7 @@ On a refusal, Baton scans the order from its head and gives each entry one state
 | State | Meaning | Effect |
 | --- | --- | --- |
 | refused | the account that just refused | skipped |
-| not launchable | an Anthropic `api_key` account while the promotional-credit guard is false | skipped |
+| not launchable | an Anthropic `claude-code` `api_key` account while the promotional-credit route is unavailable | skipped |
 | held | the account's usage gate is held | skipped |
 | open | no hold | the seat moves here |
 | unknown | the usage read could not be read and no hold stands | the seat moves here, unless the account is `claude-max-primary` |
@@ -136,8 +136,8 @@ Its focused compiler entry is `bend2/test/account-order-entry.bend`.
 
 ## Limits
 
-- The credit accounts stay unlaunchable while the promotional-credit guard is
-  false. This change does not alter the guard.
+- The credit accounts stay unlaunchable while the promotional-credit route is
+  unavailable (#1177).
 - Native history is not prepared for a seat with no native conversation.
 - This branch includes the #1063 Claude reader. Deployment fixtures use its
   credential resolution and response parsing, with a fixture response for the

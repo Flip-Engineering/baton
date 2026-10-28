@@ -313,20 +313,21 @@ def select_account(accounts: List<&2,AccountRecord>, +blocked: String, +harness:
 
 # A subscription account binds the credential directory the harness reads. The
 # API-key helper binding carries only a resolver path and secret reference. The
-# Anthropic claude-code API-key binding comes from credit_launch_gate, which records
-# the attempt's one-use authorization before returning it.
+# Anthropic claude-code API-key route is unavailable; credit_launch_gate refuses it.
 def api_key_binding(+secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
   match helper:
     case None{}: None{}
     case Some{+script}: Some{Con{script,Con{secret_ref,Nil{}}}}
 
-# An API-key account yields no binding when no resolver is installed beside the
-# resolved identity helper.
+# The Anthropic claude-code API-key route spends promotional credit. Nothing in a
+# retained launch bounds its provider requests to the reported grant, so the route
+# is unavailable (#881, #1177). Another API-key account yields no binding when no
+# resolver is installed beside the resolved identity helper.
 def credit_api_key_refusal(account: AccountRecord) -> String:
   match account:
     case Ac{id,provider,harness,funding,secret_ref,organization,verified_at}:
       match funding:
-        case "api_key": "This API-key launch has no installed resolver beside the resolved identity helper; the attempt was not started and its input stays owed."
+        case "api_key": Bool.pick(String,Bool.and(String.eq(provider,"anthropic"),String.eq(harness,"claude-code")),"Anthropic API-key launches are unavailable because no provider-enforced boundary keeps their request charges within the promotional-credit grant; the attempt was not started and its input stays owed.","This API-key launch has no installed resolver beside the resolved identity helper; the attempt was not started and its input stays owed.")
         case other: "The selected account has no available launch binding; the attempt was not started and its input stays owed."
 
 # --- request-level credit metering and admission -----------------------------
@@ -1319,13 +1320,14 @@ def handoff_label_io(+db: String, +session: String) -> IO(String):
 # The recorded accounts of the session's harness, in the operator's order, are the
 # one fallback order whenever that harness has recorded accounts. A refusal moves
 # the seat to the first entry, scanned from the head of the order, that is not the
-# refused account and is not held by a recorded usage read (#1025).
+# refused account, is launchable and is not held by a live usage read (#1025).
 # Scanning from the head reaches the listed accounts when the refused label is not a
 # recorded account (observed 2026-10-24: Riff seats bound by profile records to
 # claude-credit-primary, which the profile list did not contain, were reported
 # exhausted with two Max accounts listed), and an account that a live read reopens
-# regains its place. An Anthropic API-key credit account is held by its recorded
-# provider refusal. The order states no availability; each entry's reads do.
+# regains its place. An Anthropic API-key credit account is not launchable while
+# its route is unavailable. The order states no availability; each entry's live
+# read does.
 def harness_accounts(accounts: List<&2,AccountRecord>, +harness: String) -> List<&2,AccountRecord>:
   match accounts:
     case Nil{}: Nil{}
@@ -1369,9 +1371,11 @@ def entry_gate(+db: String, +session: String, +provider: String, +model: String,
 def account_state(+db: String, +session: String, +provider: String, +model: String, +helper: String, +read: Bool, +refused: String, +refused_detail: String, +account: AccountRecord) -> IO(EntryState):
   Bool.pick(IO(EntryState),String.eq(account_id(account),refused),
     IO.pure(EntryState,Es{"refused",refused_detail,""}),
-    do IO<EntryState>:
-      gate : UW.Gate <- entry_gate(db,session,provider,model,helper,"account-order:" ++ refused,account_id(account),read)
-      IO.pure(EntryState,gate_state(gate)))
+    Bool.pick(IO(EntryState),credit_route(account),
+      IO.pure(EntryState,Es{"not-launchable","not launchable: promotional-credit route is unavailable",""}),
+      do IO<EntryState>:
+        gate : UW.Gate <- entry_gate(db,session,provider,model,helper,"account-order:" ++ refused,account_id(account),read)
+        IO.pure(EntryState,gate_state(gate))))
 
 # held lists the labels of the held entries one per line; receipts joins their reads.
 type Scan is Data:
@@ -1627,28 +1631,11 @@ def order_move(+db: String, +session: String, +native: String, +cmd: String, +cw
     moved : Bool <- order_move_with(db,session,native,cmd,cwd)
     IO.pure(Unit,Unit{})
 
-# An Anthropic API-key credit account has no usage read. Its provider refusal is
-# the hold signal and is recorded as that account's usage hold with the provider
-# text. The refused label names the account for an account binding and for a
-# profile record alike.
-def credit_refusal_decided(+db: String, +session: String, +label: String, +id: String, +cause: String, refused: Maybe<&2,AccountRecord>) -> IO(Unit):
-  match refused:
-    case None{}: IO.pure(Unit,Unit{})
-    case Some{+account}: Bool.pick(IO(Unit),Bool.not(credit_route(account)),IO.pure(Unit,Unit{}),do IO<Unit>:
-      +provider : String <- UW.seat_provider_io(db,session)
-      UW.record_refusal_hold(db,session,provider,label,id,cause))
-
-def credit_refusal_recorded(+db: String, +session: String, +harness: String, +label: String, +id: String, +cause: String) -> IO(Unit):
-  Bool.pick(IO(Unit),Bool.or(String.is_empty(cause),String.is_empty(label)),IO.pure(Unit,Unit{}),do IO<Unit>:
-    refused : Maybe<&2,AccountRecord> <- account_by_label(db,label,harness)
-    credit_refusal_decided(db,session,label,id,cause,refused))
-
 # Provider-reported exhaustion advances the account in force when a binding
 # put one in force, and the operator's profile list otherwise. The refusal
 # evidence is recorded before any advance, under the refused account label, and
 # the refusal starts a live read of that account's provider usage (#1025); the
-# read, not the refusal text, decides whether the account is held, except for an
-# Anthropic API-key credit account, whose refusal records its hold. For two
+# read, not the refusal text, decides whether the account is held. For two
 # subscription accounts with distinct credential stores, the native-history
 # helper materializes the next store before the sidecar records the advance.
 # The advance is recorded before the caller relaunches, so the next attempt
@@ -1663,7 +1650,6 @@ def handoff_with(+db: String, +session: String, +id: String, +event: String, nat
     +label : String <- label_for_bound(db,session,bound)
     recorded : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.record_cause(db,session,id,label,cause))
     read : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.read_refused_with(db,session,label,id,helper))
-    credit : Unit <- credit_refusal_recorded(db,session,harness,label,id,cause)
     +ordered : List<&2,AccountRecord> <- ordered_accounts(db,harness)
     advanced : Bool <- handoff_ordered(db,session,id,event,native,cmd,cwd,cause,harness,label,helper,bound,ordered)
     +next_label : String <- handoff_label_io(db,session)
@@ -1988,9 +1974,9 @@ def record_current_attempt(+db: String, +session: String, +attempt: String, +pre
 # route, a verified organization, and the newest promotional_credit
 # observation for that organization with its reported balance and unit. A
 # reported zero balance is the provider-reported exhausted state. The status
-# names the recorded reason. The launch decision is the reservation that
-# credit_launch_gate records with credit_reserve_for. Actual provider cost
-# enters through external_spend observations from the Admin cost report.
+# names the recorded reason; it does not decide a launch, and credit_launch_gate
+# refuses the route. Actual provider cost enters through external_spend
+# observations from the Admin cost report.
 def credit_meter_sql(+organization: String) -> String:
   "SELECT state||char(31)||balance||char(31)||unit||char(31)||cycle FROM credit_observations WHERE organization=" ++ C.q(organization) ++ " AND fact='promotional_credit' ORDER BY observed_at DESC,rowid DESC LIMIT 1;"
 
@@ -2031,46 +2017,22 @@ def credit_launch_binding(+db: String, +session: String, +attempt: String, +harn
 
 # --- the launch gate ----------------------------------------------------------
 # The launch gate is the production caller before send. An Anthropic claude-code
-# API-key launch first reserves against the organization's usable promotional
-# credit with credit_reserve_for. A refused reservation returns its named reason
-# and starts no launch. An admitted reservation records the attempt's one-use
-# credential authorization and returns the packaged resolver binding. The
-# provider's own credit refusal is recorded by handoff_with as that account's
-# usage hold; it does not admit a launch.
+# API-key launch is refused with credit_api_key_refusal and records no reservation
+# or authorization: a retained launch can make more than one provider request, and
+# no provider-enforced boundary or account-specific evidence keeps those charges
+# within the promotional-credit grant. The reservation ledger above has no
+# production caller. Other accounts keep their bindings.
 def credit_launch_helper_text(helper: Maybe<String>) -> String:
   match helper:
     case None{}: ""
     case Some{path}: path
-
-def credit_guard_refusal_status(+reason: String) -> String:
-  "Anthropic API-key launch refused by the promotional-credit reservation (" ++ reason ++ "); the attempt was not started and its input stays owed."
-
-def credit_current_period_io(db: String) -> IO(String):
-  do IO<String>:
-    text : String <- IO.try(String,DB.Sql.read(db,"SELECT strftime('%Y-%m','now');"))
-    IO.pure(String,Tx.trim_nl(text))
-
-def credit_launch_authorized(+db: String, +session: String, +attempt: String, +account: AccountRecord, +helper: String) -> IO(Maybe<List<String>> & String):
-  do IO<Maybe<List<String>> & String>:
-    authorized : Bool <- credit_record_authorization(db,session,attempt,account)
-    Bool.pick(IO(Maybe<List<String>> & String),authorized,
-      IO.pure(Maybe<List<String>> & String,(api_key_binding(account_secret_ref(account),api_key_resolver_value(helper)),"")),
-      IO.pure(Maybe<List<String>> & String,(None{},"The promotional-credit authorization for this attempt could not be recorded; the attempt was not started and its input stays owed.")))
-
-def credit_launch_reserved(+db: String, +session: String, +attempt: String, +account: AccountRecord, +helper: String) -> IO(Maybe<List<String>> & String):
-  do IO<Maybe<List<String>> & String>:
-    +period : String <- credit_current_period_io(db)
-    +decision : CreditAdmission <- credit_reserve_for(db,session,attempt,account,period)
-    Bool.pick(IO(Maybe<List<String>> & String),credit_admission_admitted(decision),
-      credit_launch_authorized(db,session,attempt,account,helper),
-      IO.pure(Maybe<List<String>> & String,(None{},credit_guard_refusal_status(credit_admission_reason(decision)))))
 
 # The gate returns (binding, refusal). A binding that is Some with an empty
 # refusal is usable; a nonempty refusal is the full sentence the caller reports
 # and no launch starts.
 def credit_launch_gate_account(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, +helper: String, +profile_store: String) -> IO(Maybe<List<String>> & String):
   Bool.pick(IO(Maybe<List<String>> & String),credit_route(account),
-    credit_launch_reserved(db,session,attempt,account,helper),
+    IO.pure(Maybe<List<String>> & String,(None{},credit_api_key_refusal(account))),
     IO.pure(Maybe<List<String>> & String,(account_binding(harness,Some{account},api_key_resolver_value(helper),profile_store),"")))
 
 def credit_launch_gate(+db: String, +session: String, +attempt: String, +harness: String, +chosen: Maybe<&2,AccountRecord>, helper: Maybe<String>, +profile_store: String) -> IO(Maybe<List<String>> & String):

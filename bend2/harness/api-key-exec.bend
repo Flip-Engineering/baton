@@ -284,25 +284,39 @@ def admitted_decided(state: String, +reference: String, +command: String, args: 
     case "mismatch": IO.die(Unit,2,refusal_json(reference,"creditAuthorizationMismatch","The recorded authorization for this attempt names a different secret reference."))
     case other: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit authorization for this attempt."))
 
-# The authorization is keyed by the attempt directory the retained launch exports
-# as BATON_ATTEMPT_DIRECTORY, in the database it exports as BATON_DATABASE.
-def admitted_db(+attempt: String, db_value: Result<&1,&1,U32 & String,String>, +reference: String, +command: String, args: List<String>) -> IO(Unit):
-  match db_value:
-    case Done{+db}: do IO<Unit>:
+def marker_matches_decided(matches: Bool, +db: String, +attempt: String, +reference: String, +command: String, args: List<String>) -> IO(Unit):
+  match matches:
+    case True{}: do IO<Unit>:
       state : String <- authorization_consume(db,attempt,reference)
       admitted_decided(state,reference,command,args)
+    case False{}: admitted_decided("absent",reference,command,args)
+
+def admitted_marker_matches(+db: String, +marker: String, +attempt: String, +reference: String, +command: String, args: List<String>) -> IO(Unit):
+  do IO<Unit>:
+    matches : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(marker)),String.eq(marker,attempt)))
+    marker_matches_decided(matches,db,attempt,reference,command,args)
+
+def admitted_db(+marker: String, +attempt: String, db_value: Result<&1,&1,U32 & String,String>, +reference: String, +command: String, args: List<String>) -> IO(Unit):
+  match db_value:
+    case Done{+db}: admitted_marker_matches(db,marker,attempt,reference,command,args)
     case Fail{(code,detail)}: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit authorization for this attempt."))
 
-def admitted_attempt(attempt_value: Result<&1,&1,U32 & String,String>, db_value: Result<&1,&1,U32 & String,String>, +reference: String, +command: String, args: List<String>) -> IO(Unit):
+def admitted_attempt(+marker: String, attempt_value: Result<&1,&1,U32 & String,String>, db_value: Result<&1,&1,U32 & String,String>, +reference: String, +command: String, args: List<String>) -> IO(Unit):
   match attempt_value:
-    case Done{+attempt}: admitted_db(attempt,db_value,reference,command,args)
+    case Done{+attempt}: admitted_db(marker,attempt,db_value,reference,command,args)
+    case Fail{(code,detail)}: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit authorization for this attempt."))
+
+def admitted_marker(marker_value: Result<&1,&1,U32 & String,String>, attempt_value: Result<&1,&1,U32 & String,String>, db_value: Result<&1,&1,U32 & String,String>, +reference: String, +command: String, args: List<String>) -> IO(Unit):
+  match marker_value:
+    case Done{+marker}: admitted_attempt(marker,attempt_value,db_value,reference,command,args)
     case Fail{(code,detail)}: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit authorization for this attempt."))
 
 def run_admitted(+reference: String, +command: String, args: List<String>) -> IO(Unit):
   do IO<Unit>:
+    marker_value : Result<&1,&1,U32 & String,String> <- IO.get_env("BATON2_CREDIT_RESERVATION")
     attempt_value : Result<&1,&1,U32 & String,String> <- IO.get_env("BATON_ATTEMPT_DIRECTORY")
     db_value : Result<&1,&1,U32 & String,String> <- IO.get_env("BATON_DATABASE")
-    admitted_attempt(attempt_value,db_value,reference,command,args)
+    admitted_marker(marker_value,attempt_value,db_value,reference,command,args)
 
 def main_arguments(arguments: List<String>) -> IO(Unit):
   match arguments:

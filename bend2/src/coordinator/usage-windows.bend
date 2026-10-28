@@ -478,17 +478,6 @@ def record_document(+db: String, +session: String, +provider: String, +account: 
   (document,fallback)=answer
   record_pair(db,session,provider,account,trigger,document,fallback)
 
-# An account with no usage read (an Anthropic API-credit key) is held by the
-# provider's own refusal. The refusal is recorded as a readable read of that account
-# with an exhausted balance window; its source carries the attempt and the
-# provider's text, and observed_at is the coordinator clock. Only a later readable
-# read that does not hold releases it.
-def refusal_hold_document(+provider: String, +attempt: String, +cause: String) -> String:
-  "{\"schema\":" ++ J.string_literal(UR.read_schema()) ++ ",\"provider\":" ++ J.string_literal(provider) ++ ",\"source\":" ++ J.string_literal("provider refusal of attempt " ++ attempt ++ ": " ++ cause) ++ ",\"state\":\"read\",\"windows\":[{\"window\":\"balance\",\"usedPercent\":null,\"resetsAt\":null,\"exhausted\":true}]}"
-
-def record_refusal_hold(+db: String, +session: String, +provider: String, +account: String, +attempt: String, +cause: String) -> IO(Unit):
-  record_pair(db,session,provider,account,"provider-refusal:" ++ attempt,refusal_hold_document(provider,attempt,cause),"")
-
 # One live read for a provider and account, recorded, followed by the release of the
 # other seats it no longer holds. One read serves every seat on the provider account.
 # helper is the usage-read executable. The physical account lock covers the

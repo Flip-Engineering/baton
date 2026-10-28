@@ -56,37 +56,35 @@ A subscription account binds the credential directory the harness reads, through
 the existing `CODEX_HOME` or `CLAUDE_CONFIG_DIR` binding.
 
 An Anthropic API-key launch passes through `credit_launch_gate` in
-`bend2/src/coordinator/accounts.bend`. The gate first reserves the attempt with
-`credit_reserve_for` (see [Request-level reservation](#request-level-reservation)).
-A refused reservation returns `Anthropic API-key launch refused by the
-promotional-credit reservation (REASON)` and starts no launch. An admitted
-reservation is followed by one `credit_authorizations` row. That row is written
-only from the organization's newest promotional-credit observation when it is
-reported, names a grant cycle and a balance, has unit `USD` and has a 13-digit
-expiry later than the database clock, and only when the attempt holds a
-`reserved` row for the same account, organization and grant cycle. The gate then
-returns the packaged `api-key-exec` helper with the account secret reference.
-The helper reads `BATON_ATTEMPT_DIRECTORY` and `BATON_DATABASE`, which the
-retained launch exports, and consumes that attempt's authorization with one
-guarded `UPDATE`: only `changes()=1` admits the launch. A consumed row refuses
-`creditAuthorizationConsumed`, a row naming another reference refuses
-`creditAuthorizationMismatch`, and a failed or zero-change consume refuses
-`creditAdmissionUnavailable` before any secret is resolved or child started.
-The SQLite busy handler in `bend2/src/host/sqlite.c` waits at most 3000 retries
-of 10ms for one lock and then returns `SQLITE_BUSY` to the caller.
+`bend2/src/coordinator/accounts.bend`. The route spends promotional API credit
+and is unavailable (#881, #1177). The gate returns `Anthropic API-key launches
+are unavailable because no provider-enforced boundary keeps their request
+charges within the promotional-credit grant`, writes no reservation and writes
+no authorization. The attempt is not started and its input stays owed. A
+retained launch can make more than one provider request, and Baton has no
+provider-enforced boundary or account-specific evidence that keeps those
+charges within the grant. A refused provider request after paid requests does
+not provide one. The route stays unavailable until such a boundary exists.
 
-A refused reservation, an authorization that inserts no row, or a missing
-resolver returns a refusal sentence; the attempt is not started and its input stays owed. Subscription
-routes and other harnesses keep their existing bindings.
+The account order marks an Anthropic `claude-code` `api_key` account
+`not launchable: promotional-credit route is unavailable` and skips it.
+Subscription routes and other harnesses keep their existing bindings.
 
-The hold signal for a credit account is the provider's own refusal ("Your credit
-balance is too low to access the Anthropic API."). `handoff_with` records that
-refusal as a `usage_reads` row of the refused account: a readable read with one
-exhausted `balance` window, whose source names the refused attempt and carries
-the provider text. The account is then held like any account an exhausted read
-holds, and the account order moves to the next entry. The refusal records the
-hold only; a launch is admitted only by an admitted reservation. The usage-read helper
-answers unreadable for a credit account, so no live read releases this hold.
+`api-key-exec` remains the resolver for the route. It requires the
+`BATON2_CREDIT_RESERVATION` environment marker naming the attempt to match
+`BATON_ATTEMPT_DIRECTORY`, then consumes the attempt's `credit_authorizations`
+row with one guarded `UPDATE`: only `changes()=1` admits the launch. A consumed
+row refuses `creditAuthorizationConsumed`, a row naming another reference
+refuses `creditAuthorizationMismatch`, and a failed or zero-change consume
+refuses `creditAdmissionUnavailable` before any secret is resolved or child
+started. A marker by itself is not authorization. `credit_record_authorization`
+writes a row only from the organization's newest promotional-credit observation
+when it is reported, names a grant cycle and a balance, has unit `USD` and has a
+13-digit expiry later than the database clock, and only when the attempt holds a
+`reserved` row for the same account, organization and grant cycle. No production
+path writes either the marker or the row. The SQLite busy handler in
+`bend2/src/host/sqlite.c` waits at most 3000 retries of 10ms for one lock and
+then returns `SQLITE_BUSY` to the caller.
 
 ## Request-level reservation
 
@@ -154,14 +152,14 @@ state `failed`; `account reconcile` settles that row with the provider's actual
 cost later. `account import-spend` records the Admin cost report's numeric USD
 amount for the organization and cap period.
 
-`credit_launch_gate` is the production caller of `credit_reserve_for`, and the
-completion paths settle the launch reservation through `credit_settle_for`.
-`credit_reserve_bounded_for` and the request pricing (`credit_request_facts_for`,
-`credit_request_price`) have no production caller.
-
-A retained launch can contain more than one provider request. Baton decides
-admission once, before the launch starts. The provider enforces the
-promotional balance on each API request, and its refusal records the hold.
+The ledger has no production caller that creates a reservation:
+`credit_launch_gate` does not call `credit_reserve_for`, and completion
+settlement finds no reservation for a launch. `credit_reserve_bounded_for` and
+the request pricing (`credit_request_facts_for`, `credit_request_price`) have no
+production caller either. A launch reservation reserves the remaining amount
+once, before the launch starts. Settlement compares the actual cost with the
+reserved maximum only after the launch ends, so a reservation alone does not
+keep a launch's charges within the grant.
 
 ## Funded credit observations
 
@@ -251,9 +249,11 @@ configuration.
 
 - No balance is synthesized from model output, and subscription quota is never
   read as API credit.
-- An API-key credit launch is admitted only by an admitted reservation against
-  usable promotional credit; the provider's credit refusal records the account's
-  hold. Baton takes no top-up, purchase or billing action. Subscription OAuth
+- No Anthropic API-key credit launch is admitted. The only spend the route may
+  use is the existing monthly promotional credit, up to `$200` for a verified
+  organization and grant cycle shared by every credential of that organization,
+  and no source yet proves a launch stays within it. Baton takes no top-up,
+  purchase or billing action and permits no paid overage. Subscription OAuth
   quota and promotional API credit remain separate routes, and subscription
   launches keep the selection and fallback rules in the sections above.
 - Linking a plan to a Console organization, accepting program terms, purchasing
@@ -283,11 +283,11 @@ through the reservation guard and the launch gate: the lower-bound reserve, the
 refusal of a second request while a reservation holds the ceiling, a request
 charge above the unspent amount, provider spend at the ceiling,
 provider-spend reconciliation, conflicting readings, non-USD and expiry refusal,
-missing-cost settlement, duplicate request idempotence, the gate's binding for
-an admitted reservation, its named refusal for unverified, unobserved, zero,
-expired, unavailable, malformed, empty and date-only funding, two accounts of
-one organization sharing the ceiling, authorization only behind an admitted
-reservation, and process-failure settlement. `bend2/test/api-key-exec.test.mjs` covers the
+missing-cost settlement, duplicate request idempotence, two accounts of one
+organization sharing the ceiling, authorization only behind an admitted
+reservation, process-failure settlement, and the gate's refusal of every credit
+launch, with usable, unverified, unobserved, zero, expired, unavailable,
+malformed or cycle-less funding, without a reservation or an authorization. `bend2/test/api-key-exec.test.mjs` covers the
 helper's credential boundary and one-use authorization. The focused and helper
 fixtures are wired into `bend2/scripts/check-native.sh`.
 

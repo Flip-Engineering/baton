@@ -1,11 +1,11 @@
 # Per-request credit transport (#881, #793)
 
-Status: superseded, not implemented. The operator ruling under #881 (recorded in
-#1177) admits Anthropic API-key credit launches and makes the provider's credit
-refusal the hold signal. `credit_guard_qualified` and `credit_launch_gate_priced`
-are removed from `bend2/src/coordinator/accounts.bend`; the launch gate is
-described in `docs/bend2/account-credit-funding.md`. The design below calls the
-removed priced gate.
+Status: design, not implemented. `credit_launch_gate` in
+`bend2/src/coordinator/accounts.bend` refuses every Anthropic API-key credit
+launch (#1177), so no promotional-credit launch is admitted. The route stays
+unavailable until a provider-enforced boundary or account-specific evidence keeps
+each request charge within the grant. `credit_launch_gate_priced`, which the
+design below calls, and `credit_guard_qualified` are removed.
 
 ## Scope
 

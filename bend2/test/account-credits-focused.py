@@ -324,21 +324,17 @@ class FocusedAccountCredits(unittest.TestCase):
         if balance is not None:
             self.import_credit('claude-api', 'org-fixture', balance)
 
-    # An Anthropic API-key credit launch reserves against the organization's
-    # usable promotional credit before it starts (#881, #1177). An admitted
-    # reservation records the attempt's one-use authorization and returns the
-    # resolver binding; any other funding state refuses with its named reason.
-    def test_the_gate_admits_a_credit_account_launch(self):
-        self.credit_account()
-        self.assertEqual(self.gate('attempt-1'), ['binding', '/fixture/api-key-exec', 'file:/fixture/api', ''])
-        self.assertEqual(self.query("SELECT attempt,account,cycle,balance,unit,secret_ref,state FROM credit_authorizations"),
-                         [('attempt-1', 'claude-api', 'grant:2026-10-11', '200.00', 'USD', 'file:/fixture/api', 'authorized')])
-        self.assertEqual(self.query("SELECT request,account,organization,cycle,max_charge,state FROM credit_reservations"),
-                         [('attempt-1', 'claude-api', 'org-fixture', 'grant:2026-10-11', '200', 'reserved')])
+    # The Anthropic API-key credit route is unavailable (#881, #1177): a retained
+    # launch can make more than one provider request, and nothing keeps those
+    # charges within the promotional-credit grant. The gate refuses every credit
+    # launch, with usable funding or without, and records no reservation and no
+    # authorization.
+    UNAVAILABLE = 'Anthropic API-key launches are unavailable because no provider-enforced boundary'
 
     def gate_refusal(self, attempt, session='leaf'):
         line = self.gate(attempt, session)
         self.assertEqual(line[0], 'refused', line)
+        self.assertIn(self.UNAVAILABLE, line[1])
         return line[1]
 
     def credit_row(self, row_id, observed_at, balance='200.00', unit='USD', cycle='grant:2026-10-11',
@@ -347,42 +343,30 @@ class FocusedAccountCredits(unittest.TestCase):
                      "VALUES(?,'org-fixture','promotional_credit',?,?,?,?,?,'fixture',?,'operator')",
                      (row_id, state, balance, unit, expires, cycle, str(observed_at)))
 
+    def test_the_gate_refuses_a_credit_account_launch_with_usable_funding(self):
+        self.credit_account()
+        self.gate_refusal('attempt-1')
+        self.assertEqual(self.query("SELECT count(*) FROM credit_reservations"), [(0,)])
+        self.assertEqual(self.query("SELECT count(*) FROM credit_authorizations"), [(0,)])
+
     def test_the_gate_refuses_missing_expired_malformed_zero_and_unavailable_funding(self):
         self.record('claude-api', funding='api_key', secret='file:/fixture/api')
         self.bind('claude-api', 'leaf')
-        self.assertIn('(organizationUnverified)', self.gate_refusal('unverified'))
+        self.gate_refusal('unverified')
         self.observe('claude-api', 'org-fixture')
-        self.assertIn('(creditObservationUnavailable)', self.gate_refusal('unobserved'))
+        self.gate_refusal('unobserved')
         self.import_credit('claude-api', 'org-fixture', '0.00', 1760000001000)
-        self.assertIn('(promotionalCreditExhausted)', self.gate_refusal('zero'))
+        self.gate_refusal('zero')
         self.import_credit('claude-api', 'org-fixture', '200.00', 1760000002000, expires='1000000000000')
-        self.assertIn('(creditObservationExpired)', self.gate_refusal('expired'))
+        self.gate_refusal('expired')
         self.import_credit('claude-api', 'org-fixture', '', 1760000003000, state='unavailable')
-        self.assertIn('(creditObservationUnavailable)', self.gate_refusal('unavailable'))
+        self.gate_refusal('unavailable')
         self.credit_row('malformed', 1760000004000, balance='2OO.00')
-        self.assertIn('(creditAmountMalformed)', self.gate_refusal('malformed'))
-        self.credit_row('empty-balance', 1760000005000, balance='')
-        self.assertIn('(creditAmountMalformed)', self.gate_refusal('empty-balance'))
-        self.credit_row('empty-cycle', 1760000006000, cycle='')
-        self.assertIn('(creditCycleMissing)', self.gate_refusal('empty-cycle'))
-        self.credit_row('empty-unit', 1760000007000, unit='')
-        self.assertIn('(creditUnitNotUSD)', self.gate_refusal('empty-unit'))
-        self.credit_row('date-expiry', 1760000008000, expires='2026-11-14')
-        self.assertIn('(creditObservationExpiryUnverified)', self.gate_refusal('date-expiry'))
-        self.assertEqual(self.query("SELECT count(*) FROM credit_authorizations"), [(0,)])
+        self.gate_refusal('malformed')
+        self.credit_row('empty-cycle', 1760000005000, cycle='')
+        self.gate_refusal('empty-cycle')
         self.assertEqual(self.query("SELECT count(*) FROM credit_reservations"), [(0,)])
-
-    def test_the_gate_refuses_a_launch_while_an_earlier_launch_holds_the_ceiling(self):
-        self.credit_account()
-        self.assertEqual(self.gate('attempt-1')[0], 'binding')
-        self.assertIn('(monthlyCapExhausted)', self.gate_refusal('attempt-2'))
-        self.assertEqual(self.settle('attempt-1', 'completed', '12.50'), 'settled')
-        self.assertEqual(self.gate('attempt-3')[0], 'binding')
-        self.assertEqual([(request, Decimal(charge), state) for request, charge, state in self.query(
-            "SELECT request,max_charge,state FROM credit_reservations ORDER BY request")],
-                         [('attempt-1', Decimal('200'), 'settled'), ('attempt-3', Decimal('187.5'), 'reserved')])
-        self.assertEqual(self.query("SELECT attempt FROM credit_authorizations ORDER BY attempt"),
-                         [('attempt-1',), ('attempt-3',)])
+        self.assertEqual(self.query("SELECT count(*) FROM credit_authorizations"), [(0,)])
 
     # Every account of one verified organization shares its grant and its $200
     # ceiling, so a second account cannot reserve funds the first one holds.
@@ -391,9 +375,9 @@ class FocusedAccountCredits(unittest.TestCase):
         self.record('claude-api-2', funding='api_key', secret='file:/fixture/api-2')
         self.bind('claude-api-2', 'other')
         self.observe('claude-api-2', 'org-fixture')
-        self.assertEqual(self.gate('attempt-1')[0], 'binding')
-        self.assertIn('(monthlyCapExhausted)', self.gate_refusal('attempt-2', session='other'))
-        self.assertEqual(self.query("SELECT attempt,account FROM credit_authorizations"), [('attempt-1', 'claude-api')])
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
+        self.assertEqual(self.reserve('attempt-2', session='other'), ['refused', 'monthlyCapExhausted'])
+        self.assertEqual(self.query("SELECT request,account FROM credit_reservations"), [('attempt-1', 'claude-api')])
 
     def reserve(self, attempt, session='leaf', cap='2026-10'):
         completed = self.entry('reserve', session, 'claude-code', attempt, cap)
@@ -770,7 +754,7 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditObservationExpiryUnverified'])
         self.assertEqual(self.authorize('attempt-1'), 'not-authorized')
         self.assertEqual(self.query("SELECT count(*) FROM credit_authorizations"), [(0,)])
-    def test_helper_runs_with_the_durable_authorization_alone(self):
+    def test_helper_runs_only_with_marker_and_durable_authorization(self):
         helper = os.environ.get('BATON2_API_KEY_EXEC')
         if not helper:
             self.skipTest('BATON2_API_KEY_EXEC not set')
@@ -787,7 +771,7 @@ class FocusedAccountCredits(unittest.TestCase):
         child = directory / 'child.sh'
         child.write_text('#!/bin/sh\nprintf "KEY=${ANTHROPIC_API_KEY:+set}\n"\n')
         child.chmod(0o755)
-        base = {'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+        base = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
                 'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']}
         admitted = subprocess.run([helper, 'file:' + str(secret), str(child)],
                                   capture_output=True, text=True, env=base)
@@ -825,7 +809,7 @@ class FocusedAccountCredits(unittest.TestCase):
         child = directory / 'child.sh'
         child.write_text('#!/bin/sh\nprintf "KEY=${ANTHROPIC_API_KEY:+set}\\n"\n')
         child.chmod(0o755)
-        environment = {'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+        environment = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
                        'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']}
         commands = [helper, 'file:' + str(secret), str(child)]
         first = subprocess.Popen(commands, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment)
@@ -853,7 +837,8 @@ class FocusedAccountCredits(unittest.TestCase):
         child.chmod(0o755)
         refused = subprocess.run([helper, 'file:' + str(secret), str(child)],
                                  capture_output=True, text=True,
-                                 env={'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+                                 env={'BATON2_CREDIT_RESERVATION': 'attempt-1',
+                                      'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
                                       'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']})
         self.assertEqual(refused.returncode, 2, refused.stdout)
         self.assertIn('creditAdmissionUnavailable', refused.stderr)
@@ -885,7 +870,8 @@ class FocusedAccountCredits(unittest.TestCase):
                      "BEGIN SELECT RAISE(IGNORE); END")
         refused = subprocess.run([helper, 'file:' + str(secret), str(child)],
                                  capture_output=True, text=True,
-                                 env={'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+                                 env={'BATON2_CREDIT_RESERVATION': 'attempt-1',
+                                      'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
                                       'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']})
         self.assertEqual(refused.returncode, 2, refused.stdout)
         self.assertIn('creditAdmissionUnavailable', refused.stderr)
@@ -918,7 +904,8 @@ class FocusedAccountCredits(unittest.TestCase):
                      "BEGIN SELECT RAISE(ABORT,'fixture abort'); END")
         refused = subprocess.run([helper, 'file:' + str(secret), str(child)],
                                  capture_output=True, text=True,
-                                 env={'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+                                 env={'BATON2_CREDIT_RESERVATION': 'attempt-1',
+                                      'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
                                       'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']})
         self.assertEqual(refused.returncode, 2, refused.stdout)
         self.assertIn('creditAdmissionUnavailable', refused.stderr)
@@ -948,7 +935,8 @@ class FocusedAccountCredits(unittest.TestCase):
         # leaves the authorization available for the account it was written for.
         refused = subprocess.run([helper, 'file:/fixture/other-secret', str(child)],
                                  capture_output=True, text=True,
-                                 env={'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+                                 env={'BATON2_CREDIT_RESERVATION': 'attempt-1',
+                                      'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
                                       'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']})
         self.assertEqual(refused.returncode, 2, refused.stdout)
         self.assertIn('creditAuthorizationMismatch', refused.stderr)
@@ -973,7 +961,7 @@ class FocusedAccountCredits(unittest.TestCase):
         child = directory / 'child.sh'
         child.write_text('#!/bin/sh\nexit 7\n')
         child.chmod(0o755)
-        environment = {'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+        environment = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
                        'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']}
         aborted = subprocess.run([helper, 'file:' + str(secret), str(child)],
                                  capture_output=True, text=True, env=environment)
@@ -1002,7 +990,7 @@ class FocusedAccountCredits(unittest.TestCase):
         child = directory / 'child.sh'
         child.write_text('#!/bin/sh\nprintf "KEY=${ANTHROPIC_API_KEY:+set}\n"\n')
         child.chmod(0o755)
-        environment = {'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+        environment = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
                        'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']}
         admitted = subprocess.run([helper, 'file:' + str(secret), str(child)],
                                   capture_output=True, text=True, env=environment)
@@ -1027,7 +1015,7 @@ class FocusedAccountCredits(unittest.TestCase):
         child = directory / 'child.sh'
         child.write_text('#!/bin/sh\nprintf "KEY=${ANTHROPIC_API_KEY:+set}\n"\n')
         child.chmod(0o755)
-        environment = {'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+        environment = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
                        'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']}
         admitted = subprocess.run([helper, 'file:' + str(secret), str(child)],
                                   capture_output=True, text=True, env=environment)
