@@ -7,6 +7,7 @@ import ../host/sqlite.bend as DB
 import ../host/process.bend as P
 import ../git/text.bend as Tx
 import ../context/native-runtime.bend as ContextRuntime
+import ../host/files.bend as F
 
 # The session lock owner publishes one current attempt before it launches.
 # Stop and attempt admission use the same database transaction order.
@@ -184,6 +185,30 @@ def reconcile(+db: String, +session: String, +attempt: String, +directory: Strin
     signal : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT s.signal FROM session_stops s JOIN executions e ON e.session=s.session AND e.id=s.attempt WHERE s.session=" ++ C.q(session) ++ " AND s.attempt=" ++ C.q(attempt) ++ " AND e.phase<>'exited' AND s.applied_signal<>s.signal),0);"))
     send_control(db,session,attempt,directory,selected_signal(U32.read(Tx.trim_nl(signal))))
 
+# A stop names an attempt from the executions row. When that attempt's
+# directory is absent, no supported control channel is available. The
+# absent bytes do not establish that a native process has exited or that no
+# identity exists; retain the unresolved stop and send no signal until valid
+# custody returns.
+def directory_missing(+directory: String) -> IO(Bool):
+  do IO<Bool>:
+    observed : Result<&1,&1,U32 & String,String> <- F.Files.lstat(directory)
+    match observed:
+      case Fail{(code,detail)}: IO.pure(Bool,U32.is_eq(code,2))
+      case Done{value}: IO.pure(Bool,False{})
+
+def custody_missing_sql(+session: String, +attempt: String, +detail: String) -> String:
+  +s = C.q(session)
+  +a = C.q(attempt)
+  "BEGIN IMMEDIATE;UPDATE session_stops SET outcome='custody-missing',control_error=" ++ C.q(detail) ++ " WHERE session=" ++ s ++ " AND attempt=" ++ a ++ " AND outcome='requested';"
+  ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT st.report_id,s.id," ++ C.report_recipient("s.id") ++ ",'report',json_object('type','session-stop-custody-missing','session',s.id,'stopId',st.id,'reason',st.reason,'attempt',st.attempt,'requestedSignal',st.signal,'nativeStatus',NULL,'observationError',nullif(" ++ C.q(detail) ++ ",''),'workspace',s.workspace,'branch',s.branch,'native',s.native) FROM session_stops st JOIN sessions s ON s.id=st.session WHERE st.session=" ++ s ++ " AND st.attempt=" ++ a ++ " AND st.report_id<>'' AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL" ++ C.message_upsert() ++ ";COMMIT;"
+
+def mark_custody_missing(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
+  do IO<Unit>:
+    +detail : String = "Attempt custody is missing at " ++ directory ++ "; the native process identity was not established and no native exit is recorded."
+    saved : String <- IO.try(String,DB.Sql.query(db,custody_missing_sql(session,attempt,detail)))
+    IO.pure(Unit,Unit{})
+
 def started(+db: String, +session: String, +attempt: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE executions SET phase='running' WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ " AND phase='starting';"))
@@ -233,7 +258,15 @@ def reconcile_request(+db: String, +session: String) -> IO(Unit):
   do IO<Unit>:
     attempt : String <- IO.try(String,DB.Sql.query(db,"SELECT attempt FROM session_stops WHERE session=" ++ C.q(session) ++ ";"))
     directory : String <- IO.try(String,DB.Sql.query(db,"SELECT directory FROM session_stops WHERE session=" ++ C.q(session) ++ ";"))
-    reconcile(db,session,Tx.trim_nl(attempt),Tx.trim_nl(directory))
+    outcome : String <- IO.try(String,DB.Sql.query(db,"SELECT outcome FROM session_stops WHERE session=" ++ C.q(session) ++ ";"))
+    +id : String = Tx.trim_nl(attempt)
+    +path : String = Tx.trim_nl(directory)
+    +state : String = Tx.trim_nl(outcome)
+    Bool.pick(IO(Unit),Bool.and(String.eq(state,"requested"),Bool.not(String.is_empty(id))),
+      do IO<Unit>:
+        missing : Bool <- directory_missing(path)
+        Bool.pick(IO(Unit),missing,mark_custody_missing(db,session,id,path),reconcile(db,session,id,path)),
+      IO.pure(Unit,Unit{}))
 
 def request(+db: String, +session: String, +id: String, +reason: String, force: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   Store.transact_sql(db,Bool.pick(String,force,force_sql(session,id),request_sql(session,id,reason)))
