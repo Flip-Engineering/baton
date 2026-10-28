@@ -99,10 +99,15 @@ def mcp_stream_fields(fields: List<String>, +session: String) -> IO(HandlingScop
         ++ " AND m.recipient=" ++ C.q(session) ++ " AND " ++ Status.owed_sql("m") ++ ")"})
     case other: handling_invalid("Handling requires a complete input accepted on the connected root channel.")
 
+def mcp_stream_result(+session: String, result: Result<&1,&1,U32 & String,String>) -> IO(HandlingScope):
+  match result:
+    case Fail{(+code,cause)}: IO.die(HandlingScope,code,cause)
+    case Done{+fields}: mcp_stream_fields(Tx.split_tabs(Tx.trim_nl(fields)),session)
+
 def mcp_stream_witness(+db: String, +session: String, +context: String) -> IO(HandlingScope):
   do IO<HandlingScope>:
     +database : String <- Lock.SessionLock.canonical(db)
-    fields : String <- IO.try(String,DB.Sql.read(db,
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,
       "SELECT CASE WHEN json_valid(" ++ C.q(context) ++ ") THEN CASE WHEN json_extract(" ++ C.q(context)
       ++ ",'$.ready')=1 AND json_extract(" ++ C.q(context) ++ ",'$.database')=" ++ C.q(database)
       ++ " AND json_extract(" ++ C.q(context) ++ ",'$.session')=" ++ C.q(session)
@@ -119,8 +124,8 @@ def mcp_stream_witness(+db: String, +session: String, +context: String) -> IO(Ha
       ++ " AND " ++ Status.owed_sql("m") ++ ") THEN hex('root-channel:'||json_extract(" ++ C.q(context)
       ++ ",'$.connection'))||char(9)||hex(json_extract(" ++ C.q(context) ++ ",'$.native'))||char(9)||hex('root-channel:'||json_extract(" ++ C.q(context)
       ++ ",'$.connection')||':'||json_extract(" ++ C.q(context) ++ ",'$.readMessage'))||char(9)||hex(json_extract(" ++ C.q(context)
-      ++ ",'$.endpoint'))||char(9)||hex(json_extract(" ++ C.q(context) ++ ",'$.readMessage')) ELSE '' END ELSE '' END;"))
-    mcp_stream_fields(Tx.split_tabs(Tx.trim_nl(fields)),session)
+      ++ ",'$.endpoint'))||char(9)||hex(json_extract(" ++ C.q(context) ++ ",'$.readMessage')) ELSE '' END ELSE '' END;")
+    mcp_stream_result(session,result)
 
 def mcp_witness_result(db: String, session: String, result: G.RunRes) -> IO(HandlingScope):
   match result:
