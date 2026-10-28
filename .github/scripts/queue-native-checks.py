@@ -19,6 +19,7 @@ import uuid
 CLIENT = '/var/tmp/baton2-compile-queue/compile-queue-runner'
 STATE = '/var/tmp/baton2-compile-queue'
 SCRIPT = str(Path(__file__).resolve())
+EXEC_SCRIPT = str(Path(__file__).resolve().parent / 'compile-cgen-exec.py')
 DIAGNOSTIC_FILE = 'compiler-diagnostics.json'
 
 # These exact names are read by the pinned Bend compiler source or its Bun/JSC
@@ -32,11 +33,35 @@ COMPILER_ENVIRONMENT = (
     'BEND_NO_TELEMETRY',
     'BUN_OPTIONS',
     'BUN_JSC_maxPerThreadStackUsage',
+    'BATON2_DARWIN_LLVM_ROOT',
+    'BATON2_DARWIN_SDKROOT',
+    'BATON2_DARWIN_SDK_MANIFEST_SHA256',
+    'BATON2_DARWIN_SDK_TREE_SHA256',
 )
 
 
 def write(path, value):
     path.write_text(json.dumps(value, indent=2) + '\n')
+
+
+def write_focused_queue_handoff(config, request, directory, state, **extra):
+    """Record the exact queue token so focused cancellation preserves shared custody."""
+    handoff_root = os.environ.get('BATON2_FOCUSED_QUEUE_HANDOFF_DIR')
+    if not handoff_root:
+        return
+    client = shutil.which(config['client']) or config['client']
+    record = {'schema': 'baton2-focused-queue-owner-v1', 'status': state,
+              'key': request['key'], 'token': request['token'],
+              'state_root': str(Path(config['state']).resolve()),
+              'keydir': str((Path(config['state']) / 'keys' / request['key']).resolve()),
+              'client': str(Path(client).resolve()),
+              'request_path': str((Path(directory) / 'request.json').resolve()),
+              **extra}
+    path = Path(handoff_root) / (request['token'] + '.json')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix('.tmp')
+    temporary.write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')
+    os.replace(temporary, path)
 
 
 def file_identity(path):
@@ -65,6 +90,10 @@ def environment_observation(name, environment):
         return {'state': 'set', 'value': 'omitted because option text may contain secrets'}
     if name == 'BEND_LIB':
         return {'state': 'set', 'effective_path': str(Path(value).resolve())}
+    if name in ('BATON2_DARWIN_LLVM_ROOT', 'BATON2_DARWIN_SDKROOT'):
+        return {'state': 'set', 'effective_path': str(Path(value).resolve())}
+    if name in ('BATON2_DARWIN_SDK_MANIFEST_SHA256', 'BATON2_DARWIN_SDK_TREE_SHA256'):
+        return {'state': 'set', 'sha256': value}
     if name == 'BEND_COMPILER_DIAGNOSTICS' or name == 'BEND_FACTS_ONLY_FIRST':
         return {'state': 'set', 'enabled': value == '1'}
     if name == 'BEND_NO_TELEMETRY':
@@ -72,17 +101,6 @@ def environment_observation(name, environment):
     if value.isdecimal():
         return {'state': 'set', 'value': int(value)}
     return {'state': 'set', 'value': 'non-decimal value omitted'}
-
-
-def compiler_attempt_directory(output):
-    artifact = Path(output).resolve()
-    if artifact.parent.name != 'work':
-        return None
-    attempt = artifact.parent.parent
-    if not all((attempt / name).is_file()
-               for name in ('meta', 'argv', 'command', 'source-digest')):
-        return None
-    return attempt
 
 
 def read_queue_meta(attempt):
@@ -154,23 +172,22 @@ def toolchain_identity(compiler_path):
     return result
 
 
-def compiler_diagnostics(output, command):
-    """Best-effort metadata at the compiler launch boundary; never gates execution."""
+def compiler_diagnostics(attempt, compiler_argv):
+    """Best-effort execution evidence, written when the attempt is retained."""
     try:
-        attempt = compiler_attempt_directory(output)
-        if attempt is None or not command:
+        if not (attempt / 'meta').is_file() or not compiler_argv:
             return
         source_digest = (attempt / 'source-digest').read_text(errors='replace').strip()
         metadata = {
             'schema': 'baton2-compiler-execution-observation-v1',
             'observed_at': datetime.now(timezone.utc).isoformat(),
-            'boundary': 'queue adapter immediately before compiler launcher subprocess',
+            'boundary': 'queue adapter evidence retention after the executed wrapper returned',
             'process': {'pid': os.getpid(), 'cwd': str(Path.cwd())},
             'cpu_affinity': {'status': 'unavailable'},
             'environment': {name: environment_observation(name, os.environ)
                             for name in COMPILER_ENVIRONMENT},
-            'compiler_argv': command,
-            'toolchain': toolchain_identity(command[0]),
+            'compiler_argv': compiler_argv,
+            'toolchain': toolchain_identity(compiler_argv[0]),
             'queue_attempt': {
                 'meta': read_queue_meta(attempt),
                 'meta_sha256': hashlib.sha256((attempt / 'meta').read_bytes()).hexdigest(),
@@ -178,6 +195,8 @@ def compiler_diagnostics(output, command):
                 'command_sha256': hashlib.sha256((attempt / 'command').read_bytes()).hexdigest(),
                 'source_digest': source_digest,
             },
+            'queue_adapter': file_identity(SCRIPT),
+            'queue_exec': file_identity(EXEC_SCRIPT),
         }
         if hasattr(os, 'sched_getaffinity'):
             try:
@@ -225,9 +244,84 @@ def legacy_environment(env):
 
 def cancel(config, request, directory):
     with (directory / 'cancel.stdout').open('ab') as stdout, (directory / 'cancel.stderr').open('ab') as stderr:
-        return subprocess.run([config['client'], '--', 'cancel', '--state-root', config['state'],
-                               '--key', request['key'], '--token', request['token']],
-                              stdout=stdout, stderr=stderr).returncode
+        result = subprocess.run([config['client'], '--', 'cancel', '--state-root', config['state'],
+                                 '--key', request['key'], '--token', request['token']],
+                                stdout=stdout, stderr=stderr)
+    output = (directory / 'cancel.stdout').read_text(errors='replace').splitlines()
+    write_focused_queue_handoff(config, request, directory, 'cancelled',
+                                cancel_returncode=result.returncode,
+                                cancel_result=[line for line in output if line.startswith('canceled=') or line.startswith('owners=')])
+    request['cancel_returncode'] = result.returncode
+    return result.returncode
+
+
+def queue_key_sources(key_argv, cwd):
+    """Identify source inputs named by a key request without retaining their contents."""
+    outer = key_argv.index('--')
+    separator = key_argv.index('--', outer + 1)
+    options = key_argv[outer + 2:separator]
+    command = key_argv[separator + 1:]
+    paths = []
+    for flag in ('--entry', '--compiler', '--aux'):
+        index = 0
+        while index < len(options):
+            if options[index] == flag and index + 1 < len(options):
+                paths.append((flag[2:], options[index + 1]))
+                index += 2
+            else:
+                index += 1
+    for value in command:
+        if not value.startswith('-'):
+            path = Path(cwd, value)
+            if path.is_file():
+                paths.append(('command-input', value))
+    identities = []
+    seen = set()
+    for role, value in paths:
+        path = Path(value)
+        if not path.is_absolute():
+            path = Path(cwd) / path
+        path = path.resolve()
+        if str(path) in seen:
+            continue
+        seen.add(str(path))
+        identities.append({'role': role, 'identity': file_identity(path)})
+    return identities
+
+
+def run_queue_key(key_argv, config, directory):
+    """Run and retain a failed key request before returning its process status."""
+    cwd = str(Path.cwd())
+    started_ns = time.time_ns()
+    child = subprocess.run(key_argv, cwd=cwd, capture_output=True)
+    if child.stderr:
+        sys.stderr.buffer.write(child.stderr)
+        sys.stderr.buffer.flush()
+    if child.returncode:
+        (directory / 'key.stdout').write_bytes(child.stdout)
+        (directory / 'key.stderr').write_bytes(child.stderr)
+        metadata = {
+            'schema': 'baton2-compile-queue-key-failure-v1',
+            'argv': key_argv,
+            'cwd': cwd,
+            'exit_code': child.returncode,
+            'started_ns': started_ns,
+            'finished_ns': time.time_ns(),
+            'queue_binary': file_identity(config['client']),
+            'queue_adapter': file_identity(SCRIPT),
+            'sources': queue_key_sources(key_argv, cwd),
+            'stdout': 'key.stdout',
+            'stderr': 'key.stderr',
+        }
+        write(directory / 'failed-key.json', metadata)
+        if child.returncode < 0:
+            signum = -child.returncode
+            if signum not in (signal.SIGKILL, signal.SIGSTOP):
+                signal.signal(signum, signal.SIG_DFL)
+            os.kill(os.getpid(), signum)
+            return 128 + signum, None
+        return child.returncode, None
+    return 0, child.stdout.decode(errors='replace').strip()
 
 
 def retain(config, key, directory, success):
@@ -245,6 +339,12 @@ def retain(config, key, directory, success):
         source = attempt / name
         if source.is_file():
             shutil.copyfile(source, directory / name)
+    request_path = directory / 'request.json'
+    if request_path.is_file():
+        request_command = json.loads(request_path.read_text()).get('command') or []
+        executed = len(request_command) > 3 and Path(request_command[1]).name == Path(EXEC_SCRIPT).name
+        compiler_argv = request_command[3:] if executed else request_command
+        compiler_diagnostics(attempt, compiler_argv)
     diagnostics = attempt / DIAGNOSTIC_FILE
     try:
         if diagnostics.is_file():
@@ -269,7 +369,9 @@ def submit(config, directory, options, command, key_only=False):
     common = ['--state-root', config['state'], '--cwd', str(Path.cwd()),
               '--root', str(Path.cwd()), *options, '--', *command]
     key_argv = [config['client'], '--', 'key', *common]
-    key = subprocess.check_output(key_argv, text=True).strip()
+    key_code, key = run_queue_key(key_argv, config, directory)
+    if key_code:
+        return key_code
     token = uuid.uuid4().hex
     request = {'key': key, 'token': token, 'cwd': str(Path.cwd()), 'command': command,
                'key_argv': key_argv, 'started_ns': time.time_ns()}
@@ -285,6 +387,7 @@ def submit(config, directory, options, command, key_only=False):
     if key_only:
         print(key)
         return 0
+    write_focused_queue_handoff(config, request, directory, 'submitted')
     child = None
 
     def interrupted(signum, frame):
@@ -307,6 +410,8 @@ def submit(config, directory, options, command, key_only=False):
         code = 128 + error.args[0]
     request.update(exit_code=code, finished_ns=time.time_ns())
     write(directory / 'request.json', request)
+    if request.get('cancel_returncode') is None:
+        write_focused_queue_handoff(config, request, directory, 'finished', exit_code=code)
     retain(config, key, directory, code == 0)
     if code:
         sys.stderr.write((directory / 'client.stderr').read_text())
@@ -332,7 +437,10 @@ def compiler(mode, argv, key_only=False):
             entry = str(Path(entries[0]).resolve())
             options = ['--kind', 'check', '--source-root', str(Path.cwd()),
                        '--entry', os.path.relpath(entry), '--compiler', actual]
-            options.extend(['--option', 'adapter-sha256=' + hashlib.sha256(Path(SCRIPT).read_bytes()).hexdigest()])
+            # The adapter's own bytes stay out of the cache key: key material
+            # covers only execution-affecting closure (source, toolchain, argv,
+            # inputs, artifacts, options). The adapter identity is execution
+            # evidence, recorded per attempt by compiler_diagnostics().
             return submit(config, directory, options, argv, key_only)
         output_flag = '--binary' if '--binary' in argv else '-o'
         output = Path(argv[argv.index(output_flag) + 1]).absolute() if output_flag in argv else directory / 'checked.c'
@@ -342,9 +450,25 @@ def compiler(mode, argv, key_only=False):
             actual = argv[argv.index('--cc') + 1] if '--cc' in argv else argv[0]
             actual = str(Path(shutil.which(actual) or actual).resolve())
             version = subprocess.check_output([actual, '--version'], text=True)
-            options = ['--kind', 'cc', '--source-root', '/', '--compiler', actual,
-                       '--linker', '/usr/bin/ld', '--version', version,
-                       '--artifact', 'output=' + str(output)]
+            linker = '/usr/bin/ld'
+            options = ['--kind', 'cc', '--source-root', '/', '--compiler', actual]
+            darwin_llvm = os.environ.get('BATON2_DARWIN_LLVM_ROOT')
+            darwin_sdk = os.environ.get('BATON2_DARWIN_SDKROOT')
+            if darwin_llvm and darwin_sdk:
+                actual = str((Path(darwin_llvm) / 'bin/clang').resolve())
+                linker = str((Path(darwin_llvm) / 'bin/ld64.lld').resolve())
+                version = subprocess.check_output([actual, '--version'], text=True)
+                settings = Path(darwin_sdk) / 'SDKSettings.json'
+                options[options.index('--compiler') + 1] = actual
+                options.extend(['--option', 'target=arm64-apple-macosx11.0',
+                                '--option', 'sysroot=' + str(Path(darwin_sdk).resolve()),
+                                '--option', 'sdk_manifest_sha256=' + os.environ['BATON2_DARWIN_SDK_MANIFEST_SHA256'],
+                                '--option', 'sdk_tree_sha256=' + os.environ['BATON2_DARWIN_SDK_TREE_SHA256'],
+                                '--aux', linker])
+                if settings.is_file():
+                    options.extend(['--aux', str(settings.resolve())])
+            options.extend(['--linker', linker, '--version', version,
+                            '--artifact', 'output=' + str(output)])
             for value in argv:
                 if value != str(output) and not value.startswith('-') and Path(value).is_file():
                     options.extend(['--aux', str(Path(value).resolve())])
@@ -353,8 +477,11 @@ def compiler(mode, argv, key_only=False):
             entry = next(str(Path(a).resolve()) for a in argv if a.endswith('.bend') and Path(a).is_file())
             options = ['--kind', 'cgen', '--source-root', str(Path.cwd()), '--entry', os.path.relpath(entry),
                        '--compiler', argv[0], '--artifact', 'output.c=' + str(output)]
-            command = [sys.executable, SCRIPT, 'execute-cgen', str(output), *argv]
-        options.extend(['--option', 'adapter-sha256=' + hashlib.sha256(Path(SCRIPT).read_bytes()).hexdigest()])
+            # The executed module rides as a queue input: staging verifies its
+            # bytes against the key's input digest and the command names the
+            # staged copy, so executed bytes and keyed bytes are the same bytes.
+            options.extend(['--input', EXEC_SCRIPT])
+            command = [sys.executable, EXEC_SCRIPT, str(output), *argv]
         return submit(config, directory, options, command, key_only)
 
 
@@ -369,21 +496,6 @@ def main():
         return compiler(argv[0], [config_tool(argv[0]), *argv[1:]])
     if mode == 'key':
         return compiler(argv[0], [config_tool(argv[0]), *argv[1:]], key_only=True)
-    if mode == 'execute-cgen':
-        output, *command = argv
-        compiler_diagnostics(output, command)
-        code = subprocess.run(command).returncode
-        if code < 0:
-            # OOM #1068 killed the compiler with SIGKILL. Preserve its signal
-            # disposition when the queue observes this adapter process.
-            signum = -code
-            if signum not in (signal.SIGKILL, signal.SIGSTOP):
-                signal.signal(signum, signal.SIG_DFL)
-            os.kill(os.getpid(), signum)
-            return 128 + signum
-        if not code and '-o' not in command:
-            Path(output).write_text('/* Compiler check completed successfully. */\n')
-        return code
     if mode == 'stage':
         return compiler(argv[0], argv[1:])
     if mode == 'key-stage':

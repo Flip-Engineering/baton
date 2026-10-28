@@ -277,6 +277,34 @@ class AgentInput(unittest.TestCase):
         self.assertEqual([row for row in self.reads() if row['attempt'] == before[0]['attempt']], before)
         self.assertIsNone(self.fx.coord('delivery', 'owned-input')['receipt'])
 
+    def test_initial_prompt_records_complete_bodies_for_each_input_kind(self):
+        messages = [
+            ('task', 'Full task body.\nSecond task line.'),
+            ('task-assignment', 'Full task-assignment body.'),
+            ('task-continuation', 'Full task-continuation body.'),
+            ('guidance', 'Full guidance body.'),
+            ('report', 'Full report body.'),
+            ('question', 'Full question body.'),
+            ('completion-request', 'Full completion-request body.'),
+            ('completion-confirmed', 'Full completion-confirmed body.'),
+            ('recovery', 'Full recovery body.'),
+        ]
+        identifiers = []
+        for index, (kind, body) in enumerate(messages):
+            ident = f'prompt-kind-{index}'
+            identifiers.append(ident)
+            self.fx.coord('message', ident, 'root', 'parent', kind, body)
+
+        child, stream, started = self.start()
+        for kind, body in messages:
+            self.assertIn(body, started['prompt'], kind)
+        self.assertEqual({row['message'] for row in self.reads()},
+                         {'owned-input', *identifiers})
+
+        self.end(child, stream, failed=True)
+        self.assertEqual({row['message'] for row in self.reads()},
+                         {'owned-input', *identifiers})
+
     def test_unavailable_status_preserves_successful_exposure(self):
         child, stream, _ = self.start()
         with sqlite3.connect(f'{self.fx.db.as_uri()}?mode=ro', uri=True) as database:
@@ -438,14 +466,31 @@ class AgentInput(unittest.TestCase):
         self.assertEqual(status['read'], 'recorded')
         self.assertTrue(all(row['identity'] == 'receipt' for row in status['attempts']))
 
-    def app_action(self, *arguments, native='native-root', output=None):
+    def app_action(self, *arguments, native='native-root', session=None, output=None):
         environment = os.environ.copy()
         environment['CODEX_THREAD_ID'] = native
-        for name in ('BATON_DATABASE', 'BATON_SESSION', 'BATON_ATTEMPT_DIRECTORY'):
+        for name in ('BATON_DATABASE', 'BATON_SESSION', 'BATON_ATTEMPT_DIRECTORY',
+                     'BATON_MCP_INPUT'):
             environment.pop(name, None)
+        if session is not None:
+            environment['BATON_SESSION'] = session
         command = [str(receive.EXE), str(self.fx.db), 'as', 'root', *arguments]
         return subprocess.run(command, stdout=output or subprocess.PIPE,
                               stderr=subprocess.PIPE, text=True, env=environment)
+
+    def test_app_pending_uses_explicit_session_when_codex_lookup_is_unmatched(self):
+        self.fx.prepare_input('root-pending', 'root', 'Root pending input.\n', kind='guidance')
+        self.fx.prepare_input('parent-pending', 'parent', 'Parent pending input.\n', kind='guidance')
+        result = self.app_action('pending', '--pretty', native='unmatched-native', session='root')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        pending = json.loads(result.stdout)
+        self.assertEqual([row['id'] for row in pending], ['root-pending'])
+        self.assertEqual(pending[0]['body'], 'Root pending input.\n')
+        # The explicit session selects the pending recipient. The unmatched
+        # Codex native does not identify a turn that can own a read record.
+        self.assertEqual(self.reads(), [])
+        self.assertIsNone(self.fx.coord('delivery', 'root-pending')['receipt'])
+        self.assertIsNone(self.fx.coord('delivery', 'parent-pending')['receipt'])
 
     def test_app_full_read_records_exact_turn_and_preserves_legacy_receipt(self):
         self.fx.prepare_input('app-task', 'root', 'Actual App task.\nλ🙂', kind='task')

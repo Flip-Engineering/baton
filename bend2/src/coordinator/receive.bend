@@ -246,8 +246,8 @@ def wake_launch(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>)
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +executable : String <- IO.try(String,Lock.SessionLock.executable())
     +database : String <- IO.try(String,Lock.SessionLock.canonical(db))
-    launched : String <- IO.try(String,Host.Control.launch(Tx.enc_argv([executable,"--dispatch-message",database,id]),database,id))
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    launched : Result<&1,&1,U32 & String,String> <- Host.Control.launch(Tx.enc_argv([executable,"--dispatch-message",database,id]),database,id)
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Delivery.wake_result(launched))
 
 def wake_refused(+db: String, +session: String, launched: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match launched:
@@ -286,8 +286,9 @@ def wake_stand(+db: String, +session: String, +cursor: String, launch: String ->
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       +found : String <- wake_found(db,session,cursor)
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
-      Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.is_empty(found),
+      launched : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.is_empty(found),
         IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),wake_launch(db,found))
+      wake_refused(db,session,launched)
     case False{}: wake_decided(db,session,cursor,launch,lock,True{})
 
 # The obligation is held exactly when the claim row names an owner while host
@@ -799,7 +800,7 @@ def completed_observation(+db: String, +session: String, +id: String, log: Strin
 def started(+db: String, +session: String, +id: String, +log: String, cursor: String, native: String, cwd: String, +attempt: String, harness: String, level: String, lock: U32, start: P.RetainedStart, again: String -> IO(Result<&1,&1,U32 & String,Unit>), cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match start:
     case P.Retained{+handle}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      reconciled : Unit <- Stop.started(db,session,id,attempt)
+      reconciled : Unit <- Stop.started(db,session,id)
       observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,attempt,attempt,handle,Omp.filter_events(level))
       completed_observation(db,session,id,log,cursor,native,cwd,attempt,handle,Some{lock},observation,again,False{},cmd)
     case P.Unstarted{error}: do IO<Result<&1,&1,U32 & String,Unit>>:

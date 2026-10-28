@@ -826,8 +826,9 @@ law an_owned_obligation_releases_and_launches_its_input:
   {Receive.wake_stand(db,session,cursor,launch,lock,True{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
     +found : String <- Receive.wake_found(db,session,cursor)
     released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
-    Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.is_empty(found),
-      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),Receive.wake_launch(db,found))) : IO(Result<&1,&1,U32 & String,Unit>)}
+    launched : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.is_empty(found),
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),Receive.wake_launch(db,found))
+    Receive.wake_refused(db,session,launched)) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def an_owned_obligation_releases_and_launches_its_input(db,session,cursor,launch,lock):
   {==}

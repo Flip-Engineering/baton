@@ -175,7 +175,7 @@ else
   storage_test_flag=
   case "$entry_path" in
     */bend2/tests/storage.bend) storage_test_flag="-DBATON_STORAGE_TEST_PROC" ;;
-    */bend2/tests/storage-cargo.bend) storage_test_flag=-DBATON_STORAGE_CARGO_TEST ;;
+    */bend2/tests/storage-cargo.bend) storage_test_flag="-DBATON_STORAGE_CARGO_TEST -DBATON_STORAGE_TEST_PROC" ;;
   esac
   native_compile cc "${CC:-clang}" -O1 -pthread -I "$root/bend2/src/host" $storage_test_flag "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
 fi

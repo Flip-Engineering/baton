@@ -16,6 +16,7 @@ import ../git/text.bend as Tx
 import ../git/process.bend as Process
 import ../git/types.bend as T
 import ../storage/lifecycle.bend as StoragePolicy
+import ./receiver-probe.bend as ReceiverProbe
 
 def string_tail(args: List<String>) -> String:
   match args:
@@ -92,10 +93,15 @@ def identity_endpoint(executable: String, db: String, session: String, cmd: Stri
 def identity_check_args(+registry: String, +helper: String, +model: String, +repository: String) -> List<String>:
   List.append(&1,String,["node",helper,"check","--registry",registry,"--model-key",model],Bool.pick(List<String>,String.is_empty(repository),Nil{},["--repository",repository]))
 
+def identity_check_scope(model: String, repository: String) -> String:
+  "recorded model " ++ model ++ Bool.pick(String,String.is_empty(repository),""," for repository " ++ repository)
+
 def identity_check_refusal(+model: String, +repository: String, result: T.RunRes) -> IO(Unit):
   match result:
     case T.RRun{T.SExit{0}, out}: IO.pure(Unit,Unit{})
-    case other: IO.die(Unit,2,"The configured series registry does not resolve the recorded model " ++ model ++ Bool.pick(String,String.is_empty(repository),""," for repository " ++ repository) ++ "; the endpoint would refuse at delivery. Correct the registry mapping or record a mapped model, then retry.")
+    case T.RRun{T.SExit{+code}, out}: IO.die(Unit,2,"The configured series identity check failed for " ++ identity_check_scope(model,repository) ++ ": helper exited " ++ U32.show(code) ++ ": " ++ Tx.trim_nl(out) ++ ". Correct the model mapping or repository's App installation, then retry.")
+    case T.RRun{T.SSignal{+signal}, out}: IO.die(Unit,2,"The configured series identity check failed for " ++ identity_check_scope(model,repository) ++ ": helper ended by signal " ++ U32.show(signal) ++ ": " ++ Tx.trim_nl(out) ++ ". Correct the model mapping or repository's App installation, then retry.")
+    case T.RSpawn{detail}: IO.die(Unit,2,"The configured series identity check failed for " ++ identity_check_scope(model,repository) ++ ": helper could not run: " ++ detail ++ ". Correct the helper installation or repository's App installation, then retry.")
 
 def identity_check_body(+registry: String, +helper: String, +model: String, +repository: String, absent: Bool) -> IO(Unit):
   match absent:
@@ -224,14 +230,26 @@ def receiver_branch_sql(+session: String, +endpoint: String, +cwd: String, branc
     case Some{current}:
       "UPDATE sessions SET branch=" ++ C.q(current) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ receiver_admitted(session,endpoint,cwd) ++ ";"
 
-def receiver(+db: String, +session: String, cmd: String, log: String, +cwd: String) -> IO(String):
+# Registration admits an OMP harness command only after it answers the rpc
+# handshake. The probe runs before the endpoint transaction and writes nothing,
+# so a refusal preserves the recorded assignment and creates no attempt.
+def receiver_harness_probe(+db: String, +session: String, cmd: String, model: String, +workspace: String) -> IO(Unit):
+  do IO<Unit>:
+    harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    Bool.pick(IO(Unit),String.eq(Tx.trim_nl(harness),"omp"),
+      ReceiverProbe.registration(db,session,cmd,model,workspace),
+      IO.pure(Unit,Unit{}))
+
+def receiver(+db: String, +session: String, +cmd: String, log: String, +cwd: String) -> IO(String):
   do IO<String>:
     found : String <- IO.try(String,Store.apply(db,C.Session{session}))
     accepted : String <- registered(found)
-    model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +selected_model : String = Tx.trim_nl(model)
     +workspace : String <- Bool.pick(IO(String),String.is_empty(cwd),IO.pure(String,""),IO.try(String,Host.Control.workspace(cwd)))
     branch : Maybe<String> <- receiver_branch(workspace)
-    +endpoint : String <- configured_endpoint(db,session,cmd,log,Tx.trim_nl(model),workspace)
+    +endpoint : String <- configured_endpoint(db,session,cmd,log,selected_model,workspace)
+    probed : Unit <- receiver_harness_probe(db,session,cmd,selected_model,workspace)
     +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ receiver_branch_sql(session,endpoint,workspace,branch) ++ receiver_sql(session,endpoint,workspace) ++ "COMMIT;"))
     answer : String <- receiver_result(saved,receiver_denied(saved))
     collected : Unit <- StoragePolicy.collect_settled(db,session)

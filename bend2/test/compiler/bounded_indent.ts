@@ -24,29 +24,6 @@ function instrument(source: string): string {
     + "function file_push(fl: File, line: string): void {");
 }
 
-const capped = `function file_push(fl: File, line: string): void {
-  const tab = fl.tab < INDENTS.length ? fl.tab : INDENTS.length - 1;
-  // Facts-only passes use the same compiler decisions while counting output
-  // lines without retaining their strings.
-  if (fl.dry) {
-    fl.dry_lines += 1;
-    fl.dry_units += line.length + tab * 2;
-    return;
-  }
-  fl.seg.lines.push(INDENTS[tab] + line);
-}`;
-
-const uncapped = `function file_push(fl: File, line: string): void {
-  // Facts-only passes use the same compiler decisions while counting output
-  // lines without retaining their strings.
-  if (fl.dry) {
-    fl.dry_lines += 1;
-    fl.dry_units += line.length + fl.tab * 2;
-    return;
-  }
-  fl.seg.lines.push("  ".repeat(fl.tab) + line);
-}`;
-
 const fixture = `import Base
 
 def dispatch(args: List<String>) -> IO(Unit):
@@ -79,6 +56,11 @@ try {
     bendSource.includes(lower)
       ? replaceOnce(bendSource, lower, generic) : bendSource);
   const source = fs.readFileSync(path.join(upstream, "comp.ts"), "utf8");
+  const capped = source.match(/function file_push\(fl: File, line: string\): void \{\n[\s\S]*?\n\}/)?.[0];
+  assert.ok(capped !== undefined, "file_push definition");
+  const uncapped = `function file_push(fl: File, line: string): void {
+${capped.includes("fl.dry") ? "  if (fl.dry) return;\n" : ""}  fl.seg.lines.push("  ".repeat(fl.tab) + line);
+}`;
   fs.writeFileSync(path.join(temp, "capped.ts"), instrument(source));
   fs.writeFileSync(path.join(temp, "uncapped.ts"),
     instrument(replaceOnce(source, capped, uncapped)));

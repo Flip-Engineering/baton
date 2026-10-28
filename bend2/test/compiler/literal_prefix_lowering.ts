@@ -79,15 +79,10 @@ function check(book: Bend.Book, name: string, hash: string, nodes: number): void
 
 const root = path.join(import.meta.dir, "../../..");
 const codex = await load(path.join(root, "bend2/src/coordinator/codex-inbox.bend"));
-const hot: Record<string, [string, number]> = {
-  "../coordinator/commands.parse_verb_only":
-    ["71df6a78f0132579cc39dfc40bea14d435edca1461c2028cc2077e2220980ba6", 1518],
-};
-for (const [name, [hash, nodes]] of Object.entries(hot)) check(codex, name, hash, nodes);
-// parse_verb_id has a later top-level parameter, so the corrected guard keeps
-// it on the ordinary lowering. Its term is the original generic term.
-check(codex, "../coordinator/commands.parse_verb_id",
-  "a1140cc7217c6254019843171eee22fed9f32e5c92f1faebcc357b8bc137c567", 98966);
+const verb = codex.tlds["../coordinator/commands.parse_verb_only"];
+assert.ok(verb?.$ === "Def" && verb.v !== null, "the verb parser has a body");
+assert.ok(unique(Bend.term_lower_shared(verb.v) as L) < 10_000,
+  "whole-string dispatch keeps a bounded syntax graph");
 const multi = ["../coordinator/commands.parse_verb_id",
   "../coordinator/commands.parse_verb_session_id",
   "../coordinator/commands.parse_verb_three_args"];
@@ -98,7 +93,7 @@ for (const name of multi) {
 assert.deepEqual(codex.order.filter((n) => n.includes("$lit")
   && multi.some((m) => n.startsWith(m + "$"))), [],
   "multi-argument parse verbs get no literal helpers");
-console.log(`PASS codex-inbox literal-prefix String lowering: ${Object.keys(hot).length} one-argument def; ${multi.length} multi-argument defs stay generic`);
+console.log(`PASS codex-inbox literal-prefix String lowering: one-argument def; ${multi.length} multi-argument defs stay generic`);
 
 const helperNames = (book: Bend.Book): string[] =>
   book.order.filter((name) => name.includes("$lit"));

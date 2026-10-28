@@ -18,6 +18,31 @@ import traceback
 
 ARCHIVE_SHA = '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4'
 COMPILER_ARCHIVES = {
+    '2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065': {
+        'name': 'Bend 2.0.25 with shared arm, use and application summaries',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    'bf7c9a9b0a94354a107b110f5f5e37cae6c3a02a6e209455ba8ec10506b41796': {
+        'name': 'Bend 2.0.25 with total fallback coverage for literal list helpers',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    '1554306bde85194bf1271ba8048d8e752a4cba81d2a3d3213282923ece91a965': {
+        'name': 'Bend 2.0.25 with compiler heap, fact and helper emission diagnostics',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    '1531397e083ae39bcd0e7955fcd54ff4c47c4f214a765fbd4fa15fce536eed58': {
+        'name': 'Bend 2.0.25 with facts-only generic units and spins specialized by erased types',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    '8e46a9e6adeac20cf8c332a943c3e1c9243c11a7b0d3b75a6a5d3a90252d6cbf': {
+        'name': 'Bend 2.0.25 with reachable incremental emission and shared literal row continuations',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
     '6609a2de031417fe4ad149d77afd9282c76237aa0b70dfb48416f4ccfe1ad876': {
         'name': 'Bend 2.0.25 with the Baton #1017 pass collection patch and Malloc=1 launcher',
         'official_release_artifact': False,

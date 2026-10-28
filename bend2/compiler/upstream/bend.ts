@@ -3144,7 +3144,8 @@ function literal_chain(p: Parse, b: Body, vars: PVar[], def: Def,
     return literal_chain_string(p, b, vars, all, scrut);
   }
   if (all.q.$ === "Lone" && all.A.$ === "ADT" && all.A.k === "List") {
-    return literal_chain_list_helpers(p, b, vars, def, k, all, scrut);
+    return literal_chain_list_helpers(p, b, vars, def, k, all, scrut)
+      ?? literal_list_rows(p, b, def, k, all, scrut);
   }
   return null;
 }
@@ -3465,6 +3466,101 @@ function literal_chain_list_helpers(p: Parse, b: Extract<Body, { $: "Match" }>,
     p.book.order.push(helper.name);
   }
   return Lam(all.k, all.i, root, span, all.q);
+}
+
+// Each list row has one continuation. A failed shape or whole-string
+// comparison reconstructs the consumed prefix and calls the next row.
+function literal_list_rows(p: Parse, b: Match, def: Def, k: Name,
+  all: Extract<HTerm, { $: "All" }>, scrut: LTerm): LTerm | null {
+  const list = all.A;
+  if (list.$ !== "ADT" || list.k !== "List") return null;
+  const elem = list.x[list.x.length - 1];
+  if (elem?.$ !== "Ref" || elem.k !== "String") return null;
+  if (!p.book.tlds["String.eq"] || !p.book.ctrs.True || !p.book.ctrs.False) return null;
+  const result = term_lower_shared(all.B(Var(all.k, all.i)));
+  if (lit_body_uses({ $: "Reply", x: result }, all.i)) return null;
+  type Row = { heads: Patt[]; rest: PVar | null; body: Body };
+  const rows: Row[] = [];
+  let literals = 0;
+  for (const row of b.r) {
+    if (row.p.length !== 1 || lit_body_refs(row.f, k)
+      || lit_body_uses(row.f, all.i)) return null;
+    const heads: Patt[] = [];
+    let tail = row.p[0];
+    while (tail.$ === "PCtr" && tail.k === "Con" && tail.x.length === 2) {
+      const head = tail.x[0];
+      if (head.$ === "PCtr") {
+        if (head.lit === undefined) return null;
+        literals++;
+      }
+      heads.push(head);
+      tail = tail.x[1];
+    }
+    if (tail.$ === "PCtr" && (tail.k !== "Nil" || tail.x.length !== 0)) return null;
+    rows.push({ heads, rest: tail.$ === "PVar" ? tail : null, body: row.f });
+  }
+  if (literals === 0) return null;
+  // Each helper checks its row independently. Its final fallback must accept
+  // every list because the checker cannot use coverage from earlier helpers.
+  const last = rows[rows.length - 1];
+  if (last.heads.length !== 0 || last.rest === null) return null;
+  const fr = () => p.sc.frs++;
+  const span = b.s;
+  const listType = term_lower_shared(list);
+  const helpers: LitHelper[] = [];
+  let next: string | null = null;
+  for (let r = rows.length - 1; r >= 0; r--) {
+    const row = rows[r];
+    const index = fr(), name = k + "$litcase" + index;
+    if (p.book.tlds[name] !== undefined) return null;
+    const whole = Var("_xs", index);
+    const fail = (prefix: LTerm[], tail: LTerm): LTerm => {
+      let xs = tail;
+      for (let i = prefix.length - 1; i >= 0; i--) xs = Ctr("Con", [prefix[i], xs], span);
+      return next === null ? Efq(span) : App(Ref(next), xs, span);
+    };
+    const matchList = (xs: LTerm, h: number, t: number, hit: LTerm,
+      miss: LTerm): LTerm => App(Ann(
+      Mat("Con", Lam("_h", h, Lam("_t", t, hit, span, Lone()), span, Many()),
+        Mat("Nil", miss, Efq(span), span), span),
+      All(Lone(), "_l", fr(), listType, result), span), xs, span);
+    const build = (column: number, xs: LTerm, prefix: LTerm[], body: Body): LTerm => {
+      if (column === row.heads.length) {
+        if (row.rest !== null) {
+          const variable = xs as Extract<LTerm, { $: "Var" }>;
+          return body_flatten(body_sub(body, row.rest.i,
+            { $: "PVar", k: variable.k, i: variable.i, q: row.rest.q }), [], fr);
+        }
+        const h = fr(), t = fr();
+        return matchList(xs, h, t,
+          fail([...prefix, Var("_h", h)], Var("_t", t)),
+          body_flatten(body, [], fr));
+      }
+      const h = fr(), t = fr();
+      const H = Var("_h", h), T = Var("_t", t);
+      const pattern = row.heads[column];
+      const substituted = pattern.$ === "PVar" ? body_sub(body, pattern.i,
+        { $: "PVar", k: "_h", i: h, q: pattern.q }) : body;
+      let hit = build(column + 1, T, [...prefix, H], substituted);
+      if (pattern.$ === "PCtr") {
+        hit = App(Ann(Mat("False", fail([...prefix, H], T),
+          Mat("True", hit, Efq(span), span), span),
+          All(Lone(), "_b", fr(), Ref("Bool"), result), span),
+          App(App(Ref("String.eq"), H, span), patt_term(pattern), span), span);
+      }
+      return matchList(xs, h, t, hit, fail(prefix, Ctr("Nil", [], span)));
+    };
+    helpers.push({ name, def: { $: "Def", n: 1, x: 0,
+      T: term_higher(All(Lone(), "_xs", index, listType, result)),
+      v: term_higher(Lam("_xs", index, build(0, whole, [], row.body), span, Lone())),
+      u: def.u } });
+    next = name;
+  }
+  for (const helper of helpers) {
+    p.book.tlds[helper.name] = helper.def;
+    p.book.order.push(helper.name);
+  }
+  return Lam(all.k, all.i, App(Ref(next!), scrut, span), span, all.q);
 }
 
 // WNF

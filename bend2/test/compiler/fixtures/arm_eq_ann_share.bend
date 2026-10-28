@@ -6,7 +6,7 @@
 import Base
 
 @unsafe
-def dispatch(args: List<String>) -> IO(Unit):
+def dispatch(args: List<String>, +marker: Bool) -> IO(Unit):
   match args:
     case "--host-process-keeper" <> +a <> +b <> Nil{}:
       IO.write("host")
@@ -19,4 +19,4 @@ def dispatch(args: List<String>) -> IO(Unit):
 def main() -> IO(Unit):
   do IO<Unit>:
     args : List<String> <- IO.args()
-    dispatch(args)
+    dispatch(args,True{})

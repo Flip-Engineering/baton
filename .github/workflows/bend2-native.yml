@@ -18,6 +18,7 @@ name: bend2-native-development
       - 'bend2/src/**'
       - 'bend2/test/**'
       - 'bend2/scripts/build-native.sh'
+      - 'bend2/scripts/darwin-arm64-clang.sh'
       - 'bend2/scripts/package-native.py'
       - 'bend2/scripts/stage-repl-compiler.py'
       - 'bend2/scripts/check-install.py'
@@ -45,8 +46,9 @@ name: bend2-native-development
         default: ''
         type: string
       target_commit:
-        description: 'Exact target commit for the affected behavior comparison'
-        required: true
+        description: 'Optional exact target commit for the post-package affected behavior comparison'
+        required: false
+        default: ''
         type: string
       retained_main_handoff:
         description: 'Homelab completed Main handoff path or single-match glob; $HOME uses the selected runner home'
@@ -61,12 +63,12 @@ name: bend2-native-development
       retained_compiler_archive:
         description: 'Pinned compiler archive on the homelab; $RUNNER_TEMP uses the selected runner namespace'
         required: false
-        default: '/var/tmp/baton2-compile-queue/toolchains/compiler-main-literal-prefix-capacity-cid-final-20261027/bend-2.0.25-linux-x64-compiler-main-literal-prefix-capacity-cid-final-20261027.tar.gz'
+        default: '/var/tmp/baton2-compile-queue/toolchains/compiler-arms-shared-sol-20261028/bend-2.0.25-linux-x64-compiler-arms-shared-sol-20261028.tar.gz'
         type: string
       retained_compiler_archive_sha256:
         description: 'Exact SHA256 of the selected pinned compiler archive'
         required: false
-        default: '3f0c31436e3f39e3ffc581496de34ef5077faf5dd0b106438de0049f0e7e8f75'
+        default: '2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065'
         type: string
       retained_ccache:
         description: 'Measured private ccache wrapper on the homelab; leave blank for direct native compilation'
@@ -115,11 +117,11 @@ jobs:
       - name: Select homelab browser executable
         shell: bash
         run: printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Prepare candidate toolchain and TypeScript runtime
+      - name: Prepare candidate compiler
         shell: bash
         env:
-          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-literal-prefix-capacity-cid-final-20261027/bend-2.0.25-linux-x64-compiler-main-literal-prefix-capacity-cid-final-20261027.tar.gz' }}
-          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '3f0c31436e3f39e3ffc581496de34ef5077faf5dd0b106438de0049f0e7e8f75' }}
+          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-arms-shared-sol-20261028/bend-2.0.25-linux-x64-compiler-arms-shared-sol-20261028.tar.gz' }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065' }}
           BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
           BATON2_LINUX_RUNNER: homelab
         run: |
@@ -128,6 +130,214 @@ jobs:
           test ! -e "$run"
           mkdir -p "$run/toolchain-home" "$run/evidence" "$run/generated"
           printf 'BATON2_LINUX_RUN=%s\n' "$run" >> "$GITHUB_ENV"
+          python3 .github/scripts/prepare-native-compiler.py --run "$run" \
+            --archive "$BATON2_RETAINED_COMPILER_ARCHIVE" \
+            --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" \
+            --ccache "$BATON2_RETAINED_CCACHE" --github-env "$GITHUB_ENV" \
+            --runner "$BATON2_LINUX_RUNNER" \
+            > "$run/evidence/compiler-selection.stdout" 2> "$run/evidence/compiler-selection.stderr"
+          printf 'BEND=%s\n' "$run/toolchain-home/bin/bend" >> "$GITHUB_ENV"
+          sha256sum "$run/toolchain-home/bin/bend" > "$run/evidence/compiler.sha256"
+      - name: Verify optional retained Main compilation
+        shell: bash
+        env:
+          BATON2_RETAINED_MAIN_HANDOFF: ${{ inputs.retained_main_handoff }}
+          BATON2_RETAINED_MAIN_SHA256: ${{ inputs.retained_main_handoff_sha256 }}
+          BATON2_LINUX_RUNNER: homelab
+        run: |
+          set -euo pipefail
+          printf 'BATON2_MAIN_GENERATED_C=\nBATON2_MAIN_GENERATED_C_ROOT=\nBATON2_MAIN_GENERATED_C_PROOF=\nBATON2_MAIN_GENERATED_C_PROOF_SHA256=\nBATON2_MAIN_C_VERIFIER=\n' >> "$GITHUB_ENV"
+          if [[ -n "$BATON2_RETAINED_MAIN_HANDOFF" && "$BATON2_LINUX_RUNNER" != homelab ]]; then
+            printf '%s\n' 'Retained Main compilation requires the homelab runner.' >&2
+            exit 1
+          fi
+          python3 .github/scripts/reuse-native-main.py prepare \
+            --source "$GITHUB_WORKSPACE" --run "$BATON2_LINUX_RUN" \
+            --handoff "$BATON2_RETAINED_MAIN_HANDOFF" \
+            --handoff-sha256 "$BATON2_RETAINED_MAIN_SHA256" \
+            --compiler "$BEND" \
+            --compiler-archive "$BATON2_LINUX_RUN/bend-2.0.25-linux-x64.tar.gz" \
+            --github-env "$GITHUB_ENV" \
+            > "$BATON2_LINUX_RUN/evidence/main-c-reuse.stdout" \
+            2> "$BATON2_LINUX_RUN/evidence/main-c-reuse.stderr"
+      - name: Produce exact-source Main C and Linux binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset BEND_GENERATED_C
+          ulimit -s unlimited
+          ulimit -a > "$BATON2_LINUX_RUN/evidence/limits.txt"
+          "$CC" --version > "$BATON2_LINUX_RUN/evidence/clang.txt"
+          uname -a > "$BATON2_LINUX_RUN/evidence/host.txt"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, platform, runpy, subprocess, sys, time
+          root = pathlib.Path(os.environ['GITHUB_WORKSPACE'])
+          run = pathlib.Path(os.environ['BATON2_LINUX_RUN'])
+          evidence = run / 'evidence'
+          def git(*args):
+              return subprocess.check_output(['git', *args], cwd=root, text=True).strip()
+          commit = git('rev-parse', 'HEAD')
+          assert commit == os.environ['BATON2_SOURCE_SHA'], (commit, os.environ['BATON2_SOURCE_SHA'])
+          assert not git('status', '--porcelain', '--untracked-files=no'), 'Checks changed tracked source'
+          source_tree = git('rev-parse', 'HEAD^{tree}')
+          checks = [{'label': 'exact-source-identity', 'exit_code': 0,
+                     'source_commit': commit, 'source_tree': source_tree}]
+          compiler_selection = json.loads((run / 'generated/compiler-selection.json').read_text())
+          compiler_archive_sha256 = hashlib.sha256((run / 'bend-2.0.25-linux-x64.tar.gz').read_bytes()).hexdigest()
+          assert compiler_selection['compiler_archive_sha256'] == compiler_archive_sha256
+          assert compiler_selection['compiler_binary_sha256'] == hashlib.sha256(pathlib.Path(os.environ['BEND']).read_bytes()).hexdigest()
+          compilers = runpy.run_path(str(root / '.github/scripts/reuse-native-main.py'))['COMPILER_ARCHIVES']
+          assert compiler_archive_sha256 in compilers
+          compiler_identity = compilers[compiler_archive_sha256]
+          assert all(compiler_selection[key] == value for key, value in compiler_identity.items())
+          if 'binary_sha256' in compiler_identity:
+              assert compiler_selection['compiler_binary_sha256'] == compiler_identity['binary_sha256']
+          checks.append({'label': 'pinned-compiler-identity', 'exit_code': 0,
+                         'archive_sha256': compiler_archive_sha256,
+                         'binary_sha256': compiler_selection['compiler_binary_sha256'],
+                         'selection_sha256': hashlib.sha256((run / 'generated/compiler-selection.json').read_bytes()).hexdigest()})
+          queue = runpy.run_path(str(root / '.github/scripts/queue-native-checks.py'))
+          os.environ['BATON2_QUEUE_RUN_ROOT'] = str(run / 'compile-queue')
+          build_environment = queue['environment'](run)
+          argv = ['sh', 'bend2/scripts/build-native.sh']
+          started = time.time()
+          with (evidence / 'main-native-build.stdout').open('wb') as stdout, \
+               (evidence / 'main-native-build.stderr').open('wb') as stderr:
+              result = subprocess.run(argv, cwd=root, stdout=stdout, stderr=stderr, env=build_environment)
+          build_check = {'label': 'main-native-build', 'argv': argv, 'cwd': str(root),
+                   'exit_code': result.returncode, 'elapsed_seconds': time.time() - started,
+                   'stdout': 'main-native-build.stdout', 'stderr': 'main-native-build.stderr'}
+          checks.append(build_check)
+          (evidence / 'producer-checks.json').write_text(json.dumps(checks, indent=2) + '\n')
+          if result.returncode:
+              raise SystemExit(result.returncode)
+          assert not git('status', '--porcelain', '--untracked-files=no'), 'Main build changed tracked source'
+          paths = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root).decode().split('\0')
+          source = {path: hashlib.sha256((root / path).read_bytes()).hexdigest()
+                    for path in paths if path and (root / path).is_file()}
+          (run / 'generated/source-manifest.json').write_text(json.dumps(source, indent=2) + '\n')
+          c = root / '.scratch/bend2/baton2.c'
+          binary = root / '.scratch/bend2/baton2'
+          linux_binary = run / 'generated/baton2-linux-x64'
+          linux_binary.write_bytes(binary.read_bytes())
+          linux_binary.chmod(0o755)
+          (run / 'generated/baton2.c').write_bytes(c.read_bytes())
+          main_c_reuse = json.loads((run / 'generated/main-c-reuse.json').read_text())
+          verify_argv = [sys.executable, str(root / '.github/scripts/reuse-native-main.py'), 'verify-transfer',
+                         '--source', str(root), '--generated', str(run / 'generated')]
+          started = time.time()
+          with (evidence / 'main-c-reuse-verification.stdout').open('wb') as stdout, \
+               (evidence / 'main-c-reuse-verification.stderr').open('wb') as stderr:
+              verified = subprocess.run(verify_argv, cwd=root, stdout=stdout, stderr=stderr)
+          checks.append({'label': 'main-c-reuse-transfer-verification', 'argv': verify_argv,
+                         'cwd': str(root), 'exit_code': verified.returncode,
+                         'elapsed_seconds': time.time() - started,
+                         'stdout': 'main-c-reuse-verification.stdout',
+                         'stderr': 'main-c-reuse-verification.stderr'})
+          (evidence / 'producer-checks.json').write_text(json.dumps(checks, indent=2) + '\n')
+          if verified.returncode:
+              raise SystemExit(verified.returncode)
+          handoff = {'schema': 'baton2-generated-c-handoff-v1', 'source_commit': commit,
+                     'source_tree': source_tree, 'platform': platform.platform(),
+                     'workflow_run_id': os.environ['GITHUB_RUN_ID'], 'workflow_run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+                     'compiler_archive_sha256': compiler_archive_sha256,
+                     'compiler_binary_sha256': hashlib.sha256(pathlib.Path(os.environ['BEND']).read_bytes()).hexdigest(),
+                     'compiler_selection_sha256': hashlib.sha256((run / 'generated/compiler-selection.json').read_bytes()).hexdigest(),
+                     'generated_c_sha256': hashlib.sha256(c.read_bytes()).hexdigest(), 'generated_c_size': c.stat().st_size,
+                     'linux_binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+                     'linux_binary_path': 'baton2-linux-x64', 'linux_binary_size': linux_binary.stat().st_size,
+                     'source_manifest_sha256': hashlib.sha256((run / 'generated/source-manifest.json').read_bytes()).hexdigest(),
+                     'checks': checks, 'main_c_reuse': main_c_reuse}
+          (run / 'generated/handoff-manifest.json').write_text(json.dumps(handoff, indent=2) + '\n')
+          PY
+      - name: Cancel candidate compile queue requests
+        if: cancelled() && env.BATON2_LINUX_RUN != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f "$BATON2_LINUX_RUN/queue-config.json" ]]; then
+            python3 .github/scripts/queue-native-checks.py cancel "$BATON2_LINUX_RUN"
+          fi
+      - name: Retain required REPL compiler source inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/.github/scripts/repl-package.py" source \
+            --source "$GITHUB_WORKSPACE/bend2/compiler/upstream" \
+            --output "$BATON2_LINUX_RUN/generated/repl-source"
+      - name: Retain native object cache statistics
+        if: always() && env.BATON2_CCACHE != ''
+        shell: bash
+        run: |
+          "$BATON2_CCACHE" --show-stats \
+            > "$BATON2_LINUX_RUN/evidence/native-object-cache-stats.stdout" \
+            2> "$BATON2_LINUX_RUN/evidence/native-object-cache-stats.stderr"
+      - name: Retain Main producer evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: baton2-linux-producer-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          path: ${{ env.BATON2_LINUX_RUN }}/evidence/
+          if-no-files-found: error
+      - name: Retain requested Main compilation origin
+        if: always() && inputs.retained_main_handoff != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: baton2-main-c-origin-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.BATON2_LINUX_RUN }}/generated/main-c-reuse.json
+            ${{ env.BATON2_LINUX_RUN }}/generated/main-c-origin/
+            ${{ env.BATON2_LINUX_RUN }}/generated/main-c-builds/
+          if-no-files-found: error
+      - name: Retain generated C and producer results
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: baton2-generated-c-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.BATON2_LINUX_RUN }}/generated/
+            ${{ env.BATON2_LINUX_RUN }}/evidence/
+          if-no-files-found: error
+
+  linux-native-qualification:
+    needs: [darwin-arm64]
+    if: ${{ !cancelled() }}
+    timeout-minutes: 4320
+    runs-on:
+      group: baton2-native-homelab
+      labels: [self-hosted, Linux, X64, baton2-native-linux-x64]
+    env:
+      CC: /usr/bin/clang-19
+      BEND_NO_TELEMETRY: '1'
+      BUN_JSC_maxPerThreadStackUsage: '67108864'
+    steps:
+      - name: Validate exact source commit
+        shell: bash
+        run: '[[ "$BATON2_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]'
+      - name: Checkout exact candidate
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.BATON2_SOURCE_SHA }}
+          persist-credentials: false
+      - name: Select Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Select homelab browser executable
+        shell: bash
+        run: printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Prepare qualification compiler and TypeScript runtime
+        shell: bash
+        env:
+          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-arms-shared-sol-20261028/bend-2.0.25-linux-x64-compiler-arms-shared-sol-20261028.tar.gz' }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065' }}
+          BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
+          BATON2_LINUX_RUNNER: homelab
+        run: |
+          set -euo pipefail
+          run="$RUNNER_TEMP/baton2-qualification-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$run"
+          mkdir -p "$run/toolchain-home" "$run/evidence"
+          printf 'BATON2_QUALIFICATION_RUN=%s\n' "$run" >> "$GITHUB_ENV"
           python3 .github/scripts/prepare-native-compiler.py --run "$run" \
             --archive "$BATON2_RETAINED_COMPILER_ARCHIVE" \
             --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" \
@@ -153,34 +363,36 @@ jobs:
             exit 1
           fi
           python3 .github/scripts/reuse-native-main.py prepare \
-            --source "$GITHUB_WORKSPACE" --run "$BATON2_LINUX_RUN" \
+            --source "$GITHUB_WORKSPACE" --run "$BATON2_QUALIFICATION_RUN" \
             --handoff "$BATON2_RETAINED_MAIN_HANDOFF" \
             --handoff-sha256 "$BATON2_RETAINED_MAIN_SHA256" \
             --compiler "$BEND" \
-            --compiler-archive "$BATON2_LINUX_RUN/bend-2.0.25-linux-x64.tar.gz" \
+            --compiler-archive "$BATON2_QUALIFICATION_RUN/bend-2.0.25-linux-x64.tar.gz" \
             --github-env "$GITHUB_ENV" \
-            > "$BATON2_LINUX_RUN/evidence/main-c-reuse.stdout" \
-            2> "$BATON2_LINUX_RUN/evidence/main-c-reuse.stderr"
-      - name: Run complete native checks and affected candidate tests
+            > "$BATON2_QUALIFICATION_RUN/evidence/main-c-reuse.stdout" \
+            2> "$BATON2_QUALIFICATION_RUN/evidence/main-c-reuse.stderr"
+      - name: Run and record complete native checks and selected candidate tests
         shell: bash
         run: |
           set -euo pipefail
           unset BEND_GENERATED_C
           ulimit -s unlimited
-          ulimit -a > "$BATON2_LINUX_RUN/evidence/limits.txt"
-          "$CC" --version > "$BATON2_LINUX_RUN/evidence/clang.txt"
-          node --version > "$BATON2_LINUX_RUN/evidence/node.txt"
-          python3 --version > "$BATON2_LINUX_RUN/evidence/python.txt"
-          uname -a > "$BATON2_LINUX_RUN/evidence/host.txt"
+          ulimit -a > "$BATON2_QUALIFICATION_RUN/evidence/limits.txt"
+          "$CC" --version > "$BATON2_QUALIFICATION_RUN/evidence/clang.txt"
+          node --version > "$BATON2_QUALIFICATION_RUN/evidence/node.txt"
+          python3 --version > "$BATON2_QUALIFICATION_RUN/evidence/python.txt"
+          uname -a > "$BATON2_QUALIFICATION_RUN/evidence/host.txt"
           python3 - <<'PY'
-          import hashlib, json, os, pathlib, platform, runpy, subprocess, sys, time
+          import json, os, pathlib, runpy, subprocess, sys, time
           root = pathlib.Path(os.environ['GITHUB_WORKSPACE'])
-          run = pathlib.Path(os.environ['BATON2_LINUX_RUN'])
+          run = pathlib.Path(os.environ['BATON2_QUALIFICATION_RUN'])
           evidence = run / 'evidence'
           recorder = root / '.github/scripts/record-native-checks.py'
           selected = runpy.run_path(str(recorder))['SELECTED']
           subprocess.run([sys.executable, str(recorder), 'shim', str(run / 'python-shim'), str(evidence / 'selected')], check=True)
-          check_environment = runpy.run_path(str(root / '.github/scripts/queue-native-checks.py'))['environment'](run)
+          queue = runpy.run_path(str(root / '.github/scripts/queue-native-checks.py'))
+          os.environ['BATON2_QUEUE_RUN_ROOT'] = str(run / 'compile-queue')
+          check_environment = queue['environment'](run)
           check_environment['PATH'] = str(run / 'python-shim') + os.pathsep + check_environment['PATH']
           records = []
           def record(label, argv):
@@ -198,86 +410,32 @@ jobs:
           assert all(result['judged'] and result['exit_code'] == 0 for result in selected_results.values())
           def git(*args):
               return subprocess.check_output(['git', *args], cwd=root, text=True).strip()
-          commit = git('rev-parse', 'HEAD')
-          assert commit == os.environ['BATON2_SOURCE_SHA'], (commit, os.environ['BATON2_SOURCE_SHA'])
+          assert git('rev-parse', 'HEAD') == os.environ['BATON2_SOURCE_SHA']
           assert not git('status', '--porcelain', '--untracked-files=no'), 'Checks changed tracked source'
-          paths = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root).decode().split('\0')
-          source = {path: hashlib.sha256((root / path).read_bytes()).hexdigest()
-                    for path in paths if path and (root / path).is_file()}
-          (run / 'generated/source-manifest.json').write_text(json.dumps(source, indent=2) + '\n')
-          c = root / '.scratch/bend2/baton2.c'
-          binary = root / '.scratch/bend2/baton2'
-          linux_binary = run / 'generated/baton2-linux-x64'
-          linux_binary.write_bytes(binary.read_bytes())
-          linux_binary.chmod(0o755)
-          (run / 'generated/baton2.c').write_bytes(c.read_bytes())
-          main_c_reuse = json.loads((run / 'generated/main-c-reuse.json').read_text())
-          subprocess.run([sys.executable, str(root / '.github/scripts/reuse-native-main.py'), 'verify-transfer',
-                          '--source', str(root), '--generated', str(run / 'generated')], check=True,
-                         stdout=(evidence / 'main-c-reuse-verification.stdout').open('wb'),
-                         stderr=(evidence / 'main-c-reuse-verification.stderr').open('wb'))
-          handoff = {'schema': 'baton2-generated-c-handoff-v1', 'source_commit': commit,
-                     'source_tree': git('rev-parse', 'HEAD^{tree}'), 'platform': platform.platform(),
-                     'workflow_run_id': os.environ['GITHUB_RUN_ID'], 'workflow_run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
-                     'compiler_archive_sha256': hashlib.sha256((run / 'bend-2.0.25-linux-x64.tar.gz').read_bytes()).hexdigest(),
-                     'compiler_binary_sha256': hashlib.sha256(pathlib.Path(os.environ['BEND']).read_bytes()).hexdigest(),
-                     'compiler_selection_sha256': hashlib.sha256((run / 'generated/compiler-selection.json').read_bytes()).hexdigest(),
-                     'generated_c_sha256': hashlib.sha256(c.read_bytes()).hexdigest(), 'generated_c_size': c.stat().st_size,
-                     'linux_binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
-                     'linux_binary_path': 'baton2-linux-x64', 'linux_binary_size': linux_binary.stat().st_size,
-                     'source_manifest_sha256': hashlib.sha256((run / 'generated/source-manifest.json').read_bytes()).hexdigest(),
-                     'checks': records, 'selected_results': selected_results, 'main_c_reuse': main_c_reuse}
-          (run / 'generated/handoff-manifest.json').write_text(json.dumps(handoff, indent=2) + '\n')
+          (evidence / 'qualification-summary.json').write_text(json.dumps({
+              'schema': 'baton2-native-qualification-v1', 'source_commit': git('rev-parse', 'HEAD'),
+              'checks': records, 'selected_results': selected_results
+          }, indent=2) + '\n')
           PY
-      - name: Cancel candidate compile queue requests
-        if: cancelled() && env.BATON2_LINUX_RUN != ''
+      - name: Cancel qualification compile queue requests
+        if: cancelled() && env.BATON2_QUALIFICATION_RUN != ''
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -f "$BATON2_LINUX_RUN/queue-config.json" ]]; then
-            python3 .github/scripts/queue-native-checks.py cancel "$BATON2_LINUX_RUN"
+          if [[ -f "$BATON2_QUALIFICATION_RUN/queue-config.json" ]]; then
+            python3 .github/scripts/queue-native-checks.py cancel "$BATON2_QUALIFICATION_RUN"
           fi
-      - name: Retain required REPL compiler source inputs
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 "$GITHUB_WORKSPACE/.github/scripts/repl-package.py" source \
-            --source "$GITHUB_WORKSPACE/bend2/compiler/upstream" \
-            --output "$BATON2_LINUX_RUN/generated/repl-source"
-      - name: Retain native object cache statistics
-        if: always() && env.BATON2_CCACHE != ''
-        shell: bash
-        run: |
-          "$BATON2_CCACHE" --show-stats \
-            > "$BATON2_LINUX_RUN/evidence/native-object-cache-stats.stdout" \
-            2> "$BATON2_LINUX_RUN/evidence/native-object-cache-stats.stderr"
-      - name: Retain complete candidate evidence
+      - name: Retain complete native qualification evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: baton2-linux-candidate-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
-          path: ${{ env.BATON2_LINUX_RUN }}/evidence/
-          if-no-files-found: error
-      - name: Retain requested Main compilation origin
-        if: always() && inputs.retained_main_handoff != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: baton2-main-c-origin-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
-          path: |
-            ${{ env.BATON2_LINUX_RUN }}/generated/main-c-reuse.json
-            ${{ env.BATON2_LINUX_RUN }}/generated/main-c-origin/
-            ${{ env.BATON2_LINUX_RUN }}/generated/main-c-builds/
-          if-no-files-found: error
-      - name: Retain generated C and producer results
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: baton2-generated-c-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
-          path: |
-            ${{ env.BATON2_LINUX_RUN }}/generated/
-            ${{ env.BATON2_LINUX_RUN }}/evidence/
+          path: ${{ env.BATON2_QUALIFICATION_RUN }}/evidence/
           if-no-files-found: error
 
   linux-target:
+    needs: [darwin-arm64]
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.target_commit != '') }}
     timeout-minutes: 4320
     permissions:
       contents: read
@@ -290,8 +448,8 @@ jobs:
       BEND_NO_TELEMETRY: '1'
       BUN_JSC_maxPerThreadStackUsage: '67108864'
       BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.target_commit }}
-      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-literal-prefix-capacity-cid-final-20261027/bend-2.0.25-linux-x64-compiler-main-literal-prefix-capacity-cid-final-20261027.tar.gz' }}
-      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '3f0c31436e3f39e3ffc581496de34ef5077faf5dd0b106438de0049f0e7e8f75' }}
+      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-arms-shared-sol-20261028/bend-2.0.25-linux-x64-compiler-arms-shared-sol-20261028.tar.gz' }}
+      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065' }}
     steps:
       - name: Validate exact source commit
         shell: bash
@@ -405,10 +563,15 @@ jobs:
           if-no-files-found: error
 
   darwin-arm64:
-    needs: [linux-candidate, linux-target]
-    runs-on: [self-hosted, macOS, ARM64, baton2-native-darwin-arm64]
+    needs: [linux-candidate]
+    runs-on:
+      group: baton2-native-homelab
+      labels: [self-hosted, Linux, X64, baton2-native-linux-x64]
     env:
       BATON2_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || '' }}
+      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-arms-shared-sol-20261028/bend-2.0.25-linux-x64-compiler-arms-shared-sol-20261028.tar.gz' }}
+      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065' }}
+      CC: /usr/bin/clang-19
     steps:
       - name: Checkout exact source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -421,17 +584,11 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Download qualified generated C and complete producer results
+      - name: Download exact-source Main C and producer checks
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: baton2-generated-c-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/baton2-generated-c-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Download complete target comparison
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: baton2-linux-target-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/baton2-target-results-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Create owned build clone and install pinned compiler
         shell: bash
@@ -441,20 +598,18 @@ jobs:
           test ! -e "$run"
           mkdir -p "$run/toolchain"
           printf 'BATON2_NATIVE_RUN=%s\n' "$run" >> "$GITHUB_ENV"
-          test "$(uname -s)" = Darwin
-          test "$(uname -m)" = arm64
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = x86_64
           git clone --no-hardlinks --no-checkout "$GITHUB_WORKSPACE" "$run/build-source" > "$run/clone.log" 2>&1
           git -C "$run/build-source" checkout --detach "$BATON2_SOURCE_SHA" >> "$run/clone.log" 2>&1
           test "$(git -C "$run/build-source" rev-parse HEAD)" = "$BATON2_SOURCE_SHA"
-          archive="$run/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
-          curl --proto '=https' --tlsv1.2 -fsSL \
-            https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz \
-            -o "$archive" > "$run/toolchain/download.log" 2>&1
-          printf 'c5bb22ba029d5909da9c6db82aa037278a66d1cf8a5572f433879f7dcd866c31  %s\n' "$archive" | \
-            shasum -a 256 -c - > "$run/toolchain/archive-check.log" 2>&1
-          test ! -e "$run/toolchain-home"
-          BEND_HOME="$run/toolchain-home" sh "$run/build-source/docs/bend2/reference/toolchain/install-2.0.25.sh" \
-            > "$run/toolchain/install.log" 2>&1
+          compiler_run="$run/compiler-selection"
+          mkdir -p "$compiler_run/evidence" "$compiler_run/toolchain-home"
+          python3 "$run/build-source/.github/scripts/prepare-native-compiler.py" \
+            --run "$compiler_run" --archive "$BATON2_RETAINED_COMPILER_ARCHIVE" \
+            --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" --runner homelab \
+            --github-env "$GITHUB_ENV" > "$run/toolchain-selection.stdout" \
+            2> "$run/toolchain-selection.stderr"
           npm install --prefix "$run/typescript-runtime" --ignore-scripts --no-audit --no-fund \
             typescript@5.9.3 > "$run/typescript-install.stdout" 2> "$run/typescript-install.stderr"
 
@@ -463,7 +618,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 "$GITHUB_WORKSPACE/.github/scripts/repl-package.py" runtime \
-            --output "$BATON2_NATIVE_RUN/repl-runtime"
+            --output "$BATON2_NATIVE_RUN/repl-runtime" --target-platform darwin-arm64
 
       - name: Verify generated C against exact producer source and results
         shell: bash
@@ -510,18 +665,26 @@ jobs:
           assert main_c_reuse == handoff['main_c_reuse']
           subprocess.run(['python3', str(root / '.github/scripts/reuse-native-main.py'), 'verify-transfer',
                           '--source', str(root), '--generated', str(generated)], check=True)
-          assert {row['label'] for row in handoff['checks']} == {'complete-native'}
-          assert all(row['exit_code'] == 0 for row in handoff['checks'])
-          recorder = root / '.github/scripts/record-native-checks.py'
-          selected = runpy.run_path(str(recorder))['SELECTED']
-          assert set(handoff['selected_results']) == set(selected)
-          assert all(row['judged'] and row['exit_code'] == 0 for row in handoff['selected_results'].values())
-          target = pathlib.Path(os.environ['RUNNER_TEMP']) / ('baton2-target-results-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'])
-          subprocess.run(['python3', str(recorder), 'compare', str(transfer / 'evidence/selected'),
-                          str(target / 'selected'), str(pathlib.Path(os.environ['BATON2_NATIVE_RUN']) / 'selected-comparison.json')], check=True)
+          producer_checks_path = transfer / 'evidence/producer-checks.json'
+          producer_checks = json.loads(producer_checks_path.read_text())
+          assert producer_checks == handoff['checks']
+          assert [row['label'] for row in producer_checks] == [
+              'exact-source-identity', 'pinned-compiler-identity',
+              'main-native-build', 'main-c-reuse-transfer-verification']
+          assert all(row['exit_code'] == 0 for row in producer_checks)
+          assert producer_checks[2]['argv'] == ['sh', 'bend2/scripts/build-native.sh']
+          assert producer_checks[3]['argv'][2] == 'verify-transfer'
+          assert producer_checks[3]['argv'][3:6] == ['--source', producer_checks[3]['cwd'], '--generated']
+          assert producer_checks[3]['argv'][6].endswith('/generated')
+          for row in producer_checks:
+              if 'stdout' in row:
+                  assert (transfer / 'evidence' / row['stdout']).is_file()
+              if 'stderr' in row:
+                  assert (transfer / 'evidence' / row['stderr']).is_file()
           (pathlib.Path(os.environ['BATON2_NATIVE_RUN']) / 'generated-c-verification.json').write_text(json.dumps({
               'status': 'verified', 'source_commit': handoff['source_commit'],
-              'generated_c_sha256': handoff['generated_c_sha256'], 'producer': handoff
+              'generated_c_sha256': handoff['generated_c_sha256'],
+              'executed_producer_checks': handoff['checks'], 'producer': handoff
           }, indent=2) + '\n')
           PY
 
@@ -530,22 +693,31 @@ jobs:
         run: |
           set -euo pipefail
           export BUN_JSC_maxPerThreadStackUsage=67108864
+          export BATON2_QUEUE_RUN_ROOT="$BATON2_NATIVE_RUN/compile-queue"
           unset BEND_GENERATED_C
+          llvm_root=/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm
+          sdkroot=/mnt/nvme4tb/ci-runners/baton2-native-homelab/toolchains/apple/MacOSX15.5.sdk
+          sdk_manifest=/mnt/nvme4tb/ci-runners/baton2-native-homelab/toolchains/apple/MacOSX15.5.sdk.transfer-manifest.json
           settings="$BATON2_NATIVE_RUN/build-settings"
           test ! -e "$settings"
           mkdir "$settings"
-          clang --version > "$settings/clang.txt"
+          printf '%s\n' "$llvm_root/bin/clang" > "$settings/clang-path.txt"
+          sha256sum "$llvm_root/bin/clang" > "$settings/clang.sha256"
+          printf '%s\n' "$llvm_root/bin/ld64.lld" > "$settings/linker-path.txt"
+          sha256sum "$llvm_root/bin/ld64.lld" > "$settings/linker.sha256"
           node --version > "$settings/node.txt"
           python3 --version > "$settings/python.txt"
           uname -a > "$settings/host.txt"
           printf 'GITHUB_SHA=%s\nGITHUB_RUN_ID=%s\nGITHUB_RUN_ATTEMPT=%s\nBUN_JSC_maxPerThreadStackUsage=%s\nBEND_ARGUMENT=%s\nCC=%s\nBEND_GENERATED_C=%s\n' \
             "$BATON2_SOURCE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
-            "$BUN_JSC_maxPerThreadStackUsage" "$BATON2_NATIVE_RUN/toolchain-home/bin/bend" \
-            "${CC:-clang}" "${BEND_GENERATED_C:-}" > "$settings/environment.txt"
+            "$BUN_JSC_maxPerThreadStackUsage" "$BATON2_NATIVE_RUN/compiler-selection/toolchain-home/bin/bend" \
+            "$BATON2_NATIVE_RUN/build-source/bend2/scripts/darwin-arm64-clang.sh" "${BEND_GENERATED_C:-}" > "$settings/environment.txt"
           cp "$BATON2_NATIVE_RUN/build-source/.github/workflows/bend2-native.yml" "$settings/workflow.yml"
-          shasum -a 256 "$BATON2_NATIVE_RUN/toolchain-home/bin/bend" > "$settings/compiler.sha256"
-          stat -L -f '%z' "$BATON2_NATIVE_RUN/toolchain-home/bin/bend" > "$settings/compiler.size"
-          file -L "$BATON2_NATIVE_RUN/toolchain-home/bin/bend" > "$settings/compiler.file"
+          sha256sum "$BATON2_NATIVE_RUN/compiler-selection/toolchain-home/bin/bend" > "$settings/compiler.sha256"
+          stat -Lc '%s' "$BATON2_NATIVE_RUN/compiler-selection/toolchain-home/bin/bend" > "$settings/compiler.size"
+          file -L "$BATON2_NATIVE_RUN/compiler-selection/toolchain-home/bin/bend" > "$settings/compiler.file"
+          sha256sum "$sdk_manifest" > "$settings/sdk-transfer-manifest.sha256"
+          python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["verification"]["destination_tree_sha256"])' "$sdk_manifest" > "$settings/sdk-tree.sha256"
           ulimit -a > "$settings/limits-soft-before.txt"
           ulimit -H -a > "$settings/limits-hard-before.txt"
           requested_stack_kib=65536
@@ -578,8 +750,12 @@ jobs:
           test "$(cat "$settings/stack-kib.txt")" = "$chosen_stack_kib"
           package_args=(
             --output "$BATON2_NATIVE_RUN/package"
-            --bend "$BATON2_NATIVE_RUN/toolchain-home/bin/bend"
-            --compiler-archive "$BATON2_NATIVE_RUN/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
+            --bend "$BATON2_NATIVE_RUN/compiler-selection/toolchain-home/bin/bend"
+            --compiler-archive "$BATON2_NATIVE_RUN/compiler-selection/bend-2.0.25-linux-x64.tar.gz"
+            --target-system Darwin
+            --target-machine arm64
+            --darwin-llvm-root "$llvm_root"
+            --darwin-sdkroot "$sdkroot"
             --generated-c "$RUNNER_TEMP/baton2-generated-c-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/generated/baton2.c"
             --context-typescript-package "$BATON2_NATIVE_RUN/typescript-runtime/node_modules/typescript"
           )
@@ -597,7 +773,7 @@ jobs:
             > "$BATON2_NATIVE_RUN/package-command.stdout" \
             2> "$BATON2_NATIVE_RUN/package-command.stderr"
 
-      - name: Bind complete producer and comparison evidence to the package
+      - name: Bind producer evidence and finalize the package
         shell: bash
         run: |
           set -euo pipefail
@@ -623,10 +799,7 @@ jobs:
           transfer = pathlib.Path(os.environ['RUNNER_TEMP']) / ('baton2-generated-c-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'])
           shutil.copytree(transfer / 'generated', provenance)
           shutil.copytree(transfer / 'evidence', provenance / 'producer-results')
-          target = pathlib.Path(os.environ['RUNNER_TEMP']) / ('baton2-target-results-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'])
-          shutil.copytree(target, provenance / 'target-comparison')
           shutil.copyfile(run / 'generated-c-verification.json', provenance / 'verification.json')
-          shutil.copyfile(run / 'selected-comparison.json', provenance / 'selected-comparison.json')
           assets = [{'path': str(path.relative_to(payload)), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
                      'size': path.stat().st_size} for path in sorted(provenance.rglob('*')) if path.is_file()]
           manifest['build']['generated_c_provenance'] = {'path': str(provenance.relative_to(payload)), 'assets': assets}
@@ -654,37 +827,6 @@ jobs:
           (package / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
           PY
 
-      - name: Exercise extracted artifact with build path unavailable
-        shell: bash
-        run: |
-          set -euo pipefail
-          build="$BATON2_NATIVE_RUN/build-source"
-          retained="$BATON2_NATIVE_RUN/build-source-retained"
-          test ! -e "$retained"
-          mv "$build" "$retained"
-          trap 'mv "$retained" "$build"' EXIT
-          package="$BATON2_NATIVE_RUN/package"
-          sums="$package/SHA256SUMS"
-          test "$(wc -l < "$sums")" -eq 1
-          read -r sha archive_name < "$sums"
-          [[ "$sha" =~ ^[0-9a-f]{64}$ ]]
-          test "$archive_name" = "$(basename "$archive_name")"
-          [[ "$archive_name" == baton2-*-darwin-arm64-"$BATON2_SOURCE_SHA".tar.gz ]]
-          printf '%s  %s\n' "$sha" "$archive_name" | cmp - "$sums"
-          (cd "$package" && shasum -a 256 -c SHA256SUMS)
-          archive="$package/$archive_name"
-          python3 "$GITHUB_WORKSPACE/bend2/scripts/smoke-native-artifact.py" \
-            --archive "$archive" --sha256 "$sha" \
-            --manifest "$package/manifest.json" \
-            --unavailable-source "$build" --output "$BATON2_NATIVE_RUN/smoke" \
-            > "$BATON2_NATIVE_RUN/smoke-command.stdout" \
-            2> "$BATON2_NATIVE_RUN/smoke-command.stderr"
-          installed_prefix=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["extracted_prefix"])' "$BATON2_NATIVE_RUN/smoke/summary.json")
-          python3 "$GITHUB_WORKSPACE/.github/scripts/repl-package.py" smoke \
-            --prefix "$installed_prefix" --output "$BATON2_NATIVE_RUN/repl-smoke" \
-            > "$BATON2_NATIVE_RUN/repl-smoke-command.stdout" \
-            2> "$BATON2_NATIVE_RUN/repl-smoke-command.stderr"
-
       - name: Retain native artifact and validation evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -692,21 +834,73 @@ jobs:
           name: baton2-${{ github.event_name == 'workflow_dispatch' && inputs.release_version || 'development' }}-darwin-arm64-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
           path: |
             ${{ env.BATON2_NATIVE_RUN }}/package/
-            ${{ env.BATON2_NATIVE_RUN }}/smoke/
-            ${{ env.BATON2_NATIVE_RUN }}/toolchain/
+            ${{ env.BATON2_NATIVE_RUN }}/compiler-selection/
+            ${{ env.BATON2_NATIVE_RUN }}/compile-queue/
             ${{ env.BATON2_NATIVE_RUN }}/build-settings/
             ${{ env.BATON2_NATIVE_RUN }}/generated-c-verification.json
-            ${{ env.BATON2_NATIVE_RUN }}/selected-comparison.json
             ${{ env.BATON2_NATIVE_RUN }}/repl-runtime/
-            ${{ env.BATON2_NATIVE_RUN }}/repl-smoke/
-            ${{ env.BATON2_NATIVE_RUN }}/repl-smoke-command.*
             ${{ env.BATON2_NATIVE_RUN }}/typescript-runtime/package-lock.json
             ${{ env.BATON2_NATIVE_RUN }}/typescript-install.stdout
             ${{ env.BATON2_NATIVE_RUN }}/typescript-install.stderr
             ${{ env.BATON2_NATIVE_RUN }}/clone.log
+            ${{ env.BATON2_NATIVE_RUN }}/toolchain-selection.*
             ${{ env.BATON2_NATIVE_RUN }}/package-command.stdout
             ${{ env.BATON2_NATIVE_RUN }}/package-command.stderr
-            ${{ env.BATON2_NATIVE_RUN }}/smoke-command.stdout
-            ${{ env.BATON2_NATIVE_RUN }}/smoke-command.stderr
+          if-no-files-found: error
+          include-hidden-files: true
+
+  darwin-arm64-install:
+    needs: [darwin-arm64]
+    runs-on: [self-hosted, macOS, ARM64, baton2-native-darwin-arm64]
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.BATON2_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Download Darwin package and producer evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: baton2-${{ github.event_name == 'workflow_dispatch' && inputs.release_version || 'development' }}-darwin-arm64-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Verify and exercise the installed Darwin artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="$RUNNER_TEMP/baton2-darwin-arm64-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/package"
+          test "$(wc -l < "$package/SHA256SUMS")" -eq 1
+          read -r sha archive_name < "$package/SHA256SUMS"
+          [[ "$sha" =~ ^[0-9a-f]{64}$ ]]
+          test "$archive_name" = "$(basename "$archive_name")"
+          [[ "$archive_name" == baton2-*-darwin-arm64-"$BATON2_SOURCE_SHA".tar.gz ]]
+          printf '%s  %s\n' "$sha" "$archive_name" | cmp - "$package/SHA256SUMS"
+          (cd "$package" && shasum -a 256 -c SHA256SUMS)
+          unavailable=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source"]["directory"])' "$package/manifest.json")
+          test ! -e "$unavailable"
+          python3 "$GITHUB_WORKSPACE/bend2/scripts/smoke-native-artifact.py" \
+            --archive "$package/$archive_name" --sha256 "$sha" \
+            --manifest "$package/manifest.json" --unavailable-source "$unavailable" \
+            --output "$package/smoke" > "$package/smoke.stdout" 2> "$package/smoke.stderr"
+          installed_prefix=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["extracted_prefix"])' "$package/smoke/summary.json")
+          python3 "$GITHUB_WORKSPACE/bend2/scripts/check-install.py" \
+            --prefix "$installed_prefix" --skip-native-compiler-probe \
+            --output "$package/install-check" > "$package/install-check.stdout" \
+            2> "$package/install-check.stderr"
+
+      - name: Retain Darwin installation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: baton2-darwin-install-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/package/SHA256SUMS
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/package/manifest.json
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/package/*.tar.gz
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/package/smoke/
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/package/install-check/
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/package/*.stdout
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/package/*.stderr
           if-no-files-found: error
           include-hidden-files: true
