@@ -77,7 +77,7 @@ class QueueMissingResultTests(unittest.TestCase):
         import fcntl
         import time
         token = "cancel-token"
-        lock = (self.state / "heavy.lock").open("w")
+        lock = (self.state / "cc.lock").open("w")
         self.addCleanup(lock.close)
         fcntl.flock(lock, fcntl.LOCK_EX)
         compiler = self.root / "fake-holder"

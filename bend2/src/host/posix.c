@@ -384,7 +384,7 @@ static int host_posix_release_start(int gate,int errors) {
 
 typedef struct {
   char *text[4],*answer;
-  char spawned[96];
+  char spawned[128];
   size_t length[4];
   u32 number[4],value,gate,errors;
   int present;
@@ -408,6 +408,46 @@ static int host_posix_new_lock(const char *path,const char *body,size_t length,u
   if(!error) error=posix_set_inheritable(fd);
   if(error) {close(fd);unlink(path);return error;}
   *out=(u32)fd;return 0;
+}
+
+static int host_posix_publish_wait_status(const char *attempt, const char *start,
+                                          u32 pid, unsigned int exit_code,
+                                          unsigned int signal_code) {
+  char directory[PATH_MAX], temporary[PATH_MAX], final[PATH_MAX], body[256];
+  int length=snprintf(directory,sizeof directory,"%s",attempt);
+  if(length<0 || (size_t)length>=sizeof directory) return ENAMETOOLONG;
+  length=snprintf(temporary,sizeof temporary,"%s/exit_status.tmp.%u.%u",attempt,
+                  (unsigned)getpid(),pid);
+  if(length<0 || (size_t)length>=sizeof temporary) return ENAMETOOLONG;
+  length=snprintf(final,sizeof final,"%s/exit_status",attempt);
+  if(length<0 || (size_t)length>=sizeof final) return ENAMETOOLONG;
+  length=snprintf(body,sizeof body,"pid=%u\nstarttime=%s\nexit=%u\nsignal=%u\n",
+                  pid,start,exit_code,signal_code);
+  if(length<0 || (size_t)length>=sizeof body) return EOVERFLOW;
+  int fd=open(temporary,O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,0660);
+  if(fd<0) return errno;
+  int error=0;
+  if(fchmod(fd,0660)) error=errno;
+  size_t offset=0;
+  while(!error && offset<(size_t)length) {
+    ssize_t count=write(fd,body+offset,(size_t)length-offset);
+    if(count>0) offset+=(size_t)count;
+    else if(count<0 && errno==EINTR) continue;
+    else error=count<0?errno:EIO;
+  }
+  if(!error && fsync(fd)) error=errno;
+  if(close(fd) && !error) error=errno;
+  if(!error && rename(temporary,final)) error=errno;
+  if(!error) {
+    int dirfd=open(directory,O_RDONLY|O_CLOEXEC);
+    if(dirfd<0) error=errno;
+    else {
+      if(fsync(dirfd)) error=errno;
+      if(close(dirfd) && !error) error=errno;
+    }
+  }
+  if(error) unlink(temporary);
+  return error;
 }
 
 static void host_posix_work(IoWork *work) {
@@ -460,6 +500,23 @@ static void host_posix_work(IoWork *work) {
         call->number[1],call->number[2],environment,&child);
       free(environment);call->value=(u32)child;break;
     }
+    case 33: {
+      char **environment=NULL;int environment_count=0;
+      if(call->length[3])
+        call->error=posix_parse_argv(call->text[3],call->length[3],&environment,&environment_count);
+      pid_t child=0;
+      if(!call->error) call->error=posix_spawn_detached(call->text[0],call->length[0],
+        call->number[1],call->number[2],environment,&child);
+      free(environment);
+      char *start=NULL;
+      if(!call->error) call->error=posix_starttime_text((u32)child,&start);
+      if(!call->error) {
+        int length=snprintf(call->spawned,sizeof call->spawned,"pid=%u\nstarttime=%s\n",
+          (unsigned)child,start);
+        if(length<0 || (size_t)length>=sizeof call->spawned) call->error=EOVERFLOW;
+      }
+      free(start);break;
+    }
     case 21:
       call->error=host_posix_spawn_held(call->text[0],call->length[0],
         call->text[1],call->text[2],call->text[3],&call->value,&call->gate,&call->errors);
@@ -467,16 +524,34 @@ static void host_posix_work(IoWork *work) {
       break;
     case 22: call->error=host_posix_release_start((int)call->number[0],(int)call->number[1]);break;
     case 23: {
-      pid_t result=waitpid((pid_t)call->number[0],&status,WNOHANG);
+      pid_t result=waitpid((pid_t)call->number[1],&status,WNOHANG);
       if(result<0 && errno==EINTR) result=0;
       if(result<0) call->error=errno;
       else if(!result) call->answer=strdup("running=1\n");
       else {
         char text[96];
-        snprintf(text,sizeof text,"running=0\nexit=%u\nsignal=%u\n",
-          WIFEXITED(status)?(unsigned)WEXITSTATUS(status):
-          WIFSIGNALED(status)?(unsigned)(128+WTERMSIG(status)):1,
-          WIFSIGNALED(status)?(unsigned)WTERMSIG(status):0);
+        unsigned int exit_code=WIFEXITED(status)?(unsigned)WEXITSTATUS(status):
+          WIFSIGNALED(status)?(unsigned)(128+WTERMSIG(status)):1;
+        unsigned int signal_code=WIFSIGNALED(status)?(unsigned)WTERMSIG(status):0;
+        call->error=host_posix_publish_wait_status(call->text[0],call->text[2],
+          call->number[1],exit_code,signal_code);
+        if(!call->error) {
+          snprintf(text,sizeof text,"running=0\nexit=%u\nsignal=%u\n",exit_code,signal_code);
+          call->answer=strdup(text);
+        }
+      }
+      if(!call->error && !call->answer) call->error=ENOMEM;
+      break;
+    }
+    case 34: {
+      do {fd=waitpid((pid_t)call->number[0],&status,0);} while(fd<0 && errno==EINTR);
+      if(fd<0) call->error=errno;
+      else {
+        char text[96];
+        unsigned int exit_code=WIFEXITED(status)?(unsigned)WEXITSTATUS(status):
+          WIFSIGNALED(status)?(unsigned)(128+WTERMSIG(status)):1;
+        unsigned int signal_code=WIFSIGNALED(status)?(unsigned)WTERMSIG(status):0;
+        snprintf(text,sizeof text,"running=0\nexit=%u\nsignal=%u\n",exit_code,signal_code);
         call->answer=strdup(text);
       }
       if(!call->error && !call->answer) call->error=ENOMEM;
@@ -663,6 +738,10 @@ static void __attribute__((constructor)) host_posix_create_locked_use(void) {io_
 static Term host_posix_spawn_detached_run(Env e,Term *f,IoWork *w) {return host_posix_run(e,f,w,20,1,"buub");}
 static void __attribute__((constructor)) host_posix_spawn_detached_use(void) {io_eff(CID_HOSTPOSIX_SPAWN_DETACHED,host_posix_spawn_detached_run,0);}
 #endif
+#ifdef CID_HOSTPOSIX_SPAWN_DETACHED_IDENTITY
+static Term host_posix_spawn_detached_identity_run(Env e,Term *f,IoWork *w) {return host_posix_run(e,f,w,33,3,"buub");}
+static void __attribute__((constructor)) host_posix_spawn_detached_identity_use(void) {io_eff(CID_HOSTPOSIX_SPAWN_DETACHED_IDENTITY,host_posix_spawn_detached_identity_run,0);}
+#endif
 #ifdef CID_HOSTPOSIX_SPAWN_HELD
 static Term host_posix_spawn_held_run(Env e,Term *f,IoWork *w) {return host_posix_run(e,f,w,21,3,"bsss");}
 static void __attribute__((constructor)) host_posix_spawn_held_use(void) {io_eff(CID_HOSTPOSIX_SPAWN_HELD,host_posix_spawn_held_run,0);}
@@ -672,8 +751,12 @@ static Term host_posix_start_run(Env e,Term *f,IoWork *w) {return host_posix_run
 static void __attribute__((constructor)) host_posix_start_use(void) {io_eff(CID_HOSTPOSIX_START,host_posix_start_run,0);}
 #endif
 #ifdef CID_HOSTPOSIX_TRY_WAIT
-static Term host_posix_try_wait_run(Env e,Term *f,IoWork *w) {return host_posix_run(e,f,w,23,2,"u");}
+static Term host_posix_try_wait_run(Env e,Term *f,IoWork *w) {return host_posix_run(e,f,w,23,2,"sus");}
 static void __attribute__((constructor)) host_posix_try_wait_use(void) {io_eff(CID_HOSTPOSIX_TRY_WAIT,host_posix_try_wait_run,0);}
+#endif
+#ifdef CID_HOSTPOSIX_WAIT_SUPERVISOR
+static Term host_posix_wait_supervisor_run(Env e,Term *f,IoWork *w) {return host_posix_run(e,f,w,34,2,"u");}
+static void __attribute__((constructor)) host_posix_wait_supervisor_use(void) {io_eff(CID_HOSTPOSIX_WAIT_SUPERVISOR,host_posix_wait_supervisor_run,0);}
 #endif
 #ifdef CID_HOSTPOSIX_WAIT_PID
 static Term host_posix_wait_pid_run(Env e,Term *f,IoWork *w) {return host_posix_run(e,f,w,24,1,"u");}
