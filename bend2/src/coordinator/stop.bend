@@ -239,7 +239,7 @@ def missing_custody_owner(+db: String, +session: String, +attempt: String, +dire
 
 def control_attempt(+db: String, +session: String, +attempt: String, +directory: String, signal: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.control_signal(directory,signal)
+    +result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.control_signal(directory,signal)
     saved : String <- IO.try(String,DB.Sql.query(db,control_result_sql(session,attempt,signal,result)))
     IO.pure(Result<&1,&1,U32 & String,Unit>,result)
 
