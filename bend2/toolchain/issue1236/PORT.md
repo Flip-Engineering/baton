@@ -9,13 +9,13 @@ constructor calls and patterns.
 
 The source selected by Baton is `bend2/compiler/upstream/bend.ts`, whose
 contents are locked by `bend2/compiler/repl-upstream.lock.json` and included
-in the archive named there. The patch targets that tracked source. When a new
-archive is prepared, apply the same hunk to its `bend2/bend.ts` source. It is
-kept as a reviewable source proposal until a compiler release is prepared.
-Selecting it requires adding the updated source to the release archive and
-updating the lock, provenance, runtime pin and release selection together.
+in the archive named there. The patch targets that tracked source. The vendored source applies the adaptation in this branch. A released archive
+must contain the same updated `bend2/bend.ts` bytes. Compiler selection updates
+the archive hash, lock, provenance and runtime pin together.
 
 The regression inputs are in `bend2/test/compiler/fixtures/ctor-shadow/`.
 `bend2/test/compiler/ctor_shadow.ts` loads the importing module and checks that
-the law's type refers to `M.Done`. The issue reproducer uses the same module
-and entry split as upstream issue #1236.
+the law's type refers to the imported module's `Done` definition and that its
+proof checks. The loader's recorded namespace identifies the module internally;
+`M` is its alias in the entry file. The reproducer uses the same module and entry
+split as upstream issue #1236.
