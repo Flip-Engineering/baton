@@ -1,0 +1,11 @@
+element	definition_863c289	current_main_consumer_or_state	evidence_class	residual
+RequiredCapabilities struct + PORT const	863c289 capability.rs:7-24 (struct, const PORT attrs=17, storage=8)	ABSENT as a module; no import path or caller on 34844a998	absent	no consumer
+digest() acp.capabilities/v1 FNV-1a 16-hex	863c289 capability.rs:38-57	ABSENT; no digest code on main; the render receipt explicitly disclaims capability/qualification binding at acp-fframes-scene/src/night25_entry/runtime.rs:1721-1741 ('limits' field :1740)	absent	unadopted
+describe() canonical text	863c289 capability.rs:60-65	ABSENT	absent	no consumer
+verify() float32_filterable	863c289 capability.rs:95-97	DECENTRALIZED: fframes-3d/src/common_fx/display.rs:45-72 (fail: 'source display requires FLOAT32_FILTERABLE accumulator'); fframes-3d/src/common_fx/post.rs:23 ('never lower accumulator precision')	decentralized-survives	current-site enforced
+verify() float32_blendable	863c289 capability.rs:98-104	DECENTRALIZED: fframes-3d/src/common_fx/composite.rs:33 ('FLOAT32_BLENDABLE must be enabled on the device; construction fails otherwise')	decentralized-survives	current-site enforced
+verify() max_storage_buffers_per_shader_stage (>=8)	863c289 capability.rs:106-116	STRUCTURAL: device creation requests adapter.limits() at fframes-3d/src/gpu/mod.rs:1745-1757 (inside Gpu::new :1727-1729), so the device carries adapter maxima; no explicit check	structural-no-explicit-check	implicit
+verify() max_vertex_attributes (>=17)	863c289 capability.rs:117-123	DECENTRALIZED + EVOLVED: fframes-3d/src/gpu/mod.rs:3054-3058 explicit fail; fframes-3d/src/material/custom.rs:73 requires >= 20	decentralized-survives-stricter	current-site enforced at 20
+CapabilityReport (digest, adapter, features, limits)	863c289 capability.rs:70-78,125-141	ABSENT: no receipt field carries adapter/feature/limit data; receipt object runtime.rs:1721-1741 has no capability member	absent	unadopted
+module unit tests (digest stability)	863c289 capability.rs:146-156	N/A (would accompany any adopted digest)	n/a	n/a
+INTEGRATION CONTRACT (where a caller would attach)	n/a	The preflight seam exists (Gpu::new device creation, fframes-3d/src/gpu/mod.rs:1727-1757); the CONSUMER side (prepared-render envelope / capability member in the receipt) does NOT exist on main	no-production-caller	blocked on envelope feature

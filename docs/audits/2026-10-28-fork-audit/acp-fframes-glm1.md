@@ -344,3 +344,32 @@ src/main.rs). This is the port's common-fx comparison/qualification tooling (mir
 and SSS reflection comparators with fixtures) — genuine unique source that did NOT land.
 Earlier "zero loss" was wrong; the harness is preserved on b74d6c68 and needs an owner
 decision: superseded by the current test/qualification paths, or a candidate to port.
+
+## Pass 8 — capability contract mapping and the rebased PR #1174 head (2026-10-28)
+
+capability-863c289-contract.tsv (this directory) is the element-by-element contract map:
+definition site in 863c289 capability.rs | current-main consumer or state | evidence class |
+residual. Contract mapping result: the module has NO production caller on 34844a998 (no
+import path, no invocation); three of its four device requirements survive decentralized at
+consumption sites (display.rs:45-72, composite.rs:33, gpu/mod.rs:3054-3058 with custom.rs:73
+stricter at 20), the fourth is structurally satisfied through adapter.limits() at device
+creation (gpu/mod.rs:1745-1757 inside Gpu::new), and the digest / CapabilityReport / envelope
+members are absent with no receipt consumer (runtime.rs:1721-1741 has no capability member;
+its 'limits' field :1740 disclaims qualification binding). The integration seam exists
+(device creation); the consumer side does not. A module file without a production caller is
+therefore insufficient integration evidence, and the disposition stands: mechanism superseded
+decentralized, digest/envelope concept is a candidate new feature for the fframes native
+owner, history preserved.
+
+Issue-7 trace exact location: branch ensemble/repository-audit-glm1-20261027 @ 456afda61,
+path docs/audits/2026-10-28-fork-audit/issue7-candidate-trace.tsv — 79 lines (header + 78
+rows); columns path, candidate_status, candidate_blob, current_blob, disposition,
+candidate_functions (diff hunk headers of b6e93716..b74d6c68 per path), reason,
+current_main=34844a998. Counts: 7 identical, 27 evolved-present, 28 additions present,
+6 deletion-rejected with caller reasons, 9 candidate additions ABSENT (common-fx validation
+harness + STATUS.md).
+
+PR #1174 rebase: new head 9c276939c on compiler-PR1186 main 7dc5bec9 — 9a921d681 (original
+probe) + b1a428175 (outcome repair) + 9c276939c (agent-commands doc correction describing the
+actual flow: first ready frame decides, no deadlines, no cap, scratch session directory,
+own-child cleanup). Pushed with an exact lease from 926b7321b.
