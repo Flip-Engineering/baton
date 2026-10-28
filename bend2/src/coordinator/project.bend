@@ -303,16 +303,19 @@ def resume_attempt_sql(+session: String) -> String:
 # custody check reports dead is marked with the host's owner-death result before
 # resume creates its continuation input. A missing or unreadable directory is
 # left untouched for the distinct stop-custody case.
+def resume_custody_observed(+db: String, +session: String, +path: String, observed: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match observed:
+    case Fail{(code,detail)}: IO.pure(Unit,Unit{})
+    case Done{value}: do IO<Unit>:
+      dead : Bool <- Receive.custody_dead(db,path,False{})
+      Bool.pick(IO(Unit),dead,Store.record_owner_death(db,session),IO.pure(Unit,Unit{}))
+
 def resume_custody(+db: String, +session: String) -> IO(Unit):
   do IO<Unit>:
     directory : String <- IO.try(String,DB.Sql.query(db,resume_attempt_sql(session)))
     +path : String = Tx.trim_nl(directory)
     observed : Result<&1,&1,U32 & String,String> <- Files.lstat(path)
-    match observed:
-      case Fail{(code,detail)}: IO.pure(Unit,Unit{})
-      case Done{value}: do IO<Unit>:
-        dead : Bool <- Receive.custody_dead(db,path,False{})
-        Bool.pick(IO(Unit),dead,Store.record_owner_death(db,session),IO.pure(Unit,Unit{}))
+    resume_custody_observed(db,session,path,observed)
 def resume_stopped(+db: String, +session: String, stopped: Bool) -> IO(Unit):
   match stopped:
     case True{}: IO.die(Unit, 2, stopped_refusal())
