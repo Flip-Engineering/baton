@@ -206,13 +206,13 @@ static void baton_control_call(IoWork *w) {
     char *slash=strrchr(directory,'/');
     if(!slash) {free(directory);call->error=EINVAL;return;}
     *slash=0;
-    char *candidate=baton_control_join(directory,"/../libexec/baton2/codex-inbox-wake.mjs");
+    char *candidate=baton_control_join(directory,"/../libexec/baton2/dsh-worker.mjs");
     if(!candidate) {free(directory);call->error=ENOMEM;return;}
     call->path=realpath(candidate,NULL);
     int error=call->path?0:errno;
     free(candidate);
     if(!call->path && error==ENOENT) {
-      candidate=baton_control_join(directory,"/../../bend2/scripts/codex-inbox-wake.mjs");
+      candidate=baton_control_join(directory,"/../../bend2/scripts/dsh-worker.mjs");
       if(!candidate) {free(directory);call->error=ENOMEM;return;}
       call->path=realpath(candidate,NULL);
       error=call->path?0:errno;
@@ -331,7 +331,7 @@ static void __attribute__((constructor)) baton_control_use_command(void) {io_eff
 static Term baton_control_spawn(Env e,Term *f,IoWork *w) {return baton_control_begin(e,f,w,3);}
 static void __attribute__((constructor)) baton_control_use_launch(void) {io_eff(CID_CONTROL_LAUNCH,baton_control_spawn,0);}
 #endif
-#ifdef CID_CONTROL_AGENT_HELPER
-static Term baton_control_agent_helper(Env e,Term *f,IoWork *w) {return baton_control_begin(e,f,w,6);}
-static void __attribute__((constructor)) baton_control_use_agent_helper(void) {io_eff(CID_CONTROL_AGENT_HELPER,baton_control_agent_helper,0);}
+#ifdef CID_CONTROL_DSH_WORKER
+static Term baton_control_dsh_worker(Env e,Term *f,IoWork *w) {return baton_control_begin(e,f,w,6);}
+static void __attribute__((constructor)) baton_control_use_dsh_worker(void) {io_eff(CID_CONTROL_DSH_WORKER,baton_control_dsh_worker,0);}
 #endif

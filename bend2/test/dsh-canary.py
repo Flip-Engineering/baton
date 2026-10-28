@@ -134,7 +134,7 @@ def main():
         home = root / 'home'
         attempt = root / 'attempt'
         attempt.mkdir()
-        fixture('prepare', attempt, 'deepseek/deepseek-flash', 'max')
+        fixture('prepare', attempt, 'deepseek/deepseek-flash', 'max', '')
         tools = str(attempt / 'dsh-tools.patch.yml')
         model = str(attempt / 'dsh-model.patch.yml')
         argv = child_argv(str(home), DSH, tools, model, 'max')
