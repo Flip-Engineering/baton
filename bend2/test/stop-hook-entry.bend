@@ -62,6 +62,16 @@ def lifecycle_admitted(+db: String, +directory: String, start: P.RetainedStart) 
 def decision_statement() -> IO(Unit):
   IO.print(StopHook.decision_sql("worker"))
 
+def prompt_selection_statement(args: List<String>) -> IO(Unit):
+  match args:
+    case session <> cursor <> Nil{}: IO.print(MessageStatus.prompt_selection_sql(session,cursor))
+    case other: IO.die(Unit,2,"usage: stop-hook-entry prompt-selection-sql SESSION CURSOR")
+
+def prompt_record_statement(args: List<String>) -> IO(Unit):
+  match args:
+    case attempt <> native <> identity <> input <> Nil{}: IO.print(MessageStatus.prompt_record_sql("worker",attempt,native,identity,input))
+    case other: IO.die(Unit,2,"usage: stop-hook-entry prompt-record-sql ATTEMPT NATIVE IDENTITY INPUT_JSON")
+
 def record_statement(args: List<String>) -> IO(Unit):
   match args:
     case directory <> attempt <> native <> identity <> saved <> Nil{}:
@@ -80,6 +90,8 @@ def route(args: List<String>) -> IO(Unit):
     case "--stop-hook" <> Nil{}: StopHook.run()
     case "decision-sql" <> Nil{}: decision_statement()
     case "record-sql" <> rest: record_statement(rest)
+    case "prompt-selection-sql" <> rest: prompt_selection_statement(rest)
+    case "prompt-record-sql" <> rest: prompt_record_statement(rest)
     case "arguments" <> Nil{}: lines(Claude.arguments("claude","claude-opus-5-5","high"))
     case "schema" <> Nil{}: IO.write(C.schema())
     case "read" <> db <> id <> Nil{}: Agent.execute(db,"worker",Actions.Read{[id]})

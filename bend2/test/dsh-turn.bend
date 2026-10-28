@@ -3,6 +3,7 @@
 # EOF for a non-OMP harness. It starts no model provider.
 import Base
 import ../src/coordinator/turn.bend as Turn
+import ../src/coordinator/frame-span.bend as Frame
 import ../src/coordinator/commands.bend as C
 import ../src/host/process.bend as P
 import ../src/host/sqlite.bend as DB
@@ -17,7 +18,7 @@ def setup(+db: String) -> IO(Unit):
 
 def observe(+db: String, +line: String, id: String) -> IO(String):
   do IO<String>:
-    kind : String <- Turn.frame_kind(db,line,"dsh\n")
+    kind : String <- Turn.frame_kind(db,Frame.decode(line,"",False{}),line,"dsh\n")
     +event : String <- Turn.dsh_event(db,line,True{},line)
     result : String <- IO.try(String,DB.Sql.query(db,C.observe_sql(id,"dsh-player",event,False{},"dsh")))
     IO.print("kind\t" ++ Tx.trim_nl(kind))
