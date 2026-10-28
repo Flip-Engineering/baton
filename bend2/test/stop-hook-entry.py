@@ -100,6 +100,9 @@ class StopHook(unittest.TestCase):
         self.env.update(BATON_SESSION='worker', BATON_DATABASE=self.path)
         if self._testMethodName.startswith('test_codex'):
             self.db.execute("UPDATE sessions SET harness='codex' WHERE id='worker'")
+            if (self._testMethodName != 'test_codex_launch_installs_both_hooks_and_bypasses_the_trust_review'
+                    and sorted(self.codex_hooks()) != ['hooks.PostToolUse', 'hooks.Stop']):
+                self.skipTest('The target Codex launcher has no hook tables to execute.')
 
     def owe(self, ident='message:coordinator:mid-turn', kind='guidance', body='New detail.'):
         self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,'coordinator','worker',?,?)",
