@@ -27,6 +27,7 @@ fi
 )
 sh bend2/scripts/build-native.sh
 sh bend2/scripts/build-native.sh bend2/test/stop-hook-entry.bend .scratch/bend2/stop-hook-entry
+"$PYTHON3" bend2/test/sqlite-read-reuse.py
 "$PYTHON3" bend2/test/package-receiver-layout.py
 "$PYTHON3" bend2/test/record-native-checks.py
 sh bend2/test/bend-launch-guard.sh
