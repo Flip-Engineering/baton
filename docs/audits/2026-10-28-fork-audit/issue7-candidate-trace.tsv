@@ -1,0 +1,79 @@
+path	candidate_status	candidate_blob	current_blob	disposition	candidate_functions	reason	current_main
+AGENTS.md	M	39ca40ef879d	39ca40ef879d	identical	Two renderers draw the same picture:	byte-identical	34844a998
+Cargo.lock	M	8ef5677e3d1c	cf1842747114	evolved-present	dependencies = [	present and maintained by the private-source port	34844a998
+examples/arm/src/arm.rs	M	7fc27b198fed	7fc27b198fed	identical	fn warning(scene: &mut Scene, parent: NodeId, p: &Palette, at: Vec3, normal: Vec; fn lettering(; fn motor(; impl Arm {	byte-identical	34844a998
+examples/arm/src/lab.rs	M	3f5cfb937c1f	3f5cfb937c1f	identical	pub fn build(scene: &mut Scene, font: &[u8]) -> Lab {	byte-identical	34844a998
+examples/arm/src/lib.rs	M	28ac3c494109	ae112f891824	evolved-present	use fframes::{; impl Show {; impl Video for Show {	present and maintained by the private-source port	34844a998
+examples/arm/src/main.rs	M	8adbd8881e57	8adbd8881e57	identical	fn main() -> ExitCode {	byte-identical	34844a998
+examples/assembly/src/lib.rs	M	3a6f7bc0160a	c0a83f2d0a3b	evolved-present	use fframes::{; impl Assembly {	present and maintained by the private-source port	34844a998
+fframes-3d/Cargo.toml	M	068189e2f7b5	eed3312b8811	evolved-present	glam = "0.30"	present and maintained by the private-source port	34844a998
+fframes-3d/examples/skin_robot.rs	A	50f1addf67fd	d83766a93151	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/examples/skin_synthetic.rs	A	7408e8e187eb	9be9cee8eaa6	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/bake.rs	A	e2de13a5f31b	507c5154543e	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/common_fx/STATUS.md	A	9dc2df3d614a		NOT-in-main	(added by candidate)	candidate addition absent from main	34844a998
+fframes-3d/src/common_fx/composite.rs	A	075bf4d10ef7	075bf4d10ef7	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/common_fx/composite.wgsl	A	793913bbf5a9	793913bbf5a9	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/common_fx/display.rs	A	80b336f2bddd	80b336f2bddd	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/common_fx/display.wgsl	A	7736f2ac3872	7736f2ac3872	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/common_fx/gpu.rs	A	a47e1fc14107	a47e1fc14107	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/common_fx/mirror.rs	A	97794779afa0	97794779afa0	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/common_fx/mod.rs	A	8c8c0fbbd9df	537202bfd80b	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/common_fx/post.rs	A	a87336fed3f4	a87336fed3f4	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/common_fx/post.wgsl	A	97a583798a07	97a583798a07	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/common_fx/reflection.wgsl	A	77c1bdeccbb5	77c1bdeccbb5	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/common_fx/sampling.rs	A	5202aa43488e	5202aa43488e	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/common_fx/sso.wgsl	A	6ef0acffc8ae	6ef0acffc8ae	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/common_fx/sss.rs	A	32de90f601cc	32de90f601cc	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/common_fx/sss.wgsl	A	8bbb8b8ec754	8bbb8b8ec754	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/common_fx/sss_kernel.rs	A	e7288db7761b	e7288db7761b	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/common_fx/volume.rs	A	e0018a457b5f	e0018a457b5f	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/common_fx/volume.wgsl	A	e9aa13778dc2	e9aa13778dc2	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/gltf.rs	M	dee007870041	05724fe32ecd	evolved-present	impl From<image::ImageError> for ModelError {; impl Model {; impl<'g> Loader<'_, 'g> {	present and maintained by the private-source port	34844a998
+fframes-3d/src/gpu/deform.wgsl	A	1a7a2f6e0c6a	1a7a2f6e0c6a	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/gpu/mod.rs	M	433babf9af38	ae0986c6dcf1	evolved-present	const CONTEXTS: usize = 3;; const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array!; fn instance_layout(attributes: &[wgpu::V	present and maintained by the private-source port	34844a998
+fframes-3d/src/gpu/morph.wgsl	A	f0392f1f4122	a9d53f7a0828	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/gpu/scene.wgsl	M	f126349618d6	eaa4afda18c6	evolved-present	struct Draw {; override NORMAL_MAP: bool = false;; struct InstanceIn {; struct FragmentOut {	present and maintained by the private-source port	34844a998
+fframes-3d/src/gpu/shadow.wgsl	M	e05ca7936c44	41d5c2b54394	evolved-present	struct ShadowPass {; struct InstanceIn {; fn vs_shadow(@location(0) position: vec3f, copy: InstanceIn) -> ShadowOut {	present and maintained by the private-source port	34844a998
+fframes-3d/src/instances.rs	D		987f330f61f7	deletion-rejected	(deleted by candidate)	main retains the file; current callers use it (mod instances lib.rs:101 / instances_timeline test / chasm_render example / chasm-adapter capture)	34844a998
+fframes-3d/src/lib.rs	M	48393f6c0765	65b8956b7dab	evolved-present	pub use geometry::{	present and maintained by the private-source port	34844a998
+fframes-3d/src/material.rs	M	9fc988c53541		missing	?	candidate-modified path absent from main	34844a998
+fframes-3d/src/prepared.rs	A	e9cb56e9a481	e9cb56e9a481	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/render/mod.rs	M	5795f0aa4897	49cfd13b1010	evolved-present	mod raster;; use raster::Blended;; impl PartialEq for Renderer {; impl Renderer {	present and maintained by the private-source port	34844a998
+fframes-3d/src/render/post.rs	M	c18de9ff1073	04b01dab8ae5	evolved-present	fn bayer(x: usize, y: usize) -> f32 {; pub(crate) fn depth_of_field(	present and maintained by the private-source port	34844a998
+fframes-3d/src/render/prepare.rs	M	0f23ec895eb9	0f23ec895eb9	identical	pub(crate) struct WorldSprite {; pub(crate) fn build_world(scene: &Scene) -> (World<'_>, Lights) {; pub(crate) fn push_light(lights: &mut Lights, ligh	byte-identical	34844a998
+fframes-3d/src/render/raster.rs	M	c15cce17f2ff	59cc134586b5	evolved-present	use glam::{Mat4, Vec2, Vec3, Vec4};; pub(crate) struct Frame<'a> {; pub(crate) fn rasterize(frame: &Frame) -> (Vec<Vec4>, Vec<f32>) {; fn render_tile(	present and maintained by the private-source port	34844a998
+fframes-3d/src/render/shade.rs	M	2dab70f68512	3380e5b8cb3c	evolved-present	pub(crate) struct ShadeContext<'a> {; pub(crate) fn shade(ctx: &ShadeContext, draw: &Draw, s: &Surface) -> Vec4 {; fn standard(	present and maintained by the private-source port	34844a998
+fframes-3d/src/render/shadow.rs	M	f38d94678fe8	aaee68e69977	evolved-present	fn quantize_up(v: f32) -> f32 {; impl ShadowMap {	present and maintained by the private-source port	34844a998
+fframes-3d/src/render/timing.rs	A	c40edf34ff1e	c40edf34ff1e	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/src/scene.rs	M	bb2aa10e33c0	c1501db4357c	evolved-present	impl Mesh {; impl Particle {; impl Node {; impl Default for Atmosphere {	present and maintained by the private-source port	34844a998
+fframes-3d/tests/acne.rs	M	dc8f37260e3f	ea19668c6338	evolved-present		present and maintained by the private-source port	34844a998
+fframes-3d/tests/common/mod.rs	M	89ad158c52f9	89ad158c52f9	identical	pub fn showcase() -> (Scene, Camera) {; pub fn cubes(instanced: bool) -> (Scene, Camera) {; pub fn hall() -> (Scene, Camera) {; pub fn studs() -> (Sce	byte-identical	34844a998
+fframes-3d/tests/construction_cost.rs	A	18a4d89dbb27	e6e1ac505e4c	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/tests/gltf.rs	M	2e7215369897	0ceec7a2c9aa	evolved-present	fn renders_skinned_gltf() {	present and maintained by the private-source port	34844a998
+fframes-3d/tests/gpu.rs	M	23c68f8a5547	4df8982b1c71	evolved-present	fn miniature(origin: Vec3, map_size: u32) -> (Scene, Camera) {; fn gpu_casters_beyond_the_shadow_bounds_cast() {	present and maintained by the private-source port	34844a998
+fframes-3d/tests/instances_timeline.rs	D		41c8affec0b3	deletion-rejected	(deleted by candidate)	main retains the file; current callers use it (mod instances lib.rs:101 / instances_timeline test / chasm_render example / chasm-adapter capture)	34844a998
+fframes-3d/tests/prepared_import.rs	A	e1117a613e11	11f9de798da2	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/tests/prepared_import_cost.rs	A	d078ca175033	b9143b01b43c	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-3d/tests/render.rs	M	b157ce6823d4	109e6d847afb	evolved-present	fn renders_text_with_holes() {; fn renders_an_stl() {	present and maintained by the private-source port	34844a998
+fframes-3d/tests/temporal.rs	M	c575ff80f5d6	0b92c6bb5e0d	evolved-present	fn shafts(z: f32, steps: u32) -> (Scene, Camera) {; fn gpu_haze_changes_smoothly_when_the_camera_moves() {	present and maintained by the private-source port	34844a998
+fframes-3d/validation/common-fx/Cargo.lock	A	d41b4f82b950		NOT-in-main	(added by candidate)	candidate addition absent from main	34844a998
+fframes-3d/validation/common-fx/Cargo.toml	A	59ce3880930a		NOT-in-main	(added by candidate)	candidate addition absent from main	34844a998
+fframes-3d/validation/common-fx/compare-mirror.mjs	A	dc74f93df98c		NOT-in-main	(added by candidate)	candidate addition absent from main	34844a998
+fframes-3d/validation/common-fx/compare-source.mjs	A	29cc7cf1e257		NOT-in-main	(added by candidate)	candidate addition absent from main	34844a998
+fframes-3d/validation/common-fx/compare-sss.mjs	A	6d25afea36bc		NOT-in-main	(added by candidate)	candidate addition absent from main	34844a998
+fframes-3d/validation/common-fx/fixtures/qualification.json	A	972193f54bd4		NOT-in-main	(added by candidate)	candidate addition absent from main	34844a998
+fframes-3d/validation/common-fx/fixtures/sss-reflection.json	A	1fe97fc62198		NOT-in-main	(added by candidate)	candidate addition absent from main	34844a998
+fframes-3d/validation/common-fx/src/main.rs	A	1d69f04a2aab		NOT-in-main	(added by candidate)	candidate addition absent from main	34844a998
+fframes-skia-renderer/Cargo.toml	M	384a983fe42c	c9dba5506abf	evolved-present	authors = ["Dmitriy Kovalenko <dmtr.kovalenko@outlook.com>"]; skia-safe = { version = "0.153.3", features = ["svg", "webp"] }	present and maintained by the private-source port	34844a998
+fframes-skia-renderer/examples/chasm_render.rs	D		7bfec20d6850	deletion-rejected	(deleted by candidate)	main retains the file; current callers use it (mod instances lib.rs:101 / instances_timeline test / chasm_render example / chasm-adapter capture)	34844a998
+fframes-skia-renderer/examples/plate_gpu.rs	A	3ec6ae9ac65c	ee6cc9d59121	added-in-main	(added by candidate)	candidate addition survives	34844a998
+fframes-skia-renderer/src/backends/vulkan.rs	M	3f83db0a145f	57cc7dabdaac	evolved-present	pub struct SkiaVulkanCtx {; impl SkiaVulkanCtx {; fn vulkan_version(entry: &Entry) -> FFramesRendererResult<Option<(usize, usize,; fn physical_device_	present and maintained by the private-source port	34844a998
+fframes-skia-renderer/src/bin/gpu_canary.rs	D		0d75afcba383	deletion-rejected	(deleted by candidate)	main retains the file; current callers use it (mod instances lib.rs:101 / instances_timeline test / chasm_render example / chasm-adapter capture)	34844a998
+fframes-skia-renderer/src/frame_export/mod.rs	M	41df6a864f55	203779771fc4	evolved-present	impl<'b> SkiaEncoderFrameRenderer<'b> {	present and maintained by the private-source port	34844a998
+fframes-skia-renderer/src/frame_renderer.rs	M	5a3a9e6e3fed	2ba916277382	evolved-present	impl<TBackend: SkiaBackend> FrameRenderer for SkiaFrameRenderer<'_, TBackend> {	present and maintained by the private-source port	34844a998
+fframes-skia-renderer/src/instant_rendering.rs	M	bd5ac9d3a7d9	bd5ac9d3a7d9	identical	impl<TBackend: SkiaBackend> SkiaFFramesRenderer<'_, TBackend> {	byte-identical	34844a998
+fframes-skia-renderer/src/render/mod.rs	M	5f1b24bcf310	600b02061d18	evolved-present	pub struct RenderCache {; impl RenderCache {; fn render_raster_image(	present and maintained by the private-source port	34844a998
+fframes/src/lib.rs	M	cb4a2de7b044	9d87ed73b376	evolved-present	mod duration;; mod transform;; pub use video_data::*;	present and maintained by the private-source port	34844a998
+fframes/src/wgpu_layer.rs	M	e72da0e29c5c	4bec1a5d2bfc	evolved-present	pub struct SharedGpu {; impl SharedGpu {; impl std::fmt::Display for WgpuLayerError {; impl WgpuLayer {	present and maintained by the private-source port	34844a998
+tools/chasm-adapter/README.md	D		232377216793	deletion-rejected	(deleted by candidate)	main retains the file; current callers use it (mod instances lib.rs:101 / instances_timeline test / chasm_render example / chasm-adapter capture)	34844a998
+tools/chasm-adapter/capture-v4.mjs	D		5d043311575a	deletion-rejected	(deleted by candidate)	main retains the file; current callers use it (mod instances lib.rs:101 / instances_timeline test / chasm_render example / chasm-adapter capture)	34844a998

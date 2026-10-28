@@ -292,3 +292,55 @@ releases derived from its commits.
 - Delivery: format-patch at
   patches/0001-Classify-the-garmentCut-and-wear.zones-effects-the-f.patch; push to the
   private repository was not possible from this seat (App credential scoped to baton).
+
+## Pass 7 — capability.rs disposition and the corrected issue-7 trace (2026-10-28)
+
+### 863c289 capability.rs — current-main disposition (concrete)
+
+The contract: `RequiredCapabilities {float32_filterable, float32_blendable, storage_vertex,
+min_vertex_attributes: 17, min_vertex_storage_buffers: 8}`, `PORT`, a stable FNV-1a
+`acp.capabilities/v1` digest, `verify(adapter, device) -> CapabilityReport` with exact
+machine-parseable missing lists (exit-3, no fallback).
+
+Requirement-by-requirement against current main 34844a998:
+
+| Requirement | Fate | Evidence |
+|---|---|---|
+| float32_filterable | SURVIVES, re-expressed | common_fx/display.rs:45-72 requires FLOAT32_FILTERABLE; post.rs:23 "never lower accumulator precision" |
+| float32_blendable | SURVIVES, re-expressed | common_fx/composite.rs:33 "construction fails otherwise" |
+| max_vertex_attributes | SURVIVES, EVOLVED 17→20 | gpu/mod.rs:3054-3058 explicit fail; custom.rs:73 requires >= 20 |
+| min_vertex_storage_buffers | STRUCTURALLY SATISFIED | device creation requests adapter.limits() (gpu/mod.rs:1745), so the device carries adapter maxima; no separate check |
+| digest (acp.capabilities/v1) | ABSENT | no digest or envelope code anywhere on main |
+| acp.prepared-render/v1 envelope | ABSENT | no prepared-render contract on main; the receipt's own "limits" note (runtime.rs:1740) disclaims qualification binding |
+| CapabilityReport receipt | ABSENT | no receipt carries adapter/feature/limit data |
+
+Wiring: as a MODULE it is stranded (no import path, no callers). Its per-device checks are
+not lost — they are decentralized at the consumption sites and stricter in one dimension
+(attrs 20 vs 17).
+
+DISPOSITION: current architecture supersedes the module's mechanism; integrating it as-is
+would duplicate the three consumption-site checks with a stale requirement set and restore
+an envelope the architecture does not have (explicitly prohibited). The one surviving
+concept is the digest-bound capability contract for prepared-render jobs — a candidate NEW
+feature for the fframes native/infrastructure owner if that envelope is revived, not an
+elevation of this module. Preserve 863c289's history until that owner integrates or
+rejects it.
+
+### Issue 7 trace — corrected (9 candidate additions are absent from main)
+
+issue7-candidate-trace.tsv (this directory, 78 rows): path | candidate_status |
+candidate_blob | current_blob | disposition | candidate_functions | reason | current_main.
+
+Counts: 7 identical, 27 evolved-present, 28 candidate additions present, 6
+deletion-rejected (instances.rs, instances_timeline.rs, chasm_render.rs, gpu_canary.rs,
+chasm-adapter README + capture-v4.mjs — retained because current callers use them:
+mod instances lib.rs:101, the instances_timeline test, the chasm_render example and the
+chasm-adapter capture tooling), and 9 candidate additions ABSENT.
+
+The 9 absent: fframes-3d/src/common_fx/STATUS.md and the whole
+fframes-3d/validation/common-fx/ harness (Cargo.lock, Cargo.toml, compare-mirror.mjs,
+compare-source.mjs, compare-sss.mjs, fixtures/qualification.json, fixtures/sss-reflection.json,
+src/main.rs). This is the port's common-fx comparison/qualification tooling (mirror, source
+and SSS reflection comparators with fixtures) — genuine unique source that did NOT land.
+Earlier "zero loss" was wrong; the harness is preserved on b74d6c68 and needs an owner
+decision: superseded by the current test/qualification paths, or a candidate to port.
