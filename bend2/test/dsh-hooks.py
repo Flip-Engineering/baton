@@ -308,7 +308,7 @@ class LiveDsh(unittest.TestCase):
             def owe_input():
                 entry.answer('PostToolUse', CONTEXT, once=True)
                 entry.answer('Stop', BLOCK, once=True)
-            StubModel.after_tool_step = owe_input
+            StubModel.after_tool_step = staticmethod(owe_input)
             self.addCleanup(setattr, StubModel, 'after_tool_step', None)
             server = ThreadingHTTPServer(('127.0.0.1', 0), StubModel)
             threading.Thread(target=server.serve_forever, daemon=True).start()
