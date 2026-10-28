@@ -61,7 +61,8 @@ test('ssh configuration runs the conductor on the database host', (t) => {
   const database = orchestra(dir);
   const baton = executable(join(dir, "ba'ton"), '#!/bin/sh\n');
   const printer = executable(join(dir, 'print-args'), '#!/bin/sh\nprintf "%s\\n" "$@"\n');
-  const result = config(database, baton, '--session', 'operator', '--ssh', 'homelab', '--node', printer);
+  const result = config(database, baton, '--session', 'operator', '--resume', 'claude-root-thread',
+    '--ssh', 'homelab', '--node', printer);
   assert.equal(result.status, 0, result.stderr);
   const servers = JSON.parse(result.stdout).mcpServers;
   const [name] = Object.keys(servers);
@@ -73,7 +74,7 @@ test('ssh configuration runs the conductor on the database host', (t) => {
   const remote = spawnSync('sh', ['-c', entry.args[2]], { encoding: 'utf8' });
   assert.equal(remote.status, 0, remote.stderr);
   assert.deepEqual(remote.stdout.trimEnd().split('\n'), [CONDUCTOR, database, baton, '--session', 'operator']);
-  assert.match(result.stderr, new RegExp(`server:${name}`));
+  assert.match(result.stderr, new RegExp(`claude --resume claude-root-thread --mcp-config FILE --dangerously-load-development-channels server:${name}`));
 });
 
 test('a database that does not exist on this host is refused', (t) => {
@@ -86,7 +87,7 @@ test('a database that does not exist on this host is refused', (t) => {
 });
 
 // The fake coordinator records each argv as one JSON line.
-async function attach(t, session, setup = () => {}) {
+async function attach(t, session, setup = () => {}, extraArgs = []) {
   const dir = scratch(t);
   const database = orchestra(dir);
   const connection = new DatabaseSync(database);
@@ -102,6 +103,8 @@ if (args[0] === '--help' || args[0] === 'help') process.exit(0);
 const db = new DatabaseSync(args[0]);
 if (args[1] === 'attach') {
   db.prepare('UPDATE sessions SET harness=?,native=?,endpoint=? WHERE id=?').run(args[3],args[4],args[5],args[2]);
+} else if (args[1] === 'connect') {
+  db.prepare('UPDATE sessions SET endpoint=? WHERE id=?').run(args[4],args[2]);
 } else if (args[1] === 'session') {
   console.log(JSON.stringify(db.prepare('SELECT * FROM sessions WHERE id=?').get(args[2])));
 } else if (args[1] === 'delivery') {
@@ -109,6 +112,7 @@ if (args[1] === 'attach') {
   if (message?.recipient === process.env.BATON_SESSION) {
     const context = JSON.parse(process.env.BATON_MCP_INPUT);
     if (!context.ready) throw new Error('The channel is not ready.');
+    require('fs').appendFileSync(${JSON.stringify(log + '.context')}, JSON.stringify(context) + '\\n');
     db.prepare('INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES(?,?,?,?,?)')
       .run('fixture-read',message.id,message.recipient,context.native,'fixture-coordinator');
   }
@@ -116,7 +120,7 @@ if (args[1] === 'attach') {
 } else if (args[1] === 'status') console.log('{}');
 db.close();
 `);
-  const child = spawn(process.execPath, [CONDUCTOR, database, fake, '--session', session], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [CONDUCTOR, database, fake, '--session', session, ...extraArgs], { stdio: ['pipe', 'pipe', 'pipe'] });
   t.after(async () => {
     if (child.exitCode === null && child.signalCode === null) {
       child.kill();
@@ -149,7 +153,7 @@ db.close();
   await until(() => responses.some((r) => r.id === 'conductor-channel-ready'), 'delivery registered');
   const recorded = calls().filter((argv) => argv[0] === database).map((argv) => argv.slice(1));
   recorded.database = database;
-  recorded.channel = { child, send, responses, until, fake, log,
+  recorded.channel = { child, send, responses, until, fake, log, contextLog: log + '.context',
     activate: () => send({ id: 'conductor-channel-ready', result: {} }),
     notes: () => responses.filter((r) => r.method === 'notifications/claude/channel'),
     async call(id, name, args = {}) {
@@ -194,6 +198,21 @@ test('an operator attachment keeps the operator role', async (t) => {
   assert.equal(calls.filter((argv) => argv[0] === 'role').length, 0, JSON.stringify(calls));
 });
 
+test('a Codex root relay preserves its harness, thread and operator role', async (t) => {
+  const calls = await attach(t, 'operator', (db) => {
+    db.prepare('UPDATE sessions SET harness=?,native=? WHERE id=?').run('codex', 'thread-1', 'operator');
+  }, ['--root-harness', 'codex', '--thread', 'thread-1']);
+  const connected = calls.find((argv) => argv[0] === 'connect');
+  assert.deepEqual(connected.slice(0, 3), ['connect', 'operator', 'thread-1']);
+  const endpoint = JSON.parse(connected[3]);
+  assert.deepEqual(endpoint.slice(4, 7), ['--session', 'operator', '--deliver']);
+  const db = new DatabaseSync(calls.database, { readOnly: true });
+  const selected = db.prepare('SELECT harness,native FROM sessions WHERE id=?').get('operator');
+  assert.deepEqual({ ...selected }, { harness: 'codex', native: 'thread-1' });
+  assert.equal(db.prepare('SELECT role FROM session_roles WHERE session=?').get('operator').role, 'operator');
+  db.close();
+});
+
 test('a parentless conductor attachment records the principal role', async (t) => {
   const calls = await attach(t, 'lead');
   assert.deepEqual(calls.filter((argv) => argv[0] === 'role'), [['role', 'lead', 'principal-conductor']]);
@@ -218,7 +237,7 @@ test('a connect probe that sends nothing gets no answer', async (t) => {
   assert.equal(JSON.parse(probe.stdout), '');
 });
 
-test('retained root backlog produces a stored-input pointer and preserves every unread body', async (t) => {
+test('retained root backlog sends the oldest complete body and preserves every unread body', async (t) => {
   const retained = 7136;
   const body = 'Retained report body. λ🙂\n'.repeat(40) + 'Complete tail.';
   const calls = await attach(t, 'operator', (db) => {
@@ -232,8 +251,8 @@ test('retained root backlog produces a stored-input pointer and preserves every 
   await channel.until(() => channel.notes().length > 0, 'retained input notice');
   const notice = channel.notes()[0];
   assert.deepEqual(JSON.parse(notice.params.meta.messageIds), ['retained-0']);
+  assert.ok(notice.params.content.includes(body));
   assert.match(notice.params.content, /baton2_delivery/);
-  assert.ok(!notice.params.content.includes(body));
   assert.ok(!notice.params.content.includes(`retained-${retained - 1}`));
   const db = new DatabaseSync(calls.database, { readOnly: true });
   assert.equal(db.prepare('SELECT count(*) AS n FROM message_reads').get().n, 0);
@@ -254,9 +273,14 @@ test('a complete recipient read advances the root backlog without a clearing act
   assert.deepEqual(JSON.parse(channel.notes()[0].params.meta.messageIds), ['first']);
   const first = await channel.call('read-first', 'baton2_delivery', { id: 'first' });
   assert.equal(JSON.parse(first.content[0].text).body, 'First complete body.\nλ🙂\nTail.');
+  const firstContext = JSON.parse(readFileSync(channel.contextLog, 'utf8').trim().split('\n')[0]);
+  assert.equal(firstContext.readMessage, 'first');
+  assert.equal(firstContext.harness, 'claude-code');
   await channel.until(() => channel.notes().some((note) => note.params.meta.messageIds === '["second"]'), 'next unread input notice');
   const second = await channel.call('read-second', 'baton2_delivery', { id: 'second' });
   assert.equal(JSON.parse(second.content[0].text).body, 'Second complete body.');
+  const contexts = readFileSync(channel.contextLog, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(contexts[1].readMessage, 'second');
   const notes = channel.notes().slice();
   await channel.barrier('drained');
   assert.deepEqual(channel.notes(), notes);
@@ -268,6 +292,75 @@ test('a complete recipient read advances the root backlog without a clearing act
   db.close();
   const actions = readFileSync(channel.log, 'utf8').trim().split('\n').map(JSON.parse);
   assert.ok(actions.every((args) => !['ack', 'acknowledge'].includes(args[1])));
+});
+
+test('a Codex root read carries its recorded thread and accepted message on the channel connection', async (t) => {
+  const calls = await attach(t, 'operator', (db) => {
+    db.prepare('UPDATE sessions SET harness=?,native=? WHERE id=?').run('codex', 'thread-1', 'operator');
+    db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+      .run('codex-root-input', 'lead', 'operator', 'report', 'Complete Codex root body.');
+  }, ['--root-harness', 'codex', '--thread', 'thread-1']);
+  const { channel } = calls;
+  const premature = await channel.call('read-before-notice', 'baton2_root_delivery', {
+    id: 'codex-root-input', thread: 'thread-1', content: 'A body that this connection has not emitted.',
+  });
+  assert.equal(premature.isError, true);
+  const unread = new DatabaseSync(calls.database, { readOnly: true });
+  assert.equal(unread.prepare('SELECT count(*) AS n FROM message_reads').get().n, 0);
+  unread.close();
+  channel.activate();
+  await channel.until(() => channel.notes().length > 0, 'Codex root input notice');
+  const notice = channel.notes()[0];
+  assert.ok(notice.params.content.includes('Baton records the read after Codex accepts this complete input.'));
+  assert.ok(!notice.params.content.includes('call baton2_delivery'));
+  const wrongThread = await channel.call('read-wrong-thread', 'baton2_root_delivery', {
+    id: 'codex-root-input', thread: 'another-thread', content: notice.params.content,
+  });
+  assert.equal(wrongThread.isError, true);
+  const wrongBody = await channel.call('read-wrong-body', 'baton2_root_delivery', {
+    id: 'codex-root-input', thread: 'thread-1', content: 'Only a partial notice body.',
+  });
+  assert.equal(wrongBody.isError, true);
+  const unboundRead = await channel.call('read-unbound', 'baton2_delivery', { id: 'codex-root-input' });
+  assert.equal(unboundRead.isError, true);
+  const beforeRead = new DatabaseSync(calls.database, { readOnly: true });
+  assert.equal(beforeRead.prepare('SELECT count(*) AS n FROM message_reads').get().n, 0);
+  beforeRead.close();
+  const delivered = await channel.call('read-codex-root', 'baton2_root_delivery', {
+    id: 'codex-root-input', thread: 'thread-1', content: notice.params.content,
+  });
+  assert.equal(JSON.parse(delivered.content[0].text).body, 'Complete Codex root body.');
+  const context = JSON.parse(readFileSync(channel.contextLog, 'utf8').trim());
+  assert.equal(context.harness, 'codex');
+  assert.equal(context.native, 'thread-1');
+  assert.equal(context.readMessage, 'codex-root-input');
+  assert.ok(context.connection);
+  assert.ok(context.endpoint);
+});
+
+test('a root completion request notice contains its full review prompt', async (t) => {
+  const body = 'Completed the assigned change. Evidence: commit abc123 and the selected fixture result.';
+  const calls = await attach(t, 'operator', (db) => {
+    db.prepare('UPDATE sessions SET native=? WHERE id=?').run('retained-native', 'operator');
+    db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+      .run('completion-1', 'lead', 'operator', 'completion-request', body);
+  });
+  const { channel } = calls;
+  channel.activate();
+  await channel.until(() => channel.notes().length > 0, 'completion request notice');
+  const notice = channel.notes()[0];
+  assert.deepEqual(JSON.parse(notice.params.meta.messageIds), ['completion-1']);
+  assert.match(notice.params.content, /Message \(completion-request\) from lead \[id: completion-1\]:/);
+  assert.ok(notice.params.content.includes(body));
+  assert.ok(notice.params.content.includes('Review the work against lead\'s assignment and the supplied evidence.'));
+  assert.ok(notice.params.content.includes('Confirm with completion-confirmed --to lead when the assignment is satisfied.'));
+  assert.ok(notice.params.content.includes('Otherwise use guide --to lead --text TEXT to state what is missing and direct the remaining work.'));
+  const result = await channel.call('read-completion', 'baton2_delivery', { id: 'completion-1' });
+  assert.equal(JSON.parse(result.content[0].text).body, body);
+  const db = new DatabaseSync(calls.database, { readOnly: true });
+  assert.deepEqual(db.prepare('SELECT message,native FROM message_reads').all().map((row) => ({ ...row })),
+    [{ message: 'completion-1', native: 'retained-native' }]);
+  db.close();
 });
 
 test('an unread notice returns on native prompt changes and respects an explicit stop', async (t) => {
@@ -303,7 +396,7 @@ test('an unread notice returns on native prompt changes and respects an explicit
   db.close();
 });
 
-test('new committed input has a pointer while older unread history stays recoverable', async (t) => {
+test('new committed input sends its full body while older unread history stays recoverable', async (t) => {
   const calls = await attach(t, 'operator', (db) => {
     db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
       .run('old-report', 'worker', 'operator', 'report', 'Older unread history.');
@@ -318,7 +411,7 @@ test('new committed input has a pointer while older unread history stays recover
   await channel.barrier('new-input');
   const latest = channel.notes().at(-1);
   assert.deepEqual(JSON.parse(latest.params.meta.messageIds), ['new-guidance']);
-  assert.ok(!latest.params.content.includes('New committed guidance.'));
+  assert.ok(latest.params.content.includes('New committed guidance.'));
   await channel.call('read-new', 'baton2_delivery', { id: 'new-guidance' });
   await channel.barrier('old-input-remains');
   assert.deepEqual(JSON.parse(channel.notes().at(-1).params.meta.messageIds), ['old-report']);

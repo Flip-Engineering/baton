@@ -469,7 +469,7 @@ class AgentInput(unittest.TestCase):
         self.assertEqual(status['read'], 'recorded')
         self.assertTrue(all(row['identity'] == 'receipt' for row in status['attempts']))
 
-    def app_action(self, *arguments, native='native-root', session=None, output=None):
+    def app_action(self, *arguments, native='native-root', session=None, output=None, mcp_context=None):
         environment = os.environ.copy()
         environment['CODEX_THREAD_ID'] = native
         for name in ('BATON_DATABASE', 'BATON_SESSION', 'BATON_ATTEMPT_DIRECTORY',
@@ -477,9 +477,52 @@ class AgentInput(unittest.TestCase):
             environment.pop(name, None)
         if session is not None:
             environment['BATON_SESSION'] = session
+        if mcp_context is not None:
+            environment['BATON_MCP_INPUT'] = json.dumps(mcp_context)
         command = [str(receive.EXE), str(self.fx.db), 'as', 'root', *arguments]
         return subprocess.run(command, stdout=output or subprocess.PIPE,
                               stderr=subprocess.PIPE, text=True, env=environment)
+
+    def test_root_channel_read_records_a_connection_scoped_codex_witness(self):
+        ident = 'root-channel-codex-read'
+        self.fx.prepare_input(ident, 'root', 'Complete remote root input. λ🙂', kind='report')
+        database = str(self.fx.db.resolve())
+        endpoint = json.dumps([str(receive.EXE.resolve()), '/release/mcp-conductor.mjs',
+                               database, str(receive.EXE.resolve()), '--session', 'root',
+                               '--deliver', 'conductor-root.sock'])
+        with sqlite3.connect(str(self.fx.db)) as db:
+            db.execute("UPDATE sessions SET harness='codex',native='native-root',endpoint=? WHERE id='root'",
+                       (endpoint,))
+        context = {'ready': True, 'database': database, 'session': 'root',
+                   'native': 'native-root', 'harness': 'codex', 'endpoint': endpoint,
+                   'connection': 'connection-1', 'readMessage': ident}
+        result = self.app_action('delivery', ident, native='native-root', session='root',
+                                 mcp_context=context)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['body'], 'Complete remote root input. λ🙂')
+        rows = [row for row in self.reads() if row['message'] == ident]
+        self.assertTrue(any(row['native'] == 'native-root' and
+                            row['attempt'] == 'root-channel:connection-1' and
+                            row['identity'] == 'root-channel:connection-1:' + ident for row in rows), rows)
+        self.assertTrue(all(row['handled'] is None for row in rows))
+
+    def test_root_channel_codex_witness_cannot_read_a_different_message(self):
+        ident = 'root-channel-codex-read'
+        self.fx.prepare_input(ident, 'root', 'Complete remote root input.', kind='report')
+        database = str(self.fx.db.resolve())
+        endpoint = json.dumps([str(receive.EXE.resolve()), '/release/mcp-conductor.mjs',
+                               database, str(receive.EXE.resolve()), '--session', 'root',
+                               '--deliver', 'conductor-root.sock'])
+        with sqlite3.connect(str(self.fx.db)) as db:
+            db.execute("UPDATE sessions SET harness='codex',native='native-root',endpoint=? WHERE id='root'",
+                       (endpoint,))
+        context = {'ready': True, 'database': database, 'session': 'root',
+                   'native': 'native-root', 'harness': 'codex', 'endpoint': endpoint,
+                   'connection': 'connection-1', 'readMessage': 'another-message'}
+        result = self.app_action('delivery', ident, native='native-root', session='root',
+                                 mcp_context=context)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn(ident, {row['message'] for row in self.reads()})
 
     def test_app_pending_uses_explicit_session_when_codex_lookup_is_unmatched(self):
         self.fx.prepare_input('root-pending', 'root', 'Root pending input.\n', kind='guidance')
