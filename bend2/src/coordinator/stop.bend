@@ -237,11 +237,19 @@ def missing_custody_owner(+db: String, +session: String, +attempt: String, +dire
 # The host verifies the retained manifest and native birth before delivering
 # a signal; no PID or path inference is used.
 
-def control_attempt(+db: String, +session: String, +attempt: String, +directory: String, signal: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+def control_attempt_result(+db: String, +session: String, +attempt: String, +signal: U32, result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match result:
+    case Done{unit}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      saved : String <- IO.try(String,DB.Sql.query(db,control_result_sql(session,attempt,signal,Done{Unit{}})))
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case Fail{(+code,+detail)}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      saved : String <- IO.try(String,DB.Sql.query(db,control_result_sql(session,attempt,signal,Fail{(code,detail)})))
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,detail)})
+
+def control_attempt(+db: String, +session: String, +attempt: String, +directory: String, +signal: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    +result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.control_signal(directory,signal)
-    saved : String <- IO.try(String,DB.Sql.query(db,control_result_sql(session,attempt,signal,result)))
-    IO.pure(Result<&1,&1,U32 & String,Unit>,result)
+    result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.control_signal(directory,signal)
+    control_attempt_result(db,session,attempt,signal,result)
 
 def restore_requested_sql(+session: String, +attempt: String) -> String:
   "UPDATE session_stops SET outcome='requested',control_error='' WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ " AND outcome='custody-missing' AND EXISTS(SELECT 1 FROM executions e WHERE e.session=session_stops.session AND e.id=session_stops.attempt AND e.phase<>'exited');"
