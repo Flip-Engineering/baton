@@ -26,7 +26,7 @@ function* separated(parts: Iterable<string>, separator: string): Generator<strin
 // Each accepted revision owns a directory. The solver releases the preceding
 // revision after its readers finish; failed writes retain their partial files.
 export class Fragments {
-  constructor(readonly directory: string) { fs.mkdirSync(directory); }
+  constructor(readonly directory: string) { fs.mkdirSync(directory, { recursive: true }); }
 
   write(unit: CodeUnit): Fragment {
     const directory = fs.mkdtempSync(path.join(this.directory, "unit-"));

@@ -510,6 +510,8 @@ export class CheckedReader {
     return graph;
   }
 
+  has(name: string): boolean { return this.bodies.has(name); }
+
   body(name: string): Bend.HTerm | undefined {
     const found = this.decoded.get(name);
     if (found !== undefined) return found;

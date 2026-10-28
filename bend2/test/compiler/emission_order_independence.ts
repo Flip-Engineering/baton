@@ -16,7 +16,8 @@ try {
   const rounds = compiler.includes('Fact.solve<Unit>');
   if (rounds) {
     let facts = fs.readFileSync(path.join(source, "facts.ts"), "utf8");
-    const next = "              const key = queue[cursor];";
+    const next = facts.includes("              const batch = queue.slice(cursor);")
+      ? "              const batch = queue.slice(cursor);" : "              const key = queue[cursor];";
     assert.ok(facts.includes(next));
     facts = facts.replace(next, "              test_reorder(queue, cursor);\n" + next);
     facts += `

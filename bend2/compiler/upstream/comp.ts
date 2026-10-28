@@ -149,6 +149,7 @@ export type Seg = {
 };
 
 export type CodeUnit = Pick<File, "unit" | "segs" | "spins" | "statics" | "tabs" | "clos" | "lend">;
+type Unit = Fragment;
 
 type Spine = {
   h: HTerm;
@@ -4465,7 +4466,7 @@ export function compile_book(book: Bend.Book, workspace?: string): string {
   return chunks.join("");
 }
 
-export function compile_book_to(book: Bend.Book, write: (chunk: string) => void, workspace?: string): void {
+export function compiler_identity(): string {
   const Store = require("./store.ts") as typeof import("./store.ts");
   const files: URL[] = [];
   const walk = (directory: URL): void => {
@@ -4481,12 +4482,21 @@ export function compile_book_to(book: Bend.Book, write: (chunk: string) => void,
     }
   };
   walk(new URL("./", import.meta.url));
-  const identity = Store.compiler_identity(files);
+  return Store.compiler_identity(files);
+}
+
+function checked_writer(book: Bend.Book, workspace?: string): import("./store.ts").CheckedWriter {
+  const Store = require("./store.ts") as typeof import("./store.ts");
   const source_inputs = new Map(SOURCE_FILES.get(book) ?? []);
   const inputs = [...source_inputs].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([path, namespace]) =>
     ({ path, namespace, sha256: Store.file_digest(path) }));
-  const writer = new Store.CheckedWriter(identity, workspace, inputs, diagnostic);
-  diagnostic("store.begin", { directory: writer.directory, compiler: identity });
+  const writer = new Store.CheckedWriter(compiler_identity(), workspace, inputs, diagnostic);
+  diagnostic("store.begin", { directory: writer.directory, compiler: writer.compiler });
+  return writer;
+}
+
+export function compile_book_to(book: Bend.Book, write: (chunk: string) => void, workspace?: string): void {
+  const writer = checked_writer(book, workspace);
   compile_stored(book, writer, write);
   writer.remove();
 }
@@ -4523,6 +4533,20 @@ function prepare_store(cb: Carb, writer: import("./store.ts").CheckedWriter,
     wide: [...cb.bangs].some((k) => sig_def(cb, k).live.some(([, , A]) => ty_clo(cb.book, A))) };
   const stored = writer.seal(header);
   const decoded = stored.reader.header<StoredHeader>();
+  restore_header(cb, stored.reader, decoded);
+  diagnostic("store.end", { directory: writer.directory,
+    duration_ms: performance.now() - begin, bytes: stored.bytes,
+    bodies: stored.index.bodies.length, header_bytes: stored.index.header.bytes,
+    tables_bytes: stored.index.tables.bytes,
+    input_manifest_sha256: stored.index.input_manifest_sha256,
+    program_sha256: stored.index.program_sha256 });
+  return { reader: stored.reader, show: decoded.show, wide: decoded.wide };
+}
+
+type Prepared = { cb: Carb; stored: import("./store.ts").CheckedReader;
+  directory: string; show: Show | null; wide: boolean; graph?: Map<string, Set<string>> };
+
+function restore_header(cb: Carb, reader: import("./store.ts").CheckedReader, decoded: StoredHeader): void {
   const book = decoded.book;
   SRCS.clear();
   for (const [k, src] of decoded.sources) SRCS.set(k,
@@ -4538,23 +4562,60 @@ function prepare_store(cb: Carb, writer: import("./store.ts").CheckedWriter,
   cb.bangs = new Set(decoded.bangs);
   cb.masks = new Map(decoded.masks);
   for (const [k, tld] of Object.entries(book.tlds)) {
-    if (tld.$ === "Def" && writer.has(k)) {
-      Object.defineProperty(tld, "h", { get: () => stored.reader.body(k) });
+    if (tld.$ === "Def" && reader.has(k)) {
+      Object.defineProperty(tld, "h", { get: () => reader.body(k) });
     }
   }
   Object.assign(cb.src, book);
   cb.book = cb.src;
   [SIGS, BRWS, NODES, LAYS, CYCLES].forEach(m => m.clear());
-  diagnostic("store.end", { directory: writer.directory,
-    duration_ms: performance.now() - begin, bytes: stored.bytes,
-    bodies: stored.index.bodies.length, header_bytes: stored.index.header.bytes,
-    tables_bytes: stored.index.tables.bytes,
-    input_manifest_sha256: stored.index.input_manifest_sha256,
-    program_sha256: stored.index.program_sha256 });
-  return { reader: stored.reader, show: decoded.show, wide: decoded.wide };
+}
+
+function open_checked(directory: string): Prepared {
+  const Store = require("./store.ts") as typeof import("./store.ts");
+  [TELES, SRCS, NODES, LAYS, CYCLES, FLATS, SIGS, BRWS].forEach(map => map.clear());
+  LAY_KEY_NODES.clear(); LAY_KEY_NEXT = 0; memo_gc();
+  const stored = new Store.CheckedReader(directory, compiler_identity(), diagnostic);
+  const decoded = stored.header<StoredHeader>(), book = decoded.book;
+  const cb: Carb = { src: book, book, bangs: new Set(), sites: new Map(),
+    own: new Set(), hot: new Set(), stat: new Set(), lend: new Set() };
+  restore_header(cb, stored, decoded);
+  const summary = JSON.parse(fs.readFileSync(directory + "/program.json", "utf8"));
+  if (summary.program !== stored.index.program_sha256) die("Checked program summary differs");
+  diagnostic_columns.clear();
+  for (const [name, nodes] of summary.literal_columns) diagnostic_columns.set(name, nodes);
+  return { cb, stored, directory, show: decoded.show, wide: decoded.wide };
+}
+
+export function prepare_book(book: Bend.Book, workspace?: string): string {
+  const writer = checked_writer(book, workspace);
+  prepare_checked(book, writer);
+  return writer.directory;
+}
+
+export function unit_emitter(directory: string): Fact.Emit<Unit> {
+  const context = open_checked(directory), emit = checked_emitter(context);
+  const names = new Map(done_defs(context.cb).map(([name]) => [seg_fid(name), name]));
+  return (name, facts_only, initial, record) => {
+    const result = emit(seg_fid(name), facts_only, initial, record);
+    return { ...result, refs: new Set([...result.refs].flatMap(fid => names.has(fid) ? [names.get(fid)!] : [])) };
+  };
+}
+
+export async function compile_checked_to(directory: string, write: (chunk: string) => void,
+  executor: Parameters<typeof Fact.solve_async<Unit>>[1]): Promise<void> {
+  const program = compilation(open_checked(directory), write), request = program.next();
+  const solved = await Fact.solve_async<Unit>(request.value!, executor);
+  program.next(solved);
 }
 
 function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWriter, write: (chunk: string) => void): void {
+  const program = compilation(prepare_checked(book, writer), write), request = program.next();
+  const solved = Fact.solve<Unit>({ ...request.value! });
+  program.next(solved);
+}
+
+function prepare_checked(book: Bend.Book, writer: import("./store.ts").CheckedWriter): Prepared {
   diagnostic_columns.clear();
   diagnostic("book.begin", { definitions: Object.keys(book.tlds).length });
   diagnostic("carb.begin");
@@ -4574,12 +4635,95 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
   collect_full();
   diagnostic("checker.release", { type_definitions: live_types.size });
   diagnostic_heap("checker.release");
+  const graph = stored.dependencies();
+  for (const [name, source] of SRCS) {
+    const refs = graph.get(name)!;
+    for (const ref of source.refs) if (graph.has(ref)) refs.add(ref);
+    for (const ref of source.claims ?? []) if (graph.has(ref)) refs.add(ref);
+  }
+  fs.writeFileSync(writer.directory + "/program.json", JSON.stringify({
+    program: stored.index.program_sha256, graph: [...graph].map(([name, refs]) => [name, [...refs]]),
+    literal_columns: [...diagnostic_columns] }));
+  memo_gc(); collect_full();
+  return { cb, stored, directory: writer.directory, show, wide, graph };
+}
+
+function checked_emitter(context: Prepared): Fact.Emit<Unit> {
+  const { cb, stored, directory } = context;
+  const defs = new Map(done_defs(cb).map(([name, def]) => [seg_fid(name), [name, def] as const]));
+  const foreign = new Map(done_defs(cb, def_foreign).map(([name, def]) => [seg_fid(name), [name, def] as const]));
+  const fragments = new Fragments(directory + "/fragments");
+  return (fid, facts_only, initial, record) => {
+    const [k, def] = defs.get(fid)!;
+    BRWS.clear();
+    const views = Fact.views(initial, record);
+    const output = file_new({ ...cb, ...views, lend: new Set() }, "Term");
+    output.unit = "u" + Buffer.from(k).toString("hex") + "_";
+    const begin = performance.now();
+    diagnostic("unit.begin", { name: k, facts_only });
+    if (DIAGNOSTICS) diagnostic_facts = record;
+    compile_def(output, k, def);
+    diagnostic_facts = null;
+    if (!facts_only) {
+      const start = performance.now();
+      const table_names = new Map([...output.tabs].map(([row, id]) =>
+        [`${output.unit}TAB_${id}`, content_name("TAB", row)]));
+      output.spins = output.spins.map(([name, src, refs, cids]) =>
+        [name, c_identifiers(src, name => table_names.get(name) ?? name), refs, cids]);
+      const canonical = canonical_helpers(output.spins);
+      output.spins = canonical.helpers;
+      const rename = (name: string): string => canonical.names.get(name) ?? table_names.get(name) ?? name;
+      for (const seg of output.segs) {
+        seg.lines = seg.lines.map(line => c_identifiers(line, rename));
+        seg.refs = new Set([...seg.refs].map(rename));
+      }
+      diagnostic("unit.canonical", { name: k, duration_ms: performance.now() - start,
+        helpers_before: output.spins.length, helpers_after: new Set(canonical.names.values()).size });
+    }
+    const unit: CodeUnit = { unit: output.unit, segs: output.segs,
+      spins: output.spins, statics: output.statics, tabs: output.tabs,
+      clos: output.clos, lend: output.lend };
+    const local = new Set([...output.segs.map(seg => seg.fid), ...output.spins.map(spin => spin[0])]);
+    const refs = new Set<string>(), external = (ref: string): boolean => {
+      if (local.has(ref) || ref === seg_fid("io_emit") || ref === seg_fid("clo_apply")) return false;
+      if (!defs.has(ref) && !foreign.has(ref)) die("unresolved external reference from " + k + ": " + ref);
+      return true;
+    };
+    for (const ref of file_reach(output, [seg_fid(k)])) if (external(ref)) refs.add(ref);
+    const edges: [string, string][] = [];
+    for (const [origin, obligations] of output.obligations) {
+      for (const ref of obligations) if (defs.has(ref) || foreign.has(ref)) {
+        const from = cb.book.tlds[origin] === undefined ? k : origin;
+        edges.push([from, (defs.get(ref) ?? foreign.get(ref))![0]]);
+      }
+    }
+    const masks: Fact.BorrowMask[] = [...BRWS.keys()].map(name =>
+      [name, cb.masks!.get(name) ?? brw_mask(cb, name)]);
+    diagnostic("unit.end", { name: k, facts_only,
+      duration_ms: performance.now() - begin, reads: record.reads.size,
+      writes: record.wrote.size, lend: unit.lend.size, decode_ms: stored.decode_ms,
+      external_def_fids: refs.size, closure_targets: unit.clos.size,
+      local_segments: unit.segs.length, helper_refs: unit.spins.length });
+    stored.release();
+    memo_gc();
+    BRWS.clear();
+    const code: CodeUnit = facts_only ? { unit: unit.unit, lend: unit.lend,
+      segs: [], spins: [], statics: new Map(), tabs: new Map(), clos: new Set() } : unit;
+    const fragment = fragments.write(code);
+    diagnostic("fragment.write", { name: k, facts_only, directory: fragment.directory, bytes: fragment.bytes });
+    return { code: fragment, lend: unit.lend, masks, refs, edges };
+  };
+}
+
+function* compilation(context: Prepared, write: (chunk: string) => void):
+  Generator<Fact.Options<Unit> & { emit: Fact.Emit<Unit> }, void, Fact.Solved<Unit>> {
+  const { cb, stored, directory, show, wide } = context;
+  const graph = context.graph ?? new Map<string, Set<string>>(
+    JSON.parse(fs.readFileSync(directory + "/program.json", "utf8")).graph.map(([name, refs]: [string, string[]]) => [name, new Set(refs)]));
   const defs = new Map(done_defs(cb).map(([k, tld]) => [seg_fid(k), [k, tld] as const]));
   const foreign = new Map(done_defs(cb, def_foreign).map(([k, tld]) =>
     [seg_fid(k), [k, tld] as [Bend.Name, Def]]));
   const roots = [seg_fid("main"), ...[...cb.bangs].map(seg_fid)];
-  type Unit = Fragment;
-  const fragments = new Fragments(writer.directory + "/fragments");
   const units = new Map<string, Unit>();
   type FactsUnit = { lend: Set<string> };
   const facts_units = new Map<string, FactsUnit>();
@@ -4651,78 +4795,12 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
       helpers_after: fl.spins.length, static_words_before,
       static_words_after: image_words, tables_before, tables_after: tables.length });
   };
-  const emit_unit: Fact.Emit<Unit> = (fid, facts_only, initial, record) => {
-    const [k, def] = defs.get(fid)!;
-    BRWS.clear();
-    const views = Fact.views(initial, record);
-    const output = file_new({ ...cb, ...views, lend: new Set() }, "Term");
-    output.unit = "u" + Buffer.from(k).toString("hex") + "_";
-    const begin = performance.now();
-    diagnostic("unit.begin", { name: k, facts_only });
-    if (DIAGNOSTICS) diagnostic_facts = record;
-    compile_def(output, k, def);
-    diagnostic_facts = null;
-    if (!facts_only) {
-      const start = performance.now();
-      const table_names = new Map([...output.tabs].map(([row, id]) =>
-        [`${output.unit}TAB_${id}`, content_name("TAB", row)]));
-      output.spins = output.spins.map(([name, src, refs, cids]) =>
-        [name, c_identifiers(src, name => table_names.get(name) ?? name), refs, cids]);
-      const canonical = canonical_helpers(output.spins);
-      output.spins = canonical.helpers;
-      const rename = (name: string): string => canonical.names.get(name) ?? table_names.get(name) ?? name;
-      for (const seg of output.segs) {
-        seg.lines = seg.lines.map(line => c_identifiers(line, rename));
-        seg.refs = new Set([...seg.refs].map(rename));
-      }
-      diagnostic("unit.canonical", { name: k, duration_ms: performance.now() - start,
-        helpers_before: output.spins.length, helpers_after: new Set(canonical.names.values()).size });
-    }
-    const unit: CodeUnit = { unit: output.unit, segs: output.segs,
-      spins: output.spins, statics: output.statics, tabs: output.tabs,
-      clos: output.clos, lend: output.lend };
-    const local = new Set([...output.segs.map(seg => seg.fid), ...output.spins.map(spin => spin[0])]);
-    const refs = new Set<string>(), external = (ref: string): boolean => {
-      if (local.has(ref) || ref === seg_fid("io_emit") || ref === seg_fid("clo_apply")) return false;
-      if (!defs.has(ref) && !foreign.has(ref)) die("unresolved external reference from " + k + ": " + ref);
-      return true;
-    };
-    for (const ref of file_reach(output, [seg_fid(k)])) if (external(ref)) refs.add(ref);
-    const edges: [string, string][] = [];
-    for (const [origin, obligations] of output.obligations) {
-      for (const ref of obligations) if (defs.has(ref) || foreign.has(ref)) {
-        const from = cb.book.tlds[origin] === undefined ? k : origin;
-        edges.push([from, (defs.get(ref) ?? foreign.get(ref))![0]]);
-      }
-    }
-    const masks: Fact.BorrowMask[] = [...BRWS.keys()].map(name =>
-      [name, cb.masks!.get(name) ?? brw_mask(cb, name)]);
-    diagnostic("unit.end", { name: k, facts_only,
-      duration_ms: performance.now() - begin, reads: record.reads.size,
-      writes: record.wrote.size, lend: unit.lend.size, decode_ms: stored.decode_ms,
-      external_def_fids: refs.size, closure_targets: unit.clos.size,
-      local_segments: unit.segs.length, helper_refs: unit.spins.length });
-    stored.release();
-    memo_gc();
-    BRWS.clear();
-    const code: CodeUnit = facts_only ? { unit: unit.unit, lend: unit.lend,
-      segs: [], spins: [], statics: new Map(), tabs: new Map(), clos: new Set() } : unit;
-    const fragment = fragments.write(code);
-    diagnostic("fragment.write", { name: k, facts_only, directory: fragment.directory, bytes: fragment.bytes });
-    return { code: fragment, lend: unit.lend, masks, refs, edges };
-  };
-  const graph = stored.dependencies();
-  for (const [name, source] of SRCS) {
-    const refs = graph.get(name)!;
-    for (const ref of source.refs) if (graph.has(ref)) refs.add(ref);
-    for (const ref of source.claims ?? []) if (graph.has(ref)) refs.add(ref);
-  }
-  collect_full();
+  const emit_unit = checked_emitter(context);
   const names = new Map([...defs].map(([fid, [name]]) => [fid, name]));
   const by_name = new Map([...names].map(([fid, name]) => [name, fid]));
-  const fact_directory = writer.directory + "/facts";
+  const fact_directory = directory + "/facts";
   fs.mkdirSync(fact_directory);
-  const solved = Fact.solve<Unit>({ graph, entries: new Set(names.values()),
+  const solved: Fact.Solved<Unit> = yield { graph, entries: new Set(names.values()),
     generic: new Set([...generic].map(fid => names.get(fid)!)),
     roots: roots.flatMap(fid => names.has(fid) ? [names.get(fid)!] : []),
     directory: fact_directory, observe: diagnostic,
@@ -4775,10 +4853,10 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
       collect_full();
       if (DIAGNOSTICS) diagnostic_heap("pass.end", { pass: pass_number });
     },
-  });
+  };
   Object.assign(cb, solved.facts);
   if (DIAGNOSTICS) {
-    const retained = writer.directory + ".facts";
+    const retained = directory + ".facts";
     fs.cpSync(fact_directory, retained, { recursive: true });
     diagnostic("facts.history", { path: retained,
       files: fs.readdirSync(retained).map(name => ({ name, bytes: fs.statSync(retained + "/" + name).size })) });

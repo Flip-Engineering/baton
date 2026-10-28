@@ -15,6 +15,7 @@ import * as fs from "node:fs";
 import * as mod from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import * as url from "node:url";
 import * as thr from "node:worker_threads";
 
@@ -232,6 +233,9 @@ async function cli_file(args: string[]): Promise<void> {
     if (only) {
       return cli_report(...await book_read(file), 1);
     }
+    if (outs.some(out => !/\.c?js$/.test(out))) {
+      return await cli_emit_native(file, outs);
+    }
     const seen = new Map<string, string | null>();
     const [book, n0] = await book_read(file, undefined, seen);
     if (outs.length !== 0 || book_main(book) !== null) {
@@ -248,7 +252,7 @@ async function cli_file(args: string[]): Promise<void> {
       if (ins.has(at) || (fs.existsSync(at) && fs.statSync(at).isDirectory())) {
         cli_fail("-o " + out + " is a file the program reads, or a directory");
       }
-      cli_emit(book, out);
+      fs.writeFileSync(out, Comp.js_book(book));
     }
   } catch (e) {
     cli_say(2, book_err(e) + "\n");
@@ -287,36 +291,50 @@ async function cli_checkup(file: string): Promise<void> {
   }
 }
 
-function path_real(p: string): string {
-  return fs.existsSync(p) ? fs.realpathSync(p) : path.resolve(p);
+export async function prepare_file(file: string, workspace: string, outputs: string[] = []): Promise<{ directory: string; inputs: string[] }> {
+  const seen = new Map<string, string | null>();
+  const [book, n0] = await book_read(file, undefined, seen);
+  cli_report(book, n0, 2);
+  const inputs = [...new Set([...seen.keys(), ...Object.values(book.tlds).flatMap(tld =>
+    tld.$ === "Def" ? (tld.i ?? []).map(path_real) : [])])];
+  for (const output of outputs) {
+    const target = path_real(output);
+    if (inputs.includes(target) || (fs.existsSync(target) && fs.statSync(target).isDirectory())) {
+      throw "Error: -o " + output + " is a file the program reads, or a directory";
+    }
+  }
+  for (const output of outputs) if (/\.c?js$/.test(output)) fs.writeFileSync(output, Comp.js_book(book));
+  return { directory: Comp.prepare_book(book, workspace), inputs };
 }
 
-function cli_emit(book: Bend.Book, out: string): void {
-  if (/\.c?js$/.test(out)) {
-    fs.writeFileSync(out, Comp.js_book(book));
-  } else if (out.endsWith(".c")) {
-    cli_emit_c(book, out);
-  } else {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bend-"));
-    const c   = path.join(dir, path.basename(out) + ".c");
-    cli_emit_c(book, c);
-    try {
-      cli_build(out, c);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+async function cli_emit_native(file: string, outputs: string[]): Promise<void> {
+  const Driver = await import("./driver.ts");
+  const native = outputs.filter(output => !/\.c?js$/.test(output));
+  const parent = path.dirname(path_real(native[0]));
+  const prepared = await Driver.prepare(file, parent, outputs);
+  const source = path.join(prepared.evidence, "output.c");
+  try {
+    await Driver.emit(prepared, source);
+    Driver.cleanup(prepared);
+    for (const output of native) {
+      if (output.endsWith(".c")) {
+        const target = path_real(output);
+        const directory = fs.mkdtempSync(path.join(path.dirname(target), ".bend-output-"));
+        const partial = path.join(directory, "output.c");
+        fs.copyFileSync(source, partial);
+        fs.renameSync(partial, target);
+        fs.rmdirSync(directory);
+      } else await cli_build(output, source, prepared.evidence);
     }
+    fs.unlinkSync(source);
+  } catch (error) {
+    cli_say(2, "Compiler process evidence: " + prepared.evidence + "\n");
+    throw error;
   }
 }
 
-function cli_emit_c(book: Bend.Book, out: string): void {
-  const target = path_real(out), parent = path.dirname(target);
-  const temporary = fs.mkdtempSync(path.join(parent, ".bend-output-"));
-  const partial = path.join(temporary, "output.c"), fd = fs.openSync(partial, "wx");
-  try {
-    Comp.compile_book_to(book, chunk => fs.writeFileSync(fd, chunk), parent);
-  } finally { fs.closeSync(fd); }
-  fs.renameSync(partial, target);
-  fs.rmdirSync(temporary);
+function path_real(p: string): string {
+  return fs.existsSync(p) ? fs.realpathSync(p) : path.resolve(p);
 }
 
 // cc_find is the first of $CC, clang and every clang-NN on PATH (newest
@@ -359,17 +377,49 @@ function cc_find(gpu: boolean): string {
 // nix lays them, lib; else the ! runs on the cores). On macOS a program with
 // a framework (#import: a window, audio) builds as Objective-C; on Linux it
 // links the X11 and ALSA libraries it includes.
-function cli_build(bin: string, file: string): void {
-  const c     = fs.readFileSync(file, "utf8");
+function c_features(file: string): { plain: boolean; objc: boolean; x11: boolean; alsa: boolean } {
+  const tokens = { objc: "\n#import ", x11: "#include <X11/", alsa: "#include <alsa/" };
+  const found = { plain: false, objc: false, x11: false, alsa: false };
+  const names = Object.keys(tokens) as (keyof typeof tokens)[];
+  const suffix = Math.max(...names.map(name => tokens[name].length)) - 1;
+  const fd = fs.openSync(file, "r"), buffer = Buffer.allocUnsafe(65536), decoder = new StringDecoder("utf8");
+  let tail = "\n", head = 1;
+  let zero: "none" | "space" | "zero" | "end" = "none";
+  const prefix = "\n#define BANGS";
+  // Match the macro's whitespace across reads. The initial state permits a directive at file start.
+  try {
+    for (;;) {
+      const count = fs.readSync(fd, buffer, 0, buffer.length, null);
+      const chunk = count === 0 ? decoder.end() : decoder.write(buffer.subarray(0, count));
+      const text = tail + chunk;
+      for (const name of names) found[name] ||= (name === "objc"
+        ? text.replace(/[\r\u2028\u2029]/g, "\n") : text).includes(tokens[name]);
+      if (!found.plain) for (let index = 0; index < chunk.length; index++) {
+        const char = chunk[index], line_end = /[\n\r\u2028\u2029]/.test(char);
+        if (zero === "space") zero = /\s/.test(char) ? "zero" : "none";
+        else if (zero === "zero") zero = char === "0" ? "end" : /\s/.test(char) ? "zero" : "none";
+        else if (zero === "end") { found.plain ||= line_end; zero = "none"; }
+        if ((line_end ? "\n" : char) === prefix[head]) head++;
+        else head = line_end ? 1 : 0;
+        if (head === prefix.length) { zero = "space"; head = 0; }
+      }
+      if (count === 0) { found.plain ||= zero === "end"; return found; }
+      tail = text.slice(-suffix);
+    }
+  } finally { fs.closeSync(fd); }
+}
+
+async function cli_build(bin: string, file: string, evidence: string): Promise<void> {
+  const Driver = await import("./driver.ts");
+  const features = c_features(file);
   const mac   = process.platform === "darwin";
   const cuda  = process.env.CUDA_HOME || "/usr/local/cuda";
-  const bangs = !/^#define BANGS\s+0$/m.test(c)
+  const bangs = !features.plain
     && (mac || fs.existsSync(cuda + "/include/nvrtc.h"));
   const cc    = cc_find(bangs);
-  const objc  = mac && (bangs || /^#import /m.test(c))
+  const objc  = mac && (bangs || features.objc)
     ? ["-x", "objective-c", "-fobjc-arc", "-fmodules"] : [];
-  const libs  = [["X11", "X11"], ["alsa", "asound"]].flatMap(([h, l]) =>
-    !mac && c.includes("#include <" + h + "/") ? ["-l" + l] : []);
+  const libs  = mac ? [] : [...(features.x11 ? ["-lX11"] : []), ...(features.alsa ? ["-lasound"] : [])];
   const cpu = [...objc, "-std=c11", "-O3", file, "-lpthread", "-lm",
     ...libs, "-o", path.resolve(bin)];
   const gpu = mac ? ["-DBEND_METAL=1", ...cpu]
@@ -378,7 +428,9 @@ function cli_build(bin: string, file: string): void {
   const steps: [string, string[]][] = bangs
     ? [[cc, gpu], [path.resolve(bin), ["--gpu-build"]]] : [[cc, cpu]];
   for (const [cmd, args] of steps) {
-    if (child.spawnSync(cmd, args, { stdio: "inherit" }).status !== 0) {
+    const directory = fs.mkdtempSync(path.join(evidence, "native-"));
+    const completed = await Driver.run(directory, [cmd, ...args]);
+    if (completed.code !== 0 || completed.signal !== null) {
       throw "Error: " + path.basename(cmd) + " failed to build " + bin;
     }
   }

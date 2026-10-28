@@ -17,6 +17,17 @@ export function trace(): Trace {
   return { events: [], reads: new Map(), wrote: new Map() };
 }
 
+export function from_events(events: Event[]): Trace {
+  const record = trace();
+  record.events = events;
+  for (let index = 0; index < events.length; index++) {
+    const event = events[index], name = qualified(event[1], event[2]);
+    if (event[0] === "read") record.reads.set(name, event[3]);
+    else if (!record.wrote.has(name)) record.wrote.set(name, index);
+  }
+  return record;
+}
+
 export function qualified(kind: Kind, key: string): string {
   return kind + ":" + key;
 }
@@ -351,13 +362,72 @@ type Observe = (event: string, details: { [key: string]: unknown }) => void;
 export type Emit<T> = (key: string, facts_only: boolean, initial: Snapshot, record: Trace) =>
   Omit<UnitRecord<T>, "key" | "facts_only" | "revision" | "trace">;
 
-export function solve<T>(options: {
+export type Job = { key: string; facts_only: boolean; initial: Snapshot };
+export type Emission<T> = { key: string; trace: Trace; result: ReturnType<Emit<T>> };
+export type Options<T> = {
   graph: Map<string, Set<string>>; entries: Set<string>; generic: Set<string>; roots: string[];
-  directory: string; emit: Emit<T>; observe: Observe; release?: (code: T) => void;
+  directory: string; observe: Observe; release?: (code: T) => void;
   barrier?: (round: number, records: ReadonlyMap<string, UnitRecord<T>>, facts: MutableFacts,
     emitted: number, facts_emitted: number, pending: number) => void;
-}): { facts: MutableFacts; records: Map<string, UnitRecord<T>>; history: string } {
-  const { graph, entries, generic, roots, emit, observe } = options;
+};
+export type Solved<T> = { facts: MutableFacts; records: Map<string, UnitRecord<T>>; history: string };
+type Command<T> = { kind: "units"; jobs: Job[] }
+  | { kind: "barrier"; round: number; records: ReadonlyMap<string, UnitRecord<T>>; facts: MutableFacts;
+      emitted: number; facts_emitted: number; pending: number }
+  | { kind: "phase.end" };
+
+export function solve<T>(options: Options<T> & { emit: Emit<T> }): Solved<T> {
+  const analysis = analyze(options);
+  let next = analysis.next();
+  try {
+    while (!next.done) {
+      const command = next.value;
+      let results: Emission<T>[] = [];
+      if (command.kind === "units") results = command.jobs.map(job => {
+        const record = trace();
+        return { key: job.key, trace: record, result: options.emit(job.key, job.facts_only, job.initial, record) };
+      });
+      else if (command.kind === "barrier") options.barrier?.(command.round, command.records, command.facts,
+        command.emitted, command.facts_emitted, command.pending);
+      next = analysis.next(results);
+    }
+    return next.value;
+  } catch (error) { analysis.throw(error); throw error; }
+}
+
+export async function solve_async<T>(options: Options<T>, executor: {
+  emit: (jobs: Job[]) => Promise<Emission<T>[]>; end_phase: () => Promise<void>;
+}): Promise<Solved<T>> {
+  const analysis = analyze(options);
+  let next = analysis.next();
+  try {
+    while (!next.done) {
+      const command = next.value;
+      let results: Emission<T>[] = [];
+      if (command.kind === "units") results = await executor.emit(command.jobs);
+      else {
+        await executor.end_phase();
+        if (command.kind === "barrier") options.barrier?.(command.round, command.records, command.facts,
+          command.emitted, command.facts_emitted, command.pending);
+      }
+      next = analysis.next(results);
+    }
+    await executor.end_phase();
+    return next.value;
+  } catch (error) {
+    let failure = error;
+    try { analysis.throw(error); } catch (cause) {
+      if (cause !== error) failure = new AggregateError([error, cause], String(error) + "\n" + String(cause));
+    }
+    try { await executor.end_phase(); } catch (cause) {
+      failure = new AggregateError([failure, cause], String(failure) + "\nWhile collecting compiler workers: " + String(cause));
+    }
+    throw failure;
+  }
+}
+
+function* analyze<T>(options: Options<T>): Generator<Command<T>, Solved<T>, Emission<T>[]> {
+  const { graph, entries, generic, roots, observe } = options;
   for (let attempt = 0; ; attempt++) {
     const plan = levels(graph), facts = empty(), records = new Map<string, UnitRecord<T>>();
     const graph_file = options.directory + "/graph-" + attempt + ".json";
@@ -412,38 +482,46 @@ export function solve<T>(options: {
             const outputs = new Map<string, UnitRecord<T>>(), emissions: UnitRecord<T>[] = [];
             history.append({ kind: "begin", round, level, snapshot: digest(facts) });
             const queue = [...cohort].sort();
-            for (let cursor = 0; cursor < queue.length; cursor++) {
-              const key = queue[cursor];
-              cohort.delete(key);
-              const facts_only = required.get(key)!;
-              const record = trace(), result = emit(key, facts_only, facts, record);
-              const revision = (outputs.get(key)?.revision ?? records.get(key)?.revision ?? 0) + 1;
-              const output = { ...result, key, facts_only, revision, trace: record };
-              const previous = outputs.get(key);
-              if (previous) options.release?.(previous.code);
-              outputs.set(key, output); emissions.push(output);
-              facts_only ? facts_emitted++ : emitted++;
-              history.append({ kind: "unit", key, revision, events: record.events, lend: [...result.lend], masks: result.masks });
-              for (const [from, to] of result.edges) {
-                if (!graph.has(from) || !graph.has(to)) throw new Error("Unresolved source edge: " + from + " -> " + to);
-                if (!graph.get(from)!.has(to) && !covers(graph, from, to)) {
-                  graph.get(from)!.add(to);
-                  observe("facts.graph.invalidate", { attempt, from, to, round, level });
-                  restart = true;
+            for (let cursor = 0; cursor < queue.length;) {
+              const batch = queue.slice(cursor);
+              cursor = queue.length;
+              const jobs = batch.map(key => ({ key, facts_only: required.get(key)!, initial: facts }));
+              for (const key of batch) cohort.delete(key);
+              const completed = yield { kind: "units", jobs };
+              const responses = new Map(completed.map(result => [result.key, result]));
+              for (const job of jobs) {
+                const { key, facts_only } = job;
+                const response = responses.get(key);
+                if (response === undefined) throw new Error("Missing unit result: " + key);
+                const record = response.trace, result = response.result;
+                const revision = (outputs.get(key)?.revision ?? records.get(key)?.revision ?? 0) + 1;
+                const output = { ...result, key, facts_only, revision, trace: record };
+                const previous = outputs.get(key);
+                if (previous) options.release?.(previous.code);
+                outputs.set(key, output); emissions.push(output);
+                facts_only ? facts_emitted++ : emitted++;
+                history.append({ kind: "unit", key, revision, events: record.events, lend: [...result.lend], masks: result.masks });
+                for (const [from, to] of result.edges) {
+                  if (!graph.has(from) || !graph.has(to)) throw new Error("Unresolved source edge: " + from + " -> " + to);
+                  if (!graph.get(from)!.has(to) && !covers(graph, from, to)) {
+                    graph.get(from)!.add(to);
+                    observe("facts.graph.invalidate", { attempt, from, to, round, level });
+                    restart = true;
+                  }
+                }
+                if (facts_only && required.get(key) === false && !cohort.has(key)) {
+                  cohort.add(key); queue.push(key);
+                }
+                if (!facts_only) for (const ref of result.refs) if (entries.has(ref)) {
+                  if (!required.has(ref) || required.get(ref) === true) {
+                    required.set(ref, false);
+                    if ((plan.get(ref) ?? 0) <= level) {
+                      if (!cohort.has(ref)) { cohort.add(ref); queue.push(ref); }
+                    } else enqueue(ref);
+                  }
                 }
               }
               if (restart) break;
-              if (!facts_only) for (const ref of result.refs) if (entries.has(ref)) {
-                if (!required.has(ref) || required.get(ref) === true) {
-                  required.set(ref, false);
-                  // A promotion needs an entry emission even if its facts-only
-                  // revision was already emitted against this same snapshot.
-                  if ((plan.get(ref) ?? 0) <= level) {
-                    if (!cohort.has(ref)) { cohort.add(ref); queue.push(ref); }
-                  }
-                  else enqueue(ref);
-                }
-              }
             }
             if (restart) {
               for (const output of outputs.values()) options.release?.(output.code);
@@ -474,7 +552,7 @@ export function solve<T>(options: {
               changed: changed.size, snapshot: digest(facts) });
           }
           if (restart) break;
-          options.barrier?.(round, records, facts, emitted, facts_emitted, dirty.size);
+          yield { kind: "barrier", round, records, facts, emitted, facts_emitted, pending: dirty.size };
         }
         if (restart) break;
         const asks = new Set<string>(), masks = new Map<string, boolean[]>();
@@ -505,6 +583,7 @@ export function solve<T>(options: {
         }
       }
     } finally { history.close(); }
+    yield { kind: "phase.end" };
     for (const record of records.values()) options.release?.(record.code);
   }
 }
