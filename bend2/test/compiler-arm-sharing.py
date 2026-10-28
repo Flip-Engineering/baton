@@ -98,7 +98,7 @@ class CompilerArmSharing(unittest.TestCase):
         source = pathlib.Path(self.temp.name) / 'native_arm_collision.c'
         self.run_bun(UPSTREAM / 'main.ts', fixture, '-o', source)
         text = source.read_text()
-        names = re.findall(r'^(?:INLINE|FAR) Term (\w*arm_\d+)\(', text, re.M)
+        names = re.findall(r'^(?:INLINE|FAR) Term (\w*arm_(?:\d+|[0-9a-f]{64}))\(', text, re.M)
         self.assertTrue(names, msg='the fixture emitted no shared arms')
         self.assertIn('spin_', text, msg='the fixture emitted no native spin')
         self.assertEqual(len(names), len(set(names)),

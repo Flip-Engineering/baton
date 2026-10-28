@@ -1,21 +1,10 @@
-// Protected test: base arm_eq shares a duplicated arm body after one copy's
-// annotation quantity changes; the total equality emits a separate spin.
-//
-// Usage: bin/bun --smol bend2/test/compiler/arm_eq_ann_share.ts COMPILER_DIR
-//
-// COMPILER_DIR holds bend2/comp.ts, bend2/bend.ts, bend2/base.bend and
-// bend2/effs. The candidate bend.ts is the pinned file (sha256 93c2a43d...),
-// so this script imports the repository copy for terms and types and loads
-// only comp.ts from COMPILER_DIR.
-//
-// The test loads bend2/test/compiler/fixtures/arm_eq_ann_share.bend twice: once plain and
-// once with one duplicated Mat arm's Ann.T quantity changed from Lone to
-// Many. The change is layout-neutral. A compiler that ignores Ann.T emits
-// byte-identical C; a compiler that compares it emits a separate spin.
-// Exit 0 when the C differs, 1 when it does not.
+// Compare duplicated source arms after changing one annotation quantity.
+// The observer counts new arms before C content deduplication. Compilers
+// without that emission event use the emitted C comparison.
+// Usage: bun arm_eq_ann_share.ts COMPILER_DIR
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { pathToFileURL } from "node:url";
+import { observe_compiler } from "./arm_share_observation.ts";
 import * as Bend from "../../compiler/upstream/bend.ts";
 
 const [dirArg] = process.argv.slice(2);
@@ -30,6 +19,7 @@ type Compiler = {
   compile_book(book: Bend.Book): string;
   book_owned(book: Bend.Book, ks?: string[]): void;
   SYNTH: string[];
+  test_arm_count?: { value: number };
 };
 // The compiler under test is selected at run time, so its module shape is
 // declared here rather than imported from a fixed path.
@@ -41,7 +31,7 @@ if (compSource === undefined) {
   console.error("no comp.ts under " + dir);
   process.exit(2);
 }
-const Comp = (await import(pathToFileURL(compSource).href)) as unknown as Compiler;
+const Comp = (await observe_compiler(compSource)) as unknown as Compiler;
 
 function seed(base: Bend.Book): Bend.Book {
   const book = Bend.book_nil();
@@ -149,7 +139,9 @@ function mutate(s: Site): boolean {
   return true;
 }
 
+if (Comp.test_arm_count !== undefined) Comp.test_arm_count.value = 0;
 const plain = Comp.compile_book(await book());
+const plain_arms = Comp.test_arm_count?.value;
 const list = sites(await book());
 const candidates = groups(list).filter((g) => g.sites.slice(0, 2).every((s) => {
   const ty = annotation(s);
@@ -163,17 +155,19 @@ for (const g of candidates) {
   const same = groups(sites_b).find((h) => h.key === g.key);
   if (same === undefined || !mutate(same.sites[1])) continue;
   tried += 1;
+  if (Comp.test_arm_count !== undefined) Comp.test_arm_count.value = 0;
   const changed = Comp.compile_book(b);
-  if (changed !== plain) {
+  const changed_arms = Comp.test_arm_count?.value;
+  if (plain_arms === undefined ? changed !== plain : changed_arms !== plain_arms) {
     if (process.env.ARM_EQ_C !== undefined) {
       fs.writeFileSync(process.env.ARM_EQ_C, changed);
     }
-    console.log("PASS: mutation emitted different C: plain " + plain.length
-      + " B, mutated " + changed.length + " B, group " + g.key
+    console.log("PASS: annotation mutation changed arm emission: plain " + plain.length
+      + " B/" + plain_arms + " arms, mutated " + changed.length + " B/" + changed_arms + " arms, group " + g.key
       + ", candidates tried " + tried);
     process.exit(0);
   }
 }
-console.log("FAIL: every annotation mutation emitted the same C (" + plain.length
+console.log("FAIL: every annotation mutation kept the same arm emission (" + plain.length
   + " B); this compiler shares across Ann.T, candidates tried " + tried);
 process.exit(1);

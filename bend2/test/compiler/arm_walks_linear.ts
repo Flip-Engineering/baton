@@ -12,6 +12,9 @@ try {
   if (fs.existsSync(path.join(source, "store.ts"))) {
     fs.copyFileSync(path.join(source, "store.ts"), path.join(temporary, "store.ts"));
   }
+  if (fs.existsSync(path.join(source, "link.ts"))) {
+    fs.copyFileSync(path.join(source, "link.ts"), path.join(temporary, "link.ts"));
+  }
   for (const name of ["bend.ts", "base.bend"]) fs.copyFileSync(path.join(source, name), path.join(temporary, name));
   fs.symlinkSync(path.join(source, "effs"), path.join(temporary, "effs"));
   let compiler = fs.readFileSync(path.join(source, "comp.ts"), "utf8");

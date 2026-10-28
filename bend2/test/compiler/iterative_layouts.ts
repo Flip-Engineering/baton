@@ -31,7 +31,8 @@ function book(source: string): Bend.Book {
   return b;
 }
 try {
-  for (const name of ["bend.ts", "base.bend"]) {
+  for (const name of fs.readdirSync(upstream).filter(name =>
+    name.endsWith(".ts") || name === "base.bend")) {
     fs.copyFileSync(path.join(upstream, name), path.join(tmp, name));
   }
   fs.writeFileSync(path.join(tmp, "original.ts"), original + hooks);

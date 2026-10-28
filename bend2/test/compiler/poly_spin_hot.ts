@@ -10,10 +10,8 @@ const root = path.resolve(process.argv[2] ?? path.join(import.meta.dir, "../../.
 const source_dir = path.join(root, "bend2/compiler/upstream");
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bend-poly-spin-"));
 try {
-  if (fs.existsSync(path.join(source_dir, "store.ts"))) {
-    fs.copyFileSync(path.join(source_dir, "store.ts"), path.join(directory, "store.ts"));
-  }
-  for (const name of ["bend.ts", "base.bend"]) {
+  for (const name of fs.readdirSync(source_dir).filter(name =>
+    name.endsWith(".ts") || name === "base.bend")) {
     fs.copyFileSync(path.join(source_dir, name), path.join(directory, name));
   }
   fs.symlinkSync(path.join(source_dir, "effs"), path.join(directory, "effs"));

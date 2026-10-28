@@ -43,6 +43,9 @@ try {
   if (fs.existsSync(path.join(source, "store.ts"))) {
     fs.copyFileSync(path.join(source, "store.ts"), path.join(tmp, "store.ts"));
   }
+  if (fs.existsSync(path.join(source, "link.ts"))) {
+    fs.copyFileSync(path.join(source, "link.ts"), path.join(tmp, "link.ts"));
+  }
   for (const name of ["bend.ts", "comp.ts", "main.ts", "base.bend"]) {
     fs.copyFileSync(path.join(source, name), path.join(tmp, name));
   }

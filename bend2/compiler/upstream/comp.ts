@@ -5,6 +5,7 @@
 import * as fs from "node:fs";
 
 import * as Bend from "./bend.ts";
+import { canonical_helpers, c_identifiers, content_name } from "./link.ts";
 
 const DIAGNOSTICS = process.env.BEND_COMPILER_DIAGNOSTICS === "1";
 const diagnostic_started = performance.now();
@@ -200,6 +201,7 @@ type File = Carb & {
   armHints: Map<string, ArmRep[]>;
   clos: Set<string>;
   img: string[];
+  statics: Map<string, string[]>;
   lits: Map<string, number>;
   consts: Map<string, Map<HTerm, Val>>;
   reqs: string;
@@ -1767,6 +1769,13 @@ function ctr_build(fl: File, k: Bend.Name, exprs: string[],
   }
   if (stat) {
     fl.stat.add(k);
+    if (fl.unit !== "") {
+      const name = content_name("SI", JSON.stringify(exprs));
+      if (!fl.statics.has(name)) {
+        fl.statics.set(name, exprs);
+      }
+      return `term_ctr(${cid}, STAT_OFF + ${name})`;
+    }
     const at = memo(fl.lits, exprs.join(", "), () =>
       fl.img.push(...exprs) - exprs.length);
     return `term_ctr(${cid}, STAT_OFF + ${fl.unit === "" ? at : fl.unit + "STAT_BASE + " + at})`;
@@ -2518,7 +2527,7 @@ function file_reset(fl: File, cb: Carb, decl: string): File {
     unit: "", decl, segs: [], seg: seg_new("", BOX, []), tab: 2,
     cids: new Map(), tabs: new Map(), spins: [], spun: new Map(), armSeq: 0,
     armBusy: new Set(), armHints: new Map(), clos: new Set(),
-    img: [], lits: new Map(), consts: new Map(), reqs: "", fuel: 0,
+    img: [], statics: new Map(), lits: new Map(), consts: new Map(), reqs: "", fuel: 0,
     fresh: new Map(), spares: [],
     uses: new Map(), brwl: new Map(), rest: [], def: "",
   });
@@ -3234,6 +3243,7 @@ function emit_native(fl: File, ck: Call, ers: HTerm[]): string {
   fl.spun.set(key, name);
   const tld = fl.book.tlds[ck.k] as Def;
   const outer = { ...fl };
+  Object.assign(fl, { fresh: new Map(), brwl: new Map(), rest: [] });
   const vals = emit_open(fl, ck.k);
   const seg = fl.seg;
   seg.fid = name;
@@ -4109,12 +4119,14 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
   reps.push(rec);
   fl.armHints.set(bucket, reps);
   fl.armBusy.add(name);
-  const ts = ks.map(() => name_local(fl, "a"));
   const outer = { seg: fl.seg, uses: fl.uses, spares: fl.spares,
-    tab: fl.tab, rest: fl.rest };
+    tab: fl.tab, rest: fl.rest, fresh: fl.fresh, brwl: fl.brwl };
+  fl.fresh = new Map();
+  fl.brwl = new Map();
+  const ts = ks.map(() => name_local(fl, "a"));
   const seg = seg_new(name, lay, ts, ks);
-  Object.assign(fl, { seg, spares: [], tab: 2,
-    uses: new Map(fl.uses) });
+  Object.assign(fl, { seg, spares: [], tab: 2, rest: [],
+    uses: new Map() });
   let at = 0;
   for (const [p, b] of caps) {
     const w = val_new(ts.slice(at, at + b.val.lay.ks.length), b.val.lay);
@@ -4281,7 +4293,9 @@ function compile_def(fl: File, k: Bend.Name, tld: Def): void {
   emit_body(fl, tld.h as HTerm, tld.T, [], vals, null);
   diagnostic("definition.end", { name: k, duration_ms: performance.now() - diagnostic_before,
     segments: fl.segs.length, spins: fl.spins.length, tables: fl.tabs.size,
-    image_words: fl.img.length, absent_reads: diagnostic_facts?.reads.size ?? 0,
+    image_words: fl.unit === "" ? fl.img.length
+      : [...fl.statics.values()].reduce((n, words) => n + words.length, 0),
+    absent_reads: diagnostic_facts?.reads.size ?? 0,
     writes: diagnostic_facts?.writes.size ?? 0, lend: fl.lend.size, file_maps: { fresh: fl.fresh.size, uses: fl.uses.size,
       brwl: fl.brwl.size, cids: fl.cids.size, tabs: fl.tabs.size, spun: fl.spun.size,
       clos: fl.clos.size, lits: fl.lits.size, consts: fl.consts.size } });
@@ -4377,6 +4391,9 @@ function compile_tables(fl: File, entries: Seg[], show: Show | null): string[] {
       for (const c of tld.c) add(c.k, lay_node(fl.book, c.k).ks.length);
     }
   }
+  const ordered_cids = [...cids].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  cids.clear();
+  for (const [name, arity] of ordered_cids) cids.set(name, arity);
   check_id_limit("CID", cids.size, 1 << 20);
   check_id_limit("FID live segments", entries.length - 2, (1 << 20) - 4);
   for (const ms of [[...cids.keys()].map(cid_mac),
@@ -4473,6 +4490,7 @@ export function compile_book(book: Bend.Book, workspace?: string): string {
   const Store = require("./store.ts") as typeof import("./store.ts");
   const identity = Store.compiler_identity([new URL(import.meta.url),
     new URL("./bend.ts", import.meta.url), new URL("./store.ts", import.meta.url),
+    new URL("./link.ts", import.meta.url),
     new URL("./base.bend", import.meta.url)]);
   const inputs = (SOURCE_FILES.get(book) ?? []).map(([path, namespace]) =>
     ({ path, namespace, sha256: Store.file_digest(path) }));
@@ -4570,7 +4588,7 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
   const foreign = new Map(done_defs(cb, def_foreign).map(([k, tld]) =>
     [seg_fid(k), [k, tld] as [Bend.Name, Def]]));
   const roots = [seg_fid("main"), ...[...cb.bangs].map(seg_fid)];
-  type Unit = Pick<File, "unit" | "segs" | "spins" | "img" | "tabs" | "clos" | "lend">;
+  type Unit = Pick<File, "unit" | "segs" | "spins" | "statics" | "tabs" | "clos" | "lend">;
   const units = new Map<string, Unit>();
   type FactsUnit = { lend: Set<string>; wrote: Set<string> };
   const facts_units = new Map<string, FactsUnit>();
@@ -4627,18 +4645,50 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
     tables.length = 0;
     offsets.length = 0;
     cb.lend.clear();
+    const helpers = new Map<string, File["spins"][number]>();
+    const statics = new Map<string, string[]>();
+    const tab_rows = new Map<string, string>();
+    let helpers_before = 0, static_words_before = 0, tables_before = 0;
     for (const unit of facts_units.values()) {
       for (const key of unit.lend) cb.lend.add(key);
     }
-    for (const unit of units.values()) {
+    const ordered = [...units.values()].sort((a, b) =>
+      a.unit < b.unit ? -1 : a.unit > b.unit ? 1 : 0);
+    for (const unit of ordered) {
+      helpers_before += unit.spins.length;
+      tables_before += unit.tabs.size;
       for (const seg of unit.segs) fl.segs.push(seg);
-      for (const spin of unit.spins) fl.spins.push(spin);
+      for (const spin of unit.spins) {
+        const found = helpers.get(spin[0]);
+        if (found === undefined) {
+          helpers.set(spin[0], [spin[0], spin[1], new Set(spin[2]), new Map(spin[3])]);
+        } else {
+          if (found[1] !== spin[1]) die("different helper text for " + spin[0]);
+          for (const ref of spin[2]) found[2].add(ref);
+          for (const [name, arity] of spin[3]) found[3].set(name, arity);
+        }
+      }
       for (const fid of unit.clos) fl.clos.add(fid);
       for (const key of unit.lend) cb.lend.add(key);
-      offsets.push(`#define ${unit.unit}STAT_BASE ${fl.img.length}`);
-      for (const word of unit.img) fl.img.push(word);
-      for (const [row, id] of unit.tabs) tables.push([`${unit.unit}TAB_${id}`, row]);
+      for (const [name, words] of unit.statics) {
+        static_words_before += words.length;
+        const found = statics.get(name);
+        if (found !== undefined && JSON.stringify(found) !== JSON.stringify(words)) {
+          die("different static words for " + name);
+        }
+        statics.set(name, words);
+      }
+      for (const [row] of unit.tabs) tab_rows.set(content_name("TAB", row), row);
     }
+    fl.spins = [...helpers.values()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+    for (const [name, words] of [...statics].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
+      offsets.push(`#define ${name} ${fl.img.length}`);
+      fl.img.push(...words);
+    }
+    tables.push(...[...tab_rows].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+    diagnostic("link.canonical", { units: ordered.length, helpers_before,
+      helpers_after: fl.spins.length, static_words_before,
+      static_words_after: fl.img.length, tables_before, tables_after: tables.length });
   };
   const emit_unit = (fid: string, facts_only: boolean): Unit => {
     const [k, def] = defs.get(fid)!;
@@ -4649,7 +4699,7 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
     if (previous !== undefined) {
       previous.segs = [];
       previous.spins = [];
-      previous.img = [];
+      previous.statics.clear();
       previous.tabs.clear();
       previous.clos.clear();
       previous.lend.clear();
@@ -4664,8 +4714,24 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
     compile_def(output, k, def);
     diagnostic_facts = null;
     reading = null;
+    if (!facts_only) {
+      const start = performance.now();
+      const table_names = new Map([...output.tabs].map(([row, id]) =>
+        [`${output.unit}TAB_${id}`, content_name("TAB", row)]));
+      output.spins = output.spins.map(([name, src, refs, cids]) =>
+        [name, c_identifiers(src, name => table_names.get(name) ?? name), refs, cids]);
+      const canonical = canonical_helpers(output.spins);
+      output.spins = canonical.helpers;
+      const rename = (name: string): string => canonical.names.get(name) ?? table_names.get(name) ?? name;
+      for (const seg of output.segs) {
+        seg.lines = seg.lines.map(line => c_identifiers(line, rename));
+        seg.refs = new Set([...seg.refs].map(rename));
+      }
+      diagnostic("unit.canonical", { name: k, duration_ms: performance.now() - start,
+        helpers_before: output.spins.length, helpers_after: new Set(canonical.names.values()).size });
+    }
     const unit: Unit = { unit: output.unit, segs: output.segs,
-      spins: output.spins, img: output.img, tabs: output.tabs,
+      spins: output.spins, statics: output.statics, tabs: output.tabs,
       clos: output.clos, lend: output.lend };
     if (facts_only) {
       facts_units.set(fid, { lend: unit.lend, wrote: writes.get(fid)! });
@@ -4727,7 +4793,8 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
     for (const fid of dirty) {
       if (!needed.has(fid) && !facts_units.has(fid)) dirty.delete(fid);
     }
-    compile_reqs(fl, [...needed].flatMap((fid) => foreign.has(fid) ? [foreign.get(fid)!] : []));
+    compile_reqs(fl, [...needed].flatMap((fid) => foreign.has(fid) ? [foreign.get(fid)!] : [])
+      .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
     const live = file_reach(fl, roots);
     fl.segs = fl.segs.filter((seg) => live.has(seg.fid));
     fl.spins = fl.spins.filter(([fid]) => live.has(fid));
