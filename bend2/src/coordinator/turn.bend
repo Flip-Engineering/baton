@@ -724,7 +724,7 @@ def deferred_pending_sql(+player: String) -> String:
   "SELECT " ++ Guidance.outstanding_sql(player) ++ ";"
 
 def deferred_pending(+pending: String) -> String:
-  Bool.pick(String,String.is_empty(pending),""," and the deferred guidance " ++ pending ++ " stays pending for the next receive")
+  Bool.pick(String,String.is_empty(pending),""," and the deferred input " ++ pending ++ " stays pending for the next receive")
 
 def deferred_text(id: String, pending: String) -> String:
   "A later native terminal was observed after the report " ++ id ++ " was sealed; the episode is retained in the native log" ++ deferred_pending(pending) ++ "."
@@ -1401,23 +1401,36 @@ def current_history(+db: String, player: String) -> IO(String):
     home : String <- Bool.pick(IO(String),String.is_empty(line),IO.pure(String,""),IO.try(String,DB.Sql.query(db,Subs.history_home_sql(line))))
     IO.pure(String,Tx.trim_nl(home))
 
-# The recorded route with the profile's credential store bound into the spawn argv and
-# the preserved provider history home carried as an ordinary config argument; an empty
-# binding keeps today's argv through retained_arguments, so a session with no record
-# spawns exactly as before. OMP binds PI_CODING_AGENT_DIR and Muse binds
+# Retained profile arguments bind the selected credential store and provider history.
+# Every OMP launch receives the completion-request tool extension; its stop hook
+# reads the current assignment state when OMP reaches session_stop.
+# OMP binds PI_CODING_AGENT_DIR and Muse binds
 # XDG_CONFIG_HOME; a selected profile assignment overrides an inherited store.
-def retained_profile_other(omp: Bool, muse: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String) -> String:
+def retained_profile_other(omp: Bool, muse: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +completion_extension: String) -> String:
   match omp:
-    case True{}: Omp.argv_profile(binding,cmd,model,effort,sessions,native,String.is_empty(native))
+    case True{}: Omp.argv_with_completion(binding,cmd,model,effort,sessions,native,String.is_empty(native),completion_extension)
     case False{}:
       match muse:
         case True{}: Muse.argv_profile(binding,cmd,model,effort,prompt_file,native,String.is_empty(native))
         case False{}: Codex.argv_profile(binding,override,cmd,model,effort,native,String.is_empty(native))
 
-def retained_profile_arguments(omp: Bool, claude: Bool, muse: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String) -> String:
+def retained_profile_arguments(omp: Bool, claude: Bool, muse: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +completion_extension: String) -> String:
   match claude:
     case True{}: Claude.argv_profile(binding,cmd,model,effort,native,String.is_empty(native))
-    case False{}: retained_profile_other(omp,muse,binding,override,cmd,model,effort,sessions,prompt_file,native)
+    case False{}: retained_profile_other(omp,muse,binding,override,cmd,model,effort,sessions,prompt_file,native,completion_extension)
+
+def omp_completion_asset(+helper: String, +name: String) -> String:
+  Subs.directory_of(helper) ++ "/" ++ name
+
+def omp_completion_extension(omp: Bool, +executable: String) -> IO(String):
+  match omp:
+    case False{}: IO.pure(String,"")
+    case True{}: do IO<String>:
+      helper : String <- IO.try(String,HostControl.Control.agent_helper(executable))
+      IO.pure(String,omp_completion_asset(helper,"omp-completion.mjs"))
+
+def omp_completion_arguments(+arguments: String, omp: Bool, +extension: String) -> String:
+  Bool.pick(String,omp,P.argv(List.append(&1,String,Tx.split_nul(arguments),Omp.completion_extension_args(extension))),arguments)
 
 def retained_identity_prefix(model: String, identity: String & String) -> String:
   (registry,helper)=identity
@@ -1479,7 +1492,7 @@ def dsh_worker_helper(dsh: Bool, executable: String) -> IO(String):
     case False{}: IO.pure(String,"")
     case True{}: do IO<String>:
       helper : String <- IO.try(String,HostControl.Control.agent_helper(executable))
-      IO.pure(String,Subs.directory_of(helper) ++ "/dsh-worker.mjs")
+      IO.pure(String,helper)
 
 type IdentityParts is Data:
   IdParts{prefix: String, resolver: String}
@@ -1522,16 +1535,16 @@ def retained_launch_checked(prepared: Result<&1,&1,U32 & String,Dsh.Prepared>, +
       checked : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),omp,Omp.preflight_arguments(arguments),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
       retained_launch_result(checked,arguments,Bool.pick(String,agy,Agy.user_frame(initial),retained_input(muse,omp,claude,initial,level)),initial,retained_keep_stdin(muse,omp,claude),Bool.or(muse,seal_prompt))
 
-def retained_launch_plain(omp: Bool, claude: Bool, muse: Bool, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +prefix: String, account: Maybe<&2,Accounts.AccountRecord>, +credit_refusal: String) -> Result<&1,&1,U32 & String,String>:
+def retained_launch_plain(omp: Bool, claude: Bool, muse: Bool, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +prefix: String, +completion_extension: String, account: Maybe<&2,Accounts.AccountRecord>, +credit_refusal: String) -> Result<&1,&1,U32 & String,String>:
   match account:
-    case None{}: Done{prefix ++ retained_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native)}
+    case None{}: Done{prefix ++ omp_completion_arguments(retained_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native),omp,completion_extension)}
     case Some{+refused}: Fail{(2,Bool.pick(String,String.is_empty(credit_refusal),Accounts.credit_api_key_refusal(refused),credit_refusal))}
 
-def retained_launch_arguments(omp: Bool, claude: Bool, muse: Bool, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +prefix: String, +history: String, harness: String, account: Maybe<&2,Accounts.AccountRecord>, launch_credit: Maybe<List<String>> & String) -> Result<&1,&1,U32 & String,String>:
+def retained_launch_arguments(omp: Bool, claude: Bool, muse: Bool, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +prefix: String, +completion_extension: String, +history: String, harness: String, account: Maybe<&2,Accounts.AccountRecord>, launch_credit: Maybe<List<String>> & String) -> Result<&1,&1,U32 & String,String>:
   (binding,credit_refusal)=launch_credit
   match binding:
-    case Some{bound}: Done{prefix ++ retained_profile_arguments(omp,claude,muse,bound,Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,prompt_file,native)}
-    case None{}: retained_launch_plain(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,account,credit_refusal)
+    case Some{bound}: Done{prefix ++ retained_profile_arguments(omp,claude,muse,bound,Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,prompt_file,native,completion_extension)}
+    case None{}: retained_launch_plain(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,completion_extension,account,credit_refusal)
 
 
 def retained_identity_result(identity: Result<&1,&1,U32 & String,String & String>, next: String & String -> IO(Result<&1,&1,U32 & String,RetainedLaunch>)) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
@@ -1563,13 +1576,14 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
         home : String <- dsh_home_if(dsh,db,absolute_db,player)
         prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort)
         bridge : String <- dsh_worker_helper(dsh,executable)
+        completion_extension : String <- omp_completion_extension(omp,executable)
         +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory,"BATON_STOP_HOOK=" ++ executable,"BATON_COORDINATOR=" ++ executable,"BATON_DSH_WORKER_BRIDGE=" ++ bridge]) ++ identity_prefix(parts))
         +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
         store : String <- current_store(db,player,harness)
         history : String <- current_history(db,player)
         launch_credit : Maybe<List<String>> & String <- Accounts.credit_launch_gate(db,player,directory,Tx.trim_nl(harness),account,identity_resolver(parts),store,Accounts.credit_guard_qualified())
         recorded : Unit <- Accounts.record_current_attempt(db,player,directory,predecessor,account)
-        +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,history,Tx.trim_nl(harness),account,launch_credit)))
+        +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,completion_extension,history,Tx.trim_nl(harness),account,launch_credit)))
         launch : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_launch_checked(prepared,dsh,agy,prefix,home,cmd,model,effort,native,muse,args,initial,omp,claude,level,seal_prompt)
         IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,launch))
 
