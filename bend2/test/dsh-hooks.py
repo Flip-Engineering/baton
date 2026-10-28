@@ -305,7 +305,7 @@ class LiveDsh(unittest.TestCase):
 
             # Input becomes owed while the tool call runs: the entry starts answering
             # once the stub has served the tool-call step.
-            def owe_input():
+            def owe_input(_handler):
                 entry.answer('PostToolUse', CONTEXT, once=True)
                 entry.answer('Stop', BLOCK, once=True)
             StubModel.after_tool_step = owe_input
