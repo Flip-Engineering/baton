@@ -853,15 +853,15 @@ def credit_reserve_reread(+db: String, +session: String, +attempt: String, +acco
     +fields : List<&2,String> <- IO.pure(List<&2,String>,String.split(Tx.trim_nl(existing),Char.from_u32(31)))
     credit_reserve_reread_fields(db,session,attempt,account,organization,cycle,cap_period,fields)
 
-def credit_reserve_saved(+db: String, +session: String, +attempt: String, +account: String, +organization: String, +cycle: String, +cap_period: String) -> IO(CreditAdmission):
-  credit_reserve_reread(db,session,attempt,account,organization,cycle,cap_period)
+def credit_reserve_saved(+db: String, +session: String, +attempt: String, +account: String, +organization: String, +cycle: String, +cap_period: String, +changed: String) -> IO(CreditAdmission):
+  Bool.pick(IO(CreditAdmission),credit_conflict_ok(Tx.trim_nl(changed)),credit_reserve_reread(db,session,attempt,account,organization,cycle,cap_period),IO.pure(CreditAdmission,CRefused{"creditReservationConflict"}))
 
 def credit_reserve_observed(+db: String, +session: String, +attempt: String, +account: AccountRecord, +current_cap_period: String, observed: CreditObs, +decision: CreditAdmission) -> IO(CreditAdmission):
   match observed:
     case CObs{state,balance,unit,cycle,expires}:
       do IO<CreditAdmission>:
         saved : String <- Bool.pick(IO(String),credit_admission_admitted(decision),IO.try(String,commit_read(db,credit_reservation_insert_sql(session,attempt,account,current_cap_period,balance,unit,decision))),IO.pure(String,"refused"))
-        Bool.pick(IO(CreditAdmission),credit_admission_admitted(decision),credit_reserve_saved(db,session,attempt,account_id(account),account_organization(account),cycle,current_cap_period),IO.pure(CreditAdmission,decision))
+        Bool.pick(IO(CreditAdmission),credit_admission_admitted(decision),credit_reserve_saved(db,session,attempt,account_id(account),account_organization(account),cycle,current_cap_period,Tx.trim_nl(saved)),IO.pure(CreditAdmission,decision))
 
 def credit_reserve_existing(+db: String, +session: String, +attempt: String, +account: AccountRecord, +current_cap_period: String, +current_cycle: String, +request_charge: String, fields: List<&2,String>) -> IO(CreditAdmission):
   match fields:
