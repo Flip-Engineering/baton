@@ -505,7 +505,7 @@ def redriven_or_escalated(+db: String, +id: String, +code: U32, +detail: String,
   match redriven:
     case Done{output}: IO.die(Unit,code,detail)
     case Fail{(+redrive_code,+redrive_detail)}: do IO<Unit>:
-      combined = "Delivery failed (exit " ++ U32.show(code) ++ "): " ++ detail ++ "\nRedelivery launch failed (exit " ++ U32.show(redrive_code) ++ "): " ++ redrive_detail
+      +combined : String <- IO.pure(String,"Delivery failed (exit " ++ U32.show(code) ++ "): " ++ detail ++ "\nRedelivery launch failed (exit " ++ U32.show(redrive_code) ++ "): " ++ redrive_detail)
       reported : Result<&1,&1,U32 & String,String> <- undelivered_reported(db,id,combined)
       escalated(db,id,code,combined,reported)
 
