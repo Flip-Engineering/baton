@@ -143,3 +143,39 @@ history moved into the snapshot clone as refs/remotes/cur/main via local fetch b
 - The maintained bend fork is VENDORED in Flip-Engineering/baton: bend2/compiler/upstream (fork-manifest schema baton-bend-distribution-fork-manifest-v1, upstream "Bend 2.0.25", 76 source inputs), consumed by every baton native build through bend2/toolchain/runtime-pin.txt and the lineage guard; compiler provenance source.json names repository Flip-Engineering/baton, source_commit fe882a28 for the cid-final release.
 - Flip-Engineering/bend and bend-kit are NOT readable from this host: git info/refs returns 401 and API 404 unauthenticated, while control probes bendlang/bend and paymog/bend-kit return 200/anonymous-clone OK. The "public" classification needs Terra re-verification or exact clone URLs; Terra should supply branch/PR lists for both.
 - Upstream status: bendlang/bend is at v2.0.39 while the vendored line pins the 2.0.25 era — the fork's delta is maintained inside baton, so Flip-Engineering/bend's role is at most an upstream capture/mirror (cf. worktree bend-upstream-capture-20261019, bendlang remote, tip c65bcb78 2026-09-21). paymog/bend-kit is public (200); no bend-kit reference exists in baton's maintained sources, scripts, or the installed release provenance — its consumer is unknown and must come from repo access or root.
+
+## Bend fork and bend-kit — complete verdicts (public clones, 2026-10-28)
+
+Access resolution: the forks live under the flip-engineer USER account (not the
+Flip-Engineering org) — bend and bend-kit are public there; org paths 404/401.
+
+### flip-engineer/bend
+
+- main = pure upstream snapshot of bendlang/bend: 0 ahead, 102 behind (== upstream
+  e5527d5b 2026-10-16 "#1629"). Nine experiment branches, none absorbed upstream
+  (all patch-id-unique vs bendlang main): naming/uniform-identities (19),
+  codex/cli-report-cache (9), fix-1513-ty-holds (6), codex/consts-insertion-cap (5,
+  tip 2026-10-26), codex/baton-pinned-2025-comp-optimizations (5, tip 2026-10-26),
+  codex/facts-prepass-default-correction (4), preserve/homelab-20261022/fixpoint-cold-path (3),
+  fix-1236-ctor-shadow (1), codex/baton-memo-lifetime-integration (3).
+- Consumer chain proven: fork commit 27629713d2489 is the installed release
+  2.0.25-27629713-20261018 (fork-manifest schema baton-bend-memo-lifetime-v2;
+  provenance carries baton741-comp.ts and baton741-fork-manifest.json — the #741 line).
+  codex/consts-insertion-cap and codex/baton-pinned-2025-comp-optimizations are sibling
+  stacks sharing 16b84e13 "P6: enforce the CONSTS bound at insertion"; neither contains
+  the other — diff the two tips before removing the older-named one.
+- Verdict: justified and active — the experimentation/staging supplier for baton's
+  pinned compiler line (the maintained vendored fork is bend2/compiler/upstream in
+  Flip-Engineering/baton, source_commit fe882a28 for the cid-final release).
+
+### flip-engineer/bend-kit
+
+- Description declares the purpose: "Contribution fork. Child working directories and
+  recursive JSON [keys]". Both contribution branches are verified delivered upstream:
+  process-child-cwd (52 commits) and json-recursive-unique-keys-20261010 (52 commits)
+  have zero patch-id-unique commits vs paymog/bend-kit main (upstream is 261 ahead;
+  merge subjects differ from branch subjects because upstream squashed).
+- Verdict: contribution purpose fulfilled. Branches deletable with no unique source at
+  risk; keep the fork only as a future contribution vehicle and resync main (261 behind)
+  when contributions resume. No bend-kit consumer exists in baton's sources, scripts,
+  or installed release provenance.
