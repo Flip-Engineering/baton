@@ -8,6 +8,7 @@ the OMP preflight checks the selected store. No provider is contacted.
 import os
 import json
 import pathlib
+import shlex
 import sqlite3
 import subprocess
 import tempfile
@@ -23,7 +24,7 @@ UNWRITABLE = pathlib.Path('/proc')
 class RetainedStore(unittest.TestCase):
     def setUp(self):
         if not EXE.is_file():
-            self.skipTest(f'retained store fixture not built at {EXE}')
+            self.fail(f'retained store fixture not built at {EXE}')
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
         self.addCleanup(self.temp.cleanup)
         self.root = pathlib.Path(self.temp.name)
@@ -39,28 +40,24 @@ class RetainedStore(unittest.TestCase):
         self.owner = subprocess.Popen(
             [str(EXE), '--instance-owner', str(self.db)],
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:
-            if self.owner.poll() is not None:
-                self.fail('instance owner exited before readiness: '
-                          + (self.owner.stderr.read() or ''))
+        while self.owner.poll() is None:
             witness = subprocess.run(
                 [str(EXE), '--instance-witness', str(self.db)],
-                capture_output=True, text=True, timeout=5)
+                capture_output=True, text=True)
             if witness.returncode == 0 and witness.stdout.strip():
                 return
             time.sleep(0.05)
-        self.fail('instance owner did not become ready')
+        self.fail('instance owner exited before readiness: '
+                  + (self.owner.stderr.read() or ''))
 
     def tearDown(self):
-        subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
-                       capture_output=True, timeout=20)
+        shutdown = subprocess.run(
+            [str(EXE), '--instance-shutdown', str(self.db)],
+            capture_output=True, text=True)
+        self.assertEqual(shutdown.returncode, 0, shutdown.stdout + shutdown.stderr)
         if self.owner is not None:
-            try:
-                self.owner.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self.owner.kill()
-                self.owner.wait(timeout=10)
+            status = self.owner.wait()
+            self.assertEqual(status, 0, self.owner.stderr.read() or '')
 
     def select(self, harness, store):
         (self.db.parent / (self.db.name + '.profiles')).write_text(
@@ -74,7 +71,7 @@ class RetainedStore(unittest.TestCase):
         if extra:
             environment.update(extra)
         return subprocess.run([str(EXE), str(self.db), str(self.attempt), harness],
-                              env=environment, text=True, capture_output=True, timeout=120)
+                              env=environment, text=True, capture_output=True)
 
     def argv(self, harness, extra=None):
         result = self.run_fixture(harness, extra)
@@ -106,10 +103,14 @@ class RetainedStore(unittest.TestCase):
         self.assertEqual({'PostToolUse', 'Stop'}, set(hooks))
         for event in ('PostToolUse', 'Stop'):
             command = hooks[event][0]['hooks'][0]['command']
-            self.assertIn('BATON_DATABASE=', command)
-            self.assertIn('BATON_SESSION=', command)
-            self.assertIn('BATON_ATTEMPT_DIRECTORY=', command)
-            self.assertIn('--stop-hook', command)
+            self.assertEqual([
+                '/usr/bin/env',
+                'BATON_DATABASE=' + str(self.db.resolve()),
+                'BATON_SESSION=store-fixture',
+                'BATON_ATTEMPT_DIRECTORY=' + str(self.attempt.resolve()),
+                str(EXE.resolve()),
+                '--stop-hook',
+            ], shlex.split(command))
         self.assertEqual(1, len(configs))
 
     def test_no_profile_adds_no_store_binding(self):
