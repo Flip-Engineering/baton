@@ -547,7 +547,9 @@ class Control(unittest.TestCase):
                 if harness == 'codex':
                     self.assertEqual(native['args'][:2], ['-c', 'forced_login_method="chatgpt"'])
                     configs = [native['args'][index + 1] for index, arg in enumerate(native['args']) if arg == '-c']
-                    self.assertEqual(configs, ['forced_login_method="chatgpt"', 'model_reasoning_effort="low"'])
+                    self.assertEqual(configs[:2], ['forced_login_method="chatgpt"', 'model_reasoning_effort="low"'])
+                    self.assertEqual([config.partition('=')[0] for config in configs[2:]], ['hooks.Stop', 'hooks.PostToolUse'])
+                    self.assertIn('--dangerously-bypass-hook-trust', native['args'])
                     self.assertEqual(native['apiKeyVariablesPresent'], [])
                 else:
                     self.assertEqual(native['args'][native['args'].index('--thinking') + 1], 'low')

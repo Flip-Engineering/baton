@@ -1,7 +1,10 @@
-"""Claude hooks enforce completion and inject input during tool work (#1054).
+"""Claude and Codex hooks enforce completion and inject input during tool work
+(#1054, #1212).
 
 The fixture runs the installed hook commands against SQLite databases and fake
 Claude processes. BATON2_STOP_HOOK_FIXTURE names the queue-built native entry.
+The Codex tests read the hook tables from the launch arguments the way Codex 0.163.0
+parses its -c overrides, and run the configured commands with Codex's hook payloads.
 """
 import json
 import hashlib
@@ -10,6 +13,7 @@ import pathlib
 import sqlite3
 import subprocess
 import tempfile
+import tomllib
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -74,6 +78,10 @@ class StopHook(unittest.TestCase):
         if listed.returncode:
             raise AssertionError(listed.stdout + listed.stderr)
         cls.arguments = listed.stdout.splitlines()
+        codex = subprocess.run([cls.binary, 'codex-arguments'], capture_output=True, text=True)
+        if codex.returncode:
+            raise AssertionError(codex.stdout + codex.stderr)
+        cls.codex_arguments = codex.stdout.splitlines()
         schema = subprocess.run([cls.binary, 'schema'], capture_output=True, text=True)
         if schema.returncode:
             raise AssertionError(schema.stdout + schema.stderr)
@@ -410,6 +418,146 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
 
     def test_large_body_injected_read_completion_stop_and_ended_attempt(self):
         self.combined_lifecycle('Large complete body λ🙂.\n' * 25000 + 'TAIL-READ-PROOF-large', 'large')
+
+    def codex_hooks(self):
+        """The hook tables Codex builds from the launch's -c key=value overrides."""
+        hooks = {}
+        for index, value in enumerate(self.codex_arguments[:-1]):
+            if value == '-c' and self.codex_arguments[index + 1].startswith('hooks.'):
+                key, _, text = self.codex_arguments[index + 1].partition('=')
+                hooks[key] = tomllib.loads('value = ' + text)['value']
+        return hooks
+
+    def codex_handler(self, event):
+        groups = self.codex_hooks()['hooks.' + event]
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(len(groups[0]['hooks']), 1)
+        return groups[0], groups[0]['hooks'][0]
+
+    def codex_hook(self, event, extra=None, env=None):
+        """Run the configured command with the payload Codex sends the hook."""
+        _, handler = self.codex_handler(event)
+        payload = {'session_id': 'thread-1', 'turn_id': 'turn-1', 'transcript_path': None, 'cwd': str(self.home),
+                   'hook_event_name': event, 'model': 'gpt-6-luna', 'permission_mode': 'bypassPermissions'}
+        payload.update(extra or {})
+        result = subprocess.run(['/bin/sh', '-c', handler['command']], input=json.dumps(payload), capture_output=True,
+                                text=True, cwd=str(self.home), env=env or dict(self.env, BATON_STOP_HOOK=self.binary))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return json.loads(result.stdout) if result.stdout.strip() else None
+
+    def codex_stop(self, active=False, env=None):
+        return self.codex_hook('Stop', {'stop_hook_active': active, 'last_assistant_message': 'Done.'}, env)
+
+    def codex_tool(self, env=None):
+        return self.codex_hook('PostToolUse', {'tool_name': 'Bash', 'tool_use_id': 'call-1',
+                                               'tool_input': {'command': 'echo hello'}, 'tool_response': 'hello\n'}, env)
+
+    def test_codex_launch_installs_both_hooks_and_bypasses_the_trust_review(self):
+        arguments = self.codex_arguments
+        self.assertEqual(arguments[:3], ['--json', '--model', 'gpt-6-luna'])
+        self.assertEqual(arguments[-2:], ['--dangerously-bypass-approvals-and-sandbox', '-'])
+        self.assertIn('--dangerously-bypass-hook-trust', arguments)
+        self.assertEqual(sorted(self.codex_hooks()), ['hooks.PostToolUse', 'hooks.Stop'])
+        stop_group, stop = self.codex_handler('Stop')
+        tool_group, tool = self.codex_handler('PostToolUse')
+        self.assertEqual(stop, {'type': 'command', 'command': self.settings_command()})
+        self.assertEqual(tool, {'type': 'command', 'command': self.settings_command(), 'additionalContextLimit': 0})
+        self.assertNotIn('matcher', stop_group)
+        self.assertEqual(tool_group['matcher'], '*')
+
+    def test_codex_hooks_do_nothing_without_the_launch_environment(self):
+        self.owe()
+        env = {k: v for k, v in os.environ.items() if k not in ('BATON_SESSION', 'BATON_DATABASE', 'BATON_STOP_HOOK')}
+        self.assertIsNone(self.codex_stop(env=env))
+        self.assertIsNone(self.codex_tool(env=env))
+
+    def test_codex_stop_blocks_until_the_completion_request(self):
+        for active in (False, True, True):
+            decision = self.codex_stop(active)
+            self.assertEqual(decision['decision'], 'block')
+            self.assertIn('Assignment dispatch:assignment is still open', decision['reason'])
+            self.assertIn('completion-request --text SUMMARY', decision['reason'])
+        self.request()
+        self.assertIsNone(self.codex_stop(True))
+
+    def test_codex_stop_holds_owed_input_of_every_kind(self):
+        self.request()
+        kinds = ('guidance', 'report', 'question', 'task', 'completion-confirmed', 'recovery')
+        for kind in kinds:
+            self.owe(ident='owed:' + kind, kind=kind, body='Body of ' + kind + '.')
+        decision = self.codex_stop(True)
+        self.assertEqual(decision['decision'], 'block')
+        self.assertIn('Baton holds %d unread inputs for worker' % len(kinds), decision['reason'])
+        for kind in kinds:
+            self.assertIn('Message (%s) from coordinator [id: owed:%s]:\nBody of %s.' % (kind, kind, kind), decision['reason'])
+
+    def test_codex_tool_hook_injects_every_kind_whole_and_in_order(self):
+        kinds = ('guidance', 'report', 'question', 'task', 'completion-confirmed', 'recovery')
+        bodies = {kind: 'Body of %s λ🙂.\n' % kind + kind[0] * 40000 + '\nend of ' + kind for kind in kinds}
+        for kind in kinds:
+            self.owe(ident='owed:' + kind, kind=kind, body=bodies[kind])
+        output = self.codex_tool()
+        self.assertEqual(output['hookSpecificOutput']['hookEventName'], 'PostToolUse')
+        context = output['hookSpecificOutput']['additionalContext']
+        positions = []
+        for kind in kinds:
+            self.assertIn('Message (%s) from coordinator [id: owed:%s]:\n%s' % (kind, kind, bodies[kind]), context)
+            positions.append(context.index(bodies[kind]))
+        self.assertEqual(positions, sorted(positions))
+
+    def test_codex_tool_hook_stays_quiet_without_owed_input(self):
+        self.request()
+        self.assertIsNone(self.codex_tool())
+
+    def test_codex_admitted_tool_loop_records_the_read_and_then_allows_stop(self):
+        directory = self.home / 'codex-attempt'
+        self.db.execute("UPDATE sessions SET native='thread-1' WHERE id='worker'")
+        self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained',?,'running')", (str(directory),))
+        script = self.home / 'codex-admitted.py'
+        script.write_text(r'''import json, os, sqlite3, subprocess, sys
+config = json.loads(sys.argv[1])
+env = dict(os.environ, BATON_DATABASE=config['db'], BATON_SESSION='worker', BATON_ATTEMPT_DIRECTORY=config['directory'])
+def hook(event, **fields):
+    payload = dict(session_id='thread-1', turn_id='turn-1', cwd='/', hook_event_name=event, model='gpt-6-luna', **fields)
+    result = subprocess.run(['/bin/sh', '-c', config[event]], input=json.dumps(payload), env=env, capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError(result.stdout + result.stderr)
+    return json.loads(result.stdout) if result.stdout.strip() else None
+def reads():
+    with sqlite3.connect(config['db']) as db:
+        return db.execute("SELECT attempt,native FROM message_reads WHERE message='admitted-message'").fetchall()
+results = {}
+results['quiet'] = hook('PostToolUse', tool_name='Bash', tool_input={}, tool_response='')
+with sqlite3.connect(config['db']) as db:
+    db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('admitted-message','coordinator','worker','question','Admitted full body.')")
+results['unread_before'] = reads()
+results['stop_held'] = hook('Stop', stop_hook_active=False, last_assistant_message='Done.')
+results['injected'] = hook('PostToolUse', tool_name='Bash', tool_input={}, tool_response='')
+results['read_after'] = reads()
+results['again'] = hook('PostToolUse', tool_name='Bash', tool_input={}, tool_response='')
+print(json.dumps(results), flush=True)
+''')
+        config = {'db': self.path, 'directory': str(directory),
+                  'Stop': self.codex_handler('Stop')[1]['command'], 'PostToolUse': self.codex_handler('PostToolUse')[1]['command']}
+        self.request()
+        env = dict(self.env, BATON_STOP_HOOK=self.binary)
+        try:
+            result = subprocess.run([self.binary, 'admit', self.path, str(directory), str(self.home),
+                'python3', '-I', str(script), json.dumps(config)], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            lines = result.stdout.splitlines()
+            self.assertEqual(lines[-1], 'exit 0', result.stdout + result.stderr)
+            results = json.loads(lines[0])
+            self.assertIsNone(results['quiet'])
+            self.assertEqual(results['unread_before'], [])
+            self.assertEqual(results['stop_held']['decision'], 'block')
+            self.assertIn('Admitted full body.', results['stop_held']['reason'])
+            self.assertIn('Admitted full body.', results['injected']['hookSpecificOutput']['additionalContext'])
+            self.assertEqual(results['read_after'], [['attempt-1', 'thread-1']])
+            self.assertIsNone(results['again'])
+        finally:
+            subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True)
+        self.assertIsNone(self.codex_stop(True))
 
 
 if __name__ == '__main__':

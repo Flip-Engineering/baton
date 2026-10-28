@@ -217,7 +217,7 @@ def m5_muse_resume_carries_the_accepted_session(cmd, model, effort, cwd, stderr,
 law m11_codex_arguments_carry_the_declared_values:
   for +model: String
   for +effort: String
-  {Codex.arguments(model, effort) == ["--json","--model",model,"-c","model_reasoning_effort=" ++ J.string_literal(effort),"--dangerously-bypass-approvals-and-sandbox","-"] : List<String>}
+  {Codex.arguments(model, effort) == List.append(&1,String,["--json","--model",model,"-c","model_reasoning_effort=" ++ J.string_literal(effort)],List.append(&1,String,Codex.hook_configs(),["--dangerously-bypass-hook-trust","--dangerously-bypass-approvals-and-sandbox","-"])) : List<String>}
 
 def m11_codex_arguments_carry_the_declared_values(model, effort):
   {==}
