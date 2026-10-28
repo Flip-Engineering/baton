@@ -2037,7 +2037,7 @@ def with_retained_observation(observation: Outcome & List<Chan(Result<&1,&1,U32 
 def direct_second_started(+db: String, +player: String, +id: String, +log: String, +directory: String, +harness: String, +requested: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +prompt: String, +session: String, lock: Maybe<U32>, start: P.RetainedStart) -> IO(Unit):
   match start:
     case P.Retained{+handle}: do IO<Unit>:
-      reconciled : Unit <- Stop.started(db,player,id,directory)
+      reconciled : Unit <- Stop.started(db,player,id)
       observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- retained_output(db,player,id,log,harness,directory,directory,handle,requested)
       with_retained_observation(observation,lock,
         +outcome => deliveries => direct_completed(db,player,id,log,directory,handle,None{},(outcome,deliveries)),
@@ -2204,7 +2204,7 @@ def direct_first_observed(+db: String, +player: String, +id: String, +cmd: Strin
 def direct_first_started(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +session: String, +prompt: String, +requested: String, lock: Maybe<U32>, start: P.RetainedStart) -> IO(Unit):
   match start:
     case P.Retained{+handle}: do IO<Unit>:
-      reconciled : Unit <- Stop.started(db,player,id,directory)
+      reconciled : Unit <- Stop.started(db,player,id)
       observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- retained_output(db,player,id,log,harness,directory,directory,handle,requested)
       direct_first_observed(db,player,id,cmd,model,effort,cwd,task,log,harness,directory,session,prompt,handle,lock,observation)
     case P.Unstarted{error}: direct_unstarted(db,player,id,log,directory,lock,error)

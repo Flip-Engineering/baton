@@ -46,7 +46,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 FIXTURE = pathlib.Path(os.environ.get(
-    'OBSERVER_EXECUTING_FIXTURE', ROOT / '.scratch/bend2/monitor-fixture'))
+    'OBSERVER_EXECUTING_FIXTURE', ROOT / '.scratch/bend2/observer-executing-fixture'))
 HELPER = pathlib.Path(os.environ.get(
     'OBSERVER_EXECUTING_HELPER', ROOT / '.scratch/bend2/baton-recovery-fix'))
 OWNER = pathlib.Path(os.environ.get(
@@ -77,7 +77,7 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def write_native(path, observed, marker, hold=0.1):
+def write_native(path, observed, marker, hold=0.1, resist_term=False):
     """Write a native that emits the retained frames for both argv shapes.
 
     The admitting call uses ``[python, script, observed, marker]``. The
@@ -85,12 +85,14 @@ def write_native(path, observed, marker, hold=0.1):
     script falls back to the values embedded here.
     """
     script = ['#!' + sys.executable,
-              'import pathlib,sys,time',
+              'import pathlib,signal,sys,time',
               'fallback = (len(sys.argv) <= 2 or sys.argv[1].startswith("-")'
               ' or sys.argv[2].startswith("-"))',
               'value = %r if fallback else sys.argv[1]' % observed,
               'target = %r if fallback else sys.argv[2]' % str(marker),
               'pathlib.Path(target).write_text(value)']
+    if resist_term:
+        script.append('signal.signal(signal.SIGTERM, lambda signum, frame: pathlib.Path(%r).write_text(str(signum)))' % (str(marker) + '.sigterm'))
     script += ['sys.stdout.write(' + repr(frame + '\n') + ')' for frame in FRAMES]
     script += ['sys.stdout.flush()', 'time.sleep(%r)' % hold]
     path.write_text('\n'.join(script) + '\n')
@@ -190,6 +192,13 @@ class Executing(unittest.TestCase):
                 self.owner.wait()
         self.owner_out.close()
 
+    @staticmethod
+    def kill_native(pid):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
     def fixture(self, *args):
         log = self.directory / ('fixture-%d.log' % time.monotonic_ns())
         with open(log, 'w') as out:
@@ -201,11 +210,11 @@ class Executing(unittest.TestCase):
             self.fail(log.read_text())
         return result
 
-    def launch_attempt(self, attempt, directory, native, marker, cursor, log):
+    def launch_attempt(self, attempt, directory, native, marker, cursor, log, helper=HELPER):
         gate = self.directory / ('gate-' + attempt.replace(':', '-'))
         process = subprocess.Popen(
             [str(FIXTURE), 'start', str(self.db), attempt, str(directory),
-             str(self.workspace), str(log), NATIVE_UUID, str(HELPER), 'omp',
+             str(self.workspace), str(log), NATIVE_UUID, str(helper), 'omp',
              'controlled-model', 'low', sys.executable, str(native),
              str(marker), str(cursor), str(gate)],
             text=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -277,9 +286,9 @@ class Executing(unittest.TestCase):
                 "INSERT OR REPLACE INTO wake_claims(session,state,owner,generation) "
                 "VALUES('parent','claimed','task',1)")
 
-    def start(self):
+    def start(self, helper=HELPER):
         process, gate, first = self.launch_attempt(
-            ATTEMPT, self.attempt, self.native, self.uuid_marker, '0', self.log)
+            ATTEMPT, self.attempt, self.native, self.uuid_marker, '0', self.log, helper)
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             if ((self.attempt / 'native.pid').exists() and
@@ -467,6 +476,71 @@ class Executing(unittest.TestCase):
 
 
 class Lifecycle(Executing):
+    def test_stop_reconciliation_uses_recorded_target_on_start_and_observer_reentry(self):
+        self.seed()
+        write_native(self.native, NATIVE_UUID, self.uuid_marker,
+                     hold=300, resist_term=True)
+        noop = self.directory / 'recovery-noop.py'
+        noop_marker = self.directory / 'recovery-noop.marker'
+        noop.write_text('#!' + sys.executable + '\nimport pathlib\n'
+                        'pathlib.Path(%r).write_text("called")\n' % str(noop_marker))
+        noop.chmod(0o700)
+        process, gate, first = self.start(noop)
+        native_pid = int((self.attempt / 'native.pid').read_text())
+        self.addCleanup(self.kill_native, native_pid)
+
+        self.fixture('stop-request', self.db, SESSION, ATTEMPT,
+                     'Stop this retained attempt.')
+        missing_directory = self.directory / 'missing-custody'
+        self.fixture('stop-failed-control', self.db, SESSION, ATTEMPT,
+                     missing_directory)
+        with sqlite3.connect(self.db) as database:
+            row = database.execute(
+                'SELECT control_error,applied_signal,signal FROM session_stops '
+                'WHERE session=?', (SESSION,)).fetchone()
+        self.assertTrue(row[0], 'the stale custody path must record its failure')
+        self.assertEqual(row[1], 0)
+        self.assertEqual(row[2], 15)
+
+        # Re-enter the startup reconciliation with stale call arguments while
+        # the durable stop still names the live retained attempt.
+        self.fixture('started-reentry', self.db, SESSION, 'stale-attempt')
+        with sqlite3.connect(self.db) as database:
+            row = database.execute(
+                'SELECT control_error,applied_signal FROM session_stops '
+                'WHERE session=?', (SESSION,)).fetchone()
+        self.assertEqual(row, ('', 15),
+                         'startup reconciliation must use the recorded attempt')
+
+        # Make the original observer exit so the new fixture attaches through
+        # the keeper, then exercise observation re-entry with stale arguments.
+        self.fixture('stop-failed-control', self.db, SESSION, ATTEMPT,
+                     missing_directory)
+        with sqlite3.connect(self.db) as database:
+            row = database.execute(
+                'SELECT control_error,applied_signal FROM session_stops '
+                'WHERE session=?', (SESSION,)).fetchone()
+        self.assertTrue(row[0], 'the stale custody failure must be retained for reentry')
+        process.kill()
+        process.wait(timeout=10)
+        process.stdout.close()
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline and not noop_marker.exists():
+            time.sleep(0.02)
+        self.assertTrue(noop_marker.exists(),
+                        'observer loss must run the retained recovery invocation')
+        self.fixture('observe-reentry', self.db, SESSION, self.attempt,
+                     'stale-attempt', missing_directory)
+        with sqlite3.connect(self.db) as database:
+            row = database.execute(
+                'SELECT control_error,applied_signal FROM session_stops '
+                'WHERE session=?', (SESSION,)).fetchone()
+        self.assertEqual(row, ('', 15),
+                         'reattached observation must clear the stale control failure')
+        signal_marker = pathlib.Path(str(self.uuid_marker) + '.sigterm')
+        self.assertTrue(signal_marker.exists(),
+                        'the reattached keeper must receive the retained stop signal')
+
     def test_live_owner_recovery_completes_and_settles_the_claim(self):
         evidence = self.run_scenario('normal')
         print('EVIDENCE ' + json.dumps(evidence, sort_keys=True), flush=True)

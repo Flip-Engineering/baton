@@ -184,10 +184,10 @@ def reconcile(+db: String, +session: String, +attempt: String, +directory: Strin
     signal : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT s.signal FROM session_stops s JOIN executions e ON e.session=s.session AND e.id=s.attempt WHERE s.session=" ++ C.q(session) ++ " AND s.attempt=" ++ C.q(attempt) ++ " AND e.phase<>'exited' AND s.applied_signal<>s.signal),0);"))
     send_control(db,session,attempt,directory,selected_signal(U32.read(Tx.trim_nl(signal))))
 
-def started(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
+def started(+db: String, +session: String, +attempt: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE executions SET phase='running' WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ " AND phase='starting';"))
-    reconcile(db,session,attempt,directory)
+    reconcile_request(db,session)
 
 # A successful attachment resumes observation of this current attempt. Its
 # retained native status becomes the execution status when observation finishes.
@@ -199,17 +199,17 @@ def observing(+db: String, +session: String, +attempt: String, +directory: Strin
 # The same observation resume, with the first database failure returned as a
 # result. The recovery path uses it so SQLITE_BUSY reaches its typed cause
 # handler instead of aborting the executing call with the database code.
-def observing_after_query(+db: String, +session: String, +attempt: String, +directory: String, saved: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def observing_after_query(+db: String, +session: String, saved: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match saved:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
     case Done{unit}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      reconciled : Unit <- reconcile(db,session,attempt,directory)
+      reconciled : Unit <- reconcile_request(db,session)
       IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
 
 def observing_result(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     saved : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"UPDATE executions SET phase='running',status='' WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ " AND directory=" ++ C.q(directory) ++ ";")
-    observing_after_query(db,session,attempt,directory,saved)
+    observing_after_query(db,session,saved)
 
 # Completion preserves the native event and status. Its stop report is committed
 # before the owner releases custody; native acceptance receipts are unchanged.
