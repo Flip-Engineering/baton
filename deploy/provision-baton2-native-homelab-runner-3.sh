@@ -99,6 +99,7 @@ else
     [[ $(stat -c '%u:%g:%a' "$RUNNER_DIR") == "$RESUME_UID:$RESUME_GID:700" ]] \
         || fail 'resume requires the runner directory to remain owned by batonci3 with mode 0700'
     [[ -x $RUNNER_DIR/config.sh && -x $RUNNER_DIR/bin/Runner.Listener \
+        && -x $RUNNER_DIR/bin/runsvc.sh \
         && -x $RUNNER_DIR/externals/node24/bin/node ]] \
         || fail "resume requires the complete Actions Runner $RUNNER_VERSION tree"
     for state_file in .runner .credentials .credentials_rsaparams; do
@@ -131,6 +132,7 @@ printf '%s  %s\n' "$ARCHIVE_SHA256" "$ARCHIVE" | sha256sum --check --status \
 if [[ $mode == resume ]]; then
     verify_archive_member ./config.sh "$RUNNER_DIR/config.sh"
     verify_archive_member ./bin/Runner.Listener "$RUNNER_DIR/bin/Runner.Listener"
+    verify_archive_member ./bin/runsvc.sh "$RUNNER_DIR/bin/runsvc.sh"
     verify_archive_member ./externals/node24/bin/node "$RUNNER_DIR/externals/node24/bin/node"
 fi
 
@@ -198,14 +200,29 @@ for credential in .credentials .credentials_rsaparams .runner; do
         || fail "runner registration did not create $credential"
     chmod 0600 "$RUNNER_DIR/$credential"
 done
+install -o "$RUNNER_USER" -g "$RUNNER_GROUP" -m 0755 \
+    "$RUNNER_DIR/bin/runsvc.sh" "$RUNNER_DIR/runsvc.sh"
 install -o root -g root -m 0644 "$UNIT_SOURCE" "$UNIT_DEST"
 systemctl daemon-reload
 systemctl enable --now "$SERVICE_NAME"
 systemctl is-active --quiet "$SERVICE_NAME" || fail 'new runner service is not active'
+service_pid=$(systemctl show --property=MainPID --value "$SERVICE_NAME")
+service_restarts=$(systemctl show --property=NRestarts --value "$SERVICE_NAME")
+[[ $service_pid =~ ^[1-9][0-9]*$ ]] \
+    || fail 'new runner service has no stable main process'
+[[ $service_restarts == 0 ]] || fail 'new runner service restarted during initial startup'
+sleep 5
+systemctl is-active --quiet "$SERVICE_NAME" || fail 'new runner service stopped during startup verification'
+[[ $(systemctl show --property=SubState --value "$SERVICE_NAME") == running ]] \
+    || fail 'new runner service is not running after startup verification'
+[[ $(systemctl show --property=MainPID --value "$SERVICE_NAME") == "$service_pid" ]] \
+    || fail 'new runner service main process changed during startup verification'
+[[ $(systemctl show --property=NRestarts --value "$SERVICE_NAME") == "$service_restarts" ]] \
+    || fail 'new runner service restarted during startup verification'
 if [[ -d $RUNNER_DIR/_diag && ! -L $RUNNER_DIR/_diag ]]; then
     rm -rf -- "$RUNNER_DIR/_diag"
 fi
 rm -f -- "$CONFIG_STDOUT" "$CONFIG_STDERR"
 trap - EXIT
-printf 'service active: %s; runner: %s; group: %s; labels: %s\n' \
-    "$SERVICE_NAME" "$RUNNER_NAME" "$RUNNER_GROUP_NAME" "$RUNNER_LABELS"
+printf 'service remained active with PID %s and no restarts for 5 seconds: %s; runner: %s; group: %s; labels: %s\n' \
+    "$service_pid" "$SERVICE_NAME" "$RUNNER_NAME" "$RUNNER_GROUP_NAME" "$RUNNER_LABELS"
