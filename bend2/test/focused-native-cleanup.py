@@ -161,9 +161,21 @@ driver.run_command('fixture', json.loads(os.environ['FIXTURE_ARGV']),
 
         process = InterruptedClient()
 
-        def cancel_client(argv, stdout=None, stderr=None):
-            stdout.write(b'canceled=withdrawn\nowners=1\n')
-            return subprocess.CompletedProcess(argv, 0)
+        cancel_calls = 0
+
+        def cancel_client(argv, **kwargs):
+            nonlocal cancel_calls
+            cancel_calls += 1
+            key = argv[argv.index('--key') + 1]
+            token = argv[argv.index('--token') + 1]
+            owner = state / 'keys' / key / 'owners' / token
+            if not owner.is_file():
+                owner.parent.mkdir(parents=True, exist_ok=True)
+                owner.write_text('pid=fixture\n')
+                return subprocess.CompletedProcess(argv, 0, stdout=b'canceled=unknown-token\n')
+            owner.unlink()
+            return subprocess.CompletedProcess(argv, 0,
+                                                stdout=b'canceled=withdrawn\nowners=0\n')
 
         old_handoff_env = os.environ.get('BATON2_FOCUSED_QUEUE_HANDOFF_DIR')
         os.environ['BATON2_FOCUSED_QUEUE_HANDOFF_DIR'] = str(handoff_dir)
@@ -185,7 +197,7 @@ driver.run_command('fixture', json.loads(os.environ['FIXTURE_ARGV']),
         self.assertEqual(handoff['schema'], 'baton2-focused-queue-owner-v1')
         self.assertEqual(handoff['key'], 'b' * 64)
         self.assertEqual(handoff['status'], 'cancelled')
-        self.assertEqual(handoff['cancel_result'], ['canceled=withdrawn', 'owners=1'])
+        self.assertEqual(handoff['cancel_result'], ['canceled=withdrawn', 'owners=0'])
         request = json.loads(Path(handoff['request_path']).read_text())
         self.assertEqual(request['token'], handoff['token'])
         self.assertEqual(request['key'], handoff['key'])
