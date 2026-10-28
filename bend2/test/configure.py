@@ -353,7 +353,7 @@ class Configure(unittest.TestCase):
         unmapped = self.route('leaf', 'omp', 'zai/glm-5.3-flash', 'high',
                               ('omp', 'kimi-code/k3', 'low'), ok=False)
         self.assertEqual(unmapped['code'], 2)
-        self.assertIn('does not resolve the recorded model zai/glm-5.3-flash', unmapped['stderr'])
+        self.assertIn('identity check failed for recorded model zai/glm-5.3-flash', unmapped['stderr'])
         self.assertEqual(self.assignment('leaf'), before)
         unsupported = self.route('leaf', 'minimax', 'gpt-6-astra', 'high',
                                  ('omp', 'kimi-code/k3', 'low'), ok=False)
@@ -362,7 +362,7 @@ class Configure(unittest.TestCase):
         self.assertEqual(self.assignment('leaf'), before)
         empty = self.route('leaf', 'omp', '', 'high', ('omp', 'kimi-code/k3', 'low'), ok=False)
         self.assertEqual(empty['code'], 2)
-        self.assertIn('does not resolve the recorded model ;', empty['stderr'])
+        self.assertIn('identity check failed for recorded model :', empty['stderr'])
         self.assertEqual(self.assignment('leaf'), before)
 
     def test_route_change_to_muse_and_claude_keeps_delivery_available(self):

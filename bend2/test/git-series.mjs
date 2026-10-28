@@ -56,7 +56,10 @@ function installation_api(github, installed, tamper = {}, permissions = model.PE
     const lookup = /^\/repos\/([^/]+)\/([^/]+)\/installation$/.exec(api_path);
     if (lookup) {
       const found = installed.find(entry => entry.owner === lookup[1]);
-      if (!found) throw new model.Missing('GitHub reported no matching resource.');
+      const repository = lookup[1] + '/' + lookup[2];
+      if (!found || (found.repositories && !found.repositories.some(name => model.same_repository(name, repository)))) {
+        throw new model.Missing(`GitHub API GET ${api_path} returned HTTP 404: Not Found.`);
+      }
       return answer('lookup', { id: found.id, app_id: github.appId, app_slug: github.slug,
         account: { login: found.owner }, suspended_at: null, permissions: { ...(found.permissions ?? permissions) } });
     }
@@ -141,13 +144,48 @@ test('each push resolves the installation of its repository owner without a repo
   }
 });
 
-test('a repository whose owner has no App installation refuses and names the App and owner', async () => {
+test('an uninstalled repository refuses and names the repository, App and checked account', async () => {
   const github = identities.gpt;
   const fixture = installation_api(github, [{ owner: 'Flip-Engineering', id: 5100 }]);
   await assert.rejects(model.installation_token(series.gpt, github, 'flip-engineer/flip', () => 'fixture-jwt-no-key', fixture.request),
-    error => error instanceof model.Refusal && error.message === 'The GitHub App fixture-series-gpt is not installed for flip-engineer; '
-      + 'install it on flip-engineer to grant access to flip-engineer/flip.');
+    error => error instanceof model.Refusal && error.message.includes('flip-engineer/flip')
+      && error.message.includes('fixture-series-gpt') && error.message.includes('account flip-engineer')
+      && error.message.includes('HTTP 404'));
   assert.ok(!fixture.calls.some(call => call.api_path.includes('/access_tokens')));
+});
+
+test('a failed token request for an installed repository names the repository and its cause', async () => {
+  const github = identities.gpt;
+  const fixture = installation_api(github, [{ owner: 'Flip-Engineering', id: 5100,
+    permissions: model.GH_PERMISSIONS }], {}, model.GH_PERMISSIONS);
+  const request = async (api_path, authorization, body) => {
+    if (api_path.endsWith('/access_tokens')) {
+      throw new model.Refusal(`GitHub API POST ${api_path} returned HTTP 403: Not approved.`);
+    }
+    return fixture.request(api_path, authorization, body);
+  };
+  await assert.rejects(model.installation_token(series.gpt, github, REPOSITORY,
+    () => 'fixture-jwt-no-key', request), error => error instanceof model.Refusal
+    && error.message.includes(REPOSITORY) && error.message.includes('HTTP 403')
+    && error.message.includes('Not approved.'));
+  await assert.rejects(model.gh_installation_token(series.gpt, github, REPOSITORY,
+    () => 'fixture-jwt-no-key', request), error => error instanceof model.Refusal
+    && error.message.includes(REPOSITORY) && error.message.includes('HTTP 403'));
+});
+
+test('check accepts a repository in the selected App installation and refuses a same-name wrong-owner repository', async () => {
+  const github = identities.gpt;
+  const fixture = installation_api(github, [
+    { owner: 'Flip-Engineering', id: 5100, repositories: ['Flip-Engineering/baton'] },
+    { owner: 'flip-engineer', id: 5200, repositories: ['flip-engineer/flip'] }]);
+  assert.equal(await model.check({ registry, model_key: 'gpt-6-astra', repository: 'flip-engineer/flip' },
+    () => 'fixture-jwt-no-key', fixture.request), undefined);
+  await assert.rejects(model.check({ registry, model_key: 'gpt-6-astra', repository: 'Flip-Engineering/flip' },
+    () => 'fixture-jwt-no-key', fixture.request), error => error instanceof model.Refusal
+      && error.message.includes('Flip-Engineering/flip') && error.message.includes('fixture-series-gpt')
+      && error.message.includes('account Flip-Engineering') && error.message.includes('HTTP 404'));
+  assert.deepEqual(fixture.calls.map(call => call.api_path), ['/app', '/repos/flip-engineer/flip/installation',
+    '/app', '/repos/Flip-Engineering/flip/installation']);
 });
 
 test('Git credentials accept granted workflow and actions permissions and keep the token request subset', async () => {
@@ -813,12 +851,12 @@ test('check resolves a configured exact model and refuses an unmapped one withou
   assert.throws(() => model.parse(['check', '--registry', registry]), model.Refusal);
   assert.throws(() => model.parse(['check', '--registry', registry, '--model-key', 'gpt-6-astra', '--series-key', 'gpt']),
     /exact model key and no series option/);
-  assert.equal(model.check({ registry, model_key: 'gpt-6-astra' }), undefined);
-  assert.throws(() => model.check({ registry, model_key: 'zai/glm-5.3-flash' }),
+  assert.equal(await model.check({ registry, model_key: 'gpt-6-astra' }), undefined);
+  await assert.rejects(model.check({ registry, model_key: 'zai/glm-5.3-flash' }),
     /Select an explicitly configured model mapping or registered series/);
   const no_series = join(directory, 'no-series.json');
   save(no_series, { models: { ...models, 'fixture/no-series-model': null }, series });
-  assert.throws(() => model.check({ registry: no_series, model_key: 'fixture/no-series-model' }),
+  await assert.rejects(model.check({ registry: no_series, model_key: 'fixture/no-series-model' }),
     /The model fixture\/no-series-model is registered without a GitHub identity series\./);
   const resolved = await child([SOURCE, 'check', '--registry', registry, '--model-key', 'gpt-6-astra']);
   assert.equal(resolved.code, 0, resolved.stderr);
@@ -844,7 +882,7 @@ function workflow_fixture(tamper = {}) {
   return { home, registry, github, api };
 }
 
-test('workflow-write requires an explicit repository and preserves exact model selection', () => {
+test('workflow-write requires an explicit repository and preserves exact model selection', async () => {
   const fixture = workflow_fixture();
   for (const verb of ['launch', 'helper', 'check']) {
     const selection = verb === 'helper' ? ['--series-key', 'gpt', 'get'] : ['--model-key', 'gpt-6.1-sol'];
@@ -853,7 +891,7 @@ test('workflow-write requires an explicit repository and preserves exact model s
     const parsed = model.parse([...command, '--repository', 'Flip-Engineering/riff']);
     assert.equal(parsed.profile, 'workflow-write');
     assert.equal(parsed.repository, 'Flip-Engineering/riff');
-    if (verb === 'check') assert.equal(model.check(parsed), undefined);
+    if (verb === 'check') assert.equal(await model.check(parsed, () => 'fixture-jwt', fixture.api.request), undefined);
   }
   assert.throws(() => model.parse(['launch', '--registry', fixture.registry, '--profile', 'all']), /permission profile/);
   assert.throws(() => model.selected_identity(fixture.registry, 'unmapped-model', null,

@@ -272,21 +272,27 @@ export function launch(args, inherited = process.env, execute = exec_command) {
   execute(command[0], command, environment);
 }
 
-// Resolve the configured series identity for an exact model key without
-// launching a command. The coordinator runs this before it stores an endpoint or
-// a native turn that embeds the key, so an unmapped model is reported at the
-// configuration command that names it.
-export function check(args) {
-  selected_identity(path(args.registry), args.model_key, null, args.profile ?? 'git', args.repository ?? null);
+// Resolve the configured series identity and optional repository installation
+// before the coordinator stores an endpoint or launches a native turn.
+export async function check(args, jwt = app_jwt, request = api) {
+  const [, directory, github] = selected_identity(path(args.registry), args.model_key, null,
+    args.profile ?? 'git', args.repository ?? null);
+  if (args.repository !== null && args.repository !== undefined) {
+    const permissions = profile_permissions(args.profile ?? 'git', args.repository);
+    await repository_installation(directory, github, args.repository, permissions, jwt, request,
+      args.profile === 'workflow-write' ? permissions : null);
+  }
 }
 
 export async function api(api_path, authorization, body = null, request = https.request) {
   require(api_path.startsWith('/') && !api_path.startsWith('//'), 'The GitHub API path is invalid.');
   return new Promise((accept, refuse) => {
-    const failed = () => refuse(new Refusal('The GitHub API request or response verification failed.'));
+    const method = body === null ? 'GET' : 'POST';
+    const failed = error => refuse(new Refusal(`GitHub API ${method} ${api_path} failed`
+      + (error?.message ? `: ${error.message}` : ' during request or response verification.')));
     try {
       const outgoing = request(API_ROOT + api_path, {
-        method: body === null ? 'GET' : 'POST',
+        method,
         headers: { Authorization: 'Bearer ' + authorization, Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2026-03-10', 'Content-Type': 'application/json', 'User-Agent': 'Baton2-series-git' },
       }, incoming => {
@@ -295,14 +301,18 @@ export async function api(api_path, authorization, body = null, request = https.
           incoming.resume();
           return;
         }
-        if (incoming.statusCode === 404) {
-          refuse(new Missing('GitHub reported no matching resource.'));
-          incoming.resume();
-          return;
-        }
         if (incoming.statusCode < 200 || incoming.statusCode >= 300) {
-          failed();
-          incoming.resume();
+          const chunks = [];
+          incoming.on('error', failed);
+          incoming.on('aborted', failed);
+          incoming.on('data', chunk => chunks.push(Buffer.from(chunk)));
+          incoming.on('end', () => {
+            let detail = '';
+            try { detail = JSON.parse(Buffer.concat(chunks).toString('utf8')).message ?? ''; } catch {}
+            const message = `GitHub API ${method} ${api_path} returned HTTP ${incoming.statusCode}`
+              + (detail ? `: ${detail}` : '.');
+            refuse(incoming.statusCode === 404 ? new Missing(message) : new Refusal(message));
+          });
           return;
         }
         const chunks = [];
@@ -343,6 +353,28 @@ function verify_installation(installation, github, owner, permissions) {
   minimum_permissions(installation.permissions, 'The GitHub installation', permissions);
 }
 
+async function repository_installation(directory, github, repository, permissions, jwt, request,
+  registration_permissions = null) {
+  const owner = repository_path(repository).split('/')[0];
+  const signed = jwt(directory, github), app = await request('/app', signed);
+  require(app.id === github.appId && app.slug === github.slug,
+    'The signing key authenticated another GitHub App.');
+  if (Object.hasOwn(app, 'client_id')) require(app.client_id === github.clientId, 'The GitHub App client ID differs.');
+  if (registration_permissions !== null) {
+    minimum_permissions(app.permissions, 'The GitHub App registration', registration_permissions);
+  }
+  let installation;
+  try {
+    installation = await request('/repos/' + repository + '/installation', signed);
+  } catch (error) {
+    if (error instanceof Missing) throw new Refusal(`${github.slug} cannot access ${repository}; checked `
+      + `the App installation for account ${owner}. ${error.message}`);
+    throw error;
+  }
+  verify_installation(installation, github, owner, permissions);
+  return { installation, signed };
+}
+
 function valid_expiration(value) {
   if (typeof value !== 'string') return false;
   const fields = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/.exec(value);
@@ -359,19 +391,14 @@ function valid_expiration(value) {
 
 async function repository_token(directory, github, repository, permissions, body, jwt, request, profile = 'git') {
   minimum_permissions(github.permissions, 'The App identity', profile === 'gh' ? PERMISSIONS : permissions);
-  const signed = jwt(directory, github), app = await request('/app', signed);
-  require(app.id === github.appId && app.slug === github.slug,
-    'The signing key authenticated another GitHub App.');
-  if (Object.hasOwn(app, 'client_id')) require(app.client_id === github.clientId, 'The GitHub App client ID differs.');
-  if (profile === 'workflow-write') minimum_permissions(app.permissions, 'The GitHub App registration', permissions);
   const owner = repository_path(repository).split('/')[0];
-  const installation = await request('/repos/' + repository + '/installation', signed).catch(error => {
-    if (error instanceof Missing) throw new Refusal(`The GitHub App ${github.slug} is not installed for ${owner}; `
-      + `install it on ${owner} to grant access to ${repository}.`);
-    throw error;
-  });
-  verify_installation(installation, github, owner, permissions);
-  const issued = await request(`/app/installations/${installation.id}/access_tokens`, signed, body);
+  const { installation, signed } = await repository_installation(directory, github, repository,
+    permissions, jwt, request, profile === 'workflow-write' ? permissions : null);
+  const issued = await request(`/app/installations/${installation.id}/access_tokens`, signed, body)
+    .catch(error => {
+      if (error instanceof Missing || !(error instanceof Refusal)) throw error;
+      throw new Refusal(`${error.message} The token request serves ${repository}.`);
+    });
   minimum_permissions(issued.permissions, 'The issued token', permissions);
   if (profile === 'workflow-write') {
     require(issued.repository_selection === 'selected' && Array.isArray(issued.repositories)
@@ -549,7 +576,7 @@ export async function main(argv = process.argv.slice(2)) {
         + 'git-series.mjs check --registry FILE --model-key MODEL [--repository OWNER/REPO] [--profile git|workflow-write]\n'
         + 'git-series.mjs helper --registry FILE --series-key SERIES [--repository OWNER/REPO] [--profile git|workflow-write] get|store|erase\n');
     } else if (args.verb === 'launch') launch(args);
-    else if (args.verb === 'check') check(args);
+    else if (args.verb === 'check') await check(args);
     else if (args.verb === 'helper') await helper(args);
     else return 1;
     return 0;
