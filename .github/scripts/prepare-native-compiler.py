@@ -65,6 +65,7 @@ def main():
     (evidence / 'native-object-cache.json').write_text(json.dumps(cache, indent=2) + '\n')
     if args.github_env:
         with args.github_env.open('a') as output:
+            output.write('BATON2_SELECTED_COMPILER_ARCHIVE=' + str(archive) + '\n')
             output.write('BATON2_CCACHE=' + (str(wrapper) if cache else '') + '\n')
             if cache:
                 output.write('CCACHE_DIR=' + cache['directory'] + '\n')
