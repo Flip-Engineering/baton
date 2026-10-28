@@ -93,7 +93,7 @@ def identity_endpoint(executable: String, db: String, session: String, cmd: Stri
 def identity_check_args(+registry: String, +helper: String, +model: String, +repository: String) -> List<String>:
   List.append(&1,String,["node",helper,"check","--registry",registry,"--model-key",model],Bool.pick(List<String>,String.is_empty(repository),Nil{},["--repository",repository]))
 
-def identity_check_scope(model: String, repository: String) -> String:
+def identity_check_scope(model: String, +repository: String) -> String:
   "recorded model " ++ model ++ Bool.pick(String,String.is_empty(repository),""," for repository " ++ repository)
 
 def identity_check_refusal(+model: String, +repository: String, result: T.RunRes) -> IO(Unit):
