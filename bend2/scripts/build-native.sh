@@ -168,11 +168,12 @@ elif [ "$focused" = 1 ]; then
 elif [ "$recovery" = 1 ]; then
   build_native_shards -DBATON2_RECOVERY_HELPER
 else
+  # An entry that reaches the HTTP reader emits the libcurl include, so the
+  # generated C decides whether the link needs libcurl.
   extra_libs=
-  case "$entry_path" in
-    */bend2/harness/claude-credit-observe.bend) extra_libs=-lcurl ;;
-    */bend2/harness/usage-read.bend) extra_libs=-lcurl ;;
-  esac
+  if grep -q '^#include <curl/curl.h>' "$output.c"; then
+    extra_libs=-lcurl
+  fi
   storage_test_flag=
   case "$entry_path" in
     */bend2/tests/storage.bend) storage_test_flag="-DBATON_STORAGE_TEST_PROC" ;;
