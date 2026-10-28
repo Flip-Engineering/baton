@@ -51,23 +51,36 @@ class DshRetained(unittest.TestCase):
         self.addCleanup(self.shutdown_owner)
 
     def shutdown_owner(self):
-        if not self.owner_started:
+        if self.owner is None:
             return
-        shutdown = subprocess.run(
-            [str(EXE), '--instance-shutdown', str(self.db)],
-            text=True, capture_output=True)
-        if shutdown.returncode != 0:
+        shutdown = None
+        if self.owner.poll() is None:
+            shutdown = subprocess.run(
+                [str(EXE), '--instance-shutdown', str(self.db)],
+                text=True, capture_output=True)
+        status = self.owner.wait()
+        if status != 0:
+            self.fail('instance owner exited with status ' + str(status)
+                      + ': ' + (self.owner.stderr.read() or ''))
+        if shutdown is not None and shutdown.returncode != 0:
             self.fail('instance shutdown failed with status '
                       + str(shutdown.returncode) + ': '
                       + shutdown.stdout + shutdown.stderr)
 
     def start_owner(self):
-        witness = subprocess.run(
-            [str(EXE), '--instance-ensure-witness', str(self.db)],
-            capture_output=True, text=True)
-        self.assertEqual(witness.returncode, 0, witness.stderr + witness.stdout)
-        self.assertTrue(witness.stdout.strip())
-        self.owner_started = True
+        self.owner = subprocess.Popen(
+            [str(EXE), '--instance-owner', str(self.db)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        while True:
+            if self.owner.poll() is not None:
+                status = self.owner.wait()
+                self.fail('instance owner exited before readiness with status '
+                          + str(status) + ': ' + (self.owner.stderr.read() or ''))
+            witness = subprocess.run(
+                [str(EXE), '--instance-witness', str(self.db)],
+                capture_output=True, text=True)
+            if witness.returncode == 0 and witness.stdout.strip():
+                return
 
     def stage_receiver(self, package=False):
         self.receiver_bin.parent.mkdir(parents=True)
@@ -142,7 +155,7 @@ class DshRetained(unittest.TestCase):
         result = subprocess.run(
             [str(self.receiver_bin), 'prepare', str(self.link), str(self.attempt), '/usr/bin/dsh',
              'deepseek/deepseek-flash', 'max'],
-            text=True, capture_output=True, timeout=30)
+            text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         bridge = next((line.split('\t', 1)[1] for line in result.stdout.splitlines()
                        if line.startswith('arg\tBATON_DSH_WORKER_BRIDGE=')), '')
