@@ -18,8 +18,8 @@ import traceback
 
 ARCHIVE_SHA = '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4'
 COMPILER_ARCHIVES = {
-    '0368b764ebe977d676ddcf60123d878d1d27daa3ee4ba35d5dcfecdd7b660e5d': {
-        'name': 'Bend 2.0.25 with unit-owned arm summaries and iterative arm equality',
+    'bf7c9a9b0a94354a107b110f5f5e37cae6c3a02a6e209455ba8ec10506b41796': {
+        'name': 'Bend 2.0.25 with total fallback coverage for literal list helpers',
         'official_release_artifact': False,
         'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
     },
