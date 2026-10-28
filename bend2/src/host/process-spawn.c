@@ -2710,6 +2710,10 @@ static int br_owner_signal_attempt(BrOwner *owner,const char *directory,int sign
   if(!keeper)return ENOENT;
   if(signal<=0 || signal>=NSIG)return EINVAL;
   if(keeper->monitor_only)return EPERM;
+  if(keeper->manifest.count<6 || keeper->manifest.count>8)return ENODATA;
+  for(int i=0;i<keeper->manifest.count;i++)if(!keeper->manifest.field[i])return ENODATA;
+  if(keeper->identity!=br_manifest_digest(&keeper->manifest.header,keeper->manifest.field,
+                                           keeper->manifest.count))return ESTALE;
   if(keeper->native_pid<=1 || keeper->native_birth.pid!=keeper->native_pid)return ENODATA;
   if(keeper->exited) {
     if(keeper->status_unavailable || keeper->native_waiting)return ECHILD;
