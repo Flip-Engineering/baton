@@ -243,3 +243,52 @@ fork heads: unresolved (root's open reconciliation under #1089/#1017/#776).
 Worktree/session uses: NO local worktree checks out flip-engineer/bend or bend-kit
 (census over ~/worktrees). Consumers of the bend fork are the installed compiler
 releases derived from its commits.
+
+## Pass 6 — resolution traces, issue-7 path trace, and the prepared re-host (2026-10-28)
+
+### d5a912 / 863c289 merge-resolution content (correction applied)
+
+- d5a912's uuid_hex dedup: the resolution removed the Vulkan backend's local uuid_hex and
+  kept the shared fframes::uuid_string. INTEGRATED in current main: uuid_string is used at
+  acp-fframes-scene/src/backend.rs:98 and acp-fframes-scene/src/canvas_stream/gpu.rs:263;
+  no uuid_hex definition remains anywhere in the tree. Superseded with proof.
+- 863c289's resolution: fframes-3d/src/gpu/capability.rs (155 lines) + Cargo.lock serde_json
+  entries. NOT on current main: no capability.rs under fframes-3d/src/gpu/, no
+  "acp.prepared-render/v1" envelope, no RequiredCapabilities. The module is the strict
+  native path's capability contract (exact device capabilities, digest-bound job envelope,
+  explicit failure instead of fallback) — genuine unique completed engineering. Elevation
+  candidate for the prepared-render path; owner: the fframes native/infrastructure owner.
+- d5a912's nonmerge patch-id count was zero because both resolutions live in the MERGE
+  commit trees; the merge-resolution diff (52 files, +6566/−125) is the evidence surface.
+  The preserve ref's disposition: the uuid dedup is integrated, but capability.rs is unique
+  — retain until capability.rs is elevated or explicitly declined.
+
+### Issue 7 — full path trace (candidate b74d6c68 vs pre-port main b6e93716; 78 rows)
+
+- identical blobs in current main: 7
+- evolved in current main (present, maintained by the private source): 28
+- candidate-added paths present in current main: 37
+- divergent deletions (candidate deleted; main kept): 6 — fframes-3d/src/instances.rs,
+  fframes-3d/tests/instances_timeline.rs, fframes-skia-renderer/examples/chasm_render.rs,
+  fframes-skia-renderer/src/bin/gpu_canary.rs, tools/chasm-adapter/README.md and
+  capture-v4.mjs. Main kept these because its later instance-timeline and CHASM canary work
+  uses them.
+- Zero genuine unique-source loss: every candidate add/modify path survives. Issue 7 is
+  closeable as landed/superseded with this trace.
+
+### Prepared integration: the fabric-effect classification re-host
+
+- Integration commit 6c1bb914 (branch prepared in the isolated worktree; HEAD of the
+  verification checkout 55d59c7d), authorship preserved (Flip Baton - DeepSeek, original
+  port-line commit 18473340edbd).
+- Content: "garmentCut" and "wear.zones" added to fabric()'s `.unsupported([...])` with the
+  original explanatory comments, plus the regression test
+  the_fabric_path_classifies_the_garment_cut_and_zone_wear_effects using the current
+  require_classified contract (matches the existing test conventions in
+  fframes-3d/tests/materials.rs and the existing fframes_3d::fabric([dye]) call pattern).
+- Verification that actually ran: `git am` of the format-patch onto 34844a998 succeeds
+  (55d59c7d, 2 files, +25). Qualification OWED (not run here): cargo test -p fframes-3d
+  --test materials on the shared queue, routed to the port-line conductor.
+- Delivery: format-patch at
+  patches/0001-Classify-the-garmentCut-and-wear.zones-effects-the-f.patch; push to the
+  private repository was not possible from this seat (App credential scoped to baton).

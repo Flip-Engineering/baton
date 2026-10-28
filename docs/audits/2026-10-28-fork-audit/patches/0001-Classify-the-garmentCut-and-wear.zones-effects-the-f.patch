@@ -1,0 +1,75 @@
+From 6c1bb914a5bc56380afe590b743257272471c33c Mon Sep 17 00:00:00 2001
+From: Flip Baton - DeepSeek
+ <337142705+flip-baton-deepseek[bot]@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 22:39:27 -0700
+Subject: [PATCH] Classify the garmentCut and wear.zones effects the fabric
+ path refuses
+
+Re-hosts the port-line classification (18473340edbd, author Flip
+Baton - DeepSeek) onto the rev6 fabric path: the panel cut and the
+zone-driven abrasion are not carried by this path, and the
+unsupported list now says so, so a scene asking for them fails
+instead of silently missing them. The regression test uses the
+current require_classified contract.
+
+Provenance: original port-line commit 18473340edbd46ad1b08729860c8
+f09cd0ac7360 (branch fframes-port-material-shader); mechanical
+cherry-pick conflicts with the rewritten rev6 fabric path, so the
+classification is re-expressed against the current builder.
+Qualification owed: cargo test -p fframes-3d --test materials on
+the shared queue (not run here). HEAD provenance: 34844a99.
+---
+ fframes-3d/src/material/paths.rs |  9 +++++++++
+ fframes-3d/tests/materials.rs    | 16 ++++++++++++++++
+ 2 files changed, 25 insertions(+)
+
+diff --git a/fframes-3d/src/material/paths.rs b/fframes-3d/src/material/paths.rs
+index f2402a1a..e26599da 100644
+--- a/fframes-3d/src/material/paths.rs
++++ b/fframes-3d/src/material/paths.rs
+@@ -86,6 +86,15 @@ pub fn fabric(dye: [f32; 4]) -> CustomMaterial {
+         "clothFold",
+     ])
+     .unsupported([
++        // The garment is drawn as its whole shell here: the source's colour pass discards
++        // outside the panel cut and repeats those cuts in a depth material
++        // (cloth/fabric_glsl.js:479-495, fabricDepth), so an uncut shell casts a shadow it
++        // should not. The cut depends on the garment construction (region, along, the
++        // per-kind block), which this path does not carry.
++        "garmentCut",
++        // The zone-driven abrasion of the source (knees, seat, elbows, the lap) is not
++        // carried: the wear here is crest and seam driven only.
++        "wear.zones",
+         "folds.painted",
+         "plaid",
+         "retroreflectiveTape",
+diff --git a/fframes-3d/tests/materials.rs b/fframes-3d/tests/materials.rs
+index c1230240..be9ca825 100644
+--- a/fframes-3d/tests/materials.rs
++++ b/fframes-3d/tests/materials.rs
+@@ -324,6 +324,22 @@ fn the_skin_cover_cut_is_in_both_passes() {
+ }
+ 
+ #[test]
++fn the_fabric_path_classifies_the_garment_cut_and_zone_wear_effects() {
++    // The fabric path refuses the two garment effects it does not carry (the panel cut and
++    // the zone-driven abrasion), so a scene asking for them fails instead of silently
++    // missing them (the port-line classification, re-hosted onto the rev6 fabric path).
++    let fabric = fframes_3d::fabric([0.6, 0.4, 0.2, 1.0]);
++    assert!(fabric
++        .require_classified(&[
++            "weave.kinds",
++            "wear.indigo",
++            "seams",
++            "garmentCut",
++            "wear.zones",
++        ])
++        .is_ok());
++}
++
+ fn a_feature_the_material_never_classified_is_refused() {
+     // "No partial shader selected by accident": a requested source feature must be classified as
+     // carried or as unsupported. An unknown one means the port never considered it.
+-- 
+2.43.0
+
