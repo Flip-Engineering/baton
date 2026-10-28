@@ -155,20 +155,30 @@ def inspection_result(+saved: String) -> IO(Unit):
 def completion_state_sql(+session: String, +id: String) -> String:
   +parent = "(SELECT parent FROM sessions WHERE id=" ++ C.q(session) ++ ")"
   +current = C.task_request_sql(C.q(session))
-  "SELECT hex(CAST(coalesce(" ++ parent ++ ",'') AS TEXT))"
-  ++ "||char(9)||hex(CAST(coalesce((SELECT id FROM messages WHERE id=" ++ C.q(id) ++ " AND sender=" ++ C.q(session) ++ " AND recipient=" ++ parent ++ " AND kind='completion-request'),'') AS TEXT))"
-  ++ "||char(9)||hex(CAST(coalesce(" ++ current ++ ",'') AS TEXT))"
-  ++ "||char(9)||hex(CAST(coalesce((SELECT body FROM messages WHERE id=" ++ current ++ "),'') AS TEXT))"
-  ++ "||char(9)||hex(CAST(coalesce((SELECT id FROM messages WHERE id=" ++ C.q(id) ++ "),'') AS TEXT));"
+  "SELECT hex(CAST('x'||coalesce(" ++ parent ++ ",'') AS TEXT))"
+  ++ "||char(9)||hex(CAST('x'||coalesce((SELECT id FROM messages WHERE id=" ++ C.q(id) ++ " AND sender=" ++ C.q(session) ++ " AND recipient=" ++ parent ++ " AND kind='completion-request'),'') AS TEXT))"
+  ++ "||char(9)||hex(CAST('x'||coalesce(" ++ current ++ ",'') AS TEXT))"
+  ++ "||char(9)||hex(CAST('x'||coalesce((SELECT body FROM messages WHERE id=" ++ current ++ "),'') AS TEXT))"
+  ++ "||char(9)||hex(CAST('x'||coalesce((SELECT id FROM messages WHERE id=" ++ C.q(id) ++ "),'') AS TEXT));"
+
+def completion_field_value(value: String) -> IO(String):
+  match value:
+    case "x" <> rest: IO.pure(String,rest)
+    case other: IO.die(String,2,"The completion-request identity field has no empty-value marker.")
+
+def completion_field(encoded: String) -> IO(String):
+  do IO<String>:
+    value : String <- AgentInput.field(encoded)
+    completion_field_value(value)
 
 def completion_state_fields(fields: List<String>) -> IO(CompletionState):
   match fields:
     case parent_hex <> supplied_hex <> current_hex <> body_hex <> recorded_hex <> Nil{}: do IO<CompletionState>:
-      +parent : String <- AgentInput.field(parent_hex)
-      +supplied : String <- AgentInput.field(supplied_hex)
-      +current : String <- AgentInput.field(current_hex)
-      +currentBody : String <- AgentInput.field(body_hex)
-      +recorded : String <- AgentInput.field(recorded_hex)
+      +parent : String <- completion_field(parent_hex)
+      +supplied : String <- completion_field(supplied_hex)
+      +current : String <- completion_field(current_hex)
+      +currentBody : String <- completion_field(body_hex)
+      +recorded : String <- completion_field(recorded_hex)
       IO.pure(CompletionState,State{parent,supplied,current,currentBody,recorded})
     case other: IO.die(CompletionState,2,"The completion-request identity query returned an incomplete result.")
 
