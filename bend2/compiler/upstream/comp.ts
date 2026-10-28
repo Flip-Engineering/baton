@@ -2107,11 +2107,9 @@ function def_body(cb: Carb, k: Bend.Name): TLD | undefined {
     const h = Bend.term_higher(tld.e);
     const n = tld.n + Math.min(def_raise(cb.book, h, tld.n),
       tele_unbind(cb.book, tld.T).doms.length - tld.n);
-    // The checked lowered term `e` is dead once its higher image `h` exists:
-    // the only reader in the compiler is the guard above. Install the
-    // elaborated definition over `e` in the caller's book as well, so each
-    // definition's lowered graph dies when it is elaborated instead of
-    // staying live, a second copy of every body, for the whole compile.
+    // Install the elaborated definition in the caller's book. The store
+    // retains the raw root through front-end normalization and releases it
+    // after sealing; the book then receives store-backed body getters.
     const next = { ...tld, n, h };
     source_refs(cb.book, k);
     CLAIM_SRCS.set(next, CLAIM_SRCS.get(tld)!);
