@@ -360,5 +360,77 @@ class AdapterExitTests(unittest.TestCase):
         self.assertIsNone(changed['runtime']['version'])
 
 
+
+@unittest.skipUnless(os.name == 'posix', 'Linux CI adapter requires POSIX signals')
+class KeyMaterialAdapterIdentityTests(unittest.TestCase):
+    """The queue adapter's own bytes never enter the cache key request."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='queue-key-identity-')
+        self.addCleanup(temporary.cleanup)
+        self.temp = temporary
+        self.root = Path(self.temp.name).resolve()
+        self.run = self.root / 'run'
+        self.run.mkdir()
+        self.state = self.root / 'state'
+        self.client = self.root / 'fake-queue-client'
+        self.client.write_text(
+            '#!/usr/bin/env python3\n'
+            'import json, os, sys\n'
+            'with open(os.environ["FAKE_KEY_ARGV_OUT"], "w") as handle:\n'
+            '    json.dump(sys.argv, handle)\n'
+            'print("0" * 64)\n')
+        self.client.chmod(0o755)
+        self.compiler = self.root / 'fake-compiler'
+        self.compiler.write_text('#!/bin/sh\ncase "$1" in --version) echo fake-cc-v1; exit 0;; esac\nexit 0\n')
+        self.compiler.chmod(0o755)
+        self.config = {'client': str(self.client), 'state': str(self.state), 'run': str(self.run)}
+
+    def recorded_key_argv(self, mode, argv):
+        config_path = self.root / 'queue-config.json'
+        config_path.write_text(json.dumps(self.config))
+        argv_out = self.root / 'key-argv.json'
+        environment = dict(os.environ,
+                           BATON2_NATIVE_QUEUE=str(config_path),
+                           FAKE_KEY_ARGV_OUT=str(argv_out))
+        adapter_spec = importlib.util.spec_from_file_location('queue_native_checks_keymaterial', ADAPTER)
+        adapter = importlib.util.module_from_spec(adapter_spec)
+        adapter_spec.loader.exec_module(adapter)
+        previous_cwd = Path.cwd()
+        try:
+            os.chdir(self.root)
+            with mock.patch.dict(os.environ, environment, clear=False):
+                code = adapter.compiler(mode, argv, key_only=True)
+        finally:
+            os.chdir(previous_cwd)
+        self.assertEqual(code, 0)
+        recorded = json.loads(argv_out.read_text())
+        self.assertEqual(recorded[2], 'key')
+        return recorded
+
+    def assert_no_adapter_option(self, recorded):
+        options = [recorded[index + 1] for index, value in enumerate(recorded)
+                   if value == '--option' and index + 1 < len(recorded)]
+        for option in options:
+            self.assertFalse(option.startswith('adapter-sha256='),
+                             'adapter self-identity leaked into key material: ' + option)
+
+    def test_cc_key_request_excludes_adapter_self_identity(self):
+        recorded = self.recorded_key_argv('cc', [str(self.compiler), '-o', 'out', 'input.c'])
+        self.assert_no_adapter_option(recorded)
+
+    def test_check_key_request_excludes_adapter_self_identity(self):
+        entry = self.root / 'entry.bend'
+        entry.write_text('law main() {}\n')
+        recorded = self.recorded_key_argv('bend', [str(self.compiler), '--check-only', 'entry.bend'])
+        self.assert_no_adapter_option(recorded)
+
+    def test_cgen_key_request_excludes_adapter_self_identity(self):
+        entry = self.root / 'entry.bend'
+        entry.write_text('law main() {}\n')
+        recorded = self.recorded_key_argv('bend', [str(self.compiler), 'entry.bend', '-o', 'out.c'])
+        self.assert_no_adapter_option(recorded)
+
+
 if __name__ == '__main__':
     unittest.main()

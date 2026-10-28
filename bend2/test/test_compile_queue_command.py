@@ -158,5 +158,108 @@ class QueueCommandTests(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(output.read_bytes()).hexdigest(), expected_digest)
 
 
+
+class QueueExecutionIdentityTests(unittest.TestCase):
+    """Paired cache-key qualification against the installed native queue client.
+
+    The adapter's own diagnostic-only edits must leave the key unchanged, while
+    source, compiler and argv changes must produce different keys. Key requests
+    only: no compiler runs, no queue record is written or adopted.
+    """
+
+    def setUp(self):
+        import json
+        import shutil
+        import sys
+        self.native = os.environ.get('BATON2_COMPILE_QUEUE_BIN')
+        if not self.native:
+            self.skipTest('BATON2_COMPILE_QUEUE_BIN is not configured')
+        self.json = json
+        self.sys = sys
+        repo = pathlib.Path(__file__).resolve().parents[2]
+        self.adapter_source = repo / '.github' / 'scripts' / 'queue-native-checks.py'
+        self.root = pathlib.Path(tempfile.mkdtemp(prefix='queue-identity-pair-'))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.compiler = self.root / 'fake-cc'
+        self.compiler.write_text(
+            '#!/bin/sh\ncase "$1" in --version) echo fake-cc-v1; exit 0;; esac\nexit 0\n')
+        self.compiler.chmod(0o755)
+        self.entry = self.root / 'entry.bend'
+        self.entry.write_text('law main() {}\n')
+        self.source = self.root / 'input.c'
+        self.source.write_text('int fixture(void) { return 0; }\n')
+        run = self.root / 'run'
+        run.mkdir()
+        self.state = self.root / 'state'
+        self.state.mkdir()
+        self.config = run / 'queue-config.json'
+        self.config.write_text(self.json.dumps({
+            'run': str(run), 'bend': str(self.compiler), 'cc': str(self.compiler),
+            'client': str(pathlib.Path(self.native).resolve()), 'state': str(self.state)}))
+
+    def materialize_adapter(self):
+        target = self.root / '.github' / 'scripts'
+        target.mkdir(parents=True, exist_ok=True)
+        adapter = target / 'queue-native-checks.py'
+        adapter.write_text(self.adapter_source.read_text())
+        return adapter
+
+    def key_of(self, mode, argv):
+        import subprocess
+        import sys
+        adapter = self.materialize_adapter()
+        environment = dict(os.environ,
+                           BEND=str(self.compiler), CC=str(self.compiler),
+                           BATON2_NATIVE_QUEUE=str(self.config),
+                           BATON_COMPILE_QUEUE_ROOT=str(self.state))
+        result = subprocess.run(
+            [self.sys.executable, str(adapter), 'key', mode, *argv],
+            cwd=self.root, env=environment, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        key = result.stdout.strip()
+        self.assertRegex(key, r'^[0-9a-f]{64}$')
+        return key
+
+    def cgen_argv(self):
+        return [str(self.compiler), 'entry.bend', '-o', 'out.c']
+
+    def cc_argv(self):
+        return [str(self.compiler), '-o', 'out.bin', 'input.c']
+
+    def test_diagnostic_only_adapter_edit_keeps_key_equal(self):
+        for mode, argv in [('cgen', self.cgen_argv()), ('cc', self.cc_argv())]:
+            with self.subTest(mode=mode):
+                base = self.key_of(mode, argv)
+                adapter = self.root / '.github' / 'scripts' / 'queue-native-checks.py'
+                adapter.write_text(adapter.read_text()
+                                   + '\n# diagnostic-retention fixture variant\n')
+                self.assertEqual(base, self.key_of(mode, argv))
+
+    def test_cgen_source_change_changes_key(self):
+        base = self.key_of('cgen', self.cgen_argv())
+        self.entry.write_text('law main() { 1 }\n')
+        self.assertNotEqual(base, self.key_of('cgen', self.cgen_argv()))
+
+    def test_cgen_argv_change_changes_key(self):
+        base = self.key_of('cgen', self.cgen_argv())
+        changed = [str(self.compiler), 'entry.bend', '-o', 'out.c', '--extra-fact']
+        self.assertNotEqual(base, self.key_of('cgen', changed))
+
+    def test_compiler_change_changes_key(self):
+        for mode, argv in [('cgen', self.cgen_argv()), ('cc', self.cc_argv())]:
+            with self.subTest(mode=mode):
+                base = self.key_of(mode, argv)
+                self.compiler.write_text(
+                    '#!/bin/sh\ncase "$1" in --version) echo fake-cc-v1; exit 0;; esac\n# fixture rebuild\nexit 0\n')
+                self.assertNotEqual(base, self.key_of(mode, argv))
+                self.compiler.write_text(
+                    '#!/bin/sh\ncase "$1" in --version) echo fake-cc-v1; exit 0;; esac\nexit 0\n')
+
+    def test_cc_input_change_changes_key(self):
+        base = self.key_of('cc', self.cc_argv())
+        self.source.write_text('int fixture(void) { return 1; }\n')
+        self.assertNotEqual(base, self.key_of('cc', self.cc_argv()))
+
+
 if __name__ == '__main__':
     unittest.main()

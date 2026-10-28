@@ -206,6 +206,7 @@ def compiler_diagnostics(output, command):
                 'command_sha256': hashlib.sha256((attempt / 'command').read_bytes()).hexdigest(),
                 'source_digest': source_digest,
             },
+            'queue_adapter': file_identity(SCRIPT),
         }
         if hasattr(os, 'sched_getaffinity'):
             try:
@@ -440,7 +441,10 @@ def compiler(mode, argv, key_only=False):
             entry = str(Path(entries[0]).resolve())
             options = ['--kind', 'check', '--source-root', str(Path.cwd()),
                        '--entry', os.path.relpath(entry), '--compiler', actual]
-            options.extend(['--option', 'adapter-sha256=' + hashlib.sha256(Path(SCRIPT).read_bytes()).hexdigest()])
+            # The adapter's own bytes stay out of the cache key: key material
+            # covers only execution-affecting closure (source, toolchain, argv,
+            # inputs, artifacts, options). The adapter identity is execution
+            # evidence, recorded per attempt by compiler_diagnostics().
             return submit(config, directory, options, argv, key_only)
         output_flag = '--binary' if '--binary' in argv else '-o'
         output = Path(argv[argv.index(output_flag) + 1]).absolute() if output_flag in argv else directory / 'checked.c'
@@ -478,7 +482,6 @@ def compiler(mode, argv, key_only=False):
             options = ['--kind', 'cgen', '--source-root', str(Path.cwd()), '--entry', os.path.relpath(entry),
                        '--compiler', argv[0], '--artifact', 'output.c=' + str(output)]
             command = [sys.executable, SCRIPT, 'execute-cgen', str(output), *argv]
-        options.extend(['--option', 'adapter-sha256=' + hashlib.sha256(Path(SCRIPT).read_bytes()).hexdigest()])
         return submit(config, directory, options, command, key_only)
 
 
