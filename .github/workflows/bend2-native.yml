@@ -18,6 +18,7 @@ name: bend2-native-development
       - 'bend2/src/**'
       - 'bend2/test/**'
       - 'bend2/scripts/build-native.sh'
+      - 'bend2/scripts/darwin-arm64-clang.sh'
       - 'bend2/scripts/package-native.py'
       - 'bend2/scripts/stage-repl-compiler.py'
       - 'bend2/scripts/check-install.py'
@@ -406,9 +407,14 @@ jobs:
 
   darwin-arm64:
     needs: [linux-candidate, linux-target]
-    runs-on: [self-hosted, macOS, ARM64, baton2-native-darwin-arm64]
+    runs-on:
+      group: baton2-native-homelab
+      labels: [self-hosted, Linux, X64, baton2-native-linux-x64]
     env:
       BATON2_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || '' }}
+      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-arms-shared-sol-20261028/bend-2.0.25-linux-x64-compiler-arms-shared-sol-20261028.tar.gz' }}
+      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065' }}
+      CC: /usr/bin/clang-19
     steps:
       - name: Checkout exact source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -441,20 +447,18 @@ jobs:
           test ! -e "$run"
           mkdir -p "$run/toolchain"
           printf 'BATON2_NATIVE_RUN=%s\n' "$run" >> "$GITHUB_ENV"
-          test "$(uname -s)" = Darwin
-          test "$(uname -m)" = arm64
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = x86_64
           git clone --no-hardlinks --no-checkout "$GITHUB_WORKSPACE" "$run/build-source" > "$run/clone.log" 2>&1
           git -C "$run/build-source" checkout --detach "$BATON2_SOURCE_SHA" >> "$run/clone.log" 2>&1
           test "$(git -C "$run/build-source" rev-parse HEAD)" = "$BATON2_SOURCE_SHA"
-          archive="$run/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
-          curl --proto '=https' --tlsv1.2 -fsSL \
-            https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz \
-            -o "$archive" > "$run/toolchain/download.log" 2>&1
-          printf 'c5bb22ba029d5909da9c6db82aa037278a66d1cf8a5572f433879f7dcd866c31  %s\n' "$archive" | \
-            shasum -a 256 -c - > "$run/toolchain/archive-check.log" 2>&1
-          test ! -e "$run/toolchain-home"
-          BEND_HOME="$run/toolchain-home" sh "$run/build-source/docs/bend2/reference/toolchain/install-2.0.25.sh" \
-            > "$run/toolchain/install.log" 2>&1
+          compiler_run="$run/compiler-selection"
+          mkdir -p "$compiler_run/evidence" "$compiler_run/toolchain-home"
+          python3 "$run/build-source/.github/scripts/prepare-native-compiler.py" \
+            --run "$compiler_run" --archive "$BATON2_RETAINED_COMPILER_ARCHIVE" \
+            --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" --runner homelab \
+            --github-env "$GITHUB_ENV" > "$run/toolchain-selection.stdout" \
+            2> "$run/toolchain-selection.stderr"
           npm install --prefix "$run/typescript-runtime" --ignore-scripts --no-audit --no-fund \
             typescript@5.9.3 > "$run/typescript-install.stdout" 2> "$run/typescript-install.stderr"
 
@@ -463,7 +467,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 "$GITHUB_WORKSPACE/.github/scripts/repl-package.py" runtime \
-            --output "$BATON2_NATIVE_RUN/repl-runtime"
+            --output "$BATON2_NATIVE_RUN/repl-runtime" --target-platform darwin-arm64
 
       - name: Verify generated C against exact producer source and results
         shell: bash
@@ -530,22 +534,31 @@ jobs:
         run: |
           set -euo pipefail
           export BUN_JSC_maxPerThreadStackUsage=67108864
+          export BATON2_QUEUE_RUN_ROOT="$BATON2_NATIVE_RUN/compile-queue"
           unset BEND_GENERATED_C
+          llvm_root=/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm
+          sdkroot=/mnt/nvme4tb/ci-runners/baton2-native-homelab/toolchains/apple/MacOSX15.5.sdk
+          sdk_manifest=/mnt/nvme4tb/ci-runners/baton2-native-homelab/toolchains/apple/MacOSX15.5.sdk.transfer-manifest.json
           settings="$BATON2_NATIVE_RUN/build-settings"
           test ! -e "$settings"
           mkdir "$settings"
-          clang --version > "$settings/clang.txt"
+          printf '%s\n' "$llvm_root/bin/clang" > "$settings/clang-path.txt"
+          sha256sum "$llvm_root/bin/clang" > "$settings/clang.sha256"
+          printf '%s\n' "$llvm_root/bin/ld64.lld" > "$settings/linker-path.txt"
+          sha256sum "$llvm_root/bin/ld64.lld" > "$settings/linker.sha256"
           node --version > "$settings/node.txt"
           python3 --version > "$settings/python.txt"
           uname -a > "$settings/host.txt"
           printf 'GITHUB_SHA=%s\nGITHUB_RUN_ID=%s\nGITHUB_RUN_ATTEMPT=%s\nBUN_JSC_maxPerThreadStackUsage=%s\nBEND_ARGUMENT=%s\nCC=%s\nBEND_GENERATED_C=%s\n' \
             "$BATON2_SOURCE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
-            "$BUN_JSC_maxPerThreadStackUsage" "$BATON2_NATIVE_RUN/toolchain-home/bin/bend" \
-            "${CC:-clang}" "${BEND_GENERATED_C:-}" > "$settings/environment.txt"
+            "$BUN_JSC_maxPerThreadStackUsage" "$BATON2_NATIVE_RUN/compiler-selection/toolchain-home/bin/bend" \
+            "$BATON2_NATIVE_RUN/build-source/bend2/scripts/darwin-arm64-clang.sh" "${BEND_GENERATED_C:-}" > "$settings/environment.txt"
           cp "$BATON2_NATIVE_RUN/build-source/.github/workflows/bend2-native.yml" "$settings/workflow.yml"
-          shasum -a 256 "$BATON2_NATIVE_RUN/toolchain-home/bin/bend" > "$settings/compiler.sha256"
-          stat -L -f '%z' "$BATON2_NATIVE_RUN/toolchain-home/bin/bend" > "$settings/compiler.size"
-          file -L "$BATON2_NATIVE_RUN/toolchain-home/bin/bend" > "$settings/compiler.file"
+          sha256sum "$BATON2_NATIVE_RUN/compiler-selection/toolchain-home/bin/bend" > "$settings/compiler.sha256"
+          stat -Lc '%s' "$BATON2_NATIVE_RUN/compiler-selection/toolchain-home/bin/bend" > "$settings/compiler.size"
+          file -L "$BATON2_NATIVE_RUN/compiler-selection/toolchain-home/bin/bend" > "$settings/compiler.file"
+          sha256sum "$sdk_manifest" > "$settings/sdk-transfer-manifest.sha256"
+          python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["verification"]["destination_tree_sha256"])' "$sdk_manifest" > "$settings/sdk-tree.sha256"
           ulimit -a > "$settings/limits-soft-before.txt"
           ulimit -H -a > "$settings/limits-hard-before.txt"
           requested_stack_kib=65536
@@ -578,8 +591,12 @@ jobs:
           test "$(cat "$settings/stack-kib.txt")" = "$chosen_stack_kib"
           package_args=(
             --output "$BATON2_NATIVE_RUN/package"
-            --bend "$BATON2_NATIVE_RUN/toolchain-home/bin/bend"
-            --compiler-archive "$BATON2_NATIVE_RUN/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
+            --bend "$BATON2_NATIVE_RUN/compiler-selection/toolchain-home/bin/bend"
+            --compiler-archive "$BATON2_NATIVE_RUN/compiler-selection/bend-2.0.25-linux-x64.tar.gz"
+            --target-system Darwin
+            --target-machine arm64
+            --darwin-llvm-root "$llvm_root"
+            --darwin-sdkroot "$sdkroot"
             --generated-c "$RUNNER_TEMP/baton2-generated-c-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/generated/baton2.c"
             --context-typescript-package "$BATON2_NATIVE_RUN/typescript-runtime/node_modules/typescript"
           )
@@ -654,37 +671,6 @@ jobs:
           (package / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
           PY
 
-      - name: Exercise extracted artifact with build path unavailable
-        shell: bash
-        run: |
-          set -euo pipefail
-          build="$BATON2_NATIVE_RUN/build-source"
-          retained="$BATON2_NATIVE_RUN/build-source-retained"
-          test ! -e "$retained"
-          mv "$build" "$retained"
-          trap 'mv "$retained" "$build"' EXIT
-          package="$BATON2_NATIVE_RUN/package"
-          sums="$package/SHA256SUMS"
-          test "$(wc -l < "$sums")" -eq 1
-          read -r sha archive_name < "$sums"
-          [[ "$sha" =~ ^[0-9a-f]{64}$ ]]
-          test "$archive_name" = "$(basename "$archive_name")"
-          [[ "$archive_name" == baton2-*-darwin-arm64-"$BATON2_SOURCE_SHA".tar.gz ]]
-          printf '%s  %s\n' "$sha" "$archive_name" | cmp - "$sums"
-          (cd "$package" && shasum -a 256 -c SHA256SUMS)
-          archive="$package/$archive_name"
-          python3 "$GITHUB_WORKSPACE/bend2/scripts/smoke-native-artifact.py" \
-            --archive "$archive" --sha256 "$sha" \
-            --manifest "$package/manifest.json" \
-            --unavailable-source "$build" --output "$BATON2_NATIVE_RUN/smoke" \
-            > "$BATON2_NATIVE_RUN/smoke-command.stdout" \
-            2> "$BATON2_NATIVE_RUN/smoke-command.stderr"
-          installed_prefix=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["extracted_prefix"])' "$BATON2_NATIVE_RUN/smoke/summary.json")
-          python3 "$GITHUB_WORKSPACE/.github/scripts/repl-package.py" smoke \
-            --prefix "$installed_prefix" --output "$BATON2_NATIVE_RUN/repl-smoke" \
-            > "$BATON2_NATIVE_RUN/repl-smoke-command.stdout" \
-            2> "$BATON2_NATIVE_RUN/repl-smoke-command.stderr"
-
       - name: Retain native artifact and validation evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -692,21 +678,74 @@ jobs:
           name: baton2-${{ github.event_name == 'workflow_dispatch' && inputs.release_version || 'development' }}-darwin-arm64-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
           path: |
             ${{ env.BATON2_NATIVE_RUN }}/package/
-            ${{ env.BATON2_NATIVE_RUN }}/smoke/
-            ${{ env.BATON2_NATIVE_RUN }}/toolchain/
+            ${{ env.BATON2_NATIVE_RUN }}/compiler-selection/
+            ${{ env.BATON2_NATIVE_RUN }}/compile-queue/
             ${{ env.BATON2_NATIVE_RUN }}/build-settings/
             ${{ env.BATON2_NATIVE_RUN }}/generated-c-verification.json
             ${{ env.BATON2_NATIVE_RUN }}/selected-comparison.json
             ${{ env.BATON2_NATIVE_RUN }}/repl-runtime/
-            ${{ env.BATON2_NATIVE_RUN }}/repl-smoke/
-            ${{ env.BATON2_NATIVE_RUN }}/repl-smoke-command.*
             ${{ env.BATON2_NATIVE_RUN }}/typescript-runtime/package-lock.json
             ${{ env.BATON2_NATIVE_RUN }}/typescript-install.stdout
             ${{ env.BATON2_NATIVE_RUN }}/typescript-install.stderr
             ${{ env.BATON2_NATIVE_RUN }}/clone.log
+            ${{ env.BATON2_NATIVE_RUN }}/toolchain-selection.*
             ${{ env.BATON2_NATIVE_RUN }}/package-command.stdout
             ${{ env.BATON2_NATIVE_RUN }}/package-command.stderr
-            ${{ env.BATON2_NATIVE_RUN }}/smoke-command.stdout
-            ${{ env.BATON2_NATIVE_RUN }}/smoke-command.stderr
+          if-no-files-found: error
+          include-hidden-files: true
+
+  darwin-arm64-install:
+    needs: [darwin-arm64]
+    runs-on: [self-hosted, macOS, ARM64, baton2-native-darwin-arm64]
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.BATON2_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Download Darwin package and producer evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: baton2-${{ github.event_name == 'workflow_dispatch' && inputs.release_version || 'development' }}-darwin-arm64-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Verify and exercise the installed Darwin artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="$RUNNER_TEMP/baton2-darwin-arm64-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test "$(wc -l < "$package/SHA256SUMS")" -eq 1
+          read -r sha archive_name < "$package/SHA256SUMS"
+          [[ "$sha" =~ ^[0-9a-f]{64}$ ]]
+          test "$archive_name" = "$(basename "$archive_name")"
+          [[ "$archive_name" == baton2-*-darwin-arm64-"$BATON2_SOURCE_SHA".tar.gz ]]
+          printf '%s  %s\n' "$sha" "$archive_name" | cmp - "$package/SHA256SUMS"
+          (cd "$package" && shasum -a 256 -c SHA256SUMS)
+          unavailable=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source"]["directory"])' "$package/manifest.json")
+          test ! -e "$unavailable"
+          python3 "$GITHUB_WORKSPACE/bend2/scripts/smoke-native-artifact.py" \
+            --archive "$package/$archive_name" --sha256 "$sha" \
+            --manifest "$package/manifest.json" --unavailable-source "$unavailable" \
+            --output "$package/smoke" > "$package/smoke.stdout" 2> "$package/smoke.stderr"
+          installed_prefix=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["extracted_prefix"])' "$package/smoke/summary.json")
+          python3 "$GITHUB_WORKSPACE/bend2/scripts/check-install.py" \
+            --prefix "$installed_prefix" --skip-native-compiler-probe \
+            --output "$package/install-check" > "$package/install-check.stdout" \
+            2> "$package/install-check.stderr"
+
+      - name: Retain Darwin installation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: baton2-darwin-install-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/SHA256SUMS
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/manifest.json
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/*.tar.gz
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/smoke/
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/install-check/
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/*.stdout
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/*.stderr
           if-no-files-found: error
           include-hidden-files: true

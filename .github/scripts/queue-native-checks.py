@@ -32,6 +32,10 @@ COMPILER_ENVIRONMENT = (
     'BEND_NO_TELEMETRY',
     'BUN_OPTIONS',
     'BUN_JSC_maxPerThreadStackUsage',
+    'BATON2_DARWIN_LLVM_ROOT',
+    'BATON2_DARWIN_SDKROOT',
+    'BATON2_DARWIN_SDK_MANIFEST_SHA256',
+    'BATON2_DARWIN_SDK_TREE_SHA256',
 )
 
 
@@ -65,6 +69,10 @@ def environment_observation(name, environment):
         return {'state': 'set', 'value': 'omitted because option text may contain secrets'}
     if name == 'BEND_LIB':
         return {'state': 'set', 'effective_path': str(Path(value).resolve())}
+    if name in ('BATON2_DARWIN_LLVM_ROOT', 'BATON2_DARWIN_SDKROOT'):
+        return {'state': 'set', 'effective_path': str(Path(value).resolve())}
+    if name in ('BATON2_DARWIN_SDK_MANIFEST_SHA256', 'BATON2_DARWIN_SDK_TREE_SHA256'):
+        return {'state': 'set', 'sha256': value}
     if name == 'BEND_COMPILER_DIAGNOSTICS' or name == 'BEND_FACTS_ONLY_FIRST':
         return {'state': 'set', 'enabled': value == '1'}
     if name == 'BEND_NO_TELEMETRY':
@@ -342,9 +350,25 @@ def compiler(mode, argv, key_only=False):
             actual = argv[argv.index('--cc') + 1] if '--cc' in argv else argv[0]
             actual = str(Path(shutil.which(actual) or actual).resolve())
             version = subprocess.check_output([actual, '--version'], text=True)
-            options = ['--kind', 'cc', '--source-root', '/', '--compiler', actual,
-                       '--linker', '/usr/bin/ld', '--version', version,
-                       '--artifact', 'output=' + str(output)]
+            linker = '/usr/bin/ld'
+            options = ['--kind', 'cc', '--source-root', '/', '--compiler', actual]
+            darwin_llvm = os.environ.get('BATON2_DARWIN_LLVM_ROOT')
+            darwin_sdk = os.environ.get('BATON2_DARWIN_SDKROOT')
+            if darwin_llvm and darwin_sdk:
+                actual = str((Path(darwin_llvm) / 'bin/clang').resolve())
+                linker = str((Path(darwin_llvm) / 'bin/ld64.lld').resolve())
+                version = subprocess.check_output([actual, '--version'], text=True)
+                settings = Path(darwin_sdk) / 'SDKSettings.json'
+                options[options.index('--compiler') + 1] = actual
+                options.extend(['--option', 'target=arm64-apple-macosx11.0',
+                                '--option', 'sysroot=' + str(Path(darwin_sdk).resolve()),
+                                '--option', 'sdk_manifest_sha256=' + os.environ['BATON2_DARWIN_SDK_MANIFEST_SHA256'],
+                                '--option', 'sdk_tree_sha256=' + os.environ['BATON2_DARWIN_SDK_TREE_SHA256'],
+                                '--aux', linker])
+                if settings.is_file():
+                    options.extend(['--aux', str(settings.resolve())])
+            options.extend(['--linker', linker, '--version', version,
+                            '--artifact', 'output=' + str(output)])
             for value in argv:
                 if value != str(output) and not value.startswith('-') and Path(value).is_file():
                     options.extend(['--aux', str(Path(value).resolve())])
