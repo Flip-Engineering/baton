@@ -394,7 +394,11 @@ async function repository_token(directory, github, repository, permissions, body
   const owner = repository_path(repository).split('/')[0];
   const { installation, signed } = await repository_installation(directory, github, repository,
     permissions, jwt, request, profile === 'workflow-write' ? permissions : null);
-  const issued = await request(`/app/installations/${installation.id}/access_tokens`, signed, body);
+  const issued = await request(`/app/installations/${installation.id}/access_tokens`, signed, body)
+    .catch(error => {
+      if (error instanceof Missing || !(error instanceof Refusal)) throw error;
+      throw new Refusal(`${error.message} The token request serves ${repository}.`);
+    });
   minimum_permissions(issued.permissions, 'The issued token', permissions);
   if (profile === 'workflow-write') {
     require(issued.repository_selection === 'selected' && Array.isArray(issued.repositories)

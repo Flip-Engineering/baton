@@ -154,6 +154,25 @@ test('an uninstalled repository refuses and names the repository, App and checke
   assert.ok(!fixture.calls.some(call => call.api_path.includes('/access_tokens')));
 });
 
+test('a failed token request for an installed repository names the repository and its cause', async () => {
+  const github = identities.gpt;
+  const fixture = installation_api(github, [{ owner: 'Flip-Engineering', id: 5100,
+    permissions: model.GH_PERMISSIONS }], {}, model.GH_PERMISSIONS);
+  const request = async (api_path, authorization, body) => {
+    if (api_path.endsWith('/access_tokens')) {
+      throw new model.Refusal(`GitHub API POST ${api_path} returned HTTP 403: Not approved.`);
+    }
+    return fixture.request(api_path, authorization, body);
+  };
+  await assert.rejects(model.installation_token(series.gpt, github, REPOSITORY,
+    () => 'fixture-jwt-no-key', request), error => error instanceof model.Refusal
+    && error.message.includes(REPOSITORY) && error.message.includes('HTTP 403')
+    && error.message.includes('Not approved.'));
+  await assert.rejects(model.gh_installation_token(series.gpt, github, REPOSITORY,
+    () => 'fixture-jwt-no-key', request), error => error instanceof model.Refusal
+    && error.message.includes(REPOSITORY) && error.message.includes('HTTP 403'));
+});
+
 test('check accepts a repository in the selected App installation and refuses a same-name wrong-owner repository', async () => {
   const github = identities.gpt;
   const fixture = installation_api(github, [
