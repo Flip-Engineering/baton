@@ -140,14 +140,12 @@ law stop_acceptance_does_not_wait_for_completion:
 def stop_acceptance_does_not_wait_for_completion(db,session,id,reason,force):
   {==}
 
-# Signal selection reads the terminal stop and current execution together. The
-# submitted signal is compared by identity: TERM and KILL have unrelated numbers.
+# Reconciliation reads the attempt and directory from the durable stop row.
+# Call arguments may describe a prior owner after retained recovery.
 def reconcile_recorded_stop(+db: String, +session: String, +attempt: String, directory: String) -> IO(Unit):
-  do IO<Unit>:
-    signal : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT s.signal FROM session_stops s JOIN executions e ON e.session=s.session AND e.id=s.attempt WHERE s.session=" ++ C.q(session) ++ " AND s.attempt=" ++ C.q(attempt) ++ " AND e.phase<>'exited' AND s.applied_signal<>s.signal),0);"))
-    Stop.send_control(db,session,attempt,directory,Stop.selected_signal(U32.read(Tx.trim_nl(signal))))
+  Stop.reconcile_request(db,session)
 
-law stop_reconcile_selects_the_recorded_signal_and_attempt:
+law stop_reconcile_uses_the_recorded_attempt_and_directory:
   for +db: String
   for +session: String
   for +attempt: String
