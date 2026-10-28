@@ -24,6 +24,7 @@ type StorageClass is Data:
   GitObject{}
   LogEvidence{}
   StagingSource{}
+  StagingSourceReleased{}
   Unclassified{}
 
 def is_transient(+c: StorageClass) -> Bool:

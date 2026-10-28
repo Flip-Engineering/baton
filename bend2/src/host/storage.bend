@@ -22,10 +22,11 @@ def StorageHost.measure(path: String) -> IO(Result<&1,&1,U32 & String,String>):
 def StorageHost.entries(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./storage.c"
 
-# The calling process's effective uid as decimal text. Staging-source roots
-# whose content belongs to another uid are preserved because the process,
-# lease and mount evidence scan covers this uid only.
-def StorageHost.self_uid() -> IO(Result<&1,&1,U32 & String,String>):
+# `own` when PATH and every descendant belong to the caller's effective uid,
+# `foreign:<name>` when another uid owns an entry below it, `unknown` when the
+# tree cannot be read. A foreign uid preserves the candidate because the host
+# process scan may be unable to observe that identity's live references.
+def StorageHost.uid_boundary(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./storage.c"
 
 # Removes exactly the path whose identity is `kind:device:inode`. The answer is
@@ -52,20 +53,19 @@ def StorageHost.cargo_probe(path: String) -> IO(Result<&1,&1,U32 & String,String
 def StorageHost.cargo_remove(path: String, identity: String, associated: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./storage.c"
 
-# Current-user process references through cwd, executable, descriptors and
-# mapped files: present:PIDS, absent, or unknown:REASON. Failed reads report
-# their PID, path and error to stderr. Scope is the processes whose effective
-# UID equals the caller's (the value from the status record); processes of
-# other users are outside this scan and their own service retains their use.
-# Service deployment selection is a separate authority and is not derived
-# from this evidence.
+# Process references through cwd, executable, descriptors and mapped files:
+# present:PIDS, absent, or unknown:REASON. Failed reads report their PID, path
+# and error to stderr. Every observable process identity is scanned. A live
+# process whose links, descriptors or mappings cannot be read (for example
+# another uid's process without sufficient privilege) makes the custody
+# unknown, so the candidate is preserved.
 def StorageHost.runtime_refs(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./storage.c"
 
 # The same reference scan used for process ownership. Directory and mapping
 # enumeration continues through the actual end. Unreadable live evidence
 # returns unknown; an exited process has released its references. The
-# effective-UID scope above applies here too.
+# all-identity scope above applies here too.
 def StorageHost.process_refs(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./storage.c"
 

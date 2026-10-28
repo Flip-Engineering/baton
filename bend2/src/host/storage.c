@@ -11,7 +11,7 @@
  * something the preview did not observe.
  *
  * process_refs and runtime_refs compare cwd, executable, descriptor and
- * mapped-file targets for every process of the current user by device and
+ * mapped-file targets for every observable process by device and
  * inode. A descriptor whose directory entry is unlinked still matches its
  * recorded path after the " (deleted)" suffix is removed. /proc is
  * Linux-only; other hosts answer an unknown result so cleanup preserves the
@@ -489,8 +489,14 @@ static int baton_storage_mount_boundary(int fd, const char *name) {
   /* macOS has no bind mounts; a filesystem identity comparison still verifies
      that the entry lives on the same mounted volume before removal. */
   struct statfs parent, child;
+  struct stat child_info;
+  if (fstatat(fd, name, &child_info, AT_SYMLINK_NOFOLLOW)) return ENOTSUP;
+  /* Only a directory can be a mount point; unlinking a regular file or a
+     symlink cannot cross one. Opening those with O_DIRECTORY failed and
+     preserved every ordinary tree, so classify the entry first. */
+  if (!S_ISDIR(child_info.st_mode)) return 0;
   if (fstatfs(fd, &parent)) return ENOTSUP;
-  int entry = openat(fd, name, baton_storage_dir_flags());
+  int entry = openat(fd, name, baton_storage_read_dir_flags());
   if (entry < 0) return ENOTSUP;
   int error = fstatfs(entry, &child) ? ENOTSUP : 0;
   close(entry);
@@ -585,6 +591,53 @@ static void baton_storage_remove_pop(BatonStorageRemoveStack *stack) {
   free(frame->name);
 }
 
+/* Answers 0 when every entry below FD belongs to SELF, EPERM when another uid
+   owns an entry (its name is written to FOREIGN), or the read failure. The
+   walk never unlinks, so a foreign child anywhere in the tree preserves the
+   whole candidate before the removal pass starts. */
+static int baton_storage_uid_walk(int fd, uid_t self, char *foreign, size_t foreign_size) {
+  BatonStorageRemoveStack stack = {NULL, 0, 0};
+  int owned = dup(fd);
+  if (owned < 0) return errno;
+  int error = baton_storage_remove_frame(owned, -1, NULL, 0, &stack);
+  while (!error && stack.count) {
+    BatonStorageRemoveFrame *frame = &stack.items[stack.count - 1];
+    if (frame->index < frame->names.count) {
+      const char *name = frame->names.names[frame->index++];
+      struct stat info;
+      if (fstatat(frame->fd, name, &info, AT_SYMLINK_NOFOLLOW)) {
+        if (errno != ENOENT) error = errno;
+        continue;
+      }
+      if (info.st_uid != self) {
+        snprintf(foreign, foreign_size, "%s", name);
+        error = EPERM;
+        continue;
+      }
+      if (S_ISDIR(info.st_mode)) {
+        int child = openat(frame->fd, name, baton_storage_read_dir_flags());
+        if (child < 0) { if (errno != ENOENT) error = errno; }
+        else {
+          struct stat opened;
+          if (fstat(child, &opened) || opened.st_dev != info.st_dev || opened.st_ino != info.st_ino) {
+            close(child);
+            error = ESTALE;
+          } else {
+            char *owned_name = strdup(name);
+            if (!owned_name) { close(child); error = ENOMEM; }
+            else error = baton_storage_remove_frame(child, frame->fd, owned_name, frame->device, &stack);
+          }
+        }
+      } else if (!S_ISREG(info.st_mode) && !S_ISLNK(info.st_mode)) error = ENOTSUP;
+    } else {
+      baton_storage_remove_pop(&stack);
+    }
+  }
+  while (stack.count) baton_storage_remove_pop(&stack);
+  free(stack.items);
+  return error;
+}
+
 static int baton_storage_remove_children(int fd, dev_t device, BatonStorageCount *count) {
   BatonStorageRemoveStack stack = {NULL, 0, 0};
   int owned = dup(fd);
@@ -612,6 +665,12 @@ static int baton_storage_remove_children(int fd, dev_t device, BatonStorageCount
       const char *unknown_mount = getenv("BATON_CARGO_TEST_MOUNT_UNKNOWN");
       if (unknown_mount && !strcmp(name, unknown_mount)) boundary = ENOTSUP;
 #endif
+      if (info.st_uid != geteuid()) {
+        fprintf(stderr, "storage removal preserves foreign-uid entry=%s uid=%llu self=%llu\n",
+                name, (unsigned long long)info.st_uid, (unsigned long long)geteuid());
+        error = EPERM;
+        continue;
+      }
       if (info.st_dev != frame->device || boundary) {
         fprintf(stderr, "storage removal preserves mount entry=%s device=%llu root-device=%llu\n",
                 name, (baton_u64)info.st_dev, (baton_u64)frame->device);
@@ -686,6 +745,16 @@ static int baton_storage_remove_at(int parent, const char *name, const char *kin
               name, boundary, strerror(boundary));
       close(child);
       errno = boundary;
+      return -1;
+    }
+    char foreign[256];
+    foreign[0] = 0;
+    int uid_error = baton_storage_uid_walk(child, geteuid(), foreign, sizeof(foreign));
+    if (uid_error) {
+      fprintf(stderr, "storage removal preserves uid boundary entry=%s error=%d (%s)\n",
+              foreign[0] ? foreign : "(unreadable)", uid_error, strerror(uid_error));
+      close(child);
+      errno = uid_error;
       return -1;
     }
     count->nodes = 1;
@@ -1521,17 +1590,21 @@ static void baton_storage_refs_call(IoWork *w) {
     }
     if (!baton_storage_numeric(entry->d_name)) continue;
     pid_t pid = (pid_t)strtol(entry->d_name, NULL, 10);
-    uid_t owner;
-    if (!baton_storage_process_current(proc_root, pid, &owner, &unknown) || owner != geteuid()) continue;
+    uid_t owner = 0;
     int pid_unknown = 0;
+    if (!baton_storage_process_current(proc_root, pid, &owner, &pid_unknown)) {
+      /* A live process whose status cannot be read may reference the target;
+         an exited or vanished process cannot. */
+      if (pid_unknown) unknown = 1;
+      continue;
+    }
     if (baton_storage_pid_hit(proc_root, pid, device, inode, root, is_dir, &pid_unknown)) {
       if (baton_storage_pid_push(&pids, pid)) { call->error = ENOMEM; break; }
     } else if (pid_unknown) {
-      /* An exited process has released its references. A process that changed
-         user is outside this account's scan; its service retains its own use. */
-      if (baton_storage_process_current(proc_root, pid, &owner, &unknown) && owner == geteuid()) {
-        unknown = 1;
-      }
+      /* The process is live and its cwd, descriptors or mappings could not be
+         read (for example another uid). Custody is unknown, so the candidate
+         is preserved. */
+      unknown = 1;
     }
   }
   closedir(proc);
@@ -1546,6 +1619,45 @@ static void baton_storage_refs_call(IoWork *w) {
 static Term baton_storage_refs_pack(Env e, IoWork *w) {
   BatonStorageRefs *call = (BatonStorageRefs *)w->data;
   Term result = call->error ? io_fail(e, call->error, "process reference scan failed")
+    : io_done(e, io_str(e, call->answer, strlen(call->answer)));
+  free(call->path); free(call->answer); free(call);
+  w->data = NULL;
+  return result;
+}
+
+/* ---------- descendant uid boundary ---------- */
+
+typedef struct { char *path, *answer; int error; } BatonStorageUid;
+
+/* `own` when the path and every descendant belong to the caller's effective
+   uid, `foreign:<name>` when another uid owns one entry, `unknown` when the
+   tree or the path could not be read. Foreign ownership preserves the
+   candidate because the host process scan may be unable to observe that uid. */
+static void baton_storage_uid_call(IoWork *w) {
+  BatonStorageUid *call = (BatonStorageUid *)w->data;
+  struct stat info;
+  if (lstat(call->path, &info)) { call->error = errno; return; }
+  if (info.st_uid != geteuid()) { call->answer = strdup("foreign:(root)"); return; }
+  if (!S_ISDIR(info.st_mode)) { call->answer = strdup("own"); return; }
+  int fd = baton_storage_open_dir(call->path);
+  if (fd < 0) { call->answer = strdup("unknown"); return; }
+  char foreign[256];
+  foreign[0] = 0;
+  int error = baton_storage_uid_walk(fd, geteuid(), foreign, sizeof(foreign));
+  close(fd);
+  if (!error) { call->answer = strdup("own"); return; }
+  if (error == EPERM) {
+    char text[300];
+    snprintf(text, sizeof(text), "foreign:%s", foreign[0] ? foreign : "(unreadable)");
+    call->answer = strdup(text);
+    return;
+  }
+  call->answer = strdup("unknown");
+}
+
+static Term baton_storage_uid_pack(Env e, IoWork *w) {
+  BatonStorageUid *call = (BatonStorageUid *)w->data;
+  Term result = call->error ? io_fail(e, call->error, "uid boundary scan failed")
     : io_done(e, io_str(e, call->answer, strlen(call->answer)));
   free(call->path); free(call->answer); free(call);
   w->data = NULL;
@@ -1774,13 +1886,17 @@ static Term baton_storage_cleanup_try_acquire_run(Env e, Term *f, IoWork *w) {
 static void __attribute__((constructor)) baton_storage_cleanup_try_acquire_use(void) {io_eff(CID_STORAGEHOST_CLEANUP_TRY_ACQUIRE, baton_storage_cleanup_try_acquire_run, 0);}
 #endif
 
-#ifdef CID_STORAGEHOST_SELF_UID
-static Term baton_storage_self_uid_run(Env e, Term *f, IoWork *w) {
-  char text[32];
-  snprintf(text, sizeof(text), "%lu", (unsigned long)geteuid());
-  return io_done(e, io_str(e, text, strlen(text)));
+#ifdef CID_STORAGEHOST_UID_BOUNDARY
+static Term baton_storage_uid_run(Env e, Term *f, IoWork *w) {
+  BatonStorageUid *call = calloc(1, sizeof(*call));
+  if (!call) return io_fail(e, ENOMEM, NULL);
+  u64 length = 0;
+  call->path = io_cstr(e, f[0], &length);
+  if (!call->path || strlen(call->path) != length) { free(call->path); free(call); return io_fail(e, EINVAL, "path contains NUL"); }
+  w->data = (char *)call;
+  return io_work(w, baton_storage_uid_call, baton_storage_uid_pack);
 }
-static void __attribute__((constructor)) baton_storage_self_uid_use(void) {io_eff(CID_STORAGEHOST_SELF_UID, baton_storage_self_uid_run, 0);}
+static void __attribute__((constructor)) baton_storage_uid_use(void) {io_eff(CID_STORAGEHOST_UID_BOUNDARY, baton_storage_uid_run, 0);}
 #endif
 
 #ifdef CID_STORAGEHOST_LEASE_RELEASE

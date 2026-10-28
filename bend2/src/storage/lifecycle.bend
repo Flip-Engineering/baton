@@ -156,6 +156,7 @@ def covered_class(+cls: T.StorageClass) -> Bool:
     case T.Export{}: True{}
     case T.Checkout{}: True{}
     case T.StagingSource{}: True{}
+    case T.StagingSourceReleased{}: True{}
     case other: False{}
 
 def covered_root(+spec: RootSpec) -> Bool:
@@ -210,11 +211,12 @@ def referenced_root(+spec: RootSpec, +state: S.State) -> Bool:
   match spec:
     case RootSpec{cls, path, source}:
       match cls:
-        case T.StagingSource{}:
-          # An ownership-ending staging root is admitted by the operator's
-          # declaration together with the authenticated repository that must
-          # contain each candidate commit. No session record exists for it.
+        case T.StagingSourceReleased{}:
+          # This marker records the operator's explicit ownership release
+          # decision. The authenticated repository still has to contain each
+          # candidate commit before removal.
           Bool.and(covered_root(spec), Bool.not(String.is_empty(source)))
+        case T.StagingSource{}: Bool.and(covered_root(spec), Bool.not(String.is_empty(source)))
         case other: staging_referenced(spec, state)
 
 def uncovered_roots_state(specs: List<&2,RootSpec>, +state: S.State, +acc: String) -> String:
@@ -296,17 +298,19 @@ def candidate_member(+path: String, candidates: List<T.Candidate>) -> Bool:
 def add_candidate(+candidate: T.Candidate, candidates: List<T.Candidate>) -> List<T.Candidate>:
   Con{candidate, candidates}
 
-# An ownership-ending staging candidate has no recorded owner by premise, so
-# the session/owner filter must not drop it when a session is supplied.
-def ownership_ended(+cls: T.StorageClass) -> Bool:
+# A staging candidate has no recorded session owner. The class policy decides
+# whether its ownership release is recorded; both staging classes remain
+# available for preview and explicit apply decisions.
+def staging_class(+cls: T.StorageClass) -> Bool:
   match cls:
     case T.StagingSource{}: True{}
+    case T.StagingSourceReleased{}: True{}
     case other: False{}
 
 def candidate_choice(+session: String, +cls: T.StorageClass, +path: String, +identity: String, +bytes: Nat, +facts: T.Facts, +choice: S.OwnerChoice) -> IO(Maybe<T.Candidate>):
   match choice:
     case S.OwnerChoice{owner, fact}:
-      +selected = Bool.or(Bool.or(String.is_empty(session), String.eq(owner, session)), ownership_ended(cls))
+      +selected = Bool.or(Bool.or(String.is_empty(session), String.eq(owner, session)), staging_class(cls))
       Bool.pick(IO(Maybe<T.Candidate>), selected,
         do IO<Maybe<T.Candidate>>:
           proof : String = "owner:" ++ owner
@@ -840,10 +844,11 @@ def collect_receipts(result: Result<&1,&1,U32 & String,List<T.Receipt>>) -> List
     case Done{receipts}: receipts
     case Fail{error}: Nil{}
 
-# Triggered and deployment collection scans only the classes whose entries the
-# policy can remove: scratch, build output, export and log evidence. Checkout
-# roots stay for an explicit operator preview/apply, and the preserve-only
-# shared-immutable, git-object and unclassified classes never participate.
+# Triggered and deployment collection scans only the classes whose settled
+# lifecycle can be derived from recorded session state: scratch, build output,
+# export and log evidence. Staging roots require an explicit operator apply
+# after ownership release. Checkout, shared-immutable, git-object and
+# unclassified classes never participate.
 def collectable_root(+spec: RootSpec) -> Bool:
   match spec:
     case RootSpec{cls, path, source}:
@@ -852,7 +857,8 @@ def collectable_root(+spec: RootSpec) -> Bool:
         case T.BuildOutput{}: True{}
         case T.Export{}: True{}
         case T.LogEvidence{}: True{}
-        case T.StagingSource{}: True{}
+        case T.StagingSourceReleased{}: False{}
+        case T.StagingSource{}: False{}
         case other: False{}
 
 def collectable_roots(specs: List<&2,RootSpec>, +acc: List<&2,RootSpec>) -> List<&2,RootSpec>:

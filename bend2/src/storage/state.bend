@@ -465,6 +465,10 @@ def dirty_fact(+cls: T.StorageClass, +path: String) -> IO(T.Presence):
       do IO<T.Presence>:
         status : G.GitOut <- Git.runGit(path, ["status", "--porcelain", "--ignored", "--untracked-files=all"])
         IO.pure(T.Presence, staging_status(status))
+    case T.StagingSourceReleased{}:
+      do IO<T.Presence>:
+        status : G.GitOut <- Git.runGit(path, ["status", "--porcelain", "--ignored", "--untracked-files=all"])
+        IO.pure(T.Presence, staging_status(status))
     case other:
       IO.pure(T.Presence, T.Absent{})
 
@@ -529,11 +533,35 @@ def contains_value(values: List<&2,String>, +value: String) -> Bool:
     case Nil{}: False{}
     case Con{head, tail}: Bool.or(String.eq(head, value), contains_value(tail, value))
 
-def all_advertised(values: List<&2,String>, +set: List<&2,String>) -> Bool:
+def ancestor_answer(result: G.GitOut) -> Maybe<Bool>:
+  match result:
+    case G.GRun{code, out}:
+      Bool.pick(Maybe<Bool>, U32.is_eq(code, 0), Some{True{}},
+        Bool.pick(Maybe<Bool>, U32.is_eq(code, 1), Some{False{}}, None{}))
+    case G.GBroken{detail}: None{}
+
+def staging_ref_ancestor(+path: String, +local: String, tips: List<&2,String>) -> IO(Maybe<Bool>):
+  match tips:
+    case Nil{}: IO.pure(Maybe<Bool>, Some{False{}})
+    case Con{head, tail}:
+      do IO<Maybe<Bool>>:
+        check : G.GitOut <- Git.runGit(path, ["merge-base", "--is-ancestor", local, head])
+        match ancestor_answer(check):
+          case Some{True{}}: IO.pure(Maybe<Bool>, Some{True{}})
+          case Some{False{}}: staging_ref_ancestor(path, local, tail)
+          case None{}: IO.pure(Maybe<Bool>, None{})
+
+def published_local_refs(+path: String, values: List<&2,String>, tips: List<&2,String>) -> IO(Maybe<Bool>):
   match values:
-    case Nil{}: True{}
-    case Con{+head, tail}:
-      Bool.and(contains_value(set, head), all_advertised(tail, set))
+    case Nil{}: IO.pure(Maybe<Bool>, Some{True{}})
+    case Con{head, tail}:
+      Bool.pick(IO(Maybe<Bool>), contains_value(tips, head), published_local_refs(path, tail, tips),
+        do IO<Maybe<Bool>>:
+          ancestor : Maybe<Bool> <- staging_ref_ancestor(path, head, tips)
+          match ancestor:
+            case Some{True{}}: published_local_refs(path, tail, tips)
+            case Some{False{}}: IO.pure(Maybe<Bool>, Some{False{}})
+            case None{}: IO.pure(Maybe<Bool>, None{}))
 
 def single_worktree(+worklist: String, +toplevel: String) -> Bool:
   +prefix = "worktree " ++ toplevel ++ "\n"
@@ -556,37 +584,40 @@ def staging_publication_evidence(toplevel: String, gitdir: String, commondir: St
   staging_publication_after_worktree(staging_worktree_evidence(toplevel, gitdir, commondir, worklist),
     unreachable)
 
-def staging_remote_evidence(remote_text: String, refs: String, +head: String, toplevel: String,
+def staging_remote_evidence(+path: String, remote_text: String, refs: String, +head: String, toplevel: String,
                             gitdir: String, commondir: String, worklist: String,
-                            unreachable: Maybe<String>) -> T.Presence:
+                            unreachable: Maybe<String>) -> IO(T.Presence):
   +commits : List<&2,String> = field_lines(Tx.split_lines(remote_text))
-  +local : List<&2,String> = field_lines(Tx.split_lines(refs))
-  Bool.pick(T.Presence, String.is_empty(head),
-    T.Unknown{},
-    Bool.pick(T.Presence, Bool.not(all_advertised(local, commits)),
-      T.Present{"unpublished-object"},
-      Bool.pick(T.Presence, Bool.not(contains_value(commits, Tx.trim_nl(head))),
-        T.Present{"unpublished-object"},
-        staging_publication_evidence(Tx.trim_nl(toplevel), gitdir, commondir, worklist,
-          unreachable))))
+  +local : List<&2,String> = Con{Tx.trim_nl(head), field_lines(Tx.split_lines(refs))}
+  Bool.pick(IO(T.Presence), String.is_empty(head),
+    IO.pure(T.Presence, T.Unknown{}),
+    do IO<T.Presence>:
+      published : Maybe<Bool> <- published_local_refs(path, local, commits)
+      match published:
+        case None{}: IO.pure(T.Presence, T.Unknown{})
+        case Some{False{}}: IO.pure(T.Presence, T.Present{"unpublished-object"})
+        case Some{True{}}:
+          IO.pure(T.Presence, staging_publication_evidence(Tx.trim_nl(toplevel), gitdir, commondir,
+            worklist, unreachable)))
 
-# A staging source is an ownership-ending checkout. Removal requires the
-# candidate origin to be the authenticated repository, every local ref object
-# in every namespace and HEAD to be advertised by that remote, no objects
+# A released staging source is a checkout whose ownership release is recorded
+# in its root class. Removal requires the candidate origin to be the
+# authenticated repository, every local ref object in every namespace and HEAD
+# to be published by that remote, no objects
 # unreachable from local refs (including reflog-only objects), and every
 # worktree registration to point at the candidate itself. Any command failure
 # preserves the candidate.
-def staging_evidence(+source_url: String, +candidate_url: String, remote_text: String,
+def staging_evidence(+path: String, +source_url: String, +candidate_url: String, remote_text: String,
                      refs: String, head: String, toplevel: String, gitdir: String,
-                     commondir: String, worklist: String, unreachable: Maybe<String>) -> T.Presence:
-  Bool.pick(T.Presence, Bool.or(String.is_empty(source_url), String.is_empty(candidate_url)),
-    T.Unknown{},
-    Bool.pick(T.Presence, Bool.not(String.eq(source_url, candidate_url)),
-      T.Present{"remote-identity-mismatch"},
-      staging_remote_evidence(remote_text, refs, head, toplevel, gitdir, commondir, worklist,
+                     commondir: String, worklist: String, unreachable: Maybe<String>) -> IO(T.Presence):
+  Bool.pick(IO(T.Presence), Bool.or(String.is_empty(source_url), String.is_empty(candidate_url)),
+    IO.pure(T.Presence, T.Unknown{}),
+    Bool.pick(IO(T.Presence), Bool.not(String.eq(source_url, candidate_url)),
+      IO.pure(T.Presence, T.Present{"remote-identity-mismatch"}),
+      staging_remote_evidence(path, remote_text, refs, head, toplevel, gitdir, commondir, worklist,
         unreachable)))
 
-def staging_finish_rest(remote_text: String, unreachable: Maybe<String>, source_url: Maybe<String>,
+def staging_finish_rest(+path: String, remote_text: String, unreachable: Maybe<String>, source_url: Maybe<String>,
                         candidate_url: Maybe<String>,
                         head: Maybe<String>, toplevel: Maybe<String>, gitdir: Maybe<String>,
                         commondir: Maybe<String>, refs: Maybe<String>, worklist: Maybe<String>) -> IO(T.Presence):
@@ -614,42 +645,34 @@ def staging_finish_rest(remote_text: String, unreachable: Maybe<String>, source_
                               match worklist:
                                 case None{}: IO.pure(T.Presence, T.Unknown{})
                                 case Some{worklist_value}:
-                                  IO.pure(T.Presence, staging_evidence(source_value, candidate_value, remote_text,
+                                  staging_evidence(path, source_value, candidate_value, remote_text,
                                     refs_value, head_value, toplevel_value, gitdir_value, commondir_value,
-                                    worklist_value, unreachable))
+                                    worklist_value, unreachable)
 
-def staging_finish(listed: Maybe<String>, unreachable: Maybe<String>, source_url: Maybe<String>,
+def staging_finish(+path: String, listed: Maybe<String>, unreachable: Maybe<String>, source_url: Maybe<String>,
                    candidate_url: Maybe<String>,
                    head: Maybe<String>, toplevel: Maybe<String>, gitdir: Maybe<String>,
                    commondir: Maybe<String>, refs: Maybe<String>, worklist: Maybe<String>) -> IO(T.Presence):
   match listed:
     case None{}: IO.pure(T.Presence, T.Unknown{})
     case Some{remote_text}:
-      staging_finish_rest(remote_text, unreachable, source_url, candidate_url,
+      staging_finish_rest(path, remote_text, unreachable, source_url, candidate_url,
         head, toplevel, gitdir, commondir, refs, worklist)
 
-def uid_field(fields: List<String>) -> String:
-  match fields:
-    case kind <> mode <> device <> inode <> bytes <> mtime <> uid <> gid <> Nil{}: uid
-    case other: ""
-
-def same_uid_result(+lstat: Result<&1,&1,U32 & String,String>, +self: Result<&1,&1,U32 & String,String>) -> T.Presence:
-  match lstat:
+# The host walks the candidate and every descendant without following symlinks.
+# Foreign-owned entries preserve the whole candidate because process evidence
+# for that uid may be unreadable.
+def uid_boundary_result(+result: Result<&1,&1,U32 & String,String>) -> T.Presence:
+  match result:
     case Fail{error}: T.Unknown{}
-    case Done{record}:
-      match self:
-        case Fail{error}: T.Unknown{}
-        case Done{own}:
-          Bool.pick(T.Presence, String.eq(uid_field(Tx.split_tabs(record)), Tx.trim_nl(own)),
-            T.Absent{}, T.Present{"cross-uid-root"})
+    case Done{value}:
+      Bool.pick(T.Presence, String.eq(Tx.trim_nl(value), "own"), T.Absent{},
+        Bool.pick(T.Presence, String.starts_with(value, "foreign:"), T.Present{"cross-uid-descendant"}, T.Unknown{}))
 
-# The process, lease and mount evidence scan covers the cleaner's effective uid
-# only, so a candidate owned by another uid is preserved.
 def staging_same_uid(+path: String) -> IO(T.Presence):
   do IO<T.Presence>:
-    lstat : Result<&1,&1,U32 & String,String> <- F.Files.lstat(path)
-    self : Result<&1,&1,U32 & String,String> <- H.StorageHost.self_uid()
-    IO.pure(T.Presence, same_uid_result(lstat, self))
+    boundary : Result<&1,&1,U32 & String,String> <- H.StorageHost.uid_boundary(path)
+    IO.pure(T.Presence, uid_boundary_result(boundary))
 
 def staging_unpublished(+source: String, +path: String) -> IO(T.Presence):
   do IO<T.Presence>:
@@ -674,7 +697,7 @@ def staging_reads(+source: String, +path: String) -> IO(T.Presence):
     listed_git : G.RunRes <- Git.runFull(["/usr/bin/env", "git", "-C", source, "ls-remote", "origin"], ".")
     unreachable_git : G.RunRes <- Git.runFull(["/usr/bin/env", "git", "-C", path, "fsck",
       "--no-progress", "--no-reflogs", "--unreachable"], ".")
-    staging_finish(staging_text(listed_git), staging_text(unreachable_git),
+    staging_finish(path, staging_text(listed_git), staging_text(unreachable_git),
       git_text(source_url_git), git_text(candidate_url_git), git_text(head_git),
       git_text(toplevel_git), git_text(gitdir_git), git_text(commondir_git),
       git_text(refs_git), git_text(worklist_git))
@@ -687,6 +710,8 @@ def unpublished_fact(+cls: T.StorageClass, +source: String, +path: String, +stat
           +base = session_base(sessions, owner)
           unpublished_command(base, path)
     case T.StagingSource{}:
+      IO.pure(T.Presence, T.Present{"staging-source-release-required"})
+    case T.StagingSourceReleased{}:
       staging_unpublished(source, path)
     case other:
       IO.pure(T.Presence, T.Absent{})

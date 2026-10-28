@@ -25,7 +25,8 @@ A storage root declares one class:
 | `shared-immutable` | Shared immutable | Reusable assets and caches. |
 | `git-object` | Git objects | A loose-object prefix store. |
 | `log-evidence` | Log evidence | Coordination logs, reports and continuation evidence. |
-| `staging-source` | Ownership-ending staging source | Generated installer and staging clones whose owning lifecycle ended. |
+| `staging-source` | Staging source with ownership retained | Source trees remain protected until their lifecycle owner explicitly releases them. |
+| `staging-source-released` | Staging source with ownership released | The configured root records an explicit operator release decision. |
 
 An unrecognised marker becomes `unclassified`, and an unclassified candidate
 stays in the preview.
@@ -41,11 +42,14 @@ checkout=/mnt/large/worktrees
 shared-immutable=/mnt/large/assets
 git-object=/repo/.git/objects|/repo
 log-evidence=/mnt/large/baton-logs
+staging-source-released=/mnt/large/released-staging|/authenticated/repository
 ```
 
 The marker before `=` selects the class. The optional `|source` names a Git
-repository for a `git-object` root, and the authenticated repository for a
-`staging-source` root. Empty configuration performs no scan and no deletion.
+repository for a `git-object` root or the authenticated repository for a
+staging root. `staging-source-released` records the operator's explicit
+ownership release decision. `staging-source` remains protected. Empty
+configuration performs no scan and no deletion.
 The process reads the configured roots; it does not adopt a homelab path or
 relocate existing files.
 
@@ -58,20 +62,21 @@ generation (`log` or `base`), or an execution directory under it. A transient
 session workspace or execution directory is recorded under it. An absolute root
 with no such reference is arbitrary and is refused. A `staging-source` root
 is admitted when the operator records the authenticated repository as its
-source; its candidates carry no session record. A staging candidate is removed
-only when it is a clean worktree whose origin is the authenticated repository
-and every local ref object in every namespace is advertised by that remote
-(`git ls-remote origin`), `git fsck --no-reflogs --unreachable` reports no objects
+source. Its candidates remain protected until the configured class records
+ownership release. A released candidate is removed only when it is a clean
+worktree whose origin is the authenticated repository and every local ref and
+HEAD is an advertised remote tip or an ancestor of one (`git ls-remote origin`
+plus ancestry checks). `git fsck --no-reflogs --unreachable` reports no objects
 outside those refs, no process, runtime input, lease, live reference, database
 path or pending attempt names it, and every other preservation fact is absent.
 The object check includes commits retained only by reflogs and otherwise
-unreachable objects. The candidate must also be owned by the cleaner's
-effective uid: the process, lease and mount evidence scan covers that uid
-only, so a candidate owned by another uid is preserved. A dirty worktree, an
-untracked or ignored local file, a commit the authenticated repository does
-not contain, an unreachable object, a cross-uid candidate, or any unknown fact
-preserves it. The session/owner filter does not drop a staging candidate when
-a session is supplied because its ownership ended by premise. The policy reports
+unreachable objects. The candidate root and every descendant must be owned by
+the cleaner's effective uid. Process references are checked across observable
+process identities; unreadable live process evidence preserves the candidate.
+A dirty worktree, an untracked or ignored local file, a commit not contained by
+the authenticated repository, an unreachable object, a foreign-owned
+descendant, or any unknown fact preserves it. The explicit released marker
+keeps a staging candidate eligible when a session is supplied. The policy reports
 `covered` per root, `apply:"lease-gated"` when every configured root is covered,
 `apply:"refused"` when any root is not covered, and `apply:"ready"` when the
 root list is empty. storage-apply SESSION acquires the per-root writer lease
@@ -118,7 +123,7 @@ unknown, and unknown evidence preserves the candidate.
 ## Process references
 
 `StorageHost.process_refs` and `StorageHost.runtime_refs` inspect cwd, executable,
-descriptors and mapped files for every process of the current user. For a
+descriptors and mapped files for every observable process. For a
 directory candidate the scan compares each referenced path with the candidate
 directory, so a process working inside a child directory or holding a file
 there is found even though its inode differs from the parent. A descriptor
@@ -127,8 +132,9 @@ suffix is removed. The scan reports `unknown:` on an access error, a non-Linux
 host or a truncated scan, and the policy preserves the candidate.
 
 The scan covers active owner and keeper processes outside the cleanup process
-tree. Processes of other users cannot be inspected on a host with restricted
-`/proc` access; that answer is unknown and preserves the candidate.
+tree. An unreadable live process, including a foreign user's process when
+`/proc` permissions restrict inspection, makes the answer unknown and preserves
+the candidate.
 
 ## Preview and apply
 
@@ -152,7 +158,8 @@ so cleanup never proposes the lease file as a candidate.
 
 `storage-collect SESSION` runs the apply plan for a session with no non-exited
 execution and no pending input. Only scratch, build-output, export and
-log-evidence roots participate. A checkout root is excluded because the
+log-evidence roots participate. Staging roots require explicit `storage-apply`
+after ownership release. A checkout root is excluded because the
 session row still records its workspace; removing the current workspace needs
 an explicit `storage-preview` and `storage-apply` by an operator. The receive
 and direct-turn completion paths and the landing wrapper call the settled

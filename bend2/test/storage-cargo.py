@@ -624,6 +624,19 @@ CREATE TABLE log_generations(session TEXT,log TEXT,base TEXT,attempt TEXT);
         self.assertIn('error=95', answer, answer)
         self.assertEqual((candidate / 'keep' / 'file.txt').read_text(), 'keep\n')
 
+    @unittest.skipUnless(os.geteuid() == 0, 'foreign uid fixture requires ownership change')
+    def test_foreign_owned_descendant_preserves_the_candidate(self):
+        parent = self.root / 'parent'
+        candidate = parent / 'candidate'
+        child = candidate / 'nested' / 'tracked.txt'
+        child.parent.mkdir(parents=True)
+        child.write_text('owned by another uid\n')
+        os.chown(child, 65534, 65534)
+        answer, stderr = self.native_remove(candidate, parent)
+        self.assertTrue(answer.startswith(('refused', 'error:')), answer)
+        self.assertIn('preserves uid boundary', stderr)
+        self.assertEqual(child.read_text(), 'owned by another uid\n')
+
     def test_unknown_child_mount_identity_preserves_the_subtree(self):
         mounted = self.target / 'debug' / 'mount-unknown'
         mounted.mkdir()
@@ -671,9 +684,17 @@ CREATE TABLE log_generations(session TEXT,log TEXT,base TEXT,attempt TEXT);
         return upstream, staging, clone, remote
 
     def staging_apply(self, staging, source=None):
-        roots = 'staging-source=' + str(staging) + (('|' + str(source)) if source else '')
+        roots = 'staging-source-released=' + str(staging) + (('|' + str(source)) if source else '')
         env = dict(self.environment, BATON_STORAGE_ROOTS=roots)
         return self.call('apply', self.db, 'owner', environment=env)
+
+    def test_staging_source_requires_an_explicit_release_marker(self):
+        upstream, staging, clone, remote = self.staging_clone()
+        env = dict(self.environment,
+                   BATON_STORAGE_ROOTS='staging-source=' + str(staging) + '|' + str(upstream))
+        answer = self.call('apply', self.db, 'owner', environment=env)
+        self.assertIn('staging-source-release-required', answer)
+        self.assertTrue(clone.exists())
 
     def test_staging_source_clone_is_collected_when_published_and_clean(self):
         upstream, staging, clone, remote = self.staging_clone()
@@ -760,6 +781,25 @@ CREATE TABLE log_generations(session TEXT,log TEXT,base TEXT,attempt TEXT);
                        check=True, capture_output=True)
         subprocess.run(['git', '-C', str(clone), 'reset', '--hard', 'origin/main'],
                        check=True, capture_output=True)
+        answer = self.staging_apply(staging, upstream)
+        self.assertIn('staging-source-released', answer)
+        self.assertFalse(clone.exists())
+
+    def test_staging_source_local_tip_ancestor_of_new_remote_tip_is_collectable(self):
+        upstream, staging, clone, remote = self.staging_clone()
+        old = subprocess.check_output(['git', '-C', str(clone), 'rev-parse', 'HEAD'], text=True).strip()
+        (upstream / 'next.txt').write_text('published follow-up\n')
+        subprocess.run(['git', '-C', str(upstream), 'add', 'next.txt'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(upstream), 'commit', '-qm', 'published follow-up'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(upstream), 'push', '-q', 'origin', 'HEAD:refs/heads/main'],
+                       check=True, capture_output=True)
+        newest = subprocess.check_output(['git', '-C', str(remote), 'rev-parse', 'refs/heads/main'],
+                                         text=True).strip()
+        self.assertNotEqual(old, newest)
+        self.assertEqual(subprocess.check_output(
+            ['git', '-C', str(clone), 'rev-parse', 'HEAD'], text=True).strip(), old)
         answer = self.staging_apply(staging, upstream)
         self.assertIn('staging-source-released', answer)
         self.assertFalse(clone.exists())

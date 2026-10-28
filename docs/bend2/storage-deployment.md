@@ -98,12 +98,16 @@ Roots come from the environment. The deployment owner writes
 BATON_STORAGE_ROOTS=build-output=/path/to/generated-output|selection:/etc/acp-fframes-artifact/selection.json
 ```
 
-An ownership-ending staging root names the authenticated repository that must
-contain each candidate commit:
+An explicitly released staging root names the authenticated repository that
+must contain each candidate commit. The `staging-source-released` marker records
+the operator's ownership release decision:
 
 ```
-BATON_STORAGE_ROOTS=staging-source=/mnt/large/agent-scratch/acp390-install|<authenticated-repo>
+BATON_STORAGE_ROOTS=staging-source-released=/mnt/large/agent-scratch/acp390-install|<authenticated-repo>
 ```
+
+Use `staging-source` while ownership remains active. Its candidates stay
+protected with a release-required reason.
 
 `BATON_STORAGE_EXCLUSIVE_ROOTS` may be added for the same roots when the
 operator declares them exclusive to cleanup. Without the environment file no
