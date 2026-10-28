@@ -32,6 +32,8 @@ let delivery = null;
 let inputWitness = null;
 let nativeEvent = false;
 let claude = null;
+let rootHarness = 'claude-code';
+let relayThread = null;
 let claudeArgs = [];
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
@@ -46,6 +48,14 @@ for (let i = 2; i < process.argv.length; i++) {
   } else if (arg === '--session') {
     sessionId = process.argv[++i];
     if (sessionId === undefined) throw new Error('--session requires a session ID');
+  } else if (arg === '--root-harness') {
+    rootHarness = process.argv[++i];
+    if (!['claude-code', 'codex'].includes(rootHarness)) {
+      throw new Error('--root-harness must be claude-code or codex');
+    }
+  } else if (arg === '--thread') {
+    relayThread = process.argv[++i];
+    if (!relayThread) throw new Error('--thread requires the Codex root thread ID');
   } else if (arg === '--deliver') {
     delivery = { socket: process.argv[++i], message: process.argv[++i] };
     if (!delivery.socket || !delivery.message) throw new Error('--deliver requires a socket and committed message ID');
@@ -385,7 +395,8 @@ function coordInputRaw(input, ...args) {
       encoding: 'utf8', input, maxBuffer: Infinity,
       env: { ...process.env, BATON_SESSION: sessionId, BATON_DATABASE: dbPath,
         BATON_MCP_INPUT: channelReady && connectionCustody
-          ? JSON.stringify({ ...connectionCustody, ...(nativePrompt ? { prompt: nativePrompt } : {}), ready: true }) : '' },
+          ? JSON.stringify({ ...connectionCustody, ...(nativePrompt ? { prompt: nativePrompt } : {}),
+            ...(activeReadMessage ? { readMessage: activeReadMessage } : {}), ready: true }) : '' },
     });
   } catch (error) {
     const status = Number.isInteger(error.status) ? `\nexit code: ${error.status}` : '';
@@ -897,6 +908,7 @@ let nativePrompt = null;
 let inputNotice = null;
 let deliveryServer = null;
 let db = null;
+let activeReadMessage = null;
 
 function openDb() {
   if (db) return db;
@@ -910,7 +922,7 @@ function pendingConductorMessage(messageId = null) {
   if (!conn) return null;
   try {
     return conn.prepare(
-      `SELECT m.id, s.native
+      `SELECT m.id, m.sender, m.kind, m.body, s.native
        FROM messages m
        JOIN sessions s ON s.id = m.recipient
        WHERE s.id = ?
@@ -935,12 +947,20 @@ function notifyPending(messageId = null) {
   }
   const key = JSON.stringify([message.native, nativePrompt, message.id]);
   if (inputNotice?.key === key) return;
-  // The notice selects a stored message. Its complete read advances delivery.
+  const review = message.kind === 'completion-request'
+    ? `\nReview the work against ${message.sender}'s assignment and the supplied evidence. Confirm with completion-confirmed --to ${message.sender} when the assignment is satisfied. Otherwise use guide --to ${message.sender} --text TEXT to state what is missing and direct the remaining work.`
+    : '';
+  const content = `Message (${message.kind}) from ${message.sender} [id: ${message.id}]:\n${message.body}${review}`;
+  const readInstruction = rootHarness === 'codex'
+    ? 'Baton records the read after Codex accepts this complete input.'
+    : `Baton records the read when you call baton2_delivery ${JSON.stringify({ id: message.id })}.`;
+  const notice = `${content}\n\n${readInstruction}`;
   sendNotification('notifications/claude/channel', {
-    content: `Baton holds unread input. Read the complete stored message with baton2_delivery ${JSON.stringify({ id: message.id })}. Baton records the read and supplies the next unread input.`,
+    content: notice,
     meta: { recipient: sessionId, messageIds: JSON.stringify([message.id]) },
   });
-  inputNotice = { key, id: message.id, native: message.native };
+  inputNotice = { key, id: message.id, native: message.native, body: message.body,
+    content: notice, connection: connectionCustody?.connection };
 }
 
 function continuePending() {
@@ -1018,14 +1038,24 @@ async function startDelivery() {
   let existing;
   try { existing = selectedSession(); } catch {}
   if (hasParent(existing)) coord('connect', sessionId, existing.native || '', endpoint);
-  else coord('attach', sessionId, 'claude-code', existing?.native || '', endpoint);
+  else if (rootHarness === 'codex') {
+    if (existing?.harness !== 'codex' || !existing?.native) {
+      throw new Error('A Codex root relay requires a recorded Codex conversation before attachment.');
+    }
+    if (!relayThread || relayThread !== existing.native) {
+      throw new Error('The Codex relay thread must match the recorded root conversation.');
+    }
+    coord('connect', sessionId, existing.native, endpoint);
+  } else coord('attach', sessionId, 'claude-code', existing?.native || '', endpoint);
   // The operator session keeps its role: reports and questions from parentless
   // Conductors select their recipient by the operator role.
   if (recordedRole() !== 'operator') {
     coord('role', sessionId, hasParent(existing) ? 'associate-conductor' : 'principal-conductor');
   }
   connectionCustody = { database, coordinator, session: sessionId,
-    native: selectedSession()?.native, endpoint, socket: socketName, connection,
+    native: selectedSession()?.native, harness: selectedSession()?.harness,
+    ...(rootHarness === 'codex' ? { thread: relayThread } : {}),
+    endpoint, socket: socketName, connection,
     bridge: processIdentity(processFacts(process.pid)), client: processIdentity(processFacts(process.ppid)) };
 }
 
@@ -1363,7 +1393,27 @@ function handleToolCall(msg) {
         result = coord('inbox', args?.recipient ?? sessionId, ...messageReadOptions(args));
         break;
       case 'baton2_delivery':
-        result = coord('delivery', args.id);
+        if (rootHarness === 'codex' || !connectionCustody || !inputNotice
+            || inputNotice.id !== args.id || inputNotice.connection !== connectionCustody.connection
+            || inputNotice.native !== connectionCustody.native) {
+          throw new Error('The complete input was not returned by this active root channel.');
+        }
+        activeReadMessage = args.id;
+        try { result = coord('delivery', args.id); }
+        finally { activeReadMessage = null; }
+        break;
+      case 'baton2_root_delivery':
+        if (rootHarness !== 'codex' || !connectionCustody || !inputNotice
+            || args.id !== inputNotice.id || args.thread !== connectionCustody.thread
+            || args.thread !== connectionCustody.native || args.content !== inputNotice.content
+            || inputNotice.connection !== connectionCustody.connection
+            || inputNotice.native !== connectionCustody.native
+            || !pendingConductorMessage(args.id)) {
+          throw new Error('Codex read evidence does not match the accepted complete root notice and recorded thread.');
+        }
+        activeReadMessage = args.id;
+        try { result = coord('delivery', args.id); }
+        finally { activeReadMessage = null; }
         break;
       case 'baton2_input':
         result = coord('input', args.id);

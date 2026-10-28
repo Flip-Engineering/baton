@@ -760,7 +760,7 @@ database host. It resolves the database, the coordinator executable and
 `mcp-conductor.mjs` to absolute paths and refuses a path that does not exist:
 
 ```sh
-node bend2/scripts/root-channel-config.mjs /data/orchestra.db /opt/baton/bin/baton --session operator --ssh homelab --name baton-homelab
+node bend2/scripts/root-channel-config.mjs /data/orchestra.db /opt/baton/bin/baton --session operator --resume ROOT_SESSION --ssh homelab --name baton-homelab
 ```
 
 It writes the server entry to stdout and the launch command to stderr:
@@ -770,7 +770,7 @@ It writes the server entry to stdout and the launch command to stderr:
 ```
 
 ```sh
-claude --mcp-config FILE --dangerously-load-development-channels server:baton-homelab
+claude --resume ROOT_SESSION --mcp-config FILE --dangerously-load-development-channels server:baton-homelab
 ```
 
 Save the entry as `FILE` on the machine that runs Claude Code. `ssh homelab`
@@ -791,11 +791,15 @@ Baton notifications. Replace that entry with the conductor entry above.
 ### Unattached root error
 
 A root is a parentless session with the operator role, or one whose endpoint
-runs `mcp-conductor.mjs`. A root with owed input is unattached when
+runs `mcp-conductor.mjs`. A Claude Code root with owed input is unattached when
 its endpoint is not a conductor `--deliver` endpoint or when a connection to
 its delivery socket fails. Baton connects from the database directory and
-closes the connection after checking it. Each check uses the current session
-row, messages and socket connection result.
+closes the connection after checking it. A Codex root with a native
+conversation and a recorded managed receiver is checked by connecting a Codex
+app-server proxy through the receiver's recorded environment. An empty
+endpoint cannot establish a route to a conversation on another host. Baton
+checks recognized root notification routes for other harnesses. A generic
+argv endpoint produces an unattached-root error.
 
 `status`, `session` and `orchestra` print one line on stderr for each
 unattached root:
@@ -806,6 +810,12 @@ Baton error: root session operator has 7136 owed inputs and no attached channel:
 
 A message, report or question committed to an unattached root prints the same
 line on its sender's stderr and appends it to the database's `.root.log`.
+
+An input that Baton cannot route to a non-Codex session is reported to that
+session's coordinator. The report names the input, delivery cause, owed input
+count and endpoint repair command. Repeated delivery of the oldest unread
+input keeps the same report; reading that input lets a later failed delivery
+produce a new report.
 
 ## OMP Associate Conductors and Players
 
