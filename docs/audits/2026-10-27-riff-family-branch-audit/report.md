@@ -353,3 +353,43 @@ GitHub runners; no flip-platform code is in the live path, exactly as main's REA
   to flip-client main `870abd8d`; retiring the repository would orphan records the deployed
   migration path references, so retirement should preserve `config/`, `docs/`, and the runner
   authority manifests even if the code is never activated.
+
+## Addendum 5: root deletions confirmed, patch-id uniqueness verdicts (2026-10-27 evening)
+
+### Root's 91 deletions cross-checked
+
+Root's atomic push (`before=527 after=436`, `main` unchanged at `7c0d858b`) deleted exactly the
+91 candidates in `deletion-candidates-91.tsv` — set equality verified both directions; none of
+the deleted heads backed an open PR. Root proofs:
+`/var/tmp/flip-client-root-exact-tree-proof-20261027.json` and
+`/var/tmp/flip-client-root-deleted-exact-tree-refs-20261027.json`.
+
+### Closed-set correction
+
+Live per-PR re-verification (`fclient-closed-livecheck.tsv`) corrected the page-based dataset:
+10 of the 51 "closed-unmerged" heads are heads of MERGED pull requests (#1022, #1020, #1021,
+#1023, #994, #1079, #1106, #1105, #1116, #1100), and PR #1116's merge commit is current main
+`7c0d858b` itself. The remaining 41 all have every changed file byte-equal to main. Net: all 51
+closed-set heads are merged-residue or landed; PR #1079's behavior (remote Intel x64 iOS-simulator
+runner + private canary) is fully present in main and since extended by
+`ios-simulator-hosted-canary.yml` and `repair-ios-simulator-runner.yml`; no repair route needed.
+
+### Backup patch-id uniqueness (144 refs)
+
+Per-commit stable patch-ids for each unresolved backup (`backup-pid-verdicts.tsv`: branch,
+commits-ahead, patch-equivalent-in-main, unique-commit subjects) against main's 1098 patch-ids
+since 2026-06-01:
+
+- 8 refs: every commit patch-equivalent in main — deletable as fully landed.
+- 70 refs: no commit matches main — genuinely unique states.
+- 66 refs: partial — the unique-commit subjects in column 4 are the conductor-relevant remainder.
+
+For the 12 mirror-live backups, containment against the live mirror's own patch-id set
+(`mirror-pids-flat.tsv`): `agent/macos-desktop-release-v1-20260831` is fully contained by its
+mirror (0 remaining unique commits) and `feat/735-desktop-updater-install-evidence` retains 1
+unique commit; the other 10 retain 1-18 unique commits each against both main and their mirror.
+Caveat: patch-id equivalence is textual; a rebased semantically-equal commit counts as unique.
+
+These verdicts drive the remaining disposition: the 8 all-landed refs are ready candidates; the
+70 all-unique and 66 partial refs need a conductor decision per unique commit subject, all
+enumerated in the published tables.
