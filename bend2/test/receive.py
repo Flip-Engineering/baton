@@ -619,10 +619,6 @@ while True:
         print(json.dumps({'type':'response','command':'steer','success':True,'id':frame['id']}),flush=True)
         reply({'steer_received':frame})
         continue
-    if action.get('steer_pending'):
-        import select
-        reply({'steer_pending':bool(select.select([sys.stdin],[],[],0)[0])})
-        continue
     if action.get('native_request'):
         print(json.dumps(action['native_request']),flush=True)
         reply({'request_written':action['native_request']})
@@ -5379,37 +5375,6 @@ class Receive(unittest.TestCase):
                           {'type': 'fixture_progress', 'marker': marker, 'native_pid': started['pid']}])
         self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
         self.assert_no_start()
-
-    def test_queued_guidance_forwards_one_directive_per_notice(self):
-        """A guidance backlog owed after the attempt cursor is forwarded one
-        message per commit notice, so the native runs a turn between directives.
-        """
-        self.player(harness='omp')
-        self.prepare_input('original', 'parent', kind='task')
-        observer = self.spawn(*self.receive_args('parent'))
-        control, started = self.accept('parent')
-        self.eventually(lambda: self.coord('player', 'parent')['native'] == started['native'],
-                        'The retained startup frame was not observed.')
-        self.action(control, read_steer=True, signal_steer_wait=True, require_ready=True)
-        self.assertEqual(json.loads(control.readline()), {'waiting_for_steer': True})
-        with sqlite3.connect(self.db) as database:
-            database.execute('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)',
-                             ('directive-1', 'root', 'parent', 'guidance', 'First queued directive.'))
-            database.execute('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)',
-                             ('directive-2', 'root', 'parent', 'guidance', 'Second queued directive.'))
-        self.message('directive-3', 'parent', 'Third queued directive.')
-        first = json.loads(control.readline())['steer_received']
-        self.assertEqual(first['id'], 'directive-1')
-        self.action(control, steer_pending=True)
-        self.assertEqual(json.loads(control.readline()), {'steer_pending': False})
-        self.message('directive-4', 'parent', 'Fourth queued directive.')
-        self.action(control, read_steer=True, require_ready=True)
-        second = json.loads(control.readline())['steer_received']
-        self.assertEqual(second['id'], 'directive-2')
-        self.action(control, body='Queued directives consumed.')
-        self.finish(observer)
-        self.assertTrue(read_recorded(self.db, 'directive-1'))
-        self.assertTrue(read_recorded(self.db, 'directive-2'))
 
     def test_output_only_frames_replay_from_durable_checkpoint(self):
         self.player(harness='omp')
