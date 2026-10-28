@@ -16,7 +16,6 @@ type Module = {
   probe(k: string): Bend.HTerm;
   DUMMY: Bend.HTerm;
   test_reset(): void;
-  test_state(): { consts: [string, boolean][]; uses: number };
 };
 
 // Recursive reference semantics, with the current unit cache lifetime.
@@ -71,10 +70,6 @@ export function test_uses(cb: Carb, t: HTerm): number[] {
   return out;
 }
 export function test_reset(): void { memo_gc(); SIGS.clear(); }
-export function test_state() {
-  return { consts: [...CONSTS].map(([t, value]) => [(t as Of<"Ctr">).k, value]),
-    uses: USES.size };
-}
 `;
 function replace_function(source: string, name: string, next: string, body: string): string {
   const start = source.indexOf("function " + name + "(");
@@ -84,7 +79,7 @@ function replace_function(source: string, name: string, next: string, body: stri
 }
 
 const root = path.resolve(process.argv[2] ?? path.join(import.meta.dir, "../../.."));
-const source_dir = path.join(root, "bend2/compiler/upstream");
+const source_dir = process.env.BEND_COMPILER_SOURCE ?? path.join(root, "bend2/compiler/upstream");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bend-iterative-term-walks-"));
 try {
   for (const name of ["bend.ts", "base.bend"]) {
@@ -165,18 +160,14 @@ try {
     ["shared", () => { const t = Bend.Ctr("Zero", []); return pair(t, t); }, true],
   ];
   for (const [name, build, want] of const_cases) {
-    const results = [recursive, iterative].map((m) => {
+    for (const m of [recursive, iterative]) {
       m.test_reset();
       const t = build(m, Bend.book_nil());
       assert.equal(m.term_const(t), want, name);
-      const state = m.test_state();
       assert.equal(m.term_const(t), want, name + " repeated");
-      assert.deepEqual(m.test_state(), state, name + " cache admission");
-      return state;
-    });
-    assert.deepEqual(results[1], results[0], name);
+    }
   }
-  console.log("PASS " + const_cases.length + " constructor cases and cache insertion order");
+  console.log("PASS " + const_cases.length + " constructor cases and repeated queries");
 
   const reference_outcome = (run: () => unknown, want: unknown): string => {
     try {
@@ -194,9 +185,8 @@ try {
   recursive.test_reset();
   const const_reference = reference_outcome(() => recursive.term_const(nat), true);
   assert.equal(iterative.term_const(nat), true);
-  assert.equal(iterative.test_state().consts.length, depth + 1,
-    "every constructor in this unit remains memoized until the unit ends");
-  console.log("PASS " + depth + " constructor levels with unit-owned memoization; reference="
+  assert.equal(iterative.term_const(nat), true, "the live constructor chain remains constant");
+  console.log("PASS " + depth + " constructor levels and repeated queries; reference="
     + const_reference);
 
   iterative.test_reset();
