@@ -170,8 +170,7 @@ BATON2_EXE="$root/.scratch/bend2/dsh-player-test" "$PYTHON3" bend2/test/dsh-play
 # The canary and the hook test use the official dsh when DSH_CLI names it or dsh is on PATH.
 BATON2_EXE="$root/.scratch/bend2/dsh-player-test" "$PYTHON3" bend2/test/dsh-canary.py
 BATON2_EXE="$root/.scratch/bend2/dsh-player-test" "$PYTHON3" bend2/test/dsh-hooks.py
-sh bend2/scripts/build-native.sh bend2/test/stop-hook-entry.bend .scratch/bend2/stop-hook-entry-test
-BATON2_STOP_HOOK_FIXTURE="$root/.scratch/bend2/stop-hook-entry-test" "$PYTHON3" bend2/test/stop-hook-entry.py
+BATON2_STOP_HOOK_FIXTURE="$root/.scratch/bend2/stop-hook-entry" "$PYTHON3" bend2/test/stop-hook-entry.py
 sh bend2/scripts/build-native.sh bend2/test/dsh-retained.bend .scratch/bend2/dsh-retained-test
 BATON2_EXE="$root/.scratch/bend2/dsh-retained-test" "$PYTHON3" bend2/test/dsh-retained.py
 "$PYTHON3" bend2/test/dsh-worker.py
