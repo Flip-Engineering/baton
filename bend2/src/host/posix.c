@@ -100,14 +100,10 @@ static int posix_self_path(char **out) {
   *out = resolved;
   return 0;
 #else
-  char buffer[PATH_MAX];
-  ssize_t length = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
-  if (length < 0) return errno;
-  buffer[length] = 0;
-  char *resolved = realpath(buffer, NULL);
-  if (!resolved) return errno;
-  *out = resolved;
-  return 0;
+  /* Keep the procfs magic link so a caller can re-execute this loaded image
+     after its installed pathname has been replaced or unlinked. */
+  *out = strdup("/proc/self/exe");
+  return *out ? 0 : ENOMEM;
 #endif
 }
 
