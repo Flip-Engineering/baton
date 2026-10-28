@@ -63,6 +63,44 @@ function installation_api(github, installed, tamper = {}, permissions = model.PE
       return answer('lookup', { id: found.id, app_id: github.appId, app_slug: github.slug,
         account: { login: found.owner }, suspended_at: null, permissions: { ...(found.permissions ?? permissions) } });
     }
+    if (/^\/app\/installations\?per_page=100&page=\d+$/.test(api_path)) {
+      const page = Number(api_path.split('page=')[1]);
+      return installed.slice((page - 1) * 100, page * 100).map(found => ({
+        id: found.id, app_id: github.appId, app_slug: github.slug,
+        account: { login: found.owner }, suspended_at: null,
+        permissions: { ...(found.permissions ?? permissions) }
+      }));
+    }
+    const repository = /^\/repos\/([^/]+)\/([^/]+)$/.exec(api_path);
+    if (repository) {
+      const full_name = repository[1] + '/' + repository[2];
+      const found = installed.find(entry => (entry.repositories ?? [])
+        .some(name => model.same_repository(name, full_name)));
+      if (!found) throw new model.Missing(`GitHub API GET ${api_path} returned HTTP 404: Not Found.`);
+      const canonical = found.repositories.find(name => model.same_repository(name, full_name));
+      const [owner, name] = canonical.split('/');
+      return answer('repository', { id: found.repository_ids?.[canonical] ?? found.id + 10000,
+        full_name: canonical, owner: { login: owner }, name });
+    }
+    const canonical = /^\/repositories\/([0-9]+)$/.exec(api_path);
+    if (canonical) {
+      const found = installed.find(entry => Object.values(entry.repository_ids ?? {})
+        .some(id => String(id) === canonical[1]));
+      const full_name = found && Object.entries(found.repository_ids ?? {})
+        .find(([, id]) => String(id) === canonical[1])?.[0];
+      if (!found || !full_name) throw new model.Missing(`GitHub API GET ${api_path} returned HTTP 404: Not Found.`);
+      return answer('repository', { id: Number(canonical[1]), full_name,
+        owner: { login: full_name.split('/')[0] } });
+    }
+    const canonical_installation = /^\/repositories\/([0-9]+)\/installation$/.exec(api_path);
+    if (canonical_installation) {
+      const found = installed.find(entry => Object.values(entry.repository_ids ?? {})
+        .some(id => String(id) === canonical_installation[1]));
+      if (!found) throw new model.Missing(`GitHub API GET ${api_path} returned HTTP 404: Not Found.`);
+      return answer('lookup', { id: found.id, app_id: github.appId, app_slug: github.slug,
+        account: { login: found.owner }, suspended_at: null,
+        permissions: { ...(found.permissions ?? permissions) } });
+    }
     const access = /^\/app\/installations\/([0-9]+)\/access_tokens$/.exec(api_path);
     assert.ok(access, api_path);
     const owner = installed.find(entry => String(entry.id) === access[1]).owner;
@@ -224,7 +262,9 @@ test('an uninstalled repository refuses and names the repository, App and checke
     error => error instanceof model.Refusal && error.message.includes('flip-engineer/flip')
       && error.message.includes('fixture-series-gpt') && error.message.includes('account flip-engineer')
       && error.message.includes('HTTP 404'));
-  assert.ok(!fixture.calls.some(call => call.api_path.includes('/access_tokens')));
+  assert.ok(fixture.calls.some(call => call.api_path === '/app/installations?per_page=100&page=1'));
+  assert.ok(fixture.calls.some(call => call.api_path.endsWith('/access_tokens')));
+  assert.ok(fixture.calls.some(call => call.api_path === '/repos/flip-engineer/flip'));
 });
 
 test('a failed token request for an installed repository names the repository and its cause', async () => {
@@ -258,7 +298,8 @@ test('check accepts a repository in the selected App installation and refuses a 
       && error.message.includes('Flip-Engineering/flip') && error.message.includes('fixture-series-gpt')
       && error.message.includes('account Flip-Engineering') && error.message.includes('HTTP 404'));
   assert.deepEqual(fixture.calls.map(call => call.api_path), ['/app', '/repos/flip-engineer/flip/installation',
-    '/app', '/repos/Flip-Engineering/flip/installation']);
+    '/app', '/repos/Flip-Engineering/flip/installation', '/app/installations?per_page=100&page=1',
+    '/app/installations/5100/access_tokens', '/repos/Flip-Engineering/flip']);
 });
 
 test('Git credentials accept granted workflow and actions permissions and keep the token request subset', async () => {
@@ -570,7 +611,8 @@ test('the configured askpass executable runs and denies without a credential rou
   assert.equal(result.stdout, '');
   assert.match(result.stderr, /unable to read askpass response from ['"]?false['"]?|unable to get password from user/);
   assert.doesNotMatch(result.stderr, /cannot exec/);
-  assert.doesNotMatch(result.stderr, /Series Git/);
+  assert.match(result.stderr, /Series Git configuration, signing or response parsing failed/);
+  assert.doesNotMatch(result.stderr, /cannot exec|password=|fixture-token/);
 });
 
 test('an inherited literal multi-word askpass cannot exec and is replaced by controlled denial', async () => {
@@ -617,7 +659,7 @@ test('an inherited literal multi-word askpass cannot exec and is replaced by con
   assert.equal(scoped.stdout, '');
   assert.match(scoped.stderr, /unable to read askpass response from ['"]?false['"]?|unable to get password from user/);
   assert.doesNotMatch(scoped.stderr, /cannot exec/);
-  assert.doesNotMatch(scoped.stderr, /deny-askpass|Series Git/);
+  assert.doesNotMatch(scoped.stderr, /deny-askpass|cannot exec|password=|fixture-token/);
   assert.equal(environment.HOME, credentialHome);
   assert.equal(environment.GIT_CONFIG_GLOBAL, '/dev/null');
   assert.equal(environment.GIT_CONFIG_NOSYSTEM, '1');
@@ -758,11 +800,16 @@ test('recipient re-selection removes sender authentication and preserves noncred
     assert.equal(selected['credential.helper'], '');
     assert.equal(selected['http.extraHeader'], '');
     assert.ok(!pairs.some(([, value]) => value.includes('sender')));
-    for (const suffix of ['', '.git']) {
-      const command = model.shell_split(selected[`credential.https://github.com/${REPOSITORY}${suffix}.helper`].slice(1));
-      assert.deepEqual(command, [process.execPath, SOURCE, 'helper', '--registry', registry,
-        '--series-key', key, '--repository', REPOSITORY]);
-    }
+    const command = model.shell_split(selected['credential.https://github.com.helper'].slice(1));
+    assert.deepEqual(command, [process.execPath, SOURCE, 'helper', '--registry', registry,
+      '--series-key', key, '--repository', REPOSITORY]);
+    const request = `protocol=https\nhost=github.com\npath=Flip-Developers/automation.git\n\n`;
+    const routed = model.parse(command.slice(2).concat('get'));
+    assert.equal(routed.repository, REPOSITORY);
+    let requested;
+    await model.helper({ ...routed, operation: 'get' }, Readable.from([request]), { write() {} },
+      async (_home, _github, repository) => { requested = repository; return 'request-token'; });
+    assert.equal(requested, 'Flip-Developers/automation');
     assert.equal(environment.GIT_ASKPASS, 'false');
   }
   for (const key of ['gpt-6-astra', 'fixture/gpt-next-exact']) {
