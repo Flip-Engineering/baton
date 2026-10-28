@@ -68,7 +68,8 @@ static void br_http_call(IoWork *w) {
   if (!call->error) call->error = curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L) != CURLE_OK;
   if (!call->error) call->error = curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "") != CURLE_OK;
   if (!call->error) call->error = curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, br_http_write) != CURLE_OK;
-  if (!call->error) call->error = curl_easy_setopt(curl, CURLOPT_WRITEDATA, call) != CURLE_OK;
+  /* curl_easy_setopt is variadic and libcurl reads CURLOPT_WRITEDATA as void *. */
+  if (!call->error) call->error = curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)call) != CURLE_OK;
   if (!call->error) call->error = curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, call->detail) != CURLE_OK;
   if (!call->error && call->body_length)
     call->error = curl_easy_setopt(curl, CURLOPT_POSTFIELDS, call->body) != CURLE_OK ||
