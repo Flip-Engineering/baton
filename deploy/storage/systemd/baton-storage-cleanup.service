@@ -1,0 +1,36 @@
+# Deployment template for the qualified immutable storage-clean helper. Root
+# deploys it from a release that contains libexec/baton2/storage-clean (staged
+# by bend2/scripts/stage-storage-clean.py).
+#
+# Run under the database owner with the standard Baton environment. Do not add
+# credentials to this unit.
+#
+# The helper prints one JSON object to stdout:
+#   {"results":[{"session":SESSION,"result":<collect response>}]}
+# It enumerates session IDs from the database and runs the settled-session
+# collection for each one through the product StoragePolicy implementation.
+# The configured roots come from BATON_STORAGE_ROOTS in the environment file.
+# A root is admitted only when the database references content under it, it is
+# canonical and no other writer holds its lease; unowned source is refused.
+[Unit]
+Description=Baton storage cleanup (issue #912, #1049)
+Documentation=file:/path/to/repo/docs/bend2/storage-deployment.md
+
+[Service]
+Type=oneshot
+User=batonci
+Group=batonci
+# Optional: without this file no roots are configured and the pass removes
+# nothing. The file supplies BATON_STORAGE_ROOTS and, when the operator
+# declares it, BATON_STORAGE_EXCLUSIVE_ROOTS.
+EnvironmentFile=-/etc/baton/storage-roots.env
+ExecStart=/path/to/qualified-release/libexec/baton2/storage-clean /path/to/state.db storage-sweep
+StandardOutput=journal
+# Soft memory throttle only: the pass is throttled above this mark and keeps
+# running, with swap available. No hard memory limit and no forced zero swap;
+# a settled large scan is never cancelled for its size. A soft limit does not
+# detect a leak.
+MemoryHigh=2G
+TimeoutStartSec=infinity
+Nice=10
+IOSchedulingClass=idle
