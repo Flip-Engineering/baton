@@ -29,7 +29,7 @@ here=$(dirname "$0")
 input=$(cat)
 event=$(printf '%s' "$input" | sed -n 's/.*"hook_event_name":"\\([A-Za-z]*\\)".*/\\1/p')
 printf '%s %s\\n' "$event" "$*" >> "$here/events"
-[ -e "$here/exit-$event" ] && exit 1
+[ -e "$here/exit-$event" ] && { printf 'retained entry failure\n' >&2; exit 7; }
 if [ -e "$here/once-$event" ] && [ ! -e "$here/done-$event" ]; then
   touch "$here/done-$event"
   cat "$here/once-$event"
@@ -60,6 +60,9 @@ class Entry:
 
     def fail(self, event):
         (self.root / ('exit-' + event)).write_text('')
+
+    def invalid(self, event):
+        (self.root / ('answer-' + event)).write_text('not-json')
 
     def events(self):
         path = self.root / 'events'
@@ -160,11 +163,44 @@ class HookPlugin(unittest.TestCase):
         self.assertEqual(self.stopping(), [])
         self.assertEqual(self.entry.events(), ['PostToolUse', 'Stop'])
 
-    def test_failed_entry_lets_the_turn_close(self):
+    def test_failed_entry_blocks_turn_closure_with_the_process_cause(self):
         self.entry.fail('PostToolUse')
         self.entry.fail('Stop')
         self.entry.answer('Stop', BLOCK)
-        self.assertEqual(self.stopping(), [])
+        out = self.drive('''
+          const handlers = {};
+          apply({ on: (name, handler) => { handlers[name] = handler; } });
+          try {
+            await handlers['agent/turn-stopping']({ agent: { steer() {} } });
+            console.log(JSON.stringify({ returned: true }));
+          } catch (error) { console.log(JSON.stringify({ returned: false, message: error.message })); }
+        ''')
+        result = json.loads(out)
+        self.assertFalse(result['returned'])
+        self.assertIn('exited with code 7', result['message'])
+        self.assertIn('retained entry failure', result['message'])
+
+    def test_missing_entry_cannot_pass_the_completion_gate(self):
+        env = dict(self.env, BATON_STOP_HOOK=str(pathlib.Path(self.temp.name) / 'missing-entry'))
+        out = node('runHook', '''
+          try { await runHook('Stop'); console.log(JSON.stringify({ returned: true })); }
+          catch (error) { console.log(JSON.stringify({ returned: false, message: error.message })); }
+        ''', env=env)
+        result = json.loads(out)
+        self.assertFalse(result['returned'])
+        self.assertIn('could not run', result['message'])
+        self.assertIn('missing-entry', result['message'])
+
+    def test_invalid_entry_output_cannot_pass_the_completion_gate(self):
+        self.entry.invalid('Stop')
+        out = self.drive('''
+          try { await gateReason(); console.log(JSON.stringify({ returned: true })); }
+          catch (error) { console.log(JSON.stringify({ returned: false, message: error.message })); }
+        ''', names='gateReason')
+        result = json.loads(out)
+        self.assertFalse(result['returned'])
+        self.assertIn('returned invalid JSON', result['message'])
+        self.assertIn('not-json', result['message'])
 
     def test_plugin_is_inert_without_the_launch_environment(self):
         self.env = {}

@@ -23,23 +23,45 @@ function configured(environment) {
 }
 
 // Runs the entry for one hook event and returns its parsed JSON answer, or
-// null when the entry prints nothing or fails. A failed entry lets the turn
-// continue; the turn-end continuation and the coordinator report still cover
-// owed input.
+// null when the entry prints nothing. Execution and protocol errors reject so
+// DSH cannot treat a failed completion check as permission to end the turn.
 export function runHook(event, environment = process.env) {
-  return new Promise(resolve => {
+  return new Promise((resolve, reject) => {
     let child;
     try {
-      child = spawn(environment.BATON_STOP_HOOK, ['--stop-hook'], { env: environment, stdio: ['pipe', 'pipe', 'ignore'] });
-    } catch { resolve(null); return; }
+      child = spawn(environment.BATON_STOP_HOOK, ['--stop-hook'], { env: environment, stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (error) {
+      reject(new Error(`Baton ${event} hook could not start ${environment.BATON_STOP_HOOK}: ${error.message}`, { cause: error }));
+      return;
+    }
     let output = '';
+    let errorOutput = '';
+    let settled = false;
+    const fail = error => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', chunk => { output += chunk; });
-    child.on('error', () => resolve(null));
-    child.on('close', () => {
-      try { resolve(output.trim() ? JSON.parse(output) : null); } catch { resolve(null); }
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', chunk => { errorOutput += chunk; });
+    child.on('error', error => fail(new Error(`Baton ${event} hook could not run ${environment.BATON_STOP_HOOK}: ${error.message}`, { cause: error })));
+    child.on('close', (code, signal) => {
+      if (settled) return;
+      if (code !== 0) {
+        fail(new Error(`Baton ${event} hook ${environment.BATON_STOP_HOOK} exited with code ${code}${signal ? ` (${signal})` : ''}; stderr: ${errorOutput}`));
+        return;
+      }
+      try {
+        settled = true;
+        resolve(output.trim() ? JSON.parse(output) : null);
+      } catch (error) {
+        settled = true;
+        reject(new Error(`Baton ${event} hook ${environment.BATON_STOP_HOOK} returned invalid JSON: ${error.message}; stdout: ${output}; stderr: ${errorOutput}`, { cause: error }));
+      }
     });
-    child.stdin.on('error', () => {});
+    child.stdin.on('error', error => fail(new Error(`Baton ${event} hook input failed: ${error.message}`, { cause: error })));
     child.stdin.end(JSON.stringify({ hook_event_name: event }));
   });
 }
