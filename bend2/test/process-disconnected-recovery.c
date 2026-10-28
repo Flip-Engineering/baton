@@ -85,10 +85,9 @@ static int run_exited(const char *directory) {
   REQUIRE(keeper.exited && WIFEXITED(keeper.status) && WEXITSTATUS(keeper.status)==17);
   br_disconnected(&keeper);
   char marker[PATH_MAX]; snprintf(marker,sizeof(marker),"%s/recovery-started",directory);
-  REQUIRE(wait_recovery(&keeper,wake[0],marker)==0);
-  br_disconnected(&keeper);
   struct timespec delay={.tv_sec=0,.tv_nsec=200000000};
   nanosleep(&delay,NULL);
+  REQUIRE(access(marker,F_OK)!=0 && errno==ENOENT);
   char status_path[PATH_MAX]; snprintf(status_path,sizeof(status_path),"%s/status",directory);
   FILE *file=fopen(status_path,"rb"); REQUIRE(file!=NULL);
   char bytes[16]={0}; size_t count=fread(bytes,1,sizeof(bytes),file);
@@ -215,6 +214,6 @@ int main(void) {
   REQUIRE(run_unknown_status_guards(directory)==0);
   unlink(marker);unlink(status_path);
   rmdir(directory);
-  puts("{\"liveDisconnectedRecoveredOnce\":true,\"exitedDisconnectRecoveredOnceNoRetry\":true,\"terminalStatusPreserved\":true,\"failedStatusWriteRetainedAndRetried\":true,\"unknownWaitStatusNeverReportedOrPersisted\":true,\"unknownStatusReleaseAckAndReconcileRejected\":true}");
+  puts("{\"liveDisconnectedRecoveredOnce\":true,\"exitedDisconnectStartsNoRecovery\":true,\"terminalStatusPreserved\":true,\"failedStatusWriteRetainedAndRetried\":true,\"unknownWaitStatusNeverReportedOrPersisted\":true,\"unknownStatusReleaseAckAndReconcileRejected\":true}");
   return 0;
 }

@@ -314,7 +314,7 @@ class RetainedControl(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {
             'liveDisconnectedRecoveredOnce': True,
-            'exitedDisconnectRecoveredOnceNoRetry': True,
+            'exitedDisconnectStartsNoRecovery': True,
             'terminalStatusPreserved': True,
             'failedStatusWriteRetainedAndRetried': True,
             'unknownWaitStatusNeverReportedOrPersisted': True,
