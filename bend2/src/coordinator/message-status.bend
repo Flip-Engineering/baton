@@ -84,12 +84,25 @@ def forwarded_read_sql(+session: String, +attempt: String, +native: String, iden
   ++ " ON CONFLICT(attempt,identity,message) DO NOTHING;"
   ++ "DELETE FROM wake_claims WHERE session=" ++ q(session) ++ " AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.recipient=" ++ q(session) ++ " AND " ++ owed_sql("m") ++ ");COMMIT;"
 
-# Turn-start input carries complete bodies for task, task-assignment and
-# completion-confirmed messages. DSH sessions receive complete bodies for all
-# owed messages. Complete prompts record read events through
-# prompt_record_sql. Other message kinds carry a pointer to the stored body.
+# The instruction a conductor receives with a completion request. Each
+# argument is an SQL expression for the message row's kind and sender.
+def review_instruction_sql(+kind: String, +sender: String) -> String:
+  "CASE WHEN " ++ kind ++ "='completion-request' THEN char(10) || 'Review the work against ' || " ++ sender ++ " || char(39) || 's assignment and the supplied evidence. Confirm with completion-confirmed --to ' || " ++ sender ++ " || ' when the assignment is satisfied. Otherwise use guide --to ' || " ++ sender ++ " || ' --text TEXT to state what is missing and direct the remaining work.' ELSE '' END"
+
+# One complete message as delivered into a native conversation: the stored
+# header and complete body, then the review instruction for a completion
+# request. Each argument is an SQL expression. Read recording matches the
+# header and body, so the instruction follows them.
+def complete_message_sql(+id: String, +kind: String, +sender: String, +body: String) -> String:
+  "'Message (' || " ++ kind ++ " || ') from ' || " ++ sender ++ " || ' [id: ' || " ++ id ++ " || ']:' || char(10) || " ++ body ++ " || " ++ review_instruction_sql(kind,sender)
+
+# Turn-start input carries complete bodies for task, task-assignment,
+# completion-request and completion-confirmed messages. DSH sessions receive
+# complete bodies for all owed messages. Complete prompts record read events
+# through prompt_record_sql. Other message kinds carry a pointer to the stored
+# body.
 def prompt_selection_sql(+session: String, +cursor: String) -> String:
-  "SELECT json_object('ids',json_group_array(id),'text',coalesce(group_concat(input,char(10)||char(10)),'')) FROM (SELECT id,CASE WHEN kind IN ('task','task-assignment','completion-confirmed') OR EXISTS(SELECT 1 FROM sessions prompt_session WHERE prompt_session.id=" ++ q(session) ++ " AND prompt_session.harness='dsh') THEN 'Message (' || kind || ') from ' || sender || ' [id: ' || id || ']:' || char(10) || body ELSE 'Message (' || kind || ') from ' || sender || ' [id: ' || id || '] retained ' || CAST(length(CAST(body AS BLOB)) AS TEXT) || ' bytes; read the complete body with baton read ' || id || '.' END AS input FROM messages WHERE recipient=" ++ q(session) ++ " AND " ++ owed_sql("messages") ++ " AND seq<=CAST(" ++ q(cursor) ++ " AS INTEGER) ORDER BY seq);"
+  "SELECT json_object('ids',json_group_array(id),'text',coalesce(group_concat(input,char(10)||char(10)),'')) FROM (SELECT id,CASE WHEN kind IN ('task','task-assignment','completion-request','completion-confirmed') OR EXISTS(SELECT 1 FROM sessions prompt_session WHERE prompt_session.id=" ++ q(session) ++ " AND prompt_session.harness='dsh') THEN " ++ complete_message_sql("id","kind","sender","body") ++ " ELSE 'Message (' || kind || ') from ' || sender || ' [id: ' || id || '] retained ' || CAST(length(CAST(body AS BLOB)) AS TEXT) || ' bytes; read the complete body with baton read ' || id || '.' END AS input FROM messages WHERE recipient=" ++ q(session) ++ " AND " ++ owed_sql("messages") ++ " AND seq<=CAST(" ++ q(cursor) ++ " AS INTEGER) ORDER BY seq);"
 
 # The admitted complete prompt supplies the exact stored header and body.
 def prompt_record_sql(+session: String, +attempt: String, +native: String, identity: String, +input: String) -> String:
