@@ -163,7 +163,7 @@ sh bend2/scripts/build-native.sh bend2/test/quota-exhaustion-reset.bend .scratch
 rm -f .scratch/bend2/quota-exhaustion-reset.db
 .scratch/bend2/quota-exhaustion-reset-test .scratch/bend2/quota-exhaustion-reset.db
 sh bend2/scripts/build-native.sh bend2/test/stop-dsh.bend .scratch/bend2/stop-dsh-test
-BATON2_EXE="$root/.scratch/bend2/stop-dsh-test" "$PYTHON3" bend2/test/stop-dsh.py
+BATON2_STOP_DSH_FIXTURE="$root/.scratch/bend2/stop-dsh-test" "$PYTHON3" bend2/test/stop-dsh.py
 BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
 sh bend2/scripts/build-native.sh bend2/test/omp-home-preflight.bend .scratch/bend2/omp-home-preflight-test
 BATON2_EXE="$root/.scratch/bend2/omp-home-preflight-test" "$PYTHON3" bend2/test/omp-home-preflight.py

@@ -6,21 +6,30 @@ delivery, DSH native custody, reconciliation, or process termination.
 """
 import os
 import pathlib
+import sqlite3
 import subprocess
 import tempfile
 import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-EXE = pathlib.Path(os.environ.get('BATON2_EXE', ROOT / '.scratch/bend2/stop-dsh-test'))
+EXE = pathlib.Path(os.environ.get('BATON2_STOP_DSH_FIXTURE', ROOT / '.scratch/bend2/stop-dsh-test'))
 
 
 class StopDsh(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not EXE.is_file() and 'BATON2_STOP_DSH_FIXTURE' not in os.environ:
+            subprocess.run(['sh', 'bend2/scripts/build-native.sh',
+                            'bend2/test/stop-dsh.bend', str(EXE)],
+                           cwd=ROOT, check=True)
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory(prefix='stop-dsh-')
         self.addCleanup(directory.cleanup)
         self.database = str(pathlib.Path(directory.name) / 'state.db')
-        self.owner_witness = None
+        with sqlite3.connect(self.database):
+            pass
         self.owner = subprocess.Popen(
             [str(EXE), '--instance-owner', self.database],
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
@@ -34,7 +43,6 @@ class StopDsh(unittest.TestCase):
                 [str(EXE), '--instance-witness', self.database],
                 text=True, capture_output=True)
             if witness.returncode == 0 and witness.stdout.strip():
-                self.owner_witness = witness.stdout.strip()
                 break
 
     def shutdown_owner(self):

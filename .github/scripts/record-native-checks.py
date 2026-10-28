@@ -16,7 +16,7 @@ SELECTED = (
     'agent-actions.py', 'agent-input.py', 'task-start.py', 'mcp-command.py',
     'mcp-contract.py', 'mcp-root.py', 'stop-hook-entry.py',
     'control.py', 'control-identity.py', 'configure.py', 'account-credits.py',
-    'omp-completion-extension.py', 'package-licenses.py',
+    'omp-completion-extension.py', 'package-licenses.py', 'stop.py', 'stop-dsh.py',
 )
 
 

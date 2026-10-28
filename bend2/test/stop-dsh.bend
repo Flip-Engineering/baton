@@ -82,10 +82,8 @@ def main_args(args: List<String>) -> IO(Unit):
     case "--instance-owner" <> db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
     case "--instance-shutdown" <> db <> Nil{}: IO.try(Unit,Custody.Instance.shutdown(db))
     case "--instance-witness" <> db <> Nil{}: do IO<Unit>:
-      witness : Result<&1,&1,U32 & String,String> <- Custody.Instance.owner_witness(db)
-      match witness:
-        case Fail{error}: IO.die(Unit,2,"owner witness failed")
-        case Done{value}: IO.print(value)
+      witness : String <- IO.try(String,Custody.Instance.owner_witness(db))
+      IO.print(witness)
     case +path <> Nil{}: do IO<Unit>:
       initialized : Unit <- setup(path)
       exercised : Unit <- request_cases(path)
