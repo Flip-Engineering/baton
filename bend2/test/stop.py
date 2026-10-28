@@ -212,6 +212,15 @@ class Stop(unittest.TestCase):
         self.finish(observer, ok=False)
         completed = self.completed()
         self.assertEqual(completed['nativeStatus'], 'signal 15')
+        reports = self.rows("SELECT id,body FROM messages WHERE recipient='root' "
+                            "AND json_extract(body,'$.stopId')=?", [completed['stopId']])
+        self.assertEqual(len(reports), 2)
+        by_type = {json.loads(row['body'])['type']: row for row in reports}
+        self.assertEqual(set(by_type), {'session-stop-custody-missing', 'session-stopped'})
+        self.assertNotEqual(by_type['session-stop-custody-missing']['id'],
+                            by_type['session-stopped']['id'])
+        self.assertEqual(by_type['session-stopped']['id'], completed['reportId'])
+        self.assertEqual(json.loads(by_type['session-stopped']['body'])['nativeStatus'], 'signal 15')
         self.assertEqual(self.rows("SELECT phase,status FROM executions WHERE session='parent'"),
                          [{'phase': 'exited', 'status': 'signal 15'}])
         self.shutdown_idle_database_owner('restored custody left processes running')
