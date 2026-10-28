@@ -43,6 +43,26 @@ def write(path, value):
     path.write_text(json.dumps(value, indent=2) + '\n')
 
 
+def write_focused_queue_handoff(config, request, directory, state, **extra):
+    """Record the exact queue token so focused cancellation preserves shared custody."""
+    handoff_root = os.environ.get('BATON2_FOCUSED_QUEUE_HANDOFF_DIR')
+    if not handoff_root:
+        return
+    client = shutil.which(config['client']) or config['client']
+    record = {'schema': 'baton2-focused-queue-owner-v1', 'status': state,
+              'key': request['key'], 'token': request['token'],
+              'state_root': str(Path(config['state']).resolve()),
+              'keydir': str((Path(config['state']) / 'keys' / request['key']).resolve()),
+              'client': str(Path(client).resolve()),
+              'request_path': str((Path(directory) / 'request.json').resolve()),
+              **extra}
+    path = Path(handoff_root) / (request['token'] + '.json')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix('.tmp')
+    temporary.write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')
+    os.replace(temporary, path)
+
+
 def file_identity(path):
     path = Path(path)
     if not path.is_file():
@@ -233,9 +253,15 @@ def legacy_environment(env):
 
 def cancel(config, request, directory):
     with (directory / 'cancel.stdout').open('ab') as stdout, (directory / 'cancel.stderr').open('ab') as stderr:
-        return subprocess.run([config['client'], '--', 'cancel', '--state-root', config['state'],
-                               '--key', request['key'], '--token', request['token']],
-                              stdout=stdout, stderr=stderr).returncode
+        result = subprocess.run([config['client'], '--', 'cancel', '--state-root', config['state'],
+                                 '--key', request['key'], '--token', request['token']],
+                                stdout=stdout, stderr=stderr)
+    output = (directory / 'cancel.stdout').read_text(errors='replace').splitlines()
+    write_focused_queue_handoff(config, request, directory, 'cancelled',
+                                cancel_returncode=result.returncode,
+                                cancel_result=[line for line in output if line.startswith('canceled=') or line.startswith('owners=')])
+    request['cancel_returncode'] = result.returncode
+    return result.returncode
 
 
 def queue_key_sources(key_argv, cwd):
@@ -364,6 +390,7 @@ def submit(config, directory, options, command, key_only=False):
     if key_only:
         print(key)
         return 0
+    write_focused_queue_handoff(config, request, directory, 'submitted')
     child = None
 
     def interrupted(signum, frame):
@@ -386,6 +413,8 @@ def submit(config, directory, options, command, key_only=False):
         code = 128 + error.args[0]
     request.update(exit_code=code, finished_ns=time.time_ns())
     write(directory / 'request.json', request)
+    if request.get('cancel_returncode') is None:
+        write_focused_queue_handoff(config, request, directory, 'finished', exit_code=code)
     retain(config, key, directory, code == 0)
     if code:
         sys.stderr.write((directory / 'client.stderr').read_text())
