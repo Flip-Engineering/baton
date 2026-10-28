@@ -598,11 +598,10 @@ class AgentActions(unittest.TestCase):
         self.assertFalse(state['open'])
 
         second_request = self.action('worker-a', 'completion-request', '--text',
-                                     'The recorded author may also be selected explicitly.',
-                                     '--id', 'completion-request-explicit')
-        explicit_confirmation = self.action(
-            'root', 'completion-confirmed', '--to', 'worker-a',
-            '--request', second_request[0]['id'])
+                                     'The recorded author may also be selected explicitly.')
+        self.assertEqual(second_request[0]['status'], 'admitted')
+        explicit_confirmation = self.action('root', 'completion-confirmed',
+                                            '--to', 'worker-a')
         self.assertEqual(explicit_confirmation[0]['status'], 'admitted')
         self.assertEqual(explicit_confirmation[0]['delivery']['recipient'], 'worker-a')
         self.assertEqual(explicit_confirmation[0]['delivery']['body'],
@@ -623,13 +622,13 @@ class AgentActions(unittest.TestCase):
         self.legacy('connect', worker, '', self.endpoint)
         self.legacy('message', 'unicode-assignment', 'root', worker, 'task-assignment',
                     'Complete this retained assignment.')
-        request = self.action(worker, 'completion-request', '--id', 'unicode-request',
+        request = self.action(worker, 'completion-request',
                               '--text', 'Completed λ🙂.\n')
         confirmation = self.action('root', 'completion-confirmed',
                                    '--request', request[0]['id'])
         self.assertEqual(confirmation[0]['status'], 'admitted')
         self.assertEqual(confirmation[0]['delivery']['recipient'], worker)
-        self.assertEqual(confirmation[0]['delivery']['body'], 'unicode-request')
+        self.assertEqual(confirmation[0]['delivery']['body'], request[0]['id'])
         task = self.legacy('session', worker)['taskCompletion']
         self.assertTrue(task['confirmed'])
         self.assertFalse(task['open'])
@@ -1541,14 +1540,15 @@ class AgentActions(unittest.TestCase):
                     'task-assignment', 'Implement the assigned change.')
         body = '\ufeff' + ('Complete λ🙂 evidence and\n' * 8000) + 'Trailing spaces  '
         result = subprocess.run([str(EXE), str(self.db), 'as', 'worker-a',
-                                 'completion-request', '--id', 'mixed-request',
-                                 '--file', '-', '--and', 'guide', '--to', 'root',
+                                 'completion-request', '--file', '-', '--and', 'guide', '--to', 'root',
                                  '--id', 'mixed-guide-up', '--file', '-', '--and',
                                  'assignment'], input=body.encode('utf-8'), capture_output=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         rows = json.loads(result.stdout)
         self.assertEqual([row['status'] for row in rows], ['completed'] * 3)
-        for row, message_id, kind in zip(rows[:2], ('mixed-request', 'mixed-guide-up'),
+        request_id = json.loads(rows[0]['stdout'])[0]['id']
+        self.assertTrue(request_id.startswith('message:worker-a:'))
+        for row, message_id, kind in zip(rows[:2], (request_id, 'mixed-guide-up'),
                                          ('completion-request', 'guidance')):
             self.assertEqual(row['argv'][2:], ['agent-contextual-input', 'worker-a'])
             item = json.loads(row['stdout'])[0]
@@ -1559,10 +1559,10 @@ class AgentActions(unittest.TestCase):
             self.assertEqual(item['delivery']['kind'], kind)
             self.assertEqual(item['delivery']['body'], body)
         state = json.loads(rows[2]['stdout'])['taskCompletion']
-        self.assertEqual(state['requestId'], 'mixed-request')
+        self.assertEqual(state['requestId'], request_id)
         self.assertFalse(state['confirmed'])
         self.assertTrue(state['open'])
-        confirmed = self.action('root', 'completion-confirmed', '--request', 'mixed-request',
+        confirmed = self.action('root', 'completion-confirmed', '--request', request_id,
                                 '--to', 'worker-a', '--id', 'mixed-confirmation',
                                 '--and', 'assignment', '--session', 'worker-a',
                                 '--and', 'outbox')
@@ -1570,9 +1570,9 @@ class AgentActions(unittest.TestCase):
         self.assertEqual(admission['status'], 'admitted')
         self.assertEqual(admission['delivery']['id'], 'mixed-confirmation')
         self.assertEqual(admission['delivery']['recipient'], 'worker-a')
-        self.assertEqual(admission['delivery']['body'], 'mixed-request')
+        self.assertEqual(admission['delivery']['body'], request_id)
         state = json.loads(confirmed[1]['stdout'])['taskCompletion']
-        self.assertEqual(state['requestId'], 'mixed-request')
+        self.assertEqual(state['requestId'], request_id)
         self.assertTrue(state['confirmed'])
         self.assertFalse(state['open'])
         self.assertIsNone(self.legacy('delivery', 'mixed-completion-task')['receipt'])
@@ -1580,7 +1580,7 @@ class AgentActions(unittest.TestCase):
     def test_mixed_authority_and_file_refusals_keep_later_reads_and_decisions(self):
         self.legacy('message', 'mixed-authority-task', 'root', 'worker-a',
                     'task-assignment', 'Retain the owned task.')
-        request = self.action('worker-a', 'completion-request', '--id', 'mixed-authority-request',
+        request = self.action('worker-a', 'completion-request',
                               '--text', 'Done declaration.')
         before = self.legacy('session', 'worker-a')['taskCompletion']
         for actor, args, cause in (
