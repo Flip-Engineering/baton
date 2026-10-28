@@ -16,8 +16,12 @@ the archive hash, lock, provenance and runtime pin together.
 
 The regression inputs are in `bend2/test/compiler/fixtures/ctor-shadow/`.
 `bend2/test/compiler/ctor_shadow.ts` loads the importing module and checks that
-the law's type refers to the imported module's `Done` definition and that its
-proof checks. The loader's recorded namespace identifies the module internally;
+the law's parsed type refers to the imported module's `Done` definition. The
+original reproducer places that definition after the law; the selected 2.0.25
+checker refuses that forward dependency. The `ordered/` fixtures place the
+helper first and check the imported proof, constructor calls and patterns,
+qualified calls, function references and local binders. The loader's recorded
+namespace identifies the module internally;
 `M` is its alias in the entry file. The reproducer uses the same module and entry
 split as upstream issue #1236.
 

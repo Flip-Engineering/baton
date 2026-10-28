@@ -18,5 +18,18 @@ assert.ok(law, "the imported law must be loaded");
 const statement = Bend.term_show(Bend.term_lower(law.T));
 assert.ok(statement.includes(namespace + ".Done"),
   "the law must refer to its module's Done definition: " + statement);
-Bend.book_valid(book);
-console.log("PASS ctor shadow: imported law retains its module-local helper and its proof checks");
+let rejected = false;
+try { Bend.book_valid(book); } catch (error) {
+  if (error?.$ !== "Err") throw error;
+  assert.equal(error.exp, "a defined name");
+  assert.equal(error.obs?.$, "Ref");
+  assert.equal(error.obs?.k, namespace + ".Done");
+  rejected = true;
+}
+assert.ok(rejected, "the checker requires the helper before the law that uses it");
+
+const ordered = Bend.book_nil();
+await Bend.book_load(ordered, path.join(import.meta.dir, "fixtures/ctor-shadow/ordered/entry.bend"), "", new Map());
+Bend.book_valid(ordered);
+assert.equal(ordered.hols + ordered.open, 0, "the ordered import fixtures have complete proofs");
+console.log("PASS ctor shadow: module resolution, forward-name refusal and ordered import proofs");
