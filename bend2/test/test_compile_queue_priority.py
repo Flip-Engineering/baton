@@ -64,7 +64,7 @@ class QueuePriorityTests(unittest.TestCase):
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     def wait_ticket(self, deadline=30.0):
-        tickets = self.state / "waiters"
+        tickets = self.state / "waiters" / "cc"
         end = time.monotonic() + deadline
         while time.monotonic() < end:
             if tickets.is_dir() and any(tickets.iterdir()):
@@ -92,12 +92,13 @@ class QueuePriorityTests(unittest.TestCase):
         self.wait_ticket()
         flip = self.request("flip", priority=9)
         deadline = time.monotonic() + 30
-        while time.monotonic() < deadline and len(list((self.state / "waiters").iterdir())) < 2:
+        waiters = self.state / "waiters" / "cc"
+        while time.monotonic() < deadline and len(list(waiters.iterdir())) < 2:
             time.sleep(0.02)
         fcntl.flock(lock, fcntl.LOCK_UN)
         self.finish(default, flip)
         self.assertEqual(self.read_order(), ["flip", "default"])
-        self.assertEqual(list((self.state / "waiters").iterdir()), [])
+        self.assertEqual(list(waiters.iterdir()), [])
 
     def test_equal_priority_keeps_arrival_order(self):
         lock = self.hold_heavy()
@@ -105,15 +106,16 @@ class QueuePriorityTests(unittest.TestCase):
         self.wait_ticket()
         second = self.request("second", priority=9)
         deadline = time.monotonic() + 30
-        while time.monotonic() < deadline and len(list((self.state / "waiters").iterdir())) < 2:
+        waiters = self.state / "waiters" / "cc"
+        while time.monotonic() < deadline and len(list(waiters.iterdir())) < 2:
             time.sleep(0.02)
         fcntl.flock(lock, fcntl.LOCK_UN)
         self.finish(first, second)
         self.assertEqual(self.read_order(), ["first", "second"])
 
     def test_stale_ticket_is_ignored(self):
-        waiters = self.state / "waiters"
-        waiters.mkdir(mode=0o2770)
+        waiters = self.state / "waiters" / "cc"
+        waiters.mkdir(mode=0o2770, parents=True)
         waiters.chmod(0o2770)
         (waiters / "00000000000000000001-dead").write_text(
             "priority=9\npid=999999\nstarttime=1\nkey=dead\ntoken=dead\n")
@@ -145,7 +147,7 @@ class QueuePriorityTests(unittest.TestCase):
         os.kill(int(fields["pid"]), signal.SIGKILL)
         blocked.wait(timeout=60)
         fcntl.flock(lock, fcntl.LOCK_UN)
-        waiters = self.state / "waiters"
+        waiters = self.state / "waiters" / "cc"
         self.assertTrue(list(waiters.iterdir()), "expected the killed supervisor ticket to remain")
         revived = self.request("revived")
         self.finish(revived)
