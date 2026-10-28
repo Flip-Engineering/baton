@@ -42,6 +42,9 @@ const root = path.resolve(process.argv[2] ?? path.join(import.meta.dir, "../../.
 const upstream = path.join(root, "bend2/compiler/upstream");
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "bend-bounded-indent-"));
 try {
+  if (fs.existsSync(path.join(upstream, "store.ts"))) {
+    fs.copyFileSync(path.join(upstream, "store.ts"), path.join(temp, "store.ts"));
+  }
   for (const name of ["bend.ts", "base.bend"]) {
     fs.copyFileSync(path.join(upstream, name), path.join(temp, name));
   }

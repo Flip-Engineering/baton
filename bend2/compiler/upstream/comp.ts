@@ -164,6 +164,7 @@ type Src = { refs: Set<Bend.Name>; deps: Set<Bend.Name>; flat: boolean;
   claims?: Set<Bend.Name> };
 
 type Carb = {
+  store?: import("./store.ts").CheckedWriter;
   // The book as the caller holds it. `book` is a shallow copy of it, so a
   // definition the compiler rewrites must be rewritten there too, or the
   // caller keeps the pre-elaboration object alive for the whole compile.
@@ -2089,6 +2090,7 @@ function anf(cb: Carb, t: HTerm, ty: HTerm | null = null): HTerm {
 
 function def_body(cb: Carb, k: Bend.Name): TLD | undefined {
   const tld = cb.book.tlds[k];
+  if (tld?.$ === "Def" && tld.e !== undefined) cb.store?.capture(k, tld);
   if (tld?.$ === "Def" && tld.e !== undefined && tld.h === undefined) {
     diagnostic_literal_columns(k, tld.e);
     const h = Bend.term_higher(tld.e);
@@ -2115,7 +2117,8 @@ function def_body(cb: Carb, k: Bend.Name): TLD | undefined {
 // each one's source summary (SRCS): what it refers to, what it calls (a
 // reference used as a value is no call; Clo.apply is never flat), and
 // whether it is flat: no fork, no bang call, self-calls in tail position.
-function carb_book(src: Bend.Book, roots: Bend.Name[]): Carb {
+function carb_book(src: Bend.Book, roots: Bend.Name[],
+  store?: import("./store.ts").CheckedWriter): Carb {
   book_owned(src);
   [TELES, SRCS, NODES, LAYS, CYCLES, FLATS, SIGS, BRWS].forEach((m) =>
     m.clear());
@@ -2128,6 +2131,7 @@ function carb_book(src: Bend.Book, roots: Bend.Name[]): Carb {
     }
   }
   const cb: Carb = {
+    store,
     src,
     book: { ...src, tlds: { ...src.tlds } },
     bangs: new Set(),
@@ -2160,6 +2164,7 @@ function carb_book(src: Bend.Book, roots: Bend.Name[]): Carb {
       continue;
     }
     diagnostic_stage("carb.body", { name: d });
+    cb.store?.capture(d, tld);
     term_any(cb, tld.h as HTerm, (s, tail) => {
       if (s.$ === "Ann") {
         queue.push(...type_adts(cb, s.T));
@@ -4456,10 +4461,49 @@ function file_reach(fl: File, from: Iterable<string>): Set<string> {
 
 // Compilation consumes checked bodies and keeps parsed bodies needed by types.
 export function compile_book(book: Bend.Book): string {
+  const Store = require("./store.ts") as typeof import("./store.ts");
+  const identity = Store.compiler_identity([new URL(import.meta.url),
+    new URL("./bend.ts", import.meta.url), new URL("./store.ts", import.meta.url),
+    new URL("./base.bend", import.meta.url)]);
+  const writer = new Store.CheckedWriter(identity);
+  diagnostic("store.begin", { directory: writer.directory, compiler: identity });
+  const result = compile_stored(book, writer);
+  writer.remove();
+  return result;
+}
+
+function prepare_store(cb: Carb, writer: import("./store.ts").CheckedWriter):
+  import("./store.ts").CheckedReader {
+  const begin = performance.now();
+  const tlds = Object.fromEntries(Object.entries(cb.book.tlds).map(([k, tld]) => {
+    if (tld.$ !== "Def") return [k, tld];
+    const { h, e, ...header } = tld as Def;
+    return [k, header];
+  }));
+  const stored = writer.seal({ ...cb.book, tlds });
+  const book = stored.reader.header<Bend.Book>();
+  for (const [k, tld] of Object.entries(book.tlds)) {
+    const src = CLAIM_SRCS.get(cb.book.tlds[k]);
+    if (src !== undefined) CLAIM_SRCS.set(tld, src);
+    if (tld.$ === "Def" && writer.has(k)) {
+      Object.defineProperty(tld, "h", { get: () => stored.reader.body(k) });
+    }
+  }
+  Object.assign(cb.src, book);
+  cb.book = cb.src;
+  [SIGS, BRWS, NODES, LAYS, CYCLES].forEach(m => m.clear());
+  diagnostic("store.end", { directory: writer.directory,
+    duration_ms: performance.now() - begin, bytes: stored.bytes,
+    bodies: stored.index.bodies.length, header_bytes: stored.index.header.bytes,
+    tables_bytes: stored.index.tables.bytes });
+  return stored.reader;
+}
+
+function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWriter): string {
   diagnostic_columns.clear();
   diagnostic("book.begin", { definitions: Object.keys(book.tlds).length });
   diagnostic("carb.begin");
-  const cb = carb_book(book, ["main", ...RUNTIME_ADTS]);
+  const cb = carb_book(book, ["main", ...RUNTIME_ADTS], writer);
   diagnostic("carb.end", { sources: SRCS.size });
   diagnostic_stage("show.begin");
   const show = show_main(book);
@@ -4468,6 +4512,7 @@ export function compile_book(book: Bend.Book): string {
   v_drop(cb, live_types);
   book.tmps = Object.create(null);
   cb.book.tmps = book.tmps;
+  const stored = prepare_store(cb, writer);
   memo_gc();
   collect_full();
   diagnostic("checker.release", { type_definitions: live_types.size });
@@ -4580,7 +4625,8 @@ export function compile_book(book: Bend.Book): string {
     }
     diagnostic("unit.end", { name: k, facts_only,
       duration_ms: performance.now() - begin, reads: reads.get(fid)!.size,
-      writes: writes.get(fid)!.size, lend: unit.lend.size });
+      writes: writes.get(fid)!.size, lend: unit.lend.size, decode_ms: stored.decode_ms });
+    stored.release();
     return unit;
   };
   let diagnostic_pass = 0;

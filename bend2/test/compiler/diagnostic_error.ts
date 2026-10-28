@@ -40,6 +40,9 @@ const root = path.resolve(dirArg ?? path.join(import.meta.dir, "../../.."));
 const source = path.join(root, "bend2/compiler/upstream");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bend-diagnostic-error-"));
 try {
+  if (fs.existsSync(path.join(source, "store.ts"))) {
+    fs.copyFileSync(path.join(source, "store.ts"), path.join(tmp, "store.ts"));
+  }
   for (const name of ["bend.ts", "comp.ts", "main.ts", "base.bend"]) {
     fs.copyFileSync(path.join(source, name), path.join(tmp, name));
   }
