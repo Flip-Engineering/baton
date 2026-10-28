@@ -336,6 +336,35 @@ class LiveDsh(unittest.TestCase):
             frames = [json.loads(line) for line in run.stdout.splitlines() if line.startswith('{')]
             self.assertEqual(frames[-1]['type'], 'final')
 
+    def test_failed_completion_gate_does_not_emit_a_successful_final_frame(self):
+        StubModel.requests = []
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            entry = Entry(root)
+            entry.fail('Stop')
+            attempt = root / 'attempt'
+            attempt.mkdir()
+            subprocess.run([str(FIXTURE), 'prepare', str(attempt), 'deepseek/deepseek-flash', 'max',
+                            str(PLUGIN)], check=True, capture_output=True)
+            server = ThreadingHTTPServer(('127.0.0.1', 0), StubModel)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            self.addCleanup(server.server_close)
+            self.addCleanup(server.shutdown)
+            work = root / 'work'
+            work.mkdir()
+            environment = dict(os.environ, DSH_HOME=str(root / 'home'), DEEPSEEK_API_KEY='placeholder',
+                               DEEPSEEK_BASE_URL=f'http://127.0.0.1:{server.server_port}',
+                               BATON_STOP_HOOK=str(entry.path), BATON_DATABASE='/db', BATON_SESSION='dsh-seat')
+            run = subprocess.run(
+                [DSH, '--profile', 'headless', '--patch', str(attempt / 'dsh-tools.patch.yml'),
+                 '--patch', str(attempt / 'dsh-model.patch.yml'), '--json'],
+                input='Finish the assigned work.\n', text=True, capture_output=True, env=environment,
+                cwd=work)
+            frames = [json.loads(line) for line in run.stdout.splitlines() if line.startswith('{')]
+            self.assertTrue(run.returncode != 0 or not frames or frames[-1]['type'] != 'final',
+                            run.stderr + run.stdout)
+            self.assertEqual(entry.events().count('Stop'), 1)
+
 
 if __name__ == '__main__':
     unittest.main()
