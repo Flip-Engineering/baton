@@ -1,13 +1,13 @@
-"""A cc command that exits 0 without writing its declared artifact must
-publish a failed result, not die silently.
+"""A cc command that exits 0 without writing its declared artifact produces
+a failed artifact-verification result.
 
-Set BATON2_COMPILE_QUEUE_BIN to the candidate native queue. The fake
+Set BATON2_COMPILE_QUEUE_BIN to the native queue under test. The fake
 compiler exits 0 and never writes the declared artifact. The supervisor
-must publish status=failed exit=1 with the precise "declared artifact
-was not written" detail from the artifact-verification stage; the
-parent must retain that result instead of the generic "supervisor
-exited before publishing a terminal result". Artifact content
-verification at reuse and adoption is separate and unchanged.
+publishes status=failed exit=1 with the detail "declared artifact
+compile was not written" and the stage "artifact-verification". The
+parent retains that result with the missing artifact name and its
+diagnostic. Artifact content verification at reuse and adoption is
+separate and unchanged.
 """
 import os
 import pathlib
