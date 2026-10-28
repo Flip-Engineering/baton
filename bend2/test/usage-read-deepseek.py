@@ -68,11 +68,13 @@ def main():
             secret.write_text(KEY + "\n")
             secret.chmod(0o600)
             record = directory / "requested-urls"
+            options = directory / "setopt-calls"
             preload = str(shim) + (":" + os.environ["LD_PRELOAD"] if os.environ.get("LD_PRELOAD") else "")
             environment = dict(os.environ, LD_PRELOAD=preload,
                                BATON2_TEST_HTTP_FROM="https://api.deepseek.com/",
                                BATON2_TEST_HTTP_TO=f"http://127.0.0.1:{server.server_address[1]}/",
-                               BATON2_TEST_HTTP_RECORD=str(record))
+                               BATON2_TEST_HTTP_RECORD=str(record),
+                               BATON2_TEST_HTTP_OPTIONS=str(options))
             reference = "file:" + str(secret)
 
             Fixture.answer = (200, json.dumps({"is_available": True, "balance_infos": [
@@ -86,6 +88,12 @@ def main():
             assert document["windows"] == [{"window": "balance", "usedPercent": None, "resetsAt": None,
                                             "exhausted": False}], document
             assert KEY not in json.dumps(document), document
+            # The shim forwards each option with the type libcurl defines for it. The
+            # transport sets these long values and callbacks for every request.
+            calls = set(options.read_text().splitlines())
+            for call in ("52 long 0", "99 long 1", "20011 function", "10001 object",
+                         "10002 object", "10023 object", "10036 object"):
+                assert call in calls, (call, sorted(calls))
             print("deepseek-reader-funded: ok", flush=True)
 
             Fixture.answer = (200, json.dumps({"is_available": False, "balance_infos": [
