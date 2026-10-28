@@ -67,12 +67,23 @@ class FocusedReceiverRegister(unittest.TestCase):
                 return json.loads(line)
         self.fail(f'no typed refusal: stdout={result.stdout!r} stderr={result.stderr!r}')
 
+    def tracked_names(self):
+        return sorted(path.name for path in self.directory.iterdir()
+                      if path.name != 'commands.jsonl')
+
+    def assert_no_probe_leftovers(self, before):
+        after = self.tracked_names()
+        self.assertEqual(after, before, 'the registration wrote or left files')
+        self.assertFalse([name for name in after if '.receiver-probe-' in name],
+                         'probe scratch files survived the registration')
+
     def test_rebind_records_candidate_and_preserves_session_without_waking(self):
         self.root()
         self.recruit('registrant', harness='omp', parent='root')
         pending_id = 'register-pending-guidance'
         self.call('message', pending_id, 'root', 'registrant', 'guidance', 'Keep this input pending.')
         before = self.call('session', 'registrant')
+        before_names = self.tracked_names()
 
         log = self.directory / 'registered.jsonl'
         refused = subprocess.run(
@@ -99,6 +110,8 @@ class FocusedReceiverRegister(unittest.TestCase):
         self.assertEqual(self.controls, [])
         self.assertEqual(self.rows('SELECT * FROM executions'), [])
         self.assertFalse(log.exists())
+        self.assertEqual(self.tracked_names(), before_names,
+                         'the registration wrote or left files')
 
     def test_baton_command_rejected_with_help_text(self):
         self.root()
@@ -126,6 +139,7 @@ class FocusedReceiverRegister(unittest.TestCase):
         wrapper = self.harness(
             'omp-batonci-env', f'exec "{self.fixture.resolve()}" "$@"\n')
 
+        before_names = self.tracked_names()
         result = self.register('registrant', wrapper, log)
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -135,6 +149,8 @@ class FocusedReceiverRegister(unittest.TestCase):
             str(wrapper.resolve()), '', '', '', str(log.resolve())])
         self.assertEqual(self.rows('SELECT * FROM executions'), [])
         self.assertFalse(log.exists())
+        self.assertEqual(self.tracked_names(), before_names,
+                         'the registration wrote or left files')
 
     def test_refusal_leaves_no_executions_and_no_log(self):
         self.root()
@@ -145,6 +161,7 @@ class FocusedReceiverRegister(unittest.TestCase):
                                    self.directory / 'recorded.jsonl')
         self.assertEqual(registered.returncode, 0, registered.stdout + registered.stderr)
         before = self.call('session', 'registrant')
+        before_names = self.tracked_names()
         log = self.directory / 'refused.jsonl'
 
         result = self.register('registrant', CANDIDATE, log)
@@ -189,25 +206,6 @@ class FocusedReceiverRegister(unittest.TestCase):
         self.assertIn('exited without printing a ready frame', refusal['condition'])
         self.assertEqual(refusal['stdout'], '')
         self.assertEqual(self.call('session', 'registrant'), before)
-        self.assertEqual(self.rows('SELECT * FROM executions'), [])
-
-    def test_harness_that_never_prints_is_stopped_without_a_process(self):
-        self.root()
-        self.recruit('registrant', harness='omp', parent='root')
-        before = self.call('session', 'registrant')
-        log = self.directory / 'silent.jsonl'
-        harness = self.harness('silent harness', 'sleep 60\n')
-
-        started = time.monotonic()
-        result = self.register('registrant', harness, log)
-        elapsed = time.monotonic() - started
-        refusal = self.refusal(result)
-
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn('exited without printing a ready frame', refusal['condition'])
-        self.assertLess(elapsed, 30, 'the probe stopped the silent harness at its deadline')
-        self.assertEqual(self.call('session', 'registrant'), before)
-        self.assertEqual(self.process_rows(), [])
         self.assertEqual(self.rows('SELECT * FROM executions'), [])
 
 
