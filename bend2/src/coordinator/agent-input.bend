@@ -101,7 +101,7 @@ def mcp_stream_fields(fields: List<String>, +session: String) -> IO(HandlingScop
 
 def mcp_stream_witness(+db: String, +session: String, +context: String) -> IO(HandlingScope):
   do IO<HandlingScope>:
-    +database : String <- Lock.SessionLock.canonical(db)
+    +database : String <- IO.try(String,Lock.SessionLock.canonical(db))
     fields : String <- IO.try(String,DB.Sql.read(db,
       "SELECT CASE WHEN json_valid(" ++ C.q(context) ++ ") THEN CASE WHEN json_extract(" ++ C.q(context)
       ++ ",'$.ready')=1 AND json_extract(" ++ C.q(context) ++ ",'$.database')=" ++ C.q(database)
