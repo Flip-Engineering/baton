@@ -16,6 +16,7 @@ import ../git/text.bend as Tx
 import ../git/process.bend as Process
 import ../git/types.bend as T
 import ../storage/lifecycle.bend as StoragePolicy
+import ./receiver-probe.bend as ReceiverProbe
 
 def string_tail(args: List<String>) -> String:
   match args:
@@ -224,14 +225,26 @@ def receiver_branch_sql(+session: String, +endpoint: String, +cwd: String, branc
     case Some{current}:
       "UPDATE sessions SET branch=" ++ C.q(current) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ receiver_admitted(session,endpoint,cwd) ++ ";"
 
-def receiver(+db: String, +session: String, cmd: String, log: String, +cwd: String) -> IO(String):
+# Registration admits an OMP harness command only after it answers the rpc
+# handshake. The probe runs before the endpoint transaction and writes nothing,
+# so a refusal preserves the recorded assignment and creates no attempt.
+def receiver_harness_probe(+db: String, +session: String, cmd: String, model: String, +workspace: String) -> IO(Unit):
+  do IO<Unit>:
+    harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    Bool.pick(IO(Unit),String.eq(Tx.trim_nl(harness),"omp"),
+      ReceiverProbe.registration(db,session,cmd,model,workspace),
+      IO.pure(Unit,Unit{}))
+
+def receiver(+db: String, +session: String, +cmd: String, log: String, +cwd: String) -> IO(String):
   do IO<String>:
     found : String <- IO.try(String,Store.apply(db,C.Session{session}))
     accepted : String <- registered(found)
-    model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +selected_model : String = Tx.trim_nl(model)
     +workspace : String <- Bool.pick(IO(String),String.is_empty(cwd),IO.pure(String,""),IO.try(String,Host.Control.workspace(cwd)))
     branch : Maybe<String> <- receiver_branch(workspace)
-    +endpoint : String <- configured_endpoint(db,session,cmd,log,Tx.trim_nl(model),workspace)
+    +endpoint : String <- configured_endpoint(db,session,cmd,log,selected_model,workspace)
+    probed : Unit <- receiver_harness_probe(db,session,cmd,selected_model,workspace)
     +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ receiver_branch_sql(session,endpoint,workspace,branch) ++ receiver_sql(session,endpoint,workspace) ++ "COMMIT;"))
     answer : String <- receiver_result(saved,receiver_denied(saved))
     collected : Unit <- StoragePolicy.collect_settled(db,session)
@@ -313,9 +326,12 @@ def configure_write(+db: String, +id: String, +harness: String, +model: String, 
     migrated : String <- Bool.pick(IO(String),Bool.and(String.eq(harness,"codex"),Bool.not(Tx.starts_with(saved,"{\"error\":\"configure-refused\""))),CodexRoute.normalize(db,id),IO.pure(String,""))
     IO.pure(String,saved)
 
-def configure_same_route(+db: String, +id: String, +harness: String, +model: String, +effort: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> IO(String):
+def configure_same_route(+db: String, +id: String, +harness: String, +model: String, +effort: String, +cmd: String, +log: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> IO(String):
   do IO<String>:
-    +saved : String <- configure_write(db,id,harness,model,effort,"",expected_harness,expected_model,expected_effort)
+    +rebind : Bool = Bool.not(String.is_empty(cmd))
+    checked : Unit <- Bool.pick(IO(Unit),Bool.and(rebind,String.is_empty(log)),IO.die(Unit,2,"Explicit same-route receiver rebinding requires both --command and --output-log. An output log alone preserves the recorded executable and endpoint."),IO.pure(Unit,Unit{}))
+    endpoint : String <- Bool.pick(IO(String),rebind,configure_endpoint(db,id,harness,cmd,log,model),IO.pure(String,""))
+    +saved : String <- configure_write(db,id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort)
     configure_result(saved,Tx.starts_with(saved,"{\"error\":\"configure-refused\""))
 
 def configure_locked(+db: String, +id: String, +harness: String, +model: String, +effort: String, cmd: String, +log: String, +expected_harness: String, +expected_model: String, +expected_effort: String, lock: U32) -> IO(String):
@@ -334,13 +350,13 @@ def configure_lock_decided(+db: String, +id: String, +harness: String, +model: S
     case Some{handle}: configure_locked(db,id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort,handle)
     case None{}: configure_live_refusal(id)
 
-def configure(+db: String, +id: String, +harness: String, +model: String, +effort: String, cmd: String, +log: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> IO(String):
+def configure(+db: String, +id: String, +harness: String, +model: String, +effort: String, +cmd: String, +log: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> IO(String):
   do IO<String>:
     found : String <- IO.try(String,Store.apply(db,C.Session{id}))
     accepted : String <- registered(found)
     same : Bool = Bool.and(String.eq(harness,expected_harness),String.eq(model,expected_model))
     Bool.pick(IO(String),same,
-      configure_same_route(db,id,harness,model,effort,expected_harness,expected_model,expected_effort),
+      configure_same_route(db,id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort),
       do IO<String>:
         canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
         lock : Maybe<U32> <- IO.try(Maybe<U32>,Lock.SessionLock.try_acquire(canonical,id))

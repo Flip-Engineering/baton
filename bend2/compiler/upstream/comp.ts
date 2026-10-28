@@ -8,6 +8,14 @@ import * as Bend from "./bend.ts";
 
 const DIAGNOSTICS = process.env.BEND_COMPILER_DIAGNOSTICS === "1";
 const diagnostic_started = performance.now();
+const heap_stats = DIAGNOSTICS && "Bun" in globalThis
+  ? require("bun:jsc").heapStats as () => {
+      heapSize: number; heapCapacity: number; extraMemorySize: number;
+      objectCount: number; objectTypeCounts: Record<string, number>;
+    } : null;
+let diagnostic_facts: { reads: Set<string>; writes: Set<string> } | null = null;
+let diagnostic_literals: { word_leaves: number; word_nodes: number } | null = null;
+const diagnostic_columns = new Map<string, number>();
 let diagnostic_context: { event: string; details: Record<string, unknown> } | null = null;
 function diagnostic_stage(event: string, details: Record<string, unknown> = {}): void {
   if (DIAGNOSTICS) diagnostic_context = { event, details };
@@ -25,6 +33,40 @@ export function diagnostic(event: string, details: Record<string, unknown> = {})
     ...details,
   }) + "\n");
 }
+function diagnostic_heap(phase: string, details: Record<string, unknown> = {}): void {
+  if (heap_stats === null) return;
+  const { heapSize, heapCapacity, extraMemorySize, objectCount, objectTypeCounts } = heap_stats();
+  diagnostic("heap.census", { phase, heapSize, heapCapacity, extraMemorySize,
+    objectCount, objectTypeCounts, ...details });
+}
+
+// Count the checked syntax without opening closures or normalizing cells.
+// String constructor matches identify the subgraphs containing their columns.
+function diagnostic_literal_columns(k: string, term: Bend.LTerm): void {
+  if (!DIAGNOSTICS) return;
+  const seen = new WeakMap<object, boolean>();
+  const counted = new WeakSet<object>();
+  const stack: [unknown, boolean][] = [[term, false]];
+  let nodes = 0;
+  while (stack.length > 0) {
+    const [value, inside] = stack.pop()!;
+    if (value === null || typeof value !== "object") continue;
+    const t = value as Record<string, unknown>;
+    const column = inside || (t.$ === "Mat" && t.k === "SCon");
+    const prior = seen.get(value);
+    if (prior === true || (prior === false && !column)) continue;
+    seen.set(value, column);
+    if (column && typeof t.$ === "string" && !counted.has(value)) {
+      counted.add(value);
+      nodes += 1;
+    }
+    for (const key of Object.keys(t)) {
+      if (key !== "s") stack.push([t[key], column]);
+    }
+  }
+  diagnostic_columns.set(k, nodes);
+}
+
 export function diagnostic_error(error: unknown): void {
   if (!DIAGNOSTICS) return;
   const last_operation = diagnostic_context;
@@ -65,14 +107,6 @@ function collect_full(): void {
   };
   runtime.Bun?.gc(true);
 }
-
-// Facts-only passes are OFF by default. They converge own/hot/stat before
-// emitting C, but on the large fixtures they measured 22-24% slower than
-// the full passes they replace, with identical output (paired interleaved
-// A/B, 8 pairs per fixture, receipts in the round record). No throughput
-// measurement establishes an improvement, so the default keeps the full
-// passes. Set BEND_FACTS_ONLY_FIRST=1 to enable the dry-first path.
-const FACTS_ONLY_FIRST = process.env.BEND_FACTS_ONLY_FIRST === "1";
 
 // Comp
 // ====
@@ -126,7 +160,8 @@ type TLD  = Bend.ADT | Def;
 
 type Book = Omit<Bend.Book, "tlds"> & { tlds: Record<Bend.Name, TLD> };
 
-type Src = { refs: Set<Bend.Name>; deps: Set<Bend.Name>; flat: boolean };
+type Src = { refs: Set<Bend.Name>; deps: Set<Bend.Name>; flat: boolean;
+  claims?: Set<Bend.Name> };
 
 type Carb = {
   // The book as the caller holds it. `book` is a shallow copy of it, so a
@@ -143,6 +178,7 @@ type Carb = {
 };
 
 type File = Carb & {
+  unit: string;
   spares: { words: number; name: string; z: boolean }[];
   fresh: Map<string, number>;
   uses: Map<Probe, Bind>;
@@ -155,7 +191,7 @@ type File = Carb & {
   decl: string;
   cids: Map<string, number>;
   tabs: Map<string, number>;
-  spins: [string, string, Set<string>][];
+  spins: [string, string, Set<string>, Map<string, number>][];
   spun: Map<string, string>;
   armSeq: number;
   armBusy: Set<string>;
@@ -166,9 +202,6 @@ type File = Carb & {
   consts: Map<string, Map<HTerm, Val>>;
   reqs: string;
   fuel: number;
-  dry: boolean;
-  dry_lines: number;
-  dry_units: number;
 };
 
 type Gen = string | ((xs: string[]) => string);
@@ -678,6 +711,45 @@ let use_held = 0;
 const TELES: Map<HTerm, ReturnType<typeof Bend.tele_unbind>> = new Map();
 
 const SRCS: Map<Bend.Name, Src> = new Map();
+const CLAIM_SRCS = new WeakMap<Bend.TLD, Src>();
+
+// The checked source dependencies used by the CLI verdict. Shared syntax is
+// visited once, including annotations and erased arguments.
+export function source_refs(book: Bend.Book, k: Bend.Name): Set<Bend.Name> {
+  const tld = book.tlds[k];
+  if (tld === undefined) return new Set();
+  const got = CLAIM_SRCS.get(tld);
+  if (got?.claims !== undefined) return got.claims;
+  const refs = new Set<Bend.Name>();
+  const seen = new Set<object>();
+  const stack: [unknown, boolean][] = [[tld.T, true]];
+  if (tld.$ === "ADT") for (const c of tld.c) stack.push([c.T, true]);
+  else stack.push([tld.e ?? (tld as Def).h, tld.e === undefined]);
+  while (stack.length > 0) {
+    let [node, higher] = stack.pop()!;
+    if (higher && node !== null && typeof node === "object"
+      && "$" in node) node = Bend.term_force(node as HTerm);
+    if (node === null || typeof node !== "object" || seen.has(node)) continue;
+    seen.add(node);
+    const term = node as Record<string, any>;
+    if (term.$ === "Ref" || term.$ === "ADT") refs.add(term.k);
+    for (const key of Object.keys(term)) {
+      if (key === "s") continue;
+      const child = term[key];
+      if (typeof child === "function") {
+        if (term.$ === "Let" && key === "f") stack.push([child(term.k.map(() => DUMMY)), true]);
+        else if ((term.$ === "Lam" && key === "f")
+          || (term.$ === "All" && key === "B")) stack.push([child(DUMMY), true]);
+      } else {
+        stack.push([child, higher]);
+      }
+    }
+  }
+  const src = got ?? { refs: new Set(), deps: new Set(), flat: false };
+  src.claims = refs;
+  CLAIM_SRCS.set(tld, src);
+  return refs;
+}
 
 const LOCAL: Map<Bend.Name, string> = new Map();
 
@@ -1323,7 +1395,8 @@ const LAY_KEY_OMIT = Symbol();
 
 // Intern the lowered JSON structure bottom-up. Child ids keep the descriptor
 // size proportional to the distinct structure and preserve exact key equality.
-function lay_key(term: HTerm): number {
+function lay_key(term: HTerm, strip_ann = false,
+  nodes = LAY_KEY_NODES): number {
   const lowered = Bend.term_lower_shared(term);
   const seen = new WeakMap<object, number>();
   const encode = (value: unknown, inArray: boolean): unknown => {
@@ -1358,7 +1431,9 @@ function lay_key(term: HTerm): number {
         out.push(child);
       }
     };
-    if (Array.isArray(value)) {
+    if (strip_ann && (value as Bend.LTerm).$ === "Ann") {
+      add((value as Extract<Bend.LTerm, { $: "Ann" }>).x);
+    } else if (Array.isArray(value)) {
       for (let i = 0; i < value.length; i++) {
         add(value[i]);
       }
@@ -1408,14 +1483,20 @@ function lay_key(term: HTerm): number {
       stack.push({ value: child, children: children(child), next: 0 });
       continue;
     }
+    if (strip_ann && (frame.value as Bend.LTerm).$ === "Ann") {
+      seen.set(frame.value, seen.get((frame.value as Extract<Bend.LTerm, { $: "Ann" }>).x)!);
+      active.delete(frame.value);
+      stack.pop();
+      continue;
+    }
     const signature = JSON.stringify(descriptor(frame.value));
     if (signature === undefined) {
       throw new TypeError("Unable to encode a layout key");
     }
-    let id = LAY_KEY_NODES.get(signature);
+    let id = nodes.get(signature);
     if (id === undefined) {
-      id = LAY_KEY_NEXT++;
-      LAY_KEY_NODES.set(signature, id);
+      id = nodes === LAY_KEY_NODES ? LAY_KEY_NEXT++ : nodes.size;
+      nodes.set(signature, id);
     }
     seen.set(frame.value, id);
     active.delete(frame.value);
@@ -1579,7 +1660,7 @@ function ctr_build(fl: File, k: Bend.Name, exprs: string[],
     fl.stat.add(k);
     const at = memo(fl.lits, exprs.join(", "), () =>
       fl.img.push(...exprs) - exprs.length);
-    return `term_ctr(${cid}, STAT_OFF + ${at})`;
+    return `term_ctr(${cid}, STAT_OFF + ${fl.unit === "" ? at : fl.unit + "STAT_BASE + " + at})`;
   }
   const alloc = `heap_alloc(e, cls_fit(${exprs.length}))`;
   const at = fl.spares.findIndex((s) =>
@@ -1653,11 +1734,11 @@ function sig_def(cb: Carb, k: Bend.Name): Sig {
 
 // A def's borrowed parameters (a box, not an Array, not owned), fixed a pass.
 function brw_of(cb: Carb, k: Bend.Name): boolean[] {
-  return memo(BRWS, k, () => {
-    const { live, lays } = sig_def(cb, k);
-    return lays.map((l, i) => done_live(def_body(cb, k)) && l.ks.includes("box")
-      && ty_adt(cb.book, live[i][2])?.k !== "Array" && !cb.own.has(k + "~" + i));
-  });
+  const { live, lays } = sig_def(cb, k);
+  const bs = lays.map((l, i) => done_live(def_body(cb, k)) && l.ks.includes("box")
+    && ty_adt(cb.book, live[i][2])?.k !== "Array" && !cb.own.has(k + "~" + i));
+  BRWS.set(k, bs);
+  return bs;
 }
 
 function def_raise(book: Bend.Book, t: HTerm, left: number): number {
@@ -1907,6 +1988,7 @@ function anf(cb: Carb, t: HTerm, ty: HTerm | null = null): HTerm {
 function def_body(cb: Carb, k: Bend.Name): TLD | undefined {
   const tld = cb.book.tlds[k];
   if (tld?.$ === "Def" && tld.e !== undefined && tld.h === undefined) {
+    diagnostic_literal_columns(k, tld.e);
     const h = Bend.term_higher(tld.e);
     const n = tld.n + Math.min(def_raise(cb.book, h, tld.n),
       tele_unbind(cb.book, tld.T).doms.length - tld.n);
@@ -1916,6 +1998,8 @@ function def_body(cb: Carb, k: Bend.Name): TLD | undefined {
     // definition's lowered graph dies when it is elaborated instead of
     // staying live, a second copy of every body, for the whole compile.
     const next = { ...tld, n, h };
+    source_refs(cb.book, k);
+    CLAIM_SRCS.set(next, CLAIM_SRCS.get(tld)!);
     delete next.e;
     cb.book.tlds[k] = next;
     if (cb.src.tlds[k] === tld) {
@@ -1959,7 +2043,12 @@ function carb_book(src: Bend.Book, roots: Bend.Name[]): Carb {
     diagnostic_stage("carb.definition", { name: d });
     memo_gc();
     const tld = def_body(cb, d);
-    const own: Src = { refs: new Set(), deps: new Set(), flat: done_live(tld) };
+    const own: Src = (tld && CLAIM_SRCS.get(tld))
+      ?? { refs: new Set(), deps: new Set(), flat: false };
+    own.refs.clear();
+    own.deps.clear();
+    own.flat = done_live(tld);
+    if (tld !== undefined) CLAIM_SRCS.set(tld, own);
     SRCS.set(d, own);
     diagnostic_stage("carb.types", { name: d });
     for (const x of tld?.$ === "ADT" ? tld.c : tld ? [tld] : []) {
@@ -2205,8 +2294,6 @@ function v_live(cb: Carb): Set<Bend.Name> {
   // visited node's names are already in `live`, so the closure adds the same
   // names.
   const type_seen = new WeakSet<HTerm>();
-  // A book handed to compile_book must stay runnable: book_run reads main.v.
-  live.add("main");
   for (const tld of Object.values(cb.book.tlds)) {
     type_live(tld.T, live, type_seen);
   }
@@ -2252,13 +2339,15 @@ function v_live(cb: Carb): Set<Bend.Name> {
 // def_body does, or the old object stays live beside the new one and keeps
 // the parsed graph for the whole compile.
 function v_drop(cb: Carb, live: Set<Bend.Name>): void {
-  for (const k of SRCS.keys()) {
+  for (const k of Object.keys(cb.book.tlds)) {
     const tld = cb.book.tlds[k];
     if (tld?.$ !== "Def" || tld.v === null || tld.v === undefined
       || live.has(k)) {
       continue;
     }
     const next = { ...tld };
+    const refs = CLAIM_SRCS.get(tld);
+    if (refs !== undefined) CLAIM_SRCS.set(next, refs);
     delete (next as { v?: HTerm | null }).v;
     cb.book.tlds[k] = next;
     if (cb.src.tlds[k] === tld) {
@@ -2306,20 +2395,16 @@ function cid_mac(k: string): string {
 // File
 // ====
 
-// A File's per-pass state. `file_reset` is the only initializer: a File
-// reused across the emission fixed point then starts exactly as a new one,
-// and a field added to the File type cannot be initialized on one path only.
-// The Carb fields (`src`, `book`, the `own`/`hot`/`stat` facts and `lend`)
-// are the cross-pass state and are copied by reference.
+// Initialize the output of a definition or the assembled program. Carb fields
+// share the checked source, signatures and monotone facts.
 function file_reset(fl: File, cb: Carb, decl: string): File {
   return Object.assign(fl, cb, {
-    decl, segs: [], seg: seg_new("", BOX, []), tab: 2,
+    unit: "", decl, segs: [], seg: seg_new("", BOX, []), tab: 2,
     cids: new Map(), tabs: new Map(), spins: [], spun: new Map(), armSeq: 0,
     armBusy: new Set(), armHints: new Map(), clos: new Set(),
     img: [], lits: new Map(), consts: new Map(), reqs: "", fuel: 0,
     fresh: new Map(), spares: [],
     uses: new Map(), brwl: new Map(), rest: [], def: "",
-    dry: false, dry_lines: 0, dry_units: 0,
   });
 }
 
@@ -2335,13 +2420,6 @@ const INDENTS = Array.from({ length: 9 }, (_, i) => "  ".repeat(i));
 
 function file_push(fl: File, line: string): void {
   const tab = fl.tab < INDENTS.length ? fl.tab : INDENTS.length - 1;
-  // Facts-only passes use the same compiler decisions while counting output
-  // lines without retaining their strings.
-  if (fl.dry) {
-    fl.dry_lines += 1;
-    fl.dry_units += line.length + tab * 2;
-    return;
-  }
   fl.seg.lines.push(INDENTS[tab] + line);
 }
 
@@ -2414,7 +2492,7 @@ function seg_clo(fl: File, fid: string, words: string[]): string {
 }
 
 function seg_name(fl: File, stem: string): string {
-  return fl.seg.def.split("$")[0] + "$" + stem + fl.segs.length;
+  return (fl.unit || fl.seg.def.split("$")[0] + "$") + stem + fl.segs.length;
 }
 
 // Opens `name`: takes `live` (per `frame`, else in r0..), then `ks` words.
@@ -3028,13 +3106,15 @@ function emit_open(fl: File, k: Bend.Name): Val[] {
 }
 
 function emit_native(fl: File, ck: Call, ers: HTerm[]): string {
-  const key = [ck.k, ...ers.map((e) => JSON.stringify(lay_of(fl.book, e)))]
-    .join("|");
+  const diagnostic_before = DIAGNOSTICS ? performance.now() : 0;
+  // Recursive types share BOX layout but need their own heating and access
+  // paths. Intern their erased terms with spans omitted, retaining DAG sharing.
+  const key = JSON.stringify([ck.k, ...ers.map((e) => lay_key(e))]);
   const got = fl.spun.get(key);
   if (got !== undefined) {
     return seg_ref(fl, got);
   }
-  const name = seg_ref(fl, `spin_${fl.spun.size}`);
+  const name = seg_ref(fl, `${fl.unit}spin_${fl.spun.size}`);
   fl.spun.set(key, name);
   const tld = fl.book.tlds[ck.k] as Def;
   const outer = { ...fl };
@@ -3043,23 +3123,27 @@ function emit_native(fl: File, ck: Call, ers: HTerm[]): string {
   seg.fid = name;
   const dst = val_new(seg.ret.ks.map(() => name_local(fl, "v")), seg.ret);
   emit_body(fl, tld.h as HTerm, tld.T, ers, vals, dst);
-  // A dry pass keeps the spin memo, reference, and emitted-body facts, but
-  // discards the joined spin source (the INLINE/FAR read is output-only).
-  if (!fl.dry) {
-    fl.spins.push([name, [`${seg.lines.length < SPIN_FAR ? "INLINE" : "FAR"} Term ${name}(Env e, THR Term* o${
+  fl.spins.push([name, [`${seg.lines.length < SPIN_FAR ? "INLINE" : "FAR"} Term ${name}(Env e, THR Term* o${
       seg.ks.map((k, i) => `, ${lay_c(k)} r${i}`).join("")}) {`,
     "  u32 wpoll = 0;",
     ...dst.ws.map((v, j) => `  ${lay_c(seg.ret.ks[j])} ${v} = 0;`),
     ...seg_take(seg).map((l) => "  " + l),
     "  WL_SPIN", ...seg.lines, "  break;", "  }",
     ...dst.ws.map((v, j) => `  o[${j}] = ${v};`),
-    "  return 1;", "}"].join("\n"), seg.refs]);
-  }
+    "  return 1;", "}"].join("\n"), seg.refs, seg.cids]);
   // The arm name counter is monotone across nested emission. Restoring the
   // whole file must not roll it back, or a spin body's arm name is reused.
   const armSeq = fl.armSeq;
   Object.assign(fl, outer);
   fl.armSeq = armSeq;
+  if (DIAGNOSTICS) {
+    // Lowered copies keep diagnostic layout queries away from checked cells.
+    const layouts = ers.map((e) => JSON.stringify(lay_of(fl.book,
+      Bend.term_higher(Bend.term_lower_shared(e)))));
+    diagnostic("spin.emit", { kind: "native", name: ck.k, unit: fl.unit, helper: name,
+      layout_key: JSON.stringify([ck.k, ...layouts]), erased_key: key,
+      duration_ms: performance.now() - diagnostic_before, lines: seg.lines.length });
+  }
   return name;
 }
 
@@ -3618,10 +3702,11 @@ function emit_nats(x: HTerm): Chain {
 // substitution replayed): a literal compares whole.
 function emit_lits(x: HTerm): Leaf[] {
   const ws: Leaf[] = [];
-  const key = (t: HTerm): string => JSON.stringify(Bend.term_lower(t),
-    (k, v) => k === "s" ? undefined : v?.$ === "Ann" ? Bend.term_strip(v) : v);
+  const nodes = new Map<string, number>();
+  const key = (t: HTerm): number => lay_key(t, true, nodes);
   const walk = (t: HTerm, j: number, n: number,
     cov: ((w: Of<"Ctr">) => HTerm) | null): void => {
+    if (diagnostic_literals !== null) diagnostic_literals.word_nodes += 1;
     const h = mat_arms(t).arms[0]?.[1];
     if (h !== undefined && j === 32) {
       ws.push([h, j, n, 0, false]);
@@ -3644,6 +3729,7 @@ function emit_lits(x: HTerm): Leaf[] {
     }
   };
   walk(mat_arms(x).arms[0][1], 0, 0, null);
+  if (diagnostic_literals !== null) diagnostic_literals.word_leaves += ws.length;
   return ws;
 }
 
@@ -3872,6 +3958,7 @@ function arm_body_hint(h: HTerm): string {
 
 function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
   def: boolean, lit = false): boolean {
+  const diagnostic_before = DIAGNOSTICS ? performance.now() : 0;
   const u = term_uses(fl, h);
   const closed = u.length === 0;
   if (!def && !closed) return false;
@@ -3909,7 +3996,7 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
       return true;
     }
   }
-  const name = seg_ref(fl, `arm_${fl.armSeq++}`);
+  const name = seg_ref(fl, `${fl.unit}arm_${fl.armSeq++}`);
   const ks = [...capKs, ...avKs];
   const rec: ArmRep = { term: h, name, lay, ks, caps: caps.map(([p]) => p) };
   reps.push(rec);
@@ -3919,7 +4006,6 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
   const outer = { seg: fl.seg, uses: fl.uses, spares: fl.spares,
     tab: fl.tab, rest: fl.rest };
   const seg = seg_new(name, lay, ts, ks);
-  fl.segs.push(seg);
   Object.assign(fl, { seg, spares: [], tab: 2,
     uses: new Map(fl.uses) });
   let at = 0;
@@ -3935,18 +4021,19 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
   });
   const d = val_new(lay.ks.map(() => name_local(fl, "v")), lay);
   emit_body(fl, h, null, [], aparams, d);
-  if (!fl.dry) {
-    fl.spins.push([name, [`${seg.lines.length < SPIN_FAR ? "INLINE" : "FAR"} Term ${name}(Env e, THR Term* o${
+  fl.spins.push([name, [`${seg.lines.length < SPIN_FAR ? "INLINE" : "FAR"} Term ${name}(Env e, THR Term* o${
       seg.ks.map((k, i) => `, ${lay_c(k)} r${i}`).join("")}) {`,
     "  u32 wpoll = 0;",
     ...d.ws.map((v, j) => `  ${lay_c(lay.ks[j])} ${v} = 0;`),
     ...seg_take(seg).map((l) => "  " + l),
     "  WL_SPIN", ...seg.lines, "  break;", "  }",
     ...d.ws.map((v, j) => `  o[${j}] = ${v};`),
-    "  return 1;", "}"].join("\n"), seg.refs]);
-  }
+    "  return 1;", "}"].join("\n"), seg.refs, seg.cids]);
   Object.assign(fl, outer);
   fl.armBusy.delete(name);
+  diagnostic("spin.emit", { kind: "arm", name: fl.def, unit: fl.unit, helper: name,
+    layout_key: base, erased_key: null, body_key: hint,
+    duration_ms: performance.now() - diagnostic_before, lines: seg.lines.length });
   const capWs = caps.flatMap(([p, b]) => {
     const use = term_use(u, p);
     fl.uses.set(p, { ...b, n: b.n - use + 1 });
@@ -3987,7 +4074,7 @@ function emit_match(fl: File, x: Of<"Mat"> | Of<"Efq">,
   if (id !== null) {
     bind_dead(fl, []);
     return emit_put(fl, dst, val_new(
-      [`TAB_AT(TAB_${id}, ${u.ws[0]}, ${tb!.length - 1})`],
+      [`TAB_AT(${fl.unit}TAB_${id}, ${u.ws[0]}, ${tb!.length - 1})`],
       lay_of(fl.book, ret)));
   }
   const sw = u.ws[0];
@@ -4077,6 +4164,7 @@ function emit_chain(fl: File, cond: (i: number) => string,
 function compile_def(fl: File, k: Bend.Name, tld: Def): void {
   const diagnostic_before = performance.now();
   diagnostic("definition.begin", { name: k, segments: fl.segs.length });
+  if (DIAGNOSTICS) diagnostic_literals = { word_leaves: 0, word_nodes: 0 };
   Object.assign(fl, { fresh: new Map(), brwl: new Map(), rest: [] });
   memo_gc();
   diagnostic_stage("definition.open", { name: k });
@@ -4086,9 +4174,15 @@ function compile_def(fl: File, k: Bend.Name, tld: Def): void {
   emit_body(fl, tld.h as HTerm, tld.T, [], vals, null);
   diagnostic("definition.end", { name: k, duration_ms: performance.now() - diagnostic_before,
     segments: fl.segs.length, spins: fl.spins.length, tables: fl.tabs.size,
-    image_words: fl.img.length, file_maps: { fresh: fl.fresh.size, uses: fl.uses.size,
+    image_words: fl.img.length, absent_reads: diagnostic_facts?.reads.size ?? 0,
+    writes: diagnostic_facts?.writes.size ?? 0, lend: fl.lend.size, file_maps: { fresh: fl.fresh.size, uses: fl.uses.size,
       brwl: fl.brwl.size, cids: fl.cids.size, tabs: fl.tabs.size, spun: fl.spun.size,
       clos: fl.clos.size, lits: fl.lits.size, consts: fl.consts.size } });
+  if (diagnostic_literals !== null) {
+    diagnostic("literal.columns", { name: k, ...diagnostic_literals,
+      string_column_nodes: diagnostic_columns.get(k) ?? 0 });
+    diagnostic_literals = null;
+  }
 }
 
 function compile_reqs(fl: File, defs: [Bend.Name, Def][]): void {
@@ -4157,6 +4251,12 @@ function compile_tables(fl: File, entries: Seg[], show: Show | null): string[] {
   };
   for (const seg of entries) {
     for (const [k, arity] of seg.cids) add(k, arity);
+  }
+  // A spin body is emitted as a function rather than as a WL case, so its
+  // segment is not one of `entries`. The constructor references in that body
+  // still appear in the emitted C, so their CID macros must be defined here.
+  for (const spin of fl.spins) {
+    for (const [k, arity] of spin[3]) add(k, arity);
   }
   if (show !== null) {
     for (const c of show.cells) {
@@ -4245,7 +4345,24 @@ function compile_segs(fl: File): string {
   }), "\n\n");
 }
 
+function file_reach(fl: File, from: Iterable<string>): Set<string> {
+  const refs = new Map<string, Set<string>>();
+  for (const seg of fl.segs) refs.set(seg.fid, seg.refs);
+  for (const spin of fl.spins) refs.set(spin[0], spin[2]);
+  const live = new Set<string>();
+  const queue = [...from];
+  while (queue.length > 0) {
+    const fid = queue.pop()!;
+    if (live.has(fid)) continue;
+    live.add(fid);
+    for (const ref of refs.get(fid) ?? []) queue.push(ref);
+  }
+  return live;
+}
+
+// Compilation consumes checked bodies and keeps parsed bodies needed by types.
 export function compile_book(book: Bend.Book): string {
+  diagnostic_columns.clear();
   diagnostic("book.begin", { definitions: Object.keys(book.tlds).length });
   diagnostic("carb.begin");
   const cb = carb_book(book, ["main", ...RUNTIME_ADTS]);
@@ -4253,144 +4370,200 @@ export function compile_book(book: Bend.Book): string {
   diagnostic_stage("show.begin");
   const show = show_main(book);
   diagnostic("show.end");
-  // SRCS and TLD liveness are fixed after carb_book; reuse both ordered lists
-  // through the emission fixed point instead of rebuilding them each pass.
-  const stable_defs = done_defs(cb);
-  const emission_defs = [...stable_defs].reverse();
-  const foreign_defs = done_defs(cb, def_foreign);
-  const facts = () => cb.own.size + cb.hot.size + cb.stat.size;
-  let diagnostic_pass = 0;
-  let v_dropped = false;
-  // One File serves every pass: resetting it before each pass drops the
-  // previous pass's emitted lines before the next pass allocates, so only one
-  // pass's output is live. `file_reset` restores every per-pass field.
+  const live_types = v_live(cb);
+  v_drop(cb, live_types);
+  book.tmps = Object.create(null);
+  cb.book.tmps = book.tmps;
+  memo_gc();
+  collect_full();
+  diagnostic("checker.release", { type_definitions: live_types.size });
+  diagnostic_heap("checker.release");
+  const defs = new Map(done_defs(cb).map(([k, tld]) => [seg_fid(k), [k, tld] as const]));
+  const foreign = new Map(done_defs(cb, def_foreign).map(([k, tld]) =>
+    [seg_fid(k), [k, tld] as [Bend.Name, Def]]));
+  const roots = [seg_fid("main"), ...[...cb.bangs].map(seg_fid)];
+  type Unit = Pick<File, "unit" | "segs" | "spins" | "img" | "tabs" | "clos" | "lend">;
+  const units = new Map<string, Unit>();
+  type FactsUnit = { lend: Set<string>; wrote: Set<string> };
+  const facts_units = new Map<string, FactsUnit>();
+  const generic = new Set([...defs].filter(([, [, def]]) =>
+    tele_unbind(cb.book, def.T).doms.some((dom) => !live_dom(dom)))
+    .map(([fid]) => fid));
+  const writes = new Map<string, Set<string>>();
+  const reads = new Map<string, Set<string>>();
+  const readers = new Map<string, Set<string>>();
+  const dirty = new Set<string>();
+  let reading: string | null = null;
+  class Facts extends Set<string> {
+    constructor(readonly kind: string, initial: Set<string>) {
+      super();
+      for (const key of initial) super.add(key);
+    }
+    has(key: string): boolean {
+      const found = super.has(key);
+      if (!found && reading !== null) {
+        const fact = this.kind + ":" + key;
+        const dependencies = reads.get(reading)!;
+        dependencies.add(fact);
+        let dependents = readers.get(fact);
+        if (dependents === undefined) readers.set(fact, dependents = new Set());
+        dependents.add(reading);
+      }
+      return found;
+    }
+    add(key: string): this {
+      if (reading !== null) writes.get(reading)!.add(this.kind + ":" + key);
+      if (!super.has(key)) {
+        super.add(key);
+        diagnostic("fact.write", { kind: this.kind, key, unit: reading,
+          writer: reading === null ? "facts.lend" : defs.get(reading)![0] });
+        for (const fid of readers.get(this.kind + ":" + key) ?? []) dirty.add(fid);
+      }
+      return this;
+    }
+  }
+  cb.own = new Facts("own", cb.own);
+  cb.hot = new Facts("hot", cb.hot);
+  cb.stat = new Facts("stat", cb.stat);
+  const forget = (fid: string): void => {
+    for (const fact of reads.get(fid) ?? []) readers.get(fact)?.delete(fid);
+    reads.delete(fid);
+    writes.delete(fid);
+    dirty.delete(fid);
+  };
   const fl = file_new(cb, "Term");
-  const pass = (defs: [Bend.Name, Def][], dry = false): File => {
-    const pass_number = ++diagnostic_pass;
-    diagnostic("pass.begin", { pass: pass_number, definitions: defs.length,
-      own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size, dry });
-    [cb.lend, BRWS].forEach((m) => m.clear());
+  const tables: [string, string][] = [];
+  const offsets: string[] = [];
+  const assemble = (): void => {
     file_reset(fl, cb, "Term");
+    tables.length = 0;
+    offsets.length = 0;
+    cb.lend.clear();
+    for (const unit of facts_units.values()) {
+      for (const key of unit.lend) cb.lend.add(key);
+    }
+    for (const unit of units.values()) {
+      for (const seg of unit.segs) fl.segs.push(seg);
+      for (const spin of unit.spins) fl.spins.push(spin);
+      for (const fid of unit.clos) fl.clos.add(fid);
+      for (const key of unit.lend) cb.lend.add(key);
+      offsets.push(`#define ${unit.unit}STAT_BASE ${fl.img.length}`);
+      for (const word of unit.img) fl.img.push(word);
+      for (const [row, id] of unit.tabs) tables.push([`${unit.unit}TAB_${id}`, row]);
+    }
+  };
+  const emit_unit = (fid: string, facts_only: boolean): Unit => {
+    const [k, def] = defs.get(fid)!;
+    forget(fid);
+    reads.set(fid, new Set());
+    writes.set(fid, new Set());
+    const previous = units.get(fid);
+    if (previous !== undefined) {
+      previous.segs = [];
+      previous.spins = [];
+      previous.img = [];
+      previous.tabs.clear();
+      previous.clos.clear();
+      previous.lend.clear();
+    }
+    facts_units.delete(fid);
+    const output = file_new({ ...cb, lend: new Set() }, "Term");
+    output.unit = "u" + Buffer.from(k).toString("hex") + "_";
+    reading = fid;
+    const begin = performance.now();
+    diagnostic("unit.begin", { name: k, facts_only });
+    if (DIAGNOSTICS) diagnostic_facts = { reads: reads.get(fid)!, writes: writes.get(fid)! };
+    compile_def(output, k, def);
+    diagnostic_facts = null;
+    reading = null;
+    const unit: Unit = { unit: output.unit, segs: output.segs,
+      spins: output.spins, img: output.img, tabs: output.tabs,
+      clos: output.clos, lend: output.lend };
+    if (facts_only) {
+      facts_units.set(fid, { lend: unit.lend, wrote: writes.get(fid)! });
+    } else {
+      units.set(fid, unit);
+    }
+    diagnostic("unit.end", { name: k, facts_only,
+      duration_ms: performance.now() - begin, reads: reads.get(fid)!.size,
+      writes: writes.get(fid)!.size, lend: unit.lend.size });
+    return unit;
+  };
+  let diagnostic_pass = 0;
+  let needed = new Set(roots);
+  do {
+    const pass_number = ++diagnostic_pass;
+    diagnostic("pass.begin", { pass: pass_number, definitions: needed.size,
+      own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size });
+    file_reset(fl, cb, "Term");
+    tables.length = 0;
+    offsets.length = 0;
     collect_full();
-    fl.dry = dry;
-    diagnostic_stage("pass.layouts", { pass: pass_number });
-    if (!v_dropped) {
-      // show_main has read main.v and the constructor preamble has laid
-      // every reachable ADT out, so the type closure is complete here: a
-      // later pass cannot make a type it does not already name. Free the
-      // parsed body of every definition outside it, then re-point the
-      // reused definition lists at the replacement objects; they were
-      // built before this point and would otherwise keep the old ones,
-      // and their parsed graphs, live through the whole fixed point.
-      v_dropped = true;
-      diagnostic_stage("pass.v_live", { pass: pass_number });
-      const live = v_live(cb);
-      diagnostic_stage("pass.v_drop", { pass: pass_number });
-      v_drop(cb, live);
-      [emission_defs, defs].forEach((ps) => ps.forEach((p) => {
-        p[1] = cb.book.tlds[p[0]] as Def;
-      }));
-      // The dropped parsed bodies are unreachable now. Collect them before
-      // the emission loop allocates, so the first-pass peak excludes the
-      // pre-drop graph instead of carrying it to the next pass boundary.
-      collect_full();
+    const queue = [...needed].filter((fid) => !units.has(fid) || dirty.has(fid));
+    const queued = new Set(queue);
+    for (let i = 0; i < queue.length; i++) {
+      const fid = queue[i];
+      if (!defs.has(fid)) continue;
+      const unit = emit_unit(fid, false);
+      const referenced = new Set<string>();
+      for (const seg of unit.segs) for (const ref of seg.refs) referenced.add(ref);
+      for (const spin of unit.spins) for (const ref of spin[2]) referenced.add(ref);
+      for (const ref of referenced) {
+        if (!queued.has(ref) && (!units.has(ref) || dirty.has(ref))) {
+          queued.add(ref);
+          queue.push(ref);
+        }
+      }
     }
-    for (const [k, tld] of defs) {
-      compile_def(fl, k, tld);
+    let facts_reemitted = 0;
+    for (const fid of generic) {
+      if (!units.has(fid) && (!facts_units.has(fid) || dirty.has(fid))) {
+        // These standalone generic bodies produce poly keys even when all
+        // their calls are fused or spun. Their code and refs are discarded.
+        emit_unit(fid, true);
+        facts_reemitted += 1;
+      }
     }
-    diagnostic_stage("pass.facts", { pass: pass_number });
+    assemble();
+    needed = file_reach(fl, roots);
+    for (const fid of units.keys()) {
+      if (!needed.has(fid)) {
+        units.delete(fid);
+        forget(fid);
+      }
+    }
+    assemble();
     facts_converge(cb);
-    let constant_entries = 0;
-    for (const values of fl.consts.values()) constant_entries += values.size;
+    for (const fid of dirty) {
+      if (!needed.has(fid) && !facts_units.has(fid)) dirty.delete(fid);
+    }
+    compile_reqs(fl, [...needed].flatMap((fid) => foreign.has(fid) ? [foreign.get(fid)!] : []));
+    const live = file_reach(fl, roots);
+    fl.segs = fl.segs.filter((seg) => live.has(seg.fid));
+    fl.spins = fl.spins.filter(([fid]) => live.has(fid));
     let lines = 0, line_code_units = 0, spin_code_units = 0;
     for (const seg of fl.segs) {
       lines += seg.lines.length;
       for (const line of seg.lines) line_code_units += line.length;
     }
     for (const spin of fl.spins) spin_code_units += spin[1].length;
-    // A dry pass retains no lines: report the counted (not retained) units.
-    if (dry) {
-      lines = fl.dry_lines;
-      line_code_units = fl.dry_units;
+    diagnostic("pass.end", { pass: pass_number, definitions: units.size,
+      reemitted: queue.filter((fid) => defs.has(fid)).length, pending: dirty.size,
+      facts_definitions: facts_units.size, facts_reemitted,
+      segments: fl.segs.length, spins: fl.spins.length, tables: tables.length,
+      image_words: fl.img.length, lines, line_code_units, spin_code_units,
+      own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size });
+    if (DIAGNOSTICS) {
+      collect_full();
+      diagnostic_heap("pass.end", { pass: pass_number });
     }
-    diagnostic("pass.end", { pass: pass_number, segments: fl.segs.length,
-      spins: fl.spins.length, tables: fl.tabs.size, image_words: fl.img.length,
-      constant_entries, lines, line_code_units, spin_code_units,
-      own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size, dry });
-    return fl;
-  };
-  // Dry emission walks converge the monotone facts; they still run
-  // emit_body/emit_args/val_own and skip only retained lines and spin
-  // sources. Each iteration reuses the one File. The one real pass after the
-  // fixed point must not add facts; growth means the dry walk missed a
-  // producer and the result is not safe to emit.
-  let was: number;
-  if (FACTS_ONLY_FIRST) {
-    do {
-      was = facts();
-      pass(emission_defs, true);
-    } while (was !== facts());
-    const before = { own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size };
-    pass(emission_defs, false);
-    const after = { own: cb.own.size, hot: cb.hot.size, stat: cb.stat.size };
-    diagnostic("facts.no_growth", { before, after,
-      added: { own: after.own - before.own, hot: after.hot - before.hot,
-        stat: after.stat - before.stat } });
-    if (after.own !== before.own || after.hot !== before.hot
-      || after.stat !== before.stat) {
-      die("facts grew during real emission; the dry walk missed a producer: "
-        + JSON.stringify({ before, after }));
-    }
-  } else {
-    do {
-      was = facts();
-      pass(emission_defs, false);
-    } while (was !== facts());
-  }
-  // The fixed point's last pass leaves its temporary terms and maps dead
-  // before the assembly builds the final source string.
+  } while (dirty.size > 0 || [...needed].some((fid) => defs.has(fid) && !units.has(fid))
+    || [...generic].some((fid) => !units.has(fid) && !facts_units.has(fid)));
+  memo_gc();
   collect_full();
-  // Foreign source text and request stubs do not contribute to own/hot/stat/lend
-  // facts. Emit them once after the fixed point reaches its stable pass.
-  diagnostic("requests.begin", { pass: diagnostic_pass, segments: fl.segs.length });
-  compile_reqs(fl, foreign_defs);
-  diagnostic("requests.end", { pass: diagnostic_pass, code_units: fl.reqs.length });
-  // Index each id once; segments keep the precedence of the earlier find.
-  const refs_by_fid = new Map<string, Set<string>>();
-  for (const seg of fl.segs) {
-    if (!refs_by_fid.has(seg.fid)) refs_by_fid.set(seg.fid, seg.refs);
-  }
-  for (const spin of fl.spins) {
-    if (!refs_by_fid.has(spin[0])) refs_by_fid.set(spin[0], spin[2]);
-  }
-  const reach = (from: string[], set = new Set<string>()): Set<string> => {
-    // An explicit iterator stack preserves the recursive DFS visitation order
-    // while avoiding repeated linear searches and JavaScript call-stack growth.
-    const stack: [string, Iterator<string> | null][] =
-      from.slice().reverse().map((fid) => [fid, null]);
-    while (stack.length > 0) {
-      const top = stack[stack.length - 1];
-      if (top[1] === null) {
-        if (set.has(top[0])) {
-          stack.pop();
-          continue;
-        }
-        set.add(top[0]);
-        const refs = refs_by_fid.get(top[0]);
-        if (refs === undefined) {
-          stack.pop();
-          continue;
-        }
-        top[1] = refs[Symbol.iterator]();
-      }
-      const next = top[1]!.next();
-      if (next.done) stack.pop();
-      else stack.push([next.value, null]);
-    }
-    return set;
-  };
+  const reach = (from: string[]): Set<string> => file_reach(fl, from);
   diagnostic("reach.begin", { segments: fl.segs.length, spins: fl.spins.length });
-  const live = reach([seg_fid("main")]);
+  const live = reach([seg_fid("main"), ...[...fl.bangs].map(seg_fid), ...fl.clos]);
   // The device holds what the bangs reach and, when a bang's parameter
   // may hold a closure (a jump through its fid), every closure.
   const wide = [...fl.bangs].some((k) =>
@@ -4410,14 +4583,14 @@ export function compile_book(book: Bend.Book): string {
     `static const char* SHOW_NAMES[] = { ${show.names.map((n) =>
       JSON.stringify(n)).join(", ")} };`, "#endif"];
   diagnostic("tables.begin", { entries: entries.length });
-  const defs = compile_tables(fl, entries, show);
-  diagnostic("tables.end", { definitions: defs.length });
-  defs.push(`#define MAIN_FID ${seg_fid("main")}`, `#define MAIN_PURE ${
+  const table_defs = compile_tables(fl, entries, show);
+  diagnostic("tables.end", { definitions: table_defs.length });
+  table_defs.push(`#define MAIN_FID ${seg_fid("main")}`, `#define MAIN_PURE ${
     Number(show !== null)}`,
     `#define BLK_SHR ${Number(cb.hot.has("t:Array"))}`);
   const fills: [string, string[]][] = [
-    ["Tables", [diagnostic_join("fills.tables", defs, "\n"), ...[...fl.tabs].map(([r, i]) =>
-      `CONSTV u64 TAB_${i}[] = { ${r} };`)]],
+    ["Tables", [diagnostic_join("fills.tables", [...table_defs, ...offsets], "\n"), ...tables.map(([name, row]) =>
+      `CONSTV u64 ${name}[] = { ${row} };`)]],
     ["Spins", [`CONSTV u64 STAT_IMG[] = { ${diagnostic_join("fills.image", fl.img, ", ") || 0} };`,
       // A spin may call one emitted later (a nested spin is pushed before its
       // caller's body is joined), so every spin is declared before the block.

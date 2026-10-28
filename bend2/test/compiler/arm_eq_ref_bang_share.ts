@@ -207,21 +207,13 @@ function bangTerm(t: Bend.LTerm): Bend.LTerm | null {
   }
 }
 
-const spin_count = (c: string): number => (c.match(/Term arm_/g) ?? []).length;
+const spin_count = (c: string): number => (c.match(/Term \w*arm_/g) ?? []).length;
 const plain = Comp.compile_book(await book());
 const plain_spins = spin_count(plain);
 const list = sites(await book());
 const all = groups(list);
-// arm_eq_ann_share.ts establishes that this group's second site shares the
-// representative on the base compiler and separates on the corrected head.
-// The Ref.b mutation below targets that same copy.
-const shared = all.find((g) => g.key === "431:448:Lam");
-if (shared === undefined) {
-  throw new Error("fixture group 431:448:Lam is absent");
-}
-
 let tried = 0;
-for (const g of [shared]) {
+for (const g of all) {
   const b = await book();
   const same = groups(sites(b)).find((h) => h.key === g.key);
   if (same === undefined) continue;

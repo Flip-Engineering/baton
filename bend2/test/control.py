@@ -59,7 +59,11 @@ if muse and resume:
               file=sys.stderr,flush=True)
         sys.exit(1)
 if omp:
-    json.loads(sys.stdin.readline())
+    print(json.dumps({'type':'ready','protocolVersion':1,'supported':[1,2],
+                      'maxFrameBytes':1048576,'maxReassembled':67108864}),flush=True)
+    filter_frame=sys.stdin.readline()
+    if not filter_frame.strip(): sys.exit(0)
+    json.loads(filter_frame)
     state=json.loads(sys.stdin.readline())
     prompt=json.loads(sys.stdin.readline())['message']
     storage=pathlib.Path(args[args.index('--session-dir')+1])
@@ -840,6 +844,44 @@ class Control(unittest.TestCase):
                         for table in ('sessions', 'messages', 'turns', 'executions', 'session_stops')}
                     evidence['remaining_processes'] = self.process_rows()
                     evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + '\n')
+
+    def test_project_resume_starts_a_new_attempt_after_terminal_start_failure(self):
+        self.root()
+        session = 'project-start-failed'
+        assignment = self.recruit(session)
+        self.call('project', self.repo)
+        self.receiver(session)
+        failed_id = 'receive:' + session + ':1:failed-start'
+        failed_directory = self.directory / 'failed-start-attempt'
+        failed_directory.mkdir()
+        with sqlite3.connect(self.db) as database:
+            database.execute(
+                'INSERT INTO executions(session,id,mode,directory,phase,status) '
+                'VALUES(?,?,?,?,?,?)',
+                (session, failed_id, 'retained', str(failed_directory),
+                 'exited', 'start failed'))
+
+        resumed = subprocess.Popen([str(EXE), '--project', assignment['workspace'],
+                                    'as', 'root', 'resume', '--session', session],
+                                   env=self.environment, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True)
+        stream, started = self.accept(session, resumed)
+        self.assertEqual(started['session'], session)
+        self.assertEqual(started['resume'], '')
+        self.assertIn(failed_id, started['prompt'])
+        self.assertIn('Continue unfinished work', started['prompt'])
+        self.finish(stream, 'The recovered assignment completed.')
+        stdout, stderr = self.child_communication(resumed)
+        self.assertEqual(resumed.returncode, 0, stdout + stderr)
+        answer = self.project_resume_result(stdout)
+        self.assertEqual(answer['delivery']['kind'], 'recovery')
+        self.assertIn(failed_id, answer['delivery']['body'])
+        self.assertGreater(self.read_count(answer['delivery']['id'], session), 0)
+        latest = self.rows('SELECT * FROM executions WHERE session=? ORDER BY rowid DESC LIMIT 1',
+                           (session,))[0]
+        self.assertNotEqual(latest['id'], failed_id)
+        self.assertEqual((latest['phase'], latest['status']), ('exited', 'exit 0'))
+        self.assertEqual(self.call('inbox', session), [])
 
     def test_project_resume_keeps_queued_delivery_separate_from_history_and_preserves_stops(self):
         self.root()

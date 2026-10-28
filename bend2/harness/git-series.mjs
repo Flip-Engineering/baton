@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Series-scoped Git environment and GitHub App HTTPS credential helper.
 import { constants as cryptoConstants, sign } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { accessSync, constants, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import https from 'node:https';
 import { homedir } from 'node:os';
@@ -10,10 +11,13 @@ import { fileURLToPath } from 'node:url';
 export const REPOSITORY_PATTERN = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 export const PERMISSIONS = { contents: 'write', pull_requests: 'write', metadata: 'read' };
 export const WORKFLOW_PERMISSIONS = { ...PERMISSIONS, workflows: 'write' };
+export const GH_PERMISSIONS = { ...PERMISSIONS, issues: 'write', actions: 'read',
+  checks: 'read', statuses: 'read' };
 export const API_ROOT = 'https://api.github.com';
 export const SERIES = ['gpt', 'muse', 'deepseek', 'claude', 'glm', 'kimi'];
 export const SERIES_LABELS = { gpt: 'GPT', muse: 'Muse', deepseek: 'DeepSeek',
   claude: 'Claude', glm: 'GLM', kimi: 'Kimi' };
+const GH_BIN = fileURLToPath(new URL('./git-series-bin/', import.meta.url));
 
 export class Refusal extends Error {}
 // GitHub answered 404 for the requested resource.
@@ -258,6 +262,9 @@ export function launch(args, inherited = process.env, execute = exec_command) {
     args.model_key, args.series_key, profile, args.repository ?? null);
   const environment = scoped_environment(registry_path, series_key, github, inherited,
     author_email, author_name, args.repository, profile);
+  environment.PATH = GH_BIN + delimiter + (environment.PATH ?? '/bin:/usr/bin');
+  environment.BATON2_GH_REGISTRY = registry_path;
+  environment.BATON2_GH_SERIES = series_key;
   if (series_key === 'gpt') {
     delete environment.OPENAI_API_KEY;
     delete environment.CODEX_API_KEY;
@@ -350,11 +357,8 @@ function valid_expiration(value) {
     && Date.parse(value) > Date.now();
 }
 
-// Each account owner has its own installation. The workflow-write profile
-// requests a token restricted to the selected repository.
-export async function installation_token(directory, github, repository, jwt = app_jwt, request = api, profile = 'git') {
-  const permissions = profile_permissions(profile, repository);
-  minimum_permissions(github.permissions, 'The App identity', permissions);
+async function repository_token(directory, github, repository, permissions, body, jwt, request, profile = 'git') {
+  minimum_permissions(github.permissions, 'The App identity', profile === 'gh' ? PERMISSIONS : permissions);
   const signed = jwt(directory, github), app = await request('/app', signed);
   require(app.id === github.appId && app.slug === github.slug,
     'The signing key authenticated another GitHub App.');
@@ -367,8 +371,6 @@ export async function installation_token(directory, github, repository, jwt = ap
     throw error;
   });
   verify_installation(installation, github, owner, permissions);
-  const body = { permissions };
-  if (profile === 'workflow-write') body.repositories = [repository.split('/')[1]];
   const issued = await request(`/app/installations/${installation.id}/access_tokens`, signed, body);
   minimum_permissions(issued.permissions, 'The issued token', permissions);
   if (profile === 'workflow-write') {
@@ -381,6 +383,69 @@ export async function installation_token(directory, github, repository, jwt = ap
     'GitHub returned an invalid installation token.');
   require(valid_expiration(issued.expires_at), 'GitHub returned an expired installation token.');
   return issued.token;
+}
+
+// Each account owner has its own installation. The workflow-write profile
+// requests a token restricted to the selected repository.
+export function installation_token(directory, github, repository, jwt = app_jwt, request = api, profile = 'git') {
+  const permissions = profile_permissions(profile, repository);
+  const body = { permissions };
+  if (profile === 'workflow-write') body.repositories = [repository.split('/')[1]];
+  return repository_token(directory, github, repository, permissions, body, jwt, request, profile);
+}
+
+// Each gh command receives the installation's full grant for its target owner.
+export function gh_installation_token(directory, github, repository, jwt = app_jwt, request = api) {
+  return repository_token(directory, github, repository, GH_PERMISSIONS, {}, jwt, request, 'gh');
+}
+
+function origin_repository(environment) {
+  try {
+    const remote = execFileSync('git', ['remote', 'get-url', 'origin'],
+      { env: environment, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const match = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^/]+\/[^/]+?)\/?$/.exec(remote);
+    return match ? match[1].replace(/\.git$/, '') : null;
+  } catch { return null; }
+}
+
+export function gh_repository(command, environment, origin = origin_repository) {
+  let selected = null;
+  for (let index = 0; index < command.length && command[index] !== '--'; index++) {
+    const option = command[index];
+    if (option === '-R' || option === '--repo') {
+      selected = command[++index];
+      require(selected !== undefined, 'The gh repository option requires OWNER/NAME.');
+    } else if (option.startsWith('--repo=')) selected = option.slice(7);
+    else if (option.startsWith('-R')) selected = option.slice(2);
+  }
+  selected ??= environment.GH_REPO ?? origin(environment);
+  require(selected !== null && selected !== undefined,
+    'The gh repository owner could not be resolved; set -R/--repo OWNER/NAME, GH_REPO or a GitHub origin remote.');
+  return repository_path(selected);
+}
+
+function real_gh(environment) {
+  for (const directory of (environment.PATH ?? '/bin:/usr/bin').split(delimiter)) {
+    const filename = resolve(directory || '.', 'gh');
+    try {
+      accessSync(filename, constants.X_OK);
+      if (statSync(filename).isFile() && !realpathSync(filename).endsWith('/git-series-bin/gh')) return filename;
+    } catch {}
+  }
+  throw new Refusal('The gh wrapper requires an executable gh on the inherited PATH.');
+}
+
+export async function gh(command, inherited = process.env, execute = exec_command,
+  issue = gh_installation_token, origin = origin_repository) {
+  const repository = gh_repository(command, inherited, origin);
+  const program = real_gh(inherited);
+  require(inherited.BATON2_GH_REGISTRY && inherited.BATON2_GH_SERIES,
+    'The gh wrapper requires a series launch environment.');
+  const [, directory, github] = selected_identity(path(inherited.BATON2_GH_REGISTRY), null, inherited.BATON2_GH_SERIES);
+  const environment = { ...inherited };
+  delete environment.GITHUB_TOKEN;
+  environment.GH_TOKEN = await issue(directory, github, repository);
+  execute(program, [program, ...command], environment);
 }
 
 function credential_fields(input) {
@@ -474,6 +539,10 @@ export function parse(argv) {
 
 export async function main(argv = process.argv.slice(2)) {
   try {
+    if (argv[0] === 'gh') {
+      await gh(argv.slice(1));
+      return 0;
+    }
     const args = parse(argv);
     if (args.help) {
       process.stdout.write('git-series.mjs launch --registry FILE [--model-key MODEL] [--series-key SERIES] [--repository OWNER/REPO] [--profile git|workflow-write] [--native-model] -- COMMAND...\n'
