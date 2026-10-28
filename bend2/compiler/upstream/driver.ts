@@ -6,6 +6,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { finished } from "node:stream/promises";
 import * as Comp from "./comp.ts";
 import * as Fact from "./facts.ts";
+import { Admission } from "./admission.ts";
 import { Fragments } from "./fragments.ts";
 import type { Fragment } from "./fragments.ts";
 
@@ -29,7 +30,8 @@ function execute(directory: string, args: string[], front = false): Execution {
   return execute_argv(directory, argv, front, front || DIAGNOSTICS);
 }
 
-function execute_argv(directory: string, argv: string[], mirror_stdout: boolean, mirror_stderr: boolean): Execution {
+function execute_argv(directory: string, argv: string[], mirror_stdout: boolean, mirror_stderr: boolean,
+  output: NodeJS.WriteStream = process.stdout): Execution {
   const started = new Date().toISOString();
   const cwd = process.cwd();
   const stdout = fs.createWriteStream(path.join(directory, "stdout"));
@@ -37,7 +39,7 @@ function execute_argv(directory: string, argv: string[], mirror_stdout: boolean,
   const child = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"], env: process.env });
   fs.writeFileSync(path.join(directory, "process-start.json"), JSON.stringify({ argv, cwd, pid: child.pid, started }));
   child.stdout.pipe(stdout); child.stderr.pipe(stderr);
-  if (mirror_stdout) child.stdout.pipe(process.stdout, { end: false });
+  if (mirror_stdout) child.stdout.pipe(output, { end: false });
   if (mirror_stderr) child.stderr.pipe(process.stderr, { end: false });
   const complete = new Promise<{ code: number | null; signal: string | null }>((resolve, reject) => {
     let spawn_error: Error | null = null;
@@ -59,8 +61,9 @@ function execute_argv(directory: string, argv: string[], mirror_stdout: boolean,
   return { child, complete };
 }
 
-export async function run(directory: string, argv: string[]): Promise<{ code: number | null; signal: string | null }> {
-  const execution = execute_argv(directory, argv, true, true);
+export async function run(directory: string, argv: string[], output: "stdout" | "stderr" = "stdout"):
+  Promise<{ code: number | null; signal: string | null }> {
+  const execution = execute_argv(directory, argv, true, true, output === "stderr" ? process.stderr : process.stdout);
   execution.child.stdin.end();
   return await execution.complete;
 }
@@ -89,6 +92,8 @@ class Worker {
   private ready: Promise<void>;
   private pending: { file: string; unit: string; resolve: (value: any) => void; reject: (error: unknown) => void } | null = null;
   private failed = false;
+  metadata: number | null = null;
+  get pid(): number | undefined { return this.execution.child.pid; }
 
   constructor(readonly program: Prepared) {
     this.directory = fs.mkdtempSync(path.join(program.evidence, "worker-"));
@@ -116,7 +121,7 @@ class Worker {
               const pending = this.pending;
               if (pending === null || pending.file !== message.file) throw new Error("Unexpected compiler unit result");
               this.failed ||= message.failed === true;
-              this.pending = null; pending.resolve(JSON.parse(fs.readFileSync(message.file, "utf8")));
+              this.pending = null; pending.resolve(message.file);
             }
           } catch (error) { reject(error); this.pending?.reject(error); }
         }
@@ -136,13 +141,18 @@ class Worker {
     const file = path.join(directory, "result.json");
     const request = { kind: "emit", unit: job.key, facts_only: job.facts_only, snapshot, snapshot_digest, result: file };
     fs.writeFileSync(path.join(directory, "request.json"), JSON.stringify(request));
-    const result = await new Promise<any>((resolve, reject) => {
+    const file_result = await new Promise<string>((resolve, reject) => {
       this.pending = { file, unit: job.key, resolve, reject };
       this.execution.child.stdin.write(JSON.stringify(request) + "\n", error => { if (error) reject(error); });
     });
+    const before = process.memoryUsage();
+    const result = JSON.parse(fs.readFileSync(file_result, "utf8"));
     if (!result.ok) throw new CompilerFailure(directory, result, result.error.formatted);
-    return { key: job.key, trace: Fact.from_events(result.trace), result: { lend: new Set(result.lend),
-      masks: result.masks, refs: new Set(result.refs), edges: result.edges, code: Fragments.read(result.fragment) } };
+    const value = { key: job.key, trace: Fact.from_events(result.trace), result: { lend: new Set<string>(result.lend),
+      masks: result.masks, refs: new Set<string>(result.refs), edges: result.edges, code: Fragments.read(result.fragment) } };
+    const after = process.memoryUsage();
+    this.metadata = Math.max(0, after.rss - before.rss, after.heapUsed - before.heapUsed);
+    return value;
   }
 
   async finish(): Promise<void> {
@@ -159,20 +169,36 @@ class Worker {
 
 export async function emit(program: Prepared, output: string): Promise<void> {
   const snapshots = path.join(program.evidence, "snapshots"); fs.mkdirSync(snapshots);
-  let worker: Worker | null = null;
+  const observations = path.join(program.evidence, "admission.jsonl");
+  const admission = new Admission((event, details) => fs.appendFileSync(observations,
+    JSON.stringify({ event, at: new Date().toISOString(), ...details }) + "\n"));
   const fd = fs.openSync(output, "wx");
   try {
     await Comp.compile_checked_to(program.directory, chunk => fs.writeFileSync(fd, chunk), {
       emit: async jobs => {
-        if (worker === null) worker = new Worker(program);
         const digest = Fact.digest(jobs[0].initial), snapshot = path.join(snapshots, digest + ".json");
         if (!fs.existsSync(snapshot)) fs.writeFileSync(snapshot, JSON.stringify(Object.fromEntries(
           Fact.KINDS.map(kind => [kind, [...jobs[0].initial[kind]].sort()]))));
-        const results: Fact.Emission<Fragment>[] = [];
-        for (const job of jobs) results.push(await worker.emit(job, snapshot, digest));
-        return results;
+        return await admission.run(jobs, job => JSON.stringify([job.key, job.facts_only]), job => {
+          const worker = new Worker(program);
+          const complete = (async () => {
+            let value: Fact.Emission<Fragment>;
+            try { value = await worker.emit(job, snapshot, digest); }
+            catch (error) {
+              try { await worker.finish(); } catch (cause) {
+                throw new AggregateError([error, cause], String(error) + "\nWhile collecting compiler unit: " + String(cause));
+              }
+              throw error;
+            }
+            await worker.finish();
+            const usage = JSON.parse(fs.readFileSync(path.join(worker.directory, "worker-usage.json"), "utf8"));
+            return { value, profile: { peak: usage.usage.maxRSS * 1024, metadata: worker.metadata! } };
+          })();
+          return { pid: () => worker.pid, metadata: () => worker.metadata, complete };
+        });
       },
-      end_phase: async () => { if (worker) { const current = worker; worker = null; await current.finish(); } },
+      end_phase: async () => { fs.appendFileSync(observations, JSON.stringify({ event: "phase.end",
+        at: new Date().toISOString(), memory: process.memoryUsage() }) + "\n"); },
     });
   } finally { fs.closeSync(fd); }
 }
