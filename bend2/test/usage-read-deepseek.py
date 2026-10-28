@@ -88,12 +88,13 @@ def main():
             assert document["windows"] == [{"window": "balance", "usedPercent": None, "resetsAt": None,
                                             "exhausted": False}], document
             assert KEY not in json.dumps(document), document
-            # The shim forwards each option with the type libcurl defines for it. The
-            # transport sets these long values and callbacks for every request.
-            calls = set(options.read_text().splitlines())
-            for call in ("52 long 0", "99 long 1", "20011 function", "10001 object",
-                         "10002 object", "10023 object", "10036 object"):
-                assert call in calls, (call, sorted(calls))
+            # The shim reads each option with the exact type credit-transport.c passes
+            # and refuses any other option. A bodiless GET sets exactly these options:
+            # URL, CUSTOMREQUEST, HTTPHEADER, FOLLOWLOCATION 0, NOSIGNAL 1,
+            # ACCEPT_ENCODING, the br_http_write callback, WRITEDATA and ERRORBUFFER.
+            calls = options.read_text().splitlines()
+            assert calls == ["10002 char*", "10036 char*", "10023 curl_slist*", "52 long 0", "99 long 1",
+                             "10102 char*", "20011 curl_write_callback", "10001 void*", "10010 char*"], calls
             print("deepseek-reader-funded: ok", flush=True)
 
             Fixture.answer = (200, json.dumps({"is_available": False, "balance_infos": [
@@ -116,6 +117,9 @@ def main():
             assert "Authentication Fails" in document["reason"], document
             print("deepseek-reader-http-error: ok", flush=True)
 
+            # Every request in the cases above set only options the shim reads with
+            # their exact type.
+            assert not [call for call in options.read_text().splitlines() if "unsupported" in call], options.read_text()
             asked = len(Fixture.requests)
             document = read(environment, "file:" + str(directory / "absent-key"))
             assert document["state"] == "unreadable", document
