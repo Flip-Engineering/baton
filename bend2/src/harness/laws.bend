@@ -237,10 +237,9 @@ law m11_omp_completion_arguments_add_the_gate_tool:
   for +model: String
   for +effort: String
   for +sessions: String
-  for +extension: String
-  {Omp.completion_arguments(Nil{},cmd,model,effort,sessions,"",True{},extension) == List.append(&1,String,Omp.arguments(cmd,model,effort,sessions),["--extension",extension]) : List<String>}
+  {Omp.completion_arguments(Nil{},cmd,model,effort,sessions,"",True{},"/libexec/baton2/omp-completion.mjs") == List.append(&1,String,Omp.arguments(cmd,model,effort,sessions),["--extension","/libexec/baton2/omp-completion.mjs"]) : List<String>}
 
-def m11_omp_completion_arguments_add_the_gate_tool(cmd,model,effort,sessions,extension):
+def m11_omp_completion_arguments_add_the_gate_tool(cmd,model,effort,sessions):
   {==}
 
 law m11_claude_user_frame_carries_the_text_as_a_literal:
