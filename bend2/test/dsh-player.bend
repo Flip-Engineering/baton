@@ -25,8 +25,8 @@ def cli(args: List<String>) -> IO(Unit):
       print_argv("arg",Dsh.argv(home,cmd,model,effort,tools,model_patch,"",True{}))
     case "argv-resume" <> home <> cmd <> model <> effort <> tools <> model_patch <> session <> Nil{}:
       print_argv("arg",Dsh.argv(home,cmd,model,effort,tools,model_patch,session,False{}))
-    case "prepare" <> directory <> model <> effort <> Nil{}: do IO<Unit>:
-      result : Result<&1,&1,U32 & String,Dsh.Prepared> <- Dsh.prepare(directory,model,effort)
+    case "prepare" <> directory <> model <> effort <> hooks <> Nil{}: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,Dsh.Prepared> <- Dsh.prepare(directory,model,effort,hooks)
       print_prepared(result)
     case "kind" <> line <> Nil{}:
       IO.print("kind\t" ++ Dsh.kind(line))

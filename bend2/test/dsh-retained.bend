@@ -57,7 +57,7 @@ def admit(+db: String, +directory: String, +cmd: String, +model: String, +effort
   do IO<Unit>:
     +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
     home : String <- Turn.dsh_home(db,canonical,"dsh-fixture")
-    prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- Turn.dsh_prepare_if(True{},directory,model,effort)
+    prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- Turn.dsh_prepare_if(True{},directory,model,effort,"")
     launch : Turn.RetainedLaunch <- IO.try(Turn.RetainedLaunch,Turn.retained_launch_checked(prepared,True{},False{},"",home,cmd,model,effort,native,False{},"","fixture task",False{},False{},"default",True{}))
     start : P.RetainedStart <- IO.try(P.RetainedStart,Turn.retained_admit(canonical,directory,".","fixture task",0,P.argv(["/bin/true"]),launch))
     admission_value(start)
@@ -111,7 +111,7 @@ def run(args: List<String>) -> IO(Unit):
     case +db <> +directory <> +cmd <> +model <> +effort <> +native <> Nil{}: do IO<Unit>:
       canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
       home : String <- Turn.dsh_home(db,canonical,"dsh-fixture")
-      prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- Turn.dsh_prepare_if(True{},directory,model,effort)
+      prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- Turn.dsh_prepare_if(True{},directory,model,effort,"")
       prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_SESSION=dsh-fixture"]))
       launch : Result<&1,&1,U32 & String,Turn.RetainedLaunch> <- Turn.retained_launch_checked(prepared,True{},False{},prefix,home,cmd,model,effort,native,False{},"","fixture task",False{},False{},"default",False{})
       launch_value(launch)
