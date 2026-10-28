@@ -746,6 +746,12 @@ def deferred_report_id_sql(+id: String, +event: String, +episode: String) -> Str
   +failed = "coalesce(json_extract(frame.value,'$.is_error'),0)=1 OR (json_extract(frame.value,'$.payload.kind')='run_terminal' AND json_extract(frame.value,'$.payload.terminal')<>'completed') OR " ++ C.omp_terminal_error_sql_expr("frame.value")
   "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT CASE WHEN coalesce(" ++ text ++ ",'')<>'' OR " ++ failed ++ " THEN " ++ C.q(id ++ ":episode:" ++ episode) ++ " ELSE '' END FROM frame;"
 
+# A later terminal observed while replaying the same spool must not publish a
+# second report for the same recorded event in this attempt. A later event with
+# identical text remains a distinct episode and keeps its own identity.
+def deferred_existing_sql(+player: String, +id: String, +event: String) -> String:
+  "SELECT coalesce((SELECT t.id FROM turns t WHERE t.worker=" ++ C.q(player) ++ " AND t.event=" ++ C.q(event) ++ " AND t.id LIKE " ++ C.q(id ++ ":episode:%") ++ " LIMIT 1),'');"
+
 def publish_deferred(+db: String, +player: String, +id: String, +event: String, +report_id: String, substantive: Bool, +harness: String) -> IO(Unit):
   match substantive:
     case False{}: do IO<Unit>:
@@ -754,10 +760,14 @@ def publish_deferred(+db: String, +player: String, +id: String, +event: String, 
       failure : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(" ++ C.omp_terminal_error_text_sql(event) ++ ",'');"))
       write_deferred(db,player,id,Tx.trim_nl(failure),Tx.trim_nl(pending),String.eq(presence,"1\n"))
     case True{}: do IO<Unit>:
-      +saved : String <- IO.try(String,Store.apply(db,C.Observe{report_id,player,event,False{},harness}))
-      delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,report_id,"1",saved)
-      written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)
-      IO.pure(Unit,Unit{})
+      +existing : String <- IO.try(String,DB.Sql.query(db,deferred_existing_sql(player,id,event)))
+      Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(existing)),
+        do IO<Unit>:
+          +saved : String <- IO.try(String,Store.apply(db,C.Observe{report_id,player,event,False{},harness}))
+          delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,report_id,"1",saved)
+          written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)
+          IO.pure(Unit,Unit{}),
+        IO.pure(Unit,Unit{}))
 
 def record_deferred(+db: String, +player: String, +id: String, +event: String, +episode: String, later: Bool, +harness: String) -> IO(String):
   match later:
