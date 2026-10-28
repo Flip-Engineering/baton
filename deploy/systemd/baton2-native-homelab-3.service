@@ -2,7 +2,7 @@
 Description=Baton2 isolated homelab Linux validation runner 3
 After=network-online.target
 Wants=network-online.target
-RequiresMountsFor=/mnt/nvme4tb/ci-runners/baton2-native-homelab-3 /var/tmp/baton2-compile-queue
+RequiresMountsFor=/mnt/nvme4tb/ci-runners/baton2-native-homelab-3 /mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm /mnt/nvme4tb/ci-runners/baton2-native-homelab/toolchains/apple/MacOSX15.5.sdk /mnt/nvme4tb/ci-runners/baton2-native-homelab/toolchains/apple/MacOSX15.5.sdk.transfer-manifest.json /var/tmp/baton2-compile-queue
 
 [Service]
 Type=simple
@@ -13,6 +13,10 @@ RuntimeDirectory=baton2-native-homelab-3
 RuntimeDirectoryMode=0700
 BindPaths=/mnt/nvme4tb/ci-runners/baton2-native-homelab-3:/run/baton2-native-homelab-3
 BindPaths=/var/tmp/baton2-compile-queue
+TemporaryFileSystem=/mnt/nvme4tb/ci-runners/baton2-native-homelab:ro
+BindReadOnlyPaths=/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm
+BindReadOnlyPaths=/mnt/nvme4tb/ci-runners/baton2-native-homelab/toolchains/apple/MacOSX15.5.sdk
+BindReadOnlyPaths=/mnt/nvme4tb/ci-runners/baton2-native-homelab/toolchains/apple/MacOSX15.5.sdk.transfer-manifest.json
 WorkingDirectory=/run/baton2-native-homelab-3/runner
 ExecStartPre=/bin/sh -c "printf '%%s' \"$$PATH\" > /run/baton2-native-homelab-3/runner/.path"
 ExecStart=/bin/sh -c "exec /run/baton2-native-homelab-3/runner/runsvc.sh"
@@ -24,6 +28,8 @@ UMask=0077
 Environment=HOME=/run/baton2-native-homelab-3/home
 Environment=TMPDIR=/run/baton2-native-homelab-3/temp
 Environment=RUNNER_TOOL_CACHE=/run/baton2-native-homelab-3/tool-cache
+Environment=BATON2_DARWIN_LLVM_ROOT=/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm
+Environment=BATON2_DARWIN_SDKROOT=/mnt/nvme4tb/ci-runners/baton2-native-homelab/toolchains/apple/MacOSX15.5.sdk
 Environment=DOTNET_CLI_HOME=/run/baton2-native-homelab-3/home
 Environment=XDG_CACHE_HOME=/run/baton2-native-homelab-3/home/.cache
 Environment=PATH=/run/baton2-native-homelab-3/runner/externals/node24/bin:/usr/local/bin:/usr/bin:/bin
