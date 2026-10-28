@@ -182,7 +182,9 @@ class DeliveryRedrive(unittest.TestCase):
         redelivery_stdout.mkdir()
 
         first = self.dispatch('root-nudge')
-        self.assertNotEqual(first.returncode, 0)
+        self.assertEqual(first.returncode, 2, first.stdout + first.stderr)
+        self.assertIn('receive endpoint: no native conversation', first.stdout + first.stderr)
+        self.assertIn('Invalid argument', first.stdout + first.stderr)
         self.assertTrue(self.wait_for(lambda: len(self.calls('coordinator')) >= 1), self.calls('coordinator'))
         self.assertEqual(self.calls('worker'), ['root-nudge'])
         self.assertEqual(self.calls('coordinator'), ['root-nudge:undelivered'])
@@ -190,6 +192,7 @@ class DeliveryRedrive(unittest.TestCase):
             "SELECT sender, recipient, kind, body FROM messages WHERE id='root-nudge:undelivered'").fetchone()
         self.assertEqual(row[:3], ('worker', 'coordinator', 'report'))
         self.assertIn('Input root-nudge for worker could not be delivered', row[3])
+        self.assertIn('receive endpoint: no native conversation', row[3])
         self.assertIn('Invalid argument', row[3])
         self.assertEqual(self.db.execute(
             "SELECT count(*) FROM message_reads WHERE message='root-nudge'").fetchone()[0], 0)
