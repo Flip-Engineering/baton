@@ -113,9 +113,28 @@ The plan starts from `main`, bang definitions, closure targets and the reachable
 generic definitions that need facts-only emission. The worklist follows newly
 discovered external definition references. Call-graph strongly connected
 components form levels, with callees below callers. A newly discovered unit is
-assigned from this fixed source graph and emitted against its level's snapshot.
+assigned from the source graph for the current analysis and emitted against its
+level's snapshot.
 Reach determines linked code. Analysis records needed to justify historical
 facts remain available through replay even if their code becomes unreachable.
+
+Before emission, graph construction scans every reachable checked body and its
+signature/type closure, including nested binders, closure bodies and the checked
+template instances in the sealed book. It starts from `SRCS` summaries and adds
+conservative source-definition dependencies from those scans. Fused bodies retain
+their source-definition provenance, so a discovered call records its originating
+definition and target. Generated local helper names do not become source edges.
+
+Every emitted external definition or closure obligation is checked against this
+graph. Discovery of an edge absent from it invalidates the current schedule,
+including the current level snapshot. Collect already-owned worker executions,
+retain the superseded analysis evidence, add the new edges, recompute SCCs and
+levels, and restart fact analysis from empty sets. A cached variant may be reused
+only against the rebuilt schedule's matching inputs and read answers. No result
+is merged under a stale schedule. The graph grows over the finite definitions
+and closure origins in the sealed book; an unresolved external target reports
+its actual source error. This contract also covers a new edge that would merge
+SCCs or change a previously assigned level.
 
 Reference categories are explicit:
 
