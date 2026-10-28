@@ -3500,6 +3500,10 @@ function literal_list_rows(p: Parse, b: Match, def: Def, k: Name,
     rows.push({ heads, rest: tail.$ === "PVar" ? tail : null, body: row.f });
   }
   if (literals === 0) return null;
+  // Each helper checks its row independently. Its final fallback must accept
+  // every list because the checker cannot use coverage from earlier helpers.
+  const last = rows[rows.length - 1];
+  if (last.heads.length !== 0 || last.rest === null) return null;
   const fr = () => p.sc.frs++;
   const span = b.s;
   const listType = term_lower_shared(list);

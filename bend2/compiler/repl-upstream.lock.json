@@ -1,5 +1,5 @@
 {
-  "compiler_archive_sha256": "1554306bde85194bf1271ba8048d8e752a4cba81d2a3d3213282923ece91a965",
+  "compiler_archive_sha256": "bf7c9a9b0a94354a107b110f5f5e37cae6c3a02a6e209455ba8ec10506b41796",
   "files": [
     {
       "bytes": 66363,
@@ -7,9 +7,9 @@
       "sha256": "e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798"
     },
     {
-      "bytes": 164650,
+      "bytes": 164910,
       "path": "bend.ts",
-      "sha256": "113e596b88a6472077d65fbeb8707d05fde4c9de6635c9a3edfbe1dc8da88718"
+      "sha256": "b6d010f7728dcfccb33b9e7565e89d616dd87b8afbbdb618106d8e1d2bfc8146"
     },
     {
       "bytes": 248934,
