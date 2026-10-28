@@ -550,7 +550,10 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         return hooks
 
     def codex_handler(self, event):
-        groups = self.codex_hooks()['hooks.' + event]
+        hooks = self.codex_hooks()
+        self.assertIn('hooks.' + event, hooks,
+                      'Codex launch must install a %s hook for mid-turn input and completion control.' % event)
+        groups = hooks['hooks.' + event]
         self.assertEqual(len(groups), 1)
         self.assertEqual(len(groups[0]['hooks']), 1)
         return groups[0], groups[0]['hooks'][0]
@@ -646,7 +649,7 @@ def hook(event, **fields):
     return json.loads(result.stdout) if result.stdout.strip() else None
 def reads():
     with sqlite3.connect(config['db']) as db:
-        return db.execute("SELECT attempt,native FROM message_reads WHERE message=?", (config['message'],)).fetchall()
+        return db.execute("SELECT attempt,recipient,native FROM message_reads WHERE message=?", (config['message'],)).fetchall()
 results = {}
 results['quiet'] = hook('PostToolUse', tool_name='Bash', tool_input={}, tool_response='')
 with sqlite3.connect(config['db']) as db:
@@ -680,7 +683,7 @@ print(json.dumps(results), flush=True)
             self.assertIn(body, results['stop_held']['reason'])
             self.assertEqual(results['read_after_stop'], [])
             self.assertIn(body, results['injected']['hookSpecificOutput']['additionalContext'])
-            self.assertEqual(results['read_after'], [['attempt-1', 'thread-1']])
+            self.assertEqual(results['read_after'], [['attempt-1', session, 'thread-1']])
             self.assertIsNone(results['again'])
             self.assertIsNone(results['stop_after'])
         finally:
@@ -702,7 +705,11 @@ print(json.dumps(results), flush=True)
                                       kind='completion-request', sender='worker')
         self.assertIn('Message (completion-request) from worker [id: request:worker:1]:\n' + body,
                       results['injected']['hookSpecificOutput']['additionalContext'])
-        self.assertEqual(results['read_after'], [['attempt-1', 'thread-1']])
+        self.assertIn(body[-32:] + "\nReview the work against worker's assignment and the supplied evidence. "
+                      "Confirm with completion-confirmed --to worker when the assignment is satisfied. "
+                      "Otherwise use guide --to worker --text TEXT to state what is missing and direct the remaining work.",
+                      results['injected']['hookSpecificOutput']['additionalContext'])
+        self.assertEqual(results['read_after'], [['attempt-1', 'coordinator', 'thread-1']])
 
 
 if __name__ == '__main__':
