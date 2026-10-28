@@ -1,7 +1,11 @@
 # Per-request credit transport (#881, #793)
 
-Status: design, not implemented. `credit_guard_qualified` remains `False{}` in
-`bend2/src/coordinator/accounts.bend`, so no promotional-credit launch is admitted.
+Status: design, not implemented. `credit_launch_gate` in
+`bend2/src/coordinator/accounts.bend` refuses every Anthropic API-key credit
+launch (#1177), so no promotional-credit launch is admitted. The route stays
+unavailable until a provider-enforced per-request boundary keeps each request
+charge within the grant and cap. `credit_launch_gate_priced`, which the
+design below calls, and `credit_guard_qualified` are removed.
 
 ## Scope
 
@@ -16,10 +20,8 @@ Policy stays in Bend2. Host code performs listener, socket and HTTP I/O only.
 ## Current source
 
 - `credit_request_facts_for(db, body)` reads one Messages request body and returns
-  `CreditRequestFacts`.
-- `credit_launch_gate_priced(db, session, attempt, harness, chosen, helper,
-  profile_store, facts, qualified)` reserves the priced charge for one request and
-  returns the helper binding, or the hold sentence when the guard is not qualified.
+  `CreditRequestFacts`; `credit_request_price` estimates the request charge from
+  those facts.
 - `credit_settle_for(db, request, outcome, cost, allow_failed)` settles one
   reservation to its actual cost, or to the reserved maximum when no cost is
   reported.
@@ -27,6 +29,12 @@ Policy stays in Bend2. Host code performs listener, socket and HTTP I/O only.
   owner-only environment specification and spawns the harness with
   `ANTHROPIC_API_KEY` in the child environment. It admits one whole launch against
   one authorization row.
+
+The source has no production caller that reserves a launch or its Messages API
+calls. The estimate, reservation and settlement functions do not enforce a
+provider spend limit. The available Anthropic observations come from the Admin
+organization, cost and usage endpoints; they report account state and usage data.
+They do not enforce a per-request cost boundary.
 
 The host has no effect that accepts a connection or streams an upstream response:
 
@@ -46,8 +54,8 @@ The host has no effect that accepts a connection or streams an upstream response
    environment.
 3. For each request, the listener reads the request line, headers and a body of
    the length named by `Content-Length`.
-4. Bend2 calls `credit_request_facts_for` on the body and then
-   `credit_launch_gate_priced` with that request's facts.
+4. Bend2 calls `credit_request_facts_for` on the body and admits it only after a
+   provider-enforced per-request boundary has been established.
    - On a hold, the listener answers with the provider's credit-exhaustion text
      (`Your credit balance is too low to access the Anthropic API.`). The existing
      classifier then reads it through the handoff path described in

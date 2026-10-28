@@ -35,10 +35,15 @@ def fixture_read_at(+provider: String, +reference: String, +observed: String) ->
     Reader.read_http(provider,Claude.claude_source(),observed,reference,key => fixture_request(reference),response => Claude.claude_windows_sql(response),response => Claude.claude_problem_sql(response)),
     Reader.read_claude(observed,reference))
 
+def fixture_read_clock(+provider: String, +reference: String, now: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match now:
+    case Fail{(code,detail)}: Reader.clock_failed(provider,code,detail)
+    case Done{+value}: fixture_read_at(provider,reference,Tx.trim_nl(value))
+
 def fixture_read(+provider: String, +reference: String) -> IO(Unit):
   do IO<Unit>:
     now : Result<&1,&1,U32 & String,String> <- Clock.Clock.millis()
-    fixture_read_at(provider,reference,Reader.time_value(now))
+    fixture_read_clock(provider,reference,now)
 
 def fixture_args(arguments: List<String>) -> IO(Unit):
   match arguments:

@@ -370,18 +370,20 @@ def release_sql(+seat: String, +provider: String, +account: String) -> String:
   +latest = latest_readable_sql(provider,account)
   "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT replace(h.id,':hold:',':release:'),h.sender,h.recipient,'report','usage hold released: seat " ++ C.escaped(seat) ++ " on " ++ C.escaped(scope_text(provider,account)) ++ ". ' || coalesce(" ++ read_text_sql(latest) ++ ",'No readable read is recorded for this provider and account') || '. Owed input is admitted.' FROM messages h, usage_reads e WHERE h.id GLOB 'usage-read:'||e.id||':hold:*' AND " ++ scope_sql("e.",provider,account) ++ " AND h.sender=" ++ C.q(seat) ++ " AND h.kind='report' AND NOT EXISTS(SELECT 1 FROM messages x WHERE x.id=replace(h.id,':hold:',':release:'));SELECT changes();"
 
+# A hold row is what held_seats_sql reads to wake the seat on release, so a failed
+# announcement insert propagates its database cause and ends the decision.
 def announce(+db: String, +seat: String, +provider: String, +account: String, +model: String, gate: Gate) -> IO(Unit):
   match gate:
     case GateHeld{window,resets_at,source,receipt}: do IO<Unit>:
-      held : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,hold_sql(seat,provider,account,model))
-      unread : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,unknown_sql(seat,provider,account))
+      held : String <- IO.try(String,DB.Sql.query(db,hold_sql(seat,provider,account,model)))
+      unread : String <- IO.try(String,DB.Sql.query(db,unknown_sql(seat,provider,account)))
       IO.pure(Unit,Unit{})
     case GateUnknown{source,reason,receipt}: do IO<Unit>:
-      unread : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,unknown_sql(seat,provider,account))
-      released : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,release_sql(seat,provider,account))
+      unread : String <- IO.try(String,DB.Sql.query(db,unknown_sql(seat,provider,account)))
+      released : String <- IO.try(String,DB.Sql.query(db,release_sql(seat,provider,account)))
       IO.pure(Unit,Unit{})
     case GateNone{}: do IO<Unit>:
-      released : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,release_sql(seat,provider,account))
+      released : String <- IO.try(String,DB.Sql.query(db,release_sql(seat,provider,account)))
       IO.pure(Unit,Unit{})
 
 # --- the seat -------------------------------------------------------------------------

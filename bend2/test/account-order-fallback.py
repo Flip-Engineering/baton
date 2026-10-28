@@ -103,7 +103,7 @@ class AccountOrderFallback(unittest.TestCase):
         self.assertIn('root', [recipient for recipient, body in moves])
         body = moves[0][1]
         for text in ('from claude-credit-primary to claude-max-incognito', 'Credit balance is too low',
-                     'claude-credit-incognito not launchable: promotional-credit guard is false'):
+                     'claude-credit-incognito not launchable: promotional-credit route is unavailable'):
             self.assertIn(text, body)
 
     def windows(self, store, document):
@@ -160,7 +160,7 @@ class AccountOrderFallback(unittest.TestCase):
         self.assertEqual(self.current('leaf'), 'claude-max-incognito')
         holds = self.query("SELECT recipient,body FROM messages WHERE kind='report' AND body LIKE 'account order held:%'")
         self.assertIn('root', [recipient for recipient, body in holds])
-        for text in ('2 claude-credit-incognito not launchable: promotional-credit guard is false',
+        for text in ('2 claude-credit-incognito not launchable: promotional-credit route is unavailable',
                      '3 claude-max-incognito refused', '4 claude-max-primary held by live read'):
             self.assertIn(text, holds[0][1])
         self.assertEqual(self.reports(':route-unavailable') + self.reports(':profile-exhausted') + self.reports(':account-exhausted'), [])
