@@ -314,7 +314,7 @@ def resume_custody(+db: String, +session: String) -> IO(Unit):
   do IO<Unit>:
     directory : String <- IO.try(String,DB.Sql.query(db,resume_attempt_sql(session)))
     +path : String = Tx.trim_nl(directory)
-    observed : Result<&1,&1,U32 & String,String> <- Files.lstat(path)
+    observed : Result<&1,&1,U32 & String,String> <- Files.Files.lstat(path)
     resume_custody_observed(db,session,path,observed)
 def resume_stopped(+db: String, +session: String, stopped: Bool) -> IO(Unit):
   match stopped:
