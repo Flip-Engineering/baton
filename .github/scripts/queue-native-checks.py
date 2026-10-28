@@ -10,6 +10,7 @@ import shutil
 import signal
 import subprocess
 import sys
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import time
 import uuid
@@ -42,6 +43,49 @@ COMPILER_ENVIRONMENT = (
 
 def write(path, value):
     path.write_text(json.dumps(value, indent=2) + '\n')
+
+
+def write_json_atomic(path, value):
+    path = Path(path)
+    temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
+    try:
+        with temporary.open('x') as stream:
+            json.dump(value, stream, indent=2)
+            stream.write('\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+@contextmanager
+def exclusive_lock(path):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def registry_lock(run):
+    return exclusive_lock(Path(run) / 'compile-queue.lock')
+
+
+def output_lock_path(run, output):
+    identity = os.path.normcase(os.path.realpath(os.fspath(output)))
+    name = hashlib.sha256(os.fsencode(identity)).hexdigest()
+    return Path(run) / 'evidence/compile-queue/.locks' / (name + '.lock')
+
+
+def cancellation_marker(run):
+    return Path(run) / 'evidence/compile-queue/cancel-all.json'
 
 
 def write_focused_queue_handoff(config, request, directory, state, **extra):
@@ -243,17 +287,59 @@ def legacy_environment(env):
 
 
 def cancel(config, request, directory):
-    with (directory / 'cancel.stdout').open('ab') as stdout, (directory / 'cancel.stderr').open('ab') as stderr:
-        result = subprocess.run([config['client'], '--', 'cancel', '--state-root', config['state'],
-                                 '--key', request['key'], '--token', request['token']],
-                                stdout=stdout, stderr=stderr)
-    output = (directory / 'cancel.stdout').read_text(errors='replace').splitlines()
-    write_focused_queue_handoff(config, request, directory, 'cancelled',
-                                cancel_returncode=result.returncode,
-                                cancel_result=[line for line in output if line.startswith('canceled=') or line.startswith('owners=')])
-    request['cancel_returncode'] = result.returncode
-    return result.returncode
+    directory = Path(directory)
+    request_path = directory / 'request.json'
+    with exclusive_lock(directory / '.cancel.lock'):
+        with registry_lock(config['run']):
+            current = json.loads(request_path.read_text()) if request_path.is_file() else dict(request)
+            if current.get('key_only') or current.get('exit_code') is not None:
+                return 0
+            if current.get('cancel_returncode') is not None:
+                request.update(current)
+                return current['cancel_returncode']
+            current['cancel_requested_ns'] = time.time_ns()
+            write_json_atomic(request_path, current)
 
+        with (directory / 'cancel.stdout').open('wb') as stdout, \
+                (directory / 'cancel.stderr').open('wb') as stderr:
+            result = subprocess.run([config['client'], '--', 'cancel', '--state-root', config['state'],
+                                     '--key', request['key'], '--token', request['token']],
+                                    stdout=stdout, stderr=stderr)
+        output = (directory / 'cancel.stdout').read_text(errors='replace').splitlines()
+        cancel_result = [line for line in output if line.startswith('canceled=') or line.startswith('owners=')]
+        with registry_lock(config['run']):
+            current = json.loads(request_path.read_text()) if request_path.is_file() else dict(request)
+            current['cancel_returncode'] = result.returncode
+            current['cancel_result'] = cancel_result
+            write_json_atomic(request_path, current)
+            write_focused_queue_handoff(config, current, directory, 'cancelled',
+                                        cancel_returncode=result.returncode,
+                                        cancel_result=cancel_result)
+        request.update(current)
+        return result.returncode
+
+def cancel_all(config):
+    run = Path(config['run'])
+    evidence = run / 'evidence/compile-queue'
+    evidence.mkdir(parents=True, exist_ok=True)
+    marker = cancellation_marker(run)
+    requests = []
+    with registry_lock(run):
+        if not marker.exists():
+            write_json_atomic(marker, {
+                'schema': 'baton2-compile-queue-run-cancel-v1',
+                'requested_ns': time.time_ns(),
+            })
+        for request_path in sorted(evidence.glob('*/request.json')):
+            try:
+                request = json.loads(request_path.read_text())
+            except (OSError, ValueError):
+                continue
+            if request.get('key_only') or request.get('exit_code') is not None:
+                continue
+            requests.append((request, request_path.parent))
+    codes = [cancel(config, request, directory) for request, directory in requests]
+    return int(any(codes))
 
 def queue_key_sources(key_argv, cwd):
     """Identify source inputs named by a key request without retaining their contents."""
@@ -383,11 +469,14 @@ def submit(config, directory, options, command, key_only=False):
     request['priority'] = priority
     argv = [config['client'], '--', 'run', '--token', token, '--receipt', str(directory / 'receipt'), *run_common]
     request['argv'] = argv
-    write(directory / 'request.json', request)
     if key_only:
+        request['key_only'] = True
+        request.update(exit_code=0, finished_ns=time.time_ns())
+        with registry_lock(config['run']):
+            write_json_atomic(directory / 'request.json', request)
         print(key)
         return 0
-    write_focused_queue_handoff(config, request, directory, 'submitted')
+
     child = None
 
     def interrupted(signum, frame):
@@ -396,9 +485,22 @@ def submit(config, directory, options, command, key_only=False):
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, interrupted)
     try:
-        with (directory / 'client.stdout').open('wb') as stdout, (directory / 'client.stderr').open('wb') as stderr:
-            child = subprocess.Popen(argv, stdout=stdout, stderr=stderr)
-            code = child.wait()
+        with registry_lock(config['run']):
+            if cancellation_marker(config['run']).is_file():
+                request.update(cancelled_before_submit=True, exit_code=130,
+                               finished_ns=time.time_ns(), cancel_returncode=0,
+                               cancel_result=['not-submitted=run-cancelled'])
+                write_json_atomic(directory / 'request.json', request)
+                write_focused_queue_handoff(config, request, directory, 'cancelled',
+                                            cancel_returncode=0,
+                                            cancel_result=request['cancel_result'])
+                return 130
+            write_json_atomic(directory / 'request.json', request)
+            write_focused_queue_handoff(config, request, directory, 'submitted')
+            with (directory / 'client.stdout').open('wb') as stdout, \
+                    (directory / 'client.stderr').open('wb') as stderr:
+                child = subprocess.Popen(argv, stdout=stdout, stderr=stderr)
+        code = child.wait()
     except InterruptedError as error:
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             signal.signal(sig, signal.SIG_IGN)
@@ -408,81 +510,98 @@ def submit(config, directory, options, command, key_only=False):
             child.wait()
         cancel(config, request, directory)
         code = 128 + error.args[0]
-    request.update(exit_code=code, finished_ns=time.time_ns())
-    write(directory / 'request.json', request)
-    if request.get('cancel_returncode') is None:
-        write_focused_queue_handoff(config, request, directory, 'finished', exit_code=code)
+    with registry_lock(config['run']):
+        request_path = directory / 'request.json'
+        try:
+            registered = json.loads(request_path.read_text())
+        except (OSError, ValueError):
+            registered = {}
+        for name in ('cancel_requested_ns', 'cancel_returncode', 'cancel_result'):
+            if name in registered:
+                request[name] = registered[name]
+        request.update(exit_code=code, finished_ns=time.time_ns())
+        write_json_atomic(request_path, request)
+        if request.get('cancel_returncode') is None:
+            write_focused_queue_handoff(config, request, directory, 'finished', exit_code=code)
     retain(config, key, directory, code == 0)
     if code:
-        sys.stderr.write((directory / 'client.stderr').read_text())
+        stderr_path = directory / 'client.stderr'
+        if stderr_path.is_file():
+            sys.stderr.write(stderr_path.read_text())
     return code
-
 
 def compiler(mode, argv, key_only=False):
     config = json.loads(Path(os.environ['BATON2_NATIVE_QUEUE']).read_text())
     run = Path(config['run'])
     evidence = run / 'evidence/compile-queue'
     evidence.mkdir(parents=True, exist_ok=True)
-    # The native fixture runner has four workers. Each CI job owns one request at a time.
-    with (run / 'compile-queue.lock').open('w') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        directory = evidence / uuid.uuid4().hex
-        directory.mkdir()
-        if mode == 'bend' and '--check-only' in argv:
-            entries = [value for value in argv[1:]
-                       if value.endswith('.bend') and Path(value).is_file()]
-            if len(entries) != 1:
-                raise SystemExit('queued Bend check requires exactly one existing .bend entry')
-            actual = str(Path(shutil.which(argv[0]) or argv[0]).resolve())
-            entry = str(Path(entries[0]).resolve())
-            options = ['--kind', 'check', '--source-root', str(Path.cwd()),
-                       '--entry', os.path.relpath(entry), '--compiler', actual]
-            # The adapter's own bytes stay out of the cache key: key material
-            # covers only execution-affecting closure (source, toolchain, argv,
-            # inputs, artifacts, options). The adapter identity is execution
-            # evidence, recorded per attempt by compiler_diagnostics().
+    directory = evidence / uuid.uuid4().hex
+    directory.mkdir()
+    if mode == 'bend' and '--check-only' in argv:
+        entries = [value for value in argv[1:]
+                   if value.endswith('.bend') and Path(value).is_file()]
+        if len(entries) != 1:
+            raise SystemExit('queued Bend check requires exactly one existing .bend entry')
+        actual = str(Path(shutil.which(argv[0]) or argv[0]).resolve())
+        entry = str(Path(entries[0]).resolve())
+        options = ['--kind', 'check', '--source-root', str(Path.cwd()),
+                   '--entry', os.path.relpath(entry), '--compiler', actual]
+        # The adapter's own bytes stay out of the cache key: key material
+        # covers only execution-affecting closure (source, toolchain, argv,
+        # inputs, artifacts, options). The adapter identity is execution
+        # evidence, recorded per attempt by compiler_diagnostics().
+        with exclusive_lock(run / 'compile-queue-bend.lock'):
             return submit(config, directory, options, argv, key_only)
-        output_flag = '--binary' if '--binary' in argv else '-o'
-        output = Path(argv[argv.index(output_flag) + 1]).absolute() if output_flag in argv else directory / 'checked.c'
-        if output_flag in argv:
-            argv[argv.index(output_flag) + 1] = str(output)
-        if mode == 'cc':
-            actual = argv[argv.index('--cc') + 1] if '--cc' in argv else argv[0]
-            actual = str(Path(shutil.which(actual) or actual).resolve())
+
+    output_flag = '--binary' if '--binary' in argv else '-o'
+    output = Path(argv[argv.index(output_flag) + 1]).absolute() if output_flag in argv else directory / 'checked.c'
+    if output_flag in argv:
+        argv[argv.index(output_flag) + 1] = str(output)
+    if mode == 'cc':
+        actual = argv[argv.index('--cc') + 1] if '--cc' in argv else argv[0]
+        actual = str(Path(shutil.which(actual) or actual).resolve())
+        version = subprocess.check_output([actual, '--version'], text=True)
+        linker = '/usr/bin/ld'
+        options = ['--kind', 'cc', '--source-root', '/', '--compiler', actual]
+        darwin_llvm = os.environ.get('BATON2_DARWIN_LLVM_ROOT')
+        darwin_sdk = os.environ.get('BATON2_DARWIN_SDKROOT')
+        if darwin_llvm and darwin_sdk:
+            actual = str((Path(darwin_llvm) / 'bin/clang').resolve())
+            linker = str((Path(darwin_llvm) / 'bin/ld64.lld').resolve())
             version = subprocess.check_output([actual, '--version'], text=True)
-            linker = '/usr/bin/ld'
-            options = ['--kind', 'cc', '--source-root', '/', '--compiler', actual]
-            darwin_llvm = os.environ.get('BATON2_DARWIN_LLVM_ROOT')
-            darwin_sdk = os.environ.get('BATON2_DARWIN_SDKROOT')
-            if darwin_llvm and darwin_sdk:
-                actual = str((Path(darwin_llvm) / 'bin/clang').resolve())
-                linker = str((Path(darwin_llvm) / 'bin/ld64.lld').resolve())
-                version = subprocess.check_output([actual, '--version'], text=True)
-                settings = Path(darwin_sdk) / 'SDKSettings.json'
-                options[options.index('--compiler') + 1] = actual
-                options.extend(['--option', 'target=arm64-apple-macosx11.0',
-                                '--option', 'sysroot=' + str(Path(darwin_sdk).resolve()),
-                                '--option', 'sdk_manifest_sha256=' + os.environ['BATON2_DARWIN_SDK_MANIFEST_SHA256'],
-                                '--option', 'sdk_tree_sha256=' + os.environ['BATON2_DARWIN_SDK_TREE_SHA256'],
-                                '--aux', linker])
-                if settings.is_file():
-                    options.extend(['--aux', str(settings.resolve())])
-            options.extend(['--linker', linker, '--version', version,
-                            '--artifact', 'output=' + str(output)])
-            for value in argv:
-                if value != str(output) and not value.startswith('-') and Path(value).is_file():
-                    options.extend(['--aux', str(Path(value).resolve())])
-            command = [sys.executable if argv[0] == 'python3' else argv[0], *argv[1:]]
-        else:
-            entry = next(str(Path(a).resolve()) for a in argv if a.endswith('.bend') and Path(a).is_file())
-            options = ['--kind', 'cgen', '--source-root', str(Path.cwd()), '--entry', os.path.relpath(entry),
-                       '--compiler', argv[0], '--artifact', 'output.c=' + str(output)]
-            # The executed module rides as a queue input: staging verifies its
-            # bytes against the key's input digest and the command names the
-            # staged copy, so executed bytes and keyed bytes are the same bytes.
-            options.extend(['--input', EXEC_SCRIPT])
-            command = [sys.executable, EXEC_SCRIPT, str(output), *argv]
-        return submit(config, directory, options, command, key_only)
+            settings = Path(darwin_sdk) / 'SDKSettings.json'
+            options[options.index('--compiler') + 1] = actual
+            options.extend(['--option', 'target=arm64-apple-macosx11.0',
+                            '--option', 'sysroot=' + str(Path(darwin_sdk).resolve()),
+                            '--option', 'sdk_manifest_sha256=' + os.environ['BATON2_DARWIN_SDK_MANIFEST_SHA256'],
+                            '--option', 'sdk_tree_sha256=' + os.environ['BATON2_DARWIN_SDK_TREE_SHA256'],
+                            '--aux', linker])
+            if settings.is_file():
+                options.extend(['--aux', str(settings.resolve())])
+        options.extend(['--linker', linker, '--version', version,
+                        '--artifact', 'output=' + str(output)])
+        for value in argv:
+            if value != str(output) and not value.startswith('-') and Path(value).is_file():
+                options.extend(['--aux', str(Path(value).resolve())])
+        command = [sys.executable if argv[0] == 'python3' else argv[0], *argv[1:]]
+        if key_only:
+            return submit(config, directory, options, command, key_only)
+        with exclusive_lock(output_lock_path(run, output)):
+            return submit(config, directory, options, command)
+
+    entry = next(str(Path(a).resolve()) for a in argv if a.endswith('.bend') and Path(a).is_file())
+    options = ['--kind', 'cgen', '--source-root', str(Path.cwd()), '--entry', os.path.relpath(entry),
+               '--compiler', argv[0], '--artifact', 'output.c=' + str(output)]
+    # The executed module rides as a queue input: staging verifies its bytes
+    # against the key's input digest and the command names the staged copy, so
+    # executed bytes and keyed bytes are the same bytes.
+    options.extend(['--input', EXEC_SCRIPT])
+    command = [sys.executable, EXEC_SCRIPT, str(output), *argv]
+    with exclusive_lock(run / 'compile-queue-bend.lock'):
+        if key_only:
+            return submit(config, directory, options, command, key_only)
+        with exclusive_lock(output_lock_path(run, output)):
+            return submit(config, directory, options, command)
 
 
 def config_tool(mode):
@@ -502,11 +621,7 @@ def main():
         return compiler(argv[0], argv[1:], key_only=True)
     if mode == 'cancel':
         config = json.loads((Path(argv[0]) / 'queue-config.json').read_text())
-        codes = []
-        for path in (Path(config['run']) / 'evidence/compile-queue').glob('*/request.json'):
-            request = json.loads(path.read_text())
-            codes.append(cancel(config, request, path.parent))
-        return int(any(codes))
+        return cancel_all(config)
     raise SystemExit('usage: queue-native-checks.py compiler|key bend|cc ARGS | stage|key-stage bend|cc COMMAND | cancel RUN')
 
 

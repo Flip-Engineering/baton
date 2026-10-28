@@ -9,6 +9,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -278,7 +279,9 @@ class AdapterExitTests(unittest.TestCase):
 
         directory = Path(self.temp.name) / ('queue-success' if success else 'queue-failure')
         directory.mkdir()
-        config = {'client': 'fixture-client', 'state': str(state)}
+        run = Path(self.temp.name) / 'run'
+        run.mkdir()
+        config = {'client': 'fixture-client', 'state': str(state), 'run': str(run)}
         stdout = io.BytesIO()
         stderr = io.BytesIO()
 
@@ -444,6 +447,195 @@ class KeyMaterialAdapterIdentityTests(unittest.TestCase):
         entry.write_text('law main() {}\n')
         recorded = self.recorded_key_argv('bend', [str(self.compiler), 'entry.bend', '-o', 'out.c'])
         self.assert_no_adapter_option(recorded)
+
+
+
+@unittest.skipUnless(os.name == 'posix', 'native compiler queue adapter requires POSIX locks')
+class AdapterCompilerConcurrencyTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='queue-adapter-cc-concurrency-')
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        self.run = self.root / 'run'
+        self.run.mkdir()
+        self.state = self.root / 'fake-queue-state'
+        (self.state / 'started').mkdir(parents=True)
+        (self.state / 'cancelled').mkdir()
+        self.config_path = self.run / 'queue-config.json'
+        self.config = {
+            'client': str(self.root / 'fake-queue-client'),
+            'state': str(self.state),
+            'run': str(self.run),
+            'cc': str(self.root / 'fake-cc'),
+            'bend': str(self.root / 'fake-bend'),
+        }
+        self.config_path.write_text(json.dumps(self.config))
+        self.client = Path(self.config['client'])
+        self.client.write_text(r'''#!/usr/bin/env python3
+import fcntl, hashlib, os, subprocess, sys, time
+from pathlib import Path
+state = Path(os.environ['QUEUE_FAKE_STATE'])
+args = sys.argv[2:]
+verb = args[0]
+if verb == 'key':
+    print(hashlib.sha256(repr(args).encode()).hexdigest())
+    raise SystemExit(0)
+if verb == 'cancel':
+    token = args[args.index('--token') + 1]
+    (state / 'cancelled' / token).write_text('cancelled')
+    print('canceled=withdrawn')
+    print('owners=1')
+    raise SystemExit(0)
+if verb != 'run':
+    raise SystemExit('unknown queue verb: ' + verb)
+token = args[args.index('--token') + 1]
+(state / 'started' / token).write_text('started')
+with (state / 'active.lock').open('a') as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    active_path = state / 'active'
+    active = int(active_path.read_text()) if active_path.exists() else 0
+    active += 1
+    active_path.write_text(str(active))
+    maximum_path = state / 'maximum'
+    maximum = int(maximum_path.read_text()) if maximum_path.exists() else 0
+    maximum_path.write_text(str(max(maximum, active)))
+    fcntl.flock(lock, fcntl.LOCK_UN)
+try:
+    deadline = time.monotonic() + 8
+    if os.environ.get('QUEUE_FAKE_WAIT_CANCEL') == '1':
+        while not (state / 'cancelled' / token).exists() and time.monotonic() < deadline:
+            time.sleep(0.005)
+        if (state / 'cancelled' / token).exists():
+            raise SystemExit(130)
+        raise SystemExit(74)
+    release = state / 'release'
+    while not release.exists() and time.monotonic() < deadline:
+        time.sleep(0.005)
+    if not release.exists():
+        raise SystemExit(75)
+    separator = args.index('--')
+    result = subprocess.run(args[separator + 1:])
+    raise SystemExit(result.returncode)
+finally:
+    with (state / 'active.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        active_path = state / 'active'
+        active_path.write_text(str(max(0, int(active_path.read_text()) - 1)))
+        fcntl.flock(lock, fcntl.LOCK_UN)
+''')
+        self.client.chmod(0o755)
+        self.cc = Path(self.config['cc'])
+        self.cc.write_text(r'''#!/usr/bin/env python3
+import sys, time
+from pathlib import Path
+if '--version' in sys.argv:
+    print('fixture-cc-v1')
+    raise SystemExit(0)
+source = next(value for value in sys.argv[1:] if value.endswith('.c'))
+output = Path(sys.argv[sys.argv.index('-o') + 1])
+payload = Path(source).read_bytes()
+with output.open('wb') as stream:
+    for offset in range(0, len(payload), 16):
+        stream.write(payload[offset:offset + 16])
+        stream.flush()
+        time.sleep(0.001)
+''')
+        self.cc.chmod(0o755)
+        self.env = dict(os.environ)
+        self.env.update({
+            'BATON2_NATIVE_QUEUE': str(self.config_path),
+            'QUEUE_FAKE_STATE': str(self.state),
+        })
+
+    def start_cc(self, label, output, wait_cancel=False):
+        source = self.root / (label + '.c')
+        source.write_bytes((label.encode() + b':' + label.encode() * 1024))
+        environment = dict(self.env)
+        if wait_cancel:
+            environment['QUEUE_FAKE_WAIT_CANCEL'] = '1'
+        return subprocess.Popen(
+            [sys.executable, str(ADAPTER), 'compiler', 'cc', '-c', str(source),
+             '-o', str(output)],
+            cwd=self.root, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    def wait_for_started(self, count, timeout=3):
+        deadline = time.monotonic() + timeout
+        started = self.state / 'started'
+        while time.monotonic() < deadline:
+            if len(list(started.iterdir())) >= count:
+                return True
+            time.sleep(0.01)
+        return len(list(started.iterdir())) >= count
+
+    def finish(self, processes):
+        results = []
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=12)
+            results.append((process.returncode, stdout, stderr))
+        return results
+
+    def test_distinct_output_requests_run_concurrently(self):
+        first = self.start_cc('alpha', self.root / 'alpha.o')
+        second = self.start_cc('beta', self.root / 'beta.o')
+        both_started = self.wait_for_started(2)
+        (self.state / 'release').touch()
+        results = self.finish([first, second])
+        self.assertTrue(both_started, f'the second independent CC request did not reach the queue: {results!r}')
+        self.assertEqual([result[0] for result in results], [0, 0], results)
+        self.assertEqual((self.state / 'maximum').read_text(), '2')
+        self.assertEqual((self.root / 'alpha.o').read_bytes(),
+                         b'alpha:' + b'alpha' * 1024)
+        self.assertEqual((self.root / 'beta.o').read_bytes(),
+                         b'beta:' + b'beta' * 1024)
+
+    def test_same_output_requests_remain_serialized(self):
+        output = self.root / 'shared.o'
+        first = self.start_cc('first', output)
+        first_started = self.wait_for_started(1)
+        second = self.start_cc('second', output)
+        time.sleep(0.25)
+        started_before_release = len(list((self.state / 'started').iterdir()))
+        (self.state / 'release').touch()
+        results = self.finish([first, second])
+        self.assertTrue(first_started, f'first request did not reach the queue: {results!r}')
+        self.assertEqual(started_before_release, 1,
+                         'same-output requests reached the queue concurrently')
+        self.assertEqual([result[0] for result in results], [0, 0], results)
+        self.assertEqual((self.state / 'maximum').read_text(), '1')
+        self.assertIn(output.read_bytes(), (
+            b'first:' + b'first' * 1024,
+            b'second:' + b'second' * 1024,
+        ))
+
+    def test_cancel_all_covers_registered_requests_and_blocks_late_submit(self):
+        first = self.start_cc('cancel-a', self.root / 'cancel-a.o', wait_cancel=True)
+        second = self.start_cc('cancel-b', self.root / 'cancel-b.o', wait_cancel=True)
+        both_started = self.wait_for_started(2)
+        cancel = subprocess.run(
+            [sys.executable, str(ADAPTER), 'cancel', str(self.run)],
+            cwd=self.root, env=self.env, capture_output=True, timeout=12)
+        results = self.finish([first, second])
+        self.assertTrue(both_started, f'both requests must be registered before run cancellation: {results!r}')
+        self.assertEqual(cancel.returncode, 0, cancel.stderr)
+        self.assertEqual([result[0] for result in results], [130, 130], results)
+        requests = list((self.run / 'evidence/compile-queue').glob('*/request.json'))
+        active = [json.loads(path.read_text()) for path in requests]
+        submitted = [request for request in active if not request.get('cancelled_before_submit')]
+        self.assertEqual(len(submitted), 2)
+        self.assertTrue(all(request.get('cancel_returncode') == 0 for request in submitted))
+        self.assertTrue(all(request.get('cancel_result') == ['canceled=withdrawn', 'owners=1']
+                            for request in submitted))
+
+        late = self.start_cc('late', self.root / 'late.o')
+        late_result = self.finish([late])[0]
+        self.assertEqual(late_result[0], 130, late_result)
+        self.assertEqual(len(list((self.state / 'started').iterdir())), 2)
+        requests = list((self.run / 'evidence/compile-queue').glob('*/request.json'))
+        rejected = [request for request in
+                    (json.loads(path.read_text()) for path in requests)
+                    if request.get('cancelled_before_submit')]
+        self.assertEqual(len(rejected), 1)
+        self.assertEqual(rejected[0]['cancel_result'], ['not-submitted=run-cancelled'])
 
 
 if __name__ == '__main__':
