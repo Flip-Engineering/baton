@@ -540,16 +540,19 @@ def ancestor_answer(result: G.GitOut) -> Maybe<Bool>:
         Bool.pick(Maybe<Bool>, U32.is_eq(code, 1), Some{False{}}, None{}))
     case G.GBroken{detail}: None{}
 
+def staging_ref_ancestor_result(+path: String, +local: String, tips: List<&2,String>, answer: Maybe<Bool>) -> IO(Maybe<Bool>):
+  match answer:
+    case Some{True{}}: IO.pure(Maybe<Bool>, Some{True{}})
+    case Some{False{}}: staging_ref_ancestor(path, local, tips)
+    case None{}: IO.pure(Maybe<Bool>, None{})
+
 def staging_ref_ancestor(+path: String, +local: String, tips: List<&2,String>) -> IO(Maybe<Bool>):
   match tips:
     case Nil{}: IO.pure(Maybe<Bool>, Some{False{}})
     case Con{head, tail}:
       do IO<Maybe<Bool>>:
         check : G.GitOut <- Git.runGit(path, ["merge-base", "--is-ancestor", local, head])
-        match ancestor_answer(check):
-          case Some{True{}}: IO.pure(Maybe<Bool>, Some{True{}})
-          case Some{False{}}: staging_ref_ancestor(path, local, tail)
-          case None{}: IO.pure(Maybe<Bool>, None{})
+        staging_ref_ancestor_result(path, local, tail, ancestor_answer(check))
 
 def published_local_refs(+path: String, values: List<&2,String>, tips: List<&2,String>) -> IO(Maybe<Bool>):
   match values:
@@ -558,10 +561,13 @@ def published_local_refs(+path: String, values: List<&2,String>, tips: List<&2,S
       Bool.pick(IO(Maybe<Bool>), contains_value(tips, head), published_local_refs(path, tail, tips),
         do IO<Maybe<Bool>>:
           ancestor : Maybe<Bool> <- staging_ref_ancestor(path, head, tips)
-          match ancestor:
-            case Some{True{}}: published_local_refs(path, tail, tips)
-            case Some{False{}}: IO.pure(Maybe<Bool>, Some{False{}})
-            case None{}: IO.pure(Maybe<Bool>, None{}))
+          published_local_ref_result(path, tail, tips, ancestor))
+
+def published_local_ref_result(+path: String, tail: List<&2,String>, tips: List<&2,String>, ancestor: Maybe<Bool>) -> IO(Maybe<Bool>):
+  match ancestor:
+    case Some{True{}}: published_local_refs(path, tail, tips)
+    case Some{False{}}: IO.pure(Maybe<Bool>, Some{False{}})
+    case None{}: IO.pure(Maybe<Bool>, None{})
 
 def single_worktree(+worklist: String, +toplevel: String) -> Bool:
   +prefix = "worktree " ++ toplevel ++ "\n"
