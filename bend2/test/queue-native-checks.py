@@ -16,6 +16,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[2]
 ADAPTER = Path(os.environ.get(
     'BATON2_NATIVE_QUEUE_ADAPTER', ROOT / '.github/scripts/queue-native-checks.py'))
+EXEC = ROOT / '.github/scripts/compile-cgen-exec.py'
 
 
 @unittest.skipUnless(os.name == 'posix', 'Linux CI adapter requires POSIX signals')
@@ -28,7 +29,7 @@ class AdapterExitTests(unittest.TestCase):
 
     def run_child(self, code, *args):
         return subprocess.run([
-            sys.executable, str(ADAPTER), 'execute-cgen', str(self.output),
+            sys.executable, str(EXEC), str(self.output),
             sys.executable, '-c', code, *args], capture_output=True)
 
     def attempt(self, root):
@@ -43,7 +44,7 @@ class AdapterExitTests(unittest.TestCase):
         return attempt, work / 'output.c'
 
     def run_attempt(self, output, command, environment):
-        argv = [sys.executable, str(ADAPTER), 'execute-cgen', str(output), *command]
+        argv = [sys.executable, str(EXEC), str(output), *command]
         return subprocess.run(argv, capture_output=True, env=environment)
 
     def assert_signal(self, signum):
@@ -176,6 +177,9 @@ class AdapterExitTests(unittest.TestCase):
 
     def test_execution_metadata_keeps_allowlisted_values_and_excludes_environment(self):
         attempt, output = self.attempt(Path(self.temp.name))
+        adapter_spec = importlib.util.spec_from_file_location('queue_native_checks_adapter', ADAPTER)
+        adapter = importlib.util.module_from_spec(adapter_spec)
+        adapter_spec.loader.exec_module(adapter)
         environment = dict(os.environ)
         environment.update({
             'BEND_COMPILER_DIAGNOSTICS': '1',
@@ -192,6 +196,8 @@ class AdapterExitTests(unittest.TestCase):
         self.assertEqual(result.returncode, 17)
         self.assertEqual(result.stdout, b'child stdout\n')
         self.assertEqual(result.stderr, b'child stderr\n')
+        with mock.patch.dict(os.environ, environment, clear=False):
+            adapter.compiler_diagnostics(attempt, [sys.executable, '-c', code])
         metadata_bytes = (attempt / 'compiler-diagnostics.json').read_bytes()
         metadata = json.loads(metadata_bytes)
         observed = metadata['environment']
@@ -214,11 +220,15 @@ class AdapterExitTests(unittest.TestCase):
         self.assertNotIn(b'BEND_BASE', metadata_bytes)
         self.assertNotIn(b'OPENAI_API_KEY', metadata_bytes)
 
-    def test_execution_metadata_is_written_before_a_killed_compiler(self):
+    def test_execution_metadata_is_written_for_a_killed_compiler(self):
         attempt, output = self.attempt(Path(self.temp.name))
+        adapter_spec = importlib.util.spec_from_file_location('queue_native_checks_adapter', ADAPTER)
+        adapter = importlib.util.module_from_spec(adapter_spec)
+        adapter_spec.loader.exec_module(adapter)
         code = 'import os, signal; os.kill(os.getpid(), signal.SIGKILL)'
         result = self.run_attempt(output, [sys.executable, '-c', code], dict(os.environ))
         self.assertEqual(result.returncode, -signal.SIGKILL)
+        adapter.compiler_diagnostics(attempt, [sys.executable, '-c', code])
         metadata = json.loads((attempt / 'compiler-diagnostics.json').read_text())
         self.assertEqual(metadata['queue_attempt']['meta']['key'], 'fixture-key')
 
@@ -298,7 +308,11 @@ class AdapterExitTests(unittest.TestCase):
         captured_stdout = BinaryCapture(stdout)
         captured_stderr = BinaryCapture(stderr)
 
-        with mock.patch.object(adapter.subprocess, 'check_output', return_value='fixture-key'), \
+        def fake_key_run(argv, **kwargs):
+            # run_queue_key calls subprocess.run(key_argv, cwd=..., capture_output=True).
+            return subprocess.CompletedProcess(argv, 0, stdout=b'fixture-key\n', stderr=b'')
+
+        with mock.patch.object(adapter.subprocess, 'run', side_effect=fake_key_run), \
                 mock.patch.object(adapter.subprocess, 'Popen', side_effect=QueueRun), \
                 mock.patch.object(adapter.shutil, 'copyfile', side_effect=deny_diagnostic_copy), \
                 mock.patch.object(adapter.sys, 'stdout', captured_stdout), \
@@ -358,6 +372,78 @@ class AdapterExitTests(unittest.TestCase):
         changed = adapter.toolchain_identity(compiler)
         self.assertFalse(changed['manifest']['runtime_matches'])
         self.assertIsNone(changed['runtime']['version'])
+
+
+
+@unittest.skipUnless(os.name == 'posix', 'Linux CI adapter requires POSIX signals')
+class KeyMaterialAdapterIdentityTests(unittest.TestCase):
+    """The queue adapter's own bytes never enter the cache key request."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='queue-key-identity-')
+        self.addCleanup(temporary.cleanup)
+        self.temp = temporary
+        self.root = Path(self.temp.name).resolve()
+        self.run = self.root / 'run'
+        self.run.mkdir()
+        self.state = self.root / 'state'
+        self.client = self.root / 'fake-queue-client'
+        self.client.write_text(
+            '#!/usr/bin/env python3\n'
+            'import json, os, sys\n'
+            'with open(os.environ["FAKE_KEY_ARGV_OUT"], "w") as handle:\n'
+            '    json.dump(sys.argv, handle)\n'
+            'print("0" * 64)\n')
+        self.client.chmod(0o755)
+        self.compiler = self.root / 'fake-compiler'
+        self.compiler.write_text('#!/bin/sh\ncase "$1" in --version) echo fake-cc-v1; exit 0;; esac\nexit 0\n')
+        self.compiler.chmod(0o755)
+        self.config = {'client': str(self.client), 'state': str(self.state), 'run': str(self.run)}
+
+    def recorded_key_argv(self, mode, argv):
+        config_path = self.root / 'queue-config.json'
+        config_path.write_text(json.dumps(self.config))
+        argv_out = self.root / 'key-argv.json'
+        environment = dict(os.environ,
+                           BATON2_NATIVE_QUEUE=str(config_path),
+                           FAKE_KEY_ARGV_OUT=str(argv_out))
+        adapter_spec = importlib.util.spec_from_file_location('queue_native_checks_keymaterial', ADAPTER)
+        adapter = importlib.util.module_from_spec(adapter_spec)
+        adapter_spec.loader.exec_module(adapter)
+        previous_cwd = Path.cwd()
+        try:
+            os.chdir(self.root)
+            with mock.patch.dict(os.environ, environment, clear=False):
+                code = adapter.compiler(mode, argv, key_only=True)
+        finally:
+            os.chdir(previous_cwd)
+        self.assertEqual(code, 0)
+        recorded = json.loads(argv_out.read_text())
+        self.assertEqual(recorded[2], 'key')
+        return recorded
+
+    def assert_no_adapter_option(self, recorded):
+        options = [recorded[index + 1] for index, value in enumerate(recorded)
+                   if value == '--option' and index + 1 < len(recorded)]
+        for option in options:
+            self.assertFalse(option.startswith('adapter-sha256='),
+                             'adapter self-identity leaked into key material: ' + option)
+
+    def test_cc_key_request_excludes_adapter_self_identity(self):
+        recorded = self.recorded_key_argv('cc', [str(self.compiler), '-o', 'out', 'input.c'])
+        self.assert_no_adapter_option(recorded)
+
+    def test_check_key_request_excludes_adapter_self_identity(self):
+        entry = self.root / 'entry.bend'
+        entry.write_text('law main() {}\n')
+        recorded = self.recorded_key_argv('bend', [str(self.compiler), '--check-only', 'entry.bend'])
+        self.assert_no_adapter_option(recorded)
+
+    def test_cgen_key_request_excludes_adapter_self_identity(self):
+        entry = self.root / 'entry.bend'
+        entry.write_text('law main() {}\n')
+        recorded = self.recorded_key_argv('bend', [str(self.compiler), 'entry.bend', '-o', 'out.c'])
+        self.assert_no_adapter_option(recorded)
 
 
 if __name__ == '__main__':
