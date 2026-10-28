@@ -22,7 +22,7 @@ import ./ui-view.bend as UiView
 import ./control.bend as Control
 import ./stop-hook.bend as StopHook
 import ./wake.bend as Wake
-import ../coordinator/root-channel.bend as RootChannel
+import ./root-channel.bend as RootChannel
 import ./message-batch.bend as MessageBatch
 import ./subscription-fallback.bend as Subscription
 import ./accounts.bend as Accounts

@@ -3,7 +3,7 @@ import ../coordinator/commands.bend as C
 import ./receive.bend as Receive
 import ./delivery.bend as Delivery
 import ./codex-route.bend as CodexRoute
-import ../coordinator/root-channel.bend as RootChannel
+import ./root-channel.bend as RootChannel
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
 
