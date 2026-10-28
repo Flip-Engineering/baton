@@ -95,7 +95,7 @@ class AdapterExitTests(unittest.TestCase):
         try:
             os.chdir(root)
             with open(root / 'parent.stderr', 'wb') as stderr_file, \
-                    mock.patch.object(adapter.sys, 'stderr', io.TextIOWrapper(stderr_file, encoding='utf-8')):
+                    mock.patch.object(adapter.sys, 'stderr', mock.Mock(buffer=stderr_file)):
                 code = adapter.submit(config, directory, options, command, key_only=True)
         finally:
             os.chdir(previous_cwd)
