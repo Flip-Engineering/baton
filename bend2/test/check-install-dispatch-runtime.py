@@ -5,10 +5,12 @@ docs/bend2/installation.md: task-start.mjs plus either bin/node or
 libexec/baton2/repl/bun. A package with no runtime must be refused.
 """
 import importlib.util
+import json
 import os
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -57,6 +59,37 @@ class DispatchRuntimeGuard(unittest.TestCase):
         path.write_text('not executable\n')
         with self.assertRaisesRegex(RuntimeError, 'no Node or bundled Bun runtime'):
             CHECK.verify_dispatch_runtime(self.prefix)
+
+    def test_package_check_can_skip_compiler_probe_and_keeps_required_runtime(self):
+        manifest = self.prefix / 'manifest.json'
+        manifest.write_text(json.dumps({'required_system_dependencies': []}) + '\n')
+        (self.prefix / 'install-receipt.json').write_text('{}\n')
+        (self.prefix / 'SHA256SUMS').write_text('')
+        output = self.prefix / 'result'
+        output.mkdir()
+        dependency = {'path': 'libexec/baton2/repl', 'sha256': 'a' * 64}
+        calls = []
+
+        def run(argv, **kwargs):
+            calls.append(list(map(str, argv)))
+            stdout = '1.3.14\n' if argv[-1] == '--version' else ''
+            return CHECK.subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr='')
+
+        with mock.patch.object(CHECK, 'verify_checksums', return_value={}), \
+                mock.patch.object(CHECK, 'verify_payload_checksums'), \
+                mock.patch.object(CHECK, 'verify_binaries', return_value=[]), \
+                mock.patch.object(CHECK, 'verify_repl', return_value=dependency), \
+                mock.patch.object(CHECK, 'verify_dispatch_runtime'), \
+                mock.patch.object(CHECK, 'system_dependencies', return_value=[]), \
+                mock.patch.object(CHECK.platform, 'system', return_value='Darwin'), \
+                mock.patch.object(CHECK.subprocess, 'run', side_effect=run):
+            result = CHECK.check(self.prefix, output, probe_native_compiler=False)
+
+        self.assertEqual(result['native_compiler_probe'], 'not-run')
+        self.assertEqual(result['runtime_version'], '1.3.14')
+        self.assertEqual([pathlib.Path(argv[0]).name for argv in calls],
+                         ['baton', 'baton-full', 'bun'])
+        self.assertFalse((output / 'sqlite-probe.c').exists())
 
 
 if __name__ == '__main__':

@@ -312,7 +312,7 @@ def verify_binaries(prefix, manifest, checksums):
             'The manifest or install receipt is absent from SHA256SUMS')
     return records
 
-def check(prefix, output):
+def check(prefix, output, probe_native_compiler=True):
     manifest_path = prefix / 'manifest.json'
     manifest = json.loads(manifest_path.read_text())
     checksums = verify_checksums(prefix)
@@ -348,35 +348,38 @@ def check(prefix, output):
     runtime_version = run([prefix / dependency['path'] / 'bun', '--version'])
     require(re.fullmatch(r'\d+\.\d+\.\d+(?:[-+][\w.-]+)?', runtime_version) is not None,
             'The bundled Bun runtime did not report its version')
-    if system == 'Darwin':
+    compiler = sdk = version = sqlite_version = None
+    if probe_native_compiler and system == 'Darwin':
         compiler = run(['xcrun', '--find', 'clang'])
         sdk = run(['xcrun', '--sdk', 'macosx', '--show-sdk-path'])
         require(Path(sdk).is_dir(), 'The selected macOS SDK directory is unavailable')
         flags = ['-isysroot', sdk]
-    else:
+    elif probe_native_compiler:
         compiler = shutil.which(os.environ.get('CC', 'clang'))
         require(compiler is not None, 'Install Clang 14 or later and the SQLite development package')
         sdk, flags = None, []
-    version = run([compiler, '--version'])
-    match = re.search(r'clang version (\d+)', version)
-    require(match is not None and int(match[1]) >= 14,
-            'REPL native evaluation requires Clang 14 or later')
-    source = output / 'sqlite-probe.c'
-    program = output / 'sqlite-probe'
-    source.write_text('#include <stdio.h>\n#include <sqlite3.h>\n'
-                      'int main(void) { sqlite3 *db = 0; '
-                      'if (sqlite3_open(":memory:", &db) != SQLITE_OK) return 1; '
-                      'if (sqlite3_exec(db, "SELECT 1", 0, 0, 0) != SQLITE_OK) return 2; '
-                      'if (sqlite3_close(db) != SQLITE_OK) return 3; '
-                      'puts(sqlite3_libversion()); return 0; }\n')
-    run([compiler, '-std=c11', *flags, source, '-lsqlite3', '-o', program])
-    sqlite_version = run([program])
+    if probe_native_compiler:
+        version = run([compiler, '--version'])
+        match = re.search(r'clang version (\d+)', version)
+        require(match is not None and int(match[1]) >= 14,
+                'REPL native evaluation requires Clang 14 or later')
+        source = output / 'sqlite-probe.c'
+        program = output / 'sqlite-probe'
+        source.write_text('#include <stdio.h>\n#include <sqlite3.h>\n'
+                          'int main(void) { sqlite3 *db = 0; '
+                          'if (sqlite3_open(":memory:", &db) != SQLITE_OK) return 1; '
+                          'if (sqlite3_exec(db, "SELECT 1", 0, 0, 0) != SQLITE_OK) return 2; '
+                          'if (sqlite3_close(db) != SQLITE_OK) return 3; '
+                          'puts(sqlite3_libversion()); return 0; }\n')
+        run([compiler, '-std=c11', *flags, source, '-lsqlite3', '-o', program])
+        sqlite_version = run([program])
     return {'status': 'ready', 'prefix': str(prefix), 'manifest_sha256': archive_digest(manifest_path),
             'install_receipt_sha256': archive_digest(prefix / 'install-receipt.json'),
             'checksums_sha256': archive_digest(prefix / 'SHA256SUMS'),
             'binaries': binaries,
             'repl_manifest_sha256': dependency['sha256'], 'compiler': compiler,
             'runtime_version': runtime_version,
+            'native_compiler_probe': 'completed' if probe_native_compiler else 'not-run',
             'compiler_version': version, 'sdk': sdk, 'sqlite_version': sqlite_version,
             'commands': records}
 
@@ -385,6 +388,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--prefix', type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument('--output', type=Path, help='new directory for prerequisite source, program and results')
+    parser.add_argument('--skip-native-compiler-probe', action='store_true',
+                        help='verify the installed binaries and required REPL runtime without compiling a SQLite probe')
     args = parser.parse_args()
     temporary = tempfile.TemporaryDirectory(prefix='baton2-install-check-') if args.output is None else None
     output = Path(temporary.name) if temporary is not None else args.output.resolve()
@@ -392,7 +397,8 @@ def main():
         output.mkdir(parents=True, exist_ok=False)
     try:
         try:
-            result = check(args.prefix.resolve(), output)
+            result = check(args.prefix.resolve(), output,
+                           probe_native_compiler=not args.skip_native_compiler_probe)
         except (RuntimeError, OSError, ValueError, KeyError, TypeError) as error:
             remedy = ('Install Apple Command Line Tools with xcode-select --install and select a macOS SDK.'
                       if platform.system() == 'Darwin' else
