@@ -199,6 +199,18 @@ class Executing(unittest.TestCase):
         except ProcessLookupError:
             pass
 
+    @staticmethod
+    def stop_observer(process):
+        if process.poll() is None:
+            process.kill()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        if process.stdout and not process.stdout.closed:
+            process.stdout.close()
+
     def fixture(self, *args):
         log = self.directory / ('fixture-%d.log' % time.monotonic_ns())
         with open(log, 'w') as out:
@@ -476,8 +488,7 @@ class Executing(unittest.TestCase):
 
 
 class Lifecycle(Executing):
-    def test_stop_reconciliation_uses_recorded_target_on_start_and_observer_reentry(self):
-        self.seed()
+    def start_resisting_attempt(self):
         write_native(self.native, NATIVE_UUID, self.uuid_marker,
                      hold=300, resist_term=True)
         noop = self.directory / 'recovery-noop.py'
@@ -488,39 +499,59 @@ class Lifecycle(Executing):
         process, gate, first = self.start(noop)
         native_pid = int((self.attempt / 'native.pid').read_text())
         self.addCleanup(self.kill_native, native_pid)
+        self.addCleanup(self.stop_observer, process)
+        return process, noop_marker
+
+    def test_stop_start_reentry_restores_pending_signal_from_recorded_target(self):
+        self.seed()
+        process, noop_marker = self.start_resisting_attempt()
 
         self.fixture('stop-request', self.db, SESSION, ATTEMPT,
                      'Stop this retained attempt.')
-        missing_directory = self.directory / 'missing-custody'
-        self.fixture('stop-failed-control', self.db, SESSION, ATTEMPT,
-                     missing_directory)
-        with sqlite3.connect(self.db) as database:
-            row = database.execute(
-                'SELECT control_error,applied_signal,signal FROM session_stops '
-                'WHERE session=?', (SESSION,)).fetchone()
-        self.assertTrue(row[0], 'the stale custody path must record its failure')
-        self.assertEqual(row[1], 0)
-        self.assertEqual(row[2], 15)
-
-        # Re-enter the startup reconciliation with stale call arguments while
-        # the durable stop still names the live retained attempt.
+        missing_directory = self.directory / 'hidden-attempt'
+        shutil.move(str(self.attempt), str(missing_directory))
         self.fixture('started-reentry', self.db, SESSION, 'stale-attempt')
         with sqlite3.connect(self.db) as database:
             row = database.execute(
-                'SELECT control_error,applied_signal FROM session_stops '
+                'SELECT outcome,control_error,applied_signal,signal FROM session_stops '
                 'WHERE session=?', (SESSION,)).fetchone()
-        self.assertEqual(row, ('', 15),
-                         'startup reconciliation must use the recorded attempt')
+        self.assertEqual(row[0], 'custody-missing')
+        self.assertTrue(row[1], 'missing custody must retain its unresolved detail')
+        self.assertEqual(row[2:], (0, 15),
+                         'the requested signal must remain unapplied while custody is missing')
 
-        # Make the original observer exit so the new fixture attaches through
-        # the keeper, then exercise observation re-entry with stale arguments.
-        self.fixture('stop-failed-control', self.db, SESSION, ATTEMPT,
-                     missing_directory)
+        shutil.move(str(missing_directory), str(self.attempt))
+        self.fixture('started-reentry', self.db, SESSION, 'stale-attempt')
         with sqlite3.connect(self.db) as database:
             row = database.execute(
-                'SELECT control_error,applied_signal FROM session_stops '
+                'SELECT outcome,control_error,applied_signal,signal FROM session_stops '
                 'WHERE session=?', (SESSION,)).fetchone()
-        self.assertTrue(row[0], 'the stale custody failure must be retained for reentry')
+        self.assertEqual(row, ('requested', '', 15, 15),
+                         'startup reentry must restore the requested stop from durable custody')
+        signal_marker = pathlib.Path(str(self.uuid_marker) + '.sigterm')
+        self.assertTrue(signal_marker.exists(),
+                        'startup reentry must signal the recorded retained attempt')
+
+    def test_stop_observer_reentry_restores_pending_signal_from_recorded_target(self):
+        self.seed()
+        process, noop_marker = self.start_resisting_attempt()
+
+        self.fixture('stop-request', self.db, SESSION, ATTEMPT,
+                     'Stop this retained attempt.')
+        missing_directory = self.directory / 'hidden-attempt'
+        shutil.move(str(self.attempt), str(missing_directory))
+        self.fixture('observe-result', self.db, SESSION,
+                     'stale-attempt', 'stale-directory')
+        with sqlite3.connect(self.db) as database:
+            row = database.execute(
+                'SELECT outcome,control_error,applied_signal,signal FROM session_stops '
+                'WHERE session=?', (SESSION,)).fetchone()
+        self.assertEqual(row[0], 'custody-missing')
+        self.assertTrue(row[1], 'missing custody must retain its unresolved detail')
+        self.assertEqual(row[2:], (0, 15),
+                         'the requested signal must remain unapplied while custody is missing')
+
+        shutil.move(str(missing_directory), str(self.attempt))
         process.kill()
         process.wait(timeout=10)
         process.stdout.close()
@@ -530,13 +561,13 @@ class Lifecycle(Executing):
         self.assertTrue(noop_marker.exists(),
                         'observer loss must run the retained recovery invocation')
         self.fixture('observe-reentry', self.db, SESSION, self.attempt,
-                     'stale-attempt', missing_directory)
+                     'stale-attempt', 'stale-directory')
         with sqlite3.connect(self.db) as database:
             row = database.execute(
-                'SELECT control_error,applied_signal FROM session_stops '
+                'SELECT outcome,control_error,applied_signal,signal FROM session_stops '
                 'WHERE session=?', (SESSION,)).fetchone()
-        self.assertEqual(row, ('', 15),
-                         'reattached observation must clear the stale control failure')
+        self.assertEqual(row, ('requested', '', 15, 15),
+                         'observer reentry must restore the requested stop from durable custody')
         signal_marker = pathlib.Path(str(self.uuid_marker) + '.sigterm')
         self.assertTrue(signal_marker.exists(),
                         'the reattached keeper must receive the retained stop signal')
