@@ -299,14 +299,14 @@ def batch_session(+db: String) -> IO(String):
 def command_pending_output(+db: String, +saved: String) -> IO(Unit):
   do IO<Unit>:
     session : String <- batch_session(db)
-    command_owned_output(db,session,saved,saved,False{})
+    command_owned_output(db,session,saved,saved,True{})
 
 def command_output_value(+db: String, command: C.Command, +saved: String) -> IO(Unit):
   match command:
     case C.Pretty{inner}: command_output_value(db,inner,saved)
     case C.Delivery{id}: command_message_output(db,saved,False{})
     case C.InputDetail{id}: command_message_output(db,saved,True{})
-    case C.Inbox{session}: command_owned_output(db,session,saved,saved,False{})
+    case C.Inbox{session}: command_owned_output(db,session,saved,saved,True{})
     case C.Pending{}: command_pending_output(db,saved)
     case other: IO.try(Unit,Text.Text.control_output(saved))
 
