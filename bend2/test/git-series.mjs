@@ -777,7 +777,7 @@ test('native validation preserves exact model agreement and separate Git -m mean
   assert.throws(() => execution(args('unknown/exact', ['native-fixture', '--model', 'other'], true, 'glm')), model.Refusal);
 });
 
-test('recipient re-selection removes sender authentication and preserves noncredential Git parameters', () => {
+test('recipient re-selection removes sender authentication and preserves noncredential Git parameters', async () => {
   const inherited = { GH_TOKEN: 'fixture-sender', GITHUB_TOKEN: 'fixture-sender',
     GIT_AUTHOR_NAME: 'sender', GIT_COMMITTER_EMAIL: 'sender@example.invalid', GIT_ASKPASS: 'sender-askpass',
     GIT_CONFIG_COUNT: '4', GIT_CONFIG_KEY_0: 'diff.algorithm', GIT_CONFIG_VALUE_0: 'patience',
