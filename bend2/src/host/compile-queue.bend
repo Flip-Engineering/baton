@@ -922,6 +922,13 @@ def status_number(text: String) -> U32:
 def waiters_dir(+state: String) -> String:
   state ++ "/waiters"
 
+
+# cc jobs order and publish tickets apart from Bend generation so a live
+# cgen does not block C compilation of already-generated source. The ticket
+# directory must always match the lock the supervisor acquires.
+def kind_waiters_dir(+state: String, +kind: String) -> String:
+  Bool.pick(String, String.eq(kind, "cc"), waiters_dir(state) ++ "/cc", waiters_dir(state))
+
 def waiters_ticket_text(priority: U32, pid: U32, start: String, key: String, token: String) -> String:
   "priority=" ++ U32.show(priority) ++ "\npid=" ++ U32.show(pid)
   ++ "\nstarttime=" ++ start ++ "\nkey=" ++ key ++ "\ntoken=" ++ token ++ "\n"
@@ -1034,7 +1041,11 @@ def supervise_owned(+attempt: String, +keydir: String, +kind: String, source_roo
       ++ "\nstarttime=" ++ start ++ "\nkind=" ++ kind ++ "\nsetsid=1\nstarted_ns=" ++ started ++ "\n")
     active : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(keydir ++ "/active", active_text))
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
-    +held : U32 <- acquire_heavy_loop(waiters_dir(state), state ++ "/heavy.lock", token, priority, 4)
+    lock_path : String <- IO.pure(String,
+      Bool.pick(String, String.eq(kind, "cc"), state ++ "/cc.lock", state ++ "/heavy.lock"))
+    +waiters : String <- IO.pure(String, kind_waiters_dir(state, kind))
+    made_waiters : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(waiters))
+    +held : U32 <- acquire_heavy_loop(waiters, lock_path, token, priority, 4)
     transferred : Unit <- transfer_heavy(held)
     signaled : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.set_env(
       "BATON_COMPILE_QUEUE_COMPILED", attempt ++ "/compiled")
@@ -1047,7 +1058,7 @@ def supervise_owner_count(owners: U32, +attempt: String, +keydir: String, +kind:
   Bool.pick(IO(Unit), U32.is_eq(owners, 0),
     do IO<Unit>:
       released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
-      removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(waiters_dir(state) ++ "/" ++ token))
+      removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(kind_waiters_dir(state, kind) ++ "/" ++ token))
       write_failure(attempt, keydir, "canceled", 130, kind, key, started,
         "all requesters canceled before execution", names),
     supervise_owned(attempt, keydir, kind, source_root, entry, key, started, names, cwd, pid, start, gate,
@@ -1056,7 +1067,7 @@ def supervise_owner_count(owners: U32, +attempt: String, +keydir: String, +kind:
 def supervise(+attempt: String) -> IO(Unit):
   do IO<Unit>:
     +meta : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/meta"))
-    kind : String <- IO.pure(String, field(meta, "kind"))
+    +kind : String <- IO.pure(String, field(meta, "kind"))
     cwd : String <- IO.pure(String, field(meta, "cwd"))
     +state : String <- IO.pure(String, field(meta, "state_root"))
     source_root : String <- IO.pure(String, field(meta, "source_root"))
@@ -1071,9 +1082,9 @@ def supervise(+attempt: String) -> IO(Unit):
     +token : String <- IO.pure(String, started ++ "-" ++ U32.show(pid))
     published : Unit <- Bool.pick(IO(Unit), String.is_empty(state), IO.pure(Unit, Unit{}),
       do IO<Unit>:
-        made : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(waiters_dir(state)))
+        made : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(kind_waiters_dir(state, kind)))
         wrote : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(
-          waiters_dir(state) ++ "/" ++ token,
+          kind_waiters_dir(state, kind) ++ "/" ++ token,
           waiters_ticket_text(priority, pid, start, key, token)))
         IO.pure(Unit, Unit{}))
     gate : U32 <- owner_lock(keydir)
@@ -1235,12 +1246,28 @@ def run_completed_fresh(+state: U32, +keydir: String, +text: String, +parsed: Co
     do IO<Unit>:
       +completed_path : String <- IO.pure(String, keydir ++ "/completed/result")
       existing : Bool <- regular(completed_path)
-      Bool.pick(IO(Unit), existing,
+      external_keep : Bool <- Bool.pick(IO(Bool), existing,
+        do IO<Bool>:
+          result : String <- IO.try(String, L.CompileQueueLifecycle.read_text(completed_path))
+          Bool.pick(IO(Bool), Tx.str_eq(field(result, "external"), "1"),
+            do IO<Bool>:
+              adoption_exists : Bool <- regular(keydir ++ "/adoption")
+              Bool.pick(IO(Bool), adoption_exists,
+                do IO<Bool>:
+                  adoption : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/adoption"))
+                  Bool.pick(IO(Bool), non_empty(adoption),
+                    IO.try(Bool, Result.CompileQueueResult.verify_adoption(keydir, adoption)),
+                    IO.pure(Bool, False{})),
+                IO.pure(Bool, False{})),
+            IO.pure(Bool, False{})),
+        IO.pure(Bool, False{}))
+      Bool.pick(IO(Unit), external_keep,
         do IO<Unit>:
           removed : Unit <- remove_token(keydir, owner)
           released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
-          IO.die(Unit, 1, "compile-queue: completed result exists but is not reusable; only adopt may reuse an external result"),
+          IO.die(Unit, 1, "compile-queue: completed result is a verified external adoption; only adopt may reuse it"),
         do IO<Unit>:
+          cleaned : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove_tree(keydir ++ "/completed"))
           latest : String <- IO.try(String, Result.CompileQueueResult.latest_result(keydir, wait_start, Bool.pick(String, present, "1", "0")))
           run_latest_result(latest, parsed, key, keydir, lock, owner)),
     do IO<Unit>:

@@ -63,17 +63,23 @@ class QueuePriorityTests(unittest.TestCase):
         return subprocess.Popen(argv, env=dict(self.environment, QUEUE_TEST_ID=ident),
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
+    def published_tickets(self):
+        tickets = self.state / "waiters" / "cc"
+        if not tickets.is_dir():
+            return []
+        return sorted(path for path in tickets.iterdir() if ".tmp." not in path.name)
+
     def wait_ticket(self, deadline=30.0):
-        tickets = self.state / "waiters"
         end = time.monotonic() + deadline
         while time.monotonic() < end:
-            if tickets.is_dir() and any(tickets.iterdir()):
-                return sorted(tickets.iterdir())
+            published = self.published_tickets()
+            if published:
+                return published
             time.sleep(0.02)
         self.fail("queue request did not publish a scheduling ticket")
 
-    def hold_heavy(self):
-        lock = (self.state / "heavy.lock").open("w")
+    def hold_cc(self):
+        lock = (self.state / "cc.lock").open("w")
         self.addCleanup(lock.close)
         fcntl.flock(lock, fcntl.LOCK_EX)
         return lock
@@ -87,33 +93,33 @@ class QueuePriorityTests(unittest.TestCase):
         return self.log.read_text().split()
 
     def test_priority_request_precedes_waiting_default(self):
-        lock = self.hold_heavy()
+        lock = self.hold_cc()
         default = self.request("default")
         self.wait_ticket()
         flip = self.request("flip", priority=9)
         deadline = time.monotonic() + 30
-        while time.monotonic() < deadline and len(list((self.state / "waiters").iterdir())) < 2:
+        while time.monotonic() < deadline and len(self.published_tickets()) < 2:
             time.sleep(0.02)
         fcntl.flock(lock, fcntl.LOCK_UN)
         self.finish(default, flip)
         self.assertEqual(self.read_order(), ["flip", "default"])
-        self.assertEqual(list((self.state / "waiters").iterdir()), [])
+        self.assertEqual(self.published_tickets(), [])
 
     def test_equal_priority_keeps_arrival_order(self):
-        lock = self.hold_heavy()
+        lock = self.hold_cc()
         first = self.request("first", priority=9)
         self.wait_ticket()
         second = self.request("second", priority=9)
         deadline = time.monotonic() + 30
-        while time.monotonic() < deadline and len(list((self.state / "waiters").iterdir())) < 2:
+        while time.monotonic() < deadline and len(self.published_tickets()) < 2:
             time.sleep(0.02)
         fcntl.flock(lock, fcntl.LOCK_UN)
         self.finish(first, second)
         self.assertEqual(self.read_order(), ["first", "second"])
 
     def test_stale_ticket_is_ignored(self):
-        waiters = self.state / "waiters"
-        waiters.mkdir(mode=0o2770)
+        waiters = self.state / "waiters" / "cc"
+        waiters.mkdir(mode=0o2770, parents=True)
         waiters.chmod(0o2770)
         (waiters / "00000000000000000001-dead").write_text(
             "priority=9\npid=999999\nstarttime=1\nkey=dead\ntoken=dead\n")
@@ -130,7 +136,7 @@ class QueuePriorityTests(unittest.TestCase):
                          ["00000000000000000002-unknown"])
 
     def test_killed_supervisor_ticket_is_reaped(self):
-        lock = self.hold_heavy()
+        lock = self.hold_cc()
         blocked = self.request("blocked")
         active = None
         deadline = time.monotonic() + 30
@@ -143,13 +149,13 @@ class QueuePriorityTests(unittest.TestCase):
         self.assertIsNotNone(active, "blocked request did not record its supervisor")
         fields = dict(line.split("=", 1) for line in active.read_text().splitlines() if "=" in line)
         os.kill(int(fields["pid"]), signal.SIGKILL)
-        blocked.wait(timeout=60)
+        blocked.communicate(timeout=60)
         fcntl.flock(lock, fcntl.LOCK_UN)
-        waiters = self.state / "waiters"
-        self.assertTrue(list(waiters.iterdir()), "expected the killed supervisor ticket to remain")
+        waiters = self.state / "waiters" / "cc"
+        self.assertTrue(self.published_tickets(), "expected the killed supervisor ticket to remain")
         revived = self.request("revived")
         self.finish(revived)
-        self.assertEqual(list(waiters.iterdir()), [])
+        self.assertEqual(self.published_tickets(), [])
 
 
 if __name__ == "__main__":
