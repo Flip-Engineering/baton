@@ -31,13 +31,15 @@ def reserve_reason_is(grant_spend: String, balance: String, request: String, +ex
   check(label,String.eq(A.credit_admission_reason(A.credit_reserve_arithmetic(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CObs{"reported",balance,"USD","2026-10-cycle","1793000000000"},"1",grant_spend,"0","2026-10-cycle","2026-10","1793000000000","1792600000000",request)),expected))
 
 # The grant spend already holds open reservations and settled cost for the cycle, so
-# the balance left for a new request is the balance minus that spend.
+# the balance left for a new request is the balance minus that spend. A request
+# charge above it, or a balance the spend has reached, refuses (#1177).
 def reserve_headroom_checks() -> IO(Unit):
   do IO<Unit>:
     fits : Unit <- reserve_fits("40","50","10","reserve-request-fits-after-open-spend","10")
-    over : Unit <- reserve_fits("40","50","11","reserve-request-over-remaining-admitted-estimate","11")
-    spent : Unit <- reserve_fits("50","50","1","reserve-balance-spent-by-cycle-admitted-estimate","1")
-    past : Unit <- reserve_fits("60","50","1","reserve-spend-beyond-balance-admitted-estimate","1")
+    over : Unit <- reserve_reason_is("40","50","11","creditChargeExceedsBound","reserve-request-over-remaining-refused")
+    spent : Unit <- reserve_reason_is("50","50","1","promotionalCreditExhausted","reserve-balance-spent-by-cycle-refused")
+    past : Unit <- reserve_reason_is("60","50","1","promotionalCreditExhausted","reserve-spend-beyond-balance-refused")
+    ceiling : Unit <- reserve_reason_is("200","500","1","grantCapExhausted","reserve-grant-spend-at-ceiling-refused")
     IO.pure(Unit,Unit{})
 
 def main() -> IO(Unit):

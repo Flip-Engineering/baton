@@ -324,31 +324,76 @@ class FocusedAccountCredits(unittest.TestCase):
         if balance is not None:
             self.import_credit('claude-api', 'org-fixture', balance)
 
-    # The operator admits Anthropic API-key credit launches (#881, #1177). The gate
-    # records the attempt's one-use authorization and returns the resolver binding;
-    # the provider's own credit refusal is the hold signal.
+    # An Anthropic API-key credit launch reserves against the organization's
+    # usable promotional credit before it starts (#881, #1177). An admitted
+    # reservation records the attempt's one-use authorization and returns the
+    # resolver binding; any other funding state refuses with its named reason.
     def test_the_gate_admits_a_credit_account_launch(self):
         self.credit_account()
         self.assertEqual(self.gate('attempt-1'), ['binding', '/fixture/api-key-exec', 'file:/fixture/api', ''])
-        self.assertEqual(self.query("SELECT attempt,account,secret_ref,state FROM credit_authorizations"),
-                         [('attempt-1', 'claude-api', 'file:/fixture/api', 'authorized')])
-        self.assertEqual(self.query("SELECT count(*) FROM credit_reservations"), [(0,)])
+        self.assertEqual(self.query("SELECT attempt,account,cycle,balance,unit,secret_ref,state FROM credit_authorizations"),
+                         [('attempt-1', 'claude-api', 'grant:2026-10-11', '200.00', 'USD', 'file:/fixture/api', 'authorized')])
+        self.assertEqual(self.query("SELECT request,account,organization,cycle,max_charge,state FROM credit_reservations"),
+                         [('attempt-1', 'claude-api', 'org-fixture', 'grant:2026-10-11', '200', 'reserved')])
 
-    def test_the_gate_admits_without_a_retained_funding_decision(self):
+    def gate_refusal(self, attempt, session='leaf'):
+        line = self.gate(attempt, session)
+        self.assertEqual(line[0], 'refused', line)
+        return line[1]
+
+    def credit_row(self, row_id, observed_at, balance='200.00', unit='USD', cycle='grant:2026-10-11',
+                   expires='4102444800000', state='reported'):
+        self.execute("INSERT INTO credit_observations(id,organization,fact,state,balance,unit,expires,cycle,source,observed_at,authority) "
+                     "VALUES(?,'org-fixture','promotional_credit',?,?,?,?,?,'fixture',?,'operator')",
+                     (row_id, state, balance, unit, expires, cycle, str(observed_at)))
+
+    def test_the_gate_refuses_missing_expired_malformed_zero_and_unavailable_funding(self):
         self.record('claude-api', funding='api_key', secret='file:/fixture/api')
         self.bind('claude-api', 'leaf')
-        self.assertEqual(self.gate('unverified')[0], 'binding')
+        self.assertIn('(organizationUnverified)', self.gate_refusal('unverified'))
         self.observe('claude-api', 'org-fixture')
-        self.assertEqual(self.gate('unobserved')[0], 'binding')
+        self.assertIn('(creditObservationUnavailable)', self.gate_refusal('unobserved'))
         self.import_credit('claude-api', 'org-fixture', '0.00', 1760000001000)
-        self.assertEqual(self.gate('zero')[0], 'binding')
+        self.assertIn('(promotionalCreditExhausted)', self.gate_refusal('zero'))
         self.import_credit('claude-api', 'org-fixture', '200.00', 1760000002000, expires='1000000000000')
-        self.assertEqual(self.gate('expired')[0], 'binding')
+        self.assertIn('(creditObservationExpired)', self.gate_refusal('expired'))
         self.import_credit('claude-api', 'org-fixture', '', 1760000003000, state='unavailable')
-        self.assertEqual(self.gate('unavailable')[0], 'binding')
-        self.assertEqual(self.query("SELECT attempt,state FROM credit_authorizations ORDER BY attempt"),
-                         [(attempt, 'authorized') for attempt in
-                          ('expired', 'unavailable', 'unobserved', 'unverified', 'zero')])
+        self.assertIn('(creditObservationUnavailable)', self.gate_refusal('unavailable'))
+        self.credit_row('malformed', 1760000004000, balance='2OO.00')
+        self.assertIn('(creditAmountMalformed)', self.gate_refusal('malformed'))
+        self.credit_row('empty-balance', 1760000005000, balance='')
+        self.assertIn('(creditAmountMalformed)', self.gate_refusal('empty-balance'))
+        self.credit_row('empty-cycle', 1760000006000, cycle='')
+        self.assertIn('(creditCycleMissing)', self.gate_refusal('empty-cycle'))
+        self.credit_row('empty-unit', 1760000007000, unit='')
+        self.assertIn('(creditUnitNotUSD)', self.gate_refusal('empty-unit'))
+        self.credit_row('date-expiry', 1760000008000, expires='2026-11-14')
+        self.assertIn('(creditObservationExpiryUnverified)', self.gate_refusal('date-expiry'))
+        self.assertEqual(self.query("SELECT count(*) FROM credit_authorizations"), [(0,)])
+        self.assertEqual(self.query("SELECT count(*) FROM credit_reservations"), [(0,)])
+
+    def test_the_gate_refuses_a_launch_while_an_earlier_launch_holds_the_ceiling(self):
+        self.credit_account()
+        self.assertEqual(self.gate('attempt-1')[0], 'binding')
+        self.assertIn('(monthlyCapExhausted)', self.gate_refusal('attempt-2'))
+        self.assertEqual(self.settle('attempt-1', 'completed', '12.50'), 'settled')
+        self.assertEqual(self.gate('attempt-3')[0], 'binding')
+        self.assertEqual([(request, Decimal(charge), state) for request, charge, state in self.query(
+            "SELECT request,max_charge,state FROM credit_reservations ORDER BY request")],
+                         [('attempt-1', Decimal('200'), 'settled'), ('attempt-3', Decimal('187.5'), 'reserved')])
+        self.assertEqual(self.query("SELECT attempt FROM credit_authorizations ORDER BY attempt"),
+                         [('attempt-1',), ('attempt-3',)])
+
+    # Every account of one verified organization shares its grant and its $200
+    # ceiling, so a second account cannot reserve funds the first one holds.
+    def test_two_accounts_of_one_organization_share_the_grant_and_the_ceiling(self):
+        self.credit_account()
+        self.record('claude-api-2', funding='api_key', secret='file:/fixture/api-2')
+        self.bind('claude-api-2', 'other')
+        self.observe('claude-api-2', 'org-fixture')
+        self.assertEqual(self.gate('attempt-1')[0], 'binding')
+        self.assertIn('(monthlyCapExhausted)', self.gate_refusal('attempt-2', session='other'))
+        self.assertEqual(self.query("SELECT attempt,account FROM credit_authorizations"), [('attempt-1', 'claude-api')])
 
     def reserve(self, attempt, session='leaf', cap='2026-10'):
         completed = self.entry('reserve', session, 'claude-code', attempt, cap)
@@ -384,15 +429,31 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return json.loads(completed.stdout)
 
-    def test_reservation_reserves_the_lower_bound_and_admits_concurrent_requests(self):
+    # A held reservation counts against the $200 ceiling and the grant until it
+    # settles, so a second request cannot reserve the same funds (#1177 item 2).
+    def test_reservation_reserves_the_lower_bound_and_refuses_a_second_request_while_it_is_held(self):
         self.credit_account('200.00')
         first = self.reserve('attempt-1')
         self.assertEqual(first[:3], ['admitted', 'org-fixture', 'grant:2026-10-11'])
         self.assertEqual(first[3:], ['200', '0', '0'])
-        second = self.reserve('attempt-2')
-        self.assertEqual(second[:3], ['admitted', 'org-fixture', 'grant:2026-10-11'])
-        self.assertEqual(sorted(state for _, state, _ in self.query(
-            "SELECT request,state,max_charge FROM credit_reservations")), ['reserved', 'reserved'])
+        self.assertEqual(self.reserve('attempt-2'), ['refused', 'monthlyCapExhausted'])
+        self.assertEqual(self.query("SELECT request,state,max_charge FROM credit_reservations"),
+                         [('attempt-1', 'reserved', '200')])
+
+    def test_a_request_charge_above_the_unspent_amount_is_refused(self):
+        self.credit_account('150.00')
+        self.assertEqual(self.reserve_bound('attempt-1', '150.01'), ['refused', 'creditChargeExceedsBound'])
+        self.import_spend('claude-api', 'org-fixture', '120.00')
+        self.assertEqual(self.reserve_bound('attempt-1', '80.01'), ['refused', 'creditChargeExceedsBound'])
+        self.assertEqual(self.reserve_bound('attempt-1', '80.00')[:2], ['admitted', 'org-fixture'])
+        self.assertEqual([(request, Decimal(charge)) for request, charge in self.query(
+            "SELECT request,max_charge FROM credit_reservations")], [('attempt-1', Decimal('80'))])
+
+    def test_provider_spend_at_the_ceiling_refuses_a_reservation(self):
+        self.credit_account('200.00')
+        self.import_spend('claude-api', 'org-fixture', '200.00')
+        self.assertEqual(self.reserve('attempt-1'), ['refused', 'monthlyCapExhausted'])
+        self.assertEqual(self.query("SELECT count(*) FROM credit_reservations"), [(0,)])
 
     def test_reservation_uses_the_observed_balance_when_lower(self):
         self.credit_account('150.00')
@@ -681,18 +742,24 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return completed.stdout.strip()
 
-    def test_authorization_records_actual_reported_balance_only_when_eligible(self):
+    # An authorization row exists only for an attempt holding an admitted
+    # reservation against a usable reported observation (#1177 item 2).
+    def test_authorization_requires_an_admitted_reservation(self):
         self.credit_account()
+        self.assertEqual(self.authorize('attempt-1'), 'not-authorized')
+        self.assertEqual(self.query("SELECT count(*) FROM credit_authorizations"), [(0,)])
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
-        rows = self.query("SELECT attempt,account,organization,balance,unit FROM credit_authorizations")
-        self.assertEqual(rows, [('attempt-1', 'claude-api', 'org-fixture', '200.00', 'USD')])
+        rows = self.query("SELECT attempt,account,organization,cycle,balance,unit FROM credit_authorizations")
+        self.assertEqual(rows, [('attempt-1', 'claude-api', 'org-fixture', 'grant:2026-10-11', '200.00', 'USD')])
 
-    def test_authorization_records_the_route_for_a_reported_zero_balance(self):
+    def test_a_reported_zero_balance_is_not_authorized(self):
         self.credit_account(balance='0.00')
-        self.assertEqual(self.authorize('attempt-1'), 'authorized')
-        self.assertEqual(self.query("SELECT account,balance FROM credit_authorizations"), [('claude-api', '0.00')])
+        self.assertEqual(self.reserve('attempt-1'), ['refused', 'promotionalCreditExhausted'])
+        self.assertEqual(self.authorize('attempt-1'), 'not-authorized')
+        self.assertEqual(self.query("SELECT count(*) FROM credit_authorizations"), [(0,)])
 
-    def test_a_date_only_expiry_keeps_authorization_balance_unknown(self):
+    def test_a_date_only_expiry_is_not_authorized(self):
         self.record('claude-api', funding='api_key', secret='file:/fixture/api')
         self.bind('claude-api', 'leaf')
         self.observe('claude-api', 'org-fixture')
@@ -700,9 +767,9 @@ class FocusedAccountCredits(unittest.TestCase):
                                    expires='2026-11-01', cycle='2026-10')
         self.assertEqual((saved['observation']['expires'], saved['observation']['cycle']),
                          ('2026-11-01', '2026-10'))
-        self.assertEqual(self.authorize('attempt-1'), 'authorized')
-        self.assertEqual(self.query("SELECT cycle,balance,unit FROM credit_authorizations WHERE attempt='attempt-1'"),
-                         [('', '', '')])
+        self.assertEqual(self.reserve('attempt-1'), ['refused', 'creditObservationExpiryUnverified'])
+        self.assertEqual(self.authorize('attempt-1'), 'not-authorized')
+        self.assertEqual(self.query("SELECT count(*) FROM credit_authorizations"), [(0,)])
     def test_helper_runs_with_the_durable_authorization_alone(self):
         helper = os.environ.get('BATON2_API_KEY_EXEC')
         if not helper:
@@ -715,6 +782,7 @@ class FocusedAccountCredits(unittest.TestCase):
         self.bind('claude-api', 'leaf')
         self.observe('claude-api', 'org-fixture')
         self.import_credit('claude-api', 'org-fixture', '200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
         child = directory / 'child.sh'
         child.write_text('#!/bin/sh\nprintf "KEY=${ANTHROPIC_API_KEY:+set}\n"\n')
@@ -752,6 +820,7 @@ class FocusedAccountCredits(unittest.TestCase):
         self.bind('claude-api', 'leaf')
         self.observe('claude-api', 'org-fixture')
         self.import_credit('claude-api', 'org-fixture', '200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
         child = directory / 'child.sh'
         child.write_text('#!/bin/sh\nprintf "KEY=${ANTHROPIC_API_KEY:+set}\\n"\n')
@@ -802,6 +871,7 @@ class FocusedAccountCredits(unittest.TestCase):
         self.bind('claude-api', 'leaf')
         self.observe('claude-api', 'org-fixture')
         self.import_credit('claude-api', 'org-fixture', '200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
         marker = directory / 'child-started'
         child = directory / 'child.sh'
@@ -835,6 +905,7 @@ class FocusedAccountCredits(unittest.TestCase):
         self.bind('claude-api', 'leaf')
         self.observe('claude-api', 'org-fixture')
         self.import_credit('claude-api', 'org-fixture', '200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
         marker = directory / 'child-started'
         child = directory / 'child.sh'
@@ -867,6 +938,7 @@ class FocusedAccountCredits(unittest.TestCase):
         self.bind('claude-api', 'leaf')
         self.observe('claude-api', 'org-fixture')
         self.import_credit('claude-api', 'org-fixture', '200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
         marker = directory / 'child-started'
         child = directory / 'child.sh'
@@ -896,6 +968,7 @@ class FocusedAccountCredits(unittest.TestCase):
         self.bind('claude-api', 'leaf')
         self.observe('claude-api', 'org-fixture')
         self.import_credit('claude-api', 'org-fixture', '200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
         child = directory / 'child.sh'
         child.write_text('#!/bin/sh\nexit 7\n')
@@ -924,6 +997,7 @@ class FocusedAccountCredits(unittest.TestCase):
         self.bind('claude-api', 'leaf')
         self.observe('claude-api', 'org-fixture')
         self.import_credit('claude-api', 'org-fixture', '200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
         child = directory / 'child.sh'
         child.write_text('#!/bin/sh\nprintf "KEY=${ANTHROPIC_API_KEY:+set}\n"\n')
@@ -948,6 +1022,7 @@ class FocusedAccountCredits(unittest.TestCase):
         self.bind('claude-api', 'leaf')
         self.observe('claude-api', 'org-fixture')
         self.import_credit('claude-api', 'org-fixture', '200.00')
+        self.assertEqual(self.reserve('attempt-1')[0], 'admitted')
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
         child = directory / 'child.sh'
         child.write_text('#!/bin/sh\nprintf "KEY=${ANTHROPIC_API_KEY:+set}\n"\n')
