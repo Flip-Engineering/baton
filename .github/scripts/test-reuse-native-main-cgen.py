@@ -151,6 +151,7 @@ class CompletedQueueCgenTests(unittest.TestCase):
         write(self.attempt / 'identity-config', retained.read_bytes())
         diagnostics_path = self.attempt / 'compiler-diagnostics.json'
         diagnostics = json.loads(diagnostics_path.read_text())
+        diagnostics['queue_attempt']['meta_sha256'] = sha(self.attempt / 'meta')
         diagnostics['toolchain']['compiler']['path'] = config_compiler
         write(diagnostics_path, json.dumps(diagnostics))
         result = self.prepare()
