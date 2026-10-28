@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const root = path.resolve(process.argv[2] ?? path.join(import.meta.dir, "../../.."));
-const source = path.join(root, "bend2/compiler/upstream");
+const source = process.env.BEND_COMPILER_SOURCE ?? path.join(root, "bend2/compiler/upstream");
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "bend-store-release-"));
 try {
   for (const name of ["bend.ts", "base.bend", "store.ts"]) {

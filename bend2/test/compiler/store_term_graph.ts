@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const root = path.resolve(process.argv[2] ?? path.join(import.meta.dir, "../../.."));
-const directory = path.join(root, "bend2/compiler/upstream");
+const directory = process.env.BEND_COMPILER_SOURCE ?? path.join(root, "bend2/compiler/upstream");
 const Bend = await import(pathToFileURL(path.join(directory, "bend.ts")).href);
 const Store = await import(pathToFileURL(path.join(directory, "store.ts")).href);
 function copy<T>(term: T): T {
