@@ -298,7 +298,8 @@ class AdapterExitTests(unittest.TestCase):
         captured_stdout = BinaryCapture(stdout)
         captured_stderr = BinaryCapture(stderr)
 
-        with mock.patch.object(adapter.subprocess, 'check_output', return_value='fixture-key'), \
+        key_request = subprocess.CompletedProcess(['fixture-key-request'], 0, stdout=b'fixture-key\n', stderr=b'')
+        with mock.patch.object(adapter.subprocess, 'run', return_value=key_request), \
                 mock.patch.object(adapter.subprocess, 'Popen', side_effect=QueueRun), \
                 mock.patch.object(adapter.shutil, 'copyfile', side_effect=deny_diagnostic_copy), \
                 mock.patch.object(adapter.sys, 'stdout', captured_stdout), \
