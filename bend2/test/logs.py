@@ -917,6 +917,45 @@ while not pathlib.Path('resume-native').exists(): time.sleep(.01)
         updates = [row for row in map(json.loads, self.lines()) if row.get('type') == 'message_update']
         self.assertEqual(updates, [json.loads(frames[-1])])
 
+    def test_unidentified_cumulative_updates_keep_only_the_latest_snapshot(self):
+        # OMP 17.4 frames carry no message identity (issue #769): snapshots of
+        # the one open message share its lifecycle slot, so the default log
+        # holds the newest snapshot and flushes it when the stream ends open.
+        snapshots = ['thinking λ🙂 step %d' % i for i in range(3)]
+        frames = [json.dumps({'type': 'message_start',
+                              'message': {'role': 'assistant', 'content': []}})]
+        frames.extend(json.dumps({'type': 'message_update',
+                                  'assistantMessageEvent': {'type': 'thinking_delta', 'delta': snapshots[i][-1],
+                                                            'partial': {'role': 'assistant', 'content': [{'type': 'thinking', 'thinking': snapshots[i]}]}},
+                                  'message': {'role': 'assistant', 'content': [{'type': 'thinking', 'thinking': snapshots[i]}]}})
+                      for i in range(3))
+        frames.append(json.dumps({'type': 'tool_execution_update', 'toolCallId': 'tool-1', 'toolName': 'bash',
+                                  'partialResult': {'content': [{'type': 'text', 'text': 'tool partial λ'}]}}))
+        self.stream(frames + [self.terminal()])
+        rows = list(map(json.loads, self.lines()))
+        updates = [row for row in rows if row.get('type') == 'message_update']
+        self.assertEqual(updates, [json.loads(frames[-2])])
+        self.assertEqual(updates[0]['message']['content'][0]['thinking'], snapshots[-1])
+        self.assertEqual([row.get('type') for row in rows].count('message_start'), 1)
+        self.assertEqual(json.loads(self.call('delivery', 'turn-1'))['body'], 'Complete answer λ')
+
+    def test_unidentified_updates_close_with_their_message_end(self):
+        frames = [json.dumps({'type': 'message_start',
+                              'message': {'role': 'assistant', 'content': []}})]
+        frames.extend(json.dumps({'type': 'message_update',
+                                  'assistantMessageEvent': {'type': 'text_delta', 'delta': 'x',
+                                                            'partial': {'role': 'assistant', 'content': [{'type': 'text', 'text': 'partial %d λ' % i}]}},
+                                  'message': {'role': 'assistant', 'content': [{'type': 'text', 'text': 'partial %d λ' % i}]}})
+                      for i in range(3))
+        frames.append(json.dumps({'type': 'message_end',
+                                  'message': {'role': 'assistant', 'provider': 'provider', 'model': 'actual',
+                                              'content': [{'type': 'text', 'text': 'full answer λ'}]}}))
+        self.stream(frames + [self.terminal('full answer λ')])
+        rows = list(map(json.loads, self.lines()))
+        self.assertEqual([row for row in rows if row.get('type') == 'message_update'], [])
+        self.assertEqual([row.get('type') for row in rows].count('message_end'), 1)
+        self.assertEqual(json.loads(self.call('delivery', 'turn-1'))['body'], 'full answer λ')
+
     def test_existing_policy_migrates_and_preserves_registered_logs(self):
         with sqlite3.connect(self.db) as connection:
             connection.executescript("DROP TABLE log_policies;DROP TABLE log_files;"
