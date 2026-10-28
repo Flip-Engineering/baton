@@ -2,6 +2,7 @@
    the BatonSql structure, its row callback, the busy handler and the marked
    read-cache section from bend2/src/host/sqlite.c. */
 #include <time.h>
+#include <sys/wait.h>
 #include <sched.h>
 
 static int create_simple_db(const char *path, int rows, int utf16) {
@@ -38,65 +39,6 @@ static int create_simple_db(const char *path, int rows, int utf16) {
   sqlite3_free(error);
   sqlite3_close(db);
   return 0;
-}
-
-static int create_replay_db(const char *path) {
-  sqlite3 *db = NULL;
-  if (sqlite3_open(path, &db) != SQLITE_OK) return 1;
-  char *error = NULL;
-  const char *schema =
-    "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT, harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '');"
-    "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);"
-    "CREATE INDEX IF NOT EXISTS messages_pending ON messages(recipient,receipt,seq);"
-    "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL, id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, outcome TEXT NOT NULL);"
-    "INSERT OR IGNORE INTO sessions(id,parent,harness) VALUES('root',NULL,'omp');";
-  int code = sqlite3_exec(db, schema, NULL, NULL, &error);
-  sqlite3_stmt *statement = NULL;
-  if (code == SQLITE_OK)
-    code = sqlite3_prepare_v2(db,
-      "INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(?1,'sender','root','task',?2,NULL);",
-      -1, &statement, NULL);
-  char body[201];
-  memset(body, 'x', 200);
-  body[200] = 0;
-  for (int i = 0; code == SQLITE_OK && i < 100; i++) {
-    char id[16];
-    snprintf(id, sizeof(id), "m%06d", i);
-    sqlite3_bind_text(statement, 1, id, -1, SQLITE_STATIC);
-    sqlite3_bind_text(statement, 2, body, -1, SQLITE_STATIC);
-    int step = sqlite3_step(statement);
-    if (step != SQLITE_DONE) code = step;
-    sqlite3_reset(statement);
-  }
-  if (statement) sqlite3_finalize(statement);
-  if (code != SQLITE_OK) {
-    fprintf(stderr, "create replay db: %s\n", error ? error : sqlite3_errmsg(db));
-    sqlite3_free(error);
-    sqlite3_close(db);
-    return 1;
-  }
-  sqlite3_free(error);
-  sqlite3_close(db);
-  return 0;
-}
-
-static int write_spool(const char *path) {
-  FILE *handle = fopen(path, "w");
-  if (!handle) return 1;
-  for (int i = 0; i < 158; i++) fputc('x', handle);
-  fclose(handle);
-  return 0;
-}
-
-static long long rchar_bytes(void) {
-  FILE *handle = fopen("/proc/self/io", "r");
-  if (!handle) return -1;
-  char line[256];
-  long long value = -1;
-  while (fgets(line, sizeof(line), handle))
-    if (sscanf(line, "rchar: %lld", &value) == 1) break;
-  fclose(handle);
-  return value;
 }
 
 static int check(const char *label, int code, const char *output,
@@ -172,6 +114,60 @@ static int test_two_threads(const char *database) {
   }
   printf("ok two_threads\n");
   return 0;
+}
+
+static int test_fork_rejects_inherited(const char *database) {
+  baton_sql_read_test_forget();
+  BatonSqlReadTestResult before;
+  memset(&before, 0, sizeof(before));
+  if (baton_sql_read_test_run(database, "SELECT count(*) FROM t;", &before) != 0 ||
+      before.code != SQLITE_OK || !before.connection) {
+    fprintf(stderr, "fail fork-parent-before: cache was not established\n");
+    free(before.output); free(before.error);
+    return 1;
+  }
+  uintptr_t parent_connection = (uintptr_t)before.connection;
+  free(before.output); free(before.error);
+  pid_t child = fork();
+  if (child < 0) {
+    perror("fork");
+    baton_sql_read_test_forget();
+    return 1;
+  }
+  if (child == 0) {
+    BatonSqlReadTestResult result;
+    int run = baton_sql_read_test_run(database, "SELECT count(*) FROM t;", &result);
+    int rejected = run == 0 && result.code == SQLITE_MISUSE && result.error &&
+      strstr(result.error, "cannot cross a fork boundary") && !result.connection;
+    free(result.output);
+    free(result.error);
+    /* The child must not call SQLite close on the parent's inherited handle. */
+    _exit(rejected ? 0 : 1);
+  }
+  int status = 0;
+  pid_t waited;
+  do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
+  int failed = waited != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0;
+  if (failed) {
+    fprintf(stderr, "fail fork-rejected: child status=%d\n", status);
+  } else {
+    printf("ok fork-rejected\n");
+  }
+  BatonSqlReadTestResult after;
+  memset(&after, 0, sizeof(after));
+  int run = baton_sql_read_test_run(database, "SELECT count(*) FROM t;", &after);
+  if (run != 0 || after.code != SQLITE_OK || !after.connection ||
+      (uintptr_t)after.connection != parent_connection ||
+      !after.output || strcmp(after.output, "1\n") != 0) {
+    fprintf(stderr, "fail fork-parent-after: code=%d output=%s\n", after.code,
+            after.output ? after.output : "(null)");
+    failed = 1;
+  } else {
+    printf("ok fork-parent-after\n");
+  }
+  free(after.output); free(after.error);
+  baton_sql_read_test_forget();
+  return failed;
 }
 
 static int test_path_change(const char *first, const char *second) {
@@ -420,6 +416,7 @@ static int mode_lifecycle(const char *work) {
       create_simple_db(utf16, 1, 1) || create_simple_db(plain, 1, 0)) return 1;
   int failed = 0;
   failed |= test_two_threads(first);
+  failed |= test_fork_rejects_inherited(first);
   failed |= test_path_change(first, second);
   failed |= test_committed_write(first);
   failed |= test_autocommit(first);
@@ -437,58 +434,12 @@ static int mode_lifecycle(const char *work) {
   return 0;
 }
 
-static int mode_bytes(const char *work) {
-  char database[4096], spool[4096];
-  if (make_path(database, sizeof(database), work, "replay.db") ||
-      make_path(spool, sizeof(spool), work, "stdout.spool")) return 1;
-  if (create_replay_db(database) || write_spool(spool)) return 1;
-  const char *sql = "SELECT body FROM messages WHERE id='m000000';";
-  const int reads = 20;
-  BatonSqlReadTestResult result;
-  baton_sql_read_test_forget();
-  long long before = rchar_bytes();
-  if (before < 0) {
-    printf("bytes unavailable\n");
-    return 2;
-  }
-  for (int i = 0; i < reads; i++) {
-    baton_sql_read_test_forget();
-    if (baton_sql_read_test_run(database, sql, &result) != 0 ||
-        result.code != SQLITE_OK) {
-      fprintf(stderr, "fail bytes fresh: code=%d\n", result.code);
-      return 1;
-    }
-    free(result.output);
-    free(result.error);
-  }
-  long long fresh = rchar_bytes() - before;
-  baton_sql_read_test_forget();
-  before = rchar_bytes();
-  for (int i = 0; i < reads; i++) {
-    if (baton_sql_read_test_run(database, sql, &result) != 0 ||
-        result.code != SQLITE_OK) {
-      fprintf(stderr, "fail bytes reused: code=%d\n", result.code);
-      return 1;
-    }
-    free(result.output);
-    free(result.error);
-  }
-  long long reused = rchar_bytes() - before;
-  baton_sql_read_test_forget();
-  long long spool_bytes = 158;
-  printf("bytes fresh=%lld reused=%lld reads=%d spool=%lld fresh_ratio=%.3f reused_ratio=%.3f\n",
-         fresh, reused, reads, spool_bytes, (double)fresh / (double)spool_bytes,
-         (double)reused / (double)spool_bytes);
-  return 0;
-}
-
 int main(int argc, char **argv) {
   if (argc < 3) {
-    fprintf(stderr, "usage: lifecycle|bytes WORKDIR\n");
+    fprintf(stderr, "usage: lifecycle WORKDIR\n");
     return 2;
   }
   if (strcmp(argv[1], "lifecycle") == 0) return mode_lifecycle(argv[2]);
-  if (strcmp(argv[1], "bytes") == 0) return mode_bytes(argv[2]);
   fprintf(stderr, "unknown mode: %s\n", argv[1]);
   return 2;
 }

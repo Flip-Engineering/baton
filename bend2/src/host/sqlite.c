@@ -1618,7 +1618,8 @@ static int baton_sql_read_test_run(const char *path, const char *sql,
   out->output = strdup(call.output ? call.output : "");
   out->error = call.error ? strdup(call.error) : NULL;
   BatonSqlReadCache *cache = baton_sql_read_cache(0);
-  out->connection = cache ? cache->db : NULL;
+  /* A failed fork-boundary refusal must not inspect an inherited SQLite handle. */
+  out->connection = call.code == SQLITE_OK && cache ? cache->db : NULL;
   out->autocommit = out->connection ? sqlite3_get_autocommit(out->connection) : 1;
   out->live = __atomic_load_n(&baton_sql_read_live, __ATOMIC_RELAXED);
   free(call.path);

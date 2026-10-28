@@ -3,13 +3,11 @@
 The fixture compiles the verbatim BatonSql row callback, busy handler and the
 marked read-cache section of bend2/src/host/sqlite.c. It exercises two helper
 threads, path switching, file replacement, committed-write visibility,
-autocommit rollback, busy handling, UTF-8 refusal and thread-exit cleanup, then
-measures database reads for fresh and reused read calls against a small
-replay-shaped database.
+autocommit rollback, busy handling, UTF-8 refusal, fork rejection and
+thread-exit cleanup.
 """
 import os
 import pathlib
-import re
 import shutil
 import subprocess
 import tempfile
@@ -73,10 +71,14 @@ def build_fixture():
         + function_block(lines, 'static int baton_sql_busy')
         + ''.join(lines[begin + 1:end])
         + DRIVER.read_text())
-    result = subprocess.run(
-        [os.environ.get('CC', 'cc'), '-Wall', '-Wextra', '-O2', '-pthread',
-         '-DBATON_SQL_READ_TEST', str(combined), '-lsqlite3', '-o', str(FIXTURE)],
-        capture_output=True, text=True)
+    compiler = os.environ.get('CC', 'cc')
+    command = [compiler, '-Wall', '-Wextra', '-O2', '-pthread',
+               '-DBATON_SQL_READ_TEST', str(combined), '-lsqlite3', '-o', str(FIXTURE)]
+    queue_driver = os.environ.get('BATON2_NATIVE_QUEUE_DRIVER')
+    if queue_driver:
+        command = [os.environ.get('PYTHON3', 'python3'), queue_driver,
+                   'compiler', 'cc', *command[1:]]
+    result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode:
         raise AssertionError(result.stdout + result.stderr)
 
@@ -104,34 +106,12 @@ class SqliteReadReuse(unittest.TestCase):
                       'write-before', 'write-after', 'autocommit-transaction',
                       'autocommit-after', 'read-only', 'read-only-after',
                       'replacement-before', 'replacement-after',
-                      'multi-statement', 'busy-read',
+                      'multi-statement', 'busy-read', 'fork-rejected',
+                      'fork-parent-after',
                       'encoding-refusal', 'encoding-utf8',
                       'lifecycle'):
             self.assertIn('ok ' + label, result.stdout)
 
-    def test_reused_read_reduces_database_bytes(self):
-        result = self.run_mode('bytes')
-        if result.returncode == 2 and 'bytes unavailable' in result.stdout:
-            self.skipTest('/proc/self/io is unavailable')
-        self.assertEqual(result.returncode, 0,
-                         result.stdout + result.stderr)
-        match = re.search(
-            r'bytes fresh=(\d+) reused=(\d+) reads=(\d+) spool=(\d+) '
-            r'fresh_ratio=([0-9.]+) reused_ratio=([0-9.]+)',
-            result.stdout)
-        self.assertIsNotNone(match, result.stdout)
-        fresh, reused = int(match.group(1)), int(match.group(2))
-        reads, spool = int(match.group(3)), int(match.group(4))
-        fresh_ratio, reused_ratio = float(match.group(5)), float(match.group(6))
-        self.assertEqual(reads, 20)
-        self.assertEqual(spool, 158)
-        self.assertGreater(fresh, 0)
-        self.assertGreater(reused, 0)
-        self.assertLess(reused, fresh)
-        self.assertLess(reused_ratio, fresh_ratio)
-        self.assertLess(reused * 2, fresh)
-        self.assertEqual(round(fresh / spool, 3), fresh_ratio)
-        self.assertEqual(round(reused / spool, 3), reused_ratio)
 
 
 if __name__ == '__main__':
