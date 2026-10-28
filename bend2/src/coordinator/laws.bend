@@ -1106,18 +1106,18 @@ law a_later_native_terminal_is_named_once:
 def a_later_native_terminal_is_named_once(event,terminal):
   {==}
 
-law the_deferred_note_names_the_pending_guidance:
+law the_deferred_note_names_the_pending_input:
   for +pending: String
-  {Turn.deferred_pending(pending) == Bool.pick(String,String.is_empty(pending),""," and the deferred guidance " ++ pending ++ " stays pending for the next receive") : String}
+  {Turn.deferred_pending(pending) == Bool.pick(String,String.is_empty(pending),""," and the deferred input " ++ pending ++ " stays pending for the next receive") : String}
 
-def the_deferred_note_names_the_pending_guidance(pending):
+def the_deferred_note_names_the_pending_input(pending):
   {==}
 
-law the_outstanding_guidance_reader_names_stored_guidance:
+law the_outstanding_reader_names_all_stored_input:
   for +player: String
-  {Guidance.outstanding_sql(player) == ("coalesce((SELECT group_concat(id,',') FROM (SELECT id FROM messages WHERE recipient=" ++ C.q(player) ++ " AND kind='guidance' AND NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=messages.id AND owed_read.recipient=messages.recipient) AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " ORDER BY seq)),'')") : String}
+  {Guidance.outstanding_sql(player) == ("coalesce((SELECT group_concat(id,',') FROM (SELECT id FROM messages WHERE recipient=" ++ C.q(player) ++ " AND NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=messages.id AND owed_read.recipient=messages.recipient) AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " ORDER BY seq)),'')") : String}
 
-def the_outstanding_guidance_reader_names_stored_guidance(player):
+def the_outstanding_reader_names_all_stored_input(player):
   {==}
 
 law the_deferred_note_presence_reads_the_note_identity:
