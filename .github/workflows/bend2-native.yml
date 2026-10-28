@@ -154,18 +154,26 @@ jobs:
         env:
           BATON2_RETAINED_MAIN_HANDOFF: ${{ inputs.retained_main_handoff }}
           BATON2_RETAINED_MAIN_SHA256: ${{ inputs.retained_main_handoff_sha256 }}
+          BATON2_RETAINED_MAIN_CGEN_KEY: ${{ inputs.retained_main_cgen_key }}
+          BATON2_RETAINED_MAIN_CGEN_QUEUE_ROOT: ${{ inputs.retained_main_cgen_queue_root }}
           BATON2_LINUX_RUNNER: homelab
         run: |
           set -euo pipefail
           printf 'BATON2_MAIN_GENERATED_C=\nBATON2_MAIN_GENERATED_C_ROOT=\nBATON2_MAIN_GENERATED_C_PROOF=\nBATON2_MAIN_GENERATED_C_PROOF_SHA256=\nBATON2_MAIN_C_VERIFIER=\n' >> "$GITHUB_ENV"
-          if [[ -n "$BATON2_RETAINED_MAIN_HANDOFF" && "$BATON2_LINUX_RUNNER" != homelab ]]; then
-            printf '%s\n' 'Retained Main compilation requires the homelab runner.' >&2
+          if [[ -n "$BATON2_RETAINED_MAIN_HANDOFF" && -n "$BATON2_RETAINED_MAIN_CGEN_KEY" ]]; then
+            printf '%s\n' 'Select one retained Main input.' >&2
+            exit 1
+          fi
+          if [[ ( -n "$BATON2_RETAINED_MAIN_HANDOFF" || -n "$BATON2_RETAINED_MAIN_CGEN_KEY" ) && "$BATON2_LINUX_RUNNER" != homelab ]]; then
+            printf '%s\n' 'Retained Main input requires the homelab runner.' >&2
             exit 1
           fi
           python3 .github/scripts/reuse-native-main.py prepare \
             --source "$GITHUB_WORKSPACE" --run "$BATON2_LINUX_RUN" \
             --handoff "$BATON2_RETAINED_MAIN_HANDOFF" \
             --handoff-sha256 "$BATON2_RETAINED_MAIN_SHA256" \
+            --cgen-key "$BATON2_RETAINED_MAIN_CGEN_KEY" \
+            --queue-root "$BATON2_RETAINED_MAIN_CGEN_QUEUE_ROOT" \
             --compiler "$BEND" \
             --compiler-archive "$BATON2_LINUX_RUN/bend-2.0.25-linux-x64.tar.gz" \
             --github-env "$GITHUB_ENV" \

@@ -134,25 +134,12 @@ class CompletedQueueCgenTests(unittest.TestCase):
         selected = self.select(None)
         self.assertEqual(selected['status'], 'reused', selected)
 
-    def test_retained_b15f28_identity_config_is_accepted(self):
-        retained = pathlib.Path(
-            '/var/tmp/baton2-compile-queue/keys/'
-            'b15f28cb7eb42c210d28a47ce5f7c6fdd57d1c2b2be8a1e16833c7cfa1fed57b/runs/'
-            '1793206134916190647-2545431/identity-config')
-        fields = REUSE.queue_fields(retained)
-        config_source_root = REUSE.queue_effective(fields, 'source_root')
-        config_compiler = REUSE.queue_effective(fields, 'compiler')
+    def test_identity_config_with_empty_defaults_is_accepted(self):
+        fields = REUSE.queue_fields(self.attempt / 'identity-config')
         self.assertEqual(REUSE.queue_effective(fields, 'kind'), 'cgen')
         self.assertEqual(REUSE.queue_effective(fields, 'entry'), REUSE.ENTRY)
-        self.assertTrue(pathlib.Path(config_source_root).is_absolute())
-        self.assertTrue(pathlib.Path(config_compiler).is_absolute())
-
-        write(self.attempt / 'meta', self.meta_text().replace(str(self.root), config_source_root))
-        write(self.attempt / 'identity-config', retained.read_bytes())
-        diagnostics_path = self.attempt / 'compiler-diagnostics.json'
-        diagnostics = json.loads(diagnostics_path.read_text())
-        diagnostics['toolchain']['compiler']['path'] = config_compiler
-        write(diagnostics_path, json.dumps(diagnostics))
+        self.assertEqual(REUSE.queue_effective(fields, 'source_root'), str(self.root))
+        self.assertEqual(REUSE.queue_effective(fields, 'compiler'), str(self.compiler))
         result = self.prepare()
         self.assertEqual(result['status'], 'reused', result)
 
