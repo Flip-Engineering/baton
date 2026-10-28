@@ -572,6 +572,46 @@ class Lifecycle(Executing):
         self.assertTrue(signal_marker.exists(),
                         'the reattached keeper must receive the retained stop signal')
 
+    def test_stop_direct_observing_reentry_restores_pending_signal_from_recorded_target(self):
+        self.seed()
+        process, noop_marker = self.start_resisting_attempt()
+
+        self.fixture('stop-request', self.db, SESSION, ATTEMPT,
+                     'Stop this retained attempt.')
+        missing_directory = self.directory / 'hidden-attempt'
+        shutil.move(str(self.attempt), str(missing_directory))
+        self.fixture('observe-direct', self.db, SESSION,
+                     'stale-attempt', 'stale-directory')
+        with sqlite3.connect(self.db) as database:
+            row = database.execute(
+                'SELECT outcome,control_error,applied_signal,signal FROM session_stops '
+                'WHERE session=?', (SESSION,)).fetchone()
+        self.assertEqual(row[0], 'custody-missing')
+        self.assertTrue(row[1], 'missing custody must retain its unresolved detail')
+        self.assertEqual(row[2:], (0, 15),
+                         'the requested signal must remain unapplied while custody is missing')
+
+        shutil.move(str(missing_directory), str(self.attempt))
+        process.kill()
+        process.wait(timeout=10)
+        process.stdout.close()
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline and not noop_marker.exists():
+            time.sleep(0.02)
+        self.assertTrue(noop_marker.exists(),
+                        'observer loss must run the retained recovery invocation')
+        self.fixture('observe-direct-reentry', self.db, SESSION, self.attempt,
+                     'stale-attempt', 'stale-directory')
+        with sqlite3.connect(self.db) as database:
+            row = database.execute(
+                'SELECT outcome,control_error,applied_signal,signal FROM session_stops '
+                'WHERE session=?', (SESSION,)).fetchone()
+        self.assertEqual(row, ('requested', '', 15, 15),
+                         'direct retained observation must restore the stop from durable custody')
+        signal_marker = pathlib.Path(str(self.uuid_marker) + '.sigterm')
+        self.assertTrue(signal_marker.exists(),
+                        'direct retained observation must signal the recorded attempt')
+
     def test_live_owner_recovery_completes_and_settles_the_claim(self):
         evidence = self.run_scenario('normal')
         print('EVIDENCE ' + json.dumps(evidence, sort_keys=True), flush=True)

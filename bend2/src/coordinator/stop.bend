@@ -256,7 +256,7 @@ def started(+db: String, +session: String, +attempt: String) -> IO(Unit):
 def observing(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE executions SET phase='running',status='' WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ " AND directory=" ++ C.q(directory) ++ ";"))
-    reconcile(db,session,attempt,directory)
+    reconcile_request(db,session)
 
 # The same observation resume, with the first database failure returned as a
 # result. The recovery path uses it so SQLITE_BUSY reaches its typed cause
