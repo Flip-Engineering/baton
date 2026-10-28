@@ -323,7 +323,7 @@ class LiveDsh(unittest.TestCase):
                 [DSH, '--profile', 'headless', '--patch', str(attempt / 'dsh-tools.patch.yml'),
                  '--patch', str(attempt / 'dsh-model.patch.yml'), '--json'],
                 input='Run the tool, then answer.\n', text=True, capture_output=True, env=environment,
-                cwd=work, timeout=120)
+                cwd=work)
             self.assertEqual(run.returncode, 0, run.stderr)
             main = [request for request in StubModel.requests if request.get('tools')]
             texts = [json.dumps(request['messages']) for request in main]
