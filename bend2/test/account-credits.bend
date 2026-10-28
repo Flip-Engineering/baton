@@ -64,7 +64,7 @@ def binding_checks() -> IO(Unit):
 
 def refusal_checks() -> IO(Unit):
   do IO<Unit>:
-    anthropic : Unit <- check("anthropic-api-key-resolver-refusal",String.eq(A.credit_api_key_refusal(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"}),"This API-key launch has no installed resolver beside the resolved identity helper; the attempt was not started and its input stays owed."))
+    anthropic : Unit <- check("anthropic-api-key-route-unavailable",String.eq(A.credit_api_key_refusal(A.Ac{"claude-credit-primary","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"}),"Anthropic API-key launches are unavailable because no provider-enforced boundary keeps their request charges within the promotional-credit grant; the attempt was not started and its input stays owed."))
     other : Unit <- check("other-provider-resolver-refusal",String.eq(A.credit_api_key_refusal(A.Ac{"openai-api","openai","codex","api_key","file:/fixture/secrets/openai","org-openai","2026-10-18"}),"This API-key launch has no installed resolver beside the resolved identity helper; the attempt was not started and its input stays owed."))
     IO.pure(Unit,Unit{})
 
