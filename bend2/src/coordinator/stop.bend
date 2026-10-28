@@ -196,25 +196,6 @@ def deliver(+db: String, +session: String, +attempt: String) -> IO(Result<&1,&1,
     result : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,Tx.trim_nl(id),"1","")
     IO.pure(Result<&1,&1,U32 & String,Unit>,Delivery.wake_result(result))
 
-def reconcile_request(+db: String, +session: String) -> IO(Unit):
-  do IO<Unit>:
-    attempt : String <- IO.try(String,DB.Sql.query(db,"SELECT attempt FROM session_stops WHERE session=" ++ C.q(session) ++ ";"))
-    directory : String <- IO.try(String,DB.Sql.query(db,"SELECT directory FROM session_stops WHERE session=" ++ C.q(session) ++ ";"))
-    outcome : String <- IO.try(String,DB.Sql.query(db,"SELECT outcome FROM session_stops WHERE session=" ++ C.q(session) ++ ";"))
-    +id : String = Tx.trim_nl(attempt)
-    +path : String = Tx.trim_nl(directory)
-    +state : String = Tx.trim_nl(outcome)
-    Bool.pick(IO(Unit),Bool.and(Bool.or(String.eq(state,"requested"),String.eq(state,"custody-missing")),Bool.not(String.is_empty(id))),
-      do IO<Unit>:
-        missing : Bool <- directory_missing(path)
-    Bool.pick(IO(Unit),missing,missing_custody_owner(db,session,id,path),reconcile_restored(db,session,id,path)),
-      IO.pure(Unit,Unit{}))
-
-# Every reconcile entry reads the current attempt and path from the durable stop
-# row. The caller's attempt and directory can be stale after observer recovery.
-def reconcile(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
-  reconcile_request(db,session)
-
 # A stop names an attempt from the executions row. When its directory is
 # absent, the session lock distinguishes a live owner preparing the attempt
 # from missing custody with no live owner.
@@ -286,6 +267,26 @@ def reconcile_restored(+db: String, +session: String, +attempt: String, +directo
   do IO<Unit>:
     signal : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT s.signal FROM session_stops s JOIN executions e ON e.session=s.session AND e.id=s.attempt WHERE s.session=" ++ C.q(session) ++ " AND s.attempt=" ++ C.q(attempt) ++ " AND e.phase<>'exited' AND s.applied_signal<>s.signal),0);"))
     reconcile_restored_signal(db,session,attempt,directory,selected_signal(U32.read(Tx.trim_nl(signal))))
+
+# Reconciliation follows durable stop custody. Every caller uses the attempt
+# and directory stored in the stop row because recovery arguments can be stale.
+def reconcile_request(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    attempt : String <- IO.try(String,DB.Sql.query(db,"SELECT attempt FROM session_stops WHERE session=" ++ C.q(session) ++ ";"))
+    directory : String <- IO.try(String,DB.Sql.query(db,"SELECT directory FROM session_stops WHERE session=" ++ C.q(session) ++ ";"))
+    outcome : String <- IO.try(String,DB.Sql.query(db,"SELECT outcome FROM session_stops WHERE session=" ++ C.q(session) ++ ";"))
+    +id : String = Tx.trim_nl(attempt)
+    +path : String = Tx.trim_nl(directory)
+    +state : String = Tx.trim_nl(outcome)
+    Bool.pick(IO(Unit),Bool.and(Bool.or(String.eq(state,"requested"),String.eq(state,"custody-missing")),Bool.not(String.is_empty(id))),
+      do IO<Unit>:
+        missing : Bool <- directory_missing(path)
+    Bool.pick(IO(Unit),missing,missing_custody_owner(db,session,id,path),reconcile_restored(db,session,id,path)),
+      IO.pure(Unit,Unit{}))
+
+# Every reconcile entry delegates to durable stop-row reconciliation.
+def reconcile(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
+  reconcile_request(db,session)
 
 def started(+db: String, +session: String, +attempt: String) -> IO(Unit):
   do IO<Unit>:
