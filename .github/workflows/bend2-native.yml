@@ -542,6 +542,12 @@ jobs:
               'test_contracts': contracts,
               'method': 'The tracked candidate test contracts and fixtures execute against the exact target production build and target production modules.'
           }, indent=2) + '\n')
+          hook_fixture = target / '.scratch/bend2/stop-hook-entry-target'
+          status = record('target-stop-hook-build', ['sh', 'bend2/scripts/build-native.sh',
+                          'bend2/test/stop-hook-entry.bend', str(hook_fixture)])
+          if status:
+              raise SystemExit(status)
+          check_environment['BATON2_STOP_HOOK_FIXTURE'] = str(hook_fixture)
           for name in selected:
               record('target-' + name, ['python3', 'bend2/test/' + name, '-v'])
           outcomes = {name: json.loads((evidence / 'selected' / (name + '.json')).read_text()) for name in selected}
