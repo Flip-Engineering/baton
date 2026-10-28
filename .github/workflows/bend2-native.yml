@@ -714,7 +714,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          package="$RUNNER_TEMP/baton2-darwin-arm64-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          package="$RUNNER_TEMP/baton2-darwin-arm64-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/package"
           test "$(wc -l < "$package/SHA256SUMS")" -eq 1
           read -r sha archive_name < "$package/SHA256SUMS"
           [[ "$sha" =~ ^[0-9a-f]{64}$ ]]
@@ -740,12 +740,12 @@ jobs:
         with:
           name: baton2-darwin-install-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/SHA256SUMS
-            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/manifest.json
-            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/*.tar.gz
-            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/smoke/
-            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/install-check/
-            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/*.stdout
-            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/*.stderr
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/package/SHA256SUMS
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/package/manifest.json
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/package/*.tar.gz
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/package/smoke/
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/package/install-check/
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/package/*.stdout
+            ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}/package/*.stderr
           if-no-files-found: error
           include-hidden-files: true
