@@ -2,8 +2,8 @@
 
 The fixtures write coordinator rows directly so each recorded state is exact:
 an active attempt, an exited attempt, an explicit stop, a missing endpoint and an
-existing wake claim. The report must classify all five; the wake command must
-drive only the exited candidate and leave the other four unchanged.
+existing wake claim. The report must classify all six; the wake command drives
+the exited and exited-claimed candidates and leaves the other four unchanged.
 """
 import json
 import os
