@@ -7,6 +7,7 @@ import ../host/sqlite.bend as DB
 import ../host/process.bend as P
 import ../git/text.bend as Tx
 import ../context/native-runtime.bend as ContextRuntime
+import ../host/files.bend as F
 
 # The session lock owner publishes one current attempt before it launches.
 # Stop and attempt admission use the same database transaction order.
@@ -184,10 +185,71 @@ def reconcile(+db: String, +session: String, +attempt: String, +directory: Strin
     signal : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT s.signal FROM session_stops s JOIN executions e ON e.session=s.session AND e.id=s.attempt WHERE s.session=" ++ C.q(session) ++ " AND s.attempt=" ++ C.q(attempt) ++ " AND e.phase<>'exited' AND s.applied_signal<>s.signal),0);"))
     send_control(db,session,attempt,directory,selected_signal(U32.read(Tx.trim_nl(signal))))
 
-def started(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
+# A stop names an attempt from the executions row. When that attempt's
+# directory is absent, no supported control channel is available. The
+# absent bytes do not establish that a native process has exited or that no
+# identity exists; retain the unresolved stop and send no signal until valid
+# custody returns.
+def directory_missing_result(observed: Result<&1,&1,U32 & String,String>) -> IO(Bool):
+  match observed:
+    case Fail{(code,detail)}: IO.pure(Bool,U32.is_eq(code,2))
+    case Done{value}: IO.pure(Bool,False{})
+
+def directory_missing(+directory: String) -> IO(Bool):
+  do IO<Bool>:
+    observed : Result<&1,&1,U32 & String,String> <- F.Files.lstat(directory)
+    directory_missing_result(observed)
+
+def custody_missing_sql(+session: String, +attempt: String, +detail: String) -> String:
+  +s = C.q(session)
+  +a = C.q(attempt)
+  "BEGIN IMMEDIATE;UPDATE session_stops SET outcome='custody-missing',control_error=" ++ C.q(detail) ++ " WHERE session=" ++ s ++ " AND attempt=" ++ a ++ " AND outcome IN ('requested','custody-missing');"
+  ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT 'stop-custody-missing:' || lower(hex(st.id)),s.id," ++ C.report_recipient("s.id") ++ ",'report',json_object('type','session-stop-custody-missing','session',s.id,'stopId',st.id,'reason',st.reason,'attempt',st.attempt,'requestedSignal',st.signal,'nativeStatus',NULL,'observationError',nullif(" ++ C.q(detail) ++ ",''),'workspace',s.workspace,'branch',s.branch,'native',s.native) FROM session_stops st JOIN sessions s ON s.id=st.session WHERE st.session=" ++ s ++ " AND st.attempt=" ++ a ++ " AND st.report_id<>'' AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL" ++ C.message_upsert() ++ ";COMMIT;"
+
+def mark_custody_missing(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
+  do IO<Unit>:
+    +detail : String = "Attempt custody is missing at " ++ directory ++ "; the native process identity was not established and no native exit is recorded."
+    saved : String <- IO.try(String,DB.Sql.query(db,custody_missing_sql(session,attempt,detail)))
+    IO.pure(Unit,Unit{})
+
+# The host verifies the retained manifest and native birth before delivering
+# a signal; no PID or path inference is used.
+
+def control_attempt(+db: String, +session: String, +attempt: String, +directory: String, signal: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.control_signal(directory,signal)
+    saved : String <- IO.try(String,DB.Sql.query(db,control_result_sql(session,attempt,signal,result)))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,result)
+
+def restore_requested_sql(+session: String, +attempt: String) -> String:
+  "UPDATE session_stops SET outcome='requested',control_error='' WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ " AND outcome='custody-missing' AND EXISTS(SELECT 1 FROM executions e WHERE e.session=session_stops.session AND e.id=session_stops.attempt AND e.phase<>'exited');"
+
+def restore_requested(+db: String, +session: String, +attempt: String) -> IO(Unit):
+  do IO<Unit>:
+    restored : String <- IO.try(String,DB.Sql.query(db,restore_requested_sql(session,attempt)))
+    IO.pure(Unit,Unit{})
+
+def reconcile_restored_control_result(+db: String, +session: String, +attempt: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match result:
+    case Done{unit}: restore_requested(db,session,attempt)
+    case Fail{error}: IO.pure(Unit,Unit{})
+
+def reconcile_restored_signal(+db: String, +session: String, +attempt: String, +directory: String, signal: U32) -> IO(Unit):
+  match signal:
+    case 0: restore_requested(db,session,attempt)
+    case other: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,Unit> <- control_attempt(db,session,attempt,directory,other)
+      reconcile_restored_control_result(db,session,attempt,result)
+
+def reconcile_restored(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
+  do IO<Unit>:
+    signal : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT s.signal FROM session_stops s JOIN executions e ON e.session=s.session AND e.id=s.attempt WHERE s.session=" ++ C.q(session) ++ " AND s.attempt=" ++ C.q(attempt) ++ " AND e.phase<>'exited' AND s.applied_signal<>s.signal),0);"))
+    reconcile_restored_signal(db,session,attempt,directory,selected_signal(U32.read(Tx.trim_nl(signal))))
+
+def started(+db: String, +session: String, +attempt: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE executions SET phase='running' WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ " AND phase='starting';"))
-    reconcile(db,session,attempt,directory)
+    reconcile_request(db,session)
 
 # A successful attachment resumes observation of this current attempt. Its
 # retained native status becomes the execution status when observation finishes.
@@ -199,17 +261,17 @@ def observing(+db: String, +session: String, +attempt: String, +directory: Strin
 # The same observation resume, with the first database failure returned as a
 # result. The recovery path uses it so SQLITE_BUSY reaches its typed cause
 # handler instead of aborting the executing call with the database code.
-def observing_after_query(+db: String, +session: String, +attempt: String, +directory: String, saved: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def observing_after_query(+db: String, +session: String, saved: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match saved:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
     case Done{unit}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      reconciled : Unit <- reconcile(db,session,attempt,directory)
+      reconciled : Unit <- reconcile_request(db,session)
       IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
 
 def observing_result(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     saved : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"UPDATE executions SET phase='running',status='' WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ " AND directory=" ++ C.q(directory) ++ ";")
-    observing_after_query(db,session,attempt,directory,saved)
+    observing_after_query(db,session,saved)
 
 # Completion preserves the native event and status. Its stop report is committed
 # before the owner releases custody; native acceptance receipts are unchanged.
@@ -233,7 +295,15 @@ def reconcile_request(+db: String, +session: String) -> IO(Unit):
   do IO<Unit>:
     attempt : String <- IO.try(String,DB.Sql.query(db,"SELECT attempt FROM session_stops WHERE session=" ++ C.q(session) ++ ";"))
     directory : String <- IO.try(String,DB.Sql.query(db,"SELECT directory FROM session_stops WHERE session=" ++ C.q(session) ++ ";"))
-    reconcile(db,session,Tx.trim_nl(attempt),Tx.trim_nl(directory))
+    outcome : String <- IO.try(String,DB.Sql.query(db,"SELECT outcome FROM session_stops WHERE session=" ++ C.q(session) ++ ";"))
+    +id : String = Tx.trim_nl(attempt)
+    +path : String = Tx.trim_nl(directory)
+    +state : String = Tx.trim_nl(outcome)
+    Bool.pick(IO(Unit),Bool.and(Bool.or(String.eq(state,"requested"),String.eq(state,"custody-missing")),Bool.not(String.is_empty(id))),
+      do IO<Unit>:
+        missing : Bool <- directory_missing(path)
+        Bool.pick(IO(Unit),missing,mark_custody_missing(db,session,id,path),reconcile_restored(db,session,id,path)),
+      IO.pure(Unit,Unit{}))
 
 def request(+db: String, +session: String, +id: String, +reason: String, force: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   Store.transact_sql(db,Bool.pick(String,force,force_sql(session,id),request_sql(session,id,reason)))

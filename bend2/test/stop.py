@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import shutil
 import signal
 import sqlite3
 import sys
@@ -166,6 +167,63 @@ class Stop(unittest.TestCase):
         refused = self.coord(*self.receive_args('parent'), ok=False)
         self.assertNotEqual(refused.returncode, 0)
         self.assertEqual(self.rows('SELECT * FROM executions'), [])
+
+    def test_missing_attempt_stop_records_custody_missing_without_native_exit(self):
+        self.configure()
+        self.player(harness='omp')
+        attempt = 'receive:parent:1:missing-custody'
+        directory = self.directory / 'missing-stop-attempt'
+        with sqlite3.connect(self.db) as database:
+            database.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
+                             "VALUES('parent',?,'retained',?,'starting','')",
+                             (attempt, str(directory)))
+        before = self.rows("SELECT id,phase,status,directory FROM executions WHERE session='parent'")
+        stopped = self.stop()
+        self.assertEqual(stopped['status'], 'custody-missing')
+        self.assertIsNone(stopped['nativeStatus'])
+        self.assertIsNone(stopped['submittedSignal'])
+        self.assertEqual(stopped['attempt'], attempt)
+        self.assertIn('custody is missing', stopped['controlError'])
+        self.assertEqual(self.rows("SELECT id,phase,status,directory FROM executions WHERE session='parent'"),
+                         before)
+        self.assertFalse(directory.exists())
+        self.assertEqual(self.stop(), stopped)
+        reports = self.rows("SELECT id,body FROM messages WHERE recipient='root' "
+                            "AND json_extract(body,'$.type')='session-stop-custody-missing'")
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(json.loads(reports[0]['body'])['stopId'], stopped['stopId'])
+
+    def test_live_native_with_absent_attempt_waits_for_restored_custody(self):
+        observer, stream, started = self.begin()
+        attempt_dir = pathlib.Path(self.rows(
+            "SELECT directory FROM executions WHERE session='parent'")[0]['directory'])
+        hidden = self.directory / 'held-stop-attempt'
+        shutil.move(str(attempt_dir), str(hidden))
+        missing = self.stop()
+        self.assertEqual(missing['status'], 'custody-missing')
+        self.assertIsNone(missing['submittedSignal'])
+        self.assertIsNone(missing['nativeStatus'])
+        self.assertTrue(hidden.is_dir())
+        self.assertFalse(attempt_dir.exists())
+        shutil.move(str(hidden), str(attempt_dir))
+        restored = self.stop()
+        self.assertEqual(restored['status'], 'requested')
+        self.assertEqual(restored['submittedSignal'], 15)
+        self.finish(observer, ok=False)
+        completed = self.completed()
+        self.assertEqual(completed['nativeStatus'], 'signal 15')
+        reports = self.rows("SELECT id,body FROM messages WHERE recipient='root' "
+                            "AND json_extract(body,'$.stopId')=?", [completed['stopId']])
+        self.assertEqual(len(reports), 2)
+        by_type = {json.loads(row['body'])['type']: row for row in reports}
+        self.assertEqual(set(by_type), {'session-stop-custody-missing', 'session-stopped'})
+        self.assertNotEqual(by_type['session-stop-custody-missing']['id'],
+                            by_type['session-stopped']['id'])
+        self.assertEqual(by_type['session-stopped']['id'], completed['reportId'])
+        self.assertEqual(json.loads(by_type['session-stopped']['body'])['nativeStatus'], 'signal 15')
+        self.assertEqual(self.rows("SELECT phase,status FROM executions WHERE session='parent'"),
+                         [{'phase': 'exited', 'status': 'signal 15'}])
+        self.shutdown_idle_database_owner('restored custody left processes running')
 
     def retained_stop_preserves_work_native_identity_receipts_and_output(self, harness):
         observer, stream, started = self.begin(harness=harness)
