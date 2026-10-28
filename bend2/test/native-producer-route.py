@@ -46,6 +46,23 @@ def commit(root, message):
     return git(root, 'rev-parse', 'HEAD')
 
 
+STUB_ADAPTER = """import os, sys
+from pathlib import Path
+
+
+def environment(run):
+    Path(run, 'queue-config.json').write_text('{}')
+    return dict(os.environ, STUB_QUEUE='1')
+
+
+if __name__ == '__main__':
+    mode, kind, compiler, entry, flag, output = sys.argv[1:7]
+    assert (mode, kind, flag, entry) == ('stage', 'bend', '-o', 'bend2/src/coordinator/main.bend')
+    assert os.environ['STUB_QUEUE'] == '1'
+    Path(output).write_text('C generated in ' + os.getcwd() + '\\n')
+"""
+
+
 class Repository:
     """A repository holding a Main closure, an unrelated module, harness files and the tooling."""
 
@@ -68,6 +85,8 @@ class Repository:
         write(self.root / 'docs/note.md', 'note\n')
         for path in route.PRODUCER_TOOLING:
             write(self.root / path, 'tooling ' + path + '\n')
+        write(self.root / '.github/scripts/queue-native-checks.py', STUB_ADAPTER)
+        write(self.root / 'bend2/scripts/bend-lineage-guard.sh', 'exit 0\n')
         self.base = commit(self.root, 'base')
 
     def change(self, path, text):
@@ -136,6 +155,16 @@ class RouteSelection(unittest.TestCase):
                 self.assertEqual(producer, 'candidate')
                 self.assertIn(path, reason)
 
+    def test_tooling_file_absent_from_the_base_selects_the_candidate_producer(self):
+        self.repository.change('docs/note.md', 'changed\n')
+        missing = route.PRODUCER_TOOLING[1]
+        git(self.repository.root, 'rm', '-q', missing)
+        self.repository.base = commit(self.repository.root, 'remove tooling')
+        self.repository.change(missing, 'added\n')
+        producer, reason, _ = self.repository.route()
+        self.assertEqual(producer, 'candidate')
+        self.assertIn(missing, reason)
+
     def test_runs_that_are_not_pull_requests_use_their_own_producer(self):
         self.repository.change('docs/note.md', 'changed\n')
         for event in ('workflow_dispatch', 'push'):
@@ -197,6 +226,31 @@ class BaseProducedHandoff(unittest.TestCase):
         base_bytes = subprocess.check_output(['git', 'show', self.repository.base + ':bend2/harness/git-series.mjs'],
                                              cwd=self.repository.root)
         self.assertEqual(manifest['bend2/harness/git-series.mjs'], hashlib.sha256(base_bytes).hexdigest())
+
+    def test_produce_generates_the_base_commit_through_the_queue_adapter(self):
+        run = self.repository.root.parent / 'produce-run'
+        (run / 'generated').mkdir(parents=True)
+        (run / 'evidence').mkdir()
+        write(run / 'generated/compiler-selection.json', (self.run / 'generated/compiler-selection.json').read_text())
+        write(run / 'evidence/producer-route.json', (self.run / 'evidence/producer-route.json').read_text())
+        subprocess.run([sys.executable, str(SCRIPT), 'produce', '--source', str(self.repository.root),
+                        '--run', str(run), '--base', self.repository.base],
+                       check=True, env=dict(self.environment, BEND='/bin/true'), stdout=subprocess.PIPE)
+        handoff = json.loads((run / 'generated/handoff-manifest.json').read_text())
+        self.assertEqual(handoff['producer_kind'], 'base')
+        self.assertEqual([row['label'] for row in handoff['checks']],
+                         ['base-source-identity', 'pinned-compiler-identity', 'base-lineage-guard',
+                          'base-main-cgen', 'main-producer-route'])
+        self.assertTrue(all(row['exit_code'] == 0 for row in handoff['checks']))
+        generated_c = (run / 'generated/baton2.c').read_text()
+        self.assertIn(str(run / 'base-source'), generated_c)
+        self.assertEqual(json.loads((run / 'evidence/producer-checks.json').read_text()), handoff['checks'])
+        result = self.verify_at(run / 'generated')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def verify_at(self, generated):
+        return subprocess.run([sys.executable, str(SCRIPT), 'verify-base', '--source', str(self.repository.root),
+                               '--generated', str(generated)], capture_output=True, text=True)
 
     def test_consumer_with_equal_inputs_verifies(self):
         result = self.verify()
