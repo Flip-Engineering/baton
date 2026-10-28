@@ -132,6 +132,19 @@ def observe_reentry(+db: String, +session: String, +directory: String, +stale_at
     result : String <- IO.try(String,DB.Sql.query(db,Stop.result_sql(session)))
     IO.write(result)
 
+def observe_direct(+db: String, +session: String, +stale_attempt: String, +stale_directory: String) -> IO(Unit):
+  do IO<Unit>:
+    Stop.observing(db,session,stale_attempt,stale_directory)
+    result : String <- IO.try(String,DB.Sql.query(db,Stop.result_sql(session)))
+    IO.write(result)
+
+def observe_direct_reentry(+db: String, +session: String, +directory: String, +stale_attempt: String, +stale_directory: String) -> IO(Unit):
+  do IO<Unit>:
+    handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
+    Stop.observing(db,session,stale_attempt,stale_directory)
+    result : String <- IO.try(String,DB.Sql.query(db,Stop.result_sql(session)))
+    IO.write(result)
+
 def started_reentry(+db: String, +session: String, +stale_attempt: String) -> IO(Unit):
   do IO<Unit>:
     started : Unit <- Stop.started(db,session,stale_attempt)
@@ -155,9 +168,13 @@ def run(args: List<String>) -> IO(Unit):
       observe_result(db,session,stale_attempt,stale_directory)
     case "observe-reentry" <> +db <> +session <> +directory <> +stale_attempt <> +stale_directory <> Nil{}:
       observe_reentry(db,session,directory,stale_attempt,stale_directory)
+    case "observe-direct" <> +db <> +session <> +stale_attempt <> +stale_directory <> Nil{}:
+      observe_direct(db,session,stale_attempt,stale_directory)
+    case "observe-direct-reentry" <> +db <> +session <> +directory <> +stale_attempt <> +stale_directory <> Nil{}:
+      observe_direct_reentry(db,session,directory,stale_attempt,stale_directory)
     case "started-reentry" <> +db <> +session <> +stale_attempt <> Nil{}:
       started_reentry(db,session,stale_attempt)
-    case other: IO.die(Unit,2,"usage: observer-executing-fixture init DB HARNESS | start DB ID DIRECTORY WORKSPACE LOG OBSERVED HELPER HARNESS MODEL EFFORT PYTHON SCRIPT MARKER CURSOR GATE | start-obsolete DB ID DIRECTORY WORKSPACE LOG OBSERVED RECOVERY HARNESS MODEL EFFORT PYTHON SCRIPT MARKER CURSOR GATE | settle DB SESSION DIRECTORY | probe DB DIRECTORY | stop-request DB SESSION ID REASON | observe-result DB SESSION STALE_ATTEMPT STALE_DIRECTORY | observe-reentry DB SESSION DIRECTORY STALE_ATTEMPT STALE_DIRECTORY | started-reentry DB SESSION STALE_ATTEMPT")
+    case other: IO.die(Unit,2,"usage: observer-executing-fixture init DB HARNESS | start DB ID DIRECTORY WORKSPACE LOG OBSERVED HELPER HARNESS MODEL EFFORT PYTHON SCRIPT MARKER CURSOR GATE | start-obsolete DB ID DIRECTORY WORKSPACE LOG OBSERVED RECOVERY HARNESS MODEL EFFORT PYTHON SCRIPT MARKER CURSOR GATE | settle DB SESSION DIRECTORY | probe DB DIRECTORY | stop-request DB SESSION ID REASON | observe-result DB SESSION STALE_ATTEMPT STALE_DIRECTORY | observe-reentry DB SESSION DIRECTORY STALE_ATTEMPT STALE_DIRECTORY | observe-direct DB SESSION STALE_ATTEMPT STALE_DIRECTORY | observe-direct-reentry DB SESSION DIRECTORY STALE_ATTEMPT STALE_DIRECTORY | started-reentry DB SESSION STALE_ATTEMPT")
 
 def main() -> IO(Unit):
   do IO<Unit>:
