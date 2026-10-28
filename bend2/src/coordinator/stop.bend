@@ -190,12 +190,15 @@ def reconcile(+db: String, +session: String, +attempt: String, +directory: Strin
 # absent bytes do not establish that a native process has exited or that no
 # identity exists; retain the unresolved stop and send no signal until valid
 # custody returns.
+def directory_missing_result(observed: Result<&1,&1,U32 & String,String>) -> IO(Bool):
+  match observed:
+    case Fail{(code,detail)}: IO.pure(Bool,U32.is_eq(code,2))
+    case Done{value}: IO.pure(Bool,False{})
+
 def directory_missing(+directory: String) -> IO(Bool):
   do IO<Bool>:
     observed : Result<&1,&1,U32 & String,String> <- F.Files.lstat(directory)
-    match observed:
-      case Fail{(code,detail)}: IO.pure(Bool,U32.is_eq(code,2))
-      case Done{value}: IO.pure(Bool,False{})
+    directory_missing_result(observed)
 
 def custody_missing_sql(+session: String, +attempt: String, +detail: String) -> String:
   +s = C.q(session)
@@ -221,21 +224,27 @@ def control_attempt(+db: String, +session: String, +attempt: String, +directory:
 def restore_requested_sql(+session: String, +attempt: String) -> String:
   "UPDATE session_stops SET outcome='requested',control_error='' WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ " AND outcome='custody-missing' AND EXISTS(SELECT 1 FROM executions e WHERE e.session=session_stops.session AND e.id=session_stops.attempt AND e.phase<>'exited');"
 
+def restore_requested(+db: String, +session: String, +attempt: String) -> IO(Unit):
+  do IO<Unit>:
+    restored : String <- IO.try(String,DB.Sql.query(db,restore_requested_sql(session,attempt)))
+    IO.pure(Unit,Unit{})
+
+def reconcile_restored_control_result(+db: String, +session: String, +attempt: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match result:
+    case Done{unit}: restore_requested(db,session,attempt)
+    case Fail{error}: IO.pure(Unit,Unit{})
+
+def reconcile_restored_signal(+db: String, +session: String, +attempt: String, +directory: String, signal: U32) -> IO(Unit):
+  match signal:
+    case 0: restore_requested(db,session,attempt)
+    case other: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,Unit> <- control_attempt(db,session,attempt,directory,other)
+      reconcile_restored_control_result(db,session,attempt,result)
+
 def reconcile_restored(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
   do IO<Unit>:
     signal : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT s.signal FROM session_stops s JOIN executions e ON e.session=s.session AND e.id=s.attempt WHERE s.session=" ++ C.q(session) ++ " AND s.attempt=" ++ C.q(attempt) ++ " AND e.phase<>'exited' AND s.applied_signal<>s.signal),0);"))
-    +number : U32 = selected_signal(U32.read(Tx.trim_nl(signal)))
-    match number:
-      case 0: do IO<Unit>:
-        restored : String <- IO.try(String,DB.Sql.query(db,restore_requested_sql(session,attempt)))
-        IO.pure(Unit,Unit{})
-      case other: do IO<Unit>:
-        result : Result<&1,&1,U32 & String,Unit> <- control_attempt(db,session,attempt,directory,other)
-        match result:
-          case Done{unit}: do IO<Unit>:
-            restored : String <- IO.try(String,DB.Sql.query(db,restore_requested_sql(session,attempt)))
-            IO.pure(Unit,Unit{})
-          case Fail{error}: IO.pure(Unit,Unit{})
+    reconcile_restored_signal(db,session,attempt,directory,selected_signal(U32.read(Tx.trim_nl(signal))))
 
 def started(+db: String, +session: String, +attempt: String) -> IO(Unit):
   do IO<Unit>:
