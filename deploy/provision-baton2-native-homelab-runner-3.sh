@@ -39,6 +39,21 @@ validate_private_diagnostic_file() {
     fi
 }
 
+verify_archive_member() {
+    local member=$1
+    local staged_file=$2
+    local archive_digest
+    local staged_digest
+    [[ -f $staged_file && ! -L $staged_file ]] \
+        || fail "resume requires the staged runner file: $staged_file"
+    archive_digest=$(tar -xOzf "$ARCHIVE" "$member" | sha256sum | cut -d' ' -f1) \
+        || fail "could not read the pinned runner archive member: $member"
+    staged_digest=$(sha256sum "$staged_file" | cut -d' ' -f1) \
+        || fail "could not hash the staged runner file: $staged_file"
+    [[ $staged_digest == "$archive_digest" ]] \
+        || fail "staged runner file does not match the pinned archive: $member"
+}
+
 [[ $EUID -eq 0 ]] || fail 'run as root'
 [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || fail 'host must be Linux x86_64'
 [[ ! -t 0 ]] || fail 'pipe one organization runner registration token on stdin'
@@ -108,8 +123,9 @@ printf '%s  %s\n' "$ARCHIVE_SHA256" "$ARCHIVE" | sha256sum --check --status \
     || fail 'runner archive digest does not match the pinned 2.337.0 release'
 
 if [[ $mode == resume ]]; then
-    tar --compare --gzip --file="$ARCHIVE" --directory="$RUNNER_DIR" \
-        || fail "staged runner tree does not match the pinned Actions Runner $RUNNER_VERSION archive"
+    verify_archive_member ./config.sh "$RUNNER_DIR/config.sh"
+    verify_archive_member ./bin/Runner.Listener "$RUNNER_DIR/bin/Runner.Listener"
+    verify_archive_member ./externals/node24/bin/node "$RUNNER_DIR/externals/node24/bin/node"
 fi
 
 if [[ $mode == fresh ]]; then

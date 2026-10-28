@@ -18,7 +18,7 @@ gh api --method POST orgs/Flip-Engineering/actions/runners/registration-token --
   | sudo ./deploy/provision-baton2-native-homelab-runner-3.sh
 ```
 
-Use `--resume` when a registration attempt has left the staged account and extracted runner tree in place. Resume verifies account UID 980 and GID 971, the home and runner tree ownership, the pinned archive digest and extracted tree contents, and the absence of runner registration files and the service unit. It preserves the existing account and runner tree. Confirm the staged state before requesting a fresh token, then run:
+Use `--resume` when a registration attempt has left the staged account and extracted runner tree in place. Resume verifies account UID 980 and GID 971, the home and runner tree ownership, the pinned archive digest, and the staged configuration script, listener, and bundled Node hashes against that archive. It also verifies the absence of runner registration files and the service unit. It preserves the existing account and runner tree. Confirm the staged state before requesting a fresh token, then run:
 
 ```sh
 gh api --method POST orgs/Flip-Engineering/actions/runners/registration-token --jq .token \
