@@ -3283,7 +3283,9 @@ class Receive(unittest.TestCase):
             self.assertEqual(started['args'][:2],['-c','forced_login_method="chatgpt"'])
             self.assertEqual(started['args'][2:2+len(subcommand)],subcommand)
             configs=[started['args'][i+1] for i,arg in enumerate(started['args']) if arg=='-c']
-            self.assertEqual(configs,['forced_login_method="chatgpt"','model_reasoning_effort="low"'])
+            self.assertEqual(configs[:2],['forced_login_method="chatgpt"','model_reasoning_effort="low"'])
+            self.assertEqual([config.partition('=')[0] for config in configs[2:]],['hooks.Stop','hooks.PostToolUse'])
+            self.assertIn('--dangerously-bypass-hook-trust',started['args'])
             self.assertEqual(started['args'][started['args'].index('--model')+1],'root')
             self.assertEqual(started['apiKeyVariablesPresent'],[])
             self.assertEqual(started['cwd'],str(self.directory))

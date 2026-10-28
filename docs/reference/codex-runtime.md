@@ -144,6 +144,16 @@ Reference surface (learn.chatgpt.com config reference — the current home of th
 
 ---
 
+### Hooks in `codex exec` (observed on 0.163.0, #1212)
+
+Baton passes two inline hook tables with `-c` and `--dangerously-bypass-hook-trust` on every `codex exec` and `codex exec resume` launch (`harness/codex-player.bend`). Both hooks run `$BATON_STOP_HOOK --stop-hook`, the entry Claude Code runs.
+
+- `-c 'hooks.Stop=[{hooks=[{type="command",command="..."}]}]'` and `-c 'hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="...",additionalContextLimit=0}]}]'` are parsed as TOML and run. Commands run with the launch environment (`BATON_SESSION`, `BATON_DATABASE`, `BATON_ATTEMPT_DIRECTORY`, `BATON_STOP_HOOK`) and receive one JSON object on stdin with `hook_event_name`, `session_id`, `turn_id`, `cwd` and, for Stop, `stop_hook_active` and `last_assistant_message`.
+- PostToolUse fires after each shell command. `hookSpecificOutput.additionalContext` becomes a `developer` message in the running turn. Without `additionalContextLimit=0`, context over about 2500 tokens is saved under `<temp_dir>/hook_outputs/<session_id>/` and the model sees a head-and-tail preview. With `0`, the model receives the complete text (a 108905-character context arrived whole).
+- Stop fires when the model finishes its answer. A `{"decision":"block","reason":TEXT}` answer continues the same turn: TEXT arrives as a `user` message wrapped in `<hook_prompt>`, the model answers again, Stop fires again with `stop_hook_active: true`, and `turn.completed` is emitted once at the end. The `reason` keeps the default size limit. Empty output with exit 0 lets the turn end.
+- `--dangerously-bypass-hook-trust` makes Codex emit two `item.completed` events of type `error` carrying the message "`--dangerously-bypass-hook-trust` is enabled". Baton's frame classification ignores them.
+- Hooks fire only at tool boundaries and at Stop. Input that arrives while the model streams an answer without calling a tool waits for the next tool call or for Stop.
+
 ## 4. Session storage on disk
 
 `~/.codex/sessions/` — dated tree `YYYY/MM/DD/rollout-<ISO-ts>-<uuidv7>.jsonl` (231 files locally; a few legacy flat `rollout-*.jsonl` at the root from ≤2026-03). The filename UUID is the thread id used by `resume`/`fork`.
