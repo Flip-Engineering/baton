@@ -1,0 +1,242 @@
+38	[{"name":"ui/ux"},{"name":"lowest-priority"}]	[]	2026-07-24	1	Accessibility: Focus indicators, keyboard handlers, ARIA labels
+86	[]	[]	2026-02-26	1	End-to-end load test: LLM-driven simulated users via OpenRouter free t
+113	[]	[]	2026-07-24	1	Improve theme picker UX: discoverability, previews, and accessibility
+136	[{"name":"enhancement"},{"name":"feature"},{"name":"security"}]	[]	2026-02-27	1	Add WILD deployment flag for experimental terminal agent in synthesis
+144	[{"name":"enhancement"},{"name":"ui/ux"},{"name":"feature"}]	[]	2026-02-27	1	Use #flip-improvements as pre-seeded forum tag with user feedback syst
+145	[{"name":"enhancement"},{"name":"feature"},{"name":"low"}]	[]	2026-02-27	1	Add recency-based vote fuzzing
+147	[]	[]	2026-02-27	1	Create Reddit-style forum theme compatible with Flip's JSON format
+148	[]	[]	2026-02-27	1	Flipopedia: Wikipedia-style meta-community pages when forum threshold 
+155	[{"name":"low"},{"name":"moonshot"}]	[]	2026-02-28	1	Button Triggers / Webhook Actions
+156	[{"name":"low"},{"name":"moonshot"}]	[]	2026-02-28	1	Runnable Code Sandboxes
+159	[{"name":"enhancement"},{"name":"feature"}]	[]	2026-02-28	1	Add server theming, emoji pack selection, and custom emoji uploads to 
+184	[{"name":"enhancement"}]	[]	2026-07-24	1	Unified theme editor with CRUD and JSON export/import for per-server t
+188	[]	[]	2026-03-01	1	Support animated emojis (GIF/APNG/Lottie)
+198	[]	[]	2026-07-24	1	Design audit: Mermaid diagrams and custom rendering alignment with Fli
+208	[]	[]	2026-07-24	1	Exhaustive per-server per-room admin audit logging
+212	[{"name":"enhancement"}]	[]	2026-03-03	1	RAG-powered system-ai for interactive chat mode
+222	[]	[]	2026-07-24	1	Migrate media storage to RustFS + ExAWS
+225	[]	[]	2026-08-14	1	@system-ai: context-aware emoji reactions on user posts
+709	[{"name":"enhancement"}]	[]	2026-07-08	1	Optional later: Discord supporter role sync policy/spec
+723	[{"name":"enhancement"},{"name":"synthesis"}]	[]	2026-07-24	1	Flip AI capability program: interaction, artifacts, and reply-loop flo
+901	[{"name":"enhancement"}]	[]	2026-07-10	1	Avatars: grow the generative part library from the emote primitive kit
+903	[{"name":"feature"},{"name":"low"},{"name":"moonshot"}]	[]	2026-08-23	1	Private live voice/video/screenshare channels with a Flip-owned contro
+904	[{"name":"feature"},{"name":"low"},{"name":"synthesis"}]	[]	2026-10-28	1	Multimodal LLM readiness for the @Flip agent harness (epic: explorator
+905	[{"name":"feature"},{"name":"low"},{"name":"synthesis"}]	[]	2026-07-10	1	Typed content-part contract for @Flip tool results (multimodal sub-iss
+906	[{"name":"feature"},{"name":"low"},{"name":"synthesis"}]	[]	2026-07-24	1	Per-modality gating, budgets, and breakers in LLM settings + harness (
+1091	[{"name":"enhancement"},{"name":"ui/ux"}]	[]	2026-07-14	1	Rework Settings UI (esp. admin) so every setting is visibly scoped to 
+1093	[{"name":"enhancement"},{"name":"ui/ux"},{"name":"feature"},{"name":"synthesis"}]	[]	2026-07-18	1	Weibo content: web_search, media_search, readable pages, and rich rend
+1104	[{"name":"bug"},{"name":"high"},{"name":"testing"},{"name":"infrastructure"}]	[]	2026-08-04	1	CI governance: queued checks do not gate merges into main
+1106	[]	[]	2026-07-15	1	[P0][Security] Remove tracked environment backup and rotate potentiall
+1112	[{"name":"question"},{"name":"low"},{"name":"synthesis"}]	[]	2026-07-15	1	Synthesis relevance: filter low-interest conversations and preserve se
+1115	[{"name":"question"},{"name":"high"},{"name":"testing"},{"name":"infrastructure"}]	[]	2026-10-26	1	CI observability: restore Playwright artifact uploads after Actions qu
+1158	[{"name":"bug"},{"name":"testing"},{"name":"medium"},{"name":"synthesis"}]	[]	2026-07-18	1	Synthesis parser does not enforce source coverage or consume empty-pla
+1159	[{"name":"bug"},{"name":"high"},{"name":"infrastructure"}]	[]	2026-07-18	1	Homelab TSC/NUMA soft lockup can take down production and CI under Rus
+1162	[{"name":"bug"},{"name":"low"},{"name":"synthesis"}]	[]	2026-07-17	1	Synthesis normalization can retain AI bridges with no source descendan
+1183	[{"name":"feature"},{"name":"infrastructure"},{"name":"synthesis"}]	[]	2026-08-11	1	Image generation follow-up: optional OpenAI/OpenRouter/fal transports 
+1185	[{"name":"ui/ux"},{"name":"feature"},{"name":"parity"}]	[]	2026-07-18	1	Bilibili rich preview: provide an in-place working video player
+1186	[{"name":"ui/ux"},{"name":"feature"},{"name":"synthesis"}]	[]	2026-07-18	1	WeChat public articles: web_search discovery, readable pages, and rich
+1187	[{"name":"bug"},{"name":"high"},{"name":"ui/ux"}]	[]	2026-07-18	1	Bug: Discord unfurl for flip.engineering no longer shows the animated 
+1188	[{"name":"ui/ux"},{"name":"feature"},{"name":"synthesis"}]	[]	2026-08-13	1	Site-admin LLM settings: provider-correct Instant/Thinking mode and re
+1214	[{"name":"enhancement"},{"name":"synthesis"},{"name":"reserved:xhigh-model"}]	[]	2026-07-21	1	[reserved:xhigh-model] Real map rendering + expanded chart types & app
+1238	[{"name":"bug"},{"name":"critical"},{"name":"high"},{"name":"synthesis"}]	[]	2026-08-23	1	Critical: @Flip binds reply follow-ups to unrelated ambient context in
+1251	[{"name":"enhancement"},{"name":"synthesis"}]	[]	2026-07-22	1	Synthesis treatment: fix the hollow template (redundancy, meta-narrati
+1294	[{"name":"bug"}]	[]	2026-09-03	1	Flaky: client-baseline vitest suite fails nondeterministically under r
+1363	[{"name":"bug"}]	[]	2026-08-13	1	Reply runs in flight during a redeploy die silently — stuck 'started' 
+1372	[{"name":"enhancement"}]	[]	2026-08-01	1	#1362 follow-up: checkpoint loop-continue after failure + budget_epoch
+1374	[{"name":"bug"}]	[]	2026-08-01	1	Finish-mode forced call 400s on native DeepSeek (needs the thinking-di
+1398	[{"name":"bug"},{"name":"high"},{"name":"synthesis"}]	[]	2026-08-15	1	Personal AI replies: retain every trigger and prevent room-wide queue 
+1410	[{"name":"enhancement"}]	[]	2026-08-03	1	Emote: :chess: — Flip-themed chess emote
+1411	[{"name":"enhancement"}]	[]	2026-08-03	1	Emote: :chess_thinking: — Flip-themed chess emote
+1412	[{"name":"enhancement"}]	[]	2026-08-03	1	Emote: :chess_gg: — Flip-themed chess emote
+1413	[{"name":"enhancement"}]	[]	2026-08-03	1	Emote: :chess_blunder: — Flip-themed chess emote
+1414	[{"name":"enhancement"}]	[]	2026-08-03	1	Emote: :chess_brilliant: — Flip-themed chess emote
+1415	[{"name":"enhancement"}]	[]	2026-08-03	1	Emote: :chess_flag: — Flip-themed chess emote
+1437	[{"name":"enhancement"},{"name":"testing"},{"name":"infrastructure"}]	[]	2026-08-14	1	CI orchestration: one candidate gate and merge train for the self-host
+1446	[]	[]	2026-08-14	1	CI: make a fail-closed impact manifest select required suites
+1447	[]	[]	2026-08-14	1	CI: validate an ordered queue bundle as one exact candidate tree
+1456	[{"name":"bug"}]	[]	2026-08-15	1	flaky: chess latency e2e (challenge → card ≤2s) times out under CI run
+1474	[{"name":"infrastructure"}]	[]	2026-08-11	1	Make production upload storage resilient to late DAS availability and 
+1475	[{"name":"infrastructure"}]	[]	2026-08-04	1	Make redeploy self-repair stale refs in the isolated test-stack checko
+1485	[{"name":"bug"}]	[]	2026-08-04	1	flaky: AiReplyWorkerConcurrencyTest — 25ms per-tool budget lets the 'f
+1512	[{"name":"enhancement"},{"name":"infrastructure"},{"name":"low"}]	[]	2026-08-06	1	Submission-scoped :fuse circuit breaker for Flip.MiniMax (convention p
+1516	[{"name":"enhancement"}]	[]	2026-08-11	1	Follow-ups from #1257: run_call_bounded's remaining linked Task.async 
+1521	[{"name":"bug"},{"name":"testing"}]	[]	2026-08-08	1	Fresh-worktree test environment: 33 deterministic ExUnit failures on c
+1528	[{"name":"feature"},{"name":"medium"},{"name":"synthesis"}]	[]	2026-08-23	1	Agentic clip chaining: multi-shot videos beyond 15 s on H3, inside the
+1536	[{"name":"feature"},{"name":"low"}]	[]	2026-08-06	1	Terms & conditions acceptance flow: serve the disclosure, record accep
+1541	[{"name":"high"},{"name":"feature"},{"name":"synthesis"}]	[]	2026-08-13	1	Agent cost visibility: let @Flip price planned work and see the user's
+1550	[{"name":"bug"}]	[]	2026-08-06	1	flaky: ChatFixtures.server_fixture name collides with a leaked committ
+1568	[{"name":"bug"}]	[]	2026-08-13	1	Recovery-point retention: a post-publication failure re-triggers a ful
+1590	[]	[]	2026-09-13	1	games: a landed Flip turn must never end at the out-of-time disclosure
+1607	[{"name":"feature"}]	[]	2026-08-13	1	[Wan W2] Wan credential registry, probe, settings, admin UI
+1608	[{"name":"feature"}]	[]	2026-08-13	1	[Wan W4] Flip.Video Wan job arms (submit/poll/ingest/settle) + route_r
+1610	[{"name":"enhancement"}]	[]	2026-08-13	1	[Wan W5] Omni-modal conditioning (i2v / reference-to-video) — deferred
+1611	[{"name":"feature"}]	[]	2026-08-13	1	[Epic] Wan 3.0 video provider + model×resolution tier restructure
+1634	[]	[]	2026-08-13	1	PWA: establish app.flip.engineering same-origin serving and proxy cont
+1651	[]	[]	2026-10-27	1	Paired recovery capture must not impose multi-minute production 502 do
+1676	[]	[]	2026-08-13	1	Durability PR2: scheduled restore proof and operational backup hardeni
+1686	[{"name":"feature"}]	[]	2026-08-14	1	Seedance 2.5 through fal's durable queue API
+1694	[{"name":"bug"},{"name":"high"},{"name":"ui/ux"}]	[]	2026-08-14	1	Regression: mobile chat must remain fixed to a vertical scrolling rail
+1701	[]	[]	2026-08-13	1	Lossless compression pass for settled Library media (image/video/audio
+1708	[]	[]	2026-08-13	1	Video generation with LoRA support: per-server + site-wide LoRA bucket
+1710	[]	[]	2026-08-13	1	In-Flip style training (video LoRAs): credit-costed, user-friendly, wi
+1713	[{"name":"enhancement"}]	[]	2026-08-13	1	Future attention: participant/community-machine media forwarding as a 
+1720	[{"name":"bug"}]	[]	2026-08-13	1	PWA / mobile web: server room navigation sidebar renders oversized and
+1724	[{"name":"bug"}]	[]	2026-08-14	1	Storyboard approval message is truncated/brief — omits exact per-clip 
+1725	[{"name":"bug"}]	[]	2026-08-14	1	Clip-chain live-probe failures need diagnosis: fan-out step count, pro
+1737	[{"name":"bug"}]	[]	2026-08-14	1	BLOCKER: running chains accept unapproved paid dispatches; off-plan jo
+1738	[{"name":"bug"}]	[]	2026-08-14	1	BLOCKER: conversational approval resolves only within 2 reply-hops of 
+1739	[{"name":"bug"}]	[]	2026-08-14	1	Long-single split drops the user's stated branch/model, holds a plan d
+1740	[{"name":"bug"}]	[]	2026-08-14	1	Platform's own model names unresolvable at the tool surface — silent-s
+1741	[{"name":"bug"}]	[]	2026-08-14	1	Approval-expiry lifecycle is hostile end-to-end: inverted copy, no rev
+1745	[]	[]	2026-08-14	1	Flip-native high-quality upscaling for Library images and videos (up t
+1750	[{"name":"bug"}]	[]	2026-08-14	1	Per-server room and member counts are wrong: subchats counted as rooms
+1755	[{"name":"infra migration"}]	[]	2026-08-14	1	Move Flip's hot production data off the SATA root disk onto NVMe (uplo
+1758	[]	[]	2026-08-14	1	CI: isolate PostgreSQL ports for concurrent self-hosted jobs
+1759	[{"name":"bug"},{"name":"testing"}]	[]	2026-08-14	1	Flip.ReleaseSeedTest fails deterministically: seed replay at pinned sc
+1761	[{"name":"bug"}]	[]	2026-08-14	1	Flaky: onnx_serving_test element-wise op times out at 66.9s against a 
+1764	[]	[]	2026-08-14	1	Restore Patron to $23.99 across support UI and Stripe catalog
+1767	[]	[]	2026-09-03	1	CI: finish parallel-safe host resources, success-bound caches, and vol
+1768	[]	[]	2026-08-14	1	CI: classify, coalesce, and drain self-hosted queue work without weake
+1769	[{"name":"bug"},{"name":"high"},{"name":"security"}]	[]	2026-08-15	1	Credentials committed to main in .env.backup.1778034363 — rotation + h
+1771	[{"name":"bug"}]	[]	2026-10-24	1	flip-client suite flakes under CI load — 4 distinct tests across 4 PRs
+1772	[]	[]	2026-08-14	1	CI: move closed-PR reaping onto a reserved self-hosted control plane
+1773	[{"name":"bug"},{"name":"testing"}]	[]	2026-08-14	1	DataExportSecurityTest 'empty user' fails deterministically: registrat
+1775	[]	[]	2026-08-15	1	CI: restore exact-main Server authority across deterministic drift and
+1779	[]	[]	2026-08-14	1	CI: make Electric relation readiness deterministic under shared-host l
+1780	[{"name":"bug"}]	[]	2026-08-16	1	flaky: Usage contract suites time out on a Postgres socket read under 
+1781	[]	[]	2026-08-14	1	CI: make games cap Postgrex path deterministic under shared-host load
+1782	[]	[]	2026-08-14	1	Test: preserve TurnSubscriber enqueue across shape client teardown
+1784	[]	[]	2026-08-14	1	CI: make clean-worktree asset dependency and tool custody explicit
+1787	[]	[]	2026-08-15	1	CI: restore merge-authoritative parent server gates on current main
+1788	[{"name":"enhancement"},{"name":"high"},{"name":"synthesis"}]	[]	2026-08-15	1	Separate Flip conversation capacity from tiered generative workflow ca
+1789	[{"name":"enhancement"},{"name":"synthesis"}]	[]	2026-08-15	1	Music generation as a provider-neutral Flip tool (MiniMax Music on fal
+1790	[{"name":"enhancement"},{"name":"synthesis"}]	[]	2026-08-15	1	Music generation: provider-neutral generate_music tool and shared tier
+1791	[{"name":"enhancement"},{"name":"synthesis"}]	[]	2026-08-15	1	Music generation: pin reference-free MiniMax API, optional-reference r
+1792	[{"name":"enhancement"},{"name":"synthesis"}]	[]	2026-08-15	1	Music generation: durable job lifecycle, recovery, cancellation, and e
+1793	[{"name":"enhancement"},{"name":"synthesis"}]	[]	2026-08-15	1	Music generation: configuration, validation, staged activation, and pr
+1794	[{"name":"enhancement"},{"name":"synthesis"}]	[]	2026-08-15	1	Music generation: persist and deliver generated audio across Upload, L
+1795	[{"name":"bug"},{"name":"high"},{"name":"synthesis"}]	[]	2026-08-15	1	Recover repeatable Personal AI backend/request failures instead of abo
+1799	[]	[]	2026-08-15	1	Spike: does DeepSeek condition on the first request's tool catalog? (a
+1808	[{"name":"bug"}]	[]	2026-09-11	1	flaky: ApiSessionLease registry-death tests assert into a :noproc moni
+1815	[{"name":"bug"}]	[]	2026-08-15	1	CI: the client baseline gate fails on main, with different victim test
+1818	[]	[]	2026-08-15	1	Forum: subforum sidebar needs independent vertical scrolling from the 
+1822	[]	[]	2026-08-16	1	Video edits: spoken-moment localization and timeout-aware planning
+1823	[{"name":"bug"}]	[]	2026-08-16	1	flaky: restore_db_cleanup_test.sh INT-signal exit-status race under ho
+1826	[{"name":"bug"}]	[]	2026-08-16	1	flaky: mobile-composer-fit emoji picker toggle doesn't set aria-expand
+1830	[]	[]	2026-08-21	1	[epic] Post-Reve image stack: Seedream 5.0 generation + VLM/STR hybrid
+1876	[]	[]	2026-08-20	1	Mobile: horizontal scrolling in rendered diagrams conflicts with tap/c
+1899	[{"name":"bug"}]	[]	2026-08-21	1	test guard broken on main: #340 rate_limits single-writer scan fails (
+1902	[{"name":"bug"}]	[]	2026-08-21	1	voice: handle PeerConnection :failed/:disconnected — detach + reclaim 
+1903	[{"name":"bug"}]	[]	2026-08-21	1	voice: port budget counts participants, not PeerConnections
+1904	[{"name":"bug"}]	[]	2026-08-21	1	voice: screenshare drops on live-navigation while mic/camera survive
+1905	[{"name":"enhancement"}]	[]	2026-08-21	1	voice: no session resume on socket drop — brief disconnect ends the ca
+1909	[{"name":"enhancement"}]	[]	2026-08-21	1	Library stage 2: bulk selection mode + drag-to-folder filing
+1914	[{"name":"bug"}]	[]	2026-09-03	1	flaky: LibraryPendingVideo1517Test job ordering ties when two jobs lan
+1916	[{"name":"bug"}]	[]	2026-08-22	1	flaky: ai_reply_worker_dispatch_isolation containment assertions escal
+1918	[{"name":"bug"}]	[]	2026-08-22	1	videogen billing-identity loudness suite fails deterministically on ma
+1921	[]	[]	2026-08-23	1	Fix Studio in-paint mask, pricing, and admin contracts end to end
+1931	[{"name":"bug"},{"name":"high"},{"name":"synthesis"}]	[]	2026-08-23	1	Scope open video commissions to explicit reply threads, not later room
+1932	[{"name":"bug"},{"name":"critical"},{"name":"synthesis"}]	[]	2026-08-23	1	Critical: separate reply project identity from media-tool mutation aut
+1933	[]	[]	2026-08-23	1	Fix tool-call audit classification for structured non-success results
+1936	[]	[]	2026-08-23	1	Enforce media authority inside admission transactions and fail closed 
+1937	[]	[]	2026-08-23	1	OpenRouter image provider: make model selection, request shaping, keys
+1939	[]	[]	2026-08-23	1	Voice media runtime completion: O(N) ICE, congestion-native quality, h
+1940	[]	[]	2026-08-23	1	Separate verified media status from agent-authored terminal commentary
+1941	[{"name":"enhancement"},{"name":"ui/ux"},{"name":"feature"},{"name":"security"},{"name":"accessibility"}]	[]	2026-08-24	1	Add p5.js sketching, animation, and interaction as an operative @Flip 
+1945	[]	[]	2026-08-24	1	Preserve active media work during planned redeploys
+1956	[{"name":"bug"}]	[]	2026-08-25	1	video stitch (concat): exact-format join contract can terminally fail 
+1964	[{"name":"high"}]	[]	2026-08-27	1	Review + cherry-pick: recovered server-side terminal-status work (salv
+1978	[{"name":"bug"},{"name":"ui/ux"},{"name":"performance"},{"name":"testing"}]	[]	2026-09-02	1	Bug: visible UI controls must not depend on content or hook loading
+1983	[{"name":"enhancement"},{"name":"synthesis"}]	[]	2026-10-28	1	Native multimodal context for @Flip: image/video understanding in the 
+1990	[{"name":"bug"}]	[]	2026-09-02	1	flaky/order-dependent: StudioMagicTest 422→202 when :image_generation_
+1991	[{"name":"bug"}]	[]	2026-09-03	1	flaky: DBConnection.OwnershipError in setup (ContextMenuScrolledOutOwn
+1993	[{"name":"bug"}]	[]	2026-09-02	1	flaky: TurnPipelineTest 'cooldown non-consumption (§7.5)' sees an empt
+1994	[{"name":"bug"}]	[]	2026-09-05	1	flaky: three assert_receive budgets (100ms/100ms/1s) time out under sh
+1998	[{"name":"bug"}]	[]	2026-09-06	1	flaky: mobile swipe-reply E2E (#1694 spec) times out on reply affordan
+2000	[{"name":"bug"}]	[]	2026-09-03	1	flaky: ThreadElectricSync363Test cold backstop refute races the Electr
+2003	[{"name":"bug"}]	[]	2026-09-03	1	flaky: PresettleDelete780Test genuine mid-sync delete races the real E
+2005	[{"name":"bug"}]	[]	2026-09-03	1	Flaky CI: Postgres service port never reachable from the runner host (
+2015	[{"name":"bug"}]	[]	2026-09-06	1	flaky: pdf-previewer in-document search highlight spec (#851 guard) ti
+2017	[{"name":"bug"}]	[]	2026-09-03	1	flaky: 14 unrelated shard failures in one server run under host load (
+2018	[{"name":"bug"}]	[]	2026-09-03	1	Two ai_reply_worker_image_deadline mermaid tests fail wherever priv/sc
+2021	[{"name":"bug"}]	[]	2026-09-03	1	flaky: voice_signal_attach_flow_test assert_receive replies land insid
+2024	[{"name":"bug"}]	[]	2026-09-03	1	flaky: the AI reply checkpoint-call test asserts against whichever of 
+2026	[{"name":"bug"}]	[]	2026-09-03	1	flaky: readiness-orderings T10 fails because the ten orderings share o
+2029	[{"name":"bug"}]	[]	2026-09-04	1	flaky: Forum cursor pagination ties when two replies land in the same 
+2036	[{"name":"bug"}]	[]	2026-09-05	1	flaky: MermaidValidatorTest + AiReplyWorkerImageDeadlineTest fail unde
+2040	[{"name":"bug"}]	[]	2026-09-05	1	fix(games): E2E LLM stub's per-turn move flag leaked across Oban jobs,
+2041	[{"name":"bug"}]	[]	2026-09-05	1	flaky: a test shard's BEAM segfaults (exit 139) seconds into the run w
+2064	[{"name":"bug"}]	[]	2026-09-05	1	Moderation.list_recent_warnings/1 orders two warnings from the same mi
+2078	[{"name":"bug"}]	[]	2026-09-05	1	Flaky: GamesReapTest origin-room/server deletion raises games_origin_m
+2079	[{"name":"bug"}]	[]	2026-09-06	1	flaky: e2e bulwark-page-flow (both sides, whole day) exceeds the 60s t
+2096	[{"name":"bug"}]	[]	2026-09-06	1	Flaky: SynthesisWorkerToolLoopTest interest-floor coverage test ("a me
+2099	[{"name":"enhancement"}]	[]	2026-09-06	1	Voice rooms: background blur as a camera option in settings
+2109	[{"name":"bug"}]	[]	2026-09-11	1	flaky: settings_inventory_contract About rows refute "v0.1.0" while th
+2114	[]	[]	2026-09-11	1	Chess harness: give Flip an engine for move planning, move validation 
+2132	[{"name":"bug"}]	[]	2026-09-13	1	Flaky: Server shards fail when the flip-client submodule content is ab
+2140	[{"name":"bug"},{"name":"high"},{"name":"synthesis"}]	[]	2026-09-15	1	Enforce minimal clip count for storyboard/keyframe video generation
+2147	[]	[]	2026-09-22	1	PWA rollback: preserve retained assets between pointer swaps and avoid
+2148	[]	[]	2026-09-22	1	Complete Seedance 2.5 token pricing and settlement before activation
+2156	[]	[]	2026-10-19	1	CI: bound test PostgreSQL pool to admitted runner capacity
+2158	[{"name":"bug"},{"name":"infrastructure"}]	[]	2026-10-19	1	E2E Playwright cannot start Postgres when the self-hosted Colima Docke
+2159	[{"name":"bug"},{"name":"infrastructure"}]	[]	2026-10-19	1	Server CI Rust toolchain install races on the shared self-hosted rustu
+2160	[{"name":"bug"},{"name":"infrastructure"}]	[]	2026-10-19	1	Deploy-integrity validation aborts on a foreign-owned /tmp/flip-produc
+2167	[{"name":"high"},{"name":"ui/ux"},{"name":"feature"}]	[]	2026-10-28	1	High impact: personal AI companion in My Flip (Grok-bot / ChatGPT dots
+2168	[]	[]	2026-10-20	1	Self-hosted Server validation stops on a dirty pinned client submodule
+2169	[]	[]	2026-10-28	1	My Flip: generate customized Flip visuals through the existing asset s
+2170	[{"name":"infrastructure"}]	[]	2026-10-21	1	Make late uploads recovery finish within its service timeout
+2176	[]	[]	2026-10-21	1	Route production build phases through the shared self-hosted compilati
+2177	[]	[]	2026-10-21	1	Preserve owned development and research images during deployment clean
+2179	[]	[]	2026-10-21	1	Repair self-hosted runner diagnostic page-file collision
+2180	[]	[]	2026-10-21	1	Remove elapsed-time SIGKILL escalation from deployment custody helper
+2181	[]	[]	2026-10-21	1	Review reply deadlines for the integrated My Flip assistant and preser
+2182	[]	[]	2026-10-21	1	Provision the canonical shared validation slot pool for authorized run
+2183	[]	[]	2026-10-21	1	Repair root repository authentication in the self-hosted Playwright ch
+2199	[{"name":"bug"}]	[]	2026-10-23	1	My Flip: #1238 regression tests and context-design requirements
+2200	[{"name":"enhancement"}]	[]	2026-10-27	1	My Flip: approval surfaces (blocked actions, personal-information perm
+2201	[{"name":"enhancement"}]	[]	2026-10-23	1	My Flip: owner "Allow All" mode
+2202	[{"name":"enhancement"}]	[]	2026-10-23	1	My Flip: personal-information permission and untrusted-text labels
+2203	[{"name":"enhancement"}]	[]	2026-10-23	1	My Flip: structured conversation continuity
+2205	[{"name":"enhancement"}]	[]	2026-10-27	1	My Flip: Cua Spaces computer use on the owner's own computer (core fea
+2207	[{"name":"enhancement"}]	[]	2026-10-23	1	My Flip: conversational reminders, recurring tasks and proactive check
+2208	[{"name":"enhancement"}]	[]	2026-10-23	1	My Flip: task and activity view with stop, steer, needs-input and bloc
+2209	[{"name":"enhancement"}]	[]	2026-10-23	1	My Flip: "Send to My Flip" from community messages, and read-only grou
+2210	[{"name":"enhancement"}]	[]	2026-10-28	1	My Flip: companion identity (name, selector avatar, state-reactive ava
+2211	[{"name":"enhancement"}]	[]	2026-10-23	1	My Flip: one place to inspect and edit what Flip knows and how it beha
+2212	[{"name":"enhancement"}]	[]	2026-10-23	1	My Flip: native client parity in Flip-Engineering/flip-client
+2213	[{"name":"enhancement"}]	[]	2026-10-23	1	My Flip: companion session and task layer outside the shared reply wor
+2214	[{"name":"bug"}]	[]	2026-10-23	1	My Flip PR #2184: consolidation and hygiene
+2216	[{"name":"enhancement"}]	[]	2026-10-23	1	Derive video model-name aliases from the roster labels
+2217	[{"name":"bug"}]	[]	2026-10-23	1	Deploy self-prune deletes other services' Docker images on the shared 
+2218	[{"name":"bug"}]	[]	2026-10-23	1	Flaky: CI server tests fail with Postgres too_many_connections when CI
+2222	[{"name":"bug"}]	[]	2026-10-23	1	My Flip c2 qualification runs skip the CI test setup, so 20 tests fail
+2226	[{"name":"bug"}]	[]	2026-10-23	1	Flaky: ci_runner_supervisor_test zombie_children races /proc entries o
+2231	[{"name":"enhancement"}]	[]	2026-10-28	1	Run the Flip persona on the existing @FlipEngineering X account
+2286	[]	[]	2026-10-26	1	Revalidate live PR identity before each ordinary reaper cancellation
+2287	[]	[]	2026-10-26	1	Diagnose deploy archive deadline and cached-client baseline CI failure
+2288	[]	[]	2026-10-26	1	Diagnose distinct Library upload and async fan-out CI failures
+2295	[]	[]	2026-10-26	1	CI VM: remove the finite hard-memory-limit startup requirement
+2299	[]	[]	2026-10-26	1	Theme @FlipEngineering as the Flip persona, with display name Flip
+2300	[]	[]	2026-10-26	1	Research the operating costs of the active Flip bot on X
+2302	[]	[]	2026-10-27	1	Resolve ZFS member WWIDs for managed I/O priority
+2304	[{"name":"enhancement"},{"name":"synthesis"}]	[]	2026-10-27	1	My Flip: experiment with multimodal System 1 decisions tool and bounde
+2305	[]	[]	2026-10-27	1	Copy Screenshot often fails to capture image, GIF, or video content
+2306	[]	[]	2026-10-28	1	Monitor Colima guest liveness and recover an unresponsive Flip origin
+2322	[]	[]	2026-10-27	1	Use actual build filesystem capacity in deployment disk checks
+2328	[]	[]	2026-10-28	1	Implement the supplied desktop and mobile MyFlip UI changes
+2329	[]	[]	2026-10-28	1	MyFlip UI: keep compact global and room bars and scope room-control re
+2330	[]	[]	2026-10-28	1	MyFlip UI: implement desktop sidebar resizing and mobile push navigati
+2331	[]	[]	2026-10-28	1	MyFlip UI: retain the animated sticky portrait with a shared compact a
+2332	[]	[]	2026-10-28	1	Chat UI: retain open chronological messages and improve text and image
+2333	[]	[]	2026-10-28	1	Chat UI: consolidate composer controls while retaining drafts, emoji, 
+2334	[]	[]	2026-10-28	1	MyFlip UI: fit the mobile conversation to the viewport, keyboard and s
+2335	[]	[]	2026-10-28	1	Add voice input, native media routing, MyFlip mention aliases and colu
+2336	[]	[]	2026-10-28	1	Chat composer: support voice notes as message input
+2337	[]	[]	2026-10-28	1	Media tools: add describe_audio with native audio input and OpenRouter
+2338	[]	[]	2026-10-28	1	MyFlip: complete equivalent Flip mentions and use the custom persona n
+2339	[]	[]	2026-10-28	1	Image understanding: default to hybrid vision input and add view_image
+2340	[]	[]	2026-10-28	1	Fix fetch_image failures on GIFs returned by search_gif
+2341	[]	[]	2026-10-28	1	GIF search: show the selected animation to the model before confirmati
+2342	[]	[]	2026-10-28	1	Video understanding: pass native video input through and expose view_v
+2343	[]	[]	2026-10-28	1	Flip markdown: render column media inline and support full-view expans
+2345	[]	[]	2026-10-28	1	Fix compile-queue custody fixture priority arguments and unblock recov

@@ -1,0 +1,30 @@
+#903 (8 merged-title refs)	Private live voice/video/screenshare channels with a Flip-owned contro
+#1978 (4 merged-title refs)	Bug: visible UI controls must not depend on content or hook loading
+#1521 (3 merged-title refs)	Fresh-worktree test environment: 33 deterministic ExUnit failures on c
+#1541 (2 merged-title refs)	Agent cost visibility: let @Flip price planned work and see the user's
+#1750 (2 merged-title refs)	Per-server room and member counts are wrong: subchats counted as rooms
+#904 (2 merged-title refs)	Multimodal LLM readiness for the @Flip agent harness (epic: explorator
+#1251 (1 merged-title refs)	Synthesis treatment: fix the hollow template (redundancy, meta-narrati
+#1410 (1 merged-title refs)	Emote: :chess: — Flip-themed chess emote
+#1411 (1 merged-title refs)	Emote: :chess_thinking: — Flip-themed chess emote
+#1415 (1 merged-title refs)	Emote: :chess_flag: — Flip-themed chess emote
+#1456 (1 merged-title refs)	flaky: chess latency e2e (challenge → card ≤2s) times out under CI run
+#1528 (1 merged-title refs)	Agentic clip chaining: multi-shot videos beyond 15 s on H3, inside the
+#1590 (1 merged-title refs)	games: a landed Flip turn must never end at the out-of-time disclosure
+#1701 (1 merged-title refs)	Lossless compression pass for settled Library media (image/video/audio
+#1720 (1 merged-title refs)	PWA / mobile web: server room navigation sidebar renders oversized and
+#1737 (1 merged-title refs)	BLOCKER: running chains accept unapproved paid dispatches; off-plan jo
+#1745 (1 merged-title refs)	Flip-native high-quality upscaling for Library images and videos (up t
+#1761 (1 merged-title refs)	Flaky: onnx_serving_test element-wise op times out at 66.9s against a 
+#1769 (1 merged-title refs)	Credentials committed to main in .env.backup.1778034363 — rotation + h
+#1771 (1 merged-title refs)	flip-client suite flakes under CI load — 4 distinct tests across 4 PRs
+#1780 (1 merged-title refs)	flaky: Usage contract suites time out on a Postgres socket read under 
+#1830 (1 merged-title refs)	[epic] Post-Reve image stack: Seedream 5.0 generation + VLM/STR hybrid
+#2024 (1 merged-title refs)	flaky: the AI reply checkpoint-call test asserts against whichever of 
+#2158 (1 merged-title refs)	E2E Playwright cannot start Postgres when the self-hosted Colima Docke
+#2167 (1 merged-title refs)	High impact: personal AI companion in My Flip (Grok-bot / ChatGPT dots
+#2181 (1 merged-title refs)	Review reply deadlines for the integrated My Flip assistant and preser
+#2183 (1 merged-title refs)	Repair root repository authentication in the self-hosted Playwright ch
+#2210 (1 merged-title refs)	My Flip: companion identity (name, selector avatar, state-reactive ava
+#2218 (1 merged-title refs)	Flaky: CI server tests fail with Postgres too_many_connections when CI
+#2231 (1 merged-title refs)	Run the Flip persona on the existing @FlipEngineering X account
