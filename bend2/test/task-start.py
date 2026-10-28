@@ -721,6 +721,39 @@ class TaskStart(unittest.TestCase):
         self.assertEqual(native['cwd'], str(self.repo.resolve()))
         self.failed_turn('literal-paths', stream, 'Retain the literal-path provider result.')
 
+    def test_dispatch_from_outside_project_resolves_explicit_or_recorded_workspace_before_input(self):
+        body = 'Resolve dispatch setup from the selected repository workspace.'
+        explicit = self.task_call('--new', '--workspace', self.repo, '--harness', 'codex',
+                                  '--model', 'gpt-6-astra', '--effort', 'low', '--command', self.fixture,
+                                  '--text', body, database=True, project=self.directory)
+        self.assertEqual(explicit['status'], 'admitted')
+        self.assertEqual(explicit['projectKey'], str(self.repo.joinpath('.git').resolve()))
+        self.assertEqual(explicit['currentSession']['workspace'], str(self.repo.resolve()))
+        self.assert_retained_input(explicit, body)
+        stream, native = self.accept(explicit['session'])
+        self.assertEqual(native['cwd'], str(self.repo.resolve()))
+        self.finish(stream, 'Explicit workspace dispatch completed.')
+        self.exited(explicit['session'])
+
+        session = 'recorded-workspace-dispatch'
+        assignment = self.call('recruit', session, 'root', 'codex', 'gpt-6-astra', 'low',
+                               self.repo, 'recorded-workspace-branch', self.checkouts / session, self.base)
+        self.call('receiver', session, self.fixture, self.directory / 'recorded-workspace.jsonl')
+        with self.held_session(session):
+            self.pending_input('recorded-workspace-assignment', 'root', session, 'task', 'Original task.')
+            result = self.task_call('--sender', 'root', '--session', session, '--continue',
+                                    '--harness', 'codex', '--model', 'gpt-6-astra', '--effort', 'low',
+                                    '--command', self.fixture, '--text', body,
+                                    database=True, project=self.directory)
+        self.assertEqual(result['status'], 'admitted')
+        self.assertEqual(result['projectKey'], str(self.repo.joinpath('.git').resolve()))
+        self.assertEqual(result['currentSession']['workspace'], assignment['workspace'])
+        self.assert_retained_input(result, body)
+        stream, native = self.accept(session)
+        self.assertEqual(native['cwd'], assignment['workspace'])
+        self.finish(stream, 'Recorded workspace dispatch completed.')
+        self.exited(session)
+
     def test_non_git_nested_workspace_uses_native_prefix_membership_and_rejects_adjacent_path(self):
         self.environment['GIT_CEILING_DIRECTORIES'] = str(self.directory)
         project = self.directory / 'plain-project'

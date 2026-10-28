@@ -25,7 +25,7 @@ Options:
   --command EXECUTABLE Override the selected harness executable found in PATH.
   --model MODEL        Override the selected route's model.
   --effort EFFORT      Override the selected route's effort.
-  --workspace PATH     Select a new session's working directory.
+  --workspace PATH     Select a new session's working directory and project context.
   --output-log PATH    Select its native transcript path.
   --dispatch-id ID     Retain an explicit dispatched message identity.
   --text TEXT          Supply literal task text, including text beginning with --.
@@ -173,7 +173,16 @@ export function startTask(executable, database, argv) {
   };
   const native = (...args) => call([database, ...args]);
   const selectContext = () => {
-    projectPath = realpathSync(resolve(options?.project ?? process.cwd()));
+    let recordedWorkspace = null;
+    if (options?.session && !options.new && !options.project && !options.workspace && explicitDatabase) {
+      const recorded = native('session', options.session);
+      if (typeof recorded.workspace !== 'string' || !recorded.workspace) {
+        fail('taskWorkspaceMissing', `Session ${options.session} has no recorded working directory.`,
+          'Record its working directory with receiver SESSION COMMAND LOG CWD, then retry.');
+      }
+      recordedWorkspace = recorded.workspace;
+    }
+    projectPath = realpathSync(resolve(options?.project ?? options?.workspace ?? recordedWorkspace ?? process.cwd()));
     resolution = projectResolution(projectPath);
     key = resolution.common ?? projectPath;
     const pointer = join(key, 'baton2/database');
