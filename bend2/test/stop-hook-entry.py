@@ -244,10 +244,13 @@ class StopHook(unittest.TestCase):
         self.assertEqual(self.db.execute("SELECT body FROM messages WHERE id='message:coordinator:mid-turn'").fetchone()[0], body)
         self.assertEqual(self.db.execute("SELECT message FROM message_reads ORDER BY message").fetchall(), [('dispatch:assignment',)])
 
-    def test_admitted_tool_loop_records_a_read_only_after_supported_read(self):
+    def test_dsh_tool_hook_delivers_and_records_every_input_kind(self):
         directory = self.home / 'attempt'
+        self.db.execute("UPDATE sessions SET harness='dsh' WHERE id='worker'")
         self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
         self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained',?,'running')", (str(directory),))
+        kinds = ('task', 'task-assignment', 'guidance', 'report', 'question',
+                 'completion-request', 'completion-confirmed', 'recovery')
         script = self.home / 'admitted.py'
         script.write_text(r'''import json, os, sqlite3, subprocess, sys
 config = json.loads(sys.argv[1])
@@ -257,17 +260,20 @@ results = []
 for tool in ('first', 'second', 'third'):
     if tool == 'second':
         with sqlite3.connect(config['db']) as db:
-            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('admitted-message','coordinator','worker','guidance','Admitted full body.')")
+            for kind in config['kinds']:
+                db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)",
+                           ('admitted-' + kind, 'coordinator', 'worker', kind, 'Complete body for ' + kind + '.'))
     result = subprocess.run(['/bin/sh','-c',command], input=json.dumps({'hook_event_name':'PostToolUse','tool_name':'Bash'}), env=env, capture_output=True, text=True)
     if result.returncode:
         raise RuntimeError(result.stdout + result.stderr)
     results.append(json.loads(result.stdout) if result.stdout.strip() else None)
     if tool == 'second':
         with sqlite3.connect(config['db']) as db:
-            assert db.execute("SELECT count(*) FROM message_reads WHERE message='admitted-message'").fetchone()[0] == 1
+            assert db.execute("SELECT count(*) FROM message_reads WHERE attempt='attempt-1' AND recipient='worker'").fetchone()[0] == len(config['kinds'])
 print(json.dumps(results), flush=True)
 ''')
-        config = json.dumps({'db': self.path, 'directory': str(directory), 'command': self.settings_command()})
+        config = json.dumps({'db': self.path, 'directory': str(directory), 'command': self.settings_command(),
+                             'kinds': kinds})
         env = dict(self.env, BATON_STOP_HOOK=self.binary)
         try:
             result = subprocess.run([self.binary, 'admit', self.path, str(directory), str(self.home),
@@ -277,13 +283,16 @@ print(json.dumps(results), flush=True)
             self.assertEqual(outputs[-1], 'exit 0', result.stdout + result.stderr)
             first, second, third = json.loads(outputs[0])
             self.assertIsNone(first)
-            self.assertIn('Admitted full body.', second['hookSpecificOutput']['additionalContext'])
+            context = second['hookSpecificOutput']['additionalContext']
+            for kind in kinds:
+                self.assertIn('Message (' + kind + ') from coordinator [id: admitted-' + kind + ']:\n'
+                              'Complete body for ' + kind + '.', context)
             self.assertIsNone(third)
-            rows = self.db.execute("SELECT attempt,message,recipient,native,identity,handled FROM message_reads WHERE message='admitted-message'").fetchall()
-            self.assertEqual([row[:4] for row in rows], [('attempt-1','admitted-message','worker','native-1')])
-            self.assertTrue(rows[0][4])
-            self.assertIsNone(rows[0][5])
-            self.assertIsNone(self.db.execute("SELECT receipt FROM messages WHERE id='admitted-message'").fetchone()[0])
+            rows = self.db.execute("SELECT attempt,message,recipient,native,identity,handled FROM message_reads WHERE attempt='attempt-1' ORDER BY message").fetchall()
+            self.assertEqual([row[:4] for row in rows],
+                             [('attempt-1', 'admitted-' + kind, 'worker', 'native-1') for kind in sorted(kinds)])
+            self.assertTrue(all(row[4] and row[5] is None for row in rows))
+            self.assertEqual(self.db.execute("SELECT count(*) FROM messages WHERE receipt IS NOT NULL AND id LIKE 'admitted-%'").fetchone()[0], 0)
         finally:
             subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True)
 

@@ -46,41 +46,28 @@ class DshRetained(unittest.TestCase):
             database.execute(
                 "INSERT INTO sessions(id,harness,model,effort) VALUES"
                 "('dsh-fixture','dsh','deepseek-flash','max')")
-        self.owner = None
+        self.owner_started = False
         self.link.symlink_to(self.db)
         self.addCleanup(self.shutdown_owner)
 
     def shutdown_owner(self):
-        if self.owner is None:
+        if not self.owner_started:
             return
-        shutdown = None
-        if self.owner.poll() is None:
-            shutdown = subprocess.run(
-                [str(EXE), '--instance-shutdown', str(self.db)],
-                text=True, capture_output=True)
-        status = self.owner.wait()
-        if status != 0:
-            self.fail('instance owner exited with status ' + str(status)
-                      + ': ' + (self.owner.stderr.read() or ''))
-        if shutdown is not None and shutdown.returncode != 0:
+        shutdown = subprocess.run(
+            [str(EXE), '--instance-shutdown', str(self.db)],
+            text=True, capture_output=True)
+        if shutdown.returncode != 0:
             self.fail('instance shutdown failed with status '
                       + str(shutdown.returncode) + ': '
                       + shutdown.stdout + shutdown.stderr)
 
     def start_owner(self):
-        self.owner = subprocess.Popen(
-            [str(EXE), '--instance-owner', str(self.db)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-        while True:
-            if self.owner.poll() is not None:
-                status = self.owner.wait()
-                self.fail('instance owner exited before readiness with status '
-                          + str(status) + ': ' + (self.owner.stderr.read() or ''))
-            witness = subprocess.run(
-                [str(EXE), '--instance-witness', str(self.db)],
-                capture_output=True, text=True)
-            if witness.returncode == 0 and witness.stdout.strip():
-                return
+        witness = subprocess.run(
+            [str(EXE), '--instance-ensure-witness', str(self.db)],
+            capture_output=True, text=True)
+        self.assertEqual(witness.returncode, 0, witness.stderr + witness.stdout)
+        self.assertTrue(witness.stdout.strip())
+        self.owner_started = True
 
     def stage_receiver(self, package=False):
         self.receiver_bin.parent.mkdir(parents=True)

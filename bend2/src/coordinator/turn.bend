@@ -1484,7 +1484,7 @@ def dsh_prepare_if(dsh: Bool, +directory: String, +model: String, +effort: Strin
 def dsh_worker_helper(dsh: Bool, executable: String) -> IO(String):
   match dsh:
     case False{}: IO.pure(String,"")
-    case True{}: IO.try(String,HostControl.Control.dsh_worker(executable))
+    case True{}: IO.try(String,HostControl.Control.agent_helper(executable))
 
 def dsh_hooks_path(bridge: String) -> String:
   match bridge:

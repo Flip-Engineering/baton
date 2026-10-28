@@ -1,7 +1,9 @@
 """DSH live canary: a real tool call, a tool result and a session resume.
 
 The default mode starts a local Messages-compatible stub so the run needs no
-model credential. It prints the exact child argv, the composed tool names and
+model credential. It launches DSH with the production roster: the tool patch
+mounts the Baton input plugin and the baton-worker bridge, as a retained launch
+does. It prints the exact child argv, the composed tool names, the model and the
 reasoning effort from the outgoing request, and both --json streams.
 
 Set DSH_CANARY_REAL=1 to use DEEPSEEK_BASE_URL (or the provider default) with
@@ -20,6 +22,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+BRIDGE = ROOT / 'bend2/scripts/dsh-worker.mjs'
+HOOKS = ROOT / 'bend2/scripts/dsh-baton-hooks.mjs'
+BRIDGE_TOOLS = ['mcp__baton-worker__' + name
+                for name in ('ask', 'commit', 'completion_request', 'inbox', 'read', 'report')]
 FIXTURE = pathlib.Path(os.environ.get('BATON2_EXE', ROOT / '.scratch/bend2/dsh-player-test'))
 DSH = os.environ.get('DSH_CLI') or shutil.which('dsh')
 
@@ -122,6 +128,16 @@ def print_stream(label, output):
         print('  ' + line)
 
 
+def objects(value):
+    if isinstance(value, dict):
+        yield value
+        for nested in value.values():
+            yield from objects(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            yield from objects(nested)
+
+
 def main():
     if not FIXTURE.is_file():
         raise SystemExit(f'DSH fixture not built at {FIXTURE}')
@@ -134,7 +150,7 @@ def main():
         home = root / 'home'
         attempt = root / 'attempt'
         attempt.mkdir()
-        fixture('prepare', attempt, 'deepseek/deepseek-flash', 'max', '')
+        fixture('prepare', attempt, 'deepseek/deepseek-flash', 'max', str(HOOKS))
         tools = str(attempt / 'dsh-tools.patch.yml')
         model = str(attempt / 'dsh-model.patch.yml')
         argv = child_argv(str(home), DSH, tools, model, 'max')
@@ -144,6 +160,27 @@ def main():
 
         env = dict(os.environ)
         env['DSH_HOME'] = str(home)
+        database = root / 'state.db'
+        database.touch()
+        env.update(BATON_DATABASE=str(database), BATON_SESSION='dsh-canary',
+                   BATON_ATTEMPT_DIRECTORY=str(attempt), BATON_COORDINATOR=sys.executable,
+                   BATON_DSH_WORKER_BRIDGE=str(BRIDGE))
+        composition = subprocess.run(
+            [DSH, '--profile', 'headless', '--patch', tools, '--patch', model, '--dump-config'],
+            text=True, capture_output=True, env=env)
+        if composition.returncode != 0:
+            print(composition.stderr, file=sys.stderr)
+            raise SystemExit('canary: DSH config composition failed')
+        try:
+            composed = json.loads(composition.stdout)
+        except json.JSONDecodeError as error:
+            raise SystemExit('canary: DSH config composition was not JSON') from error
+        model_rows = [entry for entry in objects(composed) if entry.get('id') == 'agent-default-model']
+        if len(model_rows) != 1:
+            raise SystemExit('canary: composed config did not contain one agent-default-model row')
+        provider = model_rows[0].get('config', {}).get('provider')
+        if provider != 'deepseek-official':
+            raise SystemExit('canary: provider did not compose as deepseek-official')
         real = os.environ.get('DSH_CANARY_REAL') == '1'
         if real:
             if not env.get('DEEPSEEK_API_KEY'):
@@ -202,12 +239,17 @@ def main():
             tool_names = sorted(tool['name'] for tool in request.get('tools', []))
             effort = (request.get('output_config') or {}).get('effort')
             print('composed-tools: ' + json.dumps(tool_names))
+            print('composed-provider: ' + json.dumps(provider))
             print('composed-effort: ' + json.dumps(effort))
             print('composed-model: ' + json.dumps(request.get('model')))
-            if tool_names != ['bash', 'read_image', 'working_directory']:
+            if tool_names != sorted(['bash', 'read_image', 'working_directory'] + BRIDGE_TOOLS):
                 raise SystemExit('canary: unexpected composed tool list')
             if effort != 'max':
                 raise SystemExit('canary: reasoning effort did not reach the request')
+            if request.get('model') != 'deepseek-flash':
+                raise SystemExit('canary: the request did not carry the deepseek-flash model')
+            if provider != 'deepseek-official':
+                raise SystemExit('canary: the composed config did not carry the deepseek-official provider')
     return 0
 
 

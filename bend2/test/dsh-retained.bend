@@ -85,6 +85,11 @@ def witness_mode(db: String) -> IO(Unit):
       case Fail{error}: IO.die(Unit,2,"owner witness failed")
       case Done{value}: IO.print(value)
 
+def ensure_witness_mode(db: String) -> IO(Unit):
+  match Custody.Instance.ensure_owner_witness(db):
+    case Fail{error}: IO.die(Unit,2,"instance owner ensure failed")
+    case Done{value}: IO.print(value)
+
 def admission_mode(selected: Bool, db: String, directory: String, cmd: String, model: String, effort: String, native: String) -> IO(Unit):
   match selected:
     case True{}: admit(db,directory,cmd,model,effort,native)
@@ -101,7 +106,7 @@ def prepare_retained(+db: String, +directory: String, +cmd: String, +model: Stri
 def run(args: List<String>) -> IO(Unit):
   match args:
     case +mode <> +db <> Nil{}:
-      Bool.pick(IO(Unit),String.eq(mode,"--instance-witness"),witness_mode(db),instance_mode(String.eq(mode,"--instance-owner"),Bool.or(String.eq(mode,"--instance-shutdown"),String.eq(mode,"shutdown")),db))
+      Bool.pick(IO(Unit),String.eq(mode,"--instance-ensure-witness"),ensure_witness_mode(db),Bool.pick(IO(Unit),String.eq(mode,"--instance-witness"),witness_mode(db),instance_mode(String.eq(mode,"--instance-owner"),Bool.or(String.eq(mode,"--instance-shutdown"),String.eq(mode,"shutdown")),db)))
     case +mode <> +db <> +directory <> +cmd <> +model <> +effort <> Nil{}:
       Bool.pick(IO(Unit),String.eq(mode,"prepare"),prepare_retained(db,directory,cmd,model,effort),IO.die(Unit,2,"expected prepare mode"))
     case +mode <> +directory <> +path <> +phase <> Nil{}:
