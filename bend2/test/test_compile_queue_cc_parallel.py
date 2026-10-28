@@ -32,7 +32,17 @@ class QueueCcParallelTests(unittest.TestCase):
         self.state.chmod(0o2770)
         self.environment = dict(os.environ, BATON_COMPILE_QUEUE_ROOT=str(self.state))
         self.compiler = self.root / "fake-compiler"
-        self.compiler.write_text("#!/bin/sh\nexit 0\n")
+        self.compiler.write_text(
+            "#!/bin/sh\n"
+            "previous=\n"
+            "for arg in \"$@\"; do\n"
+            "  if [ \"$previous\" = -o ]; then\n"
+            "    printf 'compiled artifact\\n' > \"$arg\"\n"
+            "    exit 0\n"
+            "  fi\n"
+            "  previous=$arg\n"
+            "done\n"
+            "exit 4\n")
         self.compiler.chmod(0o755)
         (self.root / "main.c").write_text("int main(void){return 0;}\n")
         self.output = self.root / "result"
@@ -40,7 +50,7 @@ class QueueCcParallelTests(unittest.TestCase):
     def hold_heavy(self):
         holder = subprocess.Popen(
             ["python3", "-c",
-             "import fcntl, pathlib, time\n"
+             "import fcntl, pathlib, sys, time\n"
              "f = open(pathlib.Path(pathlib.Path(sys.argv[1]) / 'heavy.lock'), 'a+')\n"
              "fcntl.flock(f, fcntl.LOCK_EX)\n"
              "print('held', flush=True)\n"
@@ -85,7 +95,7 @@ class QueueCcParallelTests(unittest.TestCase):
         holder = self.hold_heavy()
         result = self.run_cc(timeout=20)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(self.output.read_bytes(), b"")
+        self.assertEqual(self.output.read_bytes(), b"compiled artifact\n")
         self.assertTrue(holder.poll() is None)
 
 

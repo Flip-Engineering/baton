@@ -922,6 +922,13 @@ def status_number(text: String) -> U32:
 def waiters_dir(+state: String) -> String:
   state ++ "/waiters"
 
+
+# cc jobs order and publish tickets apart from Bend generation so a live
+# cgen does not block C compilation of already-generated source. The ticket
+# directory must always match the lock the supervisor acquires.
+def kind_waiters_dir(+state: String, +kind: String) -> String:
+  Bool.pick(String, String.eq(kind, "cc"), waiters_dir(state) ++ "/cc", waiters_dir(state))
+
 def waiters_ticket_text(priority: U32, pid: U32, start: String, key: String, token: String) -> String:
   "priority=" ++ U32.show(priority) ++ "\npid=" ++ U32.show(pid)
   ++ "\nstarttime=" ++ start ++ "\nkey=" ++ key ++ "\ntoken=" ++ token ++ "\n"
@@ -1036,8 +1043,7 @@ def supervise_owned(+attempt: String, +keydir: String, +kind: String, source_roo
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
     lock_path : String <- IO.pure(String,
       Bool.pick(String, String.eq(kind, "cc"), state ++ "/cc.lock", state ++ "/heavy.lock"))
-    +waiters : String <- IO.pure(String,
-      Bool.pick(String, String.eq(kind, "cc"), waiters_dir(state) ++ "/cc", waiters_dir(state)))
+    +waiters : String <- IO.pure(String, kind_waiters_dir(state, kind))
     made_waiters : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(waiters))
     +held : U32 <- acquire_heavy_loop(waiters, lock_path, token, priority, 4)
     transferred : Unit <- transfer_heavy(held)
@@ -1052,7 +1058,7 @@ def supervise_owner_count(owners: U32, +attempt: String, +keydir: String, +kind:
   Bool.pick(IO(Unit), U32.is_eq(owners, 0),
     do IO<Unit>:
       released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
-      removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(waiters_dir(state) ++ "/" ++ token))
+      removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(kind_waiters_dir(state, kind) ++ "/" ++ token))
       write_failure(attempt, keydir, "canceled", 130, kind, key, started,
         "all requesters canceled before execution", names),
     supervise_owned(attempt, keydir, kind, source_root, entry, key, started, names, cwd, pid, start, gate,
@@ -1061,7 +1067,7 @@ def supervise_owner_count(owners: U32, +attempt: String, +keydir: String, +kind:
 def supervise(+attempt: String) -> IO(Unit):
   do IO<Unit>:
     +meta : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/meta"))
-    kind : String <- IO.pure(String, field(meta, "kind"))
+    +kind : String <- IO.pure(String, field(meta, "kind"))
     cwd : String <- IO.pure(String, field(meta, "cwd"))
     +state : String <- IO.pure(String, field(meta, "state_root"))
     source_root : String <- IO.pure(String, field(meta, "source_root"))
@@ -1076,9 +1082,9 @@ def supervise(+attempt: String) -> IO(Unit):
     +token : String <- IO.pure(String, started ++ "-" ++ U32.show(pid))
     published : Unit <- Bool.pick(IO(Unit), String.is_empty(state), IO.pure(Unit, Unit{}),
       do IO<Unit>:
-        made : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(waiters_dir(state)))
+        made : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(kind_waiters_dir(state, kind)))
         wrote : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(
-          waiters_dir(state) ++ "/" ++ token,
+          kind_waiters_dir(state, kind) ++ "/" ++ token,
           waiters_ticket_text(priority, pid, start, key, token)))
         IO.pure(Unit, Unit{}))
     gate : U32 <- owner_lock(keydir)
