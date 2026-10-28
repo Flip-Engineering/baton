@@ -1356,6 +1356,16 @@ class Receive(unittest.TestCase):
                             (name,)).fetchall()
                     self.assertEqual(len(reminders), 1, reminders)
                     self.assertIn('completion-request', reminders[0][1])
+                    with sqlite3.connect(self.db) as database:
+                        assignment_reports = database.execute(
+                            "SELECT body FROM messages WHERE sender=? AND recipient='root' "
+                            "AND kind='report' AND id=?",
+                            (name, report['id'] + ':assignment')).fetchall()
+                    self.assertEqual(len(assignment_reports), 1, assignment_reports)
+                    self.assertIn('assignment ' + assignment + ' still open', assignment_reports[0][0])
+                    self.assertIn('Baton queued continuation ' + reminders[0][0], assignment_reports[0][0])
+                    self.assertNotIn('no further turn starts', assignment_reports[0][0])
+                    self.assertNotIn('Run continue-task', assignment_reports[0][0])
                     self.assertIn('[id: ' + reminders[0][0] + ']', continued['prompt'])
                     self.assertIn('baton read ' + reminders[0][0], continued['prompt'])
 

@@ -236,15 +236,6 @@ def direct_task_prompt(+db: String, +player: String, +id: String, prompt: String
 def generation_log(+log: String, +id: String) -> String:
   Logs.attempt_log(log,id)
 
-# After settlement, a seat whose assignment is still open with no completion
-# request and no owed input has nothing that starts its next turn (#1054). Its
-# coordinator receives that state as a report beside the turn report. When the
-# write fails, the ordinary turn report remains the coordinator's input.
-def note_open_assignment(+db: String, +player: String, +id: String) -> IO(Unit):
-  do IO<Unit>:
-    noted : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,C.open_assignment_report_sql(id,player))
-    IO.pure(Unit,Unit{})
-
 # Failure reports are committed while this invocation still owns the session.
 # finish delivers the settled turn to its recorded coordinator.
 def prepare(+db: String, +player: String, +id: String, log: String, stderr: String, +outcome: Outcome) -> IO(Unit):
@@ -252,8 +243,7 @@ def prepare(+db: String, +player: String, +id: String, log: String, stderr: Stri
     +generation : String <- IO.pure(String,generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     reported : Unit <- prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
-    read : Unit <- AgentInput.record_initial_reads(db,player,id)
-    note_open_assignment(db,player,id)
+    AgentInput.record_initial_reads(db,player,id)
 
 def record_exit(db: String, player: String, +id: String, log: String, outcome: Outcome) -> IO(Unit):
   match outcome:
@@ -1979,7 +1969,7 @@ def direct_settled_wake(+db: String, +player: String, +id: String, +log: String,
       +routed : Bool <- direct_route_decided(db,player,id,outcome)
       normal : Bool <- settlement_success(db,outcome)
       reminder_source : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>),Bool.and(normal,Bool.not(routed)),
-        DB.Sql.query(db,C.task_continuation_sql(player,id)),
+        DB.Sql.query(db,C.task_settlement_sql(player,id)),
         IO.pure(Result<&1,&1,U32 & String,String>,Done{""}))
       reminder0 : Result<&1,&1,U32 & String,Unit> = Delivery.wake_result(reminder_source)
       reminder : Result<&1,&1,U32 & String,Unit> <- direct_failure_pass(db,player,id,"reminder",reminder0)

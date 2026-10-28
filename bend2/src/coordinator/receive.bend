@@ -464,7 +464,7 @@ def finish_pending(+db: String, +session: String, +id: String, +attempt: String,
     +exhausted : Bool = Bool.not(String.is_empty(exhaustion))
     +normal : Bool = Bool.and(Bool.not(failed),Bool.and(Bool.not(transient),Bool.not(Bool.or(superseded,exhausted))))
     reminder : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>),normal,
-      DB.Sql.query(db,C.task_continuation_sql(session,id)),
+      DB.Sql.query(db,C.task_settlement_sql(session,id)),
       IO.pure(Result<&1,&1,U32 & String,String>,Done{""}))
     reminder0 : Result<&1,&1,U32 & String,Unit> = Delivery.wake_result(reminder)
     reminder_unit : Result<&1,&1,U32 & String,Unit> <- report_reminder_pass(db,session,id,reminder0)

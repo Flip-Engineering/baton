@@ -1185,8 +1185,7 @@ law completion_preparation_checks_the_upstream_recipient:
     +generation : String <- IO.pure(String,Turn.generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     reported : Unit <- Turn.prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
-    read : Unit <- AgentInput.record_initial_reads(db,player,id)
-    Turn.note_open_assignment(db,player,id)) : IO(Unit)}
+    AgentInput.record_initial_reads(db,player,id)) : IO(Unit)}
 
 def completion_preparation_checks_the_upstream_recipient(db,player,id,log,stderr,outcome):
   {==}
