@@ -112,7 +112,7 @@ class StopHook(unittest.TestCase):
         decision = self.hook()
         self.assertEqual(decision['decision'], 'block')
         self.assertIn('Baton holds 1 unread inputs for worker', decision['reason'])
-        self.assertIn('[id: message:coordinator:mid-turn]:\nNew detail.\nThe complete input is available in this turn.', decision['reason'])
+        self.assertIn('[id: message:coordinator:mid-turn]:\nNew detail.\nUse inbox or read to record a complete read.', decision['reason'])
 
     def decision_sql(self):
         result = subprocess.run([self.binary, 'decision-sql'], capture_output=True, text=True)
