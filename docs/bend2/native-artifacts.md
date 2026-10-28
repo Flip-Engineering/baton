@@ -103,10 +103,9 @@ python3 bend2/scripts/check-runner-group-readiness.py \
 The command uses the current `gh` login. `BATON2_RUNNER_GROUP_READ_TOKEN` selects
 a token from the environment when provided. The account needs the organization's
 `Self-hosted runners` read permission. The check verifies that runner group 4 is named
-`baton2-native-homelab`, is restricted to selected repositories and workflows,
-includes repository ID `1296997100` (`Flip-Engineering/baton`), permits public
-repository access for Baton, and permits
-the exact direct workflow ref
+`baton2-native-homelab`, includes repository ID `1296997100` (`Flip-Engineering/baton`),
+and permits public repository access for Baton. If the group restricts workflows,
+the check also requires the exact direct workflow ref
 `Flip-Engineering/baton/.github/workflows/bend2-native.yml@refs/heads/<trusted-validation-branch>`.
 
 Use a direct workflow branch ref for the runner-group pin. Pull-request merge
