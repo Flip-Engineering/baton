@@ -60,7 +60,7 @@ class CompletedQueueCgenTests(unittest.TestCase):
         self.artifact = self.completed / 'artifacts/output.c'
         write(self.artifact, b'/* verified cgen */\n')
         write(self.attempt / 'meta', self.meta_text())
-        write(self.attempt / 'identity-config', self.meta_text())
+        write(self.attempt / 'identity-config', self.identity_config_text())
         write(self.attempt / 'command', 'bend ' + REUSE.ENTRY + ' -o output.c\n')
         write(self.attempt / 'argv', b'bend\0' + REUSE.ENTRY.encode() + b'\0-o\0output.c\0')
         source_digest, _ = REUSE.queue_source_digest(self.root, REUSE.ENTRY)
@@ -76,7 +76,7 @@ class CompletedQueueCgenTests(unittest.TestCase):
                 'source_digest': 'digest=' + source_digest,
             },
             'toolchain': {
-                'compiler': {'sha256': sha(self.compiler)},
+                'compiler': {'path': str(self.compiler), 'sha256': sha(self.compiler)},
                 'runtime': {'sha256': sha(self.runtime)},
                 'manifest': {'sha256': sha(self.manifest)},
             },
@@ -94,6 +94,15 @@ class CompletedQueueCgenTests(unittest.TestCase):
     def meta_text(self):
         return ('kind=cgen\nkey=' + self.key + '\nentry=' + REUSE.ENTRY +
                 '\nsource_root=' + str(self.root) + '\nartifact_name=output.c\n')
+
+    def identity_config_text(self, source_root=None, compiler=None):
+        source_root = str(source_root or self.root)
+        compiler = str(compiler or self.compiler)
+        return ('kind=\nstate_root=\ncwd=\nroot=\nsource_root=\nentry=\ncompiler=\nreceipt=\ntoken=\n'
+                'token=fixture-token\nreceipt=fixture-receipt\nstate_root=/tmp/queue\n'
+                'cwd=' + source_root + '\nroot=' + source_root + '\nkind=cgen\n'
+                'source_root=' + source_root + '\nentry=' + REUSE.ENTRY + '\n'
+                'compiler=' + compiler + '\nartifact=output.c\n')
 
     def result_text(self, source_digest):
         return ('schema=baton-compile-queue-result-v2\n'
@@ -124,6 +133,32 @@ class CompletedQueueCgenTests(unittest.TestCase):
         self.prepare()
         selected = self.select(None)
         self.assertEqual(selected['status'], 'reused', selected)
+
+    def test_retained_b15f28_identity_config_is_accepted(self):
+        retained = pathlib.Path(
+            '/var/tmp/baton2-compile-queue/keys/'
+            'b15f28cb7eb42c210d28a47ce5f7c6fdd57d1c2b2be8a1e16833c7cfa1fed57b/runs/'
+            '1793206134916190647-2545431/identity-config')
+        fields = REUSE.queue_fields(retained)
+        config_source_root = REUSE.queue_effective(fields, 'source_root')
+        config_compiler = REUSE.queue_effective(fields, 'compiler')
+        self.assertEqual(REUSE.queue_effective(fields, 'kind'), 'cgen')
+        self.assertEqual(REUSE.queue_effective(fields, 'entry'), REUSE.ENTRY)
+        self.assertTrue(pathlib.Path(config_source_root).is_absolute())
+        self.assertTrue(pathlib.Path(config_compiler).is_absolute())
+
+        write(self.attempt / 'meta', self.meta_text().replace(str(self.root), config_source_root))
+        write(self.attempt / 'identity-config', retained.read_bytes())
+        diagnostics_path = self.attempt / 'compiler-diagnostics.json'
+        diagnostics = json.loads(diagnostics_path.read_text())
+        diagnostics['toolchain']['compiler']['path'] = config_compiler
+        write(diagnostics_path, json.dumps(diagnostics))
+        result = self.prepare()
+        self.assertEqual(result['status'], 'reused', result)
+
+    def test_identity_config_requires_non_empty_final_values(self):
+        with self.assertRaisesRegex(ValueError, 'non-empty effective entry'):
+            REUSE.queue_effective({'entry': ['', REUSE.ENTRY, '']}, 'entry')
 
     def test_altered_cgen_artifact_is_refused(self):
         self.prepare()
