@@ -129,7 +129,7 @@ class DshPlayer(unittest.TestCase):
 
     def test_minimal_tool_patch_disables_every_other_tool_plugin(self):
         directory = self.directory / 'tools'
-        self.out('prepare', directory, 'deepseek/deepseek-flash', 'max')
+        self.out('prepare', directory, 'deepseek/deepseek-flash', 'max', '')
         text = (directory / 'dsh-tools.patch.yml').read_text()
         disabled = set(re.findall(r'^- id: (\S+)\n  disabled: true', text, re.M))
         expected = {
@@ -148,10 +148,21 @@ class DshPlayer(unittest.TestCase):
         self.assertIn('    edit: false', text)
         self.assertIn("name: '@deepseek-ai/dsh-tool-bash-persistent'", text)
 
+    def test_hooks_plugin_is_mounted_only_when_its_path_is_given(self):
+        plain = self.directory / 'without-hooks'
+        self.out('prepare', plain, 'deepseek/deepseek-flash', 'max', '')
+        self.assertNotIn('baton-hooks', (plain / 'dsh-tools.patch.yml').read_text())
+        mounted = self.directory / 'with-hooks'
+        path = "/opt/baton/it's/dsh-baton-hooks.mjs"
+        self.out('prepare', mounted, 'deepseek/deepseek-flash', 'max', path)
+        text = (mounted / 'dsh-tools.patch.yml').read_text()
+        self.assertIn("    - id: baton-hooks\n      name: '/opt/baton/it''s/dsh-baton-hooks.mjs'\n", text)
+        self.assertLess(text.index('- id: baton-hooks'), text.index('- id: baton-worker'))
+
     def test_prepare_is_idempotent_for_a_reused_attempt_directory(self):
         directory = self.directory / 'reused'
         for _ in range(2):
-            self.out('prepare', directory, 'deepseek/deepseek-flash', 'max')
+            self.out('prepare', directory, 'deepseek/deepseek-flash', 'max', '')
         tools = (directory / 'dsh-tools.patch.yml').read_text()
         model = (directory / 'dsh-model.patch.yml').read_text()
         self.assertEqual(tools.count('- id: tool-jobs'), 1)
@@ -161,7 +172,7 @@ class DshPlayer(unittest.TestCase):
 
     def test_model_patch_carries_route_and_effort_independently(self):
         directory = self.directory / 'model'
-        self.out('prepare', directory, 'deepseek/deepseek-flash', 'max')
+        self.out('prepare', directory, 'deepseek/deepseek-flash', 'max', '')
         text = (directory / 'dsh-model.patch.yml').read_text()
         self.assertIn('provider: deepseek-official', text)
         self.assertIn("model: 'deepseek-flash'", text)
@@ -169,7 +180,7 @@ class DshPlayer(unittest.TestCase):
 
     def test_empty_effort_omits_the_field(self):
         directory = self.directory / 'default-effort'
-        self.out('prepare', directory, 'deepseek-flash', '')
+        self.out('prepare', directory, 'deepseek-flash', '', '')
         text = (directory / 'dsh-model.patch.yml').read_text()
         self.assertNotIn('reasoningEffort', text)
 

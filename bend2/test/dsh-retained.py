@@ -3,9 +3,11 @@
 The fixture derives DSH_HOME from a temporary database, prepares the two patch
 overlays and calls retained launch composition and custody with a local CLI stub.
 """
+import importlib.util
 import json
 import os
 import pathlib
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -36,17 +38,79 @@ class DshRetained(unittest.TestCase):
         self.link = self.root / 'link.db'
         self.attempt = self.root / 'attempt'
         self.patches = self.root / 'attempt.dsh'
+        self.receiver = self.root / 'receiver'
+        self.receiver_bin = self.receiver / 'bin' / 'baton2'
+        self.receiver_helpers = self.receiver / 'libexec' / 'baton2'
         with sqlite3.connect(self.db) as database:
             database.executescript(SCHEMA)
             database.execute(
                 "INSERT INTO sessions(id,harness,model,effort) VALUES"
                 "('dsh-fixture','dsh','deepseek-flash','max')")
+        self.owner_started = False
         self.link.symlink_to(self.db)
         self.addCleanup(self.shutdown_owner)
 
     def shutdown_owner(self):
-        subprocess.run([str(EXE), 'shutdown', str(self.db)],
-                       text=True, capture_output=True, timeout=10)
+        if not self.owner_started:
+            return
+        shutdown = subprocess.run(
+            [str(EXE), '--instance-shutdown', str(self.db)],
+            text=True, capture_output=True)
+        if shutdown.returncode != 0:
+            self.fail('instance shutdown failed with status '
+                      + str(shutdown.returncode) + ': '
+                      + shutdown.stdout + shutdown.stderr)
+
+    def start_owner(self):
+        witness = subprocess.run(
+            [str(EXE), '--instance-ensure-witness', str(self.db)],
+            capture_output=True, text=True)
+        self.assertEqual(witness.returncode, 0, witness.stderr + witness.stdout)
+        self.assertTrue(witness.stdout.strip())
+        self.owner_started = True
+
+    def stage_receiver(self, package=False):
+        self.receiver_bin.parent.mkdir(parents=True)
+        shutil.copyfile(EXE, self.receiver_bin)
+        self.receiver_bin.chmod(0o700)
+        if package:
+            helpers = self.root / 'package-helpers'
+            helpers.mkdir()
+            binaries = {}
+            for name in ('claude-credit-observe', 'api-key-exec', 'usage-read'):
+                path = helpers / name
+                path.write_text('#!/bin/sh\nexit 0\n')
+                path.chmod(0o755)
+                binaries[name] = path
+            spec = importlib.util.spec_from_file_location(
+                'dsh_package_native', ROOT / 'bend2/scripts/package-native.py')
+            package_native = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(package_native)
+            package_native.stage_adapters(self.receiver, helper_binaries=binaries)
+            return
+        self.receiver_helpers.mkdir(parents=True)
+        shutil.copyfile(ROOT / 'bend2/scripts/dsh-worker.mjs',
+                        self.receiver_helpers / 'dsh-worker.mjs')
+        shutil.copyfile(ROOT / 'bend2/scripts/dsh-baton-hooks.mjs',
+                        self.receiver_helpers / 'dsh-baton-hooks.mjs')
+
+    def assert_retained_prepare_bridge(self):
+        self.start_owner()
+        result = subprocess.run(
+            [str(self.receiver_bin), 'prepare', str(self.link), str(self.attempt), '/usr/bin/dsh',
+             'deepseek/deepseek-flash', 'max'],
+            text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        bridge = next((line.split('\t', 1)[1] for line in result.stdout.splitlines()
+                       if line.startswith('arg\tBATON_DSH_WORKER_BRIDGE=')), '')
+        expected_bridge = str(self.receiver_helpers / 'dsh-worker.mjs')
+        expected_hooks = str(self.receiver_helpers / 'dsh-baton-hooks.mjs')
+        self.assertEqual(bridge, expected_bridge, result.stdout)
+        self.assertTrue((self.receiver_helpers / 'dsh-worker.mjs').is_file())
+        self.assertTrue((self.receiver_helpers / 'dsh-baton-hooks.mjs').is_file())
+        tools = (self.patches / 'dsh-tools.patch.yml').read_text()
+        self.assertIn('name: ' + repr(expected_hooks), tools)
+        self.assertIn('input\tfixture task', result.stdout)
 
     def run_fixture(self):
         result = subprocess.run(
@@ -74,6 +138,14 @@ class DshRetained(unittest.TestCase):
         self.assertIn('keep\t0', output)
         self.assertIn('file\tfalse', output)
         self.assertFalse(self.attempt.exists())
+
+    def test_retained_prepare_resolves_dsh_worker_bridge(self):
+        self.stage_receiver()
+        self.assert_retained_prepare_bridge()
+
+    def test_retained_prepare_resolves_dsh_assets_from_package_stage(self):
+        self.stage_receiver(package=True)
+        self.assert_retained_prepare_bridge()
 
     def test_patch_inputs_are_the_minimal_roster_and_max_effort(self):
         self.run_fixture()

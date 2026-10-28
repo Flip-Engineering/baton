@@ -226,6 +226,11 @@ def task_instructions() -> String:
 def knowledge_instructions() -> String:
   "Use baton knowledge to record and read scoped findings and evidence. Preserve uncertainty and complete evidence; baton help knowledge describes the actions.\n"
 
+# The DSH bash tool runs in a workspace sandbox that blocks coordinator writes and
+# shared Git metadata, so DSH seats reach Baton through the baton-worker tools.
+def dsh_instructions(+harness: String) -> String:
+  Bool.pick(String,String.eq(harness,"dsh\n"),"This session runs in the DeepSeek Harness. Its bash tool runs in a workspace sandbox and cannot write the orchestra database or shared Git metadata. Reach Baton through the baton-worker tools: inbox and read return complete messages, report and ask reach your coordinator, completion_request sends the completion request for your assignment, and commit adds and commits selected workspace files with your recorded Git identity. These tools replace the same-named commands listed above. Baton delivers input addressed to you during a turn at the next model step. The turn stays open while input is owed and while an assignment is open without a completion request.\n","")
+
 def direct_task_prompt(+db: String, +player: String, +id: String, prompt: String) -> IO(String):
   do IO<String>:
     executable : String <- IO.try(String,Lock.SessionLock.executable())
@@ -1457,19 +1462,24 @@ def dsh_home_if(dsh: Bool, +db: String, +base: String, +player: String) -> IO(St
     case True{}: dsh_home(db,base,player)
     case False{}: IO.pure(String,"")
 
-def dsh_prepare_if(dsh: Bool, +directory: String, +model: String, +effort: String) -> IO(Result<&1,&1,U32 & String,Dsh.Prepared>):
+def dsh_prepare_if(dsh: Bool, +directory: String, +model: String, +effort: String, hooks: String) -> IO(Result<&1,&1,U32 & String,Dsh.Prepared>):
   match dsh:
     # Native custody creates the attempt directory and seals its prompt. Keep
     # the per-attempt patches in a sibling directory referenced by the argv.
-    case True{}: Dsh.prepare(directory ++ ".dsh",model,effort)
+    case True{}: Dsh.prepare(directory ++ ".dsh",model,effort,hooks)
     case False{}: IO.pure(Result<&1,&1,U32 & String,Dsh.Prepared>,Done{Dsh.Prepared{"",""}})
 
+# The worker bridge and the input and completion plugin ship in one directory:
+# the installed package's libexec/baton2 or the source checkout's bend2/scripts.
 def dsh_worker_helper(dsh: Bool, executable: String) -> IO(String):
   match dsh:
     case False{}: IO.pure(String,"")
-    case True{}: do IO<String>:
-      helper : String <- IO.try(String,HostControl.Control.agent_helper(executable))
-      IO.pure(String,Subs.directory_of(helper) ++ "/dsh-worker.mjs")
+    case True{}: IO.try(String,HostControl.Control.agent_helper(executable))
+
+def dsh_hooks_path(bridge: String) -> String:
+  match bridge:
+    case "": ""
+    case path: Subs.directory_of(path) ++ "/dsh-baton-hooks.mjs"
 
 type IdentityParts is Data:
   IdParts{prefix: String, resolver: String}
@@ -1551,8 +1561,8 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
         +agy : Bool <- IO.pure(Bool,String.eq(harness,"antigravity\n"))
         +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
         home : String <- dsh_home_if(dsh,db,absolute_db,player)
-        prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort)
-        bridge : String <- dsh_worker_helper(dsh,executable)
+        +bridge : String <- dsh_worker_helper(dsh,executable)
+        prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort,dsh_hooks_path(bridge))
         +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory,"BATON_STOP_HOOK=" ++ executable,"BATON_COORDINATOR=" ++ executable,"BATON_DSH_WORKER_BRIDGE=" ++ bridge]) ++ identity_prefix(parts))
         +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
         store : String <- current_store(db,player,harness)
@@ -1688,7 +1698,7 @@ def dsh_launch(+db: String, +player: String, +log: String, +cmd: String, +model:
     canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
     home : String <- dsh_home(db,canonical,player)
     directory : String <- IO.pure(String,log ++ ".dsh")
-    prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- Dsh.prepare(directory,model,effort)
+    prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- Dsh.prepare(directory,model,effort,"")
     dsh_launch_prepared(prepared,home,cmd,model,effort,cwd,stderr,session)
 
 def launch(+db: String, +player: String, sessions: String, +cmd: String, +model: String, +effort: String, +cwd: String, +stderr: String, +session: String, +harness: String, +log: String, task: String) -> IO(Result<&1,&1,U32 & String,U32>):

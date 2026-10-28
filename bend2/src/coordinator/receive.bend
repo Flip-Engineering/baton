@@ -938,7 +938,7 @@ def selected(+db: String, +session: String, +cmd: String, +model: String, +effor
           IO.pure(Unit,Unit{}),
         IO.pure(Unit,Unit{}))
       orientation : String <- orientation_text(db,session)
-      start_admitted(db,session,id,cmd,route,thinking,workspace,log,lock,cursor,native,attempt,harness,Tx.trim_nl(storage),instructions(executable,db,session,orientation) ++ body,recovery,previous,again,allowed)
+      start_admitted(db,session,id,cmd,route,thinking,workspace,log,lock,cursor,native,attempt,harness,Tx.trim_nl(storage),instructions(executable,db,session,orientation) ++ Turn.dsh_instructions(harness) ++ body,recovery,previous,again,allowed)
 
 def acquired_pending(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, lock: U32, again: String -> IO(Result<&1,&1,U32 & String,Unit>), predecessor: String, +updates: Chan(String)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:

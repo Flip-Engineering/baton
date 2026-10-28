@@ -222,6 +222,7 @@ def stage_adapters(payload, helper_binaries=None):
     (directory / 'usage-read').chmod(0o755)
     shutil.copyfile(ROOT / 'bend2/harness/task-start.mjs', directory / 'task-start.mjs')
     shutil.copyfile(ROOT / 'bend2/scripts/dsh-worker.mjs', directory / 'dsh-worker.mjs')
+    shutil.copyfile(ROOT / 'bend2/scripts/dsh-baton-hooks.mjs', directory / 'dsh-baton-hooks.mjs')
     shutil.copytree(ROOT / 'bend2/ui/orchestra', directory / 'ui')
     shutil.copyfile(ROOT / 'bend2/scripts/context-provider.mjs', directory / 'context-provider.mjs')
     shutil.copyfile(ROOT / 'bend2/scripts/context-project-policy.mjs', directory / 'context-project-policy.mjs')
