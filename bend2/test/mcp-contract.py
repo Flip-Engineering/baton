@@ -136,12 +136,12 @@ class McpContract(unittest.TestCase):
         self.assertEqual(len(rows), 1, rows)
         seed, instruction, guidance = rows[0]
         self.assertRegex(seed, r'^[0-9a-f]{128}$')
-        self.assertEqual(first, seed + '\n\n' + instruction + '\n\n' + guidance)
+        self.assertEqual(first, guidance)
         self.assertIn('Baton Principal Conductor attachment for session root.', guidance)
         self.assertNotIn('\0', first)
         task = '\ufeffComplete Claude task café λ🙂\nKeep the final newline.\n'
         rendered = self.coord('native-attachment-input', 'root', 'initial-task', input=task).stdout
-        self.assertEqual(rendered, seed + '\n\n' + instruction + '\n\n' + task)
+        self.assertEqual(rendered, task)
         with sqlite3.connect(self.db) as database:
             stored = database.execute(
                 'SELECT guidance FROM native_initial_inputs WHERE session=? AND guidance=?',

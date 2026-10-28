@@ -731,12 +731,10 @@ assert sys.stdin.read()==''
         self.assertRegex(initial[0]['seed'], r'^[0-9a-f]{128}$')
         self.assertEqual(request['task'], self.task.read_text())
         for row in initial:
-            self.assertIn('abstract qualities', row['instruction'])
+            self.assertEqual(row['instruction'], 'Ideate briefly on the abstract qualities of the random seed above, and use those qualities to guide your interpretation of the task below. Apply the task\'s explicit requirements and evidence.')
             self.assertIn(self.task.read_text(), row['guidance'])
-            prefix = row['seed'] + '\n\n' + row['instruction'] + '\n\n'
-            rendered = prefix + row['guidance']
+            rendered = row['guidance']
             self.assertEqual((pathlib.Path(row['attempt']) / 'prompt.txt').read_bytes(), rendered.encode())
-            self.assertEqual(rendered.count(prefix), 1)
             if row['attempt'] == execution['directory']:
                 self.assertEqual(prompt, rendered)
                 self.assertIn('fresh conversation', row['guidance'])

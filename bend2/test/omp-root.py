@@ -530,7 +530,7 @@ class OmpRootAdapter(unittest.TestCase):
         self.assertIsNotNone(row)
         seed, instruction, guidance, directory, turn, phase = row
         self.assertRegex(seed, r'^[0-9a-f]{128}$')
-        self.assertEqual(observed['prompt'], seed + '\n\n' + instruction + '\n\n' + guidance)
+        self.assertEqual(observed['prompt'], guidance)
         self.assertIn('Ideate briefly', instruction)
         self.assertEqual(phase, 'exited')
         self.assertEqual((pathlib.Path(directory) / 'prompt.txt').read_text(), observed['prompt'])

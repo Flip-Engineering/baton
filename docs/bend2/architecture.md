@@ -213,9 +213,10 @@ invokes the receiver again. Reading after release covers messages committed
 while the previous turn was ending. Pending messages remain in the existing
 SQLite inbox. A failed turn retains unread input for later delivery.
 
-Native initialization stores its seed, instruction and complete unprefixed
-guidance in `native_initial_inputs`. The retained attempt seals the rendered
-native input as `ATTEMPT/prompt.txt` for input custody and recovery. Muse's
+Native initialization stores its seed, instruction and complete authored
+guidance in `native_initial_inputs`. The native receives the authored guidance,
+and the retained attempt stores that input as `ATTEMPT/prompt.txt` for input
+custody and recovery. Muse's
 `exec --json --prompt-file` reads that native input artifact and uses
 `--session-id` for the recorded conversation. The attempt closes the child's
 input immediately, and the adapter reads the child's stream. Task dispatches

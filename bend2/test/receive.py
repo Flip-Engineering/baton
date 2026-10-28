@@ -2076,7 +2076,7 @@ class Receive(unittest.TestCase):
             self.assertEqual(row['seed'], seed, rows)
             self.assertNotIn('\0', row['guidance'])
             self.assertNotIn('\0', prompt)
-            self.assertEqual(prompt, seed + '\n\n' + row['instruction'] + '\n\n' + row['guidance'])
+            self.assertEqual(prompt, row['guidance'])
             self.assertEqual(pathlib.Path(row['attempt'], 'prompt.txt').read_text(), prompt)
         return rows
 
@@ -2104,7 +2104,7 @@ class Receive(unittest.TestCase):
         argv = [str(EXE), str(self.db), 'native-attachment-input', 'parent', 'mcp-instructions']
         attached = subprocess.run(argv, input=guidance, capture_output=True, text=True)
         self.assertEqual(attached.returncode, 0, attached.stdout + attached.stderr)
-        self.assertEqual(attached.stdout, original['seed'] + '\n\n' + original['instruction'] + '\n\n' + guidance)
+        self.assertEqual(attached.stdout, guidance)
         repeated = subprocess.run(argv, input=guidance, capture_output=True, text=True)
         self.assertEqual((repeated.returncode, repeated.stdout), (0, attached.stdout), repeated.stderr)
         records = self.initial_inputs('parent')
@@ -2167,12 +2167,10 @@ class Receive(unittest.TestCase):
         self.assertIn(task, initialization[0]['guidance'])
         self.assertIn(task, initialization[1]['guidance'])
         self.assertNotEqual(initialization[0]['guidance'], initialization[1]['guidance'])
-        self.assertEqual(started['prompt'], initialization[1]['seed'] + '\n\n'
-                         + initialization[1]['instruction'] + '\n\n' + initialization[1]['guidance'])
+        self.assertEqual(started['prompt'], initialization[1]['guidance'])
         for row in initialization:
             self.assertNotIn('\0', row['guidance'])
-            self.assertEqual(pathlib.Path(row['attempt'], 'prompt.txt').read_text(),
-                             row['seed'] + '\n\n' + row['instruction'] + '\n\n' + row['guidance'])
+            self.assertEqual(pathlib.Path(row['attempt'], 'prompt.txt').read_text(), row['guidance'])
         self.assertEqual(self.coord('delivery', 'original-task')['body'], task)
         self.assertFalse(any(p['pid'] == launches[0]['pid'] for p in self.owned_processes()))
         self.eventually(lambda: self.coord('player', 'parent')['native'] == started['native'],
@@ -3410,8 +3408,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(len(next_initialization), 3)
         self.assertNotEqual(next_initialization[-1]['seed'], initialization[0]['seed'])
         self.assertIn(independent, next_initialization[-1]['guidance'])
-        self.assertEqual(next_started['prompt'], next_initialization[-1]['seed'] + '\n\n'
-                         + next_initialization[-1]['instruction'] + '\n\n' + next_initialization[-1]['guidance'])
+        self.assertEqual(next_started['prompt'], next_initialization[-1]['guidance'])
         self.action(third)
         self.finish(next_observer)
         self.assertEqual(self.coord('delivery', 'independent-task')['body'], independent)

@@ -14,11 +14,12 @@ def schema() -> String:
   "CREATE TABLE IF NOT EXISTS native_initial_inputs (attempt TEXT PRIMARY KEY NOT NULL,session TEXT NOT NULL REFERENCES sessions(id),turn TEXT NOT NULL,seed TEXT NOT NULL,instruction TEXT NOT NULL,guidance TEXT NOT NULL);"
 
 # The execution identity joins fresh and profile retries to their original seed.
-# Each native attempt retains the complete guidance it actually receives.
+# Seed and instruction remain recorded as initialization provenance. The native
+# receives the complete authored guidance stored with that provenance.
 def record_sql(+session: String, +attempt: String, guidance: String, +predecessor: String) -> String:
   "BEGIN IMMEDIATE;" ++ schema()
   ++ "INSERT INTO native_initial_inputs(attempt,session,turn,seed,instruction,guidance) SELECT " ++ C.q(attempt) ++ ",e.session,e.id,coalesce((SELECT seed FROM native_initial_inputs WHERE session=e.session AND turn=e.id ORDER BY rowid LIMIT 1),(SELECT seed FROM native_initial_inputs WHERE session=e.session AND attempt=" ++ C.q(predecessor) ++ "),lower(hex(randomblob(64))))," ++ C.q(instruction()) ++ "," ++ C.q(guidance) ++ " FROM executions e WHERE e.session=" ++ C.q(session) ++ " AND e.directory=" ++ C.q(attempt) ++ " AND (NOT EXISTS(SELECT 1 FROM native_initial_inputs WHERE attempt=" ++ C.q(predecessor) ++ ") OR EXISTS(SELECT 1 FROM native_initial_inputs WHERE session=e.session AND attempt=" ++ C.q(predecessor) ++ ")) ON CONFLICT(attempt) DO NOTHING;"
-  ++ "SELECT hex(n.seed || char(10,10) || n.instruction || char(10,10) || n.guidance) FROM native_initial_inputs n JOIN executions e ON e.session=n.session AND e.id=n.turn AND e.directory=n.attempt WHERE n.session=" ++ C.q(session) ++ " AND n.attempt=" ++ C.q(attempt) ++ ";COMMIT;"
+  ++ "SELECT hex(n.guidance) FROM native_initial_inputs n JOIN executions e ON e.session=n.session AND e.id=n.turn AND e.directory=n.attempt WHERE n.session=" ++ C.q(session) ++ " AND n.attempt=" ++ C.q(attempt) ++ ";COMMIT;"
 
 def decoded_scalar(scalar: Req.Scalar) -> IO(Result<&1,&1,U32 & String,String>):
   match scalar:
@@ -60,7 +61,7 @@ def attachment_sql(+session: String, +component: String, +guidance: String) -> S
   +key : String = "'attachment:'||hex(o.session)||':'||o.identity||':'||hex(" ++ C.q(component) ++ ")"
   "BEGIN IMMEDIATE;" ++ schema()
   ++ owner ++ "INSERT INTO native_initial_inputs(attempt,session,turn,seed,instruction,guidance) SELECT " ++ key ++ ",o.session,o.turn,coalesce(o.seed,(SELECT seed FROM native_initial_inputs WHERE session=o.session AND turn=o.turn ORDER BY rowid LIMIT 1),lower(hex(randomblob(64))))," ++ C.q(instruction()) ++ "," ++ C.q(guidance) ++ " FROM owner o WHERE 1 ON CONFLICT(attempt) DO NOTHING;"
-  ++ owner ++ "SELECT hex(n.seed||char(10,10)||n.instruction||char(10,10)||n.guidance) FROM native_initial_inputs n JOIN owner o ON n.session=o.session WHERE n.attempt=" ++ key ++ " AND n.turn=o.turn AND n.guidance=" ++ C.q(guidance) ++ ";COMMIT;"
+  ++ owner ++ "SELECT hex(n.guidance) FROM native_initial_inputs n JOIN owner o ON n.session=o.session WHERE n.attempt=" ++ key ++ " AND n.turn=o.turn AND n.guidance=" ++ C.q(guidance) ++ ";COMMIT;"
 
 def attachment_body(+db: String, session: String, component: String, guidance: String) -> IO(Unit):
   do IO<Unit>:

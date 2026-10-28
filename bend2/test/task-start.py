@@ -146,12 +146,10 @@ class TaskStart(unittest.TestCase):
         initial = rows[0]
         self.assertEqual((initial['session'], initial['turn']), (result['session'], execution['id']))
         self.assertRegex(initial['seed'], r'^[0-9a-f]{128}$')
-        self.assertIn('abstract qualities', initial['instruction'])
+        self.assertEqual(initial['instruction'], 'Ideate briefly on the abstract qualities of the random seed above, and use those qualities to guide your interpretation of the task below. Apply the task\'s explicit requirements and evidence.')
         self.assertIn('task', initial['instruction'])
         self.assertIn(body, initial['guidance'])
-        prefix = initial['seed'] + '\n\n' + initial['instruction'] + '\n\n'
-        self.assertEqual(native['prompt'], prefix + initial['guidance'])
-        self.assertEqual(native['prompt'].count(prefix), 1)
+        self.assertEqual(native['prompt'], initial['guidance'])
         self.assertEqual((pathlib.Path(initial['attempt']) / 'prompt.txt').read_bytes(),
                          native['prompt'].encode())
         self.assertEqual(self.call('delivery', result['task'])['body'], body)
