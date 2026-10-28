@@ -238,6 +238,75 @@ def cancel(config, request, directory):
                               stdout=stdout, stderr=stderr).returncode
 
 
+def queue_key_sources(key_argv, cwd):
+    """Identify source inputs named by a key request without retaining their contents."""
+    outer = key_argv.index('--')
+    separator = key_argv.index('--', outer + 1)
+    options = key_argv[outer + 2:separator]
+    command = key_argv[separator + 1:]
+    paths = []
+    for flag in ('--entry', '--compiler', '--aux'):
+        index = 0
+        while index < len(options):
+            if options[index] == flag and index + 1 < len(options):
+                paths.append((flag[2:], options[index + 1]))
+                index += 2
+            else:
+                index += 1
+    for value in command:
+        if not value.startswith('-'):
+            path = Path(cwd, value)
+            if path.is_file():
+                paths.append(('command-input', value))
+    identities = []
+    seen = set()
+    for role, value in paths:
+        path = Path(value)
+        if not path.is_absolute():
+            path = Path(cwd) / path
+        path = path.resolve()
+        if str(path) in seen:
+            continue
+        seen.add(str(path))
+        identities.append({'role': role, 'identity': file_identity(path)})
+    return identities
+
+
+def run_queue_key(key_argv, config, directory):
+    """Run and retain a failed key request before returning its process status."""
+    cwd = str(Path.cwd())
+    started_ns = time.time_ns()
+    child = subprocess.run(key_argv, cwd=cwd, capture_output=True)
+    if child.stderr:
+        sys.stderr.buffer.write(child.stderr)
+        sys.stderr.buffer.flush()
+    if child.returncode:
+        (directory / 'key.stdout').write_bytes(child.stdout)
+        (directory / 'key.stderr').write_bytes(child.stderr)
+        metadata = {
+            'schema': 'baton2-compile-queue-key-failure-v1',
+            'argv': key_argv,
+            'cwd': cwd,
+            'exit_code': child.returncode,
+            'started_ns': started_ns,
+            'finished_ns': time.time_ns(),
+            'queue_binary': file_identity(config['client']),
+            'queue_adapter': file_identity(SCRIPT),
+            'sources': queue_key_sources(key_argv, cwd),
+            'stdout': 'key.stdout',
+            'stderr': 'key.stderr',
+        }
+        write(directory / 'failed-key.json', metadata)
+        if child.returncode < 0:
+            signum = -child.returncode
+            if signum not in (signal.SIGKILL, signal.SIGSTOP):
+                signal.signal(signum, signal.SIG_DFL)
+            os.kill(os.getpid(), signum)
+            return 128 + signum, None
+        return child.returncode, None
+    return 0, child.stdout.decode(errors='replace').strip()
+
+
 def retain(config, key, directory, success):
     keydir = Path(config['state']) / 'keys' / key
     result = keydir / 'completed/result'
@@ -277,7 +346,9 @@ def submit(config, directory, options, command, key_only=False):
     common = ['--state-root', config['state'], '--cwd', str(Path.cwd()),
               '--root', str(Path.cwd()), *options, '--', *command]
     key_argv = [config['client'], '--', 'key', *common]
-    key = subprocess.check_output(key_argv, text=True).strip()
+    key_code, key = run_queue_key(key_argv, config, directory)
+    if key_code:
+        return key_code
     token = uuid.uuid4().hex
     request = {'key': key, 'token': token, 'cwd': str(Path.cwd()), 'command': command,
                'key_argv': key_argv, 'started_ns': time.time_ns()}
