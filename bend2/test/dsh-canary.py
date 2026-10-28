@@ -27,6 +27,7 @@ BRIDGE = ROOT / 'bend2/scripts/dsh-worker.mjs'
 HOOKS = ROOT / 'bend2/scripts/dsh-baton-hooks.mjs'
 BRIDGE_TOOLS = ['mcp__baton-worker__' + name
                 for name in ('ask', 'commit', 'completion_request', 'inbox', 'read', 'report')]
+RESOURCE_TOOLS = ['list_mcp_resource_templates', 'list_mcp_resources', 'read_mcp_resource']
 FIXTURE = pathlib.Path(os.environ.get('BATON2_EXE', ROOT / '.scratch/bend2/dsh-player-test'))
 DSH = os.environ.get('DSH_CLI') or shutil.which('dsh')
 
@@ -242,7 +243,8 @@ def main():
             print('composed-provider: ' + json.dumps(provider))
             print('composed-effort: ' + json.dumps(effort))
             print('composed-model: ' + json.dumps(request.get('model')))
-            if tool_names != sorted(['bash', 'read_image', 'working_directory'] + BRIDGE_TOOLS):
+            if tool_names != sorted(['bash', 'read_image', 'working_directory']
+                                     + BRIDGE_TOOLS + RESOURCE_TOOLS):
                 raise SystemExit('canary: unexpected composed tool list')
             if effort != 'max':
                 raise SystemExit('canary: reasoning effort did not reach the request')
