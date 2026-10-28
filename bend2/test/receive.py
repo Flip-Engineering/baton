@@ -1987,6 +1987,61 @@ class Receive(unittest.TestCase):
             attempts.append(answer['attempt'])
         self.assertEqual(len(set(attempts)), 2)
 
+    # REF-913 transition coverage: a real first receive must not make the next
+    # refused receive report the first attempt, and must not hide the second
+    # admitted attempt when its observation fails.
+    def test_successful_receive_then_refused_receive_keeps_the_first_attempt(self):
+        self.player('parent', harness='omp')
+        self.prepare_input('accepted-before-stop', 'parent',
+                           'Complete the accepted task.', kind='task')
+        receiver = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(receiver, 'parent')
+        self.action(stream)
+        accepted = self.receive_answer(receiver)
+        self.assertEqual(accepted['receive'], 'accepted')
+        self.assertEqual(accepted['state'], 'exited')
+        self.assertTrue(accepted['attempt'])
+        self.assertEqual(accepted['error'], '')
+        self.assertTrue(read_recorded(self.db, 'accepted-before-stop'))
+
+        self.coord('stop', 'parent', 'stop-after-accepted', 'Preserve the operator stop.')
+        refused = self.spawn(*self.receive_args('parent'))
+        answer = self.receive_answer(refused, ok=False)
+        self.assertEqual(answer['receive'], 'refused')
+        self.assertEqual(answer['attempt'], '')
+        self.assertEqual(answer['state'], '')
+        self.assertTrue(answer['error'])
+        self.assertEqual(self.coord('session', 'parent')['stop']['id'], 'stop-after-accepted')
+        self.assertTrue(read_recorded(self.db, 'accepted-before-stop'))
+
+    def test_successful_receive_then_observation_error_keeps_both_attempts(self):
+        self.player('parent', harness='omp')
+        self.prepare_input('accepted-first', 'parent',
+                           'Complete the first task.', kind='task')
+        receiver = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(receiver, 'parent')
+        self.action(stream)
+        accepted = self.receive_answer(receiver)
+        self.assertEqual(accepted['receive'], 'accepted')
+        self.assertEqual(accepted['state'], 'exited')
+        self.assertTrue(accepted['attempt'])
+        self.assertEqual(accepted['error'], '')
+        self.assertTrue(read_recorded(self.db, 'accepted-first'))
+
+        self.prepare_input('error-second', 'parent',
+                           'End the second observation without a native result.', kind='task')
+        second = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(second, 'parent')
+        self.action(stream, exit_fixture=True)
+        failed = self.receive_answer(second, ok=False)
+        self.assertEqual(failed['receive'], 'accepted')
+        self.assertEqual(failed['state'], 'exited')
+        self.assertTrue(failed['error'])
+        self.assertTrue(failed['attempt'])
+        self.assertNotEqual(failed['attempt'], accepted['attempt'])
+        self.assertTrue(read_recorded(self.db, 'error-second'))
+        self.assertTrue(read_recorded(self.db, 'accepted-first'))
+
     def test_receive_refusal_before_dispatch_names_no_attempt(self):
         self.player('parent', harness='omp')
         self.coord('stop', 'parent', 'stop-before', 'Preserve the operator stop.')

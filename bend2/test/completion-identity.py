@@ -178,6 +178,58 @@ class CompletionIdentity(unittest.TestCase):
                          [('cli', 'pending-body', 'worker', '', 'cli')])
         self.assertIsNone(self.db.execute("SELECT receipt FROM messages WHERE id='pending-body'").fetchone()[0])
 
+    def test_native_record_sql_enforces_owned_attempt_body_and_live_scope(self):
+        self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
+        self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained','/attempt','running')")
+        messages = [
+            ('read-good', 'worker', 'Good body.'),
+            ('read-wrong-recipient', 'worker', 'Recipient must match.'),
+            ('read-wrong-body', 'worker', 'Stored body.'),
+            ('read-foreign-owned', 'coordinator', 'Foreign owner.'),
+            ('read-stale-attempt', 'worker', 'Stale attempt.'),
+            ('read-stale-directory', 'worker', 'Stale directory.'),
+            ('read-stale-native', 'worker', 'Stale native.'),
+            ('read-exited', 'worker', 'Exited attempt.'),
+            ('read-stopped', 'worker', 'Stopped session.'),
+        ]
+        self.db.executemany("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,'coordinator',?,'guidance',?)",
+                            messages)
+
+        def execute(rows, *, directory='/attempt', attempt='attempt-1', native='native-1', identity='read-identity'):
+            result = subprocess.run(
+                [self.binary, 'record-sql', directory, attempt, native, identity,
+                 json.dumps(rows)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.db.executescript(result.stdout)
+
+        def found(ident, recipient=None, body=None):
+            owner, stored = next((owner, text) for message_id, owner, text in messages
+                                 if message_id == ident)
+            return {'id': ident, 'recipient': owner if recipient is None else recipient,
+                    'body': stored if body is None else body}
+
+        execute([
+            found('read-good'),
+            found('read-wrong-recipient', recipient='coordinator'),
+            found('read-wrong-body', body='Tampered body.'),
+            found('read-foreign-owned'),
+        ])
+        self.assertEqual(self.db.execute(
+            "SELECT attempt,message,recipient,native,identity FROM message_reads WHERE message LIKE 'read-%' ORDER BY message"
+        ).fetchall(), [('attempt-1', 'read-good', 'worker', 'native-1', 'read-identity')])
+
+        execute([found('read-stale-attempt')], attempt='old-attempt', identity='stale-attempt')
+        execute([found('read-stale-directory')], directory='/old-attempt', identity='stale-directory')
+        execute([found('read-stale-native')], native='old-native', identity='stale-native')
+        self.db.execute("UPDATE executions SET phase='exited' WHERE session='worker'")
+        execute([found('read-exited')], identity='exited')
+        self.db.execute("UPDATE executions SET phase='running' WHERE session='worker'")
+        self.db.execute("INSERT INTO session_stops(session,id,reason,outcome) VALUES('worker','stop-1','operator stop','stopped')")
+        execute([found('read-stopped')], identity='stopped')
+        self.assertEqual(self.db.execute(
+            "SELECT message FROM message_reads WHERE message LIKE 'read-%' ORDER BY message"
+        ).fetchall(), [('read-good',)])
+
 
 if __name__ == '__main__':
     unittest.main()
