@@ -25,6 +25,7 @@ SELECTED = (
     'agent-actions.py', 'agent-input.py', 'task-start.py', 'mcp-command.py',
     'mcp-contract.py', 'mcp-root.py',
     'control.py', 'control-identity.py', 'configure.py', 'account-credits.py',
+    'omp-completion-extension.py', 'package-licenses.py',
 )
 
 # A quiet period lasts this many seconds without output, an open file changing,
