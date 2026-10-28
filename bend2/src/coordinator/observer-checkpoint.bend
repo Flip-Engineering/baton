@@ -253,6 +253,7 @@ def empty_checkpoint_outcome(db: String, +handle: U32, monitor: Bool) -> IO(Rest
     case False{}: do IO<RestoreOutcome>:
       state : State <- reset_nonmonitor(db,handle)
       IO.pure(RestoreOutcome,Restored{state})
+
 def decode_valid_outcome(+db: String, +value: String) -> IO(RestoreOutcome):
   do IO<RestoreOutcome>:
     state : State <- decode_valid(db,value)
