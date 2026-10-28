@@ -438,14 +438,31 @@ class AgentInput(unittest.TestCase):
         self.assertEqual(status['read'], 'recorded')
         self.assertTrue(all(row['identity'] == 'receipt' for row in status['attempts']))
 
-    def app_action(self, *arguments, native='native-root', output=None):
+    def app_action(self, *arguments, native='native-root', session=None, output=None):
         environment = os.environ.copy()
         environment['CODEX_THREAD_ID'] = native
-        for name in ('BATON_DATABASE', 'BATON_SESSION', 'BATON_ATTEMPT_DIRECTORY'):
+        for name in ('BATON_DATABASE', 'BATON_SESSION', 'BATON_ATTEMPT_DIRECTORY',
+                     'BATON_MCP_INPUT'):
             environment.pop(name, None)
+        if session is not None:
+            environment['BATON_SESSION'] = session
         command = [str(receive.EXE), str(self.fx.db), 'as', 'root', *arguments]
         return subprocess.run(command, stdout=output or subprocess.PIPE,
                               stderr=subprocess.PIPE, text=True, env=environment)
+
+    def test_app_pending_uses_explicit_session_when_codex_lookup_is_unmatched(self):
+        self.fx.prepare_input('root-pending', 'root', 'Root pending input.\n', kind='guidance')
+        self.fx.prepare_input('parent-pending', 'parent', 'Parent pending input.\n', kind='guidance')
+        result = self.app_action('pending', '--pretty', native='unmatched-native', session='root')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        pending = json.loads(result.stdout)
+        self.assertEqual([row['id'] for row in pending], ['root-pending'])
+        self.assertEqual(pending[0]['body'], 'Root pending input.\n')
+        # The explicit session selects the pending recipient. The unmatched
+        # Codex native does not identify a turn that can own a read record.
+        self.assertEqual(self.reads(), [])
+        self.assertIsNone(self.fx.coord('delivery', 'root-pending')['receipt'])
+        self.assertIsNone(self.fx.coord('delivery', 'parent-pending')['receipt'])
 
     def test_app_full_read_records_exact_turn_and_preserves_legacy_receipt(self):
         self.fx.prepare_input('app-task', 'root', 'Actual App task.\nλ🙂', kind='task')
