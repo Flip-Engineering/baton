@@ -9,7 +9,7 @@ python3 bend2/scripts/check-runner-group-readiness.py \
   --workflow-branch release/main-cgen-reuse-20261028
 ```
 
-The script verifies the pinned Actions Runner 2.337.0 archive, creates account `batonci3`, registers runner `atari-homelab-baton2-native-3` in the existing group with the workflow labels, installs the dedicated service unit, and starts only that new service. It verifies the shared compile queue group name and GID before adding the runner account to that group. The script grants `batonci3` execute-only traversal on `/mnt/nvme4tb`; the service binds the maintained compile queue. Build invocations continue through `.github/scripts/queue-native-checks.py`.
+The script verifies the pinned Actions Runner 2.337.0 archive, creates account `batonci3`, registers runner `atari-homelab-baton2-native-3` in the existing group with the workflow labels, installs the dedicated service unit, and starts only that new service. It verifies the shared compile queue group name and GID before adding the runner account to that group. The script grants `batonci3` read and execute access on `/mnt/nvme4tb` and verifies read and traversal access on each required path ancestor. The service binds the maintained compile queue. Build invocations continue through `.github/scripts/queue-native-checks.py`.
 
 Run from a trusted checkout with the organization's authenticated GitHub CLI context:
 
@@ -18,7 +18,7 @@ gh api --method POST orgs/Flip-Engineering/actions/runners/registration-token --
   | sudo ./deploy/provision-baton2-native-homelab-runner-3.sh
 ```
 
-Use `--resume` when a registration attempt has left the staged account and extracted runner tree in place. Resume verifies account UID 980 and GID 971, the home and runner tree ownership, the pinned archive digest, and the staged configuration script, listener, and bundled Node hashes against that archive. It also verifies the absence of runner registration files and the service unit. It preserves the existing account and runner tree. Confirm the staged state before requesting a fresh token, then run:
+Use `--resume` when a registration attempt has left the staged account and extracted runner tree in place. Resume verifies account UID 980 and GID 971, the home and runner tree ownership, the pinned archive digest, and the staged configuration script, listener, and bundled Node hashes against that archive. It also verifies the absence of runner registration files and the service unit. If `.path` exists, resume verifies it is a mode 0600 regular file owned by UID 980 and GID 971 and preserves it as runner environment metadata. Fresh extraction restores mode 0700 on the runner directory after ownership changes. Resume preserves the existing account and runner tree. Confirm the staged state before requesting a fresh token, then run:
 
 ```sh
 gh api --method POST orgs/Flip-Engineering/actions/runners/registration-token --jq .token \

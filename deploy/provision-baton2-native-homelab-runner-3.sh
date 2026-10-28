@@ -101,10 +101,16 @@ else
     [[ -x $RUNNER_DIR/config.sh && -x $RUNNER_DIR/bin/Runner.Listener \
         && -x $RUNNER_DIR/externals/node24/bin/node ]] \
         || fail "resume requires the complete Actions Runner $RUNNER_VERSION tree"
-    for state_file in .runner .credentials .credentials_rsaparams .path; do
+    for state_file in .runner .credentials .credentials_rsaparams; do
         [[ ! -e $RUNNER_DIR/$state_file && ! -L $RUNNER_DIR/$state_file ]] \
             || fail "resume requires empty runner registration state: $state_file exists"
     done
+    if [[ -e $RUNNER_DIR/.path || -L $RUNNER_DIR/.path ]]; then
+        [[ -f $RUNNER_DIR/.path && ! -L $RUNNER_DIR/.path ]] \
+            || fail 'resume requires runner .path metadata to be a regular file'
+        [[ $(stat -c '%u:%g:%a' "$RUNNER_DIR/.path") == "$RESUME_UID:$RESUME_GID:600" ]] \
+            || fail 'resume requires runner .path metadata to remain owned by batonci3 with mode 0600'
+    fi
     [[ ! -L $RUNNER_DIR/_diag ]] || fail 'resume refuses a symlinked runner diagnostics directory'
     if [[ -d $RUNNER_DIR/_diag ]]; then
         [[ $(stat -c '%u:%g:%a' "$RUNNER_DIR/_diag") == "$RESUME_UID:$RESUME_GID:700" ]] \
@@ -136,12 +142,17 @@ if [[ $mode == fresh ]]; then
         "$BASE" "$BASE/temp" "$BASE/tool-cache" "$RUNNER_DIR"
     tar -xzf "$ARCHIVE" -C "$RUNNER_DIR"
     chown -R "$RUNNER_USER:$RUNNER_GROUP" "$BASE"
+    chmod 0700 "$RUNNER_DIR"
 fi
 
-command -v setfacl >/dev/null 2>&1 || fail 'setfacl is required to grant the runner account path traversal'
-setfacl -m "u:$RUNNER_USER:--x" /mnt/nvme4tb
-runuser --user "$RUNNER_USER" -- /usr/bin/test -x /mnt/nvme4tb \
-    || fail 'runner account cannot traverse the homelab mount'
+command -v setfacl >/dev/null 2>&1 || fail 'setfacl is required to grant the runner account mount access'
+setfacl -m "u:$RUNNER_USER:r-x" /mnt/nvme4tb
+for ancestor in /mnt /mnt/nvme4tb "$BASE" "$RUNNER_DIR"; do
+    runuser --user "$RUNNER_USER" -- /usr/bin/test -r "$ancestor" \
+        || fail "runner account cannot read required path ancestor: $ancestor"
+    runuser --user "$RUNNER_USER" -- /usr/bin/test -x "$ancestor" \
+        || fail "runner account cannot traverse required path ancestor: $ancestor"
+done
 
 if ! id -nG "$RUNNER_USER" | tr ' ' '\n' | grep -Fxq baton-compile; then
     usermod --append --groups baton-compile "$RUNNER_USER"
