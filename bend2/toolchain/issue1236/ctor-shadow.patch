@@ -6,15 +6,18 @@ This patch is adapted to Baton’s selected Bend source. The original change
 added an optional constructor lookup argument to a newer resolver. The pinned
 2.0.25 resolver has a simpler fallback, so this adaptation preserves its
 existing return behavior except when an unqualified name collides only with a
-constructor.
+constructor. The named-call parser also uses that lookup mode when it resolves
+an unbound variable again.
 
 This patch is for a future compiler-source release. It does not alter the
 currently selected compiler archive or its lock.
 
 diff --git a/bend2/compiler/upstream/bend.ts b/bend2/compiler/upstream/bend.ts
+index 805798954..06d98b899 100644
 --- a/bend2/compiler/upstream/bend.ts
 +++ b/bend2/compiler/upstream/bend.ts
-@@ -1976,6 +1976,6 @@ export function parse_var(p: Parse, k: Name, s?: Span): LTerm {
+@@ -1975,7 +1975,7 @@ export function parse_var(p: Parse, k: Name, s?: Span): LTerm {
+   if (e !== null) {
      return Var(k, e[1], s);
    }
 -  const q = parse_reso(p, k);
@@ -22,13 +25,16 @@ diff --git a/bend2/compiler/upstream/bend.ts b/bend2/compiler/upstream/bend.ts
    if (k.includes(".")) {
      return Ref(q, s);
    }
-@@ -1989,4 +1989,4 @@ export function parse_reso(p: Parse, k: Name): Name {
+@@ -1986,7 +1986,7 @@ export function parse_qual(p: Parse, k: Name): Name {
+   return p.ns === "" ? k : p.ns + "." + k;
+ }
+
 -export function parse_reso(p: Parse, k: Name): Name {
 +export function parse_reso(p: Parse, k: Name, ctr = true): Name {
    const dot = k.indexOf(".");
    let q = parse_qual(p, k);
    if (dot !== -1 && k.slice(0, dot) in p.al) {
-@@ -1995,5 +1995,8 @@ export function parse_reso(p: Parse, k: Name, ctr = true): Name {
+@@ -1995,6 +1995,9 @@ export function parse_reso(p: Parse, k: Name): Name {
    if (q in p.book.tlds || q in p.book.ctrs) {
      return q;
    }
@@ -37,3 +43,13 @@ diff --git a/bend2/compiler/upstream/bend.ts b/bend2/compiler/upstream/bend.ts
 +  }
    return k;
  }
+
+@@ -2345,7 +2348,7 @@ export function parse_term_ops(p: Parse, tm: LTerm, lvl: number): LTerm {
+     }
+     if (parse_at(p, "(") || parse_at(p, "!(")) {
+       if (out.$ === "Var" && parse_lookup(p, out.k) === null) {
+-        out = Ref(parse_reso(p, out.k), out.s);
++        out = Ref(parse_reso(p, out.k, false), out.s);
+       }
+       if (parse_at(p, "!")) {
+         if (out.$ !== "Ref") {

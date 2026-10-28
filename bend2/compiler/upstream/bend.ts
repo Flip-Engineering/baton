@@ -2348,7 +2348,7 @@ export function parse_term_ops(p: Parse, tm: LTerm, lvl: number): LTerm {
     }
     if (parse_at(p, "(") || parse_at(p, "!(")) {
       if (out.$ === "Var" && parse_lookup(p, out.k) === null) {
-        out = Ref(parse_reso(p, out.k), out.s);
+        out = Ref(parse_reso(p, out.k, false), out.s);
       }
       if (parse_at(p, "!")) {
         if (out.$ !== "Ref") {
