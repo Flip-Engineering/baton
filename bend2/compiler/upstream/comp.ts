@@ -165,6 +165,7 @@ type Src = { refs: Set<Bend.Name>; deps: Set<Bend.Name>; flat: boolean;
 
 type Carb = {
   store?: import("./store.ts").CheckedWriter;
+  masks?: Map<Bend.Name, boolean[]>;
   // The book as the caller holds it. `book` is a shallow copy of it, so a
   // definition the compiler rewrites must be rewritten there too, or the
   // caller keeps the pre-elaboration object alive for the whole compile.
@@ -711,6 +712,11 @@ const TELES: Map<HTerm, ReturnType<typeof Bend.tele_unbind>> = new Map();
 
 const SRCS: Map<Bend.Name, Src> = new Map();
 const CLAIM_SRCS = new WeakMap<Bend.TLD, Src>();
+const SOURCE_FILES = new WeakMap<Bend.Book, [string, string | null][]>();
+
+export function register_sources(book: Bend.Book, seen: Map<string, string | null>): void {
+  SOURCE_FILES.set(book, [...seen].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+}
 
 // The checked source dependencies used by the CLI verdict. Shared syntax is
 // visited once, including annotations and erased arguments.
@@ -1836,10 +1842,15 @@ function sig_def(cb: Carb, k: Bend.Name): Sig {
 }
 
 // A def's borrowed parameters (a box, not an Array, not owned), fixed a pass.
-function brw_of(cb: Carb, k: Bend.Name): boolean[] {
+function brw_mask(cb: Carb, k: Bend.Name): boolean[] {
   const { live, lays } = sig_def(cb, k);
-  const bs = lays.map((l, i) => done_live(def_body(cb, k)) && l.ks.includes("box")
-    && ty_adt(cb.book, live[i][2])?.k !== "Array" && !cb.own.has(k + "~" + i));
+  return lays.map((l, i) => done_live(def_body(cb, k)) && l.ks.includes("box")
+    && ty_adt(cb.book, live[i][2])?.k !== "Array");
+}
+
+function brw_of(cb: Carb, k: Bend.Name): boolean[] {
+  const mask = cb.masks?.get(k) ?? brw_mask(cb, k);
+  const bs = mask.map((b, i) => b && !cb.own.has(k + "~" + i));
   BRWS.set(k, bs);
   return bs;
 }
@@ -4460,31 +4471,67 @@ function file_reach(fl: File, from: Iterable<string>): Set<string> {
 }
 
 // Compilation consumes checked bodies and keeps parsed bodies needed by types.
-export function compile_book(book: Bend.Book): string {
+export function compile_book(book: Bend.Book, workspace?: string): string {
   const Store = require("./store.ts") as typeof import("./store.ts");
   const identity = Store.compiler_identity([new URL(import.meta.url),
     new URL("./bend.ts", import.meta.url), new URL("./store.ts", import.meta.url),
     new URL("./base.bend", import.meta.url)]);
-  const writer = new Store.CheckedWriter(identity);
+  const inputs = (SOURCE_FILES.get(book) ?? []).map(([path, namespace]) =>
+    ({ path, namespace, sha256: Store.file_digest(path) }));
+  const writer = new Store.CheckedWriter(identity, workspace, inputs);
   diagnostic("store.begin", { directory: writer.directory, compiler: identity });
   const result = compile_stored(book, writer);
   writer.remove();
   return result;
 }
 
-function prepare_store(cb: Carb, writer: import("./store.ts").CheckedWriter):
-  import("./store.ts").CheckedReader {
+type StoredHeader = {
+  book: Bend.Book;
+  sources: [Bend.Name, { refs: Bend.Name[]; deps: Bend.Name[]; flat: boolean }][];
+  claims: [Bend.Name, Bend.Name[]][];
+  sites: [Bend.Name, number][];
+  bangs: Bend.Name[];
+  local: [Bend.Name, string][];
+  masks: [Bend.Name, boolean[]][];
+  show: Show | null;
+  wide: boolean;
+};
+
+function prepare_store(cb: Carb, writer: import("./store.ts").CheckedWriter,
+  show: Show | null): { reader: import("./store.ts").CheckedReader; show: Show | null; wide: boolean } {
   const begin = performance.now();
   const tlds = Object.fromEntries(Object.entries(cb.book.tlds).map(([k, tld]) => {
     if (tld.$ !== "Def") return [k, tld];
     const { h, e, ...header } = tld as Def;
     return [k, header];
   }));
-  const stored = writer.seal({ ...cb.book, tlds });
-  const book = stored.reader.header<Bend.Book>();
+  const header: StoredHeader = { book: { ...cb.book, tlds },
+    sources: [...SRCS].map(([k, src]) => [k,
+      { refs: [...src.refs], deps: [...src.deps], flat: src.flat }]),
+    claims: Object.entries(cb.book.tlds).flatMap(([k, tld]) => {
+      const claims = CLAIM_SRCS.get(tld)?.claims;
+      return claims === undefined ? [] : [[k, [...claims]] as [Bend.Name, Bend.Name[]]];
+    }),
+    sites: [...cb.sites], bangs: [...cb.bangs], local: [...LOCAL],
+    masks: done_defs(cb).map(([k]) => [k, brw_mask(cb, k)]), show,
+    wide: [...cb.bangs].some((k) => sig_def(cb, k).live.some(([, , A]) => ty_clo(cb.book, A))) };
+  const stored = writer.seal(header);
+  const decoded = stored.reader.header<StoredHeader>();
+  const book = decoded.book;
+  SRCS.clear();
+  for (const [k, src] of decoded.sources) SRCS.set(k,
+    { refs: new Set(src.refs), deps: new Set(src.deps), flat: src.flat });
+  for (const [k, claims] of decoded.claims) {
+    const src = SRCS.get(k) ?? { refs: new Set(), deps: new Set(), flat: false };
+    src.claims = new Set(claims);
+    CLAIM_SRCS.set(book.tlds[k], src);
+  }
+  LOCAL.clear();
+  for (const [k, name] of decoded.local) LOCAL.set(k, name);
+  cb.sites = new Map(decoded.sites);
+  cb.bangs = new Set(decoded.bangs);
+  cb.masks = new Map(decoded.masks);
   for (const [k, tld] of Object.entries(book.tlds)) {
-    const src = CLAIM_SRCS.get(cb.book.tlds[k]);
-    if (src !== undefined) CLAIM_SRCS.set(tld, src);
     if (tld.$ === "Def" && writer.has(k)) {
       Object.defineProperty(tld, "h", { get: () => stored.reader.body(k) });
     }
@@ -4495,8 +4542,10 @@ function prepare_store(cb: Carb, writer: import("./store.ts").CheckedWriter):
   diagnostic("store.end", { directory: writer.directory,
     duration_ms: performance.now() - begin, bytes: stored.bytes,
     bodies: stored.index.bodies.length, header_bytes: stored.index.header.bytes,
-    tables_bytes: stored.index.tables.bytes });
-  return stored.reader;
+    tables_bytes: stored.index.tables.bytes,
+    input_manifest_sha256: stored.index.input_manifest_sha256,
+    program_sha256: stored.index.program_sha256 });
+  return { reader: stored.reader, show: decoded.show, wide: decoded.wide };
 }
 
 function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWriter): string {
@@ -4506,13 +4555,15 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
   const cb = carb_book(book, ["main", ...RUNTIME_ADTS], writer);
   diagnostic("carb.end", { sources: SRCS.size });
   diagnostic_stage("show.begin");
-  const show = show_main(book);
+  let show = show_main(book);
   diagnostic("show.end");
   const live_types = v_live(cb);
   v_drop(cb, live_types);
   book.tmps = Object.create(null);
   cb.book.tmps = book.tmps;
-  const stored = prepare_store(cb, writer);
+  const prepared = prepare_store(cb, writer, show);
+  const stored = prepared.reader, wide = prepared.wide;
+  show = prepared.show;
   memo_gc();
   collect_full();
   diagnostic("checker.release", { type_definitions: live_types.size });
@@ -4706,8 +4757,6 @@ function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWri
   const live = reach([seg_fid("main"), ...[...fl.bangs].map(seg_fid), ...fl.clos]);
   // The device holds what the bangs reach and, when a bang's parameter
   // may hold a closure (a jump through its fid), every closure.
-  const wide = [...fl.bangs].some((k) =>
-    sig_def(fl, k).live.some(([, , A]) => ty_clo(fl.book, A)));
   const dev = reach([...[...fl.bangs].map(seg_fid), ...wide ? fl.clos : []]);
   fl.segs = fl.segs.filter((s) => live.has(s.fid));
   for (const s of fl.segs) {

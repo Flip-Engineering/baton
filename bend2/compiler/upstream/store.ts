@@ -7,7 +7,7 @@ import * as crypto from "node:crypto";
 type Value = null | boolean | number | { string: number } | { node: number }
   | { span: number } | { undefined: true };
 type Row = { owner: number } & (
-  { object: [number, Value][] } | { array: Value[] }
+  { object: [number, Value][]; null_prototype?: true } | { array: Value[] }
   | { function: { scope: number; array: boolean; body: Value } }
   | { bound: { scope: number; slot: number; span?: number } });
 export type TermGraph = { root: Value; rows: Row[]; scopes: number[] };
@@ -148,7 +148,8 @@ export function encode_term(term: Bend.LTerm | Bend.HTerm, tables: EncoderTables
             ? { names: [term.k as string], array: false } : undefined;
         fields.push([tables.string(key), ref(child, scope, params)]);
       }
-      rows[id] = { owner: scope, object: fields };
+      rows[id] = { owner: scope, object: fields,
+        ...(Object.getPrototypeOf(value) === null ? { null_prototype: true as const } : {}) };
     }
   }
   // Stable immutable values remain shared across callback instances. Cells
@@ -224,7 +225,8 @@ export function decode_term<T extends Bend.LTerm | Bend.HTerm>(graph: TermGraph,
       owner.values.set(value.node, result);
       return result;
     }
-    const result = "array" in row ? [] : {};
+    const result = "array" in row ? []
+      : Object.create("null_prototype" in row ? null : Object.prototype);
     owner.values.set(value.node, result);
     pending.push([row, owner, result]);
     return result;
@@ -238,7 +240,8 @@ export function decode_term<T extends Bend.LTerm | Bend.HTerm>(graph: TermGraph,
         for (const child of row.array) (value as unknown[]).push(read(child, owner, pending));
       } else if ("object" in row) {
         for (const [key, child] of row.object) {
-          (value as Record<string, unknown>)[tables.data.strings[key]] = read(child, owner, pending);
+          Object.defineProperty(value, tables.data.strings[key], {
+            value: read(child, owner, pending), enumerable: true, writable: true, configurable: true });
         }
       }
     }
@@ -249,8 +252,10 @@ export function decode_term<T extends Bend.LTerm | Bend.HTerm>(graph: TermGraph,
 
 type Section = { file: string; sha256: string; bytes: number; nodes: number };
 type BodySection = Section & { mode: "checked" | "higher" };
+export type SourceInput = { path: string; namespace: string | null; sha256: string };
 export type StoreIndex = { compiler: string; tables: Section; header: Section;
-  bodies: [string, BodySection][] };
+  bodies: [string, BodySection][]; inputs: SourceInput[];
+  input_manifest_sha256: string; program_sha256: string };
 
 function digest(text: string): string {
   return crypto.createHash("sha256").update(text).digest("hex");
@@ -258,33 +263,37 @@ function digest(text: string): string {
 
 export function compiler_identity(files: URL[]): string {
   const hash = crypto.createHash("sha256");
+  for (const file of [...files, process.execPath]) hash.update(file_digest(file));
+  return hash.digest("hex");
+}
+
+export function file_digest(file: string | URL): string {
+  const hash = crypto.createHash("sha256");
   const buffer = Buffer.alloc(64 * 1024);
-  for (const file of [...files, process.execPath]) {
-    const fd = fs.openSync(file, "r");
-    try {
-      for (let n = fs.readSync(fd, buffer); n > 0; n = fs.readSync(fd, buffer)) {
-        hash.update(buffer.subarray(0, n));
-      }
-    } finally { fs.closeSync(fd); }
-  }
+  const fd = fs.openSync(file, "r");
+  try {
+    for (let n = fs.readSync(fd, buffer); n > 0; n = fs.readSync(fd, buffer)) {
+      hash.update(buffer.subarray(0, n));
+    }
+  } finally { fs.closeSync(fd); }
   return hash.digest("hex");
 }
 
 // The writer keeps paths and hashes after each section has been written.
 export class CheckedWriter {
-  readonly directory = fs.mkdtempSync(path.join(os.tmpdir(), "bend-checked-"));
+  readonly directory: string;
   private tables = new EncoderTables();
   private bodies = new Map<string, BodySection>();
   private pending = new Map<string, { value: Bend.LTerm | Bend.HTerm; mode: BodySection["mode"] }>();
-  private encoded_bytes = 0;
-
-  constructor(readonly compiler: string) {}
+  constructor(readonly compiler: string, workspace = os.tmpdir(),
+    readonly inputs: SourceInput[] = []) {
+    this.directory = fs.mkdtempSync(path.join(workspace, "bend-checked-"));
+  }
 
   private write(text: string, nodes: number): Section {
     const sha256 = digest(text), file = sha256 + ".json";
     fs.writeFileSync(path.join(this.directory, file), text);
     const bytes = Buffer.byteLength(text);
-    this.encoded_bytes += bytes;
     return { file, sha256, bytes, nodes };
   }
 
@@ -313,8 +322,13 @@ export class CheckedWriter {
     this.pending.clear();
     const section = this.graph(header);
     const tables = this.write(JSON.stringify(this.tables.data), this.tables.data.spans.length);
+    const bodies = [...this.bodies];
+    const input_manifest_sha256 = digest(JSON.stringify(this.inputs));
+    const program_sha256 = digest(JSON.stringify({ compiler: this.compiler,
+      header: section.sha256, tables: tables.sha256,
+      bodies: bodies.map(([name, body]) => [name, body.sha256, body.mode]), input_manifest_sha256 }));
     const index: StoreIndex = { compiler: this.compiler, header: section, tables,
-      bodies: [...this.bodies] };
+      bodies, inputs: this.inputs, input_manifest_sha256, program_sha256 };
     fs.writeFileSync(path.join(this.directory, "index.json"), JSON.stringify(index));
     const bytes = fs.readdirSync(this.directory).reduce((n, file) =>
       n + fs.statSync(path.join(this.directory, file)).size, 0);

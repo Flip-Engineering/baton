@@ -295,11 +295,11 @@ function cli_emit(book: Bend.Book, out: string): void {
   if (/\.c?js$/.test(out)) {
     fs.writeFileSync(out, Comp.js_book(book));
   } else if (out.endsWith(".c")) {
-    fs.writeFileSync(out, Comp.compile_book(book));
+    fs.writeFileSync(out, Comp.compile_book(book, path.dirname(path.resolve(out))));
   } else {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bend-"));
     const c   = path.join(dir, path.basename(out) + ".c");
-    fs.writeFileSync(c, Comp.compile_book(book));
+    fs.writeFileSync(c, Comp.compile_book(book, path.dirname(path.resolve(c))));
     try {
       cli_build(out, c);
     } finally {
@@ -587,6 +587,7 @@ async function book_read(file: string, base?: Bend.Book,
       + " found.\nThe code is incomplete, and not a valid proof yet.";
   }
   Comp.diagnostic("book.read.end", { file });
+  Comp.register_sources(book, seen);
   return [book, n0];
 }
 
