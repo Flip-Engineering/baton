@@ -6,6 +6,7 @@ HOME assignment. A selected profile store overrides an inherited value, and
 the OMP preflight checks the selected store. No provider is contacted.
 """
 import os
+import json
 import pathlib
 import sqlite3
 import subprocess
@@ -98,6 +99,18 @@ class RetainedStore(unittest.TestCase):
         self.assertIn('XDG_CONFIG_HOME=' + str(store), argv)
         self.assertFalse([value for value in argv if value.startswith('HOME=')])
         self.assertNotIn('/ambient-config', argv)
+        configs = [argv[index + 1] for index, value in enumerate(argv[:-1])
+                   if value == '--config']
+        hooks = next(json.loads(value[len('hooks='):]) for value in configs
+                     if value.startswith('hooks='))
+        self.assertEqual({'PostToolUse', 'Stop'}, set(hooks))
+        for event in ('PostToolUse', 'Stop'):
+            command = hooks[event][0]['hooks'][0]['command']
+            self.assertIn('BATON_DATABASE=', command)
+            self.assertIn('BATON_SESSION=', command)
+            self.assertIn('BATON_ATTEMPT_DIRECTORY=', command)
+            self.assertIn('--stop-hook', command)
+        self.assertEqual(1, len(configs))
 
     def test_no_profile_adds_no_store_binding(self):
         for harness in ('omp', 'muse'):
