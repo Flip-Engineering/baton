@@ -67,6 +67,16 @@ class CompletionIdentity(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)[0]
 
+    def invoke_all(self, *args, env=None):
+        clean_env = os.environ.copy() if env is None else env.copy()
+        for name in ('BATON_DATABASE', 'BATON_ATTEMPT_DIRECTORY',
+                     'BATON_MCP_INPUT', 'CODEX_THREAD_ID'):
+            clean_env.pop(name, None)
+        result = subprocess.run([self.binary, *map(str, args)], capture_output=True,
+                                text=True, env=clean_env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return json.loads(result.stdout)
+
     def request(self, body, ident=None):
         if ident is None:
             return self.invoke('completion-request', self.path, body)
@@ -143,6 +153,30 @@ class CompletionIdentity(unittest.TestCase):
         self.assertEqual(second['status'], 'admitted', second)
         self.assertNotEqual(second['id'], first['id'])
         self.assertEqual(self.current_request(), (second['id'],))
+
+    def test_inbox_emits_full_body_and_records_cli_read(self):
+        body = 'Complete inbox body.\nSecond line.'
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('inbox-body','coordinator','worker','guidance',?)",
+                        (body,))
+        output = self.invoke_all('inbox', self.path, 'worker')
+        item = next(row for row in output if row['id'] == 'inbox-body')
+        self.assertEqual(item['body'], body)
+        self.assertEqual(self.db.execute("SELECT attempt,message,recipient,native,identity FROM message_reads WHERE message='inbox-body'").fetchall(),
+                         [('cli', 'inbox-body', 'worker', '', 'cli')])
+        self.assertIsNone(self.db.execute("SELECT receipt FROM messages WHERE id='inbox-body'").fetchone()[0])
+
+    def test_pending_emits_full_body_and_records_cli_read(self):
+        body = 'Complete pending body.\nSecond line.'
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('pending-body','coordinator','worker','guidance',?)",
+                        (body,))
+        env = os.environ.copy()
+        env['BATON_SESSION'] = 'worker'
+        output = self.invoke_all('pending', self.path, env=env)
+        item = next(row for row in output if row['id'] == 'pending-body')
+        self.assertEqual(item['body'], body)
+        self.assertEqual(self.db.execute("SELECT attempt,message,recipient,native,identity FROM message_reads WHERE message='pending-body'").fetchall(),
+                         [('cli', 'pending-body', 'worker', '', 'cli')])
+        self.assertIsNone(self.db.execute("SELECT receipt FROM messages WHERE id='pending-body'").fetchone()[0])
 
 
 if __name__ == '__main__':

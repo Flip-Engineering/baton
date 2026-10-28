@@ -37,6 +37,27 @@ def literal(path, prefix):
 
 
 class SourceDerivation(unittest.TestCase):
+    def test_complete_inbox_and_pending_bodies_record_owned_reads(self):
+        agent_command = definition(COORD / 'agent-command.bend', 'execute')
+        agent_input = definition(COORD / 'agent-input.bend', 'command_pending_output')
+        command_output = definition(COORD / 'agent-input.bend', 'command_output_value')
+        record = definition(STATUS, 'record_sql')
+        cli = definition(STATUS, 'cli_read_sql')
+        self.assertIn('AgentInput.output(db,session,saved,True{})', agent_command)
+        self.assertIn('command_owned_output(db,session,saved,saved,True{})', agent_input)
+        self.assertIn('case C.Inbox{session}: command_owned_output(db,session,saved,saved,True{})', command_output)
+        self.assertIn("json_type(j.value,'$.body')='text'", definition(STATUS, 'found'))
+        self.assertIn('m.recipient=' + '" ++ q(session) ++ "', record)
+        self.assertIn('AND m.body=', record)
+        self.assertIn('exposed(read,"body")', record)
+        self.assertIn('e.id=', record)
+        self.assertIn('s.native=', record)
+        self.assertIn('q(attempt)', record)
+        self.assertIn('q(native)', record)
+        self.assertIn("json_type(j.value,'$.body')='text'", cli)
+        self.assertIn("m.body=coalesce(json_extract(j.value,'$.delivery.body'),json_extract(j.value,'$.body'))", cli)
+        self.assertIn("m.recipient=coalesce(json_extract(j.value,'$.delivery.recipient'),json_extract(j.value,'$.recipient'))", cli)
+
     def test_owed_and_read_consult_read_rows_only(self):
         owed = definition(STATUS, 'owed_sql')
         read = definition(STATUS, 'read_sql')

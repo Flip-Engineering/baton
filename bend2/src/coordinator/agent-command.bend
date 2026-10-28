@@ -296,7 +296,7 @@ def execute(+db: String, +session: String, action: A.Action) -> IO(Unit):
     case A.Invalid{cause}: IO.die(Unit,2,cause ++ "\n" ++ A.help(""))
     case A.Inbox{}: do IO<Unit>:
       saved : String <- IO.try(String,Store.read(db,C.Inbox{session}))
-      AgentInput.output(db,session,saved,False{})
+      AgentInput.output(db,session,saved,True{})
     case A.Read{ids}: do IO<Unit>:
       saved : String <- ids_json(db,session,ids)
       AgentInput.output(db,session,saved,True{})
