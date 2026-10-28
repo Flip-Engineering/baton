@@ -700,13 +700,11 @@ const OPENS: Map<Of<"Lam"> | HLet, { ps: Probe[]; b: HTerm }> = new Map();
 
 const USES: Map<HTerm, UMap> = new Map();
 
-// Use maps are kept while the definition's held entries stay under this cap.
-// Past it a map is still computed, just not kept: the fold is pure, so a later
-// query recomputes the same pairs, and the kept maps are the post-order prefix
-// covering the subtrees a later query is likeliest to revisit.
-const USE_CAP = 1 << 24;
-
-let use_held = 0;
+type TermSum = { probes: number[]; jump: boolean; shape: number };
+const SUMS = new Map<HTerm, TermSum>();
+const SHAPES = new Map<string, number>();
+const HINT_INNER = new Map<HTerm, HTerm>();
+const BODY_INNER = new Map<HTerm, HTerm>();
 
 const TELES: Map<HTerm, ReturnType<typeof Bend.tele_unbind>> = new Map();
 
@@ -773,9 +771,8 @@ let LAY_KEY_NEXT = 0;
 const CYCLES: Map<Bend.Name, boolean> = new Map();
 
 const CONSTS: Map<HTerm, boolean> = new Map();
-const CONSTS_CAP = 1 << 16;
 
-const LITS = new WeakMap<HTerm, HTerm>();
+let LITS = new WeakMap<HTerm, HTerm>();
 
 const CONSTANTS = new WeakSet<HTerm>();
 
@@ -858,9 +855,10 @@ function weak_memo<K extends object, V>(m: WeakMap<K, V>, k: K, f: () => V): V {
 // TELES retains telescope type terms from definitions and fixed-point passes.
 // Reset probe indices with these caches; index 0 retains DUMMY.
 function memo_gc(): void {
-  [OPENS, USES, FOLDS, SPINES, CONSTS, TELES].forEach((m) => m.clear());
+  [OPENS, USES, FOLDS, SPINES, CONSTS, TELES, SUMS, SHAPES,
+    HINT_INNER, BODY_INNER].forEach((m) => m.clear());
   PROBES.length = 1;
-  use_held = 0;
+  LITS = new WeakMap();
 }
 
 // Probe
@@ -934,7 +932,8 @@ function term_spine(cf: Carb, tm: HTerm): Spine {
     apps.reverse();
     const tld = c.$ === "Ref" ? def_body(cf, c.k) : undefined;
     const T = tld?.$ === "Def" ? tld.T : ty_ann(h);
-    const qs = T === null ? [] : tele_unbind(cf.book, T).doms;
+    const qs = T === null ? [] : (tld?.$ === "Def"
+      ? tele_unbind(cf.book, T) : Bend.tele_unbind(cf.book, T)).doms;
     const live = apps.map((_, i) => i >= qs.length || quant_live(qs[i][0]));
     const all = apps.map((a) => a.x);
     const args = all.filter((_, i) => live[i]);
@@ -978,6 +977,66 @@ function term_kids(cf: Carb, tm: HTerm): HTerm[] {
     case "Rwt": return [t.f];
     default: return [];
   }
+}
+
+// Runtime summaries share single-child probe lists and visit each node once.
+// The shape omits erased structure; equal arms always have equal shapes and
+// arm_eq still verifies the full term before sharing code.
+function term_sum(cf: Carb, tm: HTerm): TermSum {
+  type Frame = { t: HTerm; kids: HTerm[]; next: number };
+  const open = (t: HTerm): Frame => ({ t, kids: term_kids(cf, t).map(term_force), next: 0 });
+  const root = term_force(tm);
+  const got = SUMS.get(root);
+  if (got !== undefined) return got;
+  const stack = [open(root)];
+  while (stack.length > 0) {
+    const f = stack[stack.length - 1];
+    if (f.next < f.kids.length) {
+      const child = f.kids[f.next++];
+      if (!SUMS.has(child)) stack.push(open(child));
+      continue;
+    }
+    const t = f.t;
+    const kids = f.kids.map((k) => SUMS.get(k)!);
+    let probes: number[] = t.$ === "Var" ? [t.i] : [];
+    let seen: Set<number> | null = null;
+    for (const child of kids) {
+      if (probes.length === 0) { probes = child.probes; continue; }
+      if (child.probes.length === 0 || child.probes === probes) continue;
+      if (seen === null) { seen = new Set(probes); probes = probes.slice(); }
+      for (const i of child.probes) if (!seen.has(i)) { seen.add(i); probes.push(i); }
+    }
+    const ck = call_kind(cf, t);
+    const jump = (ck !== null && !flat_call(cf, t)) || kids.some((s) => s.jump);
+    const detail = t.$ === "Ref" ? [t.k, t.b === true]
+      : t.$ === "Ctr" || t.$ === "Mat" || t.$ === "Hol" || t.$ === "ADT" ? [t.k]
+      : t.$ === "Lit" ? [t.v]
+      : t.$ === "Lam" ? [t.q?.$ ?? ""]
+      : t.$ === "Let" ? [t.q.map((q) => q.$)]
+      : t.$ === "All" ? [t.q] : [];
+    const key = JSON.stringify([t.$, ...detail, ...kids.map((k) => k.shape)]);
+    const shape = SHAPES.get(key) ?? SHAPES.size;
+    SHAPES.set(key, shape);
+    SUMS.set(t, { probes, jump, shape });
+    stack.pop();
+  }
+  return SUMS.get(root)!;
+}
+
+function arm_inner(h: HTerm, matches: boolean): HTerm {
+  const memo = matches ? BODY_INNER : HINT_INNER;
+  const path: HTerm[] = [];
+  let t = term_force(h);
+  for (;;) {
+    const got = memo.get(t);
+    if (got !== undefined) { t = got; break; }
+    if (t.$ === "Ann") { path.push(t); t = term_force(t.x); }
+    else if (t.$ === "Lam") { path.push(t); t = term_force(term_open(t).b); }
+    else if (matches && t.$ === "Mat") { path.push(t); t = term_force(t.m); }
+    else break;
+  }
+  for (const p of path) memo.set(p, t);
+  return t;
 }
 
 // Does `p` hold at a node of `t`? Each node once, told whether it sits in
@@ -1049,7 +1108,6 @@ function term_const(t: HTerm): boolean {
       stack.pop();
       if (value) CONSTANTS.add(frame.term);
       // Each completed constructor is inserted after its visited children.
-      if (CONSTS.size >= CONSTS_CAP) CONSTS.clear();
       CONSTS.set(frame.term, value);
     }
     return value;
@@ -1126,15 +1184,10 @@ function term_use(u: UMap, p: Probe): number {
 }
 
 function use_hold(tm: HTerm, out: UMap): void {
-  const held = Math.max(1, out.length >> 1);
-  if (use_held + held <= USE_CAP) {
-    USES.set(tm, out);
-    use_held += held;
-  }
+  USES.set(tm, out);
 }
 
-// The uses of each probe in a term. A map is held while the definition's held
-// entries fit the cap; see USE_CAP for the recompute fallback.
+// The unit owns its use maps until memo_gc releases its temporary terms.
 function term_uses(cb: Carb, tm: HTerm): UMap {
   const got = USES.get(tm);
   if (got !== undefined) return got;
@@ -1632,8 +1685,8 @@ function ctr_adt(fl: File, x: Of<"Ctr">,
 // A constructor's fields: the last n domains of its type, over the
 // datatype's arguments `xs` when given.
 function ctr_tail(book: Bend.Book, ctr: Bend.Ctr, xs?: HTerm[]): Dom[] {
-  const doms = tele_unbind(book, xs === undefined ? ctr.T
-    : Bend.tele_fill(book, ctr.T, xs, Bend.ctx_nil())).doms;
+  const doms = (xs === undefined ? tele_unbind(book, ctr.T)
+    : Bend.tele_unbind(book, Bend.tele_fill(book, ctr.T, xs, Bend.ctx_nil()))).doms;
   return doms.slice(doms.length - ctr.n);
 }
 
@@ -3768,16 +3821,7 @@ function arm_hint(h: HTerm): string {
       break;
     }
   }
-  let b = term_force(h);
-  for (let i = 0; i < 100000; i++) {
-    if (b.$ === "Ann") {
-      b = term_force(b.x);
-    } else if (b.$ === "Lam") {
-      b = term_force(term_open(b).b);
-    } else {
-      break;
-    }
-  }
+  const b = arm_inner(h, false);
   const sp: any = (b as any).s;
   return out + "|" + (sp !== undefined && sp.beg !== undefined
     ? sp.beg + ":" + sp.end : "?") + ":" + b.$;
@@ -3786,11 +3830,14 @@ function arm_hint(h: HTerm): string {
 function arm_eq(a: HTerm, b: HTerm): boolean {
   const ba = new Map<number, number>(), bb = new Map<number, number>();
   const fa = new Map<number, number>(), fb = new Map<number, number>();
+  const seen = new WeakMap<object, WeakMap<object, Set<number>>>();
+  const pending: (() => boolean)[] = [];
+  let bindings = 0;
   const bind = (i: number, j: number, d: number): void => {
-    ba.set(i, d); bb.set(j, d);
+    ba.set(i, d); bb.set(j, d); bindings += 1;
   };
   const unbind = (i: number, j: number): void => {
-    ba.delete(i); bb.delete(j);
+    ba.delete(i); bb.delete(j); bindings += 1;
   };
   const same_var = (i: number, j: number, d: number): boolean => {
     const xb = ba.has(i), yb = bb.has(j);
@@ -3800,19 +3847,27 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
     const yf = fb.get(j) ?? (fb.set(j, fb.size), fb.size - 1);
     return xf === yf;
   };
-  // A quantity compares by tag. A lambda's quantity is optional: absent
-  // (no annotation) is not the same term as an explicit erased binder.
   const q_eq = (qa: Bend.Quant | undefined, qb: Bend.Quant | undefined): boolean =>
     (qa === undefined ? "" : qa.$) === (qb === undefined ? "" : qb.$);
+  const pair = (u: HTerm, v: HTerm, d: number): void => {
+    pending.push(() => go(u, v, d));
+  };
   const go = (u: HTerm, v: HTerm, d: number): boolean => {
     const x = term_force(u), y = term_force(v);
-    if (x.$ !== y.$) {
-      return false;
-    }
+    if (x.$ !== y.$) return false;
+    const sx = SUMS.get(x), sy = SUMS.get(y);
+    if (sx !== undefined && sy !== undefined && sx.shape !== sy.shape) return false;
+    const epoch = bindings;
+    let ys = seen.get(x);
+    if (ys === undefined) seen.set(x, ys = new WeakMap());
+    let epochs = ys.get(y);
+    if (epochs === undefined) ys.set(y, epochs = new Set());
+    if (epochs.has(epoch)) return true;
+    // Successful pairs can be reused while the binder maps stay unchanged.
+    // Free-variable identities only gain entries during this comparison.
+    pending.push(() => { if (bindings === epoch) epochs!.add(epoch); return true; });
     switch (x.$) {
-      case "Var": {
-        return same_var(x.i, (y as Of<"Var">).i, d);
-      }
+      case "Var": return same_var(x.i, (y as Of<"Var">).i, d);
       case "Ref": {
         const yr = y as Of<"Ref">;
         return x.k === yr.k && (x.b === true) === (yr.b === true);
@@ -3822,116 +3877,106 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
         if (!q_eq(x.q, ya.q)) return false;
         const oa = term_open(x), ob = term_open(ya);
         bind(oa.ps[0].i, ob.ps[0].i, d);
-        const r = go(oa.b, ob.b, d + 1);
-        unbind(oa.ps[0].i, ob.ps[0].i);
-        return r;
+        pending.push(() => { unbind(oa.ps[0].i, ob.ps[0].i); return true; });
+        pair(oa.b, ob.b, d + 1);
+        return true;
       }
       case "Let": {
         const ya = y as Of<"Let">;
         const oa = term_open(x), ob = term_open(ya);
-        if (x.v.length !== ya.v.length) return false;
-        if (x.q.length !== ya.q.length) return false;
-        for (let i = 0; i < x.q.length; i++) {
-          if (x.q[i].$ !== ya.q[i].$) return false;
-        }
-        for (let i = 0; i < x.v.length; i++) if (!go(x.v[i], ya.v[i], d)) return false;
-        oa.ps.forEach((p, j) => bind(p.i, ob.ps[j].i, d + j));
-        const r = go(oa.b, ob.b, d + oa.ps.length);
-        oa.ps.forEach((p, j) => unbind(p.i, ob.ps[j].i));
-        return r;
+        if (x.v.length !== ya.v.length || x.q.length !== ya.q.length) return false;
+        if (x.q.some((q, i) => q.$ !== ya.q[i].$)) return false;
+        pending.push(() => {
+          oa.ps.forEach((p, j) => bind(p.i, ob.ps[j].i, d + j));
+          pending.push(() => {
+            oa.ps.forEach((p, j) => unbind(p.i, ob.ps[j].i));
+            return true;
+          });
+          pair(oa.b, ob.b, d + oa.ps.length);
+          return true;
+        });
+        for (let i = x.v.length - 1; i >= 0; i--) pair(x.v[i], ya.v[i], d);
+        return true;
       }
-      case "App": return go(x.f, (y as Of<"App">).f, d) && go(x.x, (y as Of<"App">).x, d);
+      case "App": {
+        const ya = y as Of<"App">;
+        pair(x.x, ya.x, d); pair(x.f, ya.f, d); return true;
+      }
       case "Ctr": {
         const yc = y as Of<"Ctr">;
         if (x.k !== yc.k || x.x.length !== yc.x.length) return false;
-        return x.x.every((z, i) => go(z, yc.x[i], d));
+        for (let i = x.x.length - 1; i >= 0; i--) pair(x.x[i], yc.x[i], d);
+        return true;
       }
       case "Mat": {
         const ym = y as Of<"Mat">;
-        return x.k === ym.k && go(x.h, ym.h, d) && go(x.m, ym.m, d);
+        if (x.k !== ym.k) return false;
+        pair(x.m, ym.m, d); pair(x.h, ym.h, d); return true;
       }
       case "Lit": return JSON.stringify(x.v) === JSON.stringify((y as Of<"Lit">).v);
       case "Ann": {
         const ya = y as Of<"Ann">;
-        // A repeated copy keeps the same annotation object. Comparing it
-        // with itself costs a full traversal of a type that can carry the
-        // whole continuation, and the duplicate arms dominate the compile.
-        return go(x.x, ya.x, d) && (x.T === ya.T || go(x.T, ya.T, d));
+        if (x.T !== ya.T) pair(x.T, ya.T, d);
+        pair(x.x, ya.x, d); return true;
       }
       case "Rwt": {
         const yr = y as Of<"Rwt">;
-        return go(x.e, yr.e, d) && go(x.p, yr.p, d) && go(x.f, yr.f, d);
+        pair(x.f, yr.f, d); pair(x.p, yr.p, d); pair(x.e, yr.e, d); return true;
       }
       case "Eql": {
         const ye = y as Of<"Eql">;
-        return go(x.a, ye.a, d) && go(x.b, ye.b, d) && go(x.T, ye.T, d);
+        pair(x.T, ye.T, d); pair(x.b, ye.b, d); pair(x.a, ye.a, d); return true;
       }
-      // ADT.r is the checker's remaining-constructor refinement. A shared
-      // arm body must not merge ADTs whose constructor lists differ.
       case "ADT": {
         const yd = y as Of<"ADT">;
-        return x.k === yd.k && x.x.length === yd.x.length
-          && x.r.length === yd.r.length
-          && yd.r.every((c) => x.r.includes(c))
-          && x.x.every((z, i) => go(z, yd.x[i], d));
+        if (x.k !== yd.k || x.x.length !== yd.x.length || x.r.length !== yd.r.length
+          || !yd.r.every((c) => x.r.includes(c))) return false;
+        for (let i = x.x.length - 1; i >= 0; i--) pair(x.x[i], yd.x[i], d);
+        return true;
       }
-      case "Min": { const ym = y as Of<"Min">; return go(x.a, ym.a, d) && go(x.b, ym.b, d); }
-      case "Typ": return go(x.g, (y as Of<"Typ">).g, d);
+      case "Min": {
+        const ym = y as Of<"Min">;
+        pair(x.b, ym.b, d); pair(x.a, ym.a, d); return true;
+      }
+      case "Typ": pair(x.g, (y as Of<"Typ">).g, d); return true;
       case "Qua": return x.q.$ === (y as Of<"Qua">).q.$;
       case "Hol": return x.k === (y as Of<"Hol">).k;
-      // A Sub's i is a substitution index, not a de Bruijn binder. Binding
-      // it can alias a probe or a binder with the same number, and the body
-      // cannot be renamed without rebuilding higher-order terms. Reuse is
-      // refused for an arm that carries one.
       case "Sub": return false;
       case "All": {
         const ya = y as Of<"All">;
         if (JSON.stringify(x.q) !== JSON.stringify(ya.q)) return false;
-        if (!go(x.A, ya.A, d)) return false;
-        // The synthetic binder key stays below every real index (probes are
-        // non-negative and term_force resolves the -1 cells). Keying on d
-        // aliases a probe whose index equals the comparison depth.
-        const key = -2 - d;
-        const va = Bend.Var(x.k, key), vb = Bend.Var(ya.k, key);
-        bind(key, key, d);
-        const r = go(x.B(va), ya.B(vb), d + 1);
-        unbind(key, key);
-        return r;
+        pending.push(() => {
+          const key = -2 - d;
+          const va = Bend.Var(x.k, key), vb = Bend.Var(ya.k, key);
+          bind(key, key, d);
+          pending.push(() => { unbind(key, key); return true; });
+          pair(x.B(va), ya.B(vb), d + 1);
+          return true;
+        });
+        pair(x.A, ya.A, d);
+        return true;
       }
-      case "Qnt":
-      case "Rfl":
-      case "Efq": return true;
+      case "Qnt": case "Rfl": case "Efq": return true;
       default: return false;
     }
   };
-  return go(a, b, 0);
+  pair(a, b, 0);
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    if (!next()) return false;
+  }
+  return true;
 }
 
 // The captures in the term's first-use order. A probe absent from fl.uses
 // cannot be passed as a parameter; a missing capture selects inline emission,
 // which keeps the name bound.
 function capture_order(fl: File, h: HTerm, u: UMap): [Probe, Bind][] {
-  const out: [Probe, Bind][] = [];
-  const seen = new Set<number>();
   const by_idx = new Map<number, [Probe, Bind]>();
   for (const e of fl.uses) by_idx.set(e[0].i, e);
-  const walk = (t: HTerm): void => {
-    const s = term_force(t);
-    if (s.$ === "Var") {
-      const p = s as Probe;
-      if (term_use(u, p) > 0 && !seen.has(p.i)) {
-        const e = by_idx.get(p.i);
-        if (e !== undefined) {
-          seen.add(p.i);
-          out.push(e);
-        }
-      }
-      return;
-    }
-    for (const k of term_kids(fl, s)) walk(k);
-  };
-  walk(h);
-  return out;
+  return term_sum(fl, h).probes.flatMap((i) => {
+    const entry = by_idx.get(i);
+    return entry !== undefined && use_get(u, i) > 0 ? [entry] : [];
+  });
 }
 
 // A literal word match's default continuation is the same source body at
@@ -3939,18 +3984,7 @@ function capture_order(fl: File, h: HTerm, u: UMap): [Probe, Bind][] {
 // so arm_hint puts the copies in different buckets; the innermost body span
 // is stable and only narrows the candidates, as arm_eq still decides reuse.
 function arm_body_hint(h: HTerm): string {
-  let t = term_force(h);
-  for (let i = 0; i < 100000; i++) {
-    if (t.$ === "Ann") {
-      t = term_force(t.x);
-    } else if (t.$ === "Lam") {
-      t = term_force(term_open(t).b);
-    } else if (t.$ === "Mat") {
-      t = term_force(t.m);
-    } else {
-      break;
-    }
-  }
+  const t = arm_inner(h, true);
   const sp = t.s;
   return (sp !== undefined && sp.beg !== undefined
     ? sp.beg + ":" + sp.end : "?") + ":" + t.$;
@@ -3965,10 +3999,8 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
   // A shared arm is emitted as an ordinary C helper with only its explicit
   // parameters. WL_JMP uses the register bank declared for its segment, so
   // an arm that can transfer segments must stay in its owning segment.
-  const has_segment_jump = term_any(fl, h, (node) => {
-    const call = call_kind(fl, node);
-    return call !== null && !flat_call(fl, node);
-  });
+  const summary = term_sum(fl, h);
+  const has_segment_jump = summary.jump;
   if (has_segment_jump) {
     return false;
   }
@@ -3982,7 +4014,8 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
   const hint = lit
     ? "lit|" + arm_body_hint(h) + "|" + base
     : arm_hint(h) + "|" + base;
-  const reps = fl.armHints.get(hint) ?? [];
+  const bucket = hint + "|" + summary.shape;
+  const reps = fl.armHints.get(bucket) ?? [];
   for (const rep of reps) {
     if (rep.ks.length === capKs.length + avKs.length
       && rep.caps.length === caps.length && arm_eq(rep.term, h)) {
@@ -4000,7 +4033,7 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
   const ks = [...capKs, ...avKs];
   const rec: ArmRep = { term: h, name, lay, ks, caps: caps.map(([p]) => p) };
   reps.push(rec);
-  fl.armHints.set(hint, reps);
+  fl.armHints.set(bucket, reps);
   fl.armBusy.add(name);
   const ts = ks.map(() => name_local(fl, "a"));
   const outer = { seg: fl.seg, uses: fl.uses, spares: fl.spares,
@@ -4178,6 +4211,7 @@ function compile_def(fl: File, k: Bend.Name, tld: Def): void {
     writes: diagnostic_facts?.writes.size ?? 0, lend: fl.lend.size, file_maps: { fresh: fl.fresh.size, uses: fl.uses.size,
       brwl: fl.brwl.size, cids: fl.cids.size, tabs: fl.tabs.size, spun: fl.spun.size,
       clos: fl.clos.size, lits: fl.lits.size, consts: fl.consts.size } });
+  diagnostic("term.summary", { name: k, nodes: SUMS.size, shapes: SHAPES.size });
   if (diagnostic_literals !== null) {
     diagnostic("literal.columns", { name: k, ...diagnostic_literals,
       string_column_nodes: diagnostic_columns.get(k) ?? 0 });
