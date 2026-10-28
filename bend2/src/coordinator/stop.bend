@@ -201,7 +201,7 @@ def custody_missing_sql(+session: String, +attempt: String, +detail: String) -> 
   +s = C.q(session)
   +a = C.q(attempt)
   "BEGIN IMMEDIATE;UPDATE session_stops SET outcome='custody-missing',control_error=" ++ C.q(detail) ++ " WHERE session=" ++ s ++ " AND attempt=" ++ a ++ " AND outcome IN ('requested','custody-missing');"
-  ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT st.report_id,s.id," ++ C.report_recipient("s.id") ++ ",'report',json_object('type','session-stop-custody-missing','session',s.id,'stopId',st.id,'reason',st.reason,'attempt',st.attempt,'requestedSignal',st.signal,'nativeStatus',NULL,'observationError',nullif(" ++ C.q(detail) ++ ",''),'workspace',s.workspace,'branch',s.branch,'native',s.native) FROM session_stops st JOIN sessions s ON s.id=st.session WHERE st.session=" ++ s ++ " AND st.attempt=" ++ a ++ " AND st.report_id<>'' AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL" ++ C.message_upsert() ++ ";COMMIT;"
+  ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT 'stop-custody-missing:' || lower(hex(st.id)),s.id," ++ C.report_recipient("s.id") ++ ",'report',json_object('type','session-stop-custody-missing','session',s.id,'stopId',st.id,'reason',st.reason,'attempt',st.attempt,'requestedSignal',st.signal,'nativeStatus',NULL,'observationError',nullif(" ++ C.q(detail) ++ ",''),'workspace',s.workspace,'branch',s.branch,'native',s.native) FROM session_stops st JOIN sessions s ON s.id=st.session WHERE st.session=" ++ s ++ " AND st.attempt=" ++ a ++ " AND st.report_id<>'' AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL" ++ C.message_upsert() ++ ";COMMIT;"
 
 def mark_custody_missing(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
   do IO<Unit>:
