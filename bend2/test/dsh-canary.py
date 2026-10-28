@@ -13,6 +13,7 @@ and does not inspect the request.
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,8 @@ BRIDGE = ROOT / 'bend2/scripts/dsh-worker.mjs'
 HOOKS = ROOT / 'bend2/scripts/dsh-baton-hooks.mjs'
 BRIDGE_TOOLS = ['mcp__baton-worker__' + name
                 for name in ('ask', 'commit', 'completion_request', 'inbox', 'read', 'report')]
+DSH_TOOLS = ['bash', 'list_mcp_resource_templates', 'list_mcp_resources', 'read_image',
+             'read_mcp_resource', 'working_directory']
 FIXTURE = pathlib.Path(os.environ.get('BATON2_EXE', ROOT / '.scratch/bend2/dsh-player-test'))
 DSH = os.environ.get('DSH_CLI') or shutil.which('dsh')
 
@@ -128,16 +131,6 @@ def print_stream(label, output):
         print('  ' + line)
 
 
-def objects(value):
-    if isinstance(value, dict):
-        yield value
-        for nested in value.values():
-            yield from objects(nested)
-    elif isinstance(value, list):
-        for nested in value:
-            yield from objects(nested)
-
-
 def main():
     if not FIXTURE.is_file():
         raise SystemExit(f'DSH fixture not built at {FIXTURE}')
@@ -171,14 +164,13 @@ def main():
         if composition.returncode != 0:
             print(composition.stderr, file=sys.stderr)
             raise SystemExit('canary: DSH config composition failed')
-        try:
-            composed = json.loads(composition.stdout)
-        except json.JSONDecodeError as error:
-            raise SystemExit('canary: DSH config composition was not JSON') from error
-        model_rows = [entry for entry in objects(composed) if entry.get('id') == 'agent-default-model']
-        if len(model_rows) != 1:
+        model_row = re.search(
+            r'(?ms)^- id: agent-default-model\n(?P<body>.*?)(?=^- id: |\Z)',
+            composition.stdout)
+        if model_row is None:
             raise SystemExit('canary: composed config did not contain one agent-default-model row')
-        provider = model_rows[0].get('config', {}).get('provider')
+        provider_row = re.search(r'(?m)^    provider: (\S+)\s*$', model_row.group('body'))
+        provider = provider_row.group(1) if provider_row else None
         if provider != 'deepseek-official':
             raise SystemExit('canary: provider did not compose as deepseek-official')
         real = os.environ.get('DSH_CANARY_REAL') == '1'
@@ -242,7 +234,7 @@ def main():
             print('composed-provider: ' + json.dumps(provider))
             print('composed-effort: ' + json.dumps(effort))
             print('composed-model: ' + json.dumps(request.get('model')))
-            if tool_names != sorted(['bash', 'read_image', 'working_directory'] + BRIDGE_TOOLS):
+            if tool_names != sorted(DSH_TOOLS + BRIDGE_TOOLS):
                 raise SystemExit('canary: unexpected composed tool list')
             if effort != 'max':
                 raise SystemExit('canary: reasoning effort did not reach the request')
