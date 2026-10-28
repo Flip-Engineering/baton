@@ -57,7 +57,12 @@ class QueueCcParallelTests(unittest.TestCase):
              "time.sleep(45)\n",
              str(self.state)],
             stdout=subprocess.PIPE, text=True)
-        self.addCleanup(holder.kill)
+        def stop_holder():
+            if holder.poll() is None:
+                holder.kill()
+            holder.wait()
+
+        self.addCleanup(stop_holder)
         self.addCleanup(holder.stdout.close)
         line = holder.stdout.readline()
         self.assertEqual(line.strip(), "held")

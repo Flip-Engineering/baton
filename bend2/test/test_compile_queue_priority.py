@@ -145,7 +145,7 @@ class QueuePriorityTests(unittest.TestCase):
         self.assertIsNotNone(active, "blocked request did not record its supervisor")
         fields = dict(line.split("=", 1) for line in active.read_text().splitlines() if "=" in line)
         os.kill(int(fields["pid"]), signal.SIGKILL)
-        blocked.wait(timeout=60)
+        blocked.communicate(timeout=60)
         fcntl.flock(lock, fcntl.LOCK_UN)
         waiters = self.state / "waiters" / "cc"
         self.assertTrue(list(waiters.iterdir()), "expected the killed supervisor ticket to remain")
