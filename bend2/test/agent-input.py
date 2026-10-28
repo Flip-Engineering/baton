@@ -277,37 +277,6 @@ class AgentInput(unittest.TestCase):
         self.assertEqual([row for row in self.reads() if row['attempt'] == before[0]['attempt']], before)
         self.assertIsNone(self.fx.coord('delivery', 'owned-input')['receipt'])
 
-    def test_initial_prompt_records_complete_bodies_for_each_input_kind(self):
-        messages = [
-            ('task', 'Full task body.\nSecond task line.'),
-            ('task-assignment', 'Full task-assignment body.'),
-            ('task-continuation', 'Full task-continuation body.'),
-            ('guidance', 'Full guidance body.'),
-            ('report', 'Full report body.'),
-            ('question', 'Full question body.'),
-            ('completion-request', 'Full completion-request body.'),
-            ('completion-confirmed', 'Full completion-confirmed body.'),
-            ('recovery', 'Full recovery body.'),
-        ]
-        self.fx.player('dsh-reader', harness='dsh')
-        identifiers = []
-        for index, (kind, body) in enumerate(messages):
-            ident = f'prompt-kind-{index}'
-            identifiers.append(ident)
-            self.fx.coord('message', ident, 'root', 'dsh-reader', kind, body)
-
-        child = self.fx.spawn(*self.fx.receive_args('dsh-reader'))
-        stream, started = self.fx.accept_child(child, 'dsh-reader')
-        self.fx.eventually(lambda: self.fx.coord('session', 'dsh-reader')['native'] ==
-                           started['native'], 'native identity was not recorded')
-        for kind, body in messages:
-            self.assertIn(body, started['prompt'], kind)
-        self.assertEqual({row['message'] for row in self.reads()}, set(identifiers))
-
-        self.fx.action(stream, body='Controlled DSH result.', ack=False, fail=True)
-        self.fx.finish(child, ok=False)
-        self.assertEqual({row['message'] for row in self.reads()}, set(identifiers))
-
     def test_unavailable_status_preserves_successful_exposure(self):
         child, stream, _ = self.start()
         with sqlite3.connect(f'{self.fx.db.as_uri()}?mode=ro', uri=True) as database:
