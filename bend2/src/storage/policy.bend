@@ -94,6 +94,15 @@ def ownership_reason(+cls: T.StorageClass, +expected: String, +owner: T.Owner) -
     case T.StagingSource{}: "staging-source-release-required"
     case other: owner_reason(expected, owner)
 
+def unpublished_reason(+cls: T.StorageClass, +fact: T.Presence) -> String:
+  match cls:
+    case T.StagingSourceReleased{}:
+      match fact:
+        case T.Present{detail}: detail
+        case T.Absent{}: ""
+        case T.Unknown{}: "publication-unknown"
+    case other: presence_reason(fact, "unpublished-commits", "publication-unknown")
+
 def preserve_reason(+cls: T.StorageClass, +owner: String, +facts: T.Facts) -> String:
   match facts:
     case T.Facts{o, execution, database, lease, process, dirty, unpublished, runtime_input, ref, pending_attempt}:
@@ -105,7 +114,7 @@ def preserve_reason(+cls: T.StorageClass, +owner: String, +facts: T.Facts) -> St
         presence_reason(process, "process-live", "process-unknown"),
         presence_reason(runtime_input, "runtime-input-live", "runtime-input-unknown"),
         presence_reason(dirty, "worktree-dirty", "worktree-unknown"),
-        presence_reason(unpublished, "unpublished-commits", "publication-unknown"),
+        unpublished_reason(cls, unpublished),
         presence_reason(ref, "ref-live", "ref-unknown"),
         presence_reason(pending_attempt, "pending-attempt", "attempt-unknown"),
         class_reason(cls)

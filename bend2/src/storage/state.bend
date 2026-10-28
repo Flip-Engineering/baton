@@ -557,16 +557,34 @@ def ancestor_is_unpublished(result: AncestorResult) -> Bool:
     case AncestorUnpublished{}: True{}
     case AncestorUnknown{}: False{}
 
-def staging_ref_ancestor(+path: String, +local: String, tips: List<&2,String>) -> IO(Maybe<Bool>):
+def ancestor_is_unknown(result: AncestorResult) -> Bool:
+  match result:
+    case AncestorPublished{}: False{}
+    case AncestorUnpublished{}: False{}
+    case AncestorUnknown{}: True{}
+
+def staging_ref_ancestor_one(+source_path: String, +candidate_path: String,
+                            +local: String, +tip: String) -> IO(AncestorResult):
+  do IO<AncestorResult>:
+    +source_check : G.GitOut <- Git.runGit(source_path, ["merge-base", "--is-ancestor", local, tip])
+    Bool.pick(IO(AncestorResult), ancestor_is_unknown(ancestor_answer(source_check)),
+      do IO<AncestorResult>:
+        candidate_check : G.GitOut <- Git.runGit(candidate_path, ["merge-base", "--is-ancestor", local, tip])
+        IO.pure(AncestorResult, ancestor_answer(candidate_check)),
+      IO.pure(AncestorResult, ancestor_answer(source_check)))
+
+def staging_ref_ancestor(+source_path: String, +candidate_path: String,
+                         +local: String, tips: List<&2,String>) -> IO(Maybe<Bool>):
   match tips:
     case Nil{}: IO.pure(Maybe<Bool>, Some{False{}})
     case Con{head, tail}:
-      IO.bind(G.GitOut, Maybe<Bool>,
-        Git.runGit(path, ["merge-base", "--is-ancestor", local, head]),
-        +check => Bool.pick(IO(Maybe<Bool>), ancestor_is_published(ancestor_answer(check)),
+      IO.bind(AncestorResult, Maybe<Bool>,
+        staging_ref_ancestor_one(source_path, candidate_path, local, head),
+        +check => Bool.pick(IO(Maybe<Bool>), ancestor_is_published(check),
           IO.pure(Maybe<Bool>, Some{True{}}),
-          Bool.pick(IO(Maybe<Bool>), ancestor_is_unpublished(ancestor_answer(check)),
-            staging_ref_ancestor(path, local, tail), IO.pure(Maybe<Bool>, None{}))))
+          Bool.pick(IO(Maybe<Bool>), ancestor_is_unpublished(check),
+            staging_ref_ancestor(source_path, candidate_path, local, tail),
+            IO.pure(Maybe<Bool>, None{}))))
 
 def published_ancestor_result(answer: Maybe<Bool>) -> AncestorResult:
   match answer:
@@ -574,16 +592,18 @@ def published_ancestor_result(answer: Maybe<Bool>) -> AncestorResult:
     case Some{False{}}: AncestorUnpublished{}
     case None{}: AncestorUnknown{}
 
-def published_local_refs(+path: String, values: List<&2,String>, +tips: List<&2,String>) -> IO(Maybe<Bool>):
+def published_local_refs(+source_path: String, +candidate_path: String,
+                         values: List<&2,String>, +tips: List<&2,String>) -> IO(Maybe<Bool>):
   match values:
     case Nil{}: IO.pure(Maybe<Bool>, Some{True{}})
     case Con{+head, +tail}:
-      Bool.pick(IO(Maybe<Bool>), contains_value(tips, head), published_local_refs(path, tail, tips),
+      Bool.pick(IO(Maybe<Bool>), contains_value(tips, head),
+        published_local_refs(source_path, candidate_path, tail, tips),
         IO.bind(AncestorResult, Maybe<Bool>,
-          IO.bind(Maybe<Bool>, AncestorResult, staging_ref_ancestor(path, head, tips),
+          IO.bind(Maybe<Bool>, AncestorResult, staging_ref_ancestor(source_path, candidate_path, head, tips),
             answer => IO.pure(AncestorResult, published_ancestor_result(answer))),
           +ancestor => Bool.pick(IO(Maybe<Bool>), ancestor_is_published(ancestor),
-            published_local_refs(path, tail, tips),
+            published_local_refs(source_path, candidate_path, tail, tips),
             Bool.pick(IO(Maybe<Bool>), ancestor_is_unpublished(ancestor),
               IO.pure(Maybe<Bool>, Some{False{}}), IO.pure(Maybe<Bool>, None{})))))
 
@@ -617,7 +637,8 @@ def staging_remote_result(published: Maybe<Bool>, toplevel: String, gitdir: Stri
       IO.pure(T.Presence, staging_publication_evidence(Tx.trim_nl(toplevel), gitdir, commondir,
         worklist, unreachable))
 
-def staging_remote_evidence(+path: String, remote_text: String, refs: String, +head: String, toplevel: String,
+def staging_remote_evidence(+source_path: String, +candidate_path: String,
+                            remote_text: String, refs: String, +head: String, toplevel: String,
                             gitdir: String, commondir: String, worklist: String,
                             unreachable: Maybe<String>) -> IO(T.Presence):
   +commits : List<&2,String> = field_lines(Tx.split_lines(remote_text))
@@ -625,7 +646,7 @@ def staging_remote_evidence(+path: String, remote_text: String, refs: String, +h
   Bool.pick(IO(T.Presence), String.is_empty(head),
     IO.pure(T.Presence, T.Unknown{}),
     do IO<T.Presence>:
-      published : Maybe<Bool> <- published_local_refs(path, local, commits)
+      published : Maybe<Bool> <- published_local_refs(source_path, candidate_path, local, commits)
       staging_remote_result(published, toplevel, gitdir, commondir, worklist, unreachable))
 
 # A released staging source is a checkout whose ownership release is recorded
@@ -635,17 +656,19 @@ def staging_remote_evidence(+path: String, remote_text: String, refs: String, +h
 # unreachable from local refs (including reflog-only objects), and every
 # worktree registration to point at the candidate itself. Any command failure
 # preserves the candidate.
-def staging_evidence(+path: String, +source_url: String, +candidate_url: String, remote_text: String,
+def staging_evidence(+source_path: String, +candidate_path: String,
+                     +source_url: String, +candidate_url: String, remote_text: String,
                      refs: String, head: String, toplevel: String, gitdir: String,
                      commondir: String, worklist: String, unreachable: Maybe<String>) -> IO(T.Presence):
   Bool.pick(IO(T.Presence), Bool.or(String.is_empty(source_url), String.is_empty(candidate_url)),
     IO.pure(T.Presence, T.Unknown{}),
     Bool.pick(IO(T.Presence), Bool.not(String.eq(source_url, candidate_url)),
       IO.pure(T.Presence, T.Present{"remote-identity-mismatch"}),
-      staging_remote_evidence(path, remote_text, refs, head, toplevel, gitdir, commondir, worklist,
+      staging_remote_evidence(source_path, candidate_path, remote_text, refs, head, toplevel, gitdir, commondir, worklist,
         unreachable)))
 
-def staging_finish_rest(+path: String, remote_text: String, unreachable: Maybe<String>, source_url: Maybe<String>,
+def staging_finish_rest(+source_path: String, +candidate_path: String,
+                        remote_text: String, unreachable: Maybe<String>, source_url: Maybe<String>,
                         candidate_url: Maybe<String>,
                         head: Maybe<String>, toplevel: Maybe<String>, gitdir: Maybe<String>,
                         commondir: Maybe<String>, refs: Maybe<String>, worklist: Maybe<String>) -> IO(T.Presence):
@@ -673,18 +696,20 @@ def staging_finish_rest(+path: String, remote_text: String, unreachable: Maybe<S
                               match worklist:
                                 case None{}: IO.pure(T.Presence, T.Unknown{})
                                 case Some{worklist_value}:
-                                  staging_evidence(path, source_value, candidate_value, remote_text,
+                                  staging_evidence(source_path, candidate_path,
+                                    source_value, candidate_value, remote_text,
                                     refs_value, head_value, toplevel_value, gitdir_value, commondir_value,
                                     worklist_value, unreachable)
 
-def staging_finish(+path: String, listed: Maybe<String>, unreachable: Maybe<String>, source_url: Maybe<String>,
+def staging_finish(+source_path: String, +candidate_path: String,
+                   listed: Maybe<String>, unreachable: Maybe<String>, source_url: Maybe<String>,
                    candidate_url: Maybe<String>,
                    head: Maybe<String>, toplevel: Maybe<String>, gitdir: Maybe<String>,
                    commondir: Maybe<String>, refs: Maybe<String>, worklist: Maybe<String>) -> IO(T.Presence):
   match listed:
     case None{}: IO.pure(T.Presence, T.Unknown{})
     case Some{remote_text}:
-      staging_finish_rest(path, remote_text, unreachable, source_url, candidate_url,
+      staging_finish_rest(source_path, candidate_path, remote_text, unreachable, source_url, candidate_url,
         head, toplevel, gitdir, commondir, refs, worklist)
 
 # The host walks the candidate and every descendant without following symlinks.
@@ -715,7 +740,7 @@ def staging_reads(+source: String, +path: String) -> IO(T.Presence):
     listed_git : G.RunRes <- Git.runFull(["/usr/bin/env", "git", "-C", source, "ls-remote", "origin"], ".")
     unreachable_git : G.RunRes <- Git.runFull(["/usr/bin/env", "git", "-C", path, "fsck",
       "--no-progress", "--no-reflogs", "--unreachable"], ".")
-    staging_finish(path, staging_text(listed_git), staging_text(unreachable_git),
+    staging_finish(source, path, staging_text(listed_git), staging_text(unreachable_git),
       git_text(source_url_git), git_text(candidate_url_git), git_text(head_git),
       git_text(toplevel_git), git_text(gitdir_git), git_text(commondir_git),
       git_text(refs_git), git_text(worklist_git))

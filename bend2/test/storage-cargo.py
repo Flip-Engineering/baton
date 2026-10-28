@@ -38,6 +38,8 @@ class CargoRelease(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='cargo-release-', dir=ROOT / '.scratch')
         self.addCleanup(self.temp.cleanup)
         self.root = pathlib.Path(self.temp.name)
+        self.proc = self.root / 'proc'
+        self.proc.mkdir()
         self.source = self.root / 'source'
         (self.source / 'src').mkdir(parents=True)
         (self.source / 'Cargo.toml').write_text(
@@ -60,7 +62,8 @@ fn main() {
         self.environment = dict(os.environ, CARGO_TARGET_DIR=str(self.target),
                                 CARGO_HOME=str(self.root / 'cargo-home'),
                                 CARGO_NET_OFFLINE='true', RUSTC=str(RUSTC),
-                                TMPDIR=str(self.root))
+                                TMPDIR=str(self.root),
+                                BATON_STORAGE_TEST_PROC=str(self.proc))
         self.environment.pop('CARGO_BUILD_BUILD_DIR', None)
         self.db = self.root / 'state.sqlite'
         with sqlite3.connect(self.db) as db:

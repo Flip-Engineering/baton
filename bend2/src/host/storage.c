@@ -1641,10 +1641,13 @@ static void baton_storage_uid_call(IoWork *w) {
   if (!S_ISDIR(info.st_mode)) { call->answer = strdup("own"); return; }
   int fd = baton_storage_open_dir(call->path);
   if (fd < 0) { call->answer = strdup("unknown"); return; }
+  int readable = openat(fd, ".", baton_storage_read_dir_flags());
+  close(fd);
+  if (readable < 0) { call->answer = strdup("unknown"); return; }
   char foreign[256];
   foreign[0] = 0;
-  int error = baton_storage_uid_walk(fd, geteuid(), foreign, sizeof(foreign));
-  close(fd);
+  int error = baton_storage_uid_walk(readable, geteuid(), foreign, sizeof(foreign));
+  close(readable);
   if (!error) { call->answer = strdup("own"); return; }
   if (error == EPERM) {
     char text[300];
