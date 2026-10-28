@@ -1,8 +1,8 @@
-"""The supervisor hands the acquired heavy lock to the compile watcher.
+"""The supervisor hands the acquired cc-lane lock to the compile watcher.
 
 Set BATON2_COMPILE_QUEUE_BIN to the candidate native queue. The fake
 compiler writes the completion marker and then stays alive briefly. The
-watcher must release the heavy lock when the marker appears, so an
+watcher must release the cc-lane lock when the marker appears, so an
 observer can take the lock while the command is still running. This
 fails when the descriptor the supervisor flocked never reaches the
 watcher and the lock instead survives until the supervisor exits.
@@ -71,10 +71,10 @@ class QueueEarlyReleaseTests(unittest.TestCase):
             time.sleep(0.02)
         self.fail("the compiler never wrote its completion marker")
 
-    def test_marker_releases_the_heavy_lock(self):
+    def test_marker_releases_the_cc_lane_lock(self):
         process = self.request()
         self.marker()
-        lock = (self.state / "heavy.lock").open("w")
+        lock = (self.state / "cc.lock").open("w")
         self.addCleanup(lock.close)
         acquired = False
         deadline = time.monotonic() + 5
@@ -86,7 +86,7 @@ class QueueEarlyReleaseTests(unittest.TestCase):
             except BlockingIOError:
                 time.sleep(0.05)
         self.assertTrue(acquired,
-                        "the watcher did not release the heavy lock at the completion marker")
+                        "the watcher did not release the cc-lane lock at the completion marker")
         fcntl.flock(lock, fcntl.LOCK_UN)
         stdout, stderr = process.communicate(timeout=60)
         self.assertEqual(process.returncode, 0, stdout + stderr)
