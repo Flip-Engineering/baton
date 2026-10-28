@@ -7,6 +7,7 @@ import ./store.bend as Store
 import ./delivery.bend as Delivery
 import ./stop.bend as Stop
 import ./turn.bend as Turn
+import ./receive.bend as Receive
 import ../host/sqlite.bend as DB
 import ../host/control.bend as Host
 import ../host/files.bend as Files
@@ -285,8 +286,7 @@ def resume_oldest(+db: String, +session: String, oldest: String, empty: Bool) ->
 # receiver into the same workspace. A start failure has no native birth to recover;
 # resume creates that input so the next admission starts a fresh attempt.
 def resume_input_sql(+session: String) -> String:
-  "BEGIN IMMEDIATE;INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT 'resume:' || lower(hex(e.id)),s.id,s.id,'recovery','Continue unfinished work from native attempt ' || e.id || ' in your recorded conversation and workspace.' || coalesce((SELECT ' The latest read task is ' || m.id || '.' FROM messages m WHERE m.recipient=s.id AND m.kind='task' AND " ++ C.read_sql("m") ++ " ORDER BY m.seq DESC LIMIT 1),'') || ' Review the current work before continuing. The original task input and failed turn remain recorded.' FROM executions e JOIN sessions s ON s.id=e.session WHERE s.id=" ++ C.q(session) ++ " AND e.phase='exited' AND (" ++ C.blocked_cause_sql("s.id") ++ "='provider-failure' OR e.status='start failed') AND NOT EXISTS(SELECT 1 FROM messages WHERE recipient=s.id AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient));"
-  ++ "SELECT hex(coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ " ORDER BY seq LIMIT 1),''));COMMIT;"
+  "BEGIN IMMEDIATE;INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT 'resume:' || lower(hex(e.id)),s.id,s.id,'recovery','Continue unfinished work from native attempt ' || e.id || ' in your recorded conversation and workspace.' || coalesce((SELECT ' The latest read task is ' || m.id || '.' FROM messages m WHERE m.recipient=s.id AND m.kind='task' AND " ++ C.read_sql("m") ++ " ORDER BY m.seq DESC LIMIT 1),'') || ' Review the current work before continuing. The original task input and failed turn remain recorded.' FROM executions e JOIN sessions s ON s.id=e.session WHERE s.id=" ++ C.q(session) ++ " AND e.phase='exited' AND (" ++ C.blocked_cause_sql("s.id") ++ "='provider-failure' OR e.status IN ('start failed','owner-death')) AND NOT EXISTS(SELECT 1 FROM messages WHERE recipient=" ++ C.q(session) ++ " AND kind='recovery' AND body LIKE 'Continue unfinished work from native attempt ' || e.id || '%') ORDER BY e.rowid DESC LIMIT 1;" ++ "SELECT hex(coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ " ORDER BY seq LIMIT 1),''));COMMIT;"
 
 def resume_direct_or_input(+db: String, +session: String, direct: Maybe<String>) -> IO(Unit):
   match direct:
@@ -296,11 +296,29 @@ def resume_direct_or_input(+db: String, +session: String, direct: Maybe<String>)
       +trimmed : String <- field(oldest)
       resume_oldest(db,session,trimmed,String.is_empty(trimmed))
 
+def resume_attempt_sql(+session: String) -> String:
+  "SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ "),'');"
+
+# A recorded running attempt whose retained directory exists and whose existing
+# custody check reports dead is marked with the host's owner-death result before
+# resume creates its continuation input. A missing or unreadable directory is
+# left untouched for the distinct stop-custody case.
+def resume_custody(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    directory : String <- IO.try(String,DB.Sql.query(db,resume_attempt_sql(session)))
+    +path : String = Tx.trim_nl(directory)
+    observed : Result<&1,&1,U32 & String,String> <- Files.lstat(path)
+    match observed:
+      case Fail{(code,detail)}: IO.pure(Unit,Unit{})
+      case Done{value}: do IO<Unit>:
+        dead : Bool <- Receive.custody_dead(db,path,False{})
+        Bool.pick(IO(Unit),dead,Store.record_owner_death(db,session),IO.pure(Unit,Unit{}))
 def resume_stopped(+db: String, +session: String, stopped: Bool) -> IO(Unit):
   match stopped:
     case True{}: IO.die(Unit, 2, stopped_refusal())
     case False{}:
       do IO<Unit>:
+        custody : Unit <- resume_custody(db,session)
         direct : Maybe<String> <- Turn.resume_pending(db,session)
         resume_direct_or_input(db,session,direct)
 
