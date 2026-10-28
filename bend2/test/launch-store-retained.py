@@ -17,11 +17,29 @@ import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-EXE = pathlib.Path(os.environ.get('BATON2_EXE', ROOT / '.scratch/bend2/launch-store-retained-test'))
+DEFAULT_EXE = ROOT / '.scratch/bend2/launch-store-retained-test'
+EXE = pathlib.Path(os.environ.get('BATON2_EXE', DEFAULT_EXE))
 UNWRITABLE = pathlib.Path('/proc')
 
 
 class RetainedStore(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if EXE.is_file():
+            return
+        if 'BATON2_EXE' in os.environ:
+            cls.fail(f'BATON2_EXE was supplied but is not a file: {EXE}')
+        result = subprocess.run(
+            ['sh', 'bend2/scripts/build-native.sh',
+             'bend2/test/launch-store-retained.bend',
+             '.scratch/bend2/launch-store-retained-test'],
+            cwd=ROOT, text=True, capture_output=True)
+        if result.returncode != 0:
+            cls.fail('retained-store fixture build failed:\n'
+                     + result.stdout + result.stderr)
+        if not DEFAULT_EXE.is_file():
+            cls.fail(f'queued fixture build completed without creating {DEFAULT_EXE}')
+
     def setUp(self):
         if not EXE.is_file():
             self.fail(f'retained store fixture not built at {EXE}')
