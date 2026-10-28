@@ -395,6 +395,13 @@ def queue_one(fields, key):
     return values[0]
 
 
+def queue_effective(fields, key):
+    values = fields.get(key, [])
+    require(bool(values) and bool(values[-1].strip()),
+            'Queue identity configuration must contain a non-empty effective ' + key + ' field.')
+    return values[-1]
+
+
 def queue_source_digest(root, entry):
     """Reproduce CompileQueueIdentity.source_digest for a Cgen entry."""
     root = root.resolve()
@@ -495,11 +502,18 @@ def prepare_cgen(args, result, root, generated):
     require(queue_one(meta, 'kind') == 'cgen' and queue_one(meta, 'key') == args.cgen_key
             and queue_one(meta, 'entry') == ENTRY and queue_one(meta, 'artifact_name') == 'output.c',
             'Queue metadata does not bind the requested Main Cgen input.')
-    require(queue_one(config, 'kind') == 'cgen' and queue_one(config, 'entry') == ENTRY,
+    config_kind = queue_effective(config, 'kind')
+    config_entry = queue_effective(config, 'entry')
+    config_source_root = queue_effective(config, 'source_root')
+    config_compiler = queue_effective(config, 'compiler')
+    require(config_kind == 'cgen' and config_entry == ENTRY,
             'Queue identity configuration does not bind the Main Cgen entry.')
     require(pathlib.Path(queue_one(meta, 'source_root')).is_absolute()
-            and queue_one(config, 'source_root') == queue_one(meta, 'source_root'),
+            and pathlib.Path(config_source_root).is_absolute()
+            and config_source_root == queue_one(meta, 'source_root'),
             'Queue source roots differ between identity configuration and attempt metadata.')
+    require(pathlib.Path(config_compiler).is_absolute(),
+            'Queue identity configuration compiler path is not absolute.')
     digest_value = queue_one(queue_fields(evidence_paths['source-digest']), 'digest')
     actual_source_digest, closure = queue_source_digest(root, ENTRY)
     require(digest_value == actual_source_digest, 'Completed Cgen source dependency closure differs from this checkout.')
@@ -520,6 +534,8 @@ def prepare_cgen(args, result, root, generated):
     compiler_id = toolchain.get('compiler', {})
     runtime_id = toolchain.get('runtime', {})
     manifest_id = toolchain.get('manifest', {})
+    require(config_compiler == compiler_id.get('path'),
+            'Queue identity configuration compiler differs from compiler diagnostics.')
     compiler = args.compiler.resolve()
     compiler_home = compiler.parent.parent
     manifest_path = compiler_home / 'fork-manifest.json'
@@ -608,9 +624,15 @@ def verify_cgen_origin(origin, proof):
             and queue_one(meta, 'entry') == ENTRY and queue_one(meta, 'artifact_name') == 'output.c'
             and queue_one(meta, 'source_root') == proof['origin_cgen_source_root'],
             'Retained queue metadata differs from the Cgen proof.')
-    require(queue_one(config, 'kind') == 'cgen' and queue_one(config, 'entry') == ENTRY
-            and queue_one(config, 'source_root') == proof['origin_cgen_source_root'],
+    config_kind = queue_effective(config, 'kind')
+    config_entry = queue_effective(config, 'entry')
+    config_source_root = queue_effective(config, 'source_root')
+    config_compiler = queue_effective(config, 'compiler')
+    require(config_kind == 'cgen' and config_entry == ENTRY
+            and config_source_root == proof['origin_cgen_source_root'],
             'Retained queue identity configuration differs from the Cgen proof.')
+    require(pathlib.Path(config_compiler).is_absolute(),
+            'Retained identity configuration compiler path is not absolute.')
     source_digest = queue_one(queue_fields(origin / 'cgen-source-digest'), 'digest')
     require(source_digest == proof['origin_cgen_source_digest'], 'Retained queue source digest differs.')
     diagnostics = json.loads((origin / 'cgen-compiler-diagnostics.json').read_text())
@@ -622,6 +644,8 @@ def verify_cgen_origin(origin, proof):
             and queue_attempt.get('source_digest') == 'digest=' + proof['origin_cgen_source_digest'],
             'Retained compiler diagnostics differ from the Cgen source identity.')
     toolchain = diagnostics.get('toolchain', {})
+    require(config_compiler == toolchain.get('compiler', {}).get('path'),
+            'Retained identity configuration compiler differs from compiler diagnostics.')
     manifest = json.loads((origin / 'compiler-manifest.json').read_text())
     require(toolchain.get('compiler', {}).get('sha256') == manifest.get('compiler', {}).get('sha256')
             and toolchain.get('runtime', {}).get('sha256') == manifest.get('bun', {}).get('sha256')
