@@ -18,6 +18,11 @@ import traceback
 
 ARCHIVE_SHA = '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4'
 COMPILER_ARCHIVES = {
+    '1554306bde85194bf1271ba8048d8e752a4cba81d2a3d3213282923ece91a965': {
+        'name': 'Bend 2.0.25 with compiler heap, fact and helper emission diagnostics',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
     '1531397e083ae39bcd0e7955fcd54ff4c47c4f214a765fbd4fa15fce536eed58': {
         'name': 'Bend 2.0.25 with facts-only generic units and spins specialized by erased types',
         'official_release_artifact': False,
