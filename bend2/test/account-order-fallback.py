@@ -23,6 +23,8 @@ ENTRY = pathlib.Path(os.environ.get('BATON2_ACCOUNT_ENTRY', ROOT / '.scratch/ben
 # The terminal frame the Riff conductor recorded for attempt
 # receive:riff-backlog-conductor-20261019:2181.
 CREDIT_EVENT = json.dumps({'type': 'result', 'is_error': True, 'result': 'Credit balance is too low', 'errors': []})
+# The cause the coordinator derives from CREDIT_EVENT.
+CREDIT_CAUSE = 'provider-reported usage exhaustion: Credit balance is too low'
 LIMIT_EVENT = json.dumps({'type': 'result', 'is_error': True, 'result': "You've hit your session limit", 'api_error_status': 429})
 HELPER = str(ROOT / 'bend2/test/fake-account-usage-read')
 RESET_MS = (int(time.time()) + 3 * 86400) * 1000
@@ -66,7 +68,9 @@ class AccountOrderFallback(unittest.TestCase):
     def entry(self, *arguments):
         return subprocess.run([str(self.executable), str(self.db), *arguments], capture_output=True, text=True)
 
-    def record_order(self):
+    # A credit account is launchable until its provider refuses it. Cases about the
+    # subscription accounts start with both credit accounts held by a recorded refusal.
+    def record_order(self, credit_spent=True):
         for priority, (label, funding, secret) in enumerate(ORDER, start=1):
             reference = secret if funding == 'api_key' else self.store(secret)
             completed = self.entry('account', 'record', label, 'anthropic', 'claude-code', funding, reference, '', '', '')
@@ -74,6 +78,14 @@ class AccountOrderFallback(unittest.TestCase):
             columns = [row[1] for row in self.query('PRAGMA table_info(accounts)')]
             if 'priority' in columns:
                 self.execute('UPDATE accounts SET priority=? WHERE id=?', (str(priority), label))
+        if credit_spent:
+            for label, funding, secret in ORDER:
+                if funding == 'api_key':
+                    self.credit_refused(label)
+
+    def credit_refused(self, label):
+        completed = self.entry('refusal-hold', 'leaf', label, 'spent-' + label, CREDIT_CAUSE)
+        self.assertEqual((completed.returncode, completed.stdout.strip()), (0, 'recorded'), completed.stderr)
 
     def riff_profiles(self):
         listed = 'claude-code claude-max-primary {}\nclaude-code claude-max-incognito {}\n'.format(
@@ -90,21 +102,33 @@ class AccountOrderFallback(unittest.TestCase):
     def reports(self, suffix):
         return self.query("SELECT recipient,body FROM messages WHERE id LIKE ? ORDER BY seq", ('%' + suffix,))
 
-    def test_exhausted_credit_account_moves_to_max_incognito(self):
-        self.record_order()
+    # Credit API-key launches are admitted; the provider's credit refusal is recorded
+    # as the refused account's usage hold with the provider text (#881, #1177).
+    def test_a_credit_refusal_holds_the_credit_account_and_moves_to_the_next_entry(self):
+        self.record_order(credit_spent=False)
         self.riff_profiles()
         completed = self.entry('handoff', 'leaf', 'turn-leaf', CREDIT_EVENT)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         exhausted = self.reports(':profile-exhausted') + self.reports(':account-exhausted')
         self.assertEqual((completed.stdout.strip(), exhausted), ('advanced', []),
                          'observed sequence: handoff={!r} reports={!r}'.format(completed.stdout.strip(), exhausted))
-        self.assertEqual(self.current('leaf'), 'claude-max-incognito')
-        moves = self.query("SELECT recipient,body FROM messages WHERE kind='report' AND body LIKE 'account move:%'")
+        self.assertEqual(self.current('leaf'), 'claude-credit-incognito')
+        held = self.query("SELECT state,trigger,source FROM usage_reads WHERE account='claude-credit-primary' "
+                          "AND source LIKE 'provider refusal%'")
+        self.assertEqual([row[:2] for row in held], [('read', 'provider-refusal:turn-leaf')])
+        self.assertIn('Credit balance is too low', held[0][2])
+        moves = self.query("SELECT recipient,body FROM messages WHERE kind='report' AND body LIKE 'account move:%' ORDER BY seq")
         self.assertIn('root', [recipient for recipient, body in moves])
-        body = moves[0][1]
-        for text in ('from claude-credit-primary to claude-max-incognito', 'Credit balance is too low',
-                     'claude-credit-incognito not launchable: promotional-credit guard is false'):
-            self.assertIn(text, body)
+        for text in ('from claude-credit-primary to claude-credit-incognito', 'Credit balance is too low'):
+            self.assertIn(text, moves[0][1])
+        completed = self.entry('handoff', 'leaf', 'turn-leaf-2', CREDIT_EVENT)
+        self.assertEqual((completed.returncode, completed.stdout.strip()), (0, 'advanced'), completed.stderr)
+        self.assertEqual(self.current('leaf'), 'claude-max-incognito')
+        later = [body for recipient, body in self.query(
+            "SELECT recipient,body FROM messages WHERE kind='report' AND body LIKE 'account move:%' ORDER BY seq")
+            if 'to claude-max-incognito' in body]
+        self.assertIn('1 claude-credit-primary held by live read', later[0])
+        self.assertIn('provider refusal of attempt turn-leaf: ' + CREDIT_CAUSE, later[0])
 
     def windows(self, store, document):
         (pathlib.Path(self.store(store)) / 'usage-windows.json').write_text(document)
@@ -160,7 +184,7 @@ class AccountOrderFallback(unittest.TestCase):
         self.assertEqual(self.current('leaf'), 'claude-max-incognito')
         holds = self.query("SELECT recipient,body FROM messages WHERE kind='report' AND body LIKE 'account order held:%'")
         self.assertIn('root', [recipient for recipient, body in holds])
-        for text in ('2 claude-credit-incognito not launchable: promotional-credit guard is false',
+        for text in ('1 claude-credit-primary held by live read', '2 claude-credit-incognito held by live read',
                      '3 claude-max-incognito refused', '4 claude-max-primary held by live read'):
             self.assertIn(text, holds[0][1])
         self.assertEqual(self.reports(':route-unavailable') + self.reports(':profile-exhausted') + self.reports(':account-exhausted'), [])
@@ -208,6 +232,7 @@ class AccountOrderFallback(unittest.TestCase):
         if incognito_last:
             self.execute("UPDATE accounts SET priority='1' WHERE id='claude-credit-normal'")
         self.riff_profiles()
+        self.credit_refused('claude-credit-incognito')
         helper = self.directory / 'claude-reader'
         helper.write_text('#!/bin/sh\nexec {} --fixture-usage-read "$@"\n'.format(shlex.quote(str(ENTRY))))
         helper.chmod(0o755)

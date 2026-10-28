@@ -80,7 +80,9 @@ sh bend2/scripts/build-native.sh bend2/harness/api-key-exec.bend .scratch/bend2/
 sh bend2/scripts/build-native.sh bend2/test/api-key-spec.bend .scratch/bend2/api-key-spec
 BATON2_API_KEY_SPEC="$root/.scratch/bend2/api-key-spec" "$PYTHON3" bend2/test/api-key-spec.py
 sh bend2/scripts/build-native.sh bend2/test/account-credits-entry.bend .scratch/bend2/account-credits-entry
-BATON2_ACCOUNT_ENTRY="$root/.scratch/bend2/account-credits-entry" "$PYTHON3" bend2/test/account-credits-focused.py
+BATON2_ACCOUNT_ENTRY="$root/.scratch/bend2/account-credits-entry" BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" "$PYTHON3" bend2/test/account-credits-focused.py
+sh bend2/scripts/build-native.sh bend2/test/account-order-entry.bend .scratch/bend2/account-order-entry
+BATON2_ACCOUNT_ENTRY="$root/.scratch/bend2/account-order-entry" "$PYTHON3" bend2/test/account-order-fallback.py
 sh bend2/scripts/build-native.sh bend2/harness/claude-credit-observe.bend .scratch/bend2/claude-credit-observe
 BATON2_CREDIT_OBSERVE="$root/.scratch/bend2/claude-credit-observe" "$PYTHON3" bend2/test/claude-credit-observe.py
 sh bend2/scripts/build-native.sh bend2/harness/usage-read.bend .scratch/bend2/usage-read
@@ -90,6 +92,9 @@ sh bend2/scripts/build-native.sh bend2/test/zai-quota.bend .scratch/bend2/zai-qu
 .scratch/bend2/zai-quota-test
 sh bend2/scripts/build-native.sh bend2/test/codex-rate-limits.bend .scratch/bend2/codex-rate-limits-test
 .scratch/bend2/codex-rate-limits-test
+sh bend2/scripts/build-native.sh bend2/test/deepseek-usage.bend .scratch/bend2/deepseek-usage-test
+rm -f .scratch/bend2/deepseek-usage.db
+.scratch/bend2/deepseek-usage-test .scratch/bend2/deepseek-usage.db
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-store.bend .scratch/bend2/usage-windows-store-test
 rm -f .scratch/bend2/usage-windows-store.db
 .scratch/bend2/usage-windows-store-test .scratch/bend2/usage-windows-store.db
@@ -99,6 +104,14 @@ rm -f .scratch/bend2/usage-hold-error-text.db
 sh bend2/scripts/build-native.sh bend2/test/usage-live-reads.bend .scratch/bend2/usage-live-reads-test
 rm -f .scratch/bend2/usage-live-reads.db .scratch/bend2/usage-live-reads.db.answer
 .scratch/bend2/usage-live-reads-test .scratch/bend2/usage-live-reads.db bend2/test/fake-usage-read
+# Every case named in the fixture's regression dispatch runs on its own database.
+usage_live_cases=$(sed -n '/^def regression(/,/^    case _:/s/^    case "\([a-z-]*\)": .*/\1/p' bend2/test/usage-live-reads.bend)
+[ -n "$usage_live_cases" ] || { echo 'bend2/test/usage-live-reads.bend names no regression case' >&2; exit 1; }
+for usage_live_case in $usage_live_cases; do
+  rm -rf .scratch/bend2/usage-live-reads-case.db .scratch/bend2/usage-live-reads-case.db.answer \
+    .scratch/bend2/usage-live-reads-case.db.wake-complete .scratch/bend2/usage-live-reads-case.db.serial
+  .scratch/bend2/usage-live-reads-test --case "$usage_live_case" .scratch/bend2/usage-live-reads-case.db bend2/test/fake-usage-read
+done
 sh bend2/scripts/build-native.sh bend2/test/clear-stop-quota.bend .scratch/bend2/clear-stop-quota-test
 clear_stop_quota_db=$(mktemp "$root/.scratch/bend2/clear-stop-quota.XXXXXXXX")
 rm -f "$clear_stop_quota_db"
