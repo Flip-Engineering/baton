@@ -56,11 +56,16 @@ A subscription account binds the credential directory the harness reads, through
 the existing `CODEX_HOME` or `CLAUDE_CONFIG_DIR` binding.
 
 An Anthropic API-key launch passes through `credit_launch_gate` in
-`bend2/src/coordinator/accounts.bend`. The operator admits these launches
-(ruling under #881, recorded in #1177). The gate records a `credit_authorizations`
-row for the attempt and returns the packaged `api-key-exec` helper with the
-account secret reference. No retained balance, expiry or organization reading
-decides the launch, because no endpoint reports the remaining credit balance.
+`bend2/src/coordinator/accounts.bend`. The gate first reserves the attempt with
+`credit_reserve_for` (see [Request-level reservation](#request-level-reservation)).
+A refused reservation returns `Anthropic API-key launch refused by the
+promotional-credit reservation (REASON)` and starts no launch. An admitted
+reservation is followed by one `credit_authorizations` row. That row is written
+only from the organization's newest promotional-credit observation when it is
+reported, names a grant cycle and a balance, has unit `USD` and has a 13-digit
+expiry later than the database clock, and only when the attempt holds a
+`reserved` row for the same account, organization and grant cycle. The gate then
+returns the packaged `api-key-exec` helper with the account secret reference.
 The helper reads `BATON_ATTEMPT_DIRECTORY` and `BATON_DATABASE`, which the
 retained launch exports, and consumes that attempt's authorization with one
 guarded `UPDATE`: only `changes()=1` admits the launch. A consumed row refuses
@@ -70,8 +75,8 @@ guarded `UPDATE`: only `changes()=1` admits the launch. A consumed row refuses
 The SQLite busy handler in `bend2/src/host/sqlite.c` waits at most 3000 retries
 of 10ms for one lock and then returns `SQLITE_BUSY` to the caller.
 
-A failed authorization insert, or a missing resolver, returns a refusal
-sentence; the attempt is not started and its input stays owed. Subscription
+A refused reservation, an authorization that inserts no row, or a missing
+resolver returns a refusal sentence; the attempt is not started and its input stays owed. Subscription
 routes and other harnesses keep their existing bindings.
 
 The hold signal for a credit account is the provider's own refusal ("Your credit
@@ -79,7 +84,8 @@ balance is too low to access the Anthropic API."). `handoff_with` records that
 refusal as a `usage_reads` row of the refused account: a readable read with one
 exhausted `balance` window, whose source names the refused attempt and carries
 the provider text. The account is then held like any account an exhausted read
-holds, and the account order moves to the next entry. The usage-read helper
+holds, and the account order moves to the next entry. The refusal records the
+hold only; a launch is admitted only by an admitted reservation. The usage-read helper
 answers unreadable for a credit account, so no live read releases this hold.
 
 ## Request-level reservation
@@ -106,9 +112,12 @@ named reason when the route is not the Anthropic `claude-code` `api_key` route,
 the organization is unverified, the observation is absent or unavailable, the
 grant cycle is empty, the cap period is empty, the expiry is absent, malformed
 or past, reported balances conflict for the grant cycle, the unit is not `USD`,
-an amount is not a canonical decimal, an active reservation exists, the grant or
-monthly spend exceeds the `$200` ceiling, the balance is zero, the ceiling is
-spent, or the lower bound is zero.
+or an amount is not a canonical decimal. It refuses `monthlyCapExhausted` when the
+monthly spend has reached the `$200` ceiling, `grantCapExhausted` when the grant
+spend has reached it, `promotionalCreditExhausted` when the grant spend has
+reached the reported balance (a reported `0.00` balance included), and
+`creditChargeExceedsBound` when a supplied request charge exceeds the smaller
+unspent amount.
 
 The observed expiry text is preserved exactly. Admission requires an exact
 13-digit epoch millisecond boundary. A date-only or otherwise unverified expiry
@@ -125,11 +134,13 @@ ceilings: `min(balance, 200 - grant spend, 200 - monthly spend)`. Grant spend
 sums the reservations for the same grant cycle. Monthly spend sums the
 reservations for the same cap period and uses the larger of that ledger and the
 reconciled provider external spend. `credit_reserve_bounded_for` reserves a
-supplied request charge instead of the whole bound. The active reservation
-serializes requests, so a second request cannot reserve until the first settles.
-`credit_reservations_active` is a unique index on the organization, grant cycle
-and cap period for rows in state `reserved`. A repeated request returns its
-recorded row and does not reserve again.
+supplied request charge instead of the whole bound. A `reserved` row counts its
+maximum against the grant and both ceilings until it settles. A launch reserves
+the whole remaining amount, so a second launch for the same organization is
+refused until the first settles. The ledger is keyed by organization: every
+account of one verified organization shares the organization's grant and its
+`$200` ceiling, so each account stays within `$200` for the cap period. A
+repeated request returns its recorded row and does not reserve again.
 
 `credit_settle_for` replaces the bound with the actual cost when one is
 reported. The turn and receive completion paths pass the terminal Claude result
@@ -143,14 +154,14 @@ state `failed`; `account reconcile` settles that row with the provider's actual
 cost later. `account import-spend` records the Admin cost report's numeric USD
 amount for the organization and cap period.
 
-The launch gate does not call the reservation ledger. The ledger functions
-above (`credit_reserve_for`, `credit_reserve_bounded_for`, `credit_settle_for`)
-and the request pricing (`credit_request_facts_for`, `credit_request_price`)
-have no production caller that creates a reservation; completion settlement
-finds no reservation for a launch.
+`credit_launch_gate` is the production caller of `credit_reserve_for`, and the
+completion paths settle the launch reservation through `credit_settle_for`.
+`credit_reserve_bounded_for` and the request pricing (`credit_request_facts_for`,
+`credit_request_price`) have no production caller.
 
-The provider enforces the promotional balance on each API request. A retained
-launch can contain more than one provider request.
+A retained launch can contain more than one provider request. Baton decides
+admission once, before the launch starts. The provider enforces the
+promotional balance on each API request, and its refusal records the hold.
 
 ## Funded credit observations
 
@@ -240,9 +251,11 @@ configuration.
 
 - No balance is synthesized from model output, and subscription quota is never
   read as API credit.
-- An API-key credit launch is admitted without a retained balance decision; the
-  provider's credit refusal holds the account. Subscription launches keep the
-  selection and fallback rules in the sections above.
+- An API-key credit launch is admitted only by an admitted reservation against
+  usable promotional credit; the provider's credit refusal records the account's
+  hold. Baton takes no top-up, purchase or billing action. Subscription OAuth
+  quota and promotional API credit remain separate routes, and subscription
+  launches keep the selection and fallback rules in the sections above.
 - Linking a plan to a Console organization, accepting program terms, purchasing
   credits and changing billing settings remain operator setup actions.
 - The observed Muse wording `Subscription quota exhausted` classifies as
@@ -266,11 +279,15 @@ binding for both funding routes, the account-binding fallback and the selection
 rule.
 
 `bend2/test/account-credits-focused.py` drives the compiled focused entry
-through the reservation guard: the lower-bound reserve, one-active
-serialization, provider-spend reconciliation, conflicting readings, non-USD and
-expiry refusal, missing-cost settlement, duplicate request idempotence, the
-qualified binding and the held launch, missing and stale observations, and
-process-failure settlement. `bend2/test/api-key-exec.test.mjs` covers the
+through the reservation guard and the launch gate: the lower-bound reserve, the
+refusal of a second request while a reservation holds the ceiling, a request
+charge above the unspent amount, provider spend at the ceiling,
+provider-spend reconciliation, conflicting readings, non-USD and expiry refusal,
+missing-cost settlement, duplicate request idempotence, the gate's binding for
+an admitted reservation, its named refusal for unverified, unobserved, zero,
+expired, unavailable, malformed, empty and date-only funding, two accounts of
+one organization sharing the ceiling, authorization only behind an admitted
+reservation, and process-failure settlement. `bend2/test/api-key-exec.test.mjs` covers the
 helper's credential boundary and one-use authorization. The focused and helper
 fixtures are wired into `bend2/scripts/check-native.sh`.
 
