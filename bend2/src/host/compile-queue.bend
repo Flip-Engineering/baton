@@ -953,8 +953,8 @@ def peak_record(+attempt: String, +peak: U32) -> IO(Unit):
       +keydir : String <- IO.pure(String,field(meta,"keydir"))
       +old_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(keydir ++ "/peak")
       +old_text : String <- IO.pure(String,peak_text_result(old_result))
-      +old = status_number(field(old_text,"peak_kb"))
-      Bool.pick(IO(Unit),U32.is_gt(peak,old),
+      +old_peak = status_number(field(old_text,"peak_kb"))
+      Bool.pick(IO(Unit),U32.is_gt(peak,old_peak),
         do IO<Unit>:
           ignored : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.write_text(
             keydir ++ "/peak","peak_kb=" ++ U32.show(peak) ++ "\n")
