@@ -5,6 +5,7 @@ import ../coordinator/message-status.bend as Status
 import ../host/sqlite.bend as DB
 import ../host/process.bend as P
 import ../host/text.bend as Text
+import ../host/files.bend as Files
 import ../git/text.bend as Tx
 
 import ./../coordinator/frame-span.bend as Frame
@@ -136,6 +137,39 @@ def background_after(+db: String, decoded: Frame.FrameDecoded, previous: String,
 def background_live(state: String) -> Bool:
   String.eq(state,"1")
 
+# The latest task list in the retained stdout, read from the file so that an
+# observer which did not see the earlier frames (a recovery observer replaying
+# from its checkpoint) closes on the native's current list and not on a list it
+# passed on the way. The result is '0' when the list names no task, '1' when it
+# names tasks, 'none' when no list was ever written and '?' when the file or its
+# last list cannot be read.
+def spool_background_sql() -> String:
+  "WITH s(v) AS (SELECT replace(?1,'\"subtype\":\"background_tasks_changed\"',char(1))), "
+  ++ "t(tail) AS (SELECT replace(v,rtrim(v,replace(v,char(1),'')),'') FROM s), "
+  ++ "f(value) AS (SELECT '{\"type\":\"system\",\"subtype\":\"background_tasks_changed\"' || substr(tail,1,instr(tail || char(10),char(10))-1) AS value FROM t) "
+  ++ "SELECT CASE WHEN instr((SELECT v FROM s),char(1))=0 THEN 'none' WHEN json_valid(value) THEN CASE WHEN coalesce(json_array_length(json_extract(value,'$.tasks')),0)>0 THEN '1' ELSE '0' END ELSE '?' END FROM f;"
+
+def spool_background_text(read: Result<&1,&1,U32 & String,String>) -> String:
+  match read:
+    case Fail{error}: "?"
+    case Done{text}: Tx.trim_nl(text)
+
+def spool_background_sized(+db: String, +spool: String, sized: Result<&1,&1,U32 & String,U32>) -> IO(String):
+  match sized:
+    case Fail{error}: IO.pure(String,"?")
+    case Done{size}: do IO<String>:
+      read : Result<&1,&1,U32 & String,String> <- DB.Sql.query_span(db,spool,"0",U32.show(size),spool_background_sql())
+      IO.pure(String,spool_background_text(read))
+
+def spool_background(+db: String, +spool: String) -> IO(String):
+  do IO<String>:
+    sized : Result<&1,&1,U32 & String,U32> <- Files.Files.size(spool)
+    spool_background_sized(db,spool,sized)
+
+# Stdin closes only when the stdout file agrees with the observer's state.
+def background_clear(state: String) -> Bool:
+  Bool.or(String.eq(state,"0"),String.eq(state,"none"))
+
 # Forwards every owed message while stdin is open; a closed stdin forwards none.
 @unsafe
 def forward_all(+db: String, +player: String, +handle: U32, +attempt: String, +cursor: String) -> IO(String):
@@ -144,13 +178,19 @@ def forward_all(+db: String, +player: String, +handle: U32, +attempt: String, +c
     +next : String <- pending_live(db,player,handle,attempt,cursor,closed)
     Bool.pick(IO(String),String.eq(next,cursor),IO.pure(String,cursor),forward_all(db,player,handle,attempt,next))
 
-# Monitor observers preserve input ownership and never close stdin.
-def close_open(+handle: U32, monitor: Bool) -> IO(Unit):
+def close_confirmed(+db: String, +spool: String, +handle: U32) -> IO(Unit):
+  do IO<Unit>:
+    state : String <- spool_background(db,spool)
+    Bool.pick(IO(Unit),background_clear(state),IO.try(Unit,P.ProcessChild.close_stdin(handle)),IO.pure(Unit,Unit{}))
+
+# Monitor observers preserve input ownership and never close stdin. Other
+# observers close an open stdin once the stdout file's latest task list is empty.
+def close_open(+db: String, +spool: String, +handle: U32, monitor: Bool) -> IO(Unit):
   match monitor:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
       closed : U32 <- IO.try(U32,P.ProcessChild.input_closed(handle))
-      Bool.pick(IO(Unit),U32.is_eq(closed,0),IO.try(Unit,P.ProcessChild.close_stdin(handle)),IO.pure(Unit,Unit{}))
+      Bool.pick(IO(Unit),U32.is_eq(closed,0),close_confirmed(db,spool,handle),IO.pure(Unit,Unit{}))
 
 def continued_plain(db: String, player: String, +handle: U32, +attempt: String, cursor: String, ended: Bool, monitor: Bool) -> IO(String):
   match ended:
@@ -163,12 +203,12 @@ def continued_plain(db: String, player: String, +handle: U32, +attempt: String, 
       closed : U32 <- IO.try(U32,P.ProcessChild.input_closed(handle))
       pending_live(db,player,handle,attempt,cursor,closed)
 
-def continued(db: String, player: String, +handle: U32, +attempt: String, +cursor: String, ended: Bool, mode: String, monitor: Bool) -> IO(String):
+def continued(db: String, player: String, +handle: U32, +attempt: String, +cursor: String, +spool: String, ended: Bool, mode: String, monitor: Bool) -> IO(String):
   match mode:
     case "hold": forward_all(db,player,handle,attempt,cursor)
     case "drain": do IO<String>:
       +drained : String <- forward_all(db,player,handle,attempt,cursor)
-      shut : Unit <- close_open(handle,monitor)
+      shut : Unit <- close_open(db,spool,handle,monitor)
       IO.pure(String,drained)
     case other: continued_plain(db,player,handle,attempt,cursor,ended,monitor)
 
@@ -192,25 +232,25 @@ def terminal_sql(+value: String) -> String:
 def terminal_span_sql(+value: String) -> String:
   "SELECT CASE WHEN " ++ C.terminal_span(value) ++ " THEN 1 ELSE 0 END;"
 
-def observe_text(+db: String, +player: String, handle: U32, +attempt: String, +line: String, +cursor: String, mode: String, monitor: Bool) -> IO(String):
+def observe_text(+db: String, +player: String, handle: U32, +attempt: String, +line: String, +cursor: String, +spool: String, mode: String, monitor: Bool) -> IO(String):
   do IO<String>:
     ended : String <- IO.try(String,DB.Sql.query(db,terminal_sql(line)))
-    continued(db,player,handle,attempt,cursor,String.eq(ended,"1\n"),mode,monitor)
+    continued(db,player,handle,attempt,cursor,spool,String.eq(ended,"1\n"),mode,monitor)
 
 def observe_span(+db: String, +player: String, handle: U32, +attempt: String, +spool: String, +offset: String, +length: String, +cursor: String, mode: String, monitor: Bool) -> IO(String):
   do IO<String>:
     ended : String <- IO.try(String,DB.Sql.query_span(db,spool,offset,length,terminal_span_sql("?1")))
-    continued(db,player,handle,attempt,cursor,String.eq(ended,"1\n"),mode,monitor)
+    continued(db,player,handle,attempt,cursor,spool,String.eq(ended,"1\n"),mode,monitor)
 
-def observe_decoded(+db: String, +player: String, handle: U32, +attempt: String, decoded: Frame.FrameDecoded, cursor: String, mode: String, monitor: Bool) -> IO(String):
+def observe_decoded(+db: String, +player: String, handle: U32, +attempt: String, decoded: Frame.FrameDecoded, cursor: String, +stdout: String, mode: String, monitor: Bool) -> IO(String):
   match decoded:
-    case Frame.TextFrame{line}: observe_text(db,player,handle,attempt,line,cursor,mode,monitor)
+    case Frame.TextFrame{line}: observe_text(db,player,handle,attempt,line,cursor,stdout,mode,monitor)
     case Frame.SpanFrame{spool,offset,length}: observe_span(db,player,handle,attempt,spool,offset,length,cursor,mode,monitor)
     case Frame.InvalidFrame{line}: IO.pure(String,cursor)
 
 # Native responses remain in the observed stream. Terminal frames close stdin
 # for the process owner; monitor observers preserve input ownership.
-def observe(+db: String, +player: String, handle: U32, +attempt: String, decoded: Frame.FrameDecoded, +line: String, cursor: String, enabled: Bool, mode: String, monitor: Bool) -> IO(String):
+def observe(+db: String, +player: String, handle: U32, +attempt: String, decoded: Frame.FrameDecoded, +line: String, cursor: String, +stdout: String, enabled: Bool, mode: String, monitor: Bool) -> IO(String):
   match enabled:
     case False{}: IO.pure(String,cursor)
-    case True{}: observe_decoded(db,player,handle,attempt,decoded,cursor,mode,monitor)
+    case True{}: observe_decoded(db,player,handle,attempt,decoded,cursor,stdout,mode,monitor)

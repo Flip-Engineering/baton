@@ -185,6 +185,43 @@ class HookAndForwardOverlap(ReadRows):
         self.assertEqual([row[4] for row in self.rows()], ['witness-1'])
 
 
+class StdoutTaskList(unittest.TestCase):
+    """The task list read from the retained stdout file decides whether a replaying observer may close."""
+
+    def latest(self, *lines):
+        sql = evaluate('spool_background_sql', {})
+        text = ''.join(line + '\n' for line in lines)
+        return self.db.execute(sql, {'1': text}).fetchone()[0]
+
+    def setUp(self):
+        self.db = sqlite3.connect(':memory:')
+
+    def test_a_file_whose_latest_list_is_empty_reports_none_running(self):
+        self.assertEqual(self.latest(FRAMES['init'], FRAMES['tasks'], FRAMES['result'], FRAMES['empty']), '0')
+
+    def test_a_list_that_replaced_an_empty_one_keeps_stdin_open(self):
+        # The state a replaying observer holds at the empty frame is not the file's latest list.
+        self.assertEqual(self.latest(FRAMES['tasks'], FRAMES['empty'], FRAMES['tasks']), '1')
+
+    def test_the_latest_of_several_lists_wins_in_either_direction(self):
+        self.assertEqual(self.latest(FRAMES['empty'], FRAMES['tasks']), '1')
+        self.assertEqual(self.latest(FRAMES['tasks'], FRAMES['empty']), '0')
+
+    def test_a_file_with_no_list_reports_none(self):
+        self.assertEqual(self.latest(FRAMES['init'], FRAMES['result']), 'none')
+
+    def test_a_truncated_last_list_is_unreadable(self):
+        self.assertEqual(self.latest(FRAMES['empty'], FRAMES['tasks'][:60]), '?')
+
+    def test_a_list_name_quoted_inside_a_string_is_not_a_list(self):
+        quoted = json.dumps({'type': 'assistant', 'text': '"subtype":"background_tasks_changed","tasks":[]'})
+        self.assertEqual(self.latest(FRAMES['tasks'], quoted), '1')
+
+    def test_an_empty_file_is_not_a_list(self):
+        sql = evaluate('spool_background_sql', {})
+        self.assertEqual(self.db.execute(sql, {'1': ''}).fetchone()[0], 'none')
+
+
 class BackgroundState(unittest.TestCase):
     def state(self, frame):
         sql = evaluate('background_sql', {'value': "'" + frame.replace("'", "''") + "'"})
