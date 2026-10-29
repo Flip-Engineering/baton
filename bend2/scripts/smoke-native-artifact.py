@@ -225,7 +225,7 @@ def extract(archive, manifest_path, destination):
                     'Staged ' + alias_name + ' alias is not an executable regular file')
             require(archive_digest(alias) == archive_digest(installed),
                     'Staged ' + alias_name + ' alias differs from its binary')
-        else:
+        if not alias_name:
             require(record.get('alias') is None, 'Unexpected binary alias in the archive')
         if role == 'full-cli':
             full = record
