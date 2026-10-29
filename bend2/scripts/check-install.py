@@ -223,6 +223,10 @@ def verify_binaries(prefix, manifest, checksums):
         checked = {'role': record['role'], 'path': layout['path'],
                    'sha256': digest, 'source': source,
                    'entry': layout['entry'], 'build_mode': record['build_mode']}
+        if record.get('alias') is not None:
+            checked['alias'] = record['alias']
+        if aliases:
+            checked['aliases'] = aliases
         if layout.get('wrapper'):
             if record.get('retained_c_sha256'):
                 checked['retained_c_sha256'] = record['retained_c_sha256']

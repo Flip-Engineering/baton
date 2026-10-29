@@ -518,7 +518,7 @@ class ReceiverLayout(unittest.TestCase):
         alias = prefix / 'bin/baton-full'
         alias.write_bytes(b'changed\n')
         alias.chmod(0o755)
-        with self.assertRaisesRegex(RuntimeError, 'full-cli alias differs'):
+        with self.assertRaisesRegex(RuntimeError, 'full-cli alias bin/baton-full differs'):
             CHECK.verify_binaries(prefix, manifest, CHECK.verify_checksums(prefix))
 
     def test_installed_check_refuses_missing_recovery_helper(self):
