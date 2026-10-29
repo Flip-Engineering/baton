@@ -23,6 +23,18 @@ COMPILER_ARCHIVES = {
         'official_release_artifact': False,
         'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
     },
+    'b096466b3b849234d3393ba9c726f78121f31762dc4e5379fe886e9b61b75590': {
+        'name': 'Bend 2.0.25 with header-read unit identities, worker reuse and checked-store cleanup',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': 'acaae6ef6c0348751a38634223f3946fa6a874b2',
+        'source_tree': 'b906600c4cf4d741fa881e6fe506329a3cba3149',
+        'source_lock_sha256': '477af3f2ef97c6a8f70864ea8ada1f8bc8dd4ff8a95ebda2269215e99d59f603',
+        'source_manifest_sha256': 'e2a0a259c2e3c58b3b964ebeb165ca89b1896dc8df73e3518adf0c12b6a881aa',
+        'source_metadata_sha256': 'ee9326dd6e59e37cbfe9ebc4d5829b4737196d38de38f1d453f702fcee13f948',
+        'source_input_count': 84,
+    },
     '2b272454ec56a3d47f6957d8ad28da7d946dce470747e8bde5d5ff274c48e957': {
         'name': 'Bend 2.0.25 with compiler worker reuse and checked-store cleanup',
         'official_release_artifact': False,
