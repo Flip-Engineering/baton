@@ -28,9 +28,17 @@ class StallSilent(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.directory = pathlib.Path(self.temp.name)
         self.db = self.directory / 'state.db'
+        self.addCleanup(self.shutdown_owner)
         self.run_entry('init')
         self.rows('INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) '
                   "VALUES('root',NULL,'omp','fixture','low','native-root','')")
+
+    def shutdown_owner(self):
+        if self.db.exists():
+            result = subprocess.run([BINARY, '--instance-shutdown', str(self.db)],
+                                    capture_output=True, text=True,
+                                    env=dict(os.environ, HOME=str(self.directory)))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def run_entry(self, mode):
         result = subprocess.run([BINARY, str(self.db), mode], capture_output=True, text=True,
