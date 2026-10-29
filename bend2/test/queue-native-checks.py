@@ -20,6 +20,96 @@ ADAPTER = Path(os.environ.get(
 EXEC = ROOT / '.github/scripts/compile-cgen-exec.py'
 
 
+class CheckEntryTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='queued-entry-check-')
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.state = self.root / 'shared-state'
+        self.state.mkdir()
+        self.run = self.root / 'runs'
+        self.calls = self.root / 'queue-calls.jsonl'
+        self.compiler_called = self.root / 'compiler-called'
+        self.compiler = self.root / 'selected-compiler'
+        self.compiler.write_text('#!/bin/sh\ntouch "' + str(self.compiler_called) + '"\nexit 31\n')
+        self.compiler.chmod(0o755)
+        self.client = self.root / 'shared-queue'
+        self.client.write_text(
+            '#!/usr/bin/env python3\n'
+            'import json, os, sys\n'
+            'with open(os.environ["FIXTURE_QUEUE_CALLS"], "a") as stream:\n'
+            '    stream.write(json.dumps(sys.argv[1:]) + "\\n")\n'
+            'if sys.argv[2] == "key":\n'
+            '    print("a" * 64)\n'
+            'else:\n'
+            '    raise SystemExit(int(os.environ.get("FIXTURE_CHECK_EXIT", "0")))\n')
+        self.client.chmod(0o755)
+        self.environment = dict(os.environ)
+        for name in ('BATON2_NATIVE_QUEUE', 'BATON2_NATIVE_QUEUE_DRIVER'):
+            self.environment.pop(name, None)
+        self.environment.update(
+            BEND=str(self.compiler), BATON2_COMPILE_QUEUE_BIN=str(self.client),
+            BATON_COMPILE_QUEUE_ROOT=str(self.state), BATON2_QUEUE_RUN_ROOT=str(self.run),
+            FIXTURE_QUEUE_CALLS=str(self.calls))
+
+    def check_entry(self):
+        return subprocess.run(
+            ['sh', str(ROOT / 'bend2/scripts/check-entry.sh'),
+             'bend2/test/focused-codex-inbox-entry.bend'],
+            cwd=self.root, env=self.environment, capture_output=True, text=True)
+
+    def test_entry_check_selects_compiler_and_shared_queue_without_c_artifact(self):
+        result = self.check_entry()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        configs = list(self.run.glob('invocation.*/queue-config.json'))
+        self.assertEqual(len(configs), 1)
+        config = json.loads(configs[0].read_text())
+        self.assertEqual(config['bend'], str(self.compiler))
+        self.assertEqual(config['client'], str(self.client))
+        self.assertEqual(config['state'], str(self.state))
+        calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
+        self.assertEqual([call[1] for call in calls], ['key', 'run'])
+        for call in calls:
+            self.assertEqual(call[call.index('--kind') + 1], 'check')
+            self.assertEqual(call[call.index('--compiler') + 1], str(self.compiler))
+            self.assertNotIn('--artifact', call)
+            self.assertEqual(call[call.index('--', 1) + 1:],
+                             [str(self.compiler), 'bend2/test/focused-codex-inbox-entry.bend',
+                              '--check-only'])
+        self.assertFalse(self.compiler_called.exists())
+        self.assertFalse(list(self.run.rglob('*.c')))
+
+    def test_explicit_historical_configuration_keeps_its_compiler(self):
+        historical = self.root / 'historical-compiler'
+        historical.write_bytes(self.compiler.read_bytes())
+        historical.chmod(0o755)
+        historical_run = self.root / 'historical-run'
+        config_path = self.root / 'historical-queue.json'
+        config_path.write_text(json.dumps({
+            'run': str(historical_run), 'bend': str(historical), 'cc': '/usr/bin/cc',
+            'client': str(self.client), 'state': str(self.state)}))
+        original = config_path.read_bytes()
+        self.environment['BATON2_NATIVE_QUEUE'] = str(config_path)
+        result = self.check_entry()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(config_path.read_bytes(), original)
+        calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
+        self.assertTrue(calls)
+        for call in calls:
+            self.assertEqual(call[call.index('--compiler') + 1], str(historical))
+        self.assertFalse(self.run.exists())
+        self.assertFalse(self.compiler_called.exists())
+
+    def test_entry_check_preserves_queue_failure_status(self):
+        self.environment['FIXTURE_CHECK_EXIT'] = '17'
+        result = self.check_entry()
+        self.assertEqual(result.returncode, 17, result.stdout + result.stderr)
+        requests = list(self.run.glob('invocation.*/evidence/compile-queue/*/request.json'))
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(json.loads(requests[0].read_text())['exit_code'], 17)
+        self.assertFalse(list(self.run.rglob('*.c')))
+
+
 @unittest.skipUnless(os.name == 'posix', 'Linux CI adapter requires POSIX signals')
 class AdapterExitTests(unittest.TestCase):
     def setUp(self):
@@ -162,11 +252,10 @@ class AdapterExitTests(unittest.TestCase):
         self.assertEqual(metadata['exit_code'], -signal.SIGKILL)
         self.assertFalse((directory / 'request.json').exists())
 
-    def test_successful_check_creates_its_artifact(self):
+    def test_success_without_generated_output_creates_no_c_artifact(self):
         result = self.run_child('pass')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.output.read_text(),
-                         '/* Compiler check completed successfully. */\n')
+        self.assertFalse(self.output.exists())
 
     def test_generated_output_is_preserved(self):
         result = self.run_child(
@@ -441,6 +530,9 @@ class KeyMaterialAdapterIdentityTests(unittest.TestCase):
         entry.write_text('law main() {}\n')
         recorded = self.recorded_key_argv('bend', [str(self.compiler), '--check-only', 'entry.bend'])
         self.assert_no_adapter_option(recorded)
+        self.assertEqual(recorded[recorded.index('--kind') + 1], 'check')
+        self.assertNotIn('--artifact', recorded)
+        self.assertNotIn(str(EXEC), recorded)
 
     def test_cgen_key_request_excludes_adapter_self_identity(self):
         entry = self.root / 'entry.bend'
