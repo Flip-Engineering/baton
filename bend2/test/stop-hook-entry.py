@@ -187,6 +187,26 @@ class StopHook(unittest.TestCase):
         self.read('confirm')
         self.assertEqual(self.agy_hook(stop), {'decision': 'allow'})
 
+    def test_agy_stop_keeps_the_assignment_open_for_a_stale_confirmation_after_later_guidance(self):
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('assignment','coordinator','worker','task-assignment','Do the work.')")
+        self.read('assignment')
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('request','worker','coordinator','completion-request','Finished.')")
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('confirm','coordinator','worker','completion-confirmed','request')")
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('more','coordinator','worker','guidance','Also cover the second case.')")
+        self.read('more')
+        stop = {'executionNum': 1, 'terminationReason': 'model_stop', 'error': '',
+                'fullyIdle': True, 'conversationId': 'agy-session', 'workspacePaths': [],
+                'transcriptPath': '', 'artifactDirectoryPath': '', 'modelName': 'agy-test'}
+        delivered = self.agy_hook(stop)
+        self.assertEqual(delivered['decision'], 'continue')
+        self.assertIn('[id: confirm]:\nrequest', delivered['reason'])
+        self.assertNotIn('assignment is finished', delivered['reason'])
+        self.assertIn('completion-request --text SUMMARY', delivered['reason'])
+        self.read('confirm')
+        reopened = self.agy_hook(stop)
+        self.assertEqual(reopened['decision'], 'continue')
+        self.assertIn('The current assignment remains open', reopened['reason'])
+
     def test_agy_stop_reports_database_query_errors(self):
         database = self.home / 'incomplete.db'
         with sqlite3.connect(database) as db:
