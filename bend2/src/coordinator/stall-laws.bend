@@ -2,9 +2,9 @@
 # pins one value the module must produce: the row query's exact text so a change
 # to the classification is a deliberate edit, one stalled row's JSON object, an
 # empty report being an empty array, empty and malformed lines being skipped
-# with rows separated by commas, and the owed message each stalled row
-# contributes to the wake. The non-stalled fixtures pin that active, stopped,
-# blocked and claimed candidates contribute no wake address.
+# with rows separated by commas, and the owed message each eligible row
+# contributes to the wake. The fixtures pin that active, stopped and blocked
+# candidates contribute no wake address.
 # Serves: docs/pure-bend2/pending-stall-bend2.md.
 import Base
 import ./stall.bend as Stall
@@ -90,10 +90,10 @@ law a_blocked_row_contributes_no_wake:
 def a_blocked_row_contributes_no_wake():
   {==}
 
-law a_claimed_row_contributes_no_wake:
-  {Stall.owed_of(claimed_row()) == Nil{} : List<String>}
+law an_exited_claimed_row_contributes_its_owed_message:
+  {Stall.owed_of(claimed_row()) == ["m7"] : List<String>}
 
-def a_claimed_row_contributes_no_wake():
+def an_exited_claimed_row_contributes_its_owed_message():
   {==}
 
 law a_row_without_an_owed_message_contributes_nothing:

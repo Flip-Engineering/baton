@@ -42,10 +42,24 @@ const root = path.resolve(process.argv[2] ?? path.join(import.meta.dir, "../../.
 const upstream = path.join(root, "bend2/compiler/upstream");
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "bend-bounded-indent-"));
 try {
-  for (const name of ["bend.ts", "base.bend"]) {
+  for (const name of fs.readdirSync(upstream).filter(name =>
+    name.endsWith(".ts") || name === "base.bend")) {
     fs.copyFileSync(path.join(upstream, name), path.join(temp, name));
   }
   fs.cpSync(path.join(upstream, "effs"), path.join(temp, "effs"), { recursive: true });
+  // Observe file_push before the link removes leading helper indentation.
+  // Helper hashes still use the canonical layout in both compiler copies.
+  const linker = path.join(temp, "link.ts");
+  if (fs.existsSync(linker)) {
+    let text = fs.readFileSync(linker, "utf8");
+    const layout = '  helpers = helpers.map(([name, text, refs, cids]) => [name, c_layout(text), refs, cids]);';
+    if (text.includes(layout)) {
+      text = replaceOnce(text, layout, '  const emitted_helpers = helpers;\n' + layout);
+      text = replaceOnce(text, 'return { names, helpers: helpers.map(',
+        'return { names, helpers: emitted_helpers.map(');
+      fs.writeFileSync(linker, text);
+    }
+  }
   // The branch C literal lowering removes the deep decision tree. This test
   // exercises the indentation cap, so use the generic lowering in its temp
   // compiler copies. The branch C lowering has its own test.

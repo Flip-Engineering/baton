@@ -57,6 +57,46 @@ def safe() -> U32:
             self.assertEqual(claims,
                              {'Abstract', 'dependent', 'annotated', 'erased_use', 'Holder'})
 
+    def test_checked_store(self):
+        for name in ['store_term_graph', 'store_release', 'store_cleanup']:
+            with self.subTest(name=name):
+                script = ROOT / 'bend2/test/compiler' / (name + '.ts')
+                run = subprocess.run([self.bun, '--smol', str(script), str(ROOT)],
+                                     capture_output=True, text=True, env={
+                                         **os.environ, 'BEND_COMPILER_SOURCE': str(SOURCE),
+                                         'BEND_NO_TELEMETRY': '1'})
+                self.assertEqual(run.returncode, 0, run.stderr)
+
+    def test_canonical_link(self):
+        for name in ['link_helpers', 'emission_order_independence']:
+            with self.subTest(name=name):
+                script = ROOT / 'bend2/test/compiler' / (name + '.ts')
+                run = subprocess.run([self.bun, '--smol', str(script), str(ROOT)],
+                                     capture_output=True, text=True, env={
+                                         **os.environ, 'BEND_COMPILER_SOURCE': str(SOURCE),
+                                         'BEND_NO_TELEMETRY': '1'})
+                self.assertEqual(run.returncode, 0, run.stderr)
+
+    def test_fact_rounds(self):
+        for name in ['fact_trace', 'fact_solver']:
+            with self.subTest(name=name):
+                script = ROOT / 'bend2/test/compiler' / (name + '.ts')
+                run = subprocess.run([self.bun, '--smol', str(script), str(ROOT)],
+                                     capture_output=True, text=True, env={
+                                         **os.environ, 'BEND_COMPILER_SOURCE': str(SOURCE),
+                                         'BEND_NO_TELEMETRY': '1'})
+                self.assertEqual(run.returncode, 0, run.stderr)
+
+    def test_unit_fragments(self):
+        for name in ['streaming_c', 'fragment_replacement']:
+            with self.subTest(name=name):
+                script = ROOT / 'bend2/test/compiler' / (name + '.ts')
+                run = subprocess.run([self.bun, '--smol', str(script), str(ROOT)],
+                                     capture_output=True, text=True, env={
+                                         **os.environ, 'BEND_COMPILER_SOURCE': str(SOURCE),
+                                         'BEND_NO_TELEMETRY': '1'})
+                self.assertEqual(run.returncode, 0, run.stderr)
+
     def test_request_scalar_cids(self):
         script = ROOT / 'bend2/test/compiler/request_scalar_cids.ts'
         run = subprocess.run([self.bun, '--smol', str(script), str(ROOT)],
@@ -133,6 +173,14 @@ def safe() -> U32:
             self.assertEqual(run.returncode, 0, run.stderr)
             self.assertEqual(run.stdout, 'All terms check.\n')
             self.assertEqual(run.stderr, '')
+
+    def test_process_units(self):
+        script = ROOT / 'bend2/test/compiler/process_units.ts'
+        run = subprocess.run([self.bun, '--smol', str(script), str(ROOT)],
+                             capture_output=True, text=True, env={
+                                 **os.environ, 'BEND_COMPILER_SOURCE': str(SOURCE),
+                                 'BEND_NO_TELEMETRY': '1'})
+        self.assertEqual(run.returncode, 0, run.stderr)
 
     def test_literal_chain(self):
         with tempfile.TemporaryDirectory(prefix='bend-emission-') as temporary:
