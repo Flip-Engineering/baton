@@ -842,6 +842,55 @@ class NativeObservation(RECEIVE.Receive):
         self.shutdown_idle_database_owner('fixture database owner did not exit')
 
 
+    def test_a_silent_native_with_owed_input_reports_when_a_commit_wakes_its_receiver(self):
+        # The observer runs the silence check when a commit notice wakes its receiver (#1298).
+        # The native writes nothing after it starts, its task stays owed, and the
+        # receiver holds the claimed wake. The retained stdout is dated two hours
+        # back; a later commit wakes the receiver and the coordinator is told.
+        self.player(harness='omp')
+        self.coord('message', 'silent-task', 'root', 'parent', 'task', 'Work that stays owed.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
+        self.assertIn('[id: silent-task]', started['prompt'])
+        _, attempt = self.eventually(lambda: self._retained_attempt(),
+                                     'retained attempt was not admitted')
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            claim = database.execute(
+                "SELECT state FROM wake_claims WHERE session='parent'").fetchone()
+        self.assertEqual(claim, ('claimed',), 'the receiver holds no claimed wake for the owed task')
+
+        stdout = self.attempt_stdout('parent')
+        silent_since = time.time() - 2 * 3600
+        os.utime(stdout, (silent_since, silent_since))
+        self.coord('message', 'silent-more', 'root', 'parent', 'guidance', 'More work.')
+
+        deadline = time.monotonic() + 60
+        while True:
+            reports = [row for row in self.coord('inbox', 'root')
+                       if row['id'].startswith(attempt + ':silent:')]
+            if reports:
+                break
+            if observer.poll() is not None:
+                stdout_text, stderr_text = self.child_communication(observer)
+                self.fail(f'receive exited {observer.returncode} before it reported the silence: '
+                          f'{stdout_text}{stderr_text}')
+            if time.monotonic() > deadline:
+                self.fail('the silent native was not reported after a commit woke its receiver')
+            time.sleep(.2)
+        (report,) = reports
+        self.assertEqual(report['kind'], 'report')
+        for fact in ('session parent', 'Attempt ' + attempt, 'native pid ', 'last output ',
+                     'owed inputs'):
+            self.assertIn(fact, report['body'])
+        # The report names the condition and signals nothing: the native is still running.
+        self.assertTrue(any(process['pid'] == started['pid'] for process in self.owned_processes()))
+        self.assertIsNone(observer.poll())
+        self.action(stream, exit_fixture=True, complete_task=True)
+        self.finish(observer)
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
+
+
 def load_tests(loader, tests, pattern):
     declared = sorted(name for name in vars(NativeObservation) if name.startswith('test_'))
     return loader.loadTestsFromNames(declared, NativeObservation)

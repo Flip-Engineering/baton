@@ -7,16 +7,20 @@ stall evidence entry runs the silence check; the report reaches the parent
 seat's inbox through the report path. BATON2_STALL_EVIDENCE names a binary
 built from bend2/test/stall-evidence-entry.bend.
 """
+import json
 import os
 import pathlib
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 
 BINARY = os.environ.get('BATON2_STALL_EVIDENCE', '')
 SILENT_SECONDS = 2 * 3600
+# Elapsed silence at the start of a further silence period (900 s each).
+PERIOD_START_SECONDS = 1800
 NATIVE_PID = '4242'
 
 
@@ -30,8 +34,16 @@ class StallSilent(unittest.TestCase):
         self.db = self.directory / 'state.db'
         self.addCleanup(self.shutdown_owner)
         self.run_entry('init')
+        self.marker = self.directory / 'root.marker'
+        endpoint = self.directory / 'root-endpoint.py'
+        endpoint.write_text(
+            '#!/usr/bin/env python3\n'
+            'import pathlib, sys\n'
+            f'pathlib.Path({str(self.marker)!r}).open("a").write(sys.argv[-1]+"\\n")\n')
+        endpoint.chmod(0o700)
         self.rows('INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) '
-                  "VALUES('root',NULL,'omp','fixture','low','native-root','')")
+                  "VALUES('root',NULL,'omp','fixture','low','native-root',?)",
+                  (json.dumps([sys.executable, str(endpoint)]),))
 
     def shutdown_owner(self):
         if self.db.exists():
@@ -75,6 +87,20 @@ class StallSilent(unittest.TestCase):
             self.rows("INSERT INTO session_stops(session,id,reason,attempt,directory,outcome) "
                       "VALUES(?,?,'operator stop','','','stopped')", (name, 'stop-' + name))
 
+    def deliveries(self):
+        return self.marker.read_text().split() if self.marker.exists() else []
+
+    def earlier_report(self, name, read=False):
+        """The report row of the silence as an earlier check committed it, delivery lost."""
+        mtime = int(os.stat(self.directory / ('attempt-' + name) / 'stdout').st_mtime)
+        ident = f'attempt-{name}:silent:{mtime}:1'
+        self.rows("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,'root','report','Earlier body')",
+                  (ident, name))
+        if read:
+            self.rows("INSERT INTO message_reads(attempt,message,recipient,native,identity) "
+                      "VALUES('earlier',?,'root','native-root','identity')", (ident,))
+        return ident
+
     def silent_reports(self, name):
         return self.rows("SELECT id,sender,recipient,kind,body FROM messages WHERE id LIKE ?",
                          ('attempt-' + name + ':silent:%',))
@@ -91,6 +117,34 @@ class StallSilent(unittest.TestCase):
         self.assertTrue(ident.startswith('attempt-quiet:silent:'))
         self.assertEqual(self.rows("SELECT count(*) FROM session_stops WHERE session='quiet'"), [(0,)])
         self.assertEqual(self.rows("SELECT phase FROM executions WHERE session='quiet'"), [('running',)])
+
+    def test_a_new_report_is_delivered_to_the_coordinator_once(self):
+        self.seat('quiet', output_age=SILENT_SECONDS)
+        self.run_entry('wake')
+        (report,) = self.silent_reports('quiet')
+        self.assertEqual(self.deliveries(), [report[0]])
+
+    def test_an_unread_report_is_delivered_again_at_the_start_of_a_silence_period(self):
+        # A delivery lost with its forked task leaves the row; the next check repairs it.
+        self.seat('lost', output_age=PERIOD_START_SECONDS)
+        ident = self.earlier_report('lost')
+        self.run_entry('wake')
+        self.assertEqual(len(self.silent_reports('lost')), 1)
+        self.assertEqual(self.deliveries(), [ident])
+
+    def test_an_unread_report_is_not_delivered_again_inside_a_silence_period(self):
+        self.seat('lost', output_age=SILENT_SECONDS + 450)
+        self.earlier_report('lost')
+        self.run_entry('wake')
+        self.assertEqual(self.deliveries(), [])
+        self.assertEqual(len(self.silent_reports('lost')), 1)
+
+    def test_a_read_report_is_not_delivered_again(self):
+        self.seat('seen', output_age=PERIOD_START_SECONDS)
+        self.earlier_report('seen', read=True)
+        self.run_entry('wake')
+        self.assertEqual(self.deliveries(), [])
+        self.assertEqual(len(self.silent_reports('seen')), 1)
 
     def test_a_native_idle_after_its_result_with_owed_input_is_reported(self):
         # The turn ended with a result event, the receiver closed stdin, and the

@@ -9,7 +9,10 @@
 # the attempt phase and directory, the owed input rows, the output file's
 # modification time and the native pid file. The report's identity names the
 # attempt, the output's modification time and the owed count, so a silence is
-# reported once for each owed count and a repeated check finds the row.
+# reported once for each owed count and a repeated check finds the row. A report
+# the coordinator has not read is delivered again during the first seconds of
+# each further silence period, so a delivery lost with a forked task is repaired
+# on a later notice; a read report is not delivered again.
 #
 # The observer runs the check when a commit notice wakes it; the stall-wake
 # command runs it for every session. Every query is handled as a result, so
@@ -65,6 +68,17 @@ def silent_since_sql(+millis: String, +mtime: String) -> String:
 def silent_recorded_sql(+id: String) -> String:
   "SELECT CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ ") THEN '1' ELSE '' END;"
 
+# The seconds at the start of each further silence period in which an unread
+# report is delivered again. The window bounds the repeat to the notices that
+# arrive in it.
+def repeat_seconds() -> String:
+  "5"
+
+# The report is owed (not read by its recipient) and the elapsed silence is in
+# the first seconds of a silence period: '1', otherwise empty.
+def silent_repeat_sql(+id: String, +millis: String, +mtime: String) -> String:
+  "SELECT CASE WHEN EXISTS(SELECT 1 FROM messages m WHERE m.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("m") ++ ") AND (CAST(" ++ C.q(millis) ++ " AS INTEGER)/1000-CAST(" ++ C.q(mtime) ++ " AS INTEGER))%" ++ silence_seconds() ++ "<" ++ repeat_seconds() ++ " THEN '1' ELSE '' END;"
+
 def silent_body(+session: String, +attempt: String, +pid: String, +last: String, +owed: String) -> String:
   "Native output is silent while session " ++ session ++ " holds a claimed wake with owed input. Attempt " ++ attempt ++ ", native pid " ++ pid ++ ", last output " ++ last ++ " UTC, owed inputs " ++ owed ++ ". Baton does not stop or restart the native; decide whether to wait, nudge, stop or replace it."
 
@@ -108,31 +122,41 @@ def silent_new(+db: String, +session: String, +attempt: String, +directory: Stri
     pid : Result<&1,&1,U32 & String,String> <- Text.Text.read(directory ++ "/native.pid")
     silent_report(db,session,attempt,id,owed,last,forked,pid)
 
-# A silence already reported leaves its row; nothing is committed or delivered
-# again for the same attempt, output time and owed count.
-def silent_recorded(+db: String, +session: String, +attempt: String, +directory: String, +id: String, +owed: String, +last: String, +forked: Bool, recorded: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+def silent_again(+db: String, +id: String, +forked: Bool, repeat: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match repeat:
+    case Fail{error}: IO.pure(Unit, Unit{})
+    case Done{+text}: Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(text)),IO.pure(Unit, Unit{}),silent_wake(db,id,"",forked))
+
+# A silence already reported leaves its row and is not committed again. An
+# unread report is delivered again in the window at the start of each further
+# silence period.
+def silent_recorded(+db: String, +session: String, +attempt: String, +directory: String, +id: String, +owed: String, +mtime: String, +now: String, +last: String, +forked: Bool, recorded: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match recorded:
     case Fail{error}: IO.pure(Unit, Unit{})
-    case Done{+text}: Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(text)),silent_new(db,session,attempt,directory,id,owed,last,forked),IO.pure(Unit, Unit{}))
+    case Done{+text}: Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(text)),
+      silent_new(db,session,attempt,directory,id,owed,last,forked),
+      (do IO<Unit>:
+        repeat : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,silent_repeat_sql(id,now,mtime))
+        silent_again(db,id,forked,repeat)))
 
-def silent_decided(+db: String, +session: String, +attempt: String, +directory: String, +owed: String, +mtime: String, +last: String, +forked: Bool) -> IO(Unit):
+def silent_decided(+db: String, +session: String, +attempt: String, +directory: String, +owed: String, +mtime: String, +now: String, +last: String, +forked: Bool) -> IO(Unit):
   Bool.pick(IO(Unit),String.is_empty(last),IO.pure(Unit, Unit{}),
     (do IO<Unit>:
       +id : String = attempt ++ ":silent:" ++ mtime ++ ":" ++ owed
       recorded : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,silent_recorded_sql(id))
-      silent_recorded(db,session,attempt,directory,id,owed,last,forked,recorded)))
+      silent_recorded(db,session,attempt,directory,id,owed,mtime,now,last,forked,recorded)))
 
-def silent_since(+db: String, +session: String, +attempt: String, +directory: String, +owed: String, +mtime: String, +forked: Bool, since: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+def silent_since(+db: String, +session: String, +attempt: String, +directory: String, +owed: String, +mtime: String, +now: String, +forked: Bool, since: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match since:
     case Fail{error}: IO.pure(Unit, Unit{})
-    case Done{+text}: silent_decided(db,session,attempt,directory,owed,mtime,Tx.trim_nl(text),forked)
+    case Done{+text}: silent_decided(db,session,attempt,directory,owed,mtime,now,Tx.trim_nl(text),forked)
 
 def silent_clocked(+db: String, +session: String, +attempt: String, +directory: String, +owed: String, +mtime: String, +forked: Bool, millis: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match millis:
     case Fail{error}: IO.pure(Unit, Unit{})
     case Done{+now}: do IO<Unit>:
       since : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,silent_since_sql(now,mtime))
-      silent_since(db,session,attempt,directory,owed,mtime,forked,since)
+      silent_since(db,session,attempt,directory,owed,mtime,now,forked,since)
 
 # Files.stat answers kind, mode, device, inode, bytes, modification seconds,
 # uid and gid, separated by tabs. A missing output file derives no silence.
