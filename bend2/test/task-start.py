@@ -675,6 +675,7 @@ class TaskStart(unittest.TestCase):
         stream, native = self.accept(session)
         self.assertEqual(native['cwd'], assignment['workspace'])
         self.assertIn(body, native['prompt'])
+        self.eventually(lambda: self.call('session', session)['native'] == native['native'])
         self.finish(stream, 'The repaired receiver delivered the continued task.')
         self.exited(session)
 
