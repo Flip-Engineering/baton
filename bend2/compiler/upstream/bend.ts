@@ -237,6 +237,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as url from "node:url";
+import { createHash } from "node:crypto";
 
 // Core
 // ====
@@ -4516,7 +4517,12 @@ export function def_inst(book: Book, lhs: LHS, tm: Extract<HTerm, { $: "Ref" }>,
     if (z > 64) {
       throw Err(book, ctx, "a template that stops instantiating itself (64 levels at most)", tm, tm.s, lhs.def);
     }
-    const o = is[key] = tm.k + "~" + String(Object.keys(is).length);
+    const o = tm.k + "~" + createHash("sha256")
+      .update("bend-template-instance-v1\0" + tm.k + "\0" + key).digest("hex");
+    if (book.tlds[o] !== undefined) {
+      throw Err(book, ctx, "a template instance with a distinct content name", tm, tm.s, lhs.def);
+    }
+    is[key] = o;
     const inst: Def = { $: "Def", n: def.n - def.x, x: 0, T, v: xs.reduce((v, a) => term_apply(v, a), def.v as HTerm), u: def.u };
     book.tlds[o] = { ...inst, v: null };
     inst.e = def_check(book, o, inst, z);
@@ -4548,7 +4554,7 @@ export function def_inst(book: Book, lhs: LHS, tm: Extract<HTerm, { $: "Ref" }>,
 // binder of quantity q otherwise (term_compare's order does the
 // fitting); the tip must be the family applied to its own parameters,
 // in order. one telescope per declaration: there is no second face, no
-// substitution and no speculative pass. an instance k~n, k's body at
+// substitution and no speculative pass. a content-named instance, k's body at
 // closed ~ arguments, is minted and checked by its first live call
 // (infer-ref) while the caller is declared; it stays outside the order
 // (a seeded book keeps it), so it is no claim.
