@@ -250,6 +250,27 @@ class QueueAdoptionTests(unittest.TestCase):
         self.assertNotIn("supervisor exit 0", detail)
         self.assertNotIn("supervisor exited before publishing a terminal result; supervisor exit", detail)
 
+    def test_the_missing_result_recovery_leaves_an_unfinished_token_while_the_owner_lock_is_held(self):
+        client = subprocess.Popen(self.argv("recovery"), env=self.environment(),
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.children.append(client)
+        self.until("the execution started", lambda: any(l.startswith("start") for l in self.log_lines()))
+        keydir = self.keydir()
+        active = dict(line.split("=", 1) for line in (keydir / "active").read_text().splitlines() if "=" in line)
+        with open(keydir / "owners.lock", "a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            pending = keydir / "owners" / "pending.tmp.2"
+            pending.write_text("")
+            os.kill(int(active["pid"]), signal.SIGKILL)  # the supervisor ends without a result
+            time.sleep(3)
+            self.assertTrue(pending.exists(), "the recovery scan removed a token that is being published")
+            self.assertIsNone(client.poll(), "the client went on without the owner lock")
+            fcntl.flock(lock, fcntl.LOCK_UN)
+        out, err = client.communicate(timeout=60)
+        self.assertNotEqual(client.returncode, 0, out + err)
+        detail = "\n".join(p.read_text() for p in keydir.glob("runs/*/result"))
+        self.assertIn("supervisor terminated by signal 9", detail)
+
 
 if __name__ == "__main__":
     unittest.main()
