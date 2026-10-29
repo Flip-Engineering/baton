@@ -1045,6 +1045,26 @@ class AgentActions(unittest.TestCase):
         self.invoke(self.db, 'as', 'leaf', 'report', 'The leaf continues.')
         self.assertEqual(self.stored_messages()[-1][1:4], ('leaf', 'cond-a', 'report'))
 
+    def test_a_task_from_another_coordinator_after_a_confirmation_reopens_the_conductor(self):
+        self.associate('cond-a', harness='fixture')
+        self.associate('mid', parent='cond-a', harness='fixture')
+        self.legacy('recruit', 'leaf', 'mid', 'fixture', 'model', 'low', str(self.repo),
+                    'leaf-branch', str(self.directory / 'leaf'), 'HEAD')
+        self.legacy('message', 'mid-assignment', 'cond-a', 'mid', 'task-assignment',
+                    'Coordinate the bounded assignment.')
+        self.action('mid', 'completion-request', '--text', 'Coordination is complete.')
+        self.action('cond-a', 'completion-confirmed', '--to', 'mid')
+        self.assertTrue(self.action('root', 'session', 'mid')['taskCompletion']['ended'])
+        self.invoke(self.db, 'as', 'leaf', 'report', 'Reported while mid is ended.')
+        self.assertEqual(self.stored_messages()[-1][1:4], ('leaf', 'cond-a', 'report'))
+        # The root is another coordinator of mid; its task is a newer assignment.
+        self.legacy('message', 'root-task', 'root', 'mid', 'task', 'More work from the root.')
+        state = self.action('root', 'session', 'mid')['taskCompletion']
+        self.assertFalse(state['ended'])
+        self.assertFalse(state['confirmed'])
+        self.invoke(self.db, 'as', 'leaf', 'report', 'Reported after mid resumed.')
+        self.assertEqual(self.stored_messages()[-1][1:4], ('leaf', 'mid', 'report'))
+
     def test_successor_of_a_successor_confirms_a_request_to_the_first_predecessor(self):
         self.associate('cond-a')
         self.associate('cond-b', harness='fixture')
