@@ -3162,10 +3162,10 @@ function literal_chain(p: Parse, b: Body, vars: PVar[], def: Def,
   if (scrut.$ !== "Var" || scrut.i !== vars[0].i) return null;
   const all = def.T;
   if (all.$ !== "All" || all.i !== vars[0].i || all.q.$ === "None") return null;
-  // The String.eq chain stays inline in the definition and wraps each row in
-  // lambdas for the later top-level parameters (vars.slice(1)), so it takes
-  // any number of parameters. Without it a String match with a later parameter
-  // lowers to a character decision tree of millions of nodes.
+  // The String.eq chain stays inline in the definition under the lambdas of the
+  // later top-level parameters (vars.slice(1)), so it takes any number of them.
+  // Without it a String match with a later parameter lowers to a character
+  // decision tree of millions of nodes.
   if (all.q.$ === "Many" && all.A.$ === "Ref" && all.A.k === "String") {
     return literal_chain_string(p, b, vars, all, scrut);
   }
@@ -3177,6 +3177,20 @@ function literal_chain(p: Parse, b: Body, vars: PVar[], def: Def,
       ?? literal_list_rows(p, b, def, k, all, scrut);
   }
   return null;
+}
+
+// Does a match nested in the body scrutinize one of the variables?
+function body_matches(b: Body, vars: PVar[]): boolean {
+  const scrutinized = (e: LTerm): boolean => {
+    let x = e;
+    while (x.$ === "Sub") x = x.f;
+    return x.$ === "Var" && vars.some((v) => v.i === (x as { i: number }).i);
+  };
+  switch (b.$) {
+    case "Reply": return false;
+    case "Local": return (b.k.length === 1 && b.k[0].$ === "PCtr" && scrutinized(b.v[0])) || body_matches(b.f, vars);
+    case "Match": return b.e.some(scrutinized) || b.r.some((row) => body_matches(row.f, vars));
+  }
 }
 
 function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
@@ -3201,14 +3215,25 @@ function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
   }
   if (literals === 0) return null;
   const fr = () => p.sc.frs++;
-  const A = term_lower_shared(all.B(Var(all.k, all.i)) as HTerm);
+  // The chain sits under the lambdas of the later parameters, so a row body is
+  // an ordinary term of the result type that remains after all of them.
+  const later = vars.slice(1);
+  // A row that matches a later parameter needs that parameter among the binders
+  // being abstracted, which the lambdas above the chain no longer provide.
+  if (b.r.some((row) => body_matches(row.f, later))) return null;
+  let result: HTerm = all.B(Var(all.k, all.i)) as HTerm;
+  for (const v of later) {
+    const next = tele_open(p.book, result);
+    if (next === null || next.i !== v.i) return null;
+    result = next.B(Var(v.k, v.i)) as HTerm;
+  }
+  const A = term_lower_shared(result);
   const boolIndex = p.sc.frs++;
   let tail: LTerm;
   if (fallback !== null) {
     const binder: PVar = { $: "PVar", k: vars[0].k, i: vars[0].i,
       q: Lone(), s: vars[0].s };
-    tail = body_flatten(body_sub(fallback.f, fallback.i, binder),
-      vars.slice(1), fr);
+    tail = body_flatten(body_sub(fallback.f, fallback.i, binder), [], fr);
   } else {
     tail = Efq(b.s);
   }
@@ -3217,13 +3242,16 @@ function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
     const row = b.r[j];
     const q = row.p[0];
     if (q.$ !== "PCtr" || q.lit === undefined) continue;
-    const hit = body_flatten(row.f, vars.slice(1), fr);
+    const hit = body_flatten(row.f, [], fr);
     const cond = App(App(Ref("String.eq", q.s), scrut, q.s),
       patt_term(q), q.s);
     const inner = Mat("True", hit, Efq(row.s ?? span), row.s ?? span);
     const mat = Mat("False", tail, inner, span);
     tail = App(Ann(mat, All(Lone(), "c", boolIndex, Ref("Bool"), A), span),
       cond, span);
+  }
+  for (let j = later.length - 1; j >= 0; j--) {
+    tail = Lam(later[j].k, later[j].i, tail, later[j].s, later[j].q);
   }
   return Lam(all.k, all.i, tail, all.s, all.q);
 }
