@@ -35,6 +35,7 @@ type Command is Data:
   MessageBatch{sender: String, input: String}
   MessageBatchFile{sender: String, path: String}
   TaskContinue{session: String, id: String}
+  Succeed{successor: String, predecessor: String}
   Observe{id: String, player: String, event: String, sealed: Bool, harness: String}
   ObserveFile{id: String, player: String, path: String}
   Report{id: String, sender: String, body: String}
@@ -240,11 +241,18 @@ def blocked_cause_sql(+session: String) -> String:
 def wake_state_sql(+session: String) -> String:
   "json_object('pending',(SELECT count(*) FROM messages WHERE recipient=" ++ session ++ " AND " ++ owed_sql("messages") ++ " AND NOT " ++ stopped_session_sql(session) ++ "),'claim',coalesce((SELECT state FROM wake_claims WHERE session=" ++ session ++ "),'') )"
 
+# The nearest ancestor with no terminal stop. A stopped conductor receives no
+# input, so reports and failures of its children reach the next live ancestor.
+# The recorded parent answers when every ancestor is stopped. The depth bound
+# keeps a malformed cyclic parentage finite.
+def live_parent_sql(+row: String) -> String:
+  "coalesce((WITH RECURSIVE live_chain(id,depth) AS (SELECT " ++ row ++ ".parent,1 UNION ALL SELECT live_s.parent,live_c.depth+1 FROM sessions live_s JOIN live_chain live_c ON live_s.id=live_c.id WHERE live_s.parent IS NOT NULL AND live_c.depth<64) SELECT id FROM live_chain WHERE id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM session_stops live_stop WHERE live_stop.session=live_chain.id) ORDER BY depth LIMIT 1)," ++ row ++ ".parent)"
+
 # The accountable owner for blocked input: the recorded parent, else the
 # registered operator. This mirrors report_recipient without naming it, which
 # is defined below; the SQL shape is the same parent-first fallback.
 def blocked_owner_sql(+session: String) -> String:
-  "(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN report_sender.parent WHEN coalesce((SELECT role FROM session_roles WHERE session=report_sender.id),'player')='conductor' THEN (SELECT report_owner.id FROM sessions report_owner WHERE report_owner.id='operator' AND report_owner.parent IS NULL AND coalesce((SELECT role FROM session_roles WHERE session=report_owner.id),'player')='operator') END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")"
+  "(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN " ++ live_parent_sql("report_sender") ++ " WHEN coalesce((SELECT role FROM session_roles WHERE session=report_sender.id),'player')='conductor' THEN (SELECT report_owner.id FROM sessions report_owner WHERE report_owner.id='operator' AND report_owner.parent IS NULL AND coalesce((SELECT role FROM session_roles WHERE session=report_owner.id),'player')='operator') END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")"
 
 # An assignment remains open across native turns. Its worker explicitly asks
 # the recorded parent to confirm completion through ordinary messages.
@@ -392,7 +400,7 @@ def terminal_span(+event: String) -> String:
 # A child reports to its recorded parent. A parentless Conductor reports to the
 # registered operator when that session has the explicit operator responsibility.
 def report_recipient(+session: String) -> String:
-  "(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN report_sender.parent WHEN " ++ assigned_role("report_sender.id") ++ "='conductor' THEN (SELECT report_operator.id FROM sessions report_operator WHERE report_operator.id='operator' AND report_operator.parent IS NULL AND " ++ assigned_role("report_operator.id") ++ "='operator') END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")"
+  "(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN " ++ live_parent_sql("report_sender") ++ " WHEN " ++ assigned_role("report_sender.id") ++ "='conductor' THEN (SELECT report_operator.id FROM sessions report_operator WHERE report_operator.id='operator' AND report_operator.parent IS NULL AND " ++ assigned_role("report_operator.id") ++ "='operator') END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")"
 
 # The recorded continuation identifies the turn-end outcome sent to the coordinator.
 def open_assignment_report_sql(+id: String, +session: String) -> String:
@@ -505,6 +513,40 @@ def parent_message_sql(+id: String, +sender: String, +kind: String, +body: Strin
   ++ "SELECT json_object('error','report-recipient-missing','sender'," ++ q(sender) ++ ",'kind'," ++ q(kind) ++ ",'condition','The session has no recorded parent or registered operator report recipient.','next','Read session SENDER. Use its recorded parent; a parentless Conductor reports to the registered operator session with the operator role.') WHERE " ++ recipient ++ " IS NULL;"
   ++ matching_message_result_expr(q(id),q(sender),recipient,q(kind),q(body))
 
+# Conductor succession. The predecessor has a terminal stop and the successor
+# is a live peer under the same parent, or a live ancestor adopting the
+# children. One transaction moves the predecessor's children to the successor,
+# moves the input the predecessor was owed, and sends each child with an open
+# assignment a guidance message from the successor that continues the
+# assignment under it. Moved messages keep their IDs, senders, kinds and bodies;
+# only the recipient changes, and only for input with no recorded read that is
+# not a confirmed completion request.
+def succession_admitted(+successor: String, +predecessor: String) -> String:
+  "(" ++ successor ++ "<>" ++ predecessor ++ " AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ successor ++ ") AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ predecessor ++ ") AND " ++ stopped_session_sql(predecessor) ++ " AND NOT " ++ stopped_session_sql(successor)
+  ++ " AND ((SELECT parent FROM sessions WHERE id=" ++ successor ++ ") IS (SELECT parent FROM sessions WHERE id=" ++ predecessor ++ ") OR " ++ descendant(successor,predecessor) ++ ") AND NOT " ++ descendant(predecessor,successor) ++ ")"
+
+def succession_text(+predecessor: String, +successor: String) -> String:
+  "'Your conductor ' || " ++ predecessor ++ " || ' ended and ' || " ++ successor ++ " || ' succeeds it. Assignment ' || (SELECT id FROM messages WHERE seq=" ++ task_assignment_sql("succ_child.id") ++ ") || ' continues under ' || " ++ successor ++ " || '. Review the complete stored assignment and current inbox, continue the work, and use completion-request --text SUMMARY when it is ready for ' || " ++ successor ++ " || ' to review. Reports and requests now go to ' || " ++ successor ++ " || '.'"
+
+def succession_list(+kind: String) -> String:
+  "json(coalesce((SELECT json_group_array(id) FROM temp.baton_succession WHERE kind=" ++ kind ++ "),'[]'))"
+
+def succession_sql(+successor: String, +predecessor: String) -> String:
+  +s = q(successor)
+  +p = q(predecessor)
+  +ok = succession_admitted(s,p)
+  "DROP TABLE IF EXISTS temp.baton_succession;CREATE TEMP TABLE baton_succession(kind TEXT NOT NULL,id TEXT NOT NULL);"
+  ++ "INSERT INTO temp.baton_succession SELECT 'child',succ_child.id FROM sessions succ_child WHERE succ_child.parent=" ++ p ++ " AND succ_child.id<>" ++ s ++ " AND " ++ ok ++ ";"
+  ++ "INSERT INTO temp.baton_succession SELECT 'inherited',succ_child.id FROM sessions succ_child WHERE succ_child.parent=" ++ p ++ " AND succ_child.id<>" ++ s ++ " AND " ++ ok ++ " AND " ++ task_open_sql("succ_child.id") ++ ";"
+  ++ "INSERT INTO temp.baton_succession SELECT 'moved',m.id FROM messages m WHERE m.recipient=" ++ p ++ " AND m.sender<>m.recipient AND " ++ owed_sql("m") ++ " AND NOT (m.kind='completion-request' AND EXISTS(SELECT 1 FROM messages settled WHERE settled.kind='completion-confirmed' AND settled.body=m.id)) AND " ++ ok ++ ";"
+  ++ "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT 'succession:' || " ++ p ++ " || ':' || " ++ s ++ " || ':' || succ_child.id," ++ s ++ ",succ_child.id,'guidance'," ++ succession_text(p,s) ++ " FROM sessions succ_child WHERE succ_child.id IN (SELECT id FROM temp.baton_succession WHERE kind='inherited');"
+  ++ "UPDATE sessions SET parent=" ++ s ++ " WHERE id IN (SELECT id FROM temp.baton_succession WHERE kind='child');"
+  ++ "UPDATE messages SET recipient=" ++ s ++ " WHERE id IN (SELECT id FROM temp.baton_succession WHERE kind='moved');"
+  ++ "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT 'succession:' || " ++ p ++ " || ':' || " ++ s ++ "," ++ s ++ "," ++ report_recipient(s) ++ ",'report',json_object('type','conductor-succession','predecessor'," ++ p ++ ",'successor'," ++ s ++ ",'children'," ++ succession_list("'child'") ++ ",'inheritedAssignments'," ++ succession_list("'inherited'") ++ ",'movedInput'," ++ succession_list("'moved'") ++ ") WHERE " ++ report_recipient(s) ++ " IS NOT NULL AND EXISTS(SELECT 1 FROM temp.baton_succession);"
+  ++ "SELECT json_object('error','succession-refused','successor'," ++ s ++ ",'predecessor'," ++ p ++ ",'condition','Succession requires a registered predecessor with a terminal stop and a different live successor that is under the predecessor parent or an ancestor of the predecessor, and is not its descendant.','next','Stop the predecessor with stop --session PREDECESSOR, then run succeed --from PREDECESSOR as the successor.') WHERE NOT " ++ ok ++ ";"
+  ++ "SELECT json_object('predecessor'," ++ p ++ ",'successor'," ++ s ++ ",'children'," ++ succession_list("'child'") ++ ",'inheritedAssignments'," ++ succession_list("'inherited'") ++ ",'movedInput'," ++ succession_list("'moved'") ++ ") WHERE " ++ ok ++ ";"
+  ++ "DROP TABLE temp.baton_succession;"
+
 def role_sql(+session: String, +role: String) -> String:
   "INSERT INTO session_roles(session,role) SELECT " ++ q(session) ++ "," ++ q(role_family(role)) ++ " WHERE " ++ role_admitted(session,role) ++ " ON CONFLICT(session) DO UPDATE SET role=excluded.role;"
   ++ "SELECT json_object('error','invalid-role','session'," ++ q(session) ++ ",'requested'," ++ q(role) ++ ",'condition','Principal Conductors and operators require no parent; Associate Conductors require a parent.','next','Read session ID. Assign player, principal-conductor, associate-conductor or operator to match its recorded parentage; conductor remains a compatible family declaration.') WHERE NOT " ++ role_admitted(session,role) ++ ";"
@@ -590,6 +632,7 @@ def sql(command: Command) -> String:
   match command:
     case TaskContinue{+session,+id}:
       task_continuation_sql(session,id) ++ "SELECT json_object('session',id,'continuationId',(SELECT id FROM messages WHERE id=" ++ q(id ++ ":task-continuation") ++ " AND recipient=" ++ q(session) ++ " AND " ++ owed_sql("messages") ++ "),'taskCompletion'," ++ task_state_sql("sessions.id") ++ ") FROM sessions WHERE id=" ++ q(session) ++ ";"
+    case Succeed{+successor,+predecessor}: succession_sql(successor,predecessor)
     case Observe{id,player,event,sealed,harness}: observe_sql(id,player,event,sealed,harness)
     case Attach{+id, harness, native, endpoint}:
       "INSERT INTO sessions(id,harness,native,endpoint) VALUES(" ++ q(id) ++ "," ++ q(harness) ++ "," ++ q(native) ++ "," ++ q(endpoint) ++ ") ON CONFLICT(id) DO UPDATE SET harness=excluded.harness,native=excluded.native,endpoint=excluded.endpoint WHERE sessions.parent IS NULL;"
@@ -845,6 +888,7 @@ def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Comma
     case "force-stop": ForceStop{session,id}
     case "recover-observer": RecoverObserver{session,id}
     case "continue-task": TaskContinue{session,id}
+    case "succeed": Succeed{session,id}
     case "view": View{session,id,"7682"}
     case _: Invalid{}
 

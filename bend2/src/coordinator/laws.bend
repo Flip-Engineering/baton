@@ -1064,7 +1064,7 @@ def m1_a_message_write_answers_from_the_row_it_stored(id,sender,recipient,kind,b
 # output capture remain host effects exercised by the controlled fixtures.
 law principal_reports_use_the_recorded_upstream_recipient:
   for +session: String
-  {C.report_recipient(session) == ("(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN report_sender.parent WHEN " ++ C.assigned_role("report_sender.id") ++ "='conductor' THEN (SELECT report_operator.id FROM sessions report_operator WHERE report_operator.id='operator' AND report_operator.parent IS NULL AND " ++ C.assigned_role("report_operator.id") ++ "='operator') END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")") : String}
+  {C.report_recipient(session) == ("(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN " ++ C.live_parent_sql("report_sender") ++ " WHEN " ++ C.assigned_role("report_sender.id") ++ "='conductor' THEN (SELECT report_operator.id FROM sessions report_operator WHERE report_operator.id='operator' AND report_operator.parent IS NULL AND " ++ C.assigned_role("report_operator.id") ++ "='operator') END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")") : String}
 
 def principal_reports_use_the_recorded_upstream_recipient(session):
   {==}

@@ -57,6 +57,32 @@ def run(+db: String, +command: C.Command) -> IO(Unit):
     woken : Unit <- IO.try(Unit,Wake.drive_command(db,command,Done{result}))
     print_result(result)
 
+# The successor and each child that received inherited-assignment guidance are
+# woken after the transfer commits. A wake failure leaves the committed
+# transfer and the owed input in place.
+def inherited_wake_sql(+successor: String, +predecessor: String) -> String:
+  +prefix = "succession:" ++ predecessor ++ ":" ++ successor ++ ":"
+  "SELECT DISTINCT m.recipient FROM messages m WHERE (m.recipient=" ++ C.q(successor) ++ " OR substr(m.id,1,length(" ++ C.q(prefix) ++ "))=" ++ C.q(prefix) ++ ") AND " ++ C.owed_sql("m") ++ " AND NOT " ++ C.stopped_session_sql("m.recipient") ++ " ORDER BY m.recipient;"
+
+def wake_inherited_one(+db: String, +session: String, empty: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match empty:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case False{}: Receive.wake_due(db,session,"0",target => Receive.wake_launch(db,target))
+
+def wake_inherited(+db: String, sessions: List<String>) -> IO(Unit):
+  match sessions:
+    case Nil{}: IO.pure(Unit,Unit{})
+    case +session <> rest: do IO<Unit>:
+      woken : Result<&1,&1,U32 & String,Unit> <- wake_inherited_one(db,session,String.is_empty(session))
+      wake_inherited(db,rest)
+
+def succeed(+db: String, +successor: String, +predecessor: String) -> IO(Unit):
+  do IO<Unit>:
+    +result : String <- IO.try(String,Store.apply(db,C.Succeed{successor,predecessor}))
+    owners : String <- IO.try(String,DB.Sql.query(db,inherited_wake_sql(successor,predecessor)))
+    woken : Unit <- wake_inherited(db,Tx.split_lines(owners))
+    print_result(result)
+
 def read_command(+db: String, +command: C.Command) -> IO(Unit):
   do IO<Unit>:
     result : String <- IO.try(String,Store.read(db,command))
@@ -241,6 +267,7 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.ProjectSessions{path}: Project.sessions(db,path)
     case C.Resume{session,lift_stop}: Project.resume(db,session,lift_stop)
     case C.ClearStop{session}: Stop.clear(db,session)
+    case C.Succeed{successor,predecessor}: succeed(db,successor,predecessor)
     case C.View{subject,reader,port}: UiView.run(db,subject,reader,port)
     case C.UiSubscribe{after_cursor,generation}:
       UISubscription.run(db,after_cursor,generation)

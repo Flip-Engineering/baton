@@ -140,10 +140,21 @@ def supported_sql(+session: String) -> String:
 def stop_claim_sql(+session: String, +id: String, +reason: String) -> String:
   "DELETE FROM wake_claims WHERE session=" ++ C.q(session) ++ " AND EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(id) ++ " AND reason=" ++ C.q(reason) ++ ");"
 
+# A stop of a session with live children reports them to the next live
+# ancestor, which can adopt them with succeed, replace the session, or stop
+# them. The report ID follows the stop ID, so a replayed stop adds no second
+# report.
+def stop_orphans_sql(+session: String, +id: String, +reason: String) -> String:
+  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT 'stop-orphans:' || lower(hex(" ++ C.q(id) ++ ")),s.id," ++ C.report_recipient("s.id") ++ ",'report',json_object('type','session-ended-with-children','session',s.id,'stopId'," ++ C.q(id)
+  ++ ",'children',json((SELECT json_group_array(json_object('id',orphan.id,'assignmentOpen',json(CASE WHEN " ++ C.task_open_sql("orphan.id") ++ " THEN 'true' ELSE 'false' END),'owedInput',(SELECT count(*) FROM messages o WHERE o.recipient=orphan.id AND " ++ C.owed_sql("o") ++ "))) FROM sessions orphan WHERE orphan.parent=s.id AND NOT " ++ C.stopped_session_sql("orphan.id") ++ "))"
+  ++ ",'next','Run succeed --from ' || s.id || ' as a successor or as the live ancestor to transfer the children and their owed input, or stop the children.') FROM sessions s WHERE s.id=" ++ C.q(session)
+  ++ " AND EXISTS(SELECT 1 FROM session_stops WHERE session=s.id AND id=" ++ C.q(id) ++ " AND reason=" ++ C.q(reason) ++ ") AND EXISTS(SELECT 1 FROM sessions orphan WHERE orphan.parent=s.id AND NOT " ++ C.stopped_session_sql("orphan.id") ++ ") AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL;"
+
 def request_sql(+session: String, +id: String, +reason: String) -> String:
   "BEGIN IMMEDIATE;" ++ C.schema()
   ++ "INSERT INTO session_stops(session,id,reason,attempt,directory,outcome,report_id) SELECT s.id," ++ C.q(id) ++ "," ++ C.q(reason) ++ ",CASE WHEN e.phase<>'exited' THEN e.id ELSE '' END,CASE WHEN e.phase<>'exited' THEN e.directory ELSE '' END,CASE WHEN e.phase<>'exited' THEN 'requested' ELSE 'stopped' END,CASE WHEN e.phase<>'exited' THEN 'stop-result:' || lower(hex(" ++ C.q(id) ++ ")) ELSE '' END FROM sessions s LEFT JOIN executions e ON e.session=s.id WHERE s.id=" ++ C.q(session) ++ " AND " ++ supported_sql(session) ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=s.id OR id=" ++ C.q(id) ++ ");"
   ++ stop_claim_sql(session,id,reason)
+  ++ stop_orphans_sql(session,id,reason)
   ++ "SELECT CASE WHEN EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(id) ++ " AND reason=" ++ C.q(reason) ++ ") THEN '' WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ") THEN 'Session is not registered; inspect status.' WHEN NOT (" ++ supported_sql(session) ++ ") THEN 'Stop supports retained OMP, Codex, Muse, Claude Code, DSH and Antigravity sessions; a legacy direct turn without a keeper directory was left unchanged.' WHEN NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(id) ++ " AND reason=" ++ C.q(reason) ++ ") THEN 'Stop identity differs from the recorded operation; read the session and retry its exact stop ID and reason.' ELSE '' END;COMMIT;"
 
 def force_sql(+session: String, +id: String) -> String:
@@ -325,11 +336,30 @@ def observing_result(+db: String, +session: String, +attempt: String, +directory
 def request(+db: String, +session: String, +id: String, +reason: String, force: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   Store.transact_sql(db,Bool.pick(String,force,force_sql(session,id),request_sql(session,id,reason)))
 
-def run(+db: String, +session: String, +id: String, +reason: String, force: Bool) -> IO(Unit):
+def orphan_report_sql(+id: String) -> String:
+  "SELECT coalesce((SELECT id FROM messages WHERE id='stop-orphans:' || lower(hex(" ++ C.q(id) ++ ")) AND " ++ C.owed_sql("messages") ++ "),'');"
+
+def announce_found(+db: String, +found: String, empty: Bool) -> IO(Unit):
+  match empty:
+    case True{}: IO.pure(Unit,Unit{})
+    case False{}: do IO<Unit>:
+      delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,found,"1","")
+      IO.pure(Unit,Unit{})
+
+def announce_orphans(+db: String, +id: String, force: Bool) -> IO(Unit):
+  match force:
+    case True{}: IO.pure(Unit,Unit{})
+    case False{}: do IO<Unit>:
+      found : String <- IO.try(String,DB.Sql.query(db,orphan_report_sql(id)))
+      +name : String = Tx.trim_nl(found)
+      announce_found(db,name,String.is_empty(name))
+
+def run(+db: String, +session: String, +id: String, +reason: String, +force: Bool) -> IO(Unit):
   do IO<Unit>:
     error : String <- IO.try(String,request(db,session,id,reason,force))
     checked : Unit <- validate(error)
     reconciled : Unit <- reconcile_request(db,session)
+    announced : Unit <- announce_orphans(db,id,force)
     runtime_stopped : Unit <- ContextRuntime.runtime_stop_owner(db,session)
     result : String <- IO.try(String,DB.Sql.query(db,result_sql(session)))
     IO.write(result)
