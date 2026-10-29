@@ -62,15 +62,25 @@ def frame_sql(+next: String) -> String:
   +complete = Status.complete_message_sql("id","kind","sender","body")
   "SELECT CASE WHEN coalesce((SELECT harness FROM sessions WHERE id=messages.recipient),'')='claude-code' THEN json_object('type','user','message',json_object('role','user','content'," ++ complete ++ ")) ELSE json_object('type','steer','id',id,'message'," ++ complete ++ ") END FROM messages WHERE seq=CAST(" ++ C.q(next) ++ " AS INTEGER);"
 
+# The read row follows a successful write, so a crash between the two can only
+# forward the message again. A write the native's closed stdin refuses records
+# nothing and leaves the cursor and the owed row where they were; the normal wake
+# path delivers the message (#1298).
+def forwarded(+db: String, +player: String, +attempt: String, cursor: String, +next: String, written: Result<&1,&1,U32 & String,Unit>) -> IO(String):
+  match written:
+    case Fail{error}: IO.pure(String,cursor)
+    case Done{unit}: do IO<String>:
+      recorded : Unit <- AgentInput.forward_read(db,player,next)
+      logged : Unit <- record_forwarded(attempt,next)
+      IO.pure(String,next)
+
 def send(+db: String, +player: String, handle: U32, +attempt: String, cursor: String, +next: String, same: Bool) -> IO(String):
   match same:
     case True{}: IO.pure(String,cursor)
     case False{}: do IO<String>:
       frame : String <- IO.try(String,DB.Sql.query(db,frame_sql(next)))
-      sent : Unit <- IO.try(Unit,P.ProcessChild.write(handle,frame))
-      recorded : Unit <- AgentInput.forward_read(db,player,next)
-      logged : Unit <- record_forwarded(attempt,next)
-      IO.pure(String,next)
+      written : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.write(handle,frame)
+      forwarded(db,player,attempt,cursor,next,written)
 
 # Forwarded input is read by its recipient when the write succeeds. The send
 # cursor records which messages this attempt has already forwarded.

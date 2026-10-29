@@ -12,6 +12,7 @@ import sqlite3
 import unittest
 
 GUIDANCE = pathlib.Path(__file__).resolve().parents[1] / 'src/coordinator/guidance.bend'
+STATUS = pathlib.Path(__file__).resolve().parents[1] / 'src/coordinator/message-status.bend'
 
 # Real lines from the experiment: the task list while the background command runs,
 # the empty list when it ends, and two frames that carry no task list.
@@ -43,6 +44,93 @@ def evaluate(name, values, stand_in=None):
         else:
             out += values.get(token.group(3), stand_in if token.group(3) == 'complete' else '')
     return out
+
+
+# owed_sql("m") for the alias m, checked against its definition in message-status.bend.
+OWED_M = ("NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=m.id "
+          "AND owed_read.recipient=m.recipient)")
+
+
+def status_sql(name, values):
+    """A message-status.bend string definition with q(x) bound and owed_sql("m") expanded."""
+    text = STATUS.read_text()
+    owed_def = re.search(r'^def owed_sql\(.*?\) -> String:\n  (.*)\n', text, re.M).group(1)
+    assert 'NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=' in owed_def
+    assert '" ++ row ++ ".id AND owed_read.recipient=" ++ row ++ ".recipient)' in owed_def
+    match = re.search(r'^def ' + name + r'\(.*?\) -> String:\n((?:  .*\n)+)', text, re.M)
+    out = ''
+    for token in re.finditer(r'"((?:[^"\\]|\\.)*)"|q\((\w+)\)|owed_sql\("m"\)', match.group(1)):
+        if token.group(1) is not None:
+            out += token.group(1).encode().decode('unicode_escape')
+        elif token.group(2):
+            out += "'" + values[token.group(2)].replace("'", "''") + "'"
+        else:
+            out += OWED_M
+    return out
+
+
+class ForwardedRead(unittest.TestCase):
+    """A forwarded frame records one read row after the write; a crash between the two can only forward again."""
+
+    def setUp(self):
+        self.db = sqlite3.connect(':memory:')
+        schema = re.search(r'"(CREATE TABLE IF NOT EXISTS message_reads\(.*?\);)"', STATUS.read_text()).group(1)
+        self.db.executescript(
+            "CREATE TABLE sessions(id TEXT PRIMARY KEY, harness TEXT, native TEXT NOT NULL DEFAULT '');"
+            "CREATE TABLE messages(seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE, sender TEXT, recipient TEXT, kind TEXT, body TEXT);"
+            "CREATE TABLE executions(session TEXT PRIMARY KEY, id TEXT, mode TEXT, directory TEXT, phase TEXT, status TEXT);"
+            "CREATE TABLE session_stops(session TEXT PRIMARY KEY);"
+            "CREATE TABLE wake_claims(session TEXT PRIMARY KEY, state TEXT, owner TEXT, generation INTEGER);"
+            + schema +
+            "INSERT INTO sessions VALUES('lead','claude-code','native-lead');"
+            "INSERT INTO executions VALUES('lead','attempt-1','retained','/tmp/a','running','');"
+            "INSERT INTO messages(id,sender,recipient,kind,body) VALUES('g1','root','lead','guidance','Use the new queue.'),('g2','root','lead','guidance','Second.');"
+            "INSERT INTO wake_claims VALUES('lead','claimed','g1',1);")
+
+    def forward(self, seq, attempt='attempt-1', native='native-lead'):
+        sql = status_sql('forwarded_read_sql', {'session': 'lead', 'attempt': attempt, 'native': native,
+                                                'identity': 'witness-1', 'next': str(seq)})
+        self.db.executescript(sql)
+
+    def owed(self):
+        sql = "SELECT m.id FROM messages m WHERE m.recipient='lead' AND " + OWED_M
+        return [row[0] for row in self.db.execute(sql)]
+
+    def test_a_forwarded_message_records_exactly_one_read_row_for_its_attempt(self):
+        self.assertEqual(self.owed(), ['g1', 'g2'])
+        self.forward(1)
+        rows = self.db.execute('SELECT attempt,message,recipient,native,identity FROM message_reads').fetchall()
+        self.assertEqual(rows, [('attempt-1', 'g1', 'lead', 'native-lead', 'witness-1')])
+        self.assertEqual(self.owed(), ['g2'])
+
+    def test_forwarding_the_same_message_again_adds_no_second_row(self):
+        # A crash after the write and before the row forwards the message again; the row is still one.
+        self.forward(1)
+        self.forward(1)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM message_reads WHERE message=?', ('g1',)).fetchone()[0], 1)
+
+    def test_a_message_stays_owed_until_its_row_exists(self):
+        # Before the row (a crash between the write and the row) the message is owed, so it can only be forwarded again.
+        self.assertIn('g1', self.owed())
+        self.forward(1)
+        self.assertNotIn('g1', self.owed())
+
+    def test_no_row_is_recorded_for_an_attempt_that_is_not_live(self):
+        self.db.execute("UPDATE executions SET phase='exited'")
+        self.forward(1)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM message_reads').fetchone()[0], 0)
+        self.assertIn('g1', self.owed())
+
+    def test_no_row_is_recorded_for_another_attempt_or_native(self):
+        self.forward(1, attempt='attempt-0')
+        self.forward(1, native='native-other')
+        self.assertEqual(self.db.execute('SELECT count(*) FROM message_reads').fetchone()[0], 0)
+
+    def test_the_last_owed_message_clears_the_wake_claim(self):
+        self.forward(1)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM wake_claims').fetchone()[0], 1)
+        self.forward(2)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM wake_claims').fetchone()[0], 0)
 
 
 class BackgroundState(unittest.TestCase):

@@ -126,3 +126,17 @@ law no_notice_drains_nothing:
 
 def no_notice_drains_nothing():
   {==}
+
+# A write the native's closed stdin refuses records no read and leaves the cursor,
+# so the owed row stays and the wake path delivers it: a duplicate is possible, a
+# lost input is not.
+law a_refused_write_leaves_the_cursor_and_the_owed_row:
+  for db: String
+  for player: String
+  for attempt: String
+  for +cursor: String
+  for next: String
+  {Guidance.forwarded(db,player,attempt,cursor,next,Fail{(32,"broken pipe")}) == IO.pure(String,cursor) : IO(String)}
+
+def a_refused_write_leaves_the_cursor_and_the_owed_row(db,player,attempt,cursor,next):
+  {==}
