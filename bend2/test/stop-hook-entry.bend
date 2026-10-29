@@ -10,6 +10,7 @@ import ../src/coordinator/agent-actions.bend as Actions
 import ../src/coordinator/agent-command.bend as Agent
 import ../src/coordinator/agent-input.bend as AgentInput
 import ../src/coordinator/store.bend as Store
+import ../src/coordinator/message-status.bend as MessageStatus
 import ../src/coordinator/stop.bend as Stop
 import ../src/host/instance.bend as Custody
 import ../src/host/process.bend as P
