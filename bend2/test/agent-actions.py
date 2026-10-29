@@ -761,6 +761,140 @@ class AgentActions(unittest.TestCase):
         self.assertEqual(semantic['status'], 'admitted')
         self.assertEqual(semantic['delivery']['body'], current_second)
 
+    def requested(self, name, text='The assignment is complete.'):
+        self.legacy('message', name + '-assignment', 'root', name, 'task-assignment',
+                    'Complete the bounded assignment for ' + name + '.')
+        return self.action(name, 'completion-request', '--text', text)[0]['id']
+
+    def completion(self, name):
+        return self.legacy('session', name)['taskCompletion']
+
+    def stop_rows(self):
+        with sqlite3.connect(self.db) as db:
+            return db.execute('SELECT session,id,outcome FROM session_stops '
+                              'ORDER BY session').fetchall()
+
+    def test_confirmation_without_next_assignment_ends_the_assignment_with_no_stop(self):
+        request = self.requested('worker-a')
+        before = self.legacy('session', 'worker-a')
+        self.assertFalse(self.completion('worker-a')['ended'])
+        rows = self.action('root', 'completion-confirmed', '--to', 'worker-a')
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['status'], 'admitted')
+        self.assertEqual(rows[0]['delivery']['body'], request)
+        state = self.completion('worker-a')
+        self.assertTrue(state['ended'])
+        self.assertTrue(state['confirmed'])
+        self.assertFalse(state['open'])
+        self.assertEqual(self.stop_rows(), [])
+        after = self.legacy('session', 'worker-a')
+        for key in ('native', 'endpoint', 'harness', 'model', 'workspace', 'parent'):
+            self.assertEqual(after[key], before[key])
+
+    def test_raw_completion_confirmed_message_ends_the_assignment_the_same_way(self):
+        request = self.requested('worker-a')
+        self.legacy('message', 'raw-confirmation', 'root', 'worker-a',
+                    'completion-confirmed', request)
+        self.assertTrue(self.completion('worker-a')['ended'])
+        self.assertEqual(self.stop_rows(), [])
+
+    def test_confirmation_with_next_assignment_is_one_transaction_and_continues(self):
+        request = self.requested('worker-a')
+        text = 'Next bounded assignment.\nλ🙂'
+        rows = self.action('root', 'completion-confirmed', '--to', 'worker-a',
+                           '--id', 'decision-1', '--next', text)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual((rows[0]['id'], rows[0]['status']), ('decision-1', 'admitted'))
+        self.assertEqual(rows[0]['delivery']['body'], request)
+        self.assertEqual((rows[1]['id'], rows[1]['kind'], rows[1]['recipient']),
+                         ('decision-1:next-assignment', 'task', 'worker-a'))
+        self.assertEqual(rows[1]['delivery']['body'], text)
+        state = self.completion('worker-a')
+        self.assertEqual(state['assignmentId'], 'decision-1:next-assignment')
+        self.assertIsNone(state['requestId'])
+        self.assertTrue(state['open'])
+        self.assertFalse(state['ended'])
+        self.assertEqual(self.stop_rows(), [])
+        stored = {row[0]: row for row in self.stored_messages()}
+        self.assertLess(list(stored).index('decision-1'),
+                        list(stored).index('decision-1:next-assignment'))
+        # Repeating the decision stores nothing: the request is no longer current.
+        before = self.stored_messages()
+        repeated = self.action('root', 'completion-confirmed', '--to', 'worker-a',
+                               '--request', request, '--id', 'decision-1', '--next', text)
+        self.assertEqual(repeated[0]['status'], 'refused')
+        self.assertEqual(self.stored_messages(), before)
+        # The next assignment completes through the same decision, from a file.
+        second = self.action('worker-a', 'completion-request', '--text', 'Next complete.')[0]['id']
+        file = self.directory / 'next-assignment.txt'
+        file.write_text('Third assignment from a file.\nλ🙂\n')
+        rows = self.action('root', 'completion-confirmed', '--to', 'worker-a',
+                           '--next-file', file)
+        self.assertEqual(rows[0]['delivery']['body'], second)
+        self.assertEqual(rows[1]['delivery']['body'], file.read_text())
+        self.assertFalse(self.completion('worker-a')['ended'])
+
+    def test_unreadable_or_empty_next_assignment_stores_nothing(self):
+        self.requested('worker-a')
+        before = self.stored_messages()
+        empty = self.directory / 'empty-next.txt'
+        empty.write_text('')
+        for arguments in (('--next-file', self.directory / 'missing-next.txt'),
+                          ('--next-file', empty)):
+            with self.subTest(arguments=arguments):
+                rows = self.action('root', 'completion-confirmed', '--to', 'worker-a',
+                                   *arguments)
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]['status'], 'refused')
+                self.assertEqual(self.stored_messages(), before)
+        state = self.completion('worker-a')
+        self.assertFalse(state['ended'])
+        self.assertFalse(state['confirmed'])
+
+    def test_explicit_stop_refuses_confirmation_and_next_assignment_and_stays(self):
+        self.legacy('recruit', 'stopped-worker', 'root', 'omp', 'model', 'low',
+                    str(self.repo), 'stopped-branch', str(self.directory / 'stopped'), 'HEAD')
+        request = self.requested('stopped-worker')
+        self.legacy('stop', 'stopped-worker', 'operator-stop', 'Operator holds this session.')
+        stops = self.stop_rows()
+        self.assertEqual([(row[0], row[1]) for row in stops],
+                         [('stopped-worker', 'operator-stop')])
+        for arguments in ((), ('--next', 'Next assignment.')):
+            with self.subTest(arguments=arguments):
+                messages = self.stored_messages()
+                rows = self.action('root', 'completion-confirmed', '--to', 'stopped-worker',
+                                   '--request', request, *arguments)
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]['status'], 'refused')
+                self.assertEqual(self.stop_rows(), stops)
+                self.assertEqual(self.stored_messages(), messages)
+        self.assertFalse(self.completion('stopped-worker')['ended'])
+
+    def test_confirmation_refused_before_admission_stores_nothing(self):
+        request = self.requested('worker-a')
+        before = self.stored_messages()
+        for arguments in (('--request', 'unknown-completion-request'),
+                          ('--request', request, '--to', 'worker-b')):
+            for extra in ((), ('--next', 'Next assignment.')):
+                with self.subTest(arguments=arguments, extra=extra):
+                    rows = self.action('root', 'completion-confirmed', *arguments, *extra)
+                    self.assertEqual(len(rows), 1)
+                    self.assertEqual(rows[0]['status'], 'refused')
+                    self.assertEqual(self.stored_messages(), before)
+        self.assertFalse(self.completion('worker-a')['ended'])
+
+    def test_confirmation_next_options_reject_ambiguous_or_empty_assignments(self):
+        self.requested('worker-a')
+        before = self.stored_messages()
+        file = self.directory / 'option-next.txt'
+        file.write_text('Next.')
+        for arguments in (('--next', 'a', '--next-file', file), ('--next', 'a', '--next', 'b'),
+                          ('--next', ''), ('--next-file', file, '--next-file', file)):
+            with self.subTest(arguments=arguments):
+                self.action('root', 'completion-confirmed', '--to', 'worker-a',
+                            *arguments, success=False)
+                self.assertEqual(self.stored_messages(), before)
+
     def test_mixed_confirmation_infers_current_request_and_retains_exact_native_result(self):
         self.legacy('message', 'mixed-inferred-task', 'root', 'worker-a',
                     'task-assignment', 'Complete the bounded mixed assignment.\nλ🙂')

@@ -85,6 +85,24 @@ from that worker addressed to the current coordinator. `confirm` without a Playe
 selects the sole current request.
 The named completion commands retain explicit body and identity options.
 
+A confirmation ends the Player's assignment unless the same decision dispatches the
+next assignment. `taskCompletion.ended` in the session, player and assignment reads
+is true when the Player's current completion request has a stored
+`completion-confirmed` and the session has no explicit stop; a newer assignment from
+the coordinator makes it false again. The state derives from the stored messages, so
+the `message ... completion-confirmed` low-level form produces it as well. Baton
+signals no native process and records no stop.
+
+`completion-confirmed --next TEXT` and `--next-file PATH` read the text or file
+content first (UTF-8, no NUL, nonempty), then store the confirmation and a `task`
+for the same Player in one transaction. Delivery wakes follow the committed outcome.
+The task identity is the confirmation identity followed by `:next-assignment`, so
+repeating the decision with the same `--id` stores no second task. The result array
+holds the admitted confirmation and the admitted task. An explicit stop, a refused
+route or an identity conflict stores neither message. The MCP `baton2_guide` and
+`baton2_message_batch` tools accept `next` on a `completion-confirmed` item and pass
+it as `--next`.
+
 ## Teams and branching
 
 A Principal Conductor coordinates the whole assignment; an Associate Conductor

@@ -786,6 +786,7 @@ const TOOLS = [
         player: { type: 'string', description: 'Player session ID' },
         body: { type: 'string', description: 'Complete message body; current completion confirmation can omit it' },
         request: { type: 'string', description: 'Optional explicit completion request selector' },
+        next: { type: 'string', description: 'With kind completion-confirmed, the next assignment for the Player. Baton records it with the confirmation in one transaction and the assignment continues; without it, confirmation ends the assignment' },
         kind: { type: 'string', description: 'Authored message kind; default guidance' },
       },
       required: ['player'],
@@ -806,6 +807,7 @@ const TOOLS = [
             player: { type: 'string', description: 'Recipient Player session ID' },
             body: { type: 'string', description: 'Complete body; current completion confirmation may omit it' },
             request: { type: 'string', description: 'Optional explicit completion request selector' },
+            next: { type: 'string', description: 'With kind completion-confirmed, the next assignment for the Player, recorded with the confirmation in one transaction; without it, confirmation ends the assignment' },
             kind: { type: 'string', description: 'Authored message kind; default guidance' },
           },
           required: ['player'],
@@ -1427,9 +1429,10 @@ function handleToolCall(msg) {
         result = coord('outbox', args?.sender ?? sessionId);
         break;
       case 'baton2_guide':
-        if (args.kind === 'completion-confirmed' && (args.body === undefined || args.request !== undefined)) {
+        if (args.kind === 'completion-confirmed' && (args.body === undefined || args.request !== undefined || args.next !== undefined)) {
           result = contextualAction('completion-confirmed', ['--to', player,
             ...(args.request === undefined ? [] : ['--request', args.request]),
+            ...(args.next === undefined ? [] : ['--next', args.next]),
             ...(args.id === undefined ? [] : ['--id', args.id])]);
         } else {
           result = args.id !== undefined ? coord('message', args.id, sessionId, player, args.kind ?? 'guidance', args.body)
@@ -1438,7 +1441,7 @@ function handleToolCall(msg) {
         break;
       case 'baton2_message_batch': {
         const inferredCompletion = args.messages.some(message => message.kind === 'completion-confirmed'
-          && (message.body === undefined || message.request !== undefined));
+          && (message.body === undefined || message.request !== undefined || message.next !== undefined));
         if (inferredCompletion) {
           const values = args.messages.flatMap((message, index) => {
             const prefix = index === 0 ? [] : ['--and'];
@@ -1446,6 +1449,7 @@ function handleToolCall(msg) {
               const request = message.request ?? message.body;
               return [...prefix, 'completion-confirmed', '--to', message.player,
                 ...(request === undefined ? [] : ['--request', request]),
+                ...(message.next === undefined ? [] : ['--next', message.next]),
                 ...(message.id === undefined ? [] : ['--id', message.id])];
             }
             return [...prefix, 'dispatch', '--to', message.player, '--kind', message.kind ?? 'guidance',

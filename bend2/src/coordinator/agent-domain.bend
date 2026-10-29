@@ -55,7 +55,7 @@ def names(verb: String) -> List<String>:
     Names{"players","--pretty"},
     Names{"assignment","--session --id --pretty"},
     Names{"completion-request","--id --text --file"},
-    Names{"completion-confirmed","--id --request --to"},
+    Names{"completion-confirmed","--id --request --to --next --next-file"},
     Names{"guide","--id --to --text --file"},
     Names{"status","--pretty"},
     Names{"pending","--index --pretty --sender --recipient --kind --state --after-seq --through-seq"},
@@ -183,7 +183,8 @@ def option_cause(+verb: String, +options: List<&2,Option>) -> String:
     "A checked landing requires both --check and --files.","")
   +read = Bool.pick(String,Bool.and(String.eq(verb,"knowledge-read"),
     Bool.and(present(options,"--id"),present(options,"--index"))),"Choose --id or --index.","")
-  +body = pair_cause(options,"--text","--file",member(verb,["report","ask","native-reply","dispatch","completion-request","guide"]))
+  +body = first(pair_cause(options,"--text","--file",member(verb,["report","ask","native-reply","dispatch","completion-request","guide"])),
+    pair_cause(options,"--next","--next-file",False{}))
   +inspection = Bool.pick(String,Bool.and(member(verb,["session","player","assignment"]),
     Bool.and(present(options,"--session"),present(options,"--id"))),"Choose --session or --id.","")
   +section = Bool.pick(String,Bool.and(String.eq(verb,"section"),Bool.and(present(options,"--owner"),Bool.not(present(options,"--capability")))),"Supply --capability when selecting a Section owner.","")
@@ -266,7 +267,7 @@ def help(action: String) -> String:
     case "players": "players [--pretty]\nRead the current Players projection as an independent action in a mixed batch.\n"
     case "assignment": "assignment [--session SESSION | --id SESSION] [--pretty]\nRead the selected session and its retained assignment and task-completion state in a mixed batch. Omitted target selects the current actor.\n"
     case "completion-request": "completion-request (--text TEXT | --file PATH) [--id ID]\nSend the complete request to the current actor's recorded parent through the existing contextual completion handler. Supports mixed and or --and batches.\n"
-    case "completion-confirmed": "completion-confirmed [--to PLAYER] [--request REQUEST_ID] [--id ID]\nConfirm the selected Player's current request through the retained-request handler. Baton selects the owned request when omitted; an explicit request must belong to its author and current recipient. Supports mixed batches.\n"
+    case "completion-confirmed": "completion-confirmed [--to PLAYER] [--request REQUEST_ID] [--id ID] [--next TEXT | --next-file PATH]\nConfirm the selected Player's current request through the retained-request handler. Baton selects the owned request when omitted; an explicit request must belong to its author and current recipient. The confirmation ends the Player's assignment (taskCompletion.ended); with --next or --next-file the supplied assignment is recorded with the confirmation in one transaction and the assignment continues. Supports mixed batches.\n"
     case "guide": "guide --to PLAYER (--text TEXT | --file PATH) [--id ID]\nAdmit complete guidance as the current actor through the existing contextual handler. Supports mixed batches.\n"
     case "status": "status [--pretty]\nRead the existing database status projection.\n"
     case "pending": "pending [--index] [--pretty] [--sender SESSION] [--recipient SESSION] [--kind KIND] [--state pending|read|all] [--after-seq INTEGER] [--through-seq INTEGER]\nRead complete pending input; --index enables the native metadata filters.\n"

@@ -402,7 +402,7 @@ def main():
                 'The worker completion read was not retained')
         completion = cli('completion-state', 'session', 'worker')['taskCompletion']
         require(completion == {'assignmentId': 'artifact-task', 'coordinator': 'root',
-                               'requestId': requested['id'], 'confirmed': True, 'open': False},
+                               'requestId': requested['id'], 'confirmed': True, 'open': False, 'ended': True},
                 'The fixture assignment remains open')
         require((workspace / 'native-work.txt').read_text() == config['work'], 'Native work was not preserved')
         land = cli('land', 'land', 'worker', repo, 'main')

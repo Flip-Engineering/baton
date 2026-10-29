@@ -31,6 +31,7 @@ type Command is Data:
   EnsembleRead{id: String}
   EnsembleMember{id: String, owner: String, session: String, action: String}
   Message{id: String, sender: String, recipient: String, kind: String, body: String}
+  ConfirmNext{id: String, sender: String, recipient: String, request: String, task_id: String, task: String}
   MessageFile{id: String, sender: String, recipient: String, kind: String, path: String}
   MessageBatch{sender: String, input: String}
   MessageBatchFile{sender: String, path: String}
@@ -261,11 +262,18 @@ def task_request_sql(+session: String) -> String:
 def task_confirmed_sql(+session: String) -> String:
   "EXISTS(SELECT 1 FROM messages c WHERE c.recipient=" ++ session ++ " AND c.sender=(SELECT task_parent.parent FROM sessions task_parent WHERE task_parent.id=" ++ session ++ ") AND c.kind='completion-confirmed' AND c.body=" ++ task_request_sql(session) ++ " AND c.seq>(SELECT seq FROM messages WHERE id=c.body))"
 
+# An assignment ends when its current completion request is confirmed and no
+# newer assignment follows; a newer assignment makes the request no longer
+# current, so the confirmation stops applying. The state derives from the
+# retained messages whichever path recorded the confirmation.
+def task_ended_sql(+session: String) -> String:
+  "(" ++ task_confirmed_sql(session) ++ " AND NOT " ++ stopped_session_sql(session) ++ ")"
+
 def task_open_sql(+session: String) -> String:
   "((SELECT task_parent.parent FROM sessions task_parent WHERE task_parent.id=" ++ session ++ ") IS NOT NULL AND " ++ task_assignment_sql(session) ++ " IS NOT NULL AND NOT " ++ task_confirmed_sql(session) ++ " AND NOT " ++ stopped_session_sql(session) ++ ")"
 
 def task_state_sql(+session: String) -> String:
-  "json_object('assignmentId',(SELECT id FROM messages WHERE seq=" ++ task_assignment_sql(session) ++ "),'coordinator',(SELECT task_parent.parent FROM sessions task_parent WHERE task_parent.id=" ++ session ++ "),'requestId'," ++ task_request_sql(session) ++ ",'confirmed',json(CASE WHEN " ++ task_confirmed_sql(session) ++ " THEN 'true' ELSE 'false' END),'open',json(CASE WHEN " ++ task_open_sql(session) ++ " THEN 'true' ELSE 'false' END))"
+  "json_object('assignmentId',(SELECT id FROM messages WHERE seq=" ++ task_assignment_sql(session) ++ "),'coordinator',(SELECT task_parent.parent FROM sessions task_parent WHERE task_parent.id=" ++ session ++ "),'requestId'," ++ task_request_sql(session) ++ ",'confirmed',json(CASE WHEN " ++ task_confirmed_sql(session) ++ " THEN 'true' ELSE 'false' END),'open',json(CASE WHEN " ++ task_open_sql(session) ++ " THEN 'true' ELSE 'false' END),'ended',json(CASE WHEN " ++ task_ended_sql(session) ++ " THEN 'true' ELSE 'false' END))"
 
 # A current completion request delivers the finished work to its coordinator.
 # Further input wakes the worker; a newer assignment can generate continuation.
@@ -498,6 +506,15 @@ def message_sql(+id: String, +sender: String, +recipient: String, +kind: String,
   ++ "SELECT json_object('error','message-route-denied','sender'," ++ q(sender) ++ ",'recipient'," ++ q(recipient) ++ ",'condition','Use an immediate parent, a conductor descendant route, an explicitly tight Ensemble peer, or the operator and top-level conductor route.','next','Inspect session roles and Ensemble membership; send through your immediate conductor when a direct route is unavailable.') WHERE NOT " ++ message_route(q(sender),q(recipient)) ++ " AND NOT " ++ exact_message(id,sender,recipient,kind,body) ++ ";"
   ++ "SELECT json_object('error','session-stopped','session'," ++ q(recipient) ++ ") WHERE NOT " ++ exact_message(id,sender,recipient,kind,body) ++ " AND " ++ message_route(q(sender),q(recipient)) ++ " AND " ++ stopped_session_sql(q(recipient)) ++ " AND " ++ execution_input_sql(q(kind)) ++ ";" ++ matching_message_result(id,sender,recipient,kind,body)
 
+# The decision that confirms a request and dispatches the next assignment is one
+# transaction. The task is inserted only when the exact confirmation is stored,
+# and its identity derives from the confirmation identity, so a repeat of the
+# same decision stores no second task.
+def confirm_next_sql(+id: String, +sender: String, +recipient: String, +request: String, +task_id: String, +task: String) -> String:
+  message_sql(id,sender,recipient,"completion-confirmed",request)
+  ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(task_id) ++ "," ++ q(sender) ++ "," ++ q(recipient) ++ ",'task'," ++ q(task) ++ " WHERE " ++ exact_message(id,sender,recipient,"completion-confirmed",request) ++ message_upsert()
+  ++ matching_message_result(task_id,sender,recipient,"task",task)
+
 def parent_message_sql(+id: String, +sender: String, +kind: String, +body: String) -> String:
   +recipient = report_recipient(q(sender))
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ "," ++ q(sender) ++ "," ++ recipient ++ "," ++ q(kind) ++ "," ++ q(body) ++ " WHERE " ++ recipient ++ " IS NOT NULL" ++ message_upsert()
@@ -610,6 +627,8 @@ def sql(command: Command) -> String:
     case EnsembleMember{id,owner,session,action}: ensemble_member_sql(id,owner,session,action)
     case Message{+id, sender, +recipient, +kind, body}:
       message_sql(id,sender,recipient,kind,body)
+    case ConfirmNext{+id, +sender, +recipient, +request, +task_id, +task}:
+      confirm_next_sql(id,sender,recipient,request,task_id,task)
     case Report{+id, +sender, +body}:
       parent_message_sql(id,sender,"report",body)
     case Ask{+id, +player, +body}:
