@@ -60,7 +60,7 @@ try {
   const observations = fs.readFileSync(path.join(evidence, "admission.jsonl"), "utf8")
     .trim().split("\n").map(line => JSON.parse(line));
   const active = new Map<number, any>(), completed = new Map<number, any>();
-  let overlap = 0, reused = 0, finished = 0;
+  let overlap = 0, reused = 0, measured_units = 0;
   for (const event of observations) {
     if (event.event === "admission" && event.allowed && event.forecast === undefined) {
       assert.equal(active.size, 0, "the first unit of a compilation finishes alone, with nothing to forecast it from");
@@ -71,7 +71,7 @@ try {
       if (event.forecast !== undefined) reused++;
     } else if (event.event === "measured") {
       assert.ok(active.has(event.key), "each measurement belongs to a started unit");
-      active.delete(event.key); finished++;
+      active.delete(event.key); measured_units++;
       const worker = workers.find(worker => worker.completed.pid === event.pid);
       assert.ok(worker, "a measured unit ran in a worker with completed process evidence");
       assert.ok(event.profile.peak <= worker.usage.usage.maxRSS * 1024, "a unit's growth is within its worker's peak size");
@@ -81,7 +81,7 @@ try {
     }
   }
   assert.equal(active.size, 0);
-  assert.equal(finished, unit_count, "every unit has a measurement");
+  assert.equal(measured_units, unit_count, "every unit has a measurement");
   assert.ok(reused > 0, "units that follow a measurement start with a forecast");
   console.log(JSON.stringify({ test: "process_units", workers: workers.length, units: unit_count,
     observed_parallelism: overlap, forecast_starts: reused, available_cpus: os.availableParallelism() }));
