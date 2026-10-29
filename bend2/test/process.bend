@@ -67,22 +67,16 @@ def retained_lines(+handle: U32, lock: Maybe<U32>, sender: Chan(Unit), line: May
       next : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
       retained_lines(handle,lock,sender,next)
 
-def span_offset(span: Maybe<String> & String) -> Maybe<String>:
-  match span:
-    case (offset,length): offset
-
-def span_length(span: Maybe<String> & String) -> String:
-  match span:
-    case (offset,length): length
-
 @unsafe
-def retained_spans(+handle: U32, lock: Maybe<U32>, sender: Chan(Unit), offset: Maybe<String>, length: String) -> IO(Unit):
-  match offset:
-    case None{}: retained_finish(handle,lock,sender)
-    case Some{start}: do IO<Unit>:
-      printed : Unit <- IO.print(start ++ "\t" ++ length)
-      +next : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
-      retained_spans(handle,lock,sender,span_offset(next),span_length(next))
+def retained_spans(+handle: U32, lock: Maybe<U32>, sender: Chan(Unit), span: Maybe<String> & String) -> IO(Unit):
+  match span:
+    case (offset,length):
+      match offset:
+        case None{}: retained_finish(handle,lock,sender)
+        case Some{start}: do IO<Unit>:
+          printed : Unit <- IO.print(start ++ "\t" ++ length)
+          next : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
+          retained_spans(handle,lock,sender,next)
 
 def observer_close(handle: U32, close: Bool) -> IO(Unit):
   match close:
@@ -106,10 +100,12 @@ def retained_started(start: P.RetainedStart, lock: U32, payload: String, close: 
     case P.Unstarted{error}: IO.die(Unit,1,error)
     case P.Retained{handle}: observe_retained(handle,Some{lock},payload,close)
 
-def span_present(label: String, offset: Maybe<String>, length: String) -> IO(Unit):
-  match offset:
-    case None{}: IO.die(Unit,1,label ++ "-line-missing")
-    case Some{start}: IO.print(label ++ ":" ++ start ++ "\t" ++ length)
+def span_present(label: String, span: Maybe<String> & String) -> IO(Unit):
+  match span:
+    case (offset,length):
+      match offset:
+        case None{}: IO.die(Unit,1,label ++ "-line-missing")
+        case Some{start}: IO.print(label ++ ":" ++ start ++ "\t" ++ length)
 
 def checkpoint_saved(saved: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   match saved:
@@ -125,26 +121,26 @@ def checkpoint_restored(restored: Result<&1,&1,U32 & String,String>) -> IO(Unit)
 def observe_spans(+handle: U32, lock: Maybe<U32>) -> IO(Unit):
   do IO<Unit>:
     sender : Chan(Unit) <- IO.fork(Unit,IO.pure(Unit,Unit{}))
-    +first : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
-    retained_spans(handle,lock,sender,span_offset(first),span_length(first))
+    first : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
+    retained_spans(handle,lock,sender,first)
 
 # Commits a checkpoint after the first line, reads the next line without
 # committing it, restores the checkpoint, and expects the next line again.
 def observe_checkpoint_spans(+handle: U32, lock: Maybe<U32>) -> IO(Unit):
   do IO<Unit>:
     sender : Chan(Unit) <- IO.fork(Unit,IO.pure(Unit,Unit{}))
-    +first : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
-    durable : Unit <- span_present("durable",span_offset(first),span_length(first))
+    first : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
+    durable : Unit <- span_present("durable",first)
     saved : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.commit(handle,1,"durable")
     committed : Unit <- checkpoint_saved(saved)
-    +pending : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
-    uncommitted : Unit <- span_present("uncommitted",span_offset(pending),span_length(pending))
+    pending : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
+    uncommitted : Unit <- span_present("uncommitted",pending)
     restored : Result<&1,&1,U32 & String,String> <- Custody.Instance.restore(handle,1)
     shown : Unit <- checkpoint_restored(restored)
-    +replay : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
-    replayed : Unit <- span_present("replay",span_offset(replay),span_length(replay))
-    +next : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
-    retained_spans(handle,lock,sender,span_offset(next),span_length(next))
+    replay : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
+    replayed : Unit <- span_present("replay",replay)
+    next : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
+    retained_spans(handle,lock,sender,next)
 
 def spans_started(start: P.RetainedStart, +lock: U32, +checkpoint: Bool) -> IO(Unit):
   match start:
