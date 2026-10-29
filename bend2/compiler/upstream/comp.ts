@@ -4605,13 +4605,18 @@ type StoredHeader = {
 
 // The content identity of each header entry, from the decoded header that the
 // workers read.
-function header_entries(decoded: StoredHeader): import("./store.ts").Entries {
+function header_entries(decoded: StoredHeader, timing: Record<string, number> = {}): import("./store.ts").Entries {
   const Store = require("./store.ts") as typeof import("./store.ts");
   const book = decoded.book, claims = new Map(decoded.claims);
-  const each = <T>(values: Record<string, T>): Record<string, string> =>
-    Object.fromEntries(Object.entries(values).map(([k, v]) => [k, Store.content_digest(v)]));
+  const each = <T>(kind: string, values: Record<string, T>): Record<string, string> => {
+    const begin = performance.now();
+    const out = Object.fromEntries(Object.entries(values).map(([k, v]) => [k, Store.content_digest(v)]));
+    timing[kind + "_ms"] = performance.now() - begin;
+    return out;
+  };
   const sorted = (names: Iterable<string>): string[] => [...names].sort();
-  return { tld: each(book.tlds), ctr: each(book.ctrs),
+  const begin = performance.now();
+  const entries: import("./store.ts").Entries = { tld: each("tld", book.tlds), ctr: each("ctr", book.ctrs),
     src: Object.fromEntries(decoded.sources.map(([k, src]) => [k, JSON.stringify([sorted(src.refs),
       sorted(src.deps), src.flat, sorted(claims.get(k) ?? [])])])),
     sites: Object.fromEntries(decoded.sites), masks: Object.fromEntries(decoded.masks),
@@ -4619,6 +4624,8 @@ function header_entries(decoded: StoredHeader): import("./store.ts").Entries {
     field: { order: Store.content_digest(book.order), hols: String(book.hols), open: String(book.open),
       tmps: Store.content_digest(book.tmps) },
     show: Store.content_digest(decoded.show), wide: decoded.wide };
+  timing.other_ms = performance.now() - begin - (timing.tld_ms ?? 0) - (timing.ctr_ms ?? 0);
+  return entries;
 }
 
 function prepare_store(cb: Carb, writer: import("./store.ts").CheckedWriter,
@@ -4642,9 +4649,10 @@ function prepare_store(cb: Carb, writer: import("./store.ts").CheckedWriter,
   const stored = writer.seal(header);
   const decoded = stored.reader.header<StoredHeader>();
   const entries_begin = performance.now();
-  const entries = header_entries(decoded);
+  const timing: Record<string, number> = {};
+  const entries = header_entries(decoded, timing);
   stored.index = writer.attach(stored.index, entries);
-  diagnostic("store.entries", { duration_ms: performance.now() - entries_begin,
+  diagnostic("store.entries", { duration_ms: performance.now() - entries_begin, ...timing,
     definitions: Object.keys(entries.tld).length, constructors: Object.keys(entries.ctr).length });
   restore_header(cb, stored.reader, decoded);
   diagnostic("store.end", { directory: writer.directory,
