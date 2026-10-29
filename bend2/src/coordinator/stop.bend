@@ -342,11 +342,6 @@ def missing_custody_owner(+db: String, +session: String, +attempt: String, +dire
 # The host verifies the retained manifest and native birth before delivering
 # a signal; no PID or path inference is used.
 
-def control_attempt(+db: String, +session: String, +attempt: String, +directory: String, +signal: U32) -> IO(Unit):
-  do IO<Unit>:
-    result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.control_signal(directory,signal)
-    control_attempt_result(db,session,attempt,directory,signal,result)
-
 # When the attempt socket is unavailable, ask the elected instance owner to
 # resolve the attempt from its retained keeper. That route verifies the manifest
 # and native birth before signaling. A failed owner lookup records custody as
@@ -354,11 +349,16 @@ def control_attempt(+db: String, +session: String, +attempt: String, +directory:
 def control_attempt_result(+db: String, +session: String, +attempt: String, +directory: String, +signal: U32, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   match result:
     case Done{unit}: do IO<Unit>:
-      saved : String <- IO.try(String,DB.Sql.query(db,control_result_sql(session,attempt,signal,result)))
+      saved : String <- IO.try(String,DB.Sql.query(db,control_result_sql(session,attempt,signal,Done{unit})))
       IO.pure(Unit,Unit{})
     case Fail{error}: do IO<Unit>:
       identity : Result<&1,&1,U32 & String,String> <- P.ProcessChild.instance_attempt_signal(db,directory,signal)
       missing_identity_signal_result(db,session,attempt,signal,directory,identity)
+
+def control_attempt(+db: String, +session: String, +attempt: String, +directory: String, +signal: U32) -> IO(Unit):
+  do IO<Unit>:
+    result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.control_signal(directory,signal)
+    control_attempt_result(db,session,attempt,directory,signal,result)
 
 def restore_requested_sql(+session: String, +attempt: String) -> String:
   "UPDATE session_stops SET outcome='requested',control_error='' WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ " AND outcome='custody-missing' AND EXISTS(SELECT 1 FROM executions e WHERE e.session=session_stops.session AND e.id=session_stops.attempt AND e.phase<>'exited');"
