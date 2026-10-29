@@ -221,12 +221,40 @@ def mark_custody_missing(+db: String, +session: String, +attempt: String, +direc
     saved : String <- IO.try(String,DB.Sql.query(db,custody_missing_sql(session,attempt,detail)))
     IO.pure(Unit,Unit{})
 
+def missing_identity_signal_result(+db: String, +session: String, +attempt: String, +signal: U32, +directory: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Done{native_status}: do IO<Unit>:
+      Bool.pick(IO(Unit),String.eq(native_status,"signaled"),
+        do IO<Unit>:
+          saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE session_stops SET outcome='requested',applied_signal=" ++ U32.show(signal) ++ ",control_error='' WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ " AND signal=" ++ U32.show(signal) ++ " AND outcome IN ('requested','custody-missing');"))
+          IO.pure(Unit,Unit{}),
+        exited(db,session,attempt,native_status,"","",""))
+    case Fail{error}: mark_custody_missing(db,session,attempt,directory)
+
+def missing_identity_signal(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
+  do IO<Unit>:
+    state : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN st.applied_signal=st.signal THEN 'applied' ELSE cast(st.signal AS TEXT) END FROM session_stops st JOIN executions e ON e.session=st.session AND e.id=st.attempt WHERE st.session=" ++ C.q(session) ++ " AND st.attempt=" ++ C.q(attempt) ++ " AND st.outcome IN ('requested','custody-missing') AND e.phase<>'exited';"))
+    +value : String = Tx.trim_nl(state)
+    Bool.pick(IO(Unit),String.is_empty(value),IO.pure(Unit,Unit{}),
+      Bool.pick(IO(Unit),String.eq(value,"applied"),IO.pure(Unit,Unit{}),
+        do IO<Unit>:
+          +signal : U32 = U32.read(value)
+          Bool.pick(IO(Unit),U32.is_eq(signal,0),mark_custody_missing(db,session,attempt,directory),
+            do IO<Unit>:
+              result : Result<&1,&1,U32 & String,String> <- P.ProcessChild.instance_attempt_signal(db,directory,signal)
+              missing_identity_signal_result(db,session,attempt,signal,directory,result))))
+
+# When the lock is held during startup, the existing lifecycle reconciliation
+# retries after the attempt enters the running phase.
 def missing_custody_owner_locked(+db: String, +session: String, +attempt: String, +directory: String, owner: Maybe<U32>) -> IO(Unit):
   match owner:
-    case None{}: IO.pure(Unit,Unit{})
+    case None{}: do IO<Unit>:
+      phase : String <- IO.try(String,DB.Sql.query(db,"SELECT phase FROM executions WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ ";"))
+      Bool.pick(IO(Unit),String.eq(Tx.trim_nl(phase),"starting"),IO.pure(Unit,Unit{}),
+        missing_identity_signal(db,session,attempt,directory))
     case Some{handle}: do IO<Unit>:
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
-      mark_custody_missing(db,session,attempt,directory)
+      missing_identity_signal(db,session,attempt,directory)
 
 def missing_custody_owner(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
   do IO<Unit>:
