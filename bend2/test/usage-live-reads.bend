@@ -129,13 +129,15 @@ def unreadable_held_case(+db: String, +helper: String, +path: String) -> IO(Unit
     reason : Unit <- expect_read(db,"SELECT state||'|'||reason FROM usage_reads WHERE id=4;","unreadable|HTTP 503 from the provider\n","unreadable-reason-recorded")
     expect_read(db,"SELECT recipient FROM messages WHERE id='usage-read:4:unreadable:a';","coord\n","unreadable-announced")
 
+# An exhausted window whose recorded reset is not in the future is elapsed
+# (UW.current_gate), so the seat's gate is open and the next read decides any hold.
 def passed_reset_case(+db: String, +helper: String, +path: String, +past: String, +future: String) -> IO(Unit):
   do IO<Unit>:
     written : Unit <- answer(path,zai_doc("100",past,"true"))
     gate : UW.Gate <- UW.window_gate_with(db,"a","acct-zai",helper)
-    held : Unit <- expect("passed-reset-still-exhausted-holds",String.eq(gate_class(gate),"held"))
+    elapsed : Unit <- expect("passed-reset-exhausted-window-is-elapsed",String.eq(gate_class(gate),"none"))
     recorded : UW.Gate <- state_of(db,"a","acct-zai")
-    kept : Unit <- expect("hold-does-not-expire-without-read",String.eq(gate_class(recorded),"held"))
+    kept : Unit <- expect("elapsed-window-stays-open-without-read",String.eq(gate_class(recorded),"none"))
     passed : Unit <- expect_read(db,UW.schedule_delay_sql(past),"\n","passed-reset-has-no-continuation")
     +far_delay : String <- read(db,UW.schedule_delay_sql(future))
     far : Unit <- expect_read(db,"SELECT CAST(" ++ C.q(Tx.trim_nl(far_delay)) ++ " AS INTEGER)>60;","1\n","far-reset-continuation-waits-until-reset")
