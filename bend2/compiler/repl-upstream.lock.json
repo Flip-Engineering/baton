@@ -407,9 +407,9 @@
       "sha256": "2bfee20bf3347f2f3acdb59c5f3c1ac98d012b7b9d7a1375fe435efde44d1f8b"
     },
     {
-      "bytes": 27492,
+      "bytes": 30662,
       "path": "store.ts",
-      "sha256": "34fd2a0c1b2792fd54aab0e0cb32d3973653e244bcad74a780f4d0ae956f7454"
+      "sha256": "74c136e3a1cba8b93fae1ee94e10031f0171e90f86cea0517abcf2b8bcb54911"
     },
     {
       "bytes": 15575,

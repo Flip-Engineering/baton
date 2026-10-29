@@ -45,6 +45,8 @@ export class EncoderTables {
   private strings = new Map<string, number>();
   private spans = new WeakMap<object, number>();
 
+  find(text: string): number | undefined { return this.strings.get(text); }
+
   string(text: string): number {
     const got = this.strings.get(text);
     if (got !== undefined) return got;
@@ -272,6 +274,69 @@ export function content_digest(value: unknown): string {
   return graph_digest(encode_term(value as Bend.LTerm, tables), tables.data);
 }
 
+// Rows with the same owner scope, fields and children are one row. Copies of a
+// default arm that the match compiler places under several branches are equal in
+// every field, spans included, and share a row after this pass. A checker cell is a
+// forwarding node that nothing mutates after checking, so equal cells share too.
+// A graph with a cycle is returned as it is. The pass is applied to bodies only:
+// a header row can carry per-definition state on its decoded object.
+export function share_rows(graph: TermGraph): TermGraph {
+  const rows = graph.rows, n = rows.length;
+  const child_slots = (row: Row): number[] => {
+    const slots: number[] = [];
+    if (row[1] === CALLBACK) { if (row[4] === NODE) slots.push(5); }
+    else if (row[1] === OBJECT || row[1] === DICTIONARY) {
+      for (let at = 3; at < row.length; at += 3) if (row[at] === NODE) slots.push(at + 1);
+    } else if (row[1] === ARRAY) {
+      for (let at = 2; at < row.length; at += 2) if (row[at] === NODE) slots.push(at + 1);
+    }
+    return slots;
+  };
+  const state = new Uint8Array(n), canonical = new Int32Array(n).fill(-1);
+  const out: Row[] = [], buckets = new Map<number, number[]>();
+  const root = graph.root;
+  if (root === null || typeof root !== "object" || !("node" in root)) return graph;
+  const stack = [root.node];
+  while (stack.length > 0) {
+    const id = stack[stack.length - 1], row = rows[id];
+    if (state[id] === 2) { stack.pop(); continue; }
+    const slots = child_slots(row);
+    if (state[id] === 0) {
+      state[id] = 1;
+      let pushed = false;
+      for (const slot of slots) {
+        const child = row[slot];
+        if (state[child] === 1) return graph;
+        if (state[child] === 0) { stack.push(child); pushed = true; }
+      }
+      if (pushed) continue;
+    }
+    const mapped = slots.length === 0 ? row : row.slice();
+    for (const slot of slots) mapped[slot] = canonical[row[slot]];
+    let found = -1;
+    {
+      let hash = 0x811c9dc5 | 0;
+      for (let at = 0; at < mapped.length; at++) hash = Math.imul(hash ^ mapped[at], 0x01000193) ^ (hash >>> 15);
+      const bucket = buckets.get(hash);
+      if (bucket !== undefined) {
+        for (const candidate of bucket) {
+          const other = out[candidate];
+          if (other.length !== mapped.length) continue;
+          let same = true;
+          for (let at = 0; at < mapped.length; at++) if (other[at] !== mapped[at]) { same = false; break; }
+          if (same) { found = candidate; break; }
+        }
+      }
+      if (found < 0) {
+        if (bucket === undefined) buckets.set(hash, [out.length]); else bucket.push(out.length);
+      }
+    }
+    if (found < 0) { found = out.length; out.push(mapped); }
+    canonical[id] = found; state[id] = 2; stack.pop();
+  }
+  return { root: { node: canonical[root.node] }, rows: out, scopes: graph.scopes };
+}
+
 type Context = { scope: number; parent: Context | null; args: Bend.HTerm[];
   values: Map<number, unknown> };
 
@@ -426,14 +491,18 @@ export class CheckedWriter {
 
   private graph(value: unknown, kind: string, name?: string): Section & { content?: string } {
     const begin = performance.now();
-    const graph = encode_term(value as Bend.LTerm, this.tables);
+    const encoded_graph = encode_term(value as Bend.LTerm, this.tables);
+    const encoded_at = performance.now();
+    const graph = kind === "body" ? share_rows(encoded_graph) : encoded_graph;
+    const shared_ms = performance.now() - encoded_at;
     const data = JSON.stringify(graph);
     const encoded = performance.now();
     const section = this.write(data, graph.rows.length);
     const written = performance.now();
     const content = kind === "body" ? graph_digest(graph, this.tables.data) : undefined;
     this.observe?.("store.section", { kind, name, ...section, content,
-      encode_ms: encoded - begin, write_ms: written - encoded, digest_ms: performance.now() - written });
+      encode_ms: encoded - begin, write_ms: written - encoded, digest_ms: performance.now() - written,
+      share_ms: shared_ms, rows_before: encoded_graph.rows.length });
     return content === undefined ? section : { ...section, content };
   }
 
