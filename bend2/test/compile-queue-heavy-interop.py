@@ -66,6 +66,7 @@ for fd in /proc/$$/fd/*; do
   target=$(readlink "$fd" 2>/dev/null)
   case "$target" in */heavy.lock) printf 'heavy-descriptor %s\\n' "$tag" >> "@LOG@" ;; esac
   [ "${fd##*/}" = 10 ] && case "$target" in */admission/running/*) printf 'claim-descriptor %s\\n' "$tag" >> "@LOG@" ;; esac
+  [ "${fd##*/}" = 11 ] && case "$target" in */cc-execution.lock) printf 'cc-descriptor %s\\n' "$tag" >> "@LOG@" ;; esac
 done
 if [ -n "$hold" ]; then
   i=0
@@ -311,7 +312,8 @@ def scenario_cc():
     assert not list((state / 'admission' / 'running').iterdir()), ('cc published a claim beside unknown legacy work', T)
     finish_legacy_holder(legacy, release)
     until('history-backed cc started after legacy holder exited', lambda: 'start cc-after-exclusive' in log_lines())
-    assert 'heavy-descriptor cc-after-exclusive' not in log_lines(), ('a cc job holds heavy.lock', T)
+    assert 'heavy-descriptor cc-after-exclusive' in log_lines(), ('the cc command lost shared heavy.lock', T)
+    assert 'cc-descriptor cc-after-exclusive' in log_lines(), ('the cc command lost its per-key execution lock on FD 11', T)
     assert len(list((state / 'admission' / 'running').iterdir())) == 1, ('the cc job has no measured claim', T)
     hold.touch()
     finish(job, 'cc-after-exclusive')
@@ -335,6 +337,31 @@ def scenario_measured_cc_parallel():
     hold_a.touch(); hold_b.touch()
     finish(first, 'measured-cgen'); finish(second, 'measured-cc')
     print('PASS history-backed cgen and cc jobs from the new queue run concurrently')
+
+
+def scenario_cc_first():
+    state = new_state('queue-cc-first')
+    hold = T / 'hold-cc-first'
+    job, out = command(BINARY, state, 'cc', 'cc-running-first', hold)
+    until('cc command started first', lambda: 'start cc-running-first' in log_lines())
+    assert 'heavy-descriptor cc-running-first' in log_lines(), ('cc command has no shared heavy.lock', log_lines(), T)
+    assert 'cc-descriptor cc-running-first' in log_lines(), ('cc command has no per-key execution lock on FD 11', log_lines(), T)
+    assert not try_exclusive(state), ('legacy exclusive lock was granted beside running cc', T)
+    legacy = subprocess.Popen([sys.executable, '-c', '''
+import fcntl, sys
+handle = open(sys.argv[1], "a+")
+fcntl.flock(handle, fcntl.LOCK_EX)
+open(sys.argv[2], "w").write("granted")
+''', str(state / 'heavy.lock'), str(T / 'cc-exclusive-granted')])
+    procs.append(legacy)
+    time.sleep(1)
+    assert legacy.poll() is None and not (T / 'cc-exclusive-granted').exists(), ('legacy work overlapped cc', T)
+    hold.touch()
+    finish(job, 'cc-running-first')
+    legacy.wait(timeout=60)
+    assert legacy.returncode == 0 and (T / 'cc-exclusive-granted').exists(), T
+    assert out.read_text() == 'artifact-cc-running-first', T
+    print('PASS an exclusive legacy request waits until the running cc command releases shared heavy.lock')
 
 
 def scenario_unknown_legacy_cc():
@@ -378,6 +405,7 @@ def scenario_exclusive_queue_binary():
 scenario_exclusive_first()
 scenario_job_first()
 scenario_cc()
+scenario_cc_first()
 scenario_unknown_legacy_cc()
 scenario_measured_parallel()
 scenario_measured_cc_parallel()

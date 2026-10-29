@@ -512,6 +512,7 @@ static int host_posix_spawn_held(const char *text,size_t length,const char *cwd,
     if(maximum<1024 || maximum>1048576) maximum=65536;
     for(int fd=3;fd<(int)maximum;fd++) {
       if(fd!=8 && !(fd==10 && getenv("BATON_QUEUE_CLAIM_FD")) &&
+         !(fd==11 && getenv("BATON_QUEUE_CC_FD")) &&
          fd!=release[0] && fd!=status[1]) close(fd);
     }
     char ready=0;ssize_t got;

@@ -1550,12 +1550,10 @@ def acquire_accounted_after_heavy(~again: (@+attempt: String -> @+keydir: String
                                  heavy: Maybe<&2,U32>, +need: U32, +history: U32) -> IO(AdmissionGate):
   match heavy:
     case None{}:
-      Bool.pick(IO(AdmissionGate),Tx.str_eq(kind,"cc"),
-        admission_publish_claim(state,kind,key,token,pid,start,need,history,guard,None{}),
-        do IO<AdmissionGate>:
-          released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(guard))
-          slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(delay))
-          again(attempt,keydir,state,kind,key,group,token,priority,pid,start,U32.min(U32.mul(delay,2),1000)))
+      do IO<AdmissionGate>:
+        released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(guard))
+        slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(delay))
+        again(attempt,keydir,state,kind,key,group,token,priority,pid,start,U32.min(U32.mul(delay,2),1000))
     case Some{+shared}:
       admission_publish_claim(state,kind,key,token,pid,start,need,history,guard,Some{shared})
 
@@ -1584,8 +1582,7 @@ def acquire_accounted(~again: (@+attempt: String -> @+keydir: String -> @+state:
         +fits : Bool <- IO.pure(Bool, Bool.and(Bool.and(U32.is_gt(total,0),U32.is_gt(available,0)), admission_can_start(kind,history,need,stats,available,legacy_pid)))
         Bool.pick(IO(AdmissionGate), fits,
           do IO<AdmissionGate>:
-            heavy : Maybe<&2,U32> <- Bool.pick(IO(Maybe<&2,U32>), Tx.str_eq(kind,"cc"), IO.pure(Maybe<&2,U32>,None{}),
-              IO.try(Maybe<&2,U32>, L.CompileQueueLifecycle.lock_shared_try(state ++ "/heavy.lock")))
+            heavy : Maybe<&2,U32> <- IO.try(Maybe<&2,U32>, L.CompileQueueLifecycle.lock_shared_try(state ++ "/heavy.lock"))
             acquire_accounted_after_heavy(again,attempt,keydir,state,kind,key,group,token,priority,pid,start,delay,guard,heavy,need,history),
           do IO<AdmissionGate>:
             released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(guard))
@@ -1598,6 +1595,14 @@ def acquire_accounted_loop(+attempt: String, +keydir: String, +state: String, +k
 
 def transfer_claim(+claim: U32) -> IO(Unit):
   transfer_lock(claim,10)
+
+def transfer_cc_execution(is_cc: Bool, keydir: String) -> IO(Unit):
+  Bool.pick(IO(Unit),is_cc,
+    do IO<Unit>:
+      held : U32 <- IO.try(U32,L.CompileQueueLifecycle.lock_acquire(keydir ++ "/cc-execution.lock"))
+      transferred : Unit <- transfer_lock(held,11)
+      IO.try(Unit,L.CompileQueueLifecycle.set_env("BATON_QUEUE_CC_FD","11")),
+    IO.pure(Unit,Unit{}))
 
 def admission_fallback(+kind: String, keydir: String, +state: String, token: String, priority: U32) -> IO(AdmissionGate):
   do IO<AdmissionGate>:
@@ -1650,6 +1655,7 @@ def supervise_gate(gate: AdmissionGate, +attempt: String, +keydir: String, +kind
         transferred : Unit <- transfer_heavy(execution)
         claim_transferred : Unit <- transfer_claim(claim)
         claim_env : Unit <- IO.try(Unit,L.CompileQueueLifecycle.set_env("BATON_QUEUE_CLAIM_FD","10"))
+        cc_transferred : Unit <- transfer_cc_execution(is_cc,keydir)
         signaled : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.set_env(
           "BATON_COMPILE_QUEUE_COMPILED",attempt ++ "/compiled")
         supervise_marker_result(signaled,attempt,keydir,kind,source_root,entry,key,started,names,cwd)
