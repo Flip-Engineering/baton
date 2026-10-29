@@ -220,6 +220,21 @@ def gate_held(gate: Gate) -> Bool:
     case GateHeld{window,resets_at,source,receipt}: True{}
     case other: False{}
 
+
+# A recorded provider reset ends the hold it named. Until the next live read, a
+# held window whose reset instant is not in the future is elapsed: the owed
+# input is admitted and the read that admission performs decides the next hold.
+# A window with no recorded reset keeps its hold.
+def reset_passed_sql(+resets_at: String) -> String:
+  "SELECT CASE WHEN " ++ C.q(resets_at) ++ "<>'' AND CAST(" ++ C.q(resets_at) ++ " AS INTEGER)>0 AND CAST(" ++ C.q(resets_at) ++ " AS INTEGER)<=" ++ now_ms() ++ " THEN 1 ELSE 0 END;"
+
+def current_gate(+db: String, gate: Gate) -> IO(Gate):
+  match gate:
+    case GateHeld{+window,+resets_at,+source,+receipt}: do IO<Gate>:
+      +passed : String <- IO.try(String,DB.Sql.read(db,reset_passed_sql(resets_at)))
+      IO.pure(Gate,Bool.pick(Gate,String.eq(passed,"1\n"),GateNone{},GateHeld{window,resets_at,source,receipt}))
+    case other: IO.pure(Gate,other)
+
 # --- the read effect -------------------------------------------------------------
 #
 # The credential reference of an account record, else the provider's configured
@@ -497,7 +512,9 @@ def window_state(+db: String, +session: String, account: String) -> IO(Gate):
     +provider : String <- seat_provider_io(db,session)
     +model : String <- seat_model_io(db,session)
     +label : String <- IO.pure(String,Tx.trim_nl(account))
-    +gate : Gate <- Bool.pick(IO(Gate),String.is_empty(provider),IO.pure(Gate,GateNone{}),decide(db,provider,label,model))
+    +gate : Gate <- Bool.pick(IO(Gate),String.is_empty(provider),IO.pure(Gate,GateNone{}),do IO<Gate>:
+      raw : Gate <- decide(db,provider,label,model)
+      current_gate(db,raw))
     noted : Unit <- Bool.pick(IO(Unit),String.is_empty(provider),IO.pure(Unit,Unit{}),announce(db,session,provider,label,model,gate))
     IO.pure(Gate,gate)
 
