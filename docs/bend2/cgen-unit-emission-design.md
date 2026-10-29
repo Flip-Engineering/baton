@@ -350,6 +350,41 @@ decoded. An interface or fact change can invalidate dependent units legitimately
 The one-module warm acceptance case edits a private runtime body without changing
 its exported semantic interface.
 
+#### Header entry reads
+
+The checked store writes a content digest for each header entry and for each body:
+definitions, constructors, source summaries, call-site counts, borrow masks, local
+names, bang membership, the book's `order`, `hols`, `open` and `tmps` fields, the
+printed form of `main` and the device-closure flag. A digest is taken over the
+encoded graph with strings written as text and spans written as equality classes
+numbered by first use. Table numbering, node numbering and source positions do not
+enter a digest, so a definition that an edit elsewhere in its file moves keeps its
+digest. The emitter compares spans for equality only (`arm_hint`, `arm_body_hint`
+and the interned string-pattern constructors). Source text is read for error
+messages, for `LOCAL` names computed at checking time and for JavaScript output,
+which this cache does not serve.
+
+A worker records the names it reads while it emits one unit. `book.tlds` and
+`book.ctrs` are proxies, and `sites`, `masks`, `bangs`, `LOCAL` and `SRCS` are
+tracking collections. Reading a collection's key list records the whole collection.
+The unit cache stores, with each variant, the digest every recorded name had in the
+program that produced it. A variant applies when each body input and each recorded
+name has its stored digest in the current program, and the fact reads agree. The
+cache scope covers the compiler identity, the printed form of `main` and the
+device-closure flag.
+
+Limits. Spans carry their identity within one digested value. Two spans that are
+equal because two values share source nodes (for example two instances of one
+template) are equal in the program that produced a variant and are not part of the
+digest, so a variant produced with shared nodes can be reused for a program in
+which the same two values do not share them. Arm sharing between such values may
+then differ from a cold build, and the C remains correct. A reader outside the
+unit emission closure that bypasses the tracked collections is not recorded.
+Template instances are named `k~N` by instantiation order, so an instantiation added
+before another changes that instance's name. A probe that inserted an unused definition
+instantiating `duplicate` before `inspect` in the `poly_spin_hot` fixture reused all 22
+units; whether a renamed instance that is emitted as a unit is reused is not measured.
+
 The selected distribution contains `cache.ts`, but its current `bin/bend` invokes
 Bun `main.ts` without that C-cache API. File presence and a lineage hash do not
 prove a warm hit. Step 7 connects and tests the cache through the actual selected
