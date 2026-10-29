@@ -299,7 +299,7 @@ def contextual_args(+session: String, verb: String, +options: List<&2,D.Option>)
       optional_arg(["agent-contextual-input",session,"guide","--to",D.value(options,"--to",""),"--text",D.value(options,"--text","")],"--id",D.value(options,"--id",""),D.present(options,"--id"))
     case other: Nil{}
 
-def legacy_args_selected(+session: String, verb: String, +options: List<&2,D.Option>, +saved: List<&2,D.Option>, +target: String) -> List<String>:
+def legacy_args_selected(+session: String, +verb: String, +options: List<&2,D.Option>, +saved: List<&2,D.Option>, +target: String) -> List<String>:
   match verb:
     case "session": native_flags(["--pretty"],options,["session",D.value(options,"--id",target)])
     case "player": native_flags(["--pretty"],options,["player",D.value(options,"--id",target)])

@@ -66,7 +66,7 @@ def route(+db: String, +session: String, +event: String, tool: Bool) -> IO(Unit)
     harness : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT coalesce(harness,'') FROM sessions WHERE id=" ++ C.q(session) ++ ";")
     routed(db,session,event,directory,tool,harness)
 
-def route_event(+db: String, +session: String, +input: String, event: String) -> IO(Unit):
+def route_event(+db: String, +session: String, +input: String, +event: String) -> IO(Unit):
   match event:
     case "agy-pre-invocation": AgyHook.pre_invocation(db,session)
     case "agy-stop": AgyHook.stop(db,session)

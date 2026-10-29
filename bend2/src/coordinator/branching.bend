@@ -347,7 +347,7 @@ def recover(+db: String, +actor: String, +round: String) -> IO(Unit):
     recovered : Unit <- setup_children(db,round,actor,Tx.split_lines(rows))
     M.status(db,round)
 
-def round_action(+db: String, +actor: String, +round: String, verb: String, +options: List<&2,D.Option>) -> IO(Unit):
+def round_action(+db: String, +actor: String, +round: String, +verb: String, +options: List<&2,D.Option>) -> IO(Unit):
   match verb:
     case "status": M.status(db,round)
     case "evaluate": do IO<Unit>:
