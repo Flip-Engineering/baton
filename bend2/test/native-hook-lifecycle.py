@@ -74,7 +74,7 @@ class NativeHookLifecycle(unittest.TestCase):
         shutil.copytree(retained / 'bin', self.prefix / 'bin')
         shutil.copytree(retained / 'libexec', self.prefix / 'libexec', symlinks=True)
         self.full = self.prefix / 'bin/baton-full'
-        self.focused = self.prefix / 'bin/baton'
+        self.focused = self.prefix / 'bin/baton-focused'
         self.database = self.directory / 'fixture.sqlite'
         self.environment = {key: value for key, value in os.environ.items()
                             if not key.startswith('BATON') and key != 'CODEX_THREAD_ID'}

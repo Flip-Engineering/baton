@@ -72,7 +72,8 @@ class DispatchRuntimeGuard(unittest.TestCase):
 
         def run(argv, **kwargs):
             calls.append(list(map(str, argv)))
-            stdout = '1.3.14\n' if argv[-1] == '--version' else ''
+            stdout = ('1.3.14\n' if argv[-1] == '--version' else
+                      'guide --to PLAYER\n' if argv[-2:] == ['help', 'guide'] else '')
             return CHECK.subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr='')
 
         with mock.patch.object(CHECK, 'verify_checksums', return_value={}), \
@@ -88,7 +89,8 @@ class DispatchRuntimeGuard(unittest.TestCase):
         self.assertEqual(result['native_compiler_probe'], 'not-run')
         self.assertEqual(result['runtime_version'], '1.3.14')
         self.assertEqual([pathlib.Path(argv[0]).name for argv in calls],
-                         ['baton', 'baton-full', 'bun'])
+                         ['baton', 'baton-focused', 'baton', 'bun'])
+        self.assertFalse((output / 'guide-check.sqlite').exists())
         self.assertFalse((output / 'sqlite-probe.c').exists())
 
 

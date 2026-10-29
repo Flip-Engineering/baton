@@ -93,9 +93,9 @@ class PackageLicenses(unittest.TestCase):
         (self.payload / 'bin').mkdir()
         binaries = []
         for role, name, alias, entry, mode in (
-                ('focused-facade', 'baton', None,
+                ('focused-facade', 'baton-focused', None,
                  'bend2/src/coordinator/receive-focused.bend', 'focused-native-entry'),
-                ('full-cli', 'baton2', 'baton-full',
+                ('full-cli', 'baton', 'baton2',
                  'bend2/src/coordinator/main.bend', 'full-native-receiver-router'),
                 ('recovery-helper', 'baton-recovery', None,
                  'bend2/src/coordinator/receive-recovery-focused.bend', 'recovery-native-entry')):
@@ -116,8 +116,13 @@ class PackageLicenses(unittest.TestCase):
                 shutil.copyfile(path, alias_path)
                 alias_path.chmod(0o755)
                 record['alias'] = 'bin/' + alias
+                if role == 'full-cli':
+                    extra_path = self.payload / 'bin/baton-full'
+                    shutil.copyfile(path, extra_path)
+                    extra_path.chmod(0o755)
+                    record['aliases'] = ['bin/baton2', 'bin/baton-full']
             binaries.append(record)
-        focused = binaries[0]
+        focused = next(record for record in binaries if record['role'] == 'full-cli')
         manifest = {'schema': 'baton2-native-artifact-v2', **identity,
                     'source': {'directory': str(self.source), 'commit': 'a' * 40,
                                'tree': 'b' * 40, 'status': ''},
@@ -172,13 +177,18 @@ class PackageLicenses(unittest.TestCase):
         output = self.home / 'unusable-runtime-check'
         output.mkdir()
         help_commands = [[str(prefix / 'bin' / name), '--help']
-                         for name in ('baton', 'baton-full')]
+                         for name in ('baton', 'baton-focused')]
+        guide_command = [str(prefix / 'bin/baton'), str(output / 'guide-check.sqlite'),
+                         'help', 'guide']
         runtime_command = [str(prefix / 'libexec/baton2/repl/bun'), '--version']
         actual_run = subprocess.run
 
         def run(argv, **kwargs):
             if argv in help_commands:
                 return subprocess.CompletedProcess(argv, 0, stdout='', stderr='')
+            if argv == guide_command:
+                return subprocess.CompletedProcess(argv, 0,
+                                                    stdout='guide --to PLAYER\n', stderr='')
             self.assertEqual(argv, runtime_command)
             return actual_run(argv, **kwargs)
 
@@ -186,7 +196,8 @@ class PackageLicenses(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'command could not start'):
                 CHECK.check(prefix, output)
         records = json.loads((output / 'commands.json').read_text())
-        self.assertEqual([record['argv'] for record in records], help_commands + [runtime_command])
+        self.assertEqual([record['argv'] for record in records],
+                         help_commands + [guide_command, runtime_command])
         self.assertIsNone(records[-1]['returncode'])
         self.assertTrue(records[-1]['error'])
 
