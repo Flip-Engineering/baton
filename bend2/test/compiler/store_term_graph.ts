@@ -74,8 +74,8 @@ const filled_cell = () => { const c = Bend.term_cell(free); Bend.term_wnf({} as 
 const filled = copy(Bend.Ctr("Pair", [filled_cell(), filled_cell()], span));
 assert.equal(filled.x[0].i, -2, "a filled cell keeps its state through the store");
 assert.equal(filled.x[0], filled.x[1], "filled cells with equal contents share a row: emission never updates them");
-const mixed = copy(Bend.Ctr("Pair", [filled_cell(), Bend.term_cell(free)], span));
-assert.notEqual(mixed.x[0], mixed.x[1], "a filled cell and an unevaluated cell stay apart");
+const filled_and_open = copy(Bend.Ctr("Pair", [filled_cell(), Bend.term_cell(free)], span));
+assert.notEqual(filled_and_open.x[0], filled_and_open.x[1], "a filled cell and an unevaluated cell stay apart");
 const solved = copy(Bend.Ctr("Pair", [Bend.term_cell(Bend.Ref("a", span)), Bend.term_cell(Bend.Ref("b", span))], span));
 assert.notEqual(solved.x[0], solved.x[1], "cells with different contents stay apart");
 const scoped = copy(Bend.Lam("x", 0, x => Bend.Ctr("Pair", [Bend.Ctr("N", [], span), Bend.Ctr("N", [], span)], span)));
