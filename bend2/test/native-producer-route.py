@@ -394,6 +394,26 @@ class WorkflowGraph(unittest.TestCase):
         self.assertIn("steps.route.outputs.producer == 'base'", base_step['if'])
         self.assertIn("steps.route.outputs.producer != 'base'", candidate_step['if'])
 
+    def test_route_step_selects_the_candidate_when_the_checkout_lacks_the_script(self):
+        # A pull request branch cut before the script existed runs this workflow from the merge
+        # commit but checks out its own tree.
+        step = self.steps()['Select the Main C producer'][1]
+        with tempfile.TemporaryDirectory() as directory:
+            run, output = Path(directory) / 'run', Path(directory) / 'github-output'
+            (run / 'evidence').mkdir(parents=True)
+            workspace = Path(directory) / 'workspace'
+            workspace.mkdir()
+            result = subprocess.run(['bash', '-c', step['run']], cwd=workspace, capture_output=True, text=True,
+                                    env=dict(os.environ, BATON2_LINUX_RUN=str(run), GITHUB_OUTPUT=str(output),
+                                             GITHUB_WORKSPACE=str(workspace), GITHUB_EVENT_NAME='pull_request',
+                                             BATON2_SOURCE_SHA='1' * 40, BATON2_PULL_REQUEST_BASE='2' * 40))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            values = dict(line.split('=', 1) for line in output.read_text().splitlines())
+            self.assertEqual(values['producer'], 'candidate')
+            self.assertIn('native-producer-route.py', values['reason'])
+            record = json.loads((run / 'evidence/producer-route.json').read_text())
+            self.assertEqual(record['producer'], 'candidate')
+
     def test_candidate_checkout_stays_shallow_and_the_route_receives_the_origin_token(self):
         steps = self.steps()
         self.assertNotIn('fetch-depth', steps['Checkout exact candidate'][1]['with'])
