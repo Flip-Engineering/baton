@@ -122,9 +122,9 @@ def sleep_ms(ms: String) -> IO(Unit):
     waited : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","sleep " ++ ms]),".")
     IO.pure(Unit,Unit{})
 
-# The provider reset passes: the continuation re-enters the wake path, the gate reads
-# the provider again, the unreadable read keeps the seat held, and the hold is
-# reported once.
+# The provider reset passes: the continuation re-enters the wake path and reads
+# the provider again. The elapsed recorded reset releases the old hold, so an
+# unreadable new read does not leave the owed input parked.
 def passed_case(+db: String) -> IO(Unit):
   do IO<Unit>:
     created : Unit <- session(db,"later")
@@ -132,10 +132,10 @@ def passed_case(+db: String) -> IO(Unit):
     owed : Unit <- message(db,"later","m-later","")
     held : Result<&1,&1,U32 & String,Unit> <- drive(db,"later")
     waited : Unit <- sleep_ms("3")
-    none : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-later';","0\n","passed-reset-without-open-read-no-delivery")
+    delivered : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-later';","1\n","passed-reset-admits-owed-input")
     reread : Unit <- expect_read(db,"SELECT count(*)||'|'||min(state) FROM usage_reads WHERE provider='later-kimi' AND trigger='admission';","2|unreadable\n","passed-reset-reads-the-provider-again")
-    reported : Unit <- expect_read(db,hold_reports_sql("later","hold"),"1\n","repeated-held-wakes-report-once")
-    expect_read(db,"SELECT count(*) FROM messages WHERE sender='later' AND instr(body,'no future provider reset')>0;","1\n","passed-reset-notifies-orchestrator")
+    released : Unit <- expect_read(db,hold_reports_sql("later","release"),"1\n","passed-reset-reports-release")
+    IO.pure(Unit,Unit{})
 
 # An open read is recorded before the continuation fires: the continuation
 # delivers the owed input once and the release is reported.
