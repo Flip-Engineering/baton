@@ -251,16 +251,6 @@ def operator_destination_sql() -> String:
 def coordinator_closure_cte(+worker: String) -> String:
   "WITH RECURSIVE chain_kinds(k) AS (VALUES(0),(1)),coordinator_closure(id) AS (SELECT chain_start.parent FROM sessions chain_start WHERE chain_start.id=" ++ worker ++ " AND chain_start.parent IS NOT NULL UNION SELECT CASE chain_edge.k WHEN 0 THEN chain_session.parent ELSE chain_succession.sender END FROM coordinator_closure chain_node JOIN sessions chain_session ON chain_session.id=chain_node.id LEFT JOIN messages chain_succession ON chain_succession.kind='succession' AND chain_succession.recipient=chain_node.id AND chain_succession.id='succession:' || chain_succession.recipient || ':' || chain_succession.sender JOIN chain_kinds chain_edge WHERE (CASE chain_edge.k WHEN 0 THEN chain_session.parent ELSE chain_succession.sender END) IS NOT NULL),coordinator_authors(id) AS (SELECT id FROM coordinator_closure UNION SELECT report_operator.id FROM sessions report_operator JOIN session_roles operator_role ON operator_role.session=report_operator.id AND operator_role.role='operator' WHERE report_operator.id='operator' AND report_operator.parent IS NULL) "
 
-def coordinator_closure_sql(+worker: String) -> String:
-  coordinator_closure_cte(worker) ++ "SELECT id FROM coordinator_closure"
-
-# Membership in the closure named by an enclosing coordinator_closure_cte.
-def closure_member_sql(+candidate: String) -> String:
-  candidate ++ " IN (SELECT id FROM coordinator_closure)"
-
-def coordinator_chain_sql(+worker: String, +candidate: String) -> String:
-  candidate ++ " IN (" ++ coordinator_closure_sql(worker) ++ ")"
-
 # The single authority predicate for a worker's assignment decisions: the
 # closure above plus the registered operator. Confirmation, the exact request
 # selector, the inferred request lookup and native replies all use it. The sets
