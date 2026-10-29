@@ -168,12 +168,15 @@ def next_refused(+session: String, +target: String, +code: U32, +cause: String) 
 def next_rows(rows: List<String>, +db: String, +session: String, +target: String, +request: String,
               +id: String, +task_id: String, +task: String) -> IO(String):
   match rows:
-    case +confirmed <> +assigned <> Nil{}: do IO<String>:
-      confirmation : String <- Batch.admitted(db,"0",id,session,target,"completion-confirmed",confirmed,
-        C.Message{id,session,target,"completion-confirmed",request})
-      assignment : String <- Batch.admitted(db,"1",task_id,session,target,"task",assigned,
-        C.Message{task_id,session,target,"task",task})
-      IO.pure(String,"[" ++ confirmation ++ "," ++ assignment ++ "]")
+    case +confirmed <> +assigned <> Nil{}:
+      Bool.pick(IO(String),Tx.starts_with(assigned,"{\"error\""),
+        next_refused(session,target,2,assigned),
+        (do IO<String>:
+          confirmation : String <- Batch.admitted(db,"0",id,session,target,"completion-confirmed",confirmed,
+            C.Message{id,session,target,"completion-confirmed",request})
+          assignment : String <- Batch.admitted(db,"1",task_id,session,target,"task",assigned,
+            C.Message{task_id,session,target,"task",task})
+          IO.pure(String,"[" ++ confirmation ++ "," ++ assignment ++ "]")))
     case other: next_refused(session,target,2,"The confirmation and next assignment were not both recorded; read the Player and its messages.")
 
 def next_stored(stored: Result<&1,&1,U32 & String,String>, +db: String, +session: String, +target: String,

@@ -450,7 +450,7 @@ def denied_detached_input_cannot_launch_a_process(db,id,saved):
 # The oldest input still owed to the recipient of message id. Empty when the
 # recipient owes nothing or is stopped.
 def owed_after_sql(+id: String) -> String:
-  "SELECT coalesce((SELECT owed.id FROM messages owed WHERE owed.recipient=(SELECT recipient FROM messages WHERE id=" ++ C.q(id) ++ ") AND " ++ C.owed_sql("owed") ++ " AND NOT " ++ C.stopped_session_sql("owed.recipient") ++ " ORDER BY owed.seq LIMIT 1),'');"
+  "SELECT coalesce((SELECT owed.id FROM messages owed WHERE owed.recipient=(SELECT recipient FROM messages WHERE id=" ++ C.q(id) ++ ") AND " ++ C.owed_sql("owed") ++ " AND NOT " ++ C.stopped_session_sql("owed.recipient") ++ " AND NOT " ++ C.task_closed_sql("owed.recipient") ++ " ORDER BY owed.seq LIMIT 1),'');"
 
 # The report to the recipient's coordinator when delivery or redelivery fails.
 def undelivered_report_sql(+id: String, +detail: String) -> String:
