@@ -718,3 +718,14 @@ def CompileQueueIdentity.history_compiler(+cwd: String, +root: String, +compiler
   do IO<Result<&1,&1,U32 & String,String>>:
     +ccache : String <- IO.pure(String, CompileQueueIdentity.ccache_expand(CompileQueueIdentity.ccache_path(String.lines(command)), cwd, root, compiler))
     CompileQueueIdentity.compiler_closure_digest(compiler, linker, version, ccache)
+
+# The history group of a request: the workload family whose recorded peaks apply
+# to it. The material is the request key without the digest of the source closure
+# (or of the file closure of a cc request) and without the digests of the input
+# rows. An ordinary edit of the source keeps the group. A change of the kind, the
+# entry, an option, the toolchain, an artifact name or the normalized command
+# starts another. The command is the normalized command, as for request_key.
+def CompileQueueIdentity.request_group(+kind: String, +cwd: String, +root: String, +entry: String, +compiler: String, +linker: String, +version: String, +artifacts: String, +options: String, +command: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    toolchain : String <- IO.try(String, CompileQueueIdentity.history_compiler(cwd, root, compiler, linker, version, command))
+    CompileQueueIdentity.text_digest("history\n" ++ CompileQueueIdentity.material(kind, entry, options, "", "", toolchain, "", CompileQueueIdentity.artifact_names(String.lines(artifacts)), command))

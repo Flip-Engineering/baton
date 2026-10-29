@@ -513,6 +513,25 @@ def identity_key(+config: Config) -> IO(String):
         fields_join("\n", fields_all(text, "option")),
         normalize_command(command, cwd, root, compiler, inputs, artifacts)))
 
+# The history group of a request (see CompileQueueIdentity.request_group). It is
+# written beside the attempt so that the supervisor and the waiters use the value
+# the requester computed.
+def identity_group(+config: Config) -> IO(String):
+  match config:
+    case Config{+text, command}:
+      +inputs = input_rows(text)
+      +artifacts = artifact_rows(text)
+      +cwd = field(text, "cwd")
+      +root = field(text, "root")
+      +compiler = field(text, "compiler")
+      +linker = Bool.pick(String, String.eq(field(text, "kind"), "cc"), field(text, "linker"), "")
+      +version = Bool.pick(String, String.eq(field(text, "kind"), "cc"), field(text, "version"), "")
+      IO.try(String, Identity.CompileQueueIdentity.request_group(
+        field(text, "kind"), cwd, root, field(text, "entry"), compiler, linker, version,
+        artifact_pairs_text(artifacts),
+        fields_join("\n", fields_all(text, "option")),
+        normalize_command(command, cwd, root, compiler, inputs, artifacts)))
+
 def config_state(config: Config) -> String:
   match config:
     case Config{text, command}: field(text, "state_root")
@@ -627,6 +646,8 @@ def write_attempt_files(+config: Config, +key: String, keydir: String, +attempt:
         wrote_command : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/command", command_text(command, work, inputs, artifacts)))
         wrote_argv : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_bytes(attempt ++ "/argv", P.argv(command_tokens(command, work, inputs, artifacts))))
         wrote_meta : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/meta", meta_text(config, key, keydir, attempt, artifacts)))
+        +group : String <- identity_group(config)
+        wrote_group : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/group", "group=" ++ group ++ "\n"))
         digest_written : Unit <- Bool.pick(IO(Unit),
           Bool.or(Tx.str_eq(field(text, "kind"), "cgen"), Tx.str_eq(field(text, "kind"), "check")),
           write_attempt_digest(attempt, text), IO.pure(Unit, Unit{}))
@@ -956,6 +977,14 @@ def peak_text_result(result: Result<&1,&1,U32 & String,String>) -> String:
     case Fail{error}: ""
     case Done{+text}: text
 
+# The history group the requester recorded for the attempt; an attempt without
+# one is its own group, which only its exact key's history can match.
+def attempt_group(+attempt: String, +key: String) -> IO(String):
+  do IO<String>:
+    result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/group")
+    +text : String <- IO.pure(String, peak_text_result(result))
+    IO.pure(String, Bool.pick(String, non_empty(field(text, "group")), field(text, "group"), key))
+
 def status_number_parsed(parsed: Maybe<&2,U32>) -> U32:
   match parsed:
     case None{}: 0
@@ -987,6 +1016,61 @@ def peak_record(+attempt: String, +peak: U32) -> IO(Unit):
 # queue from creating a claim for cgen/check work.
 def admission_root(+state: String) -> String:
   state ++ "/admission"
+
+# A peak measured for a command that exited 0 is recorded for the history group
+# of its request, so a later request that differs only in its source finds it. The
+# peak of a run that did not exit 0 stays with its own key: it predicts that exact
+# request and says nothing about the request after the source is fixed. The record
+# holds the largest peak and is raised under the admission lock.
+def exit_marker_success(+attempt: String) -> IO(Bool):
+  do IO<Bool>:
+    result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/exit_status")
+    +text : String <- IO.pure(String, peak_text_result(result))
+    IO.pure(Bool, Bool.and(Tx.str_eq(field(text, "exit"), "0"), Tx.str_eq(field(text, "signal"), "0")))
+
+def group_peak_raise(+state: String, +group: String, +peak: U32) -> IO(Unit):
+  do IO<Unit>:
+    made_admission : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(admission_root(state)))
+    made_peaks : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(state ++ "/peaks"))
+    guard : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(admission_root(state) ++ "/lock"))
+    old_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(state ++ "/peaks/" ++ group)
+    +old_text : String <- IO.pure(String, peak_text_result(old_result))
+    +prior : U32 <- IO.pure(U32, status_number(field(old_text, "peak_kb")))
+    raised : Unit <- Bool.pick(IO(Unit), U32.is_gt(peak, prior),
+      do IO<Unit>:
+        ignored : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.write_text(
+          state ++ "/peaks/" ++ group, "peak_kb=" ++ U32.show(peak) ++ "\n")
+        IO.pure(Unit, Unit{}),
+      IO.pure(Unit, Unit{}))
+    released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(guard))
+    IO.pure(Unit, Unit{})
+
+def group_peak_record(+attempt: String, +peak: U32) -> IO(Unit):
+  do IO<Unit>:
+    succeeded : Bool <- exit_marker_success(attempt)
+    meta_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/meta")
+    +meta : String <- IO.pure(String, peak_text_result(meta_result))
+    group_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/group")
+    +group_text : String <- IO.pure(String, peak_text_result(group_result))
+    +group : String <- IO.pure(String, field(group_text, "group"))
+    Bool.pick(IO(Unit), Bool.and(succeeded, Bool.and(U32.is_gt(peak, 0), non_empty(group))),
+      group_peak_raise(field(meta, "state_root"), group, peak),
+      IO.pure(Unit, Unit{}))
+
+# The history of a request: the peak recorded for its exact key, else the peak
+# recorded for its history group. Neither is an estimate; a request with neither
+# has no history.
+def admission_history_value(exact: Result<&1,&1,U32 & String,String>, grouped: Result<&1,&1,U32 & String,String>) -> U32:
+  +exact_peak = status_number(field(peak_text_result(exact), "peak_kb"))
+  Bool.pick(U32, U32.is_gt(exact_peak, 0), exact_peak,
+    status_number(field(peak_text_result(grouped), "peak_kb")))
+
+def admission_history(+state: String, +key: String, +group: String) -> IO(U32):
+  do IO<U32>:
+    exact : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(state ++ "/keys/" ++ key ++ "/peak")
+    grouped : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(
+      state ++ "/peaks/" ++ Bool.pick(String, non_empty(group), group, key))
+    IO.pure(U32, admission_history_value(exact, grouped))
 
 def record_usage(+attempt: String, pid: U32, sample: U32, growth: U32) -> IO(Unit):
   do IO<Unit>:
@@ -1317,6 +1401,7 @@ def watch_heavy_go(+attempt: String, +pid: U32, +start: String,
     Bool.pick(IO(Unit), Bool.and(marker, U32.is_eq(release_child_alive, 0)),
       do IO<Unit>:
         recorded : Unit <- peak_record(attempt,next_peak)
+        recorded_group : Unit <- group_peak_record(attempt,next_peak)
         released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(8))
         IO.pure(Unit,Unit{}),
       Bool.pick(IO(Unit), U32.is_eq(child_alive, 0),
@@ -1377,9 +1462,10 @@ def waiters_dir(+state: String) -> String:
 def kind_waiters_dir(+state: String, +kind: String) -> String:
   Bool.pick(String, String.eq(kind, "cc"), waiters_dir(state) ++ "/cc", waiters_dir(state))
 
-def waiters_ticket_text(priority: U32, pid: U32, start: String, key: String, token: String) -> String:
+def waiters_ticket_text(priority: U32, pid: U32, start: String, key: String, history_group: String, token: String) -> String:
   "priority=" ++ U32.show(priority) ++ "\npid=" ++ U32.show(pid)
-  ++ "\nstarttime=" ++ start ++ "\nkey=" ++ key ++ "\ntoken=" ++ token ++ "\n"
+  ++ "\nstarttime=" ++ start ++ "\nkey=" ++ key ++ "\nhistory_group=" ++ history_group
+  ++ "\ntoken=" ++ token ++ "\n"
 
 # A ticket is reaped only when it parses as a complete record (numeric pid
 # and a non-empty start time), the recorded pid and start time no longer
@@ -1526,12 +1612,10 @@ def admission_ticket_text(+priority: U32, +pid: U32, +start: String, +key: Strin
   "priority=" ++ U32.show(priority) ++ "\npid=" ++ U32.show(pid) ++ "\nstarttime=" ++ start
   ++ "\nkey=" ++ key ++ "\nkind=" ++ kind ++ "\ngroup=" ++ group ++ "\ntoken=" ++ token ++ "\n"
 
-def admission_waiter_fits(state: String, kind: String, key: String, stats: ClaimStats,
+def admission_waiter_fits(state: String, kind: String, key: String, history_group: String, stats: ClaimStats,
                           +available: U32, total: U32, legacy_pid: U32) -> IO(Bool):
   do IO<Bool>:
-    record_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(state ++ "/keys/" ++ key ++ "/peak")
-    record : String <- IO.pure(String,admission_record_text(record_result))
-    +history : U32 <- IO.pure(U32,status_number(field(record,"peak_kb")))
+    +history : U32 <- admission_history(state,key,history_group)
     IO.pure(Bool,Bool.and(Bool.and(U32.is_gt(total,0),U32.is_gt(available,0)),
       admission_can_start(kind,history,history,stats,available,legacy_pid)))
 
@@ -1544,7 +1628,7 @@ def admission_waiter_priority(read: Result<&1,&1,U32 & String,String>, state: St
       do IO<Bool>:
         higher : Bool <- waiters_ticket_higher(text,token,priority)
         Bool.pick(IO(Bool),higher,
-          admission_waiter_fits(state,kind,field(text,"key"),stats,available,total,legacy_pid),
+          admission_waiter_fits(state,kind,field(text,"key"),field(text,"history_group"),stats,available,total,legacy_pid),
           IO.pure(Bool,False{}))
 
 def admission_waiters_scan(names: List<&1,String>, +dir: String, +state: String, +kind: String,
@@ -1616,9 +1700,8 @@ def acquire_accounted(~again: (@+attempt: String -> @+keydir: String -> @+state:
     legacy_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.exclusive_lock_pid(state ++ "/heavy.lock")
     +legacy_pid : U32 <- IO.pure(U32,admission_legacy_pid(legacy_result))
     higher : Bool <- admission_waiters_higher(state,token,priority,stats,available,total,legacy_pid)
-    record_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(keydir ++ "/peak")
-    record : String <- IO.pure(String, admission_record_text(record_result))
-    +history : U32 <- IO.pure(U32,status_number(field(record,"peak_kb")))
+    +history_group : String <- attempt_group(attempt,key)
+    +history : U32 <- admission_history(state,key,history_group)
     +need : U32 <- IO.pure(U32,admission_need(history,stats))
     +fits : Bool <- IO.pure(Bool, Bool.and(Bool.not(higher),Bool.and(Bool.and(U32.is_gt(total,0),U32.is_gt(available,0)), admission_can_start(kind,history,need,stats,available,legacy_pid))))
     Bool.pick(IO(AdmissionGate), fits,
@@ -1672,9 +1755,10 @@ def admission_probe_result(result: Result<&1,&1,U32 & String,String>, +attempt: 
           made : Unit <- IO.try(Unit,L.CompileQueueLifecycle.mkdir_p(admission_root(state) ++ "/running"))
           made_usage : Unit <- IO.try(Unit,L.CompileQueueLifecycle.mkdir_p(admission_root(state) ++ "/usage"))
           made_waiting : Unit <- IO.try(Unit,L.CompileQueueLifecycle.mkdir_sticky(admission_root(state) ++ "/waiting"))
+          +history_group : String <- attempt_group(attempt,key)
           admission_ticket : Unit <- IO.try(Unit,L.CompileQueueLifecycle.write_text(
             admission_root(state) ++ "/waiting/" ++ token,
-            waiters_ticket_text(priority,pid,start,key,token)))
+            waiters_ticket_text(priority,pid,start,key,history_group,token)))
           acquire_accounted_loop(attempt,keydir,state,kind,key,key,token,priority,pid,start,8),
         admission_fallback(kind,keydir,state,token,priority))
 
@@ -1753,9 +1837,10 @@ def supervise(+attempt: String) -> IO(Unit):
     published : Unit <- Bool.pick(IO(Unit), String.is_empty(state), IO.pure(Unit, Unit{}),
       do IO<Unit>:
         made : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(kind_waiters_dir(state, kind)))
+        +history_group : String <- attempt_group(attempt, key)
         wrote : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(
           kind_waiters_dir(state, kind) ++ "/" ++ token,
-          waiters_ticket_text(priority, pid, start, key, token)))
+          waiters_ticket_text(priority, pid, start, key, history_group, token)))
         IO.pure(Unit, Unit{}))
     gate : U32 <- owner_lock(keydir)
     owners : U32 <- owner_count(keydir)

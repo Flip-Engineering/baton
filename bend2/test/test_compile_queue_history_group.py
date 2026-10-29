@@ -1,0 +1,226 @@
+"""A request that differs from a measured one only in its source reuses the measured peak (#1310).
+
+The history group of a request is its request key without the digest of the source
+(or of the input files) and without the digests of the input rows: the kind, the
+entry, the options, the toolchain, the artifact names and the normalized command.
+A command that exits 0 records its peak for the group. A peak is an observation of
+the memory the command used; the tests start commands that touch a fixed amount of
+memory so that the sampled peak is positive, and they compare claim records with
+the group record, never with a fixed number.
+
+* An edited source finds the group peak: its claim is a known claim (`history=1`).
+* A command that does not exit 0 records no group peak.
+* Another option, or another toolchain, is another group: the claim has no history.
+* An edited source of a measured group starts beside a running claim whose history is
+  known, which a request without history does not.
+* A request of a group that was never measured waits beside a running claim.
+"""
+import os
+import pathlib
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+
+COMPILER = '''#!{python}
+import pathlib, sys, time
+
+args = sys.argv[1:]
+source = pathlib.Path(args[args.index("--source") + 1]).read_text()
+output = args[args.index("-o") + 1]
+settings = dict(line.split("=", 1) for line in source.splitlines() if "=" in line)
+memory = bytes(b"x") * (int(settings.get("mb", "64")) * 1024 * 1024)
+with open(settings["log"], "a") as log:
+    log.write("allocated %s %d\\n" % (settings["name"], len(memory)))
+hold = pathlib.Path(settings["hold"])
+deadline = time.monotonic() + 120
+while not hold.exists() and time.monotonic() < deadline:
+    time.sleep(0.05)
+if settings.get("exit", "0") != "0":
+    sys.exit(int(settings["exit"]))
+pathlib.Path(output).write_text("complete " + settings["name"] + "\\n")
+with open(settings["log"], "a") as log:
+    log.write("end %s\\n" % settings["name"])
+'''
+
+
+def fields(path):
+    return dict(line.split("=", 1) for line in pathlib.Path(path).read_text().splitlines() if "=" in line)
+
+
+class HistoryGroupTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.candidate = os.environ.get("BATON2_COMPILE_QUEUE_BIN")
+        if not cls.candidate:
+            raise unittest.SkipTest("BATON2_COMPILE_QUEUE_BIN is required")
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="queue-history-")
+        self.addCleanup(self.temporary.cleanup)
+        self.root = pathlib.Path(self.temporary.name)
+        self.state = self.root / "state"
+        self.state.mkdir(mode=0o2770)
+        self.state.chmod(0o2770)
+        self.log = self.root / "log"
+        self.source = self.root / "main.c"
+        self.compiler = self.root / "fake-compiler"
+        self.compiler.write_text(COMPILER.format(python=sys.executable))
+        self.compiler.chmod(0o755)
+        self.holds = {}
+        self.children = []
+        self.addCleanup(self.release_all)
+
+    def release_all(self):
+        for hold in self.holds.values():
+            hold.touch()
+        for child in self.children:
+            try:
+                child.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                child.kill()
+
+    def until(self, what, test, seconds=60):
+        # This deadline detects a broken fixture; it does not bound a compiler.
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            if test():
+                return
+            time.sleep(0.05)
+        self.fail(what)
+
+    def log_lines(self):
+        return self.log.read_text().splitlines() if self.log.exists() else []
+
+    def allocated(self, name):
+        return any(line.startswith("allocated %s " % name) for line in self.log_lines())
+
+    def request(self, name, edit, options=(), exit_code=0, mb=64):
+        """Start a cc request whose source text carries the edit; returns the process."""
+        hold = self.root / ("hold-" + name)
+        self.holds[name] = hold
+        self.source.write_text("mb=%d\nname=%s\nlog=%s\nhold=%s\nexit=%d\n# edit %s\n"
+                               % (mb, name, self.log, hold, exit_code, edit))
+        argv = [self.candidate, "--", "run", "--token", name,
+                "--receipt", str(self.root / ("receipt-" + name)), "--kind", "cc",
+                "--state-root", str(self.state), "--cwd", str(self.root), "--root", str(self.root),
+                "--source-root", str(self.root), "--compiler", str(self.compiler),
+                "--linker", "/usr/bin/ld", "--version", "fake-history-v1",
+                "--artifact", "output=" + str(self.root / ("output-" + name)), "--input", str(self.source)]
+        for option in options:
+            argv += ["--option", option]
+        argv += ["--", str(self.compiler), "--source", str(self.source), "-o", str(self.root / ("output-" + name))]
+        child = subprocess.Popen(argv, env=dict(os.environ, BATON_COMPILE_QUEUE_ROOT=str(self.state)),
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.children.append(child)
+        return child
+
+    def measured(self, name, edit, options=()):
+        """Run a request to its end after the sampler saw its memory."""
+        child = self.request(name, edit, options)
+        self.until("%s allocated" % name, lambda: self.allocated(name))
+        time.sleep(1.5)
+        self.holds[name].touch()
+        out, err = child.communicate(timeout=60)
+        self.assertEqual(child.returncode, 0, out + err)
+
+    def group_records(self):
+        peaks = self.state / "peaks"
+        return {p.name: int(fields(p)["peak_kb"]) for p in peaks.iterdir()} if peaks.is_dir() else {}
+
+    def claim(self, name):
+        """The record of the running claim of a request, by its key."""
+        running = self.state / "admission" / "running"
+        keys = {p.name: fields(p) for p in running.iterdir()} if running.is_dir() else {}
+        mine = [c for c in keys.values() if c.get("key") and (self.state / "keys" / c["key"]).is_dir()
+                and (self.state / "keys" / c["key"] / "owners" / name).exists()]
+        return mine[0] if mine else None
+
+    def waiting_count(self):
+        waiting = self.state / "admission" / "waiting"
+        return len(list(waiting.iterdir())) if waiting.is_dir() else 0
+
+    def test_an_edited_source_reuses_the_peak_of_its_group(self):
+        self.assertEqual(self.group_records(), {})
+        self.measured("first", "one")
+        records = self.group_records()
+        self.assertEqual(len(records), 1, records)
+        group, peak = next(iter(records.items()))
+        self.assertGreater(peak, 32 * 1024, "the sampled peak is below the memory the command touched")
+        second = self.request("second", "two")
+        self.until("second allocated", lambda: self.allocated("second"))
+        self.until("second has a claim", lambda: self.claim("second") is not None)
+        claim = self.claim("second")
+        self.assertEqual(claim["history"], "1", claim)
+        self.assertGreater(int(claim["expected_kb"]), 0, claim)
+        self.holds["second"].touch()
+        out, err = second.communicate(timeout=60)
+        self.assertEqual(second.returncode, 0, out + err)
+        self.assertEqual(len(list((self.state / "keys").iterdir())), 2, "the edit must be another request")
+        self.assertEqual(list(self.group_records()), [group])
+
+    def test_a_command_that_does_not_exit_zero_records_no_group_peak(self):
+        failing = self.request("failing", "broken", exit_code=1)
+        self.until("failing allocated", lambda: self.allocated("failing"))
+        time.sleep(1.5)
+        self.holds["failing"].touch()
+        out, err = failing.communicate(timeout=60)
+        self.assertNotEqual(failing.returncode, 0, out + err)
+        self.assertEqual(self.group_records(), {})
+        exact = list((self.state / "keys").glob("*/peak"))
+        self.assertEqual(len(exact), 1, "the failed request keeps the peak of its own key")
+        fixed = self.request("fixed", "repaired")
+        self.until("fixed has a claim", lambda: self.claim("fixed") is not None)
+        self.assertEqual(self.claim("fixed")["history"], "0")
+        self.holds["fixed"].touch()
+        out, err = fixed.communicate(timeout=60)
+        self.assertEqual(fixed.returncode, 0, out + err)
+
+    def test_another_option_is_another_group(self):
+        self.measured("first", "one")
+        other = self.request("other", "one", options=["mode=other"])
+        self.until("other has a claim", lambda: self.claim("other") is not None)
+        self.assertEqual(self.claim("other")["history"], "0")
+        self.holds["other"].touch()
+        out, err = other.communicate(timeout=60)
+        self.assertEqual(other.returncode, 0, out + err)
+        self.assertEqual(len(self.group_records()), 2)
+
+    def test_an_edited_source_of_a_measured_group_starts_beside_a_known_claim(self):
+        self.measured("a1", "one")
+        self.measured("b1", "one", options=["mode=b"])
+        running = self.request("b2", "two", options=["mode=b"])
+        self.until("b2 allocated", lambda: self.allocated("b2"))
+        self.until("b2 has a claim", lambda: self.claim("b2") is not None)
+        self.assertEqual(self.claim("b2")["history"], "1")
+        edited = self.request("a2", "two")
+        self.until("a2 started beside the running claim of b2", lambda: self.allocated("a2"))
+        self.assertNotIn("end b2", self.log_lines())
+        self.assertEqual(self.claim("a2")["history"], "1")
+        self.holds["a2"].touch()
+        self.holds["b2"].touch()
+        for child in (edited, running):
+            out, err = child.communicate(timeout=60)
+            self.assertEqual(child.returncode, 0, out + err)
+
+    def test_a_group_that_was_never_measured_waits_beside_a_running_claim(self):
+        self.measured("a1", "one")
+        running = self.request("a2", "two")
+        self.until("a2 allocated", lambda: self.allocated("a2"))
+        self.until("a2 has a claim", lambda: self.claim("a2") is not None)
+        unmeasured = self.request("fresh", "one", options=["mode=fresh"])
+        self.until("fresh has a ticket", lambda: self.waiting_count() == 1)
+        time.sleep(3)
+        self.assertFalse(self.allocated("fresh"), "a request without history started beside a running claim")
+        self.holds["a2"].touch()
+        out, err = running.communicate(timeout=60)
+        self.assertEqual(running.returncode, 0, out + err)
+        self.until("fresh started after the claim ended", lambda: self.allocated("fresh"))
+        self.holds["fresh"].touch()
+        out, err = unmeasured.communicate(timeout=60)
+        self.assertEqual(unmeasured.returncode, 0, out + err)
+
+
+if __name__ == "__main__":
+    unittest.main()
