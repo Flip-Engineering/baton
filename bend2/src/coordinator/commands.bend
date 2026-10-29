@@ -233,14 +233,6 @@ def blocked_cause_sql(+session: String) -> String:
   ++ " WHEN EXISTS(SELECT 1 FROM executions e WHERE e.session=" ++ session ++ " AND e.phase='exited' AND (e.status<>'exit 0' OR EXISTS(SELECT 1 FROM turns t WHERE t.id=e.id AND t.worker=e.session AND (coalesce(json_extract(t.event,'$.is_error'),0)=1 OR " ++ omp_terminal_error_sql_expr("t.event") ++ " OR (json_extract(t.event,'$.payload.kind')='run_terminal' AND json_extract(t.event,'$.payload.terminal')<>'completed'))))) THEN 'provider-failure'"
   ++ " ELSE '' END"
 
-# Wake and ownership projection shared by every session surface. Pending input
-# uses the continuation count: owed (delivered, not yet read) input on an
-# unstopped session.
-# The claim reads the wake_claims table, which every commit creates through
-# schema() before any surface query runs in the same transaction.
-def wake_state_sql(+session: String) -> String:
-  "json_object('pending',(SELECT count(*) FROM messages WHERE recipient=" ++ session ++ " AND " ++ owed_sql("messages") ++ " AND NOT " ++ stopped_session_sql(session) ++ "),'claim',coalesce((SELECT state FROM wake_claims WHERE session=" ++ session ++ "),'') )"
-
 # The accountable owner for blocked input: the recorded parent, else the
 # registered operator. This mirrors report_recipient without naming it, which
 # is defined below; the SQL shape is the same parent-first fallback.
@@ -269,6 +261,20 @@ def task_confirmed_sql(+session: String) -> String:
 def task_ended_sql(+session: String) -> String:
   "(" ++ task_confirmed_sql(session) ++ " AND NOT " ++ stopped_session_sql(session) ++ ")"
 
+# Operator input to an ended assignment stays effective, so a confirmed
+# assignment closes new native admission only while no owed input came from an
+# operator. A newer coordinator assignment makes the assignment not ended.
+def task_closed_sql(+session: String) -> String:
+  "(" ++ task_ended_sql(session) ++ " AND NOT EXISTS(SELECT 1 FROM messages operator_input WHERE operator_input.recipient=" ++ session ++ " AND " ++ owed_sql("operator_input") ++ " AND EXISTS(SELECT 1 FROM session_roles operator_role WHERE operator_role.session=operator_input.sender AND operator_role.role='operator')))"
+
+# Wake and ownership projection shared by every session surface. Pending input
+# uses the continuation count: owed (delivered, not yet read) input on an
+# unstopped session whose assignment is not closed by a confirmation.
+# The claim reads the wake_claims table, which every commit creates through
+# schema() before any surface query runs in the same transaction.
+def wake_state_sql(+session: String) -> String:
+  "json_object('pending',(SELECT count(*) FROM messages WHERE recipient=" ++ session ++ " AND " ++ owed_sql("messages") ++ " AND NOT " ++ stopped_session_sql(session) ++ " AND NOT " ++ task_closed_sql(session) ++ "),'claim',coalesce((SELECT state FROM wake_claims WHERE session=" ++ session ++ "),'') )"
+
 def task_open_sql(+session: String) -> String:
   "((SELECT task_parent.parent FROM sessions task_parent WHERE task_parent.id=" ++ session ++ ") IS NOT NULL AND " ++ task_assignment_sql(session) ++ " IS NOT NULL AND NOT " ++ task_confirmed_sql(session) ++ " AND NOT " ++ stopped_session_sql(session) ++ ")"
 
@@ -284,7 +290,7 @@ def task_continuation_sql(+session: String, +id: String) -> String:
 
 def session_state_sql(+session: String) -> String:
   "json_patch(coalesce((SELECT json_object('stop',json_object('id',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''))) FROM session_stops WHERE session=" ++ session ++ "),json('{}'))"
-  ++ ",json_object('blockedCause'," ++ blocked_cause_sql(session) ++ ",'blockedOwner'," ++ blocked_owner_sql(session) ++ ",'wake'," ++ wake_state_sql(session) ++ "))"
+  ++ ",json_object('blockedCause',CASE WHEN NOT " ++ stopped_session_sql(session) ++ " AND " ++ task_closed_sql(session) ++ " THEN 'assignment-ended' ELSE " ++ blocked_cause_sql(session) ++ " END,'blockedOwner'," ++ blocked_owner_sql(session) ++ ",'wake'," ++ wake_state_sql(session) ++ "))"
 
 def assigned_role(session: String) -> String:
   "coalesce((SELECT role FROM session_roles WHERE session=" ++ session ++ "),'player')"
@@ -441,10 +447,10 @@ def observe_identity_sql_expr(+player: String, +event: String, +harness: String)
 # reconciliation state, counted over unread input on unstopped
 # sessions.
 def completion_pending_sql(+player: String) -> String:
-  "(SELECT count(*) FROM messages WHERE recipient=" ++ q(player) ++ " AND " ++ owed_sql("messages") ++ " AND NOT " ++ stopped_session_sql(q(player)) ++ ")"
+  "(SELECT count(*) FROM messages WHERE recipient=" ++ q(player) ++ " AND " ++ owed_sql("messages") ++ " AND NOT " ++ stopped_session_sql(q(player)) ++ " AND NOT " ++ task_closed_sql(q(player)) ++ ")"
 
 def completion_oldest_sql(+player: String) -> String:
-  "(SELECT id FROM messages WHERE recipient=" ++ q(player) ++ " AND " ++ owed_sql("messages") ++ " AND NOT " ++ stopped_session_sql(q(player)) ++ " ORDER BY seq LIMIT 1)"
+  "(SELECT id FROM messages WHERE recipient=" ++ q(player) ++ " AND " ++ owed_sql("messages") ++ " AND NOT " ++ stopped_session_sql(q(player)) ++ " AND NOT " ++ task_closed_sql(q(player)) ++ " ORDER BY seq LIMIT 1)"
 
 def completion_sql_expr(+id: String, +player: String, +event: String) -> String:
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ ",id," ++ report_recipient("sessions.id") ++ ",'report'," ++ terminal_body_expr(event) ++ " FROM sessions WHERE id=" ++ q(player) ++ " AND " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ message_upsert() ++ message_conflict_sql(q(id),q(player),report_recipient(q(player)),"'report'",terminal_body_expr(event),report_recipient(q(player)) ++ " IS NOT NULL AND " ++ terminal_expr(event))
@@ -501,17 +507,28 @@ def matching_message_result(+id: String, sender: String, recipient: String, kind
 def matching_message_result_expr(+id: String, +sender: String, +recipient: String, +kind: String, +body: String) -> String:
   "SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt)," ++ input_state_sql("messages") ++ ") FROM messages WHERE id=" ++ id ++ " AND EXISTS(SELECT 1 FROM messages WHERE id=" ++ id ++ " AND sender=" ++ sender ++ " AND recipient=" ++ recipient ++ " AND kind=" ++ kind ++ " AND body=" ++ body ++ ");"
 
-def message_sql(+id: String, +sender: String, +recipient: String, +kind: String, +body: String) -> String:
-  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ "," ++ q(sender) ++ "," ++ q(recipient) ++ "," ++ q(kind) ++ "," ++ q(body) ++ " WHERE (" ++ message_route(q(sender),q(recipient)) ++ " AND NOT (" ++ stopped_session_sql(q(recipient)) ++ " AND " ++ execution_input_sql(q(kind)) ++ ")) OR " ++ exact_message(id,sender,recipient,kind,body) ++ message_upsert() ++ message_conflict_sql(q(id),q(sender),q(recipient),q(kind),q(body),"1")
+# The guard is an extra condition on a first write. An exact replay of a stored
+# message passes the insert's own conflict handling whatever the guard says.
+def message_guarded_sql(+id: String, +sender: String, +recipient: String, +kind: String, +body: String, +guard: String) -> String:
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ "," ++ q(sender) ++ "," ++ q(recipient) ++ "," ++ q(kind) ++ "," ++ q(body) ++ " WHERE ((" ++ message_route(q(sender),q(recipient)) ++ " AND NOT (" ++ stopped_session_sql(q(recipient)) ++ " AND " ++ execution_input_sql(q(kind)) ++ ")) OR " ++ exact_message(id,sender,recipient,kind,body) ++ ") AND " ++ guard ++ message_upsert() ++ message_conflict_sql(q(id),q(sender),q(recipient),q(kind),q(body),"1")
   ++ "SELECT json_object('error','message-route-denied','sender'," ++ q(sender) ++ ",'recipient'," ++ q(recipient) ++ ",'condition','Use an immediate parent, a conductor descendant route, an explicitly tight Ensemble peer, or the operator and top-level conductor route.','next','Inspect session roles and Ensemble membership; send through your immediate conductor when a direct route is unavailable.') WHERE NOT " ++ message_route(q(sender),q(recipient)) ++ " AND NOT " ++ exact_message(id,sender,recipient,kind,body) ++ ";"
   ++ "SELECT json_object('error','session-stopped','session'," ++ q(recipient) ++ ") WHERE NOT " ++ exact_message(id,sender,recipient,kind,body) ++ " AND " ++ message_route(q(sender),q(recipient)) ++ " AND " ++ stopped_session_sql(q(recipient)) ++ " AND " ++ execution_input_sql(q(kind)) ++ ";" ++ matching_message_result(id,sender,recipient,kind,body)
 
+def message_sql(+id: String, +sender: String, +recipient: String, +kind: String, +body: String) -> String:
+  message_guarded_sql(id,sender,recipient,kind,body,"1")
+
 # The decision that confirms a request and dispatches the next assignment is one
-# transaction. The task is inserted only when the exact confirmation is stored,
-# and its identity derives from the confirmation identity, so a repeat of the
-# same decision stores no second task.
+# transaction. The confirmation is written only when the derived task identity
+# is free or already holds the same task and the request is the current one, or
+# the exact confirmation is already stored; the task is written only when the
+# exact confirmation is stored. A conflict therefore admits neither message, and
+# a repeat of the same decision stores nothing new.
+def confirm_next_guard(+id: String, +sender: String, +recipient: String, +request: String, +task_id: String, +task: String) -> String:
+  "NOT EXISTS(SELECT 1 FROM messages WHERE id=" ++ q(task_id) ++ " AND NOT " ++ exact_message(task_id,sender,recipient,"task",task) ++ ") AND (" ++ exact_message(id,sender,recipient,"completion-confirmed",request) ++ " OR " ++ q(request) ++ "=coalesce(" ++ task_request_sql(q(recipient)) ++ ",''))"
+
 def confirm_next_sql(+id: String, +sender: String, +recipient: String, +request: String, +task_id: String, +task: String) -> String:
-  message_sql(id,sender,recipient,"completion-confirmed",request)
+  message_guarded_sql(id,sender,recipient,"completion-confirmed",request,confirm_next_guard(id,sender,recipient,request,task_id,task))
+  ++ message_conflict_sql(q(task_id),q(sender),q(recipient),q("task"),q(task),"1")
   ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(task_id) ++ "," ++ q(sender) ++ "," ++ q(recipient) ++ ",'task'," ++ q(task) ++ " WHERE " ++ exact_message(id,sender,recipient,"completion-confirmed",request) ++ message_upsert()
   ++ matching_message_result(task_id,sender,recipient,"task",task)
 

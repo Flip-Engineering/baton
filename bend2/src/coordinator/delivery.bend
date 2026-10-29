@@ -377,7 +377,7 @@ def wake_result(result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 &
 # The first unread message for a session after the cursor, in the order
 # the store accepted them. The wake reads this one message and nothing else.
 def wake_sql(+session: String, cursor: String) -> String:
-  "SELECT coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " ORDER BY seq LIMIT 1),'');"
+  "SELECT coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND NOT " ++ C.task_closed_sql(C.q(session)) ++ " ORDER BY seq LIMIT 1),'');"
 
 # The completed native owner has released its session lock before this read.
 def wake_pending(+db: String, session: String, cursor: String) -> IO(Result<&1,&1,U32 & String,Unit>):
