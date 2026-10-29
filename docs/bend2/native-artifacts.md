@@ -101,6 +101,16 @@ A pull request run compares its base and head with `.github/scripts/native-produ
 
 The Darwin job runs `native-producer-route.py verify-base` on that handoff. It recomputes the head's production inputs and producer tooling from the package checkout and compares them with the recorded base inputs and tooling, then packages the C, the route record and the handoff under `share/baton2/generated-c-provenance` with the base commit as the producer. The package, the REPL compiler source, the qualification job and the target comparison use the head checkout. A run that is not a pull request, a checkout without the routing script (a branch cut before it existed), a base that is unavailable, an unsupported import shape, or any difference in the inputs or tooling selects the existing producer, which generates and compiles the head's own Main.
 
+### Compiler unit cache directory
+
+The compiler keeps emitted C units in a directory it reads from `BEND_CGEN_CACHE_DIR`. `.github/scripts/compile-cgen-exec.py` chooses that directory for every queued C generation and passes it to the compiler explicitly. A value in the job environment, and `XDG_CACHE_HOME`, are recorded and not used (#1089).
+
+The wrapper asks the GitHub API for the run (`GET /repos/{repository}/actions/runs/{run id}` with the job token). The run shares `<queue state root>/cgen-cache/trusted` when the record shows a `workflow_dispatch` or `push` event of this repository, status `in_progress`, and the same run attempt, repository and commit as the job, and the job's own event name equals the record's. Every other run, and any run whose record cannot be read (no token, a failed request), uses `<queue state root>/cgen-cache/untrusted/<uid>`, a directory mode 0700 for the runner user. The shared directory is used only while it has the state root's group, the setgid bit and group write access; otherwise the run falls back to its private directory, and an attempt that is not inside a queue state root uses a directory in its own work area. New directories take their group from the state root and are created with the mode they need whatever the job's umask.
+
+The token reaches the wrapper through `GITHUB_TOKEN: ${{ github.token }}` in the environment of each workflow step that runs a queued build. The wrapper writes `cache-selection.json` into the attempt directory (selected path, kind, reason, the run event, owner, group, mode and inode of the directory, and the inherited values it ignored), and `compiler-diagnostics.json` embeds it under `cgen_cache`.
+
+The wrapper is part of the checkout that a pull request run executes, so the selection protects the shared directory from builds that follow it. It does not stop a pull request that edits the wrapper, and a separate runner user for trusted builds is the only filesystem-level separation. Every cache entry is checked against its content digest when it is read.
+
 ### Homelab runner-group preflight
 
 Run the read-only runner-group check before dispatching a homelab validation:
