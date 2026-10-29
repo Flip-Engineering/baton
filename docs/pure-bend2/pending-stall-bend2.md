@@ -69,6 +69,56 @@ uses `Receive.wake_due`: it takes the session lock, re-reads the pending count,
 observes the claim and host custody, and launches the message through the
 delivery path. Its claim and custody checks keep a repeated invocation safe.
 
+## Silent native
+
+A session reports to its coordinator when all of these hold:
+
+| Condition | Source |
+|---|---|
+| a `claimed` wake | `wake_claims.state` |
+| owed input | `messages` rows owed to the session, as in the pending count |
+| a live attempt | `executions.phase` is not `exited` and `executions.directory` is set |
+| no stop | no `session_stops` row |
+| no output for 900 seconds | modification time of `DIRECTORY/stdout`, read with `Files.stat`, against `Clock.millis` |
+
+`silence.bend` holds the check. The report is sent from the session to its
+coordinator as a committed report and is delivered through `Delivery.deliver`.
+Its text names the session, the attempt, the native pid (read from
+`DIRECTORY/native.pid`; the receiver is the native's parent and no receiver pid
+is recorded), the last output time in UTC and the owed input count. Its
+identity is `ATTEMPT:silent:MTIME:OWED`, so one silence is reported once for
+each owed count. A check that finds the row does not commit or deliver again.
+After a crash the check derives the same condition and finds the same row.
+
+The check covers two shapes. The native stops writing mid-turn while input is
+owed, as in the ten-hour stall of `runtime-1177-live-usage-recovery-20261028`.
+The native ends its turn with a `result` event, its stdin is closed, and it
+stays alive for background commands while input stays owed, as in
+`compiler-queue-970-claude-20261028`. Any write to `stdout`, including
+`tool_progress` heartbeats, moves the modification time and ends the silence.
+
+The report does not stop, restart or signal the native. A background command
+that a native started keeps running, and the coordinator chooses whether to
+wait, nudge, stop or replace the native. Stopping a native cancels the queue
+requests its background commands hold.
+
+### When the check runs
+
+- The observer in `turn.bend` runs it for its own session when a commit notice
+  wakes it with no output line. Its delivery runs in a forked task.
+- `stall-wake` runs it for every session after the stalled candidates are
+  driven. Nothing on the host runs `stall-wake` on a schedule.
+
+The observer waits in `br_read_awake_probe` (`bend2/src/host/process-spawn.c`)
+with `poll(waits,2,-1)`, which has no timeout. A silent native in a database
+that commits nothing gives the observer no wake, so the check does not run
+then. A timed wait needs a variant of `ProcessChild.read_awake_span` that takes
+a timeout in milliseconds and returns a notice of kind `timeout`; the observer
+would run the check on each timeout and each commit notice.
+
+Every query in the check is handled as a result. A failed query ends that
+check and not the observer.
+
 ## Boundaries
 
 `stall.bend` reads the coordinator database through `Sql.query`. `report` prints
@@ -117,6 +167,14 @@ without coordinator Main. The wake driver launches that same executable with
 
 `bend2/test/stall-evidence-fixture.py` inserts the same six states for the
 standalone entry.
+
+`bend2/test/stall-silent.py` runs the silence check on a binary built from
+`bend2/test/stall-evidence-entry.bend` (`BATON2_STALL_EVIDENCE`). Its cases
+cover a silent native, a native that keeps writing, `tool_progress` heartbeats,
+the idle-after-result shape with 14 owed inputs, a repeated check, a changed
+owed count, sessions without a claim, with an exited attempt or with a stop,
+and a missing output file. The entry also handles `--instance-owner` and
+`--instance-shutdown` so that committed reports publish.
 
 ## Verification
 

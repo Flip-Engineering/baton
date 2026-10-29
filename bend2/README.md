@@ -117,6 +117,10 @@ endpoint is present, and which has no explicit stop or existing wake claim. Both
 commands use the vocabulary of the coordinator database. A live attempt with
 owed input is reported as `active`; the wake command selects `stalled`
 candidates.
+`stall-wake` also reports a native whose session holds a claimed wake with owed
+input and whose `stdout` file has not been written for 900 seconds to the
+session's coordinator; the observer runs the same check on commit notices.
+The conditions and limits are in `docs/pure-bend2/pending-stall-bend2.md`.
 
 `observe-file ID PLAYER PATH` consumes one
 native harness event. An initialization event (type `session`) updates the
