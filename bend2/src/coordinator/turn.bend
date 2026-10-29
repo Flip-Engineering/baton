@@ -877,6 +877,9 @@ def failed_read_lines(+held: String, +state: String, +requested: String, omp: Bo
 law failed_omp_read_keeps_the_filter_marker:
   {failed_read_lines("","array+delta","default",True{}) == ["{\"type\":\"baton_event_filter\",\"selection\":\"array+delta\",\"active\":true}"] : List<String>}
 
+def failed_omp_read_keeps_the_filter_marker():
+  {==}
+
 def terminal_event(event: String, previous: String, selected: Bool) -> IO(String):
   match selected:
     case False{}: IO.pure(String,previous)
