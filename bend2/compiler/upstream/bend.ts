@@ -3016,6 +3016,83 @@ export function body_sub(b: Body, i: number, v: Patt): Body {
   }
 }
 
+// Literal rows
+// ------------
+// A string literal match on an affine String parameter shares the parameter
+// between its String.eq tests (literal_chain_string). These checks keep the uses
+// that the character decision tree allowed.
+type LiteralNode = { $: string; [field: string]: any };
+
+// Uses of a value named by `names` in a row body, counted over the written body,
+// and whether the body matches the value again. A substitution left by body_sub
+// names the value when its pattern does.
+function literal_uses(b: Body, names: ReadonlySet<number>): { uses: number; matched: boolean } {
+  let uses = 0, matched = false;
+  const patt_names = (q: Patt, a: ReadonlySet<number>): boolean =>
+    q.$ === "PVar" ? a.has(q.i) : q.x.some((y) => patt_names(y, a));
+  const term = (t: LTerm, a: ReadonlySet<number>, count: boolean): boolean => {
+    let seen = false;
+    const stack: [LiteralNode, ReadonlySet<number>][] = [[t as LiteralNode, a]];
+    while (stack.length > 0 && uses < 2) {
+      const [u, s] = stack.pop()!;
+      switch (u.$) {
+        case "Var":
+          if (s.has(u.i)) { seen = true; if (count) uses += 1; else return true; }
+          break;
+        case "Sub": {
+          const v = u.v as LiteralNode;
+          const named = v.$ === "PVar" || v.$ === "PCtr" ? patt_names(v as Patt, s) : term(v as LTerm, s, false);
+          const next = new Set(s);
+          if (named) next.add(u.i); else next.delete(u.i);
+          stack.push([u.f, next]);
+          break;
+        }
+        case "Let": for (const v of u.v) stack.push([v, s]); stack.push([u.f, s]); break;
+        case "All": stack.push([u.A, s], [u.B, s]); break;
+        case "Lam": stack.push([u.f, s]); break;
+        case "Typ": stack.push([u.g, s]); break;
+        case "Min": stack.push([u.a, s], [u.b, s]); break;
+        case "App": stack.push([u.f, s], [u.x, s]); break;
+        case "ADT": case "Ctr": for (const y of u.x) stack.push([y, s]); break;
+        case "Mat": stack.push([u.h, s], [u.m, s]); break;
+        case "Eql": stack.push([u.a, s], [u.b, s], [u.T, s]); break;
+        case "Rwt": stack.push([u.e, s], [u.p, s], [u.f, s]); break;
+        case "Ann": stack.push([u.x, s], [u.T, s]); break;
+        default: break;
+      }
+    }
+    return seen;
+  };
+  const body = (x: Body): void => {
+    switch (x.$) {
+      case "Reply": term(x.x, names, true); break;
+      case "Local":
+        for (const v of x.v) term(v, names, true);
+        if (x.k.some((q) => q.$ === "PCtr") && x.v.some((v) => term(v, names, false))) matched = true;
+        body(x.f);
+        break;
+      case "Match":
+        for (const e of x.e) if (term(e, names, true)) matched = true;
+        for (const row of x.r) body(row.f);
+        break;
+    }
+  };
+  body(b);
+  return { uses, matched };
+}
+
+// The rows of a literal column under the String.eq tests: a literal row reads
+// the matched value as the literal it equals, and a binder row may use the value
+// at most once. Neither may match it again.
+function literal_rows_affine(rows: Rows, x: PVar): boolean {
+  return rows.every((row) => {
+    const q = row.p[0];
+    if (q.$ === "PCtr") return q.lit !== undefined && !literal_uses(row.f, new Set([x.i])).matched;
+    const use = literal_uses(row.f, new Set([x.i, q.i]));
+    return !use.matched && use.uses <= 1;
+  });
+}
+
 export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
   if (m.e.length === 0 && m.r.length > 0) {
     return body_flatten(m.r[0].f, vars, fr);
@@ -3150,11 +3227,13 @@ export function body_flatten(b: Body, vars: PVar[], fr: () => number): LTerm {
   }
 }
 
-// A top-level match on a Many String parameter whose rows are string literal
+// A top-level match on a String parameter whose rows are string literal
 // patterns plus an optional final binder lowers to one String.eq test per row.
 // Each row body appears once; no character decision tree is built. The Mat on
 // the computed Bool is annotated with the branch type, so the checker and
-// emitter see the compiler-lowered case form.
+// emitter see the compiler-lowered case form. The lambda of the matched
+// parameter binds it reusable (+): String is Data, so check-lam accepts a +
+// lambda at an affine binder, as it does for a +x => e lambda.
 function literal_chain(p: Parse, b: Body, vars: PVar[], def: Def,
   k: Name): LTerm | null {
   if (b.$ !== "Match" || b.e.length !== 1 || vars.length < 1) return null;
@@ -3169,7 +3248,7 @@ function literal_chain(p: Parse, b: Body, vars: PVar[], def: Def,
   const alls = telescope_opened(p, def.T, vars);
   if (alls !== null) {
     const all = alls.alls[at];
-    if (all.q.$ === "Many" && all.A.$ === "Ref" && all.A.k === "String") {
+    if (all.q.$ !== "None" && all.A.$ === "Ref" && all.A.k === "String") {
       return literal_chain_string(p, b, vars, at, alls, scrut);
     }
   }
@@ -3241,6 +3320,10 @@ function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
   // A row that matches another parameter needs that parameter among the binders
   // being abstracted, which the lambdas above the chain no longer provide.
   if (b.r.some((row) => body_matches(row.f, others))) return null;
+  // An affine parameter is shared by the String.eq tests. The final binder
+  // keeps the character decision tree when its row could use the value more
+  // than once or match it again, so the checker refuses what it refused.
+  if (opened.alls[at].q.$ === "Lone" && !literal_rows_affine(b.r, vars[at])) return null;
   const A = term_lower_shared(opened.result);
   const boolIndex = p.sc.frs++;
   let tail: LTerm;
@@ -3266,7 +3349,7 @@ function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
   }
   for (let j = vars.length - 1; j >= 0; j--) {
     const all = opened.alls[j];
-    tail = j === at ? Lam(all.k, all.i, tail, all.s, all.q) : Lam(vars[j].k, vars[j].i, tail, vars[j].s, vars[j].q);
+    tail = j === at ? Lam(all.k, all.i, tail, all.s, Many()) : Lam(vars[j].k, vars[j].i, tail, vars[j].s, vars[j].q);
   }
   return tail;
 }
