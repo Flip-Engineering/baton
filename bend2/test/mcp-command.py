@@ -149,6 +149,15 @@ class McpCommand(unittest.TestCase):
         self.assertFalse(result.get('isError', False))
         self.assertNotIn('session', self.tools['baton2_action']['inputSchema']['properties'])
 
+    def test_initial_instructions_explain_completion_review_and_decision(self):
+        self.command()
+        self.assertIn('coordinator reviews the assignment and supplied evidence', self.instructions)
+        self.assertIn('completion-confirmed to end the Player', self.instructions)
+        self.assertIn('--next TEXT to confirm and dispatch its next assignment together',
+                      self.instructions)
+        self.assertIn('Guidance states what is missing and directs the remaining work.',
+                      self.instructions)
+
     def test_repl_guidance_matches_advertised_coordinator_capability(self):
         for available in (False, True):
             with self.subTest(repl=available):

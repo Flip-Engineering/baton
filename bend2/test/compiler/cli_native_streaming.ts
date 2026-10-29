@@ -33,19 +33,30 @@ async function run(name: string, argv: string[]): Promise<{ code: number | null;
 try {
   const preload = path.join(directory, "observe.ts"), entry = path.join(directory, "main.bend");
   const binary = path.join(directory, "main");
+  const hooks = path.join(directory, "fs-hooks"); fs.mkdirSync(hooks);
   fs.writeFileSync(preload, `
     import fs from "node:fs";
     import * as path from "node:path";
-    import { syncBuiltinESMExports } from "node:module";
+    import { mock } from "bun:test";
     const original = fs.readFileSync;
-    fs.readFileSync = function(file, ...args) {
+    const probe = ${JSON.stringify(path.join(directory, "interception-probe.c"))};
+    const failure = "Native build materialized generated C: ";
+    const intercept = function(file, ...args) {
       const name = typeof file === "string" ? path.resolve(file) : "";
-      if (name.startsWith(${JSON.stringify(path.resolve(directory) + path.sep)}) && name.endsWith(".c")) {
-        throw new Error("Native build materialized generated C: " + name);
+      if (name.endsWith(".c") && !name.startsWith(${JSON.stringify(path.resolve(source) + path.sep)})) {
+        throw new Error(failure + name);
       }
       return Reflect.apply(original, this, [file, ...args]);
     };
-    syncBuiltinESMExports();
+    const replacement = { ...fs, readFileSync: intercept };
+    mock.module("node:fs", () => ({ ...replacement, default: replacement }));
+    const namespace = await import("node:fs");
+    let observed = false;
+    try { namespace.readFileSync(probe, "utf8"); }
+    catch (error) { observed = String(error) === "Error: " + failure + probe; }
+    if (!observed) throw new Error("The native C read interceptor is inactive");
+    namespace.writeFileSync(path.join(${JSON.stringify(hooks)}, String(process.pid) + ".json"),
+      JSON.stringify({ pid: process.pid, observed }));
   `);
   fs.writeFileSync(entry, 'import Base\n\ndef main() -> IO(Unit):\n  IO.print("42")\n');
   const built = await run("build", [process.execPath, "--smol", "--preload", preload,
@@ -57,6 +68,12 @@ try {
   const evidence = fs.readdirSync(directory).find(name => name.startsWith(".bend-cgen-"));
   assert.ok(evidence, "the native build retains compiler and Clang results");
   const own = path.join(directory, evidence);
+  const pids = [json(path.join(directory, "build-result.json")).pid,
+    json(path.join(own, "front/process-result.json")).pid,
+    ...fs.readdirSync(own).filter(name => name.startsWith("worker-")).map(name =>
+      json(path.join(own, name, "process-result.json")).pid)];
+  for (const pid of pids) assert.equal(json(path.join(hooks, pid + ".json")).observed, true,
+    "the named filesystem read interceptor is active in each owned Bun process");
   const commands = fs.readdirSync(own).filter(name => name.startsWith("native-")).map(name =>
     json(path.join(own, name, "process-result.json")));
   assert.ok(commands.length > 0);
