@@ -4,10 +4,11 @@
 # reference is file:PATH and the fixture writes the next read document to PATH.
 #
 # It covers refusal reads, admission reads, unreadable reads, scoped windows,
-# observation ordering, account serialization, insert failure, release launch
-# failure, account changes and provider reset continuations.
+# observation ordering, account serialization, insert failure, announcement insert
+# failure, release launch failure, account changes and provider reset continuations.
 #
 # usage: usage-live-reads DB HELPER
+#        usage-live-reads --case NAME DB HELPER     (one case named in regression)
 #        usage-live-reads --wake-message DB MESSAGE   (the release wake records a mark)
 import Base
 import ../src/coordinator/commands.bend as C
@@ -305,8 +306,37 @@ def unreadable_episode_case(+db: String, +helper: String, +path: String) -> IO(U
     unknown : Unit <- expect("new-unreadable-episode-is-unknown",String.eq(gate_class(new_gate),"unknown"))
     expect_read(db,"SELECT group_concat(id,',') FROM (SELECT id FROM messages WHERE id GLOB 'usage-read:*:unreadable:k*' ORDER BY id);","usage-read:1:unreadable:k,usage-read:1:unreadable:k:root,usage-read:4:unreadable:k,usage-read:4:unreadable:k:root\n","readable-observation-separates-unreadable-episodes")
 
+def record_unreadable(+db: String, +account: String, +observed: String) -> IO(Unit):
+  UW.record_pair(db,"b","zai",account,"fixture",UR.unreadable_document("zai",zai_source(),observed,"fixture provider unreadable"),"")
+
+# A trigger rejects the announcement inserts whose id matches pattern. The decision
+# process exits with the database cause and records no announcement with that id.
+def announce_rejected(+db: String, +label: String, +pattern: String, +account: String) -> IO(Unit):
+  do IO<Unit>:
+    reject : Unit <- query(db,"CREATE TRIGGER reject_announce BEFORE INSERT ON messages WHEN NEW.id GLOB " ++ C.q(pattern) ++ " BEGIN SELECT RAISE(FAIL,'fixture announcement insert failed'); END;")
+    +self : String <- IO.try(String,Lock.SessionLock.executable())
+    ran : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","exec \"$@\" 2>&1","sh",self,"--window-state",db,"b",account]),".")
+    +outcome : T.RunRes <- IO.pure(T.RunRes,Tx.run_res(ran))
+    failed : Unit <- expect(label ++ "-insert-failure-propagated",Bool.not(run_ok(outcome)))
+    cause : Unit <- expect(label ++ "-insert-failure-cause-retained",UW.has_sub("fixture announcement insert failed",run_text(outcome)))
+    absent : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id GLOB " ++ C.q(pattern) ++ ";","0\n",label ++ "-rejected-announcement-unrecorded")
+    query(db,"DROP TRIGGER reject_announce;")
+
+def announce_failure_case(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    exhausted : Unit <- sample(db,"announce","1","true")
+    hold : Unit <- announce_rejected(db,"hold","usage-read:*:hold:b*","announce")
+    held : UW.Gate <- state_of(db,"b","announce")
+    recorded : Unit <- expect_read(db,UW.held_seats_sql("zai","announce","a"),"b\n","accepted-hold-wakes-on-release")
+    unreadable : Unit <- record_unreadable(db,"announce","2")
+    unknown : Unit <- announce_rejected(db,"unreadable","usage-read:*:unreadable:b*","announce")
+    opened : Unit <- sample(db,"announce","3","false")
+    release : Unit <- announce_rejected(db,"release","usage-read:*:release:b*","announce")
+    expect_read(db,UW.held_seats_sql("zai","announce","a"),"b\n","rejected-release-keeps-hold-eligible")
+
 def regression(+name: String, +db: String, +helper: String, +path: String) -> IO(Unit):
   match name:
+    case "announce-failure": announce_failure_case(db)
     case "unreadable-episode": unreadable_episode_case(db,helper,path)
     case "ordering": ordering_case(db)
     case "serialization": serialization_case(db,helper)
@@ -434,6 +464,9 @@ def main_args(args: List<String>) -> IO(Unit):
       ready : Unit <- setup(db,db ++ ".answer")
       regression(name,db,helper,db ++ ".answer")
     case "--read-account" <> +db <> +helper <> +account <> Nil{}: UW.read_with(db,"a","zai",account,helper,"fixture-child")
+    case "--window-state" <> +db <> +seat <> +account <> Nil{}: do IO<Unit>:
+      gate : UW.Gate <- state_of(db,seat,account)
+      IO.print(gate_class(gate))
     case "--wake-message" <> +db <> +message <> Nil{}: complete_mark(db,message)
     case +db <> +helper <> Nil{}: run(db,helper)
     case other: IO.die(Unit,2,"usage: usage-live-reads DB HELPER")

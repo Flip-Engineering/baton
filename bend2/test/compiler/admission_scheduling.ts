@@ -10,7 +10,7 @@ const root = path.resolve(process.argv[2] ?? path.join(import.meta.dir, "../../.
 const source = process.env.BEND_COMPILER_SOURCE ?? path.join(root, "bend2/compiler/upstream");
 const { Admission } = await import(pathToFileURL(path.join(source, "admission.ts")).href);
 type Profile = { peak: number; metadata: number };
-type Workers = { next(): { pid: number | undefined } | null; baseline(): number | null; retire(): Promise<boolean> };
+type Workers = { next(): { pid: number | undefined } | null; baseline(): number | null; retirable(): number; retire(): Promise<boolean> };
 
 const cpus = os.availableParallelism();
 const small: Profile = { peak: 1 << 20, metadata: 0 };
@@ -18,11 +18,13 @@ const small: Profile = { peak: 1 << 20, metadata: 0 };
 const huge: Profile = { peak: 2 ** 60, metadata: 0 };
 const settle = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 60));
 
-function workers(options: { reuse?: boolean; baseline?: number | null; idle?: number } = {}): Workers & { retired: number } {
+// `held` is the resident size of each idle worker the units could stop.
+function workers(options: { reuse?: boolean; baseline?: number | null; idle?: number; held?: number } = {}): Workers & { retired: number } {
   let idle = options.idle ?? 0;
   const stand_in = { retired: 0,
     next: () => options.reuse ? { pid: process.pid } : null,
     baseline: () => options.baseline === undefined ? 1 << 20 : options.baseline,
+    retirable: () => idle * (options.held ?? 1 << 20),
     retire: async () => { stand_in.retired++; if (idle === 0) return false; idle--; return true; } };
   return stand_in;
 }
@@ -95,16 +97,24 @@ function batch(admission: any, supply: Workers, keys: string[]) {
   unknown.release.get(1)!(small); await settle(); unknown.release.get(2)?.(small); await unknown.done;
 }
 
-// 5. Idle workers are stopped before a unit waits for memory.
+// 5. Idle workers are stopped before a unit waits for memory, and only when the memory they
+// hold covers what the unit lacks.
 {
   const admission = new Admission(() => {});
   const warm = batch(admission, workers(), ["warm"]);
   await settle(); warm.release.get(0)!(huge); await warm.done;
-  const supply = workers({ idle: 2 });
-  const run = batch(admission, supply, ["x", "y"]);
+  const small_workers = workers({ idle: 2 });
+  const stays = batch(admission, small_workers, ["x", "y"]);
   await settle();
-  assert.deepEqual(run.started, [0], "the second unit waits");
-  assert.equal(supply.retired, 3, "two idle workers stop, then the unit waits for the running one");
+  assert.deepEqual(stays.started, [0], "the second unit waits");
+  assert.equal(small_workers.retired, 0, "idle workers that cannot cover the shortfall are kept");
+  stays.release.get(0)!(small); await settle(); stays.release.get(1)?.(small); await stays.done;
+
+  const large_workers = workers({ idle: 2, held: 2 ** 61 });
+  const run = batch(admission, large_workers, ["p", "q"]);
+  await settle();
+  assert.deepEqual(run.started, [0], "the second unit waits once the idle workers are stopped");
+  assert.equal(large_workers.retired, 2, "idle workers that can cover the shortfall are stopped, one at a time");
   run.release.get(0)!(small); await settle(); run.release.get(1)?.(small); await run.done;
 }
 

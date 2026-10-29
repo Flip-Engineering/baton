@@ -87,8 +87,10 @@ Its text names the session, the attempt, the native pid (read from
 `DIRECTORY/native.pid`; the receiver is the native's parent and no receiver pid
 is recorded), the last output time in UTC and the owed input count. Its
 identity is `ATTEMPT:silent:MTIME:OWED`, so one silence is reported once for
-each owed count. A check that finds the row does not commit or deliver again.
-After a crash the check derives the same condition and finds the same row.
+each owed count. A check that finds the row delivers it again when the report
+is unread and the check falls within the first five seconds of a further
+900-second silence period. After a crash the check derives the same condition
+and finds the same row.
 
 The check covers two shapes. The native stops writing mid-turn while input is
 owed, as in the ten-hour stall of `runtime-1177-live-usage-recovery-20261028`.
@@ -97,10 +99,10 @@ stays alive for background commands while input stays owed, as in
 `compiler-queue-970-claude-20261028`. Any write to `stdout`, including
 `tool_progress` heartbeats, moves the modification time and ends the silence.
 
-The report does not stop, restart or signal the native. A background command
-that a native started keeps running, and the coordinator chooses whether to
-wait, nudge, stop or replace the native. Stopping a native cancels the queue
-requests its background commands hold.
+The report informs the coordinator, which chooses whether to wait, nudge,
+stop or replace the native. A background command that the native started
+keeps running. Stopping a native cancels the queue requests its background
+commands hold.
 
 ### When the check runs
 

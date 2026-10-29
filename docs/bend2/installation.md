@@ -22,13 +22,13 @@ The check refuses before command links change.
 
 ## Stage a source installation
 
-A source installation from the receiver layout contains four executable paths
-across three roles. `bin/baton` is the focused receiver, `bin/baton2` is the
-full router, `bin/baton-full` is the general CLI sibling, and
-`bin/baton-recovery` is the recovery helper. The focused receiver sends
-general and help actions to `bin/baton-full`. The full router is relinked with
+A source installation from the receiver layout contains five executable paths
+across three roles. `bin/baton` is the full CLI and receiver router,
+`bin/baton2` and `bin/baton-full` are identical compatibility aliases,
+`bin/baton-focused` is the focused receiver, and `bin/baton-recovery` is the
+recovery helper. The full router is relinked with
 `BATON2_NATIVE_RECEIVER_ROUTER` and forwards internal receiver actions to
-`bin/baton` and recovery actions to `bin/baton-recovery`. A missing or
+`bin/baton-focused` and recovery actions to `bin/baton-recovery`. A missing or
 non-executable sibling makes the operation refuse with exit status 78.
 
 Stage the layout from three already-built binaries. Each binary needs its exact
@@ -126,9 +126,9 @@ import hashlib, json, pathlib, sys
 prefix = pathlib.Path(sys.argv[1])
 manifest = json.loads((prefix / 'manifest.json').read_text())
 assert manifest['binary']['path'] == 'bin/baton'
-assert manifest['binary']['alias'] is None
+assert manifest['binary']['alias'] == 'bin/baton2'
 assert (prefix / 'bin/baton2').read_bytes() == (prefix / 'bin/baton-full').read_bytes()
-assert (prefix / 'bin/baton').read_bytes() != (prefix / 'bin/baton2').read_bytes()
+assert (prefix / 'bin/baton-focused').read_bytes() != (prefix / 'bin/baton2').read_bytes()
 for record in manifest['binaries']:
     assert hashlib.sha256((prefix / record['path']).read_bytes()).hexdigest() == record['sha256']
 PY

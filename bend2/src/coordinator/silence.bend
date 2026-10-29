@@ -3,7 +3,7 @@
 # silence period, reports to its coordinator. The report names the session, the
 # attempt, the native pid, the last output time and the owed input count, and
 # goes through the committed-message and delivery path that every report uses.
-# Baton does not stop, restart or signal the native; the coordinator decides.
+# The coordinator decides how to continue the session after receiving the report.
 #
 # Everything is derived from rows and files Baton already writes: the claim,
 # the attempt phase and directory, the owed input rows, the output file's
@@ -80,7 +80,7 @@ def silent_repeat_sql(+id: String, +millis: String, +mtime: String) -> String:
   "SELECT CASE WHEN EXISTS(SELECT 1 FROM messages m WHERE m.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("m") ++ ") AND (CAST(" ++ C.q(millis) ++ " AS INTEGER)/1000-CAST(" ++ C.q(mtime) ++ " AS INTEGER))%" ++ silence_seconds() ++ "<" ++ repeat_seconds() ++ " THEN '1' ELSE '' END;"
 
 def silent_body(+session: String, +attempt: String, +pid: String, +last: String, +owed: String) -> String:
-  "Native output is silent while session " ++ session ++ " holds a claimed wake with owed input. Attempt " ++ attempt ++ ", native pid " ++ pid ++ ", last output " ++ last ++ " UTC, owed inputs " ++ owed ++ ". Baton does not stop or restart the native; decide whether to wait, nudge, stop or replace it."
+  "Native output is silent while session " ++ session ++ " holds a claimed wake with owed input. Attempt " ++ attempt ++ ", native pid " ++ pid ++ ", last output " ++ last ++ " UTC, owed inputs " ++ owed ++ ". The coordinator decides whether to wait, nudge, stop or replace the native."
 
 def silent_pid(result: Result<&1,&1,U32 & String,String>) -> String:
   match result:

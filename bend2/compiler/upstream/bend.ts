@@ -3157,26 +3157,64 @@ export function body_flatten(b: Body, vars: PVar[], fr: () => number): LTerm {
 // emitter see the compiler-lowered case form.
 function literal_chain(p: Parse, b: Body, vars: PVar[], def: Def,
   k: Name): LTerm | null {
-  // The lowering binds only the matched first parameter. A definition with
-  // later top-level parameters stays on the ordinary lowering: its helpers
-  // would abstract those parameters without carrying them in the signatures.
-  if (b.$ !== "Match" || b.e.length !== 1 || vars.length !== 1) return null;
+  if (b.$ !== "Match" || b.e.length !== 1 || vars.length < 1) return null;
   const scrut = b.e[0];
-  if (scrut.$ !== "Var" || scrut.i !== vars[0].i) return null;
-  const all = def.T;
-  if (all.$ !== "All" || all.i !== vars[0].i || all.q.$ === "None") return null;
-  if (all.q.$ === "Many" && all.A.$ === "Ref" && all.A.k === "String") {
-    return literal_chain_string(p, b, vars, all, scrut);
+  if (scrut.$ !== "Var") return null;
+  const at = vars.findIndex((v) => v.i === scrut.i);
+  if (at < 0) return null;
+  // The String.eq chain stays inline in the definition under the lambdas of all
+  // top-level parameters, so it takes any number of them and the matched one can
+  // stand at any position. Without it a String match with another parameter
+  // lowers to a character decision tree of millions of nodes.
+  const alls = telescope_opened(p, def.T, vars);
+  if (alls !== null) {
+    const all = alls.alls[at];
+    if (all.q.$ === "Many" && all.A.$ === "Ref" && all.A.k === "String") {
+      return literal_chain_string(p, b, vars, at, alls, scrut);
+    }
   }
-  if (all.q.$ === "Lone" && all.A.$ === "ADT" && all.A.k === "List") {
+  // The list lowering binds only the matched first parameter. A definition with
+  // other top-level parameters stays on the ordinary lowering: its helpers
+  // would abstract those parameters without carrying them in the signatures.
+  const all = def.T;
+  if (at === 0 && vars.length === 1 && all.$ === "All" && all.i === vars[0].i && all.q.$ === "Lone"
+    && all.A.$ === "ADT" && all.A.k === "List") {
     return literal_chain_list_helpers(p, b, vars, def, k, all, scrut)
       ?? literal_list_rows(p, b, def, k, all, scrut);
   }
   return null;
 }
 
+// The telescope of a definition opened one parameter at a time, with the result
+// type that remains after all of them. Null when a binder does not match its parameter.
+function telescope_opened(p: Parse, T: HTerm, vars: PVar[]): { alls: Extract<HTerm, { $: "All" }>[]; result: HTerm } | null {
+  const alls: Extract<HTerm, { $: "All" }>[] = [];
+  let ty: HTerm = T;
+  for (const v of vars) {
+    const next = tele_open(p.book, ty);
+    if (next === null || next.i !== v.i) return null;
+    alls.push(next);
+    ty = next.B(Var(v.k, v.i)) as HTerm;
+  }
+  return { alls, result: ty };
+}
+
+// Does a match nested in the body scrutinize one of the variables?
+function body_matches(b: Body, vars: PVar[]): boolean {
+  const scrutinized = (e: LTerm): boolean => {
+    let x = e;
+    while (x.$ === "Sub") x = x.f;
+    return x.$ === "Var" && vars.some((v) => v.i === (x as { i: number }).i);
+  };
+  switch (b.$) {
+    case "Reply": return false;
+    case "Local": return (b.k.length === 1 && b.k[0].$ === "PCtr" && scrutinized(b.v[0])) || body_matches(b.f, vars);
+    case "Match": return b.e.some(scrutinized) || b.r.some((row) => body_matches(row.f, vars));
+  }
+}
+
 function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
-  vars: PVar[], all: Extract<HTerm, { $: "All" }>, scrut: LTerm): LTerm | null {
+  vars: PVar[], at: number, opened: { alls: Extract<HTerm, { $: "All" }>[]; result: HTerm }, scrut: LTerm): LTerm | null {
   if (p.book.tlds["String.eq"] === undefined || p.book.tlds["Bool"] === undefined
     || p.book.ctrs["False"] === undefined || p.book.ctrs["True"] === undefined) {
     return null;
@@ -3197,14 +3235,19 @@ function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
   }
   if (literals === 0) return null;
   const fr = () => p.sc.frs++;
-  const A = term_lower_shared(all.B(Var(all.k, all.i)) as HTerm);
+  // The chain sits under the lambdas of all parameters, so a row body is an
+  // ordinary term of the result type that remains after all of them.
+  const others = vars.filter((_, j) => j !== at);
+  // A row that matches another parameter needs that parameter among the binders
+  // being abstracted, which the lambdas above the chain no longer provide.
+  if (b.r.some((row) => body_matches(row.f, others))) return null;
+  const A = term_lower_shared(opened.result);
   const boolIndex = p.sc.frs++;
   let tail: LTerm;
   if (fallback !== null) {
-    const binder: PVar = { $: "PVar", k: vars[0].k, i: vars[0].i,
-      q: Lone(), s: vars[0].s };
-    tail = body_flatten(body_sub(fallback.f, fallback.i, binder),
-      vars.slice(1), fr);
+    const binder: PVar = { $: "PVar", k: vars[at].k, i: vars[at].i,
+      q: Lone(), s: vars[at].s };
+    tail = body_flatten(body_sub(fallback.f, fallback.i, binder), [], fr);
   } else {
     tail = Efq(b.s);
   }
@@ -3213,7 +3256,7 @@ function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
     const row = b.r[j];
     const q = row.p[0];
     if (q.$ !== "PCtr" || q.lit === undefined) continue;
-    const hit = body_flatten(row.f, vars.slice(1), fr);
+    const hit = body_flatten(row.f, [], fr);
     const cond = App(App(Ref("String.eq", q.s), scrut, q.s),
       patt_term(q), q.s);
     const inner = Mat("True", hit, Efq(row.s ?? span), row.s ?? span);
@@ -3221,7 +3264,11 @@ function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
     tail = App(Ann(mat, All(Lone(), "c", boolIndex, Ref("Bool"), A), span),
       cond, span);
   }
-  return Lam(all.k, all.i, tail, all.s, all.q);
+  for (let j = vars.length - 1; j >= 0; j--) {
+    const all = opened.alls[j];
+    tail = j === at ? Lam(all.k, all.i, tail, all.s, all.q) : Lam(vars[j].k, vars[j].i, tail, vars[j].s, vars[j].q);
+  }
+  return tail;
 }
 // A top-level match on a Lone List<String> parameter whose leading rows are
 // `head0 <> "literal" <> fields.. <> Nil` frames lowers to a single-traversal

@@ -1010,10 +1010,10 @@ law m13_a_retained_muse_attempt_closes_its_input_as_a_codex_attempt_does:
 def m13_a_retained_muse_attempt_closes_its_input_as_a_codex_attempt_does():
   {==}
 
-law m13_a_retained_claude_attempt_closes_its_input_as_a_codex_attempt_does:
-  {U32.is_eq(Turn.retained_keep_stdin(False{},False{},True{}),Turn.retained_keep_stdin(False{},False{},False{})) == True{} : Bool}
+law m13_a_retained_claude_attempt_keeps_its_input_open_as_an_omp_attempt_does:
+  {U32.is_eq(Turn.retained_keep_stdin(False{},False{},True{}),Turn.retained_keep_stdin(False{},True{},False{})) == True{} : Bool}
 
-def m13_a_retained_claude_attempt_closes_its_input_as_a_codex_attempt_does():
+def m13_a_retained_claude_attempt_keeps_its_input_open_as_an_omp_attempt_does():
   {==}
 
 # M-5: the retained Muse and Claude attempts reach the conversation the session

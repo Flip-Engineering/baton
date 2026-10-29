@@ -1,6 +1,6 @@
 # Native artifacts
 
-`bend2/scripts/package-native.py` builds the production receiver layout and packages a Darwin arm64 development or release archive. The layout contains the focused receiver at `bin/baton`, the full router at `bin/baton2`, and the general CLI sibling at `bin/baton-full`, together with harness adapters, Git helper, Orchestra UI, required Bend2 REPL compiler and Bun runtime, selected context providers, notices, and a manifest. The manifest records the overall source identity, each binary's path, SHA256, entry, build mode and source commit with tree or source manifest hash, the retained full C hash when available, the full wrapper source pin, the target platform, selected module identities, required REPL dependency hashes, system prerequisites, build commands and log paths, and compiler archive used for license notices. `SHA256SUMS` records the archive checksum and the payload records executable checksums, the manifest and the install receipt.
+`bend2/scripts/package-native.py` builds the production receiver layout and packages a Darwin arm64 development or release archive. The layout contains the full CLI and receiver router at `bin/baton`, compatibility aliases at `bin/baton2` and `bin/baton-full`, the focused receiver at `bin/baton-focused`, and the recovery helper at `bin/baton-recovery`, together with harness adapters, Git helper, Orchestra UI, required Bend2 REPL compiler and Bun runtime, selected context providers, notices, and a manifest. The manifest records the overall source identity, each binary's path, SHA256, entry, build mode and source commit with tree or source manifest hash, the retained full C hash when available, the full wrapper source pin, the target platform, selected module identities, required REPL dependency hashes, system prerequisites, build commands and log paths, and compiler archive used for license notices. `SHA256SUMS` records the archive checksum and the payload records executable checksums, the manifest and the install receipt.
 
 ## Build and package
 
@@ -72,7 +72,7 @@ The archive root is `baton2-development-darwin-arm64` by default. `--release-ver
 Use the installed focused receiver to record its own executable as a session endpoint:
 
 ~~~sh
-bin/baton DATABASE register-receiver SESSION HARNESS_COMMAND OUTPUT_LOG
+bin/baton-focused DATABASE register-receiver SESSION HARNESS_COMMAND OUTPUT_LOG
 ~~~
 
 The command validates and updates the endpoint through the coordinator's receiver registration path. It retains the session's model, harness, native session identity, workspace, and branch. Registration leaves pending input queued and does not start a receiver. Supply an optional working-directory argument only when updating the recorded workspace.
@@ -81,7 +81,7 @@ For an OMP session, registration runs the harness command in rpc mode with the r
 
 ## Package contents and distribution terms
 
-The archive contains the focused receiver at `bin/baton`, the full router at `bin/baton2`, the identical general CLI sibling `bin/baton-full`, manifest.json, install-receipt.json, SHA256SUMS, notices/, and libexec/baton2/. The focused receiver delegates general actions to `bin/baton-full`; the full router forwards internal receiver actions to `bin/baton` and recovery actions to `bin/baton-recovery`. A missing sibling makes the operation refuse. The task input, project settings and managed Codex inbox helpers are included in libexec/baton2/. The adapters select the archive's executable by default. The output directory also contains build logs, generated C when available, the manifest, archive, and archive checksum.
+The archive contains the full CLI and receiver router at `bin/baton`, identical compatibility aliases at `bin/baton2` and `bin/baton-full`, the focused receiver at `bin/baton-focused`, and the recovery helper at `bin/baton-recovery`, with manifest.json, install-receipt.json, SHA256SUMS, notices/, and libexec/baton2/. The full router forwards internal receiver actions to `bin/baton-focused` and recovery actions to `bin/baton-recovery`. A missing sibling makes the operation refuse. The task input, project settings and managed Codex inbox helpers are included in libexec/baton2/. The adapters select the archive's executable by default. The output directory also contains build logs, generated C when available, the manifest, archive, and archive checksum.
 
 Packaging copies the project LICENSE and NOTICE when present, and retains the pinned Bend compiler/runtime license, reference license, and license or notice files in the verified compiler archive. The manifest records the notice paths and their sources. A source snapshot without a root license is marked as unresolved for public distribution.
 

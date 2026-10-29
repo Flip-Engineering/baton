@@ -207,6 +207,8 @@ class Pool implements Workers {
   }
   put(worker: Worker): void { if (worker.usable) this.idle.push(worker); }
 
+  retirable(): number { return this.order().slice(1).reduce((sum, worker) => sum + (resident(worker.pid) ?? 0), 0); }
+
   async retire(): Promise<boolean> {
     if (this.idle.length < 2) return false;
     const worker = this.order().pop()!;

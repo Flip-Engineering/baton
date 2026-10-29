@@ -18,6 +18,42 @@ import traceback
 
 ARCHIVE_SHA = '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4'
 COMPILER_ARCHIVES = {
+    '95a6ad2b7798aa4400cc1a78ba61970aab4f749d617323a15a6eabe373be541c': {
+        'name': 'Bend 2.0.25 with facts-only unit output retention',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': '11e044f131a4542ab423b78153ed66c049689fc0',
+        'source_tree': '89008f1576c08e7f8965601038a18e137b0fca80',
+        'source_lock_sha256': '5ea0ec3478c13c0f332ecc3736390d3d1053c81ae8df5bac27699b6d17cfae9f',
+        'source_manifest_sha256': '863988ebb11dbb6c52579fc5ba32975da31b01299a13cff33f3fb0daca3c1413',
+        'source_metadata_sha256': '7610fde169ee958a69395731d4b4a3132f1902988b5f920d0222d1adc67420b5',
+        'source_input_count': 84,
+    },
+    'c9b72c4c3d802508eea769d29404989346119042c8827dc19439646b28558dfb': {
+        'name': 'Bend 2.0.25 with any-position String-chain lowering and shared checked cells',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': '676471fe56ff3e274e01b1b8a713e10f195692c1',
+        'source_tree': '4ac830d37f5678d9f119d73916901239a9ed69c1',
+        'source_lock_sha256': '9ab8fffd494ceec7e62b88fd0493a31f46303b754d55891fdd3bab6d5e7b117c',
+        'source_manifest_sha256': 'eb4de41da0349d09fd4fff71cbda2a62b941f376713465bfb0eedcf528e9fcb4',
+        'source_metadata_sha256': 'abf0f0499e1a5f31b08f21e44e4132989c612afe8d49e8a6ecaef72e1bd8a102',
+        'source_input_count': 84,
+    },
+    'f46d75d3cb3a68c68bdcfaeb5dfe465e06343b47d6376949fd862510a82781d3': {
+        'name': 'Bend 2.0.25 with String lowering, checked-body sharing and compiler worker reuse',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': '018855661c0240fd3df7b7235ce35ea9b465ab0d',
+        'source_tree': '65018fc29356d9b6731b4142f23e5c69b43a32c4',
+        'source_lock_sha256': 'b7a78d737db755c0f060cee481c65736a589b83c61110fafee227b2b5254619d',
+        'source_manifest_sha256': '0d8aace71896212c7c60a6867d95b05051fae74582eaeb5a809f6baf3deee715',
+        'source_metadata_sha256': '3207a6bd1b2a857a48cb30c3112a0bdc1e80286ec3bc4a45917e47366e417660',
+        'source_input_count': 84,
+    },
     '5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3': {
         'name': 'Bend 2.0.25 with emitted C unit cache and constructor shadow handling',
         'official_release_artifact': False,

@@ -19,6 +19,9 @@ ROOT = Path(__file__).resolve().parents[2]
 ARCHIVE_ROOT = 'baton2-development-darwin-arm64'
 COMPILER_ARCHIVE_SHA256 = 'c5bb22ba029d5909da9c6db82aa037278a66d1cf8a5572f433879f7dcd866c31'
 RETAINED_LINUX_COMPILER_ARCHIVE_SHA256S = (
+    '95a6ad2b7798aa4400cc1a78ba61970aab4f749d617323a15a6eabe373be541c',
+    'c9b72c4c3d802508eea769d29404989346119042c8827dc19439646b28558dfb',
+    'f46d75d3cb3a68c68bdcfaeb5dfe465e06343b47d6376949fd862510a82781d3',
     'b096466b3b849234d3393ba9c726f78121f31762dc4e5379fe886e9b61b75590',
     '2b272454ec56a3d47f6957d8ad28da7d946dce470747e8bde5d5ff274c48e957',
     '2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065',
@@ -107,11 +110,12 @@ def build_binary(env, directory, label, entry=None, focused=False, router=False,
 
 BINARY_LAYOUT = (
     {'role': 'focused-facade', 'option': 'focused', 'label': 'baton-focused',
-     'installed': 'bin/baton', 'alias': None,
+     'installed': 'bin/baton-focused', 'alias': None,
      'entry': 'bend2/src/coordinator/receive-focused.bend',
      'build_mode': 'focused-native-entry', 'focused': True, 'router': False},
     {'role': 'full-cli', 'option': 'full', 'label': 'baton-full',
-     'installed': 'bin/baton2', 'alias': 'bin/baton-full',
+     'installed': 'bin/baton', 'alias': 'bin/baton2',
+     'aliases': ('bin/baton2', 'bin/baton-full'),
      'entry': 'bend2/src/coordinator/main.bend',
      'build_mode': 'full-native-receiver-router',
      'focused': False, 'router': True, 'wrapper': True},
@@ -664,11 +668,15 @@ def stage_receiver_binaries(payload, specs, built, c_hashes=None):
             record['wrapper_source'] = spec['wrapper_source']
         if c_hashes and spec['role'] in c_hashes:
             record['retained_c_sha256'] = c_hashes[spec['role']]
+        aliases = list(spec.get('aliases', ()))
         if spec['alias']:
-            alias = payload / spec['alias']
+            record['alias'] = spec['alias']
+        if aliases:
+            record['aliases'] = aliases
+        for alias_name in aliases:
+            alias = payload / alias_name
             shutil.copyfile(built[spec['role']], alias)
             alias.chmod(0o755)
-            record['alias'] = spec['alias']
         records.append(record)
     return records
 
@@ -850,8 +858,8 @@ def package(args):
             'platform': {'system': target_system, 'machine': 'arm64', 'artifact': 'darwin-arm64'},
             'source': source,
             'binaries': records, 'source_manifest': source_manifest,
-            'binary': {'path': focused['path'], 'alias': focused.get('alias'),
-                       'sha256': focused['sha256'], 'source': focused['source']},
+            'binary': {'path': full_record['path'], 'alias': full_record.get('alias'),
+                       'sha256': full_record['sha256'], 'source': full_record['source']},
             'selected_modules': selected_context,
             'selected_dependencies': repl_compiler,
             'required_system_dependencies': system_dependencies(target_system),

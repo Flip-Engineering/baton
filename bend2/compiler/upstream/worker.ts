@@ -79,7 +79,10 @@ if (phase === "front") {
       const trace = Fact.trace(), emitted = emit(request.unit, request.facts_only, last!.facts, trace);
       // The unit's own high-water mark. Without a reset, a mark that did not
       // rise during the unit leaves its peak unknown below the earlier mark.
-      const end = resident(), peak = exact ? end.peak : end.peak > high ? end.peak : Math.max(begin.rss, end.rss);
+      // The mark read after a reset can lag the resident sizes read around it, and the unit was at least
+      // as large as both.
+      const end = resident(), peak = exact ? Math.max(end.peak, begin.rss, end.rss)
+        : end.peak > high ? end.peak : Math.max(begin.rss, end.rss);
       high = Math.max(high, end.peak);
       result(request.result, { ok: true, unit: request.unit, facts_only: request.facts_only,
         rss_before: begin.rss, rss_peak: peak, rss_after: end.rss, rss_peak_exact: exact,
