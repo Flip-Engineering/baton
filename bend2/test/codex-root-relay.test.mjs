@@ -59,7 +59,8 @@ const NOTICE = "Message (completion-request) from lead [id: request-1]:\nFull bo
 // app-server protocol from a state directory. ROOT_RELAY_APP_MODE selects when
 // the queued message appears as a user message: 'consume' after two history
 // reads, 'never' not at all, 'loads-late' lists the thread as loaded from the
-// fourth request on, 'drop-once' ends the first proxy that is asked for history
+// fourth request on, 'no-upgrade' closes without answering the Upgrade request
+// (what the proxy does for a non-WebSocket byte stream), 'drop-once' ends the first proxy that is asked for history
 // after the queue without replying. History starts
 // with an earlier turn that already holds the same notice text.
 function fakeCodex(path) {
@@ -77,18 +78,38 @@ if (args[0] === 'queue') {
 }
 if (args[0] !== 'app-server' || args[1] !== 'proxy') process.exit(64);
 fs.appendFileSync(dir + '/proxy-launches', 'x');
-const send = (id, result) => process.stdout.write(JSON.stringify({ id, result }) + '\\n');
+const crypto = require('node:crypto');
 const user = (id, text) => ({ type: 'userMessage', id, content: [{ type: 'text', text }] });
-readline.createInterface({ input: process.stdin }).on('line', line => {
-  const request = JSON.parse(line);
+// The proxy copies bytes between its streams and the app-server socket, which
+// answers an HTTP Upgrade request with status 101 and then speaks WebSocket
+// frames. Frames from the client must be masked; frames to it are not.
+function frame(opcode, payload, fin = true) {
+  const first = (fin ? 0x80 : 0) | opcode;
+  const head = payload.length < 126 ? Buffer.from([first, payload.length])
+    : Buffer.from([first, 126, payload.length >> 8, payload.length & 255]);
+  process.stdout.write(Buffer.concat([head, payload]));
+}
+// Replies longer than 40 bytes are split into a text frame and a continuation.
+function send(id, result) {
+  const body = Buffer.from(JSON.stringify({ id, result }));
+  if (body.length > 40) { frame(1, body.subarray(0, 20), false); frame(0, body.subarray(20)); }
+  else frame(1, body);
+}
+let buffer = Buffer.alloc(0);
+let upgraded = false;
+let afterPong = null;
+function handle(request) {
   if (request.jsonrpc !== undefined) process.exit(65);
-  if (request.method === 'initialize') send(request.id, { userAgent: 'fake' });
-  else if (request.method === 'thread/loaded/list') {
+  if (request.id === undefined) return;
+  if (request.method === 'initialize') {
+    // The client must answer a ping before this reply is sent.
+    afterPong = () => send(request.id, { userAgent: 'fake' });
+    frame(9, Buffer.from('ping'));
+  } else if (request.method === 'thread/loaded/list') {
     fs.appendFileSync(dir + '/loaded-calls', 'x');
     const calls = fs.readFileSync(dir + '/loaded-calls', 'utf8').length;
     send(request.id, { data: mode === 'loads-late' && calls < 4 ? [] : ['thread-1'] });
-  }
-  else if (request.method === 'thread/turns/list') {
+  } else if (request.method === 'thread/turns/list') {
     const queued = fs.existsSync(dir + '/queued') ? fs.readFileSync(dir + '/queued', 'utf8') : null;
     if (mode === 'drop-once' && queued !== null && request.params.itemsView === 'full' && !fs.existsSync(dir + '/dropped')) {
       fs.writeFileSync(dir + '/dropped', 'x');
@@ -104,7 +125,44 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     const earlier = { id: 'turn-0', status: 'completed', items: [user('item-0', notice)] };
     send(request.id, { data: [...turns, earlier].slice(0, request.params.limit || 100), nextCursor: null });
   } else send(request.id, {});
+}
+function clientFrames() {
+  for (;;) {
+    if (buffer.length < 2) return;
+    if ((buffer[1] & 0x80) === 0) process.exit(66);
+    let length = buffer[1] & 0x7f;
+    let offset = 2;
+    if (length === 126) { if (buffer.length < 4) return; length = buffer.readUInt16BE(2); offset = 4; }
+    else if (length === 127) process.exit(67);
+    if (buffer.length < offset + 4 + length) return;
+    const mask = buffer.subarray(offset, offset + 4);
+    const payload = Buffer.from(buffer.subarray(offset + 4, offset + 4 + length));
+    for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i % 4];
+    const opcode = buffer[0] & 0x0f;
+    if ((buffer[0] & 0x80) === 0 || opcode === 0) process.exit(68);
+    buffer = buffer.subarray(offset + 4 + length);
+    if (opcode === 1) handle(JSON.parse(payload.toString('utf8')));
+    else if (opcode === 10 && afterPong) { const reply = afterPong; afterPong = null; reply(); }
+    else if (opcode === 8) process.exit(0);
+  }
+}
+process.stdin.on('data', chunk => {
+  buffer = Buffer.concat([buffer, chunk]);
+  if (!upgraded) {
+    const end = buffer.indexOf('\\r\\n\\r\\n');
+    if (end === -1) return;
+    const head = buffer.subarray(0, end).toString('latin1');
+    buffer = buffer.subarray(end + 4);
+    const key = /^Sec-WebSocket-Key: (.+)$/mi.exec(head);
+    // A byte stream that is not an Upgrade request gets no reply, as from the real app-server.
+    if (!/^GET [^ ]+ HTTP[/]1[.]1/.test(head) || !/^Upgrade: websocket$/mi.test(head) || !key || mode === 'no-upgrade') process.exit(0);
+    const accept = crypto.createHash('sha1').update(key[1] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+    process.stdout.write('HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: ' + accept + '\\r\\n\\r\\n');
+    upgraded = true;
+  }
+  clientFrames();
 });
+process.stdin.on('end', () => process.exit(0));
 `);
 }
 
@@ -249,6 +307,17 @@ test('a lost app-server connection is reopened and the queued notice is still ma
   assert.ok(readFileSync(join(run.directory, 'proxy-launches'), 'utf8').length >= 2, 'The proxy was not reopened.');
   assert.equal(readFileSync(join(run.directory, 'queue.json'), 'utf8').includes('request-1'), true);
   assert.equal(readFileSync(run.readLog, 'utf8').trim().split('\n').length, 1);
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
+});
+
+test('a proxy that closes without upgrading is reported and nothing is queued', async (t) => {
+  const run = await runRelay(t, 'no-upgrade');
+  await until(run, 'codexAppServerUnavailable');
+  assert.match(run.diagnostic, /closed before the WebSocket upgrade/);
+  assert.equal(existsSync(join(run.directory, 'queue.json')), false);
+  assert.equal(existsSync(run.readLog), false);
   run.child.stdin.end();
   const [code] = await run.closed;
   assert.equal(code, 0, run.diagnostic);

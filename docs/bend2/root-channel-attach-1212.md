@@ -89,7 +89,9 @@ which one is the root.
 The relay keeps the SSH conductor stream open. For each complete notification
 it opens `codex app-server proxy` under the relay's `CODEX_HOME`, which finds
 the running app-server's control socket on each delivery without a stored
-address. The relay then:
+address. The proxy copies raw bytes to that socket, which speaks HTTP and then
+WebSocket. The relay sends an HTTP Upgrade request, requires status 101, and
+exchanges masked JSON text frames, answering pings. The relay then:
 
 1. Waits until `thread/loaded/list` contains the root thread. It queues nothing
    before that.

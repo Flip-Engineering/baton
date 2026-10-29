@@ -4,6 +4,7 @@
 // the app-server that owns the thread returns the complete message as a user
 // message in that thread.
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline';
 
 const USAGE = 'usage: codex-root-relay.mjs --ssh HOST --database PATH --coordinator PATH --conductor PATH --session ID [--thread ID] [--node PATH] [--codex PATH]\n';
@@ -50,8 +51,121 @@ function messageId(params) {
   return ids[0];
 }
 
+// The client side of a WebSocket carried over a child's standard streams.
+// 'codex app-server proxy' copies raw bytes between its standard streams and
+// the app-server control socket, which speaks HTTP and then WebSocket. The
+// client sends an HTTP Upgrade request, waits for status 101, then exchanges
+// WebSocket frames. Frames to the server are masked and frames from it are not.
+class WebSocketStream {
+  constructor(child, onText) {
+    this.child = child;
+    this.onText = onText;
+    this.buffer = Buffer.alloc(0);
+    this.text = null;
+    this.upgraded = false;
+    this.opened = new Promise((resolve, reject) => {
+      this.open = resolve;
+      this.refuse = reject;
+    });
+    this.opened.catch(() => {});
+    child.stdout.on('data', chunk => this.feed(chunk));
+    child.once('close', () => {
+      if (!this.upgraded) this.refuse(new Error('Codex app-server proxy closed before the WebSocket upgrade.'));
+    });
+  }
+
+  upgrade() {
+    this.child.stdin.write('GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
+      + `Sec-WebSocket-Key: ${randomBytes(16).toString('base64')}\r\nSec-WebSocket-Version: 13\r\n\r\n`);
+    return this.opened;
+  }
+
+  feed(chunk) {
+    this.buffer = Buffer.concat([this.buffer, chunk]);
+    if (!this.upgraded) {
+      const end = this.buffer.indexOf('\r\n\r\n');
+      if (end === -1) return;
+      const head = this.buffer.subarray(0, end).toString('latin1');
+      this.buffer = this.buffer.subarray(end + 4);
+      if (!/^HTTP\/1\.[01] 101 /.test(head)) {
+        this.refuse(new Error('Codex app-server proxy refused the WebSocket upgrade: ' + head.split('\r\n')[0]));
+        return;
+      }
+      this.upgraded = true;
+      this.open();
+    }
+    for (;;) {
+      const frame = this.frame();
+      if (!frame) return;
+      this.handle(frame);
+    }
+  }
+
+  // One complete frame from the buffer, or null.
+  frame() {
+    const b = this.buffer;
+    if (b.length < 2) return null;
+    let length = b[1] & 0x7f;
+    let offset = 2;
+    if (length === 126) {
+      if (b.length < 4) return null;
+      length = b.readUInt16BE(2);
+      offset = 4;
+    } else if (length === 127) {
+      if (b.length < 10) return null;
+      length = Number(b.readBigUInt64BE(2));
+      offset = 10;
+    }
+    const masked = (b[1] & 0x80) !== 0;
+    if (b.length < offset + (masked ? 4 : 0) + length) return null;
+    const mask = masked ? b.subarray(offset, offset + 4) : null;
+    if (masked) offset += 4;
+    const payload = Buffer.from(b.subarray(offset, offset + length));
+    if (mask) for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i % 4];
+    this.buffer = b.subarray(offset + length);
+    return { fin: (b[0] & 0x80) !== 0, opcode: b[0] & 0x0f, payload };
+  }
+
+  handle({ fin, opcode, payload }) {
+    if (opcode === 0x9) this.write(0xa, payload);
+    else if (opcode === 0x8) this.child.stdin.end();
+    else if (opcode === 0x1 || opcode === 0x0) {
+      this.text = this.text ? Buffer.concat([this.text, payload]) : payload;
+      if (fin) {
+        const text = this.text.toString('utf8');
+        this.text = null;
+        this.onText(text);
+      }
+    }
+  }
+
+  write(opcode, payload) {
+    if (!this.child.stdin.writable) return;
+    const mask = randomBytes(4);
+    const length = payload.length;
+    const head = length < 126 ? Buffer.from([0x80 | opcode, 0x80 | length])
+      : length < 65536 ? Buffer.from([0x80 | opcode, 0x80 | 126, length >> 8, length & 0xff])
+        : Buffer.concat([Buffer.from([0x80 | opcode, 0x80 | 127]), (() => {
+          const size = Buffer.alloc(8);
+          size.writeBigUInt64BE(BigInt(length));
+          return size;
+        })()]);
+    const masked = Buffer.from(payload);
+    for (let i = 0; i < masked.length; i++) masked[i] ^= mask[i % 4];
+    this.child.stdin.write(Buffer.concat([head, mask, masked]));
+  }
+
+  sendText(text) {
+    this.write(0x1, Buffer.from(text, 'utf8'));
+  }
+
+  close() {
+    this.write(0x8, Buffer.alloc(0));
+  }
+}
+
 class Peer {
-  constructor(child, { jsonrpc = true } = {}) {
+  constructor(child, { jsonrpc = true, websocket = false } = {}) {
     this.child = child;
     this.jsonrpc = jsonrpc;
     this.nextId = 0;
@@ -63,8 +177,11 @@ class Peer {
       this.rejectAll(new Error('SSH conductor closed before replying: ' + JSON.stringify(exit)));
       resolve(exit);
     }));
-    this.lines = createInterface({ input: child.stdout });
-    this.lines.on('line', line => this.receive(line));
+    if (websocket) this.ws = new WebSocketStream(child, text => this.receive(text));
+    else {
+      this.lines = createInterface({ input: child.stdout });
+      this.lines.on('line', line => this.receive(line));
+    }
     child.stderr.pipe(process.stderr, { end: false });
     child.once('error', error => this.rejectAll(error));
     child.stdin.on('error', error => this.rejectAll(error));
@@ -77,7 +194,9 @@ class Peer {
 
   send(message) {
     if (!this.child.stdin.writable) throw new Error('SSH conductor input is closed.');
-    this.child.stdin.write(JSON.stringify(this.jsonrpc ? { jsonrpc: '2.0', ...message } : message) + '\n');
+    const text = JSON.stringify(this.jsonrpc ? { jsonrpc: '2.0', ...message } : message);
+    if (this.ws) this.ws.sendText(text);
+    else this.child.stdin.write(text + '\n');
   }
 
   receive(line) {
@@ -139,15 +258,17 @@ async function queueMessage(options, id, content) {
 }
 
 // The Codex app-server that owns the thread, reached through the supported
-// 'codex app-server proxy' under the caller's CODEX_HOME. The connection only
-// reads thread state.
+// 'codex app-server proxy' under the caller's CODEX_HOME. The proxy carries a
+// WebSocket, which the app-server speaks as JSON text frames. The connection
+// only reads thread state.
 async function openAppServer(options) {
   const child = spawn(options.codex, ['app-server', 'proxy'], {
     env: process.env,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  const server = new Peer(child, { jsonrpc: false });
+  const server = new Peer(child, { jsonrpc: false, websocket: true });
   try {
+    await server.ws.upgrade();
     const initialized = await server.request('initialize', {
       clientInfo: { name: 'baton_codex_root_relay', title: 'Baton Codex root relay', version: '1' },
     });
@@ -161,6 +282,7 @@ async function openAppServer(options) {
 }
 
 function closeAppServer(server) {
+  if (server.ws.upgraded) server.ws.close();
   if (server.child.stdin.writable) server.child.stdin.end();
   server.child.kill('SIGTERM');
 }
