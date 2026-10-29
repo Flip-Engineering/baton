@@ -167,7 +167,7 @@ def spool_background(+db: String, +spool: String) -> IO(String):
     spool_background_sized(db,spool,sized)
 
 # Stdin closes only when the stdout file agrees with the observer's state.
-def background_clear(state: String) -> Bool:
+def background_clear(+state: String) -> Bool:
   Bool.or(String.eq(state,"0"),String.eq(state,"none"))
 
 # Forwards every owed message while stdin is open; a closed stdin forwards none.
