@@ -1698,8 +1698,43 @@ class Receive(unittest.TestCase):
                          ['Original result complete.', 'Queued result complete.'])
         self.assertIn('File exists', output + error)
 
-    def test_native_root_question_reports_unsupported_without_answering(self):
+    def test_parentless_conductor_native_question_reaches_the_registered_operator(self):
+        self.coord('connect', 'operator', '', json.dumps(['/usr/bin/true']))
         self.coord('attach', 'root', 'omp', '', '')
+        self.prepare_input('root-question-task', 'root', 'Ask the operator for required input.', kind='task')
+        observer = self.spawn(*self.receive_args('root'))
+        stream, started = self.accept_child(observer, 'root')
+        state = self.coord('session', 'root')['taskCompletion']
+        self.assertEqual(state['coordinator'], 'operator')
+        self.assertTrue(state['open'])
+        event = {'type': 'extension_ui_request', 'id': 'root input λ',
+                 'method': 'input', 'title': 'Operator question.\nPreserve this line Ω.'}
+        request = self.native_question(stream, event)
+        self.assertEqual((request['worker'], request['parent']), ('root', 'operator'))
+        read = self.coord('as', 'operator', 'read', request['id'])
+        self.assertEqual(json.loads(read[0]['delivery']['body'])['nativeRequest'], event)
+        answer = {'value': 'Complete operator reply.\nλU0001f642'}
+        result = self.coord('as', 'operator', 'native-reply', '--to', 'root',
+                            '--text', json.dumps(answer, ensure_ascii=False))
+        self.assertEqual(result[0]['status'], 'completed')
+        self.assertEqual(json.loads(result[0]['stdout'])['status'], 'stdin-written')
+        self.action(stream, read_native_reply=True)
+        self.assertEqual(json.loads(stream.readline()), {'native_reply': {
+            'type': 'extension_ui_response', 'id': event['id'], **answer}})
+        self.assertIsNone(observer.poll())
+        self.assertTrue(any(process['pid'] == started['pid'] for process in self.owned_processes()))
+        body = 'The parentless conductor completed after the operator replied.'
+        self.action(stream, body=body, hold_exit=True, report_input=True)
+        self.assertEqual(json.loads(stream.readline()),
+                         {'terminal_written': True, 'input_after_prompt': ''})
+        self.action(stream, exit_fixture=True)
+        self.finish(observer)
+        self.shutdown_idle_database_owner('parentless conductor question did not exit naturally')
+        self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'root')], [body])
+
+    def test_parentless_player_native_question_reports_missing_coordinator(self):
+        self.coord('attach', 'root', 'omp', '', '')
+        self.coord('role', 'root', 'player')
         self.prepare_input('root-question-task', 'root', 'Inspect the native request.', kind='task')
         observer = self.spawn(*self.receive_args('root'))
         stream, started = self.accept('root')
@@ -1716,7 +1751,7 @@ class Receive(unittest.TestCase):
                          {'terminal_written': True, 'input_after_prompt': ''})
         self.action(stream, exit_fixture=True)
         output, _ = self.finish(observer, ok=False)
-        self.assertIn('unsupported for a session without a registered parent', output)
+        self.assertIn('unsupported for a session without a coordinator', output)
         self.assertEqual(self.native_requests(), [])
         self.shutdown_idle_database_owner('root fixture did not exit naturally')
 
