@@ -68,6 +68,18 @@ class HelperRole(unittest.TestCase):
         self.assertIn('--link-extra', cc)
         self.assertIn('--link-flags=-O1 -pthread -lsqlite3 -lm -DBATON2_RECOVERY_HELPER', cc)
 
+    def test_role_selection_without_readlink_f(self):
+        tools = self.root / 'bin'
+        tools.mkdir()
+        readlink = tools / 'readlink'
+        readlink.write_text('#!/bin/sh\nexit 1\n')
+        readlink.chmod(0o755)
+        result = self.build('receive-recovery-focused',
+                            PATH=str(tools) + os.pathsep + self.env['PATH'])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        _, cc = self.calls()
+        self.assertIn('--link-flags=-O1 -pthread -lsqlite3 -lm -DBATON2_RECOVERY_HELPER', cc)
+
     def test_conflicting_explicit_role_is_rejected(self):
         result = self.build('receive-recovery-focused', BATON2_RECEIVE_FOCUSED='1')
         self.assertEqual(result.returncode, 78)

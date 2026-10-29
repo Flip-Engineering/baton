@@ -49,7 +49,8 @@ TMPDIR=$build_scratch
 TMP=$build_scratch
 TEMP=$build_scratch
 export TMPDIR TMP TEMP
-entry_path=$(readlink -f -- "$entry" 2>/dev/null || printf '%s' "$entry")
+entry_path=$(readlink -f -- "$entry" 2>/dev/null ||
+  (CDPATH= cd -- "$(dirname -- "$entry")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$entry")"))
 focused=${BATON2_RECEIVE_FOCUSED:-}
 router=${BATON2_NATIVE_RECEIVER_ROUTER:-}
 recovery=${BATON2_RECOVERY_HELPER:-}
