@@ -287,7 +287,7 @@ class AdapterExitTests(unittest.TestCase):
         self.assertEqual(result.returncode, 17)
         self.assertEqual(result.stdout, b'child stdout\n')
         self.assertEqual(result.stderr, b'child stderr\n')
-        with mock.patch.dict(os.environ, environment, clear=False):
+        with mock.patch.dict(os.environ, environment, clear=True):
             adapter.compiler_diagnostics(attempt, [sys.executable, '-c', code])
         metadata_bytes = (attempt / 'compiler-diagnostics.json').read_bytes()
         metadata = json.loads(metadata_bytes)
