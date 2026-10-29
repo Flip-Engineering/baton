@@ -190,6 +190,22 @@ def safe() -> U32:
                                  'BEND_NO_TELEMETRY': '1'})
         self.assertEqual(run.returncode, 0, run.stderr)
 
+    def test_admission_scheduling(self):
+        script = ROOT / 'bend2/test/compiler/admission_scheduling.ts'
+        run = subprocess.run([self.bun, '--smol', str(script), str(ROOT)],
+                             capture_output=True, text=True, env={
+                                 **os.environ, 'BEND_COMPILER_SOURCE': str(SOURCE),
+                                 'BEND_NO_TELEMETRY': '1'})
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
+    def test_worker_reuse(self):
+        script = ROOT / 'bend2/test/compiler/worker_reuse.ts'
+        run = subprocess.run([self.bun, '--smol', str(script), str(ROOT)],
+                             capture_output=True, text=True, env={
+                                 **os.environ, 'BEND_COMPILER_SOURCE': str(SOURCE),
+                                 'BEND_NO_TELEMETRY': '1'})
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
     def test_constructor_shadow(self):
         script = ROOT / 'bend2/test/compiler/ctor_shadow.ts'
         run = subprocess.run([self.bun, '--smol', str(script), str(ROOT)],

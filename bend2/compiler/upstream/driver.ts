@@ -6,7 +6,8 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { finished } from "node:stream/promises";
 import * as Comp from "./comp.ts";
 import * as Fact from "./facts.ts";
-import { Admission } from "./admission.ts";
+import { Admission, resident } from "./admission.ts";
+import type { Workers } from "./admission.ts";
 import type { Fragment } from "./fragments.ts";
 import { UnitCache, emission } from "./unit-cache.ts";
 import type { UnitData } from "./unit-cache.ts";
@@ -87,15 +88,21 @@ export async function prepare(file: string, workspace: string, outputs: string[]
   return { directory: result.directory, inputs: result.inputs, evidence };
 }
 
+type Emitted = { value: Fact.Emission<Fragment>; data: UnitData; growth: number; metadata: number };
+
+// A worker process serves one unit at a time and any number of units in turn.
 class Worker {
   readonly directory: string;
   private execution: Execution;
   private ready: Promise<void>;
   private pending: { file: string; unit: string; resolve: (value: any) => void; reject: (error: unknown) => void } | null = null;
   private failed = false;
+  private finished: Promise<void> | null = null;
   metadata: number | null = null;
-  data: UnitData | null = null;
+  // Resident peak while the process started, known once it reports ready.
+  startup: number | null = null;
   get pid(): number | undefined { return this.execution.child.pid; }
+  get usable(): boolean { return !this.failed; }
 
   constructor(readonly program: Prepared) {
     this.directory = fs.mkdtempSync(path.join(program.evidence, "worker-"));
@@ -118,6 +125,7 @@ class Worker {
           try {
             const message = JSON.parse(line);
             if (message.kind === "ready") {
+              this.startup = message.peak;
               fs.writeFileSync(path.join(this.directory, "ready.json"), JSON.stringify(message)); resolve();
             } else if (message.kind === "result") {
               const pending = this.pending;
@@ -137,8 +145,11 @@ class Worker {
     });
   }
 
-  async emit(job: Fact.Job, snapshot: string, snapshot_digest: string): Promise<Fact.Emission<Fragment>> {
+  async started(): Promise<void> { await this.ready; }
+
+  async emit(job: Fact.Job, snapshot: string, snapshot_digest: string): Promise<Emitted> {
     await this.ready;
+    this.metadata = null;
     const directory = fs.mkdtempSync(path.join(this.directory, "unit-"));
     const file = path.join(directory, "result.json");
     const request = { kind: "emit", unit: job.key, facts_only: job.facts_only, snapshot, snapshot_digest, result: file };
@@ -150,14 +161,15 @@ class Worker {
     const before = process.memoryUsage();
     const result = JSON.parse(fs.readFileSync(file_result, "utf8"));
     if (!result.ok) throw new CompilerFailure(directory, result, result.error.formatted);
-    this.data = result;
     const value = emission(result);
     const after = process.memoryUsage();
     this.metadata = Math.max(0, after.rss - before.rss, after.heapUsed - before.heapUsed);
-    return value;
+    return { value, data: result, growth: Math.max(0, result.rss_peak - result.rss_before), metadata: this.metadata };
   }
 
-  async finish(): Promise<void> {
+  finish(): Promise<void> { return this.finished ??= this.stop(); }
+
+  private async stop(): Promise<void> {
     const child = this.execution.child;
     if (!this.failed && child.exitCode === null && child.signalCode === null && !child.stdin.destroyed) {
       child.stdin.end(JSON.stringify({ kind: "stop" }) + "\n");
@@ -169,13 +181,59 @@ class Worker {
   }
 }
 
+// The workers of one compilation. They start when admission needs one, take
+// units in turn across fact barriers, and stop when emission ends.
+class Pool implements Workers {
+  private idle: Worker[] = [];
+  private started: Worker[] = [];
+  private largest: number | null = null;
+  constructor(readonly program: Prepared) {}
+
+  private order(): Worker[] {
+    const size = new Map(this.idle.map(worker => [worker, resident(worker.pid) ?? 0]));
+    return this.idle.sort((a, b) => size.get(a)! - size.get(b)!);
+  }
+  next(): { pid: number | undefined } | null { return this.order()[0] ?? null; }
+  baseline(): number | null { return this.largest; }
+
+  take(): Worker {
+    return this.order().shift() ?? this.start();
+  }
+  private start(): Worker {
+    const worker = new Worker(this.program);
+    this.started.push(worker);
+    worker.started().then(() => { this.largest = Math.max(this.largest ?? 0, worker.startup!); }, () => {});
+    return worker;
+  }
+  put(worker: Worker): void { if (worker.usable) this.idle.push(worker); }
+
+  async retire(): Promise<boolean> {
+    if (this.idle.length < 2) return false;
+    const worker = this.order().pop()!;
+    this.idle = this.idle.filter(other => other !== worker);
+    await worker.finish();
+    return true;
+  }
+
+  async close(): Promise<void> {
+    const workers = this.started.splice(0);
+    this.idle = [];
+    const results = await Promise.allSettled(workers.map(worker => worker.finish()));
+    const errors = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, errors.map(String).join("\n"));
+  }
+}
+
 export async function emit(program: Prepared, output: string): Promise<void> {
   const snapshots = path.join(program.evidence, "snapshots"); fs.mkdirSync(snapshots);
   const observations = path.join(program.evidence, "admission.jsonl");
   const admission = new Admission((event, details) => fs.appendFileSync(observations,
     JSON.stringify({ event, at: new Date().toISOString(), ...details }) + "\n"));
   const cache = new UnitCache(program.directory, program.evidence);
+  const pool = new Pool(program);
   const fd = fs.openSync(output, "wx");
+  let failure: unknown;
   try {
     await Comp.compile_checked_to(program.directory, chunk => fs.writeFileSync(fd, chunk), {
       emit: async jobs => {
@@ -190,30 +248,30 @@ export async function emit(program: Prepared, output: string): Promise<void> {
         if (!fs.existsSync(snapshot)) fs.writeFileSync(snapshot, JSON.stringify(Object.fromEntries(
           Fact.KINDS.map(kind => [kind, [...jobs[0].initial[kind]].sort()]))));
         const emitted = await admission.run(missing, job => JSON.stringify([job.key, job.facts_only]), job => {
-          const worker = new Worker(program);
+          const worker = pool.take();
           const complete = (async () => {
-            let value: Fact.Emission<Fragment>;
-            try { value = await worker.emit(job, snapshot, digest); }
-            catch (error) {
-              try { await worker.finish(); } catch (cause) {
-                throw new AggregateError([error, cause], String(error) + "\nWhile collecting compiler unit: " + String(cause));
-              }
-              throw error;
-            }
-            await worker.finish();
-            const usage = JSON.parse(fs.readFileSync(path.join(worker.directory, "worker-usage.json"), "utf8"));
-            cache.put(job, worker.data!);
-            return { value, profile: { peak: usage.usage.maxRSS * 1024, metadata: worker.metadata! } };
+            // A worker that fails a unit is collected with the others when emission ends.
+            const unit = await worker.emit(job, snapshot, digest);
+            pool.put(worker);
+            cache.put(job, unit.data);
+            return { value: unit.value, profile: { peak: unit.growth, metadata: unit.metadata } };
           })();
           return { pid: () => worker.pid, metadata: () => worker.metadata, complete };
-        });
+        }, pool);
         for (const value of emitted) accepted.set(value.key, value);
         return jobs.map(job => accepted.get(job.key)!);
       },
       end_phase: async () => { fs.appendFileSync(observations, JSON.stringify({ event: "phase.end",
         at: new Date().toISOString(), memory: process.memoryUsage() }) + "\n"); },
     });
-  } finally { fs.closeSync(fd); }
+  } catch (error) { failure = error; }
+  try { await pool.close(); }
+  catch (cause) {
+    failure = failure === undefined ? cause : new AggregateError([failure, cause],
+      String(failure) + "\nWhile collecting compiler workers: " + String(cause));
+  }
+  fs.closeSync(fd);
+  if (failure !== undefined) throw failure;
 }
 
 export function cleanup(program: Prepared): void {
