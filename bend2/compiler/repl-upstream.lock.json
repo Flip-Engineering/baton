@@ -17,14 +17,14 @@
       "sha256": "39944a7cc86e194379b66d714c9982a67316f0529d6c6c08a5e18d43248905a7"
     },
     {
-      "bytes": 268019,
+      "bytes": 268187,
       "path": "comp.ts",
-      "sha256": "38980a929ecd339aa42584e685d98c669c36abb8aa7f7becd535ef8e499a7fd1"
+      "sha256": "36c399eb89e282234dc7f13dd3463f4426da28a09d1b66919c99da4db38c3331"
     },
     {
-      "bytes": 11533,
+      "bytes": 11964,
       "path": "driver.ts",
-      "sha256": "69af04072f4e3db003e4dac7a832dcfe5a71f21406984c18ee9f9f86db46f379"
+      "sha256": "8337e09e058b3b9c668522ff2a07b267e22cd3d322081d7d4a0d78c7c1d67dfc"
     },
     {
       "bytes": 351,
@@ -407,14 +407,19 @@
       "sha256": "156b06b2cbfec3c3f34a602bbbaa167fe9c004731ce14ab3281a977ff2c56b52"
     },
     {
-      "bytes": 23482,
+      "bytes": 23781,
       "path": "store.ts",
-      "sha256": "8bc8b730f4138454334fd7550dce0fed9be17efff1c195753068141e32ab5f33"
+      "sha256": "8cf4947ddbca4ae77d99d37240eeac2fdf1aa5b04f79dce894597d535e583d00"
     },
     {
-      "bytes": 4193,
+      "bytes": 12807,
+      "path": "unit-cache.ts",
+      "sha256": "04e4ff50966d034bb6b02ce7d3bbb2caddfa4a6b2620d8c8ff500bd1a973f97e"
+    },
+    {
+      "bytes": 4308,
       "path": "worker.ts",
-      "sha256": "ba6026559976ffe310970bdbadb57bba1275aa8f57bae7c8c8468cd3b3f3fe87"
+      "sha256": "66cd1c5e89c02ae09f8a4630684a8ade80ec28d701d9ace5ad6bba38e4dcb301"
     }
   ],
   "license": {

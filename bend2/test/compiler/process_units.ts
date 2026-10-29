@@ -10,6 +10,7 @@ const source = process.env.BEND_COMPILER_SOURCE ?? path.join(root, "bend2/compil
 const directory = process.argv[3] ?? fs.mkdtempSync(path.join(os.tmpdir(), "bend-process-units-"));
 const retained = process.argv[3] !== undefined;
 fs.mkdirSync(directory, { recursive: true });
+process.env.XDG_CACHE_HOME = path.join(directory, "cache");
 const json = (file: string): any => JSON.parse(fs.readFileSync(file, "utf8"));
 
 try {

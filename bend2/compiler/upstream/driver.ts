@@ -7,8 +7,9 @@ import { finished } from "node:stream/promises";
 import * as Comp from "./comp.ts";
 import * as Fact from "./facts.ts";
 import { Admission } from "./admission.ts";
-import { Fragments } from "./fragments.ts";
 import type { Fragment } from "./fragments.ts";
+import { UnitCache, emission } from "./unit-cache.ts";
+import type { UnitData } from "./unit-cache.ts";
 
 const WORKER = fileURLToPath(new URL("./worker.ts", import.meta.url));
 const DIAGNOSTICS = process.env.BEND_COMPILER_DIAGNOSTICS === "1";
@@ -93,6 +94,7 @@ class Worker {
   private pending: { file: string; unit: string; resolve: (value: any) => void; reject: (error: unknown) => void } | null = null;
   private failed = false;
   metadata: number | null = null;
+  data: UnitData | null = null;
   get pid(): number | undefined { return this.execution.child.pid; }
 
   constructor(readonly program: Prepared) {
@@ -148,8 +150,8 @@ class Worker {
     const before = process.memoryUsage();
     const result = JSON.parse(fs.readFileSync(file_result, "utf8"));
     if (!result.ok) throw new CompilerFailure(directory, result, result.error.formatted);
-    const value = { key: job.key, trace: Fact.from_events(result.trace), result: { lend: new Set<string>(result.lend),
-      masks: result.masks, refs: new Set<string>(result.refs), edges: result.edges, code: Fragments.read(result.fragment) } };
+    this.data = result;
+    const value = emission(result);
     const after = process.memoryUsage();
     this.metadata = Math.max(0, after.rss - before.rss, after.heapUsed - before.heapUsed);
     return value;
@@ -172,14 +174,22 @@ export async function emit(program: Prepared, output: string): Promise<void> {
   const observations = path.join(program.evidence, "admission.jsonl");
   const admission = new Admission((event, details) => fs.appendFileSync(observations,
     JSON.stringify({ event, at: new Date().toISOString(), ...details }) + "\n"));
+  const cache = new UnitCache(program.directory, program.evidence);
   const fd = fs.openSync(output, "wx");
   try {
     await Comp.compile_checked_to(program.directory, chunk => fs.writeFileSync(fd, chunk), {
       emit: async jobs => {
+        const accepted = new Map<string, Fact.Emission<Fragment>>();
+        const missing = jobs.filter(job => {
+          const value = cache.get(job);
+          if (value === undefined) return true;
+          accepted.set(job.key, value);
+          return false;
+        });
         const digest = Fact.digest(jobs[0].initial), snapshot = path.join(snapshots, digest + ".json");
         if (!fs.existsSync(snapshot)) fs.writeFileSync(snapshot, JSON.stringify(Object.fromEntries(
           Fact.KINDS.map(kind => [kind, [...jobs[0].initial[kind]].sort()]))));
-        return await admission.run(jobs, job => JSON.stringify([job.key, job.facts_only]), job => {
+        const emitted = await admission.run(missing, job => JSON.stringify([job.key, job.facts_only]), job => {
           const worker = new Worker(program);
           const complete = (async () => {
             let value: Fact.Emission<Fragment>;
@@ -192,10 +202,13 @@ export async function emit(program: Prepared, output: string): Promise<void> {
             }
             await worker.finish();
             const usage = JSON.parse(fs.readFileSync(path.join(worker.directory, "worker-usage.json"), "utf8"));
+            cache.put(job, worker.data!);
             return { value, profile: { peak: usage.usage.maxRSS * 1024, metadata: worker.metadata! } };
           })();
           return { pid: () => worker.pid, metadata: () => worker.metadata, complete };
         });
+        for (const value of emitted) accepted.set(value.key, value);
+        return jobs.map(job => accepted.get(job.key)!);
       },
       end_phase: async () => { fs.appendFileSync(observations, JSON.stringify({ event: "phase.end",
         at: new Date().toISOString(), memory: process.memoryUsage() }) + "\n"); },

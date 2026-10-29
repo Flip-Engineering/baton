@@ -324,6 +324,7 @@ export function decode_term<T extends Bend.LTerm | Bend.HTerm>(graph: TermGraph,
 
 type Section = { file: string; sha256: string; bytes: number; nodes: number };
 type BodySection = Section & { mode: "checked" | "higher" };
+export type BodyInput = { name: string; sha256: string; mode: BodySection["mode"] };
 type Observe = (event: string, details: Record<string, unknown>) => void;
 export type SourceInput = { path: string; namespace: string | null; sha256: string };
 export type StoreIndex = { compiler: string; tables: Section; header: Section;
@@ -527,6 +528,13 @@ export class CheckedReader {
     this.observe?.("store.decode", { name, duration_ms, bytes: section.bytes,
       nodes: section.nodes, mode: section.mode });
     return h;
+  }
+
+  body_inputs(): BodyInput[] {
+    return [...this.decoded.keys()].sort().map(name => {
+      const section = this.bodies.get(name)!;
+      return { name, sha256: section.sha256, mode: section.mode };
+    });
   }
 
   release(): void { this.decoded.clear(); this.decode_ms = 0; }
