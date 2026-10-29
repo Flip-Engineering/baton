@@ -766,6 +766,7 @@ class TaskStart(unittest.TestCase):
         self.assert_retained_input(explicit, body)
         stream, native = self.accept(explicit['session'])
         self.assertEqual(native['cwd'], str(self.repo.resolve()))
+        self.eventually(lambda: self.call('session', explicit['session'])['native'] == native['native'])
         self.finish(stream, 'Explicit workspace dispatch completed.')
         self.exited(explicit['session'])
 
@@ -786,6 +787,7 @@ class TaskStart(unittest.TestCase):
         self.assert_retained_input(result, body)
         stream, native = self.accept(session)
         self.assertEqual(native['cwd'], assignment['workspace'])
+        self.eventually(lambda: self.call('session', session)['native'] == native['native'])
         self.finish(stream, 'Recorded workspace dispatch completed.')
         self.exited(session)
 
