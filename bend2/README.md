@@ -633,8 +633,8 @@ children keep their recorded parent, assignments and requests, and the successor
 holds the coordinator authority for them. Each unresolved input of the predecessor
 is forwarded to the successor as a `forwarded-input` message that carries the
 complete original text; original messages and read states stay as recorded. A stop
-or a completion confirmation of a session with live children or unresolved input
-reports them to its current coordinator. The
+or a completion confirmation of a session with live children, or with unresolved
+input from its children, reports them to its current coordinator. The
 [agent command guide](../docs/bend2/agent-commands.md#conductor-succession-and-ended-conductors-1257)
 describes the coordinator derivation.
 

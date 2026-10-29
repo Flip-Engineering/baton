@@ -584,8 +584,8 @@ def message_guarded_sql(+id: String, +sender: String, +recipient: String, +kind:
 def unresolved_input_sql(+row: String, +owner: String, +successor: String) -> String:
   "(" ++ row ++ ".recipient=" ++ owner ++ " AND " ++ row ++ ".sender<>" ++ row ++ ".recipient AND " ++ row ++ ".sender<>" ++ successor ++ " AND " ++ row ++ ".kind NOT IN ('succession','completion-confirmed','task-continuation') AND (" ++ owed_sql(row) ++ " OR (" ++ row ++ ".kind='completion-request' AND " ++ row ++ ".id=coalesce(" ++ task_request_sql(row ++ ".sender") ++ ",'') AND NOT " ++ task_confirmed_sql(row ++ ".sender") ++ ")))"
 
-# A session that ended with live children or unresolved input is reported to
-# its current coordinator. The report identity follows the ending action, so a
+# A session that ended with live children, or with unresolved input from its
+# children, is reported to its current coordinator. The report identity follows the ending action, so a
 # repeated action adds no second report. The statement sequence stages the
 # children and the input in temporary tables of its own transaction.
 def ended_report_sql(+session: String, +key: String, +reason: String) -> String:
@@ -595,7 +595,7 @@ def ended_report_sql(+session: String, +key: String, +reason: String) -> String:
   ++ "INSERT INTO temp.baton_ended_input SELECT pending.id FROM messages pending WHERE " ++ session_over_sql(ended) ++ " AND " ++ unresolved_input_sql("pending",ended,"''") ++ " ORDER BY pending.seq;"
   ++ "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ q("ended:" ++ key) ++ ",ended_session.id," ++ report_recipient("ended_session.id") ++ ",'report',json_object('type','session-ended','session',ended_session.id,'reason'," ++ q(reason)
   ++ ",'liveChildren',json((SELECT json_group_array(id) FROM temp.baton_ended_children)),'unresolvedInput',json((SELECT json_group_array(id) FROM temp.baton_ended_input))"
-  ++ ",'next','Run succeed --from ' || ended_session.id || ' as the replacement conductor to inherit its children and receive its unresolved input, or assign or stop the children.') FROM sessions ended_session WHERE ended_session.id=" ++ ended ++ " AND " ++ report_recipient("ended_session.id") ++ " IS NOT NULL AND (EXISTS(SELECT 1 FROM temp.baton_ended_children) OR EXISTS(SELECT 1 FROM temp.baton_ended_input));"
+  ++ ",'next','Run succeed --from ' || ended_session.id || ' as the replacement conductor to inherit its children and receive its unresolved input, or assign or stop the children.') FROM sessions ended_session WHERE ended_session.id=" ++ ended ++ " AND " ++ report_recipient("ended_session.id") ++ " IS NOT NULL AND (EXISTS(SELECT 1 FROM temp.baton_ended_children) OR EXISTS(SELECT 1 FROM temp.baton_ended_input ended_input JOIN messages child_input ON child_input.id=ended_input.id JOIN sessions child_sender ON child_sender.id=child_input.sender WHERE child_sender.parent=ended_session.id));"
   ++ "DROP TABLE temp.baton_ended_children;DROP TABLE temp.baton_ended_input;"
 
 # The kind succession is recorded only by the succession action, which names

@@ -275,10 +275,11 @@ current completion request stay as the Player recorded them. Repeating the
 action forwards only input that arrived after the previous run. Baton wakes the
 successor after the record commits.
 
-When a session with live children or unresolved input becomes over, by an explicit
-stop or by a confirmation of its completion, Baton records a `session-ended` report
-in the same transaction and wakes its recipient: the session's current coordinator.
-The report lists the live children and the unresolved input IDs. The coordinator can
+When a session with live children, or with unresolved input from its children,
+becomes over, by an explicit stop or by a confirmation of its completion, Baton
+records a `session-ended` report in the same transaction and wakes its recipient: the
+session's current coordinator. The report lists the live children and the unresolved
+input IDs. The coordinator can
 run `succeed --from SESSION` from a replacement conductor, adopt the children as an
 ancestor with the same action, or assign or stop the children.
 
