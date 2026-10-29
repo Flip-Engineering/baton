@@ -173,6 +173,22 @@ def usage_windows_schema() -> String:
   ++ "CREATE TABLE IF NOT EXISTS usage_reads (id INTEGER PRIMARY KEY AUTOINCREMENT, observed_at INTEGER NOT NULL, provider TEXT NOT NULL, account TEXT NOT NULL DEFAULT '', session TEXT NOT NULL DEFAULT '', trigger TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('read','unreadable')), source TEXT NOT NULL DEFAULT '', reason TEXT NOT NULL DEFAULT '', document TEXT NOT NULL CHECK(json_valid(document)));"
   ++ "CREATE INDEX IF NOT EXISTS idx_usage_reads_scope ON usage_reads(provider, account, id);"
 
+# Refusal recovery keeps one row per detected refusal chain and one row per
+# retry attempt. The attempt rows are the durable source for the model-refusal
+# result and for suppressing the ordinary task continuation while Baton owns
+# the retry sequence.
+def refusal_recovery_schema() -> String:
+  "CREATE TABLE IF NOT EXISTS refusal_recoveries (id TEXT PRIMARY KEY NOT NULL, source TEXT NOT NULL REFERENCES sessions(id), conductor TEXT NOT NULL DEFAULT '', instruction TEXT NOT NULL, harness TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', initial_refusal TEXT NOT NULL DEFAULT '', status TEXT NOT NULL CHECK(status IN('active','succeeded','refused','failed')), cause TEXT NOT NULL DEFAULT '', report TEXT NOT NULL DEFAULT '', created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
+  ++ "CREATE TABLE IF NOT EXISTS refusal_attempts (id TEXT PRIMARY KEY NOT NULL, recovery TEXT NOT NULL REFERENCES refusal_recoveries(id), stage TEXT NOT NULL CHECK(stage IN('fork-and-continue','fork-and-flush')), ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 1 AND 3), session TEXT NOT NULL REFERENCES sessions(id), instruction TEXT NOT NULL, refusal_description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL CHECK(status IN('pending','running','refused','succeeded','failed')), turn TEXT NOT NULL DEFAULT '', round TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(recovery,stage,ordinal));"
+  ++ "CREATE INDEX IF NOT EXISTS refusal_attempts_session_status ON refusal_attempts(session,status);"
+  ++ "CREATE INDEX IF NOT EXISTS refusal_attempts_recovery_stage ON refusal_attempts(recovery,stage,ordinal);"
+
+def refusal_attempt_running_sql(+session: String) -> String:
+  "EXISTS(SELECT 1 FROM refusal_attempts active_refusal WHERE active_refusal.session=" ++ session ++ " AND active_refusal.status='running')"
+
+def refusal_recovery_active_sql(+session: String) -> String:
+  "EXISTS(SELECT 1 FROM refusal_recoveries active_recovery WHERE active_recovery.source=" ++ session ++ " AND active_recovery.status='active')"
+
 def task_state_index_schema() -> String:
   "CREATE INDEX IF NOT EXISTS messages_sender_kind_seq ON messages(sender,kind,seq);"
   ++ "CREATE INDEX IF NOT EXISTS messages_recipient_kind_seq ON messages(recipient,kind,seq);"
@@ -184,6 +200,7 @@ def schema() -> String:
   ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);"
   ++ "DROP INDEX IF EXISTS messages_pending;CREATE INDEX IF NOT EXISTS messages_recipient_seq ON messages(recipient,seq,id);"
+  ++ refusal_recovery_schema()
   ++ task_state_index_schema()
   ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);"
   ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
@@ -362,7 +379,7 @@ def task_state_sql(+session: String) -> String:
 # A normal terminal with no other input uses this continuation to keep an open
 # assignment active and remind the worker to request completion.
 def task_continuation_sql(+session: String, +id: String) -> String:
-  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id ++ ":task-continuation") ++ ",worker.id,worker.id,'task-continuation','Continue assignment ' || (SELECT id FROM messages WHERE seq=" ++ task_assignment_sql("worker.id") ++ ") || '. Review the complete stored assignment and current inbox, and carry out the coordinator-authorized work. Before ending this turn, use completion-request --text SUMMARY to request the conductor completion decision. Explicit operator stops remain effective.' FROM sessions worker WHERE worker.id=" ++ q(session) ++ " AND " ++ task_open_sql("worker.id") ++ " AND " ++ task_request_sql("worker.id") ++ " IS NULL AND NOT EXISTS(SELECT 1 FROM messages owed WHERE owed.recipient=worker.id AND " ++ owed_sql("owed") ++ ");"
+  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id ++ ":task-continuation") ++ ",worker.id,worker.id,'task-continuation','Continue assignment ' || (SELECT id FROM messages WHERE seq=" ++ task_assignment_sql("worker.id") ++ ") || '. Review the complete stored assignment and current inbox, and carry out the coordinator-authorized work. Before ending this turn, use completion-request --text SUMMARY to request the conductor completion decision. Explicit operator stops remain effective.' FROM sessions worker WHERE worker.id=" ++ q(session) ++ " AND " ++ task_open_sql("worker.id") ++ " AND " ++ task_request_sql("worker.id") ++ " IS NULL AND NOT " ++ refusal_recovery_active_sql("worker.id") ++ " AND NOT " ++ refusal_attempt_running_sql("worker.id") ++ " AND NOT EXISTS(SELECT 1 FROM messages owed WHERE owed.recipient=worker.id AND " ++ owed_sql("owed") ++ ");"
 
 def session_state_sql(+session: String) -> String:
   "json_patch(coalesce((SELECT json_object('stop',json_object('id',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''))) FROM session_stops WHERE session=" ++ session ++ "),json('{}'))"

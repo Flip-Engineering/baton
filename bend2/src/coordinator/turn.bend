@@ -4,6 +4,7 @@ import ./agent-input.bend as AgentInput
 import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ./stop.bend as Stop
+import ./refusal-recovery.bend as RefusalRecovery
 import ./subscription-fallback.bend as Subs
 import ./accounts.bend as Accounts
 import ./delivery.bend as Delivery
@@ -244,12 +245,18 @@ def generation_log(+log: String, +id: String) -> String:
 
 # Failure reports are committed while this invocation still owns the session.
 # finish delivers the settled turn to its recorded coordinator.
+def recovery_observe(db: String, +player: String, +id: String, +outcome: Outcome) -> IO(Unit):
+  match outcome:
+    case Ended{+event,status,error,incomplete}: RefusalRecovery.observe(db,player,id,event)
+
 def prepare(+db: String, +player: String, +id: String, log: String, stderr: String, +outcome: Outcome) -> IO(Unit):
   do IO<Unit>:
     +generation : String <- IO.pure(String,generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     reported : Unit <- prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
-    AgentInput.record_initial_reads(db,player,id)
+    reads : Unit <- AgentInput.record_initial_reads(db,player,id)
+    advanced : Unit <- recovery_observe(db,player,id,outcome)
+    IO.pure(Unit,Unit{})
 
 def record_exit(db: String, player: String, +id: String, log: String, outcome: Outcome) -> IO(Unit):
   match outcome:
@@ -283,10 +290,16 @@ def finish_parent(db: String, player: String, id: String, log: String, outcome: 
             output : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN value='' THEN NULL ELSE json(value) END,'error'," ++ C.q(error) ++ ") FROM frame;"))
             T.Text.control_output(output))
 
+def recovery_after(db: String, +player: String, +id: String, +outcome: Outcome) -> IO(Unit):
+  match outcome:
+    case Ended{+event,status,error,incomplete}: RefusalRecovery.after_turn(db,player,id,event)
+
 def finish(+db: String, +player: String, id: String, log: String, outcome: Outcome, quiet: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
-    finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"),quiet)
+    finished : Result<&1,&1,U32 & String,Unit> <- finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"),quiet)
+    recovered : Unit <- recovery_after(db,player,id,outcome)
+    IO.pure(Result<&1,&1,U32 & String,Unit>,finished)
 
 def status_text(result: Result<&1,&1,U32 & String,String>) -> String:
   match result:

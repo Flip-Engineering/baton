@@ -1,6 +1,7 @@
 import Base
 import ./store.bend as Store
 import ./turn.bend as Turn
+import ./refusal-recovery.bend as RefusalRecovery
 import ./stop.bend as Stop
 import ./receive.bend as Receive
 import ./native-requests.bend as NativeRequests
@@ -291,6 +292,9 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
         event : String <- IO.try(String,T.Text.read(path))
         +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
         run(db,C.Observe{id,player,event,False{},Tx.trim_nl(harness)})
+        observed : Unit <- RefusalRecovery.observe(db,player,id,event)
+        advanced : Unit <- RefusalRecovery.after_turn(db,player,id,event)
+        IO.pure(Unit,Unit{})
     case C.NativeReply{parent,id,response}: NativeRequests.reply(db,parent,id,response)
     case C.NativeReplyFile{parent,id,path}:
       do IO<Unit>:
