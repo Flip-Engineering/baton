@@ -23,11 +23,11 @@ function digest(file: string): string {
   } finally { fs.closeSync(fd); }
 }
 
-async function run(name: string, argv: string[], cache: string): Promise<{ own: string; stdout: string; stderr: string }> {
+async function run(name: string, argv: string[], cache: string, extra: NodeJS.ProcessEnv = {}): Promise<{ own: string; stdout: string; stderr: string }> {
   const own = path.join(directory, name); fs.mkdirSync(own);
   const started = new Date().toISOString(), child = spawn(argv[0], argv.slice(1), {
     stdio: ["ignore", "pipe", "pipe"], env: { ...process.env,
-      XDG_CACHE_HOME: cache, BEND_COMPILER_DIAGNOSTICS: "1", BEND_NO_TELEMETRY: "1" },
+      XDG_CACHE_HOME: cache, BEND_COMPILER_DIAGNOSTICS: "1", BEND_NO_TELEMETRY: "1", ...extra },
   });
   const stdout = fs.createWriteStream(path.join(own, "stdout")), stderr = fs.createWriteStream(path.join(own, "stderr"));
   child.stdout.pipe(stdout); child.stderr.pipe(stderr);
@@ -36,14 +36,14 @@ async function run(name: string, argv: string[], cache: string): Promise<{ own: 
   });
   await Promise.all([finished(stdout), finished(stderr)]);
   fs.writeFileSync(path.join(own, "result.json"), JSON.stringify({ argv, pid: child.pid,
-    started, ended: new Date().toISOString(), code, signal: child.signalCode }));
+    started, ended: new Date().toISOString(), code, signal: child.signalCode, environment: extra }));
   const out = fs.readFileSync(path.join(own, "stdout"), "utf8"), err = fs.readFileSync(path.join(own, "stderr"), "utf8");
   assert.equal(code, 0, err); assert.equal(child.signalCode, null);
   return { own, stdout: out, stderr: err };
 }
 
-async function build(name: string, cache: string) {
-  const output = path.join(directory, name, "output.c"), result = await run(name, [...command, input, "-o", output], cache);
+async function build(name: string, cache: string, extra: NodeJS.ProcessEnv = {}) {
+  const output = path.join(directory, name, "output.c"), result = await run(name, [...command, input, "-o", output], cache, extra);
   const evidenceName = fs.readdirSync(result.own).find(name => name.startsWith(".bend-cgen-"));
   assert.ok(evidenceName, "the launcher retains its compilation evidence");
   const evidence = path.join(result.own, evidenceName);
@@ -91,6 +91,44 @@ try {
   assert.ok(warm.cacheEvents.some(event => event.compiler_diagnostic === "cache.hit"));
   assert.ok(!warm.cacheEvents.some(event => event.compiler_diagnostic === "cache.miss"));
   await native("original", warm.output, "218");
+
+  const hooks = path.join(directory, "storage-hooks"); fs.mkdirSync(hooks);
+  const preload = path.join(directory, "storage-failure.ts");
+  fs.writeFileSync(preload, `
+    import fs from "node:fs";
+    import * as path from "node:path";
+    import { mock } from "bun:test";
+    const probe = ${JSON.stringify(path.join(directory, ".write-positive-control", "metadata.json"))};
+    const original = fs.writeFileSync;
+    const writeFileSync = function(file, ...args) {
+      const name = String(file);
+      if (path.basename(name) === "metadata.json" && path.basename(path.dirname(name)).startsWith(".write-")) {
+        if (name !== probe) fs.appendFileSync(path.join(${JSON.stringify(hooks)}, String(process.pid) + ".jsonl"),
+          JSON.stringify({ pid: process.pid, file: name, code: "ENOSPC", syscall: "write" }) + "\\n");
+        throw Object.assign(new Error("cache write fixture ENOSPC"), { code: "ENOSPC", syscall: "write", path: name });
+      }
+      return Reflect.apply(original, this, [file, ...args]);
+    };
+    const replacement = { ...fs, writeFileSync };
+    mock.module("node:fs", () => ({ ...replacement, default: replacement }));
+    const namespace = await import("node:fs");
+    let observed = false;
+    try { namespace.writeFileSync(probe, ""); }
+    catch (error) { observed = error.code === "ENOSPC" && error.message === "cache write fixture ENOSPC"; }
+    if (!observed) throw new Error("The cache storage interceptor is inactive");
+  `);
+  const failedStorage = await build("storage-failure", path.join(directory, "failed-cache"), {
+    BUN_OPTIONS: (process.env.BUN_OPTIONS ?? "") + " --preload " + preload,
+  });
+  assert.ok(fs.readdirSync(hooks).length > 0, "the actual launcher reaches the failing cache write");
+  assert.ok(failedStorage.cacheEvents.some(event => event.compiler_diagnostic === "cache.error" && event.error?.code === "ENOSPC"));
+  assert.equal(failedStorage.sha256, cold.sha256); assert.equal(failedStorage.factHash, cold.factHash);
+  assert.ok(failedStorage.workers.length > 0, "failed cache storage completes through actual emission");
+  const staging = (at: string): string[] => fs.readdirSync(at, { withFileTypes: true }).flatMap(entry => {
+    const child = path.join(at, entry.name);
+    return entry.isDirectory() ? entry.name.startsWith(".write-") ? [child] : staging(child) : [];
+  });
+  assert.deepEqual(staging(path.join(directory, "failed-cache", "bend2", "cgen-units-v1")), []);
 
   assert.ok(original.includes("case 0n: Leaf{7}"));
   fs.writeFileSync(input, original.replace("case 0n: Leaf{7}", "case 0n: Leaf{8}"));
