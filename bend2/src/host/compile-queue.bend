@@ -1469,7 +1469,8 @@ def admission_need(recorded: U32, stats: ClaimStats) -> U32:
       Bool.pick(U32, U32.is_gt(recorded,0), recorded, group_current)
 
 def admission_legacy_pid_text(text: String) -> U32:
-  match U32.read(field(text,"pid")):
+  parsed : Maybe<U32> = U32.read(field(text,"pid"))
+  match parsed:
     case None{}: 1
     case Some{pid}: pid
 
