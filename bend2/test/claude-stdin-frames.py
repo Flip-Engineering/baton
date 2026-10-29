@@ -51,26 +51,43 @@ OWED_M = ("NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.mess
           "AND owed_read.recipient=m.recipient)")
 
 
-def status_sql(name, values):
-    """A message-status.bend string definition with q(x) bound and owed_sql("m") expanded."""
+def status_sql(name, values, read=False):
+    """A message-status.bend string definition with q(x) bound, owed_sql("m") expanded and read fixed."""
     text = STATUS.read_text()
     owed_def = re.search(r'^def owed_sql\(.*?\) -> String:\n  (.*)\n', text, re.M).group(1)
     assert 'NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=' in owed_def
     assert '" ++ row ++ ".id AND owed_read.recipient=" ++ row ++ ".recipient)' in owed_def
+    exposed_def = definition_in(text, 'exposed')
+    found_def = definition_in(text, 'found')
+    assert read is False
+    # found(False) is the last string of its Bool.pick; exposed(False, f) reads the field directly.
+    found_plain = re.findall(r'"((?:[^"\\]|\\.)*)"', found_def)[-1]
+    assert "json_extract(j.value,'$.\" ++ field ++ \"')" in exposed_def
     match = re.search(r'^def ' + name + r'\(.*?\) -> String:\n((?:  .*\n)+)', text, re.M)
     out = ''
-    for token in re.finditer(r'"((?:[^"\\]|\\.)*)"|q\((\w+)\)|owed_sql\("m"\)', match.group(1)):
-        if token.group(1) is not None:
-            out += token.group(1).encode().decode('unicode_escape')
-        elif token.group(2):
-            out += "'" + values[token.group(2)].replace("'", "''") + "'"
+    pattern = r'exposed\(read,"(\w+)"\)|found\(read\)|"((?:[^"\\]|\\.)*)"|q\((\w+)\)|owed_sql\("m"\)'
+    for token in re.finditer(pattern, match.group(1)):
+        if token.group(1):
+            out += "json_extract(j.value,'$." + token.group(1) + "')"
+        elif token.group(0) == 'found(read)':
+            out += found_plain
+        elif token.group(2) is not None:
+            out += token.group(2).encode().decode('unicode_escape')
+        elif token.group(3):
+            out += "'" + values[token.group(3)].replace("'", "''") + "'"
         else:
             out += OWED_M
     return out
 
 
-class ForwardedRead(unittest.TestCase):
-    """A forwarded frame records one read row after the write; a crash between the two can only forward again."""
+def definition_in(text, name):
+    match = re.search(r'^def ' + name + r'\(.*?\) -> String:\n((?:  .*\n)+)', text, re.M)
+    assert match, name
+    return match.group(1)
+
+
+class ReadRows(unittest.TestCase):
+    """An in-memory orchestra with one claude-code session and two owed guidance messages."""
 
     def setUp(self):
         self.db = sqlite3.connect(':memory:')
@@ -95,6 +112,10 @@ class ForwardedRead(unittest.TestCase):
     def owed(self):
         sql = "SELECT m.id FROM messages m WHERE m.recipient='lead' AND " + OWED_M
         return [row[0] for row in self.db.execute(sql)]
+
+
+class ForwardedRead(ReadRows):
+    """A forwarded frame records one read row after the write; a crash between the two can only forward again."""
 
     def test_a_forwarded_message_records_exactly_one_read_row_for_its_attempt(self):
         self.assertEqual(self.owed(), ['g1', 'g2'])
@@ -131,6 +152,37 @@ class ForwardedRead(unittest.TestCase):
         self.assertEqual(self.db.execute('SELECT count(*) FROM wake_claims').fetchone()[0], 1)
         self.forward(2)
         self.assertEqual(self.db.execute('SELECT count(*) FROM wake_claims').fetchone()[0], 0)
+
+
+class HookAndForwardOverlap(ReadRows):
+    """The turn-end hook and the forwarding path can both record the read of one message after the first result."""
+
+    SAVED = json.dumps([{'id': 'g1', 'recipient': 'lead', 'body': 'Use the new queue.'}])
+
+    def hook(self, identity='witness-1'):
+        sql = status_sql('record_sql', {'session': 'lead', 'directory': '/tmp/a', 'attempt': 'attempt-1',
+                                        'native': 'native-lead', 'identity': identity, 'saved': self.SAVED})
+        self.db.executescript(sql)
+
+    def rows(self):
+        return self.db.execute('SELECT attempt,message,recipient,native,identity FROM message_reads').fetchall()
+
+    def test_the_hook_after_the_forward_adds_no_row_and_raises_nothing(self):
+        self.forward(1)
+        self.hook()
+        self.assertEqual(self.rows(), [('attempt-1', 'g1', 'lead', 'native-lead', 'witness-1')])
+
+    def test_the_forward_after_the_hook_adds_no_row_and_raises_nothing(self):
+        self.hook()
+        self.assertEqual(self.rows(), [('attempt-1', 'g1', 'lead', 'native-lead', 'witness-1')])
+        self.forward(1)
+        self.assertEqual(self.rows(), [('attempt-1', 'g1', 'lead', 'native-lead', 'witness-1')])
+        self.assertEqual(self.owed(), ['g2'])
+
+    def test_the_first_recorded_read_wins(self):
+        self.forward(1)
+        self.hook(identity='witness-1')
+        self.assertEqual([row[4] for row in self.rows()], ['witness-1'])
 
 
 class BackgroundState(unittest.TestCase):
