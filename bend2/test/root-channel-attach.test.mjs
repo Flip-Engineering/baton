@@ -87,7 +87,7 @@ test('a database that does not exist on this host is refused', (t) => {
 });
 
 // The fake coordinator records each argv as one JSON line.
-async function attach(t, session, setup = () => {}, extraArgs = []) {
+async function attach(t, session, setup = () => {}, extraArgs = [], nativeAttachment = false) {
   const dir = scratch(t);
   const database = orchestra(dir);
   const connection = new DatabaseSync(database);
@@ -99,9 +99,19 @@ async function attach(t, session, setup = () => {}, extraArgs = []) {
 const args = process.argv.slice(2);
 require('fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + '\\n');
 const { DatabaseSync } = require('node:sqlite');
-if (args[0] === '--help' || args[0] === 'help') process.exit(0);
+if (args[0] === '--help' || args[0] === 'help') {
+  if (${nativeAttachment}) console.log('native-attachment-input');
+  process.exit(0);
+}
 const db = new DatabaseSync(args[0]);
-if (args[1] === 'attach') {
+if (args[1] === 'native-attachment-input') {
+  const selected = db.prepare('SELECT harness FROM sessions WHERE id=?').get(args[2]);
+  if (selected?.harness !== 'claude-code') {
+    console.error('Native attachment initialization requires a Claude conversation.');
+    process.exit(2);
+  }
+  process.stdin.pipe(process.stdout);
+} else if (args[1] === 'attach') {
   db.prepare('UPDATE sessions SET harness=?,native=?,endpoint=? WHERE id=?').run(args[3],args[4],args[5],args[2]);
 } else if (args[1] === 'connect') {
   db.prepare('UPDATE sessions SET endpoint=? WHERE id=?').run(args[4],args[2]);
@@ -147,6 +157,7 @@ db.close();
   const calls = () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line)) : []);
   send({ id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } } });
   await until(() => responses.some((r) => r.id === 1), 'initialize answered');
+  assert.equal(responses.find((r) => r.id === 1).error, undefined, 'initialize succeeded');
   send({ method: 'notifications/initialized' });
   send({ id: 2, method: 'tools/list' });
   // The server sends this request after its delivery endpoint is registered.
@@ -201,7 +212,7 @@ test('an operator attachment keeps the operator role', async (t) => {
 test('a Codex root relay preserves its harness, thread and operator role', async (t) => {
   const calls = await attach(t, 'operator', (db) => {
     db.prepare('UPDATE sessions SET harness=?,native=? WHERE id=?').run('codex', 'thread-1', 'operator');
-  }, ['--root-harness', 'codex', '--thread', 'thread-1']);
+  }, ['--root-harness', 'codex', '--thread', 'thread-1'], true);
   const connected = calls.find((argv) => argv[0] === 'connect');
   assert.deepEqual(connected.slice(0, 3), ['connect', 'operator', 'thread-1']);
   const endpoint = JSON.parse(connected[3]);
