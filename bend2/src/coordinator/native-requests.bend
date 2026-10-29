@@ -116,8 +116,8 @@ def saved(db: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, resu
 def record(+db: String, player: String, turn: String, attempt: String, event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, parent: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool):
   match parent:
     case False{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool>:
-      shown : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output("Native OMP UI request is unsupported for a session without a coordinator; its full frame remains in the native log.\n")
-      IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(tasks,("Native OMP UI request has no coordinator that is not over and no registered operator; interaction requires a coordinator.",False{})))
+      shown : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output("Native OMP UI request is unsupported for a session without a permitted coordinator; its full frame remains in the native log.\n")
+      IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(tasks,("Native OMP UI request has no permitted coordinator; interaction requires a recorded parent that is not over, a registered coordinator ancestor, or the operator of a parentless conductor.",False{})))
     case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool>:
       ready : String <- IO.try(String,prepare_projection(db))
       result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ schema() ++ request_sql(player,turn,attempt,event) ++ "COMMIT;")
