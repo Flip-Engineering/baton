@@ -88,13 +88,13 @@ class ReceiverLayout(unittest.TestCase):
         (prefix / 'bin').mkdir()
         specs = STAGE.binary_specs(self.args(), PACKAGE)
         records = STAGE.stage_binaries(prefix, specs, PACKAGE)
-        focused = records[0]
+        full = next(record for record in records if record['role'] == 'full-cli')
         source_manifest = self.source_manifest(records)
         manifest = {
             'schema': 'baton2-native-install-v2', 'source': {'commit': COMMIT, 'status': ''},
             'binaries': records, 'source_manifest': source_manifest,
-            'binary': {'path': focused['path'], 'alias': focused.get('alias'),
-                       'sha256': focused['sha256'], 'source': focused['source']},
+            'binary': {'path': full['path'], 'alias': full.get('alias'),
+                       'sha256': full['sha256'], 'source': full['source']},
         }
         PACKAGE.write_json(prefix / 'source-manifest.json', source_manifest)
         PACKAGE.write_json(prefix / 'manifest.json', manifest)
@@ -315,9 +315,11 @@ class ReceiverLayout(unittest.TestCase):
         records = PACKAGE.stage_receiver_binaries(payload, specs, built)
         self.assertEqual([record['role'] for record in records],
                          ['focused-facade', 'full-cli', 'recovery-helper'])
+        self.assertEqual((payload / 'bin/baton').read_bytes(),
+                         (payload / 'bin/baton2').read_bytes())
         self.assertEqual((payload / 'bin/baton2').read_bytes(),
                          (payload / 'bin/baton-full').read_bytes())
-        self.assertNotEqual((payload / 'bin/baton').read_bytes(),
+        self.assertNotEqual((payload / 'bin/baton-focused').read_bytes(),
                             (payload / 'bin/baton2').read_bytes())
         self.assertEqual([record['build_mode'] for record in records],
                          ['focused-native-entry', 'full-native-receiver-router',
@@ -393,15 +395,19 @@ class ReceiverLayout(unittest.TestCase):
         prefix, manifest, records = self.staged()
         self.assertEqual([record['role'] for record in records],
                          ['focused-facade', 'full-cli', 'recovery-helper'])
-        for name in ('baton', 'baton2', 'baton-full', 'baton-recovery'):
+        for name in ('baton', 'baton-focused', 'baton2', 'baton-full', 'baton-recovery'):
             path = prefix / 'bin' / name
             self.assertTrue(path.is_file() and os.access(path, os.X_OK), name)
         self.assertEqual((prefix / 'bin/baton2').read_bytes(),
                          (prefix / 'bin/baton-full').read_bytes())
-        self.assertNotEqual((prefix / 'bin/baton').read_bytes(),
+        self.assertEqual((prefix / 'bin/baton').read_bytes(),
+                         (prefix / 'bin/baton2').read_bytes())
+        self.assertEqual((prefix / 'bin/baton2').read_bytes(),
+                         (prefix / 'bin/baton-full').read_bytes())
+        self.assertNotEqual((prefix / 'bin/baton-focused').read_bytes(),
                             (prefix / 'bin/baton2').read_bytes())
         self.assertEqual(manifest['binary']['path'], 'bin/baton')
-        self.assertIsNone(manifest['binary']['alias'])
+        self.assertEqual(manifest['binary']['alias'], 'bin/baton2')
         self.assertEqual([record['source']['commit'] for record in records],
                          [COMMIT, COMMIT, COMMIT])
         self.assertEqual([record['source']['tree'] for record in records],
@@ -535,38 +541,40 @@ class ReceiverLayout(unittest.TestCase):
             CHECK.verify_binaries(prefix, manifest, CHECK.verify_checksums(prefix))
 
 
-    def test_missing_full_routes_hides_both_router_paths_then_restores(self):
+    def test_public_full_cli_remains_available_through_compatibility_alias(self):
         prefix = self.home / 'route-prefix'
         binary = prefix / 'bin'
         binary.mkdir(parents=True)
-        (binary / 'baton').write_text(
-            '#!/bin/sh\nd=$(dirname "$0")\n'
-            '[ ! -e "$d/baton2" ] && [ ! -e "$d/baton-full" ] || exit 0\n'
-            'exit 78\n')
+        (binary / 'baton').write_text('#!/bin/sh\nexit 78\n')
         (binary / 'baton').chmod(0o755)
         (binary / 'baton2').write_text('router\n')
-        (binary / 'baton-full').write_text('general\n')
+        (binary / 'baton-full').write_text('#!/bin/sh\nexit 0\n')
+        (binary / 'baton-full').chmod(0o755)
         operation = VERIFY.probe_missing_full_routes(prefix)
-        self.assertEqual(operation['returncode'], 78)
+        self.assertEqual(operation['returncode'], 0)
+        self.assertEqual(operation['argv'][-1], '--help')
+        self.assertTrue((binary / 'baton').is_file())
         self.assertTrue((binary / 'baton2').is_file())
         self.assertTrue((binary / 'baton-full').is_file())
+        self.assertFalse((binary / '.baton.retained').exists())
         self.assertFalse((binary / '.baton2.retained').exists())
-        self.assertFalse((binary / '.baton-full.retained').exists())
 
-    def test_missing_full_routes_restores_both_paths_after_refusal(self):
+    def test_public_full_cli_restores_paths_after_compatibility_probe_refusal(self):
         prefix = self.home / 'route-refusal-prefix'
         binary = prefix / 'bin'
         binary.mkdir(parents=True)
         (binary / 'baton').write_text('#!/bin/sh\nexit 0\n')
         (binary / 'baton').chmod(0o755)
         (binary / 'baton2').write_text('router\n')
-        (binary / 'baton-full').write_text('general\n')
-        with self.assertRaisesRegex(RuntimeError, 'instead of 78'):
+        (binary / 'baton-full').write_text('#!/bin/sh\nexit 1\n')
+        (binary / 'baton-full').chmod(0o755)
+        with self.assertRaisesRegex(RuntimeError, 'instead of 0'):
             VERIFY.probe_missing_full_routes(prefix)
+        self.assertTrue((binary / 'baton').is_file())
         self.assertTrue((binary / 'baton2').is_file())
         self.assertTrue((binary / 'baton-full').is_file())
+        self.assertFalse((binary / '.baton.retained').exists())
         self.assertFalse((binary / '.baton2.retained').exists())
-        self.assertFalse((binary / '.baton-full.retained').exists())
 
 
 if __name__ == '__main__':
