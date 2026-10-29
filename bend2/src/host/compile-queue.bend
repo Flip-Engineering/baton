@@ -1515,7 +1515,7 @@ def admission_can_start(kind: String, history: U32, +need: U32, stats: ClaimStat
       +fits = Bool.pick(Bool, Bool.and(Bool.and(U32.is_eq(count,0),U32.is_eq(legacy_pid,0)),
         Bool.not(Tx.str_eq(kind,"cc"))), True{},
         Bool.pick(Bool, U32.is_gt(need,0), Bool.not(U32.is_gt(need,free_now)), U32.is_gt(free_now,0)))
-      Bool.and(history_ok, fits)
+      Bool.and(U32.is_eq(legacy_pid,0),Bool.and(history_ok,fits))
 
 def admission_ticket_text(+priority: U32, +pid: U32, +start: String, +key: String, +kind: String, +group: String, +token: String) -> String:
   "priority=" ++ U32.show(priority) ++ "\npid=" ++ U32.show(pid) ++ "\nstarttime=" ++ start

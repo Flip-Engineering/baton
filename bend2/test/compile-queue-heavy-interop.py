@@ -10,7 +10,8 @@ orders:
   a ticket, whatever memory is free, and runs after the lock is released;
 * a cgen job of the executable under test runs first: its command holds the lock
   shared, so the exclusive request waits and is granted after the job ended;
-* a cc job does not take the lock, and a cc job is not held back by it.
+* a history-backed cc job waits for a legacy holder whose expected peak is unknown;
+* history-backed jobs from this queue share measured memory admission.
 
 BATON2_EXCLUSIVE_QUEUE_BIN optionally names an executable of the exclusive-lock
 queue (the shared runner of main). It then takes the place of the flock(2) calls:
@@ -298,21 +299,42 @@ def scenario_cc():
     state = new_state('queue-cc')
     (state / 'meminfo').write_text('total_kb=1000000\navailable_kb=100000\n')
     hold = T / 'hold-cc'
-    key = cc_key(state, 'cc-beside-exclusive', hold)
+    key = cc_key(state, 'cc-after-exclusive', hold)
     keydir = state / 'keys' / key
     keydir.mkdir(parents=True, exist_ok=True)
     (keydir / 'peak').write_text('peak_kb=1000\n')
-    legacy, release = start_legacy_holder(state, 'measured-legacy')
-    job, out = command(BINARY, state, 'cc', 'cc-beside-exclusive', hold)
-    until('a measured cc job started beside an exclusive heavy workload',
-          lambda: 'start cc-beside-exclusive' in log_lines())
-    assert 'heavy-descriptor cc-beside-exclusive' not in log_lines(), ('a cc job holds heavy.lock', T)
+    legacy, release = start_legacy_holder(state, 'unknown-growth-legacy')
+    job, out = command(BINARY, state, 'cc', 'cc-after-exclusive', hold)
+    until('history-backed cc supervisor wrote its ticket', lambda: waiting_tickets(state) == 1)
+    time.sleep(1)
+    assert 'start cc-after-exclusive' not in log_lines(), ('cc joined legacy work with unknown expected growth', log_lines(), T)
+    assert not list((state / 'admission' / 'running').iterdir()), ('cc published a claim beside unknown legacy work', T)
+    finish_legacy_holder(legacy, release)
+    until('history-backed cc started after legacy holder exited', lambda: 'start cc-after-exclusive' in log_lines())
+    assert 'heavy-descriptor cc-after-exclusive' not in log_lines(), ('a cc job holds heavy.lock', T)
     assert len(list((state / 'admission' / 'running').iterdir())) == 1, ('the cc job has no measured claim', T)
     hold.touch()
-    finish(job, 'cc-beside-exclusive')
-    finish_legacy_holder(legacy, release)
-    assert out.read_text() == 'artifact-cc-beside-exclusive', T
-    print('PASS a history-backed cc job overlaps a measured legacy heavy holder when memory fits')
+    finish(job, 'cc-after-exclusive')
+    assert out.read_text() == 'artifact-cc-after-exclusive', T
+    print('PASS a history-backed cc waits for legacy work with unknown expected growth')
+
+
+def scenario_measured_cc_parallel():
+    state = new_state('queue-measured-cc-parallel')
+    (state / 'meminfo').write_text('total_kb=1000000\navailable_kb=100000\n')
+    hold_a, hold_b = T / 'hold-measured-cgen', T / 'hold-measured-cc'
+    for key in (cgen_key(state, 'measured-cgen', hold_a), cc_key(state, 'measured-cc', hold_b)):
+        keydir = state / 'keys' / key
+        keydir.mkdir(parents=True, exist_ok=True)
+        (keydir / 'peak').write_text('peak_kb=1000\n')
+    first, _ = command(BINARY, state, 'cgen', 'measured-cgen', hold_a)
+    until('history-backed cgen started', lambda: 'start measured-cgen' in log_lines())
+    second, _ = command(BINARY, state, 'cc', 'measured-cc', hold_b)
+    until('history-backed cc joined the new-queue cgen', lambda: 'start measured-cc' in log_lines())
+    assert len(list((state / 'admission' / 'running').iterdir())) == 2, ('the two jobs need live claims', T)
+    hold_a.touch(); hold_b.touch()
+    finish(first, 'measured-cgen'); finish(second, 'measured-cc')
+    print('PASS history-backed cgen and cc jobs from the new queue run concurrently')
 
 
 def scenario_unknown_legacy_cc():
@@ -358,6 +380,7 @@ scenario_job_first()
 scenario_cc()
 scenario_unknown_legacy_cc()
 scenario_measured_parallel()
+scenario_measured_cc_parallel()
 scenario_claim_fd10_alias()
 scenario_unknown_does_not_join()
 if EXCLUSIVE:
