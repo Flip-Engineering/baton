@@ -1268,9 +1268,11 @@ export type LoadedModule = {
   imports: LoadedImport[];
 };
 
+// The callback runs after parsing and after seen records the completed module.
+// Its original exception propagates with the parsed book and seen state intact.
 export async function book_load(book: Book, file: string, ns: string,
   seen: Map<string, string | null>, spn?: Span,
-  loaded?: (module: LoadedModule) => void): Promise<number> {
+  loaded?: (module: LoadedModule, source: string) => void): Promise<number> {
   if (file.startsWith(BEND_LIB + "/") && !fs.existsSync(file)) {
     const pkg = file.slice(BEND_LIB.length + 1).split("/")[0];
     const man = await hub_get(book, pkg + "/manifest", pkg.slice(2), spn);
@@ -1350,7 +1352,7 @@ export async function book_load(book: Book, file: string, ns: string,
     }
   }
   seen.set(real, ns);
-  loaded?.({ file: real, namespace: ns, first: n0, last: book.order.length, imports });
+  loaded?.({ file: real, namespace: ns, first: n0, last: book.order.length, imports }, text);
   return n0;
 }
 

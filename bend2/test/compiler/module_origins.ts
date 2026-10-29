@@ -92,6 +92,15 @@ try {
       && String((error as any).exp).includes("one namespace per file"));
   });
 
+  await test("a callback exception preserves its cause and completed parse", async () => {
+    const f = fixture("callback-error", { "main.bend": "def main() -> Type:\n  Type\n" });
+    const book = Bend.book_nil(), seen = new Map<string, string | null>();
+    const cause = new Error("module callback fixture");
+    await assert.rejects(Bend.book_load(book, f.entry, "", seen, undefined,
+      () => { throw cause; }), error => error === cause);
+    assert.deepEqual(book.order, ["main"]); assert.equal(seen.get(f.entry), "");
+  });
+
   await test("the default front end seals physical module origins", async () => {
     const f = fixture("default-front", { "dep.bend": "import Base\n\ndef value() -> U32:\n  42\n",
       "main.bend": "import ./dep.bend as D\n\ndef main() -> U32:\n  D.value()\n" });

@@ -723,17 +723,22 @@ const TELES: Map<HTerm, ReturnType<typeof Bend.tele_unbind>> = new Map();
 
 const SRCS: Map<Bend.Name, Src> = new Map();
 const CLAIM_SRCS = new WeakMap<Bend.TLD, Src>();
-type SourceModule = { path: string; namespace: string | null;
-  first?: number; declarations?: string[]; imports?: Bend.LoadedImport[] };
+type SourceModule = import("./store.ts").SourceInput;
 const SOURCE_FILES = new WeakMap<Bend.Book, SourceModule[]>();
 
 export function register_sources(book: Bend.Book, seen: Map<string, string | null>,
-  modules: Bend.LoadedModule[]): void {
-  const by_file = new Map(modules.map(module => [module.file, module]));
+  modules: (Bend.LoadedModule & { sha256: string })[], base?: Bend.Book): void {
+  const by_file = new Map((base === undefined ? [] : SOURCE_FILES.get(base) ?? [])
+    .map(input => [input.path, input]));
+  for (const module of modules) by_file.set(module.file, {
+    path: module.file, namespace: module.namespace, sha256: module.sha256,
+    first: module.first, declarations: book.order.slice(module.first, module.last), imports: module.imports });
   SOURCE_FILES.set(book, [...seen].map(([path, namespace]) => {
     const module = by_file.get(path);
-    return { path, namespace, ...(module === undefined ? {} : {
-      first: module.first, declarations: book.order.slice(module.first, module.last), imports: module.imports }) };
+    if (module === undefined || module.namespace !== namespace) {
+      throw new Error("Parsed source identity is unavailable: " + path);
+    }
+    return module;
   }).sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
@@ -4495,8 +4500,7 @@ export function compiler_identity(): string {
 
 function checked_writer(book: Bend.Book, workspace?: string): import("./store.ts").CheckedWriter {
   const Store = require("./store.ts") as typeof import("./store.ts");
-  const inputs = (SOURCE_FILES.get(book) ?? []).map(input =>
-    ({ ...input, sha256: Store.file_digest(input.path) }));
+  const inputs = SOURCE_FILES.get(book) ?? [];
   const writer = new Store.CheckedWriter(compiler_identity(), workspace, inputs, diagnostic);
   diagnostic("store.begin", { directory: writer.directory, compiler: writer.compiler });
   return writer;
