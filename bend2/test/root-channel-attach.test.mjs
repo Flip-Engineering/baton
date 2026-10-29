@@ -586,6 +586,43 @@ test('a Codex root relay that did not name its conversation follows a changed re
   assert.deepEqual(connects[1][4], connects[0][4]);
 });
 
+test('a record change while a thread read is pending discards that read and notifies the new conversation', async (t) => {
+  const calls = await attach(t, 'operator', (db) => {
+    db.prepare('UPDATE sessions SET harness=?,native=? WHERE id=?').run('codex', 'thread-1', 'operator');
+    db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+      .run('pending-read', 'lead', 'operator', 'report', 'Body whose read straddles a rebinding.');
+  }, ['--root-harness', 'codex'], true);
+  const { channel } = calls;
+  channel.activate();
+  await channel.until(() => channel.notes().length > 0, 'first Codex root notice');
+  const first = channel.notes()[0];
+  const claim = { id: 'pending-read', thread: 'thread-1', content: first.params.content, turn: 'turn-1', item: 'item-1' };
+  // The conductor asks for the thread item and waits for the reply.
+  const call = channel.call('read-straddling-rebinding', 'baton2_root_delivery', claim);
+  await channel.until(() => channel.responses.some((r) => r.method === 'baton/rootThreadItem'), 'thread item request');
+  const request = channel.responses.find((r) => r.method === 'baton/rootThreadItem');
+  // While the first notice is selected and its read is pending, later wakes keep it.
+  const writer = new DatabaseSync(calls.database);
+  writer.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+    .run('later-input', 'lead', 'operator', 'report', 'Later body.');
+  writer.close();
+  await channel.deliver('later-input');
+  assert.equal(channel.notes().length, 1, 'A later wake replaced the notice that awaits its thread read.');
+  // The record changes to another conversation before the reply arrives.
+  const rebinding = new DatabaseSync(calls.database);
+  rebinding.prepare('UPDATE sessions SET native=?,endpoint=? WHERE id=?').run('thread-2', '', 'operator');
+  rebinding.close();
+  await channel.until(() => channel.notes().some((note) => note.params.meta.thread === 'thread-2'), 'notice for the new conversation');
+  assert.deepEqual(JSON.parse(channel.notes().at(-1).params.meta.messageIds), ['pending-read']);
+  channel.send({ id: request.id, result: { thread: 'thread-1', turn: 'turn-1', item: 'item-1', type: 'userMessage',
+    text: first.params.content } });
+  const result = await call;
+  assert.equal(result.isError, true, 'A read for the previous conversation was recorded.');
+  const reads = new DatabaseSync(calls.database, { readOnly: true });
+  assert.equal(reads.prepare('SELECT count(*) AS n FROM message_reads').get().n, 0);
+  reads.close();
+});
+
 test('a root completion request notice contains its full review prompt', async (t) => {
   const body = 'Completed the assigned change. Evidence: commit abc123 and the selected fixture result.';
   const calls = await attach(t, 'operator', (db) => {

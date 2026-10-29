@@ -522,6 +522,7 @@ async function connect(options) {
         process.stderr.write(`codex-root-relay: ${error.stack || error}\n`);
         process.exitCode = 1;
         peer.closing = true;
+        peer.deliveryFailed = true;
         child.kill('SIGTERM');
       });
   };
@@ -570,6 +571,12 @@ async function maintain() {
     }
     const exit = await connection.closed;
     if (clientClosed) return;
+    // A failed delivery (a queue error or refused read evidence) ends the relay
+    // with its diagnostic. Only a lost connection is opened again.
+    if (connection.deliveryFailed) {
+      clientLines.close();
+      return;
+    }
     process.stderr.write(JSON.stringify({ type: 'codexRelayConductorLost', session: options.session, exit }) + '\n');
     await new Promise(resolve => setTimeout(resolve, RECONNECT_MS));
   }

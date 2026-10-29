@@ -131,7 +131,8 @@ proxy again and continues for as long as the SSH conductor is open. If the SSH
 conductor connection is lost after it was established, the relay opens it again
 every 2 seconds while Codex keeps the relay running, and the conductor sends the
 oldest unread message on each new connection. A conductor that cannot be started
-or initialized the first time ends the relay with status 1. Queue
+or initialized the first time ends the relay with status 1, as does a failed
+delivery such as a queue error or refused read evidence. Queue
 acceptance does not record a read. A notification that is queued while the root
 is in a long turn stays unread until the thread returns it. If the relay or the
 root client closes first, the message stays unread and the next connection
