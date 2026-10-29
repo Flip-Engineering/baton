@@ -13,7 +13,8 @@ args = sys.argv[1:]
 with open(os.environ['ROLE_LOG'], 'a') as out:
     out.write(json.dumps(args) + '\\n')
 if args[1] == 'bend':
-    pathlib.Path(args[args.index('-o') + 1]).write_text('int main(void) { return 0; }\\n')
+    header = '#include <curl/curl.h>\\n' if os.environ.get('ROLE_CURL') == '1' else ''
+    pathlib.Path(args[args.index('-o') + 1]).write_text(header + 'int main(void) { return 0; }\\n')
 '''
 
 
@@ -67,6 +68,21 @@ class HelperRole(unittest.TestCase):
         self.assertIn('--main-rename', cc)
         self.assertIn('--link-extra', cc)
         self.assertIn('--link-flags=-O1 -pthread -lsqlite3 -lm -DBATON2_RECOVERY_HELPER', cc)
+
+    def test_http_entries_link_libcurl(self):
+        entries = ('main', 'receive-focused', 'receive-recovery-focused', 'plain')
+        (self.root / 'bend2/src/coordinator/plain.bend').touch()
+        for entry in entries:
+            with self.subTest(entry=entry):
+                self.log.unlink(missing_ok=True)
+                result = self.build(entry, ROLE_CURL='1')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                _, cc = self.calls()
+                if entry == 'plain':
+                    self.assertIn('-lcurl', cc)
+                else:
+                    flags = next(arg for arg in cc if arg.startswith('--link-flags='))
+                    self.assertIn('-lcurl', flags.split())
 
     def test_role_selection_without_readlink_f(self):
         tools = self.root / 'bin'
