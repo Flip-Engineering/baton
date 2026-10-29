@@ -28,19 +28,45 @@ HONOURING = r'''import json, os, sqlite3, subprocess, sys
 args = sys.argv[1:]
 settings = json.loads(args[args.index('--settings') + 1])
 command = settings['hooks']['Stop'][0]['hooks'][0]['command']
+post_tool_commands = [hook['command'] for group in settings['hooks'].get('PostToolUse', []) for hook in group['hooks']]
+binary = os.environ['BATON_STOP_HOOK']
+database = os.environ['BATON_DATABASE']
 log = open(sys.argv[0] + '.stops', 'a')
 for index, active in enumerate((False, True, True, True)):
+    if index == 3:
+        for post_tool_command in post_tool_commands:
+            delivered = subprocess.run(['/bin/sh', '-c', post_tool_command],
+                                       input=json.dumps({'hook_event_name': 'PostToolUse', 'tool_name': 'Bash', 'tool_response': 'continue'}),
+                                       capture_output=True, text=True)
+            if delivered.returncode:
+                raise RuntimeError(delivered.stderr)
+            context = json.loads(delivered.stdout)['hookSpecificOutput']['additionalContext']
+            if 'Message (completion-confirmed)' not in context:
+                raise RuntimeError('The PostToolUse hook did not deliver the conductor confirmation.')
+        with sqlite3.connect(database) as db:
+            confirmation = db.execute("SELECT id FROM messages WHERE recipient='worker' AND kind='completion-confirmed' ORDER BY seq DESC LIMIT 1").fetchone()[0]
+        read = subprocess.run([binary, 'read', database, confirmation], capture_output=True, text=True)
+        if read.returncode:
+            raise RuntimeError(read.stdout + read.stderr)
+        with sqlite3.connect(database) as db:
+            if not db.execute("SELECT 1 FROM message_reads WHERE recipient='worker' AND message=?", (confirmation,)).fetchone():
+                raise RuntimeError('The worker read action did not record the confirmation.')
     hook = subprocess.run(['/bin/sh', '-c', command], input=json.dumps({'hook_event_name': 'Stop', 'stop_hook_active': active}),
                           capture_output=True, text=True)
     decision = json.loads(hook.stdout) if hook.stdout.strip() else {}
     log.write(json.dumps({'active': active, 'decision': decision}) + '\n')
     log.flush()
     if active:
-        with sqlite3.connect(os.environ['BATON_DATABASE']) as db:
-            if index == 1:
-                db.execute("INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body,receipt) VALUES('request','worker','coordinator','completion-request','Done.',NULL)")
-            else:
-                db.execute("INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body,receipt) VALUES('confirm','coordinator','worker','completion-confirmed','request',NULL)")
+        if index == 1:
+            requested = subprocess.run([binary, 'completion-request', database, 'Done.'], capture_output=True, text=True)
+            if requested.returncode:
+                raise RuntimeError(requested.stdout + requested.stderr)
+        elif index == 2:
+            with sqlite3.connect(database) as db:
+                request = db.execute("SELECT id FROM messages WHERE sender='worker' AND recipient='coordinator' AND kind='completion-request' ORDER BY seq DESC LIMIT 1").fetchone()[0]
+            confirmed = subprocess.run([binary, 'completion-confirmed', database, request], capture_output=True, text=True)
+            if confirmed.returncode:
+                raise RuntimeError(confirmed.stdout + confirmed.stderr)
 print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False, 'result': 'done'}))
 '''
 # One successful tool finishes, new input commits, and another tool finishes.
@@ -126,6 +152,10 @@ class StopHook(unittest.TestCase):
 
     def request(self):
         self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES('message:worker:request','worker','coordinator','completion-request','Done.',NULL)")
+
+    def confirm_request_read(self):
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES('confirm','coordinator','worker','completion-confirmed','message:worker:request',NULL)")
+        self.read('confirm')
 
     def hook(self, active=False, env=None):
         result = subprocess.run([self.binary, '--stop-hook'], input=json.dumps({'hook_event_name': 'Stop', 'stop_hook_active': active}),
@@ -272,6 +302,7 @@ class StopHook(unittest.TestCase):
 
     def test_valid_complete_read_is_durable_and_unread_input_stays_owed(self):
         self.request()
+        self.confirm_request_read()
         self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
         self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained','/attempt','running')")
         self.owe(kind='question', body='Complete question.')
@@ -327,8 +358,7 @@ class StopHook(unittest.TestCase):
         self.assertIn('Continue the assignment', pending['reason'])
         self.assertNotIn('acknowledge', pending['reason'].lower())
 
-        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES('confirm','coordinator','worker','completion-confirmed','message:worker:request',NULL)")
-        self.read('confirm')
+        self.confirm_request_read()
         self.assertIsNone(self.hook(active=True))
 
     def test_without_the_launch_environment_the_hook_does_nothing(self):
