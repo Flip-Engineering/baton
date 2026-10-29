@@ -277,13 +277,14 @@ export function content_digest(value: unknown): string {
 // Rows with the same owner scope, fields and children are one row. Copies of a
 // default arm that the match compiler places under several branches are equal in
 // every field, spans included, and share a row after this pass. A checker cell (a
-// Var that carries a value) keeps its own row: emission updates a cell in place
-// when it reduces the cell's term (term_wnf), so two cells are two thunks. A graph
+// Var that carries a value) keeps its own row unless it is filled (i is -2): emission
+// updates a cell in place only while i is -1 (term_wnf), so two unevaluated cells are
+// two thunks and two filled cells with equal contents are one value. A graph
 // with a cycle is returned as it is. The pass is applied to bodies only: a header
 // row can carry per-definition state on its decoded object.
 export function share_rows(graph: TermGraph, tables: EncoderTables): TermGraph {
   const rows = graph.rows, n = rows.length;
-  const dollar = tables.find("$"), variable = tables.find("Var"), cell_value = tables.find("v");
+  const dollar = tables.find("$"), variable = tables.find("Var"), cell_value = tables.find("v"), cell_state = tables.find("i");
   const child_slots = (row: Row): number[] => {
     const slots: number[] = [];
     if (row[1] === CALLBACK) { if (row[4] === NODE) slots.push(5); }
@@ -296,12 +297,13 @@ export function share_rows(graph: TermGraph, tables: EncoderTables): TermGraph {
   };
   const is_cell = (row: Row): boolean => {
     if (row[1] !== OBJECT || dollar === undefined || variable === undefined || cell_value === undefined) return false;
-    let named = false, valued = false;
+    let named = false, valued = false, filled = false;
     for (let at = 2; at < row.length; at += 3) {
       if (row[at] === dollar && row[at + 1] === STRING && row[at + 2] === variable) named = true;
       if (row[at] === cell_value) valued = true;
+      if (row[at] === cell_state && row[at + 1] === NUMBER && row[at + 2] === -2) filled = true;
     }
-    return named && valued;
+    return named && valued && !filled;
   };
   const state = new Uint8Array(n), canonical = new Int32Array(n).fill(-1);
   const out: Row[] = [], buckets = new Map<number, number[]>();
