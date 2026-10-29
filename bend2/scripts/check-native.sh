@@ -22,6 +22,7 @@ fi
 )
 sh bend2/scripts/build-native.sh
 sh bend2/scripts/build-native.sh bend2/test/stop-hook-entry.bend .scratch/bend2/stop-hook-entry
+sh bend2/scripts/build-native.sh bend2/test/prompt-status-entry.bend .scratch/bend2/prompt-status-entry
 "$PYTHON3" bend2/test/sqlite-read-reuse.py
 BATON2_EXE="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/stop.py \
   Stop.test_retained_dsh_stop_preserves_work_and_exits_native_and_tool \

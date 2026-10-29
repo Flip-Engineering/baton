@@ -73,6 +73,16 @@ def fixture():
     raise AssertionError('Set BATON2_STOP_HOOK_FIXTURE to the queue-built fixture.')
 
 
+def prompt_fixture(stop_hook_binary):
+    # The prompt statements come from a second entry built beside the stop-hook entry.
+    # A tree whose production modules lack them has no such binary; the tests that need it then fail.
+    binary = os.environ.get('BATON2_PROMPT_STATUS_FIXTURE') or str(pathlib.Path(stop_hook_binary).with_name(
+        pathlib.Path(stop_hook_binary).name.replace('stop-hook-entry', 'prompt-status-entry')))
+    if not pathlib.Path(binary).is_file():
+        raise AssertionError('The prompt-status-entry fixture is not built: ' + binary)
+    return binary
+
+
 class StopHook(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -494,7 +504,7 @@ print(json.dumps(results), flush=True)
 
     def prompt(self, session='worker'):
         cursor = self.db.execute('SELECT coalesce(max(seq),0) FROM messages').fetchone()[0]
-        result = subprocess.run([self.binary, 'prompt-selection-sql', session, str(cursor)], capture_output=True, text=True)
+        result = subprocess.run([prompt_fixture(self.binary), 'prompt-selection-sql', session, str(cursor)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(self.db.execute(result.stdout).fetchone()[0])
 
@@ -533,7 +543,7 @@ print(json.dumps(results), flush=True)
         cursor = self.db.execute('SELECT max(seq) FROM messages').fetchone()[0]
         prompt = {'session': 'worker', 'attempt': 'attempt-1', 'direct': False, 'cursor': cursor,
                   'prompt': 'Instructions.\n' + selection['text'], 'inputMessages': selection['ids']}
-        result = subprocess.run([self.binary, 'prompt-record-sql', 'attempt-1', 'native-1', 'identity-1', json.dumps(prompt)],
+        result = subprocess.run([prompt_fixture(self.binary), 'prompt-record-sql', 'attempt-1', 'native-1', 'identity-1', json.dumps(prompt)],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.db.executescript(result.stdout)
