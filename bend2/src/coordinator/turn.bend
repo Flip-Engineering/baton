@@ -7,6 +7,7 @@ import ./stop.bend as Stop
 import ./subscription-fallback.bend as Subs
 import ./accounts.bend as Accounts
 import ./delivery.bend as Delivery
+import ./silence.bend as Silence
 import ./control.bend as Control
 import ../host/session-lock.bend as Lock
 import ../host/control.bend as HostControl
@@ -1165,6 +1166,13 @@ def consume_exhausted(+db: String, +player: String, +id: String, +log: String, +
 def awake_woke(+harness: String, +notice: String, +terminal: String) -> Bool:
   Bool.and(Bool.not(String.is_empty(notice)),Bool.or(Bool.and(String.eq(harness,"omp\n"),String.is_empty(terminal)),Bool.and(String.eq(harness,"claude-code\n"),Bool.not(String.is_empty(terminal)))))
 
+# A commit notice wakes the observer while the native is silent, so the silence
+# check runs then: a claimed wake with owed input and no output for the silence
+# period reports to the coordinator (#1298). The host wait has no timeout, so a
+# database that commits nothing gives the observer no wake.
+def silence_on_notice(+db: String, +player: String, +notice: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.is_empty(notice),IO.pure(Unit,Unit{}),Silence.check(db,player,True{},True{}))
+
 # The question frame carries the extension request bytes; a read failure
 # yields an empty frame and its error reaches the observation error chain.
 def question_frame_result(needed: Bool, decoded: Frame.FrameDecoded, +line: String) -> IO(Result<&1,&1,U32 & String,String>):
@@ -1283,6 +1291,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
     case Done{Again{policy,held,log_failed,cursor,last_message,primary,current,terminal,filter,codex_log,first_error,checkpoint_state,incomplete,alive,deliveries,next}}: consume(db,player,id,log,policy,held,log_failed,handle,harness,spool,spanned,cursor,last_message,primary,current,terminal,filter,requested,codex_log,first_error,sender,attempt,checkpoint_state,incomplete,monitor,wake_sub,alive,deliveries,next)
     case Done{AwakeEnd{+notice,+alive}}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
       +drained : String <- Guidance.awake_pending(db,player,handle,attempt,cursor,awake_woke(harness,notice,terminal))
+      silent : Unit <- silence_on_notice(db,player,notice)
       continuation : (List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>)) <- IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>),Bool.pick(List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>),String.is_empty(notice),
         pending => consume_exhausted(db,player,id,log,spool,held,log_failed,handle,harness,codex_log,terminal,filter,requested,first_error,sender,attempt,checkpoint_state,incomplete_observation,monitor,pending,wake_sub,alive),
         pending => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
