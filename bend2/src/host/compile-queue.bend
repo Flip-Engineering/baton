@@ -1386,18 +1386,22 @@ def admission_outside_refresh(+state: String, +guard: U32, +ids: String, now: U3
       released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
       IO.pure(Maybe<U32>,None{}))
 
+def admission_outside_cached(+state: String, +guard: U32, +ids: String, now: U32, +legacy_pid: U32,
+                             stable_set: Bool, cache: Result<&1,&1,U32 & String,String>) -> IO(Maybe<U32>):
+  match cache:
+    case Fail{error}: admission_outside_refresh(state,guard,ids,now,legacy_pid,stable_set)
+    case Done{+text}:
+      Bool.pick(IO(Maybe<U32>),admission_cache_fresh(text,now,ids),
+        do IO<Maybe<U32>>:
+          +outside : U32 <- IO.pure(U32,status_number(field(text,"outside_kb")))
+          released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
+          IO.pure(Maybe<U32>,Some{outside}),
+        admission_outside_refresh(state,guard,ids,now,legacy_pid,stable_set))
+
 def admission_outside_cache(+state: String, +guard: U32, +ids: String, now: U32, legacy_pid: U32,
                             stable_set: Bool, cache: Result<&1,&1,U32 & String,String>) -> IO(Maybe<U32>):
   Bool.pick(IO(Maybe<U32>),stable_set,
-    match cache:
-      case Fail{error}: admission_outside_refresh(state,guard,ids,now,legacy_pid,stable_set)
-      case Done{+text}:
-        Bool.pick(IO(Maybe<U32>),admission_cache_fresh(text,now,ids),
-          do IO<Maybe<U32>>:
-            +outside : U32 <- IO.pure(U32,status_number(field(text,"outside_kb")))
-            released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
-            IO.pure(Maybe<U32>,Some{outside}),
-          admission_outside_refresh(state,guard,ids,now,legacy_pid,stable_set)),
+    admission_outside_cached(state,guard,ids,now,legacy_pid,stable_set,cache),
     do IO<Maybe<U32>>:
       released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
       IO.pure(Maybe<U32>,None{}))
