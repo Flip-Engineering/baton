@@ -18,7 +18,10 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 ARCHIVE_ROOT = 'baton2-development-darwin-arm64'
 COMPILER_ARCHIVE_SHA256 = 'c5bb22ba029d5909da9c6db82aa037278a66d1cf8a5572f433879f7dcd866c31'
-RETAINED_LINUX_COMPILER_ARCHIVE_SHA256 = '2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065'
+RETAINED_LINUX_COMPILER_ARCHIVE_SHA256S = (
+    '2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065',
+    '113a272649904e80144b1954dba8b4999249efa408a6ce1ca346906114986c4d',
+)
 DARWIN_SDK_MANIFEST_SHA256 = 'f6d597415b05891fb8666415757f4a9c851df942421cd42c8d1a4234a88c132f'
 DARWIN_SDK_TREE_SHA256 = 'b6924d0319fefa3d5c7f218dcaf25898d46ea33c50f6c7ea4e0f436b6d0d5930'
 COMPILER_ARCHIVE_URL = 'https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz'
@@ -177,7 +180,7 @@ def receiver_binaries(args):
 
 
 def archive_notices(archive):
-    require(sha256(archive) in (COMPILER_ARCHIVE_SHA256, RETAINED_LINUX_COMPILER_ARCHIVE_SHA256),
+    require(sha256(archive) in (COMPILER_ARCHIVE_SHA256, *RETAINED_LINUX_COMPILER_ARCHIVE_SHA256S),
             'Compiler archive differs from the selected Bend 2.0.25 pins')
     notices = []
     with tarfile.open(archive, 'r:gz') as source:
