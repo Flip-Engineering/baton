@@ -944,6 +944,12 @@ function pendingConductorMessage(messageId = null) {
 
 function notifyPending(messageId = null) {
   if (!channelReady) return;
+  // Keep the complete Codex notice selected while its thread read is pending.
+  // Later endpoint deliveries remain in the database for continuePending.
+  if (rootHarness === 'codex' && inputNotice) {
+    const unread = pendingConductorMessage(inputNotice.id);
+    if (unread && unread.native === inputNotice.native) return;
+  }
   const message = pendingConductorMessage(messageId);
   if (!message) {
     if (messageId === null) inputNotice = null;

@@ -177,7 +177,8 @@ db.close();
       await until(() => responses.some((r) => r.id === id), 'ping answered');
     },
     async deliver(id) {
-      const endpoint = JSON.parse(recorded.find((args) => args[0] === 'attach')[4]);
+      const registration = recorded.find((args) => ['attach', 'connect'].includes(args[0]));
+      const endpoint = JSON.parse(registration[registration[0] === 'attach' ? 4 : 3]);
       const delivery = spawn(process.execPath, [CONDUCTOR, database, fake, '--session', session, '--deliver', endpoint[7], id],
         { stdio: ['ignore', 'pipe', 'pipe'] });
       let error = '';
@@ -490,6 +491,34 @@ test('a Codex root read carries its recorded thread and accepted message on the 
   assert.equal(context.readMessage, 'codex-root-input');
   assert.ok(context.connection);
   assert.ok(context.endpoint);
+});
+
+test('a later Codex endpoint delivery preserves the notice awaiting its thread read', async (t) => {
+  const calls = await attach(t, 'operator', (db) => {
+    db.prepare('UPDATE sessions SET harness=?,native=? WHERE id=?').run('codex', 'thread-1', 'operator');
+    const insert = db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)');
+    insert.run('first', 'lead', 'operator', 'report', 'First complete body.');
+    insert.run('second', 'lead', 'operator', 'report', 'Second complete body.');
+  }, ['--root-harness', 'codex', '--thread', 'thread-1']);
+  const { channel } = calls;
+  channel.activate();
+  await channel.until(() => channel.notes().length > 0, 'first notice');
+  const first = channel.notes()[0];
+  await channel.deliver('second');
+  await channel.barrier('later-delivery');
+  assert.equal(channel.notes().length, 1, 'the first notice remains selected');
+  const claim = { id: 'first', thread: 'thread-1', content: first.params.content,
+    turn: 'turn-1', item: 'item-1' };
+  const result = await rootDelivery(channel, 'read-first', claim,
+    { thread: 'thread-1', turn: 'turn-1', item: 'item-1', type: 'userMessage', text: first.params.content });
+  assert.equal(result.isError, undefined);
+  assert.equal(JSON.parse(result.content[0].text).id, 'first');
+  await channel.until(() => channel.notes().length === 2, 'second notice after first read');
+  assert.deepEqual(JSON.parse(channel.notes()[1].params.meta.messageIds), ['second']);
+  const db = new DatabaseSync(calls.database, { readOnly: true });
+  assert.deepEqual(db.prepare('SELECT message,native FROM message_reads').all().map(row => ({ ...row })),
+    [{ message: 'first', native: 'thread-1' }]);
+  db.close();
 });
 
 test('a Codex root relay without --thread follows the recorded root conversation', async (t) => {
