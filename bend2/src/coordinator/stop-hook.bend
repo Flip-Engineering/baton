@@ -18,6 +18,7 @@ def decision_sql(+session: String) -> String:
   "WITH owed(value) AS (" ++ InputHook.selection_sql(session) ++ ") "
   ++ "SELECT CASE WHEN " ++ owed_sql() ++ ">0 THEN json_object('decision','block','reason','Baton holds ' || " ++ owed_sql() ++ " || ' unread inputs for ' || " ++ C.q(session) ++ " || '. Read the complete bodies and continue the work. When the assignment is ready, run completion-request --text SUMMARY:' || char(10) || " ++ owed_lines_sql() ++ ")"
   ++ " WHEN " ++ C.task_open_sql(C.q(session)) ++ " AND " ++ C.task_request_sql(C.q(session)) ++ " IS NULL THEN json_object('decision','block','reason','Assignment ' || (SELECT id FROM messages WHERE seq=" ++ C.task_assignment_sql(C.q(session)) ++ ") || ' is still open and you have sent no completion request. When the work is ready, run completion-request --text SUMMARY; otherwise continue the work.')"
+  ++ " WHEN " ++ C.task_open_sql(C.q(session)) ++ " THEN json_object('decision','block','reason','Completion request ' || " ++ C.task_request_sql(C.q(session)) ++ " || ' is awaiting the conductor decision. Continue the assignment and follow any guidance they send.')"
   ++ " ELSE '' END;"
 
 def input_text(result: Result<&1,&1,U32 & String,String>) -> String:
