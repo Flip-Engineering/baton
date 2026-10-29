@@ -45,6 +45,11 @@ name: bend2-native-development
         required: false
         default: ''
         type: string
+      reuse_generated_c_producer:
+        description: 'Existing generated-C producer run and attempt as RUN_ID/ATTEMPT; skips Linux candidate production'
+        required: false
+        default: ''
+        type: string
       target_commit:
         description: 'Optional exact target commit for the post-package affected behavior comparison'
         required: false
@@ -63,12 +68,12 @@ name: bend2-native-development
       retained_compiler_archive:
         description: 'Pinned compiler archive on the homelab; $RUNNER_TEMP uses the selected runner namespace'
         required: false
-        default: '/var/tmp/baton2-compile-queue/toolchains/compiler-arms-shared-sol-20261028/bend-2.0.25-linux-x64-compiler-arms-shared-sol-20261028.tar.gz'
+        default: '/var/tmp/baton2-compile-queue/toolchains/compiler-unit-process-cleanup-sol-20261028/bend-2.0.25-linux-x64-compiler-unit-process-cleanup-sol-20261028.tar.gz'
         type: string
       retained_compiler_archive_sha256:
         description: 'Exact SHA256 of the selected pinned compiler archive'
         required: false
-        default: '2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065'
+        default: '113a272649904e80144b1954dba8b4999249efa408a6ce1ca346906114986c4d'
         type: string
       retained_ccache:
         description: 'Measured private ccache wrapper on the homelab; leave blank for direct native compilation'
@@ -81,6 +86,7 @@ name: bend2-native-development
         default: false
         type: boolean
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -93,6 +99,7 @@ env:
 
 jobs:
   linux-candidate:
+    if: ${{ inputs.reuse_generated_c_producer == '' }}
     timeout-minutes: 4320
     runs-on:
       group: baton2-native-homelab
@@ -120,8 +127,8 @@ jobs:
       - name: Prepare candidate compiler
         shell: bash
         env:
-          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-arms-shared-sol-20261028/bend-2.0.25-linux-x64-compiler-arms-shared-sol-20261028.tar.gz' }}
-          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065' }}
+          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-unit-process-cleanup-sol-20261028/bend-2.0.25-linux-x64-compiler-unit-process-cleanup-sol-20261028.tar.gz' }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '113a272649904e80144b1954dba8b4999249efa408a6ce1ca346906114986c4d' }}
           BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
           BATON2_LINUX_RUNNER: homelab
         run: |
@@ -160,7 +167,46 @@ jobs:
             --github-env "$GITHUB_ENV" \
             > "$BATON2_LINUX_RUN/evidence/main-c-reuse.stdout" \
             2> "$BATON2_LINUX_RUN/evidence/main-c-reuse.stderr"
+      - name: Select the Main C producer
+        id: route
+        if: ${{ github.event_name == 'pull_request' }}
+        shell: bash
+        env:
+          BATON2_PULL_REQUEST_BASE: ${{ github.event.pull_request.base.sha }}
+          BATON2_ORIGIN_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          route=.github/scripts/native-producer-route.py
+          if [[ ! -f "$route" ]]; then
+            # The pull request branch was cut before the routing script existed.
+            reason='The checkout has no .github/scripts/native-producer-route.py.'
+            printf 'producer=candidate\nreason=%s\n' "$reason" >> "$GITHUB_OUTPUT"
+            printf '{"schema": "baton2-main-producer-route-v1", "producer": "candidate", "reason": "%s"}\n' "$reason" \
+              > "$BATON2_LINUX_RUN/evidence/producer-route.json"
+            exit 0
+          fi
+          python3 "$route" route \
+            --source "$GITHUB_WORKSPACE" --run "$BATON2_LINUX_RUN" --event "$GITHUB_EVENT_NAME" \
+            --base "$BATON2_PULL_REQUEST_BASE" --head "$BATON2_SOURCE_SHA" \
+            --github-output "$GITHUB_OUTPUT" \
+            > "$BATON2_LINUX_RUN/evidence/producer-route.stdout" \
+            2> "$BATON2_LINUX_RUN/evidence/producer-route.stderr"
+      - name: Produce Main C from the base commit
+        if: ${{ steps.route.outputs.producer == 'base' }}
+        shell: bash
+        env:
+          BATON2_PULL_REQUEST_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          unset BEND_GENERATED_C
+          ulimit -s unlimited
+          ulimit -a > "$BATON2_LINUX_RUN/evidence/limits.txt"
+          "$CC" --version > "$BATON2_LINUX_RUN/evidence/clang.txt"
+          uname -a > "$BATON2_LINUX_RUN/evidence/host.txt"
+          python3 .github/scripts/native-producer-route.py produce \
+            --source "$GITHUB_WORKSPACE" --run "$BATON2_LINUX_RUN" --base "$BATON2_PULL_REQUEST_BASE"
       - name: Produce exact-source Main C and Linux binary
+        if: ${{ steps.route.outputs.producer != 'base' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -300,7 +346,7 @@ jobs:
 
   linux-native-qualification:
     needs: [darwin-arm64]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && inputs.reuse_generated_c_producer == '' }}
     timeout-minutes: 4320
     runs-on:
       group: baton2-native-homelab
@@ -328,8 +374,8 @@ jobs:
       - name: Prepare qualification compiler and TypeScript runtime
         shell: bash
         env:
-          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-arms-shared-sol-20261028/bend-2.0.25-linux-x64-compiler-arms-shared-sol-20261028.tar.gz' }}
-          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065' }}
+          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-unit-process-cleanup-sol-20261028/bend-2.0.25-linux-x64-compiler-unit-process-cleanup-sol-20261028.tar.gz' }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '113a272649904e80144b1954dba8b4999249efa408a6ce1ca346906114986c4d' }}
           BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
           BATON2_LINUX_RUNNER: homelab
         run: |
@@ -448,8 +494,8 @@ jobs:
       BEND_NO_TELEMETRY: '1'
       BUN_JSC_maxPerThreadStackUsage: '67108864'
       BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.target_commit }}
-      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-arms-shared-sol-20261028/bend-2.0.25-linux-x64-compiler-arms-shared-sol-20261028.tar.gz' }}
-      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065' }}
+      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-unit-process-cleanup-sol-20261028/bend-2.0.25-linux-x64-compiler-unit-process-cleanup-sol-20261028.tar.gz' }}
+      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '113a272649904e80144b1954dba8b4999249efa408a6ce1ca346906114986c4d' }}
     steps:
       - name: Validate exact source commit
         shell: bash
@@ -564,15 +610,36 @@ jobs:
 
   darwin-arm64:
     needs: [linux-candidate]
+    if: ${{ !cancelled() && (needs.linux-candidate.result == 'success' || inputs.reuse_generated_c_producer != '') }}
     runs-on:
       group: baton2-native-homelab
-      labels: [self-hosted, Linux, X64, baton2-native-linux-x64]
+      labels: [self-hosted, Linux, X64, baton2-native-linux-x64, baton2-native-darwin-cross]
     env:
       BATON2_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || '' }}
-      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-arms-shared-sol-20261028/bend-2.0.25-linux-x64-compiler-arms-shared-sol-20261028.tar.gz' }}
-      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065' }}
+      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-unit-process-cleanup-sol-20261028/bend-2.0.25-linux-x64-compiler-unit-process-cleanup-sol-20261028.tar.gz' }}
+      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '113a272649904e80144b1954dba8b4999249efa408a6ce1ca346906114986c4d' }}
       CC: /usr/bin/clang-19
     steps:
+      - name: Validate generated C reuse selection
+        id: generated-c-producer
+        shell: bash
+        env:
+          BATON2_REUSE_GENERATED_C_PRODUCER: ${{ inputs.reuse_generated_c_producer }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$BATON2_REUSE_GENERATED_C_PRODUCER" ]]; then
+            producer_run_id="$GITHUB_RUN_ID"
+            producer_attempt="$GITHUB_RUN_ATTEMPT"
+          else
+            [[ "$BATON2_REUSE_GENERATED_C_PRODUCER" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]]
+            producer_run_id="${BASH_REMATCH[1]}"
+            producer_attempt="${BASH_REMATCH[2]}"
+          fi
+          printf 'BATON2_GENERATED_C_RUN_ID=%s\nBATON2_GENERATED_C_RUN_ATTEMPT=%s\n' \
+            "$producer_run_id" "$producer_attempt" >> "$GITHUB_ENV"
+          printf 'run_id=%s\nattempt=%s\n' "$producer_run_id" "$producer_attempt" \
+            >> "$GITHUB_OUTPUT"
+
       - name: Checkout exact source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -584,11 +651,14 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Download exact-source Main C and producer checks
+      - name: Download selected exact-source Main C and producer checks
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: baton2-generated-c-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          name: baton2-generated-c-${{ env.BATON2_SOURCE_SHA }}-${{ steps.generated-c-producer.outputs.attempt }}
           path: ${{ runner.temp }}/baton2-generated-c-${{ github.run_id }}-${{ github.run_attempt }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.generated-c-producer.outputs.run_id }}
+          github-token: ${{ github.token }}
 
       - name: Create owned build clone and install pinned compiler
         shell: bash
@@ -630,10 +700,15 @@ jobs:
           transfer = pathlib.Path(os.environ['RUNNER_TEMP']) / ('baton2-generated-c-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'])
           generated = transfer / 'generated'
           handoff = json.loads((generated / 'handoff-manifest.json').read_text())
-          assert handoff['source_commit'] == os.environ['BATON2_SOURCE_SHA']
-          assert handoff['source_tree'] == subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=root, text=True).strip()
-          assert handoff['workflow_run_id'] == os.environ['GITHUB_RUN_ID']
-          assert handoff['workflow_run_attempt'] == os.environ['GITHUB_RUN_ATTEMPT']
+          base_produced = handoff.get('producer_kind') == 'base'
+          if base_produced:
+              assert handoff['consumer_source_commit'] == os.environ['BATON2_SOURCE_SHA']
+              assert handoff['consumer_source_tree'] == subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=root, text=True).strip()
+          else:
+              assert handoff['source_commit'] == os.environ['BATON2_SOURCE_SHA']
+              assert handoff['source_tree'] == subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=root, text=True).strip()
+          assert handoff['workflow_run_id'] == os.environ['BATON2_GENERATED_C_RUN_ID']
+          assert handoff['workflow_run_attempt'] == os.environ['BATON2_GENERATED_C_RUN_ATTEMPT']
           compilers = runpy.run_path(str(root / '.github/scripts/reuse-native-main.py'))['COMPILER_ARCHIVES']
           assert handoff['compiler_archive_sha256'] in compilers
           selection_path = generated / 'compiler-selection.json'
@@ -649,40 +724,51 @@ jobs:
           manifest_path = generated / 'source-manifest.json'
           assert hashlib.sha256(manifest_path.read_bytes()).hexdigest() == handoff['source_manifest_sha256']
           source = json.loads(manifest_path.read_text())
-          paths = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root).decode().split('\0')
-          current = {path: hashlib.sha256((root / path).read_bytes()).hexdigest()
-                     for path in paths if path and (root / path).is_file()}
-          assert current == source, 'Transferred C producer source differs from package source'
           c = generated / 'baton2.c'
           assert c.stat().st_size == handoff['generated_c_size']
           assert hashlib.sha256(c.read_bytes()).hexdigest() == handoff['generated_c_sha256']
-          assert handoff['linux_binary_path'] == 'baton2-linux-x64'
-          linux_binary = generated / handoff['linux_binary_path']
-          assert linux_binary.is_file() and not linux_binary.is_symlink()
-          assert linux_binary.stat().st_size == handoff['linux_binary_size']
-          assert hashlib.sha256(linux_binary.read_bytes()).hexdigest() == handoff['linux_binary_sha256']
-          main_c_reuse = json.loads((generated / 'main-c-reuse.json').read_text())
-          assert main_c_reuse == handoff['main_c_reuse']
-          subprocess.run(['python3', str(root / '.github/scripts/reuse-native-main.py'), 'verify-transfer',
-                          '--source', str(root), '--generated', str(generated)], check=True)
           producer_checks_path = transfer / 'evidence/producer-checks.json'
           producer_checks = json.loads(producer_checks_path.read_text())
           assert producer_checks == handoff['checks']
-          assert [row['label'] for row in producer_checks] == [
-              'exact-source-identity', 'pinned-compiler-identity',
-              'main-native-build', 'main-c-reuse-transfer-verification']
           assert all(row['exit_code'] == 0 for row in producer_checks)
-          assert producer_checks[2]['argv'] == ['sh', 'bend2/scripts/build-native.sh']
-          assert producer_checks[3]['argv'][2] == 'verify-transfer'
-          assert producer_checks[3]['argv'][3:6] == ['--source', producer_checks[3]['cwd'], '--generated']
-          assert producer_checks[3]['argv'][6].endswith('/generated')
+          if base_produced:
+              # The C was generated from the base commit; the package source is the pull request head.
+              # Equal Main production inputs and producer tooling bind the two.
+              subprocess.run(['python3', str(root / '.github/scripts/native-producer-route.py'), 'verify-base',
+                              '--source', str(root), '--generated', str(generated)], check=True)
+              assert [row['label'] for row in producer_checks] == [
+                  'base-source-identity', 'pinned-compiler-identity', 'base-lineage-guard',
+                  'base-main-cgen', 'main-producer-route']
+          else:
+              paths = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root).decode().split('\0')
+              current = {path: hashlib.sha256((root / path).read_bytes()).hexdigest()
+                         for path in paths if path and (root / path).is_file()}
+              assert current == source, 'Transferred C producer source differs from package source'
+              assert handoff['linux_binary_path'] == 'baton2-linux-x64'
+              linux_binary = generated / handoff['linux_binary_path']
+              assert linux_binary.is_file() and not linux_binary.is_symlink()
+              assert linux_binary.stat().st_size == handoff['linux_binary_size']
+              assert hashlib.sha256(linux_binary.read_bytes()).hexdigest() == handoff['linux_binary_sha256']
+              main_c_reuse = json.loads((generated / 'main-c-reuse.json').read_text())
+              assert main_c_reuse == handoff['main_c_reuse']
+              subprocess.run(['python3', str(root / '.github/scripts/reuse-native-main.py'), 'verify-transfer',
+                              '--source', str(root), '--generated', str(generated)], check=True)
+              assert [row['label'] for row in producer_checks] == [
+                  'exact-source-identity', 'pinned-compiler-identity',
+                  'main-native-build', 'main-c-reuse-transfer-verification']
+              assert producer_checks[2]['argv'] == ['sh', 'bend2/scripts/build-native.sh']
+              assert producer_checks[3]['argv'][2] == 'verify-transfer'
+              assert producer_checks[3]['argv'][3:6] == ['--source', producer_checks[3]['cwd'], '--generated']
+              assert producer_checks[3]['argv'][6].endswith('/generated')
           for row in producer_checks:
               if 'stdout' in row:
                   assert (transfer / 'evidence' / row['stdout']).is_file()
               if 'stderr' in row:
                   assert (transfer / 'evidence' / row['stderr']).is_file()
           (pathlib.Path(os.environ['BATON2_NATIVE_RUN']) / 'generated-c-verification.json').write_text(json.dumps({
-              'status': 'verified', 'source_commit': handoff['source_commit'],
+              'status': 'verified', 'producer_kind': handoff.get('producer_kind', 'candidate'),
+              'source_commit': handoff['source_commit'],
+              'consumer_source_commit': os.environ['BATON2_SOURCE_SHA'],
               'generated_c_sha256': handoff['generated_c_sha256'],
               'executed_producer_checks': handoff['checks'], 'producer': handoff
           }, indent=2) + '\n')
@@ -695,9 +781,12 @@ jobs:
           export BUN_JSC_maxPerThreadStackUsage=67108864
           export BATON2_QUEUE_RUN_ROOT="$BATON2_NATIVE_RUN/compile-queue"
           unset BEND_GENERATED_C
-          llvm_root=/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm
-          sdkroot=/mnt/nvme4tb/ci-runners/baton2-native-homelab/toolchains/apple/MacOSX15.5.sdk
-          sdk_manifest=/mnt/nvme4tb/ci-runners/baton2-native-homelab/toolchains/apple/MacOSX15.5.sdk.transfer-manifest.json
+          llvm_root="${BATON2_DARWIN_LLVM_ROOT:-/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/code-semantics-d5384042/staged/llvm}"
+          sdkroot="${BATON2_DARWIN_SDKROOT:-/mnt/nvme4tb/ci-runners/baton2-native-homelab/toolchains/apple/MacOSX15.5.sdk}"
+          sdk_manifest="${sdkroot}.transfer-manifest.json"
+          test -r "$llvm_root/bin/clang" && test -x "$llvm_root/bin/clang"
+          test -r "$llvm_root/bin/ld64.lld" && test -x "$llvm_root/bin/ld64.lld"
+          test -r "$sdk_manifest"
           settings="$BATON2_NATIVE_RUN/build-settings"
           test ! -e "$settings"
           mkdir "$settings"
