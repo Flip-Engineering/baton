@@ -154,6 +154,22 @@ exit 78''')
         self.assertTrue(record['database_created'])
         self.assertFalse(pathlib.Path(record['argv'][1]).exists())
 
+    def test_self_exec_loop_is_refused_with_captured_timeout_evidence(self):
+        self.executable('exit 0')
+        expired = CHECK.subprocess.TimeoutExpired(['private-router-probe'], 30,
+                                                 output=b'partial stdout', stderr=b'partial stderr')
+        with mock.patch.object(CHECK.subprocess, 'run', side_effect=expired) as run:
+            with self.assertRaisesRegex(RuntimeError, 'does not provide the native receiver router'):
+                CHECK.verify_receiver_router(self.prefix, self.output)
+        self.assertEqual(run.call_args.kwargs['timeout'], 30)
+        record = json.loads((self.output / 'receiver-router-probe.json').read_text())
+        self.assertEqual(record['timeout_seconds'], 30)
+        self.assertEqual(record['stdout'], 'partial stdout')
+        self.assertEqual(record['stderr'], 'partial stderr')
+        self.assertIsNone(record['returncode'])
+        self.assertFalse(record['database_created'])
+        self.assertFalse(pathlib.Path(record['argv'][0]).exists())
+
 
 if __name__ == '__main__':
     unittest.main()
