@@ -30,6 +30,18 @@ COMPILER_ARCHIVES = {
         'source_metadata_sha256': '7610fde169ee958a69395731d4b4a3132f1902988b5f920d0222d1adc67420b5',
         'source_input_count': 84,
     },
+    '3409526f5b9205da1fcc994ac14fc2f3023b1f52aba1424c2500e37654798beb': {
+        'name': 'Bend 2.0.25 with whole-Baton Class A function-level string literal chain lowering',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': '93c88ade7ae279d261ff149ae40307829924eef6',
+        'source_tree': '5eac7386ca3ee265b467acf7661f6e46945e4c89',
+        'source_lock_sha256': '630bc87aa6a2bbcfdb0c070d209d7e1d3943107b3a52b6e2968309d952aba349',
+        'source_manifest_sha256': '3c1ff6bed39349b49504f90a5a8d2286b55fd2adbd972680af4ca6561dc4bcb2',
+        'source_metadata_sha256': 'ef084b786ff041fc2f0f7e4985da45754233ebb692794abed2bfbbda93cd70b9',
+        'source_input_count': 84,
+    },
     'c9b72c4c3d802508eea769d29404989346119042c8827dc19439646b28558dfb': {
         'name': 'Bend 2.0.25 with any-position String-chain lowering and shared checked cells',
         'official_release_artifact': False,
