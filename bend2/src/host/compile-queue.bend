@@ -1473,14 +1473,6 @@ def transfer_lock(+held: U32, +target: U32) -> IO(Unit):
 def transfer_heavy(+held: U32) -> IO(Unit):
   transfer_lock(held,8)
 
-def acquire_execution_lock(is_cc: Bool, keydir: String, +admission: U32) -> IO(U32):
-  match is_cc:
-    case True{}:
-      do IO<U32>:
-        released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(admission))
-        IO.try(U32, L.CompileQueueLifecycle.lock_acquire(keydir ++ "/cc-execution.lock"))
-    case False{}: IO.pure(U32, admission)
-
 def admission_names_signature(names: List<&1,String>) -> String:
   match names:
     case Nil{}: ""
@@ -1504,19 +1496,18 @@ def admission_legacy_pid(result: Result<&1,&1,U32 & String,String>) -> U32:
     case Fail{error}: 1
     case Done{+text}: admission_legacy_pid_text(text)
 
-def admission_can_start(kind: String, history: U32, +need: U32, stats: ClaimStats,
+def admission_can_start(kind: String, +history: U32, +need: U32, stats: ClaimStats,
                         +available: U32, +legacy_pid: U32) -> Bool:
   match stats:
     case ClaimStats{+count, unspent, unknown, group_current, reserve, used, signature}:
       # A first unmeasured request may establish its own peak alone when no
       # legacy exclusive job or other claim is running.
-      +first_unmeasured = Bool.and(U32.is_eq(count,0),U32.is_eq(legacy_pid,0))
+      +first_unmeasured = Bool.and(U32.is_eq(history,0),Bool.and(U32.is_eq(count,0),U32.is_eq(legacy_pid,0)))
       +request_known = Bool.or(U32.is_gt(history,0),first_unmeasured)
       +history_ok = Bool.and(request_known,U32.is_eq(unknown,0))
       +reserved = U32.add(unspent,reserve)
       +free_now = Bool.pick(U32,U32.is_gt(available,reserved),U32.sub(available,reserved),0)
-      +fits = Bool.pick(Bool, Bool.and(Bool.and(U32.is_eq(count,0),U32.is_eq(legacy_pid,0)),
-        Bool.not(Tx.str_eq(kind,"cc"))), True{},
+      +fits = Bool.pick(Bool, Bool.and(first_unmeasured,Bool.not(Tx.str_eq(kind,"cc"))), True{},
         Bool.pick(Bool, U32.is_gt(need,0), Bool.not(U32.is_gt(need,free_now)), U32.is_gt(free_now,0)))
       Bool.and(U32.is_eq(legacy_pid,0),Bool.and(history_ok,fits))
 
@@ -1524,12 +1515,53 @@ def admission_ticket_text(+priority: U32, +pid: U32, +start: String, +key: Strin
   "priority=" ++ U32.show(priority) ++ "\npid=" ++ U32.show(pid) ++ "\nstarttime=" ++ start
   ++ "\nkey=" ++ key ++ "\nkind=" ++ kind ++ "\ngroup=" ++ group ++ "\ntoken=" ++ token ++ "\n"
 
-def admission_waiters_higher(+state: String, +token: String, +priority: U32) -> IO(Bool):
+def admission_waiter_fits(state: String, kind: String, key: String, stats: ClaimStats,
+                          +available: U32, total: U32, legacy_pid: U32) -> IO(Bool):
   do IO<Bool>:
-    heavy : Bool <- waiters_higher(waiters_dir(state), token, priority)
-    cc : Bool <- waiters_higher(waiters_dir(state) ++ "/cc", token, priority)
-    legacy : Bool <- waiters_higher(admission_root(state) ++ "/waiting", token, priority)
-    IO.pure(Bool, Bool.or(legacy,Bool.or(heavy,cc)))
+    record_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(state ++ "/keys/" ++ key ++ "/peak")
+    record : String <- IO.pure(String,admission_record_text(record_result))
+    +history : U32 <- IO.pure(U32,status_number(field(record,"peak_kb")))
+    IO.pure(Bool,Bool.and(Bool.and(U32.is_gt(total,0),U32.is_gt(available,0)),
+      admission_can_start(kind,history,history,stats,available,legacy_pid)))
+
+def admission_waiter_priority(read: Result<&1,&1,U32 & String,String>, state: String, kind: String,
+                               token: String, priority: U32, stats: ClaimStats,
+                               +available: U32, total: U32, legacy_pid: U32) -> IO(Bool):
+  match read:
+    case Fail{error}: IO.pure(Bool,False{})
+    case Done{+text}:
+      do IO<Bool>:
+        higher : Bool <- waiters_ticket_higher(text,token,priority)
+        Bool.pick(IO(Bool),higher,
+          admission_waiter_fits(state,kind,field(text,"key"),stats,available,total,legacy_pid),
+          IO.pure(Bool,False{}))
+
+def admission_waiters_scan(names: List<&1,String>, +dir: String, +state: String, +kind: String,
+                           +token: String, +priority: U32, +stats: ClaimStats,
+                           +available: U32, +total: U32, +legacy_pid: U32) -> IO(Bool):
+  match names:
+    case Nil{}: IO.pure(Bool,False{})
+    case Con{+name,rest}:
+      do IO<Bool>:
+        reaped : Unit <- waiters_reap_stale(dir,name)
+        read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(dir ++ "/" ++ name)
+        higher : Bool <- admission_waiter_priority(read,state,kind,token,priority,stats,available,total,legacy_pid)
+        Bool.pick(IO(Bool),higher,IO.pure(Bool,True{}),
+          admission_waiters_scan(rest,dir,state,kind,token,priority,stats,available,total,legacy_pid))
+
+def admission_kind_waiters_higher(+state: String, +kind: String, token: String, priority: U32,
+                                  stats: ClaimStats, available: U32, total: U32, legacy_pid: U32) -> IO(Bool):
+  do IO<Bool>:
+    +dir : String <- IO.pure(String,kind_waiters_dir(state,kind))
+    names : String <- IO.try(String,L.CompileQueueLifecycle.list_dir(dir))
+    admission_waiters_scan(Tx.split_nul(names),dir,state,kind,token,priority,stats,available,total,legacy_pid)
+
+def admission_waiters_higher(+state: String, +token: String, +priority: U32, +stats: ClaimStats,
+                             +available: U32, +total: U32, +legacy_pid: U32) -> IO(Bool):
+  do IO<Bool>:
+    heavy : Bool <- admission_kind_waiters_higher(state,"cgen",token,priority,stats,available,total,legacy_pid)
+    cc : Bool <- admission_kind_waiters_higher(state,"cc",token,priority,stats,available,total,legacy_pid)
+    IO.pure(Bool,Bool.or(heavy,cc))
 
 def admission_publish_claim(+state: String, +kind: String, +key: String, +token: String,
                             +pid: U32, start: String, need: U32,
@@ -1565,32 +1597,27 @@ def acquire_accounted(~again: (@+attempt: String -> @+keydir: String -> @+state:
                        +attempt: String, +keydir: String, +state: String, +kind: String, +key: String, +group: String,
                        +token: String, +priority: U32, +pid: U32, +start: String, +delay: U32) -> IO(AdmissionGate):
   do IO<AdmissionGate>:
-    higher : Bool <- admission_waiters_higher(state, token, priority)
-    Bool.pick(IO(AdmissionGate), higher,
+    +guard : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(admission_root(state) ++ "/lock"))
+    +meminfo : String <- IO.try(String, admission_meminfo(state))
+    +available : U32 <- IO.pure(U32,status_number(field(meminfo,"available_kb")))
+    +total : U32 <- IO.pure(U32,status_number(field(meminfo,"total_kb")))
+    +stats : ClaimStats <- admission_claims(state,group)
+    legacy_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.exclusive_lock_pid(state ++ "/heavy.lock")
+    +legacy_pid : U32 <- IO.pure(U32,admission_legacy_pid(legacy_result))
+    higher : Bool <- admission_waiters_higher(state,token,priority,stats,available,total,legacy_pid)
+    record_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(keydir ++ "/peak")
+    record : String <- IO.pure(String, admission_record_text(record_result))
+    +history : U32 <- IO.pure(U32,status_number(field(record,"peak_kb")))
+    +need : U32 <- IO.pure(U32,admission_need(history,stats))
+    +fits : Bool <- IO.pure(Bool, Bool.and(Bool.not(higher),Bool.and(Bool.and(U32.is_gt(total,0),U32.is_gt(available,0)), admission_can_start(kind,history,need,stats,available,legacy_pid))))
+    Bool.pick(IO(AdmissionGate), fits,
       do IO<AdmissionGate>:
+        heavy : Maybe<&2,U32> <- IO.try(Maybe<&2,U32>, L.CompileQueueLifecycle.lock_shared_try(state ++ "/heavy.lock"))
+        acquire_accounted_after_heavy(again,attempt,keydir,state,kind,key,group,token,priority,pid,start,delay,guard,heavy,need,history),
+      do IO<AdmissionGate>:
+        released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(guard))
         slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(delay))
-        again(attempt,keydir,state,kind,key,group,token,priority,pid,start,U32.min(U32.mul(delay,2),1000)),
-      do IO<AdmissionGate>:
-        +guard : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(admission_root(state) ++ "/lock"))
-        +meminfo : String <- IO.try(String, admission_meminfo(state))
-        +available : U32 <- IO.pure(U32,status_number(field(meminfo,"available_kb")))
-        +total : U32 <- IO.pure(U32,status_number(field(meminfo,"total_kb")))
-        +stats : ClaimStats <- admission_claims(state,group)
-        legacy_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.exclusive_lock_pid(state ++ "/heavy.lock")
-        +legacy_pid : U32 <- IO.pure(U32,admission_legacy_pid(legacy_result))
-        record_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(keydir ++ "/peak")
-        record : String <- IO.pure(String, admission_record_text(record_result))
-        +history : U32 <- IO.pure(U32,status_number(field(record,"peak_kb")))
-        +need : U32 <- IO.pure(U32,admission_need(history,stats))
-        +fits : Bool <- IO.pure(Bool, Bool.and(Bool.and(U32.is_gt(total,0),U32.is_gt(available,0)), admission_can_start(kind,history,need,stats,available,legacy_pid)))
-        Bool.pick(IO(AdmissionGate), fits,
-          do IO<AdmissionGate>:
-            heavy : Maybe<&2,U32> <- IO.try(Maybe<&2,U32>, L.CompileQueueLifecycle.lock_shared_try(state ++ "/heavy.lock"))
-            acquire_accounted_after_heavy(again,attempt,keydir,state,kind,key,group,token,priority,pid,start,delay,guard,heavy,need,history),
-          do IO<AdmissionGate>:
-            released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(guard))
-            slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(delay))
-            again(attempt,keydir,state,kind,key,group,token,priority,pid,start,U32.min(U32.mul(delay,2),1000))))
+        again(attempt,keydir,state,kind,key,group,token,priority,pid,start,U32.min(U32.mul(delay,2),1000)))
 
 def acquire_accounted_loop(+attempt: String, +keydir: String, +state: String, +kind: String, +key: String, +group: String,
                            +token: String, +priority: U32, +pid: U32, +start: String, +delay: U32) -> IO(AdmissionGate):
@@ -1607,11 +1634,18 @@ def transfer_cc_execution(is_cc: Bool, keydir: String) -> IO(Unit):
       IO.try(Unit,L.CompileQueueLifecycle.set_env("BATON_QUEUE_CC_FD","11")),
     IO.pure(Unit,Unit{}))
 
-def admission_fallback(+kind: String, keydir: String, +state: String, token: String, priority: U32) -> IO(AdmissionGate):
+def admission_fallback_ticket(+kind: String, +state: String, +token: String) -> IO(Unit):
+  Bool.pick(IO(Unit),Tx.str_eq(kind,"cc"),
+    do IO<Unit>:
+      ticket : String <- IO.try(String,L.CompileQueueLifecycle.read_text(kind_waiters_dir(state,kind) ++ "/" ++ token))
+      published : Unit <- IO.try(Unit,L.CompileQueueLifecycle.write_text(waiters_dir(state) ++ "/" ++ token,ticket))
+      IO.try(Unit,L.CompileQueueLifecycle.remove(kind_waiters_dir(state,kind) ++ "/" ++ token)),
+    IO.pure(Unit,Unit{}))
+
+def admission_fallback(+kind: String, keydir: String, +state: String, +token: String, priority: U32) -> IO(AdmissionGate):
   do IO<AdmissionGate>:
-    +dir : String <- IO.pure(String, kind_waiters_dir(state,kind))
-    +lock : String <- IO.pure(String, Bool.pick(String,Tx.str_eq(kind,"cc"),state ++ "/cc.lock",state ++ "/heavy.lock"))
-    +held : U32 <- acquire_heavy_loop(dir,lock,token,priority,4)
+    moved : Unit <- admission_fallback_ticket(kind,state,token)
+    +held : U32 <- acquire_heavy_loop(waiters_dir(state),state ++ "/heavy.lock",token,priority,4)
     IO.pure(AdmissionGate,AdmissionExclusive{held})
 
 def admission_probe_result(result: Result<&1,&1,U32 & String,String>, +attempt: String, +keydir: String,
@@ -1646,8 +1680,8 @@ def supervise_gate(gate: AdmissionGate, +attempt: String, +keydir: String, +kind
     case AdmissionExclusive{+heavy}:
       do IO<Unit>:
         is_cc : Bool <- IO.pure(Bool,Tx.str_eq(kind,"cc"))
-        +execution : U32 <- acquire_execution_lock(is_cc,keydir,heavy)
-        transferred : Unit <- transfer_heavy(execution)
+        transferred : Unit <- transfer_heavy(heavy)
+        cc_transferred : Unit <- transfer_cc_execution(is_cc,keydir)
         signaled : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.set_env(
           "BATON_COMPILE_QUEUE_COMPILED",attempt ++ "/compiled")
         supervise_marker_result(signaled,attempt,keydir,kind,source_root,entry,key,started,names,cwd)

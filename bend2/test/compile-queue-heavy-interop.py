@@ -106,7 +106,7 @@ def log_lines():
     return LOG.read_text().splitlines() if LOG.exists() else []
 
 
-def command(binary, state, kind, tag, hold=None, pad_fds=False):
+def command(binary, state, kind, tag, hold=None, pad_fds=False, priority=0):
     if hold is not None:
         releases.append(hold)
     out = T / (tag + '.artifact')
@@ -120,7 +120,7 @@ def command(binary, state, kind, tag, hold=None, pad_fds=False):
         selection = ['--kind', 'cc', '--compiler', str(FAKE), '--linker', str(FAKE), '--version', 'fake-version',
                      '--artifact', 'result=' + str(out), '--option', 'tag=' + tag]
     args = [binary, '--', 'run', '--token', 'interop-' + tag, '--receipt', str(T / (tag + '.receipt')),
-            '--state-root', str(state), '--cwd', str(T), '--source-root', str(T), *selection, '--',
+            '--state-root', str(state), '--cwd', str(T), '--source-root', str(T), '--priority', str(priority), *selection, '--',
             str(FAKE), '--tag', tag, *(['--hold', str(hold)] if hold else []), '-o', str(out)]
     if pad_fds:
         launcher = [sys.executable, str(PAD), *args]
@@ -407,7 +407,174 @@ def scenario_exclusive_queue_binary():
         print('PASS %s: the second command started after the first ended' % order)
 
 
+def seed_peak(state, kind, tag, hold, peak):
+    key = cgen_key(state, tag, hold) if kind == 'cgen' else cc_key(state, tag, hold)
+    keydir = state / 'keys' / key
+    keydir.mkdir(parents=True, exist_ok=True)
+    (keydir / 'peak').write_text('peak_kb=%d\n' % peak)
+    return key
+
+
+def scenario_first_known_capacity():
+    state = new_state('queue-first-known-capacity')
+    (state / 'meminfo').write_text('total_kb=1000000\navailable_kb=1000\n')
+    hold = T / 'hold-first-known'
+    seed_peak(state, 'cgen', 'first-known-capacity', hold, 2000)
+    job, _ = command(BINARY, state, 'cgen', 'first-known-capacity', hold)
+    until('first known job published its ticket', lambda: waiting_tickets(state) == 1)
+    time.sleep(1)
+    assert 'start first-known-capacity' not in log_lines(), ('known peak exceeded available memory', T)
+    assert not list((state / 'admission' / 'running').glob('*')), ('insufficient capacity produced a claim', T)
+    (state / 'meminfo').write_text('total_kb=1000000\navailable_kb=100000\n')
+    until('first known job started when capacity increased', lambda: 'start first-known-capacity' in log_lines())
+    assert 'claim-descriptor first-known-capacity' in log_lines(), T
+    hold.touch(); finish(job, 'first-known-capacity')
+    print('PASS a first history-backed cgen waits for enough measured capacity and then proceeds')
+
+
+def scenario_measured_capacity_wait():
+    state = new_state('queue-measured-capacity-wait')
+    (state / 'meminfo').write_text('total_kb=1000000\navailable_kb=100000\n')
+    hold_a, hold_b = T / 'hold-capacity-a', T / 'hold-capacity-b'
+    for tag, hold in (('capacity-a', hold_a), ('capacity-b', hold_b)):
+        seed_peak(state, 'cgen', tag, hold, 80000)
+    first, _ = command(BINARY, state, 'cgen', 'capacity-a', hold_a)
+    until('first capacity job started', lambda: 'start capacity-a' in log_lines())
+    second, _ = command(BINARY, state, 'cgen', 'capacity-b', hold_b)
+    until('second capacity job published its ticket', lambda: waiting_tickets(state) == 1)
+    time.sleep(1)
+    assert 'start capacity-b' not in log_lines(), ('combined expected peaks exceeded measured capacity', T)
+    hold_a.touch(); finish(first, 'capacity-a')
+    until('waiting capacity job started after release', lambda: 'start capacity-b' in log_lines())
+    hold_b.touch(); finish(second, 'capacity-b')
+    assert try_exclusive(state), ('completed jobs retained heavy.lock', T)
+    print('PASS known jobs wait when combined expected memory exceeds measured capacity and proceed after release')
+
+
+def scenario_owned_cancellation_release():
+    state = new_state('queue-cancel-release')
+    (state / 'meminfo').write_text('total_kb=1000000\navailable_kb=100000\n')
+    hold_a, hold_b = T / 'hold-cancel-first', T / 'hold-cancel-second'
+    key = cgen_key(state, 'cancel-first', hold_a)
+    seed_peak(state, 'cgen', 'cancel-second', hold_b, 1000)
+    first, _ = command(BINARY, state, 'cgen', 'cancel-first', hold_a)
+    until('owned cancel target started', lambda: 'start cancel-first' in log_lines())
+    second, _ = command(BINARY, state, 'cgen', 'cancel-second', hold_b)
+    until('cancel waiter published its ticket', lambda: waiting_tickets(state) == 1)
+    time.sleep(1)
+    assert 'start cancel-second' not in log_lines(), T
+    canceled = subprocess.run([BINARY, '--', 'cancel', '--state-root', str(state),
+                              '--key', key, '--token', 'interop-cancel-first'], capture_output=True, text=True)
+    assert canceled.returncode == 0, (canceled.stdout, canceled.stderr, T)
+    first.wait(timeout=60)
+    results = list((state / 'keys' / key / 'runs').glob('*/result'))
+    assert results and 'status=canceled' in results[-1].read_text(), (results, T)
+    until('waiter started after owned cancellation', lambda: 'start cancel-second' in log_lines())
+    assert 'claim-descriptor cancel-second' in log_lines(), T
+    hold_b.touch(); finish(second, 'cancel-second')
+    assert try_exclusive(state), ('owned cancellation retained heavy.lock', T)
+    print('PASS supported owned cancellation releases the claim and lock so a waiting job proceeds')
+
+
+def scenario_fallback_cc_interop():
+    for order in ('legacy-first', 'fallback-cc-first', 'accounted-first', 'fallback-before-accounted'):
+        state = new_state('queue-fallback-' + order)
+        tag = 'fallback-' + order
+        hold_cc = T / ('hold-' + tag)
+        # A nonempty unparseable override represents unavailable host measurement.
+        (state / 'meminfo').write_text('measurement unavailable\n')
+        if order == 'legacy-first':
+            legacy, release = start_legacy_holder(state, tag)
+            cc, _ = command(BINARY, state, 'cc', tag, hold_cc)
+            until('fallback cc published a ticket', lambda: waiting_tickets(state) == 1)
+            time.sleep(1)
+            assert 'start ' + tag not in log_lines(), ('fallback cc overlapped legacy heavy work', T)
+            finish_legacy_holder(legacy, release)
+            until('fallback cc started after legacy release', lambda: 'start ' + tag in log_lines())
+        elif order == 'fallback-cc-first':
+            cc, _ = command(BINARY, state, 'cc', tag, hold_cc)
+            until('fallback cc started first', lambda: 'start ' + tag in log_lines())
+            assert not try_exclusive(state), ('fallback cc did not retain exclusive heavy.lock', T)
+        elif order == 'accounted-first':
+            (state / 'meminfo').write_text('total_kb=1000000\navailable_kb=100000\n')
+            hold_cgen = T / ('hold-accounted-' + order)
+            cgen, _ = command(BINARY, state, 'cgen', 'accounted-' + order, hold_cgen)
+            until('accounted cgen started first', lambda: 'start accounted-' + order in log_lines())
+            (state / 'meminfo').write_text('measurement unavailable\n')
+            cc, _ = command(BINARY, state, 'cc', tag, hold_cc)
+            until('fallback cc ticket beside accounted work', lambda: waiting_tickets(state) == 1)
+            time.sleep(1)
+            assert 'start ' + tag not in log_lines(), ('fallback cc overlapped accounted work', T)
+            hold_cgen.touch(); finish(cgen, 'accounted-' + order)
+            until('fallback cc started after accounted release', lambda: 'start ' + tag in log_lines())
+        else:
+            cc, _ = command(BINARY, state, 'cc', tag, hold_cc)
+            until('fallback cc started before accounted request', lambda: 'start ' + tag in log_lines())
+            (state / 'meminfo').write_text('total_kb=1000000\navailable_kb=100000\n')
+            hold_cgen = T / ('hold-accounted-' + order)
+            cgen, _ = command(BINARY, state, 'cgen', 'accounted-' + order, hold_cgen)
+            until('accounted waiter beside fallback cc', lambda: waiting_tickets(state) == 1)
+            time.sleep(1)
+            assert 'start accounted-' + order not in log_lines(), ('accounted job overlapped fallback cc', T)
+        assert 'heavy-descriptor ' + tag in log_lines(), ('fallback cc lost heavy.lock at exec', T)
+        assert 'cc-descriptor ' + tag in log_lines(), ('fallback cc lost per-key FD 11', T)
+        hold_cc.touch(); finish(cc, tag)
+        if order == 'fallback-before-accounted':
+            until('accounted job started after fallback release', lambda: 'start accounted-' + order in log_lines())
+            hold_cgen.touch(); finish(cgen, 'accounted-' + order)
+        assert try_exclusive(state), ('fallback completion retained heavy.lock', T)
+        print('PASS unavailable-meminfo cc excludes heavy work: ' + order)
+
+
+def scenario_fallback_priority():
+    state = new_state('queue-fallback-priority')
+    (state / 'meminfo').write_text('measurement unavailable\n')
+    legacy, release = start_legacy_holder(state, 'fallback-priority-holder')
+    hold_cc, hold_cgen = T / 'hold-priority-cc', T / 'hold-priority-cgen'
+    cc, _ = command(BINARY, state, 'cc', 'priority-cc', hold_cc, priority=100)
+    until('fallback cc moved to heavy waiter directory', lambda: len([p for p in (state / 'waiters').glob('*') if p.is_file()]) == 1)
+    cgen, _ = command(BINARY, state, 'cgen', 'priority-cgen', hold_cgen, priority=1)
+    until('both fallback tickets published', lambda: waiting_tickets(state) == 2)
+    finish_legacy_holder(legacy, release)
+    until('higher priority fallback cc started', lambda: 'start priority-cc' in log_lines())
+    assert 'start priority-cgen' not in log_lines(), ('lower priority fallback job bypassed cc ticket', T)
+    hold_cc.touch(); finish(cc, 'priority-cc')
+    until('lower priority fallback cgen started after cc', lambda: 'start priority-cgen' in log_lines())
+    hold_cgen.touch(); finish(cgen, 'priority-cgen')
+    print('PASS fallback compiler kinds use the same heavy ticket order without stranding cc')
+
+
+
+def scenario_priority_capacity():
+    state = new_state('queue-priority-capacity')
+    (state / 'meminfo').write_text('total_kb=1000000\navailable_kb=1000\n')
+    large_hold, small_hold = T / 'hold-priority-large', T / 'hold-priority-small'
+    seed_peak(state, 'cgen', 'priority-large', large_hold, 2000)
+    seed_peak(state, 'cgen', 'priority-small', small_hold, 500)
+    large, _ = command(BINARY, state, 'cgen', 'priority-large', large_hold, priority=100)
+    until('large high priority request is waiting', lambda: waiting_tickets(state) == 1)
+    time.sleep(1)
+    assert 'start priority-large' not in log_lines(), ('high priority bypassed capacity', T)
+    assert try_exclusive(state), ('memory waiter reserved heavy.lock', T)
+    small, _ = command(BINARY, state, 'cgen', 'priority-small', small_hold, priority=1)
+    until('smaller lower priority request started', lambda: 'start priority-small' in log_lines())
+    assert 'start priority-large' not in log_lines(), T
+    small_hold.touch(); finish(small, 'priority-small')
+    assert 'start priority-large' not in log_lines(), T
+    assert try_exclusive(state), ('memory waiter retained heavy.lock after smaller job finished', T)
+    (state / 'meminfo').write_text('total_kb=1000000\navailable_kb=100000\n')
+    until('large request started after capacity increased', lambda: 'start priority-large' in log_lines())
+    large_hold.touch(); finish(large, 'priority-large')
+    print('PASS a memory-blocked high priority request permits a smaller runnable request and starts when capacity increases')
+
+
 try:
+    scenario_first_known_capacity()
+    scenario_priority_capacity()
+    scenario_measured_capacity_wait()
+    scenario_owned_cancellation_release()
+    scenario_fallback_cc_interop()
+    scenario_fallback_priority()
     scenario_exclusive_first()
     scenario_job_first()
     scenario_cc()
