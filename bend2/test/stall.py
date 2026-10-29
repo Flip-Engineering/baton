@@ -37,6 +37,10 @@ class Stall(unittest.TestCase):
         self.fixtures()
 
     def tearDown(self):
+        if self.db.exists():
+            shutdown = subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
+                                      capture_output=True, text=True, env=self.environment)
+            self.assertEqual(shutdown.returncode, 0, shutdown.stderr)
         self.temp.cleanup()
 
     def coord(self, *args, ok=True):

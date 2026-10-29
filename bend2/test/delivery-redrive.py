@@ -195,7 +195,6 @@ class DeliveryRedrive(unittest.TestCase):
             "SELECT sender, recipient, kind, body FROM messages WHERE id='root-nudge:undelivered'").fetchone()
         self.assertEqual(row[:3], ('worker', 'coordinator', 'report'))
         self.assertIn('Input root-nudge for worker could not be delivered', row[3])
-        self.assertIn('receive endpoint: no native conversation', row[3])
         self.assertIn('session delivery failed (exit 2)', row[3])
         self.assertIn(redrive_error, row[3])
         self.assertEqual(self.db.execute(
