@@ -161,7 +161,7 @@ def validate(+error: String) -> IO(Unit):
 def control_result_sql(+session: String, +attempt: String, +signal: U32, result: Result<&1,&1,U32 & String,Unit>) -> String:
   match result:
     case Done{unit}:
-      "UPDATE session_stops SET applied_signal=(" ++ U32.show(signal) ++ "),control_error='' WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ " AND signal=" ++ U32.show(signal) ++ ";"
+      "UPDATE session_stops SET outcome=CASE WHEN outcome='custody-missing' AND EXISTS(SELECT 1 FROM executions e WHERE e.session=session_stops.session AND e.id=session_stops.attempt AND e.phase<>'exited') THEN 'requested' ELSE outcome END,applied_signal=(" ++ U32.show(signal) ++ "),control_error='' WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ " AND signal=" ++ U32.show(signal) ++ ";"
     case Fail{(code,error)}:
       "UPDATE session_stops SET control_error=" ++ C.q(U32.show(code) ++ ": " ++ error) ++ " WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ " AND signal=" ++ U32.show(signal) ++ ";"
 
@@ -237,11 +237,11 @@ def missing_custody_owner(+db: String, +session: String, +attempt: String, +dire
 # The host verifies the retained manifest and native birth before delivering
 # a signal; no PID or path inference is used.
 
-def control_attempt(+db: String, +session: String, +attempt: String, +directory: String, signal: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
-  do IO<Result<&1,&1,U32 & String,Unit>>:
+def control_attempt(+db: String, +session: String, +attempt: String, +directory: String, signal: U32) -> IO(Unit):
+  do IO<Unit>:
     result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.control_signal(directory,signal)
     saved : String <- IO.try(String,DB.Sql.query(db,control_result_sql(session,attempt,signal,result)))
-    IO.pure(Result<&1,&1,U32 & String,Unit>,result)
+    IO.pure(Unit,Unit{})
 
 def restore_requested_sql(+session: String, +attempt: String) -> String:
   "UPDATE session_stops SET outcome='requested',control_error='' WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ " AND outcome='custody-missing' AND EXISTS(SELECT 1 FROM executions e WHERE e.session=session_stops.session AND e.id=session_stops.attempt AND e.phase<>'exited');"
@@ -251,17 +251,10 @@ def restore_requested(+db: String, +session: String, +attempt: String) -> IO(Uni
     restored : String <- IO.try(String,DB.Sql.query(db,restore_requested_sql(session,attempt)))
     IO.pure(Unit,Unit{})
 
-def reconcile_restored_control_result(+db: String, +session: String, +attempt: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
-  match result:
-    case Done{unit}: restore_requested(db,session,attempt)
-    case Fail{error}: IO.pure(Unit,Unit{})
-
 def reconcile_restored_signal(+db: String, +session: String, +attempt: String, +directory: String, signal: U32) -> IO(Unit):
   match signal:
     case 0: restore_requested(db,session,attempt)
-    case other: do IO<Unit>:
-      result : Result<&1,&1,U32 & String,Unit> <- control_attempt(db,session,attempt,directory,other)
-      reconcile_restored_control_result(db,session,attempt,result)
+    case other: control_attempt(db,session,attempt,directory,other)
 
 def reconcile_restored(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
   do IO<Unit>:
