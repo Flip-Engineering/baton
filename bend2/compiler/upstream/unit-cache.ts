@@ -6,14 +6,18 @@ import * as Fact from "./facts.ts";
 import { Fragments } from "./fragments.ts";
 import type { Fragment } from "./fragments.ts";
 import { file_digest } from "./store.ts";
-import type { BodyInput, StoreIndex } from "./store.ts";
+import type { BodyInput, Entries, StoreIndex } from "./store.ts";
 
+type HeaderKind = "tld" | "ctr" | "src" | "sites" | "masks" | "local" | "bang" | "field";
 export type UnitData = {
   unit: string; facts_only: boolean; trace: Fact.Event[]; lend: string[];
   masks: Fact.BorrowMask[]; refs: string[]; edges: [string, string][];
-  inputs: BodyInput[]; fragment: string;
+  inputs: BodyInput[]; reads: { names: [HeaderKind, string][]; listed: HeaderKind[] }; fragment: string;
 };
-type Variant = { scope: string; data: Omit<UnitData, "fragment">;
+// The header entries a unit read and the identity each had, and the complete
+// collections it listed.
+type Variant = { scope: string; data: Omit<UnitData, "fragment" | "reads"> & {
+  header: [HeaderKind, string, string][]; listed: [HeaderKind, string][] };
   fragment: Record<string, any>; code_sha256: string };
 
 function digest(data: string): string { return createHash("sha256").update(data).digest("hex"); }
@@ -56,7 +60,8 @@ function copy(source: string, destination: string): void {
   }
 }
 
-export function emission(data: UnitData): Fact.Emission<Fragment> {
+export function emission(data: Pick<UnitData, "unit" | "trace" | "lend" | "masks" | "refs" | "edges" | "fragment">):
+  Fact.Emission<Fragment> {
   return { key: data.unit, trace: Fact.from_events(data.trace), result: {
     lend: new Set(data.lend), masks: data.masks, refs: new Set(data.refs),
     edges: data.edges, code: Fragments.read(data.fragment) } };
@@ -67,12 +72,28 @@ export class UnitCache {
   private scope: string;
   private index: StoreIndex;
   private bodies: Map<string, StoreIndex["bodies"][number][1]>;
+  private entries: Entries;
+  private names: Record<HeaderKind, Map<string, string>>;
+  private bangs: Set<string>;
   private verified = new Set<string>();
   constructor(private program: string, private evidence: string) {
     this.index = JSON.parse(fs.readFileSync(path.join(program, "index.json"), "utf8"));
     this.bodies = new Map(this.index.bodies);
-    this.scope = digest(JSON.stringify([this.index.compiler, this.index.header.sha256,
-      this.index.tables.sha256, this.index.bodies.map(([name, section]) => [name, section.mode])]));
+    const section = this.index.entries;
+    if (section === undefined) throw new Error("Checked store has no header entries");
+    const text = fs.readFileSync(path.join(program, section.file), "utf8");
+    if (digest(text) !== section.sha256) throw new Error("Checked store section changed: " + section.file);
+    this.entries = JSON.parse(text);
+    const rows = (values: Record<string, unknown>, text = (value: unknown) => JSON.stringify(value)) =>
+      new Map(Object.entries(values).map(([name, value]) => [name, text(value)]));
+    this.bangs = new Set(this.entries.bangs);
+    this.names = { tld: rows(this.entries.tld, String), ctr: rows(this.entries.ctr, String),
+      src: rows(this.entries.src, String), sites: rows(this.entries.sites), masks: rows(this.entries.masks),
+      local: rows(this.entries.local, String), bang: new Map([...this.bangs].map(name => [name, "1"])),
+      field: rows(this.entries.field, String) };
+    // Only what applies to every unit: the compiler, the program's printed form
+    // and whether it needs the device closure table.
+    this.scope = digest(JSON.stringify([this.index.compiler, this.entries.show, this.entries.wide]));
     this.root = path.join(process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), ".cache"), "bend2", "cgen-units-v1");
   }
 
@@ -92,15 +113,27 @@ export class UnitCache {
     return path.join(this.root, this.scope, digest(JSON.stringify([job.key, job.facts_only])));
   }
 
+  // The identity of one header entry in this program. A name the header lacks is
+  // "-", so a read of a name that was absent is invalidated by its appearance.
+  private entry(kind: HeaderKind, name: string): string {
+    return this.names[kind].get(name) ?? "-";
+  }
+
+  // The identity of a whole collection, for a unit that listed its names.
+  private listing(kind: HeaderKind): string {
+    return digest(JSON.stringify([...this.names[kind]].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)));
+  }
+
   private applicable(value: Variant, job: Fact.Job): string | null {
     if (value.scope !== this.scope || value.data.unit !== job.key || value.data.facts_only !== job.facts_only) {
       throw new Error("Cached compiler unit identity differs: " + job.key);
     }
     for (const input of value.data.inputs) {
       const section = this.bodies.get(input.name);
-      if (section === undefined || section.sha256 !== input.sha256 || section.mode !== input.mode) return "body:" + input.name;
-
+      if (section === undefined || section.content !== input.content || section.mode !== input.mode) return "body:" + input.name;
     }
+    for (const [kind, name, seen] of value.data.header) if (this.entry(kind, name) !== seen) return kind + ":" + name;
+    for (const [kind, seen] of value.data.listed) if (this.listing(kind) !== seen) return "listed:" + kind;
     const trace = Fact.from_events(value.data.trace);
     for (const [name, answer] of trace.reads) {
       const colon = name.indexOf(":"), kind = name.slice(0, colon) as Fact.Kind;
@@ -210,8 +243,10 @@ export class UnitCache {
     const before = performance.now(), directory = this.directory(job);
     const code = path.join(data.fragment, "code");
     const metadata = JSON.parse(fs.readFileSync(path.join(data.fragment, "metadata.json"), "utf8"));
-    const { unit, facts_only, trace, lend, masks, refs, edges, inputs } = data;
-    const value: Variant = { scope: this.scope, data: { unit, facts_only, trace, lend, masks, refs, edges, inputs },
+    const { unit, facts_only, trace, lend, masks, refs, edges, inputs, reads } = data;
+    const header = reads.names.map(([kind, name]): [HeaderKind, string, string] => [kind, name, this.entry(kind, name)]);
+    const listed = reads.listed.map((kind): [HeaderKind, string] => [kind, this.listing(kind)]);
+    const value: Variant = { scope: this.scope, data: { unit, facts_only, trace, lend, masks, refs, edges, inputs, header, listed },
       fragment: relocate(metadata, ""), code_sha256: file_digest(code) };
     const bytes = JSON.stringify(value), name = digest(bytes), destination = path.join(directory, name);
     let temporary: string | undefined;

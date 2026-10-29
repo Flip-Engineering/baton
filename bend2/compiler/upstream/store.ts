@@ -227,6 +227,49 @@ export function encode_term(term: Bend.LTerm | Bend.HTerm, tables: EncoderTables
   return { root, rows, scopes };
 }
 
+// A canonical digest of a graph that does not depend on table numbering or on
+// source positions. Strings are written as text. Spans are written as classes
+// numbered by first use: two nodes have the same class exactly when their spans are
+// equal. The emitter compares spans for equality only, so a definition moved by an
+// edit elsewhere in its file keeps its digest. The source texts are not digested.
+function graph_digest(graph: TermGraph, tables: Tables): string {
+  const classes = new Map<string, number>();
+  const span = (index: number): number => {
+    const key = tables.spans[index].join(",");
+    let id = classes.get(key);
+    if (id === undefined) { id = classes.size; classes.set(key, id); }
+    return id;
+  };
+  const text = (tag: number, value: number): string | number =>
+    tag === STRING ? JSON.stringify(tables.strings[value]) : tag === SPAN ? "@" + span(value) : value;
+  const hash = crypto.createHash("sha256");
+  const root = graph.root;
+  hash.update(root === null ? "null" : typeof root !== "object" ? String(root)
+    : "string" in root ? JSON.stringify(tables.strings[root.string]) : "span" in root ? "@" + span(root.span)
+    : "node" in root ? "#" + root.node : "undefined");
+  hash.update("|" + graph.scopes.join(",") + "\n");
+  let pending: string[] = [];
+  for (const row of graph.rows) {
+    const parts: (string | number)[] = [row[0], row[1]];
+    if (row[1] === BINDING) parts.push(row[2], row[3], row[4] < 0 ? -1 : "@" + span(row[4]));
+    else if (row[1] === CALLBACK) parts.push(row[2], row[3], row[4], text(row[4], row[5]));
+    else if (row[1] === ARRAY) for (let at = 2; at < row.length; at += 2) parts.push(row[at], text(row[at], row[at + 1]));
+    else for (let at = 2; at < row.length; at += 3) {
+      parts.push(JSON.stringify(tables.strings[row[at]]), row[at + 1], text(row[at + 1], row[at + 2]));
+    }
+    pending.push(parts.join(" "));
+    if (pending.length >= 4096) { hash.update(pending.join("\n") + "\n"); pending = []; }
+  }
+  hash.update(pending.join("\n"));
+  return hash.digest("hex");
+}
+
+// The content identity of one value, encoded with tables of its own.
+export function content_digest(value: unknown): string {
+  const tables = new EncoderTables();
+  return graph_digest(encode_term(value as Bend.LTerm, tables), tables.data);
+}
+
 type Context = { scope: number; parent: Context | null; args: Bend.HTerm[];
   values: Map<number, unknown> };
 
@@ -323,13 +366,21 @@ export function decode_term<T extends Bend.LTerm | Bend.HTerm>(graph: TermGraph,
 }
 
 type Section = { file: string; sha256: string; bytes: number; nodes: number };
-type BodySection = Section & { mode: "checked" | "higher" };
-export type BodyInput = { name: string; sha256: string; mode: BodySection["mode"] };
+type BodySection = Section & { mode: "checked" | "higher"; content: string };
+export type BodyInput = { name: string; content: string; mode: BodySection["mode"] };
 type Observe = (event: string, details: Record<string, unknown>) => void;
 export type SourceInput = { path: string; namespace: string | null; sha256: string };
+// Content identities of the header entries a unit may read. A tld, constructor or
+// field is a digest of its value. Small per-name values are kept as written. A
+// name that is absent has no row.
+export type Entries = {
+  tld: Record<string, string>; ctr: Record<string, string>; src: Record<string, string>;
+  sites: Record<string, number>; masks: Record<string, boolean[]>; local: Record<string, string>;
+  bangs: string[]; field: Record<string, string>; show: string; wide: boolean;
+};
 export type StoreIndex = { compiler: string; tables: Section; header: Section;
   bodies: [string, BodySection][]; inputs: SourceInput[];
-  input_manifest_sha256: string; program_sha256: string };
+  input_manifest_sha256: string; program_sha256: string; entries?: Section };
 
 function digest(data: string): string {
   return crypto.createHash("sha256").update(data).digest("hex");
@@ -371,15 +422,17 @@ export class CheckedWriter {
     return { file, sha256, bytes, nodes };
   }
 
-  private graph(value: unknown, kind: string, name?: string): Section {
+  private graph(value: unknown, kind: string, name?: string): Section & { content?: string } {
     const begin = performance.now();
     const graph = encode_term(value as Bend.LTerm, this.tables);
     const data = JSON.stringify(graph);
     const encoded = performance.now();
     const section = this.write(data, graph.rows.length);
-    this.observe?.("store.section", { kind, name, ...section,
-      encode_ms: encoded - begin, write_ms: performance.now() - encoded });
-    return section;
+    const written = performance.now();
+    const content = kind === "body" ? graph_digest(graph, this.tables.data) : undefined;
+    this.observe?.("store.section", { kind, name, ...section, content,
+      encode_ms: encoded - begin, write_ms: written - encoded, digest_ms: performance.now() - written });
+    return content === undefined ? section : { ...section, content };
   }
 
   has(name: string): boolean { return this.bodies.has(name) || this.pending.has(name); }
@@ -393,11 +446,21 @@ export class CheckedWriter {
     }
   }
 
+  // Add the content identities of the header entries. The index is rewritten and
+  // the reader returned by seal() reads the same directory.
+  attach(index: StoreIndex, entries: Entries): StoreIndex {
+    const data = JSON.stringify(entries), section = this.write(data, Object.keys(entries.tld).length);
+    this.observe?.("store.section", { kind: "entries", ...section });
+    const next = { ...index, entries: section };
+    fs.writeFileSync(path.join(this.directory, "index.json"), JSON.stringify(next));
+    return next;
+  }
+
   seal(header: unknown): { index: StoreIndex; reader: CheckedReader; bytes: number } {
     // Front-end walks normalize checker cells. Encode their completed state
     // before releasing the front-end graph.
     for (const [name, { value, mode }] of this.pending) {
-      this.bodies.set(name, { ...this.graph(value, "body", name), mode });
+      this.bodies.set(name, { ...this.graph(value, "body", name), mode } as BodySection);
     }
     this.pending.clear();
     const section = this.graph(header, "header");
@@ -533,7 +596,7 @@ export class CheckedReader {
   body_inputs(): BodyInput[] {
     return [...this.decoded.keys()].sort().map(name => {
       const section = this.bodies.get(name)!;
-      return { name, sha256: section.sha256, mode: section.mode };
+      return { name, content: section.content, mode: section.mode };
     });
   }
 
