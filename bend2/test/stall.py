@@ -2,8 +2,8 @@
 
 The fixtures write coordinator rows directly so each recorded state is exact:
 an active attempt, an exited attempt, an explicit stop, a missing endpoint and an
-existing wake claim. The report must classify all five; the wake command must
-drive only the exited candidate and leave the other four unchanged.
+existing wake claim. The report must classify all six; the wake command drives
+the exited and exited-claimed candidates and leaves the other four unchanged.
 """
 import json
 import os
@@ -37,6 +37,10 @@ class Stall(unittest.TestCase):
         self.fixtures()
 
     def tearDown(self):
+        if self.db.exists():
+            shutdown = subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
+                                      capture_output=True, text=True, env=self.environment)
+            self.assertEqual(shutdown.returncode, 0, shutdown.stderr)
         self.temp.cleanup()
 
     def coord(self, *args, ok=True):
@@ -121,7 +125,7 @@ class Stall(unittest.TestCase):
         self.assertEqual(rows['claimed']['state'], 'stalled')
         self.assertEqual(rows['claimed']['claim'], '')
 
-    def test_wake_drives_only_the_stalled_candidate(self):
+    def test_wake_drives_stalled_and_exited_claimed_candidates(self):
         self.coord('stall-wake')
         claims = {session: state for session, state in self.rows('SELECT session,state FROM wake_claims')}
         self.assertEqual(claims.get('exited'), 'claimed')
@@ -132,8 +136,10 @@ class Stall(unittest.TestCase):
         self.assertNotIn('never', claims)
         self.assertTrue(self.wait_for(self.directory / 'exited.marker'),
                         'the stalled candidate was not delivered')
+        self.assertTrue(self.wait_for(self.directory / 'claimed.marker'),
+                        'the exited claimed candidate was not checked for dead custody')
         time.sleep(0.5)
-        for name in ('active', 'stopped', 'blocked', 'claimed', 'never'):
+        for name in ('active', 'stopped', 'blocked', 'never'):
             self.assertFalse((self.directory / (name + '.marker')).exists(),
                              f'{name} candidate was driven')
         self.assertEqual(len(self.rows('SELECT 1 FROM session_stops WHERE session=?', ('stopped',))), 1)
