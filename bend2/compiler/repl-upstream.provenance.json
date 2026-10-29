@@ -3,7 +3,7 @@
   "upstream": "Baton fork of Bend 2.0.25",
   "compiler_archive_sha256": "113a272649904e80144b1954dba8b4999249efa408a6ce1ca346906114986c4d",
   "official_release_artifact": false,
-  "lock_sha256": "f886b43dc75a5e569e5d0a5a920b371e633abc34759d2b9689c61d6cd731c392",
+  "lock_sha256": "1996a78d154fda2f65a4dc3fd6e640a1ed1d90fea7aa0dec3fea30b11ad9c402",
   "files": [
     {
       "bytes": 6569,
@@ -16,19 +16,19 @@
       "sha256": "e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798"
     },
     {
-      "bytes": 164910,
+      "bytes": 166375,
       "path": "bend.ts",
-      "sha256": "b6d010f7728dcfccb33b9e7565e89d616dd87b8afbbdb618106d8e1d2bfc8146"
+      "sha256": "b529df5033e2e8b1239fae172b0ce33864f2db20954cc7e4b501f7c82dc7fa9d"
     },
     {
-      "bytes": 268019,
+      "bytes": 268187,
       "path": "comp.ts",
-      "sha256": "38980a929ecd339aa42584e685d98c669c36abb8aa7f7becd535ef8e499a7fd1"
+      "sha256": "36c399eb89e282234dc7f13dd3463f4426da28a09d1b66919c99da4db38c3331"
     },
     {
-      "bytes": 11533,
+      "bytes": 11964,
       "path": "driver.ts",
-      "sha256": "69af04072f4e3db003e4dac7a832dcfe5a71f21406984c18ee9f9f86db46f379"
+      "sha256": "8337e09e058b3b9c668522ff2a07b267e22cd3d322081d7d4a0d78c7c1d67dfc"
     },
     {
       "bytes": 351,
@@ -411,14 +411,19 @@
       "sha256": "156b06b2cbfec3c3f34a602bbbaa167fe9c004731ce14ab3281a977ff2c56b52"
     },
     {
-      "bytes": 23482,
+      "bytes": 23781,
       "path": "store.ts",
-      "sha256": "8bc8b730f4138454334fd7550dce0fed9be17efff1c195753068141e32ab5f33"
+      "sha256": "8cf4947ddbca4ae77d99d37240eeac2fdf1aa5b04f79dce894597d535e583d00"
     },
     {
-      "bytes": 4193,
+      "bytes": 12807,
+      "path": "unit-cache.ts",
+      "sha256": "04e4ff50966d034bb6b02ce7d3bbb2caddfa4a6b2620d8c8ff500bd1a973f97e"
+    },
+    {
+      "bytes": 4308,
       "path": "worker.ts",
-      "sha256": "ba6026559976ffe310970bdbadb57bba1275aa8f57bae7c8c8468cd3b3f3fe87"
+      "sha256": "66cd1c5e89c02ae09f8a4630684a8ade80ec28d701d9ace5ad6bba38e4dcb301"
     }
   ],
   "license": {
@@ -430,7 +435,5 @@
   "reference_source_commit": "9bdc172e9d44bc6e85c6a1f1d7c15017cde31bdb",
   "source_root": "bend2/compiler/upstream",
   "package_root": "bend2",
-  "distribution_state": "packaged_not_installed",
-  "source_commit": "3b3555e7be654374e9cda304b251bf28f5e969c8",
-  "source_tree": "76837ca61990bbaa135573bb4a792af35d23d0c1"
+  "distribution_state": "source_changed_not_packaged"
 }

@@ -4594,8 +4594,9 @@ export function prepare_book(book: Bend.Book, workspace?: string): string {
   return writer.directory;
 }
 
-export function unit_emitter(directory: string): Fact.Emit<Unit> {
-  const context = open_checked(directory), emit = checked_emitter(context);
+export function unit_emitter(directory: string,
+  inputs?: (value: import("./store.ts").BodyInput[]) => void): Fact.Emit<Unit> {
+  const context = open_checked(directory), emit = checked_emitter(context, inputs);
   const names = new Map(done_defs(context.cb).map(([name]) => [seg_fid(name), name]));
   return (name, facts_only, initial, record) => {
     const result = emit(seg_fid(name), facts_only, initial, record);
@@ -4649,7 +4650,8 @@ function prepare_checked(book: Bend.Book, writer: import("./store.ts").CheckedWr
   return { cb, stored, directory: writer.directory, show, wide, graph };
 }
 
-function checked_emitter(context: Prepared): Fact.Emit<Unit> {
+function checked_emitter(context: Prepared,
+  inputs?: (value: import("./store.ts").BodyInput[]) => void): Fact.Emit<Unit> {
   const { cb, stored, directory } = context;
   const defs = new Map(done_defs(cb).map(([name, def]) => [seg_fid(name), [name, def] as const]));
   const foreign = new Map(done_defs(cb, def_foreign).map(([name, def]) => [seg_fid(name), [name, def] as const]));
@@ -4705,6 +4707,7 @@ function checked_emitter(context: Prepared): Fact.Emit<Unit> {
       writes: record.wrote.size, lend: unit.lend.size, decode_ms: stored.decode_ms,
       external_def_fids: refs.size, closure_targets: unit.clos.size,
       local_segments: unit.segs.length, helper_refs: unit.spins.length });
+    inputs?.(stored.body_inputs());
     stored.release();
     memo_gc();
     BRWS.clear();
