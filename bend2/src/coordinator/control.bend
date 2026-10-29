@@ -306,7 +306,7 @@ def starting_fields(snapshot: String) -> List<String>:
 
 def configure_starting_fields(+db: String, +id: String, +harness: String, +model: String, +effort: String, +endpoint: String, +expected_harness: String, +expected_model: String, +expected_effort: String, fields: List<String>) -> IO(String):
   match fields:
-    case attempt <> directory <> Nil{}: do IO<String>:
+    case +attempt <> +directory <> Nil{}: do IO<String>:
       stranded : Bool <- Stop.starting_stranded(directory)
       Bool.pick(IO(String),stranded,
         configure_release_write(db,id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort,attempt,directory),
