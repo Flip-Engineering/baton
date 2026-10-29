@@ -247,10 +247,10 @@ def completion_confirmed_exact(+db: String, +session: String, +recipient: String
                          +request: String, +id: String, next: A.Body) -> IO(String):
   do IO<String>:
     row : String <- IO.try(String,DB.Sql.read(db,
-      "SELECT CASE WHEN kind<>'completion-request' THEN 'wrong-kind' WHEN recipient<>" ++
-      C.q(session) ++ " THEN 'wrong-coordinator' WHEN id<>coalesce(" ++
+      "SELECT CASE WHEN req.kind<>'completion-request' THEN 'wrong-kind' WHEN NOT (EXISTS(SELECT 1 FROM sessions author WHERE author.id=req.sender AND author.parent=" ++
+      C.q(session) ++ ") AND " ++ C.coordinator_chain_sql("req.sender","req.recipient") ++ ") THEN 'wrong-coordinator' WHEN req.id<>coalesce(" ++
       C.task_request_sql("(SELECT sender FROM messages current WHERE current.id=" ++ C.q(request) ++ ")") ++
-      ",'') AND NOT EXISTS(SELECT 1 FROM messages replay WHERE replay.id=" ++ C.q(id) ++ " AND replay.kind='completion-confirmed' AND replay.sender=" ++ C.q(session) ++ " AND replay.body=" ++ C.q(request) ++ ") THEN 'stale-request' ELSE hex(CAST(sender AS TEXT)) END FROM messages WHERE id=" ++
+      ",'') AND NOT EXISTS(SELECT 1 FROM messages replay WHERE replay.id=" ++ C.q(id) ++ " AND replay.kind='completion-confirmed' AND replay.sender=" ++ C.q(session) ++ " AND replay.body=" ++ C.q(request) ++ ") THEN 'stale-request' ELSE hex(CAST(req.sender AS TEXT)) END FROM messages req WHERE req.id=" ++
       C.q(request) ++ ";"))
     confirmation_target(db,session,recipient,request,id,next,Tx.trim_nl(row))
 

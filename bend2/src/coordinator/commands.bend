@@ -239,17 +239,25 @@ def blocked_cause_sql(+session: String) -> String:
 def blocked_owner_sql(+session: String) -> String:
   "(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN report_sender.parent WHEN coalesce((SELECT role FROM session_roles WHERE session=report_sender.id),'player')='conductor' THEN (SELECT report_owner.id FROM sessions report_owner WHERE report_owner.id='operator' AND report_owner.parent IS NULL AND coalesce((SELECT role FROM session_roles WHERE session=report_owner.id),'player')='operator') END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")"
 
+# The coordinators of a worker: its recorded parent and, through each durable
+# succession record (message succession:PREDECESSOR:SUCCESSOR sent by the
+# successor), the predecessors the parent succeeded. Requests and assignments
+# keep their recorded recipient and sender; this relation selects the ones the
+# current parent inherits.
+def coordinator_chain_sql(+worker: String, +candidate: String) -> String:
+  "(" ++ candidate ++ "=(SELECT chain_parent.parent FROM sessions chain_parent WHERE chain_parent.id=" ++ worker ++ ") OR " ++ candidate ++ " IN (WITH RECURSIVE chain(id) AS (SELECT parent FROM sessions WHERE id=" ++ worker ++ " UNION SELECT s.id FROM chain c JOIN sessions s ON EXISTS(SELECT 1 FROM messages m WHERE m.id='succession:' || s.id || ':' || c.id AND m.sender=c.id)) SELECT id FROM chain))"
+
 # An assignment remains open across native turns. Its worker explicitly asks
 # the recorded parent to confirm completion through ordinary messages.
 def task_assignment_sql(+session: String) -> String:
   "(SELECT a.seq FROM messages a JOIN sessions assigned_worker ON assigned_worker.id=a.recipient WHERE a.recipient=" ++ session
   ++ " AND ((assigned_worker.parent IS NULL AND ((a.sender<>a.recipient AND a.kind IN ('task','guidance','recovery')) OR a.kind='task-assignment'))"
-  ++ " OR (assigned_worker.parent IS NOT NULL AND ((a.sender=assigned_worker.parent AND a.kind IN ('task','guidance','recovery','task-assignment'))"
+  ++ " OR (assigned_worker.parent IS NOT NULL AND ((" ++ coordinator_chain_sql(session,"a.sender") ++ " AND a.kind IN ('task','guidance','recovery','task-assignment'))"
   ++ " OR (a.sender=a.recipient AND a.kind='task-assignment' AND substr(a.id,-11)=':task-input'))))"
   ++ " ORDER BY a.seq DESC LIMIT 1)"
 
 def task_request_sql(+session: String) -> String:
-  "(SELECT r.id FROM messages r WHERE r.sender=" ++ session ++ " AND r.recipient=(SELECT task_parent.parent FROM sessions task_parent WHERE task_parent.id=" ++ session ++ ") AND r.kind='completion-request' AND r.seq>coalesce(" ++ task_assignment_sql(session) ++ ",0) ORDER BY r.seq DESC LIMIT 1)"
+  "(SELECT r.id FROM messages r WHERE r.sender=" ++ session ++ " AND " ++ coordinator_chain_sql(session,"r.recipient") ++ " AND r.kind='completion-request' AND r.seq>coalesce(" ++ task_assignment_sql(session) ++ ",0) ORDER BY r.seq DESC LIMIT 1)"
 
 def task_confirmed_sql(+session: String) -> String:
   "EXISTS(SELECT 1 FROM messages c WHERE c.recipient=" ++ session ++ " AND c.sender=(SELECT task_parent.parent FROM sessions task_parent WHERE task_parent.id=" ++ session ++ ") AND c.kind='completion-confirmed' AND c.body=" ++ task_request_sql(session) ++ " AND c.seq>(SELECT seq FROM messages WHERE id=c.body))"
