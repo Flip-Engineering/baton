@@ -631,7 +631,8 @@ async function book_read(file: string, base?: Bend.Book,
     seen.set(BASE, "");
   }
   Comp.diagnostic("book.load.begin", { file });
-  const n0 = await Bend.book_load(book, file, "", seen);
+  const modules: Bend.LoadedModule[] = [];
+  const n0 = await Bend.book_load(book, file, "", seen, undefined, module => modules.push(module));
   Comp.diagnostic("book.load.end", { file, definitions: book.order.length });
   const laws = path.join(path.dirname(file), "LAWS.bend");
   if (path.basename(file) === "PROOF.bend" && fs.existsSync(laws)
@@ -650,7 +651,7 @@ async function book_read(file: string, base?: Bend.Book,
       + " found.\nThe code is incomplete, and not a valid proof yet.";
   }
   Comp.diagnostic("book.read.end", { file });
-  Comp.register_sources(book, seen);
+  Comp.register_sources(book, seen, modules);
   return [book, n0];
 }
 

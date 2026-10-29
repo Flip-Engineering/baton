@@ -1262,7 +1262,15 @@ async function hub_get(book: Book, sub: string, hash: string, spn?: Span): Promi
   return src;
 }
 
-export async function book_load(book: Book, file: string, ns: string, seen: Map<string, string | null>, spn?: Span): Promise<number> {
+export type LoadedImport = { file: string; namespace: string };
+export type LoadedModule = {
+  file: string; namespace: string; first: number; last: number;
+  imports: LoadedImport[];
+};
+
+export async function book_load(book: Book, file: string, ns: string,
+  seen: Map<string, string | null>, spn?: Span,
+  loaded?: (module: LoadedModule) => void): Promise<number> {
   if (file.startsWith(BEND_LIB + "/") && !fs.existsSync(file)) {
     const pkg = file.slice(BEND_LIB.length + 1).split("/")[0];
     const man = await hub_get(book, pkg + "/manifest", pkg.slice(2), spn);
@@ -1292,6 +1300,7 @@ export async function book_load(book: Book, file: string, ns: string, seen: Map<
   seen.set(real, null);
   const dir   = file.slice(0, file.lastIndexOf("/") + 1);
   const al    : Record<Name, Name> = Object.create(null);
+  const imports: LoadedImport[] = [];
   const text  = fs.readFileSync(file, "utf8");
   const lines = text.split("\n");
   for (let i = 0; i < lines.length; i++) {
@@ -1305,7 +1314,8 @@ export async function book_load(book: Book, file: string, ns: string, seen: Map<
         throw Err(book, ctx_nil(), "an import ('import Base', or 'import <path> as <Name>')", "'" + line + "'", sp);
       }
       if (h[2] === undefined) {
-        await book_load(book, BASE_BEND, "", seen, sp);
+        await book_load(book, BASE_BEND, "", seen, sp, loaded);
+        imports.push({ file: BASE_BEND, namespace: "" });
       } else {
         const rel = path.posix.normalize(h[1]);
         if (!rel.endsWith(".bend")) {
@@ -1322,7 +1332,8 @@ export async function book_load(book: Book, file: string, ns: string, seen: Map<
           sub = rel;
         }
         al[h[2]] = sub.replace(/\.bend$/, "");
-        await book_load(book, at, al[h[2]], seen, sp);
+        await book_load(book, at, al[h[2]], seen, sp, loaded);
+        imports.push({ file: fs.realpathSync(at), namespace: al[h[2]] });
       }
       lines[i] = "";
       continue;
@@ -1339,6 +1350,7 @@ export async function book_load(book: Book, file: string, ns: string, seen: Map<
     }
   }
   seen.set(real, ns);
+  loaded?.({ file: real, namespace: ns, first: n0, last: book.order.length, imports });
   return n0;
 }
 

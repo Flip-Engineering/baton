@@ -723,10 +723,18 @@ const TELES: Map<HTerm, ReturnType<typeof Bend.tele_unbind>> = new Map();
 
 const SRCS: Map<Bend.Name, Src> = new Map();
 const CLAIM_SRCS = new WeakMap<Bend.TLD, Src>();
-const SOURCE_FILES = new WeakMap<Bend.Book, [string, string | null][]>();
+type SourceModule = { path: string; namespace: string | null;
+  first?: number; declarations?: string[]; imports?: Bend.LoadedImport[] };
+const SOURCE_FILES = new WeakMap<Bend.Book, SourceModule[]>();
 
-export function register_sources(book: Bend.Book, seen: Map<string, string | null>): void {
-  SOURCE_FILES.set(book, [...seen].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+export function register_sources(book: Bend.Book, seen: Map<string, string | null>,
+  modules: Bend.LoadedModule[]): void {
+  const by_file = new Map(modules.map(module => [module.file, module]));
+  SOURCE_FILES.set(book, [...seen].map(([path, namespace]) => {
+    const module = by_file.get(path);
+    return { path, namespace, ...(module === undefined ? {} : {
+      first: module.first, declarations: book.order.slice(module.first, module.last), imports: module.imports }) };
+  }).sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
 // The checked source dependencies used by the CLI verdict. Shared syntax is
@@ -4487,9 +4495,8 @@ export function compiler_identity(): string {
 
 function checked_writer(book: Bend.Book, workspace?: string): import("./store.ts").CheckedWriter {
   const Store = require("./store.ts") as typeof import("./store.ts");
-  const source_inputs = new Map(SOURCE_FILES.get(book) ?? []);
-  const inputs = [...source_inputs].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([path, namespace]) =>
-    ({ path, namespace, sha256: Store.file_digest(path) }));
+  const inputs = (SOURCE_FILES.get(book) ?? []).map(input =>
+    ({ ...input, sha256: Store.file_digest(input.path) }));
   const writer = new Store.CheckedWriter(compiler_identity(), workspace, inputs, diagnostic);
   diagnostic("store.begin", { directory: writer.directory, compiler: writer.compiler });
   return writer;
