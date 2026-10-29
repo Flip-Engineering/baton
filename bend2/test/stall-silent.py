@@ -51,7 +51,7 @@ class StallSilent(unittest.TestCase):
             return database.execute(statement, parameters).fetchall()
 
     def seat(self, name, output_age=None, phase='running', claimed=True, stopped=False,
-             output=''):
+             output='', owed=1):
         """A worker whose attempt directory holds stdout last written output_age seconds ago."""
         attempt = self.directory / ('attempt-' + name)
         attempt.mkdir()
@@ -65,8 +65,9 @@ class StallSilent(unittest.TestCase):
                   "VALUES(?,'root','claude-code','fixture','low',?,'')", (name, 'native-' + name))
         self.rows('INSERT INTO executions(session,id,mode,directory,phase,status) '
                   "VALUES(?,?,'retained',?,?,'')", (name, 'attempt-' + name, str(attempt), phase))
-        self.rows("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,'root',?,'task','Owed work')",
-                  ('owed-' + name, name))
+        for index in range(owed):
+            self.rows("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,'root',?,'task','Owed work')",
+                      (f'owed-{name}-{index}', name))
         if claimed:
             self.rows("INSERT OR REPLACE INTO wake_claims(session,state,owner,generation) "
                       "VALUES(?,'claimed',?,1)", (name, 'owed-' + name))
@@ -90,6 +91,29 @@ class StallSilent(unittest.TestCase):
         self.assertTrue(ident.startswith('attempt-quiet:silent:'))
         self.assertEqual(self.rows("SELECT count(*) FROM session_stops WHERE session='quiet'"), [(0,)])
         self.assertEqual(self.rows("SELECT phase FROM executions WHERE session='quiet'"), [('running',)])
+
+    def test_a_native_idle_after_its_result_with_owed_input_is_reported(self):
+        # The turn ended with a result event, the receiver closed stdin, and the
+        # native lingered for background commands while input stayed owed.
+        result = ('{"type":"result","subtype":"success","is_error":false,'
+                  '"result":"Turn finished.","stop_reason":"end_turn"}\n')
+        self.seat('idle', output_age=SILENT_SECONDS, output=result, owed=14)
+        self.run_entry('wake')
+        (report,) = self.silent_reports('idle')
+        self.assertEqual((report[1], report[2], report[3]), ('idle', 'root', 'report'))
+        self.assertIn('owed inputs 14', report[4])
+        self.assertIn('native pid ' + NATIVE_PID, report[4])
+
+    def test_a_changed_owed_count_reports_the_silence_again(self):
+        self.seat('quiet', output_age=SILENT_SECONDS)
+        self.run_entry('wake')
+        self.rows("INSERT INTO messages(id,sender,recipient,kind,body) "
+                  "VALUES('owed-quiet-more','root','quiet','task','More work')")
+        self.run_entry('wake')
+        bodies = [row[4] for row in self.silent_reports('quiet')]
+        self.assertEqual(len(bodies), 2)
+        self.assertTrue(any('owed inputs 1' in body for body in bodies))
+        self.assertTrue(any('owed inputs 2' in body for body in bodies))
 
     def test_a_native_that_keeps_writing_is_not_reported(self):
         self.seat('busy', output_age=5, output='{"type":"assistant"}\n')
