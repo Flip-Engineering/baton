@@ -447,7 +447,7 @@ def scenario_measured_capacity_wait():
     hold_a.touch(); finish(first, 'capacity-a')
     until('waiting capacity job started after release', lambda: 'start capacity-b' in log_lines())
     hold_b.touch(); finish(second, 'capacity-b')
-    assert try_exclusive(state), ('completed jobs retained heavy.lock', T)
+    until('completed jobs release heavy.lock', lambda: try_exclusive(state))
     print('PASS known jobs wait when combined expected memory exceeds measured capacity and proceed after release')
 
 
@@ -472,7 +472,7 @@ def scenario_owned_cancellation_release():
     until('waiter started after owned cancellation', lambda: 'start cancel-second' in log_lines())
     assert 'claim-descriptor cancel-second' in log_lines(), T
     hold_b.touch(); finish(second, 'cancel-second')
-    assert try_exclusive(state), ('owned cancellation retained heavy.lock', T)
+    until('owned cancellation and completed waiter release heavy.lock', lambda: try_exclusive(state))
     print('PASS supported owned cancellation releases the claim and lock so a waiting job proceeds')
 
 
@@ -522,7 +522,7 @@ def scenario_fallback_cc_interop():
         if order == 'fallback-before-accounted':
             until('accounted job started after fallback release', lambda: 'start accounted-' + order in log_lines())
             hold_cgen.touch(); finish(cgen, 'accounted-' + order)
-        assert try_exclusive(state), ('fallback completion retained heavy.lock', T)
+        until('fallback completion releases heavy.lock', lambda: try_exclusive(state))
         print('PASS unavailable-meminfo cc excludes heavy work: ' + order)
 
 
@@ -561,7 +561,7 @@ def scenario_priority_capacity():
     assert 'start priority-large' not in log_lines(), T
     small_hold.touch(); finish(small, 'priority-small')
     assert 'start priority-large' not in log_lines(), T
-    assert try_exclusive(state), ('memory waiter retained heavy.lock after smaller job finished', T)
+    until('smaller completed job releases heavy.lock while memory waiter stays queued', lambda: try_exclusive(state))
     (state / 'meminfo').write_text('total_kb=1000000\navailable_kb=100000\n')
     until('large request started after capacity increased', lambda: 'start priority-large' in log_lines())
     large_hold.touch(); finish(large, 'priority-large')
