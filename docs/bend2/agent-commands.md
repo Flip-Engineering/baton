@@ -285,8 +285,10 @@ was addressed to the predecessor without the Player sending it again.
 
 `succeed` also forwards the predecessor's unresolved input to the successor. That
 input is every message addressed to the predecessor with no recorded read, except
-confirmations, task continuations and succession records, and the current completion
-request of each Player that the predecessor read but did not confirm. Each item
+confirmations, task continuations and succession records, the current completion
+request of each Player that the predecessor read but did not confirm, and each native
+question that the predecessor read whose request has no stored reply and is not
+closed. Each item
 becomes a new message of kind `forwarded-input` sent to the successor. It keeps the
 original sender, names the original message ID and kind, and carries the complete
 original text. The forwarded copy has its own kind, so the Player's assignment and

@@ -13,7 +13,7 @@ def with_observation(-A: Type, observation: List<Chan(Result<&1,&1,U32 & String,
   next(tasks,error,incomplete)
 
 def schema() -> String:
-  "CREATE TABLE IF NOT EXISTS native_requests (id TEXT PRIMARY KEY NOT NULL,worker TEXT NOT NULL REFERENCES sessions(id),parent TEXT NOT NULL REFERENCES sessions(id),attempt TEXT NOT NULL,native_id TEXT NOT NULL,method TEXT NOT NULL,event TEXT NOT NULL,reply TEXT,written INTEGER NOT NULL DEFAULT 0,closed TEXT,UNIQUE(attempt,native_id));"
+  C.native_request_table_sql()
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_requests_insert AFTER INSERT ON native_requests BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('native-request',NEW.id,NEW.worker,'insert','native-request',NEW.method || ' request recorded'); END;"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_requests_update AFTER UPDATE ON native_requests WHEN OLD.reply IS NOT NEW.reply OR OLD.written IS NOT NEW.written OR OLD.closed IS NOT NEW.closed BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('native-request',NEW.id,NEW.worker,'update','native-request',NEW.method || CASE WHEN NEW.reply IS NOT OLD.reply THEN ' response stored' WHEN NEW.written IS NOT OLD.written THEN ' response written' WHEN NEW.closed IS NOT OLD.closed THEN ' request closed' ELSE ' request updated' END); END;"
   ++ "CREATE TRIGGER IF NOT EXISTS native_changes_requests_delete AFTER DELETE ON native_requests BEGIN INSERT INTO native_changes(entity,entity_id,session_id,operation,kind,summary) VALUES('native-request',OLD.id,OLD.worker,'delete','native-request',OLD.method || ' request removed'); END;"

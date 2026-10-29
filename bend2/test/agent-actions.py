@@ -1081,6 +1081,79 @@ class AgentActions(unittest.TestCase):
         self.assertEqual(self.stored_messages()[-1][1:4], ('child-a', 'root', 'report'))
         self.assertEqual(self.action('root', 'session', 'child-a')['blockedOwner'], 'root')
 
+    NATIVE_REQUESTS = ("CREATE TABLE IF NOT EXISTS native_requests (id TEXT PRIMARY KEY NOT NULL,"
+                       "worker TEXT NOT NULL REFERENCES sessions(id),parent TEXT NOT NULL REFERENCES sessions(id),"
+                       "attempt TEXT NOT NULL,native_id TEXT NOT NULL,method TEXT NOT NULL,event TEXT NOT NULL,"
+                       "reply TEXT,written INTEGER NOT NULL DEFAULT 0,closed TEXT,UNIQUE(attempt,native_id))")
+
+    def native_question(self, db, identity, worker, parent, reply=None, closed=None, read=True):
+        body = json.dumps({'nativeRequest': {'id': 'ui-' + identity}, 'requestId': identity})
+        db.execute(self.NATIVE_REQUESTS)
+        db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,'question',?)",
+                   (identity, worker, parent, body))
+        db.execute("INSERT INTO native_requests(id,worker,parent,attempt,native_id,method,event,reply,closed) "
+                   "VALUES(?,?,?,'attempt-1',?,'input','{}',?,?)",
+                   (identity, worker, parent, 'ui-' + identity, reply, closed))
+        if read:
+            db.execute("INSERT INTO message_reads(attempt,message,recipient,native,identity) "
+                       "VALUES('attempt-1',?,?,'native','read')", (identity, parent))
+
+    def test_unanswered_native_questions_stay_unresolved_input_through_stop_and_succession(self):
+        self.associate('cond-a')
+        self.associate('cond-b', harness='fixture')
+        self.legacy('recruit', 'child-a', 'cond-a', 'fixture', 'model', 'low', str(self.repo),
+                    'child-a-branch', str(self.directory / 'child-a'), 'HEAD')
+        with sqlite3.connect(self.db) as db:
+            self.native_question(db, 'q-unanswered', 'child-a', 'cond-a')
+            self.native_question(db, 'q-answered', 'child-a', 'cond-a', reply='{"value":"done"}')
+            self.native_question(db, 'q-closed', 'child-a', 'cond-a', closed='native-exited')
+            self.native_question(db, 'q-unread', 'child-a', 'cond-a', read=False)
+            before = db.execute("SELECT id,sender,recipient,kind,body FROM messages WHERE kind='question' "
+                                "ORDER BY id").fetchall()
+            reads = db.execute('SELECT message,recipient FROM message_reads ORDER BY message').fetchall()
+        self.stop_session('cond-a', 'stop-cond-a')
+        report = [row for row in self.stored_messages() if row[0] == 'ended:stop-cond-a'][0]
+        listed = json.loads(report[4])['unresolvedInput']
+        self.assertIn('q-unanswered', listed)
+        self.assertIn('q-unread', listed)
+        self.assertNotIn('q-answered', listed)
+        self.assertNotIn('q-closed', listed)
+        self.invoke(self.db, 'as', 'cond-b', 'succeed', '--from', 'cond-a')
+        forwarded = sorted(row[0] for row in self.stored_messages() if row[3] == 'forwarded-input')
+        self.assertEqual(forwarded, ['forward:cond-a:cond-b:q-unanswered', 'forward:cond-a:cond-b:q-unread'])
+        with sqlite3.connect(self.db) as db:
+            self.assertEqual(db.execute("SELECT id,sender,recipient,kind,body FROM messages "
+                                        "WHERE kind='question' ORDER BY id").fetchall(), before)
+            self.assertEqual(db.execute('SELECT message,recipient FROM message_reads ORDER BY message').fetchall(),
+                             reads)
+            self.assertEqual(db.execute('SELECT DISTINCT parent FROM native_requests').fetchall(),
+                             [('cond-a',)])
+
+    def test_operator_input_keeps_admission_effective_while_coordinator_input_does_not(self):
+        self.legacy('attach', 'operator', 'fixture', '', self.endpoint)
+        self.legacy('role', 'operator', 'operator')
+        self.legacy('recruit', 'op-worker', 'operator', 'fixture', 'model', 'low', str(self.repo),
+                    'op-worker-branch', str(self.directory / 'op-worker'), 'HEAD')
+        self.legacy('connect', 'op-worker', '', self.endpoint)
+        self.legacy('message', 'op-task', 'operator', 'op-worker', 'task-assignment', 'Do the work.')
+        self.action('op-worker', 'completion-request', '--text', 'Done.')
+        self.action('operator', 'completion-confirmed', '--to', 'op-worker')
+        self.assertTrue(self.completion('op-worker')['ended'])
+        completed = self.action('root', 'session', 'op-worker')
+        self.assertEqual((completed['blockedCause'], completed['wake']['pending']), ('assignment-ended', 0))
+        # Direct operator input is owed work again; the assignment stays complete.
+        self.legacy('message', 'op-note', 'operator', 'op-worker', 'report', 'Operator note.')
+        reopened = self.action('root', 'session', 'op-worker')
+        self.assertTrue(reopened['taskCompletion']['ended'])
+        self.assertNotEqual(reopened['blockedCause'], 'assignment-ended')
+        self.assertGreaterEqual(reopened['wake']['pending'], 1)
+        # A worker of the root completed the same way is not woken by non-operator input.
+        self.requested('worker-a')
+        self.action('root', 'completion-confirmed', '--to', 'worker-a')
+        self.legacy('message', 'root-note', 'root', 'worker-a', 'report', 'Coordinator note.')
+        quiet = self.action('root', 'session', 'worker-a')
+        self.assertEqual((quiet['blockedCause'], quiet['wake']['pending']), ('assignment-ended', 0))
+
     def test_successor_of_a_successor_confirms_a_request_to_the_first_predecessor(self):
         self.associate('cond-a')
         self.associate('cond-b', harness='fixture')
