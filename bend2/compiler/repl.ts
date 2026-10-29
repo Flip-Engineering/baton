@@ -1,16 +1,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as crypto from 'node:crypto';
+import { file_digest as digest } from './store.ts';
 import * as Bend from './bend.ts';
 import * as Comp from './comp.ts';
 import { cli_build, cli_report } from './main.ts';
 
 // Notebook state and process admission belong to the Bend coordinator. This
 // frontend exposes the pinned compiler's source, inference and build operations.
-function digest(file: string): string {
-  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-}
-
 function errorText(error: unknown): string {
   const value = error as Bend.Err;
   if (error instanceof RangeError) {
@@ -177,8 +173,16 @@ async function frontend(): Promise<void> {
   complete(book);
   const output = path.resolve(outputArg);
   const c = output + '.c';
-  fs.writeFileSync(c, Comp.compile_book(book));
-  cli_build(output, c, ['-lsqlite3'], true);
+  const cDirectory = fs.mkdtempSync(path.join(path.dirname(output), '.bend-repl-c-'));
+  const partial = path.join(cDirectory, 'output.c'), cDescriptor = fs.openSync(partial, 'wx');
+  try { Comp.compile_book_to(book, chunk => fs.writeFileSync(cDescriptor, chunk), path.dirname(output)); }
+  catch (error) {
+    process.stderr.write('Compiler output evidence: ' + cDirectory + '\n');
+    throw error;
+  } finally { fs.closeSync(cDescriptor); }
+  fs.renameSync(partial, c);
+  fs.rmdirSync(cDirectory);
+  await cli_build(output, c, undefined, ['-lsqlite3'], true);
   process.stdout.write(JSON.stringify({ protocol: 1, kind: 'native', ...provenance,
     type, generatedC: { path: c, sha256: digest(c) },
     executable: { path: output, sha256: digest(output) },

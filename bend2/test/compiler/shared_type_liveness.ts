@@ -104,7 +104,8 @@ const temp = fs.mkdtempSync(path.join(os.tmpdir(), "bend-shared-type-liveness-")
 const previousDiagnostics = process.env.BEND_COMPILER_DIAGNOSTICS;
 process.env.BEND_COMPILER_DIAGNOSTICS = "1";
 try {
-  for (const name of ["bend.ts", "base.bend"]) {
+  for (const name of fs.readdirSync(upstream).filter(name =>
+    name.endsWith(".ts") || name === "base.bend")) {
     fs.copyFileSync(path.join(upstream, name), path.join(temp, name));
   }
   const source = fs.readFileSync(path.join(upstream, "comp.ts"), "utf8");

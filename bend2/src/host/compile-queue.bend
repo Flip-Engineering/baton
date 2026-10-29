@@ -32,6 +32,14 @@ type Input is Data:
 type Artifact is Data:
   Artifact{name: String, path: String}
 
+type ExitMarker is Data:
+  ExitMarker{pid: String, start: String}
+
+type ExitMarkerField is Data:
+  ExitMarkerPid{}
+  ExitMarkerStart{}
+  ExitMarkerOther{}
+
 type InputRowCandidate is Data:
   ValidInputRow{value: Input}
   InvalidInputRow{}
@@ -846,7 +854,7 @@ def run_supervised(+attempt: String, +keydir: String, +kind: String, +key: Strin
     present : Bool <- regular(attempt ++ "/argv")
     argv : String <- command_argv(present, attempt)
     outcome : Result<&1,&1,U32 & String,U32 & String> <- L.CompileQueueLifecycle.run_command(
-      argv, cwd, attempt ++ "/stdout", attempt ++ "/stderr")
+      argv, cwd, attempt ++ "/stdout", attempt ++ "/stderr", attempt)
     supervised_result(outcome, attempt, keydir, kind, key, started, names, cwd)
 
 def supervise_source(+kind: String, source_root: String, entry: String, +attempt: String,
@@ -879,24 +887,80 @@ def supervise_kind(+kind: String, source_root: String, entry: String, +attempt: 
     supervise_identity_matches(Tx.str_eq(current_key, key), kind, source_root, entry,
       attempt, keydir, key, started, names, cwd)
 
+def exit_marker_field(label: String) -> ExitMarkerField:
+  match label:
+    case "pid": ExitMarkerPid{}
+    case "starttime": ExitMarkerStart{}
+    case other: ExitMarkerOther{}
+
+def exit_marker_update_fields(field_kind: ExitMarkerField, right: String,
+                              marker: ExitMarker) -> ExitMarker:
+  match field_kind:
+    case ExitMarkerPid{}:
+      match marker:
+        case ExitMarker{pid, start}: ExitMarker{right, start}
+    case ExitMarkerStart{}:
+      match marker:
+        case ExitMarker{pid, start}: ExitMarker{pid, right}
+    case ExitMarkerOther{}: marker
+
+def exit_marker_update(parsed: Maybe<&1,Split>, marker: ExitMarker) -> ExitMarker:
+  match parsed:
+    case None{}: marker
+    case Some{Split{left, right}}:
+      exit_marker_update_fields(exit_marker_field(left), right, marker)
+
+def exit_marker_fields(lines: List<&1,String>, marker: ExitMarker) -> ExitMarker:
+  match lines:
+    case Nil{}: marker
+    case line <> rest:
+      exit_marker_fields(rest, exit_marker_update(split_eq(line, ""), marker))
+
+def exit_marker_identity_matches(marker: ExitMarker, pid: U32, start: String) -> Bool:
+  match marker:
+    case ExitMarker{marker_pid, marker_start}:
+      Bool.and(Tx.str_eq(marker_pid, U32.show(pid)), Tx.str_eq(marker_start, start))
+
+def exit_marker_matches_text(text: String, pid: U32, start: String) -> Bool:
+  +marker = exit_marker_fields(Tx.split_lines(text), ExitMarker{"", ""})
+  exit_marker_identity_matches(marker, pid, start)
+
+def exit_marker_matches(attempt: String, pid: U32, start: String) -> IO(Bool):
+  do IO<Bool>:
+    text : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/exit_status"))
+    IO.pure(Bool, exit_marker_matches_text(text, pid, start))
+
 @unsafe
-def watch_heavy(+attempt: String, +pid: U32, +start: String) -> IO(Unit):
+def watch_heavy(+attempt: String, +pid: U32, +start: String,
+                +supervisor: U32, +supervisor_start: String) -> IO(Unit):
   do IO<Unit>:
-    alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(pid, start))
-    compiled : Bool <- regular(attempt ++ "/compiled")
-    Bool.pick(IO(Unit), U32.is_eq(alive, 0), IO.pure(Unit, Unit{}),
-      Bool.pick(IO(Unit), compiled,
-        do IO<Unit>:
-          released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(8))
-          IO.pure(Unit, Unit{}),
+    child_alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(pid, start))
+    release_child_alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(pid, start))
+    supervisor_alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(supervisor, supervisor_start))
+    marker : Bool <- exit_marker_matches(attempt, pid, start)
+    Bool.pick(IO(Unit), Bool.and(marker, U32.is_eq(release_child_alive, 0)),
+      IO.try(Unit, L.CompileQueueLifecycle.lock_release(8)),
+      Bool.pick(IO(Unit), U32.is_eq(child_alive, 0),
+        Bool.pick(IO(Unit), U32.is_eq(supervisor_alive, 0), IO.pure(Unit, Unit{}),
+          do IO<Unit>:
+            slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(100))
+            watch_heavy(attempt, pid, start, supervisor, supervisor_start)),
         do IO<Unit>:
           slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(100))
-          watch_heavy(attempt, pid, start)))
+          watch_heavy(attempt, pid, start, supervisor, supervisor_start)))
 
-def watch_heavy_pid(parsed: Maybe<&2,U32>, attempt: String, start: String) -> IO(Unit):
+def watch_heavy_supervisor(parsed: Maybe<&2,U32>, pid: U32, attempt: String, start: String,
+                           supervisor_start: String) -> IO(Unit):
+  match parsed:
+    case None{}: IO.die(Unit, 2, "compile-queue: watch supervisor pid is malformed")
+    case Some{supervisor_pid}:
+      watch_heavy(attempt, pid, start, supervisor_pid, supervisor_start)
+
+def watch_heavy_pid(parsed: Maybe<&2,U32>, attempt: String, start: String,
+                    supervisor: String, supervisor_start: String) -> IO(Unit):
   match parsed:
     case None{}: IO.die(Unit, 2, "compile-queue: watch pid is malformed")
-    case Some{pid}: watch_heavy(attempt, pid, start)
+    case Some{pid}: watch_heavy_supervisor(U32.read(supervisor), pid, attempt, start, supervisor_start)
 
 def supervise_marker_result(signaled: Result<&1,&1,U32 & String,Unit>, +attempt: String,
                             +keydir: String, +kind: String, source_root: String, entry: String,
@@ -1041,6 +1105,15 @@ def transfer_heavy(+held: U32) -> IO(Unit):
     closed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.close_fd(held))
     IO.pure(Unit, Unit{})
 
+def acquire_execution_lock(is_cc: Bool, keydir: String, +admission: U32) -> IO(U32):
+  match is_cc:
+    case True{}:
+      do IO<U32>:
+        released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(admission))
+        IO.try(U32, L.CompileQueueLifecycle.lock_acquire(keydir ++ "/cc-execution.lock"))
+    case False{}: IO.pure(U32, admission)
+
+
 def supervise_owned(+attempt: String, +keydir: String, +kind: String, source_root: String,
                     entry: String, key: String, +started: String, names: List<&2,String>,
                     cwd: String, pid: U32, start: String, +gate: U32,
@@ -1054,7 +1127,9 @@ def supervise_owned(+attempt: String, +keydir: String, +kind: String, source_roo
       Bool.pick(String, String.eq(kind, "cc"), state ++ "/cc.lock", state ++ "/heavy.lock"))
     +waiters : String <- IO.pure(String, kind_waiters_dir(state, kind))
     made_waiters : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(waiters))
-    +held : U32 <- acquire_heavy_loop(waiters, lock_path, token, priority, 4)
+    +admission : U32 <- acquire_heavy_loop(waiters, lock_path, token, priority, 4)
+    is_cc : Bool <- IO.pure(Bool, String.eq(kind, "cc"))
+    +held : U32 <- acquire_execution_lock(is_cc, keydir, admission)
     transferred : Unit <- transfer_heavy(held)
     signaled : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.set_env(
       "BATON_COMPILE_QUEUE_COMPILED", attempt ++ "/compiled")
@@ -1150,41 +1225,33 @@ def start_attempt_missing_result(text: String, key: String, keydir: String,
     exists : Bool <- regular(attempt ++ "/result")
     start_attempt_result_exists(exists, text, key, keydir, attempt, owner, now, waited)
 
-def wait_error_lines(lines: List<&1,String>, +acc: String) -> String:
-  match lines:
-    case Nil{}: acc
-    case line <> rest: wait_error_lines(rest, acc ++ " " ++ line)
+def wait_supervisor_result(result_exists: Bool, waited: String) -> String:
+  Bool.pick(String, result_exists, "running=0\nexit=0\nsignal=0\n", waited)
 
-def wait_error_text(message: String) -> String:
-  wait_error_lines(Tx.split_lines(message), "")
-
-@unsafe
-def wait_supervisor_result(~again_wait: (@+pid: U32 -> @+delay: U32 -> IO(String)), +pid: U32, +delay: U32, result: Result<&1,&1,U32 & String,String>) -> IO(String):
-  match result:
-    case Fail{(code, message)}:
-      IO.pure(String, "running=0\nerror_code=" ++ U32.show(code)
-        ++ "\nerror=" ++ wait_error_text(message) ++ "\n")
-    case Done{+status}:
-      Bool.pick(IO(String), Tx.str_eq(field(status, "running"), "1"),
-        do IO<String>:
-          slept : Unit <- IO.sleep(delay)
-          again_wait(pid, U32.min(U32.mul(delay, 2), 128)),
-        IO.pure(String, status))
-
-def wait_supervisor_poll(+pid: U32, +delay: U32) -> IO(String):
+def wait_supervisor(attempt: String, pid: U32, start: String) -> IO(String):
   do IO<String>:
-    result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.try_wait(pid)
-    wait_supervisor_result(wait_supervisor_poll, pid, delay, result)
+    waited : String <- IO.try(String, L.CompileQueueLifecycle.wait_supervisor(pid))
+    result_exists : Bool <- regular(attempt ++ "/result")
+    IO.pure(String, wait_supervisor_result(result_exists, waited))
 
-def wait_supervisor(pid: U32) -> IO(String):
-  wait_supervisor_poll(pid, 2)
+def wait_supervisor_identity(info: ExitMarker, attempt: String) -> IO(String):
+  match info:
+    case ExitMarker{pid, start}:
+      wait_supervisor(attempt, status_number(pid), start)
+
+def copy_artifacts_locked(state: String, keydir: String, rows: String) -> IO(Unit):
+  do IO<Unit>:
+    +lock : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(state ++ "/artifact-publication.lock"))
+    copied : Unit <- IO.try(Unit, Result.CompileQueueResult.copy_artifacts(keydir, rows))
+    released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
+    IO.pure(Unit, Unit{})
 
 def start_attempt_completed(completed: Bool, +text: String, +key: String,
                             +keydir: String, +attempt: String, +owner: String, now: String, waited: String) -> IO(Unit):
   match completed:
     case True{}:
       do IO<Unit>:
-        copied : Unit <- IO.try(Unit, Result.CompileQueueResult.copy_artifacts(keydir, artifact_pairs_text(artifact_rows(text))))
+        copied : Unit <- copy_artifacts_locked(field(text, "state_root"), keydir, artifact_pairs_text(artifact_rows(text)))
         receipt : Unit <- IO.try(Unit, Result.CompileQueueResult.receipt_write(field(text, "receipt"), "completed", key, "0", owner, artifact_pairs_text(artifact_rows(text))))
         removed : Unit <- remove_token(keydir, owner)
         IO.pure(Unit, Unit{})
@@ -1201,10 +1268,11 @@ def start_attempt_config(config: Config, +text: String, +key: String, +keydir: S
     prepared : Unit <- write_attempt_files(config, key, keydir, attempt)
     +heavy : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_open(state ++ "/heavy.lock"))
     args : String <- IO.pure(String, P.argv(Con{"--", Con{"__supervise", Con{attempt, Nil{}}}}))
-    supervisor : U32 <- IO.try(U32, L.CompileQueueLifecycle.spawn_detached(args, lock, heavy))
+    supervisor_text : String <- IO.try(String, L.CompileQueueLifecycle.spawn_detached_identity(args, lock, heavy))
+    supervisor_info : ExitMarker <- IO.pure(ExitMarker, exit_marker_fields(Tx.split_lines(supervisor_text), ExitMarker{"", ""}))
     released_lock : Unit <- IO.try(Unit, L.CompileQueueLifecycle.close_fd(lock))
     released_heavy : Unit <- IO.try(Unit, L.CompileQueueLifecycle.close_fd(heavy))
-    waited : String <- wait_supervisor(supervisor)
+    waited : String <- wait_supervisor_identity(supervisor_info, attempt)
     completed : Bool <- IO.try(Bool, Result.CompileQueueResult.verify_completed(keydir))
     start_attempt_completed(completed, text, key, keydir, attempt, owner, now, waited)
 
@@ -1294,7 +1362,7 @@ def run_completed_result(completed: Bool, state: U32, +text: String, +parsed: Co
   match completed:
     case True{}:
       do IO<Unit>:
-        copied : Unit <- IO.try(Unit, Result.CompileQueueResult.copy_artifacts(keydir, artifact_pairs_text(artifact_rows(text))))
+        copied : Unit <- copy_artifacts_locked(field(text, "state_root"), keydir, artifact_pairs_text(artifact_rows(text)))
         receipt : Unit <- IO.try(Unit, Result.CompileQueueResult.receipt_write(field(text, "receipt"), "completed", key, "1", owner, artifact_pairs_text(artifact_rows(text))))
         removed : Unit <- remove_token(keydir, owner)
         released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
@@ -1880,8 +1948,8 @@ def main_args(args: List<&2,String>) -> IO(Unit):
     case "status" <> rest: status_command(rest)
     case "adopt" <> rest: adopt_command(rest)
     case "__supervise" <> attempt <> Nil{}: supervise(attempt)
-    case "__watch-heavy" <> attempt <> pid_text <> start <> Nil{}:
-      watch_heavy_pid(U32.read(pid_text), attempt, start)
+    case "__watch-heavy" <> attempt <> pid_text <> start <> supervisor <> supervisor_start <> Nil{}:
+      watch_heavy_pid(U32.read(pid_text), attempt, start, supervisor, supervisor_start)
     case "__guard" <> keydir <> pid <> start <> name <> path <> Nil{}:
       guard(keydir, pid, start, name, path)
     case other: IO.die(Unit, 2, usage())
