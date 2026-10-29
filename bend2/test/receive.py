@@ -1720,6 +1720,109 @@ class Receive(unittest.TestCase):
         self.assertEqual(self.native_requests(), [])
         self.shutdown_idle_database_owner('root fixture did not exit naturally')
 
+    def test_successor_answers_a_read_native_question_on_the_original_active_attempt(self):
+        self.coord('connect', 'operator', '', json.dumps(['/usr/bin/true']))
+        observer, stream, started = self.start_question_player()
+        self.coord('attach', 'successor', 'codex', 'successor-native',
+                   json.dumps(['/usr/bin/true']))
+        self.coord('role', 'successor', 'principal-conductor')
+        event = {'type': 'extension_ui_request', 'id': 'question before succession λ',
+                 'method': 'input', 'title': 'Keep the complete question.\nSecond line Ω.'}
+        request = self.native_question(stream, event)
+        self.eventually(lambda: read_recorded(self.db, request['id']),
+                        'predecessor did not read the original question')
+        original_question = self.coord('delivery', request['id'])
+        self.assertEqual(json.loads(original_question['body'])['nativeRequest'], event)
+        self.assertEqual(request['parent'], 'root')
+        self.assertIsNone(request['reply'])
+        with sqlite3.connect(self.db) as database:
+            original = database.execute('SELECT id,sender,recipient,kind,body FROM messages '
+                                        'WHERE id=?', (request['id'],)).fetchone()
+            original_reads = database.execute('SELECT * FROM message_reads WHERE message=? '
+                                             'ORDER BY attempt,recipient', (request['id'],)).fetchall()
+            attempt = database.execute("SELECT id,directory FROM executions WHERE session='parent'").fetchone()
+
+        self.coord('stop', 'root', 'predecessor-ended', 'The successor takes over coordination.')
+        self.coord('as', 'successor', 'succeed', '--from', 'root')
+        self.assertEqual(self.coord('session', 'parent')['parent'], 'root')
+        self.assertEqual(self.coord('session', 'parent')['taskCompletion']['coordinator'], 'successor')
+        forwarded_id = 'forward:root:successor:' + request['id']
+        forwarded = self.coord('delivery', forwarded_id)
+        self.assertEqual((forwarded['sender'], forwarded['recipient'], forwarded['kind']),
+                         ('parent', 'successor', 'forwarded-input'))
+        self.assertIn(original_question['body'], forwarded['body'])
+        read = self.coord('as', 'successor', 'read', forwarded_id)
+        self.assertEqual(read[0]['delivery']['body'], forwarded['body'])
+        self.assertTrue(read_recorded(self.db, forwarded_id))
+
+        answer = {'value': 'Continue the original attempt.\nKeep the complete answer λU0001f642.'}
+        result = self.coord('as', 'successor', 'native-reply', '--to', 'parent',
+                            '--text', json.dumps(answer, ensure_ascii=False))
+        self.assertEqual(result[0]['status'], 'completed')
+        self.assertEqual(json.loads(result[0]['stdout'])['status'], 'stdin-written')
+        self.action(stream, read_native_reply=True)
+        self.assertEqual(json.loads(stream.readline()), {'native_reply': {
+            'type': 'extension_ui_response', 'id': event['id'], **answer}})
+        answered = self.native_requests()[0]
+        self.assertEqual((answered['id'], answered['attempt'], answered['parent'], answered['written']),
+                         (request['id'], request['attempt'], 'root', 1))
+
+        # An identical native frame keeps its original request and question.
+        self.native_question(stream, event)
+        barrier = 'original frame replay observed after succession'
+        self.action(stream, progress=barrier)
+        self.assertEqual(json.loads(stream.readline()), {'progress_written': barrier})
+        self.eventually(lambda: barrier in self.output_log('parent').read_text(),
+                        'observer did not consume the replayed native frame')
+        self.assertEqual(self.native_requests(), [answered])
+
+        fresh_event = {'type': 'extension_ui_request', 'id': 'question after succession Ω',
+                       'method': 'input', 'title': 'New question for the successor.\nKeep this line.'}
+        fresh = self.native_question(stream, fresh_event)
+        self.assertEqual((fresh['parent'], fresh['attempt']), ('successor', request['attempt']))
+        fresh_question = self.coord('delivery', fresh['id'])
+        self.assertEqual(fresh_question['recipient'], 'successor')
+        self.assertEqual(json.loads(fresh_question['body'])['nativeRequest'], fresh_event)
+        self.coord('as', 'successor', 'read', fresh['id'])
+        fresh_answer = {'value': 'The successor answers the next question.\nΩ'}
+        self.coord('as', 'successor', 'native-reply', '--to', 'parent',
+                   '--text', json.dumps(fresh_answer, ensure_ascii=False))
+        self.action(stream, read_native_reply=True)
+        self.assertEqual(json.loads(stream.readline()), {'native_reply': {
+            'type': 'extension_ui_response', 'id': fresh_event['id'], **fresh_answer}})
+        answered_requests = self.native_requests()
+        self.native_question(stream, fresh_event)
+        barrier = 'new frame replay observed by the same native'
+        self.action(stream, progress=barrier)
+        self.assertEqual(json.loads(stream.readline()), {'progress_written': barrier})
+        self.eventually(lambda: barrier in self.output_log('parent').read_text(),
+                        'observer did not consume the new frame replay')
+        self.assertEqual(self.native_requests(), answered_requests)
+        with sqlite3.connect(self.db) as database:
+            self.assertEqual(database.execute('SELECT id,sender,recipient,kind,body FROM messages '
+                                              'WHERE id=?', (request['id'],)).fetchone(), original)
+            self.assertEqual(database.execute('SELECT * FROM message_reads WHERE message=? '
+                                              'ORDER BY attempt,recipient', (request['id'],)).fetchall(),
+                             original_reads)
+            self.assertEqual(database.execute("SELECT id,directory FROM executions WHERE session='parent'").fetchone(),
+                             attempt)
+            self.assertEqual(database.execute("SELECT id FROM messages WHERE kind='question' "
+                                              "AND sender='parent' ORDER BY seq").fetchall(),
+                             [(request['id'],), (fresh['id'],)])
+        self.assertIsNone(observer.poll())
+        self.assert_no_start()
+        self.assertTrue(any(process['pid'] == started['pid'] and process['ppid'] == started['ppid']
+                            for process in self.owned_processes()))
+        self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
+        body = 'The original native completed after both successor replies.'
+        self.action(stream, body=body, hold_exit=True, report_input=True)
+        self.assertEqual(json.loads(stream.readline()),
+                         {'terminal_written': True, 'input_after_prompt': ''})
+        self.action(stream, exit_fixture=True)
+        self.finish(observer)
+        self.shutdown_idle_database_owner('native question succession fixture did not exit naturally')
+        self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')], [body])
+
     def test_native_question_survives_observer_loss_and_matches_one_reply(self):
         observer, stream, started = self.start_question_player()
         event = {'type': 'extension_ui_request', 'id': 'choose-branch', 'method': 'select',
