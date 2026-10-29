@@ -733,15 +733,22 @@ def owner_count(+keydir: String) -> IO(U32):
     names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(keydir ++ "/owners"))
     count_live_owners(keydir, Tx.split_nul(names), 0)
 
-# Removes the tokens of processes that are gone. The scan unlinks the files it
-# judges dead, among them the temporary file of a token that is being published,
-# so it holds the same lock as publish_token and every other destructive scan. A
-# caller that holds the key lock takes this lock second, as the supervisor does.
+# The scan of owner_count unlinks the files it judges dead, among them the
+# temporary file of a token that is being published. Every caller that is not
+# already inside the owner lock counts through this helper, which holds the same
+# lock as publish_token. A caller that holds the key lock takes this lock second,
+# as the supervisor does.
+def owner_count_locked(+keydir: String) -> IO(U32):
+  do IO<U32>:
+    gate : U32 <- owner_lock(keydir)
+    count : U32 <- owner_count(keydir)
+    released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
+    IO.pure(U32, count)
+
+# Removes the tokens of processes that are gone.
 def prune_stale_owners(+keydir: String) -> IO(Unit):
   do IO<Unit>:
-    gate : U32 <- owner_lock(keydir)
-    pruned : U32 <- owner_count(keydir)
-    released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
+    pruned : U32 <- owner_count_locked(keydir)
     IO.pure(Unit, Unit{})
 
 def clean_stale_active_alive(pid: U32, active: String, start: String) -> IO(Unit):
@@ -1991,7 +1998,7 @@ def start_attempt_result_exists(exists: Bool, +text: String, +key: String, +keyd
       removed : Unit <- remove_token(keydir, owner)
       Result.CompileQueueResult.report_failure(attempt ++ "/result"),
     do IO<Unit>:
-      left : U32 <- owner_count(keydir)
+      left : U32 <- owner_count_locked(keydir)
       +was_canceled : Bool <- IO.pure(Bool, U32.is_eq(left, 0))
       +signal : U32 <- IO.pure(U32, status_number(field(waited, "signal")))
       +exit_code : U32 <- IO.pure(U32, status_number(field(waited, "exit")))
