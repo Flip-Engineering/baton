@@ -4628,7 +4628,7 @@ function header_entries(decoded: StoredHeader, timing: Record<string, number> = 
   return entries;
 }
 
-function prepare_store(cb: Carb, writer: import("./store.ts").CheckedWriter,
+function prepare_store(cb: Carb, writer: import("./store.ts").CheckedWriter, entries_wanted: boolean,
   show: Show | null): { reader: import("./store.ts").CheckedReader; show: Show | null; wide: boolean } {
   const begin = performance.now();
   const tlds = Object.fromEntries(Object.entries(cb.book.tlds).map(([k, tld]) => {
@@ -4648,12 +4648,14 @@ function prepare_store(cb: Carb, writer: import("./store.ts").CheckedWriter,
     wide: [...cb.bangs].some((k) => sig_def(cb, k).live.some(([, , A]) => ty_clo(cb.book, A))) };
   const stored = writer.seal(header);
   const decoded = stored.reader.header<StoredHeader>();
-  const entries_begin = performance.now();
-  const timing: Record<string, number> = {};
-  const entries = header_entries(decoded, timing);
-  stored.index = writer.attach(stored.index, entries);
-  diagnostic("store.entries", { duration_ms: performance.now() - entries_begin, ...timing,
-    definitions: Object.keys(entries.tld).length, constructors: Object.keys(entries.ctr).length });
+  if (entries_wanted) {
+    const entries_begin = performance.now();
+    const timing: Record<string, number> = {};
+    const entries = header_entries(decoded, timing);
+    stored.index = writer.attach(stored.index, entries);
+    diagnostic("store.entries", { duration_ms: performance.now() - entries_begin, ...timing,
+      definitions: Object.keys(entries.tld).length, constructors: Object.keys(entries.ctr).length });
+  }
   restore_header(cb, stored.reader, decoded);
   diagnostic("store.end", { directory: writer.directory,
     duration_ms: performance.now() - begin, bytes: stored.bytes,
@@ -4710,7 +4712,7 @@ function open_checked(directory: string): Prepared {
 
 export function prepare_book(book: Bend.Book, workspace?: string): string {
   const writer = checked_writer(book, workspace);
-  try { prepare_checked(book, writer); }
+  try { prepare_checked(book, writer, true); }
   catch (error) { writer.remove(); throw error; }
   return writer.directory;
 }
@@ -4734,12 +4736,12 @@ export async function compile_checked_to(directory: string, write: (chunk: strin
 }
 
 function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWriter, write: (chunk: string) => void): void {
-  const program = compilation(prepare_checked(book, writer), write), request = program.next();
+  const program = compilation(prepare_checked(book, writer, false), write), request = program.next();
   const solved = Fact.solve<Unit>({ ...request.value! });
   program.next(solved);
 }
 
-function prepare_checked(book: Bend.Book, writer: import("./store.ts").CheckedWriter): Prepared {
+function prepare_checked(book: Bend.Book, writer: import("./store.ts").CheckedWriter, entries: boolean): Prepared {
   diagnostic_columns.clear();
   diagnostic("book.begin", { definitions: Object.keys(book.tlds).length });
   diagnostic("carb.begin");
@@ -4752,7 +4754,7 @@ function prepare_checked(book: Bend.Book, writer: import("./store.ts").CheckedWr
   v_drop(cb, live_types);
   book.tmps = Object.create(null);
   cb.book.tmps = book.tmps;
-  const prepared = prepare_store(cb, writer, show);
+  const prepared = prepare_store(cb, writer, entries, show);
   const stored = prepared.reader, wide = prepared.wide;
   show = prepared.show;
   memo_gc();
