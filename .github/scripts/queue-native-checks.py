@@ -28,6 +28,7 @@ DIAGNOSTIC_FILE = 'compiler-diagnostics.json'
 # as presence state only because its arbitrary contents can contain secrets.
 # Malloc is a Darwin allocator setting and is not consumed by the Linux runner.
 COMPILER_ENVIRONMENT = (
+    'BEND_CGEN_CACHE_DIR',
     'BEND_COMPILER_DIAGNOSTICS',
     'BEND_FACTS_ONLY_FIRST',
     'BEND_LIB',
@@ -153,7 +154,7 @@ def environment_observation(name, environment):
         return {'state': 'set', 'value': 'omitted because option text may contain secrets'}
     if name == 'BEND_LIB':
         return {'state': 'set', 'effective_path': str(Path(value).resolve())}
-    if name in ('BATON2_DARWIN_LLVM_ROOT', 'BATON2_DARWIN_SDKROOT'):
+    if name in ('BATON2_DARWIN_LLVM_ROOT', 'BATON2_DARWIN_SDKROOT', 'BEND_CGEN_CACHE_DIR'):
         return {'state': 'set', 'effective_path': str(Path(value).resolve())}
     if name in ('BATON2_DARWIN_SDK_MANIFEST_SHA256', 'BATON2_DARWIN_SDK_TREE_SHA256'):
         return {'state': 'set', 'sha256': value}
@@ -261,6 +262,13 @@ def compiler_diagnostics(attempt, compiler_argv):
             'queue_adapter': file_identity(SCRIPT),
             'queue_exec': file_identity(EXEC_SCRIPT),
         }
+        # The executed wrapper records which unit cache directory it gave the compiler, and why.
+        selection = attempt / 'cache-selection.json'
+        if selection.is_file():
+            try:
+                metadata['cgen_cache'] = json.loads(selection.read_text())
+            except ValueError:
+                metadata['cgen_cache'] = {'status': 'unreadable'}
         if hasattr(os, 'sched_getaffinity'):
             try:
                 metadata['cpu_affinity'] = {

@@ -101,6 +101,21 @@ A pull request run compares its base and head with `.github/scripts/native-produ
 
 The Darwin job runs `native-producer-route.py verify-base` on that handoff. It recomputes the head's production inputs and producer tooling from the package checkout and compares them with the recorded base inputs and tooling, then packages the C, the route record and the handoff under `share/baton2/generated-c-provenance` with the base commit as the producer. The package, the REPL compiler source, the qualification job and the target comparison use the head checkout. A run that is not a pull request, a checkout without the routing script (a branch cut before it existed), a base that is unavailable, an unsupported import shape, or any difference in the inputs or tooling selects the existing producer, which generates and compiles the head's own Main.
 
+### Compiler unit cache directory
+
+The compiler keeps emitted C units in a directory it reads from `BEND_CGEN_CACHE_DIR`. `.github/scripts/compile-cgen-exec.py` chooses that directory for every queued C generation and passes it to the compiler explicitly. A value in the job environment, and `XDG_CACHE_HOME`, are recorded and not used (#1089).
+
+The choice rests on file ownership. A host administrator creates `<queue state root>/cgen-cache/trusted`, owned by the one user that publishes units, with mode 0755 or tighter, no named-user, group or mask write entry in its access or default ACL, and a parent directory that is not writable by others unless it is sticky. A compile that runs as that user and finds the directory in this state shares it and runs with umask 022, so other users can read what it publishes. A compile that runs as any other user, or that finds the directory missing or in a different state, uses `<queue state root>/cgen-cache/untrusted/<uid>` (mode 0700, owned by that user). An attempt outside a queue state root uses a directory in its own work area. The wrapper never creates or changes the shared directory. The unit cache records a failed write and continues, so a user that can read the shared directory but not write it loses only the writes. Every cache entry is checked against its content digest when it is read.
+
+Which jobs run as the publishing user is decided by where the workflow sends them (runner labels or runner groups), because the wrapper cannot see the event of the job. The wrapper is part of the checkout that a job executes. Any job that runs as the publishing user can run any code as that user, including code that writes the shared directory. Pull request jobs must therefore run as a different user. The administrator setup is:
+
+~~~sh
+install -d -o <publisher> -m 0755 <state root>/cgen-cache
+install -d -o <publisher> -m 0755 <state root>/cgen-cache/trusted
+~~~
+
+The wrapper writes `cache-selection.json` into the attempt directory (selected path, kind, reason, user id, owner, group, mode and inode of the directory, the umask it set, and the inherited values it ignored), and `compiler-diagnostics.json` embeds it under `cgen_cache`.
+
 ### Homelab runner-group preflight
 
 Run the read-only runner-group check before dispatching a homelab validation:
