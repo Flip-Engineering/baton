@@ -1201,9 +1201,9 @@ def claim_file_live(live: U32, +dir: String, +name: String) -> Bool:
   U32.is_eq(live, 1)
 
 def claim_add_stats_after_sample(+text: String, +group: String,
-                                 count: U32, unspent: U32, unknown: U32,
-                                 group_current: U32, reserve: U32, used: U32, signature: U32,
-                                 identity: U32,
+                                 +count: U32, +unspent: U32, +unknown: U32,
+                                 +group_current: U32, +reserve: U32, +used: U32, +signature: U32,
+                                 +identity: U32,
                                  current_text: Result<&1,&1,U32 & String,String>) -> IO(ClaimStats):
   match current_text:
     case Fail{error}:
@@ -1217,7 +1217,7 @@ def claim_add_stats_after_sample(+text: String, +group: String,
       +next_unknown = Bool.pick(U32, U32.is_eq(status_number(field(text,"history")),0), U32.add(unknown,1), unknown)
       IO.pure(ClaimStats, ClaimStats{U32.add(count,1),U32.add(unspent,headroom),next_unknown,next_group,reserve,U32.add(used,current),U32.add(signature,identity)})
 
-def claim_add_stats(live: Bool, +text: String, +group: String, stats: ClaimStats) -> IO(ClaimStats):
+def claim_add_stats(live: Bool, +text: String, +group: String, +stats: ClaimStats) -> IO(ClaimStats):
   match stats:
     case ClaimStats{count, unspent, unknown, group_current, reserve, used, signature}:
       Bool.pick(IO(ClaimStats), live,
@@ -1228,15 +1228,15 @@ def claim_add_stats(live: Bool, +text: String, +group: String, stats: ClaimStats
           claim_add_stats_after_sample(text,group,count,unspent,unknown,group_current,reserve,used,signature,identity,current_text),
         IO.pure(ClaimStats, stats))
 
-def max_u32(a: U32, b: U32) -> U32:
+def max_u32(+a: U32, +b: U32) -> U32:
   Bool.pick(U32,U32.is_gt(a,b),a,b)
 
 def claim_stats_with_reserve(stats: ClaimStats, growth: U32) -> ClaimStats:
   match stats:
-    case ClaimStats{count,unspent,unknown,group_current,reserve,used,signature}:
+    case ClaimStats{count, unspent, unknown, group_current, reserve, used, signature}:
       ClaimStats{count,unspent,unknown,group_current,max_u32(reserve,growth),used,signature}
 
-def claim_usage_reserve(result: Result<&1,&1,U32 & String,String>, now: U32, stats: ClaimStats) -> ClaimStats:
+def claim_usage_reserve(result: Result<&1,&1,U32 & String,String>, now: U32, +stats: ClaimStats) -> ClaimStats:
   match result:
     case Fail{error}: stats
     case Done{+text}:
@@ -1244,7 +1244,7 @@ def claim_usage_reserve(result: Result<&1,&1,U32 & String,String>, now: U32, sta
       +fresh = Bool.and(U32.is_gt(sample,0),Bool.not(U32.is_gt(now,U32.add(sample,1))))
       Bool.pick(ClaimStats,fresh,claim_stats_with_reserve(stats,status_number(field(text,"growth_kb"))),stats)
 
-def admission_claim_file(+state: String, +dir: String, +name: String, +group: String, stats: ClaimStats) -> IO(ClaimStats):
+def admission_claim_file(+state: String, +dir: String, +name: String, +group: String, +stats: ClaimStats) -> IO(ClaimStats):
   do IO<ClaimStats>:
     live : U32 <- IO.try(U32, L.CompileQueueLifecycle.held(dir ++ "/" ++ name))
     +path : String <- IO.pure(String, dir ++ "/" ++ name)
@@ -1263,7 +1263,7 @@ def admission_claim_file(+state: String, +dir: String, +name: String, +group: St
         usage_removed : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.remove(admission_root(state) ++ "/usage/" ++ name)
         IO.pure(ClaimStats, stats))
 
-def admission_claim_files(+names: List<&1,String>, +state: String, +dir: String, +group: String, stats: ClaimStats) -> IO(ClaimStats):
+def admission_claim_files(+names: List<&1,String>, +state: String, +dir: String, +group: String, +stats: ClaimStats) -> IO(ClaimStats):
   match names:
     case Nil{}: IO.pure(ClaimStats, stats)
     case name <> rest:
@@ -1277,7 +1277,7 @@ def admission_claims(+state: String, +group: String) -> IO(ClaimStats):
     names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(dir))
     admission_claim_files(Tx.split_nul(names), state, dir, group, ClaimStats{0,0,0,0,0,0,0})
 
-def admission_outside_used(total: U32, available: U32, used: U32) -> U32:
+def admission_outside_used(+total: U32, available: U32, used: U32) -> U32:
   +accounted = U32.add(available,used)
   Bool.pick(U32,U32.is_gt(total,accounted),U32.sub(total,accounted),0)
 
@@ -1322,14 +1322,14 @@ def admission_claims_known(stats: ClaimStats) -> Bool:
     case ClaimStats{count, unspent, unknown, group_current, reserve, used, signature}:
       U32.is_eq(unknown,0)
 
-def admission_cache_fresh(text: String, now: U32, ids: String) -> Bool:
+def admission_cache_fresh(+text: String, now: U32, ids: String) -> Bool:
   +sample = status_number(field(text,"sample_s"))
   Bool.and(Tx.str_eq(field(text,"valid"),"1"),
     Bool.and(Tx.str_eq(field(text,"ids"),ids),
       Bool.and(U32.is_gt(sample,0),Bool.not(U32.is_gt(now,U32.add(sample,1))))))
 
 def admission_outside_claims(+state: String, +guard: U32, +ids: String, now: U32,
-                             total: U32, available: U32, legacy_pid: U32,
+                             +total: U32, +available: U32, legacy_pid: U32,
                              legacy_result: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
   match legacy_result:
     case Fail{error}:
@@ -1339,8 +1339,8 @@ def admission_outside_claims(+state: String, +guard: U32, +ids: String, now: U32
     case Done{+legacy_text}:
       do IO<Maybe<&2,U32>>:
         +legacy_current : U32 <- IO.pure(U32,status_number(field(legacy_text,"kb")))
-        first : ClaimStats <- admission_claims(state,"")
-        second : ClaimStats <- admission_claims(state,"")
+        +first : ClaimStats <- admission_claims(state,"")
+        +second : ClaimStats <- admission_claims(state,"")
         +stable : Bool <- IO.pure(Bool,Bool.and(admission_claims_same(first,second),
           Bool.and(admission_claims_known(first),admission_claims_known(second))))
         +known : Bool <- IO.pure(Bool,Bool.and(stable,Bool.and(U32.is_gt(total,0),U32.is_gt(available,0))))
@@ -1362,7 +1362,7 @@ def admission_outside_claims(+state: String, +guard: U32, +ids: String, now: U32
             IO.pure(Maybe<&2,U32>,None{}))
 
 def admission_outside_meminfo(+state: String, +guard: U32, +ids: String, now: U32,
-                              legacy_pid: U32,
+                              +legacy_pid: U32,
                               result: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
   match result:
     case Fail{error}:
@@ -1389,8 +1389,8 @@ def admission_outside_refresh(+state: String, +guard: U32, +ids: String, now: U3
       released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
       IO.pure(Maybe<&2,U32>,None{}))
 
-def admission_outside_cached(+state: String, +guard: U32, +ids: String, now: U32, +legacy_pid: U32,
-                             stable_set: Bool, cache: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
+def admission_outside_cached(+state: String, +guard: U32, +ids: String, +now: U32, +legacy_pid: U32,
+                             +stable_set: Bool, cache: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
   match cache:
     case Fail{error}: admission_outside_refresh(state,guard,ids,now,legacy_pid,stable_set)
     case Done{+text}:
@@ -1402,7 +1402,7 @@ def admission_outside_cached(+state: String, +guard: U32, +ids: String, now: U32
         admission_outside_refresh(state,guard,ids,now,legacy_pid,stable_set))
 
 def admission_outside_cache(+state: String, +guard: U32, +ids: String, now: U32, legacy_pid: U32,
-                            stable_set: Bool, cache: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
+                            +stable_set: Bool, cache: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
   Bool.pick(IO(Maybe<&2,U32>),stable_set,
     admission_outside_cached(state,guard,ids,now,legacy_pid,stable_set,cache),
     do IO<Maybe<&2,U32>>:
@@ -1452,12 +1452,12 @@ def outside_state_growth(state: OutsideState) -> U32:
   match state:
     case OutsideState{baseline, growth}: growth
 
-def outside_state_from_baseline(baseline: Maybe<&2,U32>, current: U32) -> OutsideState:
+def outside_state_from_baseline(baseline: Maybe<&2,U32>, +current: U32) -> OutsideState:
   match baseline:
     case None{}: OutsideState{Some{current},0}
-    case Some{base}: OutsideState{Some{base},Bool.pick(U32,U32.is_gt(current,base),U32.sub(current,base),0)}
+    case Some{+base}: OutsideState{Some{base},Bool.pick(U32,U32.is_gt(current,base),U32.sub(current,base),0)}
 
-def outside_state_next_sample(baseline: Maybe<&2,U32>, growth: U32, sample: Maybe<&2,U32>) -> OutsideState:
+def outside_state_next_sample(+baseline: Maybe<&2,U32>, growth: U32, sample: Maybe<&2,U32>) -> OutsideState:
   match sample:
     case None{}: OutsideState{baseline,growth}
     case Some{current}: outside_state_from_baseline(baseline,current)
@@ -1466,7 +1466,7 @@ def outside_state_next(previous: OutsideState, sample: Maybe<&2,U32>) -> Outside
   match previous:
     case OutsideState{baseline, growth}: outside_state_next_sample(baseline,growth,sample)
 
-def admission_need(recorded: U32, stats: ClaimStats) -> U32:
+def admission_need(+recorded: U32, stats: ClaimStats) -> U32:
   match stats:
     case ClaimStats{count, unspent, unknown, group_current, reserve, used, signature}:
       Bool.pick(U32, U32.is_gt(recorded,0), recorded, group_current)
@@ -1489,10 +1489,10 @@ def admission_record_text(result: Result<&1,&1,U32 & String,String>) -> String:
     case Fail{error}: ""
     case Done{+text}: text
 
-def admission_can_start(kind: String, history: U32, need: U32, stats: ClaimStats,
-                        available: U32, legacy_pid: U32) -> Bool:
+def admission_can_start(kind: String, history: U32, +need: U32, stats: ClaimStats,
+                        +available: U32, +legacy_pid: U32) -> Bool:
   match stats:
-    case ClaimStats{count, unspent, unknown, group_current, reserve, used, signature}:
+    case ClaimStats{+count, unspent, unknown, group_current, reserve, used, signature}:
       # A first unmeasured request may establish its own peak alone when no
       # legacy exclusive job or other claim is running.
       +first_unmeasured = Bool.and(U32.is_eq(count,0),U32.is_eq(legacy_pid,0))
@@ -1527,7 +1527,7 @@ def admission_meminfo(+state: String) -> IO(Result<&1,&1,U32 & String,String>):
     admission_meminfo_result(override)
 
 def admission_publish_claim(+state: String, +kind: String, +key: String, +token: String,
-                            pid: U32, start: String, need: U32,
+                            +pid: U32, start: String, need: U32,
                             history: U32, +guard: U32, heavy: Maybe<&2,U32>) -> IO(AdmissionGate):
   do IO<AdmissionGate>:
     body : String <- IO.pure(String,
@@ -1545,7 +1545,7 @@ def acquire_accounted_after_heavy(~again: (@+attempt: String -> @+keydir: String
                                  +attempt: String, +keydir: String, +state: String, +kind: String,
                                  +key: String, +group: String, +token: String, +priority: U32,
                                  +pid: U32, +start: String, +delay: U32, +guard: U32,
-                                 heavy: Maybe<&2,U32>, need: U32, history: U32) -> IO(AdmissionGate):
+                                 heavy: Maybe<&2,U32>, +need: U32, +history: U32) -> IO(AdmissionGate):
   match heavy:
     case None{}:
       Bool.pick(IO(AdmissionGate),Tx.str_eq(kind,"cc"),
@@ -1597,7 +1597,7 @@ def acquire_accounted_loop(+attempt: String, +keydir: String, +state: String, +k
 def transfer_claim(+claim: U32) -> IO(Unit):
   transfer_lock(claim,10)
 
-def admission_fallback(kind: String, keydir: String, state: String, token: String, priority: U32) -> IO(AdmissionGate):
+def admission_fallback(+kind: String, keydir: String, +state: String, token: String, priority: U32) -> IO(AdmissionGate):
   do IO<AdmissionGate>:
     +dir : String <- IO.pure(String, kind_waiters_dir(state,kind))
     +lock : String <- IO.pure(String, Bool.pick(String,Tx.str_eq(kind,"cc"),state ++ "/cc.lock",state ++ "/heavy.lock"))
@@ -1629,8 +1629,8 @@ def admission_execution_lock(+keydir: String, heavy: Maybe<&2,U32>) -> IO(U32):
     case None{}: IO.try(U32,L.CompileQueueLifecycle.lock_acquire(keydir ++ "/cc-execution.lock"))
 
 def supervise_gate(gate: AdmissionGate, +attempt: String, +keydir: String, +kind: String,
-                   source_root: String, entry: String, +key: String, +started: String,
-                   +names: List<&2,String>, cwd: String, +state: String, +token: String,
+                   +source_root: String, +entry: String, +key: String, +started: String,
+                   +names: List<&2,String>, +cwd: String, +state: String, +token: String,
                    +priority: U32) -> IO(Unit):
   match gate:
     case AdmissionExclusive{+heavy}:
