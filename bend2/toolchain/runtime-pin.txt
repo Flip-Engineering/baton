@@ -11,7 +11,7 @@
 #                       0: it is reported on stderr and the build continues
 #
 # Flip require_cgen_cache to 1 in the commit that selects the release above.
-lineage_commit=11e044f131a4542ab423b78153ed66c049689fc0
-release_name=2.0.25-compiler-facts-only-20261029
+lineage_commit=93c88ade7ae279d261ff149ae40307829924eef6
+release_name=2.0.25-whole-baton-class-a-93c88ade7-20261029
 cache_ts_sha256=30950fb56d75056e3c1b46ac6ce8209d49f01e556a950f18e005a55cdb06396e
 require_cgen_cache=1
