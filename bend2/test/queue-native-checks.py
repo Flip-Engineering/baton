@@ -252,10 +252,11 @@ class AdapterExitTests(unittest.TestCase):
         self.assertEqual(metadata['exit_code'], -signal.SIGKILL)
         self.assertFalse((directory / 'request.json').exists())
 
-    def test_success_without_generated_output_creates_no_c_artifact(self):
+    def test_successful_check_creates_its_artifact(self):
         result = self.run_child('pass')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse(self.output.exists())
+        self.assertEqual(self.output.read_text(),
+                         '/* Compiler check completed successfully. */\n')
 
     def test_generated_output_is_preserved(self):
         result = self.run_child(

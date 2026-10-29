@@ -11,10 +11,11 @@ import os
 import signal
 import subprocess
 import sys
+from pathlib import Path
 
 
 def main():
-    _output, *command = sys.argv[1:]
+    output, *command = sys.argv[1:]
     code = subprocess.run(command).returncode
     if code < 0:
         # OOM #1068 killed the compiler with SIGKILL. Preserve its signal
@@ -24,6 +25,8 @@ def main():
             signal.signal(signum, signal.SIG_DFL)
         os.kill(os.getpid(), signum)
         return 128 + signum
+    if not code and '-o' not in command:
+        Path(output).write_text('/* Compiler check completed successfully. */\n')
     return code
 
 

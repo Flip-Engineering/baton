@@ -12,6 +12,8 @@ compiler=${BEND:-"$root/.bend/bin/bend"}
 if [ ! -x "$compiler" ]; then
   compiler="$root/node_modules/.bend/bin/bend"
 fi
+BEND=$compiler
+export BEND
 . "$root/bend2/scripts/queue-entry.sh"
 driver=${BATON2_NATIVE_QUEUE_DRIVER:-"$root/.github/scripts/queue-native-checks.py"}
 exec "${PYTHON3:-python3}" "$driver" compiler bend "$entry" --check-only
