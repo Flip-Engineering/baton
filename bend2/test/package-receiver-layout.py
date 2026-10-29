@@ -189,18 +189,16 @@ class ReceiverLayout(unittest.TestCase):
                     preload = directory / 'preload.ts'
                     preload.write_text(
                         'import fs from "node:fs";\n'
-                        'import { syncBuiltinESMExports } from "node:module";\n'
-                        'const read = fs.readFileSync;\n'
-                        'fs.readFileSync = function(file, ...args) {\n'
-                        f'  if (String(file) === {json.dumps(str(entry))}) {{\n'
+                        'const parse = JSON.parse;\n'
+                        'JSON.parse = function(text, ...args) {\n'
+                        '  if (text === "[]\\n") {\n'
                         f'    const error = new RangeError({json.dumps(message)});\n'
                         f'    fs.writeFileSync({json.dumps(str(original))}, '
                         'JSON.stringify({ name: error.name, message: error.message, stack: error.stack }));\n'
                         '    throw error;\n'
                         '  }\n'
-                        '  return Reflect.apply(read, this, [file, ...args]);\n'
-                        '};\n'
-                        'syncBuiltinESMExports();\n')
+                        '  return Reflect.apply(parse, this, [text, ...args]);\n'
+                        '};\n')
                     argv = [str(runtime), '--smol', '--preload', str(preload),
                             str(prefix / 'upstream/repl.ts'), 'eval', str(entry),
                             str(self.home), str(directory / 'output'), 'U32']
@@ -217,6 +215,8 @@ class ReceiverLayout(unittest.TestCase):
                         'argv': argv, 'pid': child.pid, 'started': started,
                         'ended': datetime.datetime.now(datetime.timezone.utc).isoformat(),
                         'code': child.returncode}))
+                    self.assertTrue(original.is_file(),
+                                    'the staged REPL reached the injected stdin error')
                     self.assertEqual(child.returncode, 1, stdout + stderr)
                     self.assertEqual(stdout, '')
                     lines = stderr.splitlines()
