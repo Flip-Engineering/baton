@@ -670,6 +670,34 @@ print(json.dumps(decisions), flush=True)
         self.assertIsNone(self.tool_hook())
         self.assertIn('Assignment message:coordinator:mid-turn is still open', self.hook()['reason'])
 
+    def test_empty_owed_hooks_leave_transcript_unopened_and_keep_stop_checks(self):
+        directory = self.home / 'idle-attempt'
+        directory.mkdir()
+        transcript = directory / 'blocked-transcript.jsonl'
+        os.mkfifo(transcript)
+        self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
+        self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained',?,'running')", (str(directory),))
+        env = dict(self.env, BATON_ATTEMPT_DIRECTORY=str(directory))
+
+        def invoke(event):
+            # Opening this FIFO would wait for a writer. The hook must finish
+            # using the database while this session has no unread messages.
+            result = subprocess.run([self.binary, '--stop-hook'],
+                input=json.dumps({'hook_event_name': event, 'session_id': 'native-1',
+                                  'prompt_id': 'prompt-1', 'transcript_path': str(transcript)}),
+                capture_output=True, text=True, env=env, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return json.loads(result.stdout) if result.stdout.strip() else None
+
+        self.assertIsNone(invoke('PostToolUse'))
+        self.assertIn('is still open', invoke('Stop')['reason'])
+        self.request()
+        self.assertIn('awaiting the conductor decision', invoke('Stop')['reason'])
+        self.confirm_request_read()
+        self.assertIsNone(invoke('PostToolUse'))
+        self.assertIsNone(invoke('Stop'))
+        self.assertEqual(self.db.execute("SELECT count(*) FROM message_reads WHERE native='native-1'").fetchone()[0], 0)
+
     def test_unread_input_with_legacy_receipt_stays_owed(self):
         self.owe()
         self.db.execute("UPDATE messages SET receipt='legacy-only' WHERE id='message:coordinator:mid-turn'")
@@ -783,13 +811,16 @@ confirmation_id = json.loads(confirmation.stdout)[0]['id']
 held = invoke('stop-for-confirmation-input', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'Stop','stop_hook_active':True}))
 assert json.loads(held.stdout)['decision'] == 'block'
 assert confirmation_id in json.loads(held.stdout)['reason']
-confirmation_input = invoke('deliver-confirmation', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'PostToolUse','tool_name':'Bash'}))
-assert 'Message (completion-confirmed)' in json.loads(confirmation_input.stdout)['hookSpecificOutput']['additionalContext']
+confirmation_input = invoke('deliver-confirmation', [config['binary'],'--stop-hook'], event('PostToolUse', tool_name='Bash'))
+confirmation_context = json.loads(confirmation_input.stdout)['hookSpecificOutput']['additionalContext']
+assert 'Message (completion-confirmed)' in confirmation_context
+frame({'type':'api-request-blob','sessionId':'native-1',
+       'message':{'role':'system','content':[{'type':'text','text':'PostToolUse:Bash hook additional context: ' + confirmation_context}]}})
+released = invoke('stop-after-confirmation', [config['binary'],'--stop-hook'], event('Stop', stop_hook_active=True))
+assert released.stdout.strip() == ''
 with sqlite3.connect(config['database']) as db:
     confirmation_reads = db.execute('SELECT attempt,recipient,native FROM message_reads WHERE message=?', (confirmation_id,)).fetchall()
 assert len(confirmation_reads) == 1 and confirmation_reads[0] == ('attempt-1','worker','native-1')
-released = invoke('stop-after-confirmation', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'Stop','stop_hook_active':True}))
-assert released.stdout.strip() == ''
 evidence = {'fullBodyInjectedAndRecorded':True,'guidanceProcess':os.getpid(),'completeReadSha256':config['sha256'],'tail':config['tail'],'requestId':admitted['id'],'requestWake':admitted['wake'],'confirmationId':confirmation_id,'confirmationRead':confirmation_reads[0],'stopAllowed':True,'nativeRead':rows[0][:4]}
 print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_id':'native-1','result':json.dumps(evidence)}), flush=True)
 ''')

@@ -71,12 +71,24 @@ def transcript_path(+db: String, +event: String) -> IO(String):
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.transcript_path'),'') ELSE '' END;")
     IO.pure(String,text(result))
 
-# Native transcript evidence and the admitted custody witness derive read rows.
+def pending_sql(+session: String, directory: String, +event: String) -> String:
+  "SELECT EXISTS(SELECT 1 FROM executions e JOIN sessions s ON s.id=e.session WHERE e.session=" ++ C.q(session)
+  ++ " AND e.directory=" ++ C.q(directory) ++ " AND e.phase='running' AND s.native<>'' AND CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN s.native=json_extract(" ++ C.q(event) ++ ",'$.session_id') ELSE 0 END AND NOT " ++ C.stopped_session_sql(C.q(session))
+  ++ " AND EXISTS(SELECT 1 FROM messages m WHERE m.recipient=s.id AND " ++ Status.owed_sql("m") ++ "));"
+
+def run_pending(+db: String, +session: String, +directory: String, +event: String, pending: Bool) -> IO(Unit):
+  match pending:
+    case False{}: IO.pure(Unit,Unit{})
+    case True{}: do IO<Unit>:
+      +path : String <- transcript_path(db,event)
+      Bool.pick(IO(Unit),String.is_empty(path),IO.pure(Unit,Unit{}),
+        (do IO<Unit>:
+          transcript : Result<&1,&1,U32 & String,String> <- NativeInput.text_value(path)
+          witness : Result<&1,&1,U32 & String,String> <- Custody.Instance.input_witness(db,directory)
+          loaded(db,session,directory,event,transcript,witness)))
+
+# Transcript matching runs for owed input in the current native attempt.
 def run(+db: String, +session: String, +directory: String, +event: String) -> IO(Unit):
   do IO<Unit>:
-    +path : String <- transcript_path(db,event)
-    Bool.pick(IO(Unit),String.is_empty(path),IO.pure(Unit,Unit{}),
-      (do IO<Unit>:
-        transcript : Result<&1,&1,U32 & String,String> <- NativeInput.text_value(path)
-        witness : Result<&1,&1,U32 & String,String> <- Custody.Instance.input_witness(db,directory)
-        loaded(db,session,directory,event,transcript,witness)))
+    pending : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,pending_sql(session,directory,event))
+    run_pending(db,session,directory,event,String.eq(text(pending),"1"))
