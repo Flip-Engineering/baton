@@ -49,6 +49,9 @@ try {
     assert.ok(facts.code.segs.every(seg => seg.cids.size === 0)
       && facts.code.spins.every(spin => spin.cids.size === 0), fixture + ": constructor tables are not retained");
     assert.ok(full.code.bytes > 0, fixture + ": full emission produces C bytes");
+    if (fixture === "facts_only_table.bend") {
+      assert.ok(full.code.tabs.length > 0, "table fixture takes the table-lowering path in full emission");
+    }
   }
   console.log("PASS facts-only emission preserves unit facts and references");
 } finally {
