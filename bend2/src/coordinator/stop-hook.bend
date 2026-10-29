@@ -7,6 +7,7 @@ import ../coordinator/message-status.bend as Status
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
 import ./input-hook.bend as InputHook
+import ./claude-input-evidence.bend as ClaudeInputEvidence
 
 def owed_sql() -> String:
   "(SELECT count(*) FROM json_each((SELECT value FROM owed)))"
@@ -38,19 +39,41 @@ def answered(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
     case Done{+text}: Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(text)),IO.pure(Unit,Unit{}),IO.print(Tx.trim_nl(text)))
     case Fail{error}: IO.pure(Unit,Unit{})
 
-def route(+db: String, +session: String, tool: Bool) -> IO(Unit):
+def claude_routed(+db: String, +session: String, +event: String, +directory: String, tool: Bool) -> IO(Unit):
+  do IO<Unit>:
+    evidence : Unit <- ClaudeInputEvidence.run(db,session,directory,event)
+    match tool:
+      case True{}: InputHook.run_claude(db,session)
+      case False{}: do IO<Unit>:
+        result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,decision_sql(session))
+        answered(result)
+
+def other_routed(+db: String, +session: String, tool: Bool) -> IO(Unit):
   match tool:
     case True{}: InputHook.run(db,session)
     case False{}: do IO<Unit>:
       result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,decision_sql(session))
       answered(result)
 
+def routed(+db: String, +session: String, +event: String, +directory: String, tool: Bool, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Fail{error}: other_routed(db,session,tool)
+    case Done{+harness}:
+      Bool.pick(IO(Unit),String.eq(Tx.trim_nl(harness),"claude-code"),
+        claude_routed(db,session,event,directory,tool),other_routed(db,session,tool))
+
+def route(+db: String, +session: String, +event: String, tool: Bool) -> IO(Unit):
+  do IO<Unit>:
+    +directory : String <- environment("BATON_ATTEMPT_DIRECTORY")
+    harness : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT coalesce(harness,'') FROM sessions WHERE id=" ++ C.q(session) ++ ";")
+    routed(db,session,event,directory,tool,harness)
+
 def decided(+db: String, +session: String, +input: String, unknown: Bool) -> IO(Unit):
   match unknown:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
       event : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT CASE WHEN json_valid(" ++ C.q(input) ++ ") THEN json_extract(" ++ C.q(input) ++ ",'$.hook_event_name') ELSE '' END;")
-      route(db,session,String.eq(Tx.trim_nl(input_text(event)),"PostToolUse"))
+      route(db,session,input,String.eq(Tx.trim_nl(input_text(event)),"PostToolUse"))
 
 def run() -> IO(Unit):
   do IO<Unit>:
