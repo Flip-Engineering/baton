@@ -262,7 +262,7 @@ def parse_loop(args: List<String>, state: ParseState) -> Parsed:
 def parse(args: List<String>) -> Parsed:
   parse_loop(args,Active{ActionHead{},"",Nil{},Nil{}})
 
-def help(+action: String) -> String:
+def help(action: String) -> String:
   match action:
     case "session": "session [--session SESSION | --id SESSION] [--pretty]\nRead the selected complete session in a named action batch. Omitted target selects the current actor. The single positional form session [SESSION] retains its existing JSON output.\n"
     case "player": "player [--session SESSION | --id SESSION] [--pretty]\nRead the selected complete Player in a named action batch. Omitted target selects the current actor. The single positional form player SESSION retains its existing JSON output.\n"

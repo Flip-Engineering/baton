@@ -358,7 +358,7 @@ def parse(args: List<String>) -> Action:
     case Nil{}: Invalid{"Choose inbox, send, report, ask, guide, finish or confirm; use help ACTION for usage."}
     case +verb <> rest: parse_args(verb,rest)
 
-def help(+action: String) -> String:
+def help(action: String) -> String:
   match action:
     case "repl": "repl define|eval|bind|read|recover|share|import|interactive [OPTIONS]\nUse help repl for Bend source, notebook, result and interactive operations.\n"
     case "branch": "branch start|evaluate|select|continue|status|recover|stop [--ensemble NAME]\nUse help branch or branch --help for source defaults, workspace, evaluator, selection and continuation arguments.\n"
