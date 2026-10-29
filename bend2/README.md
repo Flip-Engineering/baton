@@ -627,6 +627,17 @@ Live native input and stop control require an available keeper socket. The earli
 [observer-loss measurement](../docs/bend2/receive-recovery-2026-09-28.md#recovery-boundary)
 retains its recorded scope.
 
+`succeed SESSION PREDECESSOR` records SESSION as the successor of a conductor that
+is over (explicitly stopped, or its completion was confirmed). The predecessor's
+children keep their recorded parent, assignments and requests, and the successor
+holds the coordinator authority for them. Each unresolved input of the predecessor
+is forwarded to the successor as a `forwarded-input` message that carries the
+complete original text; original messages and read states stay as recorded. A stop
+or a completion confirmation of a session with live children or unresolved input
+reports them to its current coordinator. The
+[agent command guide](../docs/bend2/agent-commands.md#conductor-succession-and-ended-conductors-1257)
+describes the coordinator derivation.
+
 `recover-observer SESSION OBSERVER_PID` replaces a receive observer after
 its native process has a recorded exit status. The operator supplies the PID of
 that receive process. An available keeper transfers the completed attempt's

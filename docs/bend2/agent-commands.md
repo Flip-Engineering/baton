@@ -237,16 +237,16 @@ operation. Each action accepts `--session SESSION`.
 
 ## Conductor succession and ended conductors (#1257)
 
-A session is over when it has an explicit stop, or when its recorded parent
-confirmed its current completion request and sent nothing after that. A Player's
-current coordinator is its recorded parent while the parent is not over. When the
-parent is over, the coordinator is the parent's recorded successor, else the
-parent's own parent, and so on up the recorded parents, until a session that is not
-over; when every ancestor is over, the registered operator. Turn-end reports,
-failure reports, `completion-request`, `report`, `ask` and the blocked owner use the
-current coordinator, and the Player and its current coordinator may message each
-other. Nothing falls back to a coordinator that is over. A Player with no such
-destination receives a structured `report-recipient-missing` refusal.
+A session is over when it has an explicit stop, or when its recorded parent or the
+parent's recorded successor confirmed its current completion request and sent nothing
+to the session after that. A Player's current coordinator is its recorded parent while
+the parent is not over. When the parent is over, the coordinator is the parent's
+recorded successor, else the parent's own parent, and so on up the recorded parents,
+until a session that is not over; when every ancestor is over, the registered
+operator. Turn-end reports, failure reports, `completion-request`, `report`, `ask`
+and the blocked owner use the current coordinator, and the Player and its current
+coordinator may message each other. A Player with no coordinator that is not over and
+no registered operator receives a structured `report-recipient-missing` refusal.
 
 `succeed --from PREDECESSOR [--session SUCCESSOR]` runs as the successor (omitted
 `--session` selects the current actor) and records that the successor replaces a
@@ -270,8 +270,8 @@ confirmations, task continuations and succession records, and the current comple
 request of each Player that the predecessor read but did not confirm. Each item
 becomes a new message of kind `forwarded-input` sent to the successor. It keeps the
 original sender, names the original message ID and kind, and carries the complete
-original text. The forwarded copy is not an assignment and not a completion request,
-so it does not change the Player's assignment or invalidate its request. Repeating the
+original text. The forwarded copy has its own kind, so the Player's assignment and
+current completion request stay as the Player recorded them. Repeating the
 action forwards only input that arrived after the previous run. Baton wakes the
 successor after the record commits.
 

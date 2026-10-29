@@ -801,6 +801,7 @@ class AgentActions(unittest.TestCase):
         self.assertEqual(projected['wake']['pending'], 0)
         # A newer assignment reopens the same conversation.
         self.legacy('message', 'reopen-assignment', 'root', 'worker-a', 'task', 'More work.')
+        self.assertNotEqual(self.endpoint_output(), delivered)
         reopened = self.action('root', 'session', 'worker-a')
         self.assertFalse(reopened['taskCompletion']['ended'])
         self.assertTrue(reopened['taskCompletion']['open'])

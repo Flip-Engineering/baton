@@ -255,11 +255,12 @@ def coordinator_chain_sql(+worker: String, +candidate: String) -> String:
   "(" ++ candidate ++ " IN (" ++ coordinator_closure_sql(worker) ++ "))"
 
 # A session is over when it has an explicit stop, or the confirmation of its
-# current completion request by its recorded parent is the latest assignment,
-# request or confirmation exchanged with that parent. Other sessions skip an
-# over session when they look for a live coordinator.
+# current completion request by its recorded parent or the parent's recorded
+# successor is the latest assignment, request or confirmation exchanged with that
+# coordinator. Other sessions skip an over session when they look for a live
+# coordinator.
 def session_over_sql(+session: String) -> String:
-  "(" ++ stopped_session_sql(session) ++ " OR EXISTS(SELECT 1 FROM messages confirmation WHERE confirmation.recipient=" ++ session ++ " AND confirmation.kind='completion-confirmed' AND confirmation.sender=(SELECT over_parent.parent FROM sessions over_parent WHERE over_parent.id=" ++ session ++ ") AND EXISTS(SELECT 1 FROM messages over_request WHERE over_request.id=confirmation.body AND over_request.sender=" ++ session ++ " AND over_request.kind='completion-request')"
+  "(" ++ stopped_session_sql(session) ++ " OR EXISTS(SELECT 1 FROM messages confirmation WHERE confirmation.recipient=" ++ session ++ " AND confirmation.kind='completion-confirmed' AND confirmation.sender IN (SELECT over_parent.parent FROM sessions over_parent WHERE over_parent.id=" ++ session ++ " UNION SELECT over_succession.sender FROM messages over_succession JOIN sessions over_child ON over_child.parent=over_succession.recipient WHERE over_child.id=" ++ session ++ " AND over_succession.kind='succession' AND over_succession.id='succession:' || over_succession.recipient || ':' || over_succession.sender) AND EXISTS(SELECT 1 FROM messages over_request WHERE over_request.id=confirmation.body AND over_request.sender=" ++ session ++ " AND over_request.kind='completion-request')"
   ++ " AND NOT EXISTS(SELECT 1 FROM messages later_assignment WHERE later_assignment.seq>confirmation.seq AND later_assignment.recipient=" ++ session ++ " AND later_assignment.sender=confirmation.sender AND later_assignment.kind IN ('task','guidance','recovery','task-assignment'))"
   ++ " AND NOT EXISTS(SELECT 1 FROM messages later_request WHERE later_request.seq>confirmation.seq AND later_request.sender=" ++ session ++ " AND later_request.recipient=confirmation.sender AND later_request.kind='completion-request')))"
 
@@ -295,7 +296,7 @@ def task_assignment_sql(+session: String) -> String:
   "(SELECT a.seq FROM messages a JOIN sessions assigned_worker ON assigned_worker.id=a.recipient WHERE " ++ task_assigned_sql("a","assigned_worker",session) ++ " ORDER BY a.seq DESC LIMIT 1)"
 
 # The registered operator receives and confirms completion requests of any
-# worker; operator input is otherwise direct input, not an assignment.
+# worker. Other operator input to a worker is direct operator input.
 def task_addressee_sql(+row: String, +session: String) -> String:
   "(" ++ coordinator_chain_sql(session,row ++ ".recipient") ++ " OR " ++ row ++ ".recipient=" ++ operator_destination_sql() ++ ")"
 
