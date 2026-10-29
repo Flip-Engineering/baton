@@ -17,9 +17,9 @@
       "sha256": "b529df5033e2e8b1239fae172b0ce33864f2db20954cc7e4b501f7c82dc7fa9d"
     },
     {
-      "bytes": 268187,
+      "bytes": 274543,
       "path": "comp.ts",
-      "sha256": "36c399eb89e282234dc7f13dd3463f4426da28a09d1b66919c99da4db38c3331"
+      "sha256": "9ad439803ffc5fbffbf3e96606b42554b4c0c943f10f6ffff2c55e9776501cc0"
     },
     {
       "bytes": 11964,
@@ -407,19 +407,19 @@
       "sha256": "156b06b2cbfec3c3f34a602bbbaa167fe9c004731ce14ab3281a977ff2c56b52"
     },
     {
-      "bytes": 23781,
+      "bytes": 27402,
       "path": "store.ts",
-      "sha256": "8cf4947ddbca4ae77d99d37240eeac2fdf1aa5b04f79dce894597d535e583d00"
+      "sha256": "c16855d715a363867206f7b72aa813014d20e647bcd97582676da3789fceb641"
     },
     {
-      "bytes": 12807,
+      "bytes": 15313,
       "path": "unit-cache.ts",
-      "sha256": "04e4ff50966d034bb6b02ce7d3bbb2caddfa4a6b2620d8c8ff500bd1a973f97e"
+      "sha256": "528bb12e90f77bde31d963e69983110bea89fad5370bb5cbb5207519dc0d4305"
     },
     {
-      "bytes": 4308,
+      "bytes": 4400,
       "path": "worker.ts",
-      "sha256": "66cd1c5e89c02ae09f8a4630684a8ade80ec28d701d9ace5ad6bba38e4dcb301"
+      "sha256": "c0e51b403791a34cebff873104c5cd3ff1d4ac161fc992fa9f0f73cb4dccc09d"
     }
   ],
   "license": {
