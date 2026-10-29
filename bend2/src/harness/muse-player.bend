@@ -3,11 +3,14 @@ import ../host/process.bend as P
 import ../json/canonical.bend as J
 import ../git/text.bend as Tx
 
+def quoted_character(+head: Char) -> String:
+  Bool.pick(String,U32.is_eq(Char.to_u32(head),39),"'\\''",SCon{head,SNil{}})
+
 def quote_tail(+text: String) -> String:
   match text:
     case SNil{}: SNil{}
     case SCon{+head, +tail}:
-      Bool.pick(String, U32.is_eq(Char.to_u32(head), 39), "'\\''" ++ quote_tail(tail), SCon{head, SNil{}} ++ quote_tail(tail))
+      quoted_character(head) ++ quote_tail(tail)
 
 def shell_quote(text: String) -> String:
   "'" ++ quote_tail(text) ++ "'"
