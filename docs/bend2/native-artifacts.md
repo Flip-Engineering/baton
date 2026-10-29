@@ -112,7 +112,10 @@ Which jobs run as the publishing user is decided by where the workflow sends the
 ~~~sh
 install -d -o <publisher> -m 0755 <state root>/cgen-cache
 install -d -o <publisher> -m 0755 <state root>/cgen-cache/trusted
+setfacl -bk <state root>/cgen-cache <state root>/cgen-cache/trusted
 ~~~
+
+A state root with default ACL entries gives every new directory under it those entries. `setfacl -bk` on both new directories removes them; the wrapper refuses a shared directory that keeps a default ACL entry with write permission.
 
 The wrapper writes `cache-selection.json` into the attempt directory (selected path, kind, reason, user id, owner, group, mode and inode of the directory, the umask it set, and the inherited values it ignored), and `compiler-diagnostics.json` embeds it under `cgen_cache`.
 
