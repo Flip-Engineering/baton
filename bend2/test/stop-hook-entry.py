@@ -217,6 +217,27 @@ class StopHook(unittest.TestCase):
         self.assertEqual(reopened['decision'], 'continue')
         self.assertIn('The current assignment remains open', reopened['reason'])
 
+    def test_agy_stop_does_not_finish_on_a_confirmation_without_a_matching_request(self):
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('assignment','coordinator','worker','task-assignment','Do the work.')")
+        self.read('assignment')
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('stray','coordinator','worker','completion-confirmed','no-such-request')")
+        stop = {'executionNum': 1, 'terminationReason': 'model_stop', 'error': '',
+                'fullyIdle': True, 'conversationId': 'agy-session', 'workspacePaths': [],
+                'transcriptPath': '', 'artifactDirectoryPath': '', 'modelName': 'agy-test'}
+        delivered = self.agy_hook(stop)
+        self.assertEqual(delivered['decision'], 'continue')
+        self.assertIn('[id: stray]:\nno-such-request', delivered['reason'])
+        self.assertNotIn('assignment is finished', delivered['reason'])
+        self.assertIn('completion-request --text SUMMARY', delivered['reason'])
+
+    def test_agy_stop_does_not_finish_a_session_without_an_assignment_on_a_stray_confirmation(self):
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('stray','coordinator','worker','completion-confirmed','no-such-request')")
+        stop = {'executionNum': 1, 'terminationReason': 'model_stop', 'error': '',
+                'fullyIdle': True, 'conversationId': 'agy-session', 'workspacePaths': [],
+                'transcriptPath': '', 'artifactDirectoryPath': '', 'modelName': 'agy-test'}
+        delivered = self.agy_hook(stop)
+        self.assertNotIn('assignment is finished', delivered['reason'])
+
     def test_agy_stop_reports_database_query_errors(self):
         database = self.home / 'incomplete.db'
         with sqlite3.connect(database) as db:

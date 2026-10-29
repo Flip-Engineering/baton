@@ -14,14 +14,15 @@ def pre_invocation_sql(+saved: String) -> String:
   "SELECT json_object('injectSteps',CASE WHEN json_array_length(" ++ C.q(saved) ++ ")=0 THEN json('[]') ELSE json_array(json_object('userMessage','Baton input for this turn. Handle the following complete messages:' || char(10) || " ++ message_text_sql(saved) ++ ")) END);"
 
 # The assignment is finished when the owed input is only completion
-# confirmations and the recorded task state is closed. A confirmation that
-# predates later guidance or a new assignment leaves the task open, so its
-# delivery keeps the instruction to continue.
+# confirmations and the session's current request is confirmed and the session
+# is not stopped (task_ended_sql). A confirmation without a matching current
+# request, or one that predates later guidance or a new assignment, does not end
+# the assignment, so its delivery keeps the instruction to continue.
 def confirmations_only_sql(+saved: String) -> String:
   "NOT EXISTS(SELECT 1 FROM json_each(" ++ C.q(saved) ++ ") j WHERE json_extract(j.value,'$.kind')<>'completion-confirmed')"
 
 def stop_instruction_sql(+session: String, +saved: String) -> String:
-  "CASE WHEN " ++ confirmations_only_sql(saved) ++ " AND NOT " ++ C.task_open_sql(C.q(session)) ++ " THEN 'The conductor confirmed your completion request and the assignment is finished. Make no further changes and end your turn.' ELSE 'Continue the work. When the assignment is ready, call completion-request --text SUMMARY with run_command.' END"
+  "CASE WHEN " ++ confirmations_only_sql(saved) ++ " AND " ++ C.task_ended_sql(C.q(session)) ++ " THEN 'The conductor confirmed your completion request and the assignment is finished. Make no further changes and end your turn.' ELSE 'Continue the work. When the assignment is ready, call completion-request --text SUMMARY with run_command.' END"
 
 def stop_sql(+session: String, +saved: String) -> String:
   "SELECT CASE WHEN json_array_length(" ++ C.q(saved) ++ ")>0 THEN json_object('decision','continue','reason','Baton has complete input for this turn:' || char(10) || " ++ message_text_sql(saved) ++ " || char(10) || " ++ stop_instruction_sql(session,saved) ++ ")"
