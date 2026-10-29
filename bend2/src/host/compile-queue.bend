@@ -969,8 +969,8 @@ def record_usage(+attempt: String, pid: U32, sample: U32, growth: U32) -> IO(Uni
     +keydir : String <- IO.pure(String,field(meta,"keydir"))
     active_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(keydir ++ "/active")
     +active : String <- IO.pure(String,peak_text_result(active_result))
-    +token = field(active,"started_ns") ++ "-" ++ field(active,"pid")
-    +state = field(meta,"state_root")
+    +token : String <- IO.pure(String,field(active,"started_ns") ++ "-" ++ field(active,"pid"))
+    +state : String <- IO.pure(String,field(meta,"state_root"))
     now_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.now_seconds()
     +now : String <- IO.pure(String,peak_text_result(now_result))
     usage_text : String <- IO.pure(String,"kb=" ++ U32.show(sample) ++ "\ngrowth_kb=" ++ U32.show(growth) ++ "\nsample_s=" ++ now ++ "\n")
@@ -993,9 +993,9 @@ def watch_heavy_go(+attempt: String, +pid: U32, +start: String,
     supervisor_alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(supervisor, supervisor_start))
     sample_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.session_kb(pid)
     sample_text : String <- IO.pure(String,peak_text_result(sample_result))
-    +sample = status_number(field(sample_text,"kb"))
-    +bigger = U32.is_gt(sample,peak)
-    +next_peak = Bool.pick(U32,bigger,sample,peak)
+    +sample : U32 <- IO.pure(U32,status_number(field(sample_text,"kb")))
+    +bigger : Bool <- IO.pure(Bool,U32.is_gt(sample,peak))
+    +next_peak : U32 <- IO.pure(U32,Bool.pick(U32,bigger,sample,peak))
     meta_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/meta")
     +meta : String <- IO.pure(String,peak_text_result(meta_result))
     +state : String <- IO.pure(String,field(meta,"state_root"))
@@ -1206,7 +1206,7 @@ def claim_add_stats(live: Bool, +text: String, +group: String, stats: ClaimStats
       Bool.pick(IO(ClaimStats), live,
         do IO<ClaimStats>:
           +root : U32 <- IO.pure(U32, status_number(field(text, "root")))
-          +identity = U32.add(root,status_number(field(text,"starttime")))
+          +identity : U32 <- IO.pure(U32,U32.add(root,status_number(field(text,"starttime"))))
           current_text : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.session_kb(root)
           match current_text:
             case Fail{error}:
@@ -1249,7 +1249,7 @@ def admission_claim_file(+state: String, +dir: String, +name: String, +group: St
         usage : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(admission_root(state) ++ "/usage/" ++ name)
         now_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.now_seconds()
         +now_text : String <- IO.pure(String,admission_record_text(now_result))
-        +now = status_number(now_text)
+        +now : U32 <- IO.pure(U32,status_number(now_text))
         IO.pure(ClaimStats,claim_usage_reserve(usage,now,measured)),
       do IO<ClaimStats>:
         removed : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.remove(path)
@@ -1328,14 +1328,14 @@ def admission_outside_claims(+state: String, +guard: U32, +ids: String, now: U32
         IO.pure(Maybe<U32>,None{})
     case Done{+legacy_text}:
       do IO<Maybe<U32>>:
-        +legacy_current = status_number(field(legacy_text,"kb"))
+        +legacy_current : U32 <- IO.pure(U32,status_number(field(legacy_text,"kb")))
         first : ClaimStats <- admission_claims(state,"")
         second : ClaimStats <- admission_claims(state,"")
-        +stable = Bool.and(admission_claims_same(first,second),
-          Bool.and(admission_claims_known(first),admission_claims_known(second)))
-        +known = Bool.and(stable,Bool.and(U32.is_gt(total,0),U32.is_gt(available,0)))
-        +used = U32.add(admission_stats_used(second),legacy_current)
-        +outside = admission_outside_used(total,available,used)
+        +stable : Bool <- IO.pure(Bool,Bool.and(admission_claims_same(first,second),
+          Bool.and(admission_claims_known(first),admission_claims_known(second))))
+        +known : Bool <- IO.pure(Bool,Bool.and(stable,Bool.and(U32.is_gt(total,0),U32.is_gt(available,0))))
+        +used : U32 <- IO.pure(U32,U32.add(admission_stats_used(second),legacy_current))
+        +outside : U32 <- IO.pure(U32,admission_outside_used(total,available,used))
         Bool.pick(IO(Maybe<U32>),known,
           do IO<Maybe<U32>>:
             +uid : U32 <- IO.try(U32,L.CompileQueueLifecycle.uid())
@@ -1361,8 +1361,8 @@ def admission_outside_meminfo(+state: String, +guard: U32, +ids: String, now: U3
         IO.pure(Maybe<U32>,None{})
     case Done{+text}:
       do IO<Maybe<U32>>:
-        +total = status_number(field(text,"total_kb"))
-        +available = status_number(field(text,"available_kb"))
+        +total : U32 <- IO.pure(U32,status_number(field(text,"total_kb")))
+        +available : U32 <- IO.pure(U32,status_number(field(text,"available_kb")))
         legacy_result : Result<&1,&1,U32 & String,String> <- Bool.pick(
           IO(Result<&1,&1,U32 & String,String>),U32.is_gt(legacy_pid,0),
           L.CompileQueueLifecycle.session_kb(legacy_pid),
@@ -1387,7 +1387,7 @@ def admission_outside_cache(+state: String, +guard: U32, +ids: String, now: U32,
       case Done{+text}:
         Bool.pick(IO(Maybe<U32>),admission_cache_fresh(text,now,ids),
           do IO<Maybe<U32>>:
-            +outside = status_number(field(text,"outside_kb"))
+            +outside : U32 <- IO.pure(U32,status_number(field(text,"outside_kb")))
             released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
             IO.pure(Maybe<U32>,Some{outside}),
           admission_outside_refresh(state,guard,ids,now,legacy_pid,stable_set)),
@@ -1405,8 +1405,8 @@ def admission_outside_holder(+state: String, +guard: U32, +ids: String, now: U32
         IO.pure(Maybe<U32>,None{})
     case Done{+text}:
       do IO<Maybe<U32>>:
-        +legacy_pid = status_number(field(text,"pid"))
-        +legacy_ids = ids ++ "legacy=" ++ U32.show(legacy_pid) ++ "\t"
+        +legacy_pid : U32 <- IO.pure(U32,status_number(field(text,"pid")))
+        +legacy_ids : String <- IO.pure(String,ids ++ "legacy=" ++ U32.show(legacy_pid) ++ "\t")
         cache : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(
           admission_root(state) ++ "/observed." ++ U32.show(uid))
         admission_outside_cache(state,guard,legacy_ids,now,legacy_pid,stable_set,cache)
@@ -1421,10 +1421,10 @@ def admission_outside(+state: String) -> IO(Maybe<U32>):
         ids_first : String <- admission_live_names(state,names_first)
         names_second : String <- IO.try(String,L.CompileQueueLifecycle.list_dir(admission_root(state) ++ "/running"))
         ids_second : String <- admission_live_names(state,names_second)
-        +stable_set = Tx.str_eq(ids_first,ids_second)
+        +stable_set : Bool <- IO.pure(Bool,Tx.str_eq(ids_first,ids_second))
         now_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.now_seconds()
         +now_text : String <- IO.pure(String,admission_record_text(now_result))
-        +now = status_number(now_text)
+        +now : U32 <- IO.pure(U32,status_number(now_text))
         +uid : U32 <- IO.try(U32,L.CompileQueueLifecycle.uid())
         holder_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.exclusive_lock_pid(state ++ "/heavy.lock")
         admission_outside_holder(state,guard,ids_second,now,stable_set,uid,holder_result)
@@ -1528,15 +1528,15 @@ def acquire_accounted(~again: (@+attempt: String -> @+keydir: String -> @+state:
       do IO<AdmissionGate>:
         +guard : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(admission_root(state) ++ "/lock"))
         meminfo : String <- IO.try(String, admission_meminfo(state))
-        +available = status_number(field(meminfo,"available_kb"))
-        +total = status_number(field(meminfo,"total_kb"))
+        +available : U32 <- IO.pure(U32,status_number(field(meminfo,"available_kb")))
+        +total : U32 <- IO.pure(U32,status_number(field(meminfo,"total_kb")))
         +stats : ClaimStats <- admission_claims(state,group)
         legacy_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.exclusive_lock_pid(state ++ "/heavy.lock")
-        +legacy_pid = admission_legacy_pid(legacy_result)
+        +legacy_pid : U32 <- IO.pure(U32,admission_legacy_pid(legacy_result))
         record_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(keydir ++ "/peak")
         record : String <- IO.pure(String, admission_record_text(record_result))
-        +history = status_number(field(record,"peak_kb"))
-        +need = admission_need(history,stats)
+        +history : U32 <- IO.pure(U32,status_number(field(record,"peak_kb")))
+        +need : U32 <- IO.pure(U32,admission_need(history,stats))
         +fits : Bool <- IO.pure(Bool, Bool.and(Bool.and(U32.is_gt(total,0),U32.is_gt(available,0)), admission_can_start(kind,history,need,stats,available,legacy_pid)))
         Bool.pick(IO(AdmissionGate), fits,
           do IO<AdmissionGate>:
