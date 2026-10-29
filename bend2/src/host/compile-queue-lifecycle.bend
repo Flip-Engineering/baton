@@ -32,7 +32,7 @@ def CompileQueueLifecycle.lock_open(path: String) -> IO(Result<&1,&1,U32 & Strin
 def CompileQueueLifecycle.lock_acquire(path: String) -> IO(Result<&1,&1,U32 & String,U32>):
   P.HostPosix.lock_acquire(path)
 
-def CompileQueueLifecycle.lock_try(path: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32>>):
+def CompileQueueLifecycle.lock_try(path: String) -> IO(Result<&1,&1,U32 & String,Maybe<&2,U32>>):
   P.HostPosix.lock_try(path)
 
 def CompileQueueLifecycle.held(path: String) -> IO(Result<&1,&1,U32 & String,U32>):
@@ -44,7 +44,7 @@ def CompileQueueLifecycle.create_locked(path: String, text: String) -> IO(Result
 def CompileQueueLifecycle.mkdir_sticky(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   P.HostPosix.mkdir_sticky(path)
 
-def CompileQueueLifecycle.lock_shared_try(path: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32>>):
+def CompileQueueLifecycle.lock_shared_try(path: String) -> IO(Result<&1,&1,U32 & String,Maybe<&2,U32>>):
   P.HostPosix.lock_shared_try(path)
 
 def CompileQueueLifecycle.exclusive_lock_pid(path: String) -> IO(Result<&1,&1,U32 & String,String>):
