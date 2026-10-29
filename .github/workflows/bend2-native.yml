@@ -84,7 +84,7 @@ name: bend2-native-development
       retained_compiler_archive_sha256:
         description: 'Exact SHA256 of the selected pinned compiler archive'
         required: false
-        default: '4e5fe7d8051a226c9db2918f26390d7455e0623757099463fd23ddbf7172d24c'
+        default: '5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3'
         type: string
       retained_ccache:
         description: 'Measured private ccache wrapper on the homelab; leave blank for direct native compilation'
@@ -139,7 +139,7 @@ jobs:
         shell: bash
         env:
           BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-unit-cache-ctor-20261029/bend-2.0.25-linux-x64-compiler-main-unit-cache-ctor-20261029.tar.gz' }}
-          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '4e5fe7d8051a226c9db2918f26390d7455e0623757099463fd23ddbf7172d24c' }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3' }}
           BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
           BATON2_LINUX_RUNNER: homelab
         run: |
@@ -394,7 +394,7 @@ jobs:
         shell: bash
         env:
           BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-unit-cache-ctor-20261029/bend-2.0.25-linux-x64-compiler-main-unit-cache-ctor-20261029.tar.gz' }}
-          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '4e5fe7d8051a226c9db2918f26390d7455e0623757099463fd23ddbf7172d24c' }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3' }}
           BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
           BATON2_LINUX_RUNNER: homelab
         run: |
@@ -539,7 +539,7 @@ jobs:
       BUN_JSC_maxPerThreadStackUsage: '67108864'
       BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.target_commit }}
       BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-unit-cache-ctor-20261029/bend-2.0.25-linux-x64-compiler-main-unit-cache-ctor-20261029.tar.gz' }}
-      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '4e5fe7d8051a226c9db2918f26390d7455e0623757099463fd23ddbf7172d24c' }}
+      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3' }}
     steps:
       - name: Validate exact source commit
         shell: bash
@@ -661,7 +661,7 @@ jobs:
     env:
       BATON2_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || '' }}
       BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-unit-cache-ctor-20261029/bend-2.0.25-linux-x64-compiler-main-unit-cache-ctor-20261029.tar.gz' }}
-      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '4e5fe7d8051a226c9db2918f26390d7455e0623757099463fd23ddbf7172d24c' }}
+      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3' }}
       CC: /usr/bin/clang-19
     steps:
       - name: Validate generated C reuse selection

@@ -18,7 +18,7 @@ import traceback
 
 ARCHIVE_SHA = '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4'
 COMPILER_ARCHIVES = {
-    '4e5fe7d8051a226c9db2918f26390d7455e0623757099463fd23ddbf7172d24c': {
+    '5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3': {
         'name': 'Bend 2.0.25 with emitted C unit cache and constructor shadow handling',
         'official_release_artifact': False,
         'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
