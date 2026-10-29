@@ -3,6 +3,7 @@
 // bugs ARE expected. It will take some time for the compiler to be stable.
 
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { createHash } from "node:crypto";
 
 import * as Bend from "./bend.ts";
@@ -4604,6 +4605,14 @@ export function unit_emitter(directory: string,
   };
 }
 
+function copy_tree(source: string, destination: string): void {
+  fs.mkdirSync(destination);
+  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    const from = path.join(source, entry.name), to = path.join(destination, entry.name);
+    if (entry.isDirectory()) copy_tree(from, to); else fs.copyFileSync(from, to);
+  }
+}
+
 export async function compile_checked_to(directory: string, write: (chunk: string) => void,
   executor: Parameters<typeof Fact.solve_async<Unit>>[1]): Promise<void> {
   const program = compilation(open_checked(directory), write), request = program.next();
@@ -4861,7 +4870,7 @@ function* compilation(context: Prepared, write: (chunk: string) => void):
   Object.assign(cb, solved.facts);
   if (DIAGNOSTICS) {
     const retained = directory + ".facts";
-    fs.cpSync(fact_directory, retained, { recursive: true });
+    copy_tree(fact_directory, retained);
     diagnostic("facts.history", { path: retained,
       files: fs.readdirSync(retained).map(name => ({ name, bytes: fs.statSync(retained + "/" + name).size })) });
   }
