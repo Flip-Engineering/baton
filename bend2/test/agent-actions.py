@@ -14,6 +14,9 @@ import receive as receive_fixture
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
+# A focused executable built from bend2/test/confirm-focused.bend runs the
+# contextual actions; the full executable prepares the database.
+FOCUSED = pathlib.Path(os.environ['BATON2_FOCUSED_BINARY']) if 'BATON2_FOCUSED_BINARY' in os.environ else EXE
 
 
 class AgentActions(unittest.TestCase):
@@ -65,13 +68,13 @@ class AgentActions(unittest.TestCase):
             for process in receive_fixture.Receive.owned_processes(self)),
             'The fixture database owner did not exit after shutdown.')
 
-    def invoke(self, *args, cwd=None, success=True, environment=None):
+    def invoke(self, *args, cwd=None, success=True, environment=None, exe=None):
         env = os.environ.copy()
         for key in ('BATON_DATABASE', 'BATON_SESSION', 'CODEX_THREAD_ID'):
             env.pop(key, None)
         if environment:
             env.update(environment)
-        result = subprocess.run([str(EXE), *map(str, args)], cwd=cwd,
+        result = subprocess.run([str(exe or EXE), *map(str, args)], cwd=cwd,
                                 env=env, capture_output=True, text=True)
         if success:
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -83,7 +86,7 @@ class AgentActions(unittest.TestCase):
         return self.invoke(self.db, *args, success=success)
 
     def action(self, session, *args, success=True):
-        return self.invoke(self.db, 'as', session, *args, success=success)
+        return self.invoke(self.db, 'as', session, *args, success=success, exe=FOCUSED)
 
     def stored_messages(self):
         with sqlite3.connect(self.db) as db:
@@ -767,7 +770,7 @@ class AgentActions(unittest.TestCase):
         return self.action(name, 'completion-request', '--text', text)[0]['id']
 
     def completion(self, name):
-        return self.legacy('session', name)['taskCompletion']
+        return self.action('root', 'session', name)['taskCompletion']
 
     def stop_rows(self):
         with sqlite3.connect(self.db) as db:
@@ -778,6 +781,7 @@ class AgentActions(unittest.TestCase):
         request = self.requested('worker-a')
         before = self.legacy('session', 'worker-a')
         self.assertFalse(self.completion('worker-a')['ended'])
+        delivered = self.endpoint_output()
         rows = self.action('root', 'completion-confirmed', '--to', 'worker-a')
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['status'], 'admitted')
@@ -790,6 +794,18 @@ class AgentActions(unittest.TestCase):
         after = self.legacy('session', 'worker-a')
         for key in ('native', 'endpoint', 'harness', 'model', 'workspace', 'parent'):
             self.assertEqual(after[key], before[key])
+        # The confirmation starts no turn and the session reports the cause.
+        self.assertEqual(self.endpoint_output(), delivered)
+        projected = self.action('root', 'session', 'worker-a')
+        self.assertEqual(projected['blockedCause'], 'assignment-ended')
+        self.assertEqual(projected['wake']['pending'], 0)
+        # A newer assignment reopens the same conversation.
+        self.legacy('message', 'reopen-assignment', 'root', 'worker-a', 'task', 'More work.')
+        reopened = self.action('root', 'session', 'worker-a')
+        self.assertFalse(reopened['taskCompletion']['ended'])
+        self.assertTrue(reopened['taskCompletion']['open'])
+        self.assertNotEqual(reopened['blockedCause'], 'assignment-ended')
+        self.assertEqual(reopened['native'], before['native'])
 
     def test_raw_completion_confirmed_message_ends_the_assignment_the_same_way(self):
         request = self.requested('worker-a')
@@ -818,11 +834,13 @@ class AgentActions(unittest.TestCase):
         stored = {row[0]: row for row in self.stored_messages()}
         self.assertLess(list(stored).index('decision-1'),
                         list(stored).index('decision-1:next-assignment'))
-        # Repeating the decision stores nothing: the request is no longer current.
+        # Repeating the exact decision is a replay: both messages are answered
+        # again and nothing new is stored.
         before = self.stored_messages()
         repeated = self.action('root', 'completion-confirmed', '--to', 'worker-a',
                                '--request', request, '--id', 'decision-1', '--next', text)
-        self.assertEqual(repeated[0]['status'], 'refused')
+        self.assertEqual([row['id'] for row in repeated],
+                         ['decision-1', 'decision-1:next-assignment'])
         self.assertEqual(self.stored_messages(), before)
         # The next assignment completes through the same decision, from a file.
         second = self.action('worker-a', 'completion-request', '--text', 'Next complete.')[0]['id']
@@ -833,6 +851,21 @@ class AgentActions(unittest.TestCase):
         self.assertEqual(rows[0]['delivery']['body'], second)
         self.assertEqual(rows[1]['delivery']['body'], file.read_text())
         self.assertFalse(self.completion('worker-a')['ended'])
+
+    def test_conflicting_derived_task_identity_admits_neither_message(self):
+        request = self.requested('worker-a')
+        self.legacy('message', 'decision-2:next-assignment', 'root', 'worker-a',
+                    'report', 'An unrelated stored message owns the derived identity.')
+        before = self.stored_messages()
+        rows = self.action('root', 'completion-confirmed', '--to', 'worker-a',
+                           '--request', request, '--id', 'decision-2', '--next', 'Next.')
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['status'], 'refused')
+        self.assertEqual(self.stored_messages(), before)
+        state = self.completion('worker-a')
+        self.assertEqual(state['requestId'], request)
+        self.assertFalse(state['confirmed'])
+        self.assertFalse(state['ended'])
 
     def test_unreadable_or_empty_next_assignment_stores_nothing(self):
         self.requested('worker-a')
