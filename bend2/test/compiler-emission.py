@@ -294,5 +294,42 @@ def safe() -> U32:
                     self.assertEqual(result.stdout.strip(), expected)
 
 
+    def test_list_route_peeled(self):
+        with tempfile.TemporaryDirectory(prefix='bend-emission-') as temporary:
+            directory = Path(temporary)
+            c = directory / 'main.c'
+            run = subprocess.run([self.bun, '--smol', str(SOURCE / 'main.ts'),
+                                  str(FIXTURES / 'list_route_peeled.bend'), '-o', str(c)],
+                                 capture_output=True, text=True, env={
+                                     **os.environ, 'BEND_NO_TELEMETRY': '1'})
+            self.assertEqual(run.returncode, 0, run.stderr)
+            build = subprocess.run([self.cc, '-std=c11', '-O1', '-w', str(c),
+                                    '-lm', '-lpthread', '-o', str(directory / 'main')],
+                                   capture_output=True, text=True)
+            self.assertEqual(build.returncode, 0, build.stderr)
+            shapes = [
+                ([], 'missing'),
+                (['exe'], 'missing'),
+                (['exe', 'db'], 'legacy|7|verb|p|exe|db|'),
+                (['exe', 'db', 'x'], 'legacy|7|verb|p|exe|db|x,'),
+                (['exe', 'db', '--project-settings', 'q'], 'settings|7|verb|p|exe|-|q'),
+                (['exe', 'db', '--project-settings'], 'legacy|7|verb|p|exe|db|--project-settings,'),
+                (['exe', 'db', '--project-settings', 'q', 'r'],
+                 'legacy|7|verb|p|exe|db|--project-settings,q,r,'),
+                (['exe', 'db', 'agent-contextual-input', 's'],
+                 'contextual|7|verb|p|exe|db|s;'),
+                (['exe', 'db', 'agent-contextual-input', 's', 'a', 'b'],
+                 'contextual|7|verb|p|exe|db|s;a,b,'),
+                (['exe', 'db', 'agent-contextual-input'],
+                 'legacy|7|verb|p|exe|db|agent-contextual-input,'),
+            ]
+            for args, expected in shapes:
+                with self.subTest(args=args):
+                    result = subprocess.run([str(directory / 'main'), *args],
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.split('\n')[:2], [expected, expected])
+
+
 if __name__ == '__main__':
     unittest.main()
