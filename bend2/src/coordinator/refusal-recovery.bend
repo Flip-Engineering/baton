@@ -25,10 +25,13 @@ def stage_continue() -> String:
 def stage_flush() -> String:
   "fork-and-flush"
 
-def number(value: String) -> U32:
-  match U32.read(value):
+def number_read(value: Maybe<&2,U32>) -> U32:
+  match value:
     case Some{n}: n
     case None{}: 0
+
+def number(value: String) -> U32:
+  number_read(U32.read(value))
 
 def string_or_die(what: String, result: Result<&1,&1,U32 & String,String>) -> IO(String):
   match result:
