@@ -206,6 +206,42 @@ exact compatibility.
 `continue-task` sends an explicit continuation through the existing assignment
 operation. Each action accepts `--session SESSION`.
 
+## Conductor succession (#1257)
+
+`succeed --from PREDECESSOR [--session SUCCESSOR]` runs as the successor
+(omitted `--session` selects the current actor). The predecessor must have a
+terminal stop, and the successor must have no stop and either share the
+predecessor's parent or be an ancestor of the predecessor. A successor that is a
+descendant of the predecessor is refused. One transaction then:
+
+- sets the successor as parent of every session whose parent was the
+  predecessor, including sessions that are themselves stopped;
+- changes the recipient of the predecessor's input that has no recorded read to
+  the successor. Message ID, sender, kind and body are unchanged. Read input,
+  input the predecessor addressed to itself and confirmed completion requests
+  stay with the predecessor;
+- sends each child with an open assignment guidance from the successor. The
+  guidance is that child's current assignment, so the child's completion
+  request goes to the successor. A child with an earlier unconfirmed request
+  requests completion again;
+- records a `conductor-succession` report from the successor to its own report
+  recipient, listing the children, the continued assignments and the moved
+  input.
+
+Baton then wakes the successor and each child that received guidance. Repeating
+the command moves nothing further.
+
+Reports that a session sends to its parent, including turn-end failure reports,
+go to the nearest ancestor with no terminal stop. The recorded parent receives
+them when every ancestor is stopped. `resume --lift-stop` on an ancestor routes
+later reports to it again.
+
+Stopping a session that has children with no terminal stop sends a
+`session-ended-with-children` report to the same nearest live ancestor. It lists
+each child, whether its assignment is open and how many inputs it is owed. The
+ancestor can run `succeed --from SESSION` to adopt them, start a replacement and
+run it there, or stop the children.
+
 ```sh
 printf '%s\n' 'Review the assigned source and report the result.' |
   baton turn --command /path/to/harness --file - --output-log turn.jsonl
