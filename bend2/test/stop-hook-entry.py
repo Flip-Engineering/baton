@@ -188,9 +188,17 @@ class StopHook(unittest.TestCase):
         self.assertIn('Assignment dispatch:assignment is still open', decision['reason'])
         self.assertIn('completion-request --text SUMMARY', decision['reason'])
 
-    def test_completion_request_lets_the_turn_end(self):
+    def test_completion_request_keeps_the_turn_open_until_conductor_confirmation(self):
         self.request()
-        self.assertIsNone(self.hook())
+        pending = self.hook()
+        self.assertEqual(pending['decision'], 'block')
+        self.assertIn('Completion request message:worker:request', pending['reason'])
+        self.assertIn('Continue the assignment', pending['reason'])
+        self.assertNotIn('acknowledge', pending['reason'].lower())
+
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES('confirm','coordinator','worker','completion-confirmed','message:worker:request',NULL)")
+        self.read('confirm')
+        self.assertIsNone(self.hook(active=True))
 
     def test_without_the_launch_environment_the_hook_does_nothing(self):
         self.owe()
@@ -514,7 +522,7 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         self.request()
         self.assertIsNone(self.codex_tool())
 
-    def codex_admitted(self, body, session='worker', ident='admitted-message', kind='question', sender='coordinator'):
+    def codex_admitted(self, body, session='worker', ident='admitted-message', kind='question', sender='coordinator', followup='confirm'):
         directory = self.home / ('codex-attempt-' + session)
         self.db.execute("UPDATE sessions SET harness='codex',native='thread-1' WHERE id=?", (session,))
         self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES(?,'attempt-1','retained',?,'running')", (session, str(directory)))
@@ -528,25 +536,49 @@ def hook(event, **fields):
     if result.returncode:
         raise RuntimeError(result.stdout + result.stderr)
     return json.loads(result.stdout) if result.stdout.strip() else None
-def reads():
+def reads(ident):
     with sqlite3.connect(config['db']) as db:
-        return db.execute("SELECT attempt,native FROM message_reads WHERE message=?", (config['message'],)).fetchall()
+        return db.execute("SELECT attempt,native FROM message_reads WHERE message=?", (ident,)).fetchall()
 results = {}
 results['quiet'] = hook('PostToolUse', tool_name='Bash', tool_input={}, tool_response='')
 with sqlite3.connect(config['db']) as db:
     db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)", (config['message'],config['sender'],config['session'],config['kind'],pathlib.Path(config['bodyPath']).read_text(encoding='utf-8')))
-results['unread_before'] = reads()
+results['unread_before'] = reads(config['message'])
 results['stop_held'] = hook('Stop', stop_hook_active=False, last_assistant_message='Done.')
-results['read_after_stop'] = reads()
+results['read_after_stop'] = reads(config['message'])
 results['injected'] = hook('PostToolUse', tool_name='Bash', tool_input={}, tool_response='')
-results['read_after'] = reads()
+results['read_after'] = reads(config['message'])
 results['again'] = hook('PostToolUse', tool_name='Bash', tool_input={}, tool_response='')
 results['stop_after'] = hook('Stop', stop_hook_active=True, last_assistant_message='Done.')
+if config['session'] == 'worker':
+    action = [config['binary'], config['followup'], config['db']]
+    if config['followup'] == 'guide':
+        action.append(config['followup_body'])
+    applied = subprocess.run(action, env=env, capture_output=True, text=True)
+    if applied.returncode:
+        raise RuntimeError(applied.stdout + applied.stderr)
+    with sqlite3.connect(config['db']) as db:
+        row = db.execute("SELECT id,kind,body FROM messages WHERE recipient='worker' AND kind=? ORDER BY seq DESC LIMIT 1",
+                         ('completion-confirmed' if config['followup'] == 'confirm' else 'guidance',)).fetchone()
+    if row is None:
+        raise RuntimeError('conductor follow-up was not recorded')
+    followup_id, followup_kind, followup_body = row
+    results['followup_id'] = followup_id
+    results['followup_kind'] = followup_kind
+    results['followup_body'] = followup_body
+    results['followup_stop'] = hook('Stop', stop_hook_active=True, last_assistant_message='Done.')
+    results['followup_read_before'] = reads(followup_id)
+    results['followup_input'] = hook('PostToolUse', tool_name='Bash', tool_input={}, tool_response='')
+    results['followup_read_after'] = reads(followup_id)
+    results['final_stop'] = hook('Stop', stop_hook_active=True, last_assistant_message='Done.')
 print(json.dumps(results), flush=True)
 ''')
         (self.home / 'codex-body.txt').write_text(body, encoding='utf-8')
+        (self.home / 'codex-followup.txt').write_text('Please add the missing evidence and continue.', encoding='utf-8')
         config = {'db': self.path, 'directory': str(directory), 'bodyPath': str(self.home / 'codex-body.txt'),
                   'session': session, 'message': ident, 'kind': kind, 'sender': sender,
+                  'binary': self.binary, 'followup': followup,
+                  'followup_body': (self.home / 'codex-followup.txt').read_text(encoding='utf-8'),
                   'Stop': self.codex_handler('Stop')[1]['command'], 'PostToolUse': self.codex_handler('PostToolUse')[1]['command']}
         if session == 'worker':
             self.request()
@@ -566,11 +598,27 @@ print(json.dumps(results), flush=True)
             self.assertIn(body, results['injected']['hookSpecificOutput']['additionalContext'])
             self.assertEqual(results['read_after'], [['attempt-1', 'thread-1']])
             self.assertIsNone(results['again'])
-            self.assertIsNone(results['stop_after'])
+            if session == 'worker':
+                self.assertEqual(results['stop_after']['decision'], 'block')
+                self.assertIn('awaiting the conductor decision', results['stop_after']['reason'])
+                self.assertEqual(results['followup_stop']['decision'], 'block')
+                self.assertIn('Message (%s) from coordinator [id: %s]:' %
+                              (results['followup_kind'], results['followup_id']),
+                              results['followup_stop']['reason'])
+                self.assertEqual(results['followup_read_before'], [])
+                self.assertIn(results['followup_body'],
+                              results['followup_input']['hookSpecificOutput']['additionalContext'])
+                self.assertEqual(results['followup_read_after'], [['attempt-1', 'thread-1']])
+                if followup == 'confirm':
+                    self.assertIsNone(results['final_stop'])
+                else:
+                    self.assertEqual(results['final_stop']['decision'], 'block')
+                    self.assertIn('is still open and you have sent no completion request',
+                                  results['final_stop']['reason'])
+            else:
+                self.assertIsNone(results['stop_after'])
         finally:
             subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True)
-        if session == 'worker':
-            self.assertIsNone(self.codex_stop(True))
         return results
 
     def test_codex_admitted_tool_loop_records_the_read_and_then_allows_stop(self):
@@ -587,6 +635,15 @@ print(json.dumps(results), flush=True)
         self.assertIn('Message (completion-request) from worker [id: request:worker:1]:\n' + body,
                       results['injected']['hookSpecificOutput']['additionalContext'])
         self.assertEqual(results['read_after'], [['attempt-1', 'thread-1']])
+
+    def test_codex_returned_guidance_reopens_work_and_uses_the_normal_read_hook(self):
+        results = self.codex_admitted('Work summary for review.', followup='guide')
+        self.assertEqual(results['followup_kind'], 'guidance')
+        self.assertEqual(results['followup_read_before'], [])
+        self.assertIn(results['followup_body'],
+                      results['followup_input']['hookSpecificOutput']['additionalContext'])
+        self.assertEqual(results['followup_read_after'], [['attempt-1', 'thread-1']])
+        self.assertIn('completion-request --text SUMMARY', results['final_stop']['reason'])
 
 
 if __name__ == '__main__':
