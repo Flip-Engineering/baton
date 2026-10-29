@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 
 const root = path.resolve(process.argv[2] ?? path.join(import.meta.dir, "../../.."));
 const source = process.env.BEND_COMPILER_SOURCE ?? path.join(root, "bend2/compiler/upstream");
@@ -99,6 +100,24 @@ try {
     await assert.rejects(Bend.book_load(book, f.entry, "", seen, undefined,
       () => { throw cause; }), error => error === cause);
     assert.deepEqual(book.order, ["main"]); assert.equal(seen.get(f.entry), "");
+  });
+
+  await test("checkup preserves the seeded prelude's captured source", async () => {
+    const f = fixture("seeded-checkup", { "dep.bend": "import Base\n\ndef value() -> U32:\n  42\n",
+      "main.bend": "import ./dep.bend as D\n\ndef main() -> U32:\n  D.value()\n" });
+    const argv = [process.execPath, "--smol", path.join(source, "main.ts"), f.entry, "--checkup"];
+    const stdout = path.join(f.own, "stdout"), stderr = path.join(f.own, "stderr");
+    const out = fs.openSync(stdout, "w"), err = fs.openSync(stderr, "w");
+    const started = new Date().toISOString();
+    const child = spawn(argv[0], argv.slice(1), { stdio: ["ignore", out, err],
+      env: { ...process.env, BEND_NO_TELEMETRY: "1" } });
+    fs.closeSync(out); fs.closeSync(err);
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject); child.once("close", resolve);
+    });
+    fs.writeFileSync(path.join(f.own, "process-result.json"), JSON.stringify({
+      argv, pid: child.pid, started, ended: new Date().toISOString(), code, signal: child.signalCode }));
+    assert.equal(code, 0, fs.readFileSync(stderr, "utf8")); assert.equal(child.signalCode, null);
   });
 
   await test("the default front end seals physical module origins", async () => {
