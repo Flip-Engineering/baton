@@ -417,9 +417,9 @@
       "sha256": "3c30e77770e35cf1c62a7ad28c2eb40d5903651e2c1a75dba2dd6a874095cddc"
     },
     {
-      "bytes": 5825,
+      "bytes": 5996,
       "path": "worker.ts",
-      "sha256": "4129ec41d92658404825cdc9c3e5ae9979cbea8ff3e8d55aa16d34e71fff5105"
+      "sha256": "64f22d4203bee6b2a5caf5726c84f89613bda541acd36cd0abd05b8d6b7a19d3"
     }
   ],
   "license": {
