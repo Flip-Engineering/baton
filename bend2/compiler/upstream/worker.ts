@@ -20,6 +20,22 @@ function result(file: string, value: unknown): void {
 }
 function send(value: unknown): void { process.stdout.write(JSON.stringify(value) + "\n"); }
 
+// Resident size and its high-water mark in bytes. Linux can reset the mark, so
+// a reading after reset_peak() covers only the time since that reset.
+function resident(): { rss: number; peak: number } {
+  if (process.platform === "linux") {
+    const status = fs.readFileSync("/proc/self/status", "utf8");
+    const field = (name: string): number => Number(new RegExp("^" + name + ":\\s+(\\d+) kB$", "m").exec(status)?.[1]) * 1024;
+    const rss = field("VmRSS"), peak = field("VmHWM");
+    if (rss > 0 && peak > 0) return { rss, peak: Math.max(rss, peak) };
+  }
+  return { rss: process.memoryUsage().rss, peak: Math.max(process.memoryUsage().rss, process.resourceUsage().maxRSS * 1024) };
+}
+function reset_peak(): boolean {
+  if (process.platform !== "linux") return false;
+  try { fs.writeFileSync("/proc/self/clear_refs", "5"); return true; } catch { return false; }
+}
+
 const [phase, directory, argument] = process.argv.slice(2);
 if (phase === "front") {
   const request = JSON.parse(fs.readFileSync(argument, "utf8"));
@@ -40,13 +56,17 @@ if (phase === "front") {
   let inputs: BodyInput[] = [];
   const before = performance.now(), emit = Comp.unit_emitter(directory, value => { inputs = value; });
   let last: { digest: string; facts: Fact.MutableFacts } | null = null;
+  const startup = resident();
   send({ kind: "ready", pid: process.pid, startup_ms: performance.now() - before,
+    rss: startup.rss, peak: startup.peak,
     memory: process.memoryUsage(), usage: process.resourceUsage() });
+  let high = startup.peak;
   const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   for await (const line of input) {
     const request = JSON.parse(line);
     if (request.kind === "stop") { input.close(); break; }
     const started = new Date().toISOString(), before = performance.now();
+    const exact = reset_peak(), begin = resident();
     try {
       if (last?.digest !== request.snapshot_digest) {
         const data = JSON.parse(fs.readFileSync(request.snapshot, "utf8"));
@@ -55,7 +75,12 @@ if (phase === "front") {
         last = { digest: request.snapshot_digest, facts };
       }
       const trace = Fact.trace(), emitted = emit(request.unit, request.facts_only, last!.facts, trace);
+      // The unit's own high-water mark. Without a reset, a mark that did not
+      // rise during the unit leaves its peak unknown below the earlier mark.
+      const end = resident(), peak = exact ? end.peak : end.peak > high ? end.peak : Math.max(begin.rss, end.rss);
+      high = Math.max(high, end.peak);
       result(request.result, { ok: true, unit: request.unit, facts_only: request.facts_only,
+        rss_before: begin.rss, rss_peak: peak, rss_after: end.rss, rss_peak_exact: exact,
         trace: trace.events, lend: [...emitted.lend], masks: emitted.masks,
         refs: [...emitted.refs], edges: emitted.edges, inputs, fragment: emitted.code.directory,
         pid: process.pid, started, ended: new Date().toISOString(), duration_ms: performance.now() - before,

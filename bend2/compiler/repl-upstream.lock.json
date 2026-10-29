@@ -2,9 +2,9 @@
   "compiler_archive_sha256": "5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3",
   "files": [
     {
-      "bytes": 6569,
+      "bytes": 9081,
       "path": "admission.ts",
-      "sha256": "0b30abca45755b1661d9b57d1890128b53d3e2f4402b7003128974ad69f69995"
+      "sha256": "77ec435fa73a3ebf19011593807b676d4ef18c53c214e293eaca47a81ef4015f"
     },
     {
       "bytes": 66363,
@@ -22,9 +22,9 @@
       "sha256": "acadbc8104021e3733c5591fc038db1f482bf181870014a820ec1872ec17012a"
     },
     {
-      "bytes": 12287,
+      "bytes": 14636,
       "path": "driver.ts",
-      "sha256": "340e958103be4a5b418ebdf826799195f1e3b17d7ad1812396be7879002231f1"
+      "sha256": "bfc15b44e0768ddb91f1824f09345dd944dac1c42d0ae4ff27d98c439fb73f9b"
     },
     {
       "bytes": 351,
@@ -417,9 +417,9 @@
       "sha256": "04e4ff50966d034bb6b02ce7d3bbb2caddfa4a6b2620d8c8ff500bd1a973f97e"
     },
     {
-      "bytes": 4308,
+      "bytes": 5733,
       "path": "worker.ts",
-      "sha256": "66cd1c5e89c02ae09f8a4630684a8ade80ec28d701d9ace5ad6bba38e4dcb301"
+      "sha256": "fab3bbf7049650dd1765b281d7f5e923aa7982c98ba4449ad5497a5bf676d648"
     }
   ],
   "license": {

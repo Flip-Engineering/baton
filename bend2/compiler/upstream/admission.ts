@@ -3,9 +3,20 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 
+// peak: bytes a unit added to its worker's resident size at the unit's high-water mark.
+// metadata: bytes the coordinator added while it ingested the unit's result.
 export type Profile = { peak: number; metadata: number };
 export type Operation<T> = { pid: () => number | undefined; metadata: () => number | null;
   complete: Promise<{ value: T; profile: Profile }> };
+// The worker processes that run the units of one compilation phase.
+export interface Workers {
+  // The idle worker the next unit reuses, or null when the next unit starts a new process.
+  next(): { pid: number | undefined } | null;
+  // The largest resident size a worker reached while it started, or null before any worker has.
+  baseline(): number | null;
+  // Stop one idle worker other than the next one. False when no such worker exists.
+  retire(): Promise<boolean>;
+}
 type Observe = (event: string, details: Record<string, unknown>) => void;
 
 function available(): { bytes: number | null; source: string; limits?: unknown[] } {
@@ -35,7 +46,7 @@ function available(): { bytes: number | null; source: string; limits?: unknown[]
   return { bytes, source: "MemAvailable", limits };
 }
 
-function resident(pid: number | undefined): number | null {
+export function resident(pid: number | undefined): number | null {
   if (pid === undefined) return null;
   try {
     if (process.platform === "linux") {
@@ -47,24 +58,27 @@ function resident(pid: number | undefined): number | null {
   } catch { return null; }
 }
 
-// Profiles are observations from completed units in this compilation. New
-// units finish their measurement before another unit is admitted.
+// Profiles are observations from completed units in this compilation. A unit
+// without a profile is forecast at the largest growth any unit has shown so
+// far, including the growth of units that are still running. The first unit of
+// a compilation has nothing to be forecast from and runs alone.
 export class Admission {
   private profiles = new Map<string, Profile>();
+  private largest: Profile | undefined;
   constructor(private observe: Observe) {}
 
   async run<J, T>(jobs: J[], key: (job: J) => string,
-    execute: (job: J) => Operation<T>): Promise<T[]> {
+    execute: (job: J) => Operation<T>, workers: Workers): Promise<T[]> {
     type Completed = { index: number; value?: T; profile?: Profile; error?: unknown };
-    type Active = { key: string; forecast: Profile | undefined;
+    type Active = { key: string; forecast: Profile | undefined; started: number; ceiling: number;
       operation: Operation<T>; complete: Promise<Completed> };
     const active = new Map<number, Active>(), values: T[] = new Array(jobs.length);
     const failures: unknown[] = [];
-    let next = 0;
-    const admit = (): boolean => {
-      const name = key(jobs[next]), profile = this.profiles.get(name);
+    let next = 0, plan: { forecast: Profile | undefined; started: number; ceiling: number } | undefined;
+    const evaluate = (): { allowed: boolean; limit: "memory" | "other" | null } => {
+      const name = key(jobs[next]), measured = this.profiles.get(name);
       const memory = available(), cpus = os.availableParallelism();
-      let growth = 0, readable = true, measuring = false;
+      let growth = 0, readable = true, measuring = false, observed = 0;
       const residents: { key: string; pid: number | undefined; resident: number | null;
         forecast: Profile | undefined; metadata_ready: boolean }[] = [];
       for (const running of active.values()) {
@@ -73,33 +87,54 @@ export class Admission {
         residents.push({ key: running.key, pid, resident: rss, forecast: running.forecast, metadata_ready });
         if (running.forecast === undefined) measuring = true;
         if (rss === null) readable = false;
-        else if (running.forecast) growth += Math.max(0, running.forecast.peak - rss)
-          + (metadata_ready ? 0 : running.forecast.metadata);
+        else if (running.forecast) {
+          growth += Math.max(0, running.ceiling - rss) + (metadata_ready ? 0 : running.forecast.metadata);
+          observed = Math.max(observed, rss - running.started);
+        }
       }
-      const need = profile === undefined ? null : profile.peak + profile.metadata;
-      const fits = profile !== undefined && !measuring && readable && memory.bytes !== null
-        && need! + growth <= memory.bytes && active.size < cpus;
+      const forecast = measured ?? (this.largest === undefined ? undefined
+        : { peak: Math.max(this.largest.peak, observed), metadata: this.largest.metadata });
+      // A unit grows from the resident size its worker has when the unit starts:
+      // the idle worker's, or the size workers reach while starting.
+      const reuse = workers.next(), baseline = workers.baseline();
+      const origin = reuse === null ? baseline : resident(reuse.pid) ?? 0;
+      const need = forecast === undefined || origin === null ? null
+        : (reuse === null ? origin : 0) + forecast.peak + forecast.metadata;
+      const room = need !== null && !measuring && readable && memory.bytes !== null;
+      const fits_memory = room && need! + growth <= memory.bytes!;
+      const fits = fits_memory && active.size < cpus;
       // The queue has admitted this compilation. Its next solitary unit runs
       // to its actual result; external memory pressure creates no parked job.
       const allowed = active.size === 0 || fits;
-      this.observe("admission", { key: name, allowed, measuring: profile === undefined,
-        cpus, available: memory, reserved_growth: growth, need, residents,
-        coordinator: process.memoryUsage() });
-      return allowed;
+      plan = { forecast, started: origin ?? 0, ceiling: (origin ?? 0) + (forecast?.peak ?? 0) };
+      this.observe("admission", { key: name, allowed, measuring: measured === undefined,
+        forecast, cpus, available: memory, reserved_growth: growth, need, residents,
+        reuse: reuse !== null, baseline, coordinator: process.memoryUsage() });
+      return { allowed, limit: allowed || fits ? null : room && !fits_memory ? "memory" : "other" };
+    };
+    // Memory held by idle workers is returned before a unit waits for it.
+    const admit = async (): Promise<boolean> => {
+      for (;;) {
+        const decision = evaluate();
+        if (decision.limit !== "memory") return decision.allowed;
+        const before = workers.next();
+        if (!await workers.retire()) return false;
+        this.observe("retire", { kept: before?.pid });
+      }
     };
     const start = (index: number): void => {
-      const name = key(jobs[index]), forecast = this.profiles.get(name);
+      const name = key(jobs[index]), { forecast, started, ceiling } = plan!;
       try {
         const operation = execute(jobs[index]);
         const complete = operation.complete.then(({ value, profile }) => ({ index, value, profile }),
           error => ({ index, error }));
-        active.set(index, { key: name, forecast, operation, complete });
+        active.set(index, { key: name, forecast, started, ceiling, operation, complete });
         this.observe("start", { key: name, pid: operation.pid(), forecast });
       } catch (error) { failures.push(error); }
     };
     try {
       while (next < jobs.length || active.size > 0) {
-        while (failures.length === 0 && next < jobs.length && admit()) start(next++);
+        while (failures.length === 0 && next < jobs.length && await admit()) start(next++);
         if (active.size === 0) break;
         const result = await Promise.race([...active.values()].map(value => value.complete));
         const running = active.get(result.index)!;
@@ -111,6 +146,8 @@ export class Admission {
           const profile = { peak: Math.max(measured.peak, previous?.peak ?? 0),
             metadata: Math.max(measured.metadata, previous?.metadata ?? 0) };
           this.profiles.set(running.key, profile);
+          this.largest = { peak: Math.max(profile.peak, this.largest?.peak ?? 0),
+            metadata: Math.max(profile.metadata, this.largest?.metadata ?? 0) };
           this.observe("measured", { key: running.key, pid: running.operation.pid(), profile });
         }
       }
