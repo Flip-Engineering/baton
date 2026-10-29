@@ -16,14 +16,9 @@ fi
 . "$root/bend2/scripts/queue-entry.sh"
 (
   ulimit -s unlimited 2>/dev/null || true
-  if [ -n "${BATON2_NATIVE_QUEUE_DRIVER:-}" ]; then
-    BEND_NO_TELEMETRY=1 BUN_JSC_maxPerThreadStackUsage="${BUN_JSC_maxPerThreadStackUsage:-67108864}" \
-      "$PYTHON3" "$BATON2_NATIVE_QUEUE_DRIVER" compiler bend \
-      bend2/src/coordinator/laws.bend --check-only
-  else
-    BEND_NO_TELEMETRY=1 BUN_JSC_maxPerThreadStackUsage="${BUN_JSC_maxPerThreadStackUsage:-67108864}" \
-      "$compiler" bend2/src/coordinator/laws.bend --check-only
-  fi
+  BEND="$compiler" BEND_NO_TELEMETRY=1 \
+    BUN_JSC_maxPerThreadStackUsage="${BUN_JSC_maxPerThreadStackUsage:-67108864}" \
+    sh bend2/scripts/check-entry.sh bend2/src/coordinator/laws.bend
 )
 sh bend2/scripts/build-native.sh
 sh bend2/scripts/build-native.sh bend2/test/stop-hook-entry.bend .scratch/bend2/stop-hook-entry

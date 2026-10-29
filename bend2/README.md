@@ -694,14 +694,16 @@ questions are pending, and `--file PATH` imports an existing JSON response.
 `stdin-written` records transport completion; subsequent native output records
 progress. See [native interaction semantics and limits](../docs/bend2/native-interactions.md).
 
-Use `baton stop --session PLAYER --reason TEXT` to end a retained OMP or Codex session. The
-command records a terminal stop, prevents further queued execution and submits
+Use `baton stop --session PLAYER --reason TEXT` to end a retained OMP, Codex,
+Muse, Claude Code, DSH or Antigravity session. The command records a terminal
+stop, prevents further queued execution and submits
 TERM to its current native process group. `baton force-stop --session PLAYER` explicitly
 submits KILL to the same still-owned attempt. Baton generates or selects the
 recorded stop identity. `session`, `inbox` and `pending`
 retain the work, messages, receipts and stop state. The stop answer distinguishes
 signal submission from actual exit; the observer reports completion to the
-parent. Active direct `turn` execution returns an unsupported-stop refusal.
+parent. Active direct `turn` execution without a retained keeper directory
+returns an unsupported-stop refusal.
 See [session stop behavior](../docs/bend2/native-interactions.md#terminal-session-stop).
 
 `codex-conductor.mjs` and `omp-conductor.mjs` provide the Node adapters.
