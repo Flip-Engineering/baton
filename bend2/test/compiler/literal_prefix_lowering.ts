@@ -93,7 +93,7 @@ for (const name of multi) {
 assert.deepEqual(codex.order.filter((n) => n.includes("$lit")
   && multi.some((m) => n.startsWith(m + "$"))), [],
   "multi-argument parse verbs get no literal helpers");
-console.log(`PASS codex-inbox literal-prefix String lowering: one-argument def; ${multi.length} multi-argument defs stay generic`);
+console.log(`PASS codex-inbox literal-prefix String lowering: one-argument def; ${multi.length} multi-argument defs have no helpers`);
 
 const helperNames = (book: Bend.Book): string[] =>
   book.order.filter((name) => name.includes("$lit"));
