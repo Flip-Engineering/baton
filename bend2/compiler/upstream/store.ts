@@ -248,7 +248,11 @@ function graph_digest(graph: TermGraph, tables: Tables): string {
     : "string" in root ? JSON.stringify(tables.strings[root.string]) : "span" in root ? "@" + span(root.span)
     : "node" in root ? "#" + root.node : "undefined");
   hash.update("|" + graph.scopes.join(",") + "\n");
-  let pending: string[] = [];
+  // Rows are hashed in short pieces so that no large string is built.
+  const write = (parts: (string | number)[]): void => {
+    for (let at = 0; at < parts.length; at += 256) hash.update(parts.slice(at, at + 256).join(" ") + " ");
+    hash.update("\n");
+  };
   for (const row of graph.rows) {
     const parts: (string | number)[] = [row[0], row[1]];
     if (row[1] === BINDING) parts.push(row[2], row[3], row[4] < 0 ? -1 : "@" + span(row[4]));
@@ -257,10 +261,8 @@ function graph_digest(graph: TermGraph, tables: Tables): string {
     else for (let at = 2; at < row.length; at += 3) {
       parts.push(JSON.stringify(tables.strings[row[at]]), row[at + 1], text(row[at + 1], row[at + 2]));
     }
-    pending.push(parts.join(" "));
-    if (pending.length >= 4096) { hash.update(pending.join("\n") + "\n"); pending = []; }
+    write(parts);
   }
-  hash.update(pending.join("\n"));
   return hash.digest("hex");
 }
 

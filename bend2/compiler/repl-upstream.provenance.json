@@ -3,7 +3,7 @@
   "upstream": "Baton fork of Bend 2.0.25",
   "compiler_archive_sha256": "5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3",
   "official_release_artifact": false,
-  "lock_sha256": "8ebae20e7ba66e1b123e4bb26e638d02ec53d67bc3769f28825f552885da7c0a",
+  "lock_sha256": "7230740d3062460aeb94767ab484f374aa9ce694e16883ca3a2f407949ef584e",
   "files": [
     {
       "bytes": 6569,
@@ -411,14 +411,14 @@
       "sha256": "156b06b2cbfec3c3f34a602bbbaa167fe9c004731ce14ab3281a977ff2c56b52"
     },
     {
-      "bytes": 27402,
+      "bytes": 27492,
       "path": "store.ts",
-      "sha256": "c16855d715a363867206f7b72aa813014d20e647bcd97582676da3789fceb641"
+      "sha256": "34fd2a0c1b2792fd54aab0e0cb32d3973653e244bcad74a780f4d0ae956f7454"
     },
     {
-      "bytes": 15313,
+      "bytes": 15575,
       "path": "unit-cache.ts",
-      "sha256": "528bb12e90f77bde31d963e69983110bea89fad5370bb5cbb5207519dc0d4305"
+      "sha256": "3c30e77770e35cf1c62a7ad28c2eb40d5903651e2c1a75dba2dd6a874095cddc"
     },
     {
       "bytes": 4400,

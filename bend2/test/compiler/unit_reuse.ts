@@ -21,13 +21,13 @@ function digest(file: string): string {
   return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
-function build(name: string, text: string, cache: string) {
+function build(name: string, text: string, cache: string, extra: NodeJS.ProcessEnv = {}) {
   const own = path.join(directory, name); fs.mkdirSync(own, { recursive: true });
   const input = path.join(own, "program.bend"), output = path.join(own, "output.c");
   fs.writeFileSync(input, text);
   const run = spawnSync(process.execPath, ["--smol", path.join(source, "main.ts"), input, "-o", output], {
     cwd: own, encoding: "utf8", maxBuffer: 1 << 28,
-    env: { ...process.env, XDG_CACHE_HOME: cache, BEND_COMPILER_DIAGNOSTICS: "1", BEND_NO_TELEMETRY: "1" } });
+    env: { ...process.env, XDG_CACHE_HOME: cache, BEND_COMPILER_DIAGNOSTICS: "1", BEND_NO_TELEMETRY: "1", ...extra } });
   fs.writeFileSync(path.join(own, "stderr"), run.stderr);
   assert.equal(run.status, 0, run.stderr.split("\n").filter(line => !line.startsWith("{")).join("\n"));
   const frames = run.stderr.split("\n").flatMap(line => {
@@ -142,6 +142,15 @@ def main() -> U32:
 `),
       emitted: ["loop_a", "loop_b", "main"] },
   ]);
+  // Builds that run under different home directories share units through BEND_CGEN_CACHE_DIR.
+  const shared = path.join(directory, "shared-cache");
+  const first = build("shared-first", chain, path.join(directory, "home-a"), { BEND_CGEN_CACHE_DIR: shared });
+  const second = build("shared-second", chain.replace("U32.add(r3(p), 3)", "U32.add(r3(p), 7)"),
+    path.join(directory, "home-b"), { BEND_CGEN_CACHE_DIR: shared });
+  assert.deepEqual(second.emitted, ["r3"], "a build under another home reuses the shared directory");
+  assert.equal(first.hits, 0);
+  assert.ok(fs.existsSync(path.join(shared, "cgen-units-v1")));
+  assert.ok(!fs.existsSync(path.join(directory, "home-a", "bend2")) && !fs.existsSync(path.join(directory, "home-b", "bend2")));
   fs.writeFileSync(path.join(directory, "summary.json"), JSON.stringify([...one.summary, ...two.summary], null, 2));
   console.log(JSON.stringify({ test: "unit_reuse", chain_units: one.cold.emitted.length, sites_units: two.cold.emitted.length,
     cases: [...one.summary, ...two.summary] }));

@@ -94,7 +94,10 @@ export class UnitCache {
     // Only what applies to every unit: the compiler, the program's printed form
     // and whether it needs the device closure table.
     this.scope = digest(JSON.stringify([this.index.compiler, this.entries.show, this.entries.wide]));
-    this.root = path.join(process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), ".cache"), "bend2", "cgen-units-v1");
+    // BEND_CGEN_CACHE_DIR names one directory that several builds on a host share.
+    this.root = process.env.BEND_CGEN_CACHE_DIR !== undefined && process.env.BEND_CGEN_CACHE_DIR !== ""
+      ? path.join(path.resolve(process.env.BEND_CGEN_CACHE_DIR), "cgen-units-v1")
+      : path.join(process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), ".cache"), "bend2", "cgen-units-v1");
   }
 
   private observe(event: string, details: Record<string, unknown>): void {
