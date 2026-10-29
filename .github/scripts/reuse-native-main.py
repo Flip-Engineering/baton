@@ -18,6 +18,18 @@ import traceback
 
 ARCHIVE_SHA = '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4'
 COMPILER_ARCHIVES = {
+    'f46d75d3cb3a68c68bdcfaeb5dfe465e06343b47d6376949fd862510a82781d3': {
+        'name': 'Bend 2.0.25 with String lowering, checked-body sharing and compiler worker reuse',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': '018855661c0240fd3df7b7235ce35ea9b465ab0d',
+        'source_tree': '65018fc29356d9b6731b4142f23e5c69b43a32c4',
+        'source_lock_sha256': 'b7a78d737db755c0f060cee481c65736a589b83c61110fafee227b2b5254619d',
+        'source_manifest_sha256': '0d8aace71896212c7c60a6867d95b05051fae74582eaeb5a809f6baf3deee715',
+        'source_metadata_sha256': '3207a6bd1b2a857a48cb30c3112a0bdc1e80286ec3bc4a45917e47366e417660',
+        'source_input_count': 84,
+    },
     '5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3': {
         'name': 'Bend 2.0.25 with emitted C unit cache and constructor shadow handling',
         'official_release_artifact': False,
