@@ -80,7 +80,8 @@ export async function gateReason(environment = process.env) {
 }
 
 const COMPLETION_TOOL = 'In this session the completion request is the baton-worker completion_request tool; '
-  + 'the report, ask, inbox and read tools replace the same-named Baton commands.';
+  + 'completion_confirmed resolves a Player\'s current completion request and guide sends complete guidance to a Player. '
+  + 'The report, ask, inbox and read tools replace the same-named Baton commands.';
 
 function quoted(value) {
   return "'" + value.replaceAll("'", "'\\''") + "'";
