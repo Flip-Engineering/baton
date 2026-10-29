@@ -35,11 +35,6 @@ import ../src/coordinator/codex-rate-limits.bend as Codex
 def print_unreadable(+provider: String, +source: String, +observed: String, +reason: String) -> IO(Unit):
   IO.print(UR.unreadable_document(provider,source,observed,reason))
 
-def time_value(result: Result<&1,&1,U32 & String,String>) -> String:
-  match result:
-    case Fail{error}: "0"
-    case Done{+value}: Tx.trim_nl(value)
-
 def scheme_of(+reference: String) -> String:
   Bool.pick(String,Tx.starts_with(reference,"omp-models:"),"omp-models",
   Bool.pick(String,Tx.starts_with(reference,"file:"),"file",
@@ -409,14 +404,25 @@ def read_provider(+provider: String, +reference: String, +observed: String, +rec
     case "muse": print_unreadable("muse","",observed,muse_reason())
     case _: print_unreadable(provider,"",observed,"no usage reader for provider " ++ provider ++ " is in this build")
 
+# A read without its observation clock cannot be ordered against the account's other
+# reads, so a failed wall-clock read prints an unreadable document and makes no
+# provider request. observedAt is null; the coordinator records its own clock.
+def clock_failed(+provider: String, code: U32, detail: String) -> IO(Unit):
+  print_unreadable(provider,"","null","the wall clock read failed: " ++ U32.show(code) ++ " " ++ detail)
+
+def read_at(+provider: String, +reference: String, now: Result<&1,&1,U32 & String,String>, +recorded: String) -> IO(Unit):
+  match now:
+    case Fail{(code,detail)}: clock_failed(provider,code,detail)
+    case Done{+value}: read_provider(provider,reference,Tx.trim_nl(value),recorded)
+
 def main_arguments(arguments: List<String>) -> IO(Unit):
   match arguments:
     case +provider <> +reference <> Nil{}: do IO<Unit>:
       now : Result<&1,&1,U32 & String,String> <- Clock.Clock.millis()
-      read_provider(provider,reference,time_value(now),"")
+      read_at(provider,reference,now,"")
     case +provider <> +reference <> +recorded <> Nil{}: do IO<Unit>:
       now : Result<&1,&1,U32 & String,String> <- Clock.Clock.millis()
-      read_provider(provider,reference,time_value(now),recorded)
+      read_at(provider,reference,now,recorded)
     case other: IO.die(Unit,2,"usage: usage-read PROVIDER CREDENTIAL_REF [CODEX_EXECUTABLE]")
 
 def main() -> IO(Unit):
