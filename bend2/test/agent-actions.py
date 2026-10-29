@@ -1208,6 +1208,37 @@ class AgentActions(unittest.TestCase):
         self.assertIn('no recorded immediate parent', refused['admission']['cause'])
         self.assertEqual(self.stored_messages(), before)
 
+    def test_a_parentless_conductor_without_a_registered_operator_cannot_request_completion(self):
+        before = self.stored_messages()
+        refused = self.action('other-root', 'completion-request', '--text', 'Done.')[0]
+        self.assertEqual(refused['status'], 'refused')
+        self.assertIn('no recorded immediate parent', refused['admission']['cause'])
+        self.assertEqual(self.stored_messages(), before)
+        state = self.completion('other-root')
+        self.assertIsNone(state['coordinator'])
+        self.assertFalse(state['open'])
+        # Registering the operator is the only change; the same request is then admitted to it.
+        self.operator_session()
+        self.legacy('message', 'other-root-task', 'operator', 'other-root', 'task', 'Coordinate the work.')
+        sent = self.action('other-root', 'completion-request', '--text', 'Done.')[0]
+        self.assertEqual((sent['status'], sent['recipient']), ('admitted', 'operator'))
+
+    def test_a_session_absent_from_the_registry_cannot_confirm_a_workers_request(self):
+        request = self.requested('worker-a')
+        before = self.stored_messages()
+        # 'operator' is absent here too: only a registered session with the operator role holds operator authority.
+        for actor in ('ghost', 'operator'):
+            for arguments, cause in (
+                    ((), 'No current completion request is addressed to this coordinator'),
+                    (('--request', request), 'addressed to another coordinator'),
+                    (('--request', request, '--next', 'Next.'), 'addressed to another coordinator')):
+                with self.subTest(actor=actor, arguments=arguments):
+                    rows = self.action(actor, 'completion-confirmed', '--to', 'worker-a', *arguments)
+                    self.assertEqual([row['status'] for row in rows], ['refused'])
+                    self.assertIn(cause, rows[0]['admission']['cause'])
+                    self.assertEqual(self.stored_messages(), before)
+        self.assertFalse(self.completion('worker-a')['confirmed'])
+
     def test_operator_confirms_a_worker_whose_ancestors_have_all_ended(self):
         self.operator_session()
         self.legacy('recruit', 'top', 'operator', 'omp', 'model', 'low', str(self.repo),

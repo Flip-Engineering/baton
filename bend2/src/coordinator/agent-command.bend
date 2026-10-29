@@ -351,8 +351,6 @@ def confirmation_target(+db: String, +session: String, +recipient: String,
           "--to does not match the author of the completion-request."),
         confirmation_sent(db,session,target,request,id,next))
 
-# An explicit selector must name the current request for the worker assignment.
-# Older requests remain historical and are refused.
 # The selector query for one exact request: its kind, whether the confirming
 # session and the request recipient both hold authority over the author, whether
 # it is the author's current request (or the exact decision is already stored),
@@ -363,6 +361,8 @@ def confirmation_selector_sql(+session: String, +request: String, +id: String) -
   ",'') AND NOT EXISTS(SELECT 1 FROM messages replay WHERE replay.id=" ++ C.q(id) ++ " AND replay.kind='completion-confirmed' AND replay.sender=" ++ C.q(session) ++ " AND replay.recipient=req.sender AND replay.body=" ++ C.q(request) ++ ") THEN 'stale-request' ELSE hex(CAST(req.sender AS TEXT)) END FROM messages req WHERE req.id=" ++
   C.q(request) ++ ";"
 
+# An explicit selector must name the current request for the worker assignment.
+# Older requests remain historical and are refused.
 def completion_confirmed_exact(+db: String, +session: String, +recipient: String,
                          +request: String, +id: String, next: A.Body) -> IO(String):
   do IO<String>:
