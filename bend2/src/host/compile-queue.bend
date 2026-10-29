@@ -945,6 +945,14 @@ def peak_text_result(result: Result<&1,&1,U32 & String,String>) -> String:
     case Fail{error}: ""
     case Done{+text}: text
 
+def status_number_parsed(parsed: Maybe<&2,U32>) -> U32:
+  match parsed:
+    case None{}: 0
+    case Some{value}: value
+
+def status_number(text: String) -> U32:
+  status_number_parsed(U32.read(text))
+
 def peak_record(+attempt: String, +peak: U32) -> IO(Unit):
   Bool.pick(IO(Unit),U32.is_gt(peak,0),
     do IO<Unit>:
@@ -961,6 +969,13 @@ def peak_record(+attempt: String, +peak: U32) -> IO(Unit):
           IO.pure(Unit,Unit{}),
         IO.pure(Unit,Unit{})),
     IO.pure(Unit,Unit{}))
+
+
+# Measured admission shares host capacity across queue versions. The lock file
+# remains the compatibility fence: an existing exclusive holder prevents this
+# queue from creating a claim for cgen/check work.
+def admission_root(+state: String) -> String:
+  state ++ "/admission"
 
 def record_usage(+attempt: String, pid: U32, sample: U32, growth: U32) -> IO(Unit):
   do IO<Unit>:
@@ -983,6 +998,285 @@ def record_usage_measured(+attempt: String, pid: U32, sample: U32, growth: U32,
   match observed:
     case None{}: IO.pure(Unit,Unit{})
     case Some{outside}: record_usage(attempt,pid,sample,growth)
+
+def admission_live_names_go(names: List<&1,String>, +state: String, +dir: String, +acc: String) -> IO(String):
+  match names:
+    case Nil{}: IO.pure(String,acc)
+    case name <> rest:
+      do IO<String>:
+        live : U32 <- IO.try(U32,L.CompileQueueLifecycle.held(dir ++ "/" ++ name))
+        Bool.pick(IO(String),U32.is_eq(live,1),
+          admission_live_names_go(rest,state,dir,acc ++ name ++ "\t"),
+          do IO<String>:
+            removed : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.remove(dir ++ "/" ++ name)
+            usage_removed : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.remove(admission_root(state) ++ "/usage/" ++ name)
+            admission_live_names_go(rest,state,dir,acc))
+
+def admission_live_names(+state: String, names: String) -> IO(String):
+  admission_live_names_go(Tx.split_nul(names),state,admission_root(state) ++ "/running","")
+
+def admission_cache_fresh(+text: String, now: U32, ids: String) -> Bool:
+  +sample = status_number(field(text,"sample_s"))
+  Bool.and(Tx.str_eq(field(text,"valid"),"1"),
+    Bool.and(Tx.str_eq(field(text,"ids"),ids),
+      Bool.and(U32.is_gt(sample,0),Bool.not(U32.is_gt(now,U32.add(sample,1))))))
+
+def claim_file_live(live: U32, +dir: String, +name: String) -> Bool:
+  U32.is_eq(live, 1)
+
+def claim_add_stats_after_sample(+text: String, +group: String,
+                                 +count: U32, +unspent: U32, +unknown: U32,
+                                 +group_current: U32, +reserve: U32, +used: U32, +signature: U32,
+                                 +identity: U32,
+                                 current_text: Result<&1,&1,U32 & String,String>) -> IO(ClaimStats):
+  match current_text:
+    case Fail{error}:
+      IO.pure(ClaimStats, ClaimStats{U32.add(count,1),unspent,U32.add(unknown,1),group_current,reserve,used,U32.add(signature,identity)})
+    case Done{+usage}:
+      +current = status_number(field(usage, "kb"))
+      +expected = status_number(field(text, "expected_kb"))
+      +headroom = Bool.pick(U32, U32.is_gt(expected,current), U32.sub(expected,current), 0)
+      +same_group = Bool.and(non_empty(group), Tx.str_eq(field(text,"group"),group))
+      +next_group = Bool.pick(U32, same_group, U32.add(group_current,current), group_current)
+      +next_unknown = Bool.pick(U32, U32.is_eq(status_number(field(text,"history")),0), U32.add(unknown,1), unknown)
+      IO.pure(ClaimStats, ClaimStats{U32.add(count,1),U32.add(unspent,headroom),next_unknown,next_group,reserve,U32.add(used,current),U32.add(signature,identity)})
+
+def claim_add_stats(live: Bool, +text: String, +group: String, +stats: ClaimStats) -> IO(ClaimStats):
+  match stats:
+    case ClaimStats{count, unspent, unknown, group_current, reserve, used, signature}:
+      Bool.pick(IO(ClaimStats), live,
+        do IO<ClaimStats>:
+          +root : U32 <- IO.pure(U32, status_number(field(text, "root")))
+          +identity : U32 <- IO.pure(U32,U32.add(root,status_number(field(text,"starttime"))))
+          current_text : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.session_kb(root)
+          claim_add_stats_after_sample(text,group,count,unspent,unknown,group_current,reserve,used,signature,identity,current_text),
+        IO.pure(ClaimStats, stats))
+
+def max_u32(+a: U32, +b: U32) -> U32:
+  Bool.pick(U32,U32.is_gt(a,b),a,b)
+
+def claim_stats_with_reserve(stats: ClaimStats, growth: U32) -> ClaimStats:
+  match stats:
+    case ClaimStats{count, unspent, unknown, group_current, reserve, used, signature}:
+      ClaimStats{count,unspent,unknown,group_current,max_u32(reserve,growth),used,signature}
+
+def claim_usage_reserve(result: Result<&1,&1,U32 & String,String>, now: U32, +stats: ClaimStats) -> ClaimStats:
+  match result:
+    case Fail{error}: stats
+    case Done{+text}:
+      +sample = status_number(field(text,"sample_s"))
+      +fresh = Bool.and(U32.is_gt(sample,0),Bool.not(U32.is_gt(now,U32.add(sample,1))))
+      Bool.pick(ClaimStats,fresh,claim_stats_with_reserve(stats,status_number(field(text,"growth_kb"))),stats)
+
+def admission_record_text(result: Result<&1,&1,U32 & String,String>) -> String:
+  match result:
+    case Fail{error}: ""
+    case Done{+text}: text
+
+def admission_claim_file(+state: String, +dir: String, +name: String, +group: String, +stats: ClaimStats) -> IO(ClaimStats):
+  do IO<ClaimStats>:
+    live : U32 <- IO.try(U32, L.CompileQueueLifecycle.held(dir ++ "/" ++ name))
+    +path : String <- IO.pure(String, dir ++ "/" ++ name)
+    +text : String <- IO.try(String, L.CompileQueueLifecycle.read_text(path))
+    +is_live : Bool <- IO.pure(Bool, claim_file_live(live, dir, name))
+    Bool.pick(IO(ClaimStats), is_live,
+      do IO<ClaimStats>:
+        +measured : ClaimStats <- claim_add_stats(True{}, text, group, stats)
+        usage : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(admission_root(state) ++ "/usage/" ++ name)
+        now_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.now_seconds()
+        +now_text : String <- IO.pure(String,admission_record_text(now_result))
+        +now : U32 <- IO.pure(U32,status_number(now_text))
+        IO.pure(ClaimStats,claim_usage_reserve(usage,now,measured)),
+      do IO<ClaimStats>:
+        removed : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.remove(path)
+        usage_removed : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.remove(admission_root(state) ++ "/usage/" ++ name)
+        IO.pure(ClaimStats, stats))
+
+def admission_claim_files(names: List<&1,String>, +state: String, +dir: String, +group: String, +stats: ClaimStats) -> IO(ClaimStats):
+  match names:
+    case Nil{}: IO.pure(ClaimStats, stats)
+    case name <> rest:
+      do IO<ClaimStats>:
+        +next : ClaimStats <- admission_claim_file(state, dir, name, group, stats)
+        admission_claim_files(rest, state, dir, group, next)
+
+def admission_claims(+state: String, +group: String) -> IO(ClaimStats):
+  do IO<ClaimStats>:
+    +dir : String <- IO.pure(String, admission_root(state) ++ "/running")
+    names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(dir))
+    admission_claim_files(Tx.split_nul(names), state, dir, group, ClaimStats{0,0,0,0,0,0,0})
+
+def admission_outside_used(+total: U32, available: U32, used: U32) -> U32:
+  +accounted = U32.add(available,used)
+  Bool.pick(U32,U32.is_gt(total,accounted),U32.sub(total,accounted),0)
+
+def admission_claims_same_second(first_count: U32, first_signature: U32, second: ClaimStats) -> Bool:
+  match second:
+    case ClaimStats{second_count, second_unspent, second_unknown, second_group, second_reserve, second_used, second_signature}:
+      Bool.and(U32.is_eq(first_count,second_count),U32.is_eq(first_signature,second_signature))
+
+def admission_claims_same(first: ClaimStats, second: ClaimStats) -> Bool:
+  match first:
+    case ClaimStats{first_count, first_unspent, first_unknown, first_group, first_reserve, first_used, first_signature}:
+      admission_claims_same_second(first_count,first_signature,second)
+
+def admission_stats_used(stats: ClaimStats) -> U32:
+  match stats:
+    case ClaimStats{count, unspent, unknown, group_current, reserve, used, signature}:
+      used
+
+def admission_claims_known(stats: ClaimStats) -> Bool:
+  match stats:
+    case ClaimStats{count, unspent, unknown, group_current, reserve, used, signature}:
+      U32.is_eq(unknown,0)
+
+def admission_outside_claims(+state: String, +guard: U32, +ids: String, now: U32,
+                             +total: U32, +available: U32, legacy_pid: U32,
+                             legacy_result: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
+  match legacy_result:
+    case Fail{error}:
+      do IO<Maybe<&2,U32>>:
+        released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
+        IO.pure(Maybe<&2,U32>,None{})
+    case Done{+legacy_text}:
+      do IO<Maybe<&2,U32>>:
+        +legacy_current : U32 <- IO.pure(U32,status_number(field(legacy_text,"kb")))
+        +first : ClaimStats <- admission_claims(state,"")
+        +second : ClaimStats <- admission_claims(state,"")
+        +stable : Bool <- IO.pure(Bool,Bool.and(admission_claims_same(first,second),
+          Bool.and(admission_claims_known(first),admission_claims_known(second))))
+        +known : Bool <- IO.pure(Bool,Bool.and(stable,Bool.and(U32.is_gt(total,0),U32.is_gt(available,0))))
+        +used : U32 <- IO.pure(U32,U32.add(admission_stats_used(second),legacy_current))
+        +outside : U32 <- IO.pure(U32,admission_outside_used(total,available,used))
+        Bool.pick(IO(Maybe<&2,U32>),known,
+          do IO<Maybe<&2,U32>>:
+            +uid : U32 <- IO.try(U32,L.CompileQueueLifecycle.uid())
+            cache_text : String <- IO.pure(String,
+              "valid=1\nsample_s=" ++ U32.show(now) ++ "\nids=" ++ ids
+              ++ "\nlegacy_pid=" ++ U32.show(legacy_pid)
+              ++ "\noutside_kb=" ++ U32.show(outside) ++ "\n")
+            cache_written : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.write_text(
+              admission_root(state) ++ "/observed." ++ U32.show(uid),cache_text)
+            released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
+            IO.pure(Maybe<&2,U32>,Some{outside}),
+          do IO<Maybe<&2,U32>>:
+            released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
+            IO.pure(Maybe<&2,U32>,None{}))
+
+def admission_outside_meminfo(+state: String, +guard: U32, +ids: String, now: U32,
+                              +legacy_pid: U32,
+                              result: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
+  match result:
+    case Fail{error}:
+      do IO<Maybe<&2,U32>>:
+        released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
+        IO.pure(Maybe<&2,U32>,None{})
+    case Done{+text}:
+      do IO<Maybe<&2,U32>>:
+        +total : U32 <- IO.pure(U32,status_number(field(text,"total_kb")))
+        +available : U32 <- IO.pure(U32,status_number(field(text,"available_kb")))
+        legacy_result : Result<&1,&1,U32 & String,String> <- Bool.pick(
+          IO(Result<&1,&1,U32 & String,String>),U32.is_gt(legacy_pid,0),
+          L.CompileQueueLifecycle.session_kb(legacy_pid),
+          IO.pure(Result<&1,&1,U32 & String,String>,Done{"kb=0\n"}))
+        admission_outside_claims(state,guard,ids,now,total,available,legacy_pid,legacy_result)
+
+def admission_meminfo_result(override: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match override:
+    case Fail{error}: L.CompileQueueLifecycle.meminfo()
+    case Done{text}: IO.pure(Result<&1,&1,U32 & String,String>,Done{text})
+
+def admission_meminfo(+state: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    override : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(state ++ "/meminfo")
+    admission_meminfo_result(override)
+
+def admission_outside_refresh(+state: String, +guard: U32, +ids: String, now: U32,
+                               legacy_pid: U32, stable_set: Bool) -> IO(Maybe<&2,U32>):
+  Bool.pick(IO(Maybe<&2,U32>),stable_set,
+    do IO<Maybe<&2,U32>>:
+      meminfo : Result<&1,&1,U32 & String,String> <- admission_meminfo(state)
+      admission_outside_meminfo(state,guard,ids,now,legacy_pid,meminfo),
+    do IO<Maybe<&2,U32>>:
+      released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
+      IO.pure(Maybe<&2,U32>,None{}))
+
+def admission_outside_cached(+state: String, +guard: U32, +ids: String, +now: U32, +legacy_pid: U32,
+                             +stable_set: Bool, cache: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
+  match cache:
+    case Fail{error}: admission_outside_refresh(state,guard,ids,now,legacy_pid,stable_set)
+    case Done{+text}:
+      Bool.pick(IO(Maybe<&2,U32>),admission_cache_fresh(text,now,ids),
+        do IO<Maybe<&2,U32>>:
+          +outside : U32 <- IO.pure(U32,status_number(field(text,"outside_kb")))
+          released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
+          IO.pure(Maybe<&2,U32>,Some{outside}),
+        admission_outside_refresh(state,guard,ids,now,legacy_pid,stable_set))
+
+def admission_outside_cache(+state: String, +guard: U32, +ids: String, now: U32, legacy_pid: U32,
+                            +stable_set: Bool, cache: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
+  Bool.pick(IO(Maybe<&2,U32>),stable_set,
+    admission_outside_cached(state,guard,ids,now,legacy_pid,stable_set,cache),
+    do IO<Maybe<&2,U32>>:
+      released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
+      IO.pure(Maybe<&2,U32>,None{}))
+
+def admission_outside_holder(+state: String, +guard: U32, +ids: String, now: U32,
+                              stable_set: Bool, uid: U32,
+                              holder: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
+  match holder:
+    case Fail{error}:
+      do IO<Maybe<&2,U32>>:
+        released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
+        IO.pure(Maybe<&2,U32>,None{})
+    case Done{+text}:
+      do IO<Maybe<&2,U32>>:
+        +legacy_pid : U32 <- IO.pure(U32,status_number(field(text,"pid")))
+        +legacy_ids : String <- IO.pure(String,ids ++ "legacy=" ++ U32.show(legacy_pid) ++ "\t")
+        cache : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(
+          admission_root(state) ++ "/observed." ++ U32.show(uid))
+        admission_outside_cache(state,guard,legacy_ids,now,legacy_pid,stable_set,cache)
+
+def admission_outside_after_guard(+state: String,
+                                  guard_result: Result<&1,&1,U32 & String,U32>) -> IO(Maybe<&2,U32>):
+  match guard_result:
+    case Fail{error}: IO.pure(Maybe<&2,U32>,None{})
+    case Done{guard}:
+      do IO<Maybe<&2,U32>>:
+        names_first : String <- IO.try(String,L.CompileQueueLifecycle.list_dir(admission_root(state) ++ "/running"))
+        ids_first : String <- admission_live_names(state,names_first)
+        names_second : String <- IO.try(String,L.CompileQueueLifecycle.list_dir(admission_root(state) ++ "/running"))
+        +ids_second : String <- admission_live_names(state,names_second)
+        +stable_set : Bool <- IO.pure(Bool,Tx.str_eq(ids_first,ids_second))
+        now_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.now_seconds()
+        +now_text : String <- IO.pure(String,admission_record_text(now_result))
+        +now : U32 <- IO.pure(U32,status_number(now_text))
+        +uid : U32 <- IO.try(U32,L.CompileQueueLifecycle.uid())
+        holder_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.exclusive_lock_pid(state ++ "/heavy.lock")
+        admission_outside_holder(state,guard,ids_second,now,stable_set,uid,holder_result)
+
+def admission_outside(+state: String) -> IO(Maybe<&2,U32>):
+  do IO<Maybe<&2,U32>>:
+    guard_result : Result<&1,&1,U32 & String,U32> <- L.CompileQueueLifecycle.lock_acquire(admission_root(state) ++ "/lock")
+    admission_outside_after_guard(state,guard_result)
+
+def outside_state_growth(state: OutsideState) -> U32:
+  match state:
+    case OutsideState{baseline, growth}: growth
+
+def outside_state_from_baseline(baseline: Maybe<&2,U32>, +current: U32) -> OutsideState:
+  match baseline:
+    case None{}: OutsideState{Some{current},0}
+    case Some{+base}: OutsideState{Some{base},Bool.pick(U32,U32.is_gt(current,base),U32.sub(current,base),0)}
+
+def outside_state_next_sample(+baseline: Maybe<&2,U32>, growth: U32, sample: Maybe<&2,U32>) -> OutsideState:
+  match sample:
+    case None{}: OutsideState{baseline,growth}
+    case Some{current}: outside_state_from_baseline(baseline,current)
+
+def outside_state_next(previous: OutsideState, sample: Maybe<&2,U32>) -> OutsideState:
+  match previous:
+    case OutsideState{baseline, growth}: outside_state_next_sample(baseline,growth,sample)
 
 @unsafe
 def watch_heavy_go(+attempt: String, +pid: U32, +start: String,
@@ -1044,14 +1338,6 @@ def supervise_marker_result(signaled: Result<&1,&1,U32 & String,Unit>, +attempt:
         "compile marker environment could not be set: " ++ message, names)
     case Done{value}:
       supervise_kind(kind, source_root, entry, attempt, keydir, key, started, names, cwd)
-
-def status_number_parsed(parsed: Maybe<&2,U32>) -> U32:
-  match parsed:
-    case None{}: 0
-    case Some{value}: value
-
-def status_number(text: String) -> U32:
-  status_number_parsed(U32.read(text))
 
 # Scheduling tickets
 # ==================
@@ -1190,281 +1476,10 @@ def acquire_execution_lock(is_cc: Bool, keydir: String, +admission: U32) -> IO(U
         IO.try(U32, L.CompileQueueLifecycle.lock_acquire(keydir ++ "/cc-execution.lock"))
     case False{}: IO.pure(U32, admission)
 
-
-# Measured admission shares host capacity across queue versions. The lock file
-# remains the compatibility fence: an existing exclusive holder prevents this
-# queue from creating a claim for cgen/check work.
-def admission_root(+state: String) -> String:
-  state ++ "/admission"
-
-def claim_file_live(live: U32, +dir: String, +name: String) -> Bool:
-  U32.is_eq(live, 1)
-
-def claim_add_stats_after_sample(+text: String, +group: String,
-                                 +count: U32, +unspent: U32, +unknown: U32,
-                                 +group_current: U32, +reserve: U32, +used: U32, +signature: U32,
-                                 +identity: U32,
-                                 current_text: Result<&1,&1,U32 & String,String>) -> IO(ClaimStats):
-  match current_text:
-    case Fail{error}:
-      IO.pure(ClaimStats, ClaimStats{U32.add(count,1),unspent,U32.add(unknown,1),group_current,reserve,used,U32.add(signature,identity)})
-    case Done{+usage}:
-      +current = status_number(field(usage, "kb"))
-      +expected = status_number(field(text, "expected_kb"))
-      +headroom = Bool.pick(U32, U32.is_gt(expected,current), U32.sub(expected,current), 0)
-      +same_group = Bool.and(non_empty(group), Tx.str_eq(field(text,"group"),group))
-      +next_group = Bool.pick(U32, same_group, U32.add(group_current,current), group_current)
-      +next_unknown = Bool.pick(U32, U32.is_eq(status_number(field(text,"history")),0), U32.add(unknown,1), unknown)
-      IO.pure(ClaimStats, ClaimStats{U32.add(count,1),U32.add(unspent,headroom),next_unknown,next_group,reserve,U32.add(used,current),U32.add(signature,identity)})
-
-def claim_add_stats(live: Bool, +text: String, +group: String, +stats: ClaimStats) -> IO(ClaimStats):
-  match stats:
-    case ClaimStats{count, unspent, unknown, group_current, reserve, used, signature}:
-      Bool.pick(IO(ClaimStats), live,
-        do IO<ClaimStats>:
-          +root : U32 <- IO.pure(U32, status_number(field(text, "root")))
-          +identity : U32 <- IO.pure(U32,U32.add(root,status_number(field(text,"starttime"))))
-          current_text : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.session_kb(root)
-          claim_add_stats_after_sample(text,group,count,unspent,unknown,group_current,reserve,used,signature,identity,current_text),
-        IO.pure(ClaimStats, stats))
-
-def max_u32(+a: U32, +b: U32) -> U32:
-  Bool.pick(U32,U32.is_gt(a,b),a,b)
-
-def claim_stats_with_reserve(stats: ClaimStats, growth: U32) -> ClaimStats:
-  match stats:
-    case ClaimStats{count, unspent, unknown, group_current, reserve, used, signature}:
-      ClaimStats{count,unspent,unknown,group_current,max_u32(reserve,growth),used,signature}
-
-def claim_usage_reserve(result: Result<&1,&1,U32 & String,String>, now: U32, +stats: ClaimStats) -> ClaimStats:
-  match result:
-    case Fail{error}: stats
-    case Done{+text}:
-      +sample = status_number(field(text,"sample_s"))
-      +fresh = Bool.and(U32.is_gt(sample,0),Bool.not(U32.is_gt(now,U32.add(sample,1))))
-      Bool.pick(ClaimStats,fresh,claim_stats_with_reserve(stats,status_number(field(text,"growth_kb"))),stats)
-
-def admission_claim_file(+state: String, +dir: String, +name: String, +group: String, +stats: ClaimStats) -> IO(ClaimStats):
-  do IO<ClaimStats>:
-    live : U32 <- IO.try(U32, L.CompileQueueLifecycle.held(dir ++ "/" ++ name))
-    +path : String <- IO.pure(String, dir ++ "/" ++ name)
-    +text : String <- IO.try(String, L.CompileQueueLifecycle.read_text(path))
-    +is_live : Bool <- IO.pure(Bool, claim_file_live(live, dir, name))
-    Bool.pick(IO(ClaimStats), is_live,
-      do IO<ClaimStats>:
-        +measured : ClaimStats <- claim_add_stats(True{}, text, group, stats)
-        usage : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(admission_root(state) ++ "/usage/" ++ name)
-        now_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.now_seconds()
-        +now_text : String <- IO.pure(String,admission_record_text(now_result))
-        +now : U32 <- IO.pure(U32,status_number(now_text))
-        IO.pure(ClaimStats,claim_usage_reserve(usage,now,measured)),
-      do IO<ClaimStats>:
-        removed : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.remove(path)
-        usage_removed : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.remove(admission_root(state) ++ "/usage/" ++ name)
-        IO.pure(ClaimStats, stats))
-
-def admission_claim_files(names: List<&1,String>, +state: String, +dir: String, +group: String, +stats: ClaimStats) -> IO(ClaimStats):
-  match names:
-    case Nil{}: IO.pure(ClaimStats, stats)
-    case name <> rest:
-      do IO<ClaimStats>:
-        +next : ClaimStats <- admission_claim_file(state, dir, name, group, stats)
-        admission_claim_files(rest, state, dir, group, next)
-
-def admission_claims(+state: String, +group: String) -> IO(ClaimStats):
-  do IO<ClaimStats>:
-    +dir : String <- IO.pure(String, admission_root(state) ++ "/running")
-    names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(dir))
-    admission_claim_files(Tx.split_nul(names), state, dir, group, ClaimStats{0,0,0,0,0,0,0})
-
-def admission_outside_used(+total: U32, available: U32, used: U32) -> U32:
-  +accounted = U32.add(available,used)
-  Bool.pick(U32,U32.is_gt(total,accounted),U32.sub(total,accounted),0)
-
 def admission_names_signature(names: List<&1,String>) -> String:
   match names:
     case Nil{}: ""
     case name <> rest: name ++ "\t" ++ admission_names_signature(rest)
-
-def admission_live_names_go(names: List<&1,String>, +state: String, +dir: String, +acc: String) -> IO(String):
-  match names:
-    case Nil{}: IO.pure(String,acc)
-    case name <> rest:
-      do IO<String>:
-        live : U32 <- IO.try(U32,L.CompileQueueLifecycle.held(dir ++ "/" ++ name))
-        Bool.pick(IO(String),U32.is_eq(live,1),
-          admission_live_names_go(rest,state,dir,acc ++ name ++ "\t"),
-          do IO<String>:
-            removed : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.remove(dir ++ "/" ++ name)
-            usage_removed : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.remove(admission_root(state) ++ "/usage/" ++ name)
-            admission_live_names_go(rest,state,dir,acc))
-
-def admission_live_names(+state: String, names: String) -> IO(String):
-  admission_live_names_go(Tx.split_nul(names),state,admission_root(state) ++ "/running","")
-
-def admission_claims_same_second(first_count: U32, first_signature: U32, second: ClaimStats) -> Bool:
-  match second:
-    case ClaimStats{second_count, second_unspent, second_unknown, second_group, second_reserve, second_used, second_signature}:
-      Bool.and(U32.is_eq(first_count,second_count),U32.is_eq(first_signature,second_signature))
-
-def admission_claims_same(first: ClaimStats, second: ClaimStats) -> Bool:
-  match first:
-    case ClaimStats{first_count, first_unspent, first_unknown, first_group, first_reserve, first_used, first_signature}:
-      admission_claims_same_second(first_count,first_signature,second)
-
-def admission_stats_used(stats: ClaimStats) -> U32:
-  match stats:
-    case ClaimStats{count, unspent, unknown, group_current, reserve, used, signature}:
-      used
-
-def admission_claims_known(stats: ClaimStats) -> Bool:
-  match stats:
-    case ClaimStats{count, unspent, unknown, group_current, reserve, used, signature}:
-      U32.is_eq(unknown,0)
-
-def admission_cache_fresh(+text: String, now: U32, ids: String) -> Bool:
-  +sample = status_number(field(text,"sample_s"))
-  Bool.and(Tx.str_eq(field(text,"valid"),"1"),
-    Bool.and(Tx.str_eq(field(text,"ids"),ids),
-      Bool.and(U32.is_gt(sample,0),Bool.not(U32.is_gt(now,U32.add(sample,1))))))
-
-def admission_outside_claims(+state: String, +guard: U32, +ids: String, now: U32,
-                             +total: U32, +available: U32, legacy_pid: U32,
-                             legacy_result: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
-  match legacy_result:
-    case Fail{error}:
-      do IO<Maybe<&2,U32>>:
-        released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
-        IO.pure(Maybe<&2,U32>,None{})
-    case Done{+legacy_text}:
-      do IO<Maybe<&2,U32>>:
-        +legacy_current : U32 <- IO.pure(U32,status_number(field(legacy_text,"kb")))
-        +first : ClaimStats <- admission_claims(state,"")
-        +second : ClaimStats <- admission_claims(state,"")
-        +stable : Bool <- IO.pure(Bool,Bool.and(admission_claims_same(first,second),
-          Bool.and(admission_claims_known(first),admission_claims_known(second))))
-        +known : Bool <- IO.pure(Bool,Bool.and(stable,Bool.and(U32.is_gt(total,0),U32.is_gt(available,0))))
-        +used : U32 <- IO.pure(U32,U32.add(admission_stats_used(second),legacy_current))
-        +outside : U32 <- IO.pure(U32,admission_outside_used(total,available,used))
-        Bool.pick(IO(Maybe<&2,U32>),known,
-          do IO<Maybe<&2,U32>>:
-            +uid : U32 <- IO.try(U32,L.CompileQueueLifecycle.uid())
-            cache_text : String <- IO.pure(String,
-              "valid=1\nsample_s=" ++ U32.show(now) ++ "\nids=" ++ ids
-              ++ "\nlegacy_pid=" ++ U32.show(legacy_pid)
-              ++ "\noutside_kb=" ++ U32.show(outside) ++ "\n")
-            cache_written : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.write_text(
-              admission_root(state) ++ "/observed." ++ U32.show(uid),cache_text)
-            released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
-            IO.pure(Maybe<&2,U32>,Some{outside}),
-          do IO<Maybe<&2,U32>>:
-            released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
-            IO.pure(Maybe<&2,U32>,None{}))
-
-def admission_outside_meminfo(+state: String, +guard: U32, +ids: String, now: U32,
-                              +legacy_pid: U32,
-                              result: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
-  match result:
-    case Fail{error}:
-      do IO<Maybe<&2,U32>>:
-        released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
-        IO.pure(Maybe<&2,U32>,None{})
-    case Done{+text}:
-      do IO<Maybe<&2,U32>>:
-        +total : U32 <- IO.pure(U32,status_number(field(text,"total_kb")))
-        +available : U32 <- IO.pure(U32,status_number(field(text,"available_kb")))
-        legacy_result : Result<&1,&1,U32 & String,String> <- Bool.pick(
-          IO(Result<&1,&1,U32 & String,String>),U32.is_gt(legacy_pid,0),
-          L.CompileQueueLifecycle.session_kb(legacy_pid),
-          IO.pure(Result<&1,&1,U32 & String,String>,Done{"kb=0\n"}))
-        admission_outside_claims(state,guard,ids,now,total,available,legacy_pid,legacy_result)
-
-def admission_outside_refresh(+state: String, +guard: U32, +ids: String, now: U32,
-                               legacy_pid: U32, stable_set: Bool) -> IO(Maybe<&2,U32>):
-  Bool.pick(IO(Maybe<&2,U32>),stable_set,
-    do IO<Maybe<&2,U32>>:
-      meminfo : Result<&1,&1,U32 & String,String> <- admission_meminfo(state)
-      admission_outside_meminfo(state,guard,ids,now,legacy_pid,meminfo),
-    do IO<Maybe<&2,U32>>:
-      released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
-      IO.pure(Maybe<&2,U32>,None{}))
-
-def admission_outside_cached(+state: String, +guard: U32, +ids: String, +now: U32, +legacy_pid: U32,
-                             +stable_set: Bool, cache: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
-  match cache:
-    case Fail{error}: admission_outside_refresh(state,guard,ids,now,legacy_pid,stable_set)
-    case Done{+text}:
-      Bool.pick(IO(Maybe<&2,U32>),admission_cache_fresh(text,now,ids),
-        do IO<Maybe<&2,U32>>:
-          +outside : U32 <- IO.pure(U32,status_number(field(text,"outside_kb")))
-          released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
-          IO.pure(Maybe<&2,U32>,Some{outside}),
-        admission_outside_refresh(state,guard,ids,now,legacy_pid,stable_set))
-
-def admission_outside_cache(+state: String, +guard: U32, +ids: String, now: U32, legacy_pid: U32,
-                            +stable_set: Bool, cache: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
-  Bool.pick(IO(Maybe<&2,U32>),stable_set,
-    admission_outside_cached(state,guard,ids,now,legacy_pid,stable_set,cache),
-    do IO<Maybe<&2,U32>>:
-      released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
-      IO.pure(Maybe<&2,U32>,None{}))
-
-def admission_outside_holder(+state: String, +guard: U32, +ids: String, now: U32,
-                              stable_set: Bool, uid: U32,
-                              holder: Result<&1,&1,U32 & String,String>) -> IO(Maybe<&2,U32>):
-  match holder:
-    case Fail{error}:
-      do IO<Maybe<&2,U32>>:
-        released : Unit <- IO.try(Unit,L.CompileQueueLifecycle.lock_release(guard))
-        IO.pure(Maybe<&2,U32>,None{})
-    case Done{+text}:
-      do IO<Maybe<&2,U32>>:
-        +legacy_pid : U32 <- IO.pure(U32,status_number(field(text,"pid")))
-        +legacy_ids : String <- IO.pure(String,ids ++ "legacy=" ++ U32.show(legacy_pid) ++ "\t")
-        cache : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(
-          admission_root(state) ++ "/observed." ++ U32.show(uid))
-        admission_outside_cache(state,guard,legacy_ids,now,legacy_pid,stable_set,cache)
-
-def admission_outside_after_guard(+state: String,
-                                  guard_result: Result<&1,&1,U32 & String,U32>) -> IO(Maybe<&2,U32>):
-  match guard_result:
-    case Fail{error}: IO.pure(Maybe<&2,U32>,None{})
-    case Done{guard}:
-      do IO<Maybe<&2,U32>>:
-        names_first : String <- IO.try(String,L.CompileQueueLifecycle.list_dir(admission_root(state) ++ "/running"))
-        ids_first : String <- admission_live_names(state,names_first)
-        names_second : String <- IO.try(String,L.CompileQueueLifecycle.list_dir(admission_root(state) ++ "/running"))
-        +ids_second : String <- admission_live_names(state,names_second)
-        +stable_set : Bool <- IO.pure(Bool,Tx.str_eq(ids_first,ids_second))
-        now_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.now_seconds()
-        +now_text : String <- IO.pure(String,admission_record_text(now_result))
-        +now : U32 <- IO.pure(U32,status_number(now_text))
-        +uid : U32 <- IO.try(U32,L.CompileQueueLifecycle.uid())
-        holder_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.exclusive_lock_pid(state ++ "/heavy.lock")
-        admission_outside_holder(state,guard,ids_second,now,stable_set,uid,holder_result)
-
-def admission_outside(+state: String) -> IO(Maybe<&2,U32>):
-  do IO<Maybe<&2,U32>>:
-    guard_result : Result<&1,&1,U32 & String,U32> <- L.CompileQueueLifecycle.lock_acquire(admission_root(state) ++ "/lock")
-    admission_outside_after_guard(state,guard_result)
-
-def outside_state_growth(state: OutsideState) -> U32:
-  match state:
-    case OutsideState{baseline, growth}: growth
-
-def outside_state_from_baseline(baseline: Maybe<&2,U32>, +current: U32) -> OutsideState:
-  match baseline:
-    case None{}: OutsideState{Some{current},0}
-    case Some{+base}: OutsideState{Some{base},Bool.pick(U32,U32.is_gt(current,base),U32.sub(current,base),0)}
-
-def outside_state_next_sample(+baseline: Maybe<&2,U32>, growth: U32, sample: Maybe<&2,U32>) -> OutsideState:
-  match sample:
-    case None{}: OutsideState{baseline,growth}
-    case Some{current}: outside_state_from_baseline(baseline,current)
-
-def outside_state_next(previous: OutsideState, sample: Maybe<&2,U32>) -> OutsideState:
-  match previous:
-    case OutsideState{baseline, growth}: outside_state_next_sample(baseline,growth,sample)
 
 def admission_need(+recorded: U32, stats: ClaimStats) -> U32:
   match stats:
@@ -1483,11 +1498,6 @@ def admission_legacy_pid(result: Result<&1,&1,U32 & String,String>) -> U32:
   match result:
     case Fail{error}: 1
     case Done{+text}: admission_legacy_pid_text(text)
-
-def admission_record_text(result: Result<&1,&1,U32 & String,String>) -> String:
-  match result:
-    case Fail{error}: ""
-    case Done{+text}: text
 
 def admission_can_start(kind: String, history: U32, +need: U32, stats: ClaimStats,
                         +available: U32, +legacy_pid: U32) -> Bool:
@@ -1515,16 +1525,6 @@ def admission_waiters_higher(+state: String, +token: String, +priority: U32) -> 
     cc : Bool <- waiters_higher(waiters_dir(state) ++ "/cc", token, priority)
     legacy : Bool <- waiters_higher(admission_root(state) ++ "/waiting", token, priority)
     IO.pure(Bool, Bool.or(legacy,Bool.or(heavy,cc)))
-
-def admission_meminfo_result(override: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
-  match override:
-    case Fail{error}: L.CompileQueueLifecycle.meminfo()
-    case Done{text}: IO.pure(Result<&1,&1,U32 & String,String>,Done{text})
-
-def admission_meminfo(+state: String) -> IO(Result<&1,&1,U32 & String,String>):
-  do IO<Result<&1,&1,U32 & String,String>>:
-    override : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(state ++ "/meminfo")
-    admission_meminfo_result(override)
 
 def admission_publish_claim(+state: String, +kind: String, +key: String, +token: String,
                             +pid: U32, start: String, need: U32,
