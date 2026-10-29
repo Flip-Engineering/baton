@@ -34,6 +34,9 @@ let nativeEvent = false;
 let claude = null;
 let rootHarness = 'claude-code';
 let relayThread = null;
+let registerRoot = false;
+// True when the relay named its conversation, so the conductor does not follow a changed record.
+let relayThreadFixed = false;
 let claudeArgs = [];
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
@@ -53,6 +56,8 @@ for (let i = 2; i < process.argv.length; i++) {
     if (!['claude-code', 'codex'].includes(rootHarness)) {
       throw new Error('--root-harness must be claude-code or codex');
     }
+  } else if (arg === '--register') {
+    registerRoot = true;
   } else if (arg === '--thread') {
     relayThread = process.argv[++i];
     if (!relayThread) throw new Error('--thread requires the Codex root thread ID');
@@ -942,8 +947,27 @@ function pendingConductorMessage(messageId = null) {
   }
 }
 
+// The recorded root conversation can change while the relay runs, for example
+// when the operator attaches the session to another Codex thread. A relay that
+// did not name its conversation follows the record: the conductor registers its
+// delivery endpoint for the new conversation and later notices name it.
+function rebindRecordedConversation() {
+  if (rootHarness !== 'codex' || relayThreadFixed || !connectionCustody) return false;
+  const recorded = selectedSession();
+  if (recorded?.harness !== 'codex' || !recorded.native || recorded.native === connectionCustody.native) return false;
+  coord('connect', sessionId, recorded.native, connectionCustody.endpoint);
+  process.stderr.write(JSON.stringify({ type: 'codexRootRebound', session: sessionId,
+    from: connectionCustody.native, to: recorded.native }) + '\n');
+  connectionCustody = { ...connectionCustody, native: recorded.native, thread: recorded.native };
+  inputNotice = null;
+  return true;
+}
+
 function notifyPending(messageId = null) {
   if (!channelReady) return;
+  // A changed recorded conversation replaces the selected notice, so the guard
+  // below does not keep a notice that names the previous conversation.
+  rebindRecordedConversation();
   // Keep the complete Codex notice selected while its thread read is pending.
   // Later endpoint deliveries remain in the database for continuePending.
   if (rootHarness === 'codex' && inputNotice) {
@@ -1015,13 +1039,24 @@ async function startDelivery() {
   let existing;
   try { existing = selectedSession(); } catch {}
   if (rootHarness === 'codex') {
+    // Registration fills an unrecorded conversation. A recorded conversation of
+    // any harness changes only by an explicit attach.
+    if (!existing?.native && registerRoot && relayThread && !hasParent(existing)) {
+      // The relay names its conversation and asks to record it as the root.
+      coord('attach', sessionId, 'codex', relayThread, '');
+      existing = selectedSession();
+    }
+    if (existing?.native && existing.harness !== 'codex') {
+      throw new Error(`The session records a ${existing.harness} conversation. Attach the Codex conversation explicitly; --register does not replace a recorded conversation.`);
+    }
     if (existing?.harness !== 'codex' || !existing?.native) {
-      throw new Error('A Codex root relay requires a recorded Codex conversation before attachment.');
+      throw new Error('A Codex root relay requires a recorded Codex conversation before attachment. Run attach, or start the relay with --register and its conversation.');
     }
     // Without --thread the relay follows the recorded root conversation.
     if (relayThread !== null && relayThread !== existing.native) {
       throw new Error('The Codex relay thread must match the recorded root conversation.');
     }
+    relayThreadFixed = relayThread !== null;
     relayThread = existing.native;
   }
   const connection = randomUUID();
@@ -1072,6 +1107,14 @@ async function startDelivery() {
     ...(rootHarness === 'codex' ? { thread: relayThread } : {}),
     endpoint, socket: socketName, connection,
     bridge: processIdentity(processFacts(process.pid)), client: processIdentity(processFacts(process.ppid)) };
+  // An attach to another conversation clears the recorded endpoint, so no
+  // delivery wake reaches this server until the endpoint is registered again.
+  if (rootHarness === 'codex' && !relayThreadFixed) {
+    setInterval(() => {
+      try { if (rebindRecordedConversation()) notifyPending(); }
+      catch (error) { process.stderr.write(`mcp-conductor: ${error.message}\n`); }
+    }, 5000).unref();
+  }
 }
 
 function selectedSession() {

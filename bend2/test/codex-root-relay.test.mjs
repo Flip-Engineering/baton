@@ -27,6 +27,8 @@ const fs = require('node:fs');
 const args = process.argv.slice(2);
 fs.writeFileSync(process.env.ROOT_RELAY_SSH_LOG, JSON.stringify(args));
 if (process.env.ROOT_RELAY_REFUSE_READ) process.on('SIGTERM', () => setTimeout(() => process.exit(0), 300));
+if (process.env.ROOT_RELAY_APP_DIR) fs.appendFileSync(process.env.ROOT_RELAY_APP_DIR + '/ssh-launches', 'x');
+const launches = process.env.ROOT_RELAY_APP_DIR ? fs.readFileSync(process.env.ROOT_RELAY_APP_DIR + '/ssh-launches', 'utf8').length : 1;
 let call;
 const line = readline.createInterface({ input: process.stdin });
 line.on('line', value => {
@@ -34,8 +36,14 @@ line.on('line', value => {
   if (request.id === 'conductor-channel-ready') {
     process.stdout.write(JSON.stringify({ jsonrpc:'2.0', method:'notifications/claude/channel', params:{
       content: "Message (completion-request) from lead [id: request-1]:\\nFull body\\nReview the work against lead's assignment.",
-      meta: { recipient:'operator', messageIds:'[\\"request-1\\"]' }
+      meta: { recipient:'operator', messageIds:'[\\"request-1\\"]', ...(process.env.ROOT_RELAY_META_THREAD ? { thread: process.env.ROOT_RELAY_META_THREAD } : {}) }
     } }) + '\\n');
+    if (process.env.ROOT_RELAY_SECOND_THREAD) setTimeout(() => process.stdout.write(JSON.stringify({
+      jsonrpc:'2.0', method:'notifications/claude/channel', params:{
+        content:'Message (report) from lead [id: request-2]:\\nSecond body',
+        meta:{ recipient:'operator', messageIds:'[\\"request-2\\"]', thread: process.env.ROOT_RELAY_SECOND_THREAD }
+      }
+    }) + '\\n'), 1500);
     if (process.env.ROOT_RELAY_REFUSE_READ) process.stdout.write(JSON.stringify({
       jsonrpc:'2.0', method:'notifications/claude/channel', params:{
         content:'Second notice', meta:{ recipient:'operator', messageIds:'[\\"request-2\\"]' }
@@ -45,7 +53,9 @@ line.on('line', value => {
     process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:request.id, result:{ protocolVersion:'2024-11-05', capabilities:{ tools:{} }, serverInfo:{ name:'fake-conductor', version:'1' } } }) + '\\n');
   } else if (request.method === 'tools/list') {
     process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:request.id, result:{ tools:[] } }) + '\\n');
-    process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:'conductor-channel-ready', method:'ping', params:{} }) + '\\n');
+    // The first connection ends after discovery, as when the network drops.
+    if (process.env.ROOT_RELAY_SSH_DROP && launches === 1) setTimeout(() => process.exit(255), 100);
+    else process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:'conductor-channel-ready', method:'ping', params:{} }) + '\\n');
   } else if (request.method === 'tools/call') {
     fs.appendFileSync(process.env.ROOT_RELAY_READ_LOG, JSON.stringify({ name:request.params.name, ...request.params.arguments }) + '\\n');
     if (process.env.ROOT_RELAY_REFUSE_READ) {
@@ -53,9 +63,21 @@ line.on('line', value => {
         result:{ isError:true, content:[{type:'text',text:'Refused fixture read'}] } }) + '\\n');
       return;
     }
+    if (process.env.ROOT_RELAY_REBIND_ON_READ && request.params.arguments.thread === 'thread-1') {
+      // The record changes while this read is pending: the conductor names the
+      // new conversation and refuses the read for the previous one.
+      process.stdout.write(JSON.stringify({ jsonrpc:'2.0', method:'notifications/claude/channel', params:{
+        content:'Message (report) from lead [id: request-2]:\\nSecond body',
+        meta:{ recipient:'operator', messageIds:'[\\"request-2\\"]', thread:'thread-2' } } }) + '\\n');
+      process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:request.id,
+        result:{ isError:true, content:[{type:'text',text:'Error: Codex read evidence does not match the complete root notice'}] } }) + '\\n');
+      return;
+    }
     call = request.id;
     const { thread, turn, item } = request.params.arguments;
     process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:'client:1', method:'baton/rootThreadItem', params:{ thread, turn, item } }) + '\\n');
+    // The first connection ends while the relay reads the item, as when the network drops.
+    if (process.env.ROOT_RELAY_SSH_DROP_ITEM && launches === 1) setTimeout(() => process.exit(255), 50);
   } else if (request.id === 'client:1') {
     fs.appendFileSync(process.env.ROOT_RELAY_ITEM_LOG, JSON.stringify(request) + '\\n');
     process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:call, result:{ content:[{ type:'text', text:'read request-1' }] } }) + '\\n');
@@ -69,7 +91,7 @@ const NOTICE = "Message (completion-request) from lead [id: request-1]:\nFull bo
 // A fake Codex CLI. 'queue' records the message. 'app-server proxy' answers the
 // app-server protocol from a state directory. ROOT_RELAY_APP_MODE selects when
 // the queued message appears as a user message: 'consume' after two history
-// reads, 'never' not at all, 'loads-late' lists the thread as loaded from the
+// reads, 'never' not at all, 'first-never' not at all for thread-1, 'loads-late' lists the thread as loaded from the
 // fourth request on, 'no-upgrade' closes without answering the Upgrade request
 // (what the proxy does for a non-WebSocket byte stream), 'drop-once' ends the first proxy that is asked for history
 // after the queue without replying. History starts
@@ -84,7 +106,12 @@ const mode = process.env.ROOT_RELAY_APP_MODE || 'consume';
 const notice = ${JSON.stringify(NOTICE)};
 if (args[0] === 'queue') {
   fs.writeFileSync(process.env.ROOT_RELAY_CODEX_LOG, JSON.stringify(args));
-  fs.writeFileSync(dir + '/queued', args[args.indexOf('--message') + 1]);
+  fs.appendFileSync(dir + '/queues.jsonl', JSON.stringify(args) + '\\n');
+  const queuedThread = args[args.indexOf('--thread') + 1];
+  fs.writeFileSync(dir + '/queued-' + queuedThread, args[args.indexOf('--message') + 1]);
+  // Each queued copy appears as its own turn two history reads after it was queued.
+  const readsNow = fs.existsSync(dir + '/history-reads-' + queuedThread) ? fs.readFileSync(dir + '/history-reads-' + queuedThread, 'utf8').length : 0;
+  fs.appendFileSync(dir + '/queue-marks-' + queuedThread, readsNow + '\\n');
   process.exit(0);
 }
 if (args[0] !== 'app-server' || args[1] !== 'proxy') process.exit(64);
@@ -119,19 +146,25 @@ function handle(request) {
   } else if (request.method === 'thread/loaded/list') {
     fs.appendFileSync(dir + '/loaded-calls', 'x');
     const calls = fs.readFileSync(dir + '/loaded-calls', 'utf8').length;
-    send(request.id, { data: mode === 'loads-late' && calls < 4 ? [] : ['thread-1'] });
+    send(request.id, { data: mode === 'loads-late' && calls < 4 ? [] : ['thread-1', 'thread-2'] });
   } else if (request.method === 'thread/turns/list') {
-    const queued = fs.existsSync(dir + '/queued') ? fs.readFileSync(dir + '/queued', 'utf8') : null;
+    const thread = request.params.threadId;
+    const queued = fs.existsSync(dir + '/queued-' + thread) ? fs.readFileSync(dir + '/queued-' + thread, 'utf8') : null;
     if (mode === 'drop-once' && queued !== null && request.params.itemsView === 'full' && !fs.existsSync(dir + '/dropped')) {
       fs.writeFileSync(dir + '/dropped', 'x');
       process.exit(1);
     }
     const turns = [];
     if (request.params.itemsView === 'full' && queued !== null) {
-      const reads = fs.existsSync(dir + '/history-reads') ? fs.readFileSync(dir + '/history-reads', 'utf8').length : 0;
-      fs.appendFileSync(dir + '/history-reads', 'x');
-      if (mode !== 'never' && reads >= 2) turns.push({ id: 'turn-1', status: 'completed', items: [
-        { type: 'agentMessage', id: 'item-2', text: 'working' }, user('item-1', 'queued: ' + queued)] });
+      const reads = fs.existsSync(dir + '/history-reads-' + thread) ? fs.readFileSync(dir + '/history-reads-' + thread, 'utf8').length : 0;
+      fs.appendFileSync(dir + '/history-reads-' + thread, 'x');
+      const marks = fs.readFileSync(dir + '/queue-marks-' + thread, 'utf8').trim().split('\\n').map(Number);
+      if (mode !== 'never' && !(mode === 'first-never' && thread === 'thread-1')) {
+        marks.forEach((mark, index) => {
+          if (reads >= mark + 2) turns.unshift({ id: 'turn-' + (index + 1), status: 'completed', items: [
+            { type: 'agentMessage', id: 'item-a' + (index + 1), text: 'working' }, user('item-' + (index + 1), 'queued: ' + queued)] });
+        });
+      }
     }
     const earlier = { id: 'turn-0', status: 'completed', items: [user('item-0', notice)] };
     send(request.id, { data: [...turns, earlier].slice(0, request.params.limit || 100), nextCursor: null });
@@ -253,15 +286,15 @@ test('the Codex root relay records the read after the root thread returns the no
   assert.ok(remoteArgs[2].includes("'--root-harness' 'codex' '--thread' 'thread-1'"));
 });
 
-async function runRelay(t, mode) {
+async function runRelay(t, mode, { env = {}, args = ['--thread', 'thread-1'] } = {}) {
   const directory = scratch(t);
   fakeSsh(join(directory, 'ssh'));
   const codex = fakeCodex(join(directory, 'codex'));
   const readLog = join(directory, 'read.jsonl');
   const child = spawn(process.execPath, [RELAY, '--ssh', 'database-host', '--database', '/scratch/orchestra.db',
     '--coordinator', '/scratch/bin/baton', '--conductor', '/scratch/lib/mcp-conductor.mjs',
-    '--session', 'operator', '--thread', 'thread-1', '--codex', codex], {
-    env: { ...process.env, PATH: `${directory}:${process.env.PATH}`, ROOT_RELAY_SSH_LOG: join(directory, 'ssh.json'),
+    '--session', 'operator', ...args, '--codex', codex], {
+    env: { ...process.env, ...env, PATH: `${directory}:${process.env.PATH}`, ROOT_RELAY_SSH_LOG: join(directory, 'ssh.json'),
       ROOT_RELAY_CODEX_LOG: join(directory, 'queue.json'), ROOT_RELAY_READ_LOG: readLog,
       ROOT_RELAY_APP_DIR: directory, ROOT_RELAY_APP_MODE: mode,
       ...(mode === 'read-refused' ? { ROOT_RELAY_REFUSE_READ: '1' } : {}),
@@ -281,9 +314,11 @@ async function runRelay(t, mode) {
 }
 
 async function until(run, text) {
+  const deadline = Date.now() + 30000;
   while (!run.diagnostic.includes(text)) {
-    const state = await Promise.race([once(run.child.stderr, 'data').then(() => 'data'), run.closed.then(() => 'closed')]);
-    if (state === 'closed' && !run.diagnostic.includes(text)) assert.fail(`closed before ${text}: ${run.diagnostic}`);
+    if (Date.now() > deadline) assert.fail(`timed out waiting for ${text}: ${run.diagnostic}`);
+    await Promise.race([once(run.child.stderr, 'data').catch(() => {}), run.closed.then(() => {}), new Promise(resolve => setTimeout(resolve, 250))]);
+    if (run.child.exitCode !== null && !run.diagnostic.includes(text)) assert.fail(`closed before ${text}: ${run.diagnostic}`);
   }
 }
 
@@ -292,7 +327,7 @@ test('a queued notice that the root thread has not returned stays unread', async
   await until(run, 'codexRootMessageQueued');
   await new Promise(resolve => setTimeout(resolve, 3500));
   assert.ok(existsSync(join(run.directory, 'queue.json')), 'The notice was not queued.');
-  assert.ok(readFileSync(join(run.directory, 'history-reads'), 'utf8').length >= 3, 'The thread history was not read repeatedly.');
+  assert.ok(readFileSync(join(run.directory, 'history-reads-thread-1'), 'utf8').length >= 3, 'The thread history was not read repeatedly.');
   assert.equal(existsSync(run.readLog), false, 'A read was recorded from queue acceptance alone.');
   run.child.stdin.end();
   const [code] = await run.closed;
@@ -340,6 +375,81 @@ test('a proxy that closes without upgrading is reported and nothing is queued', 
   assert.match(run.diagnostic, /closed before the WebSocket upgrade/);
   assert.equal(existsSync(join(run.directory, 'queue.json')), false);
   assert.equal(existsSync(run.readLog), false);
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
+});
+
+test('a lost SSH conductor connection is opened again and the unread notice is delivered', async (t) => {
+  const run = await runRelay(t, 'consume', { env: { ROOT_RELAY_SSH_DROP: '1' } });
+  await until(run, 'codexRelayConductorLost');
+  await until(run, 'codexRootMessageReceived');
+  assert.equal(readFileSync(join(run.directory, 'ssh-launches'), 'utf8').length, 2);
+  assert.equal(readFileSync(run.readLog, 'utf8').trim().split('\n').length, 1);
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
+});
+
+test('the conversation named by CODEX_THREAD_ID is passed to the conductor and registration is requested on demand', async (t) => {
+  const run = await runRelay(t, 'consume', { env: { CODEX_THREAD_ID: 'thread-1' }, args: ['--register'] });
+  await until(run, 'codexRootMessageReceived');
+  assert.match(run.diagnostic, /"threadSource":"environment"/);
+  const remote = JSON.parse(readFileSync(join(run.directory, 'ssh.json'), 'utf8'))[2];
+  assert.ok(remote.includes("'--root-harness' 'codex' '--thread' 'thread-1' '--register'"), remote);
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
+});
+
+test('a relay with no named conversation leaves the conductor to use the recorded one', async (t) => {
+  const run = await runRelay(t, 'consume', { env: { CODEX_THREAD_ID: '', ROOT_RELAY_META_THREAD: 'thread-1' }, args: [] });
+  await until(run, 'codexRootMessageReceived');
+  assert.match(run.diagnostic, /"threadSource":"recorded"/);
+  const remote = JSON.parse(readFileSync(join(run.directory, 'ssh.json'), 'utf8'))[2];
+  assert.equal(remote.includes('--thread'), false, remote);
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
+});
+
+test('a notice for another root conversation replaces a delivery that waits on the previous one', async (t) => {
+  const run = await runRelay(t, 'first-never', { args: [], env: { CODEX_THREAD_ID: '', ROOT_RELAY_META_THREAD: 'thread-1',
+    ROOT_RELAY_SECOND_THREAD: 'thread-2' } });
+  await until(run, 'codexRootMessageSuperseded');
+  await until(run, 'codexRootMessageReceived');
+  const reads = readFileSync(run.readLog, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(reads.map((read) => [read.id, read.thread]), [['request-2', 'thread-2']]);
+  const queues = readFileSync(join(run.directory, 'queues.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(queues.map((args) => args[2]), ['thread-1', 'thread-2']);
+  assert.ok(queues[1].at(-1).includes('Second body'));
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
+  assert.doesNotMatch(run.diagnostic, /codex-root-relay: Error/);
+});
+
+test('a record change while the conductor verifies a read delivers the new conversation and keeps the relay', async (t) => {
+  const run = await runRelay(t, 'consume', { args: [], env: { CODEX_THREAD_ID: '', ROOT_RELAY_META_THREAD: 'thread-1',
+    ROOT_RELAY_REBIND_ON_READ: '1' } });
+  await until(run, 'codexRootMessageSuperseded');
+  await until(run, 'codexRootMessageReceived');
+  const reads = readFileSync(run.readLog, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(reads.map((read) => [read.id, read.thread]), [['request-1', 'thread-1'], ['request-2', 'thread-2']]);
+  assert.doesNotMatch(run.diagnostic, /read was not recorded/);
+  assert.equal(run.child.exitCode, null, run.diagnostic);
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
+});
+
+test('an SSH loss during the independent item read leaves the notice unread and reconnects', async (t) => {
+  const run = await runRelay(t, 'consume', { env: { ROOT_RELAY_SSH_DROP_ITEM: '1' } });
+  await until(run, 'codexRelayConductorLost');
+  await until(run, 'codexRootMessageReceived');
+  assert.equal(readFileSync(join(run.directory, 'ssh-launches'), 'utf8').length, 2);
+  assert.doesNotMatch(run.diagnostic, /SSH conductor input is closed/);
+  assert.doesNotMatch(run.diagnostic, /codex-root-relay: Error/);
   run.child.stdin.end();
   const [code] = await run.closed;
   assert.equal(code, 0, run.diagnostic);

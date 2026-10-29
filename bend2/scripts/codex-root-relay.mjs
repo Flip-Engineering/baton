@@ -7,7 +7,9 @@ import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline';
 
-const USAGE = 'usage: codex-root-relay.mjs --ssh HOST --database PATH --coordinator PATH --conductor PATH --session ID [--thread ID] [--node PATH] [--codex PATH]\n';
+const USAGE = 'usage: codex-root-relay.mjs --ssh HOST --database PATH --coordinator PATH --conductor PATH --session ID [--thread ID] [--register] [--node PATH] [--codex PATH]\n';
+
+const RECONNECT_MS = 2000;
 
 const POLL_MS = 1000;
 const PAGE_TURNS = 8;
@@ -21,6 +23,10 @@ function parse(argv) {
   const options = {};
   for (let i = 0; i < argv.length; i++) {
     const key = argv[i];
+    if (key === '--register') {
+      options.register = true;
+      continue;
+    }
     if (!['--ssh', '--database', '--coordinator', '--conductor', '--session', '--thread', '--node', '--codex'].includes(key)) {
       fail(`Unknown option: ${key}\n${USAGE}`);
     }
@@ -31,7 +37,11 @@ function parse(argv) {
   for (const key of ['ssh', 'database', 'coordinator', 'conductor', 'session']) {
     if (!options[key]) fail(`--${key} is required\n${USAGE}`);
   }
-  return { ...options, node: options.node || 'node', codex: options.codex || 'codex' };
+  // Without --thread, the Codex process that launched the relay may name its
+  // conversation in CODEX_THREAD_ID.
+  const thread = options.thread || process.env.CODEX_THREAD_ID || '';
+  const source = options.thread ? 'argument' : thread ? 'environment' : 'recorded';
+  return { ...options, thread, threadSource: source, node: options.node || 'node', codex: options.codex || 'codex' };
 }
 
 function shellQuote(value) {
@@ -199,6 +209,14 @@ class Peer {
     else this.child.stdin.write(text + '\n');
   }
 
+  // Answers a request from the peer. When the connection has ended, the peer
+  // sends the request again on its next connection, so the answer is dropped.
+  reply(message) {
+    if (this.exited || !this.child.stdin.writable) return;
+    try { this.send(message); }
+    catch (error) { process.stderr.write(`codex-root-relay: reply dropped: ${error.message}\n`); }
+  }
+
   receive(line) {
     let message;
     try { message = JSON.parse(line); }
@@ -215,8 +233,8 @@ class Peer {
     }
     if (message.method === 'baton/rootThreadItem' && message.id !== undefined) {
       this.onItemRequest?.(message.params).then(
-        result => this.send({ id: message.id, result }),
-        error => this.send({ id: message.id, error: { code: -32000, message: String(error.message || error) } }));
+        result => this.reply({ id: message.id, result }),
+        error => this.reply({ id: message.id, error: { code: -32000, message: String(error.message || error) } }));
       return;
     }
     if (message.method === 'notifications/claude/channel') {
@@ -342,9 +360,9 @@ class AppSession {
 
 // Waits until the app-server has the thread loaded. A restarted app-server
 // loads the root thread again when the root client resumes it.
-async function awaitLoadedThread(peer, session, thread) {
+async function awaitLoadedThread(delivery, session, thread) {
   let reported = false;
-  while (!peer.exited) {
+  while (!delivery.exited) {
     let cursor = null;
     do {
       const page = await session.request('thread/loaded/list', cursor ? { cursor } : {});
@@ -357,7 +375,7 @@ async function awaitLoadedThread(peer, session, thread) {
     }
     await sleep(POLL_MS);
   }
-  throw new Error('SSH conductor closed before the Codex app-server loaded the root thread: ' + thread);
+  throw endedDelivery(delivery, 'the Codex app-server loaded the root thread: ' + thread);
 }
 
 // The newest turn and its item IDs before the notice is queued. Queued input
@@ -419,14 +437,24 @@ async function readThreadItem(session, thread, turnId, itemId) {
     ...(item.type === 'userMessage' ? { text: userText(item)[0] } : {}) };
 }
 
-async function awaitUserMessage(peer, session, id, thread, content, before) {
+async function awaitUserMessage(delivery, session, id, thread, content, before) {
   process.stderr.write(JSON.stringify({ type: 'codexRootMessageQueued', thread, message: id }) + '\n');
-  while (!peer.exited) {
+  while (!delivery.exited) {
     const found = await findUserMessage(session, thread, content, before);
     if (found) return found;
     await sleep(POLL_MS);
   }
-  throw new Error('SSH conductor closed before Codex returned Baton message ' + id + ' in the root thread.');
+  throw endedDelivery(delivery, 'Codex returned Baton message ' + id + ' in the root thread.');
+}
+
+// A delivery ends when the SSH conductor closes or when the conductor names a
+// different root conversation. The message stays unread in both cases.
+function endedDelivery(delivery, waitingFor) {
+  const error = new Error(delivery.superseded
+    ? `The root conversation changed before ${waitingFor}`
+    : `SSH conductor closed before ${waitingFor}`);
+  error.superseded = delivery.superseded;
+  return error;
 }
 
 function noticeThread(options, params) {
@@ -438,23 +466,26 @@ function noticeThread(options, params) {
   return thread;
 }
 
-async function deliverNotice(peer, options, params) {
+async function deliverNotice(peer, delivery, options, params) {
   const id = messageId(params);
   const thread = noticeThread(options, params);
-  const session = new AppSession({ ...options, thread }, peer);
+  const session = new AppSession({ ...options, thread }, delivery);
   let received;
   let queued;
   try {
-    await awaitLoadedThread(peer, session, thread);
+    await awaitLoadedThread(delivery, session, thread);
     const before = await newestTurn(session, thread);
     queued = await queueMessage({ ...options, thread }, id, params.content);
-    received = await awaitUserMessage(peer, session, id, thread, params.content, before);
+    received = await awaitUserMessage(delivery, session, id, thread, params.content, before);
   } finally {
     await session.close();
   }
+  if (delivery.exited) throw endedDelivery(delivery, 'the read of Baton message ' + id + ' was recorded.');
   const read = await peer.request('tools/call', { name: 'baton2_root_delivery',
     arguments: { id, thread, content: params.content, turn: received.turn, item: received.item } });
   if (read.error || read.result?.isError) {
+    // The conductor refuses a read from a conversation it no longer serves.
+    if (delivery.superseded) throw endedDelivery(delivery, 'the read of Baton message ' + id + ' was recorded.');
     throw new Error('Codex returned Baton message ' + id + ' in the root thread, but its read was not recorded: ' + JSON.stringify(read));
   }
   process.stderr.write(JSON.stringify({ type: 'codexRootMessageReceived', session: options.session,
@@ -483,20 +514,14 @@ function sendClient(message) {
 
 async function connect(options) {
   const remote = [options.node, options.conductor, options.database, options.coordinator,
-    '--session', options.session, '--root-harness', 'codex', ...(options.thread ? ['--thread', options.thread] : [])]
+    '--session', options.session, '--root-harness', 'codex', ...(options.thread ? ['--thread', options.thread] : []),
+    ...(options.register ? ['--register'] : [])]
     .map(shellQuote).join(' ');
   const child = spawn('ssh', ['-T', options.ssh, 'exec ' + remote], {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const peer = new Peer(child);
   connection = peer;
-  peer.closed.then(exit => {
-    if (!clientLines.closed) {
-      process.stderr.write('codex-root-relay: SSH conductor exited: ' + JSON.stringify(exit) + '\n');
-      process.exitCode = 1;
-      clientLines.close();
-    }
-  });
   peer.onItemRequest = async params => {
     const session = new AppSession({ ...options, thread: params.thread }, peer);
     try { return await readThreadItem(session, params.thread, params.turn, params.item); }
@@ -504,20 +529,29 @@ async function connect(options) {
   };
   peer.onNotice = params => {
     if (peer.closing || peer.exited) return;
+    // A notice for another root conversation replaces the delivery in progress.
+    // The earlier message stays unread, and a late return from its conversation
+    // is not recorded because the conductor now serves the new one.
+    let thread = null;
+    try { thread = noticeThread(options, params); } catch {}
+    const delivery = { thread, superseded: false, get exited() { return peer.exited || this.superseded; } };
+    if (peer.active && peer.active.thread !== thread) peer.active.superseded = true;
+    peer.active = delivery;
     peer.delivery = (peer.delivery || Promise.resolve())
       .then(() => {
-        if (peer.closing || peer.exited) return;
-        return deliverNotice(peer, options, params);
+        if (peer.closing || delivery.exited) return;
+        return deliverNotice(peer, delivery, options, params);
       })
       .catch(error => {
-        if (peer.closing) {
-          process.stderr.write(JSON.stringify({ type: 'codexRootMessageUnread', session: options.session,
-            thread: options.thread, reason: String(error.message || error) }) + '\n');
+        if (peer.closing || peer.exited || error.superseded) {
+          process.stderr.write(JSON.stringify({ type: error.superseded ? 'codexRootMessageSuperseded' : 'codexRootMessageUnread',
+            session: options.session, thread, reason: String(error.message || error) }) + '\n');
           return;
         }
         process.stderr.write(`codex-root-relay: ${error.stack || error}\n`);
         process.exitCode = 1;
         peer.closing = true;
+        peer.deliveryFailed = true;
         child.kill('SIGTERM');
       });
   };
@@ -543,15 +577,50 @@ const options = parse(process.argv.slice(2));
 const clientLines = createInterface({ input: process.stdin });
 let connection = null;
 let connecting = Promise.resolve();
+let clientClosed = false;
+
+// Keeps one SSH conductor connection open for as long as the Codex client is.
+// A conductor that cannot be started or initialized the first time is a
+// configuration failure and ends the relay. After a connection was established,
+// a lost connection is opened again; the conductor sends the oldest unread
+// message on each new connection.
+async function maintain() {
+  process.stderr.write(JSON.stringify({ type: 'codexRelayIdentity', session: options.session,
+    thread: options.thread || null, threadSource: options.threadSource, register: Boolean(options.register) }) + '\n');
+  let established = false;
+  while (!clientClosed) {
+    try {
+      connection = await connect(options);
+      established = true;
+    } catch (error) {
+      if (!established) throw error;
+      process.stderr.write(`codex-root-relay: SSH conductor connection failed: ${error.message}\n`);
+      await new Promise(resolve => setTimeout(resolve, RECONNECT_MS));
+      continue;
+    }
+    const exit = await connection.closed;
+    if (clientClosed) return;
+    // A failed delivery (a queue error or refused read evidence) ends the relay
+    // with its diagnostic. Only a lost connection is opened again.
+    if (connection.deliveryFailed) {
+      clientLines.close();
+      return;
+    }
+    process.stderr.write(JSON.stringify({ type: 'codexRelayConductorLost', session: options.session, exit }) + '\n');
+    await new Promise(resolve => setTimeout(resolve, RECONNECT_MS));
+  }
+}
+
 clientLines.on('line', line => {
   try {
     const message = JSON.parse(line);
     codexMcpRequest(message);
     if (message.method === 'notifications/initialized') {
-      connecting = connecting.then(() => connect(options));
+      connecting = connecting.then(maintain);
       connecting.catch(error => {
         process.stderr.write(`codex-root-relay: ${error.stack || error}\n`);
         process.exitCode = 1;
+        clientLines.close();
       });
     }
   } catch (error) {
@@ -561,7 +630,8 @@ clientLines.on('line', line => {
 });
 
 clientLines.on('close', async () => {
-  if (connection) {
+  clientClosed = true;
+  if (connection && !connection.exited) {
     // A message not yet returned by the root thread stays unread in the database.
     connection.closing = true;
     if (connection.child.stdin.writable) connection.child.stdin.end();
