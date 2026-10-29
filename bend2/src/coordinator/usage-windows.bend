@@ -412,7 +412,7 @@ def held_seats_sql(+provider: String, +account: String, +current: String) -> Str
   "SELECT DISTINCT h.sender FROM messages h, usage_reads e WHERE h.id GLOB 'usage-read:*:hold:*' AND h.id GLOB 'usage-read:'||e.id||':hold:*' AND " ++ scope_sql("e.",provider,account) ++ " AND h.sender<>" ++ C.q(current) ++ " AND NOT EXISTS(SELECT 1 FROM messages x WHERE x.id=replace(h.id,':hold:',':release:'));"
 
 def owed_head_sql(+seat: String) -> String:
-  "SELECT coalesce((SELECT id FROM messages m WHERE m.recipient=" ++ C.q(seat) ++ " AND " ++ C.owed_sql("m") ++ " AND NOT " ++ C.stopped_session_sql(C.q(seat)) ++ " ORDER BY seq LIMIT 1),'');"
+  "SELECT coalesce((SELECT id FROM messages m WHERE m.recipient=" ++ C.q(seat) ++ " AND " ++ C.owed_sql("m") ++ " AND NOT " ++ C.stopped_session_sql(C.q(seat)) ++ " AND NOT " ++ C.task_closed_sql(C.q(seat)) ++ " ORDER BY seq LIMIT 1),'');"
 
 def wake_argv(+self: String, +db: String, +message: String) -> List<String>:
   [self,"--wake-message",db,message]

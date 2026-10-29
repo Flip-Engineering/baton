@@ -924,6 +924,27 @@ class AgentActions(unittest.TestCase):
                 self.assertEqual(self.stored_messages(), messages)
         self.assertFalse(self.completion('stopped-worker')['ended'])
 
+    def test_replayed_confirmation_cannot_dispatch_a_new_task_past_an_explicit_stop(self):
+        self.legacy('recruit', 'replay-worker', 'root', 'omp', 'model', 'low',
+                    str(self.repo), 'replay-branch', str(self.directory / 'replay'), 'HEAD')
+        request = self.requested('replay-worker')
+        plain = self.action('root', 'completion-confirmed', '--to', 'replay-worker',
+                            '--id', 'plain-decision')
+        self.assertEqual(plain[0]['status'], 'admitted')
+        self.legacy('stop', 'replay-worker', 'operator-stop', 'Operator holds this session.')
+        stops = self.stop_rows()
+        messages = self.stored_messages()
+        rows = self.action('root', 'completion-confirmed', '--to', 'replay-worker',
+                           '--request', request, '--id', 'plain-decision', '--next', 'Next.')
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['status'], 'refused')
+        self.assertEqual(self.stored_messages(), messages)
+        self.assertEqual(self.stop_rows(), stops)
+        # The stored plain confirmation still replays with no dispatch.
+        replay = self.action('root', 'completion-confirmed', '--to', 'replay-worker',
+                             '--request', request, '--id', 'plain-decision')
+        self.assertEqual(self.stored_messages(), messages)
+
     def test_confirmation_refused_before_admission_stores_nothing(self):
         request = self.requested('worker-a')
         before = self.stored_messages()

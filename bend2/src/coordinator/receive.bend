@@ -109,7 +109,7 @@ def continue_if(again: String -> IO(Result<&1,&1,U32 & String,Unit>), present: B
 # How much input is still owed after the cursor. Busy writers have committed
 # before trying the lock, so the owner reads this again after releasing it.
 def pending_count_sql(+session: String, cursor: String) -> String:
-  "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"
+  "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND NOT " ++ C.task_closed_sql(C.q(session)) ++ ";"
 
 # The message the wake hands to the invocation. It is the first unread
 # message after the cursor, so the wake never re-delivers input the attempt

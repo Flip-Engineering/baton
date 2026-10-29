@@ -529,16 +529,16 @@ def message_sql(+id: String, +sender: String, +recipient: String, +kind: String,
 # transaction. The confirmation is written only when the derived task identity
 # is free or already holds the same task and the request is the current one, or
 # the exact confirmation is already stored; the task is written only when the
-# exact confirmation is stored. A conflict therefore admits neither message, and
-# a repeat of the same decision stores nothing new.
+# exact confirmation is stored. Both writes pass the ordinary route and stop
+# admission, so a stored confirmation never lets a new task past an explicit stop.
+# A conflict therefore admits neither message, and a repeat of the same decision
+# stores nothing new.
 def confirm_next_guard(+id: String, +sender: String, +recipient: String, +request: String, +task_id: String, +task: String) -> String:
   "NOT EXISTS(SELECT 1 FROM messages WHERE id=" ++ q(task_id) ++ " AND NOT " ++ exact_message(task_id,sender,recipient,"task",task) ++ ") AND (" ++ exact_message(id,sender,recipient,"completion-confirmed",request) ++ " OR " ++ q(request) ++ "=coalesce(" ++ task_request_sql(q(recipient)) ++ ",''))"
 
 def confirm_next_sql(+id: String, +sender: String, +recipient: String, +request: String, +task_id: String, +task: String) -> String:
   message_guarded_sql(id,sender,recipient,"completion-confirmed",request,confirm_next_guard(id,sender,recipient,request,task_id,task))
-  ++ message_conflict_sql(q(task_id),q(sender),q(recipient),q("task"),q(task),"1")
-  ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(task_id) ++ "," ++ q(sender) ++ "," ++ q(recipient) ++ ",'task'," ++ q(task) ++ " WHERE " ++ exact_message(id,sender,recipient,"completion-confirmed",request) ++ message_upsert()
-  ++ matching_message_result(task_id,sender,recipient,"task",task)
+  ++ message_guarded_sql(task_id,sender,recipient,"task",task,exact_message(id,sender,recipient,"completion-confirmed",request))
 
 def parent_message_sql(+id: String, +sender: String, +kind: String, +body: String) -> String:
   +recipient = report_recipient(q(sender))

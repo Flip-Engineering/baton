@@ -422,6 +422,36 @@ class McpCommand(unittest.TestCase):
         self.assertEqual(result['content'], [{'type': 'text', 'text': output}])
         self.assertNotIn('isError', result)
 
+    def test_completion_confirmation_forwards_the_complete_next_assignment(self):
+        text = '\ufeffNext bounded assignment.\nλ🙂\n  Trailing spaces  '
+        self.command(tool='baton2_guide',
+                     arguments={'player': 'worker', 'kind': 'completion-confirmed', 'next': text},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker', '--next', text])
+        self.command(tool='baton2_guide',
+                     arguments={'player': 'worker', 'kind': 'completion-confirmed',
+                                'request': 'exact request', 'next': text, 'id': 'exact decision'},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker', '--request',
+                                      'exact request', '--next', text, '--id', 'exact decision'])
+        self.command(tool='baton2_guide',
+                     arguments={'player': 'worker', 'kind': 'completion-confirmed'},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker'])
+        output = json.dumps([{'status': 'completed', 'stdout': '[{"status":"admitted"}]'}])
+        self.command(stdout=output + '\n', tool='baton2_message_batch',
+                     arguments={'messages': [{'player': 'worker', 'kind': 'completion-confirmed',
+                                              'next': text},
+                                             {'player': 'other', 'kind': 'completion-confirmed'}]},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker', '--next', text,
+                                       '--and', 'completion-confirmed', '--to', 'other'])
+        for tool in ('baton2_guide', 'baton2_message_batch'):
+            schema = self.tools[tool]['inputSchema']
+            item = schema if tool == 'baton2_guide' else schema['properties']['messages']['items']
+            self.assertEqual(item['properties']['next']['type'], 'string')
+            self.assertNotIn('next', item.get('required', []))
+
     def test_batch_message_tools_require_recorded_executable_support(self):
         with tempfile.TemporaryDirectory() as home:
             home = pathlib.Path(home)
