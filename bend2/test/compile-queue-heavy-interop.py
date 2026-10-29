@@ -61,13 +61,13 @@ for arg in "$@"; do
   [ "$prev" = -o ] && out=$arg
   prev=$arg
 done
-printf 'start %s\\n' "$tag" >> "@LOG@"
 for fd in /proc/$$/fd/*; do
   target=$(readlink "$fd" 2>/dev/null)
   case "$target" in */heavy.lock) printf 'heavy-descriptor %s\\n' "$tag" >> "@LOG@" ;; esac
   [ "${fd##*/}" = 10 ] && case "$target" in */admission/running/*) printf 'claim-descriptor %s\\n' "$tag" >> "@LOG@" ;; esac
   [ "${fd##*/}" = 11 ] && case "$target" in */cc-execution.lock) printf 'cc-descriptor %s\\n' "$tag" >> "@LOG@" ;; esac
 done
+printf 'start %s\\n' "$tag" >> "@LOG@"
 if [ -n "$hold" ]; then
   i=0
   while [ ! -e "$hold" ] && [ "$i" -lt 600 ]; do sleep 0.1; i=$((i + 1)); done
@@ -136,10 +136,7 @@ def finish(process, tag):
 
 
 def waiting_tickets(state):
-    shown = subprocess.run([BINARY, '--', 'status', '--state-root', str(state)],
-                           env=dict(os.environ, BATON_COMPILE_QUEUE_ROOT=str(state)),
-                           capture_output=True, text=True).stdout
-    return sum(1 for line in shown.splitlines() if line.startswith('waiting '))
+    return sum(1 for path in (state / 'waiters').rglob('*') if path.is_file())
 
 
 def start_legacy_holder(state, tag, megabytes=16):
