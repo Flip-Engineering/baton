@@ -762,6 +762,86 @@ class NativeObservation(RECEIVE.Receive):
         self.assertTrue(any(row['id'] == 'log-failure-task'
                             for row in self.coord('inbox', 'parent')))
 
+    # The store's busy handler gives up after 3000 waits of 10 ms
+    # (bend2/src/host/sqlite.c); the lock is held past that bound.
+    LOCK_HOLD_SECONDS = 36
+
+    def hold_write_lock(self):
+        """Start a process that holds the database write lock until its stdin closes."""
+        holder = subprocess.Popen(
+            [sys.executable, '-I', '-c',
+             'import sqlite3, sys\n'
+             'db = sqlite3.connect(sys.argv[1], isolation_level=None, timeout=60)\n'
+             'db.execute("BEGIN IMMEDIATE")\n'
+             'print("locked", flush=True)\n'
+             'sys.stdin.read()\n'
+             'db.execute("ROLLBACK")\n',
+             str(self.db)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        self.addCleanup(holder.kill)
+        self.assertEqual(holder.stdout.readline().strip(), 'locked')
+        return holder
+
+    def recorded_messages(self, ident):
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            return database.execute(
+                'SELECT id, kind, body FROM messages WHERE id=? OR id LIKE ? ORDER BY seq',
+                (ident, ident + ':%')).fetchall()
+
+    def test_terminal_result_is_recorded_after_a_write_lock_outlasts_the_busy_wait(self):
+        self.player(harness='omp')
+        self.coord('message', 'busy-task', 'root', 'parent', 'task', 'Read this task.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
+        self.review_input(stream, 'busy-task')
+        _, turn_id = self.eventually(lambda: self._retained_attempt(),
+                                     'retained attempt was not admitted')
+
+        holder = self.hold_write_lock()
+        locked_at = time.monotonic()
+        text = 'Result recorded after the store lock was released.'
+        self.action(stream, native_frame={
+            'type': 'agent_end', 'isTerminal': True, 'is_error': False,
+            'messages': [{'role': 'assistant', 'content': [{'type': 'text', 'text': text}]}]})
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+
+        while time.monotonic() - locked_at < self.LOCK_HOLD_SECONDS:
+            if observer.poll() is not None:
+                stdout, stderr = self.child_communication(observer)
+                self.fail(f'receive exited {observer.returncode} while the store was locked: '
+                          f'{stdout}{stderr}')
+            time.sleep(.5)
+        self.assertEqual(self.recorded_messages(turn_id), [])
+        self.assertIsNone(observer.poll())
+
+        holder.stdin.close()
+        self.assertEqual(holder.wait(timeout=30), 0)
+        released_at = time.monotonic()
+        while not self.recorded_messages(turn_id):
+            if observer.poll() is not None or time.monotonic() - released_at > 60:
+                stdout, stderr = self.child_communication(observer) \
+                    if observer.poll() is not None else ('', '')
+                self.fail('the terminal result was not recorded after the lock was released; '
+                          f'receive exit={observer.poll()}: {stdout}{stderr}')
+            time.sleep(.1)
+
+        self.assertIsNone(observer.poll(), 'receive exited while its native process was running')
+        self.assertTrue(any(process['pid'] == started['pid'] for process in self.owned_processes()))
+        self.action(stream, exit_fixture=True)
+        self.finish(observer)
+        self.assertFalse(any(process['pid'] == started['pid']
+                             for process in self.owned_processes()))
+
+        recorded = self.recorded_messages(turn_id)
+        self.assertEqual([(row[0], row[1], row[2]) for row in recorded],
+                         [(turn_id, 'report', text)])
+        self.assertEqual([row['reportBody'] for row in self.coord('turns', 'parent')], [text])
+        self.assertFalse(any(row['id'] == turn_id + ':observation'
+                             for row in self.coord('inbox', 'root')))
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
+
+
 def load_tests(loader, tests, pattern):
     declared = sorted(name for name in vars(NativeObservation) if name.startswith('test_'))
     return loader.loadTestsFromNames(declared, NativeObservation)

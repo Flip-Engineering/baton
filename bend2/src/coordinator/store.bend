@@ -190,6 +190,22 @@ def apply_through_busy(+db: String, +command: C.Command) -> IO(Result<&1,&1,U32 
     result : Result<&1,&1,U32 & String,String> <- apply(db,command)
     busy_again(result,unit => apply_through_busy(db,command))
 
+# The same retry for a statement the caller already built. The observer's
+# read-mark and native-request writes use it, so a busy answer leaves the span
+# position and checkpoint where they were and the span read continues once the
+# write commits (#1275).
+@unsafe
+def transact_through_busy(+db: String, +sql: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    result : Result<&1,&1,U32 & String,String> <- transact_sql(db,sql)
+    busy_again(result,unit => transact_through_busy(db,sql))
+
+@unsafe
+def query_through_busy(+db: String, +sql: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,sql)
+    busy_again(result,unit => query_through_busy(db,sql))
+
 
 # Wake-claim transitions for issue #685. The table is owned by this module:
 # every writer ensures it with the canonical definition first, so a fresh
