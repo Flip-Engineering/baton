@@ -153,11 +153,12 @@ def inspection_result(+saved: String) -> IO(Unit):
 # request for its open assignment. An unrecorded, foreign or older identity is
 # refused once and stores nothing. Without --id Baton generates the request
 # identity; a newer request becomes the current one for the assignment. The
-# request goes to the actor's current coordinator, and a replay goes to the
+# request goes to the actor's current coordinator, or to the registered operator
+# when the actor is a parentless conductor, and a replay goes to the
 # recipient the request recorded, so a request addressed to a coordinator that
 # has since been succeeded replays as recorded.
 def completion_state_sql(+session: String, +id: String) -> String:
-  +coordinator = C.current_coordinator_sql(C.q(session))
+  +coordinator = C.report_recipient(C.q(session))
   +current = C.task_request_sql(C.q(session))
   "SELECT hex(CAST('x'||coalesce(" ++ coordinator ++ ",'') AS TEXT))"
   ++ "||char(9)||hex(CAST('x'||coalesce((SELECT id FROM messages WHERE id=" ++ C.q(id) ++ " AND sender=" ++ C.q(session) ++ " AND kind='completion-request' AND " ++ C.task_addressee_sql("messages",C.q(session)) ++ "),'') AS TEXT))"
@@ -249,6 +250,8 @@ def completion_request_decided(+db: String, +session: String, +id: String, +body
           completion_sent(db,session,coordinator,"",body),
           completion_supplied(db,session,coordinator,supplied,suppliedTo,current,currentBody,recorded,id,body)))
 
+# A parentless Player, and a parentless conductor with no registered operator,
+# are refused.
 def completion_request(+db: String, +session: String, +id: String, body: A.Body) -> IO(String):
   do IO<String>:
     state : CompletionState <- completion_state(db,session,id)

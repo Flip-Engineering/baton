@@ -77,7 +77,8 @@ baton guide worker 'Continue the assigned work and report the result.'
 
 The completion request goes to the current session's coordinator, which is its
 recorded parent while that parent is not over (see the succession section below). A
-parentless session receives a structured refusal. Baton generates the request
+parentless conductor sends it to the registered operator. A parentless Player, and a
+parentless conductor with no registered operator, receive a structured refusal. Baton generates the request
 identity. An explicit `--id` must name the session's own current completion request
 for its open assignment, and the request replays to the recipient it recorded; an
 unrecorded identity, another message's identity or an older request is refused with its

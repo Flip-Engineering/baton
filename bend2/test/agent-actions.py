@@ -1160,20 +1160,31 @@ class AgentActions(unittest.TestCase):
 
     def test_operator_confirms_a_parentless_conductor_inferred_exact_and_with_next(self):
         self.operator_session()
+        requests = {}
         for name in ('top-a', 'top-b'):
             self.legacy('attach', name, 'fixture', '', self.endpoint)
             self.legacy('role', name, 'principal-conductor')
             self.legacy('message', name + '-task', 'operator', name, 'task', 'Coordinate the work.')
-            self.legacy('message', name + '-request', name, 'operator', 'completion-request',
-                        'The coordination is complete.')
+            sent = self.action(name, 'completion-request', '--text', 'The coordination is complete.')[0]
+            self.assertEqual((sent['status'], sent['recipient']), ('admitted', 'operator'))
+            requests[name] = sent['id']
         inferred = self.action('operator', 'completion-confirmed', '--to', 'top-a')
         self.assertEqual(inferred[0]['status'], 'admitted')
         self.assertTrue(self.completion('top-a')['ended'])
         exact = self.action('operator', 'completion-confirmed', '--to', 'top-b',
-                            '--request', 'top-b-request', '--next', 'Continue with the next stage.')
+                            '--request', requests['top-b'], '--next', 'Continue with the next stage.')
         self.assertEqual([row['status'] for row in exact], ['admitted', 'admitted'])
         self.assertFalse(self.completion('top-b')['ended'])
         self.assertEqual(self.completion('top-b')['assignmentId'], exact[1]['id'])
+
+    def test_a_parentless_player_cannot_request_completion_even_with_a_registered_operator(self):
+        self.operator_session()
+        self.legacy('attach', 'plain-player', 'fixture', '', self.endpoint)
+        before = self.stored_messages()
+        refused = self.action('plain-player', 'completion-request', '--text', 'Done.')[0]
+        self.assertEqual(refused['status'], 'refused')
+        self.assertIn('no recorded immediate parent', refused['admission']['cause'])
+        self.assertEqual(self.stored_messages(), before)
 
     def test_operator_confirms_a_worker_whose_ancestors_have_all_ended(self):
         self.operator_session()
