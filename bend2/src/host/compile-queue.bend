@@ -1002,15 +1002,17 @@ def record_usage_measured(+attempt: String, pid: U32, sample: U32, growth: U32,
 def admission_live_names_go(names: List<&1,String>, +state: String, +dir: String, +acc: String) -> IO(String):
   match names:
     case Nil{}: IO.pure(String,acc)
-    case name <> rest:
+    case +name <> rest:
       do IO<String>:
         live : U32 <- IO.try(U32,L.CompileQueueLifecycle.held(dir ++ "/" ++ name))
-        Bool.pick(IO(String),U32.is_eq(live,1),
-          admission_live_names_go(rest,state,dir,acc ++ name ++ "\t"),
-          do IO<String>:
+        +is_live : Bool <- IO.pure(Bool,U32.is_eq(live,1))
+        pruned : Unit <- Bool.pick(IO(Unit),is_live,IO.pure(Unit,Unit{}),
+          do IO<Unit>:
             removed : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.remove(dir ++ "/" ++ name)
             usage_removed : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.remove(admission_root(state) ++ "/usage/" ++ name)
-            admission_live_names_go(rest,state,dir,acc))
+            IO.pure(Unit,Unit{}))
+        next_acc : String <- IO.pure(String,Bool.pick(String,is_live,acc ++ name ++ "\t",acc))
+        admission_live_names_go(rest,state,dir,next_acc)
 
 def admission_live_names(+state: String, names: String) -> IO(String):
   admission_live_names_go(Tx.split_nul(names),state,admission_root(state) ++ "/running","")
