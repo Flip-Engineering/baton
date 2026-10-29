@@ -703,10 +703,18 @@ class Process(unittest.TestCase):
         try:
             self.wait_for_native_exit(attempt, observer)
             birth = (attempt / 'native.birth').read_bytes()
+            # The keeper records status after it reaps the native child, which
+            # can follow the zombie state wait_for_native_exit observes. Remove
+            # the recorded status so recovery must reconcile the birth with the
+            # keeper.
             status_path = attempt / 'status'
-            status = status_path.read_bytes() if status_path.exists() else b'0\n'
-            if status_path.exists():
-                status_path.unlink()
+            deadline = time.monotonic() + 20
+            while not status_path.exists():
+                self.assertLess(time.monotonic(), deadline,
+                                'the keeper did not record native exit status')
+                time.sleep(0.02)
+            status = status_path.read_bytes()
+            status_path.unlink()
             birth_path = attempt / 'native.birth'
             birth_path.unlink()
             forged = bytearray(birth)
