@@ -379,8 +379,9 @@ in SQLite.
 The real recovery runs killed the owned coordinator, adapter and native
 processes and resumed every tested session with pending work. They did not
 reboot the machine or the shared resident. There is no automatic host-start
-reconciliation, process discovery or Player cleanup. `stop` ends a retained OMP
-or Codex session, with explicit `force-stop` for the same owned attempt. Native
+reconciliation, process discovery or Player cleanup. `stop` ends a retained OMP,
+Codex, Muse, Claude Code, DSH or Antigravity session, with explicit `force-stop`
+for the same owned attempt. Native
 output, receipts and workspace remain available; queued execution is stopped.
 Worktrees survive landing, turn end and process loss. Cleanup remains an
 explicit operator action after determining the work is no longer needed.
@@ -395,7 +396,7 @@ fresh-conversation retrieval after receipts and separately promoted correction.
 Its Conductor endpoint collected notices; scope selection used trusted declared actors.
 The owner chooses which Ensembles receive further messages.
 
-The implemented paths support OMP, Codex, Claude Code and Muse Players;
+The implemented paths support OMP, Codex, Claude Code, Muse, DSH and Antigravity Players;
 OMP guidance during a turn; report-triggered Codex, OMP and Claude Conductor turns;
 review, checked landing, target movement, conflict resolution and publication;
 and native Player and Conductor recovery after owned-process loss. The September
