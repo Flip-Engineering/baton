@@ -53,6 +53,11 @@ entry_path=$(readlink -f -- "$entry" 2>/dev/null || printf '%s' "$entry")
 focused=${BATON2_RECEIVE_FOCUSED:-}
 router=${BATON2_NATIVE_RECEIVER_ROUTER:-}
 recovery=${BATON2_RECOVERY_HELPER:-}
+# Each receiver entry requires its native command router.
+case "$entry_path" in
+  "$root/bend2/src/coordinator/receive-focused.bend") focused=1 ;;
+  "$root/bend2/src/coordinator/receive-recovery-focused.bend") recovery=1 ;;
+esac
 compiler=${BEND:-"$root/.bend/bin/bend"}
 if [ ! -x "$compiler" ]; then
   compiler="$root/node_modules/.bend/bin/bend"
