@@ -91,8 +91,10 @@ A reader has two parts.
    balance was found) and for Muse (no authenticated usage endpoint was identified
    for the configured API key). A transport failure, an HTTP status other than 2xx, or a
    response the parser cannot read prints `state:"unreadable"` with the exact
-   reason. The helper exits 0 for both states and exits 2 only for a bad
-   invocation.
+   reason. A failed wall-clock read prints `state:"unreadable"` with
+   `"observedAt":null` and makes no provider request, because a read without its
+   observation time cannot be ordered against the account's other reads. The
+   helper exits 0 for both states and exits 2 only for a bad invocation.
 
 The schema name and the document builders are in
 `bend2/src/coordinator/usage-reads.bend`.
@@ -105,8 +107,9 @@ the reason of an unreadable read, and the helper's document. The windows stay in
 document. `observed_at` records the helper's `observedAt` clock; a helper failure
 without a document records the coordinator clock. Reads are serialized per provider
 and account through the physical database lock. Each decision orders observations
-by `observed_at`, then row identity. An insert failure propagates its database
-cause and ends the admission. A row never expires.
+by `observed_at`, then row identity. A read insert failure and a hold, unreadable
+or release announcement insert failure propagate their database cause and end the
+decision. A row never expires.
 
 The seat's gate derives its state from these rows for the seat's provider and
 account:
