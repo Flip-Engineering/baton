@@ -155,6 +155,13 @@ class RouteSelection(unittest.TestCase):
                 self.assertEqual(producer, 'candidate')
                 self.assertIn(path, reason)
 
+    def test_runtime_pin_change_selects_the_candidate_producer(self):
+        # bend-lineage-guard.sh reads this file, so the guard outcome can differ between base and head.
+        self.repository.change('bend2/toolchain/runtime-pin.txt', 'lineage_commit=' + '1' * 40 + '\n')
+        producer, reason, _ = self.repository.route()
+        self.assertEqual(producer, 'candidate')
+        self.assertIn('bend2/toolchain/runtime-pin.txt', reason)
+
     def test_tooling_file_absent_from_the_base_selects_the_candidate_producer(self):
         self.repository.change('docs/note.md', 'changed\n')
         missing = route.PRODUCER_TOOLING[1]
@@ -278,6 +285,82 @@ class BaseProducedHandoff(unittest.TestCase):
         self.assertIn('Consumer Main production inputs differ', result.stderr)
 
 
+class ShallowCheckout(unittest.TestCase):
+    """The pull request checkout holds only the head; the route fetches the exact base commit."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.work = Path(self.directory.name)
+        self.origin = Repository(self.directory.name)
+        git(self.origin.root, 'config', 'uploadpack.allowAnySHA1InWant', 'true')
+        for number in range(3):
+            self.origin.change('docs/note.md', 'history %d\n' % number)
+        self.origin.base = git(self.origin.root, 'rev-parse', 'HEAD')
+        self.origin.change('bend2/harness/git-series.mjs', 'export const version = 2;\n')
+        self.head = git(self.origin.root, 'rev-parse', 'HEAD')
+        self.clone = self.work / 'clone'
+        git(self.work, 'clone', '-q', '--depth', '1', 'file://' + str(self.origin.root), str(self.clone))
+
+    def base_present(self):
+        return subprocess.run(['git', '-C', str(self.clone), 'cat-file', '-e', self.origin.base + '^{commit}'],
+                              capture_output=True).returncode == 0
+
+    def route(self, base=None):
+        run = self.work / ('run-' + str(len(list(self.work.glob('run-*')))))
+        run.mkdir()
+        output = run / 'github-output'
+        subprocess.run([sys.executable, str(SCRIPT), 'route', '--source', str(self.clone), '--run', str(run),
+                        '--event', 'pull_request', '--base', base or self.origin.base, '--head', self.head,
+                        '--github-output', str(output)], check=True, stdout=subprocess.PIPE)
+        values = dict(line.split('=', 1) for line in output.read_text().splitlines())
+        return values['producer'], values['reason'], run
+
+    def test_exact_base_is_fetched_without_its_history(self):
+        self.assertFalse(self.base_present())
+        producer, reason, run = self.route()
+        self.assertEqual(producer, 'base', reason)
+        self.assertEqual(json.loads((run / 'evidence/producer-route.json').read_text())['base_availability'], 'fetched')
+        self.assertTrue(self.base_present())
+        # Depth 1: the base ref holds one commit and the checkout gained no other history.
+        self.assertEqual(git(self.clone, 'rev-list', '--count', 'refs/baton/producer-base'), '1')
+        self.assertEqual(git(self.clone, 'rev-list', '--count', '--all'), '2')
+
+    def test_fetched_base_stays_available_to_the_producer_steps(self):
+        producer, _, run = self.route()
+        self.assertEqual(producer, 'base')
+        generated = run / 'generated'
+        generated.mkdir()
+        write(generated / 'compiler-selection.json', json.dumps({
+            'schema': 'baton2-linux-compiler-selection-v1', 'compiler_archive_sha256': ARCHIVE,
+            'compiler_binary_sha256': '5' * 64}))
+        write(self.work / 'generated.c', 'int main(void){return 0;}\n')
+        subprocess.run([sys.executable, str(SCRIPT), 'assemble', '--source', str(self.clone), '--run', str(run),
+                        '--base', self.origin.base, '--generated-c', str(self.work / 'generated.c')],
+                       check=True, env=dict(os.environ, GITHUB_RUN_ID='7', GITHUB_RUN_ATTEMPT='1'), stdout=subprocess.PIPE)
+        handoff = json.loads((generated / 'handoff-manifest.json').read_text())
+        self.assertEqual(handoff['source_commit'], self.origin.base)
+        self.assertEqual(handoff['consumer_source_commit'], self.head)
+
+    def test_unreachable_origin_selects_the_candidate_producer(self):
+        git(self.clone, 'remote', 'set-url', 'origin', 'file://' + str(self.work / 'missing'))
+        producer, reason, _ = self.route()
+        self.assertEqual(producer, 'candidate')
+        self.assertIn('could not be fetched', reason)
+        self.assertFalse(self.base_present())
+
+    def test_commit_unknown_to_origin_selects_the_candidate_producer(self):
+        producer, reason, _ = self.route(base='0' * 40)
+        self.assertEqual(producer, 'candidate')
+        self.assertIn('could not be fetched', reason)
+
+    def test_abbreviated_base_is_not_fetched(self):
+        producer, reason, _ = self.route(base=self.origin.base[:12])
+        self.assertEqual(producer, 'candidate')
+        self.assertIn('full SHA', reason)
+        self.assertFalse(self.base_present())
+
+
 class WorkflowGraph(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -311,9 +394,12 @@ class WorkflowGraph(unittest.TestCase):
         self.assertIn("steps.route.outputs.producer == 'base'", base_step['if'])
         self.assertIn("steps.route.outputs.producer != 'base'", candidate_step['if'])
 
-    def test_candidate_checkout_holds_the_base_history(self):
-        checkout = self.steps()['Checkout exact candidate'][1]
-        self.assertEqual(checkout['with']['fetch-depth'], 0)
+    def test_candidate_checkout_stays_shallow_and_the_route_receives_the_origin_token(self):
+        steps = self.steps()
+        self.assertNotIn('fetch-depth', steps['Checkout exact candidate'][1]['with'])
+        route_step = steps['Select the Main C producer'][1]
+        self.assertEqual(route_step['env']['BATON2_ORIGIN_TOKEN'], '${{ github.token }}')
+        self.assertNotIn('BATON2_ORIGIN_TOKEN', steps['Produce Main C from the base commit'][1].get('env', {}))
 
     def test_darwin_job_accepts_the_candidate_job_for_both_producers(self):
         darwin = self.jobs['darwin-arm64']

@@ -9,6 +9,7 @@ through the shared compilation queue, `assemble` writes the producer handoff,
 and `verify-base` is the consumer-side check of a base-produced handoff.
 """
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -32,6 +33,7 @@ PRODUCER_TOOLING = (
     'bend2/scripts/build-native.sh',
     'bend2/scripts/queue-entry.sh',
     'bend2/scripts/bend-lineage-guard.sh',
+    'bend2/toolchain/runtime-pin.txt',
 )
 ROUTE_SCHEMA = 'baton2-main-producer-route-v1'
 HANDOFF_SCHEMA = 'baton2-generated-c-handoff-v1'
@@ -46,14 +48,41 @@ def git(root, *args):
 
 
 def checkout(source, commit, destination):
-    log = destination.with_suffix('.log')
-    with log.open('wb') as stream:
-        subprocess.run(['git', 'clone', '--no-hardlinks', '--no-checkout', '--', str(source), str(destination)],
-                       stdout=stream, stderr=stream, check=True)
-        subprocess.run(['git', '-C', str(destination), 'checkout', '--detach', commit],
-                       stdout=stream, stderr=stream, check=True)
+    """Check the commit out as a worktree of the source repository, which holds its objects."""
+    if destination.is_dir() and git(destination, 'rev-parse', 'HEAD') == commit:
+        return destination
+    with destination.with_suffix('.log').open('wb') as log:
+        subprocess.run(['git', '-c', 'safe.directory=' + str(source), 'worktree', 'add', '--detach', str(destination), commit],
+                       cwd=source, stdout=log, stderr=log, check=True)
     require(git(destination, 'rev-parse', 'HEAD') == commit, 'The checkout differs from the requested commit.')
     return destination
+
+
+def ensure_base(source, base):
+    """Make the exact base commit available in the source repository and return how it got there.
+
+    A shallow checkout lacks the base, so the exact full SHA is fetched at depth 1 from the
+    checkout's origin into a ref that keeps the object. A repository that already holds the
+    commit needs no fetch.
+    """
+    def has_base():
+        return subprocess.run(['git', '-c', 'safe.directory=' + str(source), 'cat-file', '-e', base + '^{commit}'],
+                              cwd=source, capture_output=True).returncode == 0
+    if has_base():
+        return 'present'
+    environment = dict(os.environ)
+    token = os.environ.get('BATON2_ORIGIN_TOKEN', '')
+    if token:
+        header = 'AUTHORIZATION: basic ' + base64.b64encode(('x-access-token:' + token).encode()).decode()
+        environment.update(GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0='http.https://github.com/.extraheader',
+                           GIT_CONFIG_VALUE_0=header)
+    fetched = subprocess.run(['git', '-c', 'safe.directory=' + str(source), 'fetch', '--no-tags', '--depth=1',
+                              '--no-recurse-submodules', 'origin', base + ':refs/baton/producer-base'],
+                             cwd=source, capture_output=True, text=True, env=environment, timeout=600)
+    require(fetched.returncode == 0, 'The base commit could not be fetched from origin: '
+            + fetched.stderr.strip().replace(token, '***' if token else '')[-300:])
+    require(has_base(), 'The fetched base commit is not available.')
+    return 'fetched'
 
 
 def production(root):
@@ -83,8 +112,9 @@ def decide(source, event, base, head, scratch):
     if git(source, 'rev-parse', 'HEAD') != head:
         return 'candidate', 'The checkout is not the head commit.', record
     try:
+        record['base_availability'] = ensure_base(source, base)
         base_root = checkout(source, base, scratch / 'route-base')
-    except (subprocess.CalledProcessError, ValueError) as error:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError) as error:
         return 'candidate', 'The base commit is unavailable: ' + str(error), record
     old, new = tooling(source, base), tooling(source, head)
     changed = [path for path in PRODUCER_TOOLING if old[path] != new[path]]
@@ -115,6 +145,9 @@ def route(args):
     except Exception as error:  # Any doubt selects the normal producer.
         producer, reason, record = 'candidate', 'Route selection failed: %r' % (error,), {
             'schema': ROUTE_SCHEMA, 'event': args.event, 'base': args.base, 'head': args.head}
+    if (scratch / 'route-base').is_dir():
+        subprocess.run(['git', '-c', 'safe.directory=' + str(args.source.resolve()), 'worktree', 'remove', '--force',
+                        str(scratch / 'route-base')], cwd=args.source.resolve(), capture_output=True)
     record.update(producer=producer, reason=reason)
     save(run / 'evidence/producer-route.json', record)
     if args.github_output:
@@ -127,6 +160,7 @@ def produce(args):
     """Generate the base commit's Main C through the shared queue."""
     run = args.run.resolve()
     evidence = run / 'evidence'
+    ensure_base(args.source.resolve(), args.base)
     base_root = checkout(args.source.resolve(), args.base, run / 'base-source')
     queue = runpy.run_path(str(args.source.resolve() / '.github/scripts/queue-native-checks.py'))
     environment = queue['environment'](run)
@@ -152,6 +186,7 @@ def produce(args):
 
 def assemble(args):
     checks = json.loads(args.checks.read_text()) if args.checks else []
+    ensure_base(args.source.resolve(), args.base)
     assemble_from(args, checkout(args.source.resolve(), args.base, args.run.resolve() / 'base-source'),
                   args.generated_c, checks)
 
