@@ -460,6 +460,33 @@ def queue_effective(fields, key):
     return values[-1]
 
 
+def queue_compiler_identity(argv_path, config_compiler, diagnostics):
+    arguments = pathlib.Path(argv_path).read_bytes().split(b'\0')
+    if arguments and arguments[-1] == b'':
+        arguments.pop()
+    require(len(arguments) >= 4
+            and pathlib.Path(os.fsdecode(arguments[1])).name == 'compile-cgen-exec.py',
+            'Completed Cgen argv does not record the queue compiler command.')
+    requested_path = os.fsdecode(arguments[3])
+    require(requested_path == config_compiler,
+            'Queue identity configuration compiler differs from the original Cgen command.')
+    compiler_argv = diagnostics.get('compiler_argv')
+    compiler = diagnostics.get('toolchain', {}).get('compiler', {})
+    observed_argv_path = compiler_argv[0] if isinstance(compiler_argv, list) and compiler_argv else ''
+    observed_path = compiler.get('path', '')
+    require(pathlib.Path(requested_path).is_absolute()
+            and pathlib.Path(observed_argv_path).is_absolute()
+            and pathlib.Path(observed_path).is_absolute()
+            and pathlib.Path(observed_argv_path).name == pathlib.Path(observed_path).name == 'bend'
+            and re.fullmatch('[0-9a-f]{64}', compiler.get('sha256', '')),
+            'Completed Cgen compiler paths or content identity are incomplete.')
+    return {'queue_command_path': requested_path,
+            'diagnostic_command_path': observed_argv_path,
+            'diagnostic_resolved_path': observed_path,
+            'sha256': compiler['sha256'],
+            'paths_match': requested_path == observed_path}
+
+
 def queue_source_digest(root, entry):
     """Reproduce CompileQueueIdentity.source_digest for a Cgen entry."""
     root = root.resolve()
@@ -592,8 +619,7 @@ def prepare_cgen(args, result, root, generated):
     compiler_id = toolchain.get('compiler', {})
     runtime_id = toolchain.get('runtime', {})
     manifest_id = toolchain.get('manifest', {})
-    require(config_compiler == compiler_id.get('path'),
-            'Queue identity configuration compiler differs from compiler diagnostics.')
+    compiler_identity = queue_compiler_identity(evidence_paths['argv'], config_compiler, diagnostics)
     compiler = args.compiler.resolve()
     compiler_home = compiler.parent.parent
     manifest_path = compiler_home / 'fork-manifest.json'
@@ -645,6 +671,7 @@ def prepare_cgen(args, result, root, generated):
                   origin_cgen_meta_sha256=digest(origin / 'cgen-meta'),
                   origin_compiler_manifest_sha256=digest(origin / 'compiler-manifest.json'),
                   origin_compiler_archive_sha256=digest(args.compiler_archive.resolve()),
+                  origin_compiler_identity=compiler_identity,
                   generated_c_sha256=digest(origin / 'baton2.c'), generated_c_size=(origin / 'baton2.c').stat().st_size,
                   root=str(root), origin_assets=[{**fact(path), 'path': str(path.relative_to(generated))}
                                                 for path in sorted(origin.rglob('*')) if path.is_file()])
@@ -702,8 +729,9 @@ def verify_cgen_origin(origin, proof):
             and queue_attempt.get('source_digest') == 'digest=' + proof['origin_cgen_source_digest'],
             'Retained compiler diagnostics differ from the Cgen source identity.')
     toolchain = diagnostics.get('toolchain', {})
-    require(config_compiler == toolchain.get('compiler', {}).get('path'),
-            'Retained identity configuration compiler differs from compiler diagnostics.')
+    require(queue_compiler_identity(origin / 'cgen-argv', config_compiler, diagnostics)
+            == proof.get('origin_compiler_identity'),
+            'Retained Cgen compiler paths or content identity differ from the reuse proof.')
     manifest = json.loads((origin / 'compiler-manifest.json').read_text())
     require(toolchain.get('compiler', {}).get('sha256') == manifest.get('compiler', {}).get('sha256')
             and toolchain.get('runtime', {}).get('sha256') == manifest.get('bun', {}).get('sha256')
