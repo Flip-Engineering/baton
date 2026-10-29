@@ -13,6 +13,7 @@ test -d "$BATON2_DARWIN_SDKROOT/usr/include"
 exec "$clang" \
   --target=arm64-apple-macosx11.0 \
   -isysroot "$BATON2_DARWIN_SDKROOT" \
+  -include sys/mount.h \
   -B "$BATON2_DARWIN_LLVM_ROOT/bin" \
   -fuse-ld=lld \
   "$@"
