@@ -110,11 +110,24 @@ requests its background commands hold.
   driven. Nothing on the host runs `stall-wake` on a schedule.
 
 The observer waits in `br_read_awake_probe` (`bend2/src/host/process-spawn.c`)
-with `poll(waits,2,-1)`, which has no timeout. A silent native in a database
-that commits nothing gives the observer no wake, so the check does not run
-then. A timed wait needs a variant of `ProcessChild.read_awake_span` that takes
-a timeout in milliseconds and returns a notice of kind `timeout`; the observer
-would run the check on each timeout and each commit notice.
+with `poll(waits,2,-1)`, which has no timeout. The check runs when a commit
+notice or an output line wakes the observer, so these limits apply:
+
+- A silent native in a database that commits nothing gives the observer no
+  wake, and the check does not run. A periodic `baton DATABASE stall-wake`
+  outside the repository runs the same check through the same report path.
+- Without a subscription (`wake_on` false) the observer reads with
+  `read_retained_line_span`, which blocks the same way and delivers no notice.
+  `retained_output_state` in `turn.bend` opens a subscription with
+  `Custody.Instance.subscribe` for every harness; the observer has none when
+  that call fails or a later notice read fails.
+
+A timed check needs two host changes in `process-spawn.c`, both with a
+`poll` timeout in milliseconds and a notice of kind `timeout` when it expires:
+a variant of `ProcessChild.read_awake_span` (and `read_awake`, through
+`br_read_awake_probe`), and a timed variant of `read_retained_line_span` for the
+branch without a subscription. The observer would then run the check on each
+timeout and each commit notice.
 
 Every query in the check is handled as a result. A failed query ends that
 check and not the observer.
