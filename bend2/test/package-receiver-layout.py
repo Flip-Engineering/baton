@@ -1,5 +1,6 @@
 """The source installation carries the focused facade, full router, and recovery helper."""
 import argparse
+import datetime
 import hashlib
 import importlib.util
 import json
@@ -157,6 +158,79 @@ class ReceiverLayout(unittest.TestCase):
             self.assertEqual((source.stat().st_size,
                               hashlib.sha256(source.read_bytes()).hexdigest()),
                              (row['bytes'], row['sha256']), row['path'])
+
+    def test_repl_range_errors_keep_cli_classification_and_original_detail(self):
+        runtime = os.environ.get('BEND_BUN') or shutil.which('bun')
+        if not runtime:
+            self.skipTest('Bun is required')
+        runtime = Path(runtime).resolve()
+        notices = self.home / 'Bun-NOTICES'
+        notices.write_text('Runtime notices for the staging fixture\n')
+        prefix = self.home / 'repl'
+        staged = subprocess.run(
+            [sys.executable, str(ROOT / 'bend2/scripts/stage-repl-compiler.py'),
+             '--runtime', str(runtime), '--runtime-sha256', PACKAGE.sha256(runtime),
+             '--runtime-notices', str(notices), '--output', str(prefix)],
+            capture_output=True, text=True)
+        self.assertEqual(staged.returncode, 0, staged.stdout + staged.stderr)
+        entry = self.home / 'expression.bend'
+        entry.write_text('0\n')
+        cases = [('call-stack', 'Maximum call stack size exceeded', True),
+                 ('stack-space', 'Out of stack space', True),
+                 ('stack-overflow', 'stack overflow', True),
+                 ('allocation', 'Out of memory', False),
+                 ('string-length', 'Invalid string length', False)]
+        for enabled in (False, True):
+            for name, message, stack in cases:
+                with self.subTest(diagnostics=enabled, error=name):
+                    directory = self.home / f'{name}-{int(enabled)}'
+                    directory.mkdir()
+                    original = directory / 'original.json'
+                    preload = directory / 'preload.ts'
+                    preload.write_text(
+                        'import fs from "node:fs";\n'
+                        'const parse = JSON.parse;\n'
+                        'JSON.parse = function(text, ...args) {\n'
+                        '  if (text === "[]\\n") {\n'
+                        f'    const error = new RangeError({json.dumps(message)});\n'
+                        f'    fs.writeFileSync({json.dumps(str(original))}, '
+                        'JSON.stringify({ name: error.name, message: error.message, stack: error.stack }));\n'
+                        '    throw error;\n'
+                        '  }\n'
+                        '  return Reflect.apply(parse, this, [text, ...args]);\n'
+                        '};\n')
+                    argv = [str(runtime), '--smol', '--preload', str(preload),
+                            str(prefix / 'upstream/repl.ts'), 'eval', str(entry),
+                            str(self.home), str(directory / 'output'), 'U32']
+                    started = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    child = subprocess.Popen(argv, stdin=subprocess.PIPE,
+                                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                             text=True, env={**os.environ,
+                                                 'BEND_NO_TELEMETRY': '1',
+                                                 'BEND_COMPILER_DIAGNOSTICS': str(int(enabled))})
+                    stdout, stderr = child.communicate('[]\n')
+                    (directory / 'stdout').write_text(stdout)
+                    (directory / 'stderr').write_text(stderr)
+                    (directory / 'result.json').write_text(json.dumps({
+                        'argv': argv, 'pid': child.pid, 'started': started,
+                        'ended': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                        'code': child.returncode}))
+                    self.assertTrue(original.is_file(),
+                                    'the staged REPL reached the injected stdin error')
+                    self.assertEqual(child.returncode, 1, stdout + stderr)
+                    self.assertEqual(stdout, '')
+                    lines = stderr.splitlines()
+                    expected = ('Error: the machine stack overflowed (a deep recursion, '
+                                'or a literal too large to expand)' if stack
+                                else 'RangeError: ' + message)
+                    self.assertEqual(lines.pop(), expected)
+                    if enabled:
+                        frames = [json.loads(line) for line in lines]
+                        error = next(frame for frame in frames
+                                     if frame.get('compiler_diagnostic') == 'exception')
+                        self.assertEqual(error['error'], json.loads(original.read_text()))
+                    else:
+                        self.assertEqual(lines, [])
 
     def test_post_stage_provenance_refreshes_receipt_and_all_checksums(self):
         prefix, manifest, records = self.staged()
