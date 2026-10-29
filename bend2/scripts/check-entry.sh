@@ -13,4 +13,5 @@ if [ ! -x "$compiler" ]; then
   compiler="$root/node_modules/.bend/bin/bend"
 fi
 . "$root/bend2/scripts/queue-entry.sh"
-exec "${PYTHON3:-python3}" "$BATON2_NATIVE_QUEUE_DRIVER" compiler bend "$entry" --check-only
+driver=${BATON2_NATIVE_QUEUE_DRIVER:-"$root/.github/scripts/queue-native-checks.py"}
+exec "${PYTHON3:-python3}" "$driver" compiler bend "$entry" --check-only
