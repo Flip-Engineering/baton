@@ -34,7 +34,7 @@ export function diagnostic(event: string, details: Record<string, unknown> = {})
     elapsed_ms: performance.now() - diagnostic_started,
     memory: process.memoryUsage(),
     caches: { probes: PROBES.length, teles: TELES.size, opens: OPENS.size,
-      uses: USES.size, folds: FOLDS.size, spines: SPINES.size, consts: CONSTS.size },
+      uses: USES.size, folds: FOLDS.size, spines: SPINES.size },
     ...details,
   }) + "\n");
 }
@@ -793,7 +793,9 @@ let LAY_KEY_NEXT = 0;
 
 const CYCLES: Map<Bend.Name, boolean> = new Map();
 
-const CONSTS: Map<HTerm, boolean> = new Map();
+const CONST_FALSE = Symbol("constant-negative");
+type ConstMemoTerm = Of<"Ctr"> & { [CONST_FALSE]?: object };
+let CONST_EPOCH: object = {};
 
 let LITS = new WeakMap<HTerm, HTerm>();
 
@@ -878,10 +880,11 @@ function weak_memo<K extends object, V>(m: WeakMap<K, V>, k: K, f: () => V): V {
 // TELES retains telescope type terms from definitions and fixed-point passes.
 // Reset probe indices with these caches; index 0 retains DUMMY.
 function memo_gc(): void {
-  [OPENS, USES, FOLDS, SPINES, CONSTS, TELES, SUMS, SHAPES,
+  [OPENS, USES, FOLDS, SPINES, TELES, SUMS, SHAPES,
     HINT_INNER, BODY_INNER].forEach((m) => m.clear());
   PROBES.length = 1;
   LITS = new WeakMap();
+  CONST_EPOCH = {};
 }
 
 // Probe
@@ -1142,8 +1145,7 @@ function term_const(t: HTerm): boolean {
   const root = term_strip(t);
   if (root.$ !== "Ctr") return false;
   if (CONSTANTS.has(root)) return true;
-  const got = CONSTS.get(root);
-  if (got !== undefined) return got;
+  if ((root as ConstMemoTerm)[CONST_FALSE] === CONST_EPOCH) return false;
   const stack: { term: Of<"Ctr">; next: number }[] = [];
   let tm: HTerm = root;
   walk: for (;;) {
@@ -1154,9 +1156,8 @@ function term_const(t: HTerm): boolean {
     } else if (CONSTANTS.has(s)) {
       value = true;
     } else {
-      const got = CONSTS.get(s);
-      if (got !== undefined) {
-        value = got;
+      if ((s as ConstMemoTerm)[CONST_FALSE] === CONST_EPOCH) {
+        value = false;
       } else {
         stack.push({ term: s, next: 0 });
         value = true;
@@ -1170,8 +1171,8 @@ function term_const(t: HTerm): boolean {
       }
       stack.pop();
       if (value) CONSTANTS.add(frame.term);
-      // Each completed constructor is inserted after its visited children.
-      CONSTS.set(frame.term, value);
+      // Term copies and checked transport omit the negative memo tag.
+      else Object.defineProperty(frame.term, CONST_FALSE, { value: CONST_EPOCH, writable: true });
     }
     return value;
   }

@@ -57,6 +57,14 @@ def safe() -> U32:
             self.assertEqual(claims,
                              {'Abstract', 'dependent', 'annotated', 'erased_use', 'Holder'})
 
+    def test_constant_memo_lifetime(self):
+        script = ROOT / 'bend2/test/compiler/constant_memo_lifetime.ts'
+        run = subprocess.run([self.bun, '--smol', str(script), str(ROOT)],
+                             capture_output=True, text=True, env={
+                                 **os.environ, 'BEND_COMPILER_SOURCE': str(SOURCE),
+                                 'BEND_NO_TELEMETRY': '1'})
+        self.assertEqual(run.returncode, 0, run.stderr)
+
     def test_checked_store(self):
         for name in ['store_term_graph', 'store_release', 'store_cleanup']:
             with self.subTest(name=name):
