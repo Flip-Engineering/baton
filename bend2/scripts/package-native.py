@@ -108,11 +108,12 @@ def build_binary(env, directory, label, entry=None, focused=False, router=False,
 
 BINARY_LAYOUT = (
     {'role': 'focused-facade', 'option': 'focused', 'label': 'baton-focused',
-     'installed': 'bin/baton', 'alias': None,
+     'installed': 'bin/baton-focused', 'alias': None,
      'entry': 'bend2/src/coordinator/receive-focused.bend',
      'build_mode': 'focused-native-entry', 'focused': True, 'router': False},
     {'role': 'full-cli', 'option': 'full', 'label': 'baton-full',
-     'installed': 'bin/baton2', 'alias': 'bin/baton-full',
+     'installed': 'bin/baton', 'alias': 'bin/baton2',
+     'aliases': ('bin/baton2', 'bin/baton-full'),
      'entry': 'bend2/src/coordinator/main.bend',
      'build_mode': 'full-native-receiver-router',
      'focused': False, 'router': True, 'wrapper': True},
@@ -665,11 +666,15 @@ def stage_receiver_binaries(payload, specs, built, c_hashes=None):
             record['wrapper_source'] = spec['wrapper_source']
         if c_hashes and spec['role'] in c_hashes:
             record['retained_c_sha256'] = c_hashes[spec['role']]
+        aliases = list(spec.get('aliases', ()))
         if spec['alias']:
-            alias = payload / spec['alias']
+            record['alias'] = spec['alias']
+        if aliases:
+            record['aliases'] = aliases
+        for alias_name in aliases:
+            alias = payload / alias_name
             shutil.copyfile(built[spec['role']], alias)
             alias.chmod(0o755)
-            record['alias'] = spec['alias']
         records.append(record)
     return records
 
@@ -851,8 +856,8 @@ def package(args):
             'platform': {'system': target_system, 'machine': 'arm64', 'artifact': 'darwin-arm64'},
             'source': source,
             'binaries': records, 'source_manifest': source_manifest,
-            'binary': {'path': focused['path'], 'alias': focused.get('alias'),
-                       'sha256': focused['sha256'], 'source': focused['source']},
+            'binary': {'path': full_record['path'], 'alias': full_record.get('alias'),
+                       'sha256': full_record['sha256'], 'source': full_record['source']},
             'selected_modules': selected_context,
             'selected_dependencies': repl_compiler,
             'required_system_dependencies': system_dependencies(target_system),

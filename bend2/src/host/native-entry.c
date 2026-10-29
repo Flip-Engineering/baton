@@ -258,7 +258,7 @@ static int native_receiver_route(int argc, char **argv) {
   char *slash=directory?strrchr(directory,'/'):NULL;
   if(!slash) {free(directory);free(full);perror("baton receiver router");return 78;}
   *slash=0;
-  const char *name=recovery?"/baton-recovery":"/baton";
+  const char *name=recovery?"/baton-recovery":"/baton-focused";
   size_t size=strlen(directory)+strlen(name)+1;
   char *candidate=malloc(size);
   if(!candidate) {free(directory);free(full);perror("baton receiver path");return 1;}

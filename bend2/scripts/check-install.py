@@ -102,9 +102,10 @@ def verify_repl(prefix, manifest):
 
 
 BINARY_LAYOUT = (
-    {'role': 'focused-facade', 'path': 'bin/baton', 'alias': None,
+    {'role': 'focused-facade', 'path': 'bin/baton-focused', 'alias': None,
      'entry': 'bend2/src/coordinator/receive-focused.bend', 'build_mode': 'focused-native-entry'},
-    {'role': 'full-cli', 'path': 'bin/baton2', 'alias': 'bin/baton-full',
+    {'role': 'full-cli', 'path': 'bin/baton', 'alias': 'bin/baton2',
+     'aliases': ('bin/baton2', 'bin/baton-full'),
      'entry': 'bend2/src/coordinator/main.bend',
      'build_mode': 'full-native-receiver-router', 'wrapper': True},
     {'role': 'recovery-helper', 'path': 'bin/baton-recovery', 'alias': None,
@@ -201,22 +202,31 @@ def verify_binaries(prefix, manifest, checksums):
                          or isinstance(wrapper.get('manifest_sha256'), str)
                          and re.fullmatch(r'[0-9a-f]{64}', wrapper['manifest_sha256']) is not None),
                     'The installed full CLI lacks an exact wrapper source pin')
+        aliases = list(layout.get('aliases', ()))
         if layout['alias']:
             require(record.get('alias') == layout['alias'],
                     'The ' + record['role'] + ' must expose its ' + layout['alias'] + ' alias')
-            alias = prefix / layout['alias']
+        if aliases:
+            require(record.get('aliases') == aliases,
+                    'The ' + record['role'] + ' aliases differ from the receiver layout')
+        for alias_name in aliases:
+            alias = prefix / alias_name
             require(alias.is_file() and not alias.is_symlink() and os.access(alias, os.X_OK),
-                    'The installed ' + record['role'] + ' alias is missing or not executable')
+                    'The installed ' + record['role'] + ' alias ' + alias_name + ' is missing or not executable')
             require(archive_digest(alias) == digest,
-                    'The installed ' + record['role'] + ' alias differs from its binary')
-            require(checksums.get(layout['alias']) == digest,
-                    'The installed ' + record['role'] + ' alias ' + layout['alias'] + ' is absent from SHA256SUMS')
-        else:
+                    'The installed ' + record['role'] + ' alias ' + alias_name + ' differs from its binary')
+            require(checksums.get(alias_name) == digest,
+                    'The installed ' + record['role'] + ' alias ' + alias_name + ' is absent from SHA256SUMS')
+        if not aliases and not layout['alias']:
             require(record.get('alias') is None,
                     'The ' + record['role'] + ' binary has an unexpected alias')
         checked = {'role': record['role'], 'path': layout['path'],
                    'sha256': digest, 'source': source,
                    'entry': layout['entry'], 'build_mode': record['build_mode']}
+        if record.get('alias') is not None:
+            checked['alias'] = record['alias']
+        if aliases:
+            checked['aliases'] = aliases
         if layout.get('wrapper'):
             if record.get('retained_c_sha256'):
                 checked['retained_c_sha256'] = record['retained_c_sha256']
@@ -291,9 +301,9 @@ def verify_binaries(prefix, manifest, checksums):
                 for record in records],
             'The composite source manifest binary list differs')
     binary = manifest.get('binary')
-    require(isinstance(binary, dict) and binary.get('path') == focused['path']
-            and binary.get('alias') is None and binary.get('sha256') == focused['sha256'],
-            'The compatibility binary record does not match the focused receiver')
+    require(isinstance(binary, dict) and binary.get('path') == full['path']
+            and binary.get('alias') == full.get('alias') and binary.get('sha256') == full['sha256'],
+            'The compatibility binary record does not match the public full CLI')
     receipt_path = prefix / 'install-receipt.json'
     require(receipt_path.is_file() and not receipt_path.is_symlink(),
             'The installation is missing its install receipt')
@@ -344,7 +354,13 @@ def check(prefix, output, probe_native_compiler=True):
         return result.stdout.strip()
 
     run([prefix / 'bin/baton', '--help'])
-    run([prefix / 'bin/baton-full', '--help'])
+    run([prefix / 'bin/baton-focused', '--help'])
+    guide_db = output / 'guide-check.sqlite'
+    guide_help = run([prefix / 'bin/baton', guide_db, 'help', 'guide'])
+    require('guide --to PLAYER' in guide_help,
+            'The public full CLI did not route the guide help command')
+    require(not guide_db.exists(),
+            'The guide parser check unexpectedly created its temporary database')
     runtime_version = run([prefix / dependency['path'] / 'bun', '--version'])
     require(re.fullmatch(r'\d+\.\d+\.\d+(?:[-+][\w.-]+)?', runtime_version) is not None,
             'The bundled Bun runtime did not report its version')

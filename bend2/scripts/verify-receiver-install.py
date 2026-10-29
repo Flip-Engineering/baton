@@ -32,15 +32,15 @@ def probe(prefix, expected, argv):
 
 
 def probe_missing_full_routes(prefix):
-    """Both the full router and its general CLI copy must be absent for focused delegation to fail."""
-    full = prefix / 'bin/baton2'
-    alias = prefix / 'bin/baton-full'
-    hidden_full = prefix / 'bin/.baton2.retained'
-    hidden_alias = prefix / 'bin/.baton-full.retained'
+    """The public executable remains usable as the full CLI when aliases are absent."""
+    full = prefix / 'bin/baton'
+    alias = prefix / 'bin/baton2'
+    hidden_full = prefix / 'bin/.baton.retained'
+    hidden_alias = prefix / 'bin/.baton2.retained'
     full.rename(hidden_full)
     alias.rename(hidden_alias)
     try:
-        return probe(prefix, 78, [prefix / 'bin/baton', '--help'])
+        return probe(prefix, 0, [prefix / 'bin/baton-full', '--help'])
     finally:
         hidden_alias.rename(alias)
         hidden_full.rename(full)
@@ -102,15 +102,16 @@ def main():
                            '--prefix', prefix, '--output', check_output]), 'installation check')
     operations = []
     operations.append(probe(prefix, 0, [prefix / 'bin/baton', '--help']))
+    operations.append(probe(prefix, 0, [prefix / 'bin/baton-focused', '--help']))
     operations.append(probe(prefix, 0, [prefix / 'bin/baton-full', '--help']))
     operations.append(probe(prefix, 0, [prefix / 'bin/baton2', '--help']))
     operations.append(probe(prefix, 0, [prefix / 'bin/baton-recovery', '--help']))
     operations.append(probe_missing_full_routes(prefix))
-    focused = prefix / 'bin/baton'
-    hidden_focused = prefix / 'bin/.baton.retained'
+    focused = prefix / 'bin/baton-focused'
+    hidden_focused = prefix / 'bin/.baton-focused.retained'
     focused.rename(hidden_focused)
     try:
-        operations.append(probe(prefix, 78, [prefix / 'bin/baton-full', 'state.db', 'receive',
+        operations.append(probe(prefix, 78, [prefix / 'bin/baton', 'state.db', 'receive',
                                              'session', 'harness', 'output.jsonl']))
     finally:
         hidden_focused.rename(focused)
