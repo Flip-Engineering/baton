@@ -40,11 +40,6 @@ def answered(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
     case Done{+text}: Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(text)),IO.pure(Unit,Unit{}),IO.print(Tx.trim_nl(text)))
     case Fail{error}: IO.pure(Unit,Unit{})
 
-def claude_routed(+db: String, +session: String, +event: String, +directory: String, tool: Bool) -> IO(Unit):
-  do IO<Unit>:
-    evidence : Unit <- ClaudeInputEvidence.run(db,session,directory,event)
-    Bool.pick(IO(Unit),tool,InputHook.run_claude(db,session),other_routed(db,session,False{}))
-
 def other_routed(+db: String, +session: String, tool: Bool) -> IO(Unit):
   match tool:
     case True{}: InputHook.run(db,session)
@@ -52,7 +47,12 @@ def other_routed(+db: String, +session: String, tool: Bool) -> IO(Unit):
       result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,decision_sql(session))
       answered(result)
 
-def routed(+db: String, +session: String, +event: String, +directory: String, tool: Bool, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+def claude_routed(+db: String, +session: String, +event: String, +directory: String, +tool: Bool) -> IO(Unit):
+  do IO<Unit>:
+    evidence : Unit <- ClaudeInputEvidence.run(db,session,directory,event)
+    Bool.pick(IO(Unit),tool,InputHook.run_claude(db,session),other_routed(db,session,False{}))
+
+def routed(+db: String, +session: String, +event: String, +directory: String, +tool: Bool, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match result:
     case Fail{error}: IO.pure(Unit,Unit{})
     case Done{+harness}:
