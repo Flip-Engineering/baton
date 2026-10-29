@@ -60,7 +60,7 @@ def classification_name(c: Classification) -> String:
     case ClChecked{}: "checked"
     case ClDeclared{}: "declared"
 
-def classification_of(name: String) -> Maybe<&2, Classification>:
+def classification_of(+name: String) -> Maybe<&2, Classification>:
   match name:
     case "observed": Some{ClObserved{}}
     case "static-possible": Some{ClStaticPossible{}}
@@ -79,7 +79,7 @@ def availability_name(a: Availability) -> String:
     case AvUnavailable{}: "unavailable"
     case AvExcluded{}: "excluded"
 
-def availability_of(name: String) -> Maybe<&2, Availability>:
+def availability_of(+name: String) -> Maybe<&2, Availability>:
   match name:
     case "available": Some{AvAvailable{}}
     case "unavailable": Some{AvUnavailable{}}
@@ -103,7 +103,7 @@ def query_state_name(s: QueryState) -> String:
     case QsInterrupted{}: "interrupted"
     case QsRefused{}: "refused"
 
-def query_state_of(name: String) -> Maybe<&2, QueryState>:
+def query_state_of(+name: String) -> Maybe<&2, QueryState>:
   match name:
     case "accepted": Some{QsAccepted{}}
     case "running": Some{QsRunning{}}
@@ -128,7 +128,7 @@ def effect_name(e: Effect) -> String:
     case EfEvaluateRuntime{}: "evaluateRuntime"
     case EfControlRuntime{}: "controlRuntime"
 
-def effect_of(name: String) -> Maybe<&2, Effect>:
+def effect_of(+name: String) -> Maybe<&2, Effect>:
   match name:
     case "executeTarget": Some{EfExecuteTarget{}}
     case "planTargetSql": Some{EfPlanTargetSql{}}
@@ -168,7 +168,7 @@ def subject_kind_name(k: SubjectKind) -> String:
     case SkQueryControl{}: "query-control"
     case SkRef{}: "ref"
 
-def subject_kind_of(name: String) -> Maybe<&2, SubjectKind>:
+def subject_kind_of(+name: String) -> Maybe<&2, SubjectKind>:
   match name:
     case "position": Some{SkPosition{}}
     case "symbol": Some{SkSymbol{}}
@@ -196,7 +196,7 @@ def codec_tool_name(t: CodecTool) -> String:
     case CtEngines{}: "context-engines"
     case CtResult{}: "context-result"
 
-def codec_tool_of(name: String) -> Maybe<&2, CodecTool>:
+def codec_tool_of(+name: String) -> Maybe<&2, CodecTool>:
   match name:
     case "context-query": Some{CtQuery{}}
     case "context-engines": Some{CtEngines{}}

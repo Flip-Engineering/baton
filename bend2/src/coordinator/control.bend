@@ -579,7 +579,7 @@ def recorded_field(db: String, player: String, column: String) -> IO(String):
     value : String <- IO.try(String,DB.Sql.read(db,"SELECT " ++ column ++ " FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     IO.pure(String,Tx.trim_nl(value))
 
-def harness_command(harness: String) -> String:
+def harness_command(+harness: String) -> String:
   match harness:
     case "claude-code": "claude"
     case "codex": "codex"

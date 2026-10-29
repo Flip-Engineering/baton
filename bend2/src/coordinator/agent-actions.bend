@@ -259,7 +259,7 @@ def parse_action(action: Verb, args: List<String>) -> Action:
         case other: decision_args("guide","guidance",other,"","","",Missing{})
     case UnknownVerb{}: Invalid{"Choose inbox, send, report, ask, guide, finish or confirm; use help ACTION for usage."}
 
-def classify_verb(verb: String) -> Verb:
+def classify_verb(+verb: String) -> Verb:
   match verb:
     case "read": ReadVerb{}
     case "send": SendVerb{}
@@ -358,7 +358,7 @@ def parse(args: List<String>) -> Action:
     case Nil{}: Invalid{"Choose inbox, send, report, ask, guide, finish or confirm; use help ACTION for usage."}
     case +verb <> rest: parse_args(verb,rest)
 
-def help(action: String) -> String:
+def help(+action: String) -> String:
   match action:
     case "repl": "repl define|eval|bind|read|recover|share|import|interactive [OPTIONS]\nUse help repl for Bend source, notebook, result and interactive operations.\n"
     case "branch": "branch start|evaluate|select|continue|status|recover|stop [--ensemble NAME]\nUse help branch or branch --help for source defaults, workspace, evaluator, selection and continuation arguments.\n"

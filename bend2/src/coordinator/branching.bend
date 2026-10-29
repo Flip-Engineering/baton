@@ -30,7 +30,7 @@ def options(args: List<String>, +found: List<&2,D.Option>) -> Result<&1,&1,U32 &
         options(rest,Con{D.Field{name,value},found}),Fail{(2,"Branch options must be known and supplied once. Use branch --help.")})
     case other: Fail{(2,"Each branch option requires its value. Use branch --help.")}
 
-def verb_flags(verb: String) -> List<String>:
+def verb_flags(+verb: String) -> List<String>:
   match verb:
     case "start": ["--ensemble","--from","--count","--text","--file","--evaluator","--direction","--include","--knowledge","--command","--harness","--model","--effort"]
     case "select": ["--ensemble","--round","--player","--reason"]
