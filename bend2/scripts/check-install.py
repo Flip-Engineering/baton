@@ -123,6 +123,35 @@ def verify_dispatch_runtime(prefix):
             'The installation has no Node or bundled Bun runtime for the dispatch operation')
 
 
+def verify_receiver_router(prefix, output):
+    """Exercise the full entry's receiver route in a private directory without helpers."""
+    binary = prefix / 'bin/baton'
+    record = {'binary_sha256': archive_digest(binary)}
+    with tempfile.TemporaryDirectory(prefix='receiver-router-', dir=output) as directory:
+        directory = Path(directory)
+        probe = directory / 'baton'
+        shutil.copy2(binary, probe)
+        database = directory / 'unused.sqlite'
+        argv = [str(probe), str(database), 'register-receiver']
+        environment = {key: value for key, value in os.environ.items()
+                       if not key.startswith('BATON')}
+        try:
+            result = subprocess.run(argv, env=environment, cwd=directory,
+                                    stdin=subprocess.DEVNULL, capture_output=True, text=True)
+            record.update(argv=argv, returncode=result.returncode,
+                          stdout=result.stdout, stderr=result.stderr,
+                          database_created=database.exists())
+        except OSError as error:
+            record.update(argv=argv, returncode=None, error=str(error))
+        (output / 'receiver-router-probe.json').write_text(json.dumps(record, indent=2) + '\n')
+        require(record.get('returncode') == 78 and record.get('stdout') == ''
+                and record.get('stderr', '').strip()
+                == 'baton: focused receiver is missing or not executable. Install the complete Baton package.'
+                and record.get('database_created') is False,
+                'The full CLI does not provide the native receiver router: ' + json.dumps(record))
+    return record
+
+
 def verify_checksums(prefix):
     path = prefix / 'SHA256SUMS'
     require(path.is_file() and not path.is_symlink(), 'The installation is missing its SHA256SUMS file')
@@ -328,6 +357,7 @@ def check(prefix, output, probe_native_compiler=True):
     checksums = verify_checksums(prefix)
     verify_payload_checksums(prefix, checksums)
     binaries = verify_binaries(prefix, manifest, checksums)
+    receiver_router = verify_receiver_router(prefix, output)
     dependency = verify_repl(prefix, manifest)
     verify_dispatch_runtime(prefix)
     system = platform.system()
@@ -393,6 +423,7 @@ def check(prefix, output, probe_native_compiler=True):
             'install_receipt_sha256': archive_digest(prefix / 'install-receipt.json'),
             'checksums_sha256': archive_digest(prefix / 'SHA256SUMS'),
             'binaries': binaries,
+            'receiver_router_probe': receiver_router,
             'repl_manifest_sha256': dependency['sha256'], 'compiler': compiler,
             'runtime_version': runtime_version,
             'native_compiler_probe': 'completed' if probe_native_compiler else 'not-run',

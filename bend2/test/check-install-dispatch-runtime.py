@@ -79,6 +79,7 @@ class DispatchRuntimeGuard(unittest.TestCase):
         with mock.patch.object(CHECK, 'verify_checksums', return_value={}), \
                 mock.patch.object(CHECK, 'verify_payload_checksums'), \
                 mock.patch.object(CHECK, 'verify_binaries', return_value=[]), \
+                mock.patch.object(CHECK, 'verify_receiver_router', return_value={'returncode': 78}) as router, \
                 mock.patch.object(CHECK, 'verify_repl', return_value=dependency), \
                 mock.patch.object(CHECK, 'verify_dispatch_runtime'), \
                 mock.patch.object(CHECK, 'system_dependencies', return_value=[]), \
@@ -88,10 +89,70 @@ class DispatchRuntimeGuard(unittest.TestCase):
 
         self.assertEqual(result['native_compiler_probe'], 'not-run')
         self.assertEqual(result['runtime_version'], '1.3.14')
+        router.assert_called_once_with(self.prefix, output)
+        self.assertEqual(result['receiver_router_probe'], {'returncode': 78})
         self.assertEqual([pathlib.Path(argv[0]).name for argv in calls],
                          ['baton', 'baton-focused', 'baton', 'bun'])
         self.assertFalse((output / 'guide-check.sqlite').exists())
         self.assertFalse((output / 'sqlite-probe.c').exists())
+
+
+class ReceiverRouterGuard(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.prefix = pathlib.Path(self.temp.name) / 'prefix'
+        (self.prefix / 'bin').mkdir(parents=True)
+        self.output = pathlib.Path(self.temp.name) / 'evidence'
+        self.output.mkdir()
+        self.binary = self.prefix / 'bin/baton'
+
+    def executable(self, body):
+        self.binary.write_text('#!/bin/sh\n' + body + '\n')
+        self.binary.chmod(0o755)
+
+    def test_router_reaches_missing_sibling_before_opening_database(self):
+        self.executable('''test "$2" = register-receiver || exit 11
+test ! -e "$(dirname "$0")/baton-focused" || exit 12
+test -z "${BATON2_NODE+x}${BATON_PROJECT+x}" || exit 13
+printf '%s\\n' 'baton: focused receiver is missing or not executable. Install the complete Baton package.' >&2
+exit 78''')
+        sibling = self.prefix / 'bin/baton-focused'
+        sibling.write_text('existing helper remains in its installed prefix\n')
+        original = self.binary.read_bytes()
+        with mock.patch.dict(os.environ, {'BATON2_NODE': '/invalid/runtime',
+                                         'BATON_PROJECT': '/live/project'}):
+            record = CHECK.verify_receiver_router(self.prefix, self.output)
+        self.assertEqual(record['returncode'], 78)
+        self.assertFalse(record['database_created'])
+        self.assertEqual(record['binary_sha256'], CHECK.archive_digest(self.binary))
+        self.assertEqual(self.binary.read_bytes(), original)
+        self.assertTrue(sibling.is_file())
+        self.assertFalse(pathlib.Path(record['argv'][0]).exists())
+        self.assertEqual(json.loads((self.output / 'receiver-router-probe.json').read_text()), record)
+
+    def test_plain_full_cli_admin_usage_is_refused(self):
+        self.executable("printf '%s\\n' 'usage: baton DATABASE ACTION'; exit 0")
+        with self.assertRaisesRegex(RuntimeError, 'does not provide the native receiver router'):
+            CHECK.verify_receiver_router(self.prefix, self.output)
+        record = json.loads((self.output / 'receiver-router-probe.json').read_text())
+        self.assertEqual(record['returncode'], 0)
+        self.assertIn('usage:', record['stdout'])
+
+    def test_unrelated_exit_78_is_refused(self):
+        self.executable("printf '%s\\n' 'another startup failure' >&2; exit 78")
+        with self.assertRaisesRegex(RuntimeError, 'does not provide the native receiver router'):
+            CHECK.verify_receiver_router(self.prefix, self.output)
+
+    def test_database_creation_is_refused(self):
+        self.executable('''touch "$1"
+printf '%s\\n' 'baton: focused receiver is missing or not executable. Install the complete Baton package.' >&2
+exit 78''')
+        with self.assertRaisesRegex(RuntimeError, 'does not provide the native receiver router'):
+            CHECK.verify_receiver_router(self.prefix, self.output)
+        record = json.loads((self.output / 'receiver-router-probe.json').read_text())
+        self.assertTrue(record['database_created'])
+        self.assertFalse(pathlib.Path(record['argv'][1]).exists())
 
 
 if __name__ == '__main__':
