@@ -121,3 +121,41 @@ test('the Codex root relay queues the full notice before recording its read', as
   assert.deepEqual(remoteArgs.slice(0, 2), ['-T', 'database-host']);
   assert.ok(remoteArgs[2].includes("'--root-harness' 'codex' '--thread' 'thread-1'"));
 });
+
+test('a missing remote conductor preserves its SSH failure when the client closes', async (t) => {
+  const directory = scratch(t);
+  const missing = 'fixture remote conductor is missing';
+  executable(join(directory, 'ssh'), `#!${process.execPath}
+process.stderr.write(${JSON.stringify(missing + '\n')});
+process.exit(127);
+`);
+  const child = spawn(process.execPath, [RELAY, '--ssh', 'database-host',
+    '--database', '/scratch/orchestra.db', '--coordinator', '/scratch/bin/baton',
+    '--conductor', '/scratch/missing/mcp-conductor.mjs', '--session', 'operator',
+    '--thread', 'thread-1'], {
+    env: { ...process.env, PATH: `${directory}:${process.env.PATH}` },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const closed = once(child, 'close');
+  let diagnostic = '';
+  let observed;
+  const failed = new Promise(resolve => { observed = resolve; });
+  child.stderr.on('data', chunk => {
+    diagnostic += chunk;
+    if (diagnostic.includes(missing)) observed();
+  });
+  child.stdout.resume();
+  child.stdin.write([
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: {
+      protocolVersion: '2024-11-05', capabilities: {},
+      clientInfo: { name: 'missing-conductor', version: '1' },
+    } },
+    { jsonrpc: '2.0', method: 'notifications/initialized' },
+  ].map(JSON.stringify).join('\n') + '\n');
+  await Promise.race([failed, closed]);
+  child.stdin.end();
+  const [code, signal] = await closed;
+  assert.equal(code, 1, `${signal || ''} ${diagnostic}`);
+  assert.match(diagnostic, /fixture remote conductor is missing/);
+  assert.match(diagnostic, /127/);
+});

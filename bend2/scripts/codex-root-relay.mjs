@@ -49,11 +49,16 @@ class Peer {
     this.child = child;
     this.nextId = 0;
     this.pending = new Map();
-    this.closed = new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal })));
+    this.closed = new Promise(resolve => child.once('close', (code, signal) => {
+      const exit = { code, signal };
+      this.rejectAll(new Error('SSH conductor closed before replying: ' + JSON.stringify(exit)));
+      resolve(exit);
+    }));
     this.lines = createInterface({ input: child.stdout });
     this.lines.on('line', line => this.receive(line));
     child.stderr.pipe(process.stderr, { end: false });
     child.once('error', error => this.rejectAll(error));
+    child.stdin.on('error', error => this.rejectAll(error));
   }
 
   rejectAll(error) {
@@ -158,6 +163,14 @@ async function connect(options) {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const peer = new Peer(child);
+  connection = peer;
+  peer.closed.then(exit => {
+    if (!clientLines.closed) {
+      process.stderr.write('codex-root-relay: SSH conductor exited: ' + JSON.stringify(exit) + '\n');
+      process.exitCode = 1;
+      clientLines.close();
+    }
+  });
   peer.onNotice = params => {
     peer.delivery = (peer.delivery || Promise.resolve())
       .then(() => deliverNotice(peer, options, params))
@@ -167,28 +180,34 @@ async function connect(options) {
         child.kill('SIGTERM');
       });
   };
-  const initialized = await peer.request('initialize', {
-    protocolVersion: '2024-11-05',
-    capabilities: {},
-    clientInfo: { name: 'baton_codex_root_relay', title: 'Baton Codex root relay', version: '1' },
-  });
-  if (initialized.error) throw new Error('SSH conductor initialization failed: ' + JSON.stringify(initialized.error));
-  peer.send({ method: 'notifications/initialized', params: {} });
-  const listed = await peer.request('tools/list', {});
-  if (listed.error) throw new Error('SSH conductor tool discovery failed: ' + JSON.stringify(listed.error));
-  return peer;
+  try {
+    const initialized = await peer.request('initialize', {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'baton_codex_root_relay', title: 'Baton Codex root relay', version: '1' },
+    });
+    if (initialized.error) throw new Error('SSH conductor initialization failed: ' + JSON.stringify(initialized.error));
+    peer.send({ method: 'notifications/initialized', params: {} });
+    const listed = await peer.request('tools/list', {});
+    if (listed.error) throw new Error('SSH conductor tool discovery failed: ' + JSON.stringify(listed.error));
+    return peer;
+  } catch (error) {
+    if (child.stdin.writable) child.stdin.end();
+    await peer.closed;
+    throw error;
+  }
 }
 
 const options = parse(process.argv.slice(2));
 const clientLines = createInterface({ input: process.stdin });
-let peer = null;
+let connection = null;
 let connecting = Promise.resolve();
 clientLines.on('line', line => {
   try {
     const message = JSON.parse(line);
     codexMcpRequest(message);
     if (message.method === 'notifications/initialized') {
-      connecting = connecting.then(async () => { peer = await connect(options); });
+      connecting = connecting.then(() => connect(options));
       connecting.catch(error => {
         process.stderr.write(`codex-root-relay: ${error.stack || error}\n`);
         process.exitCode = 1;
@@ -201,13 +220,15 @@ clientLines.on('line', line => {
 });
 
 clientLines.on('close', async () => {
-  if (peer) {
-    await peer.delivery;
-    peer.child.stdin.end();
-    const exit = await peer.closed;
+  if (connection) {
+    await connection.delivery;
+    if (connection.child.stdin.writable) connection.child.stdin.end();
+    const exit = await connection.closed;
     if (exit.code !== 0 && exit.signal !== 'SIGTERM') {
       process.stderr.write('codex-root-relay: SSH conductor exited: ' + JSON.stringify(exit) + '\n');
       process.exitCode = 1;
     }
   }
+  try { await connecting; }
+  catch { return; }
 });
