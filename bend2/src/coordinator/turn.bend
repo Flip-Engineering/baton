@@ -315,15 +315,17 @@ def input(+handle: U32, +prompt: String, +harness: String, level: String) -> IO(
     Claude.input(handle,prompt))))))
 
 def stdin_kept_open(+harness: String) -> Bool:
-  String.eq(harness,"omp\n")
+  Bool.or(String.eq(harness,"omp\n"),String.eq(harness,"claude-code\n"))
 
 def close_input(handle: U32, close: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match close:
     case True{}: P.ProcessChild.close_stdin(handle)
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
 
-# OMP keeps stdin open for steer frames. Every other harness, including DSH,
-# writes one prompt and receives EOF at the same point.
+# OMP keeps stdin open for steer frames. Claude Code keeps it open so owed input
+# reaches a native that outlives its turn for background tasks (#1298); the
+# observer closes it once the native lists no task. Every other harness,
+# including DSH, writes one prompt and receives EOF at the same point.
 def send_prompt(+handle: U32,prompt: String,+harness: String,level: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     sent : Result<&1,&1,U32 & String,Unit> <- input(handle,prompt,harness,level)
@@ -1158,6 +1160,11 @@ def consume_exhausted(+db: String, +player: String, +id: String, +log: String, +
     +incomplete : Bool <- IO.pure(Bool,Bool.or(incomplete_observation,Bool.or(checkpoint_write_failed(unshared_result(Unit,wake_closed)),Bool.or(wait_failed(unshared_result(String,status)),Bool.or(checkpoint_write_failed(unshared_result(Unit,sent)),Bool.or(checkpoint_write_failed(unshared_result(Unit,flushed)),Bool.or(checkpoint_write_failed(unshared_result(Unit,checkpoint_done)),Bool.or(checkpoint_write_failed(unshared_result(Unit,checkpointed)),observation_store_failed(unshared_result(String,closed))))))))))
     IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(unshared_result(String,status)),event,error,incomplete},deliveries))
 
+# A commit notice drains owed guidance while the native accepts input: OMP until
+# its terminal, Claude Code after its first result (#1298).
+def awake_woke(+harness: String, +notice: String, +terminal: String) -> Bool:
+  Bool.and(Bool.not(String.is_empty(notice)),Bool.or(Bool.and(String.eq(harness,"omp\n"),String.is_empty(terminal)),Bool.and(String.eq(harness,"claude-code\n"),Bool.not(String.is_empty(terminal)))))
+
 # The question frame carries the extension request bytes; a read failure
 # yields an empty frame and its error reaches the observation error chain.
 def question_frame_result(needed: Bool, decoded: Frame.FrameDecoded, +line: String) -> IO(Result<&1,&1,U32 & String,String>):
@@ -1183,7 +1190,7 @@ def question_frame_failed(result: Result<&1,&1,U32 & String,String>) -> Bool:
 @unsafe
 def consume_frame(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, +spool: String, +spanned: Bool, +cursor: String, +last_message: String, +primary: String, +current: String, +terminal: String, +filter: String, +requested: String, +codex_log: String, +first_error: String, +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, +monitor: Bool, +wake_sub: U32, +alive: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, +line: String, +notice: String) -> IO(WakeRead):
   do IO<WakeRead>:
-    +drained : String <- Guidance.awake_pending(db,player,handle,attempt,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
+    +drained : String <- Guidance.awake_pending(db,player,handle,attempt,cursor,awake_woke(harness,notice,terminal))
     +decoded : Frame.FrameDecoded <- IO.pure(Frame.FrameDecoded,Frame.decode(line,spool,spanned))
     +invalid : Bool <- IO.pure(Bool,Frame.is_invalid(decoded))
     +decode_error : String <- IO.pure(String,Bool.pick(String,invalid,Frame.invalid_error(),""))
@@ -1195,7 +1202,9 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
     +message_frame : Bool <- IO.pure(Bool,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"message_end")))
     +message : String <- omp_message(db,decoded,last_message,message_frame)
     +activity_frame : Bool <- IO.pure(Bool,Bool.and(String.eq(harness,"omp\n"),Bool.or(String.eq(Tx.trim_nl(kind),"message_start"),String.eq(Tx.trim_nl(kind),"message_end"))))
-    +activity : String <- omp_activity(db,decoded,Observer.omp_activity(checkpoint_state),activity_frame)
+    +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
+    +background_state : String <- Guidance.background_after(db,decoded,Observer.omp_activity(checkpoint_state),claude)
+    +activity : String <- omp_activity(db,decoded,background_state,activity_frame)
     +raw_event : String <- observed_frame_event(db,decoded,line,message,activity,String.eq(harness,"codex\n"),Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"agent_end")),Guidance.relevant(kind,String.eq(harness,"omp\n")))
     +dsh_projected : String <- dsh_event(db,line,Bool.and(dsh,Dsh.admitted(Tx.trim_nl(kind))),raw_event)
     +event : String <- agy_event(db,line,Bool.and(agy,Agy.admitted(Tx.trim_nl(kind))),dsh_projected)
@@ -1210,10 +1219,13 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
       +failed : Bool <- IO.pure(Bool,Logs.failed_now(log_failed,unshared_result(Unit,written)))
       +relevant : Bool <- IO.pure(Bool,Guidance.relevant(kind,String.eq(harness,"omp\n")))
       +sealed : Bool <- IO.pure(Bool,Bool.not(String.is_empty(terminal)))
-      +next_cursor : String <- Guidance.observe(db,player,handle,attempt,decoded,line,drained,Bool.and(String.eq(harness,"omp\n"),relevant),monitor)
+      +forwarded_cursor : String <- Guidance.observe(db,player,handle,attempt,decoded,line,drained,Bool.and(String.eq(harness,"omp\n"),relevant),"",monitor)
       +next_primary : String <- primary_command(db,event,primary,String.eq(harness,"muse\n"))
       +next_current : String <- current_command(db,event,current,String.eq(harness,"muse\n"))
       +terminal_frame : Bool <- primary_terminal(db,event,"",False{})
+      +settled : Bool <- IO.pure(Bool,Bool.or(Bool.not(String.is_empty(terminal)),terminal_frame))
+      +claude_mode : String <- IO.pure(String,Guidance.claude_mode(claude,settled,Guidance.background_live(activity)))
+      +next_cursor : String <- Guidance.observe(db,player,handle,attempt,decoded,line,forwarded_cursor,Bool.and(claude,settled),claude_mode,monitor)
       +admitted : Bool <- terminal_admitted(db,event,next_primary,terminal_frame,String.eq(harness,"muse\n"))
       +state : String <- completion_state_event(db,id,player,event,Bool.and(admitted,Bool.not(sealed)))
       +observation_sealed : Bool <- IO.pure(Bool,terminal_observation_sealed(sealed,terminal_frame,admitted,state))
@@ -1270,7 +1282,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
       IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(unshared_result(String,waited)),terminal,error,True{}},deliveries))
     case Done{Again{policy,held,log_failed,cursor,last_message,primary,current,terminal,filter,codex_log,first_error,checkpoint_state,incomplete,alive,deliveries,next}}: consume(db,player,id,log,policy,held,log_failed,handle,harness,spool,spanned,cursor,last_message,primary,current,terminal,filter,requested,codex_log,first_error,sender,attempt,checkpoint_state,incomplete,monitor,wake_sub,alive,deliveries,next)
     case Done{AwakeEnd{+notice,+alive}}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
-      +drained : String <- Guidance.awake_pending(db,player,handle,attempt,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
+      +drained : String <- Guidance.awake_pending(db,player,handle,attempt,cursor,awake_woke(harness,notice,terminal))
       continuation : (List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>)) <- IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>),Bool.pick(List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>),String.is_empty(notice),
         pending => consume_exhausted(db,player,id,log,spool,held,log_failed,handle,harness,codex_log,terminal,filter,requested,first_error,sender,attempt,checkpoint_state,incomplete_observation,monitor,pending,wake_sub,alive),
         pending => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
@@ -1448,10 +1460,11 @@ def retained_identity_prefix(model: String, identity: String & String) -> String
 def retained_input(muse: Bool, omp: Bool, claude: Bool, +prompt: String, level: String) -> String:
   Bool.pick(String,muse,"",Bool.pick(String,claude,Claude.user_frame(prompt),Bool.pick(String,omp,Omp.prompt(prompt,level),prompt)))
 
-# The Muse task file, Claude's single frame and Codex's stdin all close the child's
-# input; OMP keeps it open for steer frames.
+# The Muse task file and Codex's stdin close the child's input. OMP keeps it open
+# for steer frames; Claude Code keeps it open after its first frame so owed input
+# can follow while background tasks run, and the observer closes it (#1298).
 def retained_keep_stdin(muse: Bool, omp: Bool, claude: Bool) -> U32:
-  Bool.pick(U32,muse,0,Bool.pick(U32,claude,0,Bool.pick(U32,omp,1,0)))
+  Bool.pick(U32,muse,0,Bool.pick(U32,claude,1,Bool.pick(U32,omp,1,0)))
 
 # DSH persists sessions under DSH_HOME. One home per seat keeps two sessions
 # from sharing a conversation store. The database directory holds it so the
