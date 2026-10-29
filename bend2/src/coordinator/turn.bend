@@ -871,6 +871,12 @@ def filter_lines(+state: String, +requested: String, omp: Bool) -> List<String>:
     case False{}: Nil{}
     case True{}: [Omp.filter_note(state,requested)]
 
+def failed_read_lines(+held: String, +state: String, +requested: String, omp: Bool) -> List<String>:
+  List.append(&1,String,Logs.flush(held),filter_lines(state,requested,omp))
+
+law failed_omp_read_keeps_the_filter_marker:
+  {failed_read_lines("","array+delta","default",True{}) == ["{\"type\":\"baton_event_filter\",\"selection\":\"array+delta\",\"active\":true}"] : List<String>}
+
 def terminal_event(event: String, previous: String, selected: Bool) -> IO(String):
   match selected:
     case False{}: IO.pure(String,previous)
@@ -1247,7 +1253,8 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
       closed : Result<&1,&1,U32 & String,Unit> <- close_input(handle,Bool.not(monitor))
       sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
       +waited : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,P.ProcessChild.wait(handle))
-      +positioned : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,Logs.write_positioned(log,Logs.flush(held),Observer.output(checkpoint_state),log_failed,Bool.not(String.is_empty(attempt)),False{}))
+      output_lines : List<String> <- IO.pure(List<String>,failed_read_lines(held,filter,requested,String.eq(harness,"omp\n")))
+      +positioned : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,Logs.write_positioned(log,output_lines,Observer.output(checkpoint_state),log_failed,Bool.not(String.is_empty(attempt)),False{}))
       +flushed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.position_write(log,unshared_result(String,positioned))))
       +write_failed : Bool <- IO.pure(Bool,Logs.failed_now(log_failed,unshared_result(Unit,flushed)))
       checkpoint_done : Result<&1,&1,U32 & String,Unit> <- checkpoint(Bool.and(String.is_empty(attempt),Bool.not(write_failed)),log,"")
