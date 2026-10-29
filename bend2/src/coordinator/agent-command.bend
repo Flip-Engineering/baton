@@ -350,18 +350,24 @@ def confirmation_target(+db: String, +session: String, +recipient: String,
 
 # An explicit selector must name the current request for the worker assignment.
 # Older requests remain historical and are refused.
+# The selector query for one exact request: its kind, whether the confirming
+# session and the request recipient both hold authority over the author, whether
+# it is the author's current request (or the exact decision is already stored),
+# and the author when all hold.
+def confirmation_selector_sql(+session: String, +request: String, +id: String) -> String:
+  "SELECT CASE WHEN req.kind<>'completion-request' THEN 'wrong-kind' WHEN NOT coalesce(" ++ C.coordinator_authority_sql("req.sender",C.q(session)) ++ " AND " ++ C.coordinator_authority_sql("req.sender","req.recipient") ++ ",0) THEN 'wrong-coordinator' WHEN req.id<>coalesce(" ++
+  C.task_request_sql("req.sender") ++
+  ",'') AND NOT EXISTS(SELECT 1 FROM messages replay WHERE replay.id=" ++ C.q(id) ++ " AND replay.kind='completion-confirmed' AND replay.sender=" ++ C.q(session) ++ " AND replay.recipient=req.sender AND replay.body=" ++ C.q(request) ++ ") THEN 'stale-request' ELSE hex(CAST(req.sender AS TEXT)) END FROM messages req WHERE req.id=" ++
+  C.q(request) ++ ";"
+
 def completion_confirmed_exact(+db: String, +session: String, +recipient: String,
                          +request: String, +id: String, next: A.Body) -> IO(String):
   do IO<String>:
-    row : String <- IO.try(String,DB.Sql.read(db,
-      "SELECT CASE WHEN req.kind<>'completion-request' THEN 'wrong-kind' WHEN NOT (" ++ C.coordinator_chain_sql("req.sender",C.q(session)) ++ " AND " ++ C.coordinator_chain_sql("req.sender","req.recipient") ++ ") THEN 'wrong-coordinator' WHEN req.id<>coalesce(" ++
-      C.task_request_sql("req.sender") ++
-      ",'') AND NOT EXISTS(SELECT 1 FROM messages replay WHERE replay.id=" ++ C.q(id) ++ " AND replay.kind='completion-confirmed' AND replay.sender=" ++ C.q(session) ++ " AND replay.recipient=req.sender AND replay.body=" ++ C.q(request) ++ ") THEN 'stale-request' ELSE hex(CAST(req.sender AS TEXT)) END FROM messages req WHERE req.id=" ++
-      C.q(request) ++ ";"))
+    row : String <- IO.try(String,DB.Sql.read(db,confirmation_selector_sql(session,request,id)))
     confirmation_target(db,session,recipient,request,id,next,Tx.trim_nl(row))
 
 def confirmation_requests_sql(+session: String, +recipient: String) -> String:
-  "SELECT hex(" ++ C.task_request_sql("worker.id") ++ ") FROM sessions worker WHERE worker.parent IS NOT NULL AND " ++ C.coordinator_chain_sql("worker.id",C.q(session))
+  "SELECT hex(" ++ C.task_request_sql("worker.id") ++ ") FROM sessions worker WHERE " ++ C.coordinator_authority_sql("worker.id",C.q(session))
   ++ " AND (" ++ C.q(recipient) ++ "='' OR worker.id=" ++ C.q(recipient) ++ ") AND " ++ C.task_request_sql("worker.id") ++ " IS NOT NULL"
   ++ " AND NOT " ++ C.task_confirmed_sql("worker.id") ++ " ORDER BY worker.id;"
 

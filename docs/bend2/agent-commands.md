@@ -246,8 +246,13 @@ A session is over when it has an explicit stop, or when a coordinator of the ses
 confirmed its current completion request and nothing newer followed. The coordinators
 that may confirm are those that hold authority over the assignment: the recorded
 parent, every ancestor of the parent, every recorded successor of any of them, and the
-registered operator. The same authority decides `taskCompletion.confirmed`, so a
-session is over exactly when its assignment is confirmed or it is stopped.
+registered operator. One authority set decides `taskCompletion.confirmed`, the exact
+and inferred completion-confirmed selectors, the assignments that count as a newer
+task, and native replies, so a session is over exactly when its assignment is confirmed
+or it is stopped. A session outside the set, such as an unrelated tight Ensemble peer
+or an unregistered name, is refused. The operator holds this authority over every
+Player, including a parentless conductor; it can send a Player a task only as the
+Player's parent or, when every ancestor is over, as its coordinator.
 
 A Player's current coordinator is the nearest of those coordinators that is not over.
 Distance counts recorded-parent steps; a recorded successor stands at its

@@ -1154,6 +1154,71 @@ class AgentActions(unittest.TestCase):
         quiet = self.action('root', 'session', 'worker-a')
         self.assertEqual((quiet['blockedCause'], quiet['wake']['pending']), ('assignment-ended', 0))
 
+    def operator_session(self):
+        self.legacy('attach', 'operator', 'fixture', '', self.endpoint)
+        self.legacy('role', 'operator', 'operator')
+
+    def test_operator_confirms_a_parentless_conductor_inferred_exact_and_with_next(self):
+        self.operator_session()
+        for name in ('top-a', 'top-b'):
+            self.legacy('attach', name, 'fixture', '', self.endpoint)
+            self.legacy('role', name, 'principal-conductor')
+            self.legacy('message', name + '-task', 'operator', name, 'task', 'Coordinate the work.')
+            self.legacy('message', name + '-request', name, 'operator', 'completion-request',
+                        'The coordination is complete.')
+        inferred = self.action('operator', 'completion-confirmed', '--to', 'top-a')
+        self.assertEqual(inferred[0]['status'], 'admitted')
+        self.assertTrue(self.completion('top-a')['ended'])
+        exact = self.action('operator', 'completion-confirmed', '--to', 'top-b',
+                            '--request', 'top-b-request', '--next', 'Continue with the next stage.')
+        self.assertEqual([row['status'] for row in exact], ['admitted', 'admitted'])
+        self.assertFalse(self.completion('top-b')['ended'])
+        self.assertEqual(self.completion('top-b')['assignmentId'], exact[1]['id'])
+
+    def test_operator_confirms_a_worker_whose_ancestors_have_all_ended(self):
+        self.operator_session()
+        self.legacy('recruit', 'top', 'operator', 'omp', 'model', 'low', str(self.repo),
+                    'top-branch', str(self.directory / 'top'), 'HEAD')
+        self.legacy('role', 'top', 'associate-conductor')
+        self.legacy('recruit', 'mid', 'top', 'omp', 'model', 'low', str(self.repo),
+                    'mid-branch', str(self.directory / 'mid'), 'HEAD')
+        self.legacy('role', 'mid', 'associate-conductor')
+        self.legacy('recruit', 'leaf', 'mid', 'fixture', 'model', 'low', str(self.repo),
+                    'leaf-branch', str(self.directory / 'leaf'), 'HEAD')
+        self.legacy('message', 'leaf-task', 'mid', 'leaf', 'task-assignment', 'Complete the leaf work.')
+        self.stop_session('mid', 'stop-mid')
+        self.stop_session('top', 'stop-top')
+        request = self.action('leaf', 'completion-request', '--text', 'Done.')[0]
+        self.assertEqual(request['recipient'], 'operator')
+        rows = self.action('operator', 'completion-confirmed', '--to', 'leaf')
+        self.assertEqual(rows[0]['status'], 'admitted')
+        self.assertTrue(self.completion('leaf')['ended'])
+        # A reopened leaf is confirmed again by the operator with a next assignment.
+        self.legacy('message', 'operator-task', 'operator', 'leaf', 'task', 'More work.')
+        request = self.action('leaf', 'completion-request', '--text', 'Done again.')[0]
+        rows = self.action('operator', 'completion-confirmed', '--to', 'leaf', '--request',
+                           request['id'], '--next', 'Next stage.')
+        self.assertEqual([row['status'] for row in rows], ['admitted', 'admitted'])
+        self.assertFalse(self.completion('leaf')['ended'])
+
+    def test_an_unrelated_tight_peer_cannot_confirm_a_workers_request(self):
+        self.associate('cond-a', harness='fixture')
+        self.associate('peer', harness='fixture')
+        with sqlite3.connect(self.db) as db:
+            db.execute("INSERT INTO ensembles(id,owner,coupling) VALUES('tight-e','cond-a','tight')")
+            db.execute("INSERT INTO ensemble_members(ensemble,session) VALUES('tight-e','peer')")
+        self.legacy('recruit', 'child-a', 'cond-a', 'fixture', 'model', 'low', str(self.repo),
+                    'child-a-branch', str(self.directory / 'child-a'), 'HEAD')
+        self.legacy('message', 'child-a-task', 'cond-a', 'child-a', 'task-assignment', 'Work.')
+        request = self.action('child-a', 'completion-request', '--text', 'Done.')[0]['id']
+        before = self.stored_messages()
+        for arguments in ((), ('--request', request), ('--request', request, '--next', 'Next.')):
+            with self.subTest(arguments=arguments):
+                rows = self.action('peer', 'completion-confirmed', '--to', 'child-a', *arguments)
+                self.assertEqual(rows[0]['status'], 'refused')
+                self.assertEqual(self.stored_messages(), before)
+        self.assertFalse(self.completion('child-a')['confirmed'])
+
     def test_successor_of_a_successor_confirms_a_request_to_the_first_predecessor(self):
         self.associate('cond-a')
         self.associate('cond-b', harness='fixture')

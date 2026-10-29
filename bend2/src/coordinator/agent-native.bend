@@ -184,7 +184,7 @@ def stop_identity_sql(+target: String, force: Bool) -> String:
     case False{}: "SELECT '1'||char(9)||hex(coalesce((SELECT id FROM session_stops WHERE session=" ++ C.q(target) ++ "),'stop:'||lower(hex(randomblob(16)))))||char(9)||'end';"
 
 def reply_identity_sql(+session: String, +options: List<&2,D.Option>) -> String:
-  "SELECT count(*)||char(9)||hex(min(id))||char(9)||'end' FROM native_requests WHERE (parent=" ++ C.q(session) ++ " OR " ++ C.coordinator_chain_sql("native_requests.worker",C.q(session)) ++ ") AND reply IS NULL AND closed IS NULL" ++ Bool.pick(String,D.present(options,"--to")," AND worker=" ++ C.q(D.value(options,"--to","")),"") ++ ";"
+  "SELECT count(*)||char(9)||hex(min(id))||char(9)||'end' FROM native_requests WHERE (parent=" ++ C.q(session) ++ " OR " ++ C.coordinator_authority_sql("native_requests.worker",C.q(session)) ++ ") AND reply IS NULL AND closed IS NULL" ++ Bool.pick(String,D.present(options,"--to")," AND worker=" ++ C.q(D.value(options,"--to","")),"") ++ ";"
 
 def query_identity_sql(session: String) -> String:
   "SELECT count(*)||char(9)||hex(min(id))||char(9)||'end' FROM (SELECT id FROM semantic_queries WHERE owner=" ++ C.q(session) ++ " ORDER BY rowid DESC LIMIT 1);"

@@ -249,7 +249,7 @@ def operator_destination_sql() -> String:
 # whether or not those sessions are live, so a confirmation recorded by one of
 # them stays valid. UNION keeps the walk finite for malformed cyclic records.
 def coordinator_closure_cte(+worker: String) -> String:
-  "WITH RECURSIVE chain_kinds(k) AS (VALUES(0),(1)),coordinator_closure(id) AS (SELECT chain_start.parent FROM sessions chain_start WHERE chain_start.id=" ++ worker ++ " AND chain_start.parent IS NOT NULL UNION SELECT CASE chain_edge.k WHEN 0 THEN chain_session.parent ELSE chain_succession.sender END FROM coordinator_closure chain_node JOIN sessions chain_session ON chain_session.id=chain_node.id LEFT JOIN messages chain_succession ON chain_succession.kind='succession' AND chain_succession.recipient=chain_node.id AND chain_succession.id='succession:' || chain_succession.recipient || ':' || chain_succession.sender JOIN chain_kinds chain_edge),coordinator_authors(id) AS (SELECT id FROM coordinator_closure UNION SELECT report_operator.id FROM sessions report_operator JOIN session_roles operator_role ON operator_role.session=report_operator.id AND operator_role.role='operator' WHERE report_operator.id='operator' AND report_operator.parent IS NULL) "
+  "WITH RECURSIVE chain_kinds(k) AS (VALUES(0),(1)),coordinator_closure(id) AS (SELECT chain_start.parent FROM sessions chain_start WHERE chain_start.id=" ++ worker ++ " AND chain_start.parent IS NOT NULL UNION SELECT CASE chain_edge.k WHEN 0 THEN chain_session.parent ELSE chain_succession.sender END FROM coordinator_closure chain_node JOIN sessions chain_session ON chain_session.id=chain_node.id LEFT JOIN messages chain_succession ON chain_succession.kind='succession' AND chain_succession.recipient=chain_node.id AND chain_succession.id='succession:' || chain_succession.recipient || ':' || chain_succession.sender JOIN chain_kinds chain_edge WHERE (CASE chain_edge.k WHEN 0 THEN chain_session.parent ELSE chain_succession.sender END) IS NOT NULL),coordinator_authors(id) AS (SELECT id FROM coordinator_closure UNION SELECT report_operator.id FROM sessions report_operator JOIN session_roles operator_role ON operator_role.session=report_operator.id AND operator_role.role='operator' WHERE report_operator.id='operator' AND report_operator.parent IS NULL) "
 
 def coordinator_closure_sql(+worker: String) -> String:
   coordinator_closure_cte(worker) ++ "SELECT id FROM coordinator_closure"
@@ -261,6 +261,13 @@ def closure_member_sql(+candidate: String) -> String:
 def coordinator_chain_sql(+worker: String, +candidate: String) -> String:
   candidate ++ " IN (" ++ coordinator_closure_sql(worker) ++ ")"
 
+# The single authority predicate for a worker's assignment decisions: the
+# closure above plus the registered operator. Confirmation, the exact request
+# selector, the inferred request lookup and native replies all use it. The sets
+# hold no NULL, so a candidate outside them yields false, not NULL.
+def coordinator_authority_sql(+worker: String, +candidate: String) -> String:
+  candidate ++ " IN (" ++ coordinator_closure_cte(worker) ++ "SELECT id FROM coordinator_authors)"
+
 # An assignment remains open across native turns. Its worker explicitly asks
 # its coordinator to confirm completion through ordinary messages. A message is
 # an assignment of the worker when a coordinator of the worker sent it as a
@@ -269,13 +276,14 @@ def coordinator_chain_sql(+worker: String, +candidate: String) -> String:
 # sessions alias.
 def task_assigned_sql(+row: String, +worker: String, +session: String) -> String:
   row ++ ".recipient=" ++ session ++ " AND (" ++ worker ++ ".parent IS NULL AND " ++ row ++ ".sender<>" ++ row ++ ".recipient AND " ++ row ++ ".kind IN ('task','guidance','recovery') OR " ++ worker ++ ".parent IS NULL AND " ++ row ++ ".kind='task-assignment'"
-  ++ " OR " ++ worker ++ ".parent IS NOT NULL AND " ++ closure_member_sql(row ++ ".sender") ++ " AND " ++ row ++ ".kind IN ('task','guidance','recovery','task-assignment')"
+  ++ " OR " ++ worker ++ ".parent IS NOT NULL AND " ++ row ++ ".sender IN (SELECT id FROM coordinator_authors) AND " ++ row ++ ".kind IN ('task','guidance','recovery','task-assignment')"
   ++ " OR " ++ worker ++ ".parent IS NOT NULL AND " ++ row ++ ".sender=" ++ row ++ ".recipient AND " ++ row ++ ".kind='task-assignment' AND substr(" ++ row ++ ".id,-11)=':task-input')"
 
-# The assignment predicates declare the worker's closure once and test its
-# members at each use. The registered operator receives and confirms completion
-# requests of any worker. Other operator input to a worker is direct operator
-# input.
+# The assignment predicates declare the worker's closure and authors once and test
+# members at each use. The authors are the closure and the registered operator.
+# The operator can reach a Player only as its parent or, when every ancestor is
+# over, as its coordinator, so its task or guidance is an assignment there; its
+# other kinds of input are direct operator input.
 def task_assignment_sql(+session: String) -> String:
   "(" ++ coordinator_closure_cte(session) ++ "SELECT a.seq FROM messages a JOIN sessions assigned_worker ON assigned_worker.id=a.recipient WHERE " ++ task_assigned_sql("a","assigned_worker",session) ++ " ORDER BY a.seq DESC LIMIT 1)"
 
