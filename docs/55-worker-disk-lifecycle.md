@@ -11,13 +11,15 @@ documentation.
 
 ## Recommendation and scope
 
-Phase 1 publishes released source to exact-SHA preservation refs on the actual
-off-host Git remote, verifies those refs, and removes released checkouts through
-Git. It collects inactive Cargo targets, npm dependency trees and released
-compile-queue key directories. Project Git hooks attribute new shell-created
-worktrees and clones to their creating session. Allocation and release events
-run collection; live filesystem availability selects additional shared-cache
-collection. The root's working files use the same lifecycle.
+Phase 1 verifies that released source remains available through off-host
+integration history or patch-equivalent history. It publishes exact-SHA refs
+for required source generations that this history does not retain, verifies
+those refs, and removes released checkouts through Git. It collects inactive
+Cargo targets, npm dependency trees and released compile-queue key directories.
+Project Git hooks attribute new shell-created worktrees and clones to their
+creating session. Allocation and release events run collection; live filesystem
+availability selects additional shared-cache collection. The root's working
+files use the same lifecycle.
 
 The [October 23 incident](https://github.com/Flip-Engineering/baton/issues/1049)
 recovered about 54 GB from twelve clean, pushed worktrees created by the root,
@@ -30,7 +32,9 @@ estimates remain separate observations. The report records the Docker failure
 and PostgreSQL restart when the root filesystem reached zero available bytes.
 
 An open assignment keeps its working paths, including dirty and unpublished
-source. Released source is published automatically before local removal.
+source. Before local removal, collection verifies that required source remains
+available through off-host integration history, patch-equivalent history or
+exact-SHA refs for unique unpublished generations.
 An unreadable allocation or unresolved consumer stays in place with its reason
 reported. Eligibility is evaluated for each allocation. Phase 1 can collect an
 eligible worktree while an unrelated evidence directory remains unreadable.
@@ -141,8 +145,9 @@ The configured project repositories and disposable roots define collection
 authority. Query `git worktree list --porcelain` for each project and resolve
 the common Git directory and exact checkout path. This finds shell-created
 linked worktrees, including the root's merge and review trees. Primary project
-checkouts remain live inputs. Branches and preservation refs remain present
-after a linked working directory is removed.
+checkouts remain live inputs. Branch tips remain after a linked working
+directory is removed. Exact-SHA refs remain for unique unpublished generations
+that require remote retention.
 
 Install an executable `post-checkout` hook in each project's common Git hooks
 directory and in the Git template selected by the seat launch environment.
@@ -252,16 +257,17 @@ classifying it as unrelated requires evidence.
 Qualification uses the affected homelab account and the twelve-root-merge-worktree
 case. The original trees were removed in recovery, so rerun their normal
 merge/push/release workflow on the same busy host and record the actual paths.
-Released, clean, remotely published worktrees must receive definite
-`no-consumer` results while a current workspace and a process actually using a
-candidate receive definite consumer results and remain present. If the selected
-path still answers `process-unknown` or `consumer-unknown`, Phase 1 qualification
-is incomplete. This prerequisite has not passed in the evidence available to
-this design; a baseline failure on main does not establish working collection.
+Released, clean worktrees with verified off-host source retention must receive
+definite `no-consumer` results while a current workspace and a process actually
+using a candidate receive definite consumer results and remain present. If the
+selected path still answers `process-unknown` or `consumer-unknown`, Phase 1
+qualification is incomplete. This prerequisite has not passed in the evidence
+available to this design; a baseline failure on main does not establish working
+collection.
 
 ## Phase 1 retention and removal
 
-### Publish released source, then remove the checkout
+### Verify released source, then remove the checkout
 
 A linked worktree becomes a candidate when its assignment and operations have
 released it, Git identifies its project and disposable path, and the qualified
@@ -284,31 +290,37 @@ For each released checkout:
    differences, tracked deletions and authored untracked files. Keep sparse
    index entries for absent files. Inspect ignored content: known generated
    children follow their own rules; unresolved unique evidence keeps the tree.
-2. Produce commit objects for the required generations, retaining the original
-   HEAD and ancestry. Push each exact object to
+2. Verify that the required source for each captured generation remains
+   available through off-host integration history or patch-equivalent history.
+   For a unique unpublished HEAD, index or working generation that must remain
+   recoverable, produce its commit object and publish it to
    `refs/baton/preserve/<full-object-id>` on the actual off-host project remote.
-   An existing ref must already name that object. Publication creates refs
-   without force updates; the collector never deletes branches or preserve refs.
-3. Run `git ls-remote <publish-url> <exact-preserve-ref>` and require that exact
-   ref at the captured SHA for every required generation. A moving development
-   branch is insufficient. Record the destination, refs and object IDs in the
-   existing operation outcome for reviewer fetches and recovery.
+   An existing ref must already name that object. Create refs without force
+   updates. Create preservation refs for required unique unpublished
+   generations.
+3. Run `git ls-remote <publish-url> <exact-preserve-ref>` and require the exact
+   captured SHA for each required unique generation. For integrated or
+   patch-equivalent source, verify the corresponding off-host history and
+   retained patch. Record the destination and evidence in the existing
+   operation outcome for reviewer reconstruction.
 4. Reread assignment/operation release, allocation identity and content under
    the existing ownership boundary. Keep anything changed since capture.
-   After all required generations are verified remotely, normalize only the
+   After all required source is verified remotely, normalize only the
    captured tracked/index state and remove only the captured authored untracked
    paths. This normalization is a destructive part of collection and has the
-   same publication and release requirements. It preserves branch tips.
+   same source-retention and release requirements. It preserves branch tips.
    Collect eligible generated children separately. Unresolved files remain.
 5. Run `git worktree remove <exact-path>` without `--force`. A refusal keeps
    the tree with Git's error. Settle its runtime/Git administration through the
-   owning operation and keep its branch and preservation refs.
+   owning operation and keep its branch. Retain exact-SHA refs for unique
+   unpublished generations that require them.
 
 Historical #594 captures the visible working version and leaves the real
-index unchanged. Capturing both index and working generations is required for
-the measured `MM` file in `/tmp/acp261`. Qualification reconstructs both
-generations by fetching the exact preserve refs from the off-host remote.
-Partial publication keeps the remaining local state and reports the failed ref.
+index unchanged. The measured `MM` file in `/tmp/acp261` requires qualification
+to reconstruct both index and working generations. Use verified off-host
+integration or patch-equivalent history when it retains each generation; fetch
+exact preservation refs for unique unpublished generations. Incomplete remote
+retention keeps the remaining local state and reports the missing evidence.
 
 Independent clones created through the seat template follow the same
 attribution, release and publication sequence. Their primary directory remains
@@ -413,11 +425,12 @@ record from the Mac owner. Match it to the actual invocation; directory naming
 alone leaves attribution unresolved.
 
 Repair the identified producer's success, failure and restart cleanup at that
-entry point. A private index/staging store is released after its snapshots have
-verified exact off-host refs and its operation has finished using it. Unpublished
-source or a pending diagnostic-review decision keeps that store. This trace
-and repair are Phase 1 acceptance work. The design seat has requested the
-measurements through the conductor and has no Mac access. Validate the real
+entry point. A private index/staging store is released after required source is
+verified in off-host integration or patch-equivalent history, or in exact-SHA
+refs for unique unpublished generations, and its operation has finished using
+it. Unpublished source or a pending diagnostic-review decision keeps that store.
+This trace and repair are Phase 1 acceptance work. The design seat has requested
+the measurements through the conductor and has no Mac access. Validate the real
 producer on a remote Darwin runner and retain its completed execution evidence.
 
 ### Lifecycle triggers and space pressure
@@ -426,7 +439,7 @@ producer on a remote Darwin runner and retain its completed execution evidence.
 | --- | --- |
 | Controlled checkout/clone allocation | Run the released-allocation pass for that project and filesystem |
 | Build start or compile-queue key allocation | Run the release pass for known targets, dependency trees and queue keys on that filesystem |
-| Verified publication or completed merge/review | Publish any remaining released source and reconsider that operation's checkout |
+| Verified source retention or completed merge/review | Verify retention for remaining released source and reconsider that operation's checkout |
 | Task completion, seat stop or retirement | Reconsider released attributed allocations and project Git worktrees |
 | Build/queue producer release | Reconsider its exact generated allocation after consumers settle |
 | Restart or remote reconnect | Recompute known project, producer and staging-store decisions |
@@ -541,7 +554,9 @@ Keep the product while its required decision or producer association is unresolv
 A native turn ending, a producer exiting or a seat stopping supplies no review
 acceptance by itself. After the required decision completes and local consumers
 release the allocation, remove its work files through the owning producer.
-Git source and snapshots remain subject to verified remote preservation refs.
+Git source and snapshots must remain available through verified off-host
+integration history, patch-equivalent history or exact-SHA refs for unique
+unpublished generations.
 
 | Non-Git allocation | Recorded decision permitting removal |
 | --- | --- |
@@ -566,11 +581,11 @@ owner with its observed path and unresolved producer, decision or consumer.
 | Wrong or foreign path selected | #568 external removals left owner administration inconsistent | Resolve configured authority, exact Git path and filesystem identity; settle administration through its owner. |
 | Incomplete allocation inspection | October 23 broad inventories returned access errors; eight attempt directories were inaccessible | Keep that candidate and report its path/read/error. Decide other allocations independently. |
 | Open assignment between commands | #912 writer-entry-point review and shell-created paths in #1049 | Keep creator-attributed checkouts while the assignment remains open, plus current execution and continuation references. |
-| Staged or working changes omitted | /tmp/acp261 has an MM file despite remote HEAD equality | Preserve separate index and working generations at verified exact-SHA remote refs before local normalization/removal. |
+| Staged or working changes omitted | /tmp/acp261 has an MM file despite remote HEAD equality | Verify that separate index and working generations remain available through off-host history; publish exact-SHA refs for unique unpublished generations before local normalization/removal. |
 | Unique ignored or unregistered source omitted | #620 first patch lost a tracked edit; #644 retained unresolved files | Inspect the complete candidate. Collect classified generated children separately; retain unresolved unique files. |
-| Moving branch ceases to retain work | #558 unpublished landing and root critique of the October 23 hand review | Verify exact refs/baton/preserve object IDs and retain those refs; development branch movement cannot change that reference. |
+| Moving branch ceases to retain work | #558 unpublished landing and root critique of the October 23 hand review | Verify off-host integration or patch-equivalent history for retained source. Publish and verify exact refs for unique unpublished generations that need remote retention. |
 | Same-host origin mistaken for off-host retention | /tmp/acp261-dsh-flash-1 origin points to NVMe on this worker | Resolve the effective publish URL to the actual off-host project destination; keep an unresolved allocation. |
-| Squash merge loses original review history | #558 publication requirement and #594 source snapshots | Retain original source ancestry and snapshot generations through exact remote preservation refs. |
+| Squash merge omits original commit ancestry | #558 publication requirement and #594 source snapshots | Verify that off-host integration or patch-equivalent history retains required source. Publish exact refs for unique unpublished generations needed for reconstruction. |
 | Consumer result remains unknown | #1045 process-unknown reproduction on this host | Repair and qualify the candidate-specific consumer path before Phase 1 acceptance; unresolved reads keep the candidate. |
 | Cargo collection requires missing old records | #988 omitted target paths; October 23 orphan target is 12.658 GB | Identify Cargo output from its marker/layout and acquire native locks; source/provenance records supply no extra eligibility condition. |
 | Build is active during target collection | #988 direct Cargo bypass and October 23 inactive-process check | Hold native Cargo locks through rename/delete and retain active operations plus runtime/rollback selections. |
@@ -586,7 +601,7 @@ owner with its observed path and unresolved producer, decision or consumer.
 | Producer path | Failed run | Required completed evidence |
 | --- | --- | --- |
 | Root merge/review linked worktrees | October 23 twelve trees, about 54 GB; #1045 unknown results | Repair #1045 first. Repeat the normal twelve-tree merge/publication/release case on the busy host with definite no-consumer results and automatic non-force Git removal. Keep current workspaces, unfinished operations and an open creator assignment. |
-| Released unpublished or dirty source | Root critique's 115 hand-reviewed checkouts; /tmp/acp261 staged/working changes | Push exact-SHA refs and fetch them from the off-host remote to reconstruct HEAD, index, working generations and authored untracked files. Keep source on failed publication or changed content. Verify review history after ordinary branch movement. |
+| Released unpublished or dirty source | Root critique's 115 hand-reviewed checkouts; /tmp/acp261 staged/working changes | Verify that off-host integration or patch-equivalent history retains each required source generation. Push and fetch exact-SHA refs for unique unpublished HEAD, index, working generations or authored untracked files that need remote retention. Keep source when retention verification fails or content changes. Verify reconstruction after ordinary branch movement. |
 | Shell-created worktree and clone | About 26 GB in /tmp and root-created merge trees | Actual git worktree add and clone record BATON_SESSION via installed hook/template. Show separate linked admin attribution, discovery and open-assignment retention; qualify sparse no-checkout creation through its creator path. |
 | Private/shared/orphan Cargo targets | October 23 23 GB plus 18 GB; 12.658 GB orphan | Use actual markers/locks with missing historical provenance. Keep an active direct Cargo writer and selected binary, collect released targets without source/log publication, and rebuild after collection. Cover deployed Cargo lock layouts. |
 | npm dependency tree | npm ci named in #1049 | Classify a real hidden-lockfile tree; keep an active install/test/server, then collect on release and reinstall from retained source inputs. |
@@ -594,7 +609,7 @@ owner with its observed path and unresolved producer, decision or consumer.
 | Allocation pressure pass | October 23 Docker/PostgreSQL failures at zero free bytes | Show collection at checkout, build-start and queue-key allocation; record actual statvfs availability and measured-kind derivation for shared-cache selection. Work continues regardless of collection outcome. |
 | ACP sparse view/shared objects | October 23 about 110 GB checkout growth; 4.851 GB sample | Exercise real narrow seat and review/merge workflows, expand for actual dependencies, preserve snapshot semantics, and measure resulting working/object bytes and validation identity. |
 | Mac temporary Git store | #912 October 21 recovery | Identify the real producer from Mac evidence; repeated success/failure/restart releases unused stores while current source, snapshots and diagnostics survive. Validate on a remote Darwin runner. |
-| Non-Git work product/export | Observer logs, film evidence and broken export | Phase 2 preserves local work files before their recorded review/acceptance decision, then removes them after that decision and consumer release. Git source remains remotely published. |
+| Non-Git work product/export | Observer logs, film evidence and broken export | Phase 2 preserves local work files before their recorded review/acceptance decision, then removes them after that decision and consumer release. Git source remains available through verified off-host history or exact-SHA refs for unique unpublished generations. |
 
 Phase 1 acceptance requires completed runs of these real producer workflows,
 including #1045 and the Mac producer repair. Existing baseline failures and
