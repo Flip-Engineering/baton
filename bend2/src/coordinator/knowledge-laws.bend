@@ -52,12 +52,13 @@ law m1_the_finding_answer_is_the_row_it_wrote:
 def m1_the_finding_answer_is_the_row_it_wrote(id, author, claim, evidence, limits):
   {==}
 
-# M-8: the notice a record writes is addressed to the author's immediate parent.
-law m8_a_notice_is_addressed_to_the_authors_parent:
+# M-8: the notice a record writes is addressed to the author's current
+# coordinator, and a notice already stored for the finding keeps its recipient.
+law m8_a_notice_is_addressed_to_the_authors_current_coordinator:
   for author: String
-  {K.notice_target(author) == "(SELECT parent FROM sessions WHERE id=" ++ C.q(author) ++ ")" : String}
+  {K.notice_target(author) == C.current_coordinator_sql(C.q(author)) : String}
 
-def m8_a_notice_is_addressed_to_the_authors_parent(author):
+def m8_a_notice_is_addressed_to_the_authors_current_coordinator(author):
   {==}
 
 # M-14: the notice names the finding and its author, and carries no claim text.

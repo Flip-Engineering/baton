@@ -242,16 +242,30 @@ operation. Each action accepts `--session SESSION`.
 
 ## Conductor succession and ended conductors (#1257)
 
-A session is over when it has an explicit stop, or when its recorded parent or the
-parent's recorded successor confirmed its current completion request and sent nothing
-to the session after that. A Player's current coordinator is its recorded parent while
-the parent is not over. When the parent is over, the coordinator is the parent's
-recorded successor, else the parent's own parent, and so on up the recorded parents,
-until a session that is not over; when every ancestor is over, the registered
-operator. Turn-end reports, failure reports, `completion-request`, `report`, `ask`
-and the blocked owner use the current coordinator, and the Player and its current
-coordinator may message each other. A Player with no coordinator that is not over and
-no registered operator receives a structured `report-recipient-missing` refusal.
+A session is over when it has an explicit stop, or when a coordinator of the session
+confirmed its current completion request and nothing newer followed. The coordinators
+that may confirm are those that hold authority over the assignment: the recorded
+parent, every ancestor of the parent, every recorded successor of any of them, and the
+registered operator. The same authority decides `taskCompletion.confirmed`, so a
+session is over exactly when its assignment is confirmed or it is stopped.
+
+A Player's current coordinator is the nearest of those coordinators that is not over.
+Distance counts recorded-parent steps; a recorded successor stands at its
+predecessor's distance and is preferred. When every one of them is over, the
+coordinator is the registered operator. Turn-end reports, failure reports,
+`completion-request`, `report`, `ask`, native questions, knowledge notices and the
+blocked owner use the current coordinator, and the Player and its current coordinator
+may message each other. A Player with no coordinator that is not over and no
+registered operator receives a structured refusal (`report-recipient-missing` for a
+report or question).
+
+A message that Baton admitted under a retained identity keeps its recorded recipient.
+Repeating `report`, `ask`, a knowledge record, a turn-end report or a native question
+with the same identity after a succession or an ending replays the original admitted
+row; the same identity with different content is a `message-id-conflict` naming the
+stored recipient. A new identity takes the coordinator at that time. A native question
+records its coordinator when it is raised; that coordinator, any successor and any
+ancestor in the Player's authority can reply to it.
 
 `succeed --from PREDECESSOR [--session SUCCESSOR]` runs as the successor (omitted
 `--session` selects the current actor) and records that the successor replaces a

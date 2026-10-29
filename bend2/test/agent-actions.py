@@ -1025,6 +1025,63 @@ class AgentActions(unittest.TestCase):
         self.action('child-a', 'completion-request', '--text', 'Done again.')
         self.assertEqual(self.stored_messages()[-1][1:4], ('child-a', 'root', 'completion-request'))
 
+    def test_ancestor_confirmation_of_a_conductor_ends_it_and_reports_its_worker(self):
+        self.associate('cond-a', harness='fixture')
+        self.associate('mid', parent='cond-a', harness='fixture')
+        self.legacy('recruit', 'leaf', 'mid', 'fixture', 'model', 'low', str(self.repo),
+                    'leaf-branch', str(self.directory / 'leaf'), 'HEAD')
+        self.legacy('message', 'mid-assignment', 'cond-a', 'mid', 'task-assignment',
+                    'Coordinate the bounded assignment.')
+        self.legacy('message', 'leaf-assignment', 'mid', 'leaf', 'task-assignment',
+                    'Complete the bounded assignment for leaf.')
+        self.action('mid', 'completion-request', '--text', 'Coordination is complete.')
+        # The root is an ancestor of mid but not its parent.
+        self.action('root', 'completion-confirmed', '--to', 'mid', '--id', 'root-confirms-mid')
+        self.assertTrue(self.action('root', 'session', 'mid')['taskCompletion']['ended'])
+        reports = [row for row in self.stored_messages() if row[0] == 'ended:root-confirms-mid']
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(reports[0][1:4], ('mid', 'cond-a', 'report'))
+        self.assertEqual(json.loads(reports[0][4])['liveChildren'], ['leaf'])
+        self.invoke(self.db, 'as', 'leaf', 'report', 'The leaf continues.')
+        self.assertEqual(self.stored_messages()[-1][1:4], ('leaf', 'cond-a', 'report'))
+
+    def test_successor_of_a_successor_confirms_a_request_to_the_first_predecessor(self):
+        self.associate('cond-a')
+        self.associate('cond-b', harness='fixture')
+        self.associate('cond-c', harness='fixture')
+        self.legacy('recruit', 'child-a', 'cond-a', 'fixture', 'model', 'low', str(self.repo),
+                    'child-a-branch', str(self.directory / 'child-a'), 'HEAD')
+        self.legacy('message', 'child-a-assignment', 'cond-a', 'child-a', 'task-assignment',
+                    'Complete the bounded assignment for child-a.')
+        request = self.action('child-a', 'completion-request', '--text', 'Done.')[0]['id']
+        self.stop_session('cond-a', 'stop-cond-a')
+        self.invoke(self.db, 'as', 'cond-b', 'succeed', '--from', 'cond-a')
+        self.legacy('stop', 'cond-b', 'stop-cond-b', 'Operator ended this conductor.')
+        self.invoke(self.db, 'as', 'cond-c', 'succeed', '--from', 'cond-b')
+        self.assertEqual(self.action('root', 'session', 'child-a')['taskCompletion']['coordinator'],
+                         'cond-c')
+        confirmed = self.action('cond-c', 'completion-confirmed', '--to', 'child-a')
+        self.assertEqual(confirmed[0]['delivery']['body'], request)
+        self.assertTrue(self.action('root', 'session', 'child-a')['taskCompletion']['ended'])
+
+    def test_report_replay_with_a_retained_id_keeps_its_admitted_recipient_after_succession(self):
+        self.associate('cond-a')
+        self.associate('cond-b', harness='fixture')
+        self.legacy('recruit', 'child-a', 'cond-a', 'fixture', 'model', 'low', str(self.repo),
+                    'child-a-branch', str(self.directory / 'child-a'), 'HEAD')
+        self.legacy('report', 'retained-report', 'child-a', 'First body.')
+        self.assertEqual(self.stored_messages()[-1][:4],
+                         ('retained-report', 'child-a', 'cond-a', 'report'))
+        self.stop_session('cond-a', 'stop-cond-a')
+        self.invoke(self.db, 'as', 'cond-b', 'succeed', '--from', 'cond-a')
+        before = self.stored_messages()
+        self.legacy('report', 'retained-report', 'child-a', 'First body.')
+        self.assertEqual(self.stored_messages(), before)
+        self.legacy('report', 'retained-report', 'child-a', 'Changed body.', success=False)
+        self.assertEqual(self.stored_messages(), before)
+        self.legacy('report', 'new-report', 'child-a', 'Second body.')
+        self.assertEqual(self.stored_messages()[-1][:4], ('new-report', 'child-a', 'cond-b', 'report'))
+
     def test_confirmed_conductor_reports_live_children_and_its_children_report_upward(self):
         self.associate('cond-a', harness='fixture')
         self.legacy('connect', 'cond-a', '', self.endpoint)
