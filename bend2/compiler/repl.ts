@@ -3,18 +3,10 @@ import * as path from 'node:path';
 import { file_digest as digest } from './store.ts';
 import * as Bend from './bend.ts';
 import * as Comp from './comp.ts';
-import { cli_build, cli_report } from './main.ts';
+import { book_err as errorText, cli_build, cli_report } from './main.ts';
 
 // Notebook state and process admission belong to the Bend coordinator. This
 // frontend exposes the pinned compiler's source, inference and build operations.
-function errorText(error: unknown): string {
-  const value = error as Bend.Err;
-  if (error instanceof RangeError) {
-    return 'Error: the machine stack overflowed (a deep recursion, or a literal too large to expand)';
-  }
-  return value?.$ === 'Err' ? Bend.err_show(value) : String(error);
-}
-
 function complete(book: Bend.Book): void {
   Bend.book_valid(book, 0);
   Comp.book_owned(book, Comp.SYNTH);
