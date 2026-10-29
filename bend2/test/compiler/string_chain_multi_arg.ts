@@ -1,8 +1,11 @@
 // A String match with later top-level parameters uses the same inline String.eq
 // chain as one with a single parameter: no helper definitions, a syntax graph
-// that does not grow with the extra parameter, and the same results.
+// that does not grow with the extra parameter, and the same results from the
+// interpreter and from the emitted C.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import * as Bend from "../../compiler/upstream/bend.ts";
 
@@ -55,4 +58,14 @@ const run = spawnSync(process.execPath, [path.join(root, "bend2/compiler/upstrea
   { cwd: root, encoding: "utf8", env: { ...process.env, BEND_NO_TELEMETRY: "1" } });
 assert.equal(run.status, 0, run.stderr);
 assert.deepEqual(run.stdout.trim().split("\n"), ["B", "G1", "zzz2", "x", "y!", "z"], "results");
+// The C emitter cuts the chain's calls and needs their types.
+const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bend-string-chain-"));
+try {
+  const output = path.join(directory, "chain.c"), binary = path.join(directory, "chain");
+  const emitted = spawnSync(process.execPath, ["--smol", path.join(root, "bend2/compiler/upstream/main.ts"), fixture, "-o", output],
+    { cwd: root, encoding: "utf8", env: { ...process.env, BEND_NO_TELEMETRY: "1" } });
+  assert.equal(emitted.status, 0, "the chain emits C: " + emitted.stderr);
+  execFileSync(process.env.CC ?? "clang-19", ["-std=c11", "-O1", "-pthread", output, "-lm", "-o", binary]);
+  assert.deepEqual(execFileSync(binary, { encoding: "utf8" }).trim().split("\n"), ["B", "G1", "zzz2", "x", "y!", "z"], "results of the C");
+} finally { fs.rmSync(directory, { recursive: true, force: true }); }
 console.log(JSON.stringify({ test: "string_chain_multi_arg", pick1: one, pick2: two, pick_linear: linear }));
