@@ -244,9 +244,14 @@ def missing_identity_signal(+db: String, +session: String, +attempt: String, +di
               result : Result<&1,&1,U32 & String,String> <- P.ProcessChild.instance_attempt_signal(db,directory,signal)
               missing_identity_signal_result(db,session,attempt,signal,directory,result))))
 
+# When the lock is held during startup, the existing lifecycle reconciliation
+# retries after the attempt enters the running phase.
 def missing_custody_owner_locked(+db: String, +session: String, +attempt: String, +directory: String, owner: Maybe<U32>) -> IO(Unit):
   match owner:
-    case None{}: IO.pure(Unit,Unit{})
+    case None{}: do IO<Unit>:
+      phase : String <- IO.try(String,DB.Sql.query(db,"SELECT phase FROM executions WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ ";"))
+      Bool.pick(IO(Unit),String.eq(Tx.trim_nl(phase),"starting"),IO.pure(Unit,Unit{}),
+        missing_identity_signal(db,session,attempt,directory))
     case Some{handle}: do IO<Unit>:
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
       missing_identity_signal(db,session,attempt,directory)
