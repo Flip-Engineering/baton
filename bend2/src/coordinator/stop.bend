@@ -2,6 +2,7 @@ import Base
 import ../coordinator/commands.bend as C
 import ./delivery.bend as Delivery
 import ./store.bend as Store
+import ../host/files.bend as F
 import ../host/session-lock.bend as Lock
 import ../host/sqlite.bend as DB
 import ../host/process.bend as P
@@ -29,6 +30,79 @@ def held_release(+db: String, +session: String, +id: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,DB.Sql.query(db,held_release_sql(session,id)))
     IO.pure(Unit,Unit{})
+
+# A recorded status file is the keeper's durable native-exit record, so a
+# nonempty status means no native holds the attempt. A missing or empty status
+# falls back to the recovery markers: a launch marker without terminal marks
+# keeps custody ambiguous, and every other outcome is absent custody. Only
+# positive evidence retires an attempt; an unreadable directory or recovery
+# record leaves it owned.
+def recovery_absent(recovery: Result<&1,&1,U32 & String,Maybe<String>>) -> Bool:
+  match recovery:
+    case Done{found}: match found:
+      case Some{argv}: False{}
+      case None{}: True{}
+    case Fail{error}: False{}
+
+def stranded_without_status(+directory: String) -> IO(Bool):
+  do IO<Bool>:
+    recovery : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.recovery_argv(directory)
+    IO.pure(Bool,recovery_absent(recovery))
+
+def stranded_status(+directory: String, reaped: Result<&1,&1,U32 & String,U32>) -> IO(Bool):
+  match reaped:
+    case Done{size}: Bool.pick(IO(Bool),U32.is_eq(size,0),stranded_without_status(directory),IO.pure(Bool,True{}))
+    case Fail{(code,detail)}: Bool.pick(IO(Bool),U32.is_eq(code,2),stranded_without_status(directory),IO.pure(Bool,False{}))
+
+def starting_observed(+directory: String, observed: Result<&1,&1,U32 & String,String>) -> IO(Bool):
+  match observed:
+    case Fail{(code,detail)}: IO.pure(Bool,U32.is_eq(code,2))
+    case Done{output}: do IO<Bool>:
+      reaped : Result<&1,&1,U32 & String,U32> <- F.Files.size(directory ++ "/status")
+      stranded_status(directory,reaped)
+
+def starting_stranded(+directory: String) -> IO(Bool):
+  do IO<Bool>:
+    observed : Result<&1,&1,U32 & String,String> <- F.Files.lstat(directory)
+    starting_observed(directory,observed)
+
+# A starting attempt whose native custody is absent cannot run. Retiring it
+# leaves its owed input untouched and lets the seat change route, stop, clear or
+# start a new attempt. The execution and stop updates commit together, and the
+# stop update runs only when this call retired the recorded attempt.
+def starting_release_sql(+session: String, +attempt: String, +directory: String) -> String:
+  "BEGIN IMMEDIATE;"
+  ++ "UPDATE executions SET phase='exited',status='start failed' WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ " AND phase='starting' AND directory=" ++ C.q(directory) ++ ";"
+  ++ "UPDATE session_stops SET outcome='stopped',native_status='not started' WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ " AND outcome='requested' AND changes()=1;"
+  ++ "COMMIT;"
+
+def release_retired(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
+  do IO<Unit>:
+    saved : String <- IO.try(String,Store.transact_sql(db,starting_release_sql(session,attempt,directory)))
+    IO.pure(Unit,Unit{})
+
+
+def release_locked(+db: String, +session: String, +attempt: String, +directory: String, lock: Maybe<U32>) -> IO(Unit):
+  match lock:
+    case None{}: IO.pure(Unit,Unit{})
+    case Some{handle}: do IO<Unit>:
+      +current : String <- IO.try(String,DB.Sql.read(db,"SELECT coalesce((SELECT id || char(9) || phase || char(9) || directory FROM executions WHERE session=" ++ C.q(session) ++ "),'');"))
+      stranded : Bool <- Bool.pick(IO(Bool),String.eq(Tx.trim_nl(current),attempt ++ "\tstarting\t" ++ directory),starting_stranded(directory),IO.pure(Bool,False{}))
+      released : Unit <- Bool.pick(IO(Unit),stranded,release_retired(db,session,attempt,directory),IO.pure(Unit,Unit{}))
+      unlocked : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
+      IO.pure(Unit,Unit{})
+
+# Stop and force-stop release a held or stranded starting attempt under the
+# session lock. A live owner holds that lock, so its attempt is left to the
+# ordinary signal reconciliation.
+def release_starting(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    +attempt : String <- IO.try(String,DB.Sql.read(db,"SELECT coalesce((SELECT attempt FROM session_stops WHERE session=" ++ C.q(session) ++ "),'');"))
+    +directory : String <- IO.try(String,DB.Sql.read(db,"SELECT coalesce((SELECT directory FROM session_stops WHERE session=" ++ C.q(session) ++ "),'');"))
+    Bool.pick(IO(Unit),Bool.or(String.is_empty(Tx.trim_nl(attempt)),String.is_empty(Tx.trim_nl(directory))),IO.pure(Unit,Unit{}),do IO<Unit>:
+      +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+      lock : Maybe<U32> <- IO.try(Maybe<U32>,Lock.SessionLock.try_acquire(canonical,session))
+      release_locked(canonical,session,Tx.trim_nl(attempt),Tx.trim_nl(directory),lock))
 
 def stopped_sql(+session: String) -> String:
   "SELECT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ");"
@@ -329,6 +403,7 @@ def run(+db: String, +session: String, +id: String, +reason: String, force: Bool
   do IO<Unit>:
     error : String <- IO.try(String,request(db,session,id,reason,force))
     checked : Unit <- validate(error)
+    released : Unit <- release_starting(db,session)
     reconciled : Unit <- reconcile_request(db,session)
     runtime_stopped : Unit <- ContextRuntime.runtime_stop_owner(db,session)
     result : String <- IO.try(String,DB.Sql.query(db,result_sql(session)))

@@ -124,6 +124,7 @@ def accepted_stop(+db: String, +session: String, id: String, reason: String, for
   do IO<Unit>:
     error : String <- IO.try(String,Stop.request(db,session,id,reason,force))
     checked : Unit <- Stop.validate(error)
+    released : Unit <- Stop.release_starting(db,session)
     reconciled : Unit <- Stop.reconcile_request(db,session)
     runtime_stopped : Unit <- ContextRuntime.runtime_stop_owner(db,session)
     result : String <- IO.try(String,DB.Sql.query(db,Stop.result_sql(session)))
