@@ -51,13 +51,16 @@ const size = (name: string): number => {
   return unique(Bend.term_lower_shared(def.v) as L);
 };
 const one = size("pick1"), two = size("pick2"), linear = size("pick_linear");
+const second = size("pick_second"), third = size("pick_third");
 assert.ok(two < 2 * one, `a later parameter does not multiply the syntax graph (${one} nodes with one parameter, ${two} with two)`);
 assert.ok(linear < 2 * one, `a later linear parameter does not multiply the syntax graph (${linear} nodes)`);
+assert.ok(second < 2 * one, `a parameter before the matched one does not multiply the syntax graph (${second} nodes)`);
+assert.ok(third < 2 * one, `parameters before and after the matched one do not multiply the syntax graph (${third} nodes)`);
 
 const run = spawnSync(process.execPath, [path.join(root, "bend2/compiler/upstream/main.ts"), fixture],
   { cwd: root, encoding: "utf8", env: { ...process.env, BEND_NO_TELEMETRY: "1" } });
 assert.equal(run.status, 0, run.stderr);
-assert.deepEqual(run.stdout.trim().split("\n"), ["B", "G1", "zzz2", "x", "y!", "z"], "results");
+assert.deepEqual(run.stdout.trim().split("\n"), ["B", "G1", "zzz2", "x", "y!", "z", "x!", "xgamma", "xnope", "au", "agammau", "7u", "a?u"], "results");
 // The C emitter cuts the chain's calls and needs their types.
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bend-string-chain-"));
 try {
@@ -66,6 +69,6 @@ try {
     { cwd: root, encoding: "utf8", env: { ...process.env, BEND_NO_TELEMETRY: "1" } });
   assert.equal(emitted.status, 0, "the chain emits C: " + emitted.stderr);
   execFileSync(process.env.CC ?? "clang-19", ["-std=c11", "-O1", "-pthread", output, "-lm", "-o", binary]);
-  assert.deepEqual(execFileSync(binary, { encoding: "utf8" }).trim().split("\n"), ["B", "G1", "zzz2", "x", "y!", "z"], "results of the C");
+  assert.deepEqual(execFileSync(binary, { encoding: "utf8" }).trim().split("\n"), ["B", "G1", "zzz2", "x", "y!", "z", "x!", "xgamma", "xnope", "au", "agammau", "7u", "a?u"], "results of the C");
 } finally { fs.rmSync(directory, { recursive: true, force: true }); }
-console.log(JSON.stringify({ test: "string_chain_multi_arg", pick1: one, pick2: two, pick_linear: linear }));
+console.log(JSON.stringify({ test: "string_chain_multi_arg", pick1: one, pick2: two, pick_linear: linear, pick_second: second, pick_third: third }));

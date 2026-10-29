@@ -3154,25 +3154,38 @@ export function body_flatten(b: Body, vars: PVar[], fr: () => number): LTerm {
 // patterns plus an optional final binder lowers to one String.eq test per row.
 // Each row body appears once; no character decision tree is built. The Mat on
 // the computed Bool is annotated with the branch type, so the checker and
-// emitter see the compiler-lowered case form.
+// emitter see the compiler-lowered case form. The matched parameter can sit at
+// any position of the definition's parameters.
 function literal_chain(p: Parse, b: Body, vars: PVar[], def: Def,
   k: Name): LTerm | null {
   if (b.$ !== "Match" || b.e.length !== 1 || vars.length < 1) return null;
   const scrut = b.e[0];
-  if (scrut.$ !== "Var" || scrut.i !== vars[0].i) return null;
-  const all = def.T;
-  if (all.$ !== "All" || all.i !== vars[0].i || all.q.$ === "None") return null;
+  if (scrut.$ !== "Var") return null;
+  const at = vars.findIndex((v) => v.i === scrut.i);
+  if (at < 0) return null;
+  // The binders of the parameters before the matched one, each with the
+  // quantity the definition's type gives it.
+  const before: Extract<HTerm, { $: "All" }>[] = [];
+  let tele: HTerm = def.T;
+  for (let j = 0; j < at; j++) {
+    const open = tele_open(p.book, tele);
+    if (open === null || open.i !== vars[j].i) return null;
+    before.push(open);
+    tele = open.B(Var(open.k, open.i)) as HTerm;
+  }
+  const all = at === 0 ? def.T : tele_open(p.book, tele);
+  if (all === null || all.$ !== "All" || all.i !== vars[at].i || all.q.$ === "None") return null;
   // The String.eq chain stays inline in the definition under the lambdas of the
-  // later top-level parameters (vars.slice(1)), so it takes any number of them.
+  // later top-level parameters (vars.slice(at + 1)), so it takes any number of them.
   // Without it a String match with a later parameter lowers to a character
   // decision tree of millions of nodes.
   if (all.q.$ === "Many" && all.A.$ === "Ref" && all.A.k === "String") {
-    return literal_chain_string(p, b, vars, all, scrut);
+    return literal_chain_string(p, b, vars, at, before, all, scrut);
   }
   // The list lowering binds only the matched first parameter. A definition with
   // later top-level parameters stays on the ordinary lowering: its helpers
   // would abstract those parameters without carrying them in the signatures.
-  if (vars.length === 1 && all.q.$ === "Lone" && all.A.$ === "ADT" && all.A.k === "List") {
+  if (at === 0 && vars.length === 1 && all.q.$ === "Lone" && all.A.$ === "ADT" && all.A.k === "List") {
     return literal_chain_list_helpers(p, b, vars, def, k, all, scrut)
       ?? literal_list_rows(p, b, def, k, all, scrut);
   }
@@ -3194,7 +3207,8 @@ function body_matches(b: Body, vars: PVar[]): boolean {
 }
 
 function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
-  vars: PVar[], all: Extract<HTerm, { $: "All" }>, scrut: LTerm): LTerm | null {
+  vars: PVar[], at: number, before: Extract<HTerm, { $: "All" }>[],
+  all: Extract<HTerm, { $: "All" }>, scrut: LTerm): LTerm | null {
   if (p.book.tlds["String.eq"] === undefined || p.book.tlds["Bool"] === undefined
     || p.book.ctrs["False"] === undefined || p.book.ctrs["True"] === undefined) {
     return null;
@@ -3217,10 +3231,10 @@ function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
   const fr = () => p.sc.frs++;
   // The chain sits under the lambdas of the later parameters, so a row body is
   // an ordinary term of the result type that remains after all of them.
-  const later = vars.slice(1);
-  // A row that matches a later parameter needs that parameter among the binders
+  const later = vars.slice(at + 1);
+  // A row that matches another parameter needs that parameter among the binders
   // being abstracted, which the lambdas above the chain no longer provide.
-  if (b.r.some((row) => body_matches(row.f, later))) return null;
+  if (b.r.some((row) => body_matches(row.f, vars.filter((_, j) => j !== at)))) return null;
   let result: HTerm = all.B(Var(all.k, all.i)) as HTerm;
   for (const v of later) {
     const next = tele_open(p.book, result);
@@ -3231,8 +3245,8 @@ function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
   const boolIndex = p.sc.frs++;
   let tail: LTerm;
   if (fallback !== null) {
-    const binder: PVar = { $: "PVar", k: vars[0].k, i: vars[0].i,
-      q: Lone(), s: vars[0].s };
+    const binder: PVar = { $: "PVar", k: vars[at].k, i: vars[at].i,
+      q: Lone(), s: vars[at].s };
     tail = body_flatten(body_sub(fallback.f, fallback.i, binder), [], fr);
   } else {
     tail = Efq(b.s);
@@ -3253,7 +3267,11 @@ function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
   for (let j = later.length - 1; j >= 0; j--) {
     tail = Lam(later[j].k, later[j].i, tail, later[j].s, later[j].q);
   }
-  return Lam(all.k, all.i, tail, all.s, all.q);
+  tail = Lam(all.k, all.i, tail, all.s, all.q);
+  for (let j = before.length - 1; j >= 0; j--) {
+    tail = Lam(before[j].k, before[j].i, tail, before[j].s, before[j].q);
+  }
+  return tail;
 }
 // A top-level match on a Lone List<String> parameter whose leading rows are
 // `head0 <> "literal" <> fields.. <> Nil` frames lowers to a single-traversal
