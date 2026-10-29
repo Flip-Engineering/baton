@@ -9,7 +9,7 @@ const Bend = await import(pathToFileURL(path.join(directory, "bend.ts")).href);
 const Store = await import(pathToFileURL(path.join(directory, "store.ts")).href);
 function copy<T>(term: T): T {
   const tables = new Store.EncoderTables();
-  const graph = Store.share_rows(Store.encode_term(term, tables), tables);
+  const graph = Store.share_rows(Store.encode_term(term, tables));
   return Store.decode_term(JSON.parse(JSON.stringify(graph)),
     new Store.DecoderTables(JSON.parse(JSON.stringify(tables.data))));
 }
@@ -66,10 +66,8 @@ const other_span = { src: "source", beg: 1, end: 6 };
 const apart = copy(Bend.Ctr("Pair", [Bend.Ctr("N", [], span), Bend.Ctr("N", [], other_span)], span));
 assert.notEqual(apart.x[0], apart.x[1], "equal subterms with different spans stay apart");
 const twin = copy(Bend.Ctr("Pair", [Bend.term_cell(free), Bend.term_cell(free)], span));
-assert.notEqual(twin.x[0], twin.x[1], "two checker cells with equal contents stay two thunks");
-twin.x[0].i = -2;
-assert.notEqual(twin.x[1].i, -2, "reducing one cell leaves the other unevaluated");
-assert.equal(Bend.term_force(twin.x[1]).i, free.i);
+assert.equal(twin.x[0], twin.x[1], "two checker cells with equal contents are one cell");
+assert.equal(Bend.term_force(twin.x[0]).i, free.i);
 const solved = copy(Bend.Ctr("Pair", [Bend.term_cell(Bend.Ref("a", span)), Bend.term_cell(Bend.Ref("b", span))], span));
 assert.notEqual(solved.x[0], solved.x[1], "cells with different contents stay apart");
 const scoped = copy(Bend.Lam("x", 0, x => Bend.Ctr("Pair", [Bend.Ctr("N", [], span), Bend.Ctr("N", [], span)], span)));
@@ -77,7 +75,7 @@ const instance = scoped.f(a);
 assert.equal(instance.x[0], instance.x[1], "equal subterms inside a callback share within an instance");
 const tables_count = new Store.EncoderTables();
 const duplicated = Bend.Ctr("Pair", Array.from({ length: 50 }, () => Bend.Ctr("W", [Bend.Ctr("N", [], span)], span)), span);
-const plain = Store.encode_term(duplicated, tables_count), merged = Store.share_rows(plain, tables_count);
+const plain = Store.encode_term(duplicated, tables_count), merged = Store.share_rows(plain);
 assert.equal(plain.rows.length, 202);
 assert.equal(merged.rows.length, 6, "fifty equal subtrees become one");
 console.log("PASS row sharing keeps different contents, spans and scopes apart");
@@ -87,7 +85,7 @@ await Bend.book_load(book, path.join(root, "bend2/test/compiler/fixtures/poly_sp
 Bend.book_valid(book);
 const tables = new Store.EncoderTables();
 const sections = Object.entries(book.tlds).flatMap(([name, def]) =>
-  def.e === undefined ? [] : [{ name, def, graph: Store.share_rows(Store.encode_term(def.e, tables), tables) }]);
+  def.e === undefined ? [] : [{ name, def, graph: Store.share_rows(Store.encode_term(def.e, tables)) }]);
 const reader = new Store.DecoderTables(JSON.parse(JSON.stringify(tables.data)));
 for (const { name, def, graph } of sections) {
   const raw = Store.decode_term(JSON.parse(JSON.stringify(graph)), reader);
