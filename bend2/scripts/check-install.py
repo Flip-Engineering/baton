@@ -137,9 +137,16 @@ def verify_receiver_router(prefix, output):
                        if not key.startswith('BATON')}
         try:
             result = subprocess.run(argv, env=environment, cwd=directory,
-                                    stdin=subprocess.DEVNULL, capture_output=True, text=True)
+                                    stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                    timeout=30)
             record.update(argv=argv, returncode=result.returncode,
                           stdout=result.stdout, stderr=result.stderr,
+                          database_created=database.exists())
+        except subprocess.TimeoutExpired as error:
+            stdout, stderr = error.stdout or '', error.stderr or ''
+            record.update(argv=argv, returncode=None, timeout_seconds=error.timeout,
+                          stdout=stdout.decode(errors='replace') if isinstance(stdout, bytes) else stdout,
+                          stderr=stderr.decode(errors='replace') if isinstance(stderr, bytes) else stderr,
                           database_created=database.exists())
         except OSError as error:
             record.update(argv=argv, returncode=None, error=str(error))
