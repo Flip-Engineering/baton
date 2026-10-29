@@ -158,7 +158,7 @@ $state/admission/waiting/<queue time>-<pid>    one ticket per waiting supervisor
 $state/admission/running/<time>-<pid>          one claim per admitted job
 $state/admission/observed.<uid>                process measurements of one user
 $state/admission/usage/<claim>                 memory and outside growth measured by the supervisor of a claim
-$state/heavy.lock                              bootstrap and older queue executables
+$state/heavy.lock                              shared by running jobs other than cc; exclusive for the bootstrap and older queue executables
 ```
 
 `completed/result` uses schema `baton-compile-queue-result-v1` with `status`,
@@ -364,11 +364,26 @@ derived again after a crash; a repeated read or poll has no other effect.
 
 ### Older queue executables
 
-An executable from before #1026 serializes jobs with `$state/heavy.lock`. When
-`/proc/locks` shows a holder of that lock, the rule counts the holder's
-current memory as a running job, with the entry file of its attempt, and does
-not count it as a job without history. Jobs with the holder's entry file are
+An executable from before #1026 serializes jobs with `$state/heavy.lock`, and
+the exclusive-lock queue on `main` takes the same lock for every job that is not a cc job
+(#1266). `/proc/locks` shows the holder of an exclusive lock. While a holder
+lives, no ticket other than a cc ticket is admitted, whatever memory is free.
+A cc ticket is admitted by the memory rule, which counts the holder's current
+memory as a running job, with the entry file of its attempt, and does not
+count it as a job without history. Jobs with the holder's entry file are
 bounded by the holder's current memory.
+
+A job other than cc takes `$state/heavy.lock` shared (`flock(LOCK_SH|LOCK_NB)`)
+before it creates its claim, and keeps it on a descriptor that its command
+inherits. The lock ends when the command and the processes it started have
+ended, not at the compiled marker. A queue that takes the lock exclusively
+waits for every such job to end. If that queue took the lock between the read
+of the view and the shared lock, the job stays a ticket until the next poll.
+Jobs that hold the lock shared do not exclude each other: the memory rule alone
+admits them. Because a waiting exclusive request does not stop later shared
+requests, a steady stream of admitted jobs can keep an exclusive request
+waiting; the rule has no reservation for it. A process that was started outside
+the queue and registered by `adopt` holds no lock on `heavy.lock`.
 
 A successor runs the command with the environment of the supervisor it replaces
 (read from `/proc/PID/environ`; the replaced supervisor of an earlier takeover is

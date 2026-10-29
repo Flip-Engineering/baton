@@ -1,10 +1,12 @@
 #!/bin/sh
 # One-time bootstrap for the shared compile queue executable.
 #
-# The bootstrap waits for heavy.lock, which serializes bootstraps with each
-# other and with a queue that still uses the lock. Queue jobs do not take
-# heavy.lock; the bootstrap registers its memory with the admission rule as a
-# running job, so queued jobs count it.
+# The bootstrap waits for heavy.lock exclusively. That serializes bootstraps with
+# each other, with a queue that takes the lock exclusively, and with the jobs of
+# this queue other than cc, which hold the lock shared while they run. While the
+# bootstrap holds the lock this queue admits none of those jobs. The bootstrap
+# also registers its memory with the admission rule as a running job, so queued
+# cc jobs count it.
 #
 # This is the only supported pre-queue compilation. It builds exactly
 # bend2/src/host/compile-queue.bend to the requested output and accepts no

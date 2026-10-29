@@ -1323,6 +1323,10 @@ static long long cq_need(const CqAdmission *view, const CqTicket *ticket) {
 static int cq_admit_decision(const CqAdmission *view, size_t index, int *backfill) {
   const CqTicket *ticket = &view->tickets[index];
   *backfill = 0;
+  /* The holder of $state/heavy.lock runs under the exclusive lock, which admits
+     no other job of its lane whatever memory is free. cc jobs never take that
+     lock, so for them the holder is memory in use. */
+  if (view->legacy_pid && strcmp(ticket->kind, "cc")) return 0;
   if (!view->claim_count && !view->legacy_pid && index == 0) return 1;
   if (!view->memory_known) return 0;
   if (!ticket->history)
@@ -1377,6 +1381,27 @@ static int cq_claim_create(const char *state, const char *id, const char *body, 
   error = cq_write_all_fd(*fd, body, strlen(body));
   if (error) { close(*fd); unlink(path); return error; }
   error = cq_set_inheritable(*fd);
+  return error;
+}
+
+/* An admitted job that is not a cc job holds $state/heavy.lock shared until its
+   command and the processes the command started have ended. A queue that takes
+   the lock exclusively (the older executables and the exclusive-lock queue) then
+   starts its job only when no admitted job runs, and this process admits no job
+   while such a queue holds the lock. The descriptor is above 9 so that neither
+   the claim (8) nor the key lock (9) replaces it, and the command keeps it. */
+static int cq_heavy_fd = -1;
+
+static int cq_heavy_share(const char *state, int *fd) {
+  char path[PATH_MAX];
+  u32 handle = 0;
+  int error = cq_path(path, "%s/heavy.lock", state);
+  if (error || (error = cq_lock_open(path, &handle))) return error;
+  if (flock((int)handle, LOCK_SH | LOCK_NB) < 0) { error = errno; close((int)handle); return error; }
+  int moved = cq_dup_inherit((int)handle, 10, 0);
+  error = moved < 0 ? errno : 0;
+  close((int)handle);
+  if (!error) *fd = moved;
   return error;
 }
 
@@ -1462,8 +1487,19 @@ static int cq_wait_admission(const char *attempt, const char *queued_text,
         "pid=%d\nstarttime=%s\nroot=%d\nmeasure=session\nkey=%s\ngroup=%s\nentry=%s\nexpected_kb=%lld\n"
         "history=%d\nbackfill=%d\nadmitted_ns=%llu\n", (int)getpid(), start, (int)getsid(0), key, group, entry,
         cq_need(&view, ticket), ticket->history, backfill, cq_clock_ns(CLOCK_REALTIME));
-      error = cq_claim_create(state, id, body, claim_fd);
-      if (!error) { unlink(ticket_path); admitted = 1; snprintf(cq_my_claim, sizeof(cq_my_claim), "%s", id); }
+      int heavy = -1, busy = 0;
+      if (strcmp(kind, "cc")) {
+        error = cq_heavy_share(state, &heavy);
+        /* A queue that took the lock after the view was read keeps the job waiting. */
+        busy = error == EWOULDBLOCK || error == EAGAIN;
+        if (busy) error = 0;
+      }
+      if (!error && !busy) error = cq_claim_create(state, id, body, claim_fd);
+      if (error && heavy >= 0) close(heavy);
+      if (!error && !busy) {
+        cq_heavy_fd = heavy;
+        unlink(ticket_path); admitted = 1; snprintf(cq_my_claim, sizeof(cq_my_claim), "%s", id);
+      }
     }
     cq_admission_free(&view);
     cq_admission_unlock(fd);
@@ -2279,11 +2315,12 @@ static int cq_run_command(const char *argv_text, size_t argv_length, const char 
     }
     long limit = sysconf(_SC_OPEN_MAX);
     if (limit < 1024 || limit > 1048576) limit = 65536;
-    /* The command retains heavy execution custody if its supervisor exits.
-       The compiled marker releases this shared open file description when
-       the compiler proceeds to its separately queued C compilation. */
+    /* The command retains heavy execution custody if its supervisor exits:
+       the claim (8) and the shared heavy.lock descriptor. The compiled marker
+       releases the claim when the compiler proceeds to its separately queued C
+       compilation; heavy.lock stays shared until the command and its children end. */
     for (int fd = 3; fd < (int)limit; fd++) {
-      if (fd != status[1] && fd != 8) close(fd);
+      if (fd != status[1] && fd != 8 && fd != cq_heavy_fd) close(fd);
     }
     if (cwd && chdir(cwd)) {
       int child_error = errno;
