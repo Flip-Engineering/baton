@@ -649,6 +649,7 @@ class TaskStart(unittest.TestCase):
 
     def test_missing_recorded_receiver_is_reported_before_admission_and_can_be_repaired(self):
         session = 'repaired-receiver'
+        self.route(session)
         assignment = self.call('recruit', session, 'root', 'codex', 'gpt-6-astra', 'low',
                                self.repo, 'repaired-receiver-branch', self.checkouts / session, self.base)
         old = self.directory / 'removed-client'
@@ -667,7 +668,7 @@ class TaskStart(unittest.TestCase):
             self.assertEqual(self.rows('SELECT id FROM messages WHERE id=?', (refused['task'],)), [])
             self.assertEqual(self.call('delivery', 'repaired-receiver-assignment')['body'], 'Original receiver task.')
             self.call('receiver', session, self.fixture, log)
-            result = self.task_call('--sender', 'root', '--session', session, '--continue', '--text', body)
+        result = self.task_call('--sender', 'root', '--session', session, '--continue', '--text', body)
         self.assertEqual(result['status'], 'admitted')
         self.assertEqual(result['currentSession']['workspace'], assignment['workspace'])
         self.assert_retained_input(result, body)
@@ -753,7 +754,9 @@ class TaskStart(unittest.TestCase):
 
     def test_dispatch_from_outside_project_resolves_explicit_or_recorded_workspace_before_input(self):
         body = 'Resolve dispatch setup from the selected repository workspace.'
-        explicit = self.task_call('--new', '--workspace', self.repo, '--harness', 'codex',
+        explicit_session = 'explicit-workspace-dispatch'
+        self.route(explicit_session)
+        explicit = self.task_call('--new', '--session', explicit_session, '--workspace', self.repo, '--harness', 'codex',
                                   '--model', 'gpt-6-astra', '--effort', 'low', '--command', self.fixture,
                                   '--text', body, database=True, project=self.directory)
         self.assertEqual(explicit['status'], 'admitted')
@@ -766,15 +769,16 @@ class TaskStart(unittest.TestCase):
         self.exited(explicit['session'])
 
         session = 'recorded-workspace-dispatch'
+        self.route(session)
         assignment = self.call('recruit', session, 'root', 'codex', 'gpt-6-astra', 'low',
                                self.repo, 'recorded-workspace-branch', self.checkouts / session, self.base)
         self.call('receiver', session, self.fixture, self.directory / 'recorded-workspace.jsonl')
         with self.held_session(session):
             self.pending_input('recorded-workspace-assignment', 'root', session, 'task', 'Original task.')
-            result = self.task_call('--sender', 'root', '--session', session, '--continue',
-                                    '--harness', 'codex', '--model', 'gpt-6-astra', '--effort', 'low',
-                                    '--command', self.fixture, '--text', body,
-                                    database=True, project=self.directory)
+        result = self.task_call('--sender', 'root', '--session', session, '--continue',
+                                '--harness', 'codex', '--model', 'gpt-6-astra', '--effort', 'low',
+                                '--command', self.fixture, '--text', body,
+                                database=True, project=self.directory)
         self.assertEqual(result['status'], 'admitted')
         self.assertEqual(result['projectKey'], str(self.repo.joinpath('.git').resolve()))
         self.assertEqual(result['currentSession']['workspace'], assignment['workspace'])
