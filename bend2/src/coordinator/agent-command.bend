@@ -144,11 +144,11 @@ def inspection_result(+saved: String) -> IO(Unit):
 def completion_request(+db: String, +session: String, +id: String, body: A.Body) -> IO(String):
   do IO<String>:
     raw_parent : String <- IO.try(String,DB.Sql.read(db,
-      "SELECT coalesce(parent,'') FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+      "SELECT coalesce(" ++ C.current_coordinator_sql(C.q(session)) ++ ",'');"))
     +parent : String = Tx.trim_nl(raw_parent)
     Bool.pick(IO(String),String.is_empty(parent),
       IO.pure(String,"[" ++ Batch.send_refused("0",id,session,"","completion-request",2,
-        "The current session has no recorded immediate parent.") ++ "]"),
+        "The current session has no recorded parent, or no coordinator that is not over and no registered operator to receive the request.") ++ "]"),
       (do IO<String>:
         item : String <- send_item(db,session,0,Native.Unused{},A.Item{parent,id,"completion-request",body})
         IO.pure(String,"[" ++ item ++ "]")))
@@ -165,12 +165,15 @@ def confirmation_refused(+session: String, +recipient: String, +id: String,
 def next_refused(+session: String, +target: String, +code: U32, +cause: String) -> IO(String):
   IO.pure(String,"[" ++ Batch.send_refused("1","",session,target,"task",code,cause) ++ "]")
 
+def next_error_cause(+confirmed: String, +assigned: String) -> String:
+  Bool.pick(String,Tx.starts_with(confirmed,"{\"error\""),confirmed,assigned)
+
 def next_rows(rows: List<String>, +db: String, +session: String, +target: String, +request: String,
               +id: String, +task_id: String, +task: String) -> IO(String):
   match rows:
     case +confirmed <> +assigned <> Nil{}:
-      Bool.pick(IO(String),Tx.starts_with(assigned,"{\"error\""),
-        next_refused(session,target,2,assigned),
+      Bool.pick(IO(String),Bool.or(Tx.starts_with(confirmed,"{\"error\""),Tx.starts_with(assigned,"{\"error\"")),
+        next_refused(session,target,2,next_error_cause(confirmed,assigned)),
         (do IO<String>:
           confirmation : String <- Batch.admitted(db,"0",id,session,target,"completion-confirmed",confirmed,
             C.Message{id,session,target,"completion-confirmed",request})
@@ -250,15 +253,14 @@ def completion_confirmed_exact(+db: String, +session: String, +recipient: String
                          +request: String, +id: String, next: A.Body) -> IO(String):
   do IO<String>:
     row : String <- IO.try(String,DB.Sql.read(db,
-      "SELECT CASE WHEN req.kind<>'completion-request' THEN 'wrong-kind' WHEN NOT (EXISTS(SELECT 1 FROM sessions author WHERE author.id=req.sender AND author.parent=" ++
-      C.q(session) ++ ") AND " ++ C.coordinator_chain_sql("req.sender","req.recipient") ++ ") THEN 'wrong-coordinator' WHEN req.id<>coalesce(" ++
-      C.task_request_sql("(SELECT sender FROM messages current WHERE current.id=" ++ C.q(request) ++ ")") ++
-      ",'') AND NOT EXISTS(SELECT 1 FROM messages replay WHERE replay.id=" ++ C.q(id) ++ " AND replay.kind='completion-confirmed' AND replay.sender=" ++ C.q(session) ++ " AND replay.body=" ++ C.q(request) ++ ") THEN 'stale-request' ELSE hex(CAST(req.sender AS TEXT)) END FROM messages req WHERE req.id=" ++
+      "SELECT CASE WHEN req.kind<>'completion-request' THEN 'wrong-kind' WHEN NOT (" ++ C.coordinator_chain_sql("req.sender",C.q(session)) ++ " AND " ++ C.coordinator_chain_sql("req.sender","req.recipient") ++ ") THEN 'wrong-coordinator' WHEN req.id<>coalesce(" ++
+      C.task_request_sql("req.sender") ++
+      ",'') AND NOT EXISTS(SELECT 1 FROM messages replay WHERE replay.id=" ++ C.q(id) ++ " AND replay.kind='completion-confirmed' AND replay.sender=" ++ C.q(session) ++ " AND replay.recipient=req.sender AND replay.body=" ++ C.q(request) ++ ") THEN 'stale-request' ELSE hex(CAST(req.sender AS TEXT)) END FROM messages req WHERE req.id=" ++
       C.q(request) ++ ";"))
     confirmation_target(db,session,recipient,request,id,next,Tx.trim_nl(row))
 
 def confirmation_requests_sql(+session: String, +recipient: String) -> String:
-  "SELECT hex(" ++ C.task_request_sql("worker.id") ++ ") FROM sessions worker WHERE worker.parent=" ++ C.q(session)
+  "SELECT hex(" ++ C.task_request_sql("worker.id") ++ ") FROM sessions worker WHERE worker.parent IS NOT NULL AND " ++ C.coordinator_chain_sql("worker.id",C.q(session))
   ++ " AND (" ++ C.q(recipient) ++ "='' OR worker.id=" ++ C.q(recipient) ++ ") AND " ++ C.task_request_sql("worker.id") ++ " IS NOT NULL"
   ++ " AND NOT " ++ C.task_confirmed_sql("worker.id") ++ " ORDER BY worker.id;"
 

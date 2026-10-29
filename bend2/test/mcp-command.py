@@ -438,7 +438,29 @@ class McpCommand(unittest.TestCase):
                      arguments={'player': 'worker', 'kind': 'completion-confirmed'},
                      session='attached-λ',
                      expected_context=['completion-confirmed', '--to', 'worker'])
+        # The legacy body field names the retained request. With a next
+        # assignment it is the request selector, as in the batch tool.
+        self.command(tool='baton2_guide',
+                     arguments={'player': 'worker', 'kind': 'completion-confirmed',
+                                'body': 'explicit retained request', 'next': 'Next assignment.'},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker', '--request',
+                                      'explicit retained request', '--next', 'Next assignment.'])
+        self.command(tool='baton2_guide',
+                     arguments={'player': 'worker', 'kind': 'completion-confirmed',
+                                'body': 'ignored body', 'request': 'explicit request',
+                                'next': 'Next assignment.'},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker', '--request',
+                                      'explicit request', '--next', 'Next assignment.'])
         output = json.dumps([{'status': 'completed', 'stdout': '[{"status":"admitted"}]'}])
+        self.command(stdout=output + '\n', tool='baton2_message_batch',
+                     arguments={'messages': [{'player': 'worker', 'kind': 'completion-confirmed',
+                                              'body': 'explicit retained request',
+                                              'next': 'Next assignment.'}]},
+                     session='attached-λ',
+                     expected_context=['completion-confirmed', '--to', 'worker', '--request',
+                                      'explicit retained request', '--next', 'Next assignment.'])
         self.command(stdout=output + '\n', tool='baton2_message_batch',
                      arguments={'messages': [{'player': 'worker', 'kind': 'completion-confirmed',
                                               'next': text},

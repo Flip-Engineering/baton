@@ -1430,8 +1430,9 @@ function handleToolCall(msg) {
         break;
       case 'baton2_guide':
         if (args.kind === 'completion-confirmed' && (args.body === undefined || args.request !== undefined || args.next !== undefined)) {
+          const request = args.request ?? args.body;
           result = contextualAction('completion-confirmed', ['--to', player,
-            ...(args.request === undefined ? [] : ['--request', args.request]),
+            ...(request === undefined ? [] : ['--request', request]),
             ...(args.next === undefined ? [] : ['--next', args.next]),
             ...(args.id === undefined ? [] : ['--id', args.id])]);
         } else {

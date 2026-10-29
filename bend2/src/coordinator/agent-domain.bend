@@ -40,7 +40,7 @@ def member(+value: String, values: List<String>) -> Bool:
     case +head <> rest: Bool.or(String.eq(value,head),member(value,rest))
 
 def known(verb: String) -> Bool:
-  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure account resume stop force-stop clear-stop recover-observer continue-task turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs harness-inventory"))
+  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure account resume stop force-stop clear-stop recover-observer continue-task succeed turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs harness-inventory"))
 
 def names_lookup(entries: List<NameSet>, +verb: String) -> List<String>:
   match entries:
@@ -76,6 +76,7 @@ def names(verb: String) -> List<String>:
     Names{"clear-stop","--session"},
     Names{"recover-observer","--session --observer"},
     Names{"continue-task","--session --id"},
+    Names{"succeed","--session --from"},
     Names{"turn","--session --id --command --model --effort --cwd --file --output-log --native"},
     Names{"receive","--session --command --model --effort --cwd --output-log --message"},
     Names{"profile-bind","--session --harness --profile --store"},
@@ -133,6 +134,7 @@ def required(verb: String) -> List<String>:
     case "section-member": Tx.split_spaces("--ensemble --id --player --action")
     case "receiver": Tx.split_spaces("--command --output-log")
     case "recover-observer": Tx.split_spaces("--observer")
+    case "succeed": Tx.split_spaces("--from")
     case "turn": Tx.split_spaces("--file --command --output-log")
     case "profile-bind": Tx.split_spaces("--profile --store")
     case "account": Tx.split_spaces("--action --id --provider --harness --funding --secret-ref --organization --detail")
@@ -288,6 +290,7 @@ def help(action: String) -> String:
     case "clear-stop": "clear-stop [--session SESSION]\nRemove the session's terminal stop only. Native identity, conversation history, workspace and retained input stay unchanged; no input is delivered, no wake runs and no native starts.\n"
     case "recover-observer": "recover-observer --observer PID [--session SESSION]\nUse the existing attempt recovery and observer ownership operation.\n"
     case "continue-task": "continue-task [--id TURN_ID] [--session SESSION]\nExplicitly request continuation of the selected open assignment. Baton generates the continuation identity when omitted.\n"
+    case "succeed": "succeed --from PREDECESSOR [--session SUCCESSOR]\nRecord the selected session (omitted: the current actor) as the successor of a conductor that is over: explicitly stopped or completed. The successor must be live and under the predecessor parent or be an ancestor of the predecessor. Baton keeps the predecessor children, their assignments, completion requests and messages as recorded; the successor holds the predecessor's coordinator authority for them, so reports, requests and confirmations reach it. Each unresolved input of the predecessor, including a read but unconfirmed current completion request, is forwarded to the successor as a new forwarded-input message with the complete original text and the original message ID. The original messages keep their recipient and read state. Repeating the action forwards only input that arrived since.\n"
     case "turn": "turn [--id TURN_ID] --command EXECUTABLE --file TASK_PATH --output-log PATH [--session SESSION] [--model MODEL] [--effort EFFORT] [--cwd PATH] [--native ID]\nStart the existing managed direct turn. Omitted route, workspace and native identity use the selected session. PATH - reads stdin.\n"
     case "receive": "receive [--session SESSION] [--command EXECUTABLE] [--output-log PATH] [--model MODEL] [--effort EFFORT] [--cwd PATH] [--message ID]\nUse the recorded receiver and native retained receive operation.\n"
     case "profile-bind": "profile-bind --profile LABEL --store PATH [--session SESSION] [--harness NAME]\nBind the named existing account through the native profile operation. Omitted harness uses the selected session.\n"
