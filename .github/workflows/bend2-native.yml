@@ -167,7 +167,37 @@ jobs:
             --github-env "$GITHUB_ENV" \
             > "$BATON2_LINUX_RUN/evidence/main-c-reuse.stdout" \
             2> "$BATON2_LINUX_RUN/evidence/main-c-reuse.stderr"
+      - name: Select the Main C producer
+        id: route
+        if: ${{ github.event_name == 'pull_request' }}
+        shell: bash
+        env:
+          BATON2_PULL_REQUEST_BASE: ${{ github.event.pull_request.base.sha }}
+          BATON2_ORIGIN_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/native-producer-route.py route \
+            --source "$GITHUB_WORKSPACE" --run "$BATON2_LINUX_RUN" --event "$GITHUB_EVENT_NAME" \
+            --base "$BATON2_PULL_REQUEST_BASE" --head "$BATON2_SOURCE_SHA" \
+            --github-output "$GITHUB_OUTPUT" \
+            > "$BATON2_LINUX_RUN/evidence/producer-route.stdout" \
+            2> "$BATON2_LINUX_RUN/evidence/producer-route.stderr"
+      - name: Produce Main C from the base commit
+        if: ${{ steps.route.outputs.producer == 'base' }}
+        shell: bash
+        env:
+          BATON2_PULL_REQUEST_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          unset BEND_GENERATED_C
+          ulimit -s unlimited
+          ulimit -a > "$BATON2_LINUX_RUN/evidence/limits.txt"
+          "$CC" --version > "$BATON2_LINUX_RUN/evidence/clang.txt"
+          uname -a > "$BATON2_LINUX_RUN/evidence/host.txt"
+          python3 .github/scripts/native-producer-route.py produce \
+            --source "$GITHUB_WORKSPACE" --run "$BATON2_LINUX_RUN" --base "$BATON2_PULL_REQUEST_BASE"
       - name: Produce exact-source Main C and Linux binary
+        if: ${{ steps.route.outputs.producer != 'base' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -661,8 +691,13 @@ jobs:
           transfer = pathlib.Path(os.environ['RUNNER_TEMP']) / ('baton2-generated-c-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'])
           generated = transfer / 'generated'
           handoff = json.loads((generated / 'handoff-manifest.json').read_text())
-          assert handoff['source_commit'] == os.environ['BATON2_SOURCE_SHA']
-          assert handoff['source_tree'] == subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=root, text=True).strip()
+          base_produced = handoff.get('producer_kind') == 'base'
+          if base_produced:
+              assert handoff['consumer_source_commit'] == os.environ['BATON2_SOURCE_SHA']
+              assert handoff['consumer_source_tree'] == subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=root, text=True).strip()
+          else:
+              assert handoff['source_commit'] == os.environ['BATON2_SOURCE_SHA']
+              assert handoff['source_tree'] == subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=root, text=True).strip()
           assert handoff['workflow_run_id'] == os.environ['BATON2_GENERATED_C_RUN_ID']
           assert handoff['workflow_run_attempt'] == os.environ['BATON2_GENERATED_C_RUN_ATTEMPT']
           compilers = runpy.run_path(str(root / '.github/scripts/reuse-native-main.py'))['COMPILER_ARCHIVES']
@@ -680,40 +715,51 @@ jobs:
           manifest_path = generated / 'source-manifest.json'
           assert hashlib.sha256(manifest_path.read_bytes()).hexdigest() == handoff['source_manifest_sha256']
           source = json.loads(manifest_path.read_text())
-          paths = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root).decode().split('\0')
-          current = {path: hashlib.sha256((root / path).read_bytes()).hexdigest()
-                     for path in paths if path and (root / path).is_file()}
-          assert current == source, 'Transferred C producer source differs from package source'
           c = generated / 'baton2.c'
           assert c.stat().st_size == handoff['generated_c_size']
           assert hashlib.sha256(c.read_bytes()).hexdigest() == handoff['generated_c_sha256']
-          assert handoff['linux_binary_path'] == 'baton2-linux-x64'
-          linux_binary = generated / handoff['linux_binary_path']
-          assert linux_binary.is_file() and not linux_binary.is_symlink()
-          assert linux_binary.stat().st_size == handoff['linux_binary_size']
-          assert hashlib.sha256(linux_binary.read_bytes()).hexdigest() == handoff['linux_binary_sha256']
-          main_c_reuse = json.loads((generated / 'main-c-reuse.json').read_text())
-          assert main_c_reuse == handoff['main_c_reuse']
-          subprocess.run(['python3', str(root / '.github/scripts/reuse-native-main.py'), 'verify-transfer',
-                          '--source', str(root), '--generated', str(generated)], check=True)
           producer_checks_path = transfer / 'evidence/producer-checks.json'
           producer_checks = json.loads(producer_checks_path.read_text())
           assert producer_checks == handoff['checks']
-          assert [row['label'] for row in producer_checks] == [
-              'exact-source-identity', 'pinned-compiler-identity',
-              'main-native-build', 'main-c-reuse-transfer-verification']
           assert all(row['exit_code'] == 0 for row in producer_checks)
-          assert producer_checks[2]['argv'] == ['sh', 'bend2/scripts/build-native.sh']
-          assert producer_checks[3]['argv'][2] == 'verify-transfer'
-          assert producer_checks[3]['argv'][3:6] == ['--source', producer_checks[3]['cwd'], '--generated']
-          assert producer_checks[3]['argv'][6].endswith('/generated')
+          if base_produced:
+              # The C was generated from the base commit; the package source is the pull request head.
+              # Equal Main production inputs and producer tooling bind the two.
+              subprocess.run(['python3', str(root / '.github/scripts/native-producer-route.py'), 'verify-base',
+                              '--source', str(root), '--generated', str(generated)], check=True)
+              assert [row['label'] for row in producer_checks] == [
+                  'base-source-identity', 'pinned-compiler-identity', 'base-lineage-guard',
+                  'base-main-cgen', 'main-producer-route']
+          else:
+              paths = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root).decode().split('\0')
+              current = {path: hashlib.sha256((root / path).read_bytes()).hexdigest()
+                         for path in paths if path and (root / path).is_file()}
+              assert current == source, 'Transferred C producer source differs from package source'
+              assert handoff['linux_binary_path'] == 'baton2-linux-x64'
+              linux_binary = generated / handoff['linux_binary_path']
+              assert linux_binary.is_file() and not linux_binary.is_symlink()
+              assert linux_binary.stat().st_size == handoff['linux_binary_size']
+              assert hashlib.sha256(linux_binary.read_bytes()).hexdigest() == handoff['linux_binary_sha256']
+              main_c_reuse = json.loads((generated / 'main-c-reuse.json').read_text())
+              assert main_c_reuse == handoff['main_c_reuse']
+              subprocess.run(['python3', str(root / '.github/scripts/reuse-native-main.py'), 'verify-transfer',
+                              '--source', str(root), '--generated', str(generated)], check=True)
+              assert [row['label'] for row in producer_checks] == [
+                  'exact-source-identity', 'pinned-compiler-identity',
+                  'main-native-build', 'main-c-reuse-transfer-verification']
+              assert producer_checks[2]['argv'] == ['sh', 'bend2/scripts/build-native.sh']
+              assert producer_checks[3]['argv'][2] == 'verify-transfer'
+              assert producer_checks[3]['argv'][3:6] == ['--source', producer_checks[3]['cwd'], '--generated']
+              assert producer_checks[3]['argv'][6].endswith('/generated')
           for row in producer_checks:
               if 'stdout' in row:
                   assert (transfer / 'evidence' / row['stdout']).is_file()
               if 'stderr' in row:
                   assert (transfer / 'evidence' / row['stderr']).is_file()
           (pathlib.Path(os.environ['BATON2_NATIVE_RUN']) / 'generated-c-verification.json').write_text(json.dumps({
-              'status': 'verified', 'source_commit': handoff['source_commit'],
+              'status': 'verified', 'producer_kind': handoff.get('producer_kind', 'candidate'),
+              'source_commit': handoff['source_commit'],
+              'consumer_source_commit': os.environ['BATON2_SOURCE_SHA'],
               'generated_c_sha256': handoff['generated_c_sha256'],
               'executed_producer_checks': handoff['checks'], 'producer': handoff
           }, indent=2) + '\n')
