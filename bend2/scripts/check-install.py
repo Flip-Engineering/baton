@@ -217,7 +217,7 @@ def verify_binaries(prefix, manifest, checksums):
                     'The installed ' + record['role'] + ' alias ' + alias_name + ' differs from its binary')
             require(checksums.get(alias_name) == digest,
                     'The installed ' + record['role'] + ' alias ' + alias_name + ' is absent from SHA256SUMS')
-        else:
+        if not aliases and not layout['alias']:
             require(record.get('alias') is None,
                     'The ' + record['role'] + ' binary has an unexpected alias')
         checked = {'role': record['role'], 'path': layout['path'],

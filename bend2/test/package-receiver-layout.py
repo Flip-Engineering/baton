@@ -358,7 +358,7 @@ class ReceiverLayout(unittest.TestCase):
                                          full_source_tree='d' * 40,
                                          full_wrapper_source_commit=None), PACKAGE)
     def test_focused_build_mode_refuses_the_general_entry(self):
-        environment = dict(os.environ, BATON2_RECEIVE_FOCUSED='1')
+        environment = dict(os.environ, BATON2_RECEIVE_FOCUSED='1', TMPDIR=str(self.home))
         result = subprocess.run(
             ['sh', str(ROOT / 'bend2/scripts/build-native.sh'),
              str(ROOT / 'bend2/src/coordinator/main.bend'),
@@ -369,7 +369,7 @@ class ReceiverLayout(unittest.TestCase):
 
 
     def test_full_receiver_router_refuses_a_non_main_entry(self):
-        environment = dict(os.environ, BATON2_NATIVE_RECEIVER_ROUTER='1')
+        environment = dict(os.environ, BATON2_NATIVE_RECEIVER_ROUTER='1', TMPDIR=str(self.home))
         result = subprocess.run(
             ['sh', str(ROOT / 'bend2/scripts/build-native.sh'),
              str(ROOT / 'bend2/src/coordinator/receive-focused.bend'),
@@ -379,7 +379,7 @@ class ReceiverLayout(unittest.TestCase):
         self.assertIn('receiver-router-without-main', result.stderr)
 
     def test_recovery_helper_build_mode_refuses_another_entry(self):
-        environment = dict(os.environ, BATON2_RECOVERY_HELPER='1')
+        environment = dict(os.environ, BATON2_RECOVERY_HELPER='1', TMPDIR=str(self.home))
         result = subprocess.run(
             ['sh', str(ROOT / 'bend2/scripts/build-native.sh'),
              str(ROOT / 'bend2/src/coordinator/receive-focused.bend'),
@@ -510,7 +510,7 @@ class ReceiverLayout(unittest.TestCase):
 
     def test_installed_check_refuses_missing_or_altered_sibling(self):
         prefix, manifest, records = self.staged()
-        full = prefix / 'bin/baton2'
+        full = prefix / 'bin/baton'
         full.unlink()
         with self.assertRaisesRegex(RuntimeError, 'full-cli binary is missing'):
             CHECK.verify_binaries(prefix, manifest, CHECK.verify_checksums(prefix))
