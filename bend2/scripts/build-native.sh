@@ -100,6 +100,7 @@ if [ -z "$generated" ] && [ -n "${BATON2_MAIN_GENERATED_C:-}" ] &&
    [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
   generated=$(python3 "${BATON2_MAIN_C_VERIFIER:?}" select \
     --source "$root" --compiler "$compiler" \
+    --compiler-archive "${BATON2_SELECTED_COMPILER_ARCHIVE:?}" \
     --proof "${BATON2_MAIN_GENERATED_C_PROOF:?}" \
     --proof-sha256 "${BATON2_MAIN_GENERATED_C_PROOF_SHA256:?}" \
     --bound-root "${BATON2_MAIN_GENERATED_C_ROOT:?}" \
