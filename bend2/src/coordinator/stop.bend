@@ -272,7 +272,7 @@ def missing_custody_owner(+db: String, +session: String, +attempt: String, +dire
 # The host verifies the retained manifest and native birth before delivering
 # a signal; no PID or path inference is used.
 
-def control_attempt(+db: String, +session: String, +attempt: String, +directory: String, signal: U32) -> IO(Unit):
+def control_attempt(+db: String, +session: String, +attempt: String, +directory: String, +signal: U32) -> IO(Unit):
   do IO<Unit>:
     result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.control_signal(directory,signal)
     saved : String <- IO.try(String,DB.Sql.query(db,control_result_sql(session,attempt,signal,result)))
