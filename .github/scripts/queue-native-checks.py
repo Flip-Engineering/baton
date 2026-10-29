@@ -477,7 +477,11 @@ def retain(config, key, directory, success):
         request_command = json.loads(request_path.read_text()).get('command') or []
         executed = len(request_command) > 3 and Path(request_command[1]).name == Path(EXEC_SCRIPT).name
         compiler_argv = request_command[3:] if executed else request_command
-        compiler_diagnostics(attempt, compiler_argv)
+        receipt = directory / 'receipt'
+        receipt_fields = dict(line.split('=', 1) for line in receipt.read_text().splitlines()
+                              if '=' in line) if receipt.is_file() else {}
+        if receipt_fields.get('reused') == '0':
+            compiler_diagnostics(attempt, compiler_argv)
     diagnostics = attempt / DIAGNOSTIC_FILE
     try:
         if diagnostics.is_file():
