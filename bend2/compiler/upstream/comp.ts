@@ -23,6 +23,7 @@ let diagnostic_facts: Fact.Trace | null = null;
 let diagnostic_literals: { word_leaves: number; word_nodes: number } | null = null;
 const diagnostic_columns = new Map<string, number>();
 let diagnostic_context: { event: string; details: Record<string, unknown> } | null = null;
+export function diagnostics_enabled(): boolean { return DIAGNOSTICS; }
 function diagnostic_stage(event: string, details: Record<string, unknown> = {}): void {
   if (DIAGNOSTICS) diagnostic_context = { event, details };
 }
@@ -722,7 +723,99 @@ const BODY_INNER = new Map<HTerm, HTerm>();
 
 const TELES: Map<HTerm, ReturnType<typeof Bend.tele_unbind>> = new Map();
 
-const SRCS: Map<Bend.Name, Src> = new Map();
+// Header reads
+// ============
+//
+// A unit variant is reused when every header entry its emission read still has
+// the content identity it had. The worker records the names it reads from the
+// stored header: definitions, constructors, source summaries, call-site counts,
+// borrow masks, local names, bang membership and book fields. Reading the key
+// list of a collection records the whole collection.
+
+export type HeaderKind = "tld" | "ctr" | "src" | "sites" | "masks" | "local" | "bang" | "field";
+export type HeaderReads = { names: [HeaderKind, string][]; listed: HeaderKind[] };
+type ReadSet = { names: Map<HeaderKind, Set<string>>; listed: Set<HeaderKind> };
+let READS: ReadSet | null = null;
+
+function read_name(kind: HeaderKind, name: string): void {
+  if (READS === null) return;
+  const names = READS.names.get(kind);
+  if (names === undefined) READS.names.set(kind, new Set([name]));
+  else names.add(name);
+}
+
+function read_list(kind: HeaderKind): void { READS?.listed.add(kind); }
+
+function reads_value(set: ReadSet): HeaderReads {
+  return { names: [...set.names].flatMap(([kind, names]) => [...names].sort().map(name => [kind, name] as [HeaderKind, string]))
+    .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0),
+    listed: [...set.listed].sort() };
+}
+
+class TrackedMap<V> extends Map<Bend.Name, V> {
+  constructor(private kind: HeaderKind, entries?: Iterable<[Bend.Name, V]>) { super(entries); }
+  override get(key: Bend.Name): V | undefined { read_name(this.kind, key); return super.get(key); }
+  override has(key: Bend.Name): boolean { read_name(this.kind, key); return super.has(key); }
+  override get size(): number { read_list(this.kind); return super.size; }
+  override keys(): IterableIterator<Bend.Name> { read_list(this.kind); return super.keys(); }
+  override values(): IterableIterator<V> { read_list(this.kind); return super.values(); }
+  override entries(): IterableIterator<[Bend.Name, V]> { read_list(this.kind); return super.entries(); }
+  override [Symbol.iterator](): IterableIterator<[Bend.Name, V]> { read_list(this.kind); return super[Symbol.iterator](); }
+  override forEach(f: (value: V, key: Bend.Name, map: Map<Bend.Name, V>) => void, self?: unknown): void {
+    read_list(this.kind); super.forEach(f, self);
+  }
+}
+
+class TrackedSet extends Set<Bend.Name> {
+  constructor(private kind: HeaderKind, entries?: Iterable<Bend.Name>) { super(entries); }
+  override has(key: Bend.Name): boolean { read_name(this.kind, key); return super.has(key); }
+  override get size(): number { read_list(this.kind); return super.size; }
+  override keys(): IterableIterator<Bend.Name> { read_list(this.kind); return super.keys(); }
+  override values(): IterableIterator<Bend.Name> { read_list(this.kind); return super.values(); }
+  override entries(): IterableIterator<[Bend.Name, Bend.Name]> { read_list(this.kind); return super.entries(); }
+  override [Symbol.iterator](): IterableIterator<Bend.Name> { read_list(this.kind); return super[Symbol.iterator](); }
+  override forEach(f: (value: Bend.Name, key: Bend.Name, set: Set<Bend.Name>) => void, self?: unknown): void {
+    read_list(this.kind); super.forEach(f, self);
+  }
+}
+
+function tracked_dictionary<T extends object>(target: T, kind: HeaderKind): T {
+  return new Proxy(target, {
+    get(object, key, receiver) {
+      if (typeof key === "string") read_name(kind, key);
+      return Reflect.get(object, key, receiver);
+    },
+    has(object, key) {
+      if (typeof key === "string") read_name(kind, key);
+      return Reflect.has(object, key);
+    },
+    ownKeys(object) { read_list(kind); return Reflect.ownKeys(object); },
+    getOwnPropertyDescriptor(object, key) {
+      if (typeof key === "string") read_name(kind, key);
+      return Reflect.getOwnPropertyDescriptor(object, key);
+    },
+  });
+}
+
+// The decoded header of a worker records every later read of it.
+let TRACKED = false;
+function track_header(cb: Carb): void {
+  TRACKED = true;
+  const book = cb.book as Record<string, unknown>;
+  for (const [field, kind] of [["tlds", "tld"], ["ctrs", "ctr"]] as const) {
+    book[field] = tracked_dictionary(book[field] as object, kind);
+  }
+  for (const field of ["order", "hols", "open", "tmps"]) {
+    let value = book[field];
+    Object.defineProperty(book, field, { enumerable: true, configurable: true,
+      get: () => { read_name("field", field); return value; }, set: next => { value = next; } });
+  }
+  cb.sites = new TrackedMap("sites", cb.sites);
+  cb.masks = new TrackedMap("masks", cb.masks);
+  cb.bangs = new TrackedSet("bang", cb.bangs);
+}
+
+const SRCS: Map<Bend.Name, Src> = new TrackedMap("src");
 const CLAIM_SRCS = new WeakMap<Bend.TLD, Src>();
 const SOURCE_FILES = new WeakMap<Bend.Book, [string, string | null][]>();
 
@@ -768,7 +861,7 @@ export function source_refs(book: Bend.Book, k: Bend.Name): Set<Bend.Name> {
   return refs;
 }
 
-const LOCAL: Map<Bend.Name, string> = new Map();
+const LOCAL: Map<Bend.Name, string> = new TrackedMap("local");
 
 const FOLDS: Map<HTerm, HTerm | null> = new Map();
 
@@ -4514,7 +4607,32 @@ type StoredHeader = {
   wide: boolean;
 };
 
-function prepare_store(cb: Carb, writer: import("./store.ts").CheckedWriter,
+// The content identity of each header entry, from the decoded header that the
+// workers read.
+function header_entries(decoded: StoredHeader, timing: Record<string, number> = {}): import("./store.ts").Entries {
+  const Store = require("./store.ts") as typeof import("./store.ts");
+  const book = decoded.book, claims = new Map(decoded.claims);
+  const each = <T>(kind: string, values: Record<string, T>): Record<string, string> => {
+    const begin = performance.now();
+    const out = Object.fromEntries(Object.entries(values).map(([k, v]) => [k, Store.content_digest(v)]));
+    timing[kind + "_ms"] = performance.now() - begin;
+    return out;
+  };
+  const sorted = (names: Iterable<string>): string[] => [...names].sort();
+  const begin = performance.now();
+  const entries: import("./store.ts").Entries = { tld: each("tld", book.tlds), ctr: each("ctr", book.ctrs),
+    src: Object.fromEntries(decoded.sources.map(([k, src]) => [k, JSON.stringify([sorted(src.refs),
+      sorted(src.deps), src.flat, sorted(claims.get(k) ?? [])])])),
+    sites: Object.fromEntries(decoded.sites), masks: Object.fromEntries(decoded.masks),
+    local: Object.fromEntries(decoded.local), bangs: sorted(decoded.bangs),
+    field: { order: Store.content_digest(book.order), hols: String(book.hols), open: String(book.open),
+      tmps: Store.content_digest(book.tmps) },
+    show: Store.content_digest(decoded.show), wide: decoded.wide };
+  timing.other_ms = performance.now() - begin - (timing.tld_ms ?? 0) - (timing.ctr_ms ?? 0);
+  return entries;
+}
+
+function prepare_store(cb: Carb, writer: import("./store.ts").CheckedWriter, entries_wanted: boolean,
   show: Show | null): { reader: import("./store.ts").CheckedReader; show: Show | null; wide: boolean } {
   const begin = performance.now();
   const tlds = Object.fromEntries(Object.entries(cb.book.tlds).map(([k, tld]) => {
@@ -4534,6 +4652,14 @@ function prepare_store(cb: Carb, writer: import("./store.ts").CheckedWriter,
     wide: [...cb.bangs].some((k) => sig_def(cb, k).live.some(([, , A]) => ty_clo(cb.book, A))) };
   const stored = writer.seal(header);
   const decoded = stored.reader.header<StoredHeader>();
+  if (entries_wanted) {
+    const entries_begin = performance.now();
+    const timing: Record<string, number> = {};
+    const entries = header_entries(decoded, timing);
+    stored.index = writer.attach(stored.index, entries);
+    diagnostic("store.entries", { duration_ms: performance.now() - entries_begin, ...timing,
+      definitions: Object.keys(entries.tld).length, constructors: Object.keys(entries.ctr).length });
+  }
   restore_header(cb, stored.reader, decoded);
   diagnostic("store.end", { directory: writer.directory,
     duration_ms: performance.now() - begin, bytes: stored.bytes,
@@ -4589,16 +4715,27 @@ function open_checked(directory: string): Prepared {
 }
 
 export function prepare_book(book: Bend.Book, workspace?: string): string {
+  const prepare_started = DIAGNOSTICS ? performance.now() : 0;
   const writer = checked_writer(book, workspace);
-  try { prepare_checked(book, writer); }
-  catch (error) { writer.remove(); throw error; }
+  try {
+    diagnostic("book.prepare.begin", { definitions: Object.keys(book.tlds).length });
+    prepare_checked(book, writer, true);
+  } catch (error) {
+    writer.remove();
+    diagnostic("book.prepare.failed", { duration_ms: DIAGNOSTICS
+      ? performance.now() - prepare_started : undefined });
+    throw error;
+  }
+  diagnostic("book.prepare.end", { duration_ms: DIAGNOSTICS
+    ? performance.now() - prepare_started : undefined });
   return writer.directory;
 }
 
 export function unit_emitter(directory: string,
-  inputs?: (value: import("./store.ts").BodyInput[]) => void): Fact.Emit<Unit> {
+  inputs?: (value: import("./store.ts").BodyInput[], reads: HeaderReads) => void): Fact.Emit<Unit> {
   const context = open_checked(directory), emit = checked_emitter(context, inputs);
   const names = new Map(done_defs(context.cb).map(([name]) => [seg_fid(name), name]));
+  track_header(context.cb);
   return (name, facts_only, initial, record) => {
     const result = emit(seg_fid(name), facts_only, initial, record);
     return { ...result, refs: new Set([...result.refs].flatMap(fid => names.has(fid) ? [names.get(fid)!] : [])) };
@@ -4621,12 +4758,12 @@ export async function compile_checked_to(directory: string, write: (chunk: strin
 }
 
 function compile_stored(book: Bend.Book, writer: import("./store.ts").CheckedWriter, write: (chunk: string) => void): void {
-  const program = compilation(prepare_checked(book, writer), write), request = program.next();
+  const program = compilation(prepare_checked(book, writer, false), write), request = program.next();
   const solved = Fact.solve<Unit>({ ...request.value! });
   program.next(solved);
 }
 
-function prepare_checked(book: Bend.Book, writer: import("./store.ts").CheckedWriter): Prepared {
+function prepare_checked(book: Bend.Book, writer: import("./store.ts").CheckedWriter, entries: boolean): Prepared {
   diagnostic_columns.clear();
   diagnostic("book.begin", { definitions: Object.keys(book.tlds).length });
   diagnostic("carb.begin");
@@ -4639,7 +4776,7 @@ function prepare_checked(book: Bend.Book, writer: import("./store.ts").CheckedWr
   v_drop(cb, live_types);
   book.tmps = Object.create(null);
   cb.book.tmps = book.tmps;
-  const prepared = prepare_store(cb, writer, show);
+  const prepared = prepare_store(cb, writer, entries, show);
   const stored = prepared.reader, wide = prepared.wide;
   show = prepared.show;
   memo_gc();
@@ -4660,7 +4797,7 @@ function prepare_checked(book: Bend.Book, writer: import("./store.ts").CheckedWr
 }
 
 function checked_emitter(context: Prepared,
-  inputs?: (value: import("./store.ts").BodyInput[]) => void): Fact.Emit<Unit> {
+  inputs?: (value: import("./store.ts").BodyInput[], reads: HeaderReads) => void): Fact.Emit<Unit> {
   const { cb, stored, directory } = context;
   const defs = new Map(done_defs(cb).map(([name, def]) => [seg_fid(name), [name, def] as const]));
   const foreign = new Map(done_defs(cb, def_foreign).map(([name, def]) => [seg_fid(name), [name, def] as const]));
@@ -4668,6 +4805,15 @@ function checked_emitter(context: Prepared,
   return (fid, facts_only, initial, record) => {
     const [k, def] = defs.get(fid)!;
     BRWS.clear();
+    // A memo hit skips the header reads that computed the entry. A worker that emits many units
+    // starts each unit with the memos a fresh process has, so the unit records every read.
+    if (TRACKED) {
+      [SIGS, NODES, LAYS, CYCLES, FLATS, LAY_KEY_NODES].forEach(map => map.clear());
+      LAY_KEY_NEXT = 0;
+    }
+    const reads: ReadSet = { names: new Map(), listed: new Set() };
+    READS = reads;
+    read_name("tld", k);
     const views = Fact.views(initial, record);
     const output = file_new({ ...cb, ...views, lend: new Set() }, "Term");
     output.unit = "u" + Buffer.from(k).toString("hex") + "_";
@@ -4701,7 +4847,10 @@ function checked_emitter(context: Prepared,
       if (!defs.has(ref) && !foreign.has(ref)) die("unresolved external reference from " + k + ": " + ref);
       return true;
     };
-    for (const ref of file_reach(output, [seg_fid(k)])) if (external(ref)) refs.add(ref);
+    for (const ref of file_reach(output, [seg_fid(k)])) if (external(ref)) {
+      refs.add(ref);
+      read_name("tld", (defs.get(ref) ?? foreign.get(ref))![0]);
+    }
     const edges: [string, string][] = [];
     for (const [origin, obligations] of output.obligations) {
       for (const ref of obligations) if (defs.has(ref) || foreign.has(ref)) {
@@ -4716,7 +4865,8 @@ function checked_emitter(context: Prepared,
       writes: record.wrote.size, lend: unit.lend.size, decode_ms: stored.decode_ms,
       external_def_fids: refs.size, closure_targets: unit.clos.size,
       local_segments: unit.segs.length, helper_refs: unit.spins.length });
-    inputs?.(stored.body_inputs());
+    READS = null;
+    inputs?.(stored.body_inputs(), reads_value(reads));
     stored.release();
     memo_gc();
     BRWS.clear();

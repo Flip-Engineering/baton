@@ -53,8 +53,10 @@ if (phase === "front") {
     process.exitCode = 1;
   }
 } else if (phase === "units") {
-  let inputs: BodyInput[] = [];
-  const before = performance.now(), emit = Comp.unit_emitter(directory, value => { inputs = value; });
+  let inputs: BodyInput[] = [], reads: Comp.HeaderReads = { names: [], listed: [] };
+  const before = performance.now(), emit = Comp.unit_emitter(directory, (value, header) => {
+    inputs = value; reads = header;
+  });
   let last: { digest: string; facts: Fact.MutableFacts } | null = null;
   const startup = resident();
   send({ kind: "ready", pid: process.pid, startup_ms: performance.now() - before,
@@ -77,12 +79,15 @@ if (phase === "front") {
       const trace = Fact.trace(), emitted = emit(request.unit, request.facts_only, last!.facts, trace);
       // The unit's own high-water mark. Without a reset, a mark that did not
       // rise during the unit leaves its peak unknown below the earlier mark.
-      const end = resident(), peak = exact ? end.peak : end.peak > high ? end.peak : Math.max(begin.rss, end.rss);
+      // The mark read after a reset can lag the resident sizes read around it, and the unit was at least
+      // as large as both.
+      const end = resident(), peak = exact ? Math.max(end.peak, begin.rss, end.rss)
+        : end.peak > high ? end.peak : Math.max(begin.rss, end.rss);
       high = Math.max(high, end.peak);
       result(request.result, { ok: true, unit: request.unit, facts_only: request.facts_only,
         rss_before: begin.rss, rss_peak: peak, rss_after: end.rss, rss_peak_exact: exact,
         trace: trace.events, lend: [...emitted.lend], masks: emitted.masks,
-        refs: [...emitted.refs], edges: emitted.edges, inputs, fragment: emitted.code.directory,
+        refs: [...emitted.refs], edges: emitted.edges, inputs, reads, fragment: emitted.code.directory,
         pid: process.pid, started, ended: new Date().toISOString(), duration_ms: performance.now() - before,
         memory: process.memoryUsage(), usage: process.resourceUsage() });
       send({ kind: "result", file: request.result });

@@ -18,10 +18,34 @@ import traceback
 
 ARCHIVE_SHA = '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4'
 COMPILER_ARCHIVES = {
+    'f46d75d3cb3a68c68bdcfaeb5dfe465e06343b47d6376949fd862510a82781d3': {
+        'name': 'Bend 2.0.25 with String lowering, checked-body sharing and compiler worker reuse',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': '018855661c0240fd3df7b7235ce35ea9b465ab0d',
+        'source_tree': '65018fc29356d9b6731b4142f23e5c69b43a32c4',
+        'source_lock_sha256': 'b7a78d737db755c0f060cee481c65736a589b83c61110fafee227b2b5254619d',
+        'source_manifest_sha256': '0d8aace71896212c7c60a6867d95b05051fae74582eaeb5a809f6baf3deee715',
+        'source_metadata_sha256': '3207a6bd1b2a857a48cb30c3112a0bdc1e80286ec3bc4a45917e47366e417660',
+        'source_input_count': 84,
+    },
     '5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3': {
         'name': 'Bend 2.0.25 with emitted C unit cache and constructor shadow handling',
         'official_release_artifact': False,
         'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    'b096466b3b849234d3393ba9c726f78121f31762dc4e5379fe886e9b61b75590': {
+        'name': 'Bend 2.0.25 with header-read unit identities, worker reuse and checked-store cleanup',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': 'acaae6ef6c0348751a38634223f3946fa6a874b2',
+        'source_tree': 'b906600c4cf4d741fa881e6fe506329a3cba3149',
+        'source_lock_sha256': '477af3f2ef97c6a8f70864ea8ada1f8bc8dd4ff8a95ebda2269215e99d59f603',
+        'source_manifest_sha256': 'e2a0a259c2e3c58b3b964ebeb165ca89b1896dc8df73e3518adf0c12b6a881aa',
+        'source_metadata_sha256': 'ee9326dd6e59e37cbfe9ebc4d5829b4737196d38de38f1d453f702fcee13f948',
+        'source_input_count': 84,
     },
     '2b272454ec56a3d47f6957d8ad28da7d946dce470747e8bde5d5ff274c48e957': {
         'name': 'Bend 2.0.25 with compiler worker reuse and checked-store cleanup',
@@ -460,6 +484,33 @@ def queue_effective(fields, key):
     return values[-1]
 
 
+def queue_compiler_identity(argv_path, config_compiler, diagnostics):
+    arguments = pathlib.Path(argv_path).read_bytes().split(b'\0')
+    if arguments and arguments[-1] == b'':
+        arguments.pop()
+    require(len(arguments) >= 4
+            and pathlib.Path(os.fsdecode(arguments[1])).name == 'compile-cgen-exec.py',
+            'Completed Cgen argv does not record the queue compiler command.')
+    requested_path = os.fsdecode(arguments[3])
+    require(requested_path == config_compiler,
+            'Queue identity configuration compiler differs from the original Cgen command.')
+    compiler_argv = diagnostics.get('compiler_argv')
+    compiler = diagnostics.get('toolchain', {}).get('compiler', {})
+    observed_argv_path = compiler_argv[0] if isinstance(compiler_argv, list) and compiler_argv else ''
+    observed_path = compiler.get('path', '')
+    require(pathlib.Path(requested_path).is_absolute()
+            and pathlib.Path(observed_argv_path).is_absolute()
+            and pathlib.Path(observed_path).is_absolute()
+            and pathlib.Path(observed_argv_path).name == pathlib.Path(observed_path).name == 'bend'
+            and re.fullmatch('[0-9a-f]{64}', compiler.get('sha256', '')),
+            'Completed Cgen compiler paths or content identity are incomplete.')
+    return {'queue_command_path': requested_path,
+            'diagnostic_command_path': observed_argv_path,
+            'diagnostic_resolved_path': observed_path,
+            'sha256': compiler['sha256'],
+            'paths_match': requested_path == observed_path}
+
+
 def queue_source_digest(root, entry):
     """Reproduce CompileQueueIdentity.source_digest for a Cgen entry."""
     root = root.resolve()
@@ -592,8 +643,7 @@ def prepare_cgen(args, result, root, generated):
     compiler_id = toolchain.get('compiler', {})
     runtime_id = toolchain.get('runtime', {})
     manifest_id = toolchain.get('manifest', {})
-    require(config_compiler == compiler_id.get('path'),
-            'Queue identity configuration compiler differs from compiler diagnostics.')
+    compiler_identity = queue_compiler_identity(evidence_paths['argv'], config_compiler, diagnostics)
     compiler = args.compiler.resolve()
     compiler_home = compiler.parent.parent
     manifest_path = compiler_home / 'fork-manifest.json'
@@ -645,6 +695,7 @@ def prepare_cgen(args, result, root, generated):
                   origin_cgen_meta_sha256=digest(origin / 'cgen-meta'),
                   origin_compiler_manifest_sha256=digest(origin / 'compiler-manifest.json'),
                   origin_compiler_archive_sha256=digest(args.compiler_archive.resolve()),
+                  origin_compiler_identity=compiler_identity,
                   generated_c_sha256=digest(origin / 'baton2.c'), generated_c_size=(origin / 'baton2.c').stat().st_size,
                   root=str(root), origin_assets=[{**fact(path), 'path': str(path.relative_to(generated))}
                                                 for path in sorted(origin.rglob('*')) if path.is_file()])
@@ -702,8 +753,9 @@ def verify_cgen_origin(origin, proof):
             and queue_attempt.get('source_digest') == 'digest=' + proof['origin_cgen_source_digest'],
             'Retained compiler diagnostics differ from the Cgen source identity.')
     toolchain = diagnostics.get('toolchain', {})
-    require(config_compiler == toolchain.get('compiler', {}).get('path'),
-            'Retained identity configuration compiler differs from compiler diagnostics.')
+    require(queue_compiler_identity(origin / 'cgen-argv', config_compiler, diagnostics)
+            == proof.get('origin_compiler_identity'),
+            'Retained Cgen compiler paths or content identity differ from the reuse proof.')
     manifest = json.loads((origin / 'compiler-manifest.json').read_text())
     require(toolchain.get('compiler', {}).get('sha256') == manifest.get('compiler', {}).get('sha256')
             and toolchain.get('runtime', {}).get('sha256') == manifest.get('bun', {}).get('sha256')

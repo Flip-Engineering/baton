@@ -3,12 +3,12 @@
   "upstream": "Baton fork of Bend 2.0.25",
   "compiler_archive_sha256": "5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3",
   "official_release_artifact": false,
-  "lock_sha256": "9409738c6e4274ee544b27780a28e3bdbed8ea83215db62126e7fa27657591bc",
+  "lock_sha256": "b7a78d737db755c0f060cee481c65736a589b83c61110fafee227b2b5254619d",
   "files": [
     {
-      "bytes": 9081,
+      "bytes": 9575,
       "path": "admission.ts",
-      "sha256": "77ec435fa73a3ebf19011593807b676d4ef18c53c214e293eaca47a81ef4015f"
+      "sha256": "438e5d204746b1d30edd99bcd48f42b1c7385c23fb7b1f823b3a8bf09e6d5408"
     },
     {
       "bytes": 66363,
@@ -16,19 +16,19 @@
       "sha256": "e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798"
     },
     {
-      "bytes": 166375,
+      "bytes": 168341,
       "path": "bend.ts",
-      "sha256": "b529df5033e2e8b1239fae172b0ce33864f2db20954cc7e4b501f7c82dc7fa9d"
+      "sha256": "79dbf1e48f91f015c4469bddadbbcf73aae5bd6042e20fe18cfac19aa135968c"
     },
     {
-      "bytes": 268545,
+      "bytes": 276285,
       "path": "comp.ts",
-      "sha256": "acadbc8104021e3733c5591fc038db1f482bf181870014a820ec1872ec17012a"
+      "sha256": "59a70161fee8799ae87cdbdd29a29125cb364bdc8e43ed18ba2bdccdbf9d6ec4"
     },
     {
-      "bytes": 14636,
+      "bytes": 14755,
       "path": "driver.ts",
-      "sha256": "bfc15b44e0768ddb91f1824f09345dd944dac1c42d0ae4ff27d98c439fb73f9b"
+      "sha256": "e73e3f586d65698f7f0b44b3926eccc8349fb170c251b95c8fb300cdb9cd44d9"
     },
     {
       "bytes": 351,
@@ -406,24 +406,24 @@
       "sha256": "65a08a61eae157ab2ca505578a27b0f6e50fb46a44baa43bf8df20670b865c6a"
     },
     {
-      "bytes": 28072,
+      "bytes": 29015,
       "path": "main.ts",
-      "sha256": "156b06b2cbfec3c3f34a602bbbaa167fe9c004731ce14ab3281a977ff2c56b52"
+      "sha256": "2bfee20bf3347f2f3acdb59c5f3c1ac98d012b7b9d7a1375fe435efde44d1f8b"
     },
     {
-      "bytes": 23781,
+      "bytes": 31326,
       "path": "store.ts",
-      "sha256": "8cf4947ddbca4ae77d99d37240eeac2fdf1aa5b04f79dce894597d535e583d00"
+      "sha256": "5f26a1484eeed9aae80e2e3bb12196e6a5c14cd6112fed210beeb69bdd5888de"
     },
     {
-      "bytes": 12807,
+      "bytes": 15575,
       "path": "unit-cache.ts",
-      "sha256": "04e4ff50966d034bb6b02ce7d3bbb2caddfa4a6b2620d8c8ff500bd1a973f97e"
+      "sha256": "3c30e77770e35cf1c62a7ad28c2eb40d5903651e2c1a75dba2dd6a874095cddc"
     },
     {
-      "bytes": 5733,
+      "bytes": 5996,
       "path": "worker.ts",
-      "sha256": "fab3bbf7049650dd1765b281d7f5e923aa7982c98ba4449ad5497a5bf676d648"
+      "sha256": "64f22d4203bee6b2a5caf5726c84f89613bda541acd36cd0abd05b8d6b7a19d3"
     }
   ],
   "license": {

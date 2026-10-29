@@ -45,6 +45,8 @@ export class EncoderTables {
   private strings = new Map<string, number>();
   private spans = new WeakMap<object, number>();
 
+  find(text: string): number | undefined { return this.strings.get(text); }
+
   string(text: string): number {
     const got = this.strings.get(text);
     if (got !== undefined) return got;
@@ -227,6 +229,125 @@ export function encode_term(term: Bend.LTerm | Bend.HTerm, tables: EncoderTables
   return { root, rows, scopes };
 }
 
+// A canonical digest of a graph that does not depend on table numbering or on
+// source positions. Strings are written as text. Spans are written as classes
+// numbered by first use: two nodes have the same class exactly when their spans are
+// equal. The emitter compares spans for equality only, so a definition moved by an
+// edit elsewhere in its file keeps its digest. The source texts are not digested.
+function graph_digest(graph: TermGraph, tables: Tables): string {
+  const classes = new Map<string, number>();
+  const span = (index: number): number => {
+    const key = tables.spans[index].join(",");
+    let id = classes.get(key);
+    if (id === undefined) { id = classes.size; classes.set(key, id); }
+    return id;
+  };
+  const text = (tag: number, value: number): string | number =>
+    tag === STRING ? JSON.stringify(tables.strings[value]) : tag === SPAN ? "@" + span(value) : value;
+  const hash = crypto.createHash("sha256");
+  const root = graph.root;
+  hash.update(root === null ? "null" : typeof root !== "object" ? String(root)
+    : "string" in root ? JSON.stringify(tables.strings[root.string]) : "span" in root ? "@" + span(root.span)
+    : "node" in root ? "#" + root.node : "undefined");
+  hash.update("|" + graph.scopes.join(",") + "\n");
+  // Rows are hashed in short pieces so that no large string is built.
+  const write = (parts: (string | number)[]): void => {
+    for (let at = 0; at < parts.length; at += 256) hash.update(parts.slice(at, at + 256).join(" ") + " ");
+    hash.update("\n");
+  };
+  for (const row of graph.rows) {
+    const parts: (string | number)[] = [row[0], row[1]];
+    if (row[1] === BINDING) parts.push(row[2], row[3], row[4] < 0 ? -1 : "@" + span(row[4]));
+    else if (row[1] === CALLBACK) parts.push(row[2], row[3], row[4], text(row[4], row[5]));
+    else if (row[1] === ARRAY) for (let at = 2; at < row.length; at += 2) parts.push(row[at], text(row[at], row[at + 1]));
+    else for (let at = 2; at < row.length; at += 3) {
+      parts.push(JSON.stringify(tables.strings[row[at]]), row[at + 1], text(row[at + 1], row[at + 2]));
+    }
+    write(parts);
+  }
+  return hash.digest("hex");
+}
+
+// The content identity of one value, encoded with tables of its own.
+export function content_digest(value: unknown): string {
+  const tables = new EncoderTables();
+  return graph_digest(encode_term(value as Bend.LTerm, tables), tables.data);
+}
+
+// Rows with the same owner scope, fields and children are one row. Copies of a
+// default arm that the match compiler places under several branches are equal in
+// every field, spans included, and share a row after this pass. A checker cell (a
+// Var that carries a value) keeps its own row: emission updates a cell in place
+// when it reduces the cell's term (term_wnf), so two cells are two thunks. A graph
+// with a cycle is returned as it is. The pass is applied to bodies only: a header
+// row can carry per-definition state on its decoded object.
+export function share_rows(graph: TermGraph, tables: EncoderTables): TermGraph {
+  const rows = graph.rows, n = rows.length;
+  const dollar = tables.find("$"), variable = tables.find("Var"), cell_value = tables.find("v");
+  const child_slots = (row: Row): number[] => {
+    const slots: number[] = [];
+    if (row[1] === CALLBACK) { if (row[4] === NODE) slots.push(5); }
+    else if (row[1] === OBJECT || row[1] === DICTIONARY) {
+      for (let at = 3; at < row.length; at += 3) if (row[at] === NODE) slots.push(at + 1);
+    } else if (row[1] === ARRAY) {
+      for (let at = 2; at < row.length; at += 2) if (row[at] === NODE) slots.push(at + 1);
+    }
+    return slots;
+  };
+  const is_cell = (row: Row): boolean => {
+    if (row[1] !== OBJECT || dollar === undefined || variable === undefined || cell_value === undefined) return false;
+    let named = false, valued = false;
+    for (let at = 2; at < row.length; at += 3) {
+      if (row[at] === dollar && row[at + 1] === STRING && row[at + 2] === variable) named = true;
+      if (row[at] === cell_value) valued = true;
+    }
+    return named && valued;
+  };
+  const state = new Uint8Array(n), canonical = new Int32Array(n).fill(-1);
+  const out: Row[] = [], buckets = new Map<number, number[]>();
+  const root = graph.root;
+  if (root === null || typeof root !== "object" || !("node" in root)) return graph;
+  const stack = [root.node];
+  while (stack.length > 0) {
+    const id = stack[stack.length - 1], row = rows[id];
+    if (state[id] === 2) { stack.pop(); continue; }
+    const slots = child_slots(row);
+    if (state[id] === 0) {
+      state[id] = 1;
+      let pushed = false;
+      for (const slot of slots) {
+        const child = row[slot];
+        if (state[child] === 1) return graph;
+        if (state[child] === 0) { stack.push(child); pushed = true; }
+      }
+      if (pushed) continue;
+    }
+    const mapped = slots.length === 0 ? row : row.slice();
+    for (const slot of slots) mapped[slot] = canonical[row[slot]];
+    let found = -1;
+    if (!is_cell(mapped)) {
+      let hash = 0x811c9dc5 | 0;
+      for (let at = 0; at < mapped.length; at++) hash = Math.imul(hash ^ mapped[at], 0x01000193) ^ (hash >>> 15);
+      const bucket = buckets.get(hash);
+      if (bucket !== undefined) {
+        for (const candidate of bucket) {
+          const other = out[candidate];
+          if (other.length !== mapped.length) continue;
+          let same = true;
+          for (let at = 0; at < mapped.length; at++) if (other[at] !== mapped[at]) { same = false; break; }
+          if (same) { found = candidate; break; }
+        }
+      }
+      if (found < 0) {
+        if (bucket === undefined) buckets.set(hash, [out.length]); else bucket.push(out.length);
+      }
+    }
+    if (found < 0) { found = out.length; out.push(mapped); }
+    canonical[id] = found; state[id] = 2; stack.pop();
+  }
+  return { root: { node: canonical[root.node] }, rows: out, scopes: graph.scopes };
+}
+
 type Context = { scope: number; parent: Context | null; args: Bend.HTerm[];
   values: Map<number, unknown> };
 
@@ -323,13 +444,21 @@ export function decode_term<T extends Bend.LTerm | Bend.HTerm>(graph: TermGraph,
 }
 
 type Section = { file: string; sha256: string; bytes: number; nodes: number };
-type BodySection = Section & { mode: "checked" | "higher" };
-export type BodyInput = { name: string; sha256: string; mode: BodySection["mode"] };
+type BodySection = Section & { mode: "checked" | "higher"; content: string };
+export type BodyInput = { name: string; content: string; mode: BodySection["mode"] };
 type Observe = (event: string, details: Record<string, unknown>) => void;
 export type SourceInput = { path: string; namespace: string | null; sha256: string };
+// Content identities of the header entries a unit may read. A tld, constructor or
+// field is a digest of its value. Small per-name values are kept as written. A
+// name that is absent has no row.
+export type Entries = {
+  tld: Record<string, string>; ctr: Record<string, string>; src: Record<string, string>;
+  sites: Record<string, number>; masks: Record<string, boolean[]>; local: Record<string, string>;
+  bangs: string[]; field: Record<string, string>; show: string; wide: boolean;
+};
 export type StoreIndex = { compiler: string; tables: Section; header: Section;
   bodies: [string, BodySection][]; inputs: SourceInput[];
-  input_manifest_sha256: string; program_sha256: string };
+  input_manifest_sha256: string; program_sha256: string; entries?: Section };
 
 function digest(data: string): string {
   return crypto.createHash("sha256").update(data).digest("hex");
@@ -371,15 +500,21 @@ export class CheckedWriter {
     return { file, sha256, bytes, nodes };
   }
 
-  private graph(value: unknown, kind: string, name?: string): Section {
+  private graph(value: unknown, kind: string, name?: string): Section & { content?: string } {
     const begin = performance.now();
-    const graph = encode_term(value as Bend.LTerm, this.tables);
+    const encoded_graph = encode_term(value as Bend.LTerm, this.tables);
+    const encoded_at = performance.now();
+    const graph = kind === "body" ? share_rows(encoded_graph, this.tables) : encoded_graph;
+    const shared_ms = performance.now() - encoded_at;
     const data = JSON.stringify(graph);
     const encoded = performance.now();
     const section = this.write(data, graph.rows.length);
-    this.observe?.("store.section", { kind, name, ...section,
-      encode_ms: encoded - begin, write_ms: performance.now() - encoded });
-    return section;
+    const written = performance.now();
+    const content = kind === "body" ? graph_digest(graph, this.tables.data) : undefined;
+    this.observe?.("store.section", { kind, name, ...section, content,
+      encode_ms: encoded - begin, write_ms: written - encoded, digest_ms: performance.now() - written,
+      share_ms: shared_ms, rows_before: encoded_graph.rows.length });
+    return content === undefined ? section : { ...section, content };
   }
 
   has(name: string): boolean { return this.bodies.has(name) || this.pending.has(name); }
@@ -393,11 +528,21 @@ export class CheckedWriter {
     }
   }
 
+  // Add the content identities of the header entries. The index is rewritten and
+  // the reader returned by seal() reads the same directory.
+  attach(index: StoreIndex, entries: Entries): StoreIndex {
+    const data = JSON.stringify(entries), section = this.write(data, Object.keys(entries.tld).length);
+    this.observe?.("store.section", { kind: "entries", ...section });
+    const next = { ...index, entries: section };
+    fs.writeFileSync(path.join(this.directory, "index.json"), JSON.stringify(next));
+    return next;
+  }
+
   seal(header: unknown): { index: StoreIndex; reader: CheckedReader; bytes: number } {
     // Front-end walks normalize checker cells. Encode their completed state
     // before releasing the front-end graph.
     for (const [name, { value, mode }] of this.pending) {
-      this.bodies.set(name, { ...this.graph(value, "body", name), mode });
+      this.bodies.set(name, { ...this.graph(value, "body", name), mode } as BodySection);
     }
     this.pending.clear();
     const section = this.graph(header, "header");
@@ -533,7 +678,7 @@ export class CheckedReader {
   body_inputs(): BodyInput[] {
     return [...this.decoded.keys()].sort().map(name => {
       const section = this.bodies.get(name)!;
-      return { name, sha256: section.sha256, mode: section.mode };
+      return { name, content: section.content, mode: section.mode };
     });
   }
 
