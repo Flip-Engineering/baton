@@ -154,6 +154,26 @@ class CompletionIdentity(unittest.TestCase):
         self.assertNotEqual(second['id'], first['id'])
         self.assertEqual(self.current_request(), (second['id'],))
 
+    def test_a_request_recorded_before_succession_replays_to_its_recipient(self):
+        first = self.request('Done.')
+        self.db.executescript("""
+INSERT INTO sessions(id,parent,harness) VALUES('successor',NULL,'operator');
+INSERT INTO session_roles(session,role) VALUES('successor','conductor');
+INSERT INTO session_stops(session,id,reason,outcome) VALUES('coordinator','stop-coordinator','retired','stopped');
+INSERT INTO messages(id,sender,recipient,kind,body) VALUES('succession:coordinator:successor','successor','coordinator','succession','{}');
+""")
+        replay = self.request('Done.', first['id'])
+        self.assertEqual(replay['status'], 'admitted', replay)
+        self.assertEqual((replay['id'], replay['recipient']), (first['id'], 'coordinator'))
+        self.assertEqual(self.requests(), [(first['id'], 'Done.')])
+        later = self.request('Updated summary after succession.')
+        self.assertEqual(later['status'], 'admitted', later)
+        self.assertEqual(later['recipient'], 'successor')
+        self.assertEqual(self.recorded(later['id'])[:3], ('worker', 'successor', 'completion-request'))
+        stale = self.request('Done.', first['id'])
+        self.assertEqual(stale['status'], 'refused', stale)
+        self.assertIn('current assignment', stale['admission']['cause'])
+
     def test_inbox_emits_full_body_and_records_cli_read(self):
         body = 'Complete inbox body.\nSecond line.'
         self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('inbox-body','coordinator','worker','guidance',?)",

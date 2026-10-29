@@ -252,7 +252,7 @@ class PackageLicenses(unittest.TestCase):
                  for harness in ('codex', 'omp', 'mcp') for suffix in ('conductor', 'root')]
         names.extend(('check-install.py', 'context-provider.mjs', 'context-project-policy.mjs',
                       'context-query-artifact.mjs', 'context-worktree-capture.mjs',
-                      'dsh-worker.mjs'))
+                      'dsh-worker.mjs', 'dsh-baton-hooks.mjs', 'omp-completion.mjs'))
         for name in names:
             shutil.copyfile(ROOT / 'bend2/scripts' / name, scripts / name)
         harness = self.source / 'bend2/harness'
@@ -260,6 +260,7 @@ class PackageLicenses(unittest.TestCase):
         for name in ('git-series.mjs', 'native-history.mjs', 'project-settings.mjs', 'task-start.mjs'):
             shutil.copyfile(ROOT / 'bend2/harness' / name, harness / name)
         shutil.copytree(ROOT / 'bend2/harness/git-series-bin', harness / 'git-series-bin')
+        shutil.copytree(ROOT / 'bend2/harness/agy-plugin', harness / 'agy-plugin')
         native = self.source / '.scratch/bend2'
         native.mkdir(parents=True)
         # Archive tests retain file bytes and executable modes; these helpers are never run.
@@ -282,6 +283,9 @@ class PackageLicenses(unittest.TestCase):
         for name in ('claude-credit-observe', 'api-key-exec'):
             self.assertEqual((prefix / 'libexec/baton2' / name).read_bytes(),
                              (self.source / '.scratch/bend2' / name).read_bytes())
+        for name in ('plugin.json', 'hooks.json'):
+            self.assertEqual((prefix / 'libexec/baton2/agy-plugin' / name).read_bytes(),
+                             (ROOT / 'bend2/harness/agy-plugin' / name).read_bytes())
 
     def test_extracted_git_helper_selects_author_with_its_source_absent(self):
         self.stage_runtime_files()

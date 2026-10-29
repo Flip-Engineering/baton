@@ -32,6 +32,8 @@ let delivery = null;
 let inputWitness = null;
 let nativeEvent = false;
 let claude = null;
+let rootHarness = 'claude-code';
+let relayThread = null;
 let claudeArgs = [];
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
@@ -46,6 +48,14 @@ for (let i = 2; i < process.argv.length; i++) {
   } else if (arg === '--session') {
     sessionId = process.argv[++i];
     if (sessionId === undefined) throw new Error('--session requires a session ID');
+  } else if (arg === '--root-harness') {
+    rootHarness = process.argv[++i];
+    if (!['claude-code', 'codex'].includes(rootHarness)) {
+      throw new Error('--root-harness must be claude-code or codex');
+    }
+  } else if (arg === '--thread') {
+    relayThread = process.argv[++i];
+    if (!relayThread) throw new Error('--thread requires the Codex root thread ID');
   } else if (arg === '--deliver') {
     delivery = { socket: process.argv[++i], message: process.argv[++i] };
     if (!delivery.socket || !delivery.message) throw new Error('--deliver requires a socket and committed message ID');
@@ -385,7 +395,8 @@ function coordInputRaw(input, ...args) {
       encoding: 'utf8', input, maxBuffer: Infinity,
       env: { ...process.env, BATON_SESSION: sessionId, BATON_DATABASE: dbPath,
         BATON_MCP_INPUT: channelReady && connectionCustody
-          ? JSON.stringify({ ...connectionCustody, ...(nativePrompt ? { prompt: nativePrompt } : {}), ready: true }) : '' },
+          ? JSON.stringify({ ...connectionCustody, ...(nativePrompt ? { prompt: nativePrompt } : {}),
+            ...(activeReadMessage ? { readMessage: activeReadMessage } : {}), ready: true }) : '' },
     });
   } catch (error) {
     const status = Number.isInteger(error.status) ? `\nexit code: ${error.status}` : '';
@@ -775,6 +786,7 @@ const TOOLS = [
         player: { type: 'string', description: 'Player session ID' },
         body: { type: 'string', description: 'Complete message body; current completion confirmation can omit it' },
         request: { type: 'string', description: 'Optional explicit completion request selector' },
+        next: { type: 'string', description: 'With kind completion-confirmed, the next assignment for the Player. Baton records it with the confirmation in one transaction and the assignment continues; without it, confirmation ends the assignment' },
         kind: { type: 'string', description: 'Authored message kind; default guidance' },
       },
       required: ['player'],
@@ -795,6 +807,7 @@ const TOOLS = [
             player: { type: 'string', description: 'Recipient Player session ID' },
             body: { type: 'string', description: 'Complete body; current completion confirmation may omit it' },
             request: { type: 'string', description: 'Optional explicit completion request selector' },
+            next: { type: 'string', description: 'With kind completion-confirmed, the next assignment for the Player, recorded with the confirmation in one transaction; without it, confirmation ends the assignment' },
             kind: { type: 'string', description: 'Authored message kind; default guidance' },
           },
           required: ['player'],
@@ -897,6 +910,7 @@ let nativePrompt = null;
 let inputNotice = null;
 let deliveryServer = null;
 let db = null;
+let activeReadMessage = null;
 
 function openDb() {
   if (db) return db;
@@ -910,7 +924,7 @@ function pendingConductorMessage(messageId = null) {
   if (!conn) return null;
   try {
     return conn.prepare(
-      `SELECT m.id, s.native
+      `SELECT m.id, m.sender, m.kind, m.body, s.native
        FROM messages m
        JOIN sessions s ON s.id = m.recipient
        WHERE s.id = ?
@@ -935,12 +949,20 @@ function notifyPending(messageId = null) {
   }
   const key = JSON.stringify([message.native, nativePrompt, message.id]);
   if (inputNotice?.key === key) return;
-  // The notice selects a stored message. Its complete read advances delivery.
+  const review = message.kind === 'completion-request'
+    ? `\nReview the work against ${message.sender}'s assignment and the supplied evidence. When the assignment is satisfied, use completion-confirmed --to ${message.sender} to end the Player, or add --next TEXT to confirm and dispatch its next assignment together. When work remains, use guide --to ${message.sender} --text TEXT to state what is missing and direct the remaining work.`
+    : '';
+  const content = `Message (${message.kind}) from ${message.sender} [id: ${message.id}]:\n${message.body}${review}`;
+  const readInstruction = rootHarness === 'codex'
+    ? 'Baton records the read after Codex accepts this complete input.'
+    : `Baton records the read when you call baton2_delivery ${JSON.stringify({ id: message.id })}.`;
+  const notice = `${content}\n\n${readInstruction}`;
   sendNotification('notifications/claude/channel', {
-    content: `Baton holds unread input. Read the complete stored message with baton2_delivery ${JSON.stringify({ id: message.id })}. Baton records the read and supplies the next unread input.`,
+    content: notice,
     meta: { recipient: sessionId, messageIds: JSON.stringify([message.id]) },
   });
-  inputNotice = { key, id: message.id, native: message.native };
+  inputNotice = { key, id: message.id, native: message.native, body: message.body,
+    content: notice, connection: connectionCustody?.connection };
 }
 
 function continuePending() {
@@ -981,6 +1003,16 @@ function observeNativeEvent(event, caller) {
 async function startDelivery() {
   const database = realpathSync(dbPath);
   const coordinator = realpathSync(coordinatorExe);
+  let existing;
+  try { existing = selectedSession(); } catch {}
+  if (rootHarness === 'codex') {
+    if (existing?.harness !== 'codex' || !existing?.native) {
+      throw new Error('A Codex root relay requires a recorded Codex conversation before attachment.');
+    }
+    if (!relayThread || relayThread !== existing.native) {
+      throw new Error('The Codex relay thread must match the recorded root conversation.');
+    }
+  }
   const connection = randomUUID();
   const socketName = `conductor-${process.pid}-${connection}.sock`;
   // A relative socket name also works in deeply nested repository worktrees.
@@ -1015,17 +1047,19 @@ async function startDelivery() {
     process.execPath, fileURLToPath(import.meta.url), database, coordinator,
     '--session', sessionId, '--deliver', socketName,
   ]);
-  let existing;
-  try { existing = selectedSession(); } catch {}
   if (hasParent(existing)) coord('connect', sessionId, existing.native || '', endpoint);
-  else coord('attach', sessionId, 'claude-code', existing?.native || '', endpoint);
+  else if (rootHarness === 'codex') {
+    coord('connect', sessionId, existing.native, endpoint);
+  } else coord('attach', sessionId, 'claude-code', existing?.native || '', endpoint);
   // The operator session keeps its role: reports and questions from parentless
   // Conductors select their recipient by the operator role.
   if (recordedRole() !== 'operator') {
     coord('role', sessionId, hasParent(existing) ? 'associate-conductor' : 'principal-conductor');
   }
   connectionCustody = { database, coordinator, session: sessionId,
-    native: selectedSession()?.native, endpoint, socket: socketName, connection,
+    native: selectedSession()?.native, harness: selectedSession()?.harness,
+    ...(rootHarness === 'codex' ? { thread: relayThread } : {}),
+    endpoint, socket: socketName, connection,
     bridge: processIdentity(processFacts(process.pid)), client: processIdentity(processFacts(process.ppid)) };
 }
 
@@ -1042,7 +1076,7 @@ function recordedRole() {
 }
 
 function initialInstructions() {
-  const guidance = `Baton ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_join for shared-checkout work and baton2_recruit when a separate worktree is needed. Name the target branch, remote and integration Conductor in the assignment. Commit completed changes. The integration Conductor lands or reconciles contributions and pushes the integrated target with baton2_push. After publication and turn completion, relocate the same Player with baton2_receiver to the shared checkout and retire clean unused merged task worktrees and branches through ordinary Git. Preserve active or unfinished work, explicit stops and receiver/toolchain dependencies. Use the advertised task dispatch tool for complete task text or an existing UTF-8 file. Baton retains task input and setup outcomes in its database, resolves the recorded route and preserves an existing assignment. Scratchpads contain deliberately authored working notes. Baton stores complete task text in the database. Use baton2_receiver to configure an ordinary receive endpoint where needed. Use baton2_configure to save future effort on the same harness and model during active or stopped sessions, keeping the receiver, current turn and stop. Change harness or model after the current attempt ends and any stop is lifted. Configuration keeps the Player's identity, work, native conversation and pending input. Use baton2_context_engines to discover installed context modules; scope:"session" includes the attached project settings. Use baton2_context_install to acquire a module from a supplied built module directory or extracted distribution. Use baton2_context_query_file for request files and baton2_context_result for retained query results. Use baton2_knowledge_search to find a topic in selected holdings and baton2_knowledge_traverse to follow authored links and citations. Follow returned detailRead commands for complete findings and deliveryRead commands for cited messages. Finding references outside selected holdings carry an explicit all-scope detail read; reading preserves their holdings. Use baton2_knowledge for exact findings or metadata and baton2_knowledge_relations for directed links, including links between retained messages or external references. ${messageInstructions()} The optional kind supports authored completion-request and completion-confirmed messages. Workers ask their immediate parent to confirm task completion and continue useful work until its reply. The parent uses completion-confirmed with the recipient when the task is complete; Baton selects that recipient's current request. Guidance carries further work. Baton generates mutation IDs and records recipient handling from actual native evidence. Agents can inspect current state without copying control IDs or receipts. Native turn settlement and inbox receipts do not finish the task. The coordinator CLI ask and ask-file send questions as your recorded session to its parent; a parentless Principal Conductor reaches the registered operator. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. ${replInput ? 'Use baton2_repl to evaluate Bend2 source and retain checked definitions in the attached actor\'s notebook; action help with arguments ["repl"] describes source composition and the bundled compiler.' : ''} Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`;
+  const guidance = `Baton ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_join for shared-checkout work and baton2_recruit when a separate worktree is needed. Name the target branch, remote and integration Conductor in the assignment. Commit completed changes. The integration Conductor lands or reconciles contributions and pushes the integrated target with baton2_push. After publication and turn completion, relocate the same Player with baton2_receiver to the shared checkout and retire clean unused merged task worktrees and branches through ordinary Git. Preserve active or unfinished work, explicit stops and receiver/toolchain dependencies. Use the advertised task dispatch tool for complete task text or an existing UTF-8 file. Baton retains task input and setup outcomes in its database, resolves the recorded route and preserves an existing assignment. Scratchpads contain deliberately authored working notes. Baton stores complete task text in the database. Use baton2_receiver to configure an ordinary receive endpoint where needed. Use baton2_configure to save future effort on the same harness and model during active or stopped sessions, keeping the receiver, current turn and stop. Change harness or model after the current attempt ends and any stop is lifted. Configuration keeps the Player's identity, work, native conversation and pending input. Use baton2_context_engines to discover installed context modules; scope:"session" includes the attached project settings. Use baton2_context_install to acquire a module from a supplied built module directory or extracted distribution. Use baton2_context_query_file for request files and baton2_context_result for retained query results. Use baton2_knowledge_search to find a topic in selected holdings and baton2_knowledge_traverse to follow authored links and citations. Follow returned detailRead commands for complete findings and deliveryRead commands for cited messages. Finding references outside selected holdings carry an explicit all-scope detail read; reading preserves their holdings. Use baton2_knowledge for exact findings or metadata and baton2_knowledge_relations for directed links, including links between retained messages or external references. ${messageInstructions()} The optional kind supports authored completion-request and completion-confirmed messages. Workers send completion requests to their current coordinator when the assignment is ready. The coordinator reviews the assignment and supplied evidence. A satisfied assignment is confirmed with completion-confirmed to end the Player, or with --next TEXT to confirm and dispatch its next assignment together. Guidance states what is missing and directs the remaining work. Baton selects the recipient's current completion request. Baton generates mutation IDs and records recipient handling from actual native evidence. Agents can inspect current state without copying control IDs or receipts. Native turn settlement and inbox receipts do not finish the task. The coordinator CLI ask and ask-file send questions as your recorded session to its parent; a parentless Principal Conductor reaches the registered operator. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. ${replInput ? 'Use baton2_repl to evaluate Bend2 source and retain checked definitions in the attached actor\'s notebook; action help with arguments ["repl"] describes source composition and the bundled compiler.' : ''} Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`;
   if (!nativeAttachmentInput) return guidance;
   const selected = selectedSession();
   const native = nativeSelector(processFacts(process.ppid));
@@ -1363,7 +1397,27 @@ function handleToolCall(msg) {
         result = coord('inbox', args?.recipient ?? sessionId, ...messageReadOptions(args));
         break;
       case 'baton2_delivery':
-        result = coord('delivery', args.id);
+        if (rootHarness === 'codex' || !connectionCustody || !inputNotice
+            || inputNotice.id !== args.id || inputNotice.connection !== connectionCustody.connection
+            || inputNotice.native !== connectionCustody.native) {
+          throw new Error('The complete input was not returned by this active root channel.');
+        }
+        activeReadMessage = args.id;
+        try { result = coord('delivery', args.id); }
+        finally { activeReadMessage = null; }
+        break;
+      case 'baton2_root_delivery':
+        if (rootHarness !== 'codex' || !connectionCustody || !inputNotice
+            || args.id !== inputNotice.id || args.thread !== connectionCustody.thread
+            || args.thread !== connectionCustody.native || args.content !== inputNotice.content
+            || inputNotice.connection !== connectionCustody.connection
+            || inputNotice.native !== connectionCustody.native
+            || !pendingConductorMessage(args.id)) {
+          throw new Error('Codex read evidence does not match the accepted complete root notice and recorded thread.');
+        }
+        activeReadMessage = args.id;
+        try { result = coord('delivery', args.id); }
+        finally { activeReadMessage = null; }
         break;
       case 'baton2_input':
         result = coord('input', args.id);
@@ -1375,9 +1429,11 @@ function handleToolCall(msg) {
         result = coord('outbox', args?.sender ?? sessionId);
         break;
       case 'baton2_guide':
-        if (args.kind === 'completion-confirmed' && (args.body === undefined || args.request !== undefined)) {
+        if (args.kind === 'completion-confirmed' && (args.body === undefined || args.request !== undefined || args.next !== undefined)) {
+          const request = args.request ?? args.body;
           result = contextualAction('completion-confirmed', ['--to', player,
-            ...(args.request === undefined ? [] : ['--request', args.request]),
+            ...(request === undefined ? [] : ['--request', request]),
+            ...(args.next === undefined ? [] : ['--next', args.next]),
             ...(args.id === undefined ? [] : ['--id', args.id])]);
         } else {
           result = args.id !== undefined ? coord('message', args.id, sessionId, player, args.kind ?? 'guidance', args.body)
@@ -1386,7 +1442,7 @@ function handleToolCall(msg) {
         break;
       case 'baton2_message_batch': {
         const inferredCompletion = args.messages.some(message => message.kind === 'completion-confirmed'
-          && (message.body === undefined || message.request !== undefined));
+          && (message.body === undefined || message.request !== undefined || message.next !== undefined));
         if (inferredCompletion) {
           const values = args.messages.flatMap((message, index) => {
             const prefix = index === 0 ? [] : ['--and'];
@@ -1394,6 +1450,7 @@ function handleToolCall(msg) {
               const request = message.request ?? message.body;
               return [...prefix, 'completion-confirmed', '--to', message.player,
                 ...(request === undefined ? [] : ['--request', request]),
+                ...(message.next === undefined ? [] : ['--next', message.next]),
                 ...(message.id === undefined ? [] : ['--id', message.id])];
             }
             return [...prefix, 'dispatch', '--to', message.player, '--kind', message.kind ?? 'guidance',

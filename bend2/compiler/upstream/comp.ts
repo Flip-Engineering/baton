@@ -3,6 +3,7 @@
 // bugs ARE expected. It will take some time for the compiler to be stable.
 
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { createHash } from "node:crypto";
 
 import * as Bend from "./bend.ts";
@@ -22,6 +23,7 @@ let diagnostic_facts: Fact.Trace | null = null;
 let diagnostic_literals: { word_leaves: number; word_nodes: number } | null = null;
 const diagnostic_columns = new Map<string, number>();
 let diagnostic_context: { event: string; details: Record<string, unknown> } | null = null;
+export function diagnostics_enabled(): boolean { return DIAGNOSTICS; }
 function diagnostic_stage(event: string, details: Record<string, unknown> = {}): void {
   if (DIAGNOSTICS) diagnostic_context = { event, details };
 }
@@ -796,7 +798,9 @@ function tracked_dictionary<T extends object>(target: T, kind: HeaderKind): T {
 }
 
 // The decoded header of a worker records every later read of it.
+let TRACKED = false;
 function track_header(cb: Carb): void {
+  TRACKED = true;
   const book = cb.book as Record<string, unknown>;
   for (const [field, kind] of [["tlds", "tld"], ["ctrs", "ctr"]] as const) {
     book[field] = tracked_dictionary(book[field] as object, kind);
@@ -4711,9 +4715,19 @@ function open_checked(directory: string): Prepared {
 }
 
 export function prepare_book(book: Bend.Book, workspace?: string): string {
+  const prepare_started = DIAGNOSTICS ? performance.now() : 0;
+  diagnostic("book.prepare.begin", { definitions: Object.keys(book.tlds).length });
   const writer = checked_writer(book, workspace);
-  try { prepare_checked(book, writer, true); }
-  catch (error) { writer.remove(); throw error; }
+  try {
+    prepare_checked(book, writer, true);
+  } catch (error) {
+    writer.remove();
+    diagnostic("book.prepare.failed", { duration_ms: DIAGNOSTICS
+      ? performance.now() - prepare_started : undefined });
+    throw error;
+  }
+  diagnostic("book.prepare.end", { duration_ms: DIAGNOSTICS
+    ? performance.now() - prepare_started : undefined });
   return writer.directory;
 }
 
@@ -4726,6 +4740,14 @@ export function unit_emitter(directory: string,
     const result = emit(seg_fid(name), facts_only, initial, record);
     return { ...result, refs: new Set([...result.refs].flatMap(fid => names.has(fid) ? [names.get(fid)!] : [])) };
   };
+}
+
+function copy_tree(source: string, destination: string): void {
+  fs.mkdirSync(destination);
+  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    const from = path.join(source, entry.name), to = path.join(destination, entry.name);
+    if (entry.isDirectory()) copy_tree(from, to); else fs.copyFileSync(from, to);
+  }
 }
 
 export async function compile_checked_to(directory: string, write: (chunk: string) => void,
@@ -4783,6 +4805,12 @@ function checked_emitter(context: Prepared,
   return (fid, facts_only, initial, record) => {
     const [k, def] = defs.get(fid)!;
     BRWS.clear();
+    // A memo hit skips the header reads that computed the entry. A worker that emits many units
+    // starts each unit with the memos a fresh process has, so the unit records every read.
+    if (TRACKED) {
+      [SIGS, NODES, LAYS, CYCLES, FLATS, LAY_KEY_NODES].forEach(map => map.clear());
+      LAY_KEY_NEXT = 0;
+    }
     const reads: ReadSet = { names: new Map(), listed: new Set() };
     READS = reads;
     read_name("tld", k);
@@ -4992,7 +5020,7 @@ function* compilation(context: Prepared, write: (chunk: string) => void):
   Object.assign(cb, solved.facts);
   if (DIAGNOSTICS) {
     const retained = directory + ".facts";
-    fs.cpSync(fact_directory, retained, { recursive: true });
+    copy_tree(fact_directory, retained);
     diagnostic("facts.history", { path: retained,
       files: fs.readdirSync(retained).map(name => ({ name, bytes: fs.statSync(retained + "/" + name).size })) });
   }

@@ -79,12 +79,12 @@ name: bend2-native-development
       retained_compiler_archive:
         description: 'Pinned compiler archive on the homelab; $RUNNER_TEMP uses the selected runner namespace'
         required: false
-        default: '/var/tmp/baton2-compile-queue/toolchains/compiler-main-unit-cache-ctor-20261029/bend-2.0.25-linux-x64-compiler-main-unit-cache-ctor-20261029.tar.gz'
+        default: '/var/tmp/baton2-compile-queue/toolchains/compiler-main-worker-reuse-cleanup-20261029/bend-2.0.25-linux-x64-compiler-main-worker-reuse-cleanup-20261029.tar.gz'
         type: string
       retained_compiler_archive_sha256:
         description: 'Exact SHA256 of the selected pinned compiler archive'
         required: false
-        default: '5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3'
+        default: '2b272454ec56a3d47f6957d8ad28da7d946dce470747e8bde5d5ff274c48e957'
         type: string
       retained_ccache:
         description: 'Measured private ccache wrapper on the homelab; leave blank for direct native compilation'
@@ -138,8 +138,8 @@ jobs:
       - name: Prepare candidate compiler
         shell: bash
         env:
-          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-unit-cache-ctor-20261029/bend-2.0.25-linux-x64-compiler-main-unit-cache-ctor-20261029.tar.gz' }}
-          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3' }}
+          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-worker-reuse-cleanup-20261029/bend-2.0.25-linux-x64-compiler-main-worker-reuse-cleanup-20261029.tar.gz' }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '2b272454ec56a3d47f6957d8ad28da7d946dce470747e8bde5d5ff274c48e957' }}
           BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
           BATON2_LINUX_RUNNER: homelab
         run: |
@@ -393,8 +393,8 @@ jobs:
       - name: Prepare qualification compiler and TypeScript runtime
         shell: bash
         env:
-          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-unit-cache-ctor-20261029/bend-2.0.25-linux-x64-compiler-main-unit-cache-ctor-20261029.tar.gz' }}
-          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3' }}
+          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-worker-reuse-cleanup-20261029/bend-2.0.25-linux-x64-compiler-main-worker-reuse-cleanup-20261029.tar.gz' }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '2b272454ec56a3d47f6957d8ad28da7d946dce470747e8bde5d5ff274c48e957' }}
           BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
           BATON2_LINUX_RUNNER: homelab
         run: |
@@ -538,8 +538,8 @@ jobs:
       BEND_NO_TELEMETRY: '1'
       BUN_JSC_maxPerThreadStackUsage: '67108864'
       BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.target_commit }}
-      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-unit-cache-ctor-20261029/bend-2.0.25-linux-x64-compiler-main-unit-cache-ctor-20261029.tar.gz' }}
-      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3' }}
+      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-worker-reuse-cleanup-20261029/bend-2.0.25-linux-x64-compiler-main-worker-reuse-cleanup-20261029.tar.gz' }}
+      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '2b272454ec56a3d47f6957d8ad28da7d946dce470747e8bde5d5ff274c48e957' }}
     steps:
       - name: Validate exact source commit
         shell: bash
@@ -609,16 +609,33 @@ jobs:
           if status:
               raise SystemExit(status)
           contracts = {}
-          for name in selected:
-              relative = 'bend2/test/' + name
+          # Candidate tests and their fixtures use the target production modules.
+          fixtures = subprocess.check_output(['git', 'ls-files', '-z', '--', 'bend2/test'], cwd=candidate)
+          for name in fixtures.split(b'\0'):
+              relative = os.fsdecode(name)
+              if not relative:
+                  continue
               original = candidate / relative
+              destination = target / relative
+              destination.parent.mkdir(parents=True, exist_ok=True)
               contracts[relative] = hashlib.sha256(original.read_bytes()).hexdigest()
-              shutil.copyfile(original, target / relative)
+              shutil.copyfile(original, destination)
           (evidence / 'comparison.json').write_text(json.dumps({
               'target_commit': os.environ['BATON2_TARGET_COMMIT'], 'candidate_commit': os.environ['BATON2_SOURCE_SHA'],
               'test_contracts': contracts,
-              'method': 'Candidate test contracts execute against the exact target production build and target helpers.'
+              'method': 'The tracked candidate test contracts and fixtures execute against the exact target production build and target production modules.'
           }, indent=2) + '\n')
+          hook_fixture = target / '.scratch/bend2/stop-hook-entry-target'
+          # A fixture build failure on the target is a recorded target outcome: the fixture variable
+          # stays unset and the tests below report it.
+          status = record('target-stop-hook-build', ['sh', 'bend2/scripts/build-native.sh',
+                          'bend2/test/stop-hook-entry.bend', str(hook_fixture)])
+          if status == 0:
+              check_environment['BATON2_STOP_HOOK_FIXTURE'] = str(hook_fixture)
+          # The prompt statements exist only where the target production modules provide them.
+          # The fixture is built beside the stop-hook entry, and the tests that need it fail when it is absent.
+          record('target-prompt-status-build', ['sh', 'bend2/scripts/build-native.sh',
+                 'bend2/test/prompt-status-entry.bend', str(target / '.scratch/bend2/prompt-status-entry-target')])
           for name in selected:
               record('target-' + name, ['python3', 'bend2/test/' + name, '-v'])
           outcomes = {name: json.loads((evidence / 'selected' / (name + '.json')).read_text()) for name in selected}
@@ -660,8 +677,8 @@ jobs:
       labels: [self-hosted, Linux, X64, baton2-native-linux-x64, baton2-native-darwin-cross]
     env:
       BATON2_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || '' }}
-      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-unit-cache-ctor-20261029/bend-2.0.25-linux-x64-compiler-main-unit-cache-ctor-20261029.tar.gz' }}
-      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3' }}
+      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-main-worker-reuse-cleanup-20261029/bend-2.0.25-linux-x64-compiler-main-worker-reuse-cleanup-20261029.tar.gz' }}
+      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '2b272454ec56a3d47f6957d8ad28da7d946dce470747e8bde5d5ff274c48e957' }}
       CC: /usr/bin/clang-19
     steps:
       - name: Validate generated C reuse selection

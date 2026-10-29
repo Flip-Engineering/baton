@@ -45,6 +45,12 @@ def package(args):
         target.write_bytes(content)
     provenance = prefix / 'provenance'
     provenance.mkdir(exist_ok=True)
+    inherited_source = provenance / 'source.json'
+    inherited_validation = provenance / 'validation.json'
+    if inherited_source.is_file():
+        shutil.copyfile(inherited_source, provenance / (args.name + '-inherited-source.json'))
+    if inherited_validation.is_file():
+        shutil.copyfile(inherited_validation, provenance / (args.name + '-inherited-validation.json'))
     manifest_path = prefix / 'fork-manifest.json'
     shutil.copyfile(manifest_path, provenance / (args.name + '-parent.json'))
     (provenance / (args.name + '-source.lock.json')).write_bytes(lock_bytes)
@@ -64,6 +70,35 @@ def package(args):
         'cache_ts': {'path': 'bend2/cache.ts', 'sha256': digest(source / 'cache.ts')},
     }
     save(manifest_path, manifest)
+    save(provenance / 'source.json', {
+        'schema': 'baton-bend-compiler-source-package-v1',
+        'repository': 'Flip-Engineering/baton',
+        'source_commit': commit, 'source_tree': source_tree,
+        'lock_sha256': manifest['source_lock_sha256'],
+        'lock_path': 'provenance/' + args.name + '-source.lock.json',
+        'source_root': 'bend2/compiler/upstream', 'package_root': 'bend2',
+        'input_count': len(lock['files']),
+        'files': [{'bytes': row['bytes'], 'path': 'bend2/' + row['path'],
+                   'sha256': row['sha256'], 'upstream_path': row['path']}
+                  for row in lock['files']],
+    })
+    inherited_validation_data = {}
+    if inherited_validation.is_file():
+        inherited_validation_data = json.loads(
+            (provenance / (args.name + '-inherited-validation.json')).read_text())
+    save(provenance / 'validation.json', {
+        'schema': 'baton-bend-distribution-validation-v1',
+        'status': 'not_run',
+        'reason': 'This packaging step records committed source inputs and retains the existing compiler runtime. It does not build or execute the compiler.',
+        'source_commit': commit, 'source_tree': source_tree,
+        'bun_version': inherited_validation_data.get('bun_version'),
+        'bun_revision': inherited_validation_data.get('bun_revision'),
+        'bun_sha256': digest(prefix / 'bin/bun'),
+        'launcher_sha256': digest(prefix / 'bin/bend'),
+        'cgen_cache_sha256': digest(source / 'cache.ts'),
+        'inherited_validation': args.name + '-inherited-validation.json'
+        if inherited_validation_data else None,
+    })
     output = args.output / ('bend-2.0.25-linux-x64-' + args.name + '.tar.gz')
     final_archive = (args.final_archive_path or output).resolve()
     deployment_path = prefix / 'deployment.json'

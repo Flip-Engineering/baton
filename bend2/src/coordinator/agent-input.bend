@@ -83,6 +83,45 @@ def mcp_witness(+db: String, +session: String, +witness: String) -> IO(HandlingS
       ++ ",'$.endpoint')) ELSE '' END ELSE '' END;"))
     mcp_witness_fields(Tx.split_tabs(Tx.trim_nl(fields)),session)
 
+def mcp_stream_fields(fields: List<String>, +session: String) -> IO(HandlingScope):
+  match fields:
+    case attempt_hex <> native_hex <> identity_hex <> endpoint_hex <> message_hex <> Nil{}: do IO<HandlingScope>:
+      attempt : String <- field(attempt_hex)
+      +native : String <- field(native_hex)
+      identity : String <- field(identity_hex)
+      endpoint : String <- field(endpoint_hex)
+      message : String <- field(message_hex)
+      IO.pure(HandlingScope,Handling{attempt,native,identity,
+        "EXISTS(SELECT 1 FROM sessions connected WHERE connected.id=" ++ C.q(session)
+        ++ " AND connected.harness IN ('claude-code','codex') AND connected.native=" ++ C.q(native)
+        ++ " AND connected.endpoint=" ++ C.q(endpoint) ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=connected.id))"
+        ++ " AND EXISTS(SELECT 1 FROM messages m WHERE m.id=" ++ C.q(message)
+        ++ " AND m.recipient=" ++ C.q(session) ++ " AND " ++ Status.owed_sql("m") ++ ")"})
+    case other: handling_invalid("Handling requires a complete input accepted on the connected root channel.")
+
+def mcp_stream_witness(+db: String, +session: String, +context: String) -> IO(HandlingScope):
+  do IO<HandlingScope>:
+    +database : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    fields : String <- IO.try(String,DB.Sql.read(db,
+      "SELECT CASE WHEN json_valid(" ++ C.q(context) ++ ") THEN CASE WHEN json_extract(" ++ C.q(context)
+      ++ ",'$.ready')=1 AND json_extract(" ++ C.q(context) ++ ",'$.database')=" ++ C.q(database)
+      ++ " AND json_extract(" ++ C.q(context) ++ ",'$.session')=" ++ C.q(session)
+      ++ " AND json_type(" ++ C.q(context) ++ ",'$.connection')='text' AND json_extract(" ++ C.q(context)
+      ++ ",'$.connection')<>'' AND json_type(" ++ C.q(context) ++ ",'$.readMessage')='text' AND json_extract(" ++ C.q(context)
+      ++ ",'$.readMessage')<>'' AND json_type(" ++ C.q(context) ++ ",'$.native')='text' AND json_type(" ++ C.q(context)
+      ++ ",'$.endpoint')='text' AND json_extract(" ++ C.q(context) ++ ",'$.harness') IN ('claude-code','codex')"
+      ++ " AND (json_extract(" ++ C.q(context) ++ ",'$.harness')<>'codex' OR json_extract(" ++ C.q(context)
+      ++ ",'$.thread')=json_extract(" ++ C.q(context) ++ ",'$.native'))"
+      ++ " AND EXISTS(SELECT 1 FROM sessions s WHERE s.id=" ++ C.q(session) ++ " AND s.harness=json_extract(" ++ C.q(context)
+      ++ ",'$.harness') AND s.native=json_extract(" ++ C.q(context) ++ ",'$.native') AND s.endpoint=json_extract(" ++ C.q(context)
+      ++ ",'$.endpoint') AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=s.id))"
+      ++ " AND EXISTS(SELECT 1 FROM messages m WHERE m.id=json_extract(" ++ C.q(context) ++ ",'$.readMessage') AND m.recipient=" ++ C.q(session)
+      ++ " AND " ++ Status.owed_sql("m") ++ ") THEN hex('root-channel:'||json_extract(" ++ C.q(context)
+      ++ ",'$.connection'))||char(9)||hex(json_extract(" ++ C.q(context) ++ ",'$.native'))||char(9)||hex('root-channel:'||json_extract(" ++ C.q(context)
+      ++ ",'$.connection')||':'||json_extract(" ++ C.q(context) ++ ",'$.readMessage'))||char(9)||hex(json_extract(" ++ C.q(context)
+      ++ ",'$.endpoint'))||char(9)||hex(json_extract(" ++ C.q(context) ++ ",'$.readMessage')) ELSE '' END ELSE '' END;"))
+    mcp_stream_fields(Tx.split_tabs(Tx.trim_nl(fields)),session)
+
 def mcp_witness_result(db: String, session: String, result: G.RunRes) -> IO(HandlingScope):
   match result:
     case G.RRun{G.SExit{+code},+witness}:
@@ -101,17 +140,32 @@ def mcp_endpoint_fields(fields: List<String>, +db: String, +session: String, con
       mcp_witness_result(db,session,witness)
     case other: handling_invalid("Handling requires the current connected Claude endpoint, native conversation and stop state.")
 
+def mcp_stream_witness_selected(+db: String, +session: String, +context: String) -> IO(HandlingScope):
+  mcp_stream_witness(db,session,context)
+
+def mcp_handling_legacy(+db: String, +session: String, +context: String) -> IO(HandlingScope):
+  do IO<HandlingScope>:
+    fields : String <- IO.try(String,DB.Sql.read(db,
+      "SELECT hex(json_extract(s.endpoint,'$[0]'))||char(9)||hex(json_extract(s.endpoint,'$[1]')) FROM sessions s WHERE s.id=" ++ C.q(session)
+      ++ " AND s.harness='claude-code' AND s.native<>'' AND CASE WHEN json_valid(" ++ C.q(context)
+      ++ ") THEN json_extract(" ++ C.q(context) ++ ",'$.session')=s.id AND json_extract(" ++ C.q(context)
+      ++ ",'$.native')=s.native AND json_extract(" ++ C.q(context) ++ ",'$.endpoint')=s.endpoint ELSE 0 END"
+      ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=s.id);"))
+    mcp_endpoint_fields(Tx.split_tabs(Tx.trim_nl(fields)),db,session,context)
+
+def mcp_handling_selected(has_read_message: Bool, +db: String, +session: String, +context: String) -> IO(HandlingScope):
+  match has_read_message:
+    case True{}: mcp_stream_witness_selected(db,session,context)
+    case False{}: mcp_handling_legacy(db,session,context)
+
 def mcp_handling_owned(owned: Bool, +db: String, +session: String, +context: String) -> IO(HandlingScope):
   match owned:
     case False{}: IO.pure(HandlingScope,NoHandling{})
     case True{}: do IO<HandlingScope>:
-      fields : String <- IO.try(String,DB.Sql.read(db,
-        "SELECT hex(json_extract(s.endpoint,'$[0]'))||char(9)||hex(json_extract(s.endpoint,'$[1]')) FROM sessions s WHERE s.id=" ++ C.q(session)
-        ++ " AND s.harness='claude-code' AND s.native<>'' AND CASE WHEN json_valid(" ++ C.q(context)
-        ++ ") THEN json_extract(" ++ C.q(context) ++ ",'$.session')=s.id AND json_extract(" ++ C.q(context)
-        ++ ",'$.native')=s.native AND json_extract(" ++ C.q(context) ++ ",'$.endpoint')=s.endpoint ELSE 0 END"
-        ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=s.id);"))
-      mcp_endpoint_fields(Tx.split_tabs(Tx.trim_nl(fields)),db,session,context)
+      selected : String <- IO.try(String,DB.Sql.read(db,
+        "SELECT CASE WHEN json_valid(" ++ C.q(context) ++ ") THEN json_type(" ++ C.q(context)
+        ++ ",'$.readMessage')='text' AND json_extract(" ++ C.q(context) ++ ",'$.readMessage')<>'' ELSE 0 END;"))
+      mcp_handling_selected(String.eq(Tx.trim_nl(selected),"1"),db,session,context)
 
 def mcp_handling(+db: String, +session: String, context: String) -> IO(HandlingScope):
   do IO<HandlingScope>:
@@ -379,5 +433,5 @@ def record_initial_reads(+db: String, session: String, attempt: String) -> IO(Un
 
 def initial_observed(+db: String, +session: String, +attempt: String, +event: String) -> IO(Unit):
   do IO<Unit>:
-    identity : String <- IO.try(String,DB.Sql.read(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN coalesce(CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='thread.started' THEN json_extract(" ++ C.q(event) ++ ",'$.thread_id') END,json_extract(" ++ C.q(event) ++ ",'$.session_id'),CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='response' AND json_extract(" ++ C.q(event) ++ ",'$.command')='get_state' AND json_extract(" ++ C.q(event) ++ ",'$.success')=1 THEN json_extract(" ++ C.q(event) ++ ",'$.data.sessionId') END,CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.stream.kind')='session' THEN json_extract(" ++ C.q(event) ++ ",'$.stream.id') END,'')<>'' ELSE 0 END;"))
+    identity : String <- IO.try(String,DB.Sql.read(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN coalesce(CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='thread.started' THEN json_extract(" ++ C.q(event) ++ ",'$.thread_id') END,json_extract(" ++ C.q(event) ++ ",'$.session_id'),CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='response' AND json_extract(" ++ C.q(event) ++ ",'$.command')='get_state' AND json_extract(" ++ C.q(event) ++ ",'$.success')=1 THEN json_extract(" ++ C.q(event) ++ ",'$.data.sessionId') END,CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.stream.kind')='session' THEN json_extract(" ++ C.q(event) ++ ",'$.stream.id') END,CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='session' THEN json_extract(" ++ C.q(event) ++ ",'$.id') END,'')<>'' ELSE 0 END;"))
     Bool.pick(IO(Unit),String.eq(identity,"1\n"),record_initial_reads(db,session,attempt),IO.pure(Unit,Unit{}))

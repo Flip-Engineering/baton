@@ -48,6 +48,9 @@ def main():
     binary_sha = digest(compiler)
     if 'binary_sha256' in identity:
         require(binary_sha == identity['binary_sha256'], 'The selected compiler binary changed.')
+    if 'bun_sha256' in identity:
+        require(digest(home / 'bin/bun') == identity['bun_sha256'],
+                'The selected compiler Bun runtime changed.')
     selection = {'schema': 'baton2-linux-compiler-selection-v1', **identity,
                  'selection': 'retained' if selected else 'downloaded',
                  'compiler_archive_sha256': archive_sha, 'compiler_binary_sha256': binary_sha,

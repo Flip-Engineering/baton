@@ -293,10 +293,19 @@ def graph_read(db: String, reader: String, scope: String, subject: String, query
 def knowledge_answer(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
   "SELECT json_object('id',id,'author',author,'claim',claim,'evidence',evidence,'limits',limits) FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ";"
 
-# The immediate parent of an author. A session with no recorded parent records
-# the finding and sends no notice.
+# The current coordinator of an author: its recorded parent while that parent is
+# not over, else the parent's successor, the nearest ancestor that is not over, or
+# the registered operator. A parentless conductor's notice goes to the registered
+# operator. A parentless Player, or a session with no coordinator and no
+# registered operator, records the finding and sends no notice.
 def notice_target(+author: String) -> String:
-  "(SELECT parent FROM sessions WHERE id=" ++ C.q(author) ++ ")"
+  C.current_coordinator_sql(C.q(author))
+
+# The recipient of the notice for a finding. A notice already stored for the
+# finding keeps its recorded recipient, so repeating the record after a
+# succession admits the original notice.
+def notice_recipient(+id: String, +author: String) -> String:
+  C.historical_recipient_sql(notice_id(id),author,"question",notice_target(author))
 
 # The notice's body: the finding and its author, and nothing else.
 def notice_body(+id: String, +author: String) -> String:
@@ -311,9 +320,9 @@ def knowledge_conflict_sql(+name: String, +table: String, +id: String, +guards: 
 # stopped still receives it under the dispatch family it already serves. It is
 # written only for this invocation's own finding coordinates.
 def notice_statement_when(+id: String, +author: String, +claim: String, +evidence: String, +limits: String, +allowed: String) -> String:
-  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(notice_id(id)) ++ "," ++ C.q(author) ++ "," ++ notice_target(author) ++ ",'question'," ++ notice_body(id,author) ++ " WHERE EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ") AND " ++ notice_target(author) ++ " IS NOT NULL"
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(notice_id(id)) ++ "," ++ C.q(author) ++ "," ++ notice_recipient(id,author) ++ ",'question'," ++ notice_body(id,author) ++ " WHERE EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ") AND " ++ notice_recipient(id,author) ++ " IS NOT NULL"
   ++ " AND (" ++ allowed ++ ") ON CONFLICT(id) DO NOTHING;"
-  ++ knowledge_conflict_sql("knowledge-notice-conflict","messages",C.q(notice_id(id)),"(" ++ allowed ++ ") AND " ++ notice_target(author) ++ " IS NOT NULL AND EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ")", "sender=" ++ C.q(author) ++ " AND recipient=" ++ notice_target(author) ++ " AND kind='question' AND body=" ++ notice_body(id,author),"'sender',sender,'recipient',recipient,'kind',kind")
+  ++ knowledge_conflict_sql("knowledge-notice-conflict","messages",C.q(notice_id(id)),"(" ++ allowed ++ ") AND " ++ notice_recipient(id,author) ++ " IS NOT NULL AND EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ")", "sender=" ++ C.q(author) ++ " AND recipient=" ++ notice_recipient(id,author) ++ " AND kind='question' AND body=" ++ notice_body(id,author),"'sender',sender,'recipient',recipient,'kind',kind")
 
 def notice_statement(id: String, author: String, claim: String, evidence: String, limits: String) -> String:
   notice_statement_when(id,author,claim,evidence,limits,"1")

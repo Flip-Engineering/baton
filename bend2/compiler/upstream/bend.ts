@@ -4564,7 +4564,8 @@ export function def_inst(book: Book, lhs: LHS, tm: Extract<HTerm, { $: "Ref" }>,
 // (infer-ref) while the caller is declared; it stays outside the order
 // (a seeded book keeps it), so it is no claim.
 
-export function book_valid(book: Book, done: number = 0): void {
+export function book_valid(book: Book, done: number = 0,
+  observe?: (event: string, details: Record<string, unknown>) => void): void {
   const tlds = book.tlds;
   const last = new Map<Name, number>();
   for (let i = 0; i < book.order.length; i++) {
@@ -4647,7 +4648,11 @@ export function book_valid(book: Book, done: number = 0): void {
       }
     }
     if (def.v !== null) {
+      const started = observe === undefined ? 0 : performance.now();
+      observe?.("definition.check.begin", { name: k, index: i, definitions: book.order.length });
       def.e = def_check(book, k, def);
+      observe?.("definition.check.end", { name: k, index: i, definitions: book.order.length,
+        duration_ms: performance.now() - started });
     }
     book.tlds[k] = def;
   }

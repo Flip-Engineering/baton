@@ -438,7 +438,7 @@ class AgentInput(unittest.TestCase):
         self.assertEqual(status['read'], 'recorded')
         self.assertTrue(all(row['identity'] == 'receipt' for row in status['attempts']))
 
-    def app_action(self, *arguments, native='native-root', session=None, output=None):
+    def app_action(self, *arguments, native='native-root', session=None, output=None, mcp_context=None):
         environment = os.environ.copy()
         environment['CODEX_THREAD_ID'] = native
         for name in ('BATON_DATABASE', 'BATON_SESSION', 'BATON_ATTEMPT_DIRECTORY',
@@ -446,9 +446,52 @@ class AgentInput(unittest.TestCase):
             environment.pop(name, None)
         if session is not None:
             environment['BATON_SESSION'] = session
+        if mcp_context is not None:
+            environment['BATON_MCP_INPUT'] = json.dumps(mcp_context)
         command = [str(receive.EXE), str(self.fx.db), 'as', 'root', *arguments]
         return subprocess.run(command, stdout=output or subprocess.PIPE,
                               stderr=subprocess.PIPE, text=True, env=environment)
+
+    def test_root_channel_read_records_a_connection_scoped_codex_witness(self):
+        ident = 'root-channel-codex-read'
+        self.fx.prepare_input(ident, 'root', 'Complete remote root input. λ🙂', kind='report')
+        database = str(self.fx.db.resolve())
+        endpoint = json.dumps([str(receive.EXE.resolve()), '/release/mcp-conductor.mjs',
+                               database, str(receive.EXE.resolve()), '--session', 'root',
+                               '--deliver', 'conductor-root.sock'])
+        with sqlite3.connect(str(self.fx.db)) as db:
+            db.execute("UPDATE sessions SET harness='codex',native='native-root',endpoint=? WHERE id='root'",
+                       (endpoint,))
+        context = {'ready': True, 'database': database, 'session': 'root',
+                   'native': 'native-root', 'harness': 'codex', 'endpoint': endpoint,
+                   'connection': 'connection-1', 'readMessage': ident}
+        result = self.app_action('delivery', ident, native='native-root', session='root',
+                                 mcp_context=context)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['body'], 'Complete remote root input. λ🙂')
+        rows = [row for row in self.reads() if row['message'] == ident]
+        self.assertTrue(any(row['native'] == 'native-root' and
+                            row['attempt'] == 'root-channel:connection-1' and
+                            row['identity'] == 'root-channel:connection-1:' + ident for row in rows), rows)
+        self.assertTrue(all(row['handled'] is None for row in rows))
+
+    def test_root_channel_codex_witness_cannot_read_a_different_message(self):
+        ident = 'root-channel-codex-read'
+        self.fx.prepare_input(ident, 'root', 'Complete remote root input.', kind='report')
+        database = str(self.fx.db.resolve())
+        endpoint = json.dumps([str(receive.EXE.resolve()), '/release/mcp-conductor.mjs',
+                               database, str(receive.EXE.resolve()), '--session', 'root',
+                               '--deliver', 'conductor-root.sock'])
+        with sqlite3.connect(str(self.fx.db)) as db:
+            db.execute("UPDATE sessions SET harness='codex',native='native-root',endpoint=? WHERE id='root'",
+                       (endpoint,))
+        context = {'ready': True, 'database': database, 'session': 'root',
+                   'native': 'native-root', 'harness': 'codex', 'endpoint': endpoint,
+                   'connection': 'connection-1', 'readMessage': 'another-message'}
+        result = self.app_action('delivery', ident, native='native-root', session='root',
+                                 mcp_context=context)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn(ident, {row['message'] for row in self.reads()})
 
     def test_app_pending_uses_explicit_session_when_codex_lookup_is_unmatched(self):
         self.fx.prepare_input('root-pending', 'root', 'Root pending input.\n', kind='guidance')
@@ -630,7 +673,7 @@ class AgentInput(unittest.TestCase):
 
 
 
-    def test_forwarded_guidance_records_the_read_before_a_failed_turn(self):
+    def test_forwarded_omp_input_kinds_record_reads_before_a_failed_turn(self):
         self.fx.player('omp-parent', harness='omp')
         self.fx.prepare_input('omp-owned-input', 'omp-parent', 'Complete OMP input.\nλ🙂\n',
                               kind='task')
@@ -638,26 +681,34 @@ class AgentInput(unittest.TestCase):
         stream, started = self.fx.accept_child(child, 'omp-parent')
         self.fx.eventually(lambda: self.fx.coord('player', 'omp-parent')['native'] == started['native'],
                            'The retained startup frame was not observed.')
-        self.fx.action(stream, read_steer=True, signal_steer_wait=True,
-                       check_steer_receipt=True)
-        self.assertEqual(json.loads(stream.readline()), {'waiting_for_steer': True})
-        self.fx.coord('message', 'steered-guidance', 'root', 'omp-parent', 'guidance',
-                      'Forwarded complete input.\nλ🙂\n')
-        steered = json.loads(stream.readline())['steer_received']
-        self.assertEqual((steered['type'], steered['id']), ('steer', 'steered-guidance'))
-        # The frame written to the native input stream is recorded as read at
-        # forwarding time; no turn outcome or separate action is involved.
-        self.assertEqual({row['message'] for row in self.reads()},
-                         {'omp-owned-input', 'steered-guidance'})
-        delivered = self.fx.coord('delivery', 'steered-guidance')
-        self.assertIsNone(delivered['receipt'])
-        self.assertEqual(delivered['nativeInputStatus']['read'], 'recorded')
-        # A failed turn preserves the recorded read and owes nothing again.
+        kinds = ('guidance', 'report', 'question', 'task', 'task-assignment',
+                 'task-continuation', 'recovery', 'completion-request', 'completion-confirmed')
+        expected_ids = {'omp-owned-input'}
+        for index, kind in enumerate(kinds):
+            ident = f'omp-input-{index}'
+            body = f'Complete forwarded {kind} body.\nλ🙂\n'
+            self.fx.action(stream, read_steer=True, signal_steer_wait=True,
+                           check_steer_read=True)
+            self.assertEqual(json.loads(stream.readline()), {'waiting_for_steer': True})
+            self.fx.coord('message', ident, 'root', 'omp-parent', kind, body)
+            steered = json.loads(stream.readline())['steer_received']
+            self.assertEqual((steered['type'], steered['id']), ('steer', ident))
+            expected = f'Message ({kind}) from root [id: {ident}]:\n{body}'
+            if kind == 'completion-request':
+                expected += ("\nReview the work against root's assignment and the supplied evidence. "
+                             'Confirm with completion-confirmed --to root when the assignment is satisfied. '
+                             'Otherwise use guide --to root --text TEXT to state what is missing and direct the remaining work.')
+            self.assertEqual(steered['message'], expected)
+            expected_ids.add(ident)
+            self.assertEqual({row['message'] for row in self.reads()}, expected_ids)
+            delivered = self.fx.coord('delivery', ident)
+            self.assertIsNone(delivered['receipt'])
+            self.assertEqual(delivered['nativeInputStatus']['read'], 'recorded')
+        # Failed turn settlement preserves delivery-time read records.
         self.fx.action(stream, body='Controlled native result.', complete_task=False,
                        fail=True)
         self.fx.finish(child, ok=False)
-        self.assertEqual({row['message'] for row in self.reads()},
-                         {'omp-owned-input', 'steered-guidance'})
+        self.assertEqual({row['message'] for row in self.reads()}, expected_ids)
         self.assertEqual(self.fx.coord('inbox', 'omp-parent'), [])
         self.fx.shutdown_idle_database_owner('forwarded read observer did not exit')
 

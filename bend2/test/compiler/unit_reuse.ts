@@ -39,7 +39,7 @@ function build(name: string, text: string, cache: string, extra: NodeJS.ProcessE
   return { sha256: digest(output), hits: named("hit").length, emitted: named("write").map(event => event.unit as string).sort() };
 }
 
-type Case = { name: string; text: string; emitted: string[] };
+type Case = { name: string; text: string; emitted: string[] | null };
 
 function scenario(label: string, original: string, cases: Case[]) {
   const cache = path.join(directory, label + "-cache");
@@ -54,7 +54,7 @@ function scenario(label: string, original: string, cases: Case[]) {
     const warm = build(label + "-" + item.name + "-warm", item.text, cache);
     const fresh = build(label + "-" + item.name + "-cold", item.text, path.join(directory, label + "-" + item.name + "-cache"));
     assert.equal(warm.sha256, fresh.sha256, label + " " + item.name + ": a reused unit leaves the C unchanged");
-    assert.deepEqual(warm.emitted, item.emitted, label + " " + item.name + ": units emitted again");
+    if (item.emitted !== null) assert.deepEqual(warm.emitted, item.emitted, label + " " + item.name + ": units emitted again");
     assert.equal(warm.hits + warm.emitted.length, fresh.emitted.length, label + " " + item.name + ": every unit is reused or emitted");
     summary.push({ label, name: item.name, units: fresh.emitted.length, reused: warm.hits, emitted: warm.emitted,
       changed_c: warm.sha256 !== cold.sha256 });
@@ -142,6 +142,43 @@ def main() -> U32:
 `),
       emitted: ["loop_a", "loop_b", "main"] },
   ]);
+  // Units that use the layout of one type read the type's header entry. A constructor added to the
+  // type changes the tag and layout while every other definition keeps its text.
+  const colour = `import Base
+
+type Colour is Data:
+  Red{}
+  Green{}
+  Blue{}
+
+def rank(c: Colour) -> Nat:
+  match c:
+    case Red{}: 1n
+    case Green{}: 2n
+    case _: 0n
+
+def next(c: Colour) -> Colour:
+  match c:
+    case Red{}: Green{}
+    case Green{}: Blue{}
+    case _: Red{}
+
+def twice(c: Colour) -> Colour:
+  next(next(c))
+
+def score(+c: Colour) -> Nat:
+  Nat.add(rank(c), rank(twice(c)))
+
+def main() -> IO(Unit):
+  IO.print(Nat.show(score(Blue{})))
+`;
+  const three = scenario("layout", colour, [
+    { name: "added-constructor", text: colour.replace("  Blue{}\n", "  Blue{}\n  Violet{}\n"), emitted: null },
+    { name: "inserted-constructor", text: colour.replace("  Blue{}\n", "  Teal{}\n  Blue{}\n"), emitted: null },
+    { name: "constructor-with-fields", text: colour.replace("  Blue{}\n", "  Blue{}\n  Violet{a: U32, b: U32}\n"), emitted: null },
+    { name: "five-constructors", text: colour.replace("  Blue{}\n", "  Blue{}\n  Violet{}\n  Pink{}\n"), emitted: null },
+  ]);
+
   // Builds that run under different home directories share units through BEND_CGEN_CACHE_DIR.
   const shared = path.join(directory, "shared-cache");
   const first = build("shared-first", chain, path.join(directory, "home-a"), { BEND_CGEN_CACHE_DIR: shared });
@@ -151,7 +188,7 @@ def main() -> U32:
   assert.equal(first.hits, 0);
   assert.ok(fs.existsSync(path.join(shared, "cgen-units-v1")));
   assert.ok(!fs.existsSync(path.join(directory, "home-a", "bend2")) && !fs.existsSync(path.join(directory, "home-b", "bend2")));
-  fs.writeFileSync(path.join(directory, "summary.json"), JSON.stringify([...one.summary, ...two.summary], null, 2));
+  fs.writeFileSync(path.join(directory, "summary.json"), JSON.stringify([...one.summary, ...two.summary, ...three.summary], null, 2));
   console.log(JSON.stringify({ test: "unit_reuse", chain_units: one.cold.emitted.length, sites_units: two.cold.emitted.length,
-    cases: [...one.summary, ...two.summary] }));
+    cases: [...one.summary, ...two.summary, ...three.summary] }));
 } finally { if (!retained) fs.rmSync(directory, { recursive: true, force: true }); }

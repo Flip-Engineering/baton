@@ -65,7 +65,7 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_READ_AWAKE, BP_WAIT, BP_SIGNAL,
        BP_INSTANCE_PREPARE_WITH_FILE, BP_INSTANCE_START, BP_INSTANCE_CANCEL,
        BP_INSTANCE_OWNER_WITNESS, BP_INSTANCE_ENSURE_OWNER_WITNESS,
        BP_INSTANCE_RECOVER, BP_INSTANCE_INPUT_WITNESS, BP_INSTANCE_INPUT_PROMPT,
-       BP_OBSERVER_RECOVERY, BP_READ_SPAN, BP_READ_AWAKE_SPAN, BP_SPAWN_ENV_FILE,
+       BP_INSTANCE_ATTEMPT_SIGNAL, BP_OBSERVER_RECOVERY, BP_READ_SPAN, BP_READ_AWAKE_SPAN, BP_SPAWN_ENV_FILE,
        BP_INSTANCE_MONITOR_COMMIT };
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
@@ -383,6 +383,9 @@ typedef struct {
   BrBirth birth;
   uint64_t manifest,length,check;
 } BrInputDelivery;
+/* Span reads pread this many bytes at a time and keep at most this many bytes
+   after the newline of the line they return. */
+#define BR_SPOOL_TAIL 8192
 typedef struct BatonRetained {
   int socket,spool,error,exited,status,input_closed;
   int guard,watch,life,orphan,unknown,released,acknowledged,observer_only,custody_lock;
@@ -391,6 +394,15 @@ typedef struct BatonRetained {
   uint64_t version,serial,reply_serial,owner_attempt,owner_incarnation,owner_epoch;
   int reply_error;
   off_t offset;
+  /* Span reader state, guarded by the reader mutex and valid only while
+     spool_state_offset equals offset. spool_partial bytes at offset are known
+     to hold no newline. spool_tail holds the spool bytes that follow them.
+     Spool bytes never change once written, so these stay correct until offset
+     moves by another path. */
+  char spool_tail[BR_SPOOL_TAIL];
+  size_t spool_tail_length;
+  uint64_t spool_partial;
+  off_t spool_state_offset;
   uint64_t offset_stored,incarnation;
   uint64_t subscribe_generation,subscribe_cursor;
   int subscribe_gap;
@@ -450,9 +462,10 @@ typedef struct {
 typedef struct {
   uint32_t directory_length,bootstrap_length,witness_length,reserved;
 } BrRecoveryRequest;
+typedef struct { int32_t disposition,status; } BrAttemptSignalResult;
 enum { BI_ENSURE=1, BI_ADMIT, BI_ATTACH, BI_SHUTDOWN, BI_STATE, BI_HELLO, BI_REPLY,
        BI_SUBSCRIBE, BI_COMMIT, BI_NOTICE, BI_READY, BI_PREPARE, BI_START, BI_CANCEL,
-       BI_RECOVER };
+       BI_RECOVER, BI_ATTEMPT_SIGNAL };
 /* A committed-change subscription. A process that committed a database
    transaction publishes the durable native_changes high-water cursor with
    BI_COMMIT after its commit; the owner records the highest published cursor and
@@ -1337,37 +1350,79 @@ static void br_read_line(BatonProcessCall *call) {
   }
   pthread_mutex_unlock(&retained->reader);
 }
+/* Discards the span reader state and binds it to the current offset. */
+static void br_spool_tail_reset(BatonRetained *retained) {
+  retained->spool_tail_length=0;retained->spool_partial=0;
+  retained->spool_state_offset=retained->offset;
+}
+/* Starts a span read from the bytes kept by an earlier span read. Returns 1
+   with *line set to the length of a line whose newline is in spool_tail; the
+   bytes after that newline stay in spool_tail. Returns 0 with *line set to the
+   number of bytes at offset that hold no newline, where the next pread starts.
+   Returns -1 with call->error set on overflow. offset does not move. */
+static int br_spool_tail_line(BatonRetained *retained,BatonProcessCall *call,uint64_t *line) {
+  if(retained->spool_state_offset!=retained->offset) br_spool_tail_reset(retained);
+  *line=retained->spool_partial;
+  if(!retained->spool_tail_length) return 0;
+  char *newline=memchr(retained->spool_tail,'\n',retained->spool_tail_length);
+  size_t content=newline?(size_t)(newline-retained->spool_tail):retained->spool_tail_length;
+  if(*line>UINT64_MAX-content) {call->error=EOVERFLOW;return -1;}
+  *line+=content;
+  if(!newline) {retained->spool_tail_length=0;retained->spool_partial=*line;return 0;}
+  size_t remaining=retained->spool_tail_length-content-1;
+  memmove(retained->spool_tail,newline+1,remaining);
+  retained->spool_tail_length=remaining;
+  return 1;
+}
+/* Keeps the chunk bytes after the newline of the line being returned. A chunk
+   is at most BR_SPOOL_TAIL bytes, so they fit. */
+static void br_spool_tail_keep(BatonRetained *retained,const char *bytes,size_t length) {
+  memcpy(retained->spool_tail,bytes,length);
+  retained->spool_tail_length=length;
+}
+/* Moves offset past a returned line or end-of-output tail. The kept bytes
+   start at the new offset. */
+static void br_spool_tail_commit(BatonRetained *retained,off_t offset) {
+  retained->offset=offset;retained->spool_partial=0;retained->spool_state_offset=offset;
+}
 /* Read one complete retained-spool line as a byte range. Commit the cursor
-   only after a full line or exited partial tail has been read successfully. */
+   only after a full line or exited partial tail has been read successfully.
+   Bytes kept by the previous span read are scanned before the next pread. */
 static void br_read_line_span(BatonProcessCall *call) {
   BatonRetained *retained=call->child->retained;
   pthread_mutex_lock(&retained->reader);
   if(retained->spool<0 || retained->offset<0) {call->error=EBADF;goto done;}
-  off_t staged=retained->offset;
-  call->frame_start=(uint64_t)staged;
-  for(;;) {
+  call->frame_start=(uint64_t)retained->offset;
+  /* Kept bytes came from an earlier read. A child error recorded since then is
+     reported before they are used, as an uncached read reports it. */
+  pthread_mutex_lock(&retained->state);
+  call->error=retained->error;pthread_mutex_unlock(&retained->state);
+  if(call->error) goto done;
+  uint64_t line=0;
+  int found=br_spool_tail_line(retained,call,&line);
+  if(found<0) goto done;
+  while(!found) {
     pthread_mutex_lock(&retained->state);
-    uint64_t version=retained->version;int exited=retained->exited;
+    uint64_t version=retained->version;
     call->error=retained->error;pthread_mutex_unlock(&retained->state);
     if(call->error) break;
-    char chunk[8192];ssize_t n=pread(retained->spool,chunk,sizeof(chunk),staged);
+    if(line>(uint64_t)LLONG_MAX || retained->offset>LLONG_MAX-(off_t)line) {call->error=EOVERFLOW;break;}
+    char chunk[BR_SPOOL_TAIL];ssize_t n=pread(retained->spool,chunk,sizeof(chunk),retained->offset+(off_t)line);
     if(n<0 && errno==EINTR) continue;
     if(n<0) {call->error=errno;break;}
     if(n) {
       char *newline=memchr(chunk,'\n',(size_t)n);
-      size_t consumed=newline?(size_t)(newline-chunk)+1:(size_t)n;
-      size_t content=consumed-(newline?1u:0u);
-      if(content>UINT64_MAX-call->frame_length || consumed>(size_t)LLONG_MAX ||
-         staged>LLONG_MAX-(off_t)consumed) {call->error=EOVERFLOW;break;}
-      call->frame_length+=(uint64_t)content;
-      staged+=(off_t)consumed;
-      if(newline) break;
+      size_t content=newline?(size_t)(newline-chunk):(size_t)n;
+      if(line>UINT64_MAX-content) {call->error=EOVERFLOW;break;}
+      line+=content;
+      if(newline) {br_spool_tail_keep(retained,newline+1,(size_t)n-content-1);found=1;}
+      else retained->spool_partial=line;
       continue;
     }
     pthread_mutex_lock(&retained->state);
     int finished=retained->exited;
     if(retained->error) call->error=retained->error;
-    else if(finished) call->eof=call->frame_length==0;
+    else if(finished) call->eof=line==0;
     else {
       while(version==retained->version && !retained->exited && !retained->error)
         pthread_cond_wait(&retained->changed,&retained->state);
@@ -1375,18 +1430,24 @@ static void br_read_line_span(BatonProcessCall *call) {
     pthread_mutex_unlock(&retained->state);
     if(call->error || finished) break;
   }
+  call->frame_length=line;
   if(!call->error && !call->eof) {
+    uint64_t consumed=line+(uint64_t)found;
     char start[32],length[32];
     int a=snprintf(start,sizeof(start),"%llu",(unsigned long long)call->frame_start);
     int b=snprintf(length,sizeof(length),"%llu",(unsigned long long)call->frame_length);
-    if(a<0 || (size_t)a>=sizeof(start) || b<0 || (size_t)b>=sizeof(length)) call->error=EOVERFLOW;
+    if(consumed>(uint64_t)LLONG_MAX || retained->offset>LLONG_MAX-(off_t)consumed) call->error=EOVERFLOW;
+    else if(a<0 || (size_t)a>=sizeof(start) || b<0 || (size_t)b>=sizeof(length)) call->error=EOVERFLOW;
     else {
       call->cursor=strdup(start);
       call->generation=strdup(length);
       if(!call->cursor || !call->generation) call->error=ENOMEM;
-      else retained->offset=staged;
+      else br_spool_tail_commit(retained,retained->offset+(off_t)consumed);
     }
   }
+  /* The kept bytes follow the uncommitted line, so they no longer belong to
+     offset. */
+  if(call->error && found==1) br_spool_tail_reset(retained);
 done:
   pthread_mutex_unlock(&retained->reader);
 }
@@ -1444,6 +1505,7 @@ static void baton_retained_call(BatonProcessCall *call) {
        rewound to the beginning when there is not. */
     pthread_mutex_lock(&retained->reader);
     retained->offset=(off_t)offset;retained->offset_stored=offset;
+    br_spool_tail_reset(retained);
     pthread_mutex_unlock(&retained->reader);
     return;
   }
@@ -1453,6 +1515,7 @@ static void baton_retained_call(BatonProcessCall *call) {
        untouched; only the observation position changes. */
     pthread_mutex_lock(&retained->reader);
     retained->offset=0;retained->offset_stored=0;
+    br_spool_tail_reset(retained);
     pthread_mutex_unlock(&retained->reader);
     br_file(retained->directory,"checkpoint-error",
       "state rejected by the observer; replaying from the beginning\n",61,1);
@@ -2700,6 +2763,34 @@ static BrKeeper *br_owner_find(BrOwner *owner,const char *directory) {
     if(!strcmp(keeper->directory,directory))return keeper;
   return NULL;
 }
+/* A missing attempt path can still be controlled while its elected owner holds
+   the exact admitted keeper. The keeper's in-memory birth is the authority; a
+   PID copied from the attempt key or a database row is not sufficient. */
+static int br_owner_signal_attempt(BrOwner *owner,const char *directory,int signal,
+                                   BrAttemptSignalResult *result) {
+  BrKeeper *keeper=br_owner_find(owner,directory);
+  if(!keeper)return ENOENT;
+  if(signal<=0 || signal>=NSIG)return EINVAL;
+  if(keeper->monitor_only)return EPERM;
+  if(keeper->manifest.count<6 || keeper->manifest.count>8)return ENODATA;
+  for(int i=0;i<keeper->manifest.count;i++)if(!keeper->manifest.field[i])return ENODATA;
+  if(keeper->identity!=br_manifest_digest(&keeper->manifest.header,keeper->manifest.field,
+                                           keeper->manifest.count))return ESTALE;
+  if(keeper->native_pid<=1 || keeper->native_birth.pid!=keeper->native_pid)return ENODATA;
+  if(keeper->exited) {
+    if(keeper->status_unavailable || keeper->native_waiting)return ECHILD;
+    *result=(BrAttemptSignalResult){.disposition=2,.status=keeper->status};
+    return 0;
+  }
+  if(!keeper->ready)return EAGAIN;
+  BrBirth current={0};
+  int error=br_birth(keeper->native_pid,&current);
+  if(error)return error;
+  if(!br_same_birth(current,keeper->native_birth))return ESTALE;
+  if(kill(-keeper->native_pid,signal))return errno;
+  *result=(BrAttemptSignalResult){.disposition=1};
+  return 0;
+}
 static uint64_t br_owner_attempts(BrOwner *owner) {
   uint64_t count=0;
   for(BrKeeper *keeper=owner->attempts;keeper;keeper=keeper->next)count++;
@@ -2989,6 +3080,18 @@ static int br_owner_command(BrOwner *owner,BrOwnerControl *control,BrInstanceFra
     return br_owner_reply(control,(BrInstanceFrame){.op=BI_HELLO,.owner=owner->token,
       .epoch=owner->epoch,.attempt=keeper->id,.generation=keeper->generation,
       .state=keeper->monitor_only?2u:1u,.length=sizeof(state)},&state);
+  }
+  if(frame.op==BI_ATTEMPT_SIGNAL) {
+    size_t path_length=strnlen(payload,(size_t)frame.length);
+    if(path_length+1+sizeof(int32_t)!=(size_t)frame.length)
+      return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.owner=owner->token,
+        .epoch=owner->epoch,.error=EPROTO},NULL);
+    int32_t signal=0;
+    memcpy(&signal,payload+path_length+1,sizeof(signal));
+    BrAttemptSignalResult result={0};
+    int error=br_owner_signal_attempt(owner,payload,signal,&result);
+    return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.owner=owner->token,
+      .epoch=owner->epoch,.error=error,.length=error?0:sizeof(result)},error?NULL:&result);
   }
   if(frame.op==BI_ATTACH) {
     /* Resolves the attempt that already owns this directory, so an attaching
@@ -4271,6 +4374,44 @@ static int br_instance_request_witness(const char *database,BrInstanceFrame fram
 static int br_instance_request(const char *database,BrInstanceFrame frame,const char *payload,int rights,BrInstanceFrame *reply) {
   return br_instance_request_witness(database,frame,payload,rights,reply,0,0);
 }
+static int br_instance_signal_attempt(BatonProcessCall *call) {
+  size_t path_length=strlen(call->directory);
+  if(path_length>SIZE_MAX-sizeof(int32_t)-1)return EOVERFLOW;
+  size_t payload_length=path_length+1+sizeof(int32_t);
+  char *payload=malloc(payload_length);
+  if(!payload)return ENOMEM;
+  memcpy(payload,call->directory,path_length+1);
+  int32_t signal=(int32_t)call->signal;
+  memcpy(payload+path_length+1,&signal,sizeof(signal));
+  BrOwnerRecord record={0};BrInstanceFrame reply={0};int socket_fd=-1;
+  int error=br_instance_connect(call->database,0,&record,&socket_fd);
+  if(!error)error=br_instance_exchange(socket_fd,
+    (BrInstanceFrame){.op=BI_ATTEMPT_SIGNAL,.owner=record.token,.epoch=record.epoch,
+      .length=payload_length},payload,-1,&reply);
+  if(!error && (reply.owner!=record.token || reply.epoch!=record.epoch))error=ESTALE;
+  BrAttemptSignalResult result={0};
+  if(!error && reply.error)error=reply.error;
+  if(!error && (reply.op!=BI_REPLY || reply.length!=sizeof(result)))error=EPROTO;
+  if(!error)error=br_read_all(socket_fd,&result,sizeof(result));
+  if(!error) {
+    char status[64];int length=-1;
+    if(result.disposition==1)length=snprintf(status,sizeof(status),"signaled");
+    else if(result.disposition==2 && WIFEXITED(result.status))
+      length=snprintf(status,sizeof(status),"exit %d",WEXITSTATUS(result.status));
+    else if(result.disposition==2 && WIFSIGNALED(result.status))
+      length=snprintf(status,sizeof(status),"signal %d",WTERMSIG(result.status));
+    else error=EPROTO;
+    if(!error && (length<0 || (size_t)length>=sizeof(status)))error=EOVERFLOW;
+    if(!error) {
+      call->text=strdup(status);
+      if(!call->text)error=ENOMEM;
+      else call->length=(size_t)length;
+    }
+  }
+  if(socket_fd>=0)close(socket_fd);
+  free(payload);
+  return error;
+}
 static void br_instance_owner_witness(BatonProcessCall *call,int spawn) {
   BrInstanceFrame reply={0};
   for(;;) {
@@ -5009,45 +5150,55 @@ static int br_spool_try_line(BatonRetained *retained,BatonProcessCall *call) {
 /* Bounded spool probe that reports one complete retained line as a byte range
    instead of building its text. The newline is consumed and excluded; an end
    of output commits a partial tail with its own length, mirroring
-   br_spool_try_line. A silent or failed probe commits nothing. */
+   br_spool_try_line. A silent or failed probe commits nothing. Bytes kept by
+   the previous span read are scanned before the next pread, and a silent probe
+   records the bytes it scanned so the next probe reads only new bytes. */
 static int br_spool_try_line_span(BatonRetained *retained,BatonProcessCall *call) {
+  /* Kept bytes came from an earlier read. A child error recorded since then is
+     reported before they are used, as an uncached read reports it. */
+  pthread_mutex_lock(&retained->state);
+  call->error=retained->error;pthread_mutex_unlock(&retained->state);
+  if(call->error) return -1;
   uint64_t start=(uint64_t)retained->offset;
-  uint64_t staged=0;
-  for(;;) {
+  uint64_t line=0;
+  int found=br_spool_tail_line(retained,call,&line);
+  if(found<0) return -1;
+  while(!found) {
     pthread_mutex_lock(&retained->state);
     int exited=retained->exited;
     call->error=retained->error;pthread_mutex_unlock(&retained->state);
-    if(call->error) break;
-    char chunk[8192];
-    ssize_t n=pread(retained->spool,chunk,sizeof(chunk),retained->offset+(off_t)staged);
+    if(call->error) return -1;
+    if(line>(uint64_t)LLONG_MAX || retained->offset>LLONG_MAX-(off_t)line) {call->error=EOVERFLOW;return -1;}
+    char chunk[BR_SPOOL_TAIL];
+    ssize_t n=pread(retained->spool,chunk,sizeof(chunk),retained->offset+(off_t)line);
     if(n<0 && errno==EINTR) continue;
-    if(n<0) {call->error=errno;break;}
+    if(n<0) {call->error=errno;return -1;}
     if(n==0) {
       pthread_mutex_lock(&retained->state);
       if(retained->error) call->error=retained->error;
       else if(exited) {
-        if(staged>(uint64_t)LLONG_MAX || retained->offset>LLONG_MAX-(off_t)staged) call->error=EOVERFLOW;
-        else retained->offset+=(off_t)staged;
-        call->eof=staged==0;
-        if(!call->error && staged) {call->frame_start=start;call->frame_length=staged;}
+        if(line>(uint64_t)LLONG_MAX || retained->offset>LLONG_MAX-(off_t)line) call->error=EOVERFLOW;
+        else br_spool_tail_commit(retained,retained->offset+(off_t)line);
+        call->eof=line==0;
+        if(!call->error && line) {call->frame_start=start;call->frame_length=line;}
       }
       pthread_mutex_unlock(&retained->state);
-      if(call->error || exited) return -1;
-      break;
+      return call->error || exited?-1:0;
     }
     char *newline=memchr(chunk,'\n',(size_t)n);
-    size_t consumed=newline?(size_t)(newline-chunk)+1:(size_t)n;
-    if(consumed>UINT64_MAX-staged) {call->error=EOVERFLOW;break;}
-    staged+=consumed;
-    if(newline) {
-      if(staged>(uint64_t)LLONG_MAX || retained->offset>LLONG_MAX-(off_t)staged) {call->error=EOVERFLOW;break;}
-      retained->offset+=(off_t)staged;
-      call->frame_start=start;
-      call->frame_length=staged-1;
-      return 1;
-    }
+    size_t content=newline?(size_t)(newline-chunk):(size_t)n;
+    if(line>UINT64_MAX-content) {call->error=EOVERFLOW;return -1;}
+    line+=content;
+    if(newline) {br_spool_tail_keep(retained,newline+1,(size_t)n-content-1);found=1;}
+    else retained->spool_partial=line;
   }
-  return call->error?-1:0;
+  if(line>(uint64_t)LLONG_MAX-1 || retained->offset>LLONG_MAX-1-(off_t)line) {
+    call->error=EOVERFLOW;br_spool_tail_reset(retained);return -1;
+  }
+  br_spool_tail_commit(retained,retained->offset+(off_t)line+1);
+  call->frame_start=start;
+  call->frame_length=line;
+  return 1;
 }
 typedef struct { BatonRetained *retained;uint64_t version;int wake;int done; } BrAwakeWatch;
 /* Single-shot spool watcher: waits for spool progress, child exit or failure,
@@ -5401,6 +5552,9 @@ static void baton_retained_begin_call(BatonProcessCall *call) {
 static void baton_process_call(IoWork *w) {
   BatonProcessCall *call=(BatonProcessCall *)w->data;
   BatonChild *child=call->child;
+  if(call->kind==BP_INSTANCE_ATTEMPT_SIGNAL) {
+    call->error=br_instance_signal_attempt(call);return;
+  }
   if(call->kind==BP_INSTANCE_RETIRE && child->retained &&
      child->retained->observer_only) { call->error=EPERM;return; }
   if(call->kind==BP_SPAWN) { baton_child_spawn(call);return; }
@@ -5479,7 +5633,8 @@ static Term baton_process_pack(Env e, IoWork *w) {
   BatonProcessCall *call=(BatonProcessCall *)w->data;
   Term value=term_pak(CID_UNIT,0);
   if(!call->error) {
-    if(call->kind==BP_SPAWN || call->kind==BP_SPAWN_ENV_FILE || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED ||
+    if(call->kind==BP_INSTANCE_ATTEMPT_SIGNAL) value=io_str(e,call->text?call->text:"",call->length);
+    else if(call->kind==BP_SPAWN || call->kind==BP_SPAWN_ENV_FILE || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED ||
        call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED) value=(Term)call->handle;
     else if(call->kind==BP_INPUT_CLOSED) value=(Term)call->signal;
     else if(call->kind==BP_WAIT) value=io_str(e,call->text,call->length);
@@ -5652,6 +5807,12 @@ static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int pr
     if(kind==BP_KEEPER || kind==BP_ATTACH_OWNED)call->lock=(u32)f[1];
     if(kind==BP_CONTROL_WRITE) {call->text=io_cstr(e,f[1],&length);call->length=length;}
     if(kind==BP_CONTROL_SIGNAL)call->signal=(u32)f[1];
+  } else if(kind==BP_INSTANCE_ATTEMPT_SIGNAL) {
+    u64 database_length=0,directory_length=0;
+    call->database=io_cstr(e,f[0],&database_length);
+    call->directory=io_cstr(e,f[1],&directory_length);call->signal=(u32)f[2];
+    if(!call->database || strlen(call->database)!=database_length || !call->directory ||
+       strlen(call->directory)!=directory_length)call->error=EINVAL;
   } else if(kind==BP_INSTANCE_OWNER || kind==BP_INSTANCE_SHUTDOWN ||
             kind==BP_INSTANCE_OWNER_WITNESS || kind==BP_INSTANCE_ENSURE_OWNER_WITNESS) {
     u64 length=0;call->database=io_cstr(e,f[0],&length);
@@ -5867,6 +6028,9 @@ BP_EFFECT(baton_instance_input_witness,CID_INSTANCE_INPUT_WITNESS,BP_INSTANCE_IN
 #endif
 #ifdef CID_INSTANCE_INPUT_PROMPT
 BP_EFFECT(baton_instance_input_prompt,CID_INSTANCE_INPUT_PROMPT,BP_INSTANCE_INPUT_PROMPT)
+#endif
+#ifdef CID_INSTANCE_ATTEMPT_SIGNAL
+BP_EFFECT(baton_instance_attempt_signal,CID_INSTANCE_ATTEMPT_SIGNAL,BP_INSTANCE_ATTEMPT_SIGNAL)
 #endif
 #ifdef CID_PROCESSCHILD_RETAIN_WITH_FILE
 BP_EFFECT(baton_process_retain_with_file,CID_PROCESSCHILD_RETAIN_WITH_FILE,BP_RETAIN_WITH_FILE)

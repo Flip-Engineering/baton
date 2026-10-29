@@ -3,12 +3,12 @@
   "upstream": "Baton fork of Bend 2.0.25",
   "compiler_archive_sha256": "5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3",
   "official_release_artifact": false,
-  "lock_sha256": "b7dc99ab495314373cec2fa5f20253e152baec56eeb9f3437a010e64746c5bda",
+  "lock_sha256": "d35133ef255f9b96ae207bfe83c098db65b4d8acd408cd2d45282fb74694351b",
   "files": [
     {
-      "bytes": 6569,
+      "bytes": 9081,
       "path": "admission.ts",
-      "sha256": "0b30abca45755b1661d9b57d1890128b53d3e2f4402b7003128974ad69f69995"
+      "sha256": "77ec435fa73a3ebf19011593807b676d4ef18c53c214e293eaca47a81ef4015f"
     },
     {
       "bytes": 66363,
@@ -16,19 +16,19 @@
       "sha256": "e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798"
     },
     {
-      "bytes": 166375,
+      "bytes": 166759,
       "path": "bend.ts",
-      "sha256": "b529df5033e2e8b1239fae172b0ce33864f2db20954cc7e4b501f7c82dc7fa9d"
+      "sha256": "322f8646432157b4e5b7a66a8647f39656f0fd389e81e40065e8199a9ebaee42"
     },
     {
-      "bytes": 275088,
+      "bytes": 276283,
       "path": "comp.ts",
-      "sha256": "70bc06819c33c731c05dd929b0412fd560d3185166e6000db7405d195d6d4efb"
+      "sha256": "4d16d83359d215e85590c331da8f4d708943c35ed95f1fa8a2be89f7d2709820"
     },
     {
-      "bytes": 11964,
+      "bytes": 14636,
       "path": "driver.ts",
-      "sha256": "8337e09e058b3b9c668522ff2a07b267e22cd3d322081d7d4a0d78c7c1d67dfc"
+      "sha256": "bfc15b44e0768ddb91f1824f09345dd944dac1c42d0ae4ff27d98c439fb73f9b"
     },
     {
       "bytes": 351,
@@ -406,9 +406,9 @@
       "sha256": "65a08a61eae157ab2ca505578a27b0f6e50fb46a44baa43bf8df20670b865c6a"
     },
     {
-      "bytes": 28072,
+      "bytes": 29015,
       "path": "main.ts",
-      "sha256": "156b06b2cbfec3c3f34a602bbbaa167fe9c004731ce14ab3281a977ff2c56b52"
+      "sha256": "2bfee20bf3347f2f3acdb59c5f3c1ac98d012b7b9d7a1375fe435efde44d1f8b"
     },
     {
       "bytes": 27492,
@@ -421,9 +421,9 @@
       "sha256": "3c30e77770e35cf1c62a7ad28c2eb40d5903651e2c1a75dba2dd6a874095cddc"
     },
     {
-      "bytes": 4400,
+      "bytes": 5825,
       "path": "worker.ts",
-      "sha256": "c0e51b403791a34cebff873104c5cd3ff1d4ac161fc992fa9f0f73cb4dccc09d"
+      "sha256": "4129ec41d92658404825cdc9c3e5ae9979cbea8ff3e8d55aa16d34e71fff5105"
     }
   ],
   "license": {

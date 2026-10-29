@@ -66,7 +66,9 @@ Successful native turns record handling of their exact consumed input.
 receipt. A worker uses `completion-request --text SUMMARY` when its assignment is
 ready for its parent's review. A coordinator reviews a Player's request with
 `completion-confirmed --to PLAYER`, or sends further work with `guide --to PLAYER
---text TEXT`. Use `dispatch
+--text TEXT`. Confirmation ends the Player's assignment. `completion-confirmed --to
+PLAYER --next TEXT` (or `--next-file PATH`) confirms and dispatches the next
+assignment in one transaction, and the assignment continues. Use `dispatch
 --to PLAYER --text TEXT` for complete task input to an existing conversation.
 The [agent command guide](../docs/bend2/agent-commands.md) describes named actions,
 independent batches, explicit selected-message reads and context overrides.
@@ -625,6 +627,17 @@ Live native input and stop control require an available keeper socket. The earli
 [observer-loss measurement](../docs/bend2/receive-recovery-2026-09-28.md#recovery-boundary)
 retains its recorded scope.
 
+`succeed SESSION PREDECESSOR` records SESSION as the successor of a conductor that
+is over (explicitly stopped, or its completion was confirmed). The predecessor's
+children keep their recorded parent, assignments and requests, and the successor
+holds the coordinator authority for them. Each unresolved input of the predecessor
+is forwarded to the successor as a `forwarded-input` message that carries the
+complete original text; original messages and read states stay as recorded. A stop
+or a completion confirmation of a session with live children, or with unresolved
+input from its children, reports them to its current coordinator. The
+[agent command guide](../docs/bend2/agent-commands.md#conductor-succession-and-ended-conductors-1257)
+describes the coordinator derivation.
+
 `recover-observer SESSION OBSERVER_PID` replaces a receive observer after
 its native process has a recorded exit status. The operator supplies the PID of
 that receive process. An available keeper transfers the completed attempt's
@@ -681,14 +694,16 @@ questions are pending, and `--file PATH` imports an existing JSON response.
 `stdin-written` records transport completion; subsequent native output records
 progress. See [native interaction semantics and limits](../docs/bend2/native-interactions.md).
 
-Use `baton stop --session PLAYER --reason TEXT` to end a retained OMP or Codex session. The
-command records a terminal stop, prevents further queued execution and submits
+Use `baton stop --session PLAYER --reason TEXT` to end a retained OMP, Codex,
+Muse, Claude Code, DSH or Antigravity session. The command records a terminal
+stop, prevents further queued execution and submits
 TERM to its current native process group. `baton force-stop --session PLAYER` explicitly
 submits KILL to the same still-owned attempt. Baton generates or selects the
 recorded stop identity. `session`, `inbox` and `pending`
 retain the work, messages, receipts and stop state. The stop answer distinguishes
 signal submission from actual exit; the observer reports completion to the
-parent. Active direct `turn` execution returns an unsupported-stop refusal.
+parent. Active direct `turn` execution without a retained keeper directory
+returns an unsupported-stop refusal.
 See [session stop behavior](../docs/bend2/native-interactions.md#terminal-session-stop).
 
 `codex-conductor.mjs` and `omp-conductor.mjs` provide the Node adapters.
@@ -760,7 +775,7 @@ database host. It resolves the database, the coordinator executable and
 `mcp-conductor.mjs` to absolute paths and refuses a path that does not exist:
 
 ```sh
-node bend2/scripts/root-channel-config.mjs /data/orchestra.db /opt/baton/bin/baton --session operator --ssh homelab --name baton-homelab
+node bend2/scripts/root-channel-config.mjs /data/orchestra.db /opt/baton/bin/baton --session operator --resume ROOT_SESSION --ssh homelab --name baton-homelab
 ```
 
 It writes the server entry to stdout and the launch command to stderr:
@@ -770,7 +785,7 @@ It writes the server entry to stdout and the launch command to stderr:
 ```
 
 ```sh
-claude --mcp-config FILE --dangerously-load-development-channels server:baton-homelab
+claude --resume ROOT_SESSION --mcp-config FILE --dangerously-load-development-channels server:baton-homelab
 ```
 
 Save the entry as `FILE` on the machine that runs Claude Code. `ssh homelab`
@@ -791,11 +806,15 @@ Baton notifications. Replace that entry with the conductor entry above.
 ### Unattached root error
 
 A root is a parentless session with the operator role, or one whose endpoint
-runs `mcp-conductor.mjs`. A root with owed input is unattached when
+runs `mcp-conductor.mjs`. A Claude Code root with owed input is unattached when
 its endpoint is not a conductor `--deliver` endpoint or when a connection to
 its delivery socket fails. Baton connects from the database directory and
-closes the connection after checking it. Each check uses the current session
-row, messages and socket connection result.
+closes the connection after checking it. A Codex root with a native
+conversation and a recorded managed receiver is checked by connecting a Codex
+app-server proxy through the receiver's recorded environment. An empty
+endpoint cannot establish a route to a conversation on another host. Baton
+checks recognized root notification routes for other harnesses. A generic
+argv endpoint produces an unattached-root error.
 
 `status`, `session` and `orchestra` print one line on stderr for each
 unattached root:
@@ -806,6 +825,12 @@ Baton error: root session operator has 7136 owed inputs and no attached channel:
 
 A message, report or question committed to an unattached root prints the same
 line on its sender's stderr and appends it to the database's `.root.log`.
+
+An input that Baton cannot route to a non-Codex session is reported to that
+session's coordinator. The report names the input, delivery cause, owed input
+count and endpoint repair command. Repeated delivery of the oldest unread
+input keeps the same report; reading that input lets a later failed delivery
+produce a new report.
 
 ## OMP Associate Conductors and Players
 

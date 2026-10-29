@@ -1,6 +1,7 @@
 import Base
 import ../coordinator/commands.bend as C
 import ./agent-input.bend as AgentInput
+import ../coordinator/message-status.bend as Status
 import ../host/sqlite.bend as DB
 import ../host/process.bend as P
 import ../host/text.bend as Text
@@ -13,13 +14,11 @@ def relevant(+kind: String, omp: Bool) -> Bool:
     Bool.or(String.eq(kind,"message_end\n"),Bool.or(String.eq(kind,"tool_execution_start\n"),
     Bool.or(String.eq(kind,"tool_execution_end\n"),String.eq(kind,"agent_end\n"))))))
 
-# The guidance this attempt already forwarded, as the highest message seq in
+# The highest message sequence this attempt already forwarded, in
 # <attempt>/guidance-forwarded. A rejected observer checkpoint replays the
 # observation spool from its beginning; this journal keeps that replay from
-# writing a steer frame the native stdin already carried. It is transport state
-# for one attempt, not an acknowledgement: the message stays owed (receipt
-# stays NULL), and a new attempt has no journal, so it receives the pending
-# input again exactly once.
+# writing a steer frame the native stdin already carried. The message read is
+# recorded separately after the native write succeeds.
 def journal_path(+attempt: String) -> String:
   attempt ++ "/guidance-forwarded"
 
@@ -61,19 +60,19 @@ def send(+db: String, +player: String, handle: U32, +attempt: String, cursor: St
   match same:
     case True{}: IO.pure(String,cursor)
     case False{}: do IO<String>:
-      frame : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('type','steer','id',id,'message',body) FROM messages WHERE seq=CAST(" ++ C.q(next) ++ " AS INTEGER);"))
+      frame : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('type','steer','id',id,'message'," ++ Status.complete_message_sql("id","kind","sender","body") ++ ") FROM messages WHERE seq=CAST(" ++ C.q(next) ++ " AS INTEGER);"))
       sent : Unit <- IO.try(Unit,P.ProcessChild.write(handle,frame))
       recorded : Unit <- AgentInput.forward_read(db,player,next)
       logged : Unit <- record_forwarded(attempt,next)
       IO.pure(String,next)
 
-# Guidance stays owed until its recipient records the read. The send cursor
-# records which messages this attempt has already forwarded.
+# Forwarded input is read by its recipient when the write succeeds. The send
+# cursor records which messages this attempt has already forwarded.
 def outstanding_sql(+player: String) -> String:
-  "coalesce((SELECT group_concat(id,',') FROM (SELECT id FROM messages WHERE recipient=" ++ C.q(player) ++ " AND kind='guidance' AND " ++ C.owed_sql("messages") ++ " AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " ORDER BY seq)),'')"
+  "coalesce((SELECT group_concat(id,',') FROM (SELECT id FROM messages WHERE recipient=" ++ C.q(player) ++ " AND " ++ C.owed_sql("messages") ++ " AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " ORDER BY seq)),'')"
 
 def pending_sql(+player: String, +cursor: String) -> String:
-  "SELECT coalesce((SELECT seq FROM messages WHERE recipient=" ++ C.q(player) ++ " AND kind='guidance' AND " ++ C.owed_sql("messages") ++ " AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq LIMIT 1),CAST(" ++ C.q(cursor) ++ " AS INTEGER));"
+  "SELECT coalesce((SELECT seq FROM messages WHERE recipient=" ++ C.q(player) ++ " AND " ++ C.owed_sql("messages") ++ " AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq LIMIT 1),CAST(" ++ C.q(cursor) ++ " AS INTEGER));"
 
 def pending(+db: String, +player: String, handle: U32, +attempt: String, +cursor: String) -> IO(String):
   do IO<String>:

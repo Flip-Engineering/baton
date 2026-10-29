@@ -135,6 +135,48 @@ class DshWorker(unittest.TestCase):
         self.assertEqual((failed['status'], failed['stdout'], failed['stderr']),
                          (43, self.state['stdout'] + '\n', self.state['stderr']))
 
+    def test_completion_confirmation_and_guide_use_recorded_context(self):
+        cases = [
+            ('completion_confirmed', {'to': 'worker'}, ['completion-confirmed', '--to', 'worker']),
+            ('completion_confirmed', {'to': 'worker', 'next': 'Continue with evidence λ🙂\n' * 10000},
+             ['completion-confirmed', '--to', 'worker', '--next', 'Continue with evidence λ🙂\n' * 10000]),
+            ('guide', {'to': 'worker', 'text': 'Review complete λ🙂\n' * 10000},
+             ['guide', '--to', 'worker', '--text', 'Review complete λ🙂\n' * 10000]),
+        ]
+        for tool, arguments, action in cases:
+            result = self.call(tool, arguments)
+            self.assertFalse(result.get('isError'), result)
+            check, operation = self.calls()[-2:]
+            self.assertEqual(check['argv'], [str(self.database), 'agent-worker-context'])
+            self.assertEqual(operation['argv'], [str(self.database), 'agent-contextual-input', 'worker'])
+            self.assertEqual(json.loads(operation['stdin']), action)
+            self.assertEqual(operation['session'], 'worker')
+            self.assertIn(tool, self.tools)
+
+    def test_completion_confirmation_and_guide_validate_complete_text(self):
+        for tool, arguments in [
+                ('completion_confirmed', {'next': 'valid', 'to': 'worker\0'}),
+                ('completion_confirmed', {'next': 'bad\ud800'}),
+                ('guide', {'to': 'worker', 'text': 'bad\ud800'}),
+                ('guide', {'to': 'worker', 'text': 'bad\0text'}),
+                ('guide', {'to': 'worker', 'text': 'valid', 'session': 'other'})]:
+            result = self.call(tool, arguments)
+            self.assertTrue(result['isError'], result)
+        self.assertEqual(self.calls(), [])
+
+    def test_completion_confirmation_and_guide_preserve_child_failure(self):
+        self.state.update(code=43, stdout='full output λ\n' * 10000, stderr='write failed\n')
+        self.save_state()
+        for tool, arguments in [('completion_confirmed', {}), ('guide', {'to': 'worker', 'text': 'evidence'})]:
+            result = self.call(tool, arguments)
+            self.assertTrue(result['isError'], result)
+            try:
+                failed = json.loads(result['content'][0]['text'])
+            except json.JSONDecodeError:
+                self.fail(f'{tool} did not preserve the native child failure: {result}')
+            self.assertEqual((failed['status'], failed['stdout'], failed['stderr']),
+                             (43, self.state['stdout'] + '\n', self.state['stderr']))
+
     def test_inbox_and_read_forward_complete_output_with_recorded_context(self):
         body = 'Complete owed input λ🙂\n"quoted"\n' * 10000
         messages = [{'id': 'message:parent:one', 'recipient': 'worker', 'body': body, 'receipt': None},

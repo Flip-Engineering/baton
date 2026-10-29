@@ -40,7 +40,7 @@ def member(+value: String, values: List<String>) -> Bool:
     case +head <> rest: Bool.or(String.eq(value,head),member(value,rest))
 
 def known(verb: String) -> Bool:
-  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure account resume stop force-stop clear-stop recover-observer continue-task turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs harness-inventory"))
+  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure account resume stop force-stop clear-stop recover-observer continue-task succeed turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs harness-inventory"))
 
 def names_lookup(entries: List<NameSet>, +verb: String) -> List<String>:
   match entries:
@@ -55,7 +55,7 @@ def names(verb: String) -> List<String>:
     Names{"players","--pretty"},
     Names{"assignment","--session --id --pretty"},
     Names{"completion-request","--id --text --file"},
-    Names{"completion-confirmed","--id --request --to"},
+    Names{"completion-confirmed","--id --request --to --next --next-file"},
     Names{"guide","--id --to --text --file"},
     Names{"status","--pretty"},
     Names{"pending","--index --pretty --sender --recipient --kind --state --after-seq --through-seq"},
@@ -76,6 +76,7 @@ def names(verb: String) -> List<String>:
     Names{"clear-stop","--session"},
     Names{"recover-observer","--session --observer"},
     Names{"continue-task","--session --id"},
+    Names{"succeed","--session --from"},
     Names{"turn","--session --id --command --model --effort --cwd --file --output-log --native"},
     Names{"receive","--session --command --model --effort --cwd --output-log --message"},
     Names{"profile-bind","--session --harness --profile --store"},
@@ -133,6 +134,7 @@ def required(verb: String) -> List<String>:
     case "section-member": Tx.split_spaces("--ensemble --id --player --action")
     case "receiver": Tx.split_spaces("--command --output-log")
     case "recover-observer": Tx.split_spaces("--observer")
+    case "succeed": Tx.split_spaces("--from")
     case "turn": Tx.split_spaces("--file --command --output-log")
     case "profile-bind": Tx.split_spaces("--profile --store")
     case "account": Tx.split_spaces("--action --id --provider --harness --funding --secret-ref --organization --detail")
@@ -183,7 +185,8 @@ def option_cause(+verb: String, +options: List<&2,Option>) -> String:
     "A checked landing requires both --check and --files.","")
   +read = Bool.pick(String,Bool.and(String.eq(verb,"knowledge-read"),
     Bool.and(present(options,"--id"),present(options,"--index"))),"Choose --id or --index.","")
-  +body = pair_cause(options,"--text","--file",member(verb,["report","ask","native-reply","dispatch","completion-request","guide"]))
+  +body = first(pair_cause(options,"--text","--file",member(verb,["report","ask","native-reply","dispatch","completion-request","guide"])),
+    pair_cause(options,"--next","--next-file",False{}))
   +inspection = Bool.pick(String,Bool.and(member(verb,["session","player","assignment"]),
     Bool.and(present(options,"--session"),present(options,"--id"))),"Choose --session or --id.","")
   +section = Bool.pick(String,Bool.and(String.eq(verb,"section"),Bool.and(present(options,"--owner"),Bool.not(present(options,"--capability")))),"Supply --capability when selecting a Section owner.","")
@@ -265,8 +268,8 @@ def help(action: String) -> String:
     case "player": "player [--session SESSION | --id SESSION] [--pretty]\nRead the selected complete Player in a named action batch. Omitted target selects the current actor. The single positional form player SESSION retains its existing JSON output.\n"
     case "players": "players [--pretty]\nRead the current Players projection as an independent action in a mixed batch.\n"
     case "assignment": "assignment [--session SESSION | --id SESSION] [--pretty]\nRead the selected session and its retained assignment and task-completion state in a mixed batch. Omitted target selects the current actor.\n"
-    case "completion-request": "completion-request (--text TEXT | --file PATH) [--id ID]\nSend the complete request to the current actor's recorded parent through the existing contextual completion handler. Supports mixed and or --and batches.\n"
-    case "completion-confirmed": "completion-confirmed [--to PLAYER] [--request REQUEST_ID] [--id ID]\nConfirm the selected Player's current request through the retained-request handler. Baton selects the owned request when omitted; an explicit request must belong to its author and current recipient. Supports mixed batches.\n"
+    case "completion-request": "completion-request (--text TEXT | --file PATH) [--id ID]\nSend the complete request to the current actor's coordinator (its recorded parent while the parent is not over) through the existing contextual completion handler. Baton generates the identity when --id is omitted. An explicit --id must name the actor's current recorded request for its open assignment; an unrecorded or older ID is refused and stores nothing. Supports mixed and or --and batches.\n"
+    case "completion-confirmed": "completion-confirmed [--to PLAYER] [--request REQUEST_ID] [--id ID] [--next TEXT | --next-file PATH]\nConfirm the selected Player's current request through the retained-request handler. Baton selects the owned request when omitted; an explicit request must belong to its author and current recipient. The confirmation ends the Player's assignment (taskCompletion.ended); with --next or --next-file the supplied assignment is recorded with the confirmation in one transaction and the assignment continues. Supports mixed batches.\n"
     case "guide": "guide --to PLAYER (--text TEXT | --file PATH) [--id ID]\nAdmit complete guidance as the current actor through the existing contextual handler. Supports mixed batches.\n"
     case "status": "status [--pretty]\nRead the existing database status projection.\n"
     case "pending": "pending [--index] [--pretty] [--sender SESSION] [--recipient SESSION] [--kind KIND] [--state pending|read|all] [--after-seq INTEGER] [--through-seq INTEGER]\nRead complete pending input; --index enables the native metadata filters.\n"
@@ -287,6 +290,7 @@ def help(action: String) -> String:
     case "clear-stop": "clear-stop [--session SESSION]\nRemove the session's terminal stop only. Native identity, conversation history, workspace and retained input stay unchanged; no input is delivered, no wake runs and no native starts.\n"
     case "recover-observer": "recover-observer --observer PID [--session SESSION]\nUse the existing attempt recovery and observer ownership operation.\n"
     case "continue-task": "continue-task [--id TURN_ID] [--session SESSION]\nExplicitly request continuation of the selected open assignment. Baton generates the continuation identity when omitted.\n"
+    case "succeed": "succeed --from PREDECESSOR [--session SUCCESSOR]\nRecord the selected session (omitted: the current actor) as the successor of a conductor that is over: explicitly stopped or completed. The successor must be live and under the predecessor parent or be an ancestor of the predecessor. Baton keeps the predecessor children, their assignments, completion requests and messages as recorded; the successor holds the predecessor's coordinator authority for them, so reports, requests and confirmations reach it. Each unresolved input of the predecessor, including a read but unconfirmed current completion request, is forwarded to the successor as a new forwarded-input message with the complete original text and the original message ID. The original messages keep their recipient and read state. Repeating the action forwards only input that arrived since.\n"
     case "turn": "turn [--id TURN_ID] --command EXECUTABLE --file TASK_PATH --output-log PATH [--session SESSION] [--model MODEL] [--effort EFFORT] [--cwd PATH] [--native ID]\nStart the existing managed direct turn. Omitted route, workspace and native identity use the selected session. PATH - reads stdin.\n"
     case "receive": "receive [--session SESSION] [--command EXECUTABLE] [--output-log PATH] [--model MODEL] [--effort EFFORT] [--cwd PATH] [--message ID]\nUse the recorded receiver and native retained receive operation.\n"
     case "profile-bind": "profile-bind --profile LABEL --store PATH [--session SESSION] [--harness NAME]\nBind the named existing account through the native profile operation. Omitted harness uses the selected session.\n"

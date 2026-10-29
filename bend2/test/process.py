@@ -703,10 +703,18 @@ class Process(unittest.TestCase):
         try:
             self.wait_for_native_exit(attempt, observer)
             birth = (attempt / 'native.birth').read_bytes()
+            # The keeper records status after it reaps the native child, which
+            # can follow the zombie state wait_for_native_exit observes. Remove
+            # the recorded status so recovery must reconcile the birth with the
+            # keeper.
             status_path = attempt / 'status'
-            status = status_path.read_bytes() if status_path.exists() else b'0\n'
-            if status_path.exists():
-                status_path.unlink()
+            deadline = time.monotonic() + 20
+            while not status_path.exists():
+                self.assertLess(time.monotonic(), deadline,
+                                'the keeper did not record native exit status')
+                time.sleep(0.02)
+            status = status_path.read_bytes()
+            status_path.unlink()
             birth_path = attempt / 'native.birth'
             birth_path.unlink()
             forged = bytearray(birth)
@@ -741,6 +749,68 @@ class Process(unittest.TestCase):
                 observer.stdout.close()
             if observer.stderr:
                 observer.stderr.close()
+
+    def retained_span_command(self, mode, script):
+        (self.runtime / 'baton2').mkdir(parents=True, mode=0o700)
+        database = self.cwd / 'state.db'
+        database.touch()
+        attempt = self.cwd / 'retained-attempt'
+        payload = self.cwd / 'payload.txt'
+        payload.write_text('')
+        command = [str(EXE), 'retain', str(database), str(attempt), str(self.cwd),
+                   str(payload), mode, sys.executable, '-c', script]
+        return attempt, command
+
+    def test_retained_line_span_reads_eight_mib_line(self):
+        _, command = self.retained_span_command(
+            'span', 'import sys; sys.stdout.write("x"*8388608+"\\n")')
+        p = subprocess.run(command, input='', text=True, capture_output=True,
+                           env=self.environment, timeout=90)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn('0\t8388608\nnative-exit 0\nretained-complete\n', p.stdout)
+
+    def test_retained_line_spans_preserve_empty_and_unterminated_lines(self):
+        _, command = self.retained_span_command(
+            'span', 'import sys; sys.stdout.write("a\\n\\nlast")')
+        p = subprocess.run(command, input='', text=True, capture_output=True,
+                           env=self.environment, timeout=30)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn('0\t1\n2\t0\n3\t4\nnative-exit 0\nretained-complete\n', p.stdout)
+
+    def test_retained_line_span_waits_for_split_line_and_keeps_nul_byte(self):
+        attempt, command = self.retained_span_command(
+            'span', 'import sys,time; sys.stdout.buffer.write(b"left\\x00mid"); '
+                    'sys.stdout.flush(); time.sleep(0.05); '
+                    'sys.stdout.buffer.write(b"right\\n"); sys.stdout.flush()')
+        observer = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True, env=self.environment)
+        try:
+            observed = []
+            while not any(line.startswith('native-exit ') for line in observed):
+                line = observer.stdout.readline()
+                self.assertNotEqual(line, '', 'span observer exited before the completion gate: '
+                                    + ''.join(observed))
+                observed.append(line)
+            self.assertEqual((attempt / 'stdout').read_bytes(), b'left\x00midright\n')
+            remaining, error = observer.communicate(input='', timeout=30)
+            self.assertEqual(observer.returncode, 0, error)
+            self.assertIn('0\t13\nnative-exit 0\nretained-complete\n', ''.join(observed) + remaining)
+        finally:
+            if observer.poll() is None:
+                observer.terminate()
+                observer.wait(timeout=10)
+            for stream in (observer.stdin, observer.stdout, observer.stderr):
+                if stream and not stream.closed:
+                    stream.close()
+
+    def test_retained_span_replays_after_last_durable_checkpoint(self):
+        _, command = self.retained_span_command(
+            'checkpoint-span', 'import sys; sys.stdout.write("durable\\nnext\\n")')
+        p = subprocess.run(command, input='', text=True, capture_output=True,
+                           env=self.environment, timeout=30)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn('durable:0\t7\nuncommitted:8\t4\nrestored:durable\n'
+                      'replay:8\t4\nnative-exit 0\nretained-complete\n', p.stdout)
 
 if __name__ == '__main__':
     unittest.main()

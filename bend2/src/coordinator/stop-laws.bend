@@ -57,13 +57,14 @@ def stopped_admission_releases_without_launch(db,session,id,cmd,route,thinking,w
   {==}
 
 # Both direct turns and retained receives call this transaction while holding
-# their session lock. The terminal stop predicate also decides the result.
+# their session lock. The terminal stop predicate and the derived completion
+# closure of the assignment (C.task_closed_sql) also decide the result.
 law stop_admission_transaction_preserves_terminal_state:
   for +session: String
   for +id: String
   for +mode: String
   for +directory: String
-  {Stop.admit_sql(session,id,mode,directory) == "BEGIN IMMEDIATE;INSERT INTO executions(session,id,mode,directory,phase,status) SELECT " ++ C.q(session) ++ "," ++ C.q(id) ++ "," ++ C.q(mode) ++ "," ++ C.q(directory) ++ ",'starting','' WHERE NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ") ON CONFLICT(session) DO UPDATE SET id=excluded.id,mode=excluded.mode,directory=excluded.directory,phase=excluded.phase,status='';SELECT NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ");COMMIT;" : String}
+  {Stop.admit_sql(session,id,mode,directory) == "BEGIN IMMEDIATE;INSERT INTO executions(session,id,mode,directory,phase,status) SELECT " ++ C.q(session) ++ "," ++ C.q(id) ++ "," ++ C.q(mode) ++ "," ++ C.q(directory) ++ ",'starting','' WHERE NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ") AND NOT " ++ C.task_closed_sql(C.q(session)) ++ " ON CONFLICT(session) DO UPDATE SET id=excluded.id,mode=excluded.mode,directory=excluded.directory,phase=excluded.phase,status='';SELECT NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ") AND NOT " ++ C.task_closed_sql(C.q(session)) ++ ";COMMIT;" : String}
 
 def stop_admission_transaction_preserves_terminal_state(session,id,mode,directory):
   {==}

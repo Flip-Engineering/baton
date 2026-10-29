@@ -232,6 +232,16 @@ law m11_omp_arguments_carry_the_declared_values:
 def m11_omp_arguments_carry_the_declared_values(cmd, model, effort, sessions):
   {==}
 
+law m11_omp_completion_arguments_add_the_gate_tool:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +sessions: String
+  {Omp.completion_arguments(Nil{},cmd,model,effort,sessions,"",True{},"/libexec/baton2/omp-completion.mjs") == List.append(&1,String,Omp.arguments(cmd,model,effort,sessions),["--extension","/libexec/baton2/omp-completion.mjs"]) : List<String>}
+
+def m11_omp_completion_arguments_add_the_gate_tool(cmd,model,effort,sessions):
+  {==}
+
 law m11_claude_user_frame_carries_the_text_as_a_literal:
   for +text: String
   {Claude.user_frame(text) == "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":" ++ J.string_literal(text) ++ "}}\n" : String}
