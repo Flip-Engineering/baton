@@ -26,7 +26,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 BRIDGE = ROOT / 'bend2/scripts/dsh-worker.mjs'
 HOOKS = ROOT / 'bend2/scripts/dsh-baton-hooks.mjs'
 BRIDGE_TOOLS = ['mcp__baton-worker__' + name
-                for name in ('ask', 'commit', 'completion_request', 'inbox', 'read', 'report')]
+                for name in ('ask', 'commit', 'completion_confirmed', 'completion_request',
+                             'guide', 'inbox', 'read', 'report')]
 DSH_TOOLS = ['bash', 'list_mcp_resource_templates', 'list_mcp_resources', 'read_image',
              'read_mcp_resource', 'working_directory']
 FIXTURE = pathlib.Path(os.environ.get('BATON2_EXE', ROOT / '.scratch/bend2/dsh-player-test'))
