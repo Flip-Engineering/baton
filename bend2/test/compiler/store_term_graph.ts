@@ -82,6 +82,24 @@ assert.equal(plain.rows.length, 202);
 assert.equal(merged.rows.length, 6, "fifty equal subtrees become one");
 console.log("PASS row sharing keeps different contents, spans and scopes apart");
 
+// A cycle is stored as it was.
+const cyclic = { root: { node: 0 }, rows: [[0, 0, 0, 4, 0]], scopes: [-1] };
+assert.equal(Store.share_rows(cyclic, tables_count), cyclic, "a graph with a cycle is returned unchanged");
+// The merged graph is the same whether equal subterms were one object or several.
+const leaf = Bend.Ctr("W", [Bend.Ctr("N", [], span)], span);
+const one_object = Store.share_rows(Store.encode_term(Bend.Ctr("Pair", [leaf, leaf], span), tables_count), tables_count);
+const two_objects = Store.share_rows(Store.encode_term(Bend.Ctr("Pair", [Bend.Ctr("W", [Bend.Ctr("N", [], span)], span),
+  Bend.Ctr("W", [Bend.Ctr("N", [], span)], span)], span), tables_count), tables_count);
+assert.deepEqual(one_object.rows, two_objects.rows, "equal subterms give the same stored rows however they were built");
+// A subterm that a callback returns unchanged and that is also used outside it is one decoded object.
+// A subterm the callback builds anew on each call belongs to the callback instance and stays apart.
+const captured_leaf = Bend.Ctr("W", [Bend.Ctr("N", [], span)], span);
+const mixed = copy(Bend.Ctr("Pair", [captured_leaf, Bend.Lam("x", 0, () => captured_leaf, span)], span));
+assert.equal(mixed.x[0], mixed.x[1].f(a), "a captured subterm outside and inside a callback decodes to one object");
+const rebuilt = copy(Bend.Ctr("Pair", [Bend.Ctr("W", [], span), Bend.Lam("x", 0, () => Bend.Ctr("W", [], span), span)], span));
+assert.notEqual(rebuilt.x[0], rebuilt.x[1].f(a), "a subterm built anew by each callback call stays in its instance");
+console.log("PASS cycle fallback, canonical rows and callback instances");
+
 const book = Bend.book_nil();
 await Bend.book_load(book, path.join(root, "bend2/test/compiler/fixtures/poly_spin_hot.bend"), "", new Map());
 Bend.book_valid(book);
