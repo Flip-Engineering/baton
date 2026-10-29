@@ -18,6 +18,18 @@ import traceback
 
 ARCHIVE_SHA = '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4'
 COMPILER_ARCHIVES = {
+    '95a6ad2b7798aa4400cc1a78ba61970aab4f749d617323a15a6eabe373be541c': {
+        'name': 'Bend 2.0.25 with facts-only unit output retention',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': '11e044f131a4542ab423b78153ed66c049689fc0',
+        'source_tree': '89008f1576c08e7f8965601038a18e137b0fca80',
+        'source_lock_sha256': '5ea0ec3478c13c0f332ecc3736390d3d1053c81ae8df5bac27699b6d17cfae9f',
+        'source_manifest_sha256': '863988ebb11dbb6c52579fc5ba32975da31b01299a13cff33f3fb0daca3c1413',
+        'source_metadata_sha256': '7610fde169ee958a69395731d4b4a3132f1902988b5f920d0222d1adc67420b5',
+        'source_input_count': 84,
+    },
     'c9b72c4c3d802508eea769d29404989346119042c8827dc19439646b28558dfb': {
         'name': 'Bend 2.0.25 with any-position String-chain lowering and shared checked cells',
         'official_release_artifact': False,
