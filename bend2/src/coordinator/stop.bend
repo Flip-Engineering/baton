@@ -232,12 +232,6 @@ def missing_identity_signal_result(+db: String, +session: String, +attempt: Stri
         exited(db,session,attempt,native_status,"","",""))
     case Fail{error}: mark_custody_missing(db,session,attempt,directory)
 
-# A recorded signal is a decimal number; an unreadable value counts as no signal.
-def signal_number(parsed: Maybe<&2,U32>) -> U32:
-  match parsed:
-    case Some{found}: found
-    case None{}: 0
-
 def missing_identity_signal(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
   do IO<Unit>:
     state : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN st.applied_signal=st.signal THEN 'applied' ELSE cast(st.signal AS TEXT) END FROM session_stops st JOIN executions e ON e.session=st.session AND e.id=st.attempt WHERE st.session=" ++ C.q(session) ++ " AND st.attempt=" ++ C.q(attempt) ++ " AND st.outcome IN ('requested','custody-missing') AND e.phase<>'exited';"))
@@ -245,7 +239,7 @@ def missing_identity_signal(+db: String, +session: String, +attempt: String, +di
     Bool.pick(IO(Unit),String.is_empty(value),IO.pure(Unit,Unit{}),
       Bool.pick(IO(Unit),String.eq(value,"applied"),IO.pure(Unit,Unit{}),
         do IO<Unit>:
-          +signal : U32 = signal_number(U32.read(value))
+          +signal : U32 = selected_signal(U32.read(value))
           Bool.pick(IO(Unit),U32.is_eq(signal,0),mark_custody_missing(db,session,attempt,directory),
             do IO<Unit>:
               result : Result<&1,&1,U32 & String,String> <- P.ProcessChild.instance_attempt_signal(db,directory,signal)
