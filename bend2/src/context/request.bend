@@ -557,7 +557,7 @@ def coordinates_ok(kind: Context.SubjectKind, +members: J.Json) -> Bool:
     case Context.SkDiagnostic{}: coordinate_fields_ok(members)
     case other: True{}
 
-def runtime_required_words(intent: String) -> Words:
+def runtime_required_words(+intent: String) -> Words:
   match intent:
     case "launch": words_from(["kind", "intent", "program", "args", "env", "onOwnerStop"])
     case "observe": words_from(["kind", "intent", "session"])
@@ -572,7 +572,7 @@ def or_subject_intent(value: Maybe<&2, J.Json>) -> J.Json:
     case None{}: J.Jnull{}
     case Some{value}: value
 
-def query_control_required_words(intent: String) -> Words:
+def query_control_required_words(+intent: String) -> Words:
   match intent:
     case "recover": words_from(["kind", "query", "intent"])
     case "release": words_from(["kind", "query", "intent", "signal"])

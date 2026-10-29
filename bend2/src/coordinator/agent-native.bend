@@ -25,7 +25,7 @@ def raw_result(result: Result<&1,&1,U32 & String,Raw.RawRead>) -> Result<&1,&1,U
 def text_value(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   NativeInput.text_value(path)
 
-def file_name(name: String) -> String:
+def file_name(+name: String) -> String:
   match name:
     case "--claim-file": "--claim"
     case "--evidence-file": "--evidence"

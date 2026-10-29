@@ -71,7 +71,7 @@ def runtime_retained_open(+db: String, +target_dir: String, +target_argv: String
     +adapter : U32 <- runtime_retained_handle(adapter_start)
     IO.pure(RuntimeBridge, RuntimeBridge{target, adapter, target_dir, adapter_dir})
 
-def runtime_signal(signal: String) -> IO(U32):
+def runtime_signal(+signal: String) -> IO(U32):
   match signal:
     case "SIGTERM": IO.pure(U32, 15)
     case "SIGKILL": IO.pure(U32, 9)
