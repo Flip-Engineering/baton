@@ -140,3 +140,45 @@ law a_refused_write_leaves_the_cursor_and_the_owed_row:
 
 def a_refused_write_leaves_the_cursor_and_the_owed_row(db,player,attempt,cursor,next):
   {==}
+
+# #1298: stdin closes only when the stdout file's latest task list names no task
+# (or no list was ever written). A list that names tasks, or one that cannot be
+# read, leaves stdin open; a replaying recovery observer therefore never closes on
+# an earlier empty list that a later list replaced.
+law an_empty_latest_list_lets_stdin_close:
+  {Guidance.background_clear("0") == True{} : Bool}
+
+def an_empty_latest_list_lets_stdin_close():
+  {==}
+
+law no_list_in_the_stdout_file_lets_stdin_close:
+  {Guidance.background_clear("none") == True{} : Bool}
+
+def no_list_in_the_stdout_file_lets_stdin_close():
+  {==}
+
+law a_latest_list_with_tasks_keeps_stdin_open:
+  {Guidance.background_clear("1") == False{} : Bool}
+
+def a_latest_list_with_tasks_keeps_stdin_open():
+  {==}
+
+law an_unreadable_stdout_file_keeps_stdin_open:
+  {Guidance.background_clear("?") == False{} : Bool}
+
+def an_unreadable_stdout_file_keeps_stdin_open():
+  {==}
+
+law a_failed_size_read_reports_an_unreadable_file:
+  for +db: String
+  for +spool: String
+  {Guidance.spool_background_sized(db,spool,Fail{(2,"no such file")}) == IO.pure(String,"?") : IO(String)}
+
+def a_failed_size_read_reports_an_unreadable_file(db,spool):
+  {==}
+
+law a_failed_span_read_reports_an_unreadable_file:
+  {Guidance.spool_background_text(Fail{(5,"cannot map")}) == "?" : String}
+
+def a_failed_span_read_reports_an_unreadable_file():
+  {==}
