@@ -27,6 +27,8 @@ const fs = require('node:fs');
 const args = process.argv.slice(2);
 fs.writeFileSync(process.env.ROOT_RELAY_SSH_LOG, JSON.stringify(args));
 if (process.env.ROOT_RELAY_REFUSE_READ) process.on('SIGTERM', () => setTimeout(() => process.exit(0), 300));
+if (process.env.ROOT_RELAY_APP_DIR) fs.appendFileSync(process.env.ROOT_RELAY_APP_DIR + '/ssh-launches', 'x');
+const launches = process.env.ROOT_RELAY_APP_DIR ? fs.readFileSync(process.env.ROOT_RELAY_APP_DIR + '/ssh-launches', 'utf8').length : 1;
 let call;
 const line = readline.createInterface({ input: process.stdin });
 line.on('line', value => {
@@ -34,7 +36,7 @@ line.on('line', value => {
   if (request.id === 'conductor-channel-ready') {
     process.stdout.write(JSON.stringify({ jsonrpc:'2.0', method:'notifications/claude/channel', params:{
       content: "Message (completion-request) from lead [id: request-1]:\\nFull body\\nReview the work against lead's assignment.",
-      meta: { recipient:'operator', messageIds:'[\\"request-1\\"]' }
+      meta: { recipient:'operator', messageIds:'[\\"request-1\\"]', ...(process.env.ROOT_RELAY_META_THREAD ? { thread: process.env.ROOT_RELAY_META_THREAD } : {}) }
     } }) + '\\n');
     if (process.env.ROOT_RELAY_REFUSE_READ) process.stdout.write(JSON.stringify({
       jsonrpc:'2.0', method:'notifications/claude/channel', params:{
@@ -45,7 +47,9 @@ line.on('line', value => {
     process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:request.id, result:{ protocolVersion:'2024-11-05', capabilities:{ tools:{} }, serverInfo:{ name:'fake-conductor', version:'1' } } }) + '\\n');
   } else if (request.method === 'tools/list') {
     process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:request.id, result:{ tools:[] } }) + '\\n');
-    process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:'conductor-channel-ready', method:'ping', params:{} }) + '\\n');
+    // The first connection ends after discovery, as when the network drops.
+    if (process.env.ROOT_RELAY_SSH_DROP && launches === 1) setTimeout(() => process.exit(255), 100);
+    else process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:'conductor-channel-ready', method:'ping', params:{} }) + '\\n');
   } else if (request.method === 'tools/call') {
     fs.appendFileSync(process.env.ROOT_RELAY_READ_LOG, JSON.stringify({ name:request.params.name, ...request.params.arguments }) + '\\n');
     if (process.env.ROOT_RELAY_REFUSE_READ) {
@@ -253,15 +257,15 @@ test('the Codex root relay records the read after the root thread returns the no
   assert.ok(remoteArgs[2].includes("'--root-harness' 'codex' '--thread' 'thread-1'"));
 });
 
-async function runRelay(t, mode) {
+async function runRelay(t, mode, { env = {}, args = ['--thread', 'thread-1'] } = {}) {
   const directory = scratch(t);
   fakeSsh(join(directory, 'ssh'));
   const codex = fakeCodex(join(directory, 'codex'));
   const readLog = join(directory, 'read.jsonl');
   const child = spawn(process.execPath, [RELAY, '--ssh', 'database-host', '--database', '/scratch/orchestra.db',
     '--coordinator', '/scratch/bin/baton', '--conductor', '/scratch/lib/mcp-conductor.mjs',
-    '--session', 'operator', '--thread', 'thread-1', '--codex', codex], {
-    env: { ...process.env, PATH: `${directory}:${process.env.PATH}`, ROOT_RELAY_SSH_LOG: join(directory, 'ssh.json'),
+    '--session', 'operator', ...args, '--codex', codex], {
+    env: { ...process.env, ...env, PATH: `${directory}:${process.env.PATH}`, ROOT_RELAY_SSH_LOG: join(directory, 'ssh.json'),
       ROOT_RELAY_CODEX_LOG: join(directory, 'queue.json'), ROOT_RELAY_READ_LOG: readLog,
       ROOT_RELAY_APP_DIR: directory, ROOT_RELAY_APP_MODE: mode,
       ...(mode === 'read-refused' ? { ROOT_RELAY_REFUSE_READ: '1' } : {}),
@@ -340,6 +344,39 @@ test('a proxy that closes without upgrading is reported and nothing is queued', 
   assert.match(run.diagnostic, /closed before the WebSocket upgrade/);
   assert.equal(existsSync(join(run.directory, 'queue.json')), false);
   assert.equal(existsSync(run.readLog), false);
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
+});
+
+test('a lost SSH conductor connection is opened again and the unread notice is delivered', async (t) => {
+  const run = await runRelay(t, 'consume', { env: { ROOT_RELAY_SSH_DROP: '1' } });
+  await until(run, 'codexRelayConductorLost');
+  await until(run, 'codexRootMessageReceived');
+  assert.equal(readFileSync(join(run.directory, 'ssh-launches'), 'utf8').length, 2);
+  assert.equal(readFileSync(run.readLog, 'utf8').trim().split('\n').length, 1);
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
+});
+
+test('the conversation named by CODEX_THREAD_ID is passed to the conductor and registration is requested on demand', async (t) => {
+  const run = await runRelay(t, 'consume', { env: { CODEX_THREAD_ID: 'thread-1' }, args: ['--register'] });
+  await until(run, 'codexRootMessageReceived');
+  assert.match(run.diagnostic, /"threadSource":"environment"/);
+  const remote = JSON.parse(readFileSync(join(run.directory, 'ssh.json'), 'utf8'))[2];
+  assert.ok(remote.includes("'--root-harness' 'codex' '--thread' 'thread-1' '--register'"), remote);
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
+});
+
+test('a relay with no named conversation leaves the conductor to use the recorded one', async (t) => {
+  const run = await runRelay(t, 'consume', { env: { CODEX_THREAD_ID: '', ROOT_RELAY_META_THREAD: 'thread-1' }, args: [] });
+  await until(run, 'codexRootMessageReceived');
+  assert.match(run.diagnostic, /"threadSource":"recorded"/);
+  const remote = JSON.parse(readFileSync(join(run.directory, 'ssh.json'), 'utf8'))[2];
+  assert.equal(remote.includes('--thread'), false, remote);
   run.child.stdin.end();
   const [code] = await run.closed;
   assert.equal(code, 0, run.diagnostic);

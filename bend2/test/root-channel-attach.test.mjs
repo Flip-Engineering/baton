@@ -533,6 +533,59 @@ test('a Codex root relay without --thread follows the recorded root conversation
   assert.equal(channel.notes()[0].params.meta.thread, 'recorded-thread');
 });
 
+test('a Codex root relay started with --register records its unrecorded conversation as the root', async (t) => {
+  const calls = await attach(t, 'operator', () => {}, ['--root-harness', 'codex', '--thread', 'thread-9', '--register'], true);
+  const attached = calls.find((argv) => argv[0] === 'attach');
+  assert.deepEqual(attached, ['attach', 'operator', 'codex', 'thread-9', '']);
+  const connected = calls.find((argv) => argv[0] === 'connect');
+  assert.deepEqual(connected.slice(0, 3), ['connect', 'operator', 'thread-9']);
+  assert.ok(calls.indexOf(attached) < calls.indexOf(connected));
+});
+
+test('a Codex root relay without a recorded conversation is refused unless it registers one', async (t) => {
+  const dir = scratch(t);
+  const database = orchestra(dir);
+  const fake = executable(join(dir, 'baton'), `#!${process.execPath}
+const { DatabaseSync } = require('node:sqlite');
+if (process.argv[2] === '--help' || process.argv[2] === 'help') process.exit(0);
+const db = new DatabaseSync(process.argv[2]);
+if (process.argv[3] === 'session') console.log(JSON.stringify(db.prepare('SELECT * FROM sessions WHERE id=?').get(process.argv[4])));
+`);
+  const child = spawn(process.execPath, [CONDUCTOR, database, fake, '--session', 'operator',
+    '--root-harness', 'codex', '--thread', 'thread-9'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM'); });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  child.stdin.write([
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'unrecorded', version: '1' } } },
+    { jsonrpc: '2.0', method: 'notifications/initialized' },
+  ].map(JSON.stringify).join('\n') + '\n');
+  const [code] = await once(child, 'exit');
+  assert.equal(code, 1, stderr);
+  assert.match(stderr, /requires a recorded Codex conversation before attachment/);
+});
+
+test('a Codex root relay that did not name its conversation follows a changed record', async (t) => {
+  const calls = await attach(t, 'operator', (db) => {
+    db.prepare('UPDATE sessions SET harness=?,native=? WHERE id=?').run('codex', 'thread-1', 'operator');
+    db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+      .run('rebind-input', 'lead', 'operator', 'report', 'Body that outlives a rebinding.');
+  }, ['--root-harness', 'codex'], true);
+  const { channel } = calls;
+  channel.activate();
+  await channel.until(() => channel.notes().length > 0, 'first Codex root notice');
+  assert.equal(channel.notes()[0].params.meta.thread, 'thread-1');
+  // An attach to another conversation records it and clears the endpoint.
+  const writer = new DatabaseSync(calls.database);
+  writer.prepare('UPDATE sessions SET native=?,endpoint=? WHERE id=?').run('thread-2', '', 'operator');
+  writer.close();
+  await channel.until(() => channel.notes().some((note) => note.params.meta.thread === 'thread-2'), 'notice for the new conversation');
+  const connects = readFileSync(channel.log, 'utf8').trim().split('\n').map(JSON.parse)
+    .filter((argv) => argv[1] === 'connect');
+  assert.deepEqual(connects.map((argv) => argv[3]), ['thread-1', 'thread-2']);
+  assert.deepEqual(connects[1][4], connects[0][4]);
+});
+
 test('a root completion request notice contains its full review prompt', async (t) => {
   const body = 'Completed the assigned change. Evidence: commit abc123 and the selected fixture result.';
   const calls = await attach(t, 'operator', (db) => {

@@ -7,7 +7,9 @@ import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline';
 
-const USAGE = 'usage: codex-root-relay.mjs --ssh HOST --database PATH --coordinator PATH --conductor PATH --session ID [--thread ID] [--node PATH] [--codex PATH]\n';
+const USAGE = 'usage: codex-root-relay.mjs --ssh HOST --database PATH --coordinator PATH --conductor PATH --session ID [--thread ID] [--register] [--node PATH] [--codex PATH]\n';
+
+const RECONNECT_MS = 2000;
 
 const POLL_MS = 1000;
 const PAGE_TURNS = 8;
@@ -21,6 +23,10 @@ function parse(argv) {
   const options = {};
   for (let i = 0; i < argv.length; i++) {
     const key = argv[i];
+    if (key === '--register') {
+      options.register = true;
+      continue;
+    }
     if (!['--ssh', '--database', '--coordinator', '--conductor', '--session', '--thread', '--node', '--codex'].includes(key)) {
       fail(`Unknown option: ${key}\n${USAGE}`);
     }
@@ -31,7 +37,11 @@ function parse(argv) {
   for (const key of ['ssh', 'database', 'coordinator', 'conductor', 'session']) {
     if (!options[key]) fail(`--${key} is required\n${USAGE}`);
   }
-  return { ...options, node: options.node || 'node', codex: options.codex || 'codex' };
+  // Without --thread, the Codex process that launched the relay may name its
+  // conversation in CODEX_THREAD_ID.
+  const thread = options.thread || process.env.CODEX_THREAD_ID || '';
+  const source = options.thread ? 'argument' : thread ? 'environment' : 'recorded';
+  return { ...options, thread, threadSource: source, node: options.node || 'node', codex: options.codex || 'codex' };
 }
 
 function shellQuote(value) {
@@ -483,20 +493,14 @@ function sendClient(message) {
 
 async function connect(options) {
   const remote = [options.node, options.conductor, options.database, options.coordinator,
-    '--session', options.session, '--root-harness', 'codex', ...(options.thread ? ['--thread', options.thread] : [])]
+    '--session', options.session, '--root-harness', 'codex', ...(options.thread ? ['--thread', options.thread] : []),
+    ...(options.register ? ['--register'] : [])]
     .map(shellQuote).join(' ');
   const child = spawn('ssh', ['-T', options.ssh, 'exec ' + remote], {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const peer = new Peer(child);
   connection = peer;
-  peer.closed.then(exit => {
-    if (!clientLines.closed) {
-      process.stderr.write('codex-root-relay: SSH conductor exited: ' + JSON.stringify(exit) + '\n');
-      process.exitCode = 1;
-      clientLines.close();
-    }
-  });
   peer.onItemRequest = async params => {
     const session = new AppSession({ ...options, thread: params.thread }, peer);
     try { return await readThreadItem(session, params.thread, params.turn, params.item); }
@@ -543,15 +547,44 @@ const options = parse(process.argv.slice(2));
 const clientLines = createInterface({ input: process.stdin });
 let connection = null;
 let connecting = Promise.resolve();
+let clientClosed = false;
+
+// Keeps one SSH conductor connection open for as long as the Codex client is.
+// A conductor that cannot be started or initialized the first time is a
+// configuration failure and ends the relay. After a connection was established,
+// a lost connection is opened again; the conductor sends the oldest unread
+// message on each new connection.
+async function maintain() {
+  process.stderr.write(JSON.stringify({ type: 'codexRelayIdentity', session: options.session,
+    thread: options.thread || null, threadSource: options.threadSource, register: Boolean(options.register) }) + '\n');
+  let established = false;
+  while (!clientClosed) {
+    try {
+      connection = await connect(options);
+      established = true;
+    } catch (error) {
+      if (!established) throw error;
+      process.stderr.write(`codex-root-relay: SSH conductor connection failed: ${error.message}\n`);
+      await new Promise(resolve => setTimeout(resolve, RECONNECT_MS));
+      continue;
+    }
+    const exit = await connection.closed;
+    if (clientClosed) return;
+    process.stderr.write(JSON.stringify({ type: 'codexRelayConductorLost', session: options.session, exit }) + '\n');
+    await new Promise(resolve => setTimeout(resolve, RECONNECT_MS));
+  }
+}
+
 clientLines.on('line', line => {
   try {
     const message = JSON.parse(line);
     codexMcpRequest(message);
     if (message.method === 'notifications/initialized') {
-      connecting = connecting.then(() => connect(options));
+      connecting = connecting.then(maintain);
       connecting.catch(error => {
         process.stderr.write(`codex-root-relay: ${error.stack || error}\n`);
         process.exitCode = 1;
+        clientLines.close();
       });
     }
   } catch (error) {
@@ -561,7 +594,8 @@ clientLines.on('line', line => {
 });
 
 clientLines.on('close', async () => {
-  if (connection) {
+  clientClosed = true;
+  if (connection && !connection.exited) {
     // A message not yet returned by the root thread stays unread in the database.
     connection.closing = true;
     if (connection.child.stdin.writable) connection.child.stdin.end();
