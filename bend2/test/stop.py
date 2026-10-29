@@ -6,6 +6,7 @@ import pathlib
 import shutil
 import signal
 import sqlite3
+import subprocess
 import sys
 import unittest
 
@@ -17,6 +18,16 @@ spec.loader.exec_module(receive)
 # Its socket commands establish process state before each stop or force request.
 FIXTURE = receive.FIXTURE.replace('import json,os,pathlib,re,socket,subprocess,sys',
                                  'import json,os,pathlib,re,signal,socket,subprocess,sys')
+FIXTURE = FIXTURE.replace("""    json.loads(sys.stdin.readline())
+    state=json.loads(sys.stdin.readline())
+    prompt=json.loads(sys.stdin.readline())['message']""", """    state=None
+    while True:
+        request=json.loads(sys.stdin.readline())
+        if request['type']=='get_state': state=request
+        if request['type']=='prompt':
+            prompt=request['message']
+            break
+    assert state is not None""", 1)
 FIXTURE = FIXTURE.replace('args=sys.argv[1:]', '''args=sys.argv[1:]
 if args[:1]==['tool_fixture']:
     connection=socket.create_connection(('127.0.0.1',config['port']))
@@ -70,9 +81,22 @@ FIXTURE = FIXTURE.replace(r"""        remaining_input=sys.stdin.read()
 
 
 class Stop(unittest.TestCase):
-    setUp = receive.Receive.setUp
+    def setUp(self):
+        receive.Receive.setUp(self)
+        origin = self.directory / 'origin.git'
+        subprocess.run(['git', 'clone', '--bare', str(self.repo), str(origin)],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(self.repo), 'remote', 'add', 'origin', str(origin)],
+                       check=True, capture_output=True)
+        (self.directory / 'omp').symlink_to(self.fixture)
+        private_home = self.directory / 'home'
+        private_home.mkdir()
+        self.environment = dict(os.environ, HOME=str(private_home))
+        self.environment.pop('BATON2_GIT_REGISTRY', None)
+
     close_children = receive.Receive.close_children
     owned_processes = receive.Receive.owned_processes
+    process_names = receive.Receive.process_names
     eventually = receive.Receive.eventually
     coord = receive.Receive.coord
     spawn = receive.Receive.spawn
