@@ -75,8 +75,13 @@ baton confirm worker
 baton guide worker 'Continue the assigned work and report the result.'
 ```
 
-The completion request uses the current session's recorded parent. A parentless
-session receives a structured refusal. The coordinator can use `guide` to send
+The completion request goes to the current session's coordinator, which is its
+recorded parent while that parent is not over (see the succession section below). A
+parentless session receives a structured refusal. Baton generates the request
+identity. An explicit `--id` must name the session's own current completion request
+for its open assignment, and the request replays to the recipient it recorded; an
+unrecorded identity, another message's identity or an older request is refused with its
+cause and stores nothing. The coordinator can use `guide` to send
 further work. Each decision action uses the ordinary message admission result,
 wake result and retained delivery. Baton selects the current request addressed
 to the coordinator and constructs its confirmation. The compatibility command

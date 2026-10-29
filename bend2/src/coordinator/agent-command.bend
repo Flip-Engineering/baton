@@ -29,12 +29,13 @@ type ParsedRequest is Type:
 type PreparedRequest is Type:
   Prepared{db: String, session: String, action: A.Action}
 
-# The recorded identity context of one completion request: the actor's parent,
-# the supplied ID when it is that actor's own request to that parent, the
-# current request after the latest assignment, its body, and any stored
-# message with the supplied ID.
+# The recorded identity context of one completion request: the actor's current
+# coordinator, the supplied ID when it is that actor's own request to one of its
+# coordinators together with the recipient that request recorded, the current
+# request after the latest assignment, its body, and any stored message with the
+# supplied ID.
 type CompletionState is Type:
-  State{parent: String, supplied: String, current: String, currentBody: String, recorded: String}
+  State{coordinator: String, supplied: String, suppliedTo: String, current: String, currentBody: String, recorded: String}
 
 def ids_tail(+db: String, +session: String, ids: List<String>, +index: U32) -> IO(String):
   match ids:
@@ -151,12 +152,16 @@ def inspection_result(+saved: String) -> IO(Unit):
 # A completion request named by --id must name the actor's current recorded
 # request for its open assignment. An unrecorded, foreign or older identity is
 # refused once and stores nothing. Without --id Baton generates the request
-# identity; a newer request becomes the current one for the assignment.
+# identity; a newer request becomes the current one for the assignment. The
+# request goes to the actor's current coordinator, and a replay goes to the
+# recipient the request recorded, so a request addressed to a coordinator that
+# has since been succeeded replays as recorded.
 def completion_state_sql(+session: String, +id: String) -> String:
-  +parent = "(SELECT parent FROM sessions WHERE id=" ++ C.q(session) ++ ")"
+  +coordinator = C.current_coordinator_sql(C.q(session))
   +current = C.task_request_sql(C.q(session))
-  "SELECT hex(CAST('x'||coalesce(" ++ parent ++ ",'') AS TEXT))"
-  ++ "||char(9)||hex(CAST('x'||coalesce((SELECT id FROM messages WHERE id=" ++ C.q(id) ++ " AND sender=" ++ C.q(session) ++ " AND recipient=" ++ parent ++ " AND kind='completion-request'),'') AS TEXT))"
+  "SELECT hex(CAST('x'||coalesce(" ++ coordinator ++ ",'') AS TEXT))"
+  ++ "||char(9)||hex(CAST('x'||coalesce((SELECT id FROM messages WHERE id=" ++ C.q(id) ++ " AND sender=" ++ C.q(session) ++ " AND kind='completion-request' AND " ++ C.task_addressee_sql("messages",C.q(session)) ++ "),'') AS TEXT))"
+  ++ "||char(9)||hex(CAST('x'||coalesce((SELECT recipient FROM messages WHERE id=" ++ C.q(id) ++ " AND sender=" ++ C.q(session) ++ " AND kind='completion-request' AND " ++ C.task_addressee_sql("messages",C.q(session)) ++ "),'') AS TEXT))"
   ++ "||char(9)||hex(CAST('x'||coalesce(" ++ current ++ ",'') AS TEXT))"
   ++ "||char(9)||hex(CAST('x'||coalesce((SELECT body FROM messages WHERE id=" ++ current ++ "),'') AS TEXT))"
   ++ "||char(9)||hex(CAST('x'||coalesce((SELECT id FROM messages WHERE id=" ++ C.q(id) ++ "),'') AS TEXT));"
@@ -173,13 +178,14 @@ def completion_field(encoded: String) -> IO(String):
 
 def completion_state_fields(fields: List<String>) -> IO(CompletionState):
   match fields:
-    case parent_hex <> supplied_hex <> current_hex <> body_hex <> recorded_hex <> Nil{}: do IO<CompletionState>:
-      +parent : String <- completion_field(parent_hex)
+    case coordinator_hex <> supplied_hex <> to_hex <> current_hex <> body_hex <> recorded_hex <> Nil{}: do IO<CompletionState>:
+      +coordinator : String <- completion_field(coordinator_hex)
       +supplied : String <- completion_field(supplied_hex)
+      +suppliedTo : String <- completion_field(to_hex)
       +current : String <- completion_field(current_hex)
       +currentBody : String <- completion_field(body_hex)
       +recorded : String <- completion_field(recorded_hex)
-      IO.pure(CompletionState,State{parent,supplied,current,currentBody,recorded})
+      IO.pure(CompletionState,State{coordinator,supplied,suppliedTo,current,currentBody,recorded})
     case other: IO.die(CompletionState,2,"The completion-request identity query returned an incomplete result.")
 
 def completion_state(db: String, session: String, id: String) -> IO(CompletionState):
@@ -190,50 +196,58 @@ def completion_state(db: String, session: String, id: String) -> IO(CompletionSt
 def completion_refused(+session: String, +recipient: String, +id: String, +cause: String) -> IO(String):
   IO.pure(String,"[" ++ Batch.send_refused("0",id,session,recipient,"completion-request",2,cause) ++ "]")
 
+def completion_request_refused(+db: String, +session: String, +id: String) -> IO(String):
+  do IO<String>:
+    raw : String <- IO.try(String,DB.Sql.read(db,
+      "SELECT coalesce((SELECT parent IS NOT NULL FROM sessions WHERE id=" ++ C.q(session) ++ "),0);"))
+    Bool.pick(IO(String),String.eq(Tx.trim_nl(raw),"1"),
+      completion_refused(session,"",id,"The current session has no coordinator that is not over and no registered operator to receive the request."),
+      completion_refused(session,"",id,"The current session has no recorded immediate parent."))
+
 def completion_sent(db: String, session: String, parent: String, id: String, body: A.Body) -> IO(String):
   do IO<String>:
     item : String <- send_item(db,session,0,Native.Unused{},A.Item{parent,id,"completion-request",body})
     IO.pure(String,"[" ++ item ++ "]")
 
-def completion_replay_result(+db: String, +session: String, +parent: String, +request: String,
+def completion_replay_result(+db: String, +session: String, +recipient: String, +request: String,
                              +currentBody: String, +id: String,
                              result: Result<&1,&1,U32 & String,String>) -> IO(String):
   match result:
     case Fail{(+code,+cause)}:
-      IO.pure(String,"[" ++ Batch.send_refused("0",id,session,parent,"completion-request",code,cause) ++ "]")
+      IO.pure(String,"[" ++ Batch.send_refused("0",id,session,recipient,"completion-request",code,cause) ++ "]")
     case Done{+value}:
       Bool.pick(IO(String),String.eq(value,currentBody),
-        completion_sent(db,session,parent,request,A.Text{value}),
-        completion_refused(session,parent,id,
+        completion_sent(db,session,recipient,request,A.Text{value}),
+        completion_refused(session,recipient,id,
           "Completion request " ++ request ++ " is already recorded with different content. Omit --id to record the new summary as the current request."))
 
-def completion_replayed(+db: String, +session: String, +parent: String, +request: String,
+def completion_replayed(+db: String, +session: String, +recipient: String, +request: String,
                         +currentBody: String, body: A.Body, +id: String) -> IO(String):
   do IO<String>:
     resolved : Result<&1,&1,U32 & String,String> <- body_value(body)
-    completion_replay_result(db,session,parent,request,currentBody,id,resolved)
+    completion_replay_result(db,session,recipient,request,currentBody,id,resolved)
 
-def completion_supplied(+db: String, +session: String, +parent: String, +supplied: String,
-                        +current: String, currentBody: String, recorded: String,
+def completion_supplied(+db: String, +session: String, +coordinator: String, +supplied: String,
+                        +suppliedTo: String, +current: String, currentBody: String, recorded: String,
                         +id: String, body: A.Body) -> IO(String):
   Bool.pick(IO(String),String.is_empty(supplied),
-    completion_refused(session,parent,id,
+    completion_refused(session,coordinator,id,
       Bool.pick(String,String.is_empty(recorded),
         "Completion request " ++ id ++ " is not recorded. Omit --id; Baton derives the request identity from the recorded assignment.",
-        "The supplied ID " ++ id ++ " is not this actor's completion request to its recorded parent. Omit --id to request completion for the current assignment.")),
+        "The supplied ID " ++ id ++ " is not this actor's completion request to one of its coordinators. Omit --id to request completion for the current assignment.")),
     Bool.pick(IO(String),String.eq(supplied,current),
-      completion_replayed(db,session,parent,current,currentBody,body,id),
-      completion_refused(session,parent,id,
+      completion_replayed(db,session,suppliedTo,current,currentBody,body,id),
+      completion_refused(session,coordinator,id,
         "Completion request " ++ id ++ " does not belong to the current assignment. Omit --id to request completion for the current assignment.")))
 
 def completion_request_decided(+db: String, +session: String, +id: String, +body: A.Body, state: CompletionState) -> IO(String):
   match state:
-    case State{+parent,supplied,current,currentBody,recorded}:
-      Bool.pick(IO(String),String.is_empty(parent),
-        completion_refused(session,"",id,"The current session has no recorded immediate parent."),
+    case State{+coordinator,supplied,suppliedTo,current,currentBody,recorded}:
+      Bool.pick(IO(String),String.is_empty(coordinator),
+        completion_request_refused(db,session,id),
         Bool.pick(IO(String),String.is_empty(id),
-          completion_sent(db,session,parent,"",body),
-          completion_supplied(db,session,parent,supplied,current,currentBody,recorded,id,body)))
+          completion_sent(db,session,coordinator,"",body),
+          completion_supplied(db,session,coordinator,supplied,suppliedTo,current,currentBody,recorded,id,body)))
 
 def completion_request(+db: String, +session: String, +id: String, body: A.Body) -> IO(String):
   do IO<String>:
