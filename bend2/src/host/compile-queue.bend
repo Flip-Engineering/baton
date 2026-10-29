@@ -951,7 +951,7 @@ def peak_record(+attempt: String, +peak: U32) -> IO(Unit):
       meta_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/meta")
       +meta : String <- IO.pure(String,peak_text_result(meta_result))
       +keydir : String <- IO.pure(String,field(meta,"keydir"))
-      +old_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(keydir ++ "/peak")
+      old_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(keydir ++ "/peak")
       +old_text : String <- IO.pure(String,peak_text_result(old_result))
       +prior_peak : U32 <- IO.pure(U32,status_number(field(old_text,"peak_kb")))
       Bool.pick(IO(Unit),U32.is_gt(peak,prior_peak),
@@ -999,7 +999,7 @@ def watch_heavy_go(+attempt: String, +pid: U32, +start: String,
     meta_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/meta")
     +meta : String <- IO.pure(String,peak_text_result(meta_result))
     +state : String <- IO.pure(String,field(meta,"state_root"))
-    outside_sample : Maybe<&2,U32> <- admission_outside(state)
+    +outside_sample : Maybe<&2,U32> <- admission_outside(state)
     +next_outside : OutsideState <- IO.pure(OutsideState,outside_state_next(outside,outside_sample))
     +growth : U32 <- IO.pure(U32,outside_state_growth(next_outside))
     usage_written : Unit <- record_usage_measured(attempt,pid,sample,growth,outside_sample)
@@ -1172,7 +1172,7 @@ def acquire_heavy(~again_acquire: (@+dir: String -> @+lock: String -> @+token: S
 def acquire_heavy_loop(+dir: String, +lock: String, +token: String, +priority: U32, +delay: U32) -> IO(U32):
   acquire_heavy(acquire_heavy_loop, dir, lock, token, priority, delay)
 
-def transfer_lock(+held: U32, target: U32) -> IO(Unit):
+def transfer_lock(+held: U32, +target: U32) -> IO(Unit):
   Bool.pick(IO(Unit), U32.is_eq(held,target), IO.pure(Unit,Unit{}),
     do IO<Unit>:
       duped : Unit <- IO.try(Unit, L.CompileQueueLifecycle.dup_to(held,target))
@@ -1263,7 +1263,7 @@ def admission_claim_file(+state: String, +dir: String, +name: String, +group: St
         usage_removed : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.remove(admission_root(state) ++ "/usage/" ++ name)
         IO.pure(ClaimStats, stats))
 
-def admission_claim_files(+names: List<&1,String>, +state: String, +dir: String, +group: String, +stats: ClaimStats) -> IO(ClaimStats):
+def admission_claim_files(names: List<&1,String>, +state: String, +dir: String, +group: String, +stats: ClaimStats) -> IO(ClaimStats):
   match names:
     case Nil{}: IO.pure(ClaimStats, stats)
     case name <> rest:
@@ -1434,7 +1434,7 @@ def admission_outside_after_guard(+state: String,
         names_first : String <- IO.try(String,L.CompileQueueLifecycle.list_dir(admission_root(state) ++ "/running"))
         ids_first : String <- admission_live_names(state,names_first)
         names_second : String <- IO.try(String,L.CompileQueueLifecycle.list_dir(admission_root(state) ++ "/running"))
-        ids_second : String <- admission_live_names(state,names_second)
+        +ids_second : String <- admission_live_names(state,names_second)
         +stable_set : Bool <- IO.pure(Bool,Tx.str_eq(ids_first,ids_second))
         now_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.now_seconds()
         +now_text : String <- IO.pure(String,admission_record_text(now_result))
@@ -1569,7 +1569,7 @@ def acquire_accounted(~again: (@+attempt: String -> @+keydir: String -> @+state:
         again(attempt,keydir,state,kind,key,group,token,priority,pid,start,U32.min(U32.mul(delay,2),1000)),
       do IO<AdmissionGate>:
         +guard : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(admission_root(state) ++ "/lock"))
-        meminfo : String <- IO.try(String, admission_meminfo(state))
+        +meminfo : String <- IO.try(String, admission_meminfo(state))
         +available : U32 <- IO.pure(U32,status_number(field(meminfo,"available_kb")))
         +total : U32 <- IO.pure(U32,status_number(field(meminfo,"total_kb")))
         +stats : ClaimStats <- admission_claims(state,group)
@@ -1653,8 +1653,8 @@ def supervise_gate(gate: AdmissionGate, +attempt: String, +keydir: String, +kind
         supervise_marker_result(signaled,attempt,keydir,kind,source_root,entry,key,started,names,cwd)
 
 def supervise_owned(+attempt: String, +keydir: String, +kind: String, source_root: String,
-                    entry: String, key: String, +started: String, names: List<&2,String>,
-                    cwd: String, pid: U32, start: String, +gate: U32,
+                    entry: String, +key: String, +started: String, names: List<&2,String>,
+                    cwd: String, +pid: U32, +start: String, +gate: U32,
                     +state: String, +token: String, +priority: U32) -> IO(Unit):
   do IO<Unit>:
     active_text : String <- IO.pure(String, "pid=" ++ U32.show(pid)
