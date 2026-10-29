@@ -53,8 +53,10 @@ if (phase === "front") {
     process.exitCode = 1;
   }
 } else if (phase === "units") {
-  let inputs: BodyInput[] = [];
-  const before = performance.now(), emit = Comp.unit_emitter(directory, value => { inputs = value; });
+  let inputs: BodyInput[] = [], reads: Comp.HeaderReads = { names: [], listed: [] };
+  const before = performance.now(), emit = Comp.unit_emitter(directory, (value, header) => {
+    inputs = value; reads = header;
+  });
   let last: { digest: string; facts: Fact.MutableFacts } | null = null;
   const startup = resident();
   send({ kind: "ready", pid: process.pid, startup_ms: performance.now() - before,
@@ -82,7 +84,7 @@ if (phase === "front") {
       result(request.result, { ok: true, unit: request.unit, facts_only: request.facts_only,
         rss_before: begin.rss, rss_peak: peak, rss_after: end.rss, rss_peak_exact: exact,
         trace: trace.events, lend: [...emitted.lend], masks: emitted.masks,
-        refs: [...emitted.refs], edges: emitted.edges, inputs, fragment: emitted.code.directory,
+        refs: [...emitted.refs], edges: emitted.edges, inputs, reads, fragment: emitted.code.directory,
         pid: process.pid, started, ended: new Date().toISOString(), duration_ms: performance.now() - before,
         memory: process.memoryUsage(), usage: process.resourceUsage() });
       send({ kind: "result", file: request.result });
