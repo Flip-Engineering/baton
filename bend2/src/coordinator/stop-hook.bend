@@ -43,11 +43,7 @@ def answered(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
 def claude_routed(+db: String, +session: String, +event: String, +directory: String, tool: Bool) -> IO(Unit):
   do IO<Unit>:
     evidence : Unit <- ClaudeInputEvidence.run(db,session,directory,event)
-    match tool:
-      case True{}: InputHook.run_claude(db,session)
-      case False{}: do IO<Unit>:
-        result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,decision_sql(session))
-        answered(result)
+    Bool.pick(IO(Unit),tool,InputHook.run_claude(db,session),other_routed(db,session,False{}))
 
 def other_routed(+db: String, +session: String, tool: Bool) -> IO(Unit):
   match tool:
@@ -58,7 +54,7 @@ def other_routed(+db: String, +session: String, tool: Bool) -> IO(Unit):
 
 def routed(+db: String, +session: String, +event: String, +directory: String, tool: Bool, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match result:
-    case Fail{error}: other_routed(db,session,tool)
+    case Fail{error}: IO.pure(Unit,Unit{})
     case Done{+harness}:
       Bool.pick(IO(Unit),String.eq(Tx.trim_nl(harness),"claude-code"),
         claude_routed(db,session,event,directory,tool),other_routed(db,session,tool))

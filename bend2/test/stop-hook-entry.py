@@ -312,8 +312,11 @@ class StopHook(unittest.TestCase):
         self.assertEqual(self.db.execute("SELECT message FROM message_reads ORDER BY message").fetchall(), [('dispatch:assignment',)])
 
     def test_dsh_tool_hook_delivers_and_records_every_input_kind(self):
+        self.admitted_tool_hook('dsh')
+
+    def admitted_tool_hook(self, harness):
         directory = self.home / 'attempt'
-        self.db.execute("UPDATE sessions SET harness='dsh' WHERE id='worker'")
+        self.db.execute("UPDATE sessions SET harness=? WHERE id='worker'", (harness,))
         self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
         self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained',?,'running')", (str(directory),))
         kinds = ('task', 'task-assignment', 'guidance', 'report', 'question',
@@ -407,20 +410,7 @@ print(json.dumps(results), flush=True)
             subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True)
 
     def test_muse_post_tool_hook_keeps_legacy_read_behavior(self):
-        directory = self.home / 'muse-attempt'
-        self.db.execute("UPDATE sessions SET harness='muse',native='native-1' WHERE id='worker'")
-        self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','muse-attempt','retained',?,'running')",
-                        (str(directory),))
-        self.owe(ident='muse-guidance', body='Muse receives the complete body.')
-        result = self.tool_hook(env=dict(self.env, BATON_ATTEMPT_DIRECTORY=str(directory)))
-        self.assertIn('Muse receives the complete body.', result['hookSpecificOutput']['additionalContext'])
-        self.assertNotIn('If this input is shown as a saved file with a preview',
-                         result['hookSpecificOutput']['additionalContext'])
-        rows = self.db.execute("SELECT attempt,recipient,native,identity,handled FROM message_reads WHERE message='muse-guidance'").fetchall()
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0][:3], ('muse-attempt','worker','native-1'))
-        self.assertTrue(rows[0][3])
-        self.assertIsNone(rows[0][4])
+        self.admitted_tool_hook('muse')
 
     REVIEW = ("Review the work against coordinator's assignment and the supplied evidence. "
               "Confirm with completion-confirmed --to coordinator when the assignment is satisfied. "
