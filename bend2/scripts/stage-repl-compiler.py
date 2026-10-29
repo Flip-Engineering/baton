@@ -38,6 +38,7 @@ def extend_loader(source):
 
 
 def extend_frontend(source):
+    source = replace_once(source, 'function book_err(', 'export function book_err(')
     source = replace_once(source, 'function cli_report(', 'export function cli_report(')
     source = replace_once(source,
         'async function cli_build(bin: string, file: string, evidence: string): Promise<void> {',
