@@ -447,8 +447,13 @@ law denied_detached_input_cannot_launch_a_process:
 def denied_detached_input_cannot_launch_a_process(db,id,saved):
   {==}
 
-# The oldest input still owed to the recipient of message id. Empty when the
-# recipient owes nothing or is stopped.
+# The oldest input still owed to the recipient of message id that a native
+# attempt can carry. Empty when the recipient owes nothing, is stopped, or its
+# assignment is complete and the only owed input is not new work (the
+# confirmation itself and other input that is neither an assignment nor
+# operator input). A newer assignment from a coordinator and operator input make
+# the assignment not complete, so that input remains returned and a failed
+# delivery of it keeps the owner report below.
 def owed_after_sql(+id: String) -> String:
   "SELECT coalesce((SELECT owed.id FROM messages owed WHERE owed.recipient=(SELECT recipient FROM messages WHERE id=" ++ C.q(id) ++ ") AND " ++ C.owed_sql("owed") ++ " AND NOT " ++ C.stopped_session_sql("owed.recipient") ++ " AND NOT " ++ C.task_closed_sql("owed.recipient") ++ " ORDER BY owed.seq LIMIT 1),'');"
 

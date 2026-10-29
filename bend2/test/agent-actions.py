@@ -1065,6 +1065,22 @@ class AgentActions(unittest.TestCase):
         self.invoke(self.db, 'as', 'leaf', 'report', 'Reported after mid resumed.')
         self.assertEqual(self.stored_messages()[-1][1:4], ('leaf', 'mid', 'report'))
 
+    def test_succession_cycle_from_supported_history_resolves_to_the_live_parent(self):
+        self.associate('cond-a')
+        self.associate('cond-b')
+        self.legacy('recruit', 'child-a', 'cond-a', 'fixture', 'model', 'low', str(self.repo),
+                    'child-a-branch', str(self.directory / 'child-a'), 'HEAD')
+        self.stop_session('cond-a', 'stop-a-1')
+        self.invoke(self.db, 'as', 'cond-b', 'succeed', '--from', 'cond-a')
+        self.legacy('clear-stop', 'cond-a')
+        self.stop_session('cond-b', 'stop-b-1')
+        self.invoke(self.db, 'as', 'cond-a', 'succeed', '--from', 'cond-b')
+        self.stop_session('cond-a', 'stop-a-2')
+        # Both siblings are ended; the child reports to their live parent.
+        self.invoke(self.db, 'as', 'child-a', 'report', 'The child continues.')
+        self.assertEqual(self.stored_messages()[-1][1:4], ('child-a', 'root', 'report'))
+        self.assertEqual(self.action('root', 'session', 'child-a')['blockedOwner'], 'root')
+
     def test_successor_of_a_successor_confirms_a_request_to_the_first_predecessor(self):
         self.associate('cond-a')
         self.associate('cond-b', harness='fixture')
