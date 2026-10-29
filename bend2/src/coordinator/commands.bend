@@ -617,13 +617,14 @@ def unresolved_input_sql(+row: String, +owner: String, +successor: String) -> St
 # children and the input in temporary tables of its own transaction.
 def ended_report_sql(+session: String, +key: String, +reason: String) -> String:
   +ended = q(session)
-  native_request_table_sql() ++ "DROP TABLE IF EXISTS temp.baton_ended_children;DROP TABLE IF EXISTS temp.baton_ended_input;CREATE TEMP TABLE baton_ended_children(id TEXT NOT NULL);CREATE TEMP TABLE baton_ended_input(id TEXT NOT NULL);"
+  native_request_table_sql() ++ "DROP TABLE IF EXISTS temp.baton_ended_children;DROP TABLE IF EXISTS temp.baton_ended_input;CREATE TEMP TABLE baton_ended_children(id TEXT NOT NULL);CREATE TEMP TABLE baton_ended_input(id TEXT NOT NULL);DROP TABLE IF EXISTS temp.baton_ended_recipient;CREATE TEMP TABLE baton_ended_recipient(id TEXT);"
   ++ "INSERT INTO temp.baton_ended_children SELECT live_child.id FROM sessions live_child WHERE live_child.parent=" ++ ended ++ " AND " ++ session_over_sql(ended) ++ " AND NOT " ++ session_over_sql("live_child.id") ++ " ORDER BY live_child.id;"
   ++ "INSERT INTO temp.baton_ended_input SELECT pending.id FROM messages pending WHERE " ++ session_over_sql(ended) ++ " AND " ++ unresolved_input_sql("pending",ended,"''") ++ " ORDER BY pending.seq;"
-  ++ "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ q("ended:" ++ key) ++ ",ended_session.id," ++ report_recipient("ended_session.id") ++ ",'report',json_object('type','session-ended','session',ended_session.id,'reason'," ++ q(reason)
+  ++ "INSERT INTO temp.baton_ended_recipient SELECT " ++ report_recipient("ended_session.id") ++ " FROM sessions ended_session WHERE ended_session.id=" ++ ended ++ ";"
+  ++ "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ q("ended:" ++ key) ++ ",ended_session.id,(SELECT id FROM temp.baton_ended_recipient),'report',json_object('type','session-ended','session',ended_session.id,'reason'," ++ q(reason)
   ++ ",'liveChildren',json((SELECT json_group_array(id) FROM temp.baton_ended_children)),'unresolvedInput',json((SELECT json_group_array(id) FROM temp.baton_ended_input))"
-  ++ ",'next','Run succeed --from ' || ended_session.id || ' as the replacement conductor to inherit its children and receive its unresolved input, or assign or stop the children.') FROM sessions ended_session WHERE ended_session.id=" ++ ended ++ " AND " ++ report_recipient("ended_session.id") ++ " IS NOT NULL AND (EXISTS(SELECT 1 FROM temp.baton_ended_children) OR EXISTS(SELECT 1 FROM temp.baton_ended_input ended_input JOIN messages child_input ON child_input.id=ended_input.id JOIN sessions child_sender ON child_sender.id=child_input.sender WHERE child_sender.parent=ended_session.id));"
-  ++ "DROP TABLE temp.baton_ended_children;DROP TABLE temp.baton_ended_input;"
+  ++ ",'next','Run succeed --from ' || ended_session.id || ' as the replacement conductor to inherit its children and receive its unresolved input, or assign or stop the children.') FROM sessions ended_session WHERE ended_session.id=" ++ ended ++ " AND (SELECT id FROM temp.baton_ended_recipient) IS NOT NULL AND (EXISTS(SELECT 1 FROM temp.baton_ended_children) OR EXISTS(SELECT 1 FROM temp.baton_ended_input ended_input JOIN messages child_input ON child_input.id=ended_input.id JOIN sessions child_sender ON child_sender.id=child_input.sender WHERE child_sender.parent=ended_session.id));"
+  ++ "DROP TABLE temp.baton_ended_children;DROP TABLE temp.baton_ended_input;DROP TABLE temp.baton_ended_recipient;"
 
 # The kind succession is recorded only by the succession action, which names
 # the predecessor and the successor and checks both.

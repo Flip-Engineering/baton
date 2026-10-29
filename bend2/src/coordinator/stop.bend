@@ -224,7 +224,7 @@ def mark_custody_missing(+db: String, +session: String, +attempt: String, +direc
 
 def missing_identity_signal_result(+db: String, +session: String, +attempt: String, +signal: U32, +directory: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match result:
-    case Done{native_status}: do IO<Unit>:
+    case Done{+native_status}: do IO<Unit>:
       Bool.pick(IO(Unit),String.eq(native_status,"signaled"),
         do IO<Unit>:
           saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE session_stops SET outcome='requested',applied_signal=" ++ U32.show(signal) ++ ",control_error='' WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ " AND signal=" ++ U32.show(signal) ++ " AND outcome IN ('requested','custody-missing');"))
@@ -239,7 +239,7 @@ def missing_identity_signal(+db: String, +session: String, +attempt: String, +di
     Bool.pick(IO(Unit),String.is_empty(value),IO.pure(Unit,Unit{}),
       Bool.pick(IO(Unit),String.eq(value,"applied"),IO.pure(Unit,Unit{}),
         do IO<Unit>:
-          +signal : U32 = U32.read(value)
+          +signal : U32 = selected_signal(U32.read(value))
           Bool.pick(IO(Unit),U32.is_eq(signal,0),mark_custody_missing(db,session,attempt,directory),
             do IO<Unit>:
               result : Result<&1,&1,U32 & String,String> <- P.ProcessChild.instance_attempt_signal(db,directory,signal)
@@ -266,7 +266,7 @@ def missing_custody_owner(+db: String, +session: String, +attempt: String, +dire
 # The host verifies the retained manifest and native birth before delivering
 # a signal; no PID or path inference is used.
 
-def control_attempt(+db: String, +session: String, +attempt: String, +directory: String, signal: U32) -> IO(Unit):
+def control_attempt(+db: String, +session: String, +attempt: String, +directory: String, +signal: U32) -> IO(Unit):
   do IO<Unit>:
     result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.control_signal(directory,signal)
     saved : String <- IO.try(String,DB.Sql.query(db,control_result_sql(session,attempt,signal,result)))
