@@ -26,6 +26,7 @@ const readline = require('node:readline');
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 fs.writeFileSync(process.env.ROOT_RELAY_SSH_LOG, JSON.stringify(args));
+if (process.env.ROOT_RELAY_REFUSE_READ) process.on('SIGTERM', () => setTimeout(() => process.exit(0), 300));
 let call;
 const line = readline.createInterface({ input: process.stdin });
 line.on('line', value => {
@@ -35,6 +36,11 @@ line.on('line', value => {
       content: "Message (completion-request) from lead [id: request-1]:\\nFull body\\nReview the work against lead's assignment.",
       meta: { recipient:'operator', messageIds:'[\\"request-1\\"]' }
     } }) + '\\n');
+    if (process.env.ROOT_RELAY_REFUSE_READ) process.stdout.write(JSON.stringify({
+      jsonrpc:'2.0', method:'notifications/claude/channel', params:{
+        content:'Second notice', meta:{ recipient:'operator', messageIds:'[\\"request-2\\"]' }
+      }
+    }) + '\\n');
   } else if (request.method === 'initialize') {
     process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:request.id, result:{ protocolVersion:'2024-11-05', capabilities:{ tools:{} }, serverInfo:{ name:'fake-conductor', version:'1' } } }) + '\\n');
   } else if (request.method === 'tools/list') {
@@ -42,6 +48,11 @@ line.on('line', value => {
     process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:'conductor-channel-ready', method:'ping', params:{} }) + '\\n');
   } else if (request.method === 'tools/call') {
     fs.appendFileSync(process.env.ROOT_RELAY_READ_LOG, JSON.stringify({ name:request.params.name, ...request.params.arguments }) + '\\n');
+    if (process.env.ROOT_RELAY_REFUSE_READ) {
+      process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:request.id,
+        result:{ isError:true, content:[{type:'text',text:'Refused fixture read'}] } }) + '\\n');
+      return;
+    }
     call = request.id;
     const { thread, turn, item } = request.params.arguments;
     process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:'client:1', method:'baton/rootThreadItem', params:{ thread, turn, item } }) + '\\n');
@@ -253,6 +264,7 @@ async function runRelay(t, mode) {
     env: { ...process.env, PATH: `${directory}:${process.env.PATH}`, ROOT_RELAY_SSH_LOG: join(directory, 'ssh.json'),
       ROOT_RELAY_CODEX_LOG: join(directory, 'queue.json'), ROOT_RELAY_READ_LOG: readLog,
       ROOT_RELAY_APP_DIR: directory, ROOT_RELAY_APP_MODE: mode,
+      ...(mode === 'read-refused' ? { ROOT_RELAY_REFUSE_READ: '1' } : {}),
       ROOT_RELAY_ITEM_LOG: join(directory, 'item.jsonl') },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -287,6 +299,16 @@ test('a queued notice that the root thread has not returned stays unread', async
   assert.equal(code, 0, run.diagnostic);
   assert.equal(existsSync(run.readLog), false);
   assert.match(run.diagnostic, /codexRootMessageUnread/);
+});
+
+test('a refused thread read stops later queued notices before closing SSH', async (t) => {
+  const run = await runRelay(t, 'read-refused');
+  const [code] = await run.closed;
+  assert.equal(code, 1, run.diagnostic);
+  assert.match(run.diagnostic, /read was not recorded/);
+  assert.equal((run.diagnostic.match(/codexRootMessageQueued/g) || []).length, 1, run.diagnostic);
+  assert.ok(JSON.parse(readFileSync(join(run.directory, 'queue.json'), 'utf8')).at(-1).includes('request-1'));
+  assert.equal(readFileSync(run.readLog, 'utf8').trim().split('\n').length, 1);
 });
 
 test('a root thread that the app-server has not loaded yet receives its notice once loaded', async (t) => {

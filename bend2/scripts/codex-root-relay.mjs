@@ -503,8 +503,12 @@ async function connect(options) {
     finally { await session.close(); }
   };
   peer.onNotice = params => {
+    if (peer.closing || peer.exited) return;
     peer.delivery = (peer.delivery || Promise.resolve())
-      .then(() => deliverNotice(peer, options, params))
+      .then(() => {
+        if (peer.closing || peer.exited) return;
+        return deliverNotice(peer, options, params);
+      })
       .catch(error => {
         if (peer.closing) {
           process.stderr.write(JSON.stringify({ type: 'codexRootMessageUnread', session: options.session,
@@ -513,6 +517,7 @@ async function connect(options) {
         }
         process.stderr.write(`codex-root-relay: ${error.stack || error}\n`);
         process.exitCode = 1;
+        peer.closing = true;
         child.kill('SIGTERM');
       });
   };
