@@ -308,7 +308,7 @@ def session_over_sql(+session: String) -> String:
 # distance and is preferred over the predecessor's parent. Each trail records the
 # sessions already visited, so malformed cyclic records end the walk.
 def coordinator_sql(+worker: String) -> String:
-  +next = "CASE path_edge.k WHEN 0 THEN path_session.parent ELSE path_succession.sender END"
+  +next : String = "CASE path_edge.k WHEN 0 THEN path_session.parent ELSE path_succession.sender END"
   "coalesce((WITH RECURSIVE chain_kinds(k) AS (VALUES(0),(1)),coordinator_path(id,hops,trail) AS (SELECT chain_start.parent,0,'|' || chain_start.parent || '|' FROM sessions chain_start WHERE chain_start.id=" ++ worker ++ " AND chain_start.parent IS NOT NULL UNION ALL SELECT " ++ next ++ ",path_node.hops+1-path_edge.k,path_node.trail || " ++ next ++ " || '|' FROM coordinator_path path_node JOIN sessions path_session ON path_session.id=path_node.id LEFT JOIN messages path_succession ON path_succession.kind='succession' AND path_succession.recipient=path_node.id AND path_succession.id='succession:' || path_succession.recipient || ':' || path_succession.sender JOIN chain_kinds path_edge WHERE (" ++ next ++ ") IS NOT NULL AND instr(path_node.trail,'|' || " ++ next ++ " || '|')=0) SELECT live_node.id FROM coordinator_path live_node WHERE NOT " ++ session_over_sql("live_node.id") ++ " ORDER BY live_node.hops,length(live_node.trail) LIMIT 1)," ++ operator_destination_sql() ++ ")"
 
 # The current coordinator of a worker. A parented worker has the coordinator_sql
