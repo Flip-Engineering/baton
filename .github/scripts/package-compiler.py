@@ -65,6 +65,35 @@ def package(args):
     }
     save(manifest_path, manifest)
     output = args.output / ('bend-2.0.25-linux-x64-' + args.name + '.tar.gz')
+    final_archive = (args.final_archive_path or output).resolve()
+    deployment_path = prefix / 'deployment.json'
+    deployment = json.loads(deployment_path.read_text())
+    deployment.update({
+        'schema': 'baton-bend-distribution-package-v1',
+        'package_id': args.name,
+        'release_name': manifest['release_name'],
+        'distribution_state': manifest['distribution_state'],
+        'archive_name': output.name,
+        'archive_path': str(final_archive),
+        'package_root': prefix.name,
+        'source_commit': commit,
+        'source_tree': source_tree,
+        'source_lock_sha256': manifest['source_lock_sha256'],
+        'source_input_count': len(lock['files']),
+        'cache_ts_sha256': manifest['cache_ts']['sha256'],
+        'inherited_archive': {
+            'path': manifest['inherited_distribution']['path'],
+            'sha256': manifest['inherited_distribution']['sha256'],
+            'root': prefix.name,
+        },
+        'packaging': {
+            'format': 'tar.gz', 'tar_mtime_epoch': 0, 'gzip_mtime_epoch': 0,
+            'owner_uid': 0, 'owner_gid': 0, 'tar_format': 'USTAR',
+        },
+    })
+    deployment.setdefault('launcher', {})['sha256'] = manifest['compiler']['sha256']
+    deployment.setdefault('runtime', {})['sha256'] = manifest['bun']['sha256']
+    save(deployment_path, deployment)
     with output.open('xb') as raw, gzip.GzipFile(fileobj=raw, mode='wb', mtime=0) as zipped, \
             tarfile.open(fileobj=zipped, mode='w|') as archive:
         for path in [prefix, *sorted(prefix.rglob('*'))]:
@@ -76,7 +105,7 @@ def package(args):
                     archive.addfile(info, stream)
             else:
                 archive.addfile(info)
-    receipt = {'archive': str(output.resolve()), 'archive_sha256': digest(output),
+    receipt = {'archive': str(final_archive), 'archive_sha256': digest(output),
                'source_commit': commit, 'source_tree': source_tree,
                'release_name': manifest['release_name'],
                'compiler_sha256': manifest['compiler']['sha256'],
@@ -91,4 +120,6 @@ if __name__ == '__main__':
     parser.add_argument('--base-archive', type=Path, required=True)
     parser.add_argument('--name', required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--final-archive-path', type=Path,
+                        help='canonical archive path when packaging in a staging directory')
     package(parser.parse_args())

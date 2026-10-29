@@ -16,6 +16,7 @@ def pre_invocation_sql(+saved: String) -> String:
 def stop_sql(+session: String, +saved: String) -> String:
   "SELECT CASE WHEN json_array_length(" ++ C.q(saved) ++ ")>0 THEN json_object('decision','continue','reason','Baton has complete input for this turn:' || char(10) || " ++ message_text_sql(saved) ++ " || char(10) || 'Continue the work. When the assignment is ready, call completion-request --text SUMMARY with run_command.')"
   ++ " WHEN " ++ C.task_open_sql(C.q(session)) ++ " AND " ++ C.task_request_sql(C.q(session)) ++ " IS NULL THEN json_object('decision','continue','reason','The current assignment remains open. Continue the work. When it is ready, call completion-request --text SUMMARY with run_command so the conductor can review it.')"
+  ++ " WHEN " ++ C.task_open_sql(C.q(session)) ++ " THEN json_object('decision','continue','reason','Completion request ' || " ++ C.task_request_sql(C.q(session)) ++ " || ' is awaiting the conductor decision. Continue the assignment and follow any guidance they send.')"
   ++ " ELSE json_object('decision','allow') END;"
 
 def record_input(db: String, session: String, directory: String, saved: String, fields: List<String>) -> IO(Unit):
