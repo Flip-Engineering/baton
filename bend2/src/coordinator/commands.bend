@@ -430,8 +430,41 @@ def configure_update_sql(+session: String, +harness: String, +model: String, +ef
   ++ "SELECT json_object('error','configure-refused','session'," ++ q(session) ++ ",'expected',json_object('harness'," ++ q(expected_harness) ++ ",'model'," ++ q(expected_model) ++ ",'effort'," ++ q(expected_effort) ++ "),'requested',json_object('harness'," ++ q(harness) ++ ",'model'," ++ q(model) ++ ",'effort'," ++ q(effort) ++ "),'condition','Configuration requires the recorded harness, model and effort to match the expected route. Saving effort on the same harness and model preserves the receiver, current attempt and stop. A same-route --command with --output-log rebinds the endpoint; --command without --output-log is refused; --output-log without --command preserves the recorded endpoint. Changing harness or model requires a launchable receiver, no owned attempt and no stop.','next','Read session ID and pass its recorded harness, model and effort as the expected route. Change provider after the current attempt exits. Resume SESSION --lift-stop explicitly lifts a stop.') WHERE changes()=0;"
   ++ session_result_where("id=" ++ q(session) ++ " AND changes()=1")
 
+# An admitted harness or model change leaves no attempt that owns a wake: the
+# change is admitted only without a live attempt, and the release path retires
+# its starting attempt before this statement runs. A recorded claim and ticket
+# therefore name an attempt the change replaced or released, and the wake after
+# the change claims afresh. The deletion is guarded by the admission expression
+# the update uses, evaluated before the update in the same transaction, so a
+# refused request (stale expected route, live attempt, stop) deletes nothing. A
+# same-route save, including an effort-only change, keeps the claim because it
+# preserves the current attempt.
+def configure_claims_clear_sql(+session: String, +harness: String, +model: String, +expected_harness: String, +expected_model: String, +admitted: String) -> String:
+  +guard = admitted ++ " AND (" ++ q(harness) ++ "<>" ++ q(expected_harness) ++ " OR " ++ q(model) ++ "<>" ++ q(expected_model) ++ ") AND NOT EXISTS(SELECT 1 FROM executions WHERE session=" ++ q(session) ++ " AND phase<>'exited')"
+  "DELETE FROM wake_claims WHERE session=" ++ q(session) ++ " AND " ++ guard ++ ";"
+  ++ "DELETE FROM wake_claim_tickets WHERE session=" ++ q(session) ++ " AND " ++ guard ++ ";"
+
+def configure_update_clearing_sql(+session: String, +harness: String, +model: String, +effort: String, +endpoint: String, +expected_harness: String, +expected_model: String, expected_effort: String, +admitted: String) -> String:
+  configure_claims_clear_sql(session,harness,model,expected_harness,expected_model,admitted)
+  ++ configure_update_sql(session,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort,admitted)
+
+# The release predicate admits a starting attempt whose native custody the
+# caller observed absent. The same predicate guards its retirement, so the
+# attempt and the new route commit together or neither does.
+def configure_release_admitted(+session: String, +harness: String, +model: String, +endpoint: String, +expected_harness: String, +expected_model: String, expected_effort: String, +attempt: String, +directory: String) -> String:
+  "(" ++ q(harness) ++ " IN ('codex','omp','muse','claude-code','dsh','antigravity') AND " ++ q(model) ++ "<>'' AND " ++ configure_matches(session,expected_harness,expected_model,expected_effort)
+  ++ " AND (" ++ q(endpoint) ++ "='' OR " ++ endpoint_admitted(endpoint) ++ ")"
+  ++ " AND ((" ++ q(harness) ++ "=" ++ q(expected_harness) ++ " AND " ++ q(model) ++ "=" ++ q(expected_model) ++ ") OR (NOT " ++ stopped_session_sql(q(session))
+  ++ " AND NOT EXISTS(SELECT 1 FROM executions WHERE session=" ++ q(session) ++ " AND phase<>'exited' AND NOT (id=" ++ q(attempt) ++ " AND phase='starting' AND directory=" ++ q(directory) ++ "))"
+  ++ " AND " ++ endpoint_admitted(endpoint) ++ ")))"
+
+def configure_sql_releasing(+session: String, +harness: String, +model: String, +effort: String, +endpoint: String, +expected_harness: String, +expected_model: String, +expected_effort: String, +attempt: String, +directory: String) -> String:
+  +admitted = configure_release_admitted(session,harness,model,endpoint,expected_harness,expected_model,expected_effort,attempt,directory)
+  "UPDATE executions SET phase='exited',status='start failed' WHERE session=" ++ q(session) ++ " AND id=" ++ q(attempt) ++ " AND phase='starting' AND directory=" ++ q(directory) ++ " AND " ++ admitted ++ ";"
+  ++ configure_update_clearing_sql(session,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort,admitted)
+
 def configure_sql(+session: String, +harness: String, +model: String, +effort: String, +endpoint: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> String:
-  configure_update_sql(session,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort,configure_admitted(session,harness,model,endpoint,expected_harness,expected_model,expected_effort))
+  configure_update_clearing_sql(session,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort,configure_admitted(session,harness,model,endpoint,expected_harness,expected_model,expected_effort))
 
 # A repeated ID preserves the original message fields. Same-body replay is
 # ordinary; different input keeps the stored row and is answered with a refusal
