@@ -114,8 +114,6 @@ jobs:
     runs-on:
       group: baton2-native-homelab
       labels: [self-hosted, Linux, X64, baton2-native-linux-x64]
-    env:
-      BATON2_VALIDATION_ROUTE: ${{ runner.temp }}/baton2-validation-route-${{ github.run_id }}-${{ github.run_attempt }}
     outputs:
       route: ${{ steps.route.outputs.route }}
     steps:
@@ -132,6 +130,8 @@ jobs:
           BATON2_ORIGIN_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          BATON2_VALIDATION_ROUTE="$RUNNER_TEMP/baton2-validation-route-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          printf 'BATON2_VALIDATION_ROUTE=%s\n' "$BATON2_VALIDATION_ROUTE" >> "$GITHUB_ENV"
           mkdir -p "$BATON2_VALIDATION_ROUTE"
           if [[ ! -f .github/scripts/native-validation-route.py ]]; then
             printf '%s\n' 'route=native' >> "$GITHUB_OUTPUT"

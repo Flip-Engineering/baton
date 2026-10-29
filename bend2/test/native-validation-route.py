@@ -156,11 +156,16 @@ class Workflow(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             result = subprocess.run(['bash', '-c', step['run']], cwd=root, text=True, capture_output=True,
-                                    env=dict(os.environ, BATON2_VALIDATION_ROUTE=str(root / 'evidence'),
+                                    env=dict(os.environ, RUNNER_TEMP=str(root),
+                                             GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='2',
+                                             GITHUB_ENV=str(root / 'github-env'),
                                              GITHUB_OUTPUT=str(root / 'github-output')))
             self.assertEqual(result.returncode, 0, result.stderr)
+            evidence = root / 'baton2-validation-route-123-2'
+            self.assertEqual((root / 'github-env').read_text(),
+                             'BATON2_VALIDATION_ROUTE=' + str(evidence) + '\n')
             self.assertEqual((root / 'github-output').read_text(), 'route=native\n')
-            self.assertEqual(json.loads((root / 'evidence/selection.json').read_text())['route'], 'native')
+            self.assertEqual(json.loads((evidence / 'selection.json').read_text())['route'], 'native')
 
 
 if __name__ == '__main__':
