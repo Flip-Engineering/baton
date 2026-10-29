@@ -1997,7 +1997,7 @@ export function parse_var(p: Parse, k: Name, s?: Span): LTerm {
   if (e !== null) {
     return Var(k, e[1], s);
   }
-  const q = parse_reso(p, k);
+  const q = parse_reso(p, k, false);
   if (k.includes(".")) {
     return Ref(q, s);
   }
@@ -2008,13 +2008,16 @@ export function parse_qual(p: Parse, k: Name): Name {
   return p.ns === "" ? k : p.ns + "." + k;
 }
 
-export function parse_reso(p: Parse, k: Name): Name {
+export function parse_reso(p: Parse, k: Name, ctr = true): Name {
   const dot = k.indexOf(".");
   let q = parse_qual(p, k);
   if (dot !== -1 && k.slice(0, dot) in p.al) {
     q = p.al[k.slice(0, dot)] + k.slice(dot);
   }
   if (q in p.book.tlds || q in p.book.ctrs) {
+    return q;
+  }
+  if (!ctr && !(k in p.book.tlds) && k in p.book.ctrs) {
     return q;
   }
   return k;
@@ -2367,7 +2370,7 @@ export function parse_term_ops(p: Parse, tm: LTerm, lvl: number): LTerm {
     }
     if (parse_at(p, "(") || parse_at(p, "!(")) {
       if (out.$ === "Var" && parse_lookup(p, out.k) === null) {
-        out = Ref(parse_reso(p, out.k), out.s);
+        out = Ref(parse_reso(p, out.k, false), out.s);
       }
       if (parse_at(p, "!")) {
         if (out.$ !== "Ref") {
