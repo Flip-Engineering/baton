@@ -471,8 +471,8 @@ test('a root completion request notice contains its full review prompt', async (
   assert.match(notice.params.content, /Message \(completion-request\) from lead \[id: completion-1\]:/);
   assert.ok(notice.params.content.includes(body));
   assert.ok(notice.params.content.includes('Review the work against lead\'s assignment and the supplied evidence.'));
-  assert.ok(notice.params.content.includes('Confirm with completion-confirmed --to lead when the assignment is satisfied.'));
-  assert.ok(notice.params.content.includes('Otherwise use guide --to lead --text TEXT to state what is missing and direct the remaining work.'));
+  assert.ok(notice.params.content.includes('When the assignment is satisfied, use completion-confirmed --to lead to end the Player, or add --next TEXT to confirm and dispatch its next assignment together.'));
+  assert.ok(notice.params.content.includes('When work remains, use guide --to lead --text TEXT to state what is missing and direct the remaining work.'));
   const result = await channel.call('read-completion', 'baton2_delivery', { id: 'completion-1' });
   assert.equal(JSON.parse(result.content[0].text).body, body);
   const db = new DatabaseSync(calls.database, { readOnly: true });
