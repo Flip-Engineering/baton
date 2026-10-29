@@ -120,7 +120,7 @@ def record(+db: String, player: String, turn: String, attempt: String, event: St
       IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(tasks,("Native OMP UI request has no permitted coordinator; interaction requires a recorded parent that is not over, a registered coordinator ancestor, or the operator of a parentless conductor.",False{})))
     case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool>:
       ready : String <- IO.try(String,prepare_projection(db))
-      result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ schema() ++ request_sql(player,turn,attempt,event) ++ "COMMIT;")
+      result : Result<&1,&1,U32 & String,String> <- Store.query_through_busy(db,"BEGIN IMMEDIATE;" ++ schema() ++ request_sql(player,turn,attempt,event) ++ "COMMIT;")
       accepted : Result<&1,&1,U32 & String,String> <- Store.committed(result)
       saved(db,tasks,accepted)
 
