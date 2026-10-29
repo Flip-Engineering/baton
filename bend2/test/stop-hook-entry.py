@@ -413,8 +413,9 @@ print(json.dumps(results), flush=True)
         self.admitted_tool_hook('muse')
 
     REVIEW = ("Review the work against coordinator's assignment and the supplied evidence. "
-              "Confirm with completion-confirmed --to coordinator when the assignment is satisfied. "
-              "Otherwise use guide --to coordinator --text TEXT to state what is missing and direct the remaining work.")
+              "When the assignment is satisfied, use completion-confirmed --to coordinator to end the Player, "
+              "or add --next TEXT to confirm and dispatch its next assignment together. "
+              "When work remains, use guide --to coordinator --text TEXT to state what is missing and direct the remaining work.")
 
     def test_tool_hook_gives_a_completion_request_with_the_review_instruction(self):
         self.owe(ident='message:coordinator:request', kind='completion-request', body='Evidence: tests pass.\nλ🙂')

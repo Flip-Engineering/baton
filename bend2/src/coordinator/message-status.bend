@@ -87,7 +87,7 @@ def forwarded_read_sql(+session: String, +attempt: String, +native: String, iden
 # The instruction a conductor receives with a completion request. Each
 # argument is an SQL expression for the message row's kind and sender.
 def review_instruction_sql(+kind: String, +sender: String) -> String:
-  "CASE WHEN " ++ kind ++ "='completion-request' THEN char(10) || 'Review the work against ' || " ++ sender ++ " || char(39) || 's assignment and the supplied evidence. Confirm with completion-confirmed --to ' || " ++ sender ++ " || ' when the assignment is satisfied. Otherwise use guide --to ' || " ++ sender ++ " || ' --text TEXT to state what is missing and direct the remaining work.' ELSE '' END"
+  "CASE WHEN " ++ kind ++ "='completion-request' THEN char(10) || 'Review the work against ' || " ++ sender ++ " || char(39) || 's assignment and the supplied evidence. When the assignment is satisfied, use completion-confirmed --to ' || " ++ sender ++ " || ' to end the Player, or add --next TEXT to confirm and dispatch its next assignment together. When work remains, use guide --to ' || " ++ sender ++ " || ' --text TEXT to state what is missing and direct the remaining work.' ELSE '' END"
 
 # One complete message as delivered into a native conversation: the stored
 # header and complete body, then the review instruction for a completion
