@@ -14,8 +14,8 @@ law parentless_request_preserves_its_error_after_control_output:
   for event: String
   for -tasks: List<Chan(Result<&1,&1,U32 & String,String>)>
   {Requests.record(db,player,turn,attempt,event,tasks,False{}) == (do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool>:
-    shown : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output("Native OMP UI request is unsupported for a session without a registered parent; its full frame remains in the native log.\n")
-    IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(tasks,("Native OMP UI request has no registered parent; interaction requires a registered parent.",False{})))) : IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool)}
+    shown : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output("Native OMP UI request is unsupported for a session without a coordinator; its full frame remains in the native log.\n")
+    IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(tasks,("Native OMP UI request has no coordinator that is not over and no registered operator; interaction requires a coordinator.",False{})))) : IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool)}
 
 def parentless_request_preserves_its_error_after_control_output(db,player,turn,attempt,event,tasks):
   {==}

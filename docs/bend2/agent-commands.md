@@ -265,6 +265,13 @@ may message each other. A Player with no coordinator that is not over and no
 registered operator receives a structured refusal (`report-recipient-missing` for a
 report or question).
 
+A parentless conductor's coordinator is the registered operator. Its assignment from
+the operator is open until confirmed, its task state names the operator as the
+coordinator, and its completion requests, native questions and knowledge notices go
+to the operator. A parentless conductor with no registered operator, and a parentless
+Player, have no coordinator: their assignment is not open, their completion requests
+and native questions are refused, and their findings send no notice.
+
 A message that Baton admitted under a retained identity keeps its recorded recipient.
 Repeating `report`, `ask`, a knowledge record, a turn-end report or a native question
 with the same identity after a succession or an ending replays the original admitted

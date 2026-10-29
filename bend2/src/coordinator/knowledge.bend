@@ -295,8 +295,9 @@ def knowledge_answer(+id: String, +author: String, +claim: String, +evidence: St
 
 # The current coordinator of an author: its recorded parent while that parent is
 # not over, else the parent's successor, the nearest ancestor that is not over, or
-# the registered operator. A session with no recorded parent records the finding
-# and sends no notice.
+# the registered operator. A parentless conductor's notice goes to the registered
+# operator. A parentless Player, or a session with no coordinator and no
+# registered operator, records the finding and sends no notice.
 def notice_target(+author: String) -> String:
   C.current_coordinator_sql(C.q(author))
 

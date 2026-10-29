@@ -311,9 +311,11 @@ def coordinator_sql(+worker: String) -> String:
   +next = "CASE path_edge.k WHEN 0 THEN path_session.parent ELSE path_succession.sender END"
   "coalesce((WITH RECURSIVE chain_kinds(k) AS (VALUES(0),(1)),coordinator_path(id,hops,trail) AS (SELECT chain_start.parent,0,'|' || chain_start.parent || '|' FROM sessions chain_start WHERE chain_start.id=" ++ worker ++ " AND chain_start.parent IS NOT NULL UNION ALL SELECT " ++ next ++ ",path_node.hops+1-path_edge.k,path_node.trail || " ++ next ++ " || '|' FROM coordinator_path path_node JOIN sessions path_session ON path_session.id=path_node.id LEFT JOIN messages path_succession ON path_succession.kind='succession' AND path_succession.recipient=path_node.id AND path_succession.id='succession:' || path_succession.recipient || ':' || path_succession.sender JOIN chain_kinds path_edge WHERE (" ++ next ++ ") IS NOT NULL AND instr(path_node.trail,'|' || " ++ next ++ " || '|')=0) SELECT live_node.id FROM coordinator_path live_node WHERE NOT " ++ session_over_sql("live_node.id") ++ " ORDER BY live_node.hops,length(live_node.trail) LIMIT 1)," ++ operator_destination_sql() ++ ")"
 
-# The current coordinator of a parented worker; a parentless session has none.
+# The current coordinator of a worker. A parented worker has the coordinator_sql
+# result. A parentless conductor has the registered operator. A parentless Player
+# has none, and neither does a parentless conductor when no operator is registered.
 def current_coordinator_sql(+worker: String) -> String:
-  "(SELECT CASE WHEN coordinated_worker.parent IS NOT NULL THEN " ++ coordinator_sql("coordinated_worker.id") ++ " END FROM sessions coordinated_worker WHERE coordinated_worker.id=" ++ worker ++ ")"
+  "(SELECT CASE WHEN coordinated_worker.parent IS NOT NULL THEN " ++ coordinator_sql("coordinated_worker.id") ++ " WHEN " ++ assigned_role("coordinated_worker.id") ++ "='conductor' THEN " ++ operator_destination_sql() ++ " END FROM sessions coordinated_worker WHERE coordinated_worker.id=" ++ worker ++ ")"
 
 # The accountable owner for blocked input is the current coordinator, else the
 # registered operator. This mirrors report_recipient without naming it, which
@@ -342,8 +344,10 @@ def task_closed_sql(+session: String) -> String:
 def wake_state_sql(+session: String) -> String:
   "json_object('pending',CASE WHEN " ++ stopped_session_sql(session) ++ " OR " ++ task_closed_sql(session) ++ " THEN 0 ELSE (SELECT count(*) FROM messages WHERE recipient=" ++ session ++ " AND " ++ owed_sql("messages") ++ ") END,'claim',coalesce((SELECT state FROM wake_claims WHERE session=" ++ session ++ "),'') )"
 
+# An assignment is open for a parented session and for a parentless conductor
+# with a registered operator, the destination of its completion request.
 def task_open_sql(+session: String) -> String:
-  "((SELECT task_parent.parent FROM sessions task_parent WHERE task_parent.id=" ++ session ++ ") IS NOT NULL AND " ++ task_assignment_sql(session) ++ " IS NOT NULL AND NOT " ++ task_confirmed_sql(session) ++ " AND NOT " ++ stopped_session_sql(session) ++ ")"
+  "(((SELECT task_parent.parent FROM sessions task_parent WHERE task_parent.id=" ++ session ++ ") IS NOT NULL OR " ++ assigned_role(session) ++ "='conductor' AND " ++ operator_destination_sql() ++ " IS NOT NULL) AND " ++ task_assignment_sql(session) ++ " IS NOT NULL AND NOT " ++ task_confirmed_sql(session) ++ " AND NOT " ++ stopped_session_sql(session) ++ ")"
 
 def task_state_sql(+session: String) -> String:
   "json_object('assignmentId',(SELECT id FROM messages WHERE seq=" ++ task_assignment_sql(session) ++ "),'coordinator'," ++ current_coordinator_sql(session) ++ ",'requestId'," ++ task_request_sql(session) ++ ",'confirmed',json(CASE WHEN " ++ task_confirmed_sql(session) ++ " THEN 'true' ELSE 'false' END),'open',json(CASE WHEN " ++ task_open_sql(session) ++ " THEN 'true' ELSE 'false' END),'ended',json(CASE WHEN " ++ task_ended_sql(session) ++ " THEN 'true' ELSE 'false' END))"

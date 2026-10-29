@@ -116,8 +116,8 @@ def saved(db: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, resu
 def record(+db: String, player: String, turn: String, attempt: String, event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, parent: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool):
   match parent:
     case False{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool>:
-      shown : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output("Native OMP UI request is unsupported for a session without a registered parent; its full frame remains in the native log.\n")
-      IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(tasks,("Native OMP UI request has no registered parent; interaction requires a registered parent.",False{})))
+      shown : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output("Native OMP UI request is unsupported for a session without a coordinator; its full frame remains in the native log.\n")
+      IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(tasks,("Native OMP UI request has no coordinator that is not over and no registered operator; interaction requires a coordinator.",False{})))
     case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool>:
       ready : String <- IO.try(String,prepare_projection(db))
       result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ schema() ++ request_sql(player,turn,attempt,event) ++ "COMMIT;")
@@ -128,7 +128,7 @@ def observe(+db: String, +player: String, turn: String, attempt: String, +event:
   match enabled:
     case False{}: IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool,(tasks,("",False{})))
     case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool>:
-      parent : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN parent IS NULL AND json_extract(" ++ C.q(event) ++ ",'$.method') IN ('input','select','confirm','editor') THEN 0 ELSE 1 END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+      parent : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.current_coordinator_sql(C.q(player)) ++ " IS NULL AND json_extract(" ++ C.q(event) ++ ",'$.method') IN ('input','select','confirm','editor') THEN 0 ELSE 1 END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
       record(db,player,turn,attempt,event,tasks,String.eq(parent,"1\n"))
 
 def closed(+db: String, attempt: String, enabled: Bool) -> IO(Result<&1,&1,U32 & String,String>):

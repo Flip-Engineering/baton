@@ -1177,6 +1177,28 @@ class AgentActions(unittest.TestCase):
         self.assertFalse(self.completion('top-b')['ended'])
         self.assertEqual(self.completion('top-b')['assignmentId'], exact[1]['id'])
 
+    def test_a_parentless_conductor_assignment_is_open_under_the_operator(self):
+        self.operator_session()
+        self.legacy('attach', 'top', 'fixture', '', self.endpoint)
+        self.legacy('role', 'top', 'principal-conductor')
+        self.legacy('message', 'top-task', 'operator', 'top', 'task', 'Coordinate the work.')
+        state = self.completion('top')
+        self.assertEqual((state['assignmentId'], state['coordinator']), ('top-task', 'operator'))
+        self.assertTrue(state['open'])
+        self.assertFalse(state['confirmed'] or state['ended'])
+        sent = self.action('top', 'completion-request', '--text', 'The coordination is complete.')[0]
+        self.assertEqual((sent['status'], sent['recipient']), ('admitted', 'operator'))
+        state = self.completion('top')
+        self.assertEqual((state['requestId'], state['coordinator']), (sent['id'], 'operator'))
+        self.assertTrue(state['open'])
+        exact = self.action('operator', 'completion-confirmed', '--to', 'top',
+                            '--request', sent['id'], '--next', 'Continue with the next stage.')
+        self.assertEqual([row['status'] for row in exact], ['admitted', 'admitted'])
+        state = self.completion('top')
+        self.assertEqual((state['assignmentId'], state['coordinator']), (exact[1]['id'], 'operator'))
+        self.assertTrue(state['open'])
+        self.assertFalse(state['confirmed'] or state['ended'])
+
     def test_a_parentless_player_cannot_request_completion_even_with_a_registered_operator(self):
         self.operator_session()
         self.legacy('attach', 'plain-player', 'fixture', '', self.endpoint)
