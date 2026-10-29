@@ -6,9 +6,11 @@ descends from the tree root through parent links receives the signal.
 
 * A second owner holds the key: the execution survives and the second owner gets the
   real result; the first owner's token is gone.
-* No second owner: the execution is canceled.
-* A token whose process no longer exists is not an owner: it does not keep an
-  execution alive after the last live owner is gone.
+* No second owner: the execution still runs to its end and publishes its result, which
+  the cache keeps for the next identical request. Only the cancel command ends an
+  execution.
+* A token whose process no longer exists is not an owner: a requester that joins the
+  key removes it.
 """
 import os
 import pathlib
@@ -170,25 +172,33 @@ class QueueAdoptionTests(unittest.TestCase):
         self.assertEqual([r["status"] for r in self.results()], ["completed"])
         self.assertNotIn(first_token, self.owners())
 
-    def test_execution_is_canceled_when_the_only_owner_tree_ends(self):
+    def test_execution_runs_to_its_end_when_the_only_owner_tree_ends(self):
         first = self.start_tree("only")
         self.until("the execution started", lambda: any(l.startswith("start") for l in self.log_lines()))
         self.terminate_tree(first)
-        self.until("the execution was canceled", lambda: [r.get("status") for r in self.results()] == ["canceled"])
-        self.assertEqual(self.results()[0]["exit"], "130")
-        self.until("the compiler ended", lambda: not self.compiler_alive())
-        self.assertNotIn("end", self.log_lines())
+        time.sleep(3)
+        self.assertEqual(self.results(), [], "the execution ended with its only requester")
+        self.assertTrue(self.compiler_alive(), self.log_lines())
+        self.hold.touch()
+        self.until("the execution published its result", lambda: [r.get("status") for r in self.results()] == ["completed"])
+        self.assertEqual(self.output.read_text(), "complete\n")
+        self.assertIn("end", self.log_lines())
 
-    def test_a_token_whose_process_is_gone_is_not_an_owner(self):
+    def test_a_token_whose_process_is_gone_is_removed_when_the_key_is_joined(self):
         gone = subprocess.Popen([sys.executable, "-I", "-c", "pass"])
         gone.wait()
         first = self.start_tree("live")
         self.until("the execution started", lambda: any(l.startswith("start") for l in self.log_lines()))
         stale = self.keydir() / "owners" / "stale"
-        start = pathlib.Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]
-        stale.write_text("pid=%d\nstarttime=%s\nstarted_ns=1\n" % (gone.pid, start))
-        self.terminate_tree(first)
-        self.until("the execution was canceled", lambda: [r.get("status") for r in self.results()] == ["canceled"])
+        stale.write_text("pid=%d\nstarttime=1\nstarted_ns=1\n" % gone.pid)
+        second = subprocess.Popen(self.argv("joiner"), env=self.environment(),
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.children.append(second)
+        self.until("the joiner is registered", lambda: "joiner" in self.owners())
+        self.assertIn("stale", self.owners())
+        self.hold.touch()
+        out, err = second.communicate(timeout=60)
+        self.assertEqual(second.returncode, 0, out + err)
         self.assertNotIn("stale", self.owners())
 
 
