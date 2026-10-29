@@ -268,7 +268,9 @@ class AdapterExitTests(unittest.TestCase):
 
         directory = Path(self.temp.name) / ('queue-success' if success else 'queue-failure')
         directory.mkdir()
-        config = {'client': 'fixture-client', 'state': str(state)}
+        run = Path(self.temp.name) / 'run'
+        run.mkdir()
+        config = {'client': 'fixture-client', 'state': str(state), 'run': str(run)}
         stdout = io.BytesIO()
         stderr = io.BytesIO()
 
@@ -298,7 +300,11 @@ class AdapterExitTests(unittest.TestCase):
         captured_stdout = BinaryCapture(stdout)
         captured_stderr = BinaryCapture(stderr)
 
-        with mock.patch.object(adapter.subprocess, 'check_output', return_value='fixture-key'), \
+        def fake_key_run(argv, **kwargs):
+            # run_queue_key passes cwd and capture_output to subprocess.run.
+            return subprocess.CompletedProcess(argv, 0, stdout=b'fixture-key\n', stderr=b'')
+
+        with mock.patch.object(adapter.subprocess, 'run', side_effect=fake_key_run), \
                 mock.patch.object(adapter.subprocess, 'Popen', side_effect=QueueRun), \
                 mock.patch.object(adapter.shutil, 'copyfile', side_effect=deny_diagnostic_copy), \
                 mock.patch.object(adapter.sys, 'stdout', captured_stdout), \
