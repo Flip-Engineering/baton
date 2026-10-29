@@ -294,6 +294,7 @@ class StopHook(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         contexts = json.loads(result.stdout)
         self.assertEqual(contexts, [{'hookEventName': 'PostToolUse', 'additionalContext':
+            'If this input is shown as a saved file with a preview, read the file completely before continuing.\n'
             'Baton input for this turn. Handle the following complete messages:\nMessage (guidance) from coordinator [id: mid-loop]:\nNew complete body.\nλ🙂\n\nThe complete input is available in this turn.'}])
         self.assertIsNone(self.db.execute("SELECT receipt FROM messages WHERE id='mid-loop'").fetchone()[0])
         self.assertEqual(self.db.execute("SELECT message FROM message_reads ORDER BY message").fetchall(), [('dispatch:assignment',)])
@@ -350,6 +351,7 @@ print(json.dumps(results), flush=True)
             first, second, third = json.loads(outputs[0])
             self.assertIsNone(first)
             context = second['hookSpecificOutput']['additionalContext']
+            self.assertNotIn('If this input is shown as a saved file with a preview', context)
             for kind in kinds:
                 self.assertIn('Message (' + kind + ') from coordinator [id: admitted-' + kind + ']:\n'
                               'Complete body for ' + kind + '.', context)
@@ -404,6 +406,22 @@ print(json.dumps(results), flush=True)
         finally:
             subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True)
 
+    def test_muse_post_tool_hook_keeps_legacy_read_behavior(self):
+        directory = self.home / 'muse-attempt'
+        self.db.execute("UPDATE sessions SET harness='muse',native='native-1' WHERE id='worker'")
+        self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','muse-attempt','retained',?,'running')",
+                        (str(directory),))
+        self.owe(ident='muse-guidance', body='Muse receives the complete body.')
+        result = self.tool_hook(env=dict(self.env, BATON_ATTEMPT_DIRECTORY=str(directory)))
+        self.assertIn('Muse receives the complete body.', result['hookSpecificOutput']['additionalContext'])
+        self.assertNotIn('If this input is shown as a saved file with a preview',
+                         result['hookSpecificOutput']['additionalContext'])
+        rows = self.db.execute("SELECT attempt,recipient,native,identity,handled FROM message_reads WHERE message='muse-guidance'").fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][:3], ('muse-attempt','worker','native-1'))
+        self.assertTrue(rows[0][3])
+        self.assertIsNone(rows[0][4])
+
     REVIEW = ("Review the work against coordinator's assignment and the supplied evidence. "
               "Confirm with completion-confirmed --to coordinator when the assignment is satisfied. "
               "Otherwise use guide --to coordinator --text TEXT to state what is missing and direct the remaining work.")
@@ -411,7 +429,8 @@ print(json.dumps(results), flush=True)
     def test_tool_hook_gives_a_completion_request_with_the_review_instruction(self):
         self.owe(ident='message:coordinator:request', kind='completion-request', body='Evidence: tests pass.\nλ🙂')
         context = self.tool_hook()['hookSpecificOutput']['additionalContext']
-        self.assertEqual(context, 'Baton input for this turn. Handle the following complete messages:\n'
+        self.assertEqual(context, 'If this input is shown as a saved file with a preview, read the file completely before continuing.\n'
+            'Baton input for this turn. Handle the following complete messages:\n'
             'Message (completion-request) from coordinator [id: message:coordinator:request]:\nEvidence: tests pass.\nλ🙂\n'
             + self.REVIEW + '\nThe complete input is available in this turn.')
 
@@ -563,6 +582,14 @@ print(json.dumps(decisions), flush=True)
         script.write_text(r'''import hashlib, json, os, pathlib, sqlite3, subprocess, sys
 config = json.loads(sys.argv[1])
 env = dict(os.environ, BATON_DATABASE=config['database'], BATON_SESSION='worker', BATON_ATTEMPT_DIRECTORY=config['directory'])
+transcript_path = pathlib.Path(config['directory']) / 'native.jsonl'
+transcript_path.parent.mkdir(parents=True, exist_ok=True)
+def frame(value):
+    with transcript_path.open('a', encoding='utf-8') as stream:
+        stream.write(json.dumps(value, ensure_ascii=False) + '\n')
+def event(name, **fields):
+    return json.dumps(dict(hook_event_name=name, session_id='native-1', prompt_id='prompt-1',
+                           transcript_path=str(transcript_path), **fields), ensure_ascii=False)
 def invoke(name, args, data=None):
     result = subprocess.run(args, input=data, env=env, capture_output=True, text=True)
     if config['evidence']:
@@ -579,21 +606,69 @@ with sqlite3.connect(config['database']) as db:
     assert db.execute('SELECT count(*) FROM messages WHERE id=?', (config['id'],)).fetchone()[0] == 0
     db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,'coordinator','worker','guidance',?)",
                (config['id'], pathlib.Path(config['bodyPath']).read_text(encoding='utf-8')))
-hook = invoke('injected-input', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'PostToolUse','tool_name':'Bash'}))
+frame({'type':'user','sessionId':'native-1','promptId':'prompt-1','message':{'role':'user','content':'Start the task.'}})
+hook = invoke('injected-input', [config['binary'],'--stop-hook'], event('PostToolUse', tool_name='Bash'))
 context = json.loads(hook.stdout)['hookSpecificOutput']['additionalContext']
 assert config['tail'] in context
 assert 'baton read ' + config['id'] not in context
+assert reads() == []
+rendered = ('Message (guidance) from coordinator [id: ' + config['id'] + ']:\n' +
+            pathlib.Path(config['bodyPath']).read_text(encoding='utf-8'))
+if config['label'] == 'short':
+    frame({'type':'api-request-blob','sessionId':'native-1',
+           'message':{'role':'system','content':[{'type':'text','text':'PostToolUse:Bash hook additional context: ' + context}]}})
+    before = invoke('stop-after-inline-request', [config['binary'],'--stop-hook'], event('Stop', stop_hook_active=True))
+    assert json.loads(before.stdout)['decision'] == 'block'
+    assert 'Assignment ' + config['id'] + ' is still open' in json.loads(before.stdout)['reason']
+else:
+    preview = rendered[:512]
+    frame({'type':'api-request-blob','sessionId':'native-1',
+           'message':{'role':'system','content':[{'type':'text','text':'PostToolUse:Bash hook additional context: ' + context.replace(rendered, preview)}]}})
+    before = invoke('stop-after-preview', [config['binary'],'--stop-hook'], event('Stop', stop_hook_active=True))
+    assert json.loads(before.stdout)['decision'] == 'block'
+    assert 'Baton holds 1 unread inputs' in json.loads(before.stdout)['reason']
+    assert reads() == []
+    read_path = str(pathlib.Path(config['directory']) / 'saved-input.txt')
+    pathlib.Path(read_path).write_text(rendered, encoding='utf-8')
+    frame({'type':'assistant','sessionId':'native-1','message':{'content':[
+           {'type':'tool_use','id':'read-1','name':'Read','input':{'file_path':read_path}}]}})
+    partial = rendered[:512]
+    frame({'type':'user','sessionId':'native-1','promptId':'prompt-1','message':{'content':[
+           {'type':'tool_result','tool_use_id':'read-1','content':partial}]}})
+    partial_event = event('PostToolUse', tool_name='Read', tool_use_id='read-1',
+                          tool_input={'file_path':read_path},
+                          tool_response={'type':'text','file':{'filePath':read_path,'content':partial,
+                                        'numLines':len(partial.splitlines()),'startLine':1,
+                                        'totalLines':len(rendered.splitlines())}})
+    partial_read = invoke('post-partial-read', [config['binary'],'--stop-hook'], partial_event)
+    assert config['tail'] in json.loads(partial_read.stdout)['hookSpecificOutput']['additionalContext']
+    partial_stop = invoke('stop-after-partial-read', [config['binary'],'--stop-hook'], event('Stop', stop_hook_active=True))
+    assert json.loads(partial_stop.stdout)['decision'] == 'block'
+    assert 'Baton holds 1 unread inputs' in json.loads(partial_stop.stdout)['reason']
+    assert reads() == []
+    frame({'type':'assistant','sessionId':'native-1','message':{'content':[
+           {'type':'tool_use','id':'read-2','name':'Read','input':{'file_path':read_path}}]}})
+    numbered = '\n'.join(str(i+1) + '\t' + line for i,line in enumerate(rendered.splitlines()))
+    frame({'type':'user','sessionId':'native-1','promptId':'prompt-1','message':{'content':[
+           {'type':'tool_result','tool_use_id':'read-2','content':numbered}]}})
+    read_event = event('PostToolUse', tool_name='Read', tool_use_id='read-2',
+                       tool_input={'file_path':read_path},
+                       tool_response={'type':'text','file':{'filePath':read_path,'content':rendered,
+                                     'numLines':len(rendered.splitlines()),'startLine':1,
+                                     'totalLines':len(rendered.splitlines())}})
+    after_read = invoke('post-read', [config['binary'],'--stop-hook'], read_event)
+    assert after_read.stdout.strip() == ''
+    before = invoke('stop-after-full-read', [config['binary'],'--stop-hook'], event('Stop', stop_hook_active=True))
+    assert json.loads(before.stdout)['decision'] == 'block'
+    assert 'Assignment ' + config['id'] + ' is still open' in json.loads(before.stdout)['reason']
 rows = reads()
 assert len(rows) == 1 and rows[0][:3] == ('attempt-1','worker','native-1') and rows[0][3] and rows[0][4] is None
-before = invoke('stop-after-injection', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'Stop','stop_hook_active':True}))
-assert json.loads(before.stdout)['decision'] == 'block'
-assert 'Baton holds 1 unread inputs' not in json.loads(before.stdout)['reason']
-after = invoke('post-injection', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'PostToolUse','tool_name':'Bash'}))
+after = invoke('post-injection', [config['binary'],'--stop-hook'], event('PostToolUse', tool_name='Bash'))
 assert after.stdout.strip() == ''
 request = invoke('completion-request', [config['binary'],'completion-request',config['database'],'Read the complete input and finished the work.'])
 admitted = json.loads(request.stdout)[0]
 assert admitted['admission']['status'] == 'admitted', admitted
-stop = invoke('stop-after-request', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'Stop','stop_hook_active':True}))
+stop = invoke('stop-after-request', [config['binary'],'--stop-hook'], event('Stop', stop_hook_active=True))
 assert stop.stdout.strip() == ''
 evidence = {'fullBodyInjectedAndRecorded':True,'guidanceProcess':os.getpid(),'completeReadSha256':config['sha256'],'tail':config['tail'],'requestId':admitted['id'],'requestWake':admitted['wake'],'stopAllowed':True,'nativeRead':rows[0][:4]}
 print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_id':'native-1','result':json.dumps(evidence)}), flush=True)
