@@ -176,7 +176,16 @@ jobs:
           BATON2_ORIGIN_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 .github/scripts/native-producer-route.py route \
+          route=.github/scripts/native-producer-route.py
+          if [[ ! -f "$route" ]]; then
+            # The pull request branch was cut before the routing script existed.
+            reason='The checkout has no .github/scripts/native-producer-route.py.'
+            printf 'producer=candidate\nreason=%s\n' "$reason" >> "$GITHUB_OUTPUT"
+            printf '{"schema": "baton2-main-producer-route-v1", "producer": "candidate", "reason": "%s"}\n' "$reason" \
+              > "$BATON2_LINUX_RUN/evidence/producer-route.json"
+            exit 0
+          fi
+          python3 "$route" route \
             --source "$GITHUB_WORKSPACE" --run "$BATON2_LINUX_RUN" --event "$GITHUB_EVENT_NAME" \
             --base "$BATON2_PULL_REQUEST_BASE" --head "$BATON2_SOURCE_SHA" \
             --github-output "$GITHUB_OUTPUT" \
