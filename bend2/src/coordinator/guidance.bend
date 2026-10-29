@@ -203,7 +203,7 @@ def continued_plain(db: String, player: String, +handle: U32, +attempt: String, 
       closed : U32 <- IO.try(U32,P.ProcessChild.input_closed(handle))
       pending_live(db,player,handle,attempt,cursor,closed)
 
-def continued(db: String, player: String, +handle: U32, +attempt: String, +cursor: String, +spool: String, ended: Bool, mode: String, monitor: Bool) -> IO(String):
+def continued(+db: String, player: String, +handle: U32, +attempt: String, +cursor: String, +spool: String, ended: Bool, mode: String, monitor: Bool) -> IO(String):
   match mode:
     case "hold": forward_all(db,player,handle,attempt,cursor)
     case "drain": do IO<String>:
