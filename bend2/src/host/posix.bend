@@ -101,3 +101,21 @@ def HostPosix.write_stderr(value: String) -> IO(Result<&1,&1,U32 & String,Unit>)
 
 def HostPosix.platform() -> IO(Result<&1,&1,U32 & String,String>):
   import "./posix.c"
+
+def HostPosix.meminfo() -> IO(Result<&1,&1,U32 & String,String>):
+  import "./posix.c"
+
+def HostPosix.session_kb(pid: U32) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./posix.c"
+
+def HostPosix.lock_shared_try(path: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32>>):
+  import "./posix.c"
+
+def HostPosix.now_seconds() -> IO(Result<&1,&1,U32 & String,String>):
+  import "./posix.c"
+
+def HostPosix.mkdir_sticky(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./posix.c"
+
+def HostPosix.exclusive_lock_pid(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./posix.c"
