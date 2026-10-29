@@ -141,8 +141,13 @@ if grep -Fq '#include "persistent-path.h"' "$output.c"; then
     ln -s "$expected_persistent_header" "$persistent_header"
   fi
 fi
+# An entry that reaches the HTTP reader emits the libcurl include.
+extra_libs=
+if grep -q '^#include <curl/curl.h>' "$output.c"; then
+  extra_libs=-lcurl
+fi
 build_native_shards() {
-  native_link_flags="-O1 -pthread -lsqlite3 -lm"
+  native_link_flags="-O1 -pthread -lsqlite3 -lm${extra_libs:+ $extra_libs}"
   if [ -n "$1" ]; then
     native_link_flags="$native_link_flags $1"
   fi
@@ -174,12 +179,6 @@ elif [ "$focused" = 1 ]; then
 elif [ "$recovery" = 1 ]; then
   build_native_shards -DBATON2_RECOVERY_HELPER
 else
-  # An entry that reaches the HTTP reader emits the libcurl include, so the
-  # generated C decides whether the link needs libcurl.
-  extra_libs=
-  if grep -q '^#include <curl/curl.h>' "$output.c"; then
-    extra_libs=-lcurl
-  fi
   storage_test_flag=
   case "$entry_path" in
     */bend2/tests/storage.bend) storage_test_flag="-DBATON_STORAGE_TEST_PROC" ;;
