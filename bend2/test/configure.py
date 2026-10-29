@@ -261,6 +261,76 @@ class Configure(unittest.TestCase):
         self.assertEqual([(row['id'], row['phase'], row['status']) for row in execution],
                          [('attempt-effort', 'starting', '')])
 
+    def seed_claim(self, session):
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("INSERT OR REPLACE INTO wake_claims(session,state,owner,generation) "
+                       "VALUES(?,?,?,?)", (session, 'claimed', 'old-driver', 3))
+            db.execute("INSERT OR REPLACE INTO wake_claim_tickets(session,directory,owner,generation) "
+                       "VALUES(?,?,?,?)", (session, str(self.directory / 'old-attempt'), 'old-driver', 3))
+            db.commit()
+
+    def claim_rows(self, session):
+        with closing(sqlite3.connect(self.db)) as db:
+            return (db.execute("SELECT session,state,owner,generation FROM wake_claims "
+                               "WHERE session=?", (session,)).fetchall(),
+                    db.execute("SELECT session,directory,owner,generation FROM wake_claim_tickets "
+                               "WHERE session=?", (session,)).fetchall())
+
+    def test_route_change_retires_the_claim_and_ticket_of_the_replaced_attempt(self):
+        self.root()
+        self.recruit('leaf')
+        self.seed_claim('leaf')
+        seeded = self.claim_rows('leaf')
+        self.assertEqual((len(seeded[0]), len(seeded[1])), (1, 1))
+        self.route('leaf', 'omp', 'gpt-6-astra', 'high', ('omp', 'kimi-code/k3', 'low'))
+        self.assertEqual(self.claim_rows('leaf'), ([], []))
+
+    def test_refused_stale_expected_route_keeps_the_claim_and_ticket(self):
+        self.root()
+        self.recruit('leaf')
+        self.route('leaf', 'omp', 'gpt-6-astra', 'high', ('omp', 'kimi-code/k3', 'low'))
+        self.seed_claim('leaf')
+        seeded = self.claim_rows('leaf')
+        # The request names the route the session already records, but the expected route is
+        # stale, so the update is refused. The recorded route equals the requested route; the
+        # claim must still stay.
+        stale = self.route('leaf', 'omp', 'gpt-6-astra', 'high',
+                           ('omp', 'kimi-code/k3', 'low'), ok=False)
+        self.assertEqual(stale['code'], 2)
+        self.assertIn('configure-refused', stale['stderr'])
+        self.assertEqual(self.claim_rows('leaf'), seeded)
+
+    def test_refused_route_change_with_a_live_attempt_keeps_the_claim_and_ticket(self):
+        self.root()
+        self.recruit('leaf')
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
+                       "VALUES('leaf','attempt-live','retained','','running','')")
+            db.commit()
+        self.seed_claim('leaf')
+        seeded = self.claim_rows('leaf')
+        refused = self.route('leaf', 'omp', 'gpt-6-astra', 'high',
+                             ('omp', 'kimi-code/k3', 'low'), ok=False)
+        self.assertEqual(refused['code'], 2)
+        self.assertIn('configure-refused', refused['stderr'])
+        self.assertEqual(self.claim_rows('leaf'), seeded)
+
+    def test_same_route_save_with_a_live_attempt_keeps_the_claim_and_ticket(self):
+        self.root()
+        self.recruit('leaf')
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
+                       "VALUES('leaf','attempt-live','retained','','running','')")
+            db.commit()
+        self.seed_claim('leaf')
+        seeded = self.claim_rows('leaf')
+        changed = self.route('leaf', 'omp', 'kimi-code/k3', 'max', ('omp', 'kimi-code/k3', 'low'))
+        self.assertEqual(changed['effort'], 'max')
+        self.assertEqual(self.claim_rows('leaf'), seeded)
+        self.assertEqual([row['phase'] for row in
+                          self.rows("SELECT phase FROM executions WHERE session='leaf'")],
+                         ['running'])
+
     @unittest.skipIf(os.geteuid() == 0, 'requires an unprivileged owner')
     def test_route_change_keeps_an_attempt_with_unreadable_status(self):
         self.root()
