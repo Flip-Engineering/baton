@@ -1449,16 +1449,19 @@ def outside_state_growth(state: OutsideState) -> U32:
   match state:
     case OutsideState{baseline, growth}: growth
 
-def outside_state_next(previous: OutsideState, sample: Maybe<U32>) -> OutsideState:
+def outside_state_from_baseline(baseline: Maybe<U32>, current: U32) -> OutsideState:
+  match baseline:
+    case None{}: OutsideState{Some{current},0}
+    case Some{base}: OutsideState{Some{base},Bool.pick(U32,U32.is_gt(current,base),U32.sub(current,base),0)}
+
+def outside_state_next_sample(baseline: Maybe<U32>, growth: U32, sample: Maybe<U32>) -> OutsideState:
   match sample:
-    case None{}: previous
-    case Some{current}:
-      match previous:
-        case OutsideState{baseline, growth}:
-          match baseline:
-            case None{}: OutsideState{Some{current},0}
-            case Some{base}:
-              OutsideState{Some{base},Bool.pick(U32,U32.is_gt(current,base),U32.sub(current,base),0)}
+    case None{}: OutsideState{baseline,growth}
+    case Some{current}: outside_state_from_baseline(baseline,current)
+
+def outside_state_next(previous: OutsideState, sample: Maybe<U32>) -> OutsideState:
+  match previous:
+    case OutsideState{baseline, growth}: outside_state_next_sample(baseline,growth,sample)
 
 def admission_need(recorded: U32, stats: ClaimStats) -> U32:
   match stats:
