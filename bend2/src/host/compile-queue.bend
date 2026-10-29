@@ -1585,7 +1585,7 @@ def acquire_accounted(~again: (@+attempt: String -> @+keydir: String -> @+state:
           do IO<AdmissionGate>:
             released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(guard))
             slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(delay))
-            again(attempt,keydir,state,kind,key,group,token,priority,pid,start,U32.min(U32.mul(delay,2),1000)))
+            again(attempt,keydir,state,kind,key,group,token,priority,pid,start,U32.min(U32.mul(delay,2),1000))))
 
 def acquire_accounted_loop(+attempt: String, +keydir: String, +state: String, +kind: String, +key: String, +group: String,
                            +token: String, +priority: U32, +pid: U32, +start: String, +delay: U32) -> IO(AdmissionGate):
