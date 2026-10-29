@@ -374,6 +374,8 @@ process.stdin.on('data', (chunk) => {
 });
 
 process.stdin.on('end', () => {
+  for (const pending of clientRequests.values()) pending.reject(new Error('The MCP client closed before replying.'));
+  clientRequests.clear();
   channelReady = false;
   connectionCustody = null;
   deliveryServer?.close();
@@ -959,7 +961,8 @@ function notifyPending(messageId = null) {
   const notice = `${content}\n\n${readInstruction}`;
   sendNotification('notifications/claude/channel', {
     content: notice,
-    meta: { recipient: sessionId, messageIds: JSON.stringify([message.id]) },
+    meta: { recipient: sessionId, messageIds: JSON.stringify([message.id]),
+      ...(rootHarness === 'codex' && connectionCustody ? { thread: connectionCustody.native } : {}) },
   });
   inputNotice = { key, id: message.id, native: message.native, body: message.body,
     content: notice, connection: connectionCustody?.connection };
@@ -1009,9 +1012,11 @@ async function startDelivery() {
     if (existing?.harness !== 'codex' || !existing?.native) {
       throw new Error('A Codex root relay requires a recorded Codex conversation before attachment.');
     }
-    if (!relayThread || relayThread !== existing.native) {
+    // Without --thread the relay follows the recorded root conversation.
+    if (relayThread !== null && relayThread !== existing.native) {
       throw new Error('The Codex relay thread must match the recorded root conversation.');
     }
+    relayThread = existing.native;
   }
   const connection = randomUUID();
   const socketName = `conductor-${process.pid}-${connection}.sock`;
@@ -1094,6 +1099,12 @@ function initialInstructions() {
 
 // MCP message handler.
 function handleMessage(msg) {
+  if (clientRequests.has(msg.id) && msg.method === undefined) {
+    const pending = clientRequests.get(msg.id);
+    clientRequests.delete(msg.id);
+    pending.resolve(msg);
+    return;
+  }
   if (msg.id === 'conductor-channel-ready' && msg.result !== undefined) {
     channelReady = true;
     notifyPending();
@@ -1175,12 +1186,68 @@ function messageReadOptions(args, pending = false) {
   ];
 }
 
+// Requests that this server sends to its client and the replies it awaits.
+const clientRequests = new Map();
+let clientRequestId = 0;
+
+function requestClient(method, params) {
+  const id = `client:${++clientRequestId}`;
+  return new Promise((resolve, reject) => {
+    clientRequests.set(id, { resolve, reject });
+    writeMessage({ jsonrpc: '2.0', id, method, params });
+  });
+}
+
+function checkRootDelivery(args) {
+  if (rootHarness !== 'codex' || !connectionCustody || !inputNotice
+      || args.id !== inputNotice.id || args.thread !== connectionCustody.thread
+      || args.thread !== connectionCustody.native || args.content !== inputNotice.content
+      || typeof args.turn !== 'string' || !args.turn || typeof args.item !== 'string' || !args.item
+      || inputNotice.connection !== connectionCustody.connection
+      || inputNotice.native !== connectionCustody.native
+      || !pendingConductorMessage(args.id)) {
+    throw new Error('Codex read evidence does not match the complete root notice, the recorded thread and the thread turn and item that returned it.');
+  }
+}
+
+// The relay's turn and item IDs select an item. The read is recorded only when
+// the relay reads that item from the root thread now and it is a user message
+// that holds the complete notice.
+async function rootDelivery(msg) {
+  const args = msg.params.arguments ?? {};
+  try {
+    checkRootDelivery(args);
+    const reply = await requestClient('baton/rootThreadItem',
+      { thread: args.thread, turn: args.turn, item: args.item });
+    if (reply.error) throw new Error(`The Codex root thread item could not be read: ${reply.error.message}`);
+    const read = reply.result;
+    if (read?.thread !== args.thread || read.turn !== args.turn || read.item !== args.item
+        || read.type !== 'userMessage' || typeof read.text !== 'string'
+        || !read.text.includes(args.content)) {
+      throw new Error('The Codex root thread item is not a user message holding the complete notice.');
+    }
+    checkRootDelivery(args);
+    let result;
+    activeReadMessage = args.id;
+    try { result = coord('delivery', args.id); }
+    finally { activeReadMessage = null; }
+    sendResponse(msg.id, { content: [{ type: 'text', text: result }] });
+    continuePending();
+  } catch (e) {
+    sendResponse(msg.id, { content: [{ type: 'text', text: `Error: ${e.message}` }], isError: true });
+  }
+}
+
 function handleToolCall(msg) {
   const { name } = msg.params;
   const args = msg.params.arguments ?? {};
   const player = args?.player ?? args?.worker;
   if (unavailableTools.has(name)) {
     sendError(msg.id, -32601, `The recorded coordinator executable does not advertise ${name}. Use baton2_delivery or baton2_guide until that executable is updated.`);
+    return;
+  }
+  if (name === 'baton2_root_delivery') {
+    rootDelivery(msg);
     return;
   }
   try {
@@ -1401,20 +1468,6 @@ function handleToolCall(msg) {
             || inputNotice.id !== args.id || inputNotice.connection !== connectionCustody.connection
             || inputNotice.native !== connectionCustody.native) {
           throw new Error('The complete input was not returned by this active root channel.');
-        }
-        activeReadMessage = args.id;
-        try { result = coord('delivery', args.id); }
-        finally { activeReadMessage = null; }
-        break;
-      case 'baton2_root_delivery':
-        if (rootHarness !== 'codex' || !connectionCustody || !inputNotice
-            || args.id !== inputNotice.id || args.thread !== connectionCustody.thread
-            || args.thread !== connectionCustody.native || args.content !== inputNotice.content
-            || typeof args.turn !== 'string' || !args.turn || typeof args.item !== 'string' || !args.item
-            || inputNotice.connection !== connectionCustody.connection
-            || inputNotice.native !== connectionCustody.native
-            || !pendingConductorMessage(args.id)) {
-          throw new Error('Codex read evidence does not match the complete root notice, the recorded thread and the thread turn and item that returned it.');
         }
         activeReadMessage = args.id;
         try { result = coord('delivery', args.id); }

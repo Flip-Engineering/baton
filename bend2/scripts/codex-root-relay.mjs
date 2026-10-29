@@ -6,7 +6,7 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
-const USAGE = 'usage: codex-root-relay.mjs --ssh HOST --database PATH --coordinator PATH --conductor PATH --session ID --thread ID [--node PATH] [--codex PATH]\n';
+const USAGE = 'usage: codex-root-relay.mjs --ssh HOST --database PATH --coordinator PATH --conductor PATH --session ID [--thread ID] [--node PATH] [--codex PATH]\n';
 
 const POLL_MS = 1000;
 const PAGE_TURNS = 8;
@@ -27,7 +27,7 @@ function parse(argv) {
     if (value === undefined || value.startsWith('--')) fail(`${key} requires a value\n${USAGE}`);
     options[key.slice(2)] = value;
   }
-  for (const key of ['ssh', 'database', 'coordinator', 'conductor', 'session', 'thread']) {
+  for (const key of ['ssh', 'database', 'coordinator', 'conductor', 'session']) {
     if (!options[key]) fail(`--${key} is required\n${USAGE}`);
   }
   return { ...options, node: options.node || 'node', codex: options.codex || 'codex' };
@@ -94,6 +94,12 @@ class Peer {
       this.send({ id: message.id, result: {} });
       return;
     }
+    if (message.method === 'baton/rootThreadItem' && message.id !== undefined) {
+      this.onItemRequest?.(message.params).then(
+        result => this.send({ id: message.id, result }),
+        error => this.send({ id: message.id, error: { code: -32000, message: String(error.message || error) } }));
+      return;
+    }
     if (message.method === 'notifications/claude/channel') {
       this.onNotice?.(message.params);
       return;
@@ -141,34 +147,101 @@ async function openAppServer(options) {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const server = new Peer(child, { jsonrpc: false });
-  const initialized = await server.request('initialize', {
-    clientInfo: { name: 'baton_codex_root_relay', title: 'Baton Codex root relay', version: '1' },
-  });
-  if (initialized.error) throw new Error('Codex app-server initialization failed: ' + JSON.stringify(initialized.error));
-  server.send({ method: 'initialized' });
+  try {
+    const initialized = await server.request('initialize', {
+      clientInfo: { name: 'baton_codex_root_relay', title: 'Baton Codex root relay', version: '1' },
+    });
+    if (initialized.error) throw appError('Codex app-server initialization failed: ' + JSON.stringify(initialized.error));
+    server.send({ method: 'initialized' });
+  } catch (error) {
+    closeAppServer(server);
+    throw error;
+  }
   return server;
 }
 
-async function appRequest(server, method, params) {
-  const reply = await server.request(method, params);
-  if (reply.error) throw new Error(`Codex app-server ${method} failed: ` + JSON.stringify(reply.error));
-  return reply.result;
+function closeAppServer(server) {
+  if (server.child.stdin.writable) server.child.stdin.end();
+  server.child.kill('SIGTERM');
 }
 
-async function requireLoadedThread(server, thread) {
-  let cursor = null;
-  do {
-    const page = await appRequest(server, 'thread/loaded/list', cursor ? { cursor } : {});
-    if (page.data.includes(thread)) return;
-    cursor = page.nextCursor ?? null;
-  } while (cursor);
-  throw new Error('The Codex app-server does not have the recorded root thread loaded: ' + thread);
+// An error reply from the app-server. Lost connections are not app errors.
+function appError(message) {
+  const error = new Error(message);
+  error.appServer = true;
+  return error;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Requests to the app-server that reconnect through the proxy when the
+// connection is lost, for as long as the SSH conductor is open. A restarted
+// app-server is found again through the same control socket lookup.
+class AppSession {
+  constructor(options, peer) {
+    this.options = options;
+    this.peer = peer;
+    this.server = null;
+    this.lost = '';
+  }
+
+  async request(method, params) {
+    for (;;) {
+      try {
+        this.server ??= await openAppServer(this.options);
+        const reply = await this.server.request(method, params);
+        if (reply.error) throw appError(`Codex app-server ${method} failed: ` + JSON.stringify(reply.error));
+        this.lost = '';
+        return reply.result;
+      } catch (error) {
+        if (error.appServer || this.peer.exited) throw error;
+        if (this.server) closeAppServer(this.server);
+        this.server = null;
+        const reason = String(error.message || error);
+        if (reason !== this.lost) {
+          this.lost = reason;
+          process.stderr.write(JSON.stringify({ type: 'codexAppServerUnavailable', thread: this.options.thread, reason }) + '\n');
+        }
+        await sleep(POLL_MS);
+      }
+    }
+  }
+
+  async close() {
+    if (this.server) {
+      closeAppServer(this.server);
+      await this.server.closed;
+      this.server = null;
+    }
+  }
+}
+
+// Waits until the app-server has the thread loaded. A restarted app-server
+// loads the root thread again when the root client resumes it.
+async function awaitLoadedThread(peer, session, thread) {
+  let reported = false;
+  while (!peer.exited) {
+    let cursor = null;
+    do {
+      const page = await session.request('thread/loaded/list', cursor ? { cursor } : {});
+      if (page.data.includes(thread)) return;
+      cursor = page.nextCursor ?? null;
+    } while (cursor);
+    if (!reported) {
+      reported = true;
+      process.stderr.write(JSON.stringify({ type: 'codexRootThreadNotLoaded', thread }) + '\n');
+    }
+    await sleep(POLL_MS);
+  }
+  throw new Error('SSH conductor closed before the Codex app-server loaded the root thread: ' + thread);
 }
 
 // The newest turn and its item IDs before the notice is queued. Queued input
 // can join that turn, so its earlier items are excluded from the receipt search.
-async function newestTurn(server, thread) {
-  const page = await appRequest(server, 'thread/turns/list',
+async function newestTurn(session, thread) {
+  const page = await session.request('thread/turns/list',
     { threadId: thread, limit: 1, sortDirection: 'desc', itemsView: 'full' });
   const turn = page.data[0];
   return { turn: turn?.id ?? null, items: new Set((turn?.items || []).map(item => item.id)) };
@@ -179,60 +252,91 @@ function userText(item) {
   return [text.join(''), text.join('\n'), ...text];
 }
 
-// The newest user message that contains the complete notice, searched from the
-// newest turn back to the turn that was newest before the notice was queued.
-// `before` is the result of newestTurn.
-async function findUserMessage(server, thread, content, before) {
+// Walks the thread's turns from the newest. `visit` returns a value to stop the
+// walk with it, null to stop with no value, or undefined to continue.
+async function walkTurns(session, thread, visit) {
   let cursor = null;
   do {
-    const page = await appRequest(server, 'thread/turns/list', { threadId: thread, limit: PAGE_TURNS,
+    const page = await session.request('thread/turns/list', { threadId: thread, limit: PAGE_TURNS,
       sortDirection: 'desc', itemsView: 'full', ...(cursor ? { cursor } : {}) });
     for (const turn of page.data) {
-      for (const item of [...turn.items].reverse()) {
-        if (item.type === 'userMessage' && !(turn.id === before.turn && before.items.has(item.id))
-            && userText(item).some(text => text.includes(content))) {
-          return { turn: turn.id, item: item.id };
-        }
-      }
-      if (turn.id === before.turn) return null;
+      const found = visit(turn);
+      if (found !== undefined) return found;
     }
     cursor = page.nextCursor ?? null;
   } while (cursor);
   return null;
 }
 
-async function awaitUserMessage(peer, server, id, thread, content, before) {
+// The newest user message that contains the complete notice, searched from the
+// newest turn back to the turn that was newest before the notice was queued.
+// `before` is the result of newestTurn.
+function findUserMessage(session, thread, content, before) {
+  return walkTurns(session, thread, turn => {
+    for (const item of [...turn.items].reverse()) {
+      if (item.type === 'userMessage' && !(turn.id === before.turn && before.items.has(item.id))
+          && userText(item).some(text => text.includes(content))) {
+        return { turn: turn.id, item: item.id };
+      }
+    }
+    return turn.id === before.turn ? null : undefined;
+  });
+}
+
+// The conductor asks for the item that the relay claims returned a notice, and
+// decides from this read whether the read is recorded.
+async function readThreadItem(session, thread, turnId, itemId) {
+  const found = await walkTurns(session, thread, turn => {
+    if (turn.id !== turnId) return undefined;
+    const item = turn.items.find(candidate => candidate.id === itemId);
+    return item ? { item } : null;
+  });
+  if (!found) throw new Error(`Thread ${thread} has no item ${itemId} in turn ${turnId}.`);
+  const { item } = found;
+  return { thread, turn: turnId, item: itemId, type: item.type,
+    ...(item.type === 'userMessage' ? { text: userText(item)[0] } : {}) };
+}
+
+async function awaitUserMessage(peer, session, id, thread, content, before) {
   process.stderr.write(JSON.stringify({ type: 'codexRootMessageQueued', thread, message: id }) + '\n');
   while (!peer.exited) {
-    const found = await findUserMessage(server, thread, content, before);
+    const found = await findUserMessage(session, thread, content, before);
     if (found) return found;
-    await new Promise(resolve => setTimeout(resolve, POLL_MS));
+    await sleep(POLL_MS);
   }
   throw new Error('SSH conductor closed before Codex returned Baton message ' + id + ' in the root thread.');
 }
 
+function noticeThread(options, params) {
+  const thread = params.meta?.thread ?? options.thread;
+  if (typeof thread !== 'string' || !thread) throw new Error('Baton root notice does not identify the root thread.');
+  if (options.thread && thread !== options.thread) {
+    throw new Error(`Baton root notice is for thread ${thread}, not ${options.thread}.`);
+  }
+  return thread;
+}
+
 async function deliverNotice(peer, options, params) {
   const id = messageId(params);
-  const server = await openAppServer(options);
+  const thread = noticeThread(options, params);
+  const session = new AppSession({ ...options, thread }, peer);
   let received;
   let queued;
   try {
-    await requireLoadedThread(server, options.thread);
-    const before = await newestTurn(server, options.thread);
-    queued = await queueMessage(options, id, params.content);
-    received = await awaitUserMessage(peer, server, id, options.thread, params.content, before);
+    await awaitLoadedThread(peer, session, thread);
+    const before = await newestTurn(session, thread);
+    queued = await queueMessage({ ...options, thread }, id, params.content);
+    received = await awaitUserMessage(peer, session, id, thread, params.content, before);
   } finally {
-    if (server.child.stdin.writable) server.child.stdin.end();
-    server.child.kill('SIGTERM');
-    await server.closed;
+    await session.close();
   }
   const read = await peer.request('tools/call', { name: 'baton2_root_delivery',
-    arguments: { id, thread: options.thread, content: params.content, turn: received.turn, item: received.item } });
+    arguments: { id, thread, content: params.content, turn: received.turn, item: received.item } });
   if (read.error || read.result?.isError) {
     throw new Error('Codex returned Baton message ' + id + ' in the root thread, but its read was not recorded: ' + JSON.stringify(read));
   }
   process.stderr.write(JSON.stringify({ type: 'codexRootMessageReceived', session: options.session,
-    thread: options.thread, message: id, turn: received.turn, item: received.item, queue: queued.stdout.trim() }) + '\n');
+    thread, message: id, turn: received.turn, item: received.item, queue: queued.stdout.trim() }) + '\n');
 }
 
 function codexMcpRequest(message) {
@@ -257,7 +361,7 @@ function sendClient(message) {
 
 async function connect(options) {
   const remote = [options.node, options.conductor, options.database, options.coordinator,
-    '--session', options.session, '--root-harness', 'codex', '--thread', options.thread]
+    '--session', options.session, '--root-harness', 'codex', ...(options.thread ? ['--thread', options.thread] : [])]
     .map(shellQuote).join(' ');
   const child = spawn('ssh', ['-T', options.ssh, 'exec ' + remote], {
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -271,6 +375,11 @@ async function connect(options) {
       clientLines.close();
     }
   });
+  peer.onItemRequest = async params => {
+    const session = new AppSession({ ...options, thread: params.thread }, peer);
+    try { return await readThreadItem(session, params.thread, params.turn, params.item); }
+    finally { await session.close(); }
+  };
   peer.onNotice = params => {
     peer.delivery = (peer.delivery || Promise.resolve())
       .then(() => deliverNotice(peer, options, params))

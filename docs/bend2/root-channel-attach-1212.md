@@ -77,27 +77,40 @@ codex app-server daemon start
 codex resume ROOT_THREAD
 ```
 
-The managed app-server owns the thread resumed by the TUI. The configured relay
-keeps the SSH conductor stream open. For each complete notification it opens
-`codex app-server proxy` under the relay's `CODEX_HOME`, which finds the running
-app-server's control socket on each delivery without a stored address. The relay
-then:
+The managed app-server owns the thread resumed by the TUI. The relay's
+`--thread` option is optional. Without it, the conductor on the database host
+uses the conversation recorded for the session by the `attach` command and
+names it in each notification, so a changed recorded conversation is followed
+after the relay restarts. With it, the value must equal the recorded
+conversation. Registering the conversation with `attach` remains an explicit
+step, because the app-server lists many loaded threads and does not identify
+which one is the root.
 
-1. Confirms with `thread/loaded/list` that the app-server has `ROOT_THREAD`
-   loaded. Otherwise it queues nothing and exits with status 1.
+The relay keeps the SSH conductor stream open. For each complete notification
+it opens `codex app-server proxy` under the relay's `CODEX_HOME`, which finds
+the running app-server's control socket on each delivery without a stored
+address. The relay then:
+
+1. Waits until `thread/loaded/list` contains the root thread. It queues nothing
+   before that.
 2. Reads the thread's newest turn and its item IDs with `thread/turns/list`.
 3. Runs `codex queue` with the complete notification.
 4. Reads the thread's turns until a `userMessage` item that was not present in
    step 2 contains the complete notification text.
 5. Calls the conductor's `baton2_root_delivery` with the thread, the complete
-   notification, and the turn and item IDs that returned it. This records the
-   read and advances delivery to the next unread message.
+   notification, and the turn and item IDs that returned it.
 
-Queue acceptance does not record a read. A notification that is queued while the
-root is in a long turn stays unread until the thread returns it. If the relay
-or the root client closes first, the message stays unread and the next
-connection sends it again, which can add a second copy of the notification to
-the thread.
+The conductor then sends the relay a `baton/rootThreadItem` request with those
+IDs. The relay reads that item from the thread and returns its type and text.
+The conductor records the read only when the item is a `userMessage` that holds
+the complete notification. This advances delivery to the next unread message.
+
+If the connection to the app-server is lost at any step, the relay opens the
+proxy again and continues for as long as the SSH conductor is open. Queue
+acceptance does not record a read. A notification that is queued while the root
+is in a long turn stays unread until the thread returns it. If the relay or the
+root client closes first, the message stays unread and the next connection
+sends it again, which can add a second copy of the notification to the thread.
 
 ## Read the existing backlog
 

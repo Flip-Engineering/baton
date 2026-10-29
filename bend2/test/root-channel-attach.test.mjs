@@ -404,6 +404,18 @@ test('a complete recipient read advances the root backlog without a clearing act
   assert.ok(actions.every((args) => !['ack', 'acknowledge'].includes(args[1])));
 });
 
+// Calls baton2_root_delivery and answers the conductor's thread item request.
+async function rootDelivery(channel, id, args, answer) {
+  const before = channel.responses.filter((r) => r.method === 'baton/rootThreadItem').length;
+  const call = channel.call(id, 'baton2_root_delivery', args);
+  await channel.until(() => channel.responses.filter((r) => r.method === 'baton/rootThreadItem').length > before,
+    'thread item request');
+  const request = channel.responses.filter((r) => r.method === 'baton/rootThreadItem')[before];
+  assert.deepEqual(request.params, { thread: args.thread, turn: args.turn, item: args.item });
+  channel.send({ id: request.id, result: answer });
+  return call;
+}
+
 test('a Codex root read carries its recorded thread and accepted message on the channel connection', async (t) => {
   const calls = await attach(t, 'operator', (db) => {
     db.prepare('UPDATE sessions SET harness=?,native=? WHERE id=?').run('codex', 'thread-1', 'operator');
@@ -443,10 +455,23 @@ test('a Codex root read carries its recorded thread and accepted message on the 
   const beforeRead = new DatabaseSync(calls.database, { readOnly: true });
   assert.equal(beforeRead.prepare('SELECT count(*) AS n FROM message_reads').get().n, 0);
   beforeRead.close();
-  const delivered = await channel.call('read-codex-root', 'baton2_root_delivery', {
-    id: 'codex-root-input', thread: 'thread-1', content: notice.params.content,
-    turn: 'turn-1', item: 'item-1',
-  });
+  assert.equal(notice.params.meta.thread, 'thread-1');
+  const claim = { id: 'codex-root-input', thread: 'thread-1', content: notice.params.content,
+    turn: 'turn-1', item: 'item-1' };
+  const wrongType = await rootDelivery(channel, 'read-agent-item', claim,
+    { thread: 'thread-1', turn: 'turn-1', item: 'item-1', type: 'agentMessage' });
+  assert.equal(wrongType.isError, true);
+  const otherText = await rootDelivery(channel, 'read-other-text', claim,
+    { thread: 'thread-1', turn: 'turn-1', item: 'item-1', type: 'userMessage', text: 'A different message.' });
+  assert.equal(otherText.isError, true);
+  const otherItem = await rootDelivery(channel, 'read-other-item', claim,
+    { thread: 'thread-1', turn: 'turn-1', item: 'item-9', type: 'userMessage', text: notice.params.content });
+  assert.equal(otherItem.isError, true);
+  const unreadForged = new DatabaseSync(calls.database, { readOnly: true });
+  assert.equal(unreadForged.prepare('SELECT count(*) AS n FROM message_reads').get().n, 0);
+  unreadForged.close();
+  const delivered = await rootDelivery(channel, 'read-codex-root', claim,
+    { thread: 'thread-1', turn: 'turn-1', item: 'item-1', type: 'userMessage', text: `queued: ${notice.params.content}` });
   assert.equal(JSON.parse(delivered.content[0].text).body, 'Complete Codex root body.');
   const context = JSON.parse(readFileSync(channel.contextLog, 'utf8').trim());
   assert.equal(context.harness, 'codex');
@@ -454,6 +479,18 @@ test('a Codex root read carries its recorded thread and accepted message on the 
   assert.equal(context.readMessage, 'codex-root-input');
   assert.ok(context.connection);
   assert.ok(context.endpoint);
+});
+
+test('a Codex root relay without --thread follows the recorded root conversation', async (t) => {
+  const calls = await attach(t, 'operator', (db) => {
+    db.prepare('UPDATE sessions SET harness=?,native=? WHERE id=?').run('codex', 'recorded-thread', 'operator');
+    db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+      .run('follow-input', 'lead', 'operator', 'report', 'Body for the recorded thread.');
+  }, ['--root-harness', 'codex']);
+  const { channel } = calls;
+  channel.activate();
+  await channel.until(() => channel.notes().length > 0, 'Codex root input notice');
+  assert.equal(channel.notes()[0].params.meta.thread, 'recorded-thread');
 });
 
 test('a root completion request notice contains its full review prompt', async (t) => {
