@@ -28,6 +28,7 @@ DIAGNOSTIC_FILE = 'compiler-diagnostics.json'
 # as presence state only because its arbitrary contents can contain secrets.
 # Malloc is a Darwin allocator setting and is not consumed by the Linux runner.
 COMPILER_ENVIRONMENT = (
+    'BEND_CGEN_CACHE_DIR',
     'BEND_COMPILER_DIAGNOSTICS',
     'BEND_FACTS_ONLY_FIRST',
     'BEND_LIB',
@@ -39,6 +40,37 @@ COMPILER_ENVIRONMENT = (
     'BATON2_DARWIN_SDK_MANIFEST_SHA256',
     'BATON2_DARWIN_SDK_TREE_SHA256',
 )
+
+
+# Builds of the protected branch share one compiled-unit cache directory under the
+# queue state root. A unit variant is checked by content digest only, so a build that
+# can write the directory can publish a forged variant. Pull request builds, and
+# dispatches of any other ref, keep the per-runner cache of their own home.
+TRUSTED_CGEN_REF = 'refs/heads/main'
+TRUSTED_CGEN_EVENTS = ('push', 'workflow_dispatch', 'schedule')
+TRUSTED_CGEN_DIRECTORY = 'cgen-cache'
+
+
+def select_cgen_cache(state, environment):
+    """Name the shared cache directory for a protected-branch build, or return None.
+
+    An explicit BEND_CGEN_CACHE_DIR in the environment stays as set. The directory is
+    created with the queue's group-writable mode when it is missing.
+    """
+    if environment.get('BEND_CGEN_CACHE_DIR'):
+        return None
+    if environment.get('GITHUB_REF') != TRUSTED_CGEN_REF \
+            or environment.get('GITHUB_EVENT_NAME') not in TRUSTED_CGEN_EVENTS:
+        return None
+    directory = Path(state) / TRUSTED_CGEN_DIRECTORY
+    try:
+        if not directory.is_dir():
+            directory.mkdir(mode=0o2770, exist_ok=True)
+            directory.chmod(0o2770)
+    except OSError as error:
+        sys.stderr.write('shared compiled-unit cache unavailable: ' + str(error) + '\n')
+        return None
+    return str(directory)
 
 
 def write(path, value):
@@ -151,7 +183,7 @@ def environment_observation(name, environment):
         return {'state': 'empty'}
     if name == 'BUN_OPTIONS':
         return {'state': 'set', 'value': 'omitted because option text may contain secrets'}
-    if name == 'BEND_LIB':
+    if name in ('BEND_LIB', 'BEND_CGEN_CACHE_DIR'):
         return {'state': 'set', 'effective_path': str(Path(value).resolve())}
     if name in ('BATON2_DARWIN_LLVM_ROOT', 'BATON2_DARWIN_SDKROOT'):
         return {'state': 'set', 'effective_path': str(Path(value).resolve())}
@@ -593,6 +625,9 @@ def submit(config, directory, options, command, key_only=False):
 
 def compiler(mode, argv, key_only=False):
     config = json.loads(Path(os.environ['BATON2_NATIVE_QUEUE']).read_text())
+    cache = select_cgen_cache(config['state'], os.environ)
+    if cache is not None:
+        os.environ['BEND_CGEN_CACHE_DIR'] = cache
     run = Path(config['run'])
     evidence = run / 'evidence/compile-queue'
     evidence.mkdir(parents=True, exist_ok=True)

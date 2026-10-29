@@ -788,5 +788,58 @@ with output.open('wb') as stream:
         self.assertEqual(rejected[0]['cancel_result'], ['not-submitted=run-cancelled'])
 
 
+class TrustedCgenCacheTests(unittest.TestCase):
+    """The protected branch shares one compiled-unit cache; other builds keep their own."""
+
+    def adapter(self):
+        spec = importlib.util.spec_from_file_location('queue_native_checks_cache', ADAPTER)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='trusted-cgen-cache-')
+        self.addCleanup(temporary.cleanup)
+        self.state = Path(temporary.name)
+        self.module = self.adapter()
+
+    def select(self, **environment):
+        return self.module.select_cgen_cache(self.state, environment)
+
+    def test_main_pushes_and_dispatches_share_one_directory(self):
+        for event in ('push', 'workflow_dispatch', 'schedule'):
+            directory = self.select(GITHUB_REF='refs/heads/main', GITHUB_EVENT_NAME=event)
+            self.assertEqual(directory, str(self.state / 'cgen-cache'))
+        mode = (self.state / 'cgen-cache').stat().st_mode
+        self.assertTrue(mode & 0o2000, 'the directory inherits the queue group')
+        self.assertEqual(mode & 0o777, 0o770)
+
+    def test_pull_requests_and_other_refs_get_no_shared_directory(self):
+        for event, ref in (('pull_request', 'refs/pull/9/merge'), ('pull_request_target', 'refs/heads/main'),
+                           ('workflow_dispatch', 'refs/heads/feature'), ('push', 'refs/heads/feature'),
+                           ('', ''), ('push', '')):
+            self.assertIsNone(self.select(GITHUB_REF=ref, GITHUB_EVENT_NAME=event), (event, ref))
+        self.assertFalse((self.state / 'cgen-cache').exists())
+
+    def test_an_explicit_directory_stays_as_set(self):
+        self.assertIsNone(self.select(BEND_CGEN_CACHE_DIR='/somewhere',
+                                      GITHUB_REF='refs/heads/main', GITHUB_EVENT_NAME='push'))
+
+    def test_unavailable_directory_leaves_the_build_cold(self):
+        blocker = self.state / 'cgen-cache'
+        blocker.write_text('a file where the directory belongs')
+        with mock.patch('sys.stderr', new=io.StringIO()) as stderr:
+            directory = self.select(GITHUB_REF='refs/heads/main', GITHUB_EVENT_NAME='push')
+        self.assertIsNone(directory)
+        self.assertIn('shared compiled-unit cache unavailable', stderr.getvalue())
+
+    def test_the_selected_directory_is_part_of_the_attempt_evidence(self):
+        self.assertIn('BEND_CGEN_CACHE_DIR', self.module.COMPILER_ENVIRONMENT)
+        observed = self.module.environment_observation(
+            'BEND_CGEN_CACHE_DIR', {'BEND_CGEN_CACHE_DIR': str(self.state / 'cgen-cache')})
+        self.assertEqual(observed, {'state': 'set', 'effective_path': str((self.state / 'cgen-cache').resolve())})
+        self.assertEqual(self.module.environment_observation('BEND_CGEN_CACHE_DIR', {}), {'state': 'absent'})
+
+
 if __name__ == '__main__':
     unittest.main()
