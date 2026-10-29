@@ -131,7 +131,9 @@ the complete notification. This advances delivery to the next unread message.
 When the conductor names a different conversation, for example after a
 re-binding, the relay stops the delivery that is waiting on the previous
 conversation and delivers the new notice. The earlier message stays unread. The
-conductor does not record a read that arrives from the previous conversation.
+conductor does not record a read that arrives from the previous conversation,
+and the relay does not treat that refusal as a failed delivery when the
+conversation changed while it waited for the answer.
 
 If the connection to the app-server is lost at any step, the relay opens the
 proxy again and continues for as long as the SSH conductor is open. If the SSH

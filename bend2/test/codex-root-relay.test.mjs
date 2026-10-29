@@ -63,6 +63,16 @@ line.on('line', value => {
         result:{ isError:true, content:[{type:'text',text:'Refused fixture read'}] } }) + '\\n');
       return;
     }
+    if (process.env.ROOT_RELAY_REBIND_ON_READ && request.params.arguments.thread === 'thread-1') {
+      // The record changes while this read is pending: the conductor names the
+      // new conversation and refuses the read for the previous one.
+      process.stdout.write(JSON.stringify({ jsonrpc:'2.0', method:'notifications/claude/channel', params:{
+        content:'Message (report) from lead [id: request-2]:\\nSecond body',
+        meta:{ recipient:'operator', messageIds:'[\\"request-2\\"]', thread:'thread-2' } } }) + '\\n');
+      process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:request.id,
+        result:{ isError:true, content:[{type:'text',text:'Error: Codex read evidence does not match the complete root notice'}] } }) + '\\n');
+      return;
+    }
     call = request.id;
     const { thread, turn, item } = request.params.arguments;
     process.stdout.write(JSON.stringify({ jsonrpc:'2.0', id:'client:1', method:'baton/rootThreadItem', params:{ thread, turn, item } }) + '\\n');
@@ -417,6 +427,20 @@ test('a notice for another root conversation replaces a delivery that waits on t
   const [code] = await run.closed;
   assert.equal(code, 0, run.diagnostic);
   assert.doesNotMatch(run.diagnostic, /codex-root-relay: Error/);
+});
+
+test('a record change while the conductor verifies a read delivers the new conversation and keeps the relay', async (t) => {
+  const run = await runRelay(t, 'consume', { args: [], env: { CODEX_THREAD_ID: '', ROOT_RELAY_META_THREAD: 'thread-1',
+    ROOT_RELAY_REBIND_ON_READ: '1' } });
+  await until(run, 'codexRootMessageSuperseded');
+  await until(run, 'codexRootMessageReceived');
+  const reads = readFileSync(run.readLog, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(reads.map((read) => [read.id, read.thread]), [['request-1', 'thread-1'], ['request-2', 'thread-2']]);
+  assert.doesNotMatch(run.diagnostic, /read was not recorded/);
+  assert.equal(run.child.exitCode, null, run.diagnostic);
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
 });
 
 test('an SSH loss during the independent item read leaves the notice unread and reconnects', async (t) => {

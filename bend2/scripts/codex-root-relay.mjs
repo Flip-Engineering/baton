@@ -484,6 +484,8 @@ async function deliverNotice(peer, delivery, options, params) {
   const read = await peer.request('tools/call', { name: 'baton2_root_delivery',
     arguments: { id, thread, content: params.content, turn: received.turn, item: received.item } });
   if (read.error || read.result?.isError) {
+    // The conductor refuses a read from a conversation it no longer serves.
+    if (delivery.superseded) throw endedDelivery(delivery, 'the read of Baton message ' + id + ' was recorded.');
     throw new Error('Codex returned Baton message ' + id + ' in the root thread, but its read was not recorded: ' + JSON.stringify(read));
   }
   process.stderr.write(JSON.stringify({ type: 'codexRootMessageReceived', session: options.session,
