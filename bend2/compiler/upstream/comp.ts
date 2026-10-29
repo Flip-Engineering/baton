@@ -23,6 +23,7 @@ let diagnostic_facts: Fact.Trace | null = null;
 let diagnostic_literals: { word_leaves: number; word_nodes: number } | null = null;
 const diagnostic_columns = new Map<string, number>();
 let diagnostic_context: { event: string; details: Record<string, unknown> } | null = null;
+export function diagnostics_enabled(): boolean { return DIAGNOSTICS; }
 function diagnostic_stage(event: string, details: Record<string, unknown> = {}): void {
   if (DIAGNOSTICS) diagnostic_context = { event, details };
 }
@@ -4589,9 +4590,19 @@ function open_checked(directory: string): Prepared {
 }
 
 export function prepare_book(book: Bend.Book, workspace?: string): string {
+  const prepare_started = DIAGNOSTICS ? performance.now() : 0;
+  diagnostic("book.prepare.begin", { definitions: Object.keys(book.tlds).length });
   const writer = checked_writer(book, workspace);
-  try { prepare_checked(book, writer); }
-  catch (error) { writer.remove(); throw error; }
+  try {
+    prepare_checked(book, writer);
+  } catch (error) {
+    writer.remove();
+    diagnostic("book.prepare.failed", { duration_ms: DIAGNOSTICS
+      ? performance.now() - prepare_started : undefined });
+    throw error;
+  }
+  diagnostic("book.prepare.end", { duration_ms: DIAGNOSTICS
+    ? performance.now() - prepare_started : undefined });
   return writer.directory;
 }
 

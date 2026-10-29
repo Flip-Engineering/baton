@@ -568,6 +568,8 @@ async function pow_mine(hash: string, bytes: number): Promise<number> {
 // holds one, a walk from the claims collects who names whom, then the
 // promises flood back along those edges.
 function cli_report(book: Bend.Book, n0: number, fd: number): void {
+  const report_started = Comp.diagnostics_enabled() ? performance.now() : 0;
+  Comp.diagnostic("book.report.begin", { definitions: book.order.length - n0 });
   const own  = [...new Set(book.order.slice(n0))];
   const bad  = new Set(Object.keys(book.tlds).filter((k) => {
     const t = book.tlds[k] as Bend.Def;
@@ -602,6 +604,8 @@ function cli_report(book: Bend.Book, n0: number, fd: number): void {
   } else if (fd === 1) {
     cli_say(1, "All terms check.\n");
   }
+  Comp.diagnostic("book.report.end", { definitions: own.length, affected: list.length,
+    duration_ms: Comp.diagnostics_enabled() ? performance.now() - report_started : undefined });
 }
 
 function cli_say(fd: number, text: string): void {
@@ -625,22 +629,28 @@ function cli_fail(msg: string): never {
 
 async function book_read(file: string, base?: Bend.Book,
   seen = new Map<string, string | null>()): Promise<[Bend.Book, number]> {
+  const read_started = Comp.diagnostics_enabled() ? performance.now() : 0;
   Comp.diagnostic("book.read.begin", { file });
   const book = base === undefined ? Bend.book_nil() : book_seed(base);
   if (base !== undefined) {
     seen.set(BASE, "");
   }
   Comp.diagnostic("book.load.begin", { file });
+  const load_started = Comp.diagnostics_enabled() ? performance.now() : 0;
   const n0 = await Bend.book_load(book, file, "", seen);
-  Comp.diagnostic("book.load.end", { file, definitions: book.order.length });
+  Comp.diagnostic("book.load.end", { file, definitions: book.order.length,
+    duration_ms: Comp.diagnostics_enabled() ? performance.now() - load_started : undefined });
   const laws = path.join(path.dirname(file), "LAWS.bend");
   if (path.basename(file) === "PROOF.bend" && fs.existsSync(laws)
     && !seen.has(fs.realpathSync(laws))) {
     cli_fail("PROOF.bend must import ./LAWS.bend");
   }
   Comp.diagnostic("book.valid.begin", { file });
-  Bend.book_valid(book, base?.order.length ?? 0);
-  Comp.diagnostic("book.valid.end", { file });
+  const valid_started = Comp.diagnostics_enabled() ? performance.now() : 0;
+  Bend.book_valid(book, base?.order.length ?? 0, Comp.diagnostics_enabled()
+    ? (event, details) => Comp.diagnostic(event, details) : undefined);
+  Comp.diagnostic("book.valid.end", { file,
+    duration_ms: Comp.diagnostics_enabled() ? performance.now() - valid_started : undefined });
   Comp.diagnostic("book.owned.begin", { file });
   Comp.book_owned(book, Comp.SYNTH);
   Comp.diagnostic("book.owned.end", { file });
@@ -649,7 +659,8 @@ async function book_read(file: string, base?: Bend.Book,
     throw "Error: " + String(hols) + " TODO" + (hols === 1 ? "" : "s")
       + " found.\nThe code is incomplete, and not a valid proof yet.";
   }
-  Comp.diagnostic("book.read.end", { file });
+  Comp.diagnostic("book.read.end", { file,
+    duration_ms: Comp.diagnostics_enabled() ? performance.now() - read_started : undefined });
   Comp.register_sources(book, seen);
   return [book, n0];
 }
