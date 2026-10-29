@@ -87,11 +87,14 @@ def CompileQueueLifecycle.copy_file(source: String, destination: String) -> IO(R
 def CompileQueueLifecycle.wait_pid(pid: U32) -> IO(Result<&1,&1,U32 & String,U32>):
   P.HostPosix.wait_pid(pid)
 
-def CompileQueueLifecycle.try_wait(pid: U32) -> IO(Result<&1,&1,U32 & String,String>):
-  P.HostPosix.try_wait(pid)
+def CompileQueueLifecycle.try_wait(attempt: String, pid: U32, start: String) -> IO(Result<&1,&1,U32 & String,String>):
+  P.HostPosix.try_wait(attempt,pid,start)
 
-def CompileQueueLifecycle.run_command(argv: String, cwd: String, stdout_path: String, stderr_path: String) -> IO(Result<&1,&1,U32 & String,U32 & String>):
-  Supervisor.run(argv,cwd,stdout_path,stderr_path)
+def CompileQueueLifecycle.wait_supervisor(pid: U32) -> IO(Result<&1,&1,U32 & String,String>):
+  P.HostPosix.wait_supervisor(pid)
+
+def CompileQueueLifecycle.run_command(argv: String, cwd: String, stdout_path: String, stderr_path: String, attempt: String) -> IO(Result<&1,&1,U32 & String,U32 & String>):
+  Supervisor.run(argv,cwd,stdout_path,stderr_path,attempt)
 
 def CompileQueueLifecycle.cmdline(pid: U32) -> IO(Result<&1,&1,U32 & String,String>):
   Proc.cmdline(pid)
@@ -164,3 +167,9 @@ def CompileQueueLifecycle.spawn_detached(+argv: String, key_lock: U32, heavy_loc
     self : String <- IO.try(String,P.HostPosix.self_exe())
     complete : String <- IO.pure(String,Choice.choose(String,String.starts_with(argv,"/"), _choice_unit => argv, _choice_unit => self ++ Char.show(Char.from_u32(0)) ++ argv))
     P.HostPosix.spawn_detached(complete,key_lock,heavy_lock,"")
+
+def CompileQueueLifecycle.spawn_detached_identity(+argv: String, key_lock: U32, heavy_lock: U32) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    self : String <- IO.try(String,P.HostPosix.self_exe())
+    complete : String <- IO.pure(String,Choice.choose(String,String.starts_with(argv,"/"), _choice_unit => argv, _choice_unit => self ++ Char.show(Char.from_u32(0)) ++ argv))
+    P.HostPosix.spawn_detached_identity(complete,key_lock,heavy_lock,"")

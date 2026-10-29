@@ -1,8 +1,9 @@
 # Pending-input candidates and wake
 
 The coordinator derives pending-input candidates from its recorded database.
-`stall` reports every candidate with its recorded state. `stall-wake` drives the
-stalled candidates through the existing wake driver. Both commands classify from
+`stall` reports every candidate with its recorded state. `stall-wake` sends
+stalled candidates and exited candidates with claimed wakes and runnable
+endpoints through the existing wake driver. Both commands classify from
 recorded database state.
 
 ## Recorded state
@@ -36,10 +37,10 @@ with an empty attempt id and phase and is classified `blocked`.
 | `stopped` | a `session_stops` row |
 | `claimed` | `wake_claims.state = 'claimed'` |
 
-The stop and claim checks take precedence. The wake command selects only
-`stalled` candidates, so a stopped session keeps its explicit stop and a claimed
-session remains with its claim. A pending candidate with a live attempt is
-`active`.
+The stop and claim checks take precedence in the report. A pending candidate
+with a live attempt is `active`. The wake command also submits an exited
+candidate with a claimed wake and a runnable endpoint to the wake driver, which
+checks recorded host custody under the session lock.
 
 ## Report
 
@@ -61,12 +62,12 @@ recorded execution row.
 baton2 DATABASE stall-wake
 ```
 
-The command selects candidates whose state is `stalled` and calls
-`Wake.drive_id` once per candidate with its oldest owed message. `Wake.drive_id`
+The command selects candidates whose state is `stalled`, plus exited candidates
+with a claimed wake and a runnable endpoint. It calls `Wake.drive_id` once per
+selected candidate with its oldest owed message. `Wake.drive_id`
 uses `Receive.wake_due`: it takes the session lock, re-reads the pending count,
 observes the claim and host custody, and launches the message through the
-delivery path. The driver receives only `stalled` candidates. Its claim and custody checks
-keep a repeated invocation safe.
+delivery path. Its claim and custody checks keep a repeated invocation safe.
 
 ## Boundaries
 
@@ -103,8 +104,8 @@ commands:
   and is driven;
 - an explicit stop renders `stopped` and remains in `session_stops`;
 - an exited attempt with no endpoint renders `blocked` and is not driven;
-- an exited attempt with an existing `claimed` wake claim renders `claimed` and
-  is not driven.
+- an exited attempt with an existing `claimed` wake claim renders `claimed`;
+  `stall-wake` checks its host custody through `Wake.drive_id`.
 - a pending session with no execution row renders `blocked` with an empty
   attempt and is not driven.
 

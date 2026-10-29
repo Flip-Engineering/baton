@@ -18,6 +18,11 @@ import traceback
 
 ARCHIVE_SHA = '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4'
 COMPILER_ARCHIVES = {
+    '113a272649904e80144b1954dba8b4999249efa408a6ce1ca346906114986c4d': {
+        'name': 'Bend 2.0.25 with measured unit processes and checked-store cleanup',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
     '2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065': {
         'name': 'Bend 2.0.25 with shared arm, use and application summaries',
         'official_release_artifact': False,

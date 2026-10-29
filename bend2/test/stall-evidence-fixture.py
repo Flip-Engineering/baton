@@ -78,17 +78,19 @@ def check_report(path):
 def check_wake(database_path, marker_path):
     marker = pathlib.Path(marker_path)
     lines = marker.read_text().splitlines() if marker.exists() else []
-    delivered = [line for line in lines if 'owed-exited' in line]
+    exited = [line for line in lines if 'owed-exited' in line]
+    claimed = [line for line in lines if 'owed-claimed' in line]
     others = [line for line in lines
               if any('owed-' + name in line
-                     for name in ('active', 'stopped', 'blocked', 'claimed', 'never'))]
+                     for name in ('active', 'stopped', 'blocked', 'never'))]
     database = sqlite3.connect(database_path)
     claims = dict(database.execute('SELECT session,state FROM wake_claims'))
     stopped = database.execute(
         'SELECT count(*) FROM session_stops WHERE session=?', ('stopped',)).fetchone()[0]
     database.close()
     observations = [
-        'CASE wake-exited-delivered: ' + ('yes' if delivered else 'no'),
+        'CASE wake-exited-delivered: ' + ('yes' if exited else 'no'),
+        'CASE wake-claimed-delivered: ' + ('yes' if claimed else 'no'),
         'CASE wake-other-delivered: ' + ('yes' if others else 'no'),
         'CASE wake-exited-claim: ' + claims.get('exited', 'missing'),
         'CASE wake-active-claim: ' + claims.get('active', 'missing'),
@@ -100,6 +102,7 @@ def check_wake(database_path, marker_path):
     ]
     expected = [
         'CASE wake-exited-delivered: yes',
+        'CASE wake-claimed-delivered: yes',
         'CASE wake-other-delivered: no',
         'CASE wake-exited-claim: claimed',
         'CASE wake-active-claim: missing',
