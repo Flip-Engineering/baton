@@ -181,8 +181,14 @@ class QueueAdoptionTests(unittest.TestCase):
         self.assertTrue(self.compiler_alive(), self.log_lines())
         self.hold.touch()
         self.until("the execution published its result", lambda: [r.get("status") for r in self.results()] == ["completed"])
-        self.assertEqual(self.output.read_text(), "complete\n")
         self.assertIn("end", self.log_lines())
+        # The first requester's client copies the artifact to its path, and it is gone.
+        # The result stays cached for the next identical request, which runs nothing.
+        self.assertFalse(self.output.exists())
+        again = subprocess.run(self.argv("again"), env=self.environment(), capture_output=True, text=True, timeout=60)
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+        self.assertEqual(self.output.read_text(), "complete\n")
+        self.assertEqual(len([l for l in self.log_lines() if l.startswith("start")]), 1, self.log_lines())
 
     def test_a_token_whose_process_is_gone_is_removed_when_the_key_is_joined(self):
         gone = subprocess.Popen([sys.executable, "-I", "-c", "pass"])
