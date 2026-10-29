@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -47,13 +47,52 @@ line.on('line', value => {
 `);
 }
 
+const NOTICE = "Message (completion-request) from lead [id: request-1]:\nFull body\nReview the work against lead's assignment.";
+
+// A fake Codex CLI. 'queue' records the message. 'app-server proxy' answers the
+// app-server protocol from a state directory. ROOT_RELAY_APP_MODE selects when
+// the queued message appears as a user message: 'consume' after two history
+// reads, 'never' not at all, 'unloaded' lists no loaded thread. History starts
+// with an earlier turn that already holds the same notice text.
 function fakeCodex(path) {
   return executable(path, `#!${process.execPath}
-require('node:fs').writeFileSync(process.env.ROOT_RELAY_CODEX_LOG, JSON.stringify(process.argv.slice(2)));
+const fs = require('node:fs');
+const readline = require('node:readline');
+const args = process.argv.slice(2);
+const dir = process.env.ROOT_RELAY_APP_DIR;
+const mode = process.env.ROOT_RELAY_APP_MODE || 'consume';
+const notice = ${JSON.stringify(NOTICE)};
+if (args[0] === 'queue') {
+  fs.writeFileSync(process.env.ROOT_RELAY_CODEX_LOG, JSON.stringify(args));
+  fs.writeFileSync(dir + '/queued', args[args.indexOf('--message') + 1]);
+  process.exit(0);
+}
+if (args[0] !== 'app-server' || args[1] !== 'proxy') process.exit(64);
+fs.appendFileSync(dir + '/proxy-launches', 'x');
+const send = (id, result) => process.stdout.write(JSON.stringify({ id, result }) + '\\n');
+const user = (id, text) => ({ type: 'userMessage', id, content: [{ type: 'text', text }] });
+readline.createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  if (request.jsonrpc !== undefined) process.exit(65);
+  if (request.method === 'initialize') send(request.id, { userAgent: 'fake' });
+  else if (request.method === 'thread/loaded/list') send(request.id, { data: mode === 'unloaded' ? [] : ['thread-1'] });
+  else if (request.method === 'thread/turns/list') {
+    const queued = fs.existsSync(dir + '/queued') ? fs.readFileSync(dir + '/queued', 'utf8') : null;
+    const turns = [];
+    if (request.params.itemsView === 'full' && queued !== null) {
+      const reads = fs.existsSync(dir + '/history-reads') ? fs.readFileSync(dir + '/history-reads', 'utf8').length : 0;
+      fs.appendFileSync(dir + '/history-reads', 'x');
+      if (mode === 'consume' && reads >= 2) turns.push({ id: 'turn-1', status: 'completed', items: [
+        { type: 'agentMessage', id: 'item-2', text: 'working' }, user('item-1', 'queued: ' + queued)] });
+    }
+    const earlier = { id: 'turn-0', status: 'completed', items: [user('item-0', notice)] };
+    send(request.id, { data: [...turns, earlier].slice(0, request.params.limit || 100), nextCursor: null });
+  } else send(request.id, {});
+});
 `);
 }
 
-test('the Codex root relay queues the full notice before recording its read', async (t) => {
+test('the Codex root relay records the read after the root thread returns the notice', async (t) => {
   const directory = scratch(t);
   const ssh = fakeSsh(join(directory, 'ssh'));
   const codex = fakeCodex(join(directory, 'codex'));
@@ -64,7 +103,8 @@ test('the Codex root relay queues the full notice before recording its read', as
     '--coordinator', '/scratch/bin/baton', '--conductor', '/scratch/lib/mcp-conductor.mjs',
     '--session', 'operator', '--thread', 'thread-1', '--codex', codex], {
     env: { ...process.env, PATH: `${directory}:${process.env.PATH}`, ROOT_RELAY_SSH_LOG: sshLog,
-      ROOT_RELAY_CODEX_LOG: queueLog, ROOT_RELAY_READ_LOG: readLog },
+      ROOT_RELAY_CODEX_LOG: queueLog, ROOT_RELAY_READ_LOG: readLog,
+      ROOT_RELAY_APP_DIR: directory },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM'); });
@@ -97,7 +137,7 @@ test('the Codex root relay queues the full notice before recording its read', as
 
   const accepted = new Promise(resolveAccepted => {
     const check = () => {
-      if (diagnostic.includes('codexRootMessageAccepted')) resolveAccepted();
+      if (diagnostic.includes('codexRootMessageReceived')) resolveAccepted();
     };
     child.stderr.on('data', check);
     check();
@@ -115,11 +155,68 @@ test('the Codex root relay queues the full notice before recording its read', as
   assert.equal(reads[0].name, 'baton2_root_delivery');
   assert.equal(reads[0].id, 'request-1');
   assert.equal(reads[0].thread, 'thread-1');
+  assert.equal(reads[0].turn, 'turn-1');
+  assert.equal(reads[0].item, 'item-1');
   assert.ok(reads[0].content.includes('Full body'));
   assert.ok(reads[0].content.includes('Review the work against lead\'s assignment.'));
   const remoteArgs = JSON.parse(readFileSync(sshLog, 'utf8'));
   assert.deepEqual(remoteArgs.slice(0, 2), ['-T', 'database-host']);
   assert.ok(remoteArgs[2].includes("'--root-harness' 'codex' '--thread' 'thread-1'"));
+});
+
+async function runRelay(t, mode) {
+  const directory = scratch(t);
+  fakeSsh(join(directory, 'ssh'));
+  const codex = fakeCodex(join(directory, 'codex'));
+  const readLog = join(directory, 'read.jsonl');
+  const child = spawn(process.execPath, [RELAY, '--ssh', 'database-host', '--database', '/scratch/orchestra.db',
+    '--coordinator', '/scratch/bin/baton', '--conductor', '/scratch/lib/mcp-conductor.mjs',
+    '--session', 'operator', '--thread', 'thread-1', '--codex', codex], {
+    env: { ...process.env, PATH: `${directory}:${process.env.PATH}`, ROOT_RELAY_SSH_LOG: join(directory, 'ssh.json'),
+      ROOT_RELAY_CODEX_LOG: join(directory, 'queue.json'), ROOT_RELAY_READ_LOG: readLog,
+      ROOT_RELAY_APP_DIR: directory, ROOT_RELAY_APP_MODE: mode },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM'); });
+  const run = { directory, child, readLog, diagnostic: '', closed: once(child, 'close') };
+  child.stdout.resume();
+  child.stderr.on('data', chunk => { run.diagnostic += chunk; });
+  child.stdin.write([
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {},
+      clientInfo: { name: 'fixture', version: '1' } } },
+    { jsonrpc: '2.0', method: 'notifications/initialized' },
+  ].map(JSON.stringify).join('\n') + '\n');
+  return run;
+}
+
+async function until(run, text) {
+  while (!run.diagnostic.includes(text)) {
+    const state = await Promise.race([once(run.child.stderr, 'data').then(() => 'data'), run.closed.then(() => 'closed')]);
+    if (state === 'closed' && !run.diagnostic.includes(text)) assert.fail(`closed before ${text}: ${run.diagnostic}`);
+  }
+}
+
+test('a queued notice that the root thread has not returned stays unread', async (t) => {
+  const run = await runRelay(t, 'never');
+  await until(run, 'codexRootMessageQueued');
+  await new Promise(resolve => setTimeout(resolve, 3500));
+  assert.ok(existsSync(join(run.directory, 'queue.json')), 'The notice was not queued.');
+  assert.ok(readFileSync(join(run.directory, 'history-reads'), 'utf8').length >= 3, 'The thread history was not read repeatedly.');
+  assert.equal(existsSync(run.readLog), false, 'A read was recorded from queue acceptance alone.');
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
+  assert.equal(existsSync(run.readLog), false);
+  assert.match(run.diagnostic, /codexRootMessageUnread/);
+});
+
+test('a root thread that the app-server has not loaded receives no queued notice', async (t) => {
+  const run = await runRelay(t, 'unloaded');
+  const [code] = await run.closed;
+  assert.equal(code, 1, run.diagnostic);
+  assert.match(run.diagnostic, /does not have the recorded root thread loaded: thread-1/);
+  assert.equal(existsSync(join(run.directory, 'queue.json')), false);
+  assert.equal(existsSync(run.readLog), false);
 });
 
 test('a missing remote conductor preserves its SSH failure when the client closes', async (t) => {

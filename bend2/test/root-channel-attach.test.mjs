@@ -413,6 +413,7 @@ test('a Codex root read carries its recorded thread and accepted message on the 
   const { channel } = calls;
   const premature = await channel.call('read-before-notice', 'baton2_root_delivery', {
     id: 'codex-root-input', thread: 'thread-1', content: 'A body that this connection has not emitted.',
+    turn: 'turn-1', item: 'item-1',
   });
   assert.equal(premature.isError, true);
   const unread = new DatabaseSync(calls.database, { readOnly: true });
@@ -421,16 +422,22 @@ test('a Codex root read carries its recorded thread and accepted message on the 
   channel.activate();
   await channel.until(() => channel.notes().length > 0, 'Codex root input notice');
   const notice = channel.notes()[0];
-  assert.ok(notice.params.content.includes('Baton records the read after Codex accepts this complete input.'));
+  assert.ok(notice.params.content.includes('Baton records the read after the Codex root thread returns this complete input.'));
   assert.ok(!notice.params.content.includes('call baton2_delivery'));
   const wrongThread = await channel.call('read-wrong-thread', 'baton2_root_delivery', {
     id: 'codex-root-input', thread: 'another-thread', content: notice.params.content,
+    turn: 'turn-1', item: 'item-1',
   });
   assert.equal(wrongThread.isError, true);
   const wrongBody = await channel.call('read-wrong-body', 'baton2_root_delivery', {
     id: 'codex-root-input', thread: 'thread-1', content: 'Only a partial notice body.',
+    turn: 'turn-1', item: 'item-1',
   });
   assert.equal(wrongBody.isError, true);
+  const queuedOnly = await channel.call('read-queued-only', 'baton2_root_delivery', {
+    id: 'codex-root-input', thread: 'thread-1', content: notice.params.content,
+  });
+  assert.equal(queuedOnly.isError, true);
   const unboundRead = await channel.call('read-unbound', 'baton2_delivery', { id: 'codex-root-input' });
   assert.equal(unboundRead.isError, true);
   const beforeRead = new DatabaseSync(calls.database, { readOnly: true });
@@ -438,6 +445,7 @@ test('a Codex root read carries its recorded thread and accepted message on the 
   beforeRead.close();
   const delivered = await channel.call('read-codex-root', 'baton2_root_delivery', {
     id: 'codex-root-input', thread: 'thread-1', content: notice.params.content,
+    turn: 'turn-1', item: 'item-1',
   });
   assert.equal(JSON.parse(delivered.content[0].text).body, 'Complete Codex root body.');
   const context = JSON.parse(readFileSync(channel.contextLog, 'utf8').trim());

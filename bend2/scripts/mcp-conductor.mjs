@@ -954,7 +954,7 @@ function notifyPending(messageId = null) {
     : '';
   const content = `Message (${message.kind}) from ${message.sender} [id: ${message.id}]:\n${message.body}${review}`;
   const readInstruction = rootHarness === 'codex'
-    ? 'Baton records the read after Codex accepts this complete input.'
+    ? 'Baton records the read after the Codex root thread returns this complete input.'
     : `Baton records the read when you call baton2_delivery ${JSON.stringify({ id: message.id })}.`;
   const notice = `${content}\n\n${readInstruction}`;
   sendNotification('notifications/claude/channel', {
@@ -1410,10 +1410,11 @@ function handleToolCall(msg) {
         if (rootHarness !== 'codex' || !connectionCustody || !inputNotice
             || args.id !== inputNotice.id || args.thread !== connectionCustody.thread
             || args.thread !== connectionCustody.native || args.content !== inputNotice.content
+            || typeof args.turn !== 'string' || !args.turn || typeof args.item !== 'string' || !args.item
             || inputNotice.connection !== connectionCustody.connection
             || inputNotice.native !== connectionCustody.native
             || !pendingConductorMessage(args.id)) {
-          throw new Error('Codex read evidence does not match the accepted complete root notice and recorded thread.');
+          throw new Error('Codex read evidence does not match the complete root notice, the recorded thread and the thread turn and item that returned it.');
         }
         activeReadMessage = args.id;
         try { result = coord('delivery', args.id); }
