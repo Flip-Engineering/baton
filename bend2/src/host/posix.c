@@ -414,26 +414,81 @@ static int posix_setup_child_fds(int key_lock, int cgen_lock, int status_write,
   return 0;
 }
 
+/* The process is started through two forks, so it has no parent among the
+   processes of the caller: a teardown that walks the descendants of the caller
+   (the requester of a queue job, and the requester's own requester) does not
+   reach it. The caller learns its pid, which is not a child of the caller, from
+   a pipe.
+
+   With wait_out, a third process is the parent of the detached process. It is
+   itself detached, has no descriptors but the pipe, and writes the wait status
+   of the detached process to the pipe when that process ends. The caller keeps
+   the read end for the wait_supervisor call. */
 static int posix_spawn_detached(const char *argv_text, size_t argv_length,
-                             u32 key_lock, u32 cgen_lock, char *const *envp, pid_t *pid_out) {
+                             u32 key_lock, u32 cgen_lock, char *const *envp,
+                             pid_t *pid_out, int *wait_out) {
   char **parsed = NULL; int count = 0;
   int error = posix_parse_argv(argv_text, argv_length, &parsed, &count);
   if (error) return error;
   char **argv=parsed;
   const char *exec=argv[0];
-  int status[2];
+  int status[2], report[2];
   if (pipe(status)) { free(parsed); return errno; }
+  if (pipe(report)) { error = errno; close(status[0]); close(status[1]); free(parsed); return error; }
   fcntl(status[0], F_SETFD, FD_CLOEXEC);
   fcntl(status[1], F_SETFD, FD_CLOEXEC);
+  fcntl(report[0], F_SETFD, FD_CLOEXEC);
+  fcntl(report[1], F_SETFD, FD_CLOEXEC);
   posix_set_inheritable((int)key_lock);
   posix_set_inheritable((int)cgen_lock);
-  pid_t child = fork();
-  if (child < 0) {
-    error = errno; close(status[0]); close(status[1]);
+  pid_t middle = fork();
+  if (middle < 0) {
+    error = errno; close(status[0]); close(status[1]); close(report[0]); close(report[1]);
     free(parsed); return error;
   }
-  if (child == 0) {
-    close(status[0]);
+  if (middle == 0) {
+    close(status[0]); close(report[0]);
+    if (wait_out) {
+      pid_t reaper = fork();
+      if (reaper < 0) {
+        int child_error = errno;
+        write(status[1], &child_error, sizeof(child_error));
+        _exit(127);
+      }
+      if (reaper > 0) _exit(0);
+      setsid();
+    }
+    pid_t child = fork();
+    if (child < 0) {
+      int child_error = errno;
+      write(status[1], &child_error, sizeof(child_error));
+      _exit(127);
+    }
+    if (child > 0) {
+      write(report[1], &child, sizeof(child));
+      if (!wait_out) _exit(0);
+      /* The reaper holds nothing of the caller: no standard stream, no lock,
+         no pipe but the one that carries the wait status. */
+      int devnull = open("/dev/null", O_RDWR);
+      if (devnull >= 0) {
+        dup2(devnull, STDIN_FILENO); dup2(devnull, STDOUT_FILENO); dup2(devnull, STDERR_FILENO);
+        if (devnull > STDERR_FILENO) close(devnull);
+      }
+      long limit = sysconf(_SC_OPEN_MAX);
+      if (limit < 1024 || limit > 1048576) limit = 65536;
+      for (int fd = 3; fd < (int)limit; fd++) if (fd != report[1]) close(fd);
+      /* error is 0 when waitpid answered; status is meaningful only then. */
+      int record[2] = {0, 0};
+      for (;;) {
+        pid_t waited = waitpid(child, &record[1], 0);
+        if (waited < 0 && errno == EINTR) continue;
+        if (waited < 0) record[0] = errno;
+        break;
+      }
+      write(report[1], record, sizeof(record));
+      _exit(0);
+    }
+    close(report[1]);
     if (setsid() < 0) {
       int child_error = errno;
       write(status[1], &child_error, sizeof(child_error));
@@ -451,20 +506,54 @@ static int posix_spawn_detached(const char *argv_text, size_t argv_length,
     write(status_fd >= 0 ? status_fd : status[1], &child_error, sizeof(child_error));
     _exit(127);
   }
-  close(status[1]);
-  int child_error = 0;
+  close(status[1]); close(report[1]);
+  pid_t child = 0;
   ssize_t got;
-  do { got = read(status[0], &child_error, sizeof(child_error)); } while (got < 0 && errno == EINTR);
+  do { got = read(report[0], &child, sizeof(child)); } while (got < 0 && errno == EINTR);
+  while (waitpid(middle, NULL, 0) < 0 && errno == EINTR) {}
+  int child_error = 0;
+  ssize_t reported;
+  do { reported = read(status[0], &child_error, sizeof(child_error)); } while (reported < 0 && errno == EINTR);
   close(status[0]);
-  if (got > 0) {
-    int status_value = 0;
-    while (waitpid(child, &status_value, 0) < 0 && errno == EINTR) {}
+  if (reported > 0 || got != (ssize_t)sizeof(child)) {
+    close(report[0]);
     free(parsed);
-    return child_error ? child_error : EIO;
+    return reported > 0 && child_error ? child_error : EIO;
   }
+  if (wait_out) *wait_out = report[0]; else close(report[0]);
   *pid_out = child;
   free(parsed);
   return 0;
+}
+
+/* The read ends of the wait pipes, by the pid of the detached process. The list
+   has no fixed size. A registration that cannot allocate closes the pipe; the
+   wait then finds no entry and reports the error of waitpid on a process that is
+   not a child, an explicit failure. */
+typedef struct PosixWait { pid_t pid; int fd; struct PosixWait *next; } PosixWait;
+static PosixWait *posix_waits = NULL;
+static pthread_mutex_t posix_waits_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void posix_wait_register(pid_t pid, int fd) {
+  PosixWait *entry = malloc(sizeof(*entry));
+  if (!entry) { close(fd); return; }
+  entry->pid = pid; entry->fd = fd;
+  pthread_mutex_lock(&posix_waits_lock);
+  entry->next = posix_waits; posix_waits = entry;
+  pthread_mutex_unlock(&posix_waits_lock);
+}
+
+static int posix_wait_take(pid_t pid) {
+  int fd = -1;
+  pthread_mutex_lock(&posix_waits_lock);
+  for (PosixWait **at = &posix_waits; *at; at = &(*at)->next) {
+    if ((*at)->pid != pid) continue;
+    PosixWait *found = *at;
+    fd = found->fd; *at = found->next; free(found);
+    break;
+  }
+  pthread_mutex_unlock(&posix_waits_lock);
+  return fd;
 }
 
 
@@ -669,7 +758,7 @@ static void host_posix_work(IoWork *work) {
       if(call->length[3]) call->error=posix_parse_argv(call->text[3],call->length[3],&environment,&count);
       pid_t child=0;
       if(!call->error) call->error=posix_spawn_detached(call->text[0],call->length[0],
-        call->number[1],call->number[2],environment,&child);
+        call->number[1],call->number[2],environment,&child,NULL);
       free(environment);call->value=(u32)child;break;
     }
     case 33: {
@@ -677,9 +766,11 @@ static void host_posix_work(IoWork *work) {
       if(call->length[3])
         call->error=posix_parse_argv(call->text[3],call->length[3],&environment,&environment_count);
       pid_t child=0;
+      int wait_fd=-1;
       if(!call->error) call->error=posix_spawn_detached(call->text[0],call->length[0],
-        call->number[1],call->number[2],environment,&child);
+        call->number[1],call->number[2],environment,&child,&wait_fd);
       free(environment);
+      if(!call->error) posix_wait_register(child,wait_fd);
       char *start=NULL;
       if(!call->error) call->error=posix_starttime_text((u32)child,&start);
       if(!call->error) {
@@ -716,17 +807,35 @@ static void host_posix_work(IoWork *work) {
       break;
     }
     case 34: {
-      do {fd=waitpid((pid_t)call->number[0],&status,0);} while(fd<0 && errno==EINTR);
-      if(fd<0) call->error=errno;
-      else {
-        char text[96];
-        unsigned int exit_code=WIFEXITED(status)?(unsigned)WEXITSTATUS(status):
-          WIFSIGNALED(status)?(unsigned)(128+WTERMSIG(status)):1;
-        unsigned int signal_code=WIFSIGNALED(status)?(unsigned)WTERMSIG(status):0;
-        snprintf(text,sizeof text,"running=0\nexit=%u\nsignal=%u\n",exit_code,signal_code);
-        call->answer=strdup(text);
+      /* A supervisor started by this process is not its child: the status comes
+         from the process that waited for it. The answer is the exit status, the
+         signal, or an error with its code; a status that never arrived is an
+         error, not a successful exit. */
+      int wait_fd=posix_wait_take((pid_t)call->number[0]);
+      int record[2]={0,0},failure=0;const char *reason=NULL;
+      if(wait_fd>=0) {
+        ssize_t got;
+        do {got=read(wait_fd,record,sizeof record);} while(got<0 && errno==EINTR);
+        close(wait_fd);
+        if(got!=(ssize_t)sizeof record) {failure=EIO;reason="supervisor status was not reported";}
+        else if(record[0]) {failure=record[0];reason="waitpid failed";}
+      } else {
+        int result;
+        do {result=waitpid((pid_t)call->number[0],&record[1],0);} while(result<0 && errno==EINTR);
+        if(result<0) {failure=errno;reason="waitpid failed";}
       }
-      if(!call->error && !call->answer) call->error=ENOMEM;
+      char text[160];
+      if(failure) {
+        snprintf(text,sizeof text,"running=0\nerror=%s: %s\nerror_code=%d\n",reason,strerror(failure),failure);
+      } else {
+        int raw=record[1];
+        unsigned int exit_code=WIFEXITED(raw)?(unsigned)WEXITSTATUS(raw):
+          WIFSIGNALED(raw)?(unsigned)(128+WTERMSIG(raw)):1;
+        unsigned int signal_code=WIFSIGNALED(raw)?(unsigned)WTERMSIG(raw):0;
+        snprintf(text,sizeof text,"running=0\nexit=%u\nsignal=%u\n",exit_code,signal_code);
+      }
+      call->answer=strdup(text);
+      if(!call->answer) call->error=ENOMEM;
       break;
     }
     case 24:

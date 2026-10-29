@@ -703,6 +703,17 @@ def owner_count(+keydir: String) -> IO(U32):
     names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(keydir ++ "/owners"))
     count_live_owners(keydir, Tx.split_nul(names), 0)
 
+# Removes the tokens of processes that are gone. The scan unlinks the files it
+# judges dead, among them the temporary file of a token that is being published,
+# so it holds the same lock as publish_token and every other destructive scan. A
+# caller that holds the key lock takes this lock second, as the supervisor does.
+def prune_stale_owners(+keydir: String) -> IO(Unit):
+  do IO<Unit>:
+    gate : U32 <- owner_lock(keydir)
+    pruned : U32 <- owner_count(keydir)
+    released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
+    IO.pure(Unit, Unit{})
+
 def clean_stale_active_alive(pid: U32, active: String, start: String) -> IO(Unit):
   do IO<Unit>:
     alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(pid, start))
@@ -1956,6 +1967,7 @@ def run_config_locked(parsed: Config, +text: String, +key: String) -> IO(Unit):
     lock : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(keydir ++ "/lock"))
     active : U32 <- active_state(keydir)
     cleaned : Unit <- clean_stale_active(keydir)
+    pruned : Unit <- prune_stale_owners(keydir)
     completed : Bool <- IO.try(Bool, Result.CompileQueueResult.verify_completed(keydir))
     run_completed_result(completed, active, text, parsed, key, keydir, owner, wait_start, present, lock)
 
