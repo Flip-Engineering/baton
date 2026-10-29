@@ -29,7 +29,7 @@ args = sys.argv[1:]
 settings = json.loads(args[args.index('--settings') + 1])
 command = settings['hooks']['Stop'][0]['hooks'][0]['command']
 log = open(sys.argv[0] + '.stops', 'a')
-for active in (False, True, True):
+for index, active in enumerate((False, True, True, True)):
     hook = subprocess.run(['/bin/sh', '-c', command], input=json.dumps({'hook_event_name': 'Stop', 'stop_hook_active': active}),
                           capture_output=True, text=True)
     decision = json.loads(hook.stdout) if hook.stdout.strip() else {}
@@ -37,7 +37,10 @@ for active in (False, True, True):
     log.flush()
     if active:
         with sqlite3.connect(os.environ['BATON_DATABASE']) as db:
-            db.execute("INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body,receipt) VALUES('request','worker','coordinator','completion-request','Done.',NULL)")
+            if index == 1:
+                db.execute("INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body,receipt) VALUES('request','worker','coordinator','completion-request','Done.',NULL)")
+            else:
+                db.execute("INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body,receipt) VALUES('confirm','coordinator','worker','completion-confirmed','request',NULL)")
 print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False, 'result': 'done'}))
 '''
 # One successful tool finishes, new input commits, and another tool finishes.
@@ -233,7 +236,7 @@ class StopHook(unittest.TestCase):
     def test_claude_ignoring_two_blocks_must_request_completion(self):
         result, stops = self.fake(HONOURING)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual([s['decision'].get('decision') for s in stops], ['block', 'block', None])
+        self.assertEqual([s['decision'].get('decision') for s in stops], ['block', 'block', 'block', None])
 
     def tool_hook(self, env=None):
         result = subprocess.run([self.binary, '--stop-hook'], input=json.dumps({'hook_event_name': 'PostToolUse', 'tool_name': 'Bash'}),
@@ -388,8 +391,21 @@ request = invoke('completion-request', [config['binary'],'completion-request',co
 admitted = json.loads(request.stdout)[0]
 assert admitted['admission']['status'] == 'admitted', admitted
 stop = invoke('stop-after-request', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'Stop','stop_hook_active':True}))
-assert stop.stdout.strip() == ''
-evidence = {'fullBodyInjectedAndRecorded':True,'guidanceProcess':os.getpid(),'completeReadSha256':config['sha256'],'tail':config['tail'],'requestId':admitted['id'],'requestWake':admitted['wake'],'stopAllowed':True,'nativeRead':rows[0][:4]}
+assert json.loads(stop.stdout)['decision'] == 'block'
+assert 'awaiting the conductor decision' in json.loads(stop.stdout)['reason']
+confirmation = invoke('completion-confirmed', [config['binary'],'completion-confirmed',config['database'],admitted['id']])
+confirmation_id = json.loads(confirmation.stdout)[0]['id']
+held = invoke('stop-for-confirmation-input', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'Stop','stop_hook_active':True}))
+assert json.loads(held.stdout)['decision'] == 'block'
+assert confirmation_id in json.loads(held.stdout)['reason']
+confirmation_input = invoke('deliver-confirmation', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'PostToolUse','tool_name':'Bash'}))
+assert 'Message (completion-confirmed)' in json.loads(confirmation_input.stdout)['hookSpecificOutput']['additionalContext']
+with sqlite3.connect(config['database']) as db:
+    confirmation_reads = db.execute('SELECT attempt,recipient,native FROM message_reads WHERE message=?', (confirmation_id,)).fetchall()
+assert len(confirmation_reads) == 1 and confirmation_reads[0] == ('attempt-1','worker','native-1')
+released = invoke('stop-after-confirmation', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'Stop','stop_hook_active':True}))
+assert released.stdout.strip() == ''
+evidence = {'fullBodyInjectedAndRecorded':True,'guidanceProcess':os.getpid(),'completeReadSha256':config['sha256'],'tail':config['tail'],'requestId':admitted['id'],'requestWake':admitted['wake'],'confirmationId':confirmation_id,'confirmationRead':confirmation_reads[0],'stopAllowed':True,'nativeRead':rows[0][:4]}
 print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_id':'native-1','result':json.dumps(evidence)}), flush=True)
 ''')
         tail = 'TAIL-READ-PROOF-' + label
@@ -418,7 +434,8 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             self.assertEqual(self.db.execute('SELECT body FROM messages WHERE id=?', (ident,)).fetchone()[0], body)
             self.assertIsNone(self.db.execute('SELECT receipt FROM messages WHERE id=?', (ident,)).fetchone()[0])
             self.assertEqual(self.db.execute("SELECT count(*) FROM messages m WHERE m.recipient='worker' AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=m.id AND r.recipient=m.recipient)").fetchone()[0], 0)
-            self.assertEqual(self.db.execute("SELECT count(*) FROM messages WHERE recipient='worker' AND kind='completion-confirmed'").fetchone()[0], 0)
+            self.assertEqual(self.db.execute("SELECT count(*) FROM messages WHERE id=? AND recipient='worker' AND kind='completion-confirmed'", (evidence['confirmationId'],)).fetchone()[0], 1)
+            self.assertEqual(self.db.execute("SELECT attempt,recipient,native FROM message_reads WHERE message=?", (evidence['confirmationId'],)).fetchall(), [('attempt-1','worker','native-1')])
             self.assertIsNone(self.hook(active=True))
             self.owe(ident='unread-after-exit', body='Input committed after the native exit.')
             self.assertEqual(self.db.execute("SELECT m.id FROM messages m WHERE m.recipient='worker' AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=m.id AND r.recipient=m.recipient)").fetchall(), [('unread-after-exit',)])
@@ -484,13 +501,22 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         self.assertIsNone(self.codex_stop(env=env))
         self.assertIsNone(self.codex_tool(env=env))
 
-    def test_codex_stop_blocks_until_the_completion_request(self):
+    def test_codex_stop_blocks_until_the_conductor_confirms_the_request(self):
         for active in (False, True, True):
             decision = self.codex_stop(active)
             self.assertEqual(decision['decision'], 'block')
             self.assertIn('Assignment dispatch:assignment is still open', decision['reason'])
             self.assertIn('completion-request --text SUMMARY', decision['reason'])
         self.request()
+        pending = self.codex_stop(True)
+        self.assertEqual(pending['decision'], 'block')
+        self.assertIn('awaiting the conductor decision', pending['reason'])
+
+        confirmed = subprocess.run([self.binary, 'completion-confirmed', self.path, 'message:worker:request'],
+                                   env=dict(self.env, BATON_STOP_HOOK=self.binary), capture_output=True, text=True)
+        self.assertEqual(confirmed.returncode, 0, confirmed.stdout + confirmed.stderr)
+        confirmation = self.db.execute("SELECT id FROM messages WHERE recipient='worker' AND kind='completion-confirmed' ORDER BY seq DESC LIMIT 1").fetchone()[0]
+        self.read(confirmation)
         self.assertIsNone(self.codex_stop(True))
 
     def test_codex_stop_holds_owed_input_of_every_kind(self):
@@ -551,9 +577,10 @@ results['read_after'] = reads(config['message'])
 results['again'] = hook('PostToolUse', tool_name='Bash', tool_input={}, tool_response='')
 results['stop_after'] = hook('Stop', stop_hook_active=True, last_assistant_message='Done.')
 if config['session'] == 'worker':
-    action = [config['binary'], config['followup'], config['db']]
-    if config['followup'] == 'guide':
-        action.append(config['followup_body'])
+    if config['followup'] == 'confirm':
+        action = [config['binary'], 'completion-confirmed', config['db'], 'message:worker:request']
+    else:
+        action = [config['binary'], 'guide', config['db'], config['followup_body']]
     applied = subprocess.run(action, env=env, capture_output=True, text=True)
     if applied.returncode:
         raise RuntimeError(applied.stdout + applied.stderr)

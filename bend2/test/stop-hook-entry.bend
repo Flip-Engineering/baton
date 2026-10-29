@@ -87,7 +87,7 @@ def route(args: List<String>) -> IO(Unit):
     case "read" <> db <> id <> Nil{}: Agent.execute(db,"worker",Actions.Read{[id]})
     case "completion-request" <> db <> body <> Nil{}: Agent.execute(db,"worker",Actions.CompletionRequest{"",Actions.Text{body}})
     case "completion-request-id" <> db <> id <> body <> Nil{}: Agent.execute(db,"worker",Actions.CompletionRequest{id,Actions.Text{body}})
-    case "completion-confirmed" <> db <> Nil{}: Agent.execute(db,"coordinator",Actions.CompletionConfirmed{"worker","message:worker:request",""})
+    case "completion-confirmed" <> db <> request <> Nil{}: Agent.execute(db,"coordinator",Actions.CompletionConfirmed{"worker",request,""})
     case "guide" <> db <> body <> Nil{}: Agent.execute(db,"coordinator",Actions.Send{[Actions.Item{"worker","guide","guidance",Actions.Text{body}}]})
     case "inbox" <> db <> session <> Nil{}: Agent.execute(db,session,Actions.Inbox{})
     case "pending" <> +db <> Nil{}: do IO<Unit>:
