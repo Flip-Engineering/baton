@@ -15,6 +15,10 @@ SCRIPT = pathlib.Path(__file__).with_name('reuse-native-main.py')
 SPEC = importlib.util.spec_from_file_location('reuse_native_main', SCRIPT)
 REUSE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(REUSE)
+QUEUE_PATH = pathlib.Path(__file__).with_name('queue-native-checks.py')
+QUEUE_SPEC = importlib.util.spec_from_file_location('queue_native_checks', QUEUE_PATH)
+QUEUE = importlib.util.module_from_spec(QUEUE_SPEC)
+QUEUE_SPEC.loader.exec_module(QUEUE)
 
 
 def write(path, data):
@@ -59,15 +63,20 @@ class CompletedQueueCgenTests(unittest.TestCase):
         self.completed = self.keydir / 'completed'
         self.artifact = self.completed / 'artifacts/output.c'
         write(self.artifact, b'/* verified cgen */\n')
+        self.queue_output = self.attempt / 'work/output.c'
+        self.exec_script = self.base / '.github/scripts/compile-cgen-exec.py'
+        self.queue_argv = ['/usr/bin/python3', str(self.exec_script), str(self.queue_output),
+                           str(self.compiler), REUSE.ENTRY, '-o', str(self.queue_output)]
         write(self.attempt / 'meta', self.meta_text())
         write(self.attempt / 'identity-config', self.identity_config_text())
-        write(self.attempt / 'command', 'bend ' + REUSE.ENTRY + ' -o output.c\n')
-        write(self.attempt / 'argv', b'bend\0' + REUSE.ENTRY.encode() + b'\0-o\0output.c\0')
+        write(self.attempt / 'command', '\n'.join(self.queue_argv) + '\n')
+        write(self.attempt / 'argv', b'\0'.join(arg.encode() for arg in self.queue_argv) + b'\0')
         source_digest, _ = REUSE.queue_source_digest(self.root, REUSE.ENTRY)
         write(self.attempt / 'source-digest', 'digest=' + source_digest + '\n')
         write(self.completed / 'result', self.result_text(source_digest))
         diagnostics = {
             'schema': 'baton2-compiler-execution-observation-v1',
+            'compiler_argv': self.queue_argv[3:],
             'queue_attempt': {
                 'meta': {'key': self.key, 'kind': 'cgen', 'entry': REUSE.ENTRY},
                 'meta_sha256': sha(self.attempt / 'meta'),
@@ -166,6 +175,73 @@ class CompletedQueueCgenTests(unittest.TestCase):
         selected = self.select(None)
         self.assertEqual(selected['status'], 'miss', selected)
         self.assertIn('compiler distribution', selected['reason'])
+
+    def test_cache_hit_diagnostic_at_another_path_is_bound_by_compiler_bytes(self):
+        target_compiler = self.base / 'target-run/toolchain-home/bin/bend'
+        write(target_compiler, self.compiler.read_bytes())
+        diagnostics = json.loads((self.attempt / 'compiler-diagnostics.json').read_text())
+        diagnostics['compiler_argv'][0] = str(target_compiler)
+        diagnostics['toolchain']['compiler']['path'] = str(target_compiler)
+        write(self.attempt / 'compiler-diagnostics.json', json.dumps(diagnostics))
+
+        result = self.prepare()
+
+        self.assertEqual(result['status'], 'reused', result)
+        self.assertFalse(result['origin_compiler_identity']['paths_match'])
+        self.assertEqual(result['origin_compiler_identity']['sha256'], sha(self.compiler))
+        selected = self.select(result)
+        self.assertEqual(selected['status'], 'reused', selected)
+
+    def test_cache_hit_diagnostic_with_different_compiler_bytes_is_refused(self):
+        target_compiler = self.base / 'target-run/toolchain-home/bin/bend'
+        write(target_compiler, b'different compiler')
+        diagnostics = json.loads((self.attempt / 'compiler-diagnostics.json').read_text())
+        diagnostics['compiler_argv'][0] = str(target_compiler)
+        diagnostics['toolchain']['compiler']['path'] = str(target_compiler)
+        diagnostics['toolchain']['compiler']['sha256'] = sha(target_compiler)
+        write(self.attempt / 'compiler-diagnostics.json', json.dumps(diagnostics))
+
+        with self.assertRaisesRegex(ValueError, 'Completed Cgen compiler diagnostics differ from the selected compiler'):
+            self.prepare()
+
+
+class QueueCacheDiagnosticRetentionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='queue-cache-diagnostics-')
+        self.addCleanup(self.temp.cleanup)
+        self.base = pathlib.Path(self.temp.name)
+        self.state = self.base / 'queue'
+        self.key = 'b' * 64
+        self.keydir = self.state / 'keys' / self.key
+        self.attempt = self.keydir / 'runs/attempt-1'
+        self.directory = self.base / 'current-request'
+        self.completed = self.keydir / 'completed'
+        self.attempt.mkdir(parents=True)
+        self.directory.mkdir()
+        self.completed.mkdir()
+        write(self.completed / 'result', 'schema=baton-compile-queue-result-v2\n'
+              'key=' + self.key + '\nstatus=completed\nexit=0\nattempt=' + str(self.attempt) + '\n')
+        for name, body in (('stdout', ''), ('stderr', ''), ('meta', 'kind=cc\n'),
+                           ('command', 'old command\n'), ('source-digest', 'digest=old\n'),
+                           ('argv', b'old\0argv\0')):
+            write(self.attempt / name, body)
+        self.original_diagnostics = b'{"execution":"original candidate"}\n'
+        write(self.attempt / QUEUE.DIAGNOSTIC_FILE, self.original_diagnostics)
+        compiler = self.base / 'target-run/bin/cc'
+        write(compiler, b'target compiler')
+        compiler.chmod(0o755)
+        request = {'command': ['/usr/bin/python3', QUEUE.EXEC_SCRIPT,
+                               str(self.base / 'output'), str(compiler), '-c', 'input.c']}
+        write(self.directory / 'request.json', json.dumps(request))
+        write(self.directory / 'receipt', 'status=completed\nreused=1\n')
+
+    def test_cache_hit_copies_original_execution_diagnostics_without_overwriting(self):
+        QUEUE.retain({'state': str(self.state)}, self.key, self.directory, True)
+
+        self.assertEqual((self.attempt / QUEUE.DIAGNOSTIC_FILE).read_bytes(),
+                         self.original_diagnostics)
+        self.assertEqual((self.directory / QUEUE.DIAGNOSTIC_FILE).read_bytes(),
+                         self.original_diagnostics)
 
 
 if __name__ == '__main__':
