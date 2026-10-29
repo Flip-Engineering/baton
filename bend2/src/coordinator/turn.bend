@@ -78,7 +78,7 @@ def append_store_error(previous: String, result: Result<&1,&1,U32 & String,Strin
 # Its stdout copy is best effort and cannot interrupt native completion.
 def report(db: String, player: String, id: String, body: String) -> IO(Unit):
   do IO<Unit>:
-    saved : String <- IO.try(String,Store.apply(db,C.Report{id,player,body}))
+    saved : String <- IO.try(String,Store.apply_through_busy(db,C.Report{id,player,body}))
     written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)
     IO.pure(Unit,Unit{})
 
@@ -758,7 +758,7 @@ def publish_deferred(+db: String, +player: String, +id: String, +event: String, 
       +existing : String <- IO.try(String,DB.Sql.query(db,deferred_existing_sql(player,id,event)))
       Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(existing)),
         do IO<Unit>:
-          +saved : String <- IO.try(String,Store.apply(db,C.Observe{report_id,player,event,False{},harness}))
+          +saved : String <- IO.try(String,Store.apply_through_busy(db,C.Observe{report_id,player,event,False{},harness}))
           delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,report_id,"1",saved)
           written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)
           IO.pure(Unit,Unit{}),

@@ -198,7 +198,7 @@ def record_fields(+db: String, +session: String, +directory: String, +saved: Str
       Bool.pick(IO(Unit),String.eq(live,"1\n"),
         (do IO<Unit>:
           bound : String <- field(Tx.trim_nl(identity))
-          stored : String <- IO.try(String,Store.transact_sql(db,Status.record_sql(session,directory,attempt,native,bound,saved,read)))
+          stored : String <- IO.try(String,Store.transact_through_busy(db,Status.record_sql(session,directory,attempt,native,bound,saved,read)))
           IO.pure(Unit,Unit{})),
         IO.die(Unit,2,"The owned input action has no matching live native process birth. Read status remains unrecorded."))
     case other: IO.die(Unit,2,"The owned input action has no matching active execution, native conversation and stop state. Read status remains unrecorded.")
@@ -221,7 +221,7 @@ def forward_read_witness(+db: String, +session: String, +attempt: String, +nativ
       identity : String <- field(Tx.trim_nl(encoded))
       Bool.pick(IO(Unit),String.eq(live,"1\n"),
         (do IO<Unit>:
-          stored : String <- IO.try(String,Store.transact_sql(db,Status.forwarded_read_sql(session,attempt,native,identity,next)))
+          stored : String <- IO.try(String,Store.transact_through_busy(db,Status.forwarded_read_sql(session,attempt,native,identity,next)))
           IO.pure(Unit,Unit{})),
         IO.pure(Unit,Unit{}))
 
@@ -249,7 +249,7 @@ def codex_witness(+db: String, +session: String, +native: String, +saved: String
       (do IO<Unit>:
         turn : String <- field(bound)
         ensured : Unit <- Store.ensure_before_begin(db)
-        stored : String <- IO.try(String,Store.transact_sql(db,Status.codex_record_sql(session,native,turn,saved,read)))
+        stored : String <- IO.try(String,Store.transact_through_busy(db,Status.codex_record_sql(session,native,turn,saved,read)))
         IO.pure(Unit,Unit{})))
 
 def codex_witness_result(db: String, session: String, native: String, saved: String, read: Bool, result: G.RunRes) -> IO(Unit):
