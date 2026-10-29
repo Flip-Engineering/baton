@@ -451,6 +451,8 @@ class RootChannel(unittest.TestCase):
         self.assertIn('the session has no recorded endpoint', body)
         self.assertIn('worker has 2 owed inputs', body)
         self.assertIn('baton connect --endpoint JSON_ARGV --session worker', body)
+        self.assertIn('baton resume --session worker to deliver the retained input', body)
+        self.assertIn('The original input remains stored.', body)
 
     def test_second_input_to_the_same_endpointless_seat_adds_no_report(self):
         self.worker()
@@ -483,6 +485,9 @@ class RootChannel(unittest.TestCase):
         reports = self.coordinator_reports()
         self.assertEqual(len(reports), 1, reports)
         self.assertIn('its harness is not supported', reports[0][3])
+        self.assertIn('Select a supported harness and record its receiver', reports[0][3])
+        self.assertIn('baton resume --session worker to deliver the retained input', reports[0][3])
+        self.assertIn('The original input and cause remain stored.', reports[0][3])
 
     def test_input_to_the_root_itself_adds_no_coordinator_report(self):
         self.seat_input('operator', 1)
