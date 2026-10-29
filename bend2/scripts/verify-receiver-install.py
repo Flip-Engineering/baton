@@ -108,7 +108,7 @@ def main():
     operations.append(probe(prefix, 0, [prefix / 'bin/baton-recovery', '--help']))
     operations.append(probe_missing_full_routes(prefix))
     focused = prefix / 'bin/baton-focused'
-    hidden_focused = prefix / 'bin/.baton.retained'
+    hidden_focused = prefix / 'bin/.baton-focused.retained'
     focused.rename(hidden_focused)
     try:
         operations.append(probe(prefix, 78, [prefix / 'bin/baton', 'state.db', 'receive',
