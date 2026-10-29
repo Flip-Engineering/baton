@@ -3157,18 +3157,22 @@ export function body_flatten(b: Body, vars: PVar[], fr: () => number): LTerm {
 // emitter see the compiler-lowered case form.
 function literal_chain(p: Parse, b: Body, vars: PVar[], def: Def,
   k: Name): LTerm | null {
-  // The lowering binds only the matched first parameter. A definition with
-  // later top-level parameters stays on the ordinary lowering: its helpers
-  // would abstract those parameters without carrying them in the signatures.
-  if (b.$ !== "Match" || b.e.length !== 1 || vars.length !== 1) return null;
+  if (b.$ !== "Match" || b.e.length !== 1 || vars.length < 1) return null;
   const scrut = b.e[0];
   if (scrut.$ !== "Var" || scrut.i !== vars[0].i) return null;
   const all = def.T;
   if (all.$ !== "All" || all.i !== vars[0].i || all.q.$ === "None") return null;
+  // The String.eq chain stays inline in the definition and wraps each row in
+  // lambdas for the later top-level parameters (vars.slice(1)), so it takes
+  // any number of parameters. Without it a String match with a later parameter
+  // lowers to a character decision tree of millions of nodes.
   if (all.q.$ === "Many" && all.A.$ === "Ref" && all.A.k === "String") {
     return literal_chain_string(p, b, vars, all, scrut);
   }
-  if (all.q.$ === "Lone" && all.A.$ === "ADT" && all.A.k === "List") {
+  // The list lowering binds only the matched first parameter. A definition with
+  // later top-level parameters stays on the ordinary lowering: its helpers
+  // would abstract those parameters without carrying them in the signatures.
+  if (vars.length === 1 && all.q.$ === "Lone" && all.A.$ === "ADT" && all.A.k === "List") {
     return literal_chain_list_helpers(p, b, vars, def, k, all, scrut)
       ?? literal_list_rows(p, b, def, k, all, scrut);
   }

@@ -477,7 +477,11 @@ def retain(config, key, directory, success):
         request_command = json.loads(request_path.read_text()).get('command') or []
         executed = len(request_command) > 3 and Path(request_command[1]).name == Path(EXEC_SCRIPT).name
         compiler_argv = request_command[3:] if executed else request_command
-        compiler_diagnostics(attempt, compiler_argv)
+        receipt = directory / 'receipt'
+        receipt_fields = dict(line.split('=', 1) for line in receipt.read_text().splitlines()
+                              if '=' in line) if receipt.is_file() else {}
+        if receipt_fields.get('reused') == '0':
+            compiler_diagnostics(attempt, compiler_argv)
     diagnostics = attempt / DIAGNOSTIC_FILE
     try:
         if diagnostics.is_file():
@@ -626,7 +630,18 @@ def compiler(mode, argv, key_only=False):
         options = ['--kind', 'cc', '--source-root', '/', '--compiler', actual]
         darwin_llvm = os.environ.get('BATON2_DARWIN_LLVM_ROOT')
         darwin_sdk = os.environ.get('BATON2_DARWIN_SDKROOT')
-        if darwin_llvm and darwin_sdk:
+        darwin_sdk_manifest = os.environ.get('BATON2_DARWIN_SDK_MANIFEST_SHA256')
+        darwin_sdk_tree = os.environ.get('BATON2_DARWIN_SDK_TREE_SHA256')
+        darwin_cross_compiler = Path(actual).name == 'darwin-arm64-clang.sh'
+        if darwin_cross_compiler:
+            missing = [name for name, value in (
+                ('BATON2_DARWIN_LLVM_ROOT', darwin_llvm),
+                ('BATON2_DARWIN_SDKROOT', darwin_sdk),
+                ('BATON2_DARWIN_SDK_MANIFEST_SHA256', darwin_sdk_manifest),
+                ('BATON2_DARWIN_SDK_TREE_SHA256', darwin_sdk_tree),
+            ) if not value]
+            if missing:
+                raise SystemExit('Darwin cross-compiler requires ' + ', '.join(missing))
             actual = str((Path(darwin_llvm) / 'bin/clang').resolve())
             linker = str((Path(darwin_llvm) / 'bin/ld64.lld').resolve())
             version = subprocess.check_output([actual, '--version'], text=True)
@@ -634,8 +649,8 @@ def compiler(mode, argv, key_only=False):
             options[options.index('--compiler') + 1] = actual
             options.extend(['--option', 'target=arm64-apple-macosx11.0',
                             '--option', 'sysroot=' + str(Path(darwin_sdk).resolve()),
-                            '--option', 'sdk_manifest_sha256=' + os.environ['BATON2_DARWIN_SDK_MANIFEST_SHA256'],
-                            '--option', 'sdk_tree_sha256=' + os.environ['BATON2_DARWIN_SDK_TREE_SHA256'],
+                            '--option', 'sdk_manifest_sha256=' + darwin_sdk_manifest,
+                            '--option', 'sdk_tree_sha256=' + darwin_sdk_tree,
                             '--aux', linker])
             if settings.is_file():
                 options.extend(['--aux', str(settings.resolve())])
