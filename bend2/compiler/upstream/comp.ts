@@ -4716,9 +4716,9 @@ function open_checked(directory: string): Prepared {
 
 export function prepare_book(book: Bend.Book, workspace?: string): string {
   const prepare_started = DIAGNOSTICS ? performance.now() : 0;
-  diagnostic("book.prepare.begin", { definitions: Object.keys(book.tlds).length });
   const writer = checked_writer(book, workspace);
   try {
+    diagnostic("book.prepare.begin", { definitions: Object.keys(book.tlds).length });
     prepare_checked(book, writer, true);
   } catch (error) {
     writer.remove();
