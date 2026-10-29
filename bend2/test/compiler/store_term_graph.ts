@@ -100,8 +100,8 @@ assert.notEqual(rebuilt.x[0], rebuilt.x[1].f(a), "a subterm built anew by each c
 console.log("PASS cycle fallback, canonical rows and callback instances");
 
 const evaluation_book = Bend.book_nil();
-const identity = () => Bend.Lam("z", 0, z => z, span);
-const redex = (value = Bend.Ctr("Answer", [], span)) => Bend.App(identity(), value, span);
+const identity = Bend.Lam("z", 0, z => z, span);
+const redex = (value = Bend.Ctr("Answer", [], span)) => Bend.App(identity, value, span);
 const beta_pair = Bend.Ctr("Pair", [Bend.term_cell(redex()), Bend.term_cell(redex())], span);
 const beta_shared = copy(beta_pair), beta_separate = copy(beta_pair, false);
 assert.equal(beta_shared.x[0], beta_shared.x[1], "equal beta-redex cells share a decoded thunk");
