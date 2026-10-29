@@ -276,12 +276,14 @@ export function content_digest(value: unknown): string {
 
 // Rows with the same owner scope, fields and children are one row. Copies of a
 // default arm that the match compiler places under several branches are equal in
-// every field, spans included, and share a row after this pass. A checker cell is a
-// forwarding node that nothing mutates after checking, so equal cells share too.
-// A graph with a cycle is returned as it is. The pass is applied to bodies only:
-// a header row can carry per-definition state on its decoded object.
-export function share_rows(graph: TermGraph): TermGraph {
+// every field, spans included, and share a row after this pass. A checker cell (a
+// Var that carries a value) keeps its own row: emission updates a cell in place
+// when it reduces the cell's term (term_wnf), so two cells are two thunks. A graph
+// with a cycle is returned as it is. The pass is applied to bodies only: a header
+// row can carry per-definition state on its decoded object.
+export function share_rows(graph: TermGraph, tables: EncoderTables): TermGraph {
   const rows = graph.rows, n = rows.length;
+  const dollar = tables.find("$"), variable = tables.find("Var"), cell_value = tables.find("v");
   const child_slots = (row: Row): number[] => {
     const slots: number[] = [];
     if (row[1] === CALLBACK) { if (row[4] === NODE) slots.push(5); }
@@ -291,6 +293,15 @@ export function share_rows(graph: TermGraph): TermGraph {
       for (let at = 2; at < row.length; at += 2) if (row[at] === NODE) slots.push(at + 1);
     }
     return slots;
+  };
+  const is_cell = (row: Row): boolean => {
+    if (row[1] !== OBJECT || dollar === undefined || variable === undefined || cell_value === undefined) return false;
+    let named = false, valued = false;
+    for (let at = 2; at < row.length; at += 3) {
+      if (row[at] === dollar && row[at + 1] === STRING && row[at + 2] === variable) named = true;
+      if (row[at] === cell_value) valued = true;
+    }
+    return named && valued;
   };
   const state = new Uint8Array(n), canonical = new Int32Array(n).fill(-1);
   const out: Row[] = [], buckets = new Map<number, number[]>();
@@ -314,7 +325,7 @@ export function share_rows(graph: TermGraph): TermGraph {
     const mapped = slots.length === 0 ? row : row.slice();
     for (const slot of slots) mapped[slot] = canonical[row[slot]];
     let found = -1;
-    {
+    if (!is_cell(mapped)) {
       let hash = 0x811c9dc5 | 0;
       for (let at = 0; at < mapped.length; at++) hash = Math.imul(hash ^ mapped[at], 0x01000193) ^ (hash >>> 15);
       const bucket = buckets.get(hash);
@@ -493,7 +504,7 @@ export class CheckedWriter {
     const begin = performance.now();
     const encoded_graph = encode_term(value as Bend.LTerm, this.tables);
     const encoded_at = performance.now();
-    const graph = kind === "body" ? share_rows(encoded_graph) : encoded_graph;
+    const graph = kind === "body" ? share_rows(encoded_graph, this.tables) : encoded_graph;
     const shared_ms = performance.now() - encoded_at;
     const data = JSON.stringify(graph);
     const encoded = performance.now();
