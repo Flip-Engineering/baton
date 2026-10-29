@@ -565,6 +565,41 @@ if (process.argv[3] === 'session') console.log(JSON.stringify(db.prepare('SELECT
   assert.match(stderr, /requires a recorded Codex conversation before attachment/);
 });
 
+test('--register does not replace a recorded conversation of another harness', async (t) => {
+  const dir = scratch(t);
+  const database = orchestra(dir);
+  const writer = new DatabaseSync(database);
+  writer.prepare('UPDATE sessions SET harness=?,native=? WHERE id=?').run('claude-code', 'existing-claude-thread', 'operator');
+  writer.close();
+  const log = join(dir, 'coordinator.log');
+  const fake = executable(join(dir, 'baton'), `#!${process.execPath}
+const { appendFileSync } = require('node:fs');
+appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');
+if (process.argv[2] === '--help' || process.argv[2] === 'help') process.exit(0);
+const { DatabaseSync } = require('node:sqlite');
+const db = new DatabaseSync(process.argv[2]);
+if (process.argv[3] === 'session') console.log(JSON.stringify(db.prepare('SELECT * FROM sessions WHERE id=?').get(process.argv[4])));
+`);
+  const child = spawn(process.execPath, [CONDUCTOR, database, fake, '--session', 'operator',
+    '--root-harness', 'codex', '--thread', 'new-codex-thread', '--register'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM'); });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  child.stdin.write([
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'recorded-claude', version: '1' } } },
+    { jsonrpc: '2.0', method: 'notifications/initialized' },
+  ].map(JSON.stringify).join('\n') + '\n');
+  const [code] = await once(child, 'exit');
+  assert.equal(code, 1, stderr);
+  assert.match(stderr, /records a claude-code conversation/);
+  const calls = readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(calls.filter((argv) => argv[1] === 'attach' || argv[1] === 'connect'), []);
+  const after = new DatabaseSync(database, { readOnly: true });
+  assert.deepEqual({ ...after.prepare('SELECT harness,native FROM sessions WHERE id=?').get('operator') },
+    { harness: 'claude-code', native: 'existing-claude-thread' });
+  after.close();
+});
+
 test('a Codex root relay that did not name its conversation follows a changed record', async (t) => {
   const calls = await attach(t, 'operator', (db) => {
     db.prepare('UPDATE sessions SET harness=?,native=? WHERE id=?').run('codex', 'thread-1', 'operator');

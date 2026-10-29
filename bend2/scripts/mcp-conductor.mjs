@@ -1039,10 +1039,15 @@ async function startDelivery() {
   let existing;
   try { existing = selectedSession(); } catch {}
   if (rootHarness === 'codex') {
-    if ((existing?.harness !== 'codex' || !existing?.native) && registerRoot && relayThread && !hasParent(existing)) {
+    // Registration fills an unrecorded conversation. A recorded conversation of
+    // any harness changes only by an explicit attach.
+    if (!existing?.native && registerRoot && relayThread && !hasParent(existing)) {
       // The relay names its conversation and asks to record it as the root.
       coord('attach', sessionId, 'codex', relayThread, '');
       existing = selectedSession();
+    }
+    if (existing?.native && existing.harness !== 'codex') {
+      throw new Error(`The session records a ${existing.harness} conversation. Attach the Codex conversation explicitly; --register does not replace a recorded conversation.`);
     }
     if (existing?.harness !== 'codex' || !existing?.native) {
       throw new Error('A Codex root relay requires a recorded Codex conversation before attachment. Run attach, or start the relay with --register and its conversation.');

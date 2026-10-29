@@ -99,11 +99,13 @@ conductor registers its delivery endpoint for the new conversation and sends
 the oldest unread message with the new thread, without a relay restart.
 
 `--register` lets a relay record its own conversation. When the session has no
-recorded Codex conversation and the relay named one (case 1 or 2), the conductor
-runs the equivalent of `attach SESSION codex THREAD ""` before connecting. It
-does not replace a recorded conversation. Use it only for a relay that is
-configured for the root, because a global MCP entry starts a relay for every
-thread and the first one to register would become the root.
+recorded conversation and the relay named one (case 1 or 2), the conductor
+runs the equivalent of `attach SESSION codex THREAD ""` before connecting. A
+recorded conversation of any harness is never replaced; the conductor refuses
+to start and the operator attaches the Codex conversation explicitly. Use
+`--register` only for a relay that is configured for the root, because a global
+MCP entry starts a relay for every thread and the first one to register would
+become the root.
 
 The relay keeps the SSH conductor stream open. For each complete notification
 it opens `codex app-server proxy` under the relay's `CODEX_HOME`, which finds
@@ -126,11 +128,17 @@ IDs. The relay reads that item from the thread and returns its type and text.
 The conductor records the read only when the item is a `userMessage` that holds
 the complete notification. This advances delivery to the next unread message.
 
+When the conductor names a different conversation, for example after a
+re-binding, the relay stops the delivery that is waiting on the previous
+conversation and delivers the new notice. The earlier message stays unread. The
+conductor does not record a read that arrives from the previous conversation.
+
 If the connection to the app-server is lost at any step, the relay opens the
 proxy again and continues for as long as the SSH conductor is open. If the SSH
 conductor connection is lost after it was established, the relay opens it again
 every 2 seconds while Codex keeps the relay running, and the conductor sends the
-oldest unread message on each new connection. A conductor that cannot be started
+oldest unread message on each new connection, including a connection lost
+while the relay was reading a thread item for the conductor. A conductor that cannot be started
 or initialized the first time ends the relay with status 1, as does a failed
 delivery such as a queue error or refused read evidence. Queue
 acceptance does not record a read. A notification that is queued while the root
