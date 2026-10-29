@@ -29,10 +29,10 @@ class RetainedStore(unittest.TestCase):
             subprocess.run(['sh', 'bend2/scripts/build-native.sh',
                             'bend2/test/launch-store-retained.bend', str(EXE)],
                            cwd=ROOT, check=True)
+        if not EXE.is_file():
+            raise RuntimeError(f'Retained store fixture is unavailable at {EXE}')
 
     def setUp(self):
-        if not EXE.is_file():
-            self.fail(f'retained store fixture not built at {EXE}')
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
         self.addCleanup(self.temp.cleanup)
         self.root = pathlib.Path(self.temp.name)
