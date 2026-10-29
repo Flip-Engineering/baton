@@ -12,7 +12,7 @@ import ../host/files.bend as F
 # The session lock owner publishes one current attempt before it launches.
 # Stop and attempt admission use the same database transaction order.
 def admit_sql(+session: String, +id: String, +mode: String, +directory: String) -> String:
-  "BEGIN IMMEDIATE;INSERT INTO executions(session,id,mode,directory,phase,status) SELECT " ++ C.q(session) ++ "," ++ C.q(id) ++ "," ++ C.q(mode) ++ "," ++ C.q(directory) ++ ",'starting','' WHERE NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ") ON CONFLICT(session) DO UPDATE SET id=excluded.id,mode=excluded.mode,directory=excluded.directory,phase=excluded.phase,status='';SELECT NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ");COMMIT;"
+  "BEGIN IMMEDIATE;INSERT INTO executions(session,id,mode,directory,phase,status) SELECT " ++ C.q(session) ++ "," ++ C.q(id) ++ "," ++ C.q(mode) ++ "," ++ C.q(directory) ++ ",'starting','' WHERE NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ") AND NOT " ++ C.task_closed_sql(C.q(session)) ++ " ON CONFLICT(session) DO UPDATE SET id=excluded.id,mode=excluded.mode,directory=excluded.directory,phase=excluded.phase,status='';SELECT NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ") AND NOT " ++ C.task_closed_sql(C.q(session)) ++ ";COMMIT;"
 
 def admit(+db: String, +session: String, +id: String, +mode: String, +directory: String) -> IO(Bool):
   do IO<Bool>:
@@ -120,7 +120,7 @@ def clear(+db: String, +session: String) -> IO(Unit):
 def require_open(closed: Bool) -> IO(Unit):
   match closed:
     case False{}: IO.pure(Unit,Unit{})
-    case True{}: IO.die(Unit,2,"Session is terminally stopped. Read its session and retained inbox; resume SESSION --lift-stop explicitly lifts the stop and continues the same conversation.")
+    case True{}: IO.die(Unit,2,"Session is terminally stopped or its assignment is complete. Read its session and retained inbox; resume SESSION --lift-stop explicitly lifts a stop and continues the same conversation, and a new assignment from its coordinator continues a completed one.")
 
 def admitted(allowed: Bool) -> IO(Unit):
   require_open(Bool.not(allowed))

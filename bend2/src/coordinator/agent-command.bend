@@ -250,7 +250,7 @@ def completion_confirmed_exact(+db: String, +session: String, +recipient: String
       "SELECT CASE WHEN kind<>'completion-request' THEN 'wrong-kind' WHEN recipient<>" ++
       C.q(session) ++ " THEN 'wrong-coordinator' WHEN id<>coalesce(" ++
       C.task_request_sql("(SELECT sender FROM messages current WHERE current.id=" ++ C.q(request) ++ ")") ++
-      ",'') THEN 'stale-request' ELSE hex(CAST(sender AS TEXT)) END FROM messages WHERE id=" ++
+      ",'') AND NOT EXISTS(SELECT 1 FROM messages replay WHERE replay.id=" ++ C.q(id) ++ " AND replay.kind='completion-confirmed' AND replay.sender=" ++ C.q(session) ++ " AND replay.body=" ++ C.q(request) ++ ") THEN 'stale-request' ELSE hex(CAST(sender AS TEXT)) END FROM messages WHERE id=" ++
       C.q(request) ++ ";"))
     confirmation_target(db,session,recipient,request,id,next,Tx.trim_nl(row))
 
