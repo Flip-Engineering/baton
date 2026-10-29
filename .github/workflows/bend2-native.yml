@@ -214,6 +214,7 @@ jobs:
         if: ${{ steps.route.outputs.producer == 'base' }}
         shell: bash
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           BATON2_PULL_REQUEST_BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
@@ -227,6 +228,8 @@ jobs:
       - name: Produce exact-source Main C and Linux binary
         if: ${{ steps.route.outputs.producer != 'base' }}
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           unset BEND_GENERATED_C
@@ -453,6 +456,8 @@ jobs:
             2> "$BATON2_QUALIFICATION_RUN/evidence/main-cgen-reuse-tests.stderr"
       - name: Run and record complete native checks and selected candidate tests
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           unset BEND_GENERATED_C
@@ -559,6 +564,8 @@ jobs:
         run: printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Build exact target and measure affected candidate tests
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           run="$RUNNER_TEMP/baton2-target-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
