@@ -930,9 +930,36 @@ def exit_marker_matches(attempt: String, pid: U32, start: String) -> IO(Bool):
     text : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/exit_status"))
     IO.pure(Bool, exit_marker_matches_text(text, pid, start))
 
+# The watcher ends an execution whose requesters have all gone. A requester
+# counts while the process that registered its token lives, whatever happened to
+# the processes around it, so an execution continues while any live owner
+# remains. The signal is the one the cancel command sends; the group is killed
+# if it is still alive three seconds later.
+def owners_withdrawn(+keydir: String) -> IO(Bool):
+  do IO<Bool>:
+    gate : U32 <- owner_lock(keydir)
+    owners : U32 <- owner_count(keydir)
+    released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
+    IO.pure(Bool, U32.is_eq(owners, 0))
+
+def owner_step(+keydir: String, +supervisor: U32, +supervisor_start: String, +sent: U32) -> IO(U32):
+  Bool.pick(IO(U32), U32.is_eq(sent, 0),
+    do IO<U32>:
+      withdrawn : Bool <- owners_withdrawn(keydir)
+      Bool.pick(IO(U32), withdrawn,
+        do IO<U32>:
+          signaled : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.signal_group_verified(supervisor, supervisor_start, 15)
+          IO.pure(U32, 1),
+        IO.pure(U32, 0)),
+    Bool.pick(IO(U32), U32.is_eq(sent, 30),
+      do IO<U32>:
+        killed : Result<&1,&1,U32 & String,Unit> <- L.CompileQueueLifecycle.signal_group_verified(supervisor, supervisor_start, 9)
+        IO.pure(U32, 31),
+      IO.pure(U32, U32.add(sent, 1))))
+
 @unsafe
 def watch_heavy(+attempt: String, +pid: U32, +start: String,
-                +supervisor: U32, +supervisor_start: String) -> IO(Unit):
+                +supervisor: U32, +supervisor_start: String, +keydir: String, +sent: U32) -> IO(Unit):
   do IO<Unit>:
     child_alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(pid, start))
     release_child_alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(pid, start))
@@ -944,17 +971,20 @@ def watch_heavy(+attempt: String, +pid: U32, +start: String,
         Bool.pick(IO(Unit), U32.is_eq(supervisor_alive, 0), IO.pure(Unit, Unit{}),
           do IO<Unit>:
             slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(100))
-            watch_heavy(attempt, pid, start, supervisor, supervisor_start)),
+            watch_heavy(attempt, pid, start, supervisor, supervisor_start, keydir, sent)),
         do IO<Unit>:
+          next : U32 <- owner_step(keydir, supervisor, supervisor_start, sent)
           slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(100))
-          watch_heavy(attempt, pid, start, supervisor, supervisor_start)))
+          watch_heavy(attempt, pid, start, supervisor, supervisor_start, keydir, next)))
 
 def watch_heavy_supervisor(parsed: Maybe<&2,U32>, pid: U32, attempt: String, start: String,
                            supervisor_start: String) -> IO(Unit):
   match parsed:
     case None{}: IO.die(Unit, 2, "compile-queue: watch supervisor pid is malformed")
     case Some{supervisor_pid}:
-      watch_heavy(attempt, pid, start, supervisor_pid, supervisor_start)
+      do IO<Unit>:
+        +meta : String <- IO.try(String, L.CompileQueueLifecycle.read_text(attempt ++ "/meta"))
+        watch_heavy(attempt, pid, start, supervisor_pid, supervisor_start, field(meta, "keydir"), 0)
 
 def watch_heavy_pid(parsed: Maybe<&2,U32>, attempt: String, start: String,
                     supervisor: String, supervisor_start: String) -> IO(Unit):
@@ -1381,6 +1411,7 @@ def run_config_locked(parsed: Config, +text: String, +key: String) -> IO(Unit):
     lock : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(keydir ++ "/lock"))
     active : U32 <- active_state(keydir)
     cleaned : Unit <- clean_stale_active(keydir)
+    pruned : U32 <- owner_count(keydir)
     completed : Bool <- IO.try(Bool, Result.CompileQueueResult.verify_completed(keydir))
     run_completed_result(completed, active, text, parsed, key, keydir, owner, wait_start, present, lock)
 
