@@ -13,13 +13,15 @@ def text(result: Result<&1,&1,U32 & String,String>) -> String:
     case Done{value}: Tx.trim_nl(value)
     case Fail{error}: ""
 
+def keep_line(empty: Bool, line: String, rest: List<String>) -> List<String>:
+  match empty:
+    case True{}: nonempty_lines(rest)
+    case False{}: Con{line,nonempty_lines(rest)}
+
 def nonempty_lines(lines: List<String>) -> List<String>:
   match lines:
     case Nil{}: Nil{}
-    case line <> rest:
-      match String.is_empty(line):
-        case True{}: nonempty_lines(rest)
-        case False{}: Con{line,nonempty_lines(rest)}
+    case +line <> rest: keep_line(String.is_empty(line),line,rest)
 
 def transcript_json(transcript: String) -> String:
   "[" ++ Tx.join(",",nonempty_lines(Tx.split_lines(transcript))) ++ "]"
