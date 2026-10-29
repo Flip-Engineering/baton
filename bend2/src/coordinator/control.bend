@@ -289,7 +289,7 @@ def release_old_gate(+db: String, +id: String, +provider: String, +account: Stri
 
 def release_old_hold(+db: String, +id: String, +harness: String, +model: String, account: String, saved: String) -> IO(Unit):
   +provider : String = UW.seat_provider(Tx.trim_nl(harness),Tx.trim_nl(model))
-  Bool.pick(IO(Unit),Bool.or(String.is_empty(provider),Tx.starts_with(saved,"{\"error\"}")),IO.pure(Unit,Unit{}),release_old_gate(db,id,provider,account,model))
+  Bool.pick(IO(Unit),Bool.or(String.is_empty(provider),Tx.starts_with(saved,"{\"error\":\"configure-refused\"")),IO.pure(Unit,Unit{}),release_old_gate(db,id,provider,account,model))
 
 def configure_result(saved: String, denied: Bool) -> IO(String):
   match denied:
