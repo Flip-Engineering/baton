@@ -1614,6 +1614,11 @@ def admission_probe_result(result: Result<&1,&1,U32 & String,String>, +attempt: 
           acquire_accounted_loop(attempt,keydir,state,kind,key,key,token,priority,pid,start,8),
         admission_fallback(kind,keydir,state,token,priority))
 
+def admission_execution_lock(+keydir: String, heavy: Maybe<U32>) -> IO(U32):
+  match heavy:
+    case Some{+shared}: IO.pure(U32,shared)
+    case None{}: IO.try(U32,L.CompileQueueLifecycle.lock_acquire(keydir ++ "/cc-execution.lock"))
+
 def supervise_gate(gate: AdmissionGate, +attempt: String, +keydir: String, +kind: String,
                    source_root: String, entry: String, +key: String, +started: String,
                    +names: List<&2,String>, cwd: String, +state: String, +token: String,
@@ -1630,9 +1635,7 @@ def supervise_gate(gate: AdmissionGate, +attempt: String, +keydir: String, +kind
     case AdmissionAccounted{+claim,heavy}:
       do IO<Unit>:
         is_cc : Bool <- IO.pure(Bool,Tx.str_eq(kind,"cc"))
-        +execution : U32 <- match heavy:
-          case Some{+shared}: IO.pure(U32,shared)
-          case None{}: IO.try(U32,L.CompileQueueLifecycle.lock_acquire(keydir ++ "/cc-execution.lock"))
+        +execution : U32 <- admission_execution_lock(keydir,heavy)
         transferred : Unit <- transfer_heavy(execution)
         claim_transferred : Unit <- transfer_claim(claim)
         claim_env : Unit <- IO.try(Unit,L.CompileQueueLifecycle.set_env("BATON_QUEUE_CLAIM_FD","10"))
