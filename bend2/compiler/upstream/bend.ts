@@ -776,12 +776,7 @@ function term_higher_inner(term: LTerm, env: Env, cache: ClosedCtrCache): HTerm 
     }
     const tm = task.visit;
     const here = task.env;
-    const expand = (kids: LTerm[]): void => {
-      tasks.push({ build: tm, env: here, count: kids.length });
-      for (let i = kids.length - 1; i >= 0; i -= 1) {
-        tasks.push({ visit: kids[i], env: here });
-      }
-    };
+    let kids: LTerm[] | null = null;
     switch (tm.$) {
       case "Var": {
         if (tm.i < 0) {
@@ -822,26 +817,30 @@ function term_higher_inner(term: LTerm, env: Env, cache: ClosedCtrCache): HTerm 
         }
         break;
       }
-      case "Let": expand(tm.v); break;
-      case "All": expand([tm.A]); break;
+      case "Let": kids = tm.v; break;
+      case "All": kids = [tm.A]; break;
       case "Lam": {
         const b = tm;
         results.push(Lam(b.k, b.i, (x: HTerm) =>
           term_higher_inner(b.f, list_set(here, b.i, x), cache), b.s, b.q));
         break;
       }
-      case "Typ": expand([tm.g]); break;
+      case "Typ": kids = [tm.g]; break;
       case "Qnt": case "Qua": case "Lit": results.push(tm); break;
-      case "Min": expand([tm.a, tm.b]); break;
-      case "App": expand([tm.f, tm.x]); break;
-      case "ADT": case "Ctr": expand(tm.x); break;
-      case "Mat": expand([tm.h, tm.m]); break;
+      case "Min": kids = [tm.a, tm.b]; break;
+      case "App": kids = [tm.f, tm.x]; break;
+      case "ADT": case "Ctr": kids = tm.x; break;
+      case "Mat": kids = [tm.h, tm.m]; break;
       case "Efq": results.push(Efq(tm.s)); break;
-      case "Eql": expand([tm.a, tm.b, tm.T]); break;
+      case "Eql": kids = [tm.a, tm.b, tm.T]; break;
       case "Rfl": results.push(Rfl(tm.s)); break;
-      case "Rwt": expand([tm.e, tm.p, tm.f]); break;
+      case "Rwt": kids = [tm.e, tm.p, tm.f]; break;
       case "Hol": results.push(Hol(tm.k, tm.s)); break;
-      case "Ann": expand([tm.x, tm.T]); break;
+      case "Ann": kids = [tm.x, tm.T]; break;
+    }
+    if (kids !== null) {
+      tasks.push({ build: tm, env: here, count: kids.length });
+      for (let i = kids.length - 1; i >= 0; i--) tasks.push({ visit: kids[i], env: here });
     }
   }
   return results[0];

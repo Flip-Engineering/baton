@@ -1,5 +1,7 @@
 // Usage: bun bend2/test/compiler/iterative_term_higher.ts
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { HTerm, LTerm, Span } from "../../compiler/upstream/bend.ts";
@@ -85,5 +87,27 @@ check("literal sharing across binder callbacks", () => {
   assert.notStrictEqual(distinct, first);
   assert.notStrictEqual(Bend.term_higher(literal(span)), first);
 });
+
+const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "bend-higher-lifetime-"));
+try {
+  const text = fs.readFileSync(path.join(source, "bend.ts"), "utf8");
+  const allocation = "  const tasks: Task[] = [{ visit: term, env }];";
+  const probe = text.replace(allocation, allocation + "\n  __test_higher_tasks.push(new WeakRef(tasks));");
+  fs.copyFileSync(path.join(source, "base.bend"), path.join(temporary, "base.bend"));
+  fs.writeFileSync(path.join(temporary, "bend.ts"),
+    "const __test_higher_tasks: WeakRef<object>[] = [];\n" + probe + "\nexport { __test_higher_tasks };\n");
+  const Probe = await import(pathToFileURL(path.join(temporary, "bend.ts")).href);
+  const kept = Probe.term_higher(Probe.Lam("x", 0, Probe.Var("x", 0)));
+  await new Promise<void>(resolve => setImmediate(resolve));
+  Bun.gc(true);
+  for (const reference of Probe.__test_higher_tasks) {
+    assert.equal(reference.deref(), undefined, "a binder releases the completed raising traversal");
+  }
+  const argument = Probe.Ref("argument");
+  assert.strictEqual(kept.f(argument), argument);
+  console.log("PASS completed traversal release while its binder remains live");
+} catch (error) {
+  failures.push(error); console.error("completed traversal release: " + String(error));
+} finally { fs.rmSync(temporary, { recursive: true, force: true }); }
 
 if (failures.length) throw new AggregateError(failures, "Term raising failed");
