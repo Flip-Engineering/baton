@@ -12,6 +12,7 @@ descends from the tree root through parent links receives the signal.
 * A token whose process no longer exists is not an owner: a requester that joins the
   key removes it.
 """
+import fcntl
 import os
 import pathlib
 import signal
@@ -206,6 +207,48 @@ class QueueAdoptionTests(unittest.TestCase):
         out, err = second.communicate(timeout=60)
         self.assertEqual(second.returncode, 0, out + err)
         self.assertNotIn("stale", self.owners())
+
+    def test_a_joining_requester_leaves_an_unfinished_token_while_the_owner_lock_is_held(self):
+        first = self.start_tree("holder")
+        self.until("the execution started", lambda: any(l.startswith("start") for l in self.log_lines()))
+        second = subprocess.Popen(self.argv("joiner"), env=self.environment(),
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.children.append(second)
+        self.until("the joiner is registered", lambda: "joiner" in self.owners())
+        # A publisher holds owners.lock while it writes a token: its temporary file
+        # is visible and empty. The scan of a joining requester must wait for the lock.
+        keydir = self.keydir()
+        with open(keydir / "owners.lock", "a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            pending = keydir / "owners" / "pending.tmp.1"
+            pending.write_text("")
+            self.hold.touch()
+            self.until("the execution published its result",
+                       lambda: [r.get("status") for r in self.results()] == ["completed"])
+            time.sleep(2)
+            self.assertTrue(pending.exists(), "the scan removed a token that is being published")
+            self.assertIsNone(second.poll(), "the joining requester went on without the owner lock")
+            fcntl.flock(lock, fcntl.LOCK_UN)
+        out, err = second.communicate(timeout=60)
+        self.assertEqual(second.returncode, 0, out + err)
+
+    def test_a_status_that_never_arrives_is_reported_as_an_error_not_as_exit_zero(self):
+        client = subprocess.Popen(self.argv("status"), env=self.environment(),
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.children.append(client)
+        self.until("the execution started", lambda: any(l.startswith("start") for l in self.log_lines()))
+        active = dict(line.split("=", 1) for line in (self.keydir() / "active").read_text().splitlines() if "=" in line)
+        supervisor = int(active["pid"])
+        reaper = int(pathlib.Path("/proc/%d/stat" % supervisor).read_text().rsplit(")", 1)[1].split()[1])
+        self.assertGreater(reaper, 1)
+        os.kill(reaper, signal.SIGKILL)
+        os.kill(supervisor, signal.SIGKILL)
+        out, err = client.communicate(timeout=60)
+        self.assertNotEqual(client.returncode, 0, out + err)
+        detail = "\n".join(p.read_text() for p in self.keydir().glob("runs/*/result"))
+        self.assertIn("supervisor wait failed (error 5)", detail)
+        self.assertNotIn("supervisor exit 0", detail)
+        self.assertNotIn("supervisor exited before publishing a terminal result; supervisor exit", detail)
 
 
 if __name__ == "__main__":
