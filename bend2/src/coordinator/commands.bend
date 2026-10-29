@@ -173,6 +173,10 @@ def usage_windows_schema() -> String:
   ++ "CREATE TABLE IF NOT EXISTS usage_reads (id INTEGER PRIMARY KEY AUTOINCREMENT, observed_at INTEGER NOT NULL, provider TEXT NOT NULL, account TEXT NOT NULL DEFAULT '', session TEXT NOT NULL DEFAULT '', trigger TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('read','unreadable')), source TEXT NOT NULL DEFAULT '', reason TEXT NOT NULL DEFAULT '', document TEXT NOT NULL CHECK(json_valid(document)));"
   ++ "CREATE INDEX IF NOT EXISTS idx_usage_reads_scope ON usage_reads(provider, account, id);"
 
+def task_state_index_schema() -> String:
+  "CREATE INDEX IF NOT EXISTS messages_sender_kind_seq ON messages(sender,kind,seq);"
+  ++ "CREATE INDEX IF NOT EXISTS messages_recipient_kind_seq ON messages(recipient,kind,seq);"
+
 def schema() -> String:
   wake_claim_schema()
   ++ task_input_schema()
@@ -180,6 +184,7 @@ def schema() -> String:
   ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);"
   ++ "DROP INDEX IF EXISTS messages_pending;CREATE INDEX IF NOT EXISTS messages_recipient_seq ON messages(recipient,seq,id);"
+  ++ task_state_index_schema()
   ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);"
   ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
   ++ MessageStatus.schema()
