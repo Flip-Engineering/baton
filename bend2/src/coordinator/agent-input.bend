@@ -104,8 +104,8 @@ def mcp_stream_result(+session: String, result: Result<&1,&1,U32 & String,String
     case Fail{(+code,cause)}: IO.die(HandlingScope,code,cause)
     case Done{+fields}: mcp_stream_fields(Tx.split_tabs(Tx.trim_nl(fields)),session)
 
-def mcp_stream_witness(+db: String, +session: String, +context: String) -> IO(HandlingScope):
-  do IO<HandlingScope>:
+def mcp_stream_witness(+db: String, +session: String, +context: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
     +database : String <- Lock.SessionLock.canonical(db)
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,
       "SELECT CASE WHEN json_valid(" ++ C.q(context) ++ ") THEN CASE WHEN json_extract(" ++ C.q(context)
@@ -125,7 +125,7 @@ def mcp_stream_witness(+db: String, +session: String, +context: String) -> IO(Ha
       ++ ",'$.connection'))||char(9)||hex(json_extract(" ++ C.q(context) ++ ",'$.native'))||char(9)||hex('root-channel:'||json_extract(" ++ C.q(context)
       ++ ",'$.connection')||':'||json_extract(" ++ C.q(context) ++ ",'$.readMessage'))||char(9)||hex(json_extract(" ++ C.q(context)
       ++ ",'$.endpoint'))||char(9)||hex(json_extract(" ++ C.q(context) ++ ",'$.readMessage')) ELSE '' END ELSE '' END;")
-    mcp_stream_result(session,result)
+    IO.pure(Result<&1,&1,U32 & String,String>,result)
 
 def mcp_witness_result(db: String, session: String, result: G.RunRes) -> IO(HandlingScope):
   match result:
@@ -146,7 +146,9 @@ def mcp_endpoint_fields(fields: List<String>, +db: String, +session: String, con
     case other: handling_invalid("Handling requires the current connected Claude endpoint, native conversation and stop state.")
 
 def mcp_stream_witness_selected(+db: String, +session: String, +context: String) -> IO(HandlingScope):
-  mcp_stream_witness(db,session,context)
+  do IO<HandlingScope>:
+    result : Result<&1,&1,U32 & String,String> <- mcp_stream_witness(db,session,context)
+    mcp_stream_result(session,result)
 
 def mcp_handling_legacy(+db: String, +session: String, +context: String) -> IO(HandlingScope):
   do IO<HandlingScope>:
