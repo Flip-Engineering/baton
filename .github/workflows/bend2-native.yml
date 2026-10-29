@@ -673,14 +673,13 @@ jobs:
           set -euo pipefail
           if [[ -z "$BATON2_REUSE_GENERATED_C_PRODUCER" ]]; then
             producer_run_id="$GITHUB_RUN_ID"
-            producer_attempt="$GITHUB_RUN_ATTEMPT"
+            producer_attempt=
           else
             [[ "$BATON2_REUSE_GENERATED_C_PRODUCER" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]]
             producer_run_id="${BASH_REMATCH[1]}"
             producer_attempt="${BASH_REMATCH[2]}"
           fi
-          printf 'BATON2_GENERATED_C_RUN_ID=%s\nBATON2_GENERATED_C_RUN_ATTEMPT=%s\n' \
-            "$producer_run_id" "$producer_attempt" >> "$GITHUB_ENV"
+          printf 'BATON2_GENERATED_C_RUN_ID=%s\n' "$producer_run_id" >> "$GITHUB_ENV"
           printf 'run_id=%s\nattempt=%s\n' "$producer_run_id" "$producer_attempt" \
             >> "$GITHUB_OUTPUT"
 
@@ -695,10 +694,32 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Select the attempt of the generated C producer
+        id: producer-attempt
+        shell: bash
+        env:
+          BATON2_NAMED_PRODUCER_ATTEMPT: ${{ steps.generated-c-producer.outputs.attempt }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          attempt="$BATON2_NAMED_PRODUCER_ATTEMPT"
+          if [[ -z "$attempt" ]]; then
+            # A rerun of failed jobs keeps the artifacts that an earlier attempt uploaded.
+            selector=.github/scripts/select-artifact-attempt.py
+            if [[ -f "$selector" ]]; then
+              attempt=$(python3 "$selector" --prefix "baton2-generated-c-$BATON2_SOURCE_SHA-" \
+                --current-attempt "$GITHUB_RUN_ATTEMPT" --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID")
+            else
+              attempt="$GITHUB_RUN_ATTEMPT"
+            fi
+          fi
+          printf 'BATON2_GENERATED_C_RUN_ATTEMPT=%s\n' "$attempt" >> "$GITHUB_ENV"
+          printf 'attempt=%s\n' "$attempt" >> "$GITHUB_OUTPUT"
+
       - name: Download selected exact-source Main C and producer checks
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: baton2-generated-c-${{ env.BATON2_SOURCE_SHA }}-${{ steps.generated-c-producer.outputs.attempt }}
+          name: baton2-generated-c-${{ env.BATON2_SOURCE_SHA }}-${{ steps.producer-attempt.outputs.attempt }}
           path: ${{ runner.temp }}/baton2-generated-c-${{ github.run_id }}-${{ github.run_attempt }}
           repository: ${{ github.repository }}
           run-id: ${{ steps.generated-c-producer.outputs.run_id }}
@@ -992,10 +1013,26 @@ jobs:
           ref: ${{ env.BATON2_SOURCE_SHA }}
           persist-credentials: false
 
+      - name: Select the attempt of the Darwin package
+        id: package-attempt
+        shell: bash
+        env:
+          BATON2_PACKAGE_LABEL: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || 'development' }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          attempt="$GITHUB_RUN_ATTEMPT"
+          selector=.github/scripts/select-artifact-attempt.py
+          if [[ -f "$selector" ]]; then
+            attempt=$(python3 "$selector" --prefix "baton2-$BATON2_PACKAGE_LABEL-darwin-arm64-$BATON2_SOURCE_SHA-" \
+              --current-attempt "$GITHUB_RUN_ATTEMPT" --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID")
+          fi
+          printf 'attempt=%s\n' "$attempt" >> "$GITHUB_OUTPUT"
+
       - name: Download Darwin package and producer evidence
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: baton2-${{ github.event_name == 'workflow_dispatch' && inputs.release_version || 'development' }}-darwin-arm64-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          name: baton2-${{ github.event_name == 'workflow_dispatch' && inputs.release_version || 'development' }}-darwin-arm64-${{ env.BATON2_SOURCE_SHA }}-${{ steps.package-attempt.outputs.attempt }}
           path: ${{ runner.temp }}/baton2-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Verify and exercise the installed Darwin artifact
