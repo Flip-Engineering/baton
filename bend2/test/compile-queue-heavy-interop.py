@@ -259,7 +259,7 @@ def scenario_exclusive_first():
     until('the supervisor wrote its ticket', lambda: waiting_tickets(state) == 1)
     time.sleep(3)
     assert waiting_tickets(state) == 1 and 'start after-exclusive' not in log_lines(), (log_lines(), T)
-    assert not list((state / 'admission' / 'running').iterdir()), ('a claim exists', T)
+    assert not list((state / 'admission' / 'running').glob('*')), ('a claim exists', T)
     print('PASS a cgen job stays a ticket for 3 s while another queue holds heavy.lock exclusively')
     fcntl.flock(holder, fcntl.LOCK_UN)
     holder.close()
@@ -274,6 +274,8 @@ def scenario_job_first():
     job, out = command(BINARY, state, 'cgen', 'running-first', hold)
     until('the job started', lambda: 'start running-first' in log_lines())
     assert 'heavy-descriptor running-first' in log_lines(), ('the command has no heavy.lock descriptor', log_lines(), T)
+    assert 'claim-descriptor running-first' in log_lines(), ('normal host meminfo did not produce a retained claim', log_lines(), T)
+    assert len(list((state / 'admission' / 'running').glob('*'))) == 1, ('normal host meminfo did not enter measured admission', T)
     assert not try_exclusive(state), ('an exclusive lock was granted beside a running job', T)
     print('PASS the command of an admitted cgen job holds heavy.lock; an exclusive request is refused')
     waiter = subprocess.Popen([sys.executable, '-c', '''

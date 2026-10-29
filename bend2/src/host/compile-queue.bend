@@ -1186,7 +1186,10 @@ def admission_outside_meminfo(+state: String, +guard: U32, +ids: String, now: U3
 def admission_meminfo_result(override: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match override:
     case Fail{error}: L.CompileQueueLifecycle.meminfo()
-    case Done{text}: IO.pure(Result<&1,&1,U32 & String,String>,Done{text})
+    case Done{+text}:
+      Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(text),
+        L.CompileQueueLifecycle.meminfo(),
+        IO.pure(Result<&1,&1,U32 & String,String>,Done{text}))
 
 def admission_meminfo(+state: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
