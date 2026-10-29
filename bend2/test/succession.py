@@ -25,6 +25,7 @@ class Succession(unittest.TestCase):
         scratch.mkdir(parents=True, exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=scratch)
         self.addCleanup(self.temp.cleanup)
+        self.addCleanup(self.shutdown)
         self.db = pathlib.Path(self.temp.name) / 'state.db'
         self.run_command('attach', 'root', 'claude-code', 'native-root', '')
         self.run_command('role', 'root', 'principal-conductor')
@@ -33,6 +34,9 @@ class Succession(unittest.TestCase):
         for child in ('open', 'closed', 'ended', 'unrequested'):
             self.session(child, 'old')
         self.rows = None
+
+    def shutdown(self):
+        subprocess.run([str(EXE), '--instance-shutdown', str(self.db)], capture_output=True)
 
     # Fixture helpers -------------------------------------------------------
     def run_command(self, *args):

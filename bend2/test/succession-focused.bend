@@ -3,12 +3,14 @@
 # commands a succession fixture needs, and the stop request admission that
 # announces a stopped session's children, without a full Main build.
 #
-# usage: succession-focused DB stop-request SESSION STOP_ID REASON
+# usage: succession-focused --instance-owner DB | --instance-shutdown DB
+#        succession-focused DB stop-request SESSION STOP_ID REASON
 #        succession-focused DB COMMAND ARGS   (any command the parser accepts)
 import Base
 import ../src/coordinator/commands.bend as C
 import ../src/coordinator/store.bend as Store
 import ../src/coordinator/stop.bend as Stop
+import ../src/host/instance.bend as Custody
 
 def output(value: String, empty: Bool) -> IO(Unit):
   match empty:
@@ -32,6 +34,8 @@ def dispatch(+db: String, args: List<String>) -> IO(Unit):
 
 def main_args(args: List<String>) -> IO(Unit):
   match args:
+    case "--instance-owner" <> db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
+    case "--instance-shutdown" <> db <> Nil{}: IO.try(Unit,Custody.Instance.shutdown(db))
     case path <> rest: dispatch(path,rest)
     case Nil{}: IO.die(Unit,2,"usage: succession-focused DB COMMAND ARGS")
 
