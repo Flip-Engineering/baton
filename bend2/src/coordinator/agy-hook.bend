@@ -13,8 +13,16 @@ def message_text_sql(+saved: String) -> String:
 def pre_invocation_sql(+saved: String) -> String:
   "SELECT json_object('injectSteps',CASE WHEN json_array_length(" ++ C.q(saved) ++ ")=0 THEN json('[]') ELSE json_array(json_object('userMessage','Baton input for this turn. Handle the following complete messages:' || char(10) || " ++ message_text_sql(saved) ++ ")) END);"
 
+# Input made only of completion confirmations closes the assignment, so the
+# instruction that goes with it ends the turn instead of restarting the work.
+def confirmations_only_sql(+saved: String) -> String:
+  "NOT EXISTS(SELECT 1 FROM json_each(" ++ C.q(saved) ++ ") j WHERE json_extract(j.value,'$.kind')<>'completion-confirmed')"
+
+def stop_instruction_sql(+saved: String) -> String:
+  "CASE WHEN " ++ confirmations_only_sql(saved) ++ " THEN 'The conductor confirmed your completion request and the assignment is finished. Make no further changes and end your turn.' ELSE 'Continue the work. When the assignment is ready, call completion-request --text SUMMARY with run_command.' END"
+
 def stop_sql(+session: String, +saved: String) -> String:
-  "SELECT CASE WHEN json_array_length(" ++ C.q(saved) ++ ")>0 THEN json_object('decision','continue','reason','Baton has complete input for this turn:' || char(10) || " ++ message_text_sql(saved) ++ " || char(10) || 'Continue the work. When the assignment is ready, call completion-request --text SUMMARY with run_command.')"
+  "SELECT CASE WHEN json_array_length(" ++ C.q(saved) ++ ")>0 THEN json_object('decision','continue','reason','Baton has complete input for this turn:' || char(10) || " ++ message_text_sql(saved) ++ " || char(10) || " ++ stop_instruction_sql(saved) ++ ")"
   ++ " WHEN " ++ C.task_open_sql(C.q(session)) ++ " AND " ++ C.task_request_sql(C.q(session)) ++ " IS NULL THEN json_object('decision','continue','reason','The current assignment remains open. Continue the work. When it is ready, call completion-request --text SUMMARY with run_command so the conductor can review it.')"
   ++ " WHEN " ++ C.task_open_sql(C.q(session)) ++ " THEN json_object('decision','continue','reason','Completion request ' || " ++ C.task_request_sql(C.q(session)) ++ " || ' is awaiting the conductor decision. Continue the assignment and follow any guidance they send.')"
   ++ " ELSE json_object('decision','allow') END;"
