@@ -66,7 +66,9 @@ Successful native turns record handling of their exact consumed input.
 receipt. A worker uses `completion-request --text SUMMARY` when its assignment is
 ready for its parent's review. A coordinator reviews a Player's request with
 `completion-confirmed --to PLAYER`, or sends further work with `guide --to PLAYER
---text TEXT`. Use `dispatch
+--text TEXT`. Confirmation ends the Player's assignment. `completion-confirmed --to
+PLAYER --next TEXT` (or `--next-file PATH`) confirms and dispatches the next
+assignment in one transaction, and the assignment continues. Use `dispatch
 --to PLAYER --text TEXT` for complete task input to an existing conversation.
 The [agent command guide](../docs/bend2/agent-commands.md) describes named actions,
 independent batches, explicit selected-message reads and context overrides.

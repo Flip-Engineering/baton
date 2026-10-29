@@ -292,7 +292,9 @@ def contextual_args(+session: String, verb: String, +options: List<&2,D.Option>)
     case "completion-confirmed":
       request = optional_arg(["agent-contextual-input",session,"completion-confirmed"],"--request",D.value(options,"--request",""),D.present(options,"--request"))
       args = optional_arg(request,"--to",D.value(options,"--to",""),D.present(options,"--to"))
-      optional_arg(args,"--id",D.value(options,"--id",""),D.present(options,"--id"))
+      identified = optional_arg(args,"--id",D.value(options,"--id",""),D.present(options,"--id"))
+      assignment = optional_arg(identified,"--next",D.value(options,"--next",""),D.present(options,"--next"))
+      optional_arg(assignment,"--next-file",D.value(options,"--next-file",""),D.present(options,"--next-file"))
     case "guide":
       optional_arg(["agent-contextual-input",session,"guide","--to",D.value(options,"--to",""),"--text",D.value(options,"--text","")],"--id",D.value(options,"--id",""),D.present(options,"--id"))
     case other: Nil{}

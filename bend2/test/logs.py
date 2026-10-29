@@ -166,7 +166,7 @@ assert completion['assignmentId']==expected_assignment and completion['requestId
         state = json.loads(self.call('session', player))
         self.assertEqual(state['taskCompletion'], {
             'assignmentId': turn + ':task-input', 'coordinator': parent_state['id'],
-            'requestId': turn + ':completion-request', 'confirmed': True, 'open': False})
+            'requestId': turn + ':completion-request', 'confirmed': True, 'open': False, 'ended': True})
         self.assertGreater(self.read_count(turn + ':completion-request:confirmed'), 0)
         self.assertEqual(json.loads(self.call('inbox', player)), [])
         self.call('connect', parent_state['id'], parent_state['native'], parent_state['endpoint'])

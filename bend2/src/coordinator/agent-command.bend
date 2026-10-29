@@ -158,8 +158,72 @@ def confirmation_refused(+session: String, +recipient: String, +id: String,
   IO.pure(String,"[" ++ Batch.send_refused("0",id,session,recipient,
     "completion-confirmed",2,cause) ++ "]")
 
+# Ended is derived from the stored confirmation (C.task_ended_sql), so a
+# confirmation without a next assignment is the whole decision. A next
+# assignment is read and validated first, then confirmed and recorded in one
+# transaction; delivery wakes follow the committed outcome.
+def next_refused(+session: String, +target: String, +code: U32, +cause: String) -> IO(String):
+  IO.pure(String,"[" ++ Batch.send_refused("1","",session,target,"task",code,cause) ++ "]")
+
+def next_rows(rows: List<String>, +db: String, +session: String, +target: String, +request: String,
+              +id: String, +task_id: String, +task: String) -> IO(String):
+  match rows:
+    case +confirmed <> +assigned <> Nil{}: do IO<String>:
+      confirmation : String <- Batch.admitted(db,"0",id,session,target,"completion-confirmed",confirmed,
+        C.Message{id,session,target,"completion-confirmed",request})
+      assignment : String <- Batch.admitted(db,"1",task_id,session,target,"task",assigned,
+        C.Message{task_id,session,target,"task",task})
+      IO.pure(String,"[" ++ confirmation ++ "," ++ assignment ++ "]")
+    case other: next_refused(session,target,2,"The confirmation and next assignment were not both recorded; read the Player and its messages.")
+
+def next_stored(stored: Result<&1,&1,U32 & String,String>, +db: String, +session: String, +target: String,
+                +request: String, +id: String, +task_id: String, +task: String) -> IO(String):
+  match stored:
+    case Fail{(code,cause)}: IO.pure(String,"[" ++ Batch.send_refused("0",id,session,target,"completion-confirmed",code,cause) ++ "]")
+    case Done{saved}: next_rows(Tx.split_lines(saved),db,session,target,request,id,task_id,task)
+
+def next_committed(+db: String, +session: String, +target: String, +request: String,
+                   +id: String, +task: String) -> IO(String):
+  do IO<String>:
+    +task_id : String = id ++ ":next-assignment"
+    stored : Result<&1,&1,U32 & String,String> <- Store.apply(db,C.ConfirmNext{id,session,target,request,task_id,task})
+    next_stored(stored,db,session,target,request,id,task_id,task)
+
+def next_identified(identified: Result<&1,&1,U32 & String,String>, +db: String, +session: String,
+                    +target: String, +request: String, +task: String) -> IO(String):
+  match identified:
+    case Fail{(code,cause)}: next_refused(session,target,code,cause)
+    case Done{id}: next_committed(db,session,target,request,id,task)
+
+def next_loaded(loaded: Result<&1,&1,U32 & String,String>, +db: String, +session: String,
+                +target: String, +request: String, +id: String) -> IO(String):
+  match loaded:
+    case Fail{(code,cause)}: next_refused(session,target,code,cause)
+    case Done{+task}:
+      Bool.pick(IO(String),String.is_empty(task),
+        next_refused(session,target,2,"The next assignment is empty."),
+        (do IO<String>:
+          identified : Result<&1,&1,U32 & String,String> <- message_id(db,session,id)
+          next_identified(identified,db,session,target,request,task)))
+
+def confirmation_next(+db: String, +session: String, +target: String, +request: String,
+                      +id: String, next: A.Body) -> IO(String):
+  do IO<String>:
+    loaded : Result<&1,&1,U32 & String,String> <- body_value(next)
+    next_loaded(loaded,db,session,target,request,id)
+
+def confirmation_sent(+db: String, +session: String, +target: String, +request: String,
+                      +id: String, next: A.Body) -> IO(String):
+  match next:
+    case A.Missing{}: do IO<String>:
+      item : String <- send_item(db,session,0,Native.Unused{},
+        A.Item{target,id,"completion-confirmed",A.Text{request}})
+      IO.pure(String,"[" ++ item ++ "]")
+    case other: confirmation_next(db,session,target,request,id,other)
+
 def confirmation_target(+db: String, +session: String, +recipient: String,
-                        +request: String, +id: String, +target_hex: String) -> IO(String):
+                        +request: String, +id: String, next: A.Body,
+                        +target_hex: String) -> IO(String):
   match target_hex:
     case "": confirmation_refused(session,recipient,id,
       "No retained completion-request has the supplied ID.")
@@ -175,15 +239,12 @@ def confirmation_target(+db: String, +session: String, +recipient: String,
       Bool.pick(IO(String),Bool.not(matches),
         confirmation_refused(session,recipient,id,
           "--to does not match the author of the completion-request."),
-        (do IO<String>:
-          item : String <- send_item(db,session,0,Native.Unused{},
-            A.Item{target,id,"completion-confirmed",A.Text{request}})
-          IO.pure(String,"[" ++ item ++ "]")))
+        confirmation_sent(db,session,target,request,id,next))
 
 # An explicit selector must name the current request for the worker assignment.
 # Older requests remain historical and are refused.
 def completion_confirmed_exact(+db: String, +session: String, +recipient: String,
-                         +request: String, +id: String) -> IO(String):
+                         +request: String, +id: String, next: A.Body) -> IO(String):
   do IO<String>:
     row : String <- IO.try(String,DB.Sql.read(db,
       "SELECT CASE WHEN kind<>'completion-request' THEN 'wrong-kind' WHEN recipient<>" ++
@@ -191,27 +252,27 @@ def completion_confirmed_exact(+db: String, +session: String, +recipient: String
       C.task_request_sql("(SELECT sender FROM messages current WHERE current.id=" ++ C.q(request) ++ ")") ++
       ",'') THEN 'stale-request' ELSE hex(CAST(sender AS TEXT)) END FROM messages WHERE id=" ++
       C.q(request) ++ ";"))
-    confirmation_target(db,session,recipient,request,id,Tx.trim_nl(row))
+    confirmation_target(db,session,recipient,request,id,next,Tx.trim_nl(row))
 
 def confirmation_requests_sql(+session: String, +recipient: String) -> String:
   "SELECT hex(" ++ C.task_request_sql("worker.id") ++ ") FROM sessions worker WHERE worker.parent=" ++ C.q(session)
   ++ " AND (" ++ C.q(recipient) ++ "='' OR worker.id=" ++ C.q(recipient) ++ ") AND " ++ C.task_request_sql("worker.id") ++ " IS NOT NULL"
   ++ " AND NOT " ++ C.task_confirmed_sql("worker.id") ++ " ORDER BY worker.id;"
 
-def confirmation_inferred(rows: List<String>, +db: String, +session: String, +recipient: String, +id: String) -> IO(String):
+def confirmation_inferred(rows: List<String>, +db: String, +session: String, +recipient: String, +id: String, next: A.Body) -> IO(String):
   match rows:
     case encoded <> Nil{}: do IO<String>:
       request : String <- AgentInput.field(encoded)
-      completion_confirmed_exact(db,session,recipient,request,id)
+      completion_confirmed_exact(db,session,recipient,request,id,next)
     case Nil{}: confirmation_refused(session,recipient,id,"No current completion request is addressed to this coordinator for the selected Player.")
     case other: confirmation_refused(session,recipient,id,"Multiple Players have current completion requests. Select the Player with --to.")
 
-def completion_confirmed(+db: String, +session: String, +recipient: String, +request: String, +id: String) -> IO(String):
+def completion_confirmed(+db: String, +session: String, +recipient: String, +request: String, +id: String, +next: A.Body) -> IO(String):
   Bool.pick(IO(String),String.is_empty(request),
     (do IO<String>:
       rows : String <- IO.try(String,DB.Sql.read(db,confirmation_requests_sql(session,recipient)))
-      confirmation_inferred(Tx.split_lines(rows),db,session,recipient,id)),
-    completion_confirmed_exact(db,session,recipient,request,id))
+      confirmation_inferred(Tx.split_lines(rows),db,session,recipient,id,next)),
+    completion_confirmed_exact(db,session,recipient,request,id,next))
 
 def execute(+db: String, +session: String, action: A.Action) -> IO(Unit):
   match action:
@@ -226,8 +287,8 @@ def execute(+db: String, +session: String, action: A.Action) -> IO(Unit):
     case A.CompletionRequest{id,body}: do IO<Unit>:
       saved : String <- completion_request(db,session,id,body)
       IO.write(saved)
-    case A.CompletionConfirmed{+recipient,+request,+id}: do IO<Unit>:
-      saved : String <- completion_confirmed(db,session,recipient,request,id)
+    case A.CompletionConfirmed{+recipient,+request,+id,next}: do IO<Unit>:
+      saved : String <- completion_confirmed(db,session,recipient,request,id,next)
       IO.write(saved)
     case A.Session{+id}: do IO<Unit>:
       target : String = Bool.pick(String,String.is_empty(id),session,id)
