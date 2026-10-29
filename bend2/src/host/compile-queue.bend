@@ -977,7 +977,7 @@ def watch_heavy(+attempt: String, +pid: U32, +start: String,
           slept : Unit <- IO.try(Unit, L.CompileQueueLifecycle.sleep_millis(100))
           watch_heavy(attempt, pid, start, supervisor, supervisor_start, keydir, next)))
 
-def watch_heavy_supervisor(parsed: Maybe<&2,U32>, pid: U32, attempt: String, start: String,
+def watch_heavy_supervisor(parsed: Maybe<&2,U32>, pid: U32, +attempt: String, start: String,
                            supervisor_start: String) -> IO(Unit):
   match parsed:
     case None{}: IO.die(Unit, 2, "compile-queue: watch supervisor pid is malformed")
