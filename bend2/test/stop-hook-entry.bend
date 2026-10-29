@@ -3,7 +3,6 @@
 # Claude and Codex argv one argument per line.
 import Base
 import ../src/coordinator/stop-hook.bend as StopHook
-import ../src/coordinator/message-status.bend as MessageStatus
 import ../src/harness/claude-player.bend as Claude
 import ../src/harness/codex-player.bend as Codex
 import ../src/coordinator/commands.bend as C
@@ -87,7 +86,7 @@ def route(args: List<String>) -> IO(Unit):
     case "read" <> db <> id <> Nil{}: Agent.execute(db,"worker",Actions.Read{[id]})
     case "completion-request" <> db <> body <> Nil{}: Agent.execute(db,"worker",Actions.CompletionRequest{"",Actions.Text{body}})
     case "completion-request-id" <> db <> id <> body <> Nil{}: Agent.execute(db,"worker",Actions.CompletionRequest{id,Actions.Text{body}})
-    case "completion-confirmed" <> db <> request <> Nil{}: Agent.execute(db,"coordinator",Actions.CompletionConfirmed{"worker",request,""})
+    case "completion-confirmed" <> db <> request <> Nil{}: Agent.execute(db,"coordinator",Actions.parse_action(Actions.CompletionConfirmedVerb{},["--to","worker","--request",request]))
     case "guide" <> db <> body <> Nil{}: Agent.execute(db,"coordinator",Actions.Send{[Actions.Item{"worker","guide","guidance",Actions.Text{body}}]})
     case "inbox" <> db <> session <> Nil{}: Agent.execute(db,session,Actions.Inbox{})
     case "pending" <> +db <> Nil{}: do IO<Unit>:

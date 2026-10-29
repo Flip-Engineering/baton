@@ -16,7 +16,7 @@ type Action is Type:
   Read{ids: List<String>}
   Send{items: List<&2,Message>}
   CompletionRequest{id: String, body: Body}
-  CompletionConfirmed{recipient: String, request: String, id: String}
+  CompletionConfirmed{recipient: String, request: String, id: String, next: Body}
   Session{id: String}
   Player{id: String}
   Players{}
@@ -181,24 +181,43 @@ def decision_args(+action: String, +kind: String, args: List<String>,
     case other:
       Invalid{action ++ " expects --to SESSION and its documented named arguments; use help " ++ action ++ "."}
 
+def next_option(next: Body, value: Body) -> Body:
+  match next:
+    case Missing{}: value
+    case Bad{cause}: Bad{cause}
+    case other: Bad{"completion-confirmed accepts exactly one --next TEXT or --next-file PATH."}
+
+def confirmation_done(+recipient: String, +request: String, +id: String, next: Body) -> Action:
+  match next:
+    case Bad{cause}: Invalid{cause}
+    case Text{+value}:
+      Bool.pick(Action,String.is_empty(value),
+        Invalid{"completion-confirmed --next requires nonempty assignment text."},
+        CompletionConfirmed{recipient,request,id,Text{value}})
+    case other: CompletionConfirmed{recipient,request,id,other}
+
 def confirmation_args(args: List<String>, +recipient: String, +request: String,
-                      +id: String) -> Action:
+                      +id: String, next: Body) -> Action:
   match args:
     case "--to" <> +value <> rest:
       Bool.pick(Action,Bool.or(Bool.not(String.is_empty(recipient)),String.is_empty(value)),
         Invalid{"completion-confirmed accepts one nonempty --to PLAYER."},
-        confirmation_args(rest,value,request,id))
+        confirmation_args(rest,value,request,id,next))
     case "--request" <> +value <> rest:
       Bool.pick(Action,Bool.or(Bool.not(String.is_empty(request)),String.is_empty(value)),
         Invalid{"completion-confirmed requires one nonempty --request REQUEST_ID."},
-        confirmation_args(rest,recipient,value,id))
+        confirmation_args(rest,recipient,value,id,next))
     case "--id" <> +value <> rest:
       Bool.pick(Action,Bool.or(Bool.not(String.is_empty(id)),String.is_empty(value)),
         Invalid{"completion-confirmed accepts one nonempty --id ID."},
-        confirmation_args(rest,recipient,request,value))
-    case Nil{}: CompletionConfirmed{recipient,request,id}
+        confirmation_args(rest,recipient,request,value,next))
+    case "--next" <> value <> rest:
+      confirmation_args(rest,recipient,request,id,next_option(next,Text{value}))
+    case "--next-file" <> path <> rest:
+      confirmation_args(rest,recipient,request,id,next_option(next,File{path}))
+    case Nil{}: confirmation_done(recipient,request,id,next)
     case other:
-      Invalid{"completion-confirmed accepts --request REQUEST_ID, optional --to PLAYER, and optional --id ID."}
+      Invalid{"completion-confirmed accepts --request REQUEST_ID, optional --to PLAYER, optional --id ID, and optional --next TEXT or --next-file PATH."}
 
 def player_args(args: List<String>) -> Action:
   match args:
@@ -221,15 +240,15 @@ def parse_action(action: Verb, args: List<String>) -> Action:
     case PlayerVerb{}: player_args(args)
     case AssignmentVerb{}: inspect_id("assignment",args)
     case CompletionRequestVerb{}: completion_request_options(args,"",Missing{})
-    case CompletionConfirmedVerb{}: confirmation_args(args,"","","")
+    case CompletionConfirmedVerb{}: confirmation_args(args,"","","",Missing{})
     case FinishVerb{}:
       match args:
         case summary <> Nil{}: CompletionRequest{"",Text{summary}}
         case other: Invalid{"finish requires one quoted summary; use finish --help."}
     case ConfirmVerb{}:
       match args:
-        case player <> Nil{}: CompletionConfirmed{player,"",""}
-        case Nil{}: CompletionConfirmed{"","",""}
+        case player <> Nil{}: CompletionConfirmed{player,"","",Missing{}}
+        case Nil{}: CompletionConfirmed{"","","",Missing{}}
         case other: Invalid{"confirm accepts one Player; use confirm --help."}
     case GuideVerb{}:
       match args:
@@ -350,9 +369,9 @@ def help(action: String) -> String:
     case "players": "players\nRead the current Players projection.\n" ++ Domain.help("players")
     case "assignment": "assignment [SESSION]\nRead the registered session record, including its assignment and task-completion state. Omitted SESSION selects the current agent.\n" ++ Domain.help("assignment")
     case "finish": "finish SUMMARY\nSend the completion summary to your recorded coordinator. Baton selects the assignment and creates the request identity.\n"
-    case "confirm": "confirm [PLAYER]\nConfirm the Player's current completion request. Omitted PLAYER selects the sole current request addressed to you.\n"
-    case "completion-request": "completion-request (--text TEXT | --file PATH) [--id ID]\nSend the request to the current session's recorded immediate parent. The message body carries the completion report. A parentless session receives a structured refusal. Each mixed --and item retains its actual process result and complete admission result in stdout.\n"
-    case "completion-confirmed": "completion-confirmed [--to PLAYER] [--request REQUEST_ID] [--id ID]\nResolve the selected Player's current completion request. Omitted --to selects the sole current request addressed to this coordinator. Baton generates the action identity and links the exact retained request. Explicit selectors retain their native authority checks. Supports mixed and or --and batches.\n"
+    case "confirm": "confirm [PLAYER]\nConfirm the Player's current completion request; the Player's assignment is then ended (taskCompletion.ended). Omitted PLAYER selects the sole current request addressed to you. Use completion-confirmed --next to confirm and dispatch the next assignment in one transaction.\n"
+    case "completion-request": "completion-request (--text TEXT | --file PATH) [--id ID]\nSend the request to the current session's coordinator: its recorded parent while the parent is not over, else the parent's successor, the nearest ancestor that is not over, or the registered operator. Baton generates the request identity when --id is omitted. An explicit --id must name the actor's current recorded request for its open assignment; an unrecorded or older ID is refused and stores nothing. The message body carries the completion report. A parentless conductor sends it to the registered operator; a parentless Player, or a conductor with no registered operator, receives a structured refusal. Each mixed --and item retains its actual process result and complete admission result in stdout.\n"
+    case "completion-confirmed": "completion-confirmed [--to PLAYER] [--request REQUEST_ID] [--id ID] [--next TEXT | --next-file PATH]\nResolve the selected Player's current completion request. Omitted --to selects the sole current request addressed to this coordinator. Baton generates the action identity and links the exact retained request. Explicit selectors retain their native authority checks. The recorded confirmation ends the Player's assignment (taskCompletion.ended is true). With --next or --next-file, the text or file content is read first, then the confirmation and a task to the Player are recorded in one transaction; the assignment continues and taskCompletion.ended stays false. An explicit stop on the Player refuses both and stays in place. Supports mixed and or --and batches.\n"
     case "guide": "guide PLAYER TEXT\nguide --to PLAYER (--text TEXT | --file PATH) [--id ID]\nSend guidance to a Player through the ordinary message admission path. The named form supports mixed batches.\n"
     case "send": "send PLAYER TEXT\nsend PLAYER [--kind KIND] (--text TEXT | --file PATH) [--id ID] [and PLAYER ...]\nSend a complete report to a Player. The named form selects an explicit kind and supports independent messages. Baton generates omitted identities. PATH - reads stdin.\n"
     case +other:

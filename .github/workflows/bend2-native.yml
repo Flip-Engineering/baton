@@ -609,16 +609,33 @@ jobs:
           if status:
               raise SystemExit(status)
           contracts = {}
-          for name in selected:
-              relative = 'bend2/test/' + name
+          # Candidate tests and their fixtures use the target production modules.
+          fixtures = subprocess.check_output(['git', 'ls-files', '-z', '--', 'bend2/test'], cwd=candidate)
+          for name in fixtures.split(b'\0'):
+              relative = os.fsdecode(name)
+              if not relative:
+                  continue
               original = candidate / relative
+              destination = target / relative
+              destination.parent.mkdir(parents=True, exist_ok=True)
               contracts[relative] = hashlib.sha256(original.read_bytes()).hexdigest()
-              shutil.copyfile(original, target / relative)
+              shutil.copyfile(original, destination)
           (evidence / 'comparison.json').write_text(json.dumps({
               'target_commit': os.environ['BATON2_TARGET_COMMIT'], 'candidate_commit': os.environ['BATON2_SOURCE_SHA'],
               'test_contracts': contracts,
-              'method': 'Candidate test contracts execute against the exact target production build and target helpers.'
+              'method': 'The tracked candidate test contracts and fixtures execute against the exact target production build and target production modules.'
           }, indent=2) + '\n')
+          hook_fixture = target / '.scratch/bend2/stop-hook-entry-target'
+          # A fixture build failure on the target is a recorded target outcome: the fixture variable
+          # stays unset and the tests below report it.
+          status = record('target-stop-hook-build', ['sh', 'bend2/scripts/build-native.sh',
+                          'bend2/test/stop-hook-entry.bend', str(hook_fixture)])
+          if status == 0:
+              check_environment['BATON2_STOP_HOOK_FIXTURE'] = str(hook_fixture)
+          # The prompt statements exist only where the target production modules provide them.
+          # The fixture is built beside the stop-hook entry, and the tests that need it fail when it is absent.
+          record('target-prompt-status-build', ['sh', 'bend2/scripts/build-native.sh',
+                 'bend2/test/prompt-status-entry.bend', str(target / '.scratch/bend2/prompt-status-entry-target')])
           for name in selected:
               record('target-' + name, ['python3', 'bend2/test/' + name, '-v'])
           outcomes = {name: json.loads((evidence / 'selected' / (name + '.json')).read_text()) for name in selected}

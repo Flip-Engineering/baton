@@ -226,6 +226,11 @@ def task_instructions() -> String:
 def knowledge_instructions() -> String:
   "Use baton knowledge to record and read scoped findings and evidence. Preserve uncertainty and complete evidence; baton help knowledge describes the actions.\n"
 
+# The DSH bash tool runs in a workspace sandbox that blocks coordinator writes and
+# shared Git metadata, so DSH seats reach Baton through the baton-worker tools.
+def dsh_instructions(+harness: String) -> String:
+  Bool.pick(String,String.eq(harness,"dsh\n"),"This session runs in the DeepSeek Harness. Its bash tool runs in a workspace sandbox and cannot write the orchestra database or shared Git metadata. Reach Baton through the baton-worker tools: inbox and read return complete messages, report and ask reach your coordinator, completion_request sends the completion request for your assignment, completion_confirmed resolves a Player's current completion request, guide sends complete guidance to a Player, and commit adds and commits selected workspace files with your recorded Git identity. These tools replace the same-named commands listed above. Baton delivers input addressed to you during a turn at the next model step. The turn stays open while input is owed and while an assignment is open without a completion request.\n","")
+
 def direct_task_prompt(+db: String, +player: String, +id: String, prompt: String) -> IO(String):
   do IO<String>:
     executable : String <- IO.try(String,Lock.SessionLock.executable())
@@ -236,15 +241,6 @@ def direct_task_prompt(+db: String, +player: String, +id: String, prompt: String
 def generation_log(+log: String, +id: String) -> String:
   Logs.attempt_log(log,id)
 
-# After settlement, a seat whose assignment is still open with no completion
-# request and no owed input has nothing that starts its next turn (#1054). Its
-# coordinator receives that state as a report beside the turn report. When the
-# write fails, the ordinary turn report remains the coordinator's input.
-def note_open_assignment(+db: String, +player: String, +id: String) -> IO(Unit):
-  do IO<Unit>:
-    noted : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,C.open_assignment_report_sql(id,player))
-    IO.pure(Unit,Unit{})
-
 # Failure reports are committed while this invocation still owns the session.
 # finish delivers the settled turn to its recorded coordinator.
 def prepare(+db: String, +player: String, +id: String, log: String, stderr: String, +outcome: Outcome) -> IO(Unit):
@@ -252,8 +248,7 @@ def prepare(+db: String, +player: String, +id: String, log: String, stderr: Stri
     +generation : String <- IO.pure(String,generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     reported : Unit <- prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
-    read : Unit <- AgentInput.record_initial_reads(db,player,id)
-    note_open_assignment(db,player,id)
+    AgentInput.record_initial_reads(db,player,id)
 
 def record_exit(db: String, player: String, +id: String, log: String, outcome: Outcome) -> IO(Unit):
   match outcome:
@@ -724,7 +719,7 @@ def deferred_pending_sql(+player: String) -> String:
   "SELECT " ++ Guidance.outstanding_sql(player) ++ ";"
 
 def deferred_pending(+pending: String) -> String:
-  Bool.pick(String,String.is_empty(pending),""," and the deferred guidance " ++ pending ++ " stays pending for the next receive")
+  Bool.pick(String,String.is_empty(pending),""," and the deferred input " ++ pending ++ " stays pending for the next receive")
 
 def deferred_text(id: String, pending: String) -> String:
   "A later native terminal was observed after the report " ++ id ++ " was sealed; the episode is retained in the native log" ++ deferred_pending(pending) ++ "."
@@ -875,6 +870,12 @@ def filter_lines(+state: String, +requested: String, omp: Bool) -> List<String>:
   match omp:
     case False{}: Nil{}
     case True{}: [Omp.filter_note(state,requested)]
+
+def failed_read_lines(+held: String, +state: String, +requested: String, omp: Bool) -> List<String>:
+  List.append(&1,String,Logs.flush(held),filter_lines(state,requested,omp))
+
+law failed_omp_read_keeps_the_filter_marker:
+  {failed_read_lines("","array+delta","default",True{}) == ["{\"type\":\"baton_event_filter\",\"selection\":\"array+delta\",\"active\":true}"] : List<String>}
 
 def terminal_event(event: String, previous: String, selected: Bool) -> IO(String):
   match selected:
@@ -1252,7 +1253,8 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
       closed : Result<&1,&1,U32 & String,Unit> <- close_input(handle,Bool.not(monitor))
       sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
       +waited : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,P.ProcessChild.wait(handle))
-      +positioned : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,Logs.write_positioned(log,Logs.flush(held),Observer.output(checkpoint_state),log_failed,Bool.not(String.is_empty(attempt)),False{}))
+      output_lines : List<String> <- IO.pure(List<String>,failed_read_lines(held,filter,requested,String.eq(harness,"omp\n")))
+      +positioned : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,Logs.write_positioned(log,output_lines,Observer.output(checkpoint_state),log_failed,Bool.not(String.is_empty(attempt)),False{}))
       +flushed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.position_write(log,unshared_result(String,positioned))))
       +write_failed : Bool <- IO.pure(Bool,Logs.failed_now(log_failed,unshared_result(Unit,flushed)))
       checkpoint_done : Result<&1,&1,U32 & String,Unit> <- checkpoint(Bool.and(String.is_empty(attempt),Bool.not(write_failed)),log,"")
@@ -1401,23 +1403,36 @@ def current_history(+db: String, player: String) -> IO(String):
     home : String <- Bool.pick(IO(String),String.is_empty(line),IO.pure(String,""),IO.try(String,DB.Sql.query(db,Subs.history_home_sql(line))))
     IO.pure(String,Tx.trim_nl(home))
 
-# The recorded route with the profile's credential store bound into the spawn argv and
-# the preserved provider history home carried as an ordinary config argument; an empty
-# binding keeps today's argv through retained_arguments, so a session with no record
-# spawns exactly as before. OMP binds PI_CODING_AGENT_DIR and Muse binds
+# Retained profile arguments bind the selected credential store and provider history.
+# Every OMP launch receives the completion-request tool extension; its stop hook
+# reads the current assignment state when OMP reaches session_stop.
+# OMP binds PI_CODING_AGENT_DIR and Muse binds
 # XDG_CONFIG_HOME; a selected profile assignment overrides an inherited store.
-def retained_profile_other(omp: Bool, muse: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String) -> String:
+def retained_profile_other(omp: Bool, muse: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +completion_extension: String) -> String:
   match omp:
-    case True{}: Omp.argv_profile(binding,cmd,model,effort,sessions,native,String.is_empty(native))
+    case True{}: Omp.argv_with_completion(binding,cmd,model,effort,sessions,native,String.is_empty(native),completion_extension)
     case False{}:
       match muse:
         case True{}: Muse.argv_profile(binding,cmd,model,effort,prompt_file,native,String.is_empty(native))
         case False{}: Codex.argv_profile(binding,override,cmd,model,effort,native,String.is_empty(native))
 
-def retained_profile_arguments(omp: Bool, claude: Bool, muse: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String) -> String:
+def retained_profile_arguments(omp: Bool, claude: Bool, muse: Bool, binding: List<String>, override: List<String>, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +completion_extension: String) -> String:
   match claude:
     case True{}: Claude.argv_profile(binding,cmd,model,effort,native,String.is_empty(native))
-    case False{}: retained_profile_other(omp,muse,binding,override,cmd,model,effort,sessions,prompt_file,native)
+    case False{}: retained_profile_other(omp,muse,binding,override,cmd,model,effort,sessions,prompt_file,native,completion_extension)
+
+def omp_completion_asset(+helper: String, +name: String) -> String:
+  Subs.directory_of(helper) ++ "/" ++ name
+
+def omp_completion_extension(omp: Bool, +executable: String) -> IO(String):
+  match omp:
+    case False{}: IO.pure(String,"")
+    case True{}: do IO<String>:
+      helper : String <- IO.try(String,HostControl.Control.agent_helper(executable))
+      IO.pure(String,omp_completion_asset(helper,"omp-completion.mjs"))
+
+def omp_completion_arguments(+arguments: String, omp: Bool, +extension: String) -> String:
+  Bool.pick(String,omp,P.argv(List.append(&1,String,Tx.split_nul(arguments),Omp.completion_extension_args(extension))),arguments)
 
 def retained_identity_prefix(model: String, identity: String & String) -> String:
   (registry,helper)=identity
@@ -1467,19 +1482,24 @@ def dsh_home_if(dsh: Bool, +db: String, +base: String, +player: String) -> IO(St
     case True{}: dsh_home(db,base,player)
     case False{}: IO.pure(String,"")
 
-def dsh_prepare_if(dsh: Bool, +directory: String, +model: String, +effort: String) -> IO(Result<&1,&1,U32 & String,Dsh.Prepared>):
+def dsh_prepare_if(dsh: Bool, +directory: String, +model: String, +effort: String, hooks: String) -> IO(Result<&1,&1,U32 & String,Dsh.Prepared>):
   match dsh:
     # Native custody creates the attempt directory and seals its prompt. Keep
     # the per-attempt patches in a sibling directory referenced by the argv.
-    case True{}: Dsh.prepare(directory ++ ".dsh",model,effort)
+    case True{}: Dsh.prepare(directory ++ ".dsh",model,effort,hooks)
     case False{}: IO.pure(Result<&1,&1,U32 & String,Dsh.Prepared>,Done{Dsh.Prepared{"",""}})
 
+# The worker bridge and the input and completion plugin ship in one directory:
+# the installed package's libexec/baton2 or the source checkout's bend2/scripts.
 def dsh_worker_helper(dsh: Bool, executable: String) -> IO(String):
   match dsh:
     case False{}: IO.pure(String,"")
-    case True{}: do IO<String>:
-      helper : String <- IO.try(String,HostControl.Control.agent_helper(executable))
-      IO.pure(String,Subs.directory_of(helper) ++ "/dsh-worker.mjs")
+    case True{}: IO.try(String,HostControl.Control.agent_helper(executable))
+
+def dsh_hooks_path(bridge: String) -> String:
+  match bridge:
+    case "": ""
+    case path: Subs.directory_of(path) ++ "/dsh-baton-hooks.mjs"
 
 type IdentityParts is Data:
   IdParts{prefix: String, resolver: String}
@@ -1522,16 +1542,16 @@ def retained_launch_checked(prepared: Result<&1,&1,U32 & String,Dsh.Prepared>, +
       checked : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),omp,Omp.preflight_arguments(arguments),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
       retained_launch_result(checked,arguments,Bool.pick(String,agy,Agy.user_frame(initial),retained_input(muse,omp,claude,initial,level)),initial,retained_keep_stdin(muse,omp,claude),Bool.or(muse,seal_prompt))
 
-def retained_launch_plain(omp: Bool, claude: Bool, muse: Bool, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +prefix: String, account: Maybe<&2,Accounts.AccountRecord>, +credit_refusal: String) -> Result<&1,&1,U32 & String,String>:
+def retained_launch_plain(+omp: Bool, claude: Bool, muse: Bool, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +prefix: String, +completion_extension: String, account: Maybe<&2,Accounts.AccountRecord>, +credit_refusal: String) -> Result<&1,&1,U32 & String,String>:
   match account:
-    case None{}: Done{prefix ++ retained_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native)}
+    case None{}: Done{prefix ++ omp_completion_arguments(retained_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native),omp,completion_extension)}
     case Some{+refused}: Fail{(2,Bool.pick(String,String.is_empty(credit_refusal),Accounts.credit_api_key_refusal(refused),credit_refusal))}
 
-def retained_launch_arguments(omp: Bool, claude: Bool, muse: Bool, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +prefix: String, +history: String, harness: String, account: Maybe<&2,Accounts.AccountRecord>, launch_credit: Maybe<List<String>> & String) -> Result<&1,&1,U32 & String,String>:
+def retained_launch_arguments(omp: Bool, claude: Bool, muse: Bool, cmd: String, model: String, effort: String, sessions: String, prompt_file: String, +native: String, +prefix: String, +completion_extension: String, +history: String, harness: String, account: Maybe<&2,Accounts.AccountRecord>, launch_credit: Maybe<List<String>> & String) -> Result<&1,&1,U32 & String,String>:
   (binding,credit_refusal)=launch_credit
   match binding:
-    case Some{bound}: Done{prefix ++ retained_profile_arguments(omp,claude,muse,bound,Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,prompt_file,native)}
-    case None{}: retained_launch_plain(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,account,credit_refusal)
+    case Some{bound}: Done{prefix ++ retained_profile_arguments(omp,claude,muse,bound,Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,prompt_file,native,completion_extension)}
+    case None{}: retained_launch_plain(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,completion_extension,account,credit_refusal)
 
 
 def retained_identity_result(identity: Result<&1,&1,U32 & String,String & String>, next: String & String -> IO(Result<&1,&1,U32 & String,RetainedLaunch>)) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
@@ -1561,16 +1581,18 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
         +agy : Bool <- IO.pure(Bool,String.eq(harness,"antigravity\n"))
         +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
         home : String <- dsh_home_if(dsh,db,absolute_db,player)
-        prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort)
-        bridge : String <- dsh_worker_helper(dsh,executable)
+        +bridge : String <- dsh_worker_helper(dsh,executable)
+        prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort,dsh_hooks_path(bridge))
+        completion_extension : String <- omp_completion_extension(omp,executable)
         +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory,"BATON_STOP_HOOK=" ++ executable,"BATON_COORDINATOR=" ++ executable,"BATON_DSH_WORKER_BRIDGE=" ++ bridge]) ++ identity_prefix(parts))
         +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
         store : String <- current_store(db,player,harness)
         history : String <- current_history(db,player)
         launch_credit : Maybe<List<String>> & String <- Accounts.credit_launch_gate(db,player,directory,Tx.trim_nl(harness),account,identity_resolver(parts),store,Accounts.credit_guard_qualified())
         recorded : Unit <- Accounts.record_current_attempt(db,player,directory,predecessor,account)
-        +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,history,Tx.trim_nl(harness),account,launch_credit)))
-        launch : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_launch_checked(prepared,dsh,agy,prefix,home,cmd,model,effort,native,muse,args,initial,omp,claude,level,seal_prompt)
+        +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,muse,cmd,model,effort,sessions,prompt_file,native,prefix,completion_extension,history,Tx.trim_nl(harness),account,launch_credit)))
+        +runtime_args : String <- IO.pure(String,Bool.pick(String,muse,Muse.with_runtime_hooks(args,absolute_db,player,directory,executable),args))
+        launch : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_launch_checked(prepared,dsh,agy,prefix,home,cmd,model,effort,native,muse,runtime_args,initial,omp,claude,level,seal_prompt)
         IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,launch))
 
 def retained_prepare(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool, predecessor: String) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
@@ -1698,7 +1720,7 @@ def dsh_launch(+db: String, +player: String, +log: String, +cmd: String, +model:
     canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
     home : String <- dsh_home(db,canonical,player)
     directory : String <- IO.pure(String,log ++ ".dsh")
-    prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- Dsh.prepare(directory,model,effort)
+    prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- Dsh.prepare(directory,model,effort,"")
     dsh_launch_prepared(prepared,home,cmd,model,effort,cwd,stderr,session)
 
 def launch(+db: String, +player: String, sessions: String, +cmd: String, +model: String, +effort: String, +cwd: String, +stderr: String, +session: String, +harness: String, +log: String, task: String) -> IO(Result<&1,&1,U32 & String,U32>):
@@ -1979,13 +2001,15 @@ def direct_settled_wake(+db: String, +player: String, +id: String, +log: String,
       +routed : Bool <- direct_route_decided(db,player,id,outcome)
       normal : Bool <- settlement_success(db,outcome)
       reminder_source : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>),Bool.and(normal,Bool.not(routed)),
-        DB.Sql.query(db,C.task_continuation_sql(player,id)),
+        DB.Sql.query(db,C.task_settlement_sql(player,id)),
         IO.pure(Result<&1,&1,U32 & String,String>,Done{""}))
       reminder0 : Result<&1,&1,U32 & String,Unit> = Delivery.wake_result(reminder_source)
       reminder : Result<&1,&1,U32 & String,Unit> <- direct_failure_pass(db,player,id,"reminder",reminder0)
+      assignment_task : Chan(Result<&1,&1,U32 & String,String>) <- IO.fork(Result<&1,&1,U32 & String,String>,Delivery.deliver(db,id ++ ":assignment","1",""))
       wake0 : Result<&1,&1,U32 & String,Unit> <- direct_route_wake(db,player,id,log,outcome,routed)
       wake : Result<&1,&1,U32 & String,Unit> <- direct_failure_pass(db,player,id,"wake",wake0)
-      IO.pure(Result<&1,&1,U32 & String,Unit>,combine(reminder,combine(Done{unit},wake)))
+      assignment : Result<&1,&1,U32 & String,String> <- IO.join(Result<&1,&1,U32 & String,String>,assignment_task)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,combine(reminder,combine(Delivery.wake_result(assignment),wake)))
 
 def outcome_event(outcome: Outcome) -> String:
   match outcome:

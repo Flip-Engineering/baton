@@ -23,7 +23,8 @@ def naming_refused(+saved: String) -> Bool:
         Bool.or(Tx.starts_with(saved,"{\"error\":\"section-refused\""),
           Bool.or(Tx.starts_with(saved,"{\"error\":\"ensemble-owner-conflict\""),
             Bool.or(Tx.starts_with(saved,"{\"error\":\"ensemble-member-refused\""),
-              Tx.starts_with(saved,"{\"error\":\"report-recipient-missing\"")))))))
+              Bool.or(Tx.starts_with(saved,"{\"error\":\"succession-refused\""),
+                Tx.starts_with(saved,"{\"error\":\"report-recipient-missing\""))))))))
 
 def refused(+saved: String) -> Bool:
   Bool.or(naming_refused(saved),

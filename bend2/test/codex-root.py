@@ -446,7 +446,7 @@ class CodexRootAdapter(unittest.TestCase):
         self.assertGreater(self.read_count(confirmation), 0)
         self.assertEqual(json.loads(self.coord('session', 'w1'))['taskCompletion'], {
             'assignmentId': 'finished:task-input', 'coordinator': 'root',
-            'requestId': request, 'confirmed': True, 'open': False})
+            'requestId': request, 'confirmed': True, 'open': False, 'ended': True})
         self.assertEqual(json.loads(reviewed.read_text())['request']['id'], request)
         self.assertEqual(json.loads(self.coord('inbox', 'w1')), [])
         logs = json.loads(self.coord('logs-storage'))['logs']

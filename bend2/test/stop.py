@@ -42,8 +42,8 @@ FIXTURE = FIXTURE.replace("    if action.get('progress'):", """    if action.get
     if action.get('progress'):""", 1)
 
 # The stop helper runs one turn for each supported retained harness. The shared
-# fixture speaks Codex and OMP; these insertions add the Muse task-file envelope
-# and the Claude user-frame envelope without touching the shared fixture.
+# fixture speaks Codex, OMP and DSH; these insertions add the Muse task-file
+# envelope and the Claude user-frame envelope.
 FIXTURE = FIXTURE.replace(r"""omp='--mode' in args""", r"""omp='--mode' in args
 muse='--prompt-file' in args
 claude='--input-format' in args""", 1)
@@ -196,32 +196,27 @@ class Stop(unittest.TestCase):
         self.assertEqual(len(reports), 1)
         self.assertEqual(json.loads(reports[0]['body'])['stopId'], stopped['stopId'])
 
-    def test_live_native_with_absent_attempt_waits_for_restored_custody(self):
+    def test_live_native_with_absent_attempt_uses_owner_held_identity(self):
         observer, stream, started = self.begin()
         attempt_dir = pathlib.Path(self.rows(
             "SELECT directory FROM executions WHERE session='parent'")[0]['directory'])
         hidden = self.directory / 'held-stop-attempt'
         shutil.move(str(attempt_dir), str(hidden))
-        missing = self.stop()
-        self.assertEqual(missing['status'], 'custody-missing')
-        self.assertIsNone(missing['submittedSignal'])
-        self.assertIsNone(missing['nativeStatus'])
+        stopped = self.stop()
+        self.assertEqual(stopped['status'], 'requested')
+        self.assertEqual(stopped['submittedSignal'], 15)
         self.assertTrue(hidden.is_dir())
         self.assertFalse(attempt_dir.exists())
+        self.assertEqual(self.stop(), stopped)
         shutil.move(str(hidden), str(attempt_dir))
-        restored = self.stop()
-        self.assertEqual(restored['status'], 'requested')
-        self.assertEqual(restored['submittedSignal'], 15)
         self.finish(observer, ok=False)
         completed = self.completed()
         self.assertEqual(completed['nativeStatus'], 'signal 15')
         reports = self.rows("SELECT id,body FROM messages WHERE recipient='root' "
                             "AND json_extract(body,'$.stopId')=?", [completed['stopId']])
-        self.assertEqual(len(reports), 2)
+        self.assertEqual(len(reports), 1)
         by_type = {json.loads(row['body'])['type']: row for row in reports}
-        self.assertEqual(set(by_type), {'session-stop-custody-missing', 'session-stopped'})
-        self.assertNotEqual(by_type['session-stop-custody-missing']['id'],
-                            by_type['session-stopped']['id'])
+        self.assertEqual(set(by_type), {'session-stopped'})
         self.assertEqual(by_type['session-stopped']['id'], completed['reportId'])
         self.assertEqual(json.loads(by_type['session-stopped']['body'])['nativeStatus'], 'signal 15')
         self.assertEqual(self.rows("SELECT phase,status FROM executions WHERE session='parent'"),
@@ -341,8 +336,14 @@ class Stop(unittest.TestCase):
     def test_retained_claude_code_stop_preserves_work_and_exits_native_and_tool(self):
         self.retained_stop_preserves_work_native_identity_receipts_and_output('claude-code')
 
+    def test_retained_dsh_stop_preserves_work_and_exits_native_and_tool(self):
+        self.retained_stop_preserves_work_native_identity_receipts_and_output('dsh')
+
     def test_explicit_force_reaches_same_term_resistant_attempt_after_observer_loss(self):
-        observer, stream, started = self.begin(resist=True)
+        self.explicit_force_reaches_same_term_resistant_attempt_after_observer_loss('omp')
+
+    def explicit_force_reaches_same_term_resistant_attempt_after_observer_loss(self, harness='omp'):
+        observer, stream, started = self.begin(harness=harness, resist=True)
         requested = self.stop()
         self.assertEqual(requested['status'], 'requested')
         self.assertEqual(requested['submittedSignal'], 15)
@@ -368,6 +369,9 @@ class Stop(unittest.TestCase):
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.assertEqual(self.coord('force-stop', 'parent', 'operator-stop')['nativeStatus'], 'signal 9')
         self.assertTrue(receive.read_recorded(self.db, completed['reportId'], 'root'))
+
+    def test_explicit_force_reconciles_dsh_attempt_after_observer_loss(self):
+        self.explicit_force_reaches_same_term_resistant_attempt_after_observer_loss('dsh')
 
     def test_legacy_direct_turn_refuses_stop_without_mutating_input(self):
         self.configure()

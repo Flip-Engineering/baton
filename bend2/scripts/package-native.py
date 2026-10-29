@@ -204,6 +204,8 @@ def stage_adapters(payload, helper_binaries=None):
         for suffix in ('conductor', 'root'):
             name = harness + '-' + suffix + '.mjs'
             shutil.copyfile(ROOT / 'bend2/scripts' / name, directory / name)
+    shutil.copyfile(ROOT / 'bend2/scripts/omp-completion.mjs', directory / 'omp-completion.mjs')
+    shutil.copytree(ROOT / 'bend2/harness/agy-plugin', directory / 'agy-plugin')
     shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', directory / 'git-series.mjs')
     shutil.copytree(ROOT / 'bend2/harness/git-series-bin', directory / 'git-series-bin')
     shutil.copyfile(ROOT / 'bend2/harness/native-history.mjs', directory / 'native-history.mjs')
@@ -226,6 +228,7 @@ def stage_adapters(payload, helper_binaries=None):
     (directory / 'usage-read').chmod(0o755)
     shutil.copyfile(ROOT / 'bend2/harness/task-start.mjs', directory / 'task-start.mjs')
     shutil.copyfile(ROOT / 'bend2/scripts/dsh-worker.mjs', directory / 'dsh-worker.mjs')
+    shutil.copyfile(ROOT / 'bend2/scripts/dsh-baton-hooks.mjs', directory / 'dsh-baton-hooks.mjs')
     shutil.copytree(ROOT / 'bend2/ui/orchestra', directory / 'ui')
     shutil.copyfile(ROOT / 'bend2/scripts/context-provider.mjs', directory / 'context-provider.mjs')
     shutil.copyfile(ROOT / 'bend2/scripts/context-project-policy.mjs', directory / 'context-project-policy.mjs')

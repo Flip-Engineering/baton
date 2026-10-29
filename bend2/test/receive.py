@@ -434,8 +434,10 @@ dsh=args[:2]==['--profile','headless']
 if dsh:
     patches=[args[index+1] for index,argument in enumerate(args[:-1]) if argument=='--patch']
     model=re.search(r"^    model: '([^']*)'$",pathlib.Path(patches[1]).read_text(),re.M).group(1)
+    tools_patch=pathlib.Path(patches[0]).read_text()
 else:
     model=args[args.index('--model')+1]
+    tools_patch=''
 session=os.environ.get('BATON_SESSION',model)
 native_args=args[:]
 while native_args[:1]==['-c'] and len(native_args)>1: native_args=native_args[2:]
@@ -554,7 +556,8 @@ if config.get('inspect_session_guard'):
 reply({'pid':os.getpid(),'ppid':os.getppid(),'session':session,'native':native,'resume':resume,'args':args,'prompt':prompt,
        'cwd':os.getcwd(),'codexHome':os.environ.get('CODEX_HOME',''),'apiKeyVariablesPresent':[key for key in ('OPENAI_API_KEY','CODEX_API_KEY') if key in os.environ],
        'claudeAuthVariablesPresent':[key for key in ('ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN') if key in os.environ],
-       'sessionGuardDescriptors':guard_descriptors})
+       'sessionGuardDescriptors':guard_descriptors,
+       'dshBridge':os.environ.get('BATON_DSH_WORKER_BRIDGE',''),'dshTools':tools_patch})
 while True:
     line=stream.readline()
     if not line: break
@@ -1356,6 +1359,21 @@ class Receive(unittest.TestCase):
                             (name,)).fetchall()
                     self.assertEqual(len(reminders), 1, reminders)
                     self.assertIn('completion-request', reminders[0][1])
+                    with sqlite3.connect(self.db) as database:
+                        assignment_reports = database.execute(
+                            "SELECT body FROM messages WHERE sender=? AND recipient='root' "
+                            "AND kind='report' AND id=?",
+                            (name, report['id'] + ':assignment')).fetchall()
+                    self.assertEqual(len(assignment_reports), 1, assignment_reports)
+                    self.assertIn('assignment ' + assignment + ' still open', assignment_reports[0][0])
+                    self.assertIn('Baton queued continuation ' + reminders[0][0], assignment_reports[0][0])
+                    self.assertNotIn('no further turn starts', assignment_reports[0][0])
+                    self.assertNotIn('Run continue-task', assignment_reports[0][0])
+                    self.eventually(
+                        lambda: any(message['id'] == report['id'] + ':assignment' for message in
+                                    (json.loads(line) for line in
+                                     (self.directory / 'parent-deliveries.jsonl').read_text().splitlines())),
+                        'the continuation report was not delivered to the coordinator')
                     self.assertIn('[id: ' + reminders[0][0] + ']', continued['prompt'])
                     self.assertIn('baton read ' + reminders[0][0], continued['prompt'])
 
@@ -1680,8 +1698,43 @@ class Receive(unittest.TestCase):
                          ['Original result complete.', 'Queued result complete.'])
         self.assertIn('File exists', output + error)
 
-    def test_native_root_question_reports_unsupported_without_answering(self):
+    def test_parentless_conductor_native_question_reaches_the_registered_operator(self):
+        self.coord('connect', 'operator', '', json.dumps(['/usr/bin/true']))
         self.coord('attach', 'root', 'omp', '', '')
+        self.prepare_input('root-question-task', 'root', 'Ask the operator for required input.', kind='task')
+        observer = self.spawn(*self.receive_args('root'))
+        stream, started = self.accept_child(observer, 'root')
+        state = self.coord('session', 'root')['taskCompletion']
+        self.assertEqual(state['coordinator'], 'operator')
+        self.assertTrue(state['open'])
+        event = {'type': 'extension_ui_request', 'id': 'root input λ',
+                 'method': 'input', 'title': 'Operator question.\nPreserve this line Ω.'}
+        request = self.native_question(stream, event)
+        self.assertEqual((request['worker'], request['parent']), ('root', 'operator'))
+        read = self.coord('as', 'operator', 'read', request['id'])
+        self.assertEqual(json.loads(read[0]['delivery']['body'])['nativeRequest'], event)
+        answer = {'value': 'Complete operator reply.\nλU0001f642'}
+        result = self.coord('as', 'operator', 'native-reply', '--to', 'root',
+                            '--text', json.dumps(answer, ensure_ascii=False))
+        self.assertEqual(result[0]['status'], 'completed')
+        self.assertEqual(json.loads(result[0]['stdout'])['status'], 'stdin-written')
+        self.action(stream, read_native_reply=True)
+        self.assertEqual(json.loads(stream.readline()), {'native_reply': {
+            'type': 'extension_ui_response', 'id': event['id'], **answer}})
+        self.assertIsNone(observer.poll())
+        self.assertTrue(any(process['pid'] == started['pid'] for process in self.owned_processes()))
+        body = 'The parentless conductor completed after the operator replied.'
+        self.action(stream, body=body, hold_exit=True, report_input=True)
+        self.assertEqual(json.loads(stream.readline()),
+                         {'terminal_written': True, 'input_after_prompt': ''})
+        self.action(stream, exit_fixture=True)
+        self.finish(observer)
+        self.shutdown_idle_database_owner('parentless conductor question did not exit naturally')
+        self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'root')], [body])
+
+    def test_parentless_player_native_question_reports_missing_coordinator(self):
+        self.coord('attach', 'root', 'omp', '', '')
+        self.coord('role', 'root', 'player')
         self.prepare_input('root-question-task', 'root', 'Inspect the native request.', kind='task')
         observer = self.spawn(*self.receive_args('root'))
         stream, started = self.accept('root')
@@ -1698,9 +1751,112 @@ class Receive(unittest.TestCase):
                          {'terminal_written': True, 'input_after_prompt': ''})
         self.action(stream, exit_fixture=True)
         output, _ = self.finish(observer, ok=False)
-        self.assertIn('unsupported for a session without a registered parent', output)
+        self.assertIn('unsupported for a session without a coordinator', output)
         self.assertEqual(self.native_requests(), [])
         self.shutdown_idle_database_owner('root fixture did not exit naturally')
+
+    def test_successor_answers_a_read_native_question_on_the_original_active_attempt(self):
+        self.coord('connect', 'operator', '', json.dumps(['/usr/bin/true']))
+        observer, stream, started = self.start_question_player()
+        self.coord('attach', 'successor', 'codex', 'successor-native',
+                   json.dumps(['/usr/bin/true']))
+        self.coord('role', 'successor', 'principal-conductor')
+        event = {'type': 'extension_ui_request', 'id': 'question before succession λ',
+                 'method': 'input', 'title': 'Keep the complete question.\nSecond line Ω.'}
+        request = self.native_question(stream, event)
+        self.eventually(lambda: read_recorded(self.db, request['id']),
+                        'predecessor did not read the original question')
+        original_question = self.coord('delivery', request['id'])
+        self.assertEqual(json.loads(original_question['body'])['nativeRequest'], event)
+        self.assertEqual(request['parent'], 'root')
+        self.assertIsNone(request['reply'])
+        with sqlite3.connect(self.db) as database:
+            original = database.execute('SELECT id,sender,recipient,kind,body FROM messages '
+                                        'WHERE id=?', (request['id'],)).fetchone()
+            original_reads = database.execute('SELECT * FROM message_reads WHERE message=? '
+                                             'ORDER BY attempt,recipient', (request['id'],)).fetchall()
+            attempt = database.execute("SELECT id,directory FROM executions WHERE session='parent'").fetchone()
+
+        self.coord('stop', 'root', 'predecessor-ended', 'The successor takes over coordination.')
+        self.coord('as', 'successor', 'succeed', '--from', 'root')
+        self.assertEqual(self.coord('session', 'parent')['parent'], 'root')
+        self.assertEqual(self.coord('session', 'parent')['taskCompletion']['coordinator'], 'successor')
+        forwarded_id = 'forward:root:successor:' + request['id']
+        forwarded = self.coord('delivery', forwarded_id)
+        self.assertEqual((forwarded['sender'], forwarded['recipient'], forwarded['kind']),
+                         ('parent', 'successor', 'forwarded-input'))
+        self.assertIn(original_question['body'], forwarded['body'])
+        read = self.coord('as', 'successor', 'read', forwarded_id)
+        self.assertEqual(read[0]['delivery']['body'], forwarded['body'])
+        self.assertTrue(read_recorded(self.db, forwarded_id))
+
+        answer = {'value': 'Continue the original attempt.\nKeep the complete answer λU0001f642.'}
+        result = self.coord('as', 'successor', 'native-reply', '--to', 'parent',
+                            '--text', json.dumps(answer, ensure_ascii=False))
+        self.assertEqual(result[0]['status'], 'completed')
+        self.assertEqual(json.loads(result[0]['stdout'])['status'], 'stdin-written')
+        self.action(stream, read_native_reply=True)
+        self.assertEqual(json.loads(stream.readline()), {'native_reply': {
+            'type': 'extension_ui_response', 'id': event['id'], **answer}})
+        answered = self.native_requests()[0]
+        self.assertEqual((answered['id'], answered['attempt'], answered['parent'], answered['written']),
+                         (request['id'], request['attempt'], 'root', 1))
+
+        # An identical native frame keeps its original request and question.
+        self.native_question(stream, event)
+        barrier = 'original frame replay observed after succession'
+        self.action(stream, progress=barrier)
+        self.assertEqual(json.loads(stream.readline()), {'progress_written': barrier})
+        self.eventually(lambda: barrier in self.output_log('parent').read_text(),
+                        'observer did not consume the replayed native frame')
+        self.assertEqual(self.native_requests(), [answered])
+
+        fresh_event = {'type': 'extension_ui_request', 'id': 'question after succession Ω',
+                       'method': 'input', 'title': 'New question for the successor.\nKeep this line.'}
+        fresh = self.native_question(stream, fresh_event)
+        self.assertEqual((fresh['parent'], fresh['attempt']), ('successor', request['attempt']))
+        fresh_question = self.coord('delivery', fresh['id'])
+        self.assertEqual(fresh_question['recipient'], 'successor')
+        self.assertEqual(json.loads(fresh_question['body'])['nativeRequest'], fresh_event)
+        self.coord('as', 'successor', 'read', fresh['id'])
+        fresh_answer = {'value': 'The successor answers the next question.\nΩ'}
+        self.coord('as', 'successor', 'native-reply', '--to', 'parent',
+                   '--text', json.dumps(fresh_answer, ensure_ascii=False))
+        self.action(stream, read_native_reply=True)
+        self.assertEqual(json.loads(stream.readline()), {'native_reply': {
+            'type': 'extension_ui_response', 'id': fresh_event['id'], **fresh_answer}})
+        answered_requests = self.native_requests()
+        self.native_question(stream, fresh_event)
+        barrier = 'new frame replay observed by the same native'
+        self.action(stream, progress=barrier)
+        self.assertEqual(json.loads(stream.readline()), {'progress_written': barrier})
+        self.eventually(lambda: barrier in self.output_log('parent').read_text(),
+                        'observer did not consume the new frame replay')
+        self.assertEqual(self.native_requests(), answered_requests)
+        with sqlite3.connect(self.db) as database:
+            self.assertEqual(database.execute('SELECT id,sender,recipient,kind,body FROM messages '
+                                              'WHERE id=?', (request['id'],)).fetchone(), original)
+            self.assertEqual(database.execute('SELECT * FROM message_reads WHERE message=? '
+                                              'ORDER BY attempt,recipient', (request['id'],)).fetchall(),
+                             original_reads)
+            self.assertEqual(database.execute("SELECT id,directory FROM executions WHERE session='parent'").fetchone(),
+                             attempt)
+            self.assertEqual(database.execute("SELECT id FROM messages WHERE kind='question' "
+                                              "AND sender='parent' ORDER BY seq").fetchall(),
+                             [(request['id'],), (fresh['id'],)])
+        self.assertIsNone(observer.poll())
+        self.assert_no_start()
+        self.assertTrue(any(process['pid'] == started['pid'] and process['ppid'] == started['ppid']
+                            for process in self.owned_processes()))
+        self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
+        body = 'The original native completed after both successor replies.'
+        self.action(stream, body=body, hold_exit=True, report_input=True)
+        self.assertEqual(json.loads(stream.readline()),
+                         {'terminal_written': True, 'input_after_prompt': ''})
+        self.action(stream, exit_fixture=True)
+        self.finish(observer)
+        self.shutdown_idle_database_owner('native question succession fixture did not exit naturally')
+        self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')], [body])
 
     def test_native_question_survives_observer_loss_and_matches_one_reply(self):
         observer, stream, started = self.start_question_player()
@@ -5192,6 +5348,47 @@ class Receive(unittest.TestCase):
         self.assertTrue(read_recorded(self.db, 'assignment', 'parent'))
         self.assertTrue(read_recorded(self.db, 'note', 'parent'))
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
+        self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
+
+    def start_dsh_task(self, body='Complete the input.'):
+        self.coord('connect', 'root', 'native-root', json.dumps([str(self.fixture), 'parent_endpoint']))
+        self.player(harness='dsh')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config.update(record_launches=True, read_root=False)
+        config_path.write_text(json.dumps(config))
+        self.prepare_input('first', 'parent', body, kind='task')
+        self.connect('parent')
+        receiver = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept_child(receiver, 'parent', 'receiver exited before the dsh stub started')
+        return receiver, control, started
+
+    def test_dsh_launch_resolves_the_worker_bridge_and_mounts_the_input_plugin(self):
+        """Every DSH launch resolves the packaged worker bridge and mounts the
+        Baton input plugin beside it (#1215). The bridge lookup runs before
+        spawn, so a missing file stops the launch."""
+        receiver, control, started = self.start_dsh_task()
+        scripts = (ROOT / 'bend2/scripts').resolve()
+        self.assertEqual(started['dshBridge'], str(scripts / 'dsh-worker.mjs'))
+        tools = started['dshTools']
+        self.assertIn("    - id: baton-hooks\n      name: '" + str(scripts / 'dsh-baton-hooks.mjs') + "'\n", tools)
+        self.assertLess(tools.index('- id: baton-hooks'), tools.index('- id: baton-worker'))
+        self.action(control, body='The DSH seat started with its bridge.', read=['first'], ack=False, complete_task=False)
+        self.assertEqual(control.readline(), b'')
+        self.finish(receiver)
+
+    def test_dsh_prompt_reads_are_recorded_at_the_session_frame(self):
+        """The DSH session frame is the native identity: the reads for the
+        input in its prompt are recorded then, so a turn that has started no
+        longer shows that input as owed (#1094)."""
+        receiver, control, started = self.start_dsh_task()
+        self.assertIn('[id: first]', started['prompt'])
+        self.eventually(lambda: read_recorded(self.db, 'first', 'parent'),
+                        'the prompt read was not recorded at the DSH session frame')
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+        self.action(control, body='The DSH turn completed.', read=[], ack=False, complete_task=False)
+        self.assertEqual(control.readline(), b'')
+        self.finish(receiver)
         self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
 
     def test_direct_receive_behind_a_live_child_starts_no_second_turn(self):

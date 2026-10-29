@@ -96,14 +96,15 @@ invoke that parent's registered endpoint after the transaction commits, the same
 path `report` takes. For OMP, the supervisor sends pending guidance as native
 `steer` frames on a response, message completion or tool event. `receive` admits
 OMP and Codex workers and composes pending input into the next native turn it
-starts for those sessions. Muse and Claude Code workers run under the direct
-`turn` command, whose task file supplies their next turn. Each worker's pending
+starts for those sessions. Muse and Claude Code workers receive complete task
+input from the database through their recorded receivers. Each worker's pending
 input remains readable with `inbox`. The parent sends guidance, requests further
 work and reviews completed work for landing. After the native process exits,
 `receive` releases session ownership and checks for new pending input.
-`stop` ends a retained OMP or Codex session and prevents queued execution.
-`force-stop` explicitly signals the same still-owned attempt. Active direct
-`turn` execution returns an unsupported-stop refusal. The retained observer
+`stop` ends a retained OMP, Codex, Muse, Claude Code, DSH or Antigravity session
+and prevents queued execution. `force-stop` explicitly signals the same
+still-owned attempt. Active direct `turn` execution without a retained keeper
+directory returns an unsupported-stop refusal. The retained observer
 records actual exit and delivers a stop report to the parent while preserving
 output, receipts and workspace. Killing only a `receive` observer starts
 observation recovery through the keeper.

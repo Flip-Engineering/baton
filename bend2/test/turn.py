@@ -233,6 +233,8 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
     def test_omp_prompt_session_route_and_terminal_report(self):
         self.register('omp-worker','root','omp','requested-model','high',str(self.cwd),'omp-branch','base')
         self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
+mode=json.loads(sys.stdin.readline())
+assert mode=={'type':'set_interrupt_mode','id':'baton:interrupt-mode','mode':'wait'},mode
 request=json.loads(sys.stdin.readline())
 assert request['type']=='set_event_filter' and request['id']=='baton:filter' and request['messageUpdates']=='delta' and 'tool_execution_update' not in request['events'] and 'message_end' in request['events'],request
 state=json.loads(sys.stdin.readline())
@@ -275,10 +277,18 @@ assert sys.stdin.read()==''
         args=json.loads((self.cwd/'argv.json').read_text())
         self.assertEqual(args[args.index('--mode')+1],'rpc')
         self.assertEqual(args[args.index('--session-dir')+1],str(self.db)+'.sessions')
+        self.assertEqual(args[args.index('--extension')+1],str(ROOT/'bend2/scripts/omp-completion.mjs'))
         self.call('turn','omp-worker','omp-turn-2',str(self.player),'requested-model','high',str(self.cwd),str(self.task),str(self.cwd/'second.jsonl'),'omp-native')
         resumed=json.loads((self.cwd/'argv.json').read_text())
         self.assertEqual(resumed[resumed.index('--resume')+1],'omp-native')
         self.assertEqual(resumed[resumed.index('--session-dir')+1],args[args.index('--session-dir')+1])
+        self.assertEqual(resumed[resumed.index('--extension')+1],args[args.index('--extension')+1])
+
+    def test_omp_completion_extension_registers_and_calls_baton_tool(self):
+        result = subprocess.run(['node', str(ROOT/'bend2/test/omp-completion-extension.mjs')],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('OMP session_stop gate and completion tool invoke Baton:ok', result.stdout)
 
     def test_omp_frame_retention_uses_exact_json_type(self):
         self.register('omp-worker','root','omp','model','low',str(self.cwd),'omp-branch','base')
@@ -299,6 +309,8 @@ assert sys.stdin.read()==''
             {'role':'assistant','content':[{'type':'text','text':final_text}]}]})
         (self.cwd/'events.jsonl').write_text('\n'.join(retained+prefixes+[terminal])+'\n')
         self.player.write_text('#!'+sys.executable+'\n'+'''import json,pathlib,sys
+mode=json.loads(sys.stdin.readline())
+assert mode['type']=='set_interrupt_mode' and mode['mode']=='wait',mode
 sys.stdin.readline()
 state=json.loads(sys.stdin.readline())
 sys.stdin.readline()
@@ -346,6 +358,8 @@ assert sys.stdin.read()==''
         endpoint = json.dumps([sys.executable, str(receiver), str(self.db), str(received)])
         self.call('attach','root','native-fixture','root-session',endpoint)
         self.player.write_text('#!'+sys.executable+'\n'+'''import json,pathlib,sys
+mode=json.loads(sys.stdin.readline())
+assert mode['type']=='set_interrupt_mode' and mode['mode']=='wait',mode
 sys.stdin.readline()
 state=json.loads(sys.stdin.readline())
 sys.stdin.readline()
@@ -379,11 +393,14 @@ assert sys.stdin.read()==''
         body='Change focus now: report the guidance label indigo λ.'
         self.call('message','guidance-1','root','omp-worker','guidance',body)
         self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib,sqlite3,subprocess
+mode=json.loads(sys.stdin.readline())
+assert mode['type']=='set_interrupt_mode' and mode['mode']=='wait',mode
 json.loads(sys.stdin.readline())
 state=json.loads(sys.stdin.readline())
 prompt=json.loads(sys.stdin.readline())
 assert prompt['type']=='prompt'
 print(json.dumps({'type':'response','command':'get_state','success':True,'id':state['id'],'data':{'sessionId':'omp-guided','model':{'provider':'deepseek','id':'deepseek-flash'}}}),flush=True)
+print(json.dumps({'type':'agent_end','isTerminal':False,'messages':[]}),flush=True)
 guide=json.loads(sys.stdin.readline())
 assert guide['type']=='steer'
 db=sys.argv[sys.argv.index('--session-dir')+1].removesuffix('.sessions')
@@ -406,6 +423,8 @@ assert sys.stdin.read()==''
     def test_omp_delta_filter_echo_activates_the_projection(self):
         self.register('omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
         self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
+mode=json.loads(sys.stdin.readline())
+assert mode['type']=='set_interrupt_mode' and mode['mode']=='wait',mode
 request=json.loads(sys.stdin.readline())
 events=request['events']
 assert request['type']=='set_event_filter' and request['id']=='baton:filter' and request['messageUpdates']=='delta' and 'tool_execution_update' not in events and 'message_end' in events,request
@@ -442,6 +461,8 @@ pathlib.Path('emitted.jsonl').write_text(chr(10).join(emitted)+chr(10))
         self.register('omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
         self.call('logs','omp-worker','diagnostic')
         self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys
+mode=json.loads(sys.stdin.readline())
+assert mode['type']=='set_interrupt_mode' and mode['mode']=='wait',mode
 request=json.loads(sys.stdin.readline())
 assert request=={'type':'set_event_filter','id':'baton:filter','events':None,'messageUpdates':'full'},request
 print(json.dumps({'type':'response','id':'baton:filter','command':'set_event_filter','success':True,'data':{'events':None,'messageUpdates':'full'}}),flush=True)
@@ -463,6 +484,8 @@ print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assi
     def test_omp_filter_refusal_is_recorded_and_turn_completes(self):
         self.register('omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
         self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys
+mode=json.loads(sys.stdin.readline())
+assert mode['type']=='set_interrupt_mode' and mode['mode']=='wait',mode
 request=json.loads(sys.stdin.readline())
 assert request['type']=='set_event_filter'
 print(json.dumps({'type':'response','id':'baton:filter','command':'set_event_filter','success':False,'error':'Unknown request type set_event_filter'}),flush=True)
@@ -488,6 +511,8 @@ print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assi
         # false and no id (issue #769). The refusal still names the command.
         self.register('omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
         self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys
+mode=json.loads(sys.stdin.readline())
+assert mode['type']=='set_interrupt_mode' and mode['mode']=='wait',mode
 request=json.loads(sys.stdin.readline())
 assert request['type']=='set_event_filter'
 print(json.dumps({'type':'response','command':'set_event_filter','success':False,'error':'Unknown command: set_event_filter'}),flush=True)
@@ -518,6 +543,8 @@ print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assi
         }
         expected = {'false-success':'refused','missing-events':'unconfirmed','restricted-events':'unconfirmed'}
         self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
+mode=json.loads(sys.stdin.readline())
+assert mode['type']=='set_interrupt_mode' and mode['mode']=='wait',mode
 request=json.loads(sys.stdin.readline())
 assert request['type']=='set_event_filter' and request['id']=='baton:filter' and request['messageUpdates']=='delta' and 'tool_execution_update' not in request['events'] and 'message_end' in request['events'],request
 print(json.dumps(json.loads(pathlib.Path('scenario.json').read_text())),flush=True)
@@ -705,6 +732,8 @@ args=sys.argv
 if '--resume' in args:
     sys.stderr.write('Error: Session "%s" not found.\\n' % args[args.index('--resume')+1])
     raise SystemExit(1)
+mode=json.loads(sys.stdin.readline())
+assert mode['type']=='set_interrupt_mode' and mode['mode']=='wait',mode
 json.loads(sys.stdin.readline())
 state=json.loads(sys.stdin.readline())
 prompt=json.loads(sys.stdin.readline())['message']

@@ -54,7 +54,7 @@ def control_sql() -> String:
   "coalesce((SELECT max(m.seq) FROM messages m WHERE m.recipient=s.id AND (m.kind IN ('task','guidance','recovery','task-assignment','task-continuation','completion-confirmed','question') OR EXISTS(SELECT 1 FROM session_roles r WHERE r.session=m.sender AND r.role='operator'))),0)"
 
 def row_sql() -> String:
-  "hex(s.native)||char(9)||hex(s.parent)||char(9)||EXISTS(SELECT 1 FROM session_stops WHERE session=s.id)||char(9)||(SELECT count(*) FROM messages WHERE recipient=s.id AND " ++ C.owed_sql("messages") ++ ")||char(9)||"
+  "hex(s.native)||char(9)||hex(s.parent)||char(9)||EXISTS(SELECT 1 FROM session_stops WHERE session=s.id)||char(9)||(SELECT count(*) FROM messages WHERE recipient=s.id AND " ++ C.owed_sql("messages") ++ " AND NOT " ++ C.task_closed_sql("s.id") ++ ")||char(9)||"
   ++ input_sql() ++ "||char(9)||(SELECT count(*) FROM messages WHERE recipient=s.id AND " ++ C.read_sql("messages") ++ ")||char(9)||" ++ control_sql()
   ++ "||char(9)||hex(coalesce((SELECT id FROM messages WHERE recipient=s.id AND " ++ C.owed_sql("messages") ++ " ORDER BY seq LIMIT 1),''))||char(9)"
 
@@ -106,7 +106,7 @@ def claimed(+db: String, +session: String, +thread: String) -> Outcome.Checked(B
     Outcome.Checked.pure(Bool,String.eq(result,"1\n"))
 
 def active_sql(+session: String, +thread: String) -> String:
-  "s.id=" ++ C.q(session) ++ " AND s.native=" ++ C.q(thread) ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=s.id) AND EXISTS(SELECT 1 FROM messages WHERE recipient=s.id AND " ++ C.owed_sql("messages") ++ ")"
+  "s.id=" ++ C.q(session) ++ " AND s.native=" ++ C.q(thread) ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=s.id) AND NOT " ++ C.task_closed_sql("s.id") ++ " AND EXISTS(SELECT 1 FROM messages WHERE recipient=s.id AND " ++ C.owed_sql("messages") ++ ")"
 
 def claim_sql(+session: String, +thread: String) -> String:
   "BEGIN IMMEDIATE;" ++ schema_sql()

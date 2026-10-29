@@ -73,6 +73,16 @@ def fixture():
     raise AssertionError('Set BATON2_STOP_HOOK_FIXTURE to the queue-built fixture.')
 
 
+def prompt_fixture(stop_hook_binary):
+    # The prompt statements come from a second entry built beside the stop-hook entry.
+    # A tree whose production modules lack them has no such binary; the tests that need it then fail.
+    binary = os.environ.get('BATON2_PROMPT_STATUS_FIXTURE') or str(pathlib.Path(stop_hook_binary).with_name(
+        pathlib.Path(stop_hook_binary).name.replace('stop-hook-entry', 'prompt-status-entry')))
+    if not pathlib.Path(binary).is_file():
+        raise AssertionError('The prompt-status-entry fixture is not built: ' + binary)
+    return binary
+
+
 class StopHook(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -123,12 +133,130 @@ class StopHook(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout) if result.stdout.strip() else None
 
+    def agy_hook(self, payload, env=None):
+        result = subprocess.run([self.binary, '--stop-hook'], input=json.dumps(payload),
+                                capture_output=True, text=True, env=env if env is not None else self.env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return json.loads(result.stdout) if result.stdout.strip() else None
+
     def test_b1_input_arriving_mid_turn_is_handed_to_the_turn(self):
         self.owe()
         decision = self.hook()
         self.assertEqual(decision['decision'], 'block')
         self.assertIn('Baton holds 1 unread inputs for worker', decision['reason'])
-        self.assertIn('[id: message:coordinator:mid-turn]:\nNew detail.\nThe complete input is available in this turn.', decision['reason'])
+        self.assertIn('[id: message:coordinator:mid-turn]:\nNew detail.\nUse inbox or read to record a complete read.', decision['reason'])
+
+    def test_agy_pre_invocation_injects_complete_messages_of_every_kind(self):
+        kinds = ('task', 'task-assignment', 'task-continuation', 'guidance',
+                 'recovery', 'report', 'question', 'completion-request',
+                 'completion-confirmed', 'other-kind')
+        for index, kind in enumerate(kinds):
+            self.owe(ident='agy-' + kind, kind=kind, body='Complete body for ' + kind)
+        large_body = 'AGY complete λ🙂.\n' * 7000 + 'AGY-BODY-END'
+        self.owe(ident='agy-large', kind='report', body=large_body)
+        reads_before = self.db.execute('SELECT count(*) FROM message_reads').fetchone()[0]
+        result = self.agy_hook({'invocationNum': 3, 'initialNumSteps': 7})
+        self.assertEqual(len(result['injectSteps']), 1)
+        text = result['injectSteps'][0]['userMessage']
+        for kind in kinds:
+            self.assertIn('[id: agy-' + kind + ']:\nComplete body for ' + kind, text)
+        self.assertIn('[id: agy-large]:\n' + large_body, text)
+        self.assertIn("Review the work against coordinator's assignment and the supplied evidence.", text)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM message_reads').fetchone()[0], reads_before)
+
+    def test_agy_stop_continues_open_assignment_until_the_conductor_confirms(self):
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('assignment','coordinator','worker','task-assignment','Do the work.')")
+        self.read('assignment')
+        stop = {'executionNum': 1, 'terminationReason': 'model_stop', 'error': '',
+                'fullyIdle': True, 'conversationId': 'agy-session', 'workspacePaths': [],
+                'transcriptPath': '', 'artifactDirectoryPath': '', 'modelName': 'agy-test'}
+        blocked = self.agy_hook(stop)
+        self.assertEqual(blocked['decision'], 'continue')
+        self.assertIn('completion-request --text SUMMARY', blocked['reason'])
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('request','worker','coordinator','completion-request','Finished.')")
+        pending = self.agy_hook(stop)
+        self.assertEqual(pending['decision'], 'continue')
+        self.assertIn('Completion request request is awaiting the conductor decision', pending['reason'])
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('confirm','coordinator','worker','completion-confirmed','request')")
+        self.read('confirm')
+        self.assertEqual(self.agy_hook(stop), {'decision': 'allow'})
+
+    def test_agy_stop_delivers_an_unread_confirmation_and_lets_the_finished_assignment_end(self):
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('assignment','coordinator','worker','task-assignment','Do the work.')")
+        self.read('assignment')
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('request','worker','coordinator','completion-request','Finished.')")
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('confirm','coordinator','worker','completion-confirmed','request')")
+        stop = {'executionNum': 1, 'terminationReason': 'model_stop', 'error': '',
+                'fullyIdle': True, 'conversationId': 'agy-session', 'workspacePaths': [],
+                'transcriptPath': '', 'artifactDirectoryPath': '', 'modelName': 'agy-test'}
+        delivered = self.agy_hook(stop)
+        self.assertEqual(delivered['decision'], 'continue')
+        self.assertIn('[id: confirm]:\nrequest', delivered['reason'])
+        self.assertIn('assignment is finished', delivered['reason'])
+        self.assertNotIn('completion-request --text SUMMARY', delivered['reason'])
+        self.read('confirm')
+        self.assertEqual(self.agy_hook(stop), {'decision': 'allow'})
+
+    def test_agy_stop_keeps_the_assignment_open_for_a_stale_confirmation_after_later_guidance(self):
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('assignment','coordinator','worker','task-assignment','Do the work.')")
+        self.read('assignment')
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('request','worker','coordinator','completion-request','Finished.')")
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('confirm','coordinator','worker','completion-confirmed','request')")
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('more','coordinator','worker','guidance','Also cover the second case.')")
+        self.read('more')
+        stop = {'executionNum': 1, 'terminationReason': 'model_stop', 'error': '',
+                'fullyIdle': True, 'conversationId': 'agy-session', 'workspacePaths': [],
+                'transcriptPath': '', 'artifactDirectoryPath': '', 'modelName': 'agy-test'}
+        delivered = self.agy_hook(stop)
+        self.assertEqual(delivered['decision'], 'continue')
+        self.assertIn('[id: confirm]:\nrequest', delivered['reason'])
+        self.assertNotIn('assignment is finished', delivered['reason'])
+        self.assertIn('completion-request --text SUMMARY', delivered['reason'])
+        self.read('confirm')
+        reopened = self.agy_hook(stop)
+        self.assertEqual(reopened['decision'], 'continue')
+        self.assertIn('The current assignment remains open', reopened['reason'])
+
+    def test_agy_stop_does_not_finish_on_a_confirmation_without_a_matching_request(self):
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('assignment','coordinator','worker','task-assignment','Do the work.')")
+        self.read('assignment')
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('stray','coordinator','worker','completion-confirmed','no-such-request')")
+        stop = {'executionNum': 1, 'terminationReason': 'model_stop', 'error': '',
+                'fullyIdle': True, 'conversationId': 'agy-session', 'workspacePaths': [],
+                'transcriptPath': '', 'artifactDirectoryPath': '', 'modelName': 'agy-test'}
+        delivered = self.agy_hook(stop)
+        self.assertEqual(delivered['decision'], 'continue')
+        self.assertIn('[id: stray]:\nno-such-request', delivered['reason'])
+        self.assertNotIn('assignment is finished', delivered['reason'])
+        self.assertIn('completion-request --text SUMMARY', delivered['reason'])
+
+    def test_agy_stop_does_not_finish_a_session_without_an_assignment_on_a_stray_confirmation(self):
+        self.db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('stray','coordinator','worker','completion-confirmed','no-such-request')")
+        stop = {'executionNum': 1, 'terminationReason': 'model_stop', 'error': '',
+                'fullyIdle': True, 'conversationId': 'agy-session', 'workspacePaths': [],
+                'transcriptPath': '', 'artifactDirectoryPath': '', 'modelName': 'agy-test'}
+        delivered = self.agy_hook(stop)
+        self.assertNotIn('assignment is finished', delivered['reason'])
+
+    def test_agy_stop_reports_database_query_errors(self):
+        database = self.home / 'incomplete.db'
+        with sqlite3.connect(database) as db:
+            db.executescript('''
+                CREATE TABLE sessions(id TEXT PRIMARY KEY);
+                CREATE TABLE session_stops(session TEXT PRIMARY KEY);
+                CREATE TABLE messages(id TEXT, recipient TEXT, sender TEXT, kind TEXT, body TEXT, seq INTEGER);
+                CREATE TABLE message_reads(message TEXT, recipient TEXT);
+                INSERT INTO sessions(id) VALUES('worker');
+                INSERT INTO messages(id,recipient,sender,kind,body,seq)
+                    VALUES('assignment','worker','coordinator','task-assignment','Do the work.',1);
+                INSERT INTO message_reads(message,recipient) VALUES('assignment','worker');
+            ''')
+        result = subprocess.run([self.binary, '--stop-hook'],
+            input=json.dumps({'executionNum': 1, 'terminationReason': 'model_stop', 'fullyIdle': True}),
+            capture_output=True, text=True, env=dict(self.env, BATON_DATABASE=str(database)))
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('no such column: task_parent.parent', result.stderr)
+        self.assertNotIn('"decision":"allow"', result.stdout)
 
     def decision_sql(self):
         result = subprocess.run([self.binary, 'decision-sql'], capture_output=True, text=True)
@@ -208,9 +336,12 @@ class StopHook(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if k not in ('BATON_SESSION', 'BATON_DATABASE')}
         self.assertIsNone(self.hook(env=env))
 
-    def settings_command(self):
+    def arguments_command(self, event):
         settings = json.loads(self.arguments[self.arguments.index('--settings') + 1])
-        return settings['hooks']['Stop'][0]['hooks'][0]['command']
+        return settings['hooks'][event][0]['hooks'][0]['command']
+
+    def settings_command(self):
+        return self.arguments_command('Stop')
 
     def test_launch_arguments_name_the_stop_hook(self):
         self.assertEqual(self.arguments[0], 'claude')
@@ -249,6 +380,7 @@ class StopHook(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         contexts = json.loads(result.stdout)
         self.assertEqual(contexts, [{'hookEventName': 'PostToolUse', 'additionalContext':
+            'If this input is shown as a saved file with a preview, read the file completely before continuing.\n'
             'Baton input for this turn. Handle the following complete messages:\nMessage (guidance) from coordinator [id: mid-loop]:\nNew complete body.\nλ🙂\n\nThe complete input is available in this turn.'}])
         self.assertIsNone(self.db.execute("SELECT receipt FROM messages WHERE id='mid-loop'").fetchone()[0])
         self.assertEqual(self.db.execute("SELECT message FROM message_reads ORDER BY message").fetchall(), [('dispatch:assignment',)])
@@ -265,10 +397,16 @@ class StopHook(unittest.TestCase):
         self.assertEqual(self.db.execute("SELECT body FROM messages WHERE id='message:coordinator:mid-turn'").fetchone()[0], body)
         self.assertEqual(self.db.execute("SELECT message FROM message_reads ORDER BY message").fetchall(), [('dispatch:assignment',)])
 
-    def test_admitted_tool_loop_records_a_read_only_after_supported_read(self):
+    def test_dsh_tool_hook_delivers_and_records_every_input_kind(self):
+        self.admitted_tool_hook('dsh')
+
+    def admitted_tool_hook(self, harness):
         directory = self.home / 'attempt'
+        self.db.execute("UPDATE sessions SET harness=? WHERE id='worker'", (harness,))
         self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
         self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained',?,'running')", (str(directory),))
+        kinds = ('task', 'task-assignment', 'guidance', 'report', 'question',
+                 'completion-request', 'completion-confirmed', 'recovery')
         script = self.home / 'admitted.py'
         script.write_text(r'''import json, os, sqlite3, subprocess, sys
 config = json.loads(sys.argv[1])
@@ -278,17 +416,20 @@ results = []
 for tool in ('first', 'second', 'third'):
     if tool == 'second':
         with sqlite3.connect(config['db']) as db:
-            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('admitted-message','coordinator','worker','guidance','Admitted full body.')")
+            for kind in config['kinds']:
+                db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)",
+                           ('admitted-' + kind, 'coordinator', 'worker', kind, 'Complete body for ' + kind + '.'))
     result = subprocess.run(['/bin/sh','-c',command], input=json.dumps({'hook_event_name':'PostToolUse','tool_name':'Bash'}), env=env, capture_output=True, text=True)
     if result.returncode:
         raise RuntimeError(result.stdout + result.stderr)
     results.append(json.loads(result.stdout) if result.stdout.strip() else None)
     if tool == 'second':
         with sqlite3.connect(config['db']) as db:
-            assert db.execute("SELECT count(*) FROM message_reads WHERE message='admitted-message'").fetchone()[0] == 1
+            assert db.execute("SELECT count(*) FROM message_reads WHERE attempt='attempt-1' AND recipient='worker'").fetchone()[0] == len(config['kinds'])
 print(json.dumps(results), flush=True)
 ''')
-        config = json.dumps({'db': self.path, 'directory': str(directory), 'command': self.settings_command()})
+        config = json.dumps({'db': self.path, 'directory': str(directory), 'command': self.settings_command(),
+                             'kinds': kinds})
         env = dict(self.env, BATON_STOP_HOOK=self.binary)
         try:
             result = subprocess.run([self.binary, 'admit', self.path, str(directory), str(self.home),
@@ -298,13 +439,171 @@ print(json.dumps(results), flush=True)
             self.assertEqual(outputs[-1], 'exit 0', result.stdout + result.stderr)
             first, second, third = json.loads(outputs[0])
             self.assertIsNone(first)
-            self.assertIn('Admitted full body.', second['hookSpecificOutput']['additionalContext'])
+            context = second['hookSpecificOutput']['additionalContext']
+            self.assertNotIn('If this input is shown as a saved file with a preview', context)
+            for kind in kinds:
+                self.assertIn('Message (' + kind + ') from coordinator [id: admitted-' + kind + ']:\n'
+                              'Complete body for ' + kind + '.', context)
             self.assertIsNone(third)
+            rows = self.db.execute("SELECT attempt,message,recipient,native,identity,handled FROM message_reads WHERE attempt='attempt-1' ORDER BY message").fetchall()
+            self.assertEqual([row[:4] for row in rows],
+                             [('attempt-1', 'admitted-' + kind, 'worker', 'native-1') for kind in sorted(kinds)])
+            self.assertTrue(all(row[4] and row[5] is None for row in rows))
+            self.assertEqual(self.db.execute("SELECT count(*) FROM messages WHERE receipt IS NOT NULL AND id LIKE 'admitted-%'").fetchone()[0], 0)
+        finally:
+            subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True)
+
+    def test_admitted_agy_invocation_records_a_read_after_injection(self):
+        directory = self.home / 'attempt'
+        self.db.execute("UPDATE sessions SET harness='antigravity',native='native-1' WHERE id='worker'")
+        self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained',?,'running')", (str(directory),))
+        script = self.home / 'admitted.py'
+        script.write_text(r'''import json, os, sqlite3, subprocess, sys
+config = json.loads(sys.argv[1])
+env = dict(os.environ, BATON_DATABASE=config['db'], BATON_SESSION='worker', BATON_ATTEMPT_DIRECTORY=config['directory'])
+results = []
+for invocation in ('first', 'second', 'third'):
+    if invocation == 'second':
+        with sqlite3.connect(config['db']) as db:
+            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('admitted-message','coordinator','worker','guidance','Admitted full body.')")
+    result = subprocess.run([config['binary'],'--stop-hook'], input=json.dumps({'invocationNum':2,'initialNumSteps':4}), env=env, capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError(result.stdout + result.stderr)
+    results.append(json.loads(result.stdout) if result.stdout.strip() else None)
+    if invocation == 'second':
+        with sqlite3.connect(config['db']) as db:
+            assert db.execute("SELECT count(*) FROM message_reads WHERE message='admitted-message'").fetchone()[0] == 1
+print(json.dumps(results), flush=True)
+''')
+        config = json.dumps({'db': self.path, 'directory': str(directory), 'binary': self.binary})
+        env = dict(self.env, BATON_STOP_HOOK=self.binary)
+        try:
+            result = subprocess.run([self.binary, 'admit', self.path, str(directory), str(self.home),
+                'python3', '-I', str(script), config], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            outputs = result.stdout.splitlines()
+            self.assertEqual(outputs[-1], 'exit 0', result.stdout + result.stderr)
+            first, second, third = json.loads(outputs[0])
+            self.assertEqual(first, {'injectSteps': []})
+            self.assertIn('Admitted full body.', second['injectSteps'][0]['userMessage'])
+            self.assertEqual(third, {'injectSteps': []})
             rows = self.db.execute("SELECT attempt,message,recipient,native,identity,handled FROM message_reads WHERE message='admitted-message'").fetchall()
             self.assertEqual([row[:4] for row in rows], [('attempt-1','admitted-message','worker','native-1')])
             self.assertTrue(rows[0][4])
             self.assertIsNone(rows[0][5])
             self.assertIsNone(self.db.execute("SELECT receipt FROM messages WHERE id='admitted-message'").fetchone()[0])
+        finally:
+            subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True)
+
+    def test_muse_post_tool_hook_keeps_legacy_read_behavior(self):
+        self.admitted_tool_hook('muse')
+
+    REVIEW = ("Review the work against coordinator's assignment and the supplied evidence. "
+              "When the assignment is satisfied, use completion-confirmed --to coordinator to end the Player, "
+              "or add --next TEXT to confirm and dispatch its next assignment together. "
+              "When work remains, use guide --to coordinator --text TEXT to state what is missing and direct the remaining work.")
+
+    def test_tool_hook_gives_a_completion_request_with_the_review_instruction(self):
+        self.owe(ident='message:coordinator:request', kind='completion-request', body='Evidence: tests pass.\nλ🙂')
+        context = self.tool_hook()['hookSpecificOutput']['additionalContext']
+        self.assertEqual(context, 'If this input is shown as a saved file with a preview, read the file completely before continuing.\n'
+            'Baton input for this turn. Handle the following complete messages:\n'
+            'Message (completion-request) from coordinator [id: message:coordinator:request]:\nEvidence: tests pass.\nλ🙂\n'
+            + self.REVIEW + '\nThe complete input is available in this turn.')
+
+    def test_stop_block_gives_a_completion_request_with_the_review_instruction(self):
+        self.owe(ident='message:coordinator:request', kind='completion-request', body='Evidence: tests pass.')
+        reason = self.hook()['reason']
+        self.assertIn('[id: message:coordinator:request]:\nEvidence: tests pass.\n' + self.REVIEW + '\nUse inbox or read to record a complete read.', reason)
+
+    def test_other_input_kinds_carry_no_review_instruction(self):
+        for kind in ('guidance', 'report', 'question', 'task', 'completion-confirmed'):
+            self.owe(ident='message:coordinator:' + kind, kind=kind, body='Body of ' + kind + '.')
+        context = self.tool_hook()['hookSpecificOutput']['additionalContext']
+        self.assertNotIn('Review the work', context)
+        self.assertNotIn('Review the work', self.hook()['reason'])
+
+    def prompt(self, session='worker'):
+        cursor = self.db.execute('SELECT coalesce(max(seq),0) FROM messages').fetchone()[0]
+        result = subprocess.run([prompt_fixture(self.binary), 'prompt-selection-sql', session, str(cursor)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return json.loads(self.db.execute(result.stdout).fetchone()[0])
+
+    def test_turn_start_prompt_carries_the_complete_request_and_review_instruction(self):
+        self.owe(ident='message:coordinator:request', kind='completion-request', body='Evidence: tests pass.\nλ🙂')
+        self.owe(ident='message:coordinator:note', kind='report', body='Progress.')
+        selection = self.prompt()
+        self.assertEqual(selection['ids'], ['message:coordinator:request', 'message:coordinator:note'])
+        self.assertEqual(selection['text'].split('\n\n')[0],
+            'Message (completion-request) from coordinator [id: message:coordinator:request]:\nEvidence: tests pass.\nλ🙂\n' + self.REVIEW)
+        self.assertIn('Message (report) from coordinator [id: message:coordinator:note] retained 9 bytes; read the complete body with baton read message:coordinator:note.', selection['text'])
+
+    def test_turn_start_prompt_for_a_dsh_conductor_carries_the_review_instruction(self):
+        self.db.execute("UPDATE sessions SET harness='dsh' WHERE id='worker'")
+        self.owe(ident='message:coordinator:request', kind='completion-request', body='Evidence: tests pass.')
+        self.owe(ident='message:coordinator:note', kind='report', body='Progress.')
+        text = self.prompt()['text']
+        self.assertIn('[id: message:coordinator:request]:\nEvidence: tests pass.\n' + self.REVIEW, text)
+        self.assertIn('[id: message:coordinator:note]:\nProgress.', text)
+
+    def test_turn_start_request_body_and_review_for_each_harness(self):
+        self.db.execute("UPDATE session_roles SET role='conductor' WHERE session='worker'")
+        body = 'Evidence with paragraphs.\n\n' + 'Complete λ🙂 evidence.\n' * 5000 + 'REQUEST-BODY-END'
+        self.owe(ident='message:coordinator:request', kind='completion-request', body=body)
+        for harness in ('claude-code', 'codex', 'omp', 'muse', 'dsh', 'antigravity'):
+            with self.subTest(harness=harness):
+                self.db.execute("UPDATE sessions SET harness=? WHERE id='worker'", (harness,))
+                text = self.prompt()['text']
+                self.assertIn('[id: message:coordinator:request]:\n' + body + '\n' + self.REVIEW, text)
+
+    def test_complete_prompt_with_the_review_instruction_still_records_the_read(self):
+        self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
+        self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained','/attempt','running')")
+        self.owe(ident='message:coordinator:request', kind='completion-request', body='Evidence: tests pass.')
+        selection = self.prompt()
+        cursor = self.db.execute('SELECT max(seq) FROM messages').fetchone()[0]
+        prompt = {'session': 'worker', 'attempt': 'attempt-1', 'direct': False, 'cursor': cursor,
+                  'prompt': 'Instructions.\n' + selection['text'], 'inputMessages': selection['ids']}
+        result = subprocess.run([prompt_fixture(self.binary), 'prompt-record-sql', 'attempt-1', 'native-1', 'identity-1', json.dumps(prompt)],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.db.executescript(result.stdout)
+        self.assertEqual(self.db.execute("SELECT attempt,native FROM message_reads WHERE message='message:coordinator:request'").fetchall(),
+                         [('attempt-1', 'native-1')])
+
+    def test_stop_preview_keeps_input_owed_until_a_complete_read(self):
+        directory = self.home / 'stop-attempt'
+        self.db.execute("UPDATE sessions SET native='native-1' WHERE id='worker'")
+        self.db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('worker','attempt-1','retained',?,'running')", (str(directory),))
+        script = self.home / 'stopped.py'
+        script.write_text(r"""import json, os, sqlite3, subprocess, sys
+config = json.loads(sys.argv[1])
+env = dict(os.environ, BATON_DATABASE=config['db'], BATON_SESSION='worker', BATON_ATTEMPT_DIRECTORY=config['directory'])
+with sqlite3.connect(config['db']) as db:
+    db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('stop-delivered','coordinator','worker','guidance','Delivered at Stop.')")
+decisions = []
+for _ in range(2):
+    result = subprocess.run(['/bin/sh','-c',config['command']], input=json.dumps({'hook_event_name':'Stop','stop_hook_active':False}), env=env, capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError(result.stdout + result.stderr)
+    decisions.append(json.loads(result.stdout))
+print(json.dumps(decisions), flush=True)
+""")
+        config = json.dumps({'db': self.path, 'directory': str(directory),
+            'command': self.arguments_command('Stop')})
+        env = dict(self.env, BATON_STOP_HOOK=self.binary)
+        try:
+            result = subprocess.run([self.binary, 'admit', self.path, str(directory), str(self.home),
+                'python3', '-I', str(script), config], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            outputs = result.stdout.splitlines()
+            self.assertEqual(outputs[-1], 'exit 0', result.stdout + result.stderr)
+            first, second = json.loads(outputs[0])
+            self.assertIn('Delivered at Stop.', first['reason'])
+            self.assertIn('Delivered at Stop.', second['reason'])
+            self.assertIn('Baton holds', second['reason'])
+            rows = self.db.execute("SELECT attempt,recipient,native FROM message_reads WHERE message='stop-delivered'").fetchall()
+            self.assertEqual(rows, [])
         finally:
             subprocess.run([self.binary, 'shutdown', self.path], env=env, capture_output=True, text=True)
 
@@ -360,6 +659,14 @@ print(json.dumps(results), flush=True)
         script.write_text(r'''import hashlib, json, os, pathlib, sqlite3, subprocess, sys
 config = json.loads(sys.argv[1])
 env = dict(os.environ, BATON_DATABASE=config['database'], BATON_SESSION='worker', BATON_ATTEMPT_DIRECTORY=config['directory'])
+transcript_path = pathlib.Path(config['directory']) / 'native.jsonl'
+transcript_path.parent.mkdir(parents=True, exist_ok=True)
+def frame(value):
+    with transcript_path.open('a', encoding='utf-8') as stream:
+        stream.write(json.dumps(value, ensure_ascii=False) + '\n')
+def event(name, **fields):
+    return json.dumps(dict(hook_event_name=name, session_id='native-1', prompt_id='prompt-1',
+                           transcript_path=str(transcript_path), **fields), ensure_ascii=False)
 def invoke(name, args, data=None):
     result = subprocess.run(args, input=data, env=env, capture_output=True, text=True)
     if config['evidence']:
@@ -376,16 +683,64 @@ with sqlite3.connect(config['database']) as db:
     assert db.execute('SELECT count(*) FROM messages WHERE id=?', (config['id'],)).fetchone()[0] == 0
     db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,'coordinator','worker','guidance',?)",
                (config['id'], pathlib.Path(config['bodyPath']).read_text(encoding='utf-8')))
-hook = invoke('injected-input', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'PostToolUse','tool_name':'Bash'}))
+frame({'type':'user','sessionId':'native-1','promptId':'prompt-1','message':{'role':'user','content':'Start the task.'}})
+hook = invoke('injected-input', [config['binary'],'--stop-hook'], event('PostToolUse', tool_name='Bash'))
 context = json.loads(hook.stdout)['hookSpecificOutput']['additionalContext']
 assert config['tail'] in context
 assert 'baton read ' + config['id'] not in context
+assert reads() == []
+rendered = ('Message (guidance) from coordinator [id: ' + config['id'] + ']:\n' +
+            pathlib.Path(config['bodyPath']).read_text(encoding='utf-8'))
+if config['label'] == 'short':
+    frame({'type':'api-request-blob','sessionId':'native-1',
+           'message':{'role':'system','content':[{'type':'text','text':'PostToolUse:Bash hook additional context: ' + context}]}})
+    before = invoke('stop-after-inline-request', [config['binary'],'--stop-hook'], event('Stop', stop_hook_active=True))
+    assert json.loads(before.stdout)['decision'] == 'block'
+    assert 'Assignment ' + config['id'] + ' is still open' in json.loads(before.stdout)['reason']
+else:
+    preview = rendered[:512]
+    frame({'type':'api-request-blob','sessionId':'native-1',
+           'message':{'role':'system','content':[{'type':'text','text':'PostToolUse:Bash hook additional context: ' + context.replace(rendered, preview)}]}})
+    before = invoke('stop-after-preview', [config['binary'],'--stop-hook'], event('Stop', stop_hook_active=True))
+    assert json.loads(before.stdout)['decision'] == 'block'
+    assert 'Baton holds 1 unread inputs' in json.loads(before.stdout)['reason']
+    assert reads() == []
+    read_path = str(pathlib.Path(config['directory']) / 'saved-input.txt')
+    pathlib.Path(read_path).write_text(rendered, encoding='utf-8')
+    frame({'type':'assistant','sessionId':'native-1','message':{'content':[
+           {'type':'tool_use','id':'read-1','name':'Read','input':{'file_path':read_path}}]}})
+    partial = rendered[:512]
+    frame({'type':'user','sessionId':'native-1','promptId':'prompt-1','message':{'content':[
+           {'type':'tool_result','tool_use_id':'read-1','content':partial}]}})
+    partial_event = event('PostToolUse', tool_name='Read', tool_use_id='read-1',
+                          tool_input={'file_path':read_path},
+                          tool_response={'type':'text','file':{'filePath':read_path,'content':partial,
+                                        'numLines':len(partial.splitlines()),'startLine':1,
+                                        'totalLines':len(rendered.splitlines())}})
+    partial_read = invoke('post-partial-read', [config['binary'],'--stop-hook'], partial_event)
+    assert config['tail'] in json.loads(partial_read.stdout)['hookSpecificOutput']['additionalContext']
+    partial_stop = invoke('stop-after-partial-read', [config['binary'],'--stop-hook'], event('Stop', stop_hook_active=True))
+    assert json.loads(partial_stop.stdout)['decision'] == 'block'
+    assert 'Baton holds 1 unread inputs' in json.loads(partial_stop.stdout)['reason']
+    assert reads() == []
+    frame({'type':'assistant','sessionId':'native-1','message':{'content':[
+           {'type':'tool_use','id':'read-2','name':'Read','input':{'file_path':read_path}}]}})
+    numbered = '\n'.join(str(i+1) + '\t' + line for i,line in enumerate(rendered.splitlines()))
+    frame({'type':'user','sessionId':'native-1','promptId':'prompt-1','message':{'content':[
+           {'type':'tool_result','tool_use_id':'read-2','content':numbered}]}})
+    read_event = event('PostToolUse', tool_name='Read', tool_use_id='read-2',
+                       tool_input={'file_path':read_path},
+                       tool_response={'type':'text','file':{'filePath':read_path,'content':rendered,
+                                     'numLines':len(rendered.splitlines()),'startLine':1,
+                                     'totalLines':len(rendered.splitlines())}})
+    after_read = invoke('post-read', [config['binary'],'--stop-hook'], read_event)
+    assert after_read.stdout.strip() == ''
+    before = invoke('stop-after-full-read', [config['binary'],'--stop-hook'], event('Stop', stop_hook_active=True))
+    assert json.loads(before.stdout)['decision'] == 'block'
+    assert 'Assignment ' + config['id'] + ' is still open' in json.loads(before.stdout)['reason']
 rows = reads()
 assert len(rows) == 1 and rows[0][:3] == ('attempt-1','worker','native-1') and rows[0][3] and rows[0][4] is None
-before = invoke('stop-after-injection', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'Stop','stop_hook_active':True}))
-assert json.loads(before.stdout)['decision'] == 'block'
-assert 'Baton holds 1 unread inputs' not in json.loads(before.stdout)['reason']
-after = invoke('post-injection', [config['binary'],'--stop-hook'], json.dumps({'hook_event_name':'PostToolUse','tool_name':'Bash'}))
+after = invoke('post-injection', [config['binary'],'--stop-hook'], event('PostToolUse', tool_name='Bash'))
 assert after.stdout.strip() == ''
 request = invoke('completion-request', [config['binary'],'completion-request',config['database'],'Read the complete input and finished the work.'])
 admitted = json.loads(request.stdout)[0]
@@ -459,7 +814,10 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         return hooks
 
     def codex_handler(self, event):
-        groups = self.codex_hooks()['hooks.' + event]
+        hooks = self.codex_hooks()
+        self.assertIn('hooks.' + event, hooks,
+                      'Codex launch must install a %s hook for mid-turn input and completion control.' % event)
+        groups = hooks['hooks.' + event]
         self.assertEqual(len(groups), 1)
         self.assertEqual(len(groups[0]['hooks']), 1)
         return groups[0], groups[0]['hooks'][0]
@@ -660,6 +1018,10 @@ print(json.dumps(results), flush=True)
         results = self.codex_admitted(body, session='coordinator', ident='request:worker:1',
                                       kind='completion-request', sender='worker')
         self.assertIn('Message (completion-request) from worker [id: request:worker:1]:\n' + body,
+                      results['injected']['hookSpecificOutput']['additionalContext'])
+        self.assertIn(body[-32:] + "\nReview the work against worker's assignment and the supplied evidence. "
+                      "Confirm with completion-confirmed --to worker when the assignment is satisfied. "
+                      "Otherwise use guide --to worker --text TEXT to state what is missing and direct the remaining work.",
                       results['injected']['hookSpecificOutput']['additionalContext'])
         self.assertEqual(results['read_after'], [['attempt-1', 'thread-1']])
 

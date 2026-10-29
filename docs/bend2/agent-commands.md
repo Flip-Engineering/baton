@@ -75,8 +75,14 @@ baton confirm worker
 baton guide worker 'Continue the assigned work and report the result.'
 ```
 
-The completion request uses the current session's recorded parent. A parentless
-session receives a structured refusal. The coordinator can use `guide` to send
+The completion request goes to the current session's coordinator, which is its
+recorded parent while that parent is not over (see the succession section below). A
+parentless conductor sends it to the registered operator. A parentless Player, and a
+parentless conductor with no registered operator, receive a structured refusal. Baton generates the request
+identity. An explicit `--id` must name the session's own current completion request
+for its open assignment, and the request replays to the recipient it recorded; an
+unrecorded identity, another message's identity or an older request is refused with its
+cause and stores nothing. The coordinator can use `guide` to send
 further work. Each decision action uses the ordinary message admission result,
 wake result and retained delivery. Baton selects the current request addressed
 to the coordinator and constructs its confirmation. The compatibility command
@@ -84,6 +90,35 @@ to the coordinator and constructs its confirmation. The compatibility command
 from that worker addressed to the current coordinator. `confirm` without a Player
 selects the sole current request.
 The named completion commands retain explicit body and identity options.
+
+A confirmation ends the Player's assignment unless the same decision dispatches the
+next assignment. `taskCompletion.ended` in the session, player and assignment reads
+is true when the Player's current completion request has a stored
+`completion-confirmed` and the session has no explicit stop; a newer assignment from
+the coordinator makes it false again. The state derives from the stored messages, so
+the `message ... completion-confirmed` low-level form produces it as well. Baton
+signals no native process and records no stop.
+
+An ended assignment admits no new native attempt and starts no wake. The session
+projection reports `blockedCause` `assignment-ended` and a pending count of zero.
+An attempt that is already running keeps its identity and finishes normally. Input
+from an operator and a newer coordinator assignment reopen the same native
+conversation. An explicit stop keeps its effect: the Player is not ended while it is
+stopped, and a stopped Player refuses every new confirmation and task. Owed input
+stays unread in the inbox; Baton records no read for it.
+
+`completion-confirmed --next TEXT` and `--next-file PATH` read the text or file
+content first (UTF-8, no NUL, nonempty), then store the confirmation and a `task`
+for the same Player in one transaction. Delivery wakes follow the committed outcome.
+The task identity is the confirmation identity followed by `:next-assignment`, so
+repeating the decision with the same `--id` stores no second task. The result array
+holds the admitted confirmation and the admitted task. An explicit stop, a refused
+route or an identity conflict stores neither message. The confirmation is written
+only when the request is the Player's current request, or when both rows of the same
+decision are already stored; a stored confirmation never admits a new task after a
+newer assignment replaced its request. The MCP `baton2_guide` and
+`baton2_message_batch` tools accept `next` on a `completion-confirmed` item and pass
+it as `--next`; the legacy `body` field names the request, as `request` does.
 
 ## Teams and branching
 
@@ -205,6 +240,82 @@ exact compatibility.
 `recover-observer --observer PID` uses the existing observer recovery path.
 `continue-task` sends an explicit continuation through the existing assignment
 operation. Each action accepts `--session SESSION`.
+
+## Conductor succession and ended conductors (#1257)
+
+A session is over when it has an explicit stop, or when a coordinator of the session
+confirmed its current completion request and nothing newer followed. The coordinators
+that may confirm are those that hold authority over the assignment: the recorded
+parent, every ancestor of the parent, every recorded successor of any of them, and the
+registered operator. One authority set decides `taskCompletion.confirmed`, the exact
+and inferred completion-confirmed selectors, the assignments that count as a newer
+task, and native replies, so a session is over exactly when its assignment is confirmed
+or it is stopped. A session outside the set, such as an unrelated tight Ensemble peer
+or an unregistered name, is refused. The operator holds this authority over every
+Player, including a parentless conductor; it can send a Player a task only as the
+Player's parent or, when every ancestor is over, as its coordinator.
+
+A Player's current coordinator is the nearest of those coordinators that is not over.
+Distance counts recorded-parent steps; a recorded successor stands at its
+predecessor's distance and is preferred. When every one of them is over, the
+coordinator is the registered operator. Turn-end reports, failure reports,
+`completion-request`, `report`, `ask`, native questions, knowledge notices and the
+blocked owner use the current coordinator, and the Player and its current coordinator
+may message each other. A Player with no coordinator that is not over and no
+registered operator receives a structured refusal (`report-recipient-missing` for a
+report or question).
+
+A parentless conductor's coordinator is the registered operator. Its assignment from
+the operator is open until confirmed, its task state names the operator as the
+coordinator, and its completion requests, native questions and knowledge notices go
+to the operator. A parentless conductor with no registered operator, and a parentless
+Player, have no coordinator: their assignment is not open, their completion requests
+and native questions are refused, and their findings send no notice.
+
+A message that Baton admitted under a retained identity keeps its recorded recipient.
+Repeating `report`, `ask`, a knowledge record, a turn-end report or a native question
+with the same identity after a succession or an ending replays the original admitted
+row; the same identity with different content is a `message-id-conflict` naming the
+stored recipient. A new identity takes the coordinator at that time. A native question
+records its coordinator when it is raised; that coordinator, any successor and any
+ancestor in the Player's authority can reply to it.
+
+`succeed --from PREDECESSOR [--session SUCCESSOR]` runs as the successor (omitted
+`--session` selects the current actor) and records that the successor replaces a
+predecessor that is over. The successor must not be over and must share the
+predecessor's parent or be an ancestor of the predecessor. A second successor of the
+same predecessor is refused. Baton records a message of kind `succession`, ID
+`succession:PREDECESSOR:SUCCESSOR`, sent by the successor to the predecessor. Only
+this action writes that kind; an ordinary message with kind `succession` is refused.
+The record exists whether or not the predecessor has children or a report recipient.
+
+The predecessor's children, their assignments, completion requests, confirmations,
+messages and read states stay as recorded, and no session parent changes. The
+successor and every ancestor of a Player hold coordinator authority over its
+assignment, request and confirmation. A confirmation that the predecessor recorded
+keeps ending the Player's assignment, and the successor can confirm a request that
+was addressed to the predecessor without the Player sending it again.
+
+`succeed` also forwards the predecessor's unresolved input to the successor. That
+input is every message addressed to the predecessor with no recorded read, except
+confirmations, task continuations and succession records, the current completion
+request of each Player that the predecessor read but did not confirm, and each native
+question that the predecessor read whose request has no stored reply and is not
+closed. Each item
+becomes a new message of kind `forwarded-input` sent to the successor. It keeps the
+original sender, names the original message ID and kind, and carries the complete
+original text. The forwarded copy has its own kind, so the Player's assignment and
+current completion request stay as the Player recorded them. Repeating the
+action forwards only input that arrived after the previous run. Baton wakes the
+successor after the record commits.
+
+When a session with live children, or with unresolved input from its children,
+becomes over, by an explicit stop or by a confirmation of its completion, Baton
+records a `session-ended` report in the same transaction and wakes its recipient: the
+session's current coordinator. The report lists the live children and the unresolved
+input IDs. The coordinator can
+run `succeed --from SESSION` from a replacement conductor, adopt the children as an
+ancestor with the same action, or assign or stop the children.
 
 ```sh
 printf '%s\n' 'Review the assigned source and report the result.' |

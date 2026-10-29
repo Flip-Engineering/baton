@@ -16,18 +16,20 @@ fi
 . "$root/bend2/scripts/queue-entry.sh"
 (
   ulimit -s unlimited 2>/dev/null || true
-  if [ -n "${BATON2_NATIVE_QUEUE_DRIVER:-}" ]; then
-    BEND_NO_TELEMETRY=1 BUN_JSC_maxPerThreadStackUsage="${BUN_JSC_maxPerThreadStackUsage:-67108864}" \
-      "$PYTHON3" "$BATON2_NATIVE_QUEUE_DRIVER" compiler bend \
-      bend2/src/coordinator/laws.bend --check-only
-  else
-    BEND_NO_TELEMETRY=1 BUN_JSC_maxPerThreadStackUsage="${BUN_JSC_maxPerThreadStackUsage:-67108864}" \
-      "$compiler" bend2/src/coordinator/laws.bend --check-only
-  fi
+  BEND="$compiler" BEND_NO_TELEMETRY=1 \
+    BUN_JSC_maxPerThreadStackUsage="${BUN_JSC_maxPerThreadStackUsage:-67108864}" \
+    sh bend2/scripts/check-entry.sh bend2/src/coordinator/laws.bend
 )
 sh bend2/scripts/build-native.sh
+sh bend2/scripts/build-native.sh bend2/test/stop-hook-entry.bend .scratch/bend2/stop-hook-entry
+sh bend2/scripts/build-native.sh bend2/test/prompt-status-entry.bend .scratch/bend2/prompt-status-entry
 "$PYTHON3" bend2/test/sqlite-read-reuse.py
+BATON2_EXE="$root/.scratch/bend2/baton2" "$PYTHON3" bend2/test/stop.py \
+  Stop.test_retained_dsh_stop_preserves_work_and_exits_native_and_tool \
+  Stop.test_explicit_force_reconciles_dsh_attempt_after_observer_loss
 "$PYTHON3" bend2/test/package-receiver-layout.py
+"$PYTHON3" bend2/test/omp-completion-extension.py
+"$PYTHON3" bend2/test/package-licenses.py
 "$PYTHON3" bend2/test/record-native-checks.py
 sh bend2/test/bend-launch-guard.sh
 sh bend2/scripts/build-native.sh bend2/test/process.bend .scratch/bend2/process-test
@@ -156,6 +158,8 @@ rm -f .scratch/bend2/route-change-identity.db
 sh bend2/scripts/build-native.sh bend2/test/quota-exhaustion-reset.bend .scratch/bend2/quota-exhaustion-reset-test
 rm -f .scratch/bend2/quota-exhaustion-reset.db
 .scratch/bend2/quota-exhaustion-reset-test .scratch/bend2/quota-exhaustion-reset.db
+sh bend2/scripts/build-native.sh bend2/test/stop-dsh.bend .scratch/bend2/stop-dsh-test
+BATON2_STOP_DSH_FIXTURE="$root/.scratch/bend2/stop-dsh-test" "$PYTHON3" bend2/test/stop-dsh.py
 BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
 sh bend2/scripts/build-native.sh bend2/test/omp-home-preflight.bend .scratch/bend2/omp-home-preflight-test
 BATON2_EXE="$root/.scratch/bend2/omp-home-preflight-test" "$PYTHON3" bend2/test/omp-home-preflight.py
@@ -167,6 +171,10 @@ BATON2_EXE="$root/.scratch/bend2/launch-store-retained-test" "$PYTHON3" bend2/te
 "$PYTHON3" bend2/test/check-install-dispatch-runtime.py
 sh bend2/scripts/build-native.sh bend2/test/dsh-player.bend .scratch/bend2/dsh-player-test
 BATON2_EXE="$root/.scratch/bend2/dsh-player-test" "$PYTHON3" bend2/test/dsh-player.py
+# The canary and the hook test use the official dsh when DSH_CLI names it or dsh is on PATH.
+BATON2_EXE="$root/.scratch/bend2/dsh-player-test" "$PYTHON3" bend2/test/dsh-canary.py
+BATON2_EXE="$root/.scratch/bend2/dsh-player-test" "$PYTHON3" bend2/test/dsh-hooks.py
+BATON2_STOP_HOOK_FIXTURE="$root/.scratch/bend2/stop-hook-entry" "$PYTHON3" bend2/test/stop-hook-entry.py
 sh bend2/scripts/build-native.sh bend2/test/dsh-retained.bend .scratch/bend2/dsh-retained-test
 BATON2_EXE="$root/.scratch/bend2/dsh-retained-test" "$PYTHON3" bend2/test/dsh-retained.py
 "$PYTHON3" bend2/test/dsh-worker.py

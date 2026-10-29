@@ -98,7 +98,7 @@ def operator_routes_admit_immediate_children_and_top_level_conductors(sender,rec
 law message_routes_require_registered_distinct_sessions_and_a_permitted_relation:
   for +sender: String
   for +recipient: String
-  {C.message_route(sender,recipient) == "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ ") AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ ") AND " ++ sender ++ "<>" ++ recipient ++ " AND ((" ++ C.assigned_role(sender) ++ "<>'operator' AND " ++ C.assigned_role(recipient) ++ "<>'operator' AND (coalesce((SELECT parent FROM sessions WHERE id=" ++ sender ++ ")=" ++ recipient ++ ",0) OR coalesce((SELECT parent FROM sessions WHERE id=" ++ recipient ++ ")=" ++ sender ++ ",0) OR (" ++ C.assigned_role(sender) ++ "='conductor' AND " ++ C.descendant(sender,recipient) ++ ") OR " ++ C.tight_peers(sender,recipient) ++ ")) OR " ++ C.operator_route(sender,recipient) ++ "))" : String}
+  {C.message_route(sender,recipient) == "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ ") AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ ") AND " ++ sender ++ "<>" ++ recipient ++ " AND ((" ++ C.assigned_role(sender) ++ "<>'operator' AND " ++ C.assigned_role(recipient) ++ "<>'operator' AND (coalesce((SELECT parent FROM sessions WHERE id=" ++ sender ++ ")=" ++ recipient ++ ",0) OR coalesce((SELECT parent FROM sessions WHERE id=" ++ recipient ++ ")=" ++ sender ++ ",0) OR (" ++ C.assigned_role(sender) ++ "='conductor' AND " ++ C.descendant(sender,recipient) ++ ") OR " ++ C.tight_peers(sender,recipient) ++ ")) OR " ++ C.operator_route(sender,recipient) ++ " OR " ++ C.coordinated_route(sender,recipient) ++ "))" : String}
 
 def message_routes_require_registered_distinct_sessions_and_a_permitted_relation(sender,recipient):
   {==}
