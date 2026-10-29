@@ -482,7 +482,7 @@ def m5_delivery_carries_the_recipients_current_endpoint(id):
 law m5_wake_reads_the_first_owed_message_after_the_cursor:
   for +session: String
   for +cursor: String
-  {Delivery.wake_sql(session, cursor) == "SELECT coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=messages.id AND owed_read.recipient=messages.recipient) AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " ORDER BY seq LIMIT 1),'');" : String}
+  {Delivery.wake_sql(session, cursor) == "SELECT coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=messages.id AND owed_read.recipient=messages.recipient) AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND NOT " ++ C.task_closed_sql(C.q(session)) ++ " ORDER BY seq LIMIT 1),'');" : String}
 
 def m5_wake_reads_the_first_owed_message_after_the_cursor(session, cursor):
   {==}
@@ -490,7 +490,7 @@ def m5_wake_reads_the_first_owed_message_after_the_cursor(session, cursor):
 law m5_owed_input_is_counted_after_the_cursor:
   for +session: String
   for +cursor: String
-  {Receive.pending_count_sql(session, cursor) == "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";" : String}
+  {Receive.pending_count_sql(session, cursor) == "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND NOT " ++ C.task_closed_sql(C.q(session)) ++ ";" : String}
 
 def m5_owed_input_is_counted_after_the_cursor(session, cursor):
   {==}
@@ -1064,7 +1064,7 @@ def m1_a_message_write_answers_from_the_row_it_stored(id,sender,recipient,kind,b
 # output capture remain host effects exercised by the controlled fixtures.
 law principal_reports_use_the_recorded_upstream_recipient:
   for +session: String
-  {C.report_recipient(session) == ("(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN report_sender.parent WHEN " ++ C.assigned_role("report_sender.id") ++ "='conductor' THEN (SELECT report_operator.id FROM sessions report_operator WHERE report_operator.id='operator' AND report_operator.parent IS NULL AND " ++ C.assigned_role("report_operator.id") ++ "='operator') END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")") : String}
+  {C.report_recipient(session) == ("(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN " ++ C.coordinator_sql("report_sender.id") ++ " WHEN " ++ C.assigned_role("report_sender.id") ++ "='conductor' THEN " ++ C.operator_destination_sql() ++ " END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")") : String}
 
 def principal_reports_use_the_recorded_upstream_recipient(session):
   {==}

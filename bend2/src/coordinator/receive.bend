@@ -46,10 +46,11 @@ def shell(value: String) -> String:
 # that the message route predicate accepts (each with its recorded route metadata).
 # Nothing is invented; an unrecorded part reads `none recorded`.
 def orientation_sql(+session: String) -> String:
-  "SELECT json_object('parent',coalesce(nullif((SELECT parent FROM sessions WHERE id=" ++ C.q(session) ++ "),''),'none recorded'),"
+  "WITH reachable(id,harness,model,effort) AS (SELECT r.id,r.harness,r.model,r.effort FROM sessions r WHERE " ++ C.message_route(C.q(session),"r.id") ++ ") "
+  ++ "SELECT json_object('parent',coalesce(nullif((SELECT parent FROM sessions WHERE id=" ++ C.q(session) ++ "),''),'none recorded'),"
   ++ "'ensembles',coalesce(nullif((SELECT json_group_array(json(item)) FROM (SELECT json_object('ensemble',m.ensemble,'coupling',e.coupling) AS item FROM ensemble_members m JOIN ensembles e ON e.id=m.ensemble WHERE m.session=" ++ C.q(session) ++ " ORDER BY m.ensemble)),'[]'),'none recorded'),"
   ++ "'sections',coalesce(nullif((SELECT json_group_array(json(item)) FROM (SELECT json_object('ensemble',sm.ensemble,'section',sm.section,'capability',se.capability) AS item FROM section_members sm JOIN sections se ON se.ensemble=sm.ensemble AND se.id=sm.section WHERE sm.session=" ++ C.q(session) ++ " ORDER BY sm.ensemble,sm.section)),'[]'),'none recorded'),"
-  ++ "'recipients',coalesce(nullif((SELECT json_group_array(json(item)) FROM (SELECT json_object('id',r.id,'harness',r.harness,'model',r.model,'effort',r.effort) AS item FROM sessions r WHERE " ++ C.message_route(C.q(session),"r.id") ++ " ORDER BY r.id)),'[]'),'none recorded'));"
+  ++ "'recipients',coalesce(nullif((SELECT json_group_array(json(item)) FROM (SELECT json_object('id',r.id,'harness',r.harness,'model',r.model,'effort',r.effort) AS item FROM reachable r ORDER BY r.id)),'[]'),'none recorded'));"
 
 def orientation_text(db: String, session: String) -> IO(String):
   do IO<String>:

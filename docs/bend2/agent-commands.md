@@ -93,15 +93,26 @@ the coordinator makes it false again. The state derives from the stored messages
 the `message ... completion-confirmed` low-level form produces it as well. Baton
 signals no native process and records no stop.
 
+An ended assignment admits no new native attempt and starts no wake. The session
+projection reports `blockedCause` `assignment-ended` and a pending count of zero.
+An attempt that is already running keeps its identity and finishes normally. Input
+from an operator and a newer coordinator assignment reopen the same native
+conversation. An explicit stop keeps its effect: the Player is not ended while it is
+stopped, and a stopped Player refuses every new confirmation and task. Owed input
+stays unread in the inbox; Baton records no read for it.
+
 `completion-confirmed --next TEXT` and `--next-file PATH` read the text or file
 content first (UTF-8, no NUL, nonempty), then store the confirmation and a `task`
 for the same Player in one transaction. Delivery wakes follow the committed outcome.
 The task identity is the confirmation identity followed by `:next-assignment`, so
 repeating the decision with the same `--id` stores no second task. The result array
 holds the admitted confirmation and the admitted task. An explicit stop, a refused
-route or an identity conflict stores neither message. The MCP `baton2_guide` and
+route or an identity conflict stores neither message. The confirmation is written
+only when the request is the Player's current request, or when both rows of the same
+decision are already stored; a stored confirmation never admits a new task after a
+newer assignment replaced its request. The MCP `baton2_guide` and
 `baton2_message_batch` tools accept `next` on a `completion-confirmed` item and pass
-it as `--next`.
+it as `--next`; the legacy `body` field names the request, as `request` does.
 
 ## Teams and branching
 
@@ -223,6 +234,53 @@ exact compatibility.
 `recover-observer --observer PID` uses the existing observer recovery path.
 `continue-task` sends an explicit continuation through the existing assignment
 operation. Each action accepts `--session SESSION`.
+
+## Conductor succession and ended conductors (#1257)
+
+A session is over when it has an explicit stop, or when its recorded parent
+confirmed its current completion request and sent nothing after that. A Player's
+current coordinator is its recorded parent while the parent is not over. When the
+parent is over, the coordinator is the parent's recorded successor, else the
+parent's own parent, and so on up the recorded parents, until a session that is not
+over; when every ancestor is over, the registered operator. Turn-end reports,
+failure reports, `completion-request`, `report`, `ask` and the blocked owner use the
+current coordinator, and the Player and its current coordinator may message each
+other. Nothing falls back to a coordinator that is over. A Player with no such
+destination receives a structured `report-recipient-missing` refusal.
+
+`succeed --from PREDECESSOR [--session SUCCESSOR]` runs as the successor (omitted
+`--session` selects the current actor) and records that the successor replaces a
+predecessor that is over. The successor must not be over and must share the
+predecessor's parent or be an ancestor of the predecessor. A second successor of the
+same predecessor is refused. Baton records a message of kind `succession`, ID
+`succession:PREDECESSOR:SUCCESSOR`, sent by the successor to the predecessor. Only
+this action writes that kind; an ordinary message with kind `succession` is refused.
+The record exists whether or not the predecessor has children or a report recipient.
+
+The predecessor's children, their assignments, completion requests, confirmations,
+messages and read states stay as recorded, and no session parent changes. The
+successor and every ancestor of a Player hold coordinator authority over its
+assignment, request and confirmation. A confirmation that the predecessor recorded
+keeps ending the Player's assignment, and the successor can confirm a request that
+was addressed to the predecessor without the Player sending it again.
+
+`succeed` also forwards the predecessor's unresolved input to the successor. That
+input is every message addressed to the predecessor with no recorded read, except
+confirmations, task continuations and succession records, and the current completion
+request of each Player that the predecessor read but did not confirm. Each item
+becomes a new message of kind `forwarded-input` sent to the successor. It keeps the
+original sender, names the original message ID and kind, and carries the complete
+original text. The forwarded copy is not an assignment and not a completion request,
+so it does not change the Player's assignment or invalidate its request. Repeating the
+action forwards only input that arrived after the previous run. Baton wakes the
+successor after the record commits.
+
+When a session with live children or unresolved input becomes over, by an explicit
+stop or by a confirmation of its completion, Baton records a `session-ended` report
+in the same transaction and wakes its recipient: the session's current coordinator.
+The report lists the live children and the unresolved input IDs. The coordinator can
+run `succeed --from SESSION` from a replacement conductor, adopt the children as an
+ancestor with the same action, or assign or stop the children.
 
 ```sh
 printf '%s\n' 'Review the assigned source and report the result.' |

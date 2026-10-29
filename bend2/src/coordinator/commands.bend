@@ -249,7 +249,7 @@ def operator_destination_sql() -> String:
 # whether or not those sessions are live, so a confirmation recorded by one of
 # them stays valid. UNION keeps the walk finite for malformed cyclic records.
 def coordinator_closure_sql(+worker: String) -> String:
-  "WITH RECURSIVE coordinator_closure(id) AS (SELECT chain_start.parent FROM sessions chain_start WHERE chain_start.id=" ++ worker ++ " AND chain_start.parent IS NOT NULL UNION SELECT chain_edge.upward FROM coordinator_closure chain_node JOIN (SELECT chain_session.id AS below, chain_session.parent AS upward FROM sessions chain_session WHERE chain_session.parent IS NOT NULL UNION SELECT chain_succession.recipient, chain_succession.sender FROM messages chain_succession WHERE chain_succession.kind='succession' AND chain_succession.id='succession:' || chain_succession.recipient || ':' || chain_succession.sender) chain_edge ON chain_edge.below=chain_node.id) SELECT id FROM coordinator_closure"
+  "WITH RECURSIVE chain_kinds(k) AS (VALUES(0),(1)),coordinator_closure(id) AS (SELECT chain_start.parent FROM sessions chain_start WHERE chain_start.id=" ++ worker ++ " AND chain_start.parent IS NOT NULL UNION SELECT CASE chain_edge.k WHEN 0 THEN chain_session.parent ELSE chain_succession.sender END FROM coordinator_closure chain_node JOIN sessions chain_session ON chain_session.id=chain_node.id LEFT JOIN messages chain_succession ON chain_succession.kind='succession' AND chain_succession.recipient=chain_node.id AND chain_succession.id='succession:' || chain_succession.recipient || ':' || chain_succession.sender JOIN chain_kinds chain_edge) SELECT id FROM coordinator_closure"
 
 def coordinator_chain_sql(+worker: String, +candidate: String) -> String:
   "(" ++ candidate ++ " IN (" ++ coordinator_closure_sql(worker) ++ "))"
@@ -259,7 +259,9 @@ def coordinator_chain_sql(+worker: String, +candidate: String) -> String:
 # request or confirmation exchanged with that parent. Other sessions skip an
 # over session when they look for a live coordinator.
 def session_over_sql(+session: String) -> String:
-  "(" ++ stopped_session_sql(session) ++ " OR EXISTS(SELECT 1 FROM messages confirmation WHERE confirmation.recipient=" ++ session ++ " AND confirmation.kind='completion-confirmed' AND confirmation.sender=(SELECT over_parent.parent FROM sessions over_parent WHERE over_parent.id=" ++ session ++ ") AND EXISTS(SELECT 1 FROM messages over_request WHERE over_request.id=confirmation.body AND over_request.sender=" ++ session ++ " AND over_request.kind='completion-request') AND NOT EXISTS(SELECT 1 FROM messages later WHERE later.seq>confirmation.seq AND ((later.recipient=" ++ session ++ " AND later.sender=confirmation.sender AND later.kind IN ('task','guidance','recovery','task-assignment')) OR (later.sender=" ++ session ++ " AND later.recipient=confirmation.sender AND later.kind='completion-request')))))"
+  "(" ++ stopped_session_sql(session) ++ " OR EXISTS(SELECT 1 FROM messages confirmation WHERE confirmation.recipient=" ++ session ++ " AND confirmation.kind='completion-confirmed' AND confirmation.sender=(SELECT over_parent.parent FROM sessions over_parent WHERE over_parent.id=" ++ session ++ ") AND EXISTS(SELECT 1 FROM messages over_request WHERE over_request.id=confirmation.body AND over_request.sender=" ++ session ++ " AND over_request.kind='completion-request')"
+  ++ " AND NOT EXISTS(SELECT 1 FROM messages later_assignment WHERE later_assignment.seq>confirmation.seq AND later_assignment.recipient=" ++ session ++ " AND later_assignment.sender=confirmation.sender AND later_assignment.kind IN ('task','guidance','recovery','task-assignment'))"
+  ++ " AND NOT EXISTS(SELECT 1 FROM messages later_request WHERE later_request.seq>confirmation.seq AND later_request.sender=" ++ session ++ " AND later_request.recipient=confirmation.sender AND later_request.kind='completion-request')))"
 
 # The worker's current coordinator for reports and requests: the first session
 # in the walk from its recorded parent that is not over, else the registered
@@ -276,7 +278,7 @@ def current_coordinator_sql(+worker: String) -> String:
 # registered operator. This mirrors report_recipient without naming it, which
 # is defined below.
 def blocked_owner_sql(+session: String) -> String:
-  "(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN " ++ coordinator_sql("report_sender.id") ++ " WHEN coalesce((SELECT role FROM session_roles WHERE session=report_sender.id),'player')='conductor' THEN " ++ operator_destination_sql() ++ " END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")"
+  "CASE WHEN (SELECT report_sender.parent FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ") IS NOT NULL THEN " ++ coordinator_sql(session) ++ " WHEN " ++ assigned_role(session) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ") THEN " ++ operator_destination_sql() ++ " END"
 
 # An assignment remains open across native turns. Its worker explicitly asks
 # its coordinator to confirm completion through ordinary messages. A message is
@@ -285,9 +287,9 @@ def blocked_owner_sql(+session: String) -> String:
 # initial task input. The row names a messages alias and the worker row a
 # sessions alias.
 def task_assigned_sql(+row: String, +worker: String, +session: String) -> String:
-  "(" ++ row ++ ".recipient=" ++ session ++ " AND ((" ++ worker ++ ".parent IS NULL AND ((" ++ row ++ ".sender<>" ++ row ++ ".recipient AND " ++ row ++ ".kind IN ('task','guidance','recovery')) OR " ++ row ++ ".kind='task-assignment'))"
-  ++ " OR (" ++ worker ++ ".parent IS NOT NULL AND ((" ++ coordinator_chain_sql(session,row ++ ".sender") ++ " AND " ++ row ++ ".kind IN ('task','guidance','recovery','task-assignment'))"
-  ++ " OR (" ++ row ++ ".sender=" ++ row ++ ".recipient AND " ++ row ++ ".kind='task-assignment' AND substr(" ++ row ++ ".id,-11)=':task-input')))))"
+  row ++ ".recipient=" ++ session ++ " AND (" ++ worker ++ ".parent IS NULL AND " ++ row ++ ".sender<>" ++ row ++ ".recipient AND " ++ row ++ ".kind IN ('task','guidance','recovery') OR " ++ worker ++ ".parent IS NULL AND " ++ row ++ ".kind='task-assignment'"
+  ++ " OR " ++ worker ++ ".parent IS NOT NULL AND " ++ coordinator_chain_sql(session,row ++ ".sender") ++ " AND " ++ row ++ ".kind IN ('task','guidance','recovery','task-assignment')"
+  ++ " OR " ++ worker ++ ".parent IS NOT NULL AND " ++ row ++ ".sender=" ++ row ++ ".recipient AND " ++ row ++ ".kind='task-assignment' AND substr(" ++ row ++ ".id,-11)=':task-input')"
 
 def task_assignment_sql(+session: String) -> String:
   "(SELECT a.seq FROM messages a JOIN sessions assigned_worker ON assigned_worker.id=a.recipient WHERE " ++ task_assigned_sql("a","assigned_worker",session) ++ " ORDER BY a.seq DESC LIMIT 1)"
@@ -319,7 +321,7 @@ def task_ended_sql(+session: String) -> String:
 # assignment closes new native admission only while no owed input came from an
 # operator. A newer coordinator assignment makes the assignment not ended.
 def task_closed_sql(+session: String) -> String:
-  "(" ++ task_ended_sql(session) ++ " AND NOT EXISTS(SELECT 1 FROM messages operator_input WHERE operator_input.recipient=" ++ session ++ " AND " ++ owed_sql("operator_input") ++ " AND EXISTS(SELECT 1 FROM session_roles operator_role WHERE operator_role.session=operator_input.sender AND operator_role.role='operator')))"
+  "(" ++ task_confirmed_sql(session) ++ " AND NOT " ++ stopped_session_sql(session) ++ " AND NOT EXISTS(SELECT 1 FROM messages operator_input WHERE operator_input.recipient=" ++ session ++ " AND " ++ owed_sql("operator_input") ++ " AND EXISTS(SELECT 1 FROM session_roles operator_role WHERE operator_role.session=operator_input.sender AND operator_role.role='operator')))"
 
 # Wake and ownership projection shared by every session surface. Pending input
 # uses the continuation count: owed (delivered, not yet read) input on an
@@ -327,7 +329,7 @@ def task_closed_sql(+session: String) -> String:
 # The claim reads the wake_claims table, which every commit creates through
 # schema() before any surface query runs in the same transaction.
 def wake_state_sql(+session: String) -> String:
-  "json_object('pending',(SELECT count(*) FROM messages WHERE recipient=" ++ session ++ " AND " ++ owed_sql("messages") ++ " AND NOT " ++ stopped_session_sql(session) ++ " AND NOT " ++ task_closed_sql(session) ++ "),'claim',coalesce((SELECT state FROM wake_claims WHERE session=" ++ session ++ "),'') )"
+  "json_object('pending',CASE WHEN " ++ stopped_session_sql(session) ++ " OR " ++ task_closed_sql(session) ++ " THEN 0 ELSE (SELECT count(*) FROM messages WHERE recipient=" ++ session ++ " AND " ++ owed_sql("messages") ++ ") END,'claim',coalesce((SELECT state FROM wake_claims WHERE session=" ++ session ++ "),'') )"
 
 def task_open_sql(+session: String) -> String:
   "((SELECT task_parent.parent FROM sessions task_parent WHERE task_parent.id=" ++ session ++ ") IS NOT NULL AND " ++ task_assignment_sql(session) ++ " IS NOT NULL AND NOT " ++ task_confirmed_sql(session) ++ " AND NOT " ++ stopped_session_sql(session) ++ ")"
@@ -637,7 +639,7 @@ def parent_message_sql(+id: String, +sender: String, +kind: String, +body: Strin
   +recipient = report_recipient(q(sender))
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ "," ++ q(sender) ++ "," ++ recipient ++ "," ++ q(kind) ++ "," ++ q(body) ++ " WHERE " ++ recipient ++ " IS NOT NULL" ++ message_upsert()
   ++ message_conflict_sql(q(id),q(sender),recipient,q(kind),q(body),recipient ++ " IS NOT NULL")
-  ++ "SELECT json_object('error','report-recipient-missing','sender'," ++ q(sender) ++ ",'kind'," ++ q(kind) ++ ",'condition','The session has no recorded parent or registered operator report recipient.','next','Read session SENDER. Use its recorded parent; a parentless Conductor reports to the registered operator session with the operator role.') WHERE " ++ recipient ++ " IS NULL;"
+  ++ "SELECT json_object('error','report-recipient-missing','sender'," ++ q(sender) ++ ",'kind'," ++ q(kind) ++ ",'condition','The session has no recorded parent that is not over and no registered operator report recipient.','next','Read session SENDER. Reports go to its recorded parent, that parent successor or the nearest ancestor that is not over, else the registered operator session; a parentless Conductor reports to the registered operator session with the operator role.') WHERE " ++ recipient ++ " IS NULL;"
   ++ matching_message_result_expr(q(id),q(sender),recipient,q(kind),q(body))
 
 def succession_record_id(+predecessor: String, +successor: String) -> String:

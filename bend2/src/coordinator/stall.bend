@@ -21,9 +21,10 @@ import ./wake.bend as Wake
 def endpoint_present_expr(+column: String) -> String:
   "CASE WHEN json_valid(" ++ column ++ ") THEN json_type(" ++ column ++ ")='array' AND json_array_length(" ++ column ++ ")>0 ELSE 0 END"
 
-# The owed-input count for one session.
+# The owed-input count for one session. A completed assignment admits no new
+# native attempt, so its owed input is not a wake obligation.
 def owed_expr(+session: String) -> String:
-  "(SELECT count(*) FROM messages m WHERE m.recipient=" ++ session ++ " AND " ++ C.owed_sql("m") ++ ")"
+  "(SELECT count(*) FROM messages m WHERE m.recipient=" ++ session ++ " AND " ++ C.owed_sql("m") ++ " AND NOT " ++ C.task_closed_sql(session) ++ ")"
 
 # An explicit stop resolves the session's wake obligation.
 def stopped_expr(+session: String) -> String:

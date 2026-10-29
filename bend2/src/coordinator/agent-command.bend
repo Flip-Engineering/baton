@@ -141,14 +141,26 @@ def inspection_result(+saved: String) -> IO(Unit):
     IO.die(Unit,1,"No matching session or Player; inspect the requested ID."),
     IO.write(saved))
 
+def completion_request_refused(+db: String, +session: String, +id: String) -> IO(String):
+  do IO<String>:
+    raw : String <- IO.try(String,DB.Sql.read(db,
+      "SELECT coalesce((SELECT parent IS NOT NULL FROM sessions WHERE id=" ++ C.q(session) ++ "),0);"))
+    Bool.pick(IO(String),String.eq(Tx.trim_nl(raw),"1"),
+      IO.pure(String,"[" ++ Batch.send_refused("0",id,session,"","completion-request",2,
+        "The current session has no coordinator that is not over and no registered operator to receive the request.") ++ "]"),
+      IO.pure(String,"[" ++ Batch.send_refused("0",id,session,"","completion-request",2,
+        "The current session has no recorded immediate parent.") ++ "]"))
+
+# The request goes to the session's current coordinator: its recorded parent
+# while that parent is not over, else the parent's successor, the nearest
+# ancestor that is not over, or the registered operator.
 def completion_request(+db: String, +session: String, +id: String, body: A.Body) -> IO(String):
   do IO<String>:
     raw_parent : String <- IO.try(String,DB.Sql.read(db,
       "SELECT coalesce(" ++ C.current_coordinator_sql(C.q(session)) ++ ",'');"))
     +parent : String = Tx.trim_nl(raw_parent)
     Bool.pick(IO(String),String.is_empty(parent),
-      IO.pure(String,"[" ++ Batch.send_refused("0",id,session,"","completion-request",2,
-        "The current session has no recorded parent, or no coordinator that is not over and no registered operator to receive the request.") ++ "]"),
+      completion_request_refused(db,session,id),
       (do IO<String>:
         item : String <- send_item(db,session,0,Native.Unused{},A.Item{parent,id,"completion-request",body})
         IO.pure(String,"[" ++ item ++ "]")))

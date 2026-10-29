@@ -852,26 +852,195 @@ class AgentActions(unittest.TestCase):
         self.assertEqual(rows[1]['delivery']['body'], file.read_text())
         self.assertFalse(self.completion('worker-a')['ended'])
 
-    def test_successor_confirms_a_request_addressed_to_its_predecessor(self):
+    def associate(self, name, parent='root', harness='omp'):
+        self.legacy('recruit', name, parent, harness, 'model', 'low', str(self.repo),
+                    name + '-branch', str(self.directory / name), 'HEAD')
+        self.legacy('role', name, 'associate-conductor')
+
+    def stop_session(self, name, identity):
+        self.legacy('stop', name, identity, 'Operator ended this conductor.')
+
+    def message_ids(self):
+        return [row[0] for row in self.stored_messages()]
+
+    def test_stale_plain_confirmation_with_a_new_next_assignment_cannot_overwrite_a_newer_assignment(self):
         request = self.requested('worker-a')
-        # A durable succession record and the worker's new parent; the request
-        # keeps its recorded recipient and the worker sends nothing again.
+        plain = self.action('root', 'completion-confirmed', '--to', 'worker-a',
+                            '--id', 'plain-decision')
+        self.assertEqual(plain[0]['status'], 'admitted')
+        self.legacy('message', 'newer-assignment', 'root', 'worker-a', 'task',
+                    'A newer assignment replaces the confirmed request.')
+        before = self.stored_messages()
+        rows = self.action('root', 'completion-confirmed', '--to', 'worker-a',
+                           '--request', request, '--id', 'plain-decision',
+                           '--next', 'A stale decision must not overwrite the newer assignment.')
+        self.assertEqual(rows[0]['status'], 'refused')
+        self.assertEqual(self.stored_messages(), before)
+        state = self.completion('worker-a')
+        self.assertEqual(state['assignmentId'], 'newer-assignment')
+        self.assertFalse(state['ended'])
+        # The plain confirmation itself still replays and stores nothing.
+        replay = self.action('root', 'completion-confirmed', '--to', 'worker-a',
+                             '--request', request, '--id', 'plain-decision')
+        self.assertEqual(replay[0]['status'], 'admitted')
+        self.assertEqual(self.stored_messages(), before)
+
+    def test_replay_of_the_whole_decision_after_a_newer_assignment_stores_nothing(self):
+        request = self.requested('worker-a')
+        text = 'Next bounded assignment.'
+        self.action('root', 'completion-confirmed', '--to', 'worker-a', '--id', 'decision-3',
+                    '--next', text)
+        self.legacy('message', 'later-assignment', 'root', 'worker-a', 'guidance', 'More.')
+        before = self.stored_messages()
+        rows = self.action('root', 'completion-confirmed', '--to', 'worker-a',
+                           '--request', request, '--id', 'decision-3', '--next', text)
+        self.assertEqual([row['id'] for row in rows], ['decision-3', 'decision-3:next-assignment'])
+        self.assertEqual([row['status'] for row in rows], ['admitted', 'admitted'])
+        self.assertEqual(self.stored_messages(), before)
+
+    def test_ended_assignment_keeps_an_admitted_attempt_and_unread_confirmation(self):
+        request = self.requested('worker-a')
         with sqlite3.connect(self.db) as db:
-            db.execute("UPDATE sessions SET parent='other-root' WHERE id='worker-a'")
-            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES"
-                       "('succession:root:other-root','other-root','other-root','report','{}')")
-        stored = self.stored_messages()
-        self.assertEqual(self.completion('worker-a')['requestId'], request)
-        refused = self.action('root', 'completion-confirmed', '--to', 'worker-a',
-                              '--request', request)[0]
-        self.assertEqual(refused['status'], 'refused')
-        self.assertEqual(self.stored_messages(), stored)
-        confirmed = self.action('other-root', 'completion-confirmed', '--to', 'worker-a')
+            db.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
+                       "VALUES('worker-a','running-attempt','retained','','running','')")
+            attempt = db.execute('SELECT * FROM executions').fetchall()
+        rows = self.action('root', 'completion-confirmed', '--to', 'worker-a')
+        self.assertEqual(rows[0]['status'], 'admitted')
+        with sqlite3.connect(self.db) as db:
+            self.assertEqual(db.execute('SELECT * FROM executions').fetchall(), attempt)
+            self.assertEqual(db.execute('SELECT count(*) FROM message_reads WHERE message=?',
+                                        (rows[0]['id'],)).fetchone()[0], 0)
+        self.assertEqual(self.stop_rows(), [])
+        state = self.action('root', 'session', 'worker-a')
+        self.assertTrue(state['taskCompletion']['ended'])
+        self.assertEqual(state['wake']['pending'], 0)
+        self.assertEqual(state['native'], self.legacy('session', 'worker-a')['native'])
+        # The owed confirmation stays unread evidence of the decision.
+        self.assertEqual(request, self.completion('worker-a')['requestId'])
+
+    def test_succeed_transfers_authority_and_forwards_unresolved_input(self):
+        self.associate('cond-a')
+        self.associate('cond-b', harness='fixture')
+        self.legacy('connect', 'cond-b', '', self.endpoint)
+        self.legacy('recruit', 'child-a', 'cond-a', 'fixture', 'model', 'low', str(self.repo),
+                    'child-a-branch', str(self.directory / 'child-a'), 'HEAD')
+        self.legacy('connect', 'child-a', '', self.endpoint)
+        self.legacy('message', 'child-a-assignment', 'cond-a', 'child-a', 'task-assignment',
+                    'Complete the bounded assignment for child-a.')
+        request = self.action('child-a', 'completion-request', '--text',
+                              'Child result.\nλ🙂')[0]['id']
+        # The predecessor read the request and did not confirm it; a second input is unread.
+        self.action('cond-a', 'read', request)
+        self.legacy('message', 'unread-report', 'child-a', 'cond-a', 'report',
+                    'An unread report for the predecessor.')
+        self.stop_session('cond-a', 'stop-cond-a')
+        original = [row for row in self.stored_messages()
+                    if row[0] in ('child-a-assignment', request, 'unread-report')]
+        parent_before = self.legacy('session', 'child-a')['parent']
+        succeeded = self.invoke(self.db, 'as', 'cond-b', 'succeed', '--from', 'cond-a')
+        self.assertEqual(succeeded['record'], 'succession:cond-a:cond-b')
+        stored = {row[0]: row for row in self.stored_messages()}
+        self.assertEqual(stored['succession:cond-a:cond-b'][1:4],
+                         ('cond-b', 'cond-a', 'succession'))
+        forwards = {name: stored['forward:cond-a:cond-b:' + name]
+                    for name in (request, 'unread-report')}
+        self.assertEqual(forwards[request][1:4], ('child-a', 'cond-b', 'forwarded-input'))
+        self.assertIn('Child result.\nλ🙂', forwards[request][4])
+        self.assertIn(request, forwards[request][4])
+        self.assertIn('An unread report for the predecessor.', forwards['unread-report'][4])
+        # Originals, their recipients and read states, and the child's records are unchanged.
+        self.assertEqual([row for row in self.stored_messages()
+                          if row[0] in ('child-a-assignment', request, 'unread-report')], original)
+        self.assertEqual(self.legacy('session', 'child-a')['parent'], parent_before)
+        state = self.action('root', 'session', 'child-a')['taskCompletion']
+        self.assertEqual((state['assignmentId'], state['requestId'], state['coordinator']),
+                         ('child-a-assignment', request, 'cond-b'))
+        self.assertFalse(state['confirmed'])
+        self.assertEqual(self.message_ids().count('child-a-assignment'), 1)
+        # The successor confirms the original request; the child sends nothing again.
+        confirmed = self.action('cond-b', 'completion-confirmed', '--to', 'child-a')
         self.assertEqual(confirmed[0]['status'], 'admitted')
         self.assertEqual(confirmed[0]['delivery']['body'], request)
-        original = [row for row in self.stored_messages() if row[0] == request][0]
-        self.assertEqual(original[2], 'root')
-        self.assertTrue(self.completion('worker-a')['ended'])
+        ended = self.action('root', 'session', 'child-a')['taskCompletion']
+        self.assertTrue(ended['ended'])
+        self.assertEqual(self.stop_rows(), [('cond-a', 'stop-cond-a', 'stopped')])
+        # Repeating the action stores nothing new.
+        before = self.stored_messages()
+        self.invoke(self.db, 'as', 'cond-b', 'succeed', '--from', 'cond-a')
+        self.assertEqual(self.stored_messages(), before)
+
+    def test_confirmation_by_the_predecessor_stays_in_force_after_succession(self):
+        self.associate('cond-a')
+        self.associate('cond-b', harness='fixture')
+        self.legacy('recruit', 'child-a', 'cond-a', 'fixture', 'model', 'low', str(self.repo),
+                    'child-a-branch', str(self.directory / 'child-a'), 'HEAD')
+        self.legacy('message', 'child-a-assignment', 'cond-a', 'child-a', 'task-assignment',
+                    'Complete the bounded assignment for child-a.')
+        request = self.action('child-a', 'completion-request', '--text', 'Done.')[0]['id']
+        self.action('cond-a', 'completion-confirmed', '--to', 'child-a')
+        self.assertTrue(self.action('root', 'session', 'child-a')['taskCompletion']['ended'])
+        self.stop_session('cond-a', 'stop-cond-a')
+        self.invoke(self.db, 'as', 'cond-b', 'succeed', '--from', 'cond-a')
+        state = self.action('root', 'session', 'child-a')['taskCompletion']
+        self.assertTrue(state['confirmed'] and state['ended'])
+        # The confirmed request is no longer unresolved input.
+        self.assertNotIn('forward:cond-a:cond-b:' + request, self.message_ids())
+
+    def test_succession_is_refused_without_an_ended_predecessor_and_for_forged_records(self):
+        self.associate('cond-a')
+        self.associate('cond-b', harness='fixture')
+        before = self.stored_messages()
+        self.invoke(self.db, 'as', 'cond-b', 'succeed', '--from', 'cond-a', success=False)
+        self.assertEqual(self.stored_messages(), before)
+        self.stop_session('cond-a', 'stop-cond-a')
+        before = self.stored_messages()
+        self.legacy('message', 'succession:cond-a:cond-b', 'cond-b', 'cond-a',
+                    'succession', '{}', success=False)
+        self.assertEqual(self.stored_messages(), before)
+        self.legacy('succeed', 'cond-b', 'cond-a')
+        self.associate('cond-c', harness='fixture')
+        before = self.stored_messages()
+        self.legacy('succeed', 'cond-c', 'cond-a', success=False)
+        self.assertEqual(self.stored_messages(), before)
+
+    def test_stopping_a_conductor_reports_live_children_to_the_live_ancestor(self):
+        self.associate('cond-a')
+        self.legacy('recruit', 'child-a', 'cond-a', 'fixture', 'model', 'low', str(self.repo),
+                    'child-a-branch', str(self.directory / 'child-a'), 'HEAD')
+        self.legacy('message', 'child-a-assignment', 'cond-a', 'child-a', 'task-assignment',
+                    'Complete the bounded assignment for child-a.')
+        request = self.action('child-a', 'completion-request', '--text', 'Done.')[0]['id']
+        self.stop_session('cond-a', 'stop-cond-a')
+        reports = [row for row in self.stored_messages() if row[0] == 'ended:stop-cond-a']
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(reports[0][1:4], ('cond-a', 'root', 'report'))
+        body = json.loads(reports[0][4])
+        self.assertEqual(body['type'], 'session-ended')
+        self.assertEqual(body['liveChildren'], ['child-a'])
+        self.assertIn(request, body['unresolvedInput'])
+        # The child's later reports and requests reach the live ancestor.
+        self.invoke(self.db, 'as', 'child-a', 'report', 'The child continues.')
+        self.assertEqual(self.stored_messages()[-1][1:4], ('child-a', 'root', 'report'))
+        self.assertEqual(self.action('root', 'session', 'child-a')['blockedOwner'], 'root')
+        self.action('child-a', 'completion-request', '--text', 'Done again.')
+        self.assertEqual(self.stored_messages()[-1][1:4], ('child-a', 'root', 'completion-request'))
+
+    def test_confirmed_conductor_reports_live_children_and_its_children_report_upward(self):
+        self.associate('cond-a', harness='fixture')
+        self.legacy('connect', 'cond-a', '', self.endpoint)
+        self.legacy('message', 'cond-a-assignment', 'root', 'cond-a', 'task-assignment',
+                    'Coordinate the bounded assignment.')
+        self.legacy('recruit', 'child-a', 'cond-a', 'fixture', 'model', 'low', str(self.repo),
+                    'child-a-branch', str(self.directory / 'child-a'), 'HEAD')
+        self.action('cond-a', 'completion-request', '--text', 'Coordination is complete.')
+        self.action('root', 'completion-confirmed', '--to', 'cond-a', '--id', 'end-cond-a')
+        self.assertTrue(self.action('root', 'session', 'cond-a')['taskCompletion']['ended'])
+        reports = [row for row in self.stored_messages() if row[0] == 'ended:end-cond-a']
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(reports[0][1:4], ('cond-a', 'root', 'report'))
+        self.assertEqual(json.loads(reports[0][4])['liveChildren'], ['child-a'])
+        self.invoke(self.db, 'as', 'child-a', 'report', 'The child continues.')
+        self.assertEqual(self.stored_messages()[-1][1:4], ('child-a', 'root', 'report'))
 
     def test_conflicting_derived_task_identity_admits_neither_message(self):
         request = self.requested('worker-a')
