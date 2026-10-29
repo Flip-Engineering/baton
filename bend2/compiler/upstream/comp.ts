@@ -4875,6 +4875,23 @@ function checked_emitter(context: Prepared,
     stored.release();
     memo_gc();
     BRWS.clear();
+    if (DIAGNOSTICS && facts_only) {
+      const segment_lines = output.segs.reduce((n, seg) => n + seg.lines.length, 0);
+      const segment_chars = output.segs.reduce((n, seg) =>
+        n + seg.lines.reduce((m, line) => m + line.length, 0), 0);
+      const helper_chars = output.spins.reduce((n, spin) => n + spin[1].length, 0);
+      const static_words = [...output.statics.values()].reduce((n, words) => n + words.length, 0);
+      const static_chars = [...output.statics.values()].flat()
+        .reduce((n, word) => n + word.length, 0);
+      const table_chars = [...output.tabs.keys()].reduce((n, rows) => n + rows.length, 0);
+      const constructor_entries = output.segs.reduce((n, seg) => n + seg.cids.size, 0)
+        + output.spins.reduce((n, spin) => n + spin[3].size, 0);
+      diagnostic("facts_only.retained_output", { name: k, segment_lines, segment_chars,
+        helper_count: output.spins.length, helper_chars, static_rows: output.statics.size,
+        static_words, static_chars, tables: output.tabs.size, table_chars,
+        closure_targets: output.clos.size, constructor_entries,
+        retained_output_chars: segment_chars + helper_chars + static_chars + table_chars });
+    }
     const code: CodeUnit = facts_only ? { unit: unit.unit, lend: unit.lend,
       segs: [], spins: [], statics: new Map(), tabs: new Map(), clos: new Set() } : unit;
     const fragment = fragments.write(code);

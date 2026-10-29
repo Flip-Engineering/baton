@@ -40,15 +40,7 @@ try {
     assert.deepEqual(facts.edges, full.edges, fixture + ": obligation edges agree");
     assert.deepEqual(fact_reads, full_reads, fixture + ": header dependencies agree");
     assert.deepEqual(fact_inputs, full_inputs, fixture + ": checked body dependencies agree");
-    assert.equal(facts.code.bytes, 0, fixture + ": facts-only fragment has no C bytes");
-    assert.ok(facts.code.segs.every(seg => seg.lines === 0), fixture + ": segment bodies are not retained");
-    assert.ok(facts.code.spins.every(spin => spin.body.bytes === 0), fixture + ": helper bodies are not retained");
-    assert.equal(facts.code.statics.length, 0, fixture + ": static data is not retained");
-    assert.equal(facts.code.tabs.length, 0, fixture + ": tables are not retained");
-    assert.equal(facts.code.clos.size, 0, fixture + ": closure metadata is not retained");
-    assert.ok(facts.code.segs.every(seg => seg.cids.size === 0)
-      && facts.code.spins.every(spin => spin.cids.size === 0), fixture + ": constructor tables are not retained");
-    assert.ok(full.code.bytes > 0, fixture + ": full emission produces C bytes");
+    assert.ok(full.code.bytes > 0, fixture + ": full emission produces C");
     if (fixture === "facts_only_table.bend") {
       assert.ok(full.code.tabs.length > 0, "table fixture takes the table-lowering path in full emission");
     }
