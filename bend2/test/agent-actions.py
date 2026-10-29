@@ -852,6 +852,27 @@ class AgentActions(unittest.TestCase):
         self.assertEqual(rows[1]['delivery']['body'], file.read_text())
         self.assertFalse(self.completion('worker-a')['ended'])
 
+    def test_successor_confirms_a_request_addressed_to_its_predecessor(self):
+        request = self.requested('worker-a')
+        # A durable succession record and the worker's new parent; the request
+        # keeps its recorded recipient and the worker sends nothing again.
+        with sqlite3.connect(self.db) as db:
+            db.execute("UPDATE sessions SET parent='other-root' WHERE id='worker-a'")
+            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES"
+                       "('succession:root:other-root','other-root','other-root','report','{}')")
+        stored = self.stored_messages()
+        self.assertEqual(self.completion('worker-a')['requestId'], request)
+        refused = self.action('root', 'completion-confirmed', '--to', 'worker-a',
+                              '--request', request)[0]
+        self.assertEqual(refused['status'], 'refused')
+        self.assertEqual(self.stored_messages(), stored)
+        confirmed = self.action('other-root', 'completion-confirmed', '--to', 'worker-a')
+        self.assertEqual(confirmed[0]['status'], 'admitted')
+        self.assertEqual(confirmed[0]['delivery']['body'], request)
+        original = [row for row in self.stored_messages() if row[0] == request][0]
+        self.assertEqual(original[2], 'root')
+        self.assertTrue(self.completion('worker-a')['ended'])
+
     def test_conflicting_derived_task_identity_admits_neither_message(self):
         request = self.requested('worker-a')
         self.legacy('message', 'decision-2:next-assignment', 'root', 'worker-a',
