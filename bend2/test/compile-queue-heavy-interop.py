@@ -31,6 +31,7 @@ if not BINARY:
     print('Set BATON2_COMPILE_QUEUE_BIN to the built Bend2 queue executable', file=sys.stderr)
     sys.exit(2)
 
+os.umask(0o007)
 T = pathlib.Path(tempfile.mkdtemp(prefix='compile-queue-heavy-interop-'))
 LOG = T / 'log'
 PAD = T / 'pad-exec.py'
@@ -40,6 +41,7 @@ for target in range(3, 10):
     if fd != target:
         os.dup2(fd, target)
         os.close(fd)
+    os.set_inheritable(target, True)
 os.execv(sys.argv[1], sys.argv[1:])
 """)
 LEGACY = T / 'legacy-holder.py'
@@ -80,6 +82,7 @@ FAKE.chmod(0o755)
 (T / 'entry.bend').write_text('def main() -> Unit:\n  Unit{}\n')
 
 procs = []
+releases = []
 
 
 def new_state(name):
@@ -104,6 +107,8 @@ def log_lines():
 
 
 def command(binary, state, kind, tag, hold=None, pad_fds=False):
+    if hold is not None:
+        releases.append(hold)
     out = T / (tag + '.artifact')
     env = dict(os.environ, BATON_COMPILE_QUEUE_ROOT=str(state))
     env.pop('BATON_COMPILE_QUEUE_TELEMETRY', None)
@@ -142,6 +147,7 @@ def waiting_tickets(state):
 def start_legacy_holder(state, tag, megabytes=16):
     started = T / (tag + '.legacy-started')
     release = T / (tag + '.legacy-release')
+    releases.append(release)
     process = subprocess.Popen([sys.executable, str(LEGACY), str(state / 'heavy.lock'),
                                 str(started), str(release), str(megabytes)],
                                start_new_session=True)
@@ -186,7 +192,7 @@ def cc_key(state, tag, hold):
     out = T / (tag + '.artifact')
     env = dict(os.environ, BATON_COMPILE_QUEUE_ROOT=str(state))
     args = [BINARY, '--', 'key', '--kind', 'cc', '--state-root', str(state),
-            '--cwd', str(T), '--compiler', str(FAKE), '--linker', str(FAKE),
+            '--cwd', str(T), '--source-root', str(T), '--compiler', str(FAKE), '--linker', str(FAKE),
             '--version', 'fake-version', '--artifact', 'result=' + str(out),
             '--option', 'tag=' + tag, '--', str(FAKE), '--tag', tag,
             '--hold', str(hold), '-o', str(out)]
@@ -214,7 +220,7 @@ def scenario_measured_parallel():
     finish(first, "measured-a"); finish(second, "measured-b")
 
 
-def scenario_claim_fd10_alias():
+def scenario_claim_fd10_inheritance():
     state = new_state("queue-claim-fd10-alias")
     (state / "meminfo").write_text("total_kb=1000000\navailable_kb=100000\n")
     hold = T / "hold-claim-fd10"
@@ -225,7 +231,7 @@ def scenario_claim_fd10_alias():
     assert len(claims) == 1, ("claim file disappeared while the child held FD 10", claims, T)
     hold.touch()
     finish(job, "claim-fd10-alias")
-    print("PASS a claim lock allocated at FD 10 remains live in the command process")
+    print("PASS the command retains its claim on FD 10 with inherited descriptors occupied")
 
 
 def scenario_unknown_does_not_join():
@@ -401,18 +407,24 @@ def scenario_exclusive_queue_binary():
         print('PASS %s: the second command started after the first ended' % order)
 
 
-scenario_exclusive_first()
-scenario_job_first()
-scenario_cc()
-scenario_cc_first()
-scenario_unknown_legacy_cc()
-scenario_measured_parallel()
-scenario_measured_cc_parallel()
-scenario_claim_fd10_alias()
-scenario_unknown_does_not_join()
-if EXCLUSIVE:
-    scenario_exclusive_queue_binary()
-else:
-    print('SKIP exclusive-lock queue executable: BATON2_EXCLUSIVE_QUEUE_BIN is not set')
+try:
+    scenario_exclusive_first()
+    scenario_job_first()
+    scenario_cc()
+    scenario_cc_first()
+    scenario_unknown_legacy_cc()
+    scenario_measured_parallel()
+    scenario_measured_cc_parallel()
+    scenario_claim_fd10_inheritance()
+    scenario_unknown_does_not_join()
+    if EXCLUSIVE:
+        scenario_exclusive_queue_binary()
+    else:
+        print('SKIP exclusive-lock queue executable: BATON2_EXCLUSIVE_QUEUE_BIN is not set')
+finally:
+    for release in releases:
+        release.touch()
+    for process in procs:
+        process.wait(timeout=60)
 for process in procs:
     assert process.poll() is not None, ('process left running', process.args, T)
