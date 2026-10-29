@@ -8,8 +8,8 @@ def models_args(cmd: String) -> List<String>:
 
 # Codex runs the retained Baton entry at Stop and after each successful tool, the same
 # entry Claude Code runs (#1212). PostToolUse adds complete owed input to the running
-# turn and Stop continues the turn while owed input or an open assignment without a
-# completion request remains. additionalContextLimit=0 passes the complete context to
+# turn and Stop continues the turn while input is owed or the coordinator has not
+# confirmed the completion request. additionalContextLimit=0 passes the complete context to
 # the model; the default limit saves context over about 2500 tokens to a file and shows
 # a preview. The hook trust bypass runs these inline hooks without a persisted review.
 def hook_handler(extra: String) -> String:
