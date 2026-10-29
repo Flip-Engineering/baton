@@ -216,10 +216,18 @@ export async function emit(program: Prepared, output: string): Promise<void> {
   } finally { fs.closeSync(fd); }
 }
 
+function copy_tree(source: string, destination: string): void {
+  fs.mkdirSync(destination);
+  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    const from = path.join(source, entry.name), to = path.join(destination, entry.name);
+    if (entry.isDirectory()) copy_tree(from, to); else fs.copyFileSync(from, to);
+  }
+}
+
 export function cleanup(program: Prepared): void {
   for (const file of ["index.json", "program.json"]) fs.copyFileSync(path.join(program.directory, file), path.join(program.evidence, file));
   const history = path.join(program.directory, "facts");
-  if (fs.existsSync(history)) fs.cpSync(history, path.join(program.evidence, "facts"), { recursive: true });
+  if (fs.existsSync(history)) copy_tree(history, path.join(program.evidence, "facts"));
   fs.rmSync(program.directory, { recursive: true });
   fs.rmSync(path.join(program.evidence, "snapshots"), { recursive: true });
 }
