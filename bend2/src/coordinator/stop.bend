@@ -56,7 +56,9 @@ def stranded_status(+directory: String, reaped: Result<&1,&1,U32 & String,U32>) 
 
 def starting_observed(+directory: String, observed: Result<&1,&1,U32 & String,String>) -> IO(Bool):
   match observed:
-    case Fail{(code,detail)}: IO.pure(Bool,U32.is_eq(code,2))
+    # An admitted native can outlive the process that owned its files. A
+    # terminal status or retained keeper identity establishes its outcome.
+    case Fail{(code,detail)}: IO.pure(Bool,False{})
     case Done{output}: do IO<Bool>:
       reaped : Result<&1,&1,U32 & String,U32> <- F.Files.size(directory ++ "/status")
       stranded_status(directory,reaped)
@@ -343,8 +345,20 @@ def missing_custody_owner(+db: String, +session: String, +attempt: String, +dire
 def control_attempt(+db: String, +session: String, +attempt: String, +directory: String, +signal: U32) -> IO(Unit):
   do IO<Unit>:
     result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.control_signal(directory,signal)
-    saved : String <- IO.try(String,DB.Sql.query(db,control_result_sql(session,attempt,signal,result)))
-    IO.pure(Unit,Unit{})
+    control_attempt_result(db,session,attempt,directory,signal,result)
+
+# When the attempt socket is unavailable, ask the elected instance owner to
+# resolve the attempt from its retained keeper. That route verifies the manifest
+# and native birth before signaling. A failed owner lookup records custody as
+# missing and preserves the execution row.
+def control_attempt_result(+db: String, +session: String, +attempt: String, +directory: String, +signal: U32, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match result:
+    case Done{unit}: do IO<Unit>:
+      saved : String <- IO.try(String,DB.Sql.query(db,control_result_sql(session,attempt,signal,result)))
+      IO.pure(Unit,Unit{})
+    case Fail{error}: do IO<Unit>:
+      identity : Result<&1,&1,U32 & String,String> <- P.ProcessChild.instance_attempt_signal(db,directory,signal)
+      missing_identity_signal_result(db,session,attempt,signal,directory,identity)
 
 def restore_requested_sql(+session: String, +attempt: String) -> String:
   "UPDATE session_stops SET outcome='requested',control_error='' WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ " AND outcome='custody-missing' AND EXISTS(SELECT 1 FROM executions e WHERE e.session=session_stops.session AND e.id=session_stops.attempt AND e.phase<>'exited');"

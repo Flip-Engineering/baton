@@ -223,6 +223,23 @@ class Stop(unittest.TestCase):
                          [{'phase': 'exited', 'status': 'signal 15'}])
         self.shutdown_idle_database_owner('restored custody left processes running')
 
+    def test_live_native_with_missing_control_endpoint_uses_owner_identity(self):
+        observer, stream, started = self.begin()
+        attempt_dir = pathlib.Path(self.rows(
+            "SELECT directory FROM executions WHERE session='parent'")[0]['directory'])
+        endpoint = attempt_dir / 'control'
+        self.assertTrue(endpoint.exists())
+        endpoint.unlink()
+
+        stopped = self.stop()
+        self.assertEqual(stopped['status'], 'requested')
+        self.assertEqual(stopped['submittedSignal'], 15)
+        self.assertIsNone(stopped['controlError'])
+        self.finish(observer, ok=False)
+        completed = self.completed()
+        self.assertEqual(completed['nativeStatus'], 'signal 15')
+        self.shutdown_idle_database_owner('owner-verified stop left processes running')
+
     def test_live_owner_keeps_launch_window_stop_requested_until_custody_is_ready(self):
         observer, stream, started = self.begin(resist=True)
         self.assertFalse(self.session_guard_available('parent'))
