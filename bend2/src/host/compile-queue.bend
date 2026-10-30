@@ -1724,7 +1724,7 @@ def admission_legacy_pid(result: Result<&1,&1,U32 & String,String>) -> U32:
     case Fail{error}: 1
     case Done{+text}: admission_legacy_pid_text(text)
 
-def admission_can_start(kind: String, +history: U32, +need: U32, stats: ClaimStats,
+def admission_can_start(+kind: String, +history: U32, +need: U32, stats: ClaimStats,
                         +available: U32, +legacy_pid: U32) -> Bool:
   match stats:
     case ClaimStats{+count, unspent, unknown, unobserved, group_current, reserve, used, signature}:
