@@ -1071,6 +1071,9 @@ def group_peak_record(+attempt: String, +peak: U32) -> IO(Unit):
 
 # Admission uses the largest observed peak of the exact key and compatible CC
 # group. A request with unavailable history enters when no other claim is live.
+def max_u32(+a: U32, +b: U32) -> U32:
+  Bool.pick(U32,U32.is_gt(a,b),a,b)
+
 def admission_history_value(exact: Result<&1,&1,U32 & String,String>, grouped: Result<&1,&1,U32 & String,String>) -> U32:
   +exact_peak = status_number(field(peak_text_result(exact), "peak_kb"))
   max_u32(exact_peak, status_number(field(peak_text_result(grouped), "peak_kb")))
@@ -1203,12 +1206,6 @@ def history_import_parsed(parsed: StateKey) -> IO(Unit):
         names : String <- IO.try(String,L.CompileQueueLifecycle.list_dir(state ++ "/keys"))
         history_import_keys(Tx.split_nul(names),state,selected)
 
-def history_rebuild_command(args: List<&2,String>) -> IO(Unit):
-  do IO<Unit>:
-    state : String <- default_state_root()
-    parsed : StateKey <- parse_state_key(args,state,"")
-    history_import_parsed(parsed)
-
 def record_usage(+attempt: String, pid: U32, sample: U32, growth: U32) -> IO(Unit):
   do IO<Unit>:
     meta_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/meta")
@@ -1285,9 +1282,6 @@ def claim_add_stats(live: Bool, +text: String, +group: String, +stats: ClaimStat
           current_text : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.session_kb(root)
           claim_add_stats_after_sample(text,group,count,unspent,unknown,unobserved,group_current,reserve,used,signature,identity,current_text),
         IO.pure(ClaimStats, stats))
-
-def max_u32(+a: U32, +b: U32) -> U32:
-  Bool.pick(U32,U32.is_gt(a,b),a,b)
 
 def claim_stats_with_reserve(stats: ClaimStats, growth: U32) -> ClaimStats:
   match stats:
@@ -2242,6 +2236,12 @@ def parse_state_key(args: List<&2,String>, +state: String, +key: String) -> IO(S
     case "--state-root" <> value <> rest: parse_state_key(rest, value, key)
     case "--key" <> value <> rest: parse_state_key(rest, state, value)
     case +option <> rest: IO.die(StateKey, 2, "compile-queue: unknown option " ++ option)
+
+def history_rebuild_command(args: List<&2,String>) -> IO(Unit):
+  do IO<Unit>:
+    state : String <- default_state_root()
+    parsed : StateKey <- parse_state_key(args,state,"")
+    history_import_parsed(parsed)
 
 def wait_result_path(latest: String, key: String, lock: U32) -> IO(Unit):
   match latest:
