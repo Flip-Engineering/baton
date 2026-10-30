@@ -1,3 +1,6 @@
+#ifndef BATON_JSONL_INCLUDED
+#define BATON_JSONL_INCLUDED
+
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -191,5 +194,7 @@ static Term baton_jsonl_read_run(Env environment, Term *arguments, IoWork *work)
 static void __attribute__((constructor)) baton_jsonl_read_use(void) {
   io_eff(CID_JSONL_READ_SUFFIX, baton_jsonl_read_run, 0);
 }
+
+#endif
 
 #endif
