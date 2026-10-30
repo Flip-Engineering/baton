@@ -42,6 +42,18 @@ COMPILER_ARCHIVES = {
         'source_metadata_sha256': 'ef084b786ff041fc2f0f7e4985da45754233ebb692794abed2bfbbda93cd70b9',
         'source_input_count': 84,
     },
+    '9ce9b66b67e86868eb08d987eaabd162a5aad6a3a723ea16e63bfa7df112dd23': {
+        'name': 'Bend 2.0.25 with nested literal rows, linear table names, fragment digest comparison and admission at the processor limit',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': 'd1bbe3d2a3ff4974068e71df0a7e9936d53e775d',
+        'source_tree': 'daefeca145da0c0d094c2a3e870ab5bfae78e896',
+        'source_lock_sha256': '4abcb7bfe1535fb1e274c99c1ace67eb82ccecf6eec0c869ede207c37c0aeb8c',
+        'source_manifest_sha256': '415c5735b111b3507259aa93e53b364d68ac653bbb1e3fe4a5df77ba24f928fd',
+        'source_metadata_sha256': '314ca76d185aa51f8381dfc520819bce787216bbd8f16ea09890c10fe50ad5c5',
+        'source_input_count': 84,
+    },
     'd942170807fdfacc078792110e76e00a1e2b5076524ac043bf6f8534652c284d': {
         'name': 'Bend 2.0.25 with term comparison and String-chain compiler fixes and refreshed release checksums',
         'official_release_artifact': False,
