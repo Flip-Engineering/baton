@@ -144,7 +144,8 @@ class SharedInstance(unittest.TestCase):
             time.sleep(.05)
         self.assertFalse(self.election_held(), 'the election lock stayed held after cleanup')
         _, key, _, record, socket_path = self.election_paths()
-        for path in (record, socket_path, self.ipc_directory() / f'{key}.log'):
+        for path in (record, socket_path, self.ipc_directory() / f'{key}.log',
+                     self.ipc_directory() / f'{key}.drain'):
             if path.exists():
                 path.unlink()
         for child in self.children:
@@ -1332,6 +1333,149 @@ class SharedInstance(unittest.TestCase):
         self.assertFalse((cancelled_dir / 'launch').exists())
         self.assertFalse((cancelled_dir / 'native.pid').exists())
         print('evidence dormant-cancel', 'matching-repeat', 'changed-refused', 'start-refused')
+
+    # -- owner drain (#1399) ------------------------------------------------
+
+    def owner_status(self, database=None):
+        result = self.command('owner-status', database or self.db)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def drain_marker(self):
+        info = os.stat(self.db)
+        return self.ipc_directory() / f'owner-{info.st_dev:x}-{info.st_ino:x}.drain'
+
+    def executable_sha256(self):
+        return hashlib.sha256(EXE.read_bytes()).hexdigest()
+
+    def start_survivor(self, label, database=None):
+        database = database or self.db
+        directory = pathlib.Path(f'{database}.attempt-{label}')
+        child = self.spawn('admit', database, label, directory, self.home, '\n',
+                           sys.executable, self.survivor)
+        self.line(child, 'admitted')
+        self.hold(directory / 'stdout', 'tick:', child=child)
+        return directory, child
+
+    def end_attempt(self, directory, child):
+        result = self.command('control-signal', directory, str(signal.SIGTERM))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('attempt-complete', self.wait_run(child))
+
+    def test_owner_status_names_the_loaded_executable(self):
+        self.assertEqual(self.owner_status(), {'state': 'absent'})
+        directory, child = self.start_survivor('s0')
+        status = self.owner_status()
+        self.assertEqual(status['state'], 'running')
+        self.assertEqual(status['pid'], self.owner_pid())
+        self.assertEqual(status['attempts'], 1)
+        self.assertTrue(status['drainGated'])
+        self.assertEqual(os.path.realpath(status['executable']), os.path.realpath(EXE))
+        self.assertEqual(status['sha256'], self.executable_sha256())
+        self.end_attempt(directory, child)
+
+    def test_drain_refuses_new_attempts_until_the_owner_exits(self):
+        first_directory, first = self.start_survivor('g0')
+        owner = self.owner_pid()
+        other_root = pathlib.Path(tempfile.mkdtemp(prefix='b2-drain-other-')).resolve()
+        self.addCleanup(shutil.rmtree, other_root, ignore_errors=True)
+        other_db = other_root / 'other.db'
+        other_db.touch()
+        other_directory, other = self.start_survivor('o0', other_db)
+        self.addCleanup(lambda: subprocess.run([str(EXE), 'shutdown', str(other_db)],
+                                               capture_output=True, text=True))
+
+        drained = self.command('drain', self.db)
+        self.assertEqual(drained.returncode, 0, drained.stderr)
+        report = json.loads(drained.stdout)
+        self.assertEqual((report['state'], report['attempts'], report['pid']),
+                         ('draining', 1, owner), report)
+        self.assertEqual(self.owner_status()['state'], 'draining')
+        # The request returned while the owner still lives.
+        self.assertEqual(self.owner_pid(), owner)
+        waiter = self.spawn('owner-wait', self.db)
+        time.sleep(.5)
+        self.assertIsNone(waiter.poll(), 'wait returned before the owner exited')
+
+        refused_directory, refused = self.begin('g1')
+        refused.wait()
+        stderr = refused.stderr.read()
+        self.assertNotEqual(refused.returncode, 0, stderr)
+        self.assertIn('ESHUTDOWN', stderr)
+        self.assertIn(f'owner pid {owner}', stderr)
+        self.assertIn(os.path.realpath(EXE), stderr)
+        self.assertFalse(refused_directory.exists(), 'the refused admission left its directory')
+        self.assertEqual(self.owner_pid(), owner)
+        self.assertEqual(self.owner_status()['attempts'], 1)
+        # Without the client marker the draining owner itself refuses.
+        self.drain_marker().unlink()
+        gated_directory, gated = self.begin('g3')
+        gated.wait()
+        gated_error = gated.stderr.read()
+        self.assertNotEqual(gated.returncode, 0, gated_error)
+        self.assertIn('ESHUTDOWN', gated_error)
+        self.assertFalse(gated_directory.exists())
+        self.assertEqual(self.owner_status()['attempts'], 1)
+
+        # The attempt the owner already holds keeps running, and an independent
+        # database keeps its own owner.
+        before = (first_directory / 'stdout').read_text()
+        self.eventually(lambda: (first_directory / 'stdout').read_text() != before,
+                        'the held attempt stopped producing output during the drain')
+        self.assertEqual(self.owner_status(other_db)['state'], 'running')
+
+        self.end_attempt(first_directory, first)
+        waiter.wait(timeout=20)
+        waiter.stdout_reader.join()
+        self.assertEqual(waiter.returncode, 0, ''.join(waiter.output))
+        self.assertEqual(json.loads(''.join(waiter.output)), {'state': 'absent'})
+        self.assertEqual(self.owner_status(), {'state': 'absent'})
+
+        successor_directory, successor = self.start_survivor('g2')
+        status = self.owner_status()
+        self.assertEqual(status['state'], 'running')
+        self.assertNotEqual(status['pid'], owner)
+        self.assertEqual(os.path.realpath(status['executable']), os.path.realpath(EXE))
+        self.assertEqual(status['sha256'], self.executable_sha256())
+        self.end_attempt(successor_directory, successor)
+        self.end_attempt(other_directory, other)
+
+    def test_drain_of_an_idle_owner_exits_and_clears_the_marker(self):
+        directory, child = self.begin('i0', payload='exit\n')
+        self.assertIn('attempt-complete', self.wait_run(child))
+        owner = self.owner_pid()
+        drained = self.command('drain', self.db)
+        self.assertEqual(drained.returncode, 0, drained.stderr)
+        waiter = self.command('owner-wait', self.db)
+        self.assertEqual(waiter.returncode, 0, waiter.stderr)
+        self.assertEqual(json.loads(waiter.stdout), {'state': 'absent'})
+        self.eventually(lambda: not self.owner_processes(), 'the idle owner did not exit')
+        marker = self.drain_marker()
+        self.assertFalse(marker.exists(), 'the owner left its drain marker')
+        directory, again = self.begin('i1', payload='again\n')
+        self.assertIn('echo:again', self.wait_run(again))
+        self.assertNotEqual(self.owner_pid(), owner)
+
+    def test_a_marker_names_the_draining_owner_and_a_stale_one_is_removed(self):
+        directory, child = self.start_survivor('m0')
+        _, _, _, record, _ = self.election_paths()
+        raw = record.read_bytes()
+        token, epoch = struct.unpack_from('=QQ', raw, 0)
+        marker = self.drain_marker()
+        # An owner of an older release does not gate admissions; the marker a
+        # client of this release finds for the answering owner refuses the admission.
+        marker.write_text(f'{token}:{epoch}\n')
+        refused_directory, refused = self.begin('m1')
+        refused.wait()
+        self.assertIn('ESHUTDOWN', refused.stderr.read())
+        self.assertFalse(refused_directory.exists())
+        self.assertTrue(marker.exists())
+        # A marker that names another incarnation is stale and is removed.
+        marker.write_text(f'{token + 1}:{epoch}\n')
+        allowed_directory, allowed = self.begin('m2', payload='exit\n')
+        self.assertIn('attempt-complete', self.wait_run(allowed))
+        self.assertFalse(marker.exists(), 'a stale marker stayed after an admission')
+        self.end_attempt(directory, child)
 
 
 if __name__ == '__main__':

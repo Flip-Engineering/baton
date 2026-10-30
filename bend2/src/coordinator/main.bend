@@ -497,9 +497,17 @@ def recover_cli(db: String, session: String, id: String, cursor: String, cmd: St
     case True{}: IO.try(Unit,Receive.recover(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native))
     case False{}: execute("",C.Invalid{})
 
+def instance_wait_cli(+database: String, +flag: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(flag,"--instance-wait"),
+    Custody.Instance.print_wait(database),normal_cli([flag,database]))
+
+def instance_status_cli(+database: String, +flag: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(flag,"--instance-status"),
+    Custody.Instance.print_status(database),instance_wait_cli(database,flag))
+
 def instance_shutdown_cli(+database: String, +flag: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.eq(flag,"--instance-shutdown"),
-    IO.try(Unit,Custody.Instance.shutdown(database)),normal_cli([flag,database]))
+    Custody.Instance.print_drain(database),instance_status_cli(database,flag))
 
 def instance_owner_cli(+database: String, +flag: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.eq(flag,"--instance-owner"),

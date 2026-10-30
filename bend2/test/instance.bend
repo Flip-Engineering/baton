@@ -714,9 +714,12 @@ def existing_mode_number(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"recover-observation"),29,0)))))))))))))))))))))))))))))
 
 def mode_number(+mode: String) -> U32:
+  Bool.pick(U32,String.eq(mode,"owner-status"),33,
+  Bool.pick(U32,String.eq(mode,"owner-wait"),34,
+  Bool.pick(U32,String.eq(mode,"drain"),35,
   Bool.pick(U32,String.eq(mode,"legacy-hold"),30,
   Bool.pick(U32,String.eq(mode,"attach-owned-close"),31,
-  Bool.pick(U32,String.eq(mode,"--host-process-keeper"),32,existing_mode_number(mode))))
+  Bool.pick(U32,String.eq(mode,"--host-process-keeper"),32,existing_mode_number(mode)))))))
 
 # Admits under the shared owner while holding no session guard, so the record
 # states no guard binding.
@@ -738,6 +741,22 @@ def nolock_cli(args: List<String>) -> IO(Unit):
       run : Unit <- nolock_started(start,payload)
       IO.pure(Unit,Unit{})
     case _: IO.die(Unit,2,"admit-nolock DATABASE ATTEMPT CWD PAYLOAD PROGRAM ARGS...")
+
+# Owner status, exit wait and drain request (#1399); each prints the owner JSON.
+def status_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case +database <> Nil{}: Custody.Instance.print_status(database)
+    case _: IO.die(Unit,2,"owner-status DATABASE")
+
+def wait_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case +database <> Nil{}: Custody.Instance.print_wait(database)
+    case _: IO.die(Unit,2,"owner-wait DATABASE")
+
+def drain_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case +database <> Nil{}: Custody.Instance.print_drain(database)
+    case _: IO.die(Unit,2,"drain DATABASE")
 
 def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
   match mode:
@@ -772,6 +791,9 @@ def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
     case 30: legacy_cli(rest)
     case 31: attach_owned_cli(rest,True{})
     case 32: legacy_keeper_cli(rest)
+    case 33: status_cli(rest)
+    case 34: wait_cli(rest)
+    case 35: drain_cli(rest)
     case _: IO.die(Unit,2,"instance mode required")
 
 def cli(args: List<String>) -> IO(Unit):

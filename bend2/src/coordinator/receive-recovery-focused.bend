@@ -51,13 +51,12 @@ def dispatch_host_keeper_command(selected: Bool, +directory: String, +lock: Stri
     case False{}: IO.die(Unit,2,"observer recovery entry expects a recovery command")
 
 @unsafe
-def dispatch_instance(owner: Bool, shutdown: Bool, +db: String) -> IO(Unit):
-  match owner:
-    case True{}: IO.try(Unit,Custody.Instance.owner(db))
-    case False{}:
-      match shutdown:
-        case True{}: IO.try(Unit,Custody.Instance.shutdown(db))
-        case False{}: IO.die(Unit,2,"expected instance lifecycle command")
+def dispatch_instance(+flag: String, +db: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(flag,"--instance-owner"),IO.try(Unit,Custody.Instance.owner(db)),
+    Bool.pick(IO(Unit),String.eq(flag,"--instance-shutdown"),Custody.Instance.print_drain(db),
+      Bool.pick(IO(Unit),String.eq(flag,"--instance-status"),Custody.Instance.print_status(db),
+        Bool.pick(IO(Unit),String.eq(flag,"--instance-wait"),Custody.Instance.print_wait(db),
+          IO.die(Unit,2,"expected instance lifecycle command")))))
 
 @unsafe
 def dispatch(args: List<String>) -> IO(Unit):
@@ -67,7 +66,7 @@ def dispatch(args: List<String>) -> IO(Unit):
     case +flag <> +directory <> +lock <> Nil{}:
       dispatch_host_keeper_command(String.eq(flag,"--host-process-keeper"),directory,lock)
     case +flag <> +db <> Nil{}:
-      dispatch_instance(String.eq(flag,"--instance-owner"),String.eq(flag,"--instance-shutdown"),db)
+      dispatch_instance(flag,db)
     case +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> Nil{}:
       dispatch_recover(String.eq(flag,"--recover-receive"),db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,"")
     case +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> +inputs <> Nil{}:

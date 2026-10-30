@@ -84,6 +84,9 @@ def Instance.attach(database: String, directory: String)
 def Instance.attach_owned(database: String, directory: String, lock: U32)
   -> IO(Result<&1,&1,U32 & String,U32>)
 def Instance.shutdown(database: String) -> IO(Result<&1,&1,U32 & String,Unit>)
+def Instance.drain(database: String) -> IO(Result<&1,&1,U32 & String,String>)
+def Instance.owner_status(database: String) -> IO(Result<&1,&1,U32 & String,String>)
+def Instance.owner_wait(database: String) -> IO(Result<&1,&1,U32 & String,String>)
 def Instance.retire(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>)
 def Instance.commit(handle: U32, schema: U32, state: String) -> IO(Result<&1,&1,U32 & String,Unit>)
 def Instance.restore(handle: U32, schema: U32) -> IO(Result<&1,&1,U32 & String,String>)
@@ -98,10 +101,52 @@ The same rule applies to `ProcessChild` and `SessionLock` callers
 `Instance.admit` returns the `RetainedStart` shape that `ProcessChild.retain`
 returns, so a caller keeps its existing `retained_start` handling. When the owner
 refuses an admission that started no custody (`EINVAL`, `ESTALE`, `ENOENT`,
-`ENOMEM`), the client removes the attempt directory and manifest it created, so a
-retry prepares them again. A refusal that may leave custody running (`EEXIST` for
+`ENOMEM`, `ESHUTDOWN`), the client removes the attempt directory and manifest it
+created, so a retry prepares them again. A refusal that may leave custody running (`EEXIST` for
 an attempt that already launched, `EBUSY` for an attempt the owner already holds)
 leaves the directory in place.
+
+## Owner drain
+
+`--instance-shutdown DATABASE` asks the owner to drain and prints the owner
+status. A draining owner admits no new attempt. It keeps serving the attempts it
+holds and every attach, recover, state, commit, start, cancel and signal request
+for them, so each attempt completes and recovers as before. When its last attempt
+retires, the owner removes its socket and record and exits. Because attempts
+only leave a draining owner, new admissions cannot extend a drain. The request
+returns while the owner is still alive; the printed state is `draining`.
+
+`--instance-status DATABASE` prints one JSON object and starts no owner:
+
+```json
+{"state":"draining","pid":4242,"owner":7,"epoch":3,"attempts":1,
+ "drainGated":true,"executable":"/opt/baton/bin/baton","sha256":"..."}
+```
+
+`state` is `absent`, `running` or `draining`. `executable` is the link of
+`/proc/PID/exe`; it ends in ` (deleted)` when an install replaced the file after
+the owner started. `sha256` is the hash of the file the owner process has open,
+which is the code it runs. `drainGated` is false for an owner that predates the
+gate. `--instance-wait DATABASE` blocks, without a limit, until the owner that
+answers now has exited or a successor replaced it, then prints the status. The
+caller interrupts it.
+
+An admission that a draining owner refuses ends as `ESHUTDOWN`. The client
+removes the attempt directory it created and the refusal text names the drain,
+the owner pid and executable, and the retry condition. The caller's existing
+settlement for an attempt that could not start records that text, so the report
+that reaches the recorded conductor names the drain, and the owed input stays
+owed. A caller retries after `--instance-status` reports `absent`; the next
+admission starts a successor owner from the executable of the admitting client.
+
+An owner that runs an older release does not gate admissions. `--instance-shutdown`
+therefore also writes a marker, `owner-KEY.drain`, in the per-user IPC directory
+that names the owner token and epoch. A client of this release refuses
+`BI_ADMIT` and `BI_PREPARE` while the marker names the owner that answered, and it
+removes a marker that names another incarnation. The marker does not stop a
+client of an older release from reaching an older owner. An older owner is
+replaced only after `--instance-status` reports `absent` and a later admission
+reports the successor's executable and hash.
 
 ## Unchanged caller surface
 
@@ -321,6 +366,13 @@ passes `"0"`, which reports `gap` and still delivers every later commit.
   incarnation keeps the cursor and reports `gap` for the earlier incarnation.
 - A write through a retired capability is refused.
 - `Instance.shutdown` ends the owner, and a later attempt starts a new one.
+- `drain` returns while the owner lives, with state `draining`; a new admission
+  is refused with `ESHUTDOWN` naming the owner pid and executable, both through
+  the client marker and, with the marker removed, through the owner; the held
+  attempt keeps running and an owner of another database is unaffected; `owner-wait`
+  returns `absent` after the held attempt ends; the next admission starts a
+  successor whose pid differs and whose executable and hash match the
+  admitting client; a stale marker is removed (`test/shared-instance.py`).
 
 `test/process.py`, `test/retained-control.py`, `test/receive.py` and
 `test/native-cli.py` run unchanged as regression controls for the launch path.

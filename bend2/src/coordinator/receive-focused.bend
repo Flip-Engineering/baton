@@ -27,13 +27,12 @@ def dispatch_receive(selected: Bool, +db: String, +session: String, +cmd: String
       IO.pure(Unit, collected)
     case False{}: IO.die(Unit,2,"expected receive")
 
-def dispatch_instance(owner: Bool, shutdown: Bool, +db: String) -> IO(Unit):
-  match owner:
-    case True{}: IO.try(Unit,Custody.Instance.owner(db))
-    case False{}:
-      match shutdown:
-        case True{}: IO.try(Unit,Custody.Instance.shutdown(db))
-        case False{}: IO.die(Unit,2,"expected instance lifecycle command")
+def dispatch_instance(+flag: String, +db: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(flag,"--instance-owner"),IO.try(Unit,Custody.Instance.owner(db)),
+    Bool.pick(IO(Unit),String.eq(flag,"--instance-shutdown"),Custody.Instance.print_drain(db),
+      Bool.pick(IO(Unit),String.eq(flag,"--instance-status"),Custody.Instance.print_status(db),
+        Bool.pick(IO(Unit),String.eq(flag,"--instance-wait"),Custody.Instance.print_wait(db),
+          IO.die(Unit,2,"expected instance lifecycle command")))))
 
 # Package maintenance installs the same schema preflight used by coordinator writes.
 def dispatch_schema(selected: Bool, +flag: String, +db: String) -> IO(Unit):
@@ -43,7 +42,7 @@ def dispatch_schema(selected: Bool, +flag: String, +db: String) -> IO(Unit):
       ensured : Unit <- Store.ensure_before_begin(canonical)
       accounts_schema : String <- IO.try(String,Accounts.commit_read(canonical,""))
       IO.write("{\"schema\":\"baton2-schema-ensure-v1\",\"status\":\"ready\"}\n")
-    case False{}: dispatch_instance(String.eq(flag,"--instance-owner"),String.eq(flag,"--instance-shutdown"),db)
+    case False{}: dispatch_instance(flag,db)
 
 def dispatch_observer(selected: Bool, +db: String, +session: String, +observer: String) -> IO(Unit):
   match selected:
