@@ -521,6 +521,40 @@ test('a later Codex endpoint delivery preserves the notice awaiting its thread r
   db.close();
 });
 
+test('a completed Codex root read accepts a delayed receipt after the next notice is selected', async (t) => {
+  const calls = await attach(t, 'operator', (db) => {
+    db.prepare('UPDATE sessions SET harness=?,native=? WHERE id=?').run('codex', 'thread-1', 'operator');
+    const insert = db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)');
+    insert.run('first', 'lead', 'operator', 'report', 'First complete body.');
+    insert.run('second', 'lead', 'operator', 'report', 'Second complete body.');
+  }, ['--root-harness', 'codex', '--thread', 'thread-1']);
+  const { channel } = calls;
+  channel.activate();
+  await channel.until(() => channel.notes().length > 0, 'first notice');
+  const first = channel.notes()[0];
+  const claim = { id: 'first', thread: 'thread-1', content: first.params.content,
+    turn: 'turn-1', item: 'item-1' };
+  const db = new DatabaseSync(calls.database);
+  db.prepare('INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES(?,?,?,?,?)')
+    .run('root-channel:prior', 'first', 'operator', 'thread-1', 'root-channel:prior:first');
+  db.close();
+  await channel.deliver('second');
+  await channel.until(() => channel.notes().length === 2, 'second notice after first read');
+
+  const rejectedItem = await rootDelivery(channel, 'late-read-wrong-item', claim,
+    { thread: 'thread-1', turn: 'turn-1', item: 'item-1', type: 'userMessage', text: 'Unrelated user message.' });
+  assert.equal(rejectedItem.isError, true);
+  const accepted = await rootDelivery(channel, 'late-read-retry', claim,
+    { thread: 'thread-1', turn: 'turn-1', item: 'item-1', type: 'userMessage', text: first.params.content });
+  assert.equal(accepted.isError, undefined);
+  assert.deepEqual(JSON.parse(accepted.content[0].text), { id: 'first', read: 'already-recorded' });
+
+  const verify = new DatabaseSync(calls.database, { readOnly: true });
+  assert.deepEqual(verify.prepare('SELECT attempt,native FROM message_reads WHERE message=?').all('first')
+    .map((row) => ({ ...row })), [{ attempt: 'root-channel:prior', native: 'thread-1' }]);
+  verify.close();
+});
+
 test('a Codex root relay without --thread follows the recorded root conversation', async (t) => {
   const calls = await attach(t, 'operator', (db) => {
     db.prepare('UPDATE sessions SET harness=?,native=? WHERE id=?').run('codex', 'recorded-thread', 'operator');

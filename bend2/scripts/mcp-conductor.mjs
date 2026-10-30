@@ -947,6 +947,30 @@ function pendingConductorMessage(messageId = null) {
   }
 }
 
+function rootNoticeContent(message, readInstruction = 'Baton records the read after the Codex root thread returns this complete input.') {
+  const review = message.kind === 'completion-request'
+    ? `\nReview the work against ${message.sender}'s assignment and the supplied evidence. When the assignment is satisfied, use completion-confirmed --to ${message.sender} to end the Player, or add --next TEXT to confirm and dispatch its next assignment together. When work remains, use guide --to ${message.sender} --text TEXT to state what is missing and direct the remaining work.`
+    : '';
+  const content = `Message (${message.kind}) from ${message.sender} [id: ${message.id}]:\n${message.body}${review}`;
+  return `${content}\n\n${readInstruction}`;
+}
+
+function recordedRootMessage(messageId) {
+  const conn = openDb();
+  if (!conn) return null;
+  try {
+    return conn.prepare(
+      `SELECT m.id, m.sender, m.kind, m.body, s.native, s.endpoint,
+         EXISTS(SELECT 1 FROM message_reads mr WHERE mr.message=m.id AND mr.recipient=m.recipient) AS is_read
+       FROM messages m JOIN sessions s ON s.id=m.recipient
+       WHERE m.id=? AND m.recipient=? AND s.harness='codex'
+         AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=s.id)`
+    ).get(messageId, sessionId) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // The recorded root conversation can change while the relay runs, for example
 // when the operator attaches the session to another Codex thread. A relay that
 // did not name its conversation follows the record: the conductor registers its
@@ -981,14 +1005,9 @@ function notifyPending(messageId = null) {
   }
   const key = JSON.stringify([message.native, nativePrompt, message.id]);
   if (inputNotice?.key === key) return;
-  const review = message.kind === 'completion-request'
-    ? `\nReview the work against ${message.sender}'s assignment and the supplied evidence. When the assignment is satisfied, use completion-confirmed --to ${message.sender} to end the Player, or add --next TEXT to confirm and dispatch its next assignment together. When work remains, use guide --to ${message.sender} --text TEXT to state what is missing and direct the remaining work.`
-    : '';
-  const content = `Message (${message.kind}) from ${message.sender} [id: ${message.id}]:\n${message.body}${review}`;
-  const readInstruction = rootHarness === 'codex'
+  const notice = rootNoticeContent(message, rootHarness === 'codex'
     ? 'Baton records the read after the Codex root thread returns this complete input.'
-    : `Baton records the read when you call baton2_delivery ${JSON.stringify({ id: message.id })}.`;
-  const notice = `${content}\n\n${readInstruction}`;
+    : `Baton records the read when you call baton2_delivery ${JSON.stringify({ id: message.id })}.`);
   sendNotification('notifications/claude/channel', {
     content: notice,
     meta: { recipient: sessionId, messageIds: JSON.stringify([message.id]),
@@ -1248,15 +1267,51 @@ function requestClient(method, params) {
 }
 
 function checkRootDelivery(args) {
+  const message = recordedRootMessage(args.id);
   if (rootHarness !== 'codex' || !connectionCustody || !inputNotice
       || args.id !== inputNotice.id || args.thread !== connectionCustody.thread
       || args.thread !== connectionCustody.native || args.content !== inputNotice.content
       || typeof args.turn !== 'string' || !args.turn || typeof args.item !== 'string' || !args.item
       || inputNotice.connection !== connectionCustody.connection
       || inputNotice.native !== connectionCustody.native
+      || !message || message.is_read !== 0 || message.native !== args.thread
+      || message.endpoint !== connectionCustody.endpoint || args.content !== rootNoticeContent(message)
       || !pendingConductorMessage(args.id)) {
     throw new Error('Codex read evidence does not match the complete root notice, the recorded thread and the thread turn and item that returned it.');
   }
+}
+
+function rootItemReplyMatches(args, read) {
+  return read?.thread === args.thread && read.turn === args.turn && read.item === args.item
+    && read.type === 'userMessage' && typeof read.text === 'string'
+    && read.text.includes(args.content);
+}
+
+async function readRootItem(args) {
+  if (typeof args.turn !== 'string' || !args.turn || typeof args.item !== 'string' || !args.item) {
+    throw new Error('The Codex root thread item must identify a turn and item.');
+  }
+  const reply = await requestClient('baton/rootThreadItem',
+    { thread: args.thread, turn: args.turn, item: args.item });
+  if (reply.error) throw new Error(`The Codex root thread item could not be read: ${reply.error.message}`);
+  if (!rootItemReplyMatches(args, reply.result)) {
+    throw new Error('The Codex root thread item is not a user message holding the complete notice.');
+  }
+}
+
+function alreadyRecordedRootDelivery(args) {
+  if (rootHarness !== 'codex' || !connectionCustody
+      || args.thread !== connectionCustody.thread || args.thread !== connectionCustody.native
+      || connectionCustody.session !== sessionId) return false;
+  const message = recordedRootMessage(args.id);
+  return !!message && message.is_read === 1 && message.native === args.thread
+    && message.endpoint === connectionCustody.endpoint
+    && args.content === rootNoticeContent(message);
+}
+
+function respondRootReadRecorded(msg, args) {
+  sendResponse(msg.id, { content: [{ type: 'text', text: JSON.stringify({ id: args.id, read: 'already-recorded' }) }] });
+  continuePending();
 }
 
 // The relay's turn and item IDs select an item. The read is recorded only when
@@ -1265,20 +1320,29 @@ function checkRootDelivery(args) {
 async function rootDelivery(msg) {
   const args = msg.params.arguments ?? {};
   try {
-    checkRootDelivery(args);
-    const reply = await requestClient('baton/rootThreadItem',
-      { thread: args.thread, turn: args.turn, item: args.item });
-    if (reply.error) throw new Error(`The Codex root thread item could not be read: ${reply.error.message}`);
-    const read = reply.result;
-    if (read?.thread !== args.thread || read.turn !== args.turn || read.item !== args.item
-        || read.type !== 'userMessage' || typeof read.text !== 'string'
-        || !read.text.includes(args.content)) {
-      throw new Error('The Codex root thread item is not a user message holding the complete notice.');
+    if (alreadyRecordedRootDelivery(args)) {
+      await readRootItem(args);
+      if (!alreadyRecordedRootDelivery(args)) {
+        throw new Error('The recorded Codex root read changed while its thread item was being checked.');
+      }
+      respondRootReadRecorded(msg, args);
+      return;
     }
+    checkRootDelivery(args);
+    await readRootItem(args);
     checkRootDelivery(args);
     let result;
     activeReadMessage = args.id;
     try { result = coord('delivery', args.id); }
+    catch (error) {
+      // Another valid reader may complete the same message between the
+      // custody checks and the coordinator's transactional receipt check.
+      if (alreadyRecordedRootDelivery(args)) {
+        respondRootReadRecorded(msg, args);
+        return;
+      }
+      throw error;
+    }
     finally { activeReadMessage = null; }
     sendResponse(msg.id, { content: [{ type: 'text', text: result }] });
     continuePending();
