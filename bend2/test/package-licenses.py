@@ -279,7 +279,8 @@ class PackageLicenses(unittest.TestCase):
         names.extend(('check-install.py', 'context-provider.mjs', 'context-project-policy.mjs',
                       'context-query-artifact.mjs', 'context-worktree-capture.mjs',
                       'dsh-worker.mjs', 'dsh-baton-hooks.mjs', 'omp-completion.mjs',
-                      'no-agent-summary.js', 'agent-summary-check.mjs'))
+                      'no-agent-summary.js', 'agent-summary-check.mjs',
+                      'codex-root-relay.mjs', 'root-channel-config.mjs'))
         for name in names:
             shutil.copyfile(ROOT / 'bend2/scripts' / name, scripts / name)
         harness = self.source / 'bend2/harness'

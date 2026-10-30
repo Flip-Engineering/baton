@@ -81,6 +81,7 @@ class DispatchRuntimeGuard(unittest.TestCase):
                 mock.patch.object(CHECK, 'verify_binaries', return_value=[]), \
                 mock.patch.object(CHECK, 'verify_receiver_router', return_value={'returncode': 78}) as router, \
                 mock.patch.object(CHECK, 'verify_repl', return_value=dependency), \
+                mock.patch.object(CHECK, 'verify_root_channel'), \
                 mock.patch.object(CHECK, 'verify_dispatch_runtime'), \
                 mock.patch.object(CHECK, 'verify_agent_summary_preload'), \
                 mock.patch.object(CHECK, 'system_dependencies', return_value=[]), \
@@ -128,6 +129,38 @@ class AgentSummaryPreloadGuard(unittest.TestCase):
             stream.write('// edited\n')
         with self.assertRaisesRegex(RuntimeError, 'differs from its pinned SHA-256'):
             CHECK.verify_agent_summary_preload(self.prefix)
+
+
+class RootChannelGuard(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.prefix = pathlib.Path(self.temp.name)
+        self.directory = self.prefix / 'libexec/baton2'
+        self.directory.mkdir(parents=True)
+        self.names = ('mcp-conductor.mjs', 'codex-root-relay.mjs', 'root-channel-config.mjs')
+        for name in self.names:
+            (self.directory / name).write_text('fixture root channel helper\n')
+
+    def test_complete_root_channel_is_accepted(self):
+        CHECK.verify_root_channel(self.prefix)
+
+    def test_each_missing_root_helper_is_refused(self):
+        for name in self.names:
+            with self.subTest(helper=name):
+                path = self.directory / name
+                data = path.read_bytes()
+                path.unlink()
+                with self.assertRaisesRegex(RuntimeError, name):
+                    CHECK.verify_root_channel(self.prefix)
+                path.write_bytes(data)
+
+    def test_symlinked_root_helper_is_refused(self):
+        path = self.directory / 'codex-root-relay.mjs'
+        path.unlink()
+        path.symlink_to(self.directory / 'mcp-conductor.mjs')
+        with self.assertRaisesRegex(RuntimeError, 'codex-root-relay.mjs'):
+            CHECK.verify_root_channel(self.prefix)
 
 
 class ReceiverRouterGuard(unittest.TestCase):
