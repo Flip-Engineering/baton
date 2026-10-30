@@ -1052,7 +1052,6 @@ jobs:
           provenance = payload / 'share/baton2/generated-c-provenance'
           selected_repl = [row for row in manifest.get('selected_dependencies', []) if row['id'] == 'bend2-repl-compiler']
           assert len(selected_repl) == 1 and selected_repl[0]['required'] is True
-          shutil.copyfile(run / 'repl-runtime/runtime.json', provenance / 'repl-runtime.json')
           runtime = json.loads((run / 'repl-runtime/runtime.json').read_text())
           dependency = selected_repl[0]
           compiler_manifest = payload / dependency['path'] / dependency['manifest']
@@ -1062,6 +1061,7 @@ jobs:
           assert hashlib.sha256((payload / dependency['path'] / 'notices/Bun-NOTICES').read_bytes()).hexdigest() == runtime['notices']['sha256']
           transfer = pathlib.Path(os.environ['RUNNER_TEMP']) / ('baton2-generated-c-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'])
           shutil.copytree(transfer / 'generated', provenance)
+          shutil.copyfile(run / 'repl-runtime/runtime.json', provenance / 'repl-runtime.json')
           shutil.copytree(transfer / 'evidence', provenance / 'producer-results')
           shutil.copyfile(run / 'generated-c-verification.json', provenance / 'verification.json')
           assets = [{'path': str(path.relative_to(payload)), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
