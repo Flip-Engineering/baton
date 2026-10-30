@@ -124,26 +124,37 @@ returns while the owner is still alive; the printed state is `draining`.
 ```
 
 `state` is `absent`, `running` or `draining`. `executable` is the link of
-`/proc/PID/exe`; it ends in ` (deleted)` when an install replaced the file after
-the owner started. `sha256` is the hash of the file the owner process has open,
-which is the code it runs. `drainGated` is false for an owner that predates the
-gate. `--instance-wait DATABASE` blocks, without a limit, until the owner that
-answers now has exited or a successor replaced it, then prints the status. The
-caller interrupts it.
+`/proc/PID/exe`, where PID comes from the credentials of the socket that
+answered; it ends in ` (deleted)` when an install replaced the file after the
+owner started. `sha256` is the hash of the file the owner process has open, which
+is the code it runs. `drainGated` is false for an owner that predates the gate.
+`--instance-wait DATABASE` blocks, without a limit, until the owner that answers
+now has exited or a successor replaced it, then prints the status. It decides
+liveness the way every client does, by connecting to the owner socket, so a stale
+record or a reused pid never keeps it waiting. The caller interrupts it.
 
 An admission that a draining owner refuses ends as `ESHUTDOWN`. The client
-removes the attempt directory it created and the refusal text names the drain,
-the owner pid and executable, and the retry condition. The caller's existing
-settlement for an attempt that could not start records that text, so the report
-that reaches the recorded conductor names the drain, and the owed input stays
-owed. A caller retries after `--instance-status` reports `absent`; the next
-admission starts a successor owner from the executable of the admitting client.
+removes the attempt directory it created, and the refusal text, which starts with
+`ESHUTDOWN:`, names the owner pid and executable. The receive path
+(`receive.bend`, `started`) classifies that prefix with `Drain.drain_refusal`
+and defers the start. It releases the execution row the admission wrote, keeps
+the input owed, writes one durable report of kind `instance-drain-deferred` to
+the recorded orchestrator, and launches a detached waiter,
+`SELF --instance-wait DATABASE` followed by `SELF --dispatch-message DATABASE
+MESSAGE`. The waiter delivers the owed message through the entry the wake path
+uses once the owner has exited, and the delivery starts a successor owner from
+the executable of the admitting client. A second drain defers the start again. A
+waiter that cannot be launched produces a report of kind
+`instance-drain-redrive-failed`, and the next wake delivers the input.
 
 An owner that runs an older release does not gate admissions. `--instance-shutdown`
-therefore also writes a marker, `owner-KEY.drain`, in the per-user IPC directory
-that names the owner token and epoch. A client of this release refuses
-`BI_ADMIT` and `BI_PREPARE` while the marker names the owner that answered, and it
-removes a marker that names another incarnation. The marker does not stop a
+therefore also creates a marker file, `owner-KEY.drain-TOKEN-EPOCH`, in the
+per-user IPC directory. The name carries the owner incarnation, so no client reads
+or removes another incarnation's marker, and the owner removes its own marker when
+it exits. A client of this release refuses a genuinely new custody start, one
+whose attempt directory has no `launch` marker, while the marker of the owner
+that answers exists. An attempt that the owner already holds, or that already
+launched, passes the client and the owner decides. The marker does not stop a
 client of an older release from reaching an older owner. An older owner is
 replaced only after `--instance-status` reports `absent` and a later admission
 reports the successor's executable and hash.
@@ -368,11 +379,16 @@ passes `"0"`, which reports `gap` and still delivers every later commit.
 - `Instance.shutdown` ends the owner, and a later attempt starts a new one.
 - `drain` returns while the owner lives, with state `draining`; a new admission
   is refused with `ESHUTDOWN` naming the owner pid and executable, both through
-  the client marker and, with the marker removed, through the owner; the held
-  attempt keeps running and an owner of another database is unaffected; `owner-wait`
-  returns `absent` after the held attempt ends; the next admission starts a
-  successor whose pid differs and whose executable and hash match the
-  admitting client; a stale marker is removed (`test/shared-instance.py`).
+  the client marker and, with the marker removed, through the owner; an admission
+  of the held attempt is not stopped by the marker; the held attempt keeps
+  running and an owner of another database is unaffected; `owner-wait` returns
+  `absent` after the held attempt ends and after an owner died and left its
+  record; the next admission starts a successor whose pid differs and whose
+  executable and hash match the admitting client; a marker of another
+  incarnation neither blocks nor is removed (`test/shared-instance.py`).
+- The classification and waiter command of the deferral are laws in
+  `coordinator/instance-drain-laws.bend`. The receive-path branch itself needs a
+  Main-level run.
 
 `test/process.py`, `test/retained-control.py`, `test/receive.py` and
 `test/native-cli.py` run unchanged as regression controls for the launch path.

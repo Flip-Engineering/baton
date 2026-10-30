@@ -145,7 +145,7 @@ class SharedInstance(unittest.TestCase):
         self.assertFalse(self.election_held(), 'the election lock stayed held after cleanup')
         _, key, _, record, socket_path = self.election_paths()
         for path in (record, socket_path, self.ipc_directory() / f'{key}.log',
-                     self.ipc_directory() / f'{key}.drain'):
+                     *self.ipc_directory().glob(f'{key}.drain-*')):
             if path.exists():
                 path.unlink()
         for child in self.children:
@@ -1341,9 +1341,16 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
 
-    def drain_marker(self):
+    def owner_incarnation(self):
+        _, _, _, record, _ = self.election_paths()
+        return struct.unpack_from('=QQ', record.read_bytes(), 0)
+
+    def drain_marker(self, token=None, epoch=None):
+        """The marker of one owner incarnation: owner-KEY.drain-TOKEN-EPOCH."""
+        if token is None:
+            token, epoch = self.owner_incarnation()
         info = os.stat(self.db)
-        return self.ipc_directory() / f'owner-{info.st_dev:x}-{info.st_ino:x}.drain'
+        return self.ipc_directory() / f'owner-{info.st_dev:x}-{info.st_ino:x}.drain-{token}-{epoch}'
 
     def executable_sha256(self):
         return hashlib.sha256(EXE.read_bytes()).hexdigest()
@@ -1407,6 +1414,14 @@ class SharedInstance(unittest.TestCase):
         self.assertFalse(refused_directory.exists(), 'the refused admission left its directory')
         self.assertEqual(self.owner_pid(), owner)
         self.assertEqual(self.owner_status()['attempts'], 1)
+        # An attempt the owner already holds is not new custody: the client marker
+        # does not stop its admission from reaching the owner, which answers for
+        # itself (here another observer holds the attempt).
+        reused = self.spawn('admit', self.db, 'g0', first_directory, self.home, '\n',
+                            sys.executable, self.survivor)
+        reused.wait()
+        self.assertNotIn('ESHUTDOWN', reused.stderr.read())
+        self.assertEqual(self.owner_status()['attempts'], 1)
         # Without the client marker the draining owner itself refuses.
         self.drain_marker().unlink()
         gated_directory, gated = self.begin('g3')
@@ -1444,38 +1459,58 @@ class SharedInstance(unittest.TestCase):
         directory, child = self.begin('i0', payload='exit\n')
         self.assertIn('attempt-complete', self.wait_run(child))
         owner = self.owner_pid()
+        marker = self.drain_marker()
         drained = self.command('drain', self.db)
         self.assertEqual(drained.returncode, 0, drained.stderr)
         waiter = self.command('owner-wait', self.db)
         self.assertEqual(waiter.returncode, 0, waiter.stderr)
         self.assertEqual(json.loads(waiter.stdout), {'state': 'absent'})
         self.eventually(lambda: not self.owner_processes(), 'the idle owner did not exit')
-        marker = self.drain_marker()
         self.assertFalse(marker.exists(), 'the owner left its drain marker')
         directory, again = self.begin('i1', payload='again\n')
         self.assertIn('echo:again', self.wait_run(again))
         self.assertNotEqual(self.owner_pid(), owner)
 
-    def test_a_marker_names_the_draining_owner_and_a_stale_one_is_removed(self):
+    def test_a_marker_names_one_incarnation_and_never_touches_another(self):
         directory, child = self.start_survivor('m0')
-        _, _, _, record, _ = self.election_paths()
-        raw = record.read_bytes()
-        token, epoch = struct.unpack_from('=QQ', raw, 0)
-        marker = self.drain_marker()
+        token, epoch = self.owner_incarnation()
+        marker = self.drain_marker(token, epoch)
         # An owner of an older release does not gate admissions; the marker a
-        # client of this release finds for the answering owner refuses the admission.
-        marker.write_text(f'{token}:{epoch}\n')
+        # client of this release finds for the answering owner refuses a new
+        # attempt before it reaches that owner.
+        marker.write_text('')
         refused_directory, refused = self.begin('m1')
         refused.wait()
         self.assertIn('ESHUTDOWN', refused.stderr.read())
         self.assertFalse(refused_directory.exists())
         self.assertTrue(marker.exists())
-        # A marker that names another incarnation is stale and is removed.
-        marker.write_text(f'{token + 1}:{epoch}\n')
+        # The marker of another incarnation neither blocks nor is removed.
+        foreign = self.drain_marker(token + 1, epoch)
+        foreign.write_text('')
+        marker.unlink()
         allowed_directory, allowed = self.begin('m2', payload='exit\n')
         self.assertIn('attempt-complete', self.wait_run(allowed))
-        self.assertFalse(marker.exists(), 'a stale marker stayed after an admission')
+        self.assertTrue(foreign.exists(), 'a marker of another incarnation was removed')
+        foreign.unlink()
         self.end_attempt(directory, child)
+
+    def test_owner_wait_returns_when_the_owner_died_and_left_its_record(self):
+        directory, child = self.start_survivor('k0')
+        owner = self.owner_pid()
+        native = json.loads((directory / 'stdout').read_text().splitlines()[0])['pid']
+        os.kill(owner, signal.SIGKILL)
+        self.eventually(lambda: not self.owner_processes(), 'the killed owner stayed')
+        _, _, _, record, _ = self.election_paths()
+        self.assertTrue(record.exists(), 'the killed owner removed its record')
+        waited = subprocess.run([str(EXE), 'owner-wait', str(self.db)], capture_output=True,
+                                text=True, timeout=20)
+        self.assertEqual(waited.returncode, 0, waited.stderr)
+        self.assertEqual(json.loads(waited.stdout), {'state': 'absent'})
+        status = subprocess.run([str(EXE), 'owner-status', str(self.db)], capture_output=True,
+                                text=True, timeout=20)
+        self.assertEqual(json.loads(status.stdout), {'state': 'absent'})
+        os.kill(native, signal.SIGKILL)
+        child.kill()
 
 
 if __name__ == '__main__':
