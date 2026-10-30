@@ -21,7 +21,9 @@ baton repl eval 'IO.write("complete output\n")' --type 'IO(Unit)'
 baton repl define --stdin --notebook analysis
 baton repl read --cell answer
 baton repl recover
+baton repl cite --cell arithmetic
 baton repl share --cell arithmetic --to reviewer
+baton repl resolve --cell CITATION
 baton repl import MESSAGE
 baton repl interactive
 ```
@@ -30,7 +32,7 @@ The registered project and actor supply context. `--notebook NAME` selects a
 notebook; its default is `main`. Each cell has an immutable reference generated
 by Baton. `--label NAME` adds a semantic name; selecting a repeated label returns
 its latest cell. `read` without `--cell` returns the complete notebook. `bind`,
-`recover` and `share` select its latest cell by default.
+`recover`, `cite` and `share` select its latest cell by default.
 
 `define` accepts complete Bend2 declarations, including imports, types and named
 functions. Only a declaration cell whose canonical check succeeds enters later
@@ -56,8 +58,8 @@ have exact dependency hashes.
 The cumulative book is checked after each declaration load. A redefinition must
 preserve the type and affine validity of that complete book.
 
-The MCP `baton2_repl` tool accepts `define`, `eval`, `bind`, `read`, `recover`,
-`share` and `import`. Its source field carries a complete Bend2 source string;
+The MCP `baton2_repl` tool accepts `define`, `eval`, `bind`, `read`, `cite`, `resolve`,
+`recover`, `share` and `import`. Its source field carries a complete Bend2 source string;
 `bind` takes the definition name in its name field. The
 generic `baton2_action` tool also accepts action `repl` and the same CLI
 arguments. `help repl` describes both surfaces.
@@ -110,14 +112,35 @@ inside that evaluation. Subsequent cells compose retained declarations. Labels
 select saved result records. A pure normal form can supply a new checked named
 definition. IO stdout and process outcomes are observable results.
 
-`share` sends one complete cell through ordinary message routing. `import`
-selects a declaration message delivered to the current actor and checks its
-complete declaration snapshot in that actor's notebook. It prints the complete
-original message through the existing recipient-owned read operation, followed
-by each checked declaration's cell result. Baton records that complete read
-internally, and the read persists if the turn later fails or is interrupted. A
-compiler refusal retains its cell and the complete source message. Ordinary routing, recipient identity and explicit stops continue to
-govern these operations.
+## Context citations
+
+`cite` selects a completed successful cell in the actor's notebook and returns
+its immutable citation, cell reference, owner, notebook, label, version and type.
+A citation has the form `repl:NOTEBOOK_ID:LABEL@SEQUENCE`; an unlabelled cell uses
+its cell reference for the label position. Reusing a label creates a later cell.
+An earlier citation continues to select its original cell and source snapshot.
+
+`share` sends that metadata as a `bend-repl` message through ordinary routing.
+The message and its recipient's read grant commit in one database transaction.
+The stored grant derives its recipient from the admitted message. Citations and
+ordinary messages cannot independently create read authority. Each recipient
+resolves only its own grants; the cell owner can also resolve its own citations.
+Explicitly stopped actors cannot share or resolve cells.
+
+`resolve --cell CITATION` returns the complete submitted source, declaration
+snapshot, type, stdout, stderr and process outcomes for that version. Cross-seat
+results contain these values and metadata. Execution directories and process
+arguments remain in the owner's `read` records. Resolution displays the complete
+original citation message through the recipient-owned read path before returning
+the cell. Each invocation uses the durable cell and grant records, including
+after the receiving process restarts.
+
+`import MESSAGE` selects a shared declaration cell delivered to the current actor
+and checks its complete snapshot in that actor's notebook. Earlier complete-cell
+share messages remain importable. It prints the original message through the
+recipient-owned read path, followed by each checked declaration's result. A
+compiler refusal retains its cell and the source message. Pure results can be
+retained as declarations with `bind` and then shared and imported.
 
 ## Bundled compiler
 

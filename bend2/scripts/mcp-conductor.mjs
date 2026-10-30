@@ -448,9 +448,9 @@ const dispatchInputSchema = { type: 'object', properties: {
 const TOOLS = [
   {
     name: 'baton2_repl',
-    description: 'Evaluate actual Bend2 source or retain checked definitions in the attached actor\'s notebook. The packaged canonical compiler infers types and checks affine use. IO runs in the recorded workspace through native custody. Read returns complete source, results, diagnostics and process outcomes; recover observes the original attempt. Bind checks a named definition from a pure result for later expressions. Labels select saved result records. Share sends a complete cell through ordinary message routing; import displays the complete received message through the owned-read path and checks its declaration snapshot. Standard installations include the Bend2 REPL compiler and runtime. Use baton2_action with action help and arguments ["repl"] for CLI and multiline interactive usage.',
+    description: 'Evaluate actual Bend2 source or retain checked definitions in the attached actor\'s notebook. The packaged canonical compiler infers types and checks affine use. IO runs in the recorded workspace through native custody. Read returns complete source, results, diagnostics and process outcomes; recover observes the original attempt. Bind checks a named definition from a pure result for later expressions. Labels select saved result records. Cite returns an immutable version citation. Share sends citation metadata and grants its recipient access. Resolve reads the exact complete cell through recipient-owned authorization; import checks its declaration snapshot. Standard installations include the Bend2 REPL compiler and runtime. Use baton2_action with action help and arguments ["repl"] for CLI and multiline interactive usage.',
     inputSchema: { type: 'object', properties: {
-      operation: { enum: ['define', 'eval', 'bind', 'read', 'recover', 'share', 'import'] },
+      operation: { enum: ['define', 'eval', 'bind', 'read', 'cite', 'resolve', 'recover', 'share', 'import'] },
       source: { type: 'string', description: 'Complete Bend2 declarations or expression for define or eval.' },
       expectedType: { type: 'string', description: 'Optional expected Bend2 type for eval.' },
       name: { type: 'string', description: 'Bend2 definition name for binding a selected pure result.' },
@@ -1371,6 +1371,9 @@ function handleToolCall(msg) {
     let result;
     switch (name) {
       case 'baton2_repl': {
+        if (!['define', 'eval', 'bind', 'read', 'cite', 'resolve', 'recover', 'share', 'import'].includes(args.operation)) {
+          throw new Error('Select a supported REPL tool operation.');
+        }
         const values = [args.operation];
         if (['define', 'eval'].includes(args.operation)) {
           if (typeof args.source !== 'string') throw new Error('Supply complete Bend2 source.');

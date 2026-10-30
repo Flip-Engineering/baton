@@ -2,6 +2,7 @@ import Base
 import ./repl-model.bend as M
 import ./repl-source.bend as Source
 import ./repl-runtime.bend as Runtime
+import ./repl-context.bend as Context
 import ./agent-domain.bend as D
 import ./agent-native.bend as Native
 import ./agent-input.bend as AgentInput
@@ -14,7 +15,7 @@ import ../host/repl.bend as Host
 import ../git/text.bend as Tx
 
 def help() -> String:
-  "repl define SOURCE [--label NAME] [--notebook NAME]\nrepl eval EXPRESSION [--type TYPE] [--label NAME] [--notebook NAME]\nrepl define|eval --stdin [OPTIONS]\nrepl bind NAME [--cell REFERENCE] [--notebook NAME]\nrepl read|recover [--cell REFERENCE] [--notebook NAME]\nrepl share [--cell REFERENCE] --to PLAYER [--notebook NAME]\nrepl import MESSAGE [--notebook NAME]\nrepl interactive [--notebook NAME]\nBend2 is the supported REPL input language. Evaluate Bend2 expressions and retain checked Bend2 definitions in the current actor's notebook. Standard installations include the Bend2 REPL compiler and runtime. Its canonical compiler infers types; --type supplies an expected type for expressions that need one. IO runs through retained native custody in the actor's recorded workspace. Each result retains complete source, type, output, diagnostics and actual process status. Bind checks a named Bend2 definition from a pure result's canonical type and value for later expressions. Named definitions compose as source; labels select the latest matching result. Live affine values remain inside their evaluation.\nThe default notebook is main. Read without --cell returns every cell. Bind, recover and share default to the latest cell; --cell accepts an immutable reference or label. Recover observes the original cell and retains completed effects. Share uses ordinary message routing; import displays the complete received message through the existing owned-read path and checks its declaration snapshot in your own notebook.\nInteractive commands: :define, :eval, :submit, :bind NAME, :read, :clear, :quit. Enter multiline Bend2 source between commands. Drafts survive restart and EOF.\n"
+  "repl define SOURCE [--label NAME] [--notebook NAME]\nrepl eval EXPRESSION [--type TYPE] [--label NAME] [--notebook NAME]\nrepl define|eval --stdin [OPTIONS]\nrepl bind NAME [--cell REFERENCE] [--notebook NAME]\nrepl read|recover|cite [--cell REFERENCE] [--notebook NAME]\nrepl resolve --cell CITATION_OR_REFERENCE\nrepl share [--cell REFERENCE] --to PLAYER [--notebook NAME]\nrepl import MESSAGE [--notebook NAME]\nrepl interactive [--notebook NAME]\nBend2 is the supported REPL input language. Evaluate Bend2 expressions and retain checked Bend2 definitions in the current actor's notebook. Standard installations include the Bend2 REPL compiler and runtime. Its canonical compiler infers types; --type supplies an expected type for expressions that need one. IO runs through retained native custody in the actor's recorded workspace. Each result retains complete source, type, output, diagnostics and actual process status. Bind checks a named Bend2 definition from a pure result's canonical type and value for later expressions. Named definitions compose as source; labels select the latest matching result. Live affine values remain inside their evaluation.\nThe default notebook is main. Read without --cell returns every cell. Bind, recover, cite and share default to the latest cell; --cell accepts an immutable reference or label. Recover observes the original cell and retains completed effects. Cite returns an immutable version citation. Share sends citation metadata through ordinary message routing and atomically grants its recipient access to the completed cell. Resolve reads that exact cell with its complete source and outcome; it records the original received message through the owned-read path. Import checks the shared declaration snapshot in your own notebook.\nInteractive commands: :define, :eval, :submit, :bind NAME, :read, :clear, :quit. Enter multiline Bend2 source between commands. Drafts survive restart and EOF.\n"
 
 def flags() -> List<String>:
   ["--notebook","--type","--label","--cell","--to"]
@@ -45,6 +46,8 @@ def allowed(+verb: String) -> List<String>:
     case "define": ["--source","--label","--notebook"]
     case "bind": ["--source","--cell","--notebook"]
     case "read": ["--cell","--notebook"]
+    case "cite": ["--cell","--notebook"]
+    case "resolve": ["--cell"]
     case "recover": ["--cell","--notebook"]
     case "share": ["--cell","--to","--notebook"]
     case "import": ["--source","--notebook"]
@@ -98,13 +101,8 @@ def share(+db: String, +actor: String, +notebook: String, +options: List<&2,D.Op
   do IO<Unit>:
     +cell : String <- M.selected_cell(db,notebook,D.value(options,"--cell",""))
     +destination : String = D.value(options,"--to","")
-    specified : Unit <- M.require(Bool.not(String.is_empty(destination)),"Select --to PLAYER for the complete REPL result.")
-    body : String <- M.read(db,notebook,cell)
-    +id : String <- M.identity(db,"repl-share:")
-    +command : C.Command = C.Message{id,actor,destination,"bend-repl",body}
-    +saved : String <- IO.try(String,Store.apply(db,command))
-    woken : Unit <- IO.try(Unit,Wake.drive_command(db,command,Done{saved}))
-    IO.write(saved)
+    specified : Unit <- M.require(Bool.not(String.is_empty(destination)),"Select --to PLAYER for the REPL citation.")
+    Context.share(db,actor,cell,destination)
 
 def binding_source(+db: String, +cell: String, name: String) -> IO(String):
   do IO<String>:
@@ -122,7 +120,8 @@ def bind_result(+db: String, +actor: String, +notebook: String, +options: List<&
 
 def import_source(+db: String, +actor: String, +message: String) -> IO(String):
   do IO<String>:
-    +selected : String <- M.scalar(db,"SELECT CASE WHEN json_valid(body) THEN CASE WHEN json_array_length(body,'$.cells')=1 AND json_extract(body,'$.cells[0].operation')='define' THEN json_insert(json(json_extract(body,'$.cells[0].declarations')),'$[#]',json_extract(body,'$.cells[0].source')) ELSE '' END ELSE '' END FROM messages WHERE id=" ++ C.q(message) ++ " AND recipient=" ++ C.q(actor) ++ " AND kind='bend-repl'")
+    ready : Unit <- M.actor_ready(db,actor)
+    +selected : String <- Context.import_source(db,actor,message)
     present : Unit <- M.require(Bool.not(String.is_empty(selected)),"Select a declaration snapshot delivered to this actor by repl share.")
     delivered : String <- IO.try(String,Store.read(db,C.Delivery{message}))
     observed : Unit <- AgentInput.command_output(db,C.Delivery{message},delivered)
@@ -249,6 +248,11 @@ def interactive(+db: String, +actor: String, +notebook: String) -> IO(Unit):
 def configured_notebook(+db: String, +actor: String, +verb: String, +options: List<&2,D.Option>, +notebook: String) -> IO(Unit):
   match verb:
     case "read": read_selected(db,notebook,D.value(options,"--cell",""))
+    case "cite": do IO<Unit>:
+      cell : String <- M.selected_cell(db,notebook,D.value(options,"--cell",""))
+      body : String <- Context.cite(db,actor,cell)
+      IO.write(body ++ "\n")
+    case "resolve": Context.resolve(db,actor,D.value(options,"--cell",""))
     case "recover": recover(db,actor,notebook,D.value(options,"--cell",""))
     case "share": share(db,actor,notebook,options)
     case "interactive": interactive(db,actor,notebook)
@@ -281,7 +285,7 @@ def execute_canonical(db: String, actor: String, args: List<String>) -> IO(Unit)
     case "--help" <> rest: IO.write(help())
     case "help" <> rest: IO.write(help())
     case +verb <> rest:
-      Bool.pick(IO(Unit),D.member(verb,["define","eval","bind","read","recover","share","import","interactive"]),
+      Bool.pick(IO(Unit),D.member(verb,["define","eval","bind","read","cite","resolve","recover","share","import","interactive"]),
         parsed(db,actor,verb,operation_options(D.member(verb,["define","eval","bind","import"]),rest)),IO.die(Unit,2,help()))
 
 def execute(db: String, actor: String, args: List<String>) -> IO(Unit):
