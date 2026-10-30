@@ -5,6 +5,7 @@ import pathlib
 import shlex
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -488,6 +489,54 @@ class Land(unittest.TestCase):
                              env=self.environment).stdout.split()
         self.assertEqual(tip, [self.git('rev-parse', 'main').strip(), 'refs/heads/main'])
         self.assertTrue(emails['kimi'].endswith('@users.noreply.github.com'))
+
+    def recorded_workspace(self, player):
+        with sqlite3.connect(self.db) as connection:
+            return connection.execute(
+                'SELECT workspace FROM sessions WHERE id=?', (player,)).fetchone()[0]
+
+    def publication_remote(self, observed):
+        """A bare remote whose pre-push hook records the pushing Git identity."""
+        remote = self.directory / 'remote.git'
+        subprocess.run(['git', 'init', '-q', '--bare', str(remote)],
+                       check=True, capture_output=True, env=self.environment)
+        self.git('remote', 'add', 'test-remote', str(remote))
+        hook = self.repo / '.git' / 'hooks' / 'pre-push'
+        hook.write_text(f'#!/bin/sh\nprintf %s "$GIT_AUTHOR_EMAIL" > {observed}\n')
+        hook.chmod(0o755)
+        return remote
+
+    def test_push_without_a_session_recovers_the_checkout_owner_identity(self):
+        registry, emails = self.identity_registry({'fixture-worker': ('gpt', 'GPT', 9001)})
+        observed = self.directory / 'observed-email'
+        self.publication_remote(observed)
+        self.recruit_and_commit(model='fixture-worker')
+        environment = {**self.environment, 'BATON2_GIT_REGISTRY': str(registry)}
+        self.assertNotIn('BATON_SESSION', environment)
+        result = self.call('push', self.recorded_workspace('w1'), 'w1-branch', 'test-remote',
+                           env=environment)
+        self.assertEqual(result['status'], 'pushed')
+        self.assertEqual(observed.read_text(), emails['gpt'])
+
+    def test_rejected_push_names_the_missing_publication_identity(self):
+        registry, emails = self.identity_registry({'fixture-worker': ('gpt', 'GPT', 9001)})
+        observed = self.directory / 'observed-email'
+        self.publication_remote(observed)
+        (self.repo / '.git' / 'hooks' / 'pre-push').write_text('#!/bin/sh\nexit 1\n')
+        environment = {**self.environment, 'BATON2_GIT_REGISTRY': str(registry)}
+        result = self.call('push', self.repo, 'main', 'test-remote', env=environment)
+        self.assertEqual(result['status'], 'rejected')
+        self.assertIn('BATON_SESSION is unset', result['identity'])
+        self.assertFalse(observed.exists())
+        self.recruit_and_commit(model='fixture-worker')
+        unmapped = {**environment, 'BATON_SESSION': 'root'}
+        result = self.call('push', self.repo, 'main', 'test-remote', env=unmapped)
+        self.assertEqual(result['status'], 'rejected')
+        self.assertIn('no series identity for session root', result['identity'])
+        mapped = {**environment, 'BATON_SESSION': 'w1'}
+        result = self.call('push', self.recorded_workspace('w1'), 'w1-branch', 'test-remote', env=mapped)
+        self.assertEqual(result['status'], 'rejected')
+        self.assertIn('series identity applied', result['identity'])
 
     def test_checked_landing_blocks_on_new_failure(self):
         (self.repo / 'check-blocked.sh').write_text(
