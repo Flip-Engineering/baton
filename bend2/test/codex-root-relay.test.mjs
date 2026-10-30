@@ -94,8 +94,8 @@ const NOTICE = "Message (completion-request) from lead [id: request-1]:\nFull bo
 // reads, 'never' not at all, 'first-never' not at all for thread-1, 'loads-late' lists the thread as loaded from the
 // fourth request on, 'no-upgrade' closes without answering the Upgrade request
 // (what the proxy does for a non-WebSocket byte stream), 'drop-once' ends the first proxy that is asked for history
-// after the queue without replying. History starts
-// with an earlier turn that already holds the same notice text.
+// after the queue without replying. History starts with an earlier notice
+// that has a different message ID.
 function fakeCodex(path) {
   return executable(path, `#!${process.execPath}
 const fs = require('node:fs');
@@ -155,18 +155,19 @@ function handle(request) {
       process.exit(1);
     }
     const turns = [];
-    if (request.params.itemsView === 'full' && queued !== null) {
+    if (request.params.itemsView === 'full' && (queued !== null || mode === 'preexisting')) {
       const reads = fs.existsSync(dir + '/history-reads-' + thread) ? fs.readFileSync(dir + '/history-reads-' + thread, 'utf8').length : 0;
       fs.appendFileSync(dir + '/history-reads-' + thread, 'x');
-      const marks = fs.readFileSync(dir + '/queue-marks-' + thread, 'utf8').trim().split('\\n').map(Number);
-      if (mode !== 'never' && !(mode === 'first-never' && thread === 'thread-1')) {
+      const marks = queued === null ? [] : fs.readFileSync(dir + '/queue-marks-' + thread, 'utf8').trim().split('\\n').map(Number);
+      if (mode === 'preexisting') turns.push({ id: 'turn-existing', status: 'completed', items: [user('item-existing', 'queued: ' + notice)] });
+      else if (mode !== 'never' && !(mode === 'first-never' && thread === 'thread-1')) {
         marks.forEach((mark, index) => {
           if (reads >= mark + 2) turns.unshift({ id: 'turn-' + (index + 1), status: 'completed', items: [
             { type: 'agentMessage', id: 'item-a' + (index + 1), text: 'working' }, user('item-' + (index + 1), 'queued: ' + queued)] });
         });
       }
     }
-    const earlier = { id: 'turn-0', status: 'completed', items: [user('item-0', notice)] };
+    const earlier = { id: 'turn-0', status: 'completed', items: [user('item-0', notice.replace('request-1', 'older-request'))] };
     send(request.id, { data: [...turns, earlier].slice(0, request.params.limit || 100), nextCursor: null });
   } else send(request.id, {});
 }
@@ -284,6 +285,17 @@ test('the Codex root relay records the read after the root thread returns the no
   const remoteArgs = JSON.parse(readFileSync(sshLog, 'utf8'));
   assert.deepEqual(remoteArgs.slice(0, 2), ['-T', 'database-host']);
   assert.ok(remoteArgs[2].includes("'--root-harness' 'codex' '--thread' 'thread-1'"));
+});
+
+test('a retry reuses an exact notice already returned by the root thread', async (t) => {
+  const run = await runRelay(t, 'preexisting');
+  await until(run, 'codexRootMessageReceived');
+  assert.equal(existsSync(join(run.directory, 'queue.json')), false, 'The retry queued a duplicate notice.');
+  assert.match(run.diagnostic, /"reused":true/);
+  assert.equal(readFileSync(run.readLog, 'utf8').trim().split('\n').length, 1);
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
 });
 
 async function runRelay(t, mode, { env = {}, args = ['--thread', 'thread-1'] } = {}) {

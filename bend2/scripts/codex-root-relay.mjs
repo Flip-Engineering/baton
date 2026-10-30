@@ -408,18 +408,18 @@ async function walkTurns(session, thread, visit) {
   return null;
 }
 
-// The newest user message that contains the complete notice, searched from the
-// newest turn back to the turn that was newest before the notice was queued.
-// `before` is the result of newestTurn.
-function findUserMessage(session, thread, content, before) {
+// Search newest turns first. Supplying `before` limits receipt matching to
+// messages that arrived after the notice was queued; omitting it finds a
+// complete notice left by an earlier relay attempt.
+function findUserMessage(session, thread, content, before = null) {
   return walkTurns(session, thread, turn => {
     for (const item of [...turn.items].reverse()) {
-      if (item.type === 'userMessage' && !(turn.id === before.turn && before.items.has(item.id))
+      if (item.type === 'userMessage' && !(before && turn.id === before.turn && before.items.has(item.id))
           && userText(item).some(text => text.includes(content))) {
         return { turn: turn.id, item: item.id };
       }
     }
-    return turn.id === before.turn ? null : undefined;
+    return before && turn.id === before.turn ? null : undefined;
   });
 }
 
@@ -472,11 +472,19 @@ async function deliverNotice(peer, delivery, options, params) {
   const session = new AppSession({ ...options, thread }, delivery);
   let received;
   let queued;
+  let reused = false;
   try {
     await awaitLoadedThread(delivery, session, thread);
     const before = await newestTurn(session, thread);
-    queued = await queueMessage({ ...options, thread }, id, params.content);
-    received = await awaitUserMessage(delivery, session, id, thread, params.content, before);
+    // A prior relay can queue the complete notice and exit before its read
+    // callback completes. Reuse that exact message on retry instead of
+    // adding another copy to the root thread.
+    received = await findUserMessage(session, thread, params.content);
+    if (received) reused = true;
+    else {
+      queued = await queueMessage({ ...options, thread }, id, params.content);
+      received = await awaitUserMessage(delivery, session, id, thread, params.content, before);
+    }
   } finally {
     await session.close();
   }
@@ -489,7 +497,8 @@ async function deliverNotice(peer, delivery, options, params) {
     throw new Error('Codex returned Baton message ' + id + ' in the root thread, but its read was not recorded: ' + JSON.stringify(read));
   }
   process.stderr.write(JSON.stringify({ type: 'codexRootMessageReceived', session: options.session,
-    thread, message: id, turn: received.turn, item: received.item, queue: queued.stdout.trim() }) + '\n');
+    thread, message: id, turn: received.turn, item: received.item,
+    ...(reused ? { reused: true } : { queue: queued.stdout.trim() }) }) + '\n');
 }
 
 function codexMcpRequest(message) {
