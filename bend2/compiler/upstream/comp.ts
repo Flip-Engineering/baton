@@ -4470,7 +4470,8 @@ function compile_tables(fl: File, entries: Seg[], show: Show | null, image_words
   check_id_limit("FID live segments", entries.length - 2, (1 << 20) - 4);
   for (const ms of [[...cids.keys()].map(cid_mac),
     [...entries.map((s) => s.fid), "FID_EXIT", "FID_ENTER"]]) {
-    const dup = [...ms, ...TABLES].find((m, i, a) => a.indexOf(m) < i);
+    const seen = new Set<string>();
+    const dup = [...ms, ...TABLES].find((m) => seen.has(m) || !seen.add(m));
     if (dup !== undefined) {
       die("two names mangle to " + dup);
     }
