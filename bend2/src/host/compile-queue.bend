@@ -1655,6 +1655,30 @@ def waiters_ticket_higher(+text: String, +token: String, +priority: U32) -> IO(B
         IO.pure(Bool, U32.is_eq(alive, 1)),
       IO.pure(Bool, False{}))
 
+# Admission orders equal priorities by age. A ticket is ahead of mine when its priority is
+# greater, or equal with a token that sorts before mine. The token is "<started_ns>-<pid>" of
+# the supervisor that published the ticket; started_ns has 19 digits until the year 2286, so
+# string order is start order and the pid suffix makes it total. A ticket without a token
+# is never ahead by age, and a ticket with my token is mine.
+def admission_ahead(+other_priority: U32, +other_token: String, +my_priority: U32, +my_token: String) -> Bool:
+  Bool.and(Bool.not(Tx.str_eq(other_token, my_token)),
+    Bool.or(U32.is_gt(other_priority, my_priority),
+      Bool.and(Bool.and(U32.is_eq(other_priority, my_priority), Bool.not(String.is_empty(other_token))),
+        String.is_lt(other_token, my_token))))
+
+# A live ticket that is ahead of mine. The scan of the admission queue asks this; the scan of the
+# flock queue (waiters_ticket_higher) keeps strict priority and the kernel's arrival order.
+def admission_ticket_ahead(+text: String, +token: String, +priority: U32) -> IO(Bool):
+  do IO<Bool>:
+    contender : Bool <- IO.pure(Bool,
+      admission_ahead(status_number(field(text, "priority")), field(text, "token"), priority, token))
+    Bool.pick(IO(Bool), contender,
+      do IO<Bool>:
+        alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(
+          status_number(field(text, "pid")), field(text, "starttime")))
+        IO.pure(Bool, U32.is_eq(alive, 1)),
+      IO.pure(Bool, False{}))
+
 def waiters_scan_one(read: Result<&1,&1,U32 & String,String>, +token: String, +priority: U32) -> IO(Bool):
   match read:
     case Fail{error}: IO.pure(Bool, False{})
@@ -1769,7 +1793,7 @@ def admission_waiter_priority(read: Result<&1,&1,U32 & String,String>, state: St
     case Fail{error}: IO.pure(Bool,False{})
     case Done{+text}:
       do IO<Bool>:
-        higher : Bool <- waiters_ticket_higher(text,token,priority)
+        higher : Bool <- admission_ticket_ahead(text,token,priority)
         Bool.pick(IO(Bool),higher,
           admission_waiter_fits(state,kind,field(text,"key"),field(text,"history_group"),stats,available,total,legacy_pid),
           IO.pure(Bool,False{}))
