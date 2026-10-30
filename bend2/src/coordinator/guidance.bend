@@ -5,7 +5,7 @@ import ../coordinator/message-status.bend as Status
 import ../host/sqlite.bend as DB
 import ../host/process.bend as P
 import ../host/text.bend as Text
-import ../host/files.bend as Files
+import ../host/jsonl-last.bend as JsonlLast
 import ../git/text.bend as Tx
 
 import ./../coordinator/frame-span.bend as Frame
@@ -140,31 +140,44 @@ def background_live(state: String) -> Bool:
 # The latest task list in the retained stdout, read from the file so that an
 # observer which did not see the earlier frames (a recovery observer replaying
 # from its checkpoint) closes on the native's current list and not on a list it
-# passed on the way. The result is '0' when the list names no task, '1' when it
-# names tasks, 'none' when no list was ever written and '?' when the file or its
-# last list cannot be read.
-def spool_background_sql() -> String:
-  "WITH s(v) AS (SELECT replace(?1,'\"subtype\":\"background_tasks_changed\"',char(1))), "
-  ++ "t(tail) AS (SELECT replace(v,rtrim(v,replace(v,char(1),'')),'') FROM s), "
-  ++ "f(value) AS (SELECT '{\"type\":\"system\",\"subtype\":\"background_tasks_changed\"' || substr(tail,1,instr(tail || char(10),char(10))-1) AS value FROM t) "
-  ++ "SELECT CASE WHEN instr((SELECT v FROM s),char(1))=0 THEN 'none' WHEN json_valid(value) THEN CASE WHEN coalesce(json_array_length(json_extract(value,'$.tasks')),0)>0 THEN '1' ELSE '0' END ELSE '?' END FROM f;"
+# passed on the way. The read scans the file backward from its end and stops at
+# the latest list, so it covers the frames from that list to the end of the file;
+# only frames that name background_tasks_changed are parsed. The result is '0'
+# when the list names no task, '1' when it names tasks, 'none' when no list was
+# ever written and '?' when the file or its last list cannot be read.
+# A native without a retained stdout file (the direct path) has no path to read;
+# its observer state is the only record, so the result is 'none'.
+def spool_list_sql() -> String:
+  "SELECT CASE WHEN json_extract(?1,'$.type')='system' AND json_extract(?1,'$.subtype')='background_tasks_changed' THEN 1 ELSE 0 END"
+
+def spool_background_value(+value: String) -> String:
+  Bool.pick(String,String.is_empty(value),"?",value)
 
 def spool_background_text(read: Result<&1,&1,U32 & String,String>) -> String:
   match read:
     case Fail{error}: "?"
-    case Done{text}: Tx.trim_nl(text)
+    case Done{text}: spool_background_value(Tx.trim_nl(text))
 
-def spool_background_sized(+db: String, +spool: String, sized: Result<&1,&1,U32 & String,U32>) -> IO(String):
-  match sized:
+def spool_background_frame(+db: String, frame: String) -> IO(String):
+  do IO<String>:
+    read : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,background_sql(C.q(frame)))
+    IO.pure(String,spool_background_text(read))
+
+def spool_background_listed(+db: String, +frame: String) -> IO(String):
+  Bool.pick(IO(String),String.is_empty(frame),IO.pure(String,"none"),spool_background_frame(db,frame))
+
+def spool_background_found(+db: String, found: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match found:
     case Fail{error}: IO.pure(String,"?")
-    case Done{size}: do IO<String>:
-      read : Result<&1,&1,U32 & String,String> <- DB.Sql.query_span(db,spool,"0",U32.show(size),spool_background_sql())
-      IO.pure(String,spool_background_text(read))
+    case Done{+frame}: spool_background_listed(db,frame)
+
+def spool_background_read(+db: String, spool: String) -> IO(String):
+  do IO<String>:
+    found : Result<&1,&1,U32 & String,String> <- JsonlLast.Jsonl.read_last(spool,"background_tasks_changed",spool_list_sql())
+    spool_background_found(db,found)
 
 def spool_background(+db: String, +spool: String) -> IO(String):
-  do IO<String>:
-    sized : Result<&1,&1,U32 & String,U32> <- Files.Files.size(spool)
-    spool_background_sized(db,spool,sized)
+  Bool.pick(IO(String),String.is_empty(spool),IO.pure(String,"none"),spool_background_read(db,spool))
 
 # Stdin closes only when the stdout file agrees with the observer's state.
 def background_clear(+state: String) -> Bool:

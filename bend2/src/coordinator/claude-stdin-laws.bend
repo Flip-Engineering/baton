@@ -169,16 +169,47 @@ law an_unreadable_stdout_file_keeps_stdin_open:
 def an_unreadable_stdout_file_keeps_stdin_open():
   {==}
 
-law a_failed_size_read_reports_an_unreadable_file:
+law a_failed_last_frame_read_reports_an_unreadable_file:
   for +db: String
-  for +spool: String
-  {Guidance.spool_background_sized(db,spool,Fail{(2,"no such file")}) == IO.pure(String,"?") : IO(String)}
+  {Guidance.spool_background_found(db,Fail{(2,"no such file")}) == IO.pure(String,"?") : IO(String)}
 
-def a_failed_size_read_reports_an_unreadable_file(db,spool):
+def a_failed_last_frame_read_reports_an_unreadable_file(db):
   {==}
 
-law a_failed_span_read_reports_an_unreadable_file:
-  {Guidance.spool_background_text(Fail{(5,"cannot map")}) == "?" : String}
+law a_file_without_a_list_reports_none:
+  for +db: String
+  {Guidance.spool_background_found(db,Done{""}) == IO.pure(String,"none") : IO(String)}
 
-def a_failed_span_read_reports_an_unreadable_file():
+def a_file_without_a_list_reports_none(db):
+  {==}
+
+law a_native_without_a_stdout_file_reports_none:
+  for +db: String
+  {Guidance.spool_background(db,"") == IO.pure(String,"none") : IO(String)}
+
+def a_native_without_a_stdout_file_reports_none(db):
+  {==}
+
+law a_failed_task_list_query_reports_an_unreadable_list:
+  {Guidance.spool_background_text(Fail{(5,"query failed")}) == "?" : String}
+
+def a_failed_task_list_query_reports_an_unreadable_list():
+  {==}
+
+law a_list_with_tasks_reports_one:
+  {Guidance.spool_background_text(Done{"1\n"}) == "1" : String}
+
+def a_list_with_tasks_reports_one():
+  {==}
+
+law an_empty_list_reports_zero:
+  {Guidance.spool_background_text(Done{"0\n"}) == "0" : String}
+
+def an_empty_list_reports_zero():
+  {==}
+
+law a_query_without_a_value_reports_an_unreadable_list:
+  {Guidance.spool_background_text(Done{""}) == "?" : String}
+
+def a_query_without_a_value_reports_an_unreadable_list():
   {==}

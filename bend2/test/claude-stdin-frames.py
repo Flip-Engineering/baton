@@ -186,40 +186,37 @@ class HookAndForwardOverlap(ReadRows):
 
 
 class StdoutTaskList(unittest.TestCase):
-    """The task list read from the retained stdout file decides whether a replaying observer may close."""
+    """The backward read of the retained stdout selects a frame by this predicate; the coordinator's SQL then reads its list."""
 
-    def latest(self, *lines):
-        sql = evaluate('spool_background_sql', {})
-        text = ''.join(line + '\n' for line in lines)
-        return self.db.execute(sql, {'1': text}).fetchone()[0]
+    def selects(self, line):
+        sql = evaluate('spool_list_sql', {})
+        return sqlite3.connect(':memory:').execute(sql, (line,)).fetchone()[0]
 
-    def setUp(self):
-        self.db = sqlite3.connect(':memory:')
+    def state(self, line):
+        sql = evaluate('background_sql', {'value': "'" + line.replace("'", "''") + "'"})
+        return sqlite3.connect(':memory:').execute(sql).fetchone()[0]
 
-    def test_a_file_whose_latest_list_is_empty_reports_none_running(self):
-        self.assertEqual(self.latest(FRAMES['init'], FRAMES['tasks'], FRAMES['result'], FRAMES['empty']), '0')
+    def test_a_task_list_frame_is_selected_and_read(self):
+        self.assertEqual((self.selects(FRAMES['tasks']), self.state(FRAMES['tasks'])), (1, '1'))
+        self.assertEqual((self.selects(FRAMES['empty']), self.state(FRAMES['empty'])), (1, '0'))
 
-    def test_a_list_that_replaced_an_empty_one_keeps_stdin_open(self):
-        # The state a replaying observer holds at the empty frame is not the file's latest list.
-        self.assertEqual(self.latest(FRAMES['tasks'], FRAMES['empty'], FRAMES['tasks']), '1')
+    def test_json_whitespace_and_key_order_do_not_hide_a_list(self):
+        for list_name, expected in (('tasks', '1'), ('empty', '0')):
+            frame = json.loads(FRAMES[list_name])
+            for text in (json.dumps(frame, indent=2), json.dumps(frame, separators=(' , ', ' : ')),
+                         json.dumps(dict(reversed(list(frame.items()))), indent=1)):
+                with self.subTest(list=list_name, text=text):
+                    self.assertEqual((self.selects(text), self.state(text)), (1, expected))
 
-    def test_the_latest_of_several_lists_wins_in_either_direction(self):
-        self.assertEqual(self.latest(FRAMES['empty'], FRAMES['tasks']), '1')
-        self.assertEqual(self.latest(FRAMES['tasks'], FRAMES['empty']), '0')
-
-    def test_a_file_with_no_list_reports_none(self):
-        self.assertEqual(self.latest(FRAMES['init'], FRAMES['result']), 'none')
-
-    def test_a_truncated_last_list_is_unreadable(self):
-        self.assertEqual(self.latest(FRAMES['empty'], FRAMES['tasks'][:60]), '?')
-
-    def test_a_list_name_quoted_inside_a_string_is_not_a_list(self):
+    def test_other_frames_are_not_selected(self):
         quoted = json.dumps({'type': 'assistant', 'text': '"subtype":"background_tasks_changed","tasks":[]'})
-        self.assertEqual(self.latest(FRAMES['tasks'], quoted), '1')
+        other = json.dumps({'type': 'user', 'subtype': 'background_tasks_changed'})
+        for line in (FRAMES['init'], FRAMES['result'], quoted, other, '[]', '5', '"background_tasks_changed"'):
+            with self.subTest(line=line):
+                self.assertEqual(self.selects(line), 0)
 
-    def test_an_empty_file_is_not_a_list(self):
-        sql = evaluate('spool_background_sql', {})
-        self.assertEqual(self.db.execute(sql, {'1': ''}).fetchone()[0], 'none')
+    def test_a_selected_frame_without_a_task_array_names_no_task(self):
+        self.assertEqual(self.state('{"type":"system","subtype":"background_tasks_changed"}'), '0')
 
 
 class BackgroundState(unittest.TestCase):
