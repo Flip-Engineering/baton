@@ -1656,15 +1656,55 @@ def waiters_ticket_higher(+text: String, +token: String, +priority: U32) -> IO(B
       IO.pure(Bool, False{}))
 
 # Admission orders equal priorities by age. A ticket is ahead of mine when its priority is
-# greater, or equal with a token that sorts before mine. The token is "<started_ns>-<pid>" of
-# the supervisor that published the ticket; started_ns has 19 digits until the year 2286, so
-# string order is start order and the pid suffix makes it total. A ticket without a token
-# is never ahead by age, and a ticket with my token is mine.
+# greater, or when the priority is equal and the ticket is older. The age is the token
+# "<started_ns>-<pid>" that the supervisor wrote into its ticket, compared as numbers: first
+# started_ns, then pid, then the token text, which makes the order total. A token that is not
+# two non-empty runs of decimal digits joined by one hyphen has no age and is never ahead by
+# age; a ticket with my own token is mine.
+type TicketAge is Data:
+  TicketAge{valid: Bool, started: Nat, pid: Nat, text: String}
+
+def token_digits_rest(s: String) -> Bool:
+  match s:
+    case SNil{}: True{}
+    case SCon{+c, rest}: Bool.and(Char.is_digit(c), token_digits_rest(rest))
+
+def token_digits(s: String) -> Bool:
+  match s:
+    case SNil{}: False{}
+    case SCon{+c, rest}: Bool.and(Char.is_digit(c), token_digits_rest(rest))
+
+def token_nat(text: String, acc: Nat) -> Nat:
+  match text:
+    case SNil{}: acc
+    case SCon{+c, rest}: token_nat(rest, Nat.add(Nat.mul(acc, 10n), U32.to_nat(U32.sub(Char.to_u32(c), 48))))
+
+def token_age_parts(parts: List<&2,String>, +token: String) -> TicketAge:
+  match parts:
+    case +started <> +pid <> Nil{}:
+      Bool.pick(TicketAge, Bool.and(token_digits(started), token_digits(pid)),
+        TicketAge{True{}, token_nat(started, 0n), token_nat(pid, 0n), token},
+        TicketAge{False{}, 0n, 0n, token})
+    case other: TicketAge{False{}, 0n, 0n, token}
+
+def token_age(+token: String) -> TicketAge:
+  token_age_parts(String.split(token, Char.from_u32(45)), token)
+
+def age_before(a: TicketAge, b: TicketAge) -> Bool:
+  match a:
+    case TicketAge{a_valid, +a_started, +a_pid, a_text}:
+      match b:
+        case TicketAge{b_valid, +b_started, +b_pid, b_text}:
+          Bool.and(Bool.and(a_valid, b_valid),
+            Bool.or(Nat.is_lt(a_started, b_started),
+              Bool.and(Nat.is_eq(a_started, b_started),
+                Bool.or(Nat.is_lt(a_pid, b_pid),
+                  Bool.and(Nat.is_eq(a_pid, b_pid), String.is_lt(a_text, b_text))))))
+
 def admission_ahead(+other_priority: U32, +other_token: String, +my_priority: U32, +my_token: String) -> Bool:
   Bool.and(Bool.not(Tx.str_eq(other_token, my_token)),
     Bool.or(U32.is_gt(other_priority, my_priority),
-      Bool.and(Bool.and(U32.is_eq(other_priority, my_priority), Bool.not(String.is_empty(other_token))),
-        String.is_lt(other_token, my_token))))
+      Bool.and(U32.is_eq(other_priority, my_priority), age_before(token_age(other_token), token_age(my_token)))))
 
 # A live ticket that is ahead of mine. The scan of the admission queue asks this; the scan of the
 # flock queue (waiters_ticket_higher) keeps strict priority and the kernel's arrival order.

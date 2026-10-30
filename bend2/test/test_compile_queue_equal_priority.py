@@ -9,7 +9,12 @@ different history groups; none of them has a recorded peak unless a test measure
   although a newer waiter polls more often than an older one that has backed off.
 * An older waiter that is not eligible does not block a newer waiter that is.
 * A request of higher priority still starts before older waiters of lower priority.
-* A dead older ticket and a live ticket without a token field do not block a request.
+* A dead older ticket, a live ticket without a token field, and live tickets whose tokens do not
+  parse do not block a request.
+* A live ticket whose token is numerically older blocks an eligible request until it goes, and
+  one that is numerically newer does not, whatever the text order of the tokens (18 and 21
+  digits against the 19 of a current token). Equal timestamps are ordered by pid and token text
+  in compile-queue-admission-laws.bend, because a native test cannot fix the token of a request.
 """
 import fcntl
 import os
@@ -231,12 +236,12 @@ class EqualPriorityTests(unittest.TestCase):
         self.assertEqual(self.drain_in_start_order(["older", "urgent"]), ["urgent", "older"])
         self.finish(*self.holds)
 
-    def ticket(self, name, pid, starttime, token):
+    def ticket(self, name, pid, starttime, token, priority=0):
         directory = self.state / "waiters" / "cc"
         directory.mkdir(mode=0o2770, parents=True, exist_ok=True)
         directory.chmod(0o2770)
-        text = "priority=0\npid=%d\nstarttime=%s\nkey=%s\nhistory_group=%s\nkind=cc\ngroup=%s\n" % (
-            pid, starttime, name, name, name)
+        text = "priority=%d\npid=%d\nstarttime=%s\nkey=%s\nhistory_group=%s\nkind=cc\ngroup=%s\n" % (
+            priority, pid, starttime, name, name, name)
         if token is not None:
             text += "token=%s\n" % token
         path = directory / name
@@ -250,12 +255,51 @@ class EqualPriorityTests(unittest.TestCase):
         self.assertFalse(stale.exists(), "the scan reaps a ticket whose process is gone")
         self.finish(*self.holds)
 
-    def test_a_live_ticket_without_a_token_does_not_block(self):
+    def live_ticket(self, name, token, priority=0):
+        """A ticket of this live process, so the scan counts it; it fits because its group is unmeasured."""
         with open("/proc/self/stat") as stat:
             starttime = stat.read().rsplit(")", 1)[1].split()[19]
-        self.ticket("tokenless", os.getpid(), starttime, None)
+        return self.ticket(name, os.getpid(), starttime, token, priority)
+
+    def test_a_live_ticket_without_a_token_does_not_block(self):
+        self.live_ticket("tokenless", None)
         self.request("alive")
         self.until("alive started beside a live ticket without a token", lambda: "alive" in self.started())
+        self.finish(*self.holds)
+
+    def test_malformed_live_tickets_do_not_block(self):
+        for number, token in enumerate(["garbage", "1-", "-1", "1a-2", "1-2-3", "12", "1 -2", ""]):
+            self.live_ticket("malformed%d" % number, token)
+        self.request("alive")
+        self.until("alive started beside live tickets whose tokens do not parse", lambda: "alive" in self.started())
+        self.finish(*self.holds)
+
+    def test_a_numerically_older_live_ticket_blocks_an_eligible_request_until_it_goes(self):
+        # 18 digits is older than the 19 digits of every current token as a number, and later as text.
+        ticket = self.live_ticket("older-number", "999999999999999999-1")
+        self.request("waits")
+        self.until("waits has a ticket", lambda: "waits" in self.waiting())
+        time.sleep(4)
+        self.assertNotIn("waits", self.started())
+        ticket.unlink()
+        self.until("waits started once the older ticket was removed", lambda: "waits" in self.started())
+        self.finish(*self.holds)
+
+    def test_a_numerically_newer_live_ticket_does_not_block(self):
+        # 21 digits is newer than every current token as a number, and earlier as text.
+        self.live_ticket("newer-number", "100000000000000000000-1")
+        self.request("alive")
+        self.until("alive started beside a numerically newer ticket", lambda: "alive" in self.started())
+        self.finish(*self.holds)
+
+    def test_a_higher_priority_live_ticket_blocks_an_eligible_request_until_it_goes(self):
+        ticket = self.live_ticket("urgent", "100000000000000000000-1", priority=5)
+        self.request("waits")
+        self.until("waits has a ticket", lambda: "waits" in self.waiting())
+        time.sleep(3)
+        self.assertNotIn("waits", self.started())
+        ticket.unlink()
+        self.until("waits started once the higher ticket was removed", lambda: "waits" in self.started())
         self.finish(*self.holds)
 
 
