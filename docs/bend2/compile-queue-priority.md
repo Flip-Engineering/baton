@@ -27,6 +27,9 @@ among tickets of equal priority.
 - Same-key deduplication, the execution identity, the owner custody rules, the
   capacity check and the order among tickets of equal priority are unchanged.
 
+Every priority from 0 through 4294967295 is supported; each owner is read with its own
+live flag, so no priority value doubles as an absent owner.
+
 ## What the caller sees
 
 After `owner=TOKEN`, a requester prints one line on standard error:

@@ -1813,38 +1813,52 @@ def admission_publish_claim(+state: String, +kind: String, +key: String, +token:
 # token without one (written by an earlier executable) counts at the priority of
 # the first request, which the attempt meta records. A token whose process is gone
 # does not count. A scan holds owners.lock, as every other scan of the tokens does,
-# so a token that is being published or removed is read whole or not at all. The
-# value 0 of a scan means that no live owner was found; a priority p is carried as
-# p + 1 so that priority 0 stays distinct.
-def owner_priority_value(+text: String, +fallback: U32, live: U32) -> U32:
-  Bool.pick(U32, U32.is_eq(live, 1),
-    U32.add(Bool.pick(U32, non_empty(field(text, "priority")), status_number(field(text, "priority")), fallback), 1),
-    0)
+# so a token that is being published or removed is read whole or not at all. Each
+# owner is read as a record with its own live flag, so every priority from 0 to
+# 4294967295 is a valid value and no priority stands for "no owner".
+type OwnerPriority is Data:
+  OwnerPriority{live: U32, priority: U32}
 
-def owner_priority_one(+keydir: String, +name: String, +fallback: U32) -> IO(U32):
-  do IO<U32>:
+def owner_priority_value(+text: String, +fallback: U32, live: U32) -> OwnerPriority:
+  OwnerPriority{live, Bool.pick(U32, non_empty(field(text, "priority")), status_number(field(text, "priority")), fallback)}
+
+def owner_priority_one(+keydir: String, +name: String, +fallback: U32) -> IO(OwnerPriority):
+  do IO<OwnerPriority>:
     +text : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/owners/" ++ name))
     +pid : U32 <- IO.pure(U32, status_number(field(text, "pid")))
     live : U32 <- Bool.pick(IO(U32), U32.is_gt(pid, 0),
       IO.try(U32, L.CompileQueueLifecycle.alive(pid, field(text, "starttime"))),
       IO.pure(U32, 0))
-    IO.pure(U32, owner_priority_value(text, fallback, live))
+    IO.pure(OwnerPriority, owner_priority_value(text, fallback, U32.min(live, 1)))
 
-def owner_priority_scan(+keydir: String, names: List<&1,String>, +fallback: U32, +best: U32) -> IO(U32):
+def owner_priority_merge(best: OwnerPriority, one: OwnerPriority) -> OwnerPriority:
+  match best:
+    case OwnerPriority{+best_live, +best_priority}:
+      match one:
+        case OwnerPriority{+one_live, +one_priority}:
+          Bool.pick(OwnerPriority, U32.is_eq(one_live, 0), OwnerPriority{best_live, best_priority},
+            Bool.pick(OwnerPriority, Bool.or(U32.is_eq(best_live, 0), U32.is_gt(one_priority, best_priority)),
+              OwnerPriority{1, one_priority}, OwnerPriority{best_live, best_priority}))
+
+def owner_priority_scan(+keydir: String, names: List<&1,String>, +fallback: U32, +best: OwnerPriority) -> IO(OwnerPriority):
   match names:
-    case Nil{}: IO.pure(U32, best)
+    case Nil{}: IO.pure(OwnerPriority, best)
     case Con{+name, rest}:
-      do IO<U32>:
-        +value : U32 <- owner_priority_one(keydir, name, fallback)
-        owner_priority_scan(keydir, rest, fallback, max_u32(best, value))
+      do IO<OwnerPriority>:
+        +one : OwnerPriority <- owner_priority_one(keydir, name, fallback)
+        owner_priority_scan(keydir, rest, fallback, owner_priority_merge(best, one))
+
+def owner_priority_result(best: OwnerPriority, fallback: U32) -> U32:
+  match best:
+    case OwnerPriority{live, priority}: Bool.pick(U32, U32.is_eq(live, 0), fallback, priority)
 
 def owner_priority_locked(+keydir: String, +fallback: U32) -> IO(U32):
   do IO<U32>:
     gate : U32 <- owner_lock(keydir)
     names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(keydir ++ "/owners"))
-    +best : U32 <- owner_priority_scan(keydir, Tx.split_nul(names), fallback, 0)
+    best : OwnerPriority <- owner_priority_scan(keydir, Tx.split_nul(names), fallback, OwnerPriority{0, 0})
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
-    IO.pure(U32, Bool.pick(U32, U32.is_eq(best, 0), fallback, U32.sub(best, 1)))
+    IO.pure(U32, owner_priority_result(best, fallback))
 
 # One pass of a waiting supervisor: the effective priority is derived again from
 # the live owners, and the two tickets of the supervisor are replaced when it

@@ -215,6 +215,40 @@ class PriorityJoinTests(unittest.TestCase):
             self.assertEqual(child.wait(timeout=120), 0)
         self.assertEqual(self.starts(), ["zero", "fifty"])
 
+    def test_the_largest_priority_is_a_priority(self):
+        largest = 4294967295
+        self.hold()
+        low = self.request("low", "largest", 0)
+        self.until("tickets at priority 0", lambda: self.both_tickets_at("largest", 0))
+        high = self.request("high", "largest", largest)
+        self.until("the joiner reported the largest effective priority",
+                   lambda: "priority=%d effective=%d" % (largest, largest) in self.stderr_of("high"))
+        self.until("both tickets carry the largest priority", lambda: self.both_tickets_at("largest", largest))
+        done = subprocess.run([self.candidate, "--", "cancel", "--state-root", str(self.state),
+                               "--key", self.key("largest"), "--token", "high"],
+                              env=self.environment(), capture_output=True, text=True)
+        self.assertIn("canceled=", done.stdout, done.stdout + done.stderr)
+        self.until("the tickets returned to priority 0", lambda: self.both_tickets_at("largest", 0))
+        self.release()
+        self.assertEqual(low.wait(timeout=120), 0, self.stderr_of("low"))
+        high.wait(timeout=120)
+        self.assertEqual(self.starts(), ["largest"])
+
+    def test_priorities_next_to_the_largest_order_the_executions(self):
+        near = 4294967294
+        self.hold()
+        first = self.request("first", "zero", 0)
+        self.until("the first ticket exists", lambda: self.both_tickets_at("zero", 0))
+        second = self.request("second", "near", near)
+        self.until("the second ticket exists", lambda: self.both_tickets_at("near", near))
+        joiner = self.request("joiner", "zero", near + 1)
+        self.until("the joined execution carries the largest priority", lambda: self.both_tickets_at("zero", near + 1))
+        self.assertTrue(self.both_tickets_at("near", near))
+        self.release()
+        for child in (first, second, joiner):
+            self.assertEqual(child.wait(timeout=120), 0)
+        self.assertEqual(self.starts(), ["zero", "near"])
+
 
 if __name__ == "__main__":
     unittest.main()
