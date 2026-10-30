@@ -71,10 +71,10 @@ def transcript_path(+db: String, +event: String) -> IO(String):
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.transcript_path'),'') ELSE '' END;")
     IO.pure(String,text(result))
 
-# The first explicit prompt anchor includes every later inherited or repeated
-# prompt frame needed by selection_sql. Earlier frames cannot match prompt_scope.
+# The first current-native explicit prompt includes earlier matching Read calls
+# and every later inherited or repeated prompt frame needed by selection_sql.
 def prompt_anchor_sql(+event: String) -> String:
-  "SELECT CASE WHEN json_extract(?1,'$.type')='user' AND json_extract(?1,'$.sessionId')=json_extract(" ++ C.q(event) ++ ",'$.session_id') AND json_extract(?1,'$.promptId')=json_extract(" ++ C.q(event) ++ ",'$.prompt_id') THEN 1 ELSE 0 END;"
+  "SELECT CASE WHEN json_extract(?1,'$.sessionId')=json_extract(" ++ C.q(event) ++ ",'$.session_id') AND json_extract(?1,'$.promptId')=json_extract(" ++ C.q(event) ++ ",'$.prompt_id') THEN 1 ELSE 0 END;"
 
 def pending_sql(+session: String, directory: String, +event: String) -> String:
   "SELECT EXISTS(SELECT 1 FROM executions e JOIN sessions s ON s.id=e.session WHERE e.session=" ++ C.q(session)

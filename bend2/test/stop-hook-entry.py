@@ -758,6 +758,11 @@ if config['label'] == 'stream':
            'message':{'role':'system','content':[{'type':'text','text':
                'PostToolUse:Bash hook additional context: ' + old_complete}]}})
     frame({'type':'system','sessionId':'native-1','subtype':'compact_boundary'})
+    # Existing Read matching permits an explicit prompt on an assistant frame
+    # before its first user frame. Retain that call across the whole suffix.
+    frame({'type':'assistant','sessionId':'native-1','promptId':'prompt-1','message':{'content':[
+           {'type':'tool_use','id':'read-2','name':'Read','input':{'file_path':
+               str(pathlib.Path(config['directory']) / 'saved-input.txt')}}]}})
 frame({'type':'user','sessionId':'native-1','promptId':'prompt-1','message':{'role':'user','content':'Start the task.'}})
 hook = invoke('injected-input', [config['binary'],'--stop-hook'], event('PostToolUse', tool_name='Bash'))
 context = json.loads(hook.stdout)['hookSpecificOutput']['additionalContext']
@@ -798,8 +803,9 @@ else:
     assert json.loads(partial_stop.stdout)['decision'] == 'block'
     assert 'Baton holds 1 unread inputs' in json.loads(partial_stop.stdout)['reason']
     assert reads() == []
-    frame({'type':'assistant','sessionId':'native-1','message':{'content':[
-           {'type':'tool_use','id':'read-2','name':'Read','input':{'file_path':read_path}}]}})
+    if config['label'] != 'stream':
+        frame({'type':'assistant','sessionId':'native-1','message':{'content':[
+               {'type':'tool_use','id':'read-2','name':'Read','input':{'file_path':read_path}}]}})
     if config['label'] == 'stream':
         # The matching Read call precedes another prompt and a repeated current
         # prompt. Selecting only the last contiguous run would lose that call.
