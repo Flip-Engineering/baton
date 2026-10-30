@@ -82,6 +82,7 @@ class DispatchRuntimeGuard(unittest.TestCase):
                 mock.patch.object(CHECK, 'verify_receiver_router', return_value={'returncode': 78}) as router, \
                 mock.patch.object(CHECK, 'verify_repl', return_value=dependency), \
                 mock.patch.object(CHECK, 'verify_dispatch_runtime'), \
+                mock.patch.object(CHECK, 'verify_agent_summary_preload'), \
                 mock.patch.object(CHECK, 'system_dependencies', return_value=[]), \
                 mock.patch.object(CHECK.platform, 'system', return_value='Darwin'), \
                 mock.patch.object(CHECK.subprocess, 'run', side_effect=run):
@@ -95,6 +96,38 @@ class DispatchRuntimeGuard(unittest.TestCase):
                          ['baton', 'baton-focused', 'baton', 'bun'])
         self.assertFalse((output / 'guide-check.sqlite').exists())
         self.assertFalse((output / 'sqlite-probe.c').exists())
+
+
+class AgentSummaryPreloadGuard(unittest.TestCase):
+    """The installed preload must be the pinned script and the doctor helper must be present (#1338)."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.prefix = pathlib.Path(self.temp.name)
+        self.directory = self.prefix / 'libexec/baton2'
+        self.directory.mkdir(parents=True)
+        for name in ('agent-summary-check.mjs', 'no-agent-summary.js'):
+            (self.directory / name).write_bytes((ROOT / 'bend2/scripts' / name).read_bytes())
+
+    def test_the_pinned_preload_and_helper_are_accepted(self):
+        CHECK.verify_agent_summary_preload(self.prefix)
+
+    def test_a_missing_helper_is_refused(self):
+        (self.directory / 'agent-summary-check.mjs').unlink()
+        with self.assertRaisesRegex(RuntimeError, 'lacks the doctor operation'):
+            CHECK.verify_agent_summary_preload(self.prefix)
+
+    def test_a_missing_preload_is_refused(self):
+        (self.directory / 'no-agent-summary.js').unlink()
+        with self.assertRaisesRegex(RuntimeError, 'lacks the agent_summary preload'):
+            CHECK.verify_agent_summary_preload(self.prefix)
+
+    def test_a_changed_preload_is_refused(self):
+        with (self.directory / 'no-agent-summary.js').open('a') as stream:
+            stream.write('// edited\n')
+        with self.assertRaisesRegex(RuntimeError, 'differs from its pinned SHA-256'):
+            CHECK.verify_agent_summary_preload(self.prefix)
 
 
 class ReceiverRouterGuard(unittest.TestCase):

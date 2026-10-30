@@ -3,7 +3,7 @@ import ./repl-model.bend as M
 import ./store.bend as Store
 import ./wake.bend as Wake
 import ./agent-input.bend as AgentInput
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 
 # A citation pins the immutable cell sequence within its owner's notebook.
 def citation_sql() -> String:
