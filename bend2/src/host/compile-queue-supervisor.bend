@@ -39,13 +39,21 @@ def finish_wait(result: Result<&1,&1,U32 & String,String>, +canceled: U32) -> IO
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32 & String>,Fail{error})
     case Done{+status}: IO.pure(Result<&1,&1,U32 & String,U32 & String>,Done{disposition(status,canceled)})
 
+# A termination signal that reached the supervisor while the command was being
+# started is a cancellation, whatever the start reported: the cancel command signals
+# the process group of the supervisor, and the held child, which has not executed
+# yet, is in it. Its death before the release byte makes the start fail. A start
+# that fails with no signal recorded is a spawn failure and keeps its own error.
 def run_started(started: Result<&1,&1,U32 & String,Unit>, +child: U32, +attempt: String, +start: String) -> IO(Result<&1,&1,U32 & String,U32 & String>):
   match started:
     case Fail{error}:
       do IO<Result<&1,&1,U32 & String,U32 & String>>:
         waited : Result<&1,&1,U32 & String,U32> <- P.HostPosix.wait_pid(child)
+        +canceled : U32 <- IO.try(U32,P.HostPosix.pending_signal())
         restored : Result<&1,&1,U32 & String,Unit> <- P.HostPosix.restore_signals()
-        IO.pure(Result<&1,&1,U32 & String,U32 & String>,Fail{error})
+        Bool.pick(IO(Result<&1,&1,U32 & String,U32 & String>),U32.is_gt(canceled,0),
+          IO.pure(Result<&1,&1,U32 & String,U32 & String>,Done{(130,"canceled")}),
+          IO.pure(Result<&1,&1,U32 & String,U32 & String>,Fail{error}))
     case Done{unit}:
       do IO<Result<&1,&1,U32 & String,U32 & String>>:
         result : Result<&1,&1,U32 & String,String> <- wait_running(attempt,child,start,2)
