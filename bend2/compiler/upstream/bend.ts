@@ -4175,124 +4175,180 @@ export function term_snf(book: Book, term: HTerm): HTerm {
 // same walk, kinds exact, no swap (a swap under EQ is harmless, so
 // the All case swaps unconditionally).
 
+// The last child of a node is compared by the loop: a string or list in constructor
+// form, a chain of matches or a body under binders is compared at a fixed stack depth,
+// and only the earlier children recurse. The children are compared in the same order.
 export function term_compare(mode: "EQ" | "LE", book: Book, lhs: HTerm, rhs: HTerm, dep: number = 0): boolean {
-  if (lhs === rhs) {
-    return true;
-  }
-  let a = term_wnf(book, lhs);
-  let b = term_wnf(book, rhs);
-  if (a === b) {
-    return true;
-  }
-  if (a.$ === "Lam" || b.$ === "Lam") {
-    const k = a.$ === "Lam" ? a.k : (b as Extract<HTerm, { $: "Lam" }>).k;
-    const x: HTerm = Var(k, dep);
-    return term_compare(mode, book, term_apply(a, x), term_apply(b, x), dep + 1);
-  }
-  if (a.$ === "Lit" && b.$ === "Ctr") {
-    a = term_higher(lit_step(a));
-  }
-  if (b.$ === "Lit" && a.$ === "Ctr") {
-    b = term_higher(lit_step(b));
-  }
-  switch (a.$) {
-    case "Var": {
-      return b.$ === "Var" && a.i === b.i;
+  for (;;) {
+    if (lhs === rhs) {
+      return true;
     }
-    case "Ref": {
-      return b.$ === "Ref" && a.k === b.k;
+    let a = term_wnf(book, lhs);
+    let b = term_wnf(book, rhs);
+    if (a === b) {
+      return true;
     }
-    case "Typ": {
-      if (b.$ !== "Typ") {
+    if (a.$ === "Lam" || b.$ === "Lam") {
+      const k = a.$ === "Lam" ? a.k : (b as Extract<HTerm, { $: "Lam" }>).k;
+      const x: HTerm = Var(k, dep);
+      lhs = term_apply(a, x);
+      rhs = term_apply(b, x);
+      dep = dep + 1;
+      continue;
+    }
+    if (a.$ === "Lit" && b.$ === "Ctr") {
+      a = term_higher(lit_step(a));
+    }
+    if (b.$ === "Lit" && a.$ === "Ctr") {
+      b = term_higher(lit_step(b));
+    }
+    switch (a.$) {
+      case "Var": {
+        return b.$ === "Var" && a.i === b.i;
+      }
+      case "Ref": {
+        return b.$ === "Ref" && a.k === b.k;
+      }
+      case "Typ": {
+        if (b.$ !== "Typ") {
+          return false;
+        }
+        if (mode === "EQ") {
+          return term_compare("EQ", book, a.g, b.g, dep);
+        }
+        const g = term_wnf(book, a.g);
+        const h = term_wnf(book, b.g);
+        if ((g.$ === "Qua" && g.q.$ === "Many") || (h.$ === "Qua" && h.q.$ !== "Many")) {
+          return true;
+        }
+        if (g.$ === "Min") {
+          const fa = term_compare("LE", book, Typ(g.a), b, dep);
+          const fb = term_compare("LE", book, Typ(g.b), b, dep);
+          return fa && fb;
+        }
+        if (h.$ === "Min") {
+          const fa = term_compare("LE", book, a, Typ(h.a), dep);
+          const fb = term_compare("LE", book, a, Typ(h.b), dep);
+          return fa || fb;
+        }
+        return term_compare("LE", book, g, h, dep);
+      }
+      case "Qnt": {
+        return b.$ === "Qnt";
+      }
+      case "Qua": {
+        return b.$ === "Qua" && a.q.$ === b.q.$;
+      }
+      case "Min": {
+        if (b.$ !== "Min" || !term_compare("EQ", book, a.a, b.a, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.b;
+        rhs = b.b;
+        continue;
+      }
+      case "All": {
+        const x: HTerm = Var(a.k, dep);
+        if (b.$ !== "All" || a.q.$ !== b.q.$ || !term_compare(mode, book, b.A, a.A, dep)) {
+          return false;
+        }
+        lhs = a.B(x);
+        rhs = b.B(x);
+        dep = dep + 1;
+        continue;
+      }
+      case "App": {
+        if (b.$ !== "App" || !term_compare("EQ", book, a.f, b.f, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.x;
+        rhs = b.x;
+        continue;
+      }
+      case "ADT": {
+        if (b.$ !== "ADT" || a.k !== b.k || a.x.length !== b.x.length) {
+          return false;
+        }
+        if (mode === "EQ" && a.r.length !== b.r.length) {
+          return false;
+        }
+        if (!b.r.every((c) => a.r.includes(c))) {
+          return false;
+        }
+        if (a.x.length === 0) {
+          return true;
+        }
+        for (let j = 0; j < a.x.length - 1; j++) {
+          if (!term_compare("EQ", book, a.x[j], b.x[j], dep)) {
+            return false;
+          }
+        }
+        mode = "EQ";
+        lhs = a.x[a.x.length - 1];
+        rhs = b.x[b.x.length - 1];
+        continue;
+      }
+      case "Ctr": {
+        if (b.$ !== "Ctr" || a.k !== b.k || a.x.length !== b.x.length) {
+          return false;
+        }
+        if (a.x.length === 0) {
+          return true;
+        }
+        for (let j = 0; j < a.x.length - 1; j++) {
+          if (!term_compare("EQ", book, a.x[j], b.x[j], dep)) {
+            return false;
+          }
+        }
+        mode = "EQ";
+        lhs = a.x[a.x.length - 1];
+        rhs = b.x[b.x.length - 1];
+        continue;
+      }
+      case "Lit": {
+        return b.$ === "Lit" && a.v === b.v;
+      }
+      case "Mat": {
+        if (b.$ !== "Mat" || a.k !== b.k || !term_compare("EQ", book, a.h, b.h, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.m;
+        rhs = b.m;
+        continue;
+      }
+      case "Efq": {
+        return b.$ === "Efq";
+      }
+      case "Eql": {
+        if (b.$ !== "Eql" || !term_compare("EQ", book, a.a, b.a, dep) || !term_compare("EQ", book, a.b, b.b, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.T;
+        rhs = b.T;
+        continue;
+      }
+      case "Rfl": {
+        return b.$ === "Rfl";
+      }
+      case "Hol": {
+        return b.$ === "Hol" && a.k === b.k;
+      }
+      case "Rwt": {
+        if (b.$ !== "Rwt" || !term_compare("EQ", book, a.e, b.e, dep) || !term_compare("EQ", book, a.p, b.p, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.f;
+        rhs = b.f;
+        continue;
+      }
+      default: {
         return false;
       }
-      if (mode === "EQ") {
-        return term_compare("EQ", book, a.g, b.g, dep);
-      }
-      const g = term_wnf(book, a.g);
-      const h = term_wnf(book, b.g);
-      if ((g.$ === "Qua" && g.q.$ === "Many") || (h.$ === "Qua" && h.q.$ !== "Many")) {
-        return true;
-      }
-      if (g.$ === "Min") {
-        const fa = term_compare("LE", book, Typ(g.a), b, dep);
-        const fb = term_compare("LE", book, Typ(g.b), b, dep);
-        return fa && fb;
-      }
-      if (h.$ === "Min") {
-        const fa = term_compare("LE", book, a, Typ(h.a), dep);
-        const fb = term_compare("LE", book, a, Typ(h.b), dep);
-        return fa || fb;
-      }
-      return term_compare("LE", book, g, h, dep);
-    }
-    case "Qnt": {
-      return b.$ === "Qnt";
-    }
-    case "Qua": {
-      return b.$ === "Qua" && a.q.$ === b.q.$;
-    }
-    case "Min": {
-      return b.$ === "Min"
-          && term_compare("EQ", book, a.a, b.a, dep)
-          && term_compare("EQ", book, a.b, b.b, dep);
-    }
-    case "All": {
-      const x: HTerm = Var(a.k, dep);
-      return b.$ === "All" && a.q.$ === b.q.$
-          && term_compare(mode, book, b.A, a.A, dep)
-          && term_compare(mode, book, a.B(x), b.B(x), dep + 1);
-    }
-    case "App": {
-      return b.$ === "App"
-          && term_compare("EQ", book, a.f, b.f, dep)
-          && term_compare("EQ", book, a.x, b.x, dep);
-    }
-    case "ADT": {
-      if (b.$ !== "ADT" || a.k !== b.k || a.x.length !== b.x.length) {
-        return false;
-      }
-      if (mode === "EQ" && a.r.length !== b.r.length) {
-        return false;
-      }
-      return b.r.every((c) => a.r.includes(c))
-          && a.x.every((x, j) => term_compare("EQ", book, x, b.x[j], dep));
-    }
-    case "Ctr": {
-      return b.$ === "Ctr" && a.k === b.k && a.x.length === b.x.length
-          && a.x.every((x, j) => term_compare("EQ", book, x, b.x[j], dep));
-    }
-    case "Lit": {
-      return b.$ === "Lit" && a.v === b.v;
-    }
-    case "Mat": {
-      return b.$ === "Mat" && a.k === b.k
-          && term_compare("EQ", book, a.h, b.h, dep)
-          && term_compare("EQ", book, a.m, b.m, dep);
-    }
-    case "Efq": {
-      return b.$ === "Efq";
-    }
-    case "Eql": {
-      return b.$ === "Eql"
-          && term_compare("EQ", book, a.a, b.a, dep)
-          && term_compare("EQ", book, a.b, b.b, dep)
-          && term_compare("EQ", book, a.T, b.T, dep);
-    }
-    case "Rfl": {
-      return b.$ === "Rfl";
-    }
-    case "Hol": {
-      return b.$ === "Hol" && a.k === b.k;
-    }
-    case "Rwt": {
-      return b.$ === "Rwt"
-          && term_compare("EQ", book, a.e, b.e, dep)
-          && term_compare("EQ", book, a.p, b.p, dep)
-          && term_compare("EQ", book, a.f, b.f, dep);
-    }
-    default: {
-      return false;
     }
   }
 }
