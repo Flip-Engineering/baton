@@ -6,8 +6,11 @@
 # stalled candidate is woken through the existing Wake.drive_id route, addressed
 # by its oldest owed message.
 #
-# The module classifies from recorded database state; the database carries no
-# clock value, so no observed instant is reported.
+# The classification uses recorded database state; the database carries no
+# clock value, so no observed instant is reported there. stall-wake also runs
+# the silence check in silence.bend: a claimed wake with owed input whose native
+# output file has not been written for the silence period reports to the
+# session's coordinator.
 # Serves: docs/pure-bend2/pending-stall-bend2.md.
 # Fixture: bend2/src/coordinator/stall-laws.bend.
 import Base
@@ -16,6 +19,7 @@ import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
 import ../coordinator/commands.bend as C
 import ./wake.bend as Wake
+import ./silence.bend as Silence
 
 # The endpoint predicate the coordinator already uses for a runnable route.
 def endpoint_present_expr(+column: String) -> String:
@@ -24,16 +28,16 @@ def endpoint_present_expr(+column: String) -> String:
 # The owed-input count for one session. A completed assignment admits no new
 # native attempt, so its owed input is not a wake obligation.
 def owed_expr(+session: String) -> String:
-  "(SELECT count(*) FROM messages m WHERE m.recipient=" ++ session ++ " AND " ++ C.owed_sql("m") ++ " AND NOT " ++ C.task_closed_sql(session) ++ ")"
+  Silence.owed_expr(session)
 
 # An explicit stop resolves the session's wake obligation.
 def stopped_expr(+session: String) -> String:
-  "EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ session ++ ")"
+  Silence.stopped_expr(session)
 
 # The claim state the coordinator records for one session. A database without
 # the claim table reports an empty state and classifies no candidate as claimed.
 def claim_state_expr(+session: String, +present: Bool) -> String:
-  Bool.pick(String, present, "coalesce((SELECT state FROM wake_claims WHERE session=" ++ session ++ "),'')", "''")
+  Silence.claim_state_expr(session,present)
 
 # The candidate classification. The recorded attempt phase separates a live
 # attempt from a finished one; the endpoint decides whether a finished attempt
@@ -151,6 +155,7 @@ def wake_each(+db: String, ids: List<String>) -> IO(Unit):
 
 def wake_stalled(+db: String) -> IO(Unit):
   do IO<Unit>:
-    present : Bool <- claim_table_present(db)
+    +present : Bool <- claim_table_present(db)
     found : String <- IO.try(String,DB.Sql.query(db,stalled_rows_sql(present)))
-    wake_each(db, wake_rows(Tx.split_lines(Tx.trim_nl(found))))
+    woken : Unit <- wake_each(db, wake_rows(Tx.split_lines(Tx.trim_nl(found))))
+    Silence.check(db,"",present,False{})

@@ -102,9 +102,10 @@ def verify_repl(prefix, manifest):
 
 
 BINARY_LAYOUT = (
-    {'role': 'focused-facade', 'path': 'bin/baton', 'alias': None,
+    {'role': 'focused-facade', 'path': 'bin/baton-focused', 'alias': None,
      'entry': 'bend2/src/coordinator/receive-focused.bend', 'build_mode': 'focused-native-entry'},
-    {'role': 'full-cli', 'path': 'bin/baton2', 'alias': 'bin/baton-full',
+    {'role': 'full-cli', 'path': 'bin/baton', 'alias': 'bin/baton2',
+     'aliases': ('bin/baton2', 'bin/baton-full'),
      'entry': 'bend2/src/coordinator/main.bend',
      'build_mode': 'full-native-receiver-router', 'wrapper': True},
     {'role': 'recovery-helper', 'path': 'bin/baton-recovery', 'alias': None,
@@ -120,6 +121,42 @@ def verify_dispatch_runtime(prefix):
     require(any(path.is_file() and not path.is_symlink() and os.access(path, os.X_OK)
                 for path in runtimes),
             'The installation has no Node or bundled Bun runtime for the dispatch operation')
+
+
+def verify_receiver_router(prefix, output):
+    """Exercise the full entry's receiver route in a private directory without helpers."""
+    binary = prefix / 'bin/baton'
+    record = {'binary_sha256': archive_digest(binary)}
+    with tempfile.TemporaryDirectory(prefix='receiver-router-', dir=output) as directory:
+        directory = Path(directory)
+        probe = directory / 'baton'
+        shutil.copy2(binary, probe)
+        database = directory / 'unused.sqlite'
+        argv = [str(probe), str(database), 'register-receiver']
+        environment = {key: value for key, value in os.environ.items()
+                       if not key.startswith('BATON')}
+        try:
+            result = subprocess.run(argv, env=environment, cwd=directory,
+                                    stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                    timeout=30)
+            record.update(argv=argv, returncode=result.returncode,
+                          stdout=result.stdout, stderr=result.stderr,
+                          database_created=database.exists())
+        except subprocess.TimeoutExpired as error:
+            stdout, stderr = error.stdout or '', error.stderr or ''
+            record.update(argv=argv, returncode=None, timeout_seconds=error.timeout,
+                          stdout=stdout.decode(errors='replace') if isinstance(stdout, bytes) else stdout,
+                          stderr=stderr.decode(errors='replace') if isinstance(stderr, bytes) else stderr,
+                          database_created=database.exists())
+        except OSError as error:
+            record.update(argv=argv, returncode=None, error=str(error))
+        (output / 'receiver-router-probe.json').write_text(json.dumps(record, indent=2) + '\n')
+        require(record.get('returncode') == 78 and record.get('stdout') == ''
+                and record.get('stderr', '').strip()
+                == 'baton: focused receiver is missing or not executable. Install the complete Baton package.'
+                and record.get('database_created') is False,
+                'The full CLI does not provide the native receiver router: ' + json.dumps(record))
+    return record
 
 
 def verify_checksums(prefix):
@@ -201,22 +238,31 @@ def verify_binaries(prefix, manifest, checksums):
                          or isinstance(wrapper.get('manifest_sha256'), str)
                          and re.fullmatch(r'[0-9a-f]{64}', wrapper['manifest_sha256']) is not None),
                     'The installed full CLI lacks an exact wrapper source pin')
+        aliases = list(layout.get('aliases', ()))
         if layout['alias']:
             require(record.get('alias') == layout['alias'],
                     'The ' + record['role'] + ' must expose its ' + layout['alias'] + ' alias')
-            alias = prefix / layout['alias']
+        if aliases:
+            require(record.get('aliases') == aliases,
+                    'The ' + record['role'] + ' aliases differ from the receiver layout')
+        for alias_name in aliases:
+            alias = prefix / alias_name
             require(alias.is_file() and not alias.is_symlink() and os.access(alias, os.X_OK),
-                    'The installed ' + record['role'] + ' alias is missing or not executable')
+                    'The installed ' + record['role'] + ' alias ' + alias_name + ' is missing or not executable')
             require(archive_digest(alias) == digest,
-                    'The installed ' + record['role'] + ' alias differs from its binary')
-            require(checksums.get(layout['alias']) == digest,
-                    'The installed ' + record['role'] + ' alias ' + layout['alias'] + ' is absent from SHA256SUMS')
-        else:
+                    'The installed ' + record['role'] + ' alias ' + alias_name + ' differs from its binary')
+            require(checksums.get(alias_name) == digest,
+                    'The installed ' + record['role'] + ' alias ' + alias_name + ' is absent from SHA256SUMS')
+        if not aliases and not layout['alias']:
             require(record.get('alias') is None,
                     'The ' + record['role'] + ' binary has an unexpected alias')
         checked = {'role': record['role'], 'path': layout['path'],
                    'sha256': digest, 'source': source,
                    'entry': layout['entry'], 'build_mode': record['build_mode']}
+        if record.get('alias') is not None:
+            checked['alias'] = record['alias']
+        if aliases:
+            checked['aliases'] = aliases
         if layout.get('wrapper'):
             if record.get('retained_c_sha256'):
                 checked['retained_c_sha256'] = record['retained_c_sha256']
@@ -291,9 +337,9 @@ def verify_binaries(prefix, manifest, checksums):
                 for record in records],
             'The composite source manifest binary list differs')
     binary = manifest.get('binary')
-    require(isinstance(binary, dict) and binary.get('path') == focused['path']
-            and binary.get('alias') is None and binary.get('sha256') == focused['sha256'],
-            'The compatibility binary record does not match the focused receiver')
+    require(isinstance(binary, dict) and binary.get('path') == full['path']
+            and binary.get('alias') == full.get('alias') and binary.get('sha256') == full['sha256'],
+            'The compatibility binary record does not match the public full CLI')
     receipt_path = prefix / 'install-receipt.json'
     require(receipt_path.is_file() and not receipt_path.is_symlink(),
             'The installation is missing its install receipt')
@@ -318,6 +364,7 @@ def check(prefix, output, probe_native_compiler=True):
     checksums = verify_checksums(prefix)
     verify_payload_checksums(prefix, checksums)
     binaries = verify_binaries(prefix, manifest, checksums)
+    receiver_router = verify_receiver_router(prefix, output)
     dependency = verify_repl(prefix, manifest)
     verify_dispatch_runtime(prefix)
     system = platform.system()
@@ -344,7 +391,13 @@ def check(prefix, output, probe_native_compiler=True):
         return result.stdout.strip()
 
     run([prefix / 'bin/baton', '--help'])
-    run([prefix / 'bin/baton-full', '--help'])
+    run([prefix / 'bin/baton-focused', '--help'])
+    guide_db = output / 'guide-check.sqlite'
+    guide_help = run([prefix / 'bin/baton', guide_db, 'help', 'guide'])
+    require('guide --to PLAYER' in guide_help,
+            'The public full CLI did not route the guide help command')
+    require(not guide_db.exists(),
+            'The guide parser check unexpectedly created its temporary database')
     runtime_version = run([prefix / dependency['path'] / 'bun', '--version'])
     require(re.fullmatch(r'\d+\.\d+\.\d+(?:[-+][\w.-]+)?', runtime_version) is not None,
             'The bundled Bun runtime did not report its version')
@@ -377,6 +430,7 @@ def check(prefix, output, probe_native_compiler=True):
             'install_receipt_sha256': archive_digest(prefix / 'install-receipt.json'),
             'checksums_sha256': archive_digest(prefix / 'SHA256SUMS'),
             'binaries': binaries,
+            'receiver_router_probe': receiver_router,
             'repl_manifest_sha256': dependency['sha256'], 'compiler': compiler,
             'runtime_version': runtime_version,
             'native_compiler_probe': 'completed' if probe_native_compiler else 'not-run',

@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <pthread.h>
@@ -11,6 +12,9 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#ifdef __linux__
+#include <sys/sysmacros.h>
+#endif
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -20,6 +24,16 @@
 #include <sys/proc.h>
 #endif
 extern char **environ;
+
+static int posix_seconds_text(char **out) {
+  struct timespec value;
+  if (clock_gettime(CLOCK_REALTIME, &value)) return errno;
+  char text[32];
+  int length = snprintf(text, sizeof text, "%llu", (unsigned long long)value.tv_sec);
+  if (length < 0 || (size_t)length >= sizeof text) return EOVERFLOW;
+  *out = strdup(text);
+  return *out ? 0 : ENOMEM;
+}
 
 static int posix_starttime_text(u32 pid, char **out) {
   char *text = calloc(64, 1);
@@ -165,6 +179,162 @@ static int posix_lock_try(const char *path, u32 *handle, int *present) {
   return 0;
 }
 
+static int posix_dup_inherit(int fd, int minimum, int cloexec);
+
+static int posix_meminfo_text(char **out) {
+#ifdef __linux__
+  FILE *file = fopen("/proc/meminfo", "r");
+  if (!file) return errno;
+  char *line = NULL; size_t capacity = 0;
+  unsigned long long total = 0, available = 0;
+  while (getline(&line, &capacity, file) >= 0) {
+    if (!strncmp(line, "MemTotal:", 9)) total = strtoull(line + 9, NULL, 10);
+    else if (!strncmp(line, "MemAvailable:", 13)) available = strtoull(line + 13, NULL, 10);
+  }
+  int error = ferror(file) ? EIO : 0;
+  free(line); fclose(file);
+  if (error) return error;
+  if (!total || !available) return ENODATA;
+  char text[96];
+  int length = snprintf(text, sizeof text, "total_kb=%llu\navailable_kb=%llu\n", total, available);
+  if (length < 0 || (size_t)length >= sizeof text) return EOVERFLOW;
+  *out = strdup(text);
+  return *out ? 0 : ENOMEM;
+#else
+  (void)out;
+  return ENOSYS;
+#endif
+}
+
+static int posix_session_kb(u32 root, char **out) {
+#ifdef __linux__
+  char root_path[64];
+  snprintf(root_path, sizeof root_path, "/proc/%u/stat", root);
+  FILE *root_file = fopen(root_path, "r");
+  if (!root_file) return errno;
+  char *root_line = NULL; size_t root_capacity = 0;
+  ssize_t root_length = getline(&root_line, &root_capacity, root_file);
+  fclose(root_file);
+  if (root_length < 0) { free(root_line); return EIO; }
+  char *close_paren = strrchr(root_line, ')');
+  if (!close_paren) { free(root_line); return EINVAL; }
+  char state = 0; int parent = 0, group = 0, session = 0;
+  if (sscanf(close_paren + 2, "%c %d %d %d", &state, &parent, &group, &session) != 4 ||
+      state == 'Z' || state == 'X') { free(root_line); return ESRCH; }
+  free(root_line);
+  DIR *proc = opendir("/proc");
+  if (!proc) return errno;
+  unsigned long long sum = 0;
+  int root_status_seen = 0;
+  struct dirent *entry;
+  while ((entry = readdir(proc))) {
+    char *end = NULL; errno = 0;
+    long pid = strtol(entry->d_name, &end, 10);
+    if (errno || end == entry->d_name || *end || pid <= 0 || pid > UINT32_MAX) continue;
+    char path[96];
+    snprintf(path, sizeof path, "/proc/%ld/stat", pid);
+    FILE *file = fopen(path, "r");
+    if (!file) continue;
+    char *line = NULL; size_t capacity = 0;
+    ssize_t length = getline(&line, &capacity, file);
+    fclose(file);
+    if (length < 0) { free(line); continue; }
+    char *end_name = strrchr(line, ')');
+    char proc_state = 0; int proc_parent = 0, proc_group = 0, proc_session = 0;
+    int valid = end_name && sscanf(end_name + 2, "%c %d %d %d", &proc_state,
+      &proc_parent, &proc_group, &proc_session) == 4;
+    free(line);
+    if (!valid || proc_state == 'Z' || proc_state == 'X' || proc_session != session) continue;
+    snprintf(path, sizeof path, "/proc/%ld/status", pid);
+    file = fopen(path, "r");
+    if (!file) continue;
+    char status[8192]; size_t got = fread(status, 1, sizeof status - 1, file);
+    int failed = ferror(file); fclose(file);
+    if (failed) continue;
+    status[got] = 0;
+    char *at; unsigned long long anon = 0, shared = 0, resident = 0;
+    char *resident_field = strstr(status, "VmRSS:");
+    if ((at = strstr(status, "RssAnon:"))) anon = strtoull(at + 8, NULL, 10);
+    if ((at = strstr(status, "RssShmem:"))) shared = strtoull(at + 9, NULL, 10);
+    if (resident_field) resident = strtoull(resident_field + 6, NULL, 10);
+    if ((u32)pid == root && resident_field) root_status_seen = 1;
+    sum += (anon || shared) ? anon + shared : resident;
+  }
+  closedir(proc);
+  if (!root_status_seen) return EACCES;
+  char text[64];
+  int length = snprintf(text, sizeof text, "kb=%llu\n", sum);
+  if (length < 0 || (size_t)length >= sizeof text) return EOVERFLOW;
+  *out = strdup(text);
+  return *out ? 0 : ENOMEM;
+#else
+  (void)root; (void)out;
+  return ENOSYS;
+#endif
+}
+
+static int posix_exclusive_lock_pid(const char *path, char **out) {
+#ifdef __linux__
+  struct stat info;
+  if (stat(path, &info)) return errno;
+  FILE *locks = fopen("/proc/locks", "r");
+  if (!locks) return errno;
+  char line[512]; int holder = 0;
+  while (fgets(line, sizeof(line), locks)) {
+    if (strstr(line, "->") || !strstr(line, "FLOCK")) continue;
+    char *at = strstr(line, "WRITE");
+    if (!at) continue;
+    int pid; unsigned major_id, minor_id; unsigned long inode;
+    if (sscanf(at + 5, " %d %x:%x:%lu", &pid, &major_id, &minor_id, &inode) != 4) continue;
+    if (inode == (unsigned long)info.st_ino &&
+        major_id == major(info.st_dev) && minor_id == minor(info.st_dev)) {
+      holder = pid; break;
+    }
+  }
+  int failed = ferror(locks); fclose(locks);
+  if (failed) return EIO;
+  char text[48];
+  int length = snprintf(text, sizeof text, "pid=%d\n", holder);
+  if (length < 0 || (size_t)length >= sizeof text) return EOVERFLOW;
+  *out = strdup(text);
+  return *out ? 0 : ENOMEM;
+#else
+  (void)path; (void)out;
+  return ENOSYS;
+#endif
+}
+
+static int posix_mkdir_sticky(const char *path) {
+  mode_t previous = umask(0007);
+  int made = mkdir(path, 01770);
+  int saved = errno;
+  umask(previous);
+  if (!made) return 0;
+  if (saved != EEXIST) return saved;
+  struct stat info;
+  if (stat(path, &info)) return errno;
+  if (!S_ISDIR(info.st_mode) || !(info.st_mode & S_ISVTX)) return EPERM;
+  return 0;
+}
+
+static int posix_lock_shared_try(const char *path, u32 *handle, int *present) {
+  mode_t previous = umask(0007);
+  int fd = open(path, O_RDWR | O_CREAT | O_NOFOLLOW, 0660);
+  int saved = errno; umask(previous); errno = saved;
+  if (fd < 0) return errno;
+  if (flock(fd, LOCK_SH | LOCK_NB) < 0) {
+    int error = errno; close(fd);
+    if (error == EWOULDBLOCK || error == EAGAIN) { *present = 0; return 0; }
+    return error;
+  }
+  int copy = posix_dup_inherit(fd, 10, 0);
+  int error = copy < 0 ? errno : 0;
+  close(fd);
+  if (error) return error;
+  *handle = (u32)copy; *present = 1;
+  return 0;
+}
+
 static int posix_lock_fd_acquire(u32 fd) {
   while (flock((int)fd, LOCK_EX) < 0) {
     if (errno == EINTR) continue;
@@ -244,26 +414,81 @@ static int posix_setup_child_fds(int key_lock, int cgen_lock, int status_write,
   return 0;
 }
 
+/* The process is started through two forks, so it has no parent among the
+   processes of the caller: a teardown that walks the descendants of the caller
+   (the requester of a queue job, and the requester's own requester) does not
+   reach it. The caller learns its pid, which is not a child of the caller, from
+   a pipe.
+
+   With wait_out, a third process is the parent of the detached process. It is
+   itself detached, has no descriptors but the pipe, and writes the wait status
+   of the detached process to the pipe when that process ends. The caller keeps
+   the read end for the wait_supervisor call. */
 static int posix_spawn_detached(const char *argv_text, size_t argv_length,
-                             u32 key_lock, u32 cgen_lock, char *const *envp, pid_t *pid_out) {
+                             u32 key_lock, u32 cgen_lock, char *const *envp,
+                             pid_t *pid_out, int *wait_out) {
   char **parsed = NULL; int count = 0;
   int error = posix_parse_argv(argv_text, argv_length, &parsed, &count);
   if (error) return error;
   char **argv=parsed;
   const char *exec=argv[0];
-  int status[2];
+  int status[2], report[2];
   if (pipe(status)) { free(parsed); return errno; }
+  if (pipe(report)) { error = errno; close(status[0]); close(status[1]); free(parsed); return error; }
   fcntl(status[0], F_SETFD, FD_CLOEXEC);
   fcntl(status[1], F_SETFD, FD_CLOEXEC);
+  fcntl(report[0], F_SETFD, FD_CLOEXEC);
+  fcntl(report[1], F_SETFD, FD_CLOEXEC);
   posix_set_inheritable((int)key_lock);
   posix_set_inheritable((int)cgen_lock);
-  pid_t child = fork();
-  if (child < 0) {
-    error = errno; close(status[0]); close(status[1]);
+  pid_t middle = fork();
+  if (middle < 0) {
+    error = errno; close(status[0]); close(status[1]); close(report[0]); close(report[1]);
     free(parsed); return error;
   }
-  if (child == 0) {
-    close(status[0]);
+  if (middle == 0) {
+    close(status[0]); close(report[0]);
+    if (wait_out) {
+      pid_t reaper = fork();
+      if (reaper < 0) {
+        int child_error = errno;
+        write(status[1], &child_error, sizeof(child_error));
+        _exit(127);
+      }
+      if (reaper > 0) _exit(0);
+      setsid();
+    }
+    pid_t child = fork();
+    if (child < 0) {
+      int child_error = errno;
+      write(status[1], &child_error, sizeof(child_error));
+      _exit(127);
+    }
+    if (child > 0) {
+      write(report[1], &child, sizeof(child));
+      if (!wait_out) _exit(0);
+      /* The reaper holds nothing of the caller: no standard stream, no lock,
+         no pipe but the one that carries the wait status. */
+      int devnull = open("/dev/null", O_RDWR);
+      if (devnull >= 0) {
+        dup2(devnull, STDIN_FILENO); dup2(devnull, STDOUT_FILENO); dup2(devnull, STDERR_FILENO);
+        if (devnull > STDERR_FILENO) close(devnull);
+      }
+      long limit = sysconf(_SC_OPEN_MAX);
+      if (limit < 1024 || limit > 1048576) limit = 65536;
+      for (int fd = 3; fd < (int)limit; fd++) if (fd != report[1]) close(fd);
+      /* error is 0 when waitpid answered; status is meaningful only then. */
+      int record[2] = {0, 0};
+      for (;;) {
+        pid_t waited = waitpid(child, &record[1], 0);
+        if (waited < 0 && errno == EINTR) continue;
+        if (waited < 0) record[0] = errno;
+        break;
+      }
+      write(report[1], record, sizeof(record));
+      _exit(0);
+    }
+    close(report[1]);
     if (setsid() < 0) {
       int child_error = errno;
       write(status[1], &child_error, sizeof(child_error));
@@ -281,20 +506,54 @@ static int posix_spawn_detached(const char *argv_text, size_t argv_length,
     write(status_fd >= 0 ? status_fd : status[1], &child_error, sizeof(child_error));
     _exit(127);
   }
-  close(status[1]);
-  int child_error = 0;
+  close(status[1]); close(report[1]);
+  pid_t child = 0;
   ssize_t got;
-  do { got = read(status[0], &child_error, sizeof(child_error)); } while (got < 0 && errno == EINTR);
+  do { got = read(report[0], &child, sizeof(child)); } while (got < 0 && errno == EINTR);
+  while (waitpid(middle, NULL, 0) < 0 && errno == EINTR) {}
+  int child_error = 0;
+  ssize_t reported;
+  do { reported = read(status[0], &child_error, sizeof(child_error)); } while (reported < 0 && errno == EINTR);
   close(status[0]);
-  if (got > 0) {
-    int status_value = 0;
-    while (waitpid(child, &status_value, 0) < 0 && errno == EINTR) {}
+  if (reported > 0 || got != (ssize_t)sizeof(child)) {
+    close(report[0]);
     free(parsed);
-    return child_error ? child_error : EIO;
+    return reported > 0 && child_error ? child_error : EIO;
   }
+  if (wait_out) *wait_out = report[0]; else close(report[0]);
   *pid_out = child;
   free(parsed);
   return 0;
+}
+
+/* The read ends of the wait pipes, by the pid of the detached process. The list
+   has no fixed size. A registration that cannot allocate closes the pipe; the
+   wait then finds no entry and reports the error of waitpid on a process that is
+   not a child, an explicit failure. */
+typedef struct PosixWait { pid_t pid; int fd; struct PosixWait *next; } PosixWait;
+static PosixWait *posix_waits = NULL;
+static pthread_mutex_t posix_waits_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void posix_wait_register(pid_t pid, int fd) {
+  PosixWait *entry = malloc(sizeof(*entry));
+  if (!entry) { close(fd); return; }
+  entry->pid = pid; entry->fd = fd;
+  pthread_mutex_lock(&posix_waits_lock);
+  entry->next = posix_waits; posix_waits = entry;
+  pthread_mutex_unlock(&posix_waits_lock);
+}
+
+static int posix_wait_take(pid_t pid) {
+  int fd = -1;
+  pthread_mutex_lock(&posix_waits_lock);
+  for (PosixWait **at = &posix_waits; *at; at = &(*at)->next) {
+    if ((*at)->pid != pid) continue;
+    PosixWait *found = *at;
+    fd = found->fd; *at = found->next; free(found);
+    break;
+  }
+  pthread_mutex_unlock(&posix_waits_lock);
+  return fd;
 }
 
 
@@ -341,7 +600,9 @@ static int host_posix_spawn_held(const char *text,size_t length,const char *cwd,
     long maximum=sysconf(_SC_OPEN_MAX);
     if(maximum<1024 || maximum>1048576) maximum=65536;
     for(int fd=3;fd<(int)maximum;fd++) {
-      if(fd!=8 && fd!=release[0] && fd!=status[1]) close(fd);
+      if(fd!=8 && !(fd==10 && getenv("BATON_QUEUE_CLAIM_FD")) &&
+         !(fd==11 && getenv("BATON_QUEUE_CC_FD")) &&
+         fd!=release[0] && fd!=status[1]) close(fd);
     }
     char ready=0;ssize_t got;
     do {got=read(release[0],&ready,1);} while(got<0 && errno==EINTR);
@@ -497,7 +758,7 @@ static void host_posix_work(IoWork *work) {
       if(call->length[3]) call->error=posix_parse_argv(call->text[3],call->length[3],&environment,&count);
       pid_t child=0;
       if(!call->error) call->error=posix_spawn_detached(call->text[0],call->length[0],
-        call->number[1],call->number[2],environment,&child);
+        call->number[1],call->number[2],environment,&child,NULL);
       free(environment);call->value=(u32)child;break;
     }
     case 33: {
@@ -505,9 +766,11 @@ static void host_posix_work(IoWork *work) {
       if(call->length[3])
         call->error=posix_parse_argv(call->text[3],call->length[3],&environment,&environment_count);
       pid_t child=0;
+      int wait_fd=-1;
       if(!call->error) call->error=posix_spawn_detached(call->text[0],call->length[0],
-        call->number[1],call->number[2],environment,&child);
+        call->number[1],call->number[2],environment,&child,&wait_fd);
       free(environment);
+      if(!call->error) posix_wait_register(child,wait_fd);
       char *start=NULL;
       if(!call->error) call->error=posix_starttime_text((u32)child,&start);
       if(!call->error) {
@@ -544,17 +807,35 @@ static void host_posix_work(IoWork *work) {
       break;
     }
     case 34: {
-      do {fd=waitpid((pid_t)call->number[0],&status,0);} while(fd<0 && errno==EINTR);
-      if(fd<0) call->error=errno;
-      else {
-        char text[96];
-        unsigned int exit_code=WIFEXITED(status)?(unsigned)WEXITSTATUS(status):
-          WIFSIGNALED(status)?(unsigned)(128+WTERMSIG(status)):1;
-        unsigned int signal_code=WIFSIGNALED(status)?(unsigned)WTERMSIG(status):0;
-        snprintf(text,sizeof text,"running=0\nexit=%u\nsignal=%u\n",exit_code,signal_code);
-        call->answer=strdup(text);
+      /* A supervisor started by this process is not its child: the status comes
+         from the process that waited for it. The answer is the exit status, the
+         signal, or an error with its code; a status that never arrived is an
+         error, not a successful exit. */
+      int wait_fd=posix_wait_take((pid_t)call->number[0]);
+      int record[2]={0,0},failure=0;const char *reason=NULL;
+      if(wait_fd>=0) {
+        ssize_t got;
+        do {got=read(wait_fd,record,sizeof record);} while(got<0 && errno==EINTR);
+        close(wait_fd);
+        if(got!=(ssize_t)sizeof record) {failure=EIO;reason="supervisor status was not reported";}
+        else if(record[0]) {failure=record[0];reason="waitpid failed";}
+      } else {
+        int result;
+        do {result=waitpid((pid_t)call->number[0],&record[1],0);} while(result<0 && errno==EINTR);
+        if(result<0) {failure=errno;reason="waitpid failed";}
       }
-      if(!call->error && !call->answer) call->error=ENOMEM;
+      char text[160];
+      if(failure) {
+        snprintf(text,sizeof text,"running=0\nerror=%s: %s\nerror_code=%d\n",reason,strerror(failure),failure);
+      } else {
+        int raw=record[1];
+        unsigned int exit_code=WIFEXITED(raw)?(unsigned)WEXITSTATUS(raw):
+          WIFSIGNALED(raw)?(unsigned)(128+WTERMSIG(raw)):1;
+        unsigned int signal_code=WIFSIGNALED(raw)?(unsigned)WTERMSIG(raw):0;
+        snprintf(text,sizeof text,"running=0\nexit=%u\nsignal=%u\n",exit_code,signal_code);
+      }
+      call->answer=strdup(text);
+      if(!call->answer) call->error=ENOMEM;
       break;
     }
     case 24:
@@ -618,6 +899,12 @@ static void host_posix_work(IoWork *work) {
       if(!call->answer) call->error=ENOMEM;break;
     case 32:
       call->error=posix_lock_try(call->text[0],&call->value,&call->present);break;
+    case 35: call->error=posix_meminfo_text(&call->answer);break;
+    case 36: call->error=posix_session_kb(call->number[0],&call->answer);break;
+    case 37: call->error=posix_lock_shared_try(call->text[0],&call->value,&call->present);break;
+    case 38: call->error=posix_seconds_text(&call->answer);break;
+    case 39: call->error=posix_mkdir_sticky(call->text[0]);break;
+    case 40: call->error=posix_exclusive_lock_pid(call->text[0],&call->answer);break;
   }
 }
 
@@ -654,6 +941,30 @@ static Term host_posix_run(Env env,Term *fields,IoWork *work,int operation,
   return io_work(work,host_posix_work,host_posix_pack);
 }
 
+#ifdef CID_HOSTPOSIX_MKDIR_STICKY
+static Term host_posix_mkdir_sticky_run(Env e,Term *f,IoWork *w) {return host_posix_run(e,f,w,39,0,"s");}
+static void __attribute__((constructor)) host_posix_mkdir_sticky_use(void) {io_eff(CID_HOSTPOSIX_MKDIR_STICKY,host_posix_mkdir_sticky_run,0);}
+#endif
+#ifdef CID_HOSTPOSIX_NOW_SECONDS
+static Term host_posix_now_seconds_run(Env e,Term *f,IoWork *w) {return host_posix_run(e,f,w,38,2,"");}
+static void __attribute__((constructor)) host_posix_now_seconds_use(void) {io_eff(CID_HOSTPOSIX_NOW_SECONDS,host_posix_now_seconds_run,0);}
+#endif
+#ifdef CID_HOSTPOSIX_MEMINFO
+static Term host_posix_meminfo_run(Env e,Term *f,IoWork *w) {return host_posix_run(e,f,w,35,2,"");}
+static void __attribute__((constructor)) host_posix_meminfo_use(void) {io_eff(CID_HOSTPOSIX_MEMINFO,host_posix_meminfo_run,0);}
+#endif
+#ifdef CID_HOSTPOSIX_SESSION_KB
+static Term host_posix_session_kb_run(Env e,Term *f,IoWork *w) {return host_posix_run(e,f,w,36,2,"u");}
+static void __attribute__((constructor)) host_posix_session_kb_use(void) {io_eff(CID_HOSTPOSIX_SESSION_KB,host_posix_session_kb_run,0);}
+#endif
+#ifdef CID_HOSTPOSIX_EXCLUSIVE_LOCK_PID
+static Term host_posix_exclusive_lock_pid_run(Env e,Term *f,IoWork *w) {return host_posix_run(e,f,w,40,2,"s");}
+static void __attribute__((constructor)) host_posix_exclusive_lock_pid_use(void) {io_eff(CID_HOSTPOSIX_EXCLUSIVE_LOCK_PID,host_posix_exclusive_lock_pid_run,0);}
+#endif
+#ifdef CID_HOSTPOSIX_LOCK_SHARED_TRY
+static Term host_posix_lock_shared_try_run(Env e,Term *f,IoWork *w) {return host_posix_run(e,f,w,37,4,"s");}
+static void __attribute__((constructor)) host_posix_lock_shared_try_use(void) {io_eff(CID_HOSTPOSIX_LOCK_SHARED_TRY,host_posix_lock_shared_try_run,0);}
+#endif
 #ifdef CID_HOSTPOSIX_PID
 static Term host_posix_pid_run(Env e,Term *f,IoWork *w) {return host_posix_run(e,f,w,1,1,"");}
 static void __attribute__((constructor)) host_posix_pid_use(void) {io_eff(CID_HOSTPOSIX_PID,host_posix_pid_run,0);}

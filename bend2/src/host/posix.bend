@@ -39,7 +39,7 @@ def HostPosix.lock_open(path: String) -> IO(Result<&1,&1,U32 & String,U32>):
 def HostPosix.lock_acquire(path: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./posix.c"
 
-def HostPosix.lock_try(path: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32>>):
+def HostPosix.lock_try(path: String) -> IO(Result<&1,&1,U32 & String,Maybe<&2,U32>>):
   import "./posix.c"
 
 def HostPosix.lock_fd_acquire(fd: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -100,4 +100,22 @@ def HostPosix.write_stderr(value: String) -> IO(Result<&1,&1,U32 & String,Unit>)
   import "./posix.c"
 
 def HostPosix.platform() -> IO(Result<&1,&1,U32 & String,String>):
+  import "./posix.c"
+
+def HostPosix.meminfo() -> IO(Result<&1,&1,U32 & String,String>):
+  import "./posix.c"
+
+def HostPosix.session_kb(pid: U32) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./posix.c"
+
+def HostPosix.lock_shared_try(path: String) -> IO(Result<&1,&1,U32 & String,Maybe<&2,U32>>):
+  import "./posix.c"
+
+def HostPosix.now_seconds() -> IO(Result<&1,&1,U32 & String,String>):
+  import "./posix.c"
+
+def HostPosix.mkdir_sticky(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./posix.c"
+
+def HostPosix.exclusive_lock_pid(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./posix.c"

@@ -439,7 +439,7 @@ def normal_cli_codex_witness(args: List<String>, db: String, head: String) -> IO
     case native <> Nil{}: IO.try(Unit,CodexInbox.witness(db,native))
     case other: normal_cli_fallback(db,head,other)
 
-def normal_cli_codex(args: List<String>, db: String, head: String) -> IO(Unit):
+def normal_cli_codex(args: List<String>, db: String, +head: String) -> IO(Unit):
   match head:
     case "codex-inbox-session": normal_cli_codex_session(args,db,head)
     case "codex-inbox-follow": normal_cli_codex_follow(args,db,head)

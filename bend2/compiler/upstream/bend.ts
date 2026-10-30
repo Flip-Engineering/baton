@@ -321,9 +321,9 @@ export type Ctx = PMap<Ann>;
 export type PVar  = { $: "PVar"; k: Name; i: number; q: Quant; s?: Span };
 export type PCtr  = { $: "PCtr"; k: Name; x: Patt[]; s?: Span; lit?: string };
 export type Patt  = PVar | PCtr;
-export type Case  = { p: Patt[]; f: Body };
+export type Case  = { p: Patt[]; f: Body; g?: [PVar, PCtr][] };
 export type Rows  = Array<Case>;
-export type Match = { $: "Match"; e: LTerm[]; r: Rows; s?: Span };
+export type Match = { $: "Match"; e: LTerm[]; r: Rows; s?: Span; done?: Name[] };
 export type Local = { $: "Local"; k: Patt[]; q: Quant; v: LTerm[]; f: Body };
 export type Reply = { $: "Reply"; x: LTerm; s?: Span };
 export type Body  = Match | Local | Reply
@@ -2854,7 +2854,7 @@ export function parse_def(p: Parse, book: Book, u: Bool = false): void {
     // constructor chains. The lower/raise round trip that followed rebuilt the
     // same normalized term and held a second LTerm and HTerm during the load.
     def.v = term_higher(literal_chain(p, body, vars, def, k)
-      ?? body_flatten(body, vars, () => p.sc.frs++));
+      ?? literal_columns(p, def, k, vars, () => body_flatten(body, vars, () => p.sc.frs++)));
   }
   parse_close(p, n0);
   book.order.push(k);
@@ -3016,8 +3016,225 @@ export function body_sub(b: Body, i: number, v: Patt): Body {
   }
 }
 
+// Literal rows
+// ------------
+// A string literal match on an affine String parameter shares the parameter
+// between its String.eq tests (literal_chain_string). These checks keep the uses
+// that the character decision tree allowed.
+type LiteralNode = { $: string; [field: string]: any };
+
+// Uses of a value named by `names` in a row body, counted over the written body,
+// and whether the body matches the value again. A substitution left by body_sub
+// names the value when its pattern does.
+function literal_uses(b: Body, names: ReadonlySet<number>): { uses: number; matched: boolean } {
+  let uses = 0, matched = false;
+  const patt_names = (q: Patt, a: ReadonlySet<number>): boolean =>
+    q.$ === "PVar" ? a.has(q.i) : q.x.some((y) => patt_names(y, a));
+  const term = (t: LTerm, a: ReadonlySet<number>, count: boolean): boolean => {
+    let seen = false;
+    const stack: [LiteralNode, ReadonlySet<number>][] = [[t as LiteralNode, a]];
+    while (stack.length > 0 && uses < 2) {
+      const [u, s] = stack.pop()!;
+      switch (u.$) {
+        case "Var":
+          if (s.has(u.i)) { seen = true; if (count) uses += 1; else return true; }
+          break;
+        case "Sub": {
+          const v = u.v as LiteralNode;
+          const named = v.$ === "PVar" || v.$ === "PCtr" ? patt_names(v as Patt, s) : term(v as LTerm, s, false);
+          const next = new Set(s);
+          if (named) next.add(u.i); else next.delete(u.i);
+          stack.push([u.f, next]);
+          break;
+        }
+        case "Let": for (const v of u.v) stack.push([v, s]); stack.push([u.f, s]); break;
+        case "All": stack.push([u.A, s], [u.B, s]); break;
+        case "Lam": stack.push([u.f, s]); break;
+        case "Typ": stack.push([u.g, s]); break;
+        case "Min": stack.push([u.a, s], [u.b, s]); break;
+        case "App": stack.push([u.f, s], [u.x, s]); break;
+        case "ADT": case "Ctr": for (const y of u.x) stack.push([y, s]); break;
+        case "Mat": stack.push([u.h, s], [u.m, s]); break;
+        case "Eql": stack.push([u.a, s], [u.b, s], [u.T, s]); break;
+        case "Rwt": stack.push([u.e, s], [u.p, s], [u.f, s]); break;
+        case "Ann": stack.push([u.x, s], [u.T, s]); break;
+        default: break;
+      }
+    }
+    return seen;
+  };
+  const body = (x: Body): void => {
+    switch (x.$) {
+      case "Reply": term(x.x, names, true); break;
+      case "Local":
+        for (const v of x.v) term(v, names, true);
+        if (x.k.some((q) => q.$ === "PCtr") && x.v.some((v) => term(v, names, false))) matched = true;
+        body(x.f);
+        break;
+      case "Match":
+        for (const e of x.e) if (term(e, names, true)) matched = true;
+        for (const row of x.r) body(row.f);
+        break;
+    }
+  };
+  body(b);
+  return { uses, matched };
+}
+
+// The rows of a literal column under the String.eq tests: a literal row reads
+// the matched value as the literal it equals, and a binder row may use the value
+// at most once, unless a binder row of the column is written reusable (+), which
+// makes the column's fields reusable in the character decision tree (patt_mark).
+// No row may match the value again.
+function literal_rows_affine(rows: Rows, x: PVar): boolean {
+  const marked = rows.some((row) => row.p[0].$ === "PVar" && row.p[0].q.$ === "Many");
+  return rows.every((row) => {
+    const q = row.p[0];
+    if (q.$ === "PCtr") return q.lit !== undefined && !literal_uses(row.f, new Set([x.i])).matched;
+    const use = literal_uses(row.f, new Set([x.i, q.i]));
+    return !use.matched && (marked || use.uses <= 1);
+  });
+}
+
+// Literal columns
+// ---------------
+// A column of string literal patterns nested in a match (a literal inside a
+// List pattern, or a String parameter matched together with other columns)
+// becomes a binder column with deferred guards: the column's binder is bound
+// reusable, each literal row carries a String.eq guard on it, and every other
+// column is split at its binder's own position as before, so the checker still
+// reads a decreasing self-call from those splits. Where all columns are decided,
+// literal_leaf binds the remaining binders and tests the candidate rows' guards
+// in row order, each test an annotated match on a Bool of the definition's result
+// type, the shape literal_chain_string emits. No character decision tree is
+// built.
+//
+// LITERAL_COLUMNS holds, while one definition body is flattened, its name, its
+// result type (when it mentions no parameter; LITERAL_DEPTH numbers the binders
+// inside it apart from the definition's own binders), and the binders known to be
+// reusable for the checker: + parameters and the head and tail of a List split
+// from one (check-mat gives a plain field the scrutinee's quantity).
+type LiteralBinder = { q: Quant; list: boolean };
+type LiteralGuard = [PVar, PCtr];
+let LITERAL_COLUMNS: { book: Book; name: Name; binders: Map<number, LiteralBinder>; result: LTerm } | null = null;
+const LITERAL_DEPTH = 1 << 30;
+
+// Runs `flatten` with the context of `def` for literal_guards, when the
+// definition's result type mentions no parameter.
+function literal_columns<T>(p: Parse, def: Def, k: Name, vars: PVar[], flatten: () => T): T {
+  if (p.book.tlds["String.eq"] === undefined || p.book.tlds["Bool.and"] === undefined
+    || p.book.tlds["Bool"] === undefined || p.book.ctrs["False"] === undefined
+    || p.book.ctrs["True"] === undefined) {
+    return flatten();
+  }
+  const opened = telescope_opened(p, def.T, vars);
+  if (opened === null) return flatten();
+  const params = new Set(vars.map((v) => v.i));
+  const result = term_lower_shared(opened.result, LITERAL_DEPTH);
+  let mentions = false;
+  lit_body_terms({ $: "Reply", x: result }, (t) => { if (t.$ === "Var" && params.has(t.i)) mentions = true; });
+  if (mentions) return flatten();
+  const binders = new Map<number, LiteralBinder>();
+  vars.forEach((v, j) => {
+    const A = opened.alls[j].A;
+    binders.set(v.i, { q: opened.alls[j].q, list: A.$ === "ADT" && A.k === "List" });
+  });
+  const outer = LITERAL_COLUMNS;
+  LITERAL_COLUMNS = { book: p.book, name: k, binders, result };
+  try { return flatten(); } finally { LITERAL_COLUMNS = outer; }
+}
+
+// The constructors of the datatype that declares constructor k.
+const LITERAL_SIBLINGS = new WeakMap<Book, Map<Name, Name[]>>();
+function literal_siblings(book: Book, k: Name): Name[] | undefined {
+  let map = LITERAL_SIBLINGS.get(book);
+  if (map === undefined || !map.has(k)) {
+    map = new Map();
+    for (const tld of Object.values(book.tlds)) {
+      if (tld.$ === "ADT") for (const c of tld.c) map.set(c.k, tld.c.map((d) => d.k));
+    }
+    LITERAL_SIBLINGS.set(book, map);
+  }
+  return map.get(k);
+}
+
+// The default branch after the constructors in `done` holds no value when they
+// are all of their datatype's constructors. Rows that carry guards reach such a
+// branch when a literal column was deferred past this split; the branch is then
+// a match with no cases (check-efq accepts it once every constructor is split),
+// so no guard selection is built where no value arrives.
+function literal_exhausted(done: Name[], rows: Rows): boolean {
+  if (LITERAL_COLUMNS === null || !rows.some((row) => row.g !== undefined && row.g.length > 0)) return false;
+  const all = literal_siblings(LITERAL_COLUMNS.book, done[done.length - 1]);
+  return all !== undefined && all.every((k) => done.includes(k));
+}
+
+// A List binder split by Con passes its quantity to its head and tail.
+function literal_fields(x: PVar, c: PCtr, xs: PVar[]): void {
+  const known = LITERAL_COLUMNS?.binders.get(x.i);
+  if (known === undefined || !known.list || c.k !== "Con" || xs.length !== 2) return;
+  LITERAL_COLUMNS!.binders.set(xs[0].i, { q: known.q, list: false });
+  LITERAL_COLUMNS!.binders.set(xs[1].i, { q: known.q, list: true });
+}
+
+// The pattern binders of the rows.
+function literal_binders(rows: Rows): PVar[] {
+  const binders: PVar[] = [];
+  const visit = (q: Patt): void => { if (q.$ === "PVar") binders.push(q); else q.x.forEach(visit); };
+  for (const row of rows) row.p.forEach(visit);
+  return binders;
+}
+
+// v heads a column of string literal and binder patterns. Null keeps the
+// ordinary lowering: a row that matches a binder again (literal_leaf binds every
+// remaining binder before the row bodies), a literal row that calls the
+// definition itself and uses the matched value (the value would stand where the
+// character decision tree had the literal), or an affine value that a binder row
+// could use more than once.
+function literal_guards(m: Match, v: PVar, vars: PVar[], fr: () => number): LTerm | null {
+  const known = LITERAL_COLUMNS;
+  if (known === null) return null;
+  if (m.r.some((row) => row.p[0].$ === "PCtr" && (row.p[0] as PCtr).lit === undefined)) return null;
+  const binders = literal_binders(m.r);
+  if (m.r.some((row) => body_matches(row.f, [...vars, ...binders]))) return null;
+  if (m.r.some((row) => row.p[0].$ === "PCtr" && lit_body_refs(row.f, known.name)
+    && literal_uses(row.f, new Set([v.i])).uses > 0)) return null;
+  if (known.binders.get(v.i)?.q.$ !== "Many" && !literal_rows_affine(m.r, v)) return null;
+  const w: PVar = { ...v, q: Many() };
+  const rows = m.r.map((row): Case => {
+    const q = row.p[0];
+    return q.$ === "PVar" ? { p: row.p.slice(1), f: body_sub(row.f, q.i, w), g: row.g }
+      : { p: row.p.slice(1), f: row.f, g: [...(row.g ?? []), [w, q]] };
+  });
+  return match_flatten({ $: "Match", e: m.e.slice(1), r: rows, s: m.s }, vars.map((u) => u === v ? w : u), fr);
+}
+
+// All columns are decided: bind the remaining binders and select the first row
+// whose guards hold. A row without guards ends the selection.
+function literal_leaf(m: Match, vars: PVar[], fr: () => number): LTerm {
+  const known = LITERAL_COLUMNS!;
+  const span = m.s;
+  const test = ([w, lit]: LiteralGuard): LTerm => Ann(App(App(Ref("String.eq", lit.s),
+    Var(w.k, w.i, lit.s), lit.s), patt_term(lit), lit.s), Ref("Bool"), lit.s);
+  const guard = (gs: LiteralGuard[]): LTerm => gs.slice(1).reduce((all, g) =>
+    Ann(App(App(Ref("Bool.and", span), all, span), test(g), span), Ref("Bool"), span), test(gs[0]));
+  const select = (at: number): LTerm => {
+    if (at === m.r.length) return Efq(span);
+    const row = m.r[at], body = body_flatten(row.f, [], fr);
+    if (row.g === undefined || row.g.length === 0) return body;
+    return App(Ann(Mat("False", select(at + 1), Mat("True", body, Efq(span), span), span),
+      All(Lone(), "c", fr(), Ref("Bool"), known.result, span), span), guard(row.g), span);
+  };
+  let out = select(0);
+  for (let j = vars.length - 1; j >= 0; j--) out = Lam(vars[j].k, vars[j].i, out, vars[j].s, vars[j].q);
+  return out;
+}
+
 export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
   if (m.e.length === 0 && m.r.length > 0) {
+    if (m.r[0].g !== undefined && m.r[0].g.length > 0) {
+      return literal_leaf(m, vars, fr);
+    }
     return body_flatten(m.r[0].f, vars, fr);
   } else if (m.e.length === 0) {
     throw Err(book_nil(), ctx_nil(), "a case (this match has no row to return)", undefined, m.s);
@@ -3045,6 +3262,10 @@ export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
     const scu = m.e[0];
     const c   = m.r.map((row) => row.p[0]).find((q): q is PCtr => q.$ === "PCtr") ?? null;
     const v   = vars.find((w) => scu.$ === "Var" && w.i === scu.i);
+    const guarded = v !== undefined && c !== null && c.lit !== undefined ? literal_guards(m, v, vars, fr) : null;
+    if (guarded !== null) {
+      return guarded;
+    }
     if (v !== undefined && c === null && m.r.length > 0) {
       const w  = { ...v, q: patt_mark(v, m.r) };
       const rs = m.r.map((row): Case => {
@@ -3052,7 +3273,7 @@ export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
         if (p0.$ !== "PVar") {
           throw Err(book_nil(), ctx_nil(), "a variable pattern (this column has no constructor row)", undefined, p0.s);
         }
-        return { p: row.p.slice(1), f: body_sub(row.f, p0.i, w) };
+        return { p: row.p.slice(1), f: body_sub(row.f, p0.i, w), g: row.g };
       });
       return match_flatten({ $: "Match", e: m.e.slice(1), r: rs, s: m.s }, vars.map((u) => u === v ? w : u), fr);
     } else if (v === x) {
@@ -3067,6 +3288,7 @@ export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
           const i = fr();
           return { $: "PVar", k: "_" + String(i), i, q: xq, s: q.s };
         });
+        literal_fields(x, c, xs);
         const kx: Patt = { $: "PCtr", k: c.k, x: xs, s: x.s };
         const ps = m.r.flatMap((row): Rows => {
           const p0 = row.p[0];
@@ -3076,12 +3298,12 @@ export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
                 return [];
               }
               const f = body_sub(row.f, x.i, kx);
-              return [{ p: [...p0.x, ...row.p.slice(1)], f }];
+              return [{ p: [...p0.x, ...row.p.slice(1)], f, g: row.g }];
             }
             case "PVar": {
               const g = body_sub(row.f, p0.i, x);
               const f = body_sub(g, x.i, kx);
-              return [{ p: [...xs, ...row.p.slice(1)], f }];
+              return [{ p: [...xs, ...row.p.slice(1)], f, g: row.g }];
             }
           }
         });
@@ -3089,7 +3311,9 @@ export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
         const pv = xs.concat(vars.slice(1));
         const pt = match_flatten({ $: "Match", e: pe, r: ps, s: m.s }, pv, fr);
         const ds = m.r.filter((row) => row.p[0].$ !== "PCtr" || row.p[0].k !== c.k);
-        const dt = match_flatten({ $: "Match", e: m.e, r: ds, s: m.s }, vars, fr);
+        const done = [...(m.done ?? []), c.k];
+        const dt = literal_exhausted(done, ds) ? Efq(m.s)
+          : match_flatten({ $: "Match", e: m.e, r: ds, s: m.s, done }, vars, fr);
         return Mat(c.k, pt, dt, c.s);
       }
     } else {
@@ -3150,11 +3374,13 @@ export function body_flatten(b: Body, vars: PVar[], fr: () => number): LTerm {
   }
 }
 
-// A top-level match on a Many String parameter whose rows are string literal
+// A top-level match on a String parameter whose rows are string literal
 // patterns plus an optional final binder lowers to one String.eq test per row.
 // Each row body appears once; no character decision tree is built. The Mat on
 // the computed Bool is annotated with the branch type, so the checker and
-// emitter see the compiler-lowered case form.
+// emitter see the compiler-lowered case form. The lambda of the matched
+// parameter binds it reusable (+): String is Data, so check-lam accepts a +
+// lambda at an affine binder, as it does for a +x => e lambda.
 function literal_chain(p: Parse, b: Body, vars: PVar[], def: Def,
   k: Name): LTerm | null {
   if (b.$ !== "Match" || b.e.length !== 1 || vars.length < 1) return null;
@@ -3169,7 +3395,7 @@ function literal_chain(p: Parse, b: Body, vars: PVar[], def: Def,
   const alls = telescope_opened(p, def.T, vars);
   if (alls !== null) {
     const all = alls.alls[at];
-    if (all.q.$ === "Many" && all.A.$ === "Ref" && all.A.k === "String") {
+    if (all.q.$ !== "None" && all.A.$ === "Ref" && all.A.k === "String") {
       return literal_chain_string(p, b, vars, at, alls, scrut);
     }
   }
@@ -3241,6 +3467,10 @@ function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
   // A row that matches another parameter needs that parameter among the binders
   // being abstracted, which the lambdas above the chain no longer provide.
   if (b.r.some((row) => body_matches(row.f, others))) return null;
+  // An affine parameter is shared by the String.eq tests. The final binder
+  // keeps the character decision tree when its row could use the value more
+  // than once or match it again, so the checker refuses what it refused.
+  if (opened.alls[at].q.$ === "Lone" && !literal_rows_affine(b.r, vars[at])) return null;
   const A = term_lower_shared(opened.result);
   const boolIndex = p.sc.frs++;
   let tail: LTerm;
@@ -3266,7 +3496,7 @@ function literal_chain_string(p: Parse, b: Extract<Body, { $: "Match" }>,
   }
   for (let j = vars.length - 1; j >= 0; j--) {
     const all = opened.alls[j];
-    tail = j === at ? Lam(all.k, all.i, tail, all.s, all.q) : Lam(vars[j].k, vars[j].i, tail, vars[j].s, vars[j].q);
+    tail = j === at ? Lam(all.k, all.i, tail, all.s, Many()) : Lam(vars[j].k, vars[j].i, tail, vars[j].s, vars[j].q);
   }
   return tail;
 }
@@ -3945,124 +4175,180 @@ export function term_snf(book: Book, term: HTerm): HTerm {
 // same walk, kinds exact, no swap (a swap under EQ is harmless, so
 // the All case swaps unconditionally).
 
+// The last child of a node is compared by the loop: a string or list in constructor
+// form, a chain of matches or a body under binders is compared at a fixed stack depth,
+// and only the earlier children recurse. The children are compared in the same order.
 export function term_compare(mode: "EQ" | "LE", book: Book, lhs: HTerm, rhs: HTerm, dep: number = 0): boolean {
-  if (lhs === rhs) {
-    return true;
-  }
-  let a = term_wnf(book, lhs);
-  let b = term_wnf(book, rhs);
-  if (a === b) {
-    return true;
-  }
-  if (a.$ === "Lam" || b.$ === "Lam") {
-    const k = a.$ === "Lam" ? a.k : (b as Extract<HTerm, { $: "Lam" }>).k;
-    const x: HTerm = Var(k, dep);
-    return term_compare(mode, book, term_apply(a, x), term_apply(b, x), dep + 1);
-  }
-  if (a.$ === "Lit" && b.$ === "Ctr") {
-    a = term_higher(lit_step(a));
-  }
-  if (b.$ === "Lit" && a.$ === "Ctr") {
-    b = term_higher(lit_step(b));
-  }
-  switch (a.$) {
-    case "Var": {
-      return b.$ === "Var" && a.i === b.i;
+  for (;;) {
+    if (lhs === rhs) {
+      return true;
     }
-    case "Ref": {
-      return b.$ === "Ref" && a.k === b.k;
+    let a = term_wnf(book, lhs);
+    let b = term_wnf(book, rhs);
+    if (a === b) {
+      return true;
     }
-    case "Typ": {
-      if (b.$ !== "Typ") {
+    if (a.$ === "Lam" || b.$ === "Lam") {
+      const k = a.$ === "Lam" ? a.k : (b as Extract<HTerm, { $: "Lam" }>).k;
+      const x: HTerm = Var(k, dep);
+      lhs = term_apply(a, x);
+      rhs = term_apply(b, x);
+      dep = dep + 1;
+      continue;
+    }
+    if (a.$ === "Lit" && b.$ === "Ctr") {
+      a = term_higher(lit_step(a));
+    }
+    if (b.$ === "Lit" && a.$ === "Ctr") {
+      b = term_higher(lit_step(b));
+    }
+    switch (a.$) {
+      case "Var": {
+        return b.$ === "Var" && a.i === b.i;
+      }
+      case "Ref": {
+        return b.$ === "Ref" && a.k === b.k;
+      }
+      case "Typ": {
+        if (b.$ !== "Typ") {
+          return false;
+        }
+        if (mode === "EQ") {
+          return term_compare("EQ", book, a.g, b.g, dep);
+        }
+        const g = term_wnf(book, a.g);
+        const h = term_wnf(book, b.g);
+        if ((g.$ === "Qua" && g.q.$ === "Many") || (h.$ === "Qua" && h.q.$ !== "Many")) {
+          return true;
+        }
+        if (g.$ === "Min") {
+          const fa = term_compare("LE", book, Typ(g.a), b, dep);
+          const fb = term_compare("LE", book, Typ(g.b), b, dep);
+          return fa && fb;
+        }
+        if (h.$ === "Min") {
+          const fa = term_compare("LE", book, a, Typ(h.a), dep);
+          const fb = term_compare("LE", book, a, Typ(h.b), dep);
+          return fa || fb;
+        }
+        return term_compare("LE", book, g, h, dep);
+      }
+      case "Qnt": {
+        return b.$ === "Qnt";
+      }
+      case "Qua": {
+        return b.$ === "Qua" && a.q.$ === b.q.$;
+      }
+      case "Min": {
+        if (b.$ !== "Min" || !term_compare("EQ", book, a.a, b.a, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.b;
+        rhs = b.b;
+        continue;
+      }
+      case "All": {
+        const x: HTerm = Var(a.k, dep);
+        if (b.$ !== "All" || a.q.$ !== b.q.$ || !term_compare(mode, book, b.A, a.A, dep)) {
+          return false;
+        }
+        lhs = a.B(x);
+        rhs = b.B(x);
+        dep = dep + 1;
+        continue;
+      }
+      case "App": {
+        if (b.$ !== "App" || !term_compare("EQ", book, a.f, b.f, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.x;
+        rhs = b.x;
+        continue;
+      }
+      case "ADT": {
+        if (b.$ !== "ADT" || a.k !== b.k || a.x.length !== b.x.length) {
+          return false;
+        }
+        if (mode === "EQ" && a.r.length !== b.r.length) {
+          return false;
+        }
+        if (!b.r.every((c) => a.r.includes(c))) {
+          return false;
+        }
+        if (a.x.length === 0) {
+          return true;
+        }
+        for (let j = 0; j < a.x.length - 1; j++) {
+          if (!term_compare("EQ", book, a.x[j], b.x[j], dep)) {
+            return false;
+          }
+        }
+        mode = "EQ";
+        lhs = a.x[a.x.length - 1];
+        rhs = b.x[b.x.length - 1];
+        continue;
+      }
+      case "Ctr": {
+        if (b.$ !== "Ctr" || a.k !== b.k || a.x.length !== b.x.length) {
+          return false;
+        }
+        if (a.x.length === 0) {
+          return true;
+        }
+        for (let j = 0; j < a.x.length - 1; j++) {
+          if (!term_compare("EQ", book, a.x[j], b.x[j], dep)) {
+            return false;
+          }
+        }
+        mode = "EQ";
+        lhs = a.x[a.x.length - 1];
+        rhs = b.x[b.x.length - 1];
+        continue;
+      }
+      case "Lit": {
+        return b.$ === "Lit" && a.v === b.v;
+      }
+      case "Mat": {
+        if (b.$ !== "Mat" || a.k !== b.k || !term_compare("EQ", book, a.h, b.h, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.m;
+        rhs = b.m;
+        continue;
+      }
+      case "Efq": {
+        return b.$ === "Efq";
+      }
+      case "Eql": {
+        if (b.$ !== "Eql" || !term_compare("EQ", book, a.a, b.a, dep) || !term_compare("EQ", book, a.b, b.b, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.T;
+        rhs = b.T;
+        continue;
+      }
+      case "Rfl": {
+        return b.$ === "Rfl";
+      }
+      case "Hol": {
+        return b.$ === "Hol" && a.k === b.k;
+      }
+      case "Rwt": {
+        if (b.$ !== "Rwt" || !term_compare("EQ", book, a.e, b.e, dep) || !term_compare("EQ", book, a.p, b.p, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.f;
+        rhs = b.f;
+        continue;
+      }
+      default: {
         return false;
       }
-      if (mode === "EQ") {
-        return term_compare("EQ", book, a.g, b.g, dep);
-      }
-      const g = term_wnf(book, a.g);
-      const h = term_wnf(book, b.g);
-      if ((g.$ === "Qua" && g.q.$ === "Many") || (h.$ === "Qua" && h.q.$ !== "Many")) {
-        return true;
-      }
-      if (g.$ === "Min") {
-        const fa = term_compare("LE", book, Typ(g.a), b, dep);
-        const fb = term_compare("LE", book, Typ(g.b), b, dep);
-        return fa && fb;
-      }
-      if (h.$ === "Min") {
-        const fa = term_compare("LE", book, a, Typ(h.a), dep);
-        const fb = term_compare("LE", book, a, Typ(h.b), dep);
-        return fa || fb;
-      }
-      return term_compare("LE", book, g, h, dep);
-    }
-    case "Qnt": {
-      return b.$ === "Qnt";
-    }
-    case "Qua": {
-      return b.$ === "Qua" && a.q.$ === b.q.$;
-    }
-    case "Min": {
-      return b.$ === "Min"
-          && term_compare("EQ", book, a.a, b.a, dep)
-          && term_compare("EQ", book, a.b, b.b, dep);
-    }
-    case "All": {
-      const x: HTerm = Var(a.k, dep);
-      return b.$ === "All" && a.q.$ === b.q.$
-          && term_compare(mode, book, b.A, a.A, dep)
-          && term_compare(mode, book, a.B(x), b.B(x), dep + 1);
-    }
-    case "App": {
-      return b.$ === "App"
-          && term_compare("EQ", book, a.f, b.f, dep)
-          && term_compare("EQ", book, a.x, b.x, dep);
-    }
-    case "ADT": {
-      if (b.$ !== "ADT" || a.k !== b.k || a.x.length !== b.x.length) {
-        return false;
-      }
-      if (mode === "EQ" && a.r.length !== b.r.length) {
-        return false;
-      }
-      return b.r.every((c) => a.r.includes(c))
-          && a.x.every((x, j) => term_compare("EQ", book, x, b.x[j], dep));
-    }
-    case "Ctr": {
-      return b.$ === "Ctr" && a.k === b.k && a.x.length === b.x.length
-          && a.x.every((x, j) => term_compare("EQ", book, x, b.x[j], dep));
-    }
-    case "Lit": {
-      return b.$ === "Lit" && a.v === b.v;
-    }
-    case "Mat": {
-      return b.$ === "Mat" && a.k === b.k
-          && term_compare("EQ", book, a.h, b.h, dep)
-          && term_compare("EQ", book, a.m, b.m, dep);
-    }
-    case "Efq": {
-      return b.$ === "Efq";
-    }
-    case "Eql": {
-      return b.$ === "Eql"
-          && term_compare("EQ", book, a.a, b.a, dep)
-          && term_compare("EQ", book, a.b, b.b, dep)
-          && term_compare("EQ", book, a.T, b.T, dep);
-    }
-    case "Rfl": {
-      return b.$ === "Rfl";
-    }
-    case "Hol": {
-      return b.$ === "Hol" && a.k === b.k;
-    }
-    case "Rwt": {
-      return b.$ === "Rwt"
-          && term_compare("EQ", book, a.e, b.e, dep)
-          && term_compare("EQ", book, a.p, b.p, dep)
-          && term_compare("EQ", book, a.f, b.f, dep);
-    }
-    default: {
-      return false;
     }
   }
 }

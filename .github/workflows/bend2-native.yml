@@ -5,6 +5,7 @@ name: bend2-native-development
     paths:
       - '.github/workflows/bend2-native.yml'
       - '.github/scripts/record-native-checks.py'
+      - '.github/scripts/native-validation-route.py'
       - '.github/scripts/queue-native-checks.py'
       - '.github/scripts/reuse-native-target.py'
       - '.github/scripts/package-native-target-handoff.py'
@@ -79,12 +80,12 @@ name: bend2-native-development
       retained_compiler_archive:
         description: 'Pinned compiler archive on the homelab; $RUNNER_TEMP uses the selected runner namespace'
         required: false
-        default: '/var/tmp/baton2-compile-queue/toolchains/compiler-store-string-20261029/bend-2.0.25-linux-x64-compiler-store-string-20261029.tar.gz'
+        default: '/var/tmp/baton2-compile-queue/toolchains/compiler-term-chain-1360-20261030/bend-2.0.25-linux-x64-compiler-term-chain-1360-20261030.tar.gz'
         type: string
       retained_compiler_archive_sha256:
         description: 'Exact SHA256 of the selected pinned compiler archive'
         required: false
-        default: 'f46d75d3cb3a68c68bdcfaeb5dfe465e06343b47d6376949fd862510a82781d3'
+        default: '33cb7efe2e8f85211dc3f155db5015fb61bf83c51a342e9ad3e3f26697345843'
         type: string
       retained_ccache:
         description: 'Measured private ccache wrapper on the homelab; leave blank for direct native compilation'
@@ -109,8 +110,63 @@ env:
   BEND_COMPILER_DIAGNOSTICS: ${{ inputs.compiler_diagnostics && '1' || '' }}
 
 jobs:
+  select-validation:
+    runs-on:
+      group: baton2-native-homelab
+      labels: [self-hosted, Linux, X64, baton2-native-linux-x64]
+    outputs:
+      route: ${{ steps.route.outputs.route }}
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.BATON2_SOURCE_SHA }}
+          persist-credentials: false
+      - name: Select validation for the changed inputs
+        id: route
+        shell: bash
+        env:
+          BATON2_PULL_REQUEST_BASE: ${{ github.event.pull_request.base.sha }}
+          BATON2_ORIGIN_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BATON2_VALIDATION_ROUTE="$RUNNER_TEMP/baton2-validation-route-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          printf 'BATON2_VALIDATION_ROUTE=%s\n' "$BATON2_VALIDATION_ROUTE" >> "$GITHUB_ENV"
+          mkdir -p "$BATON2_VALIDATION_ROUTE"
+          if [[ ! -f .github/scripts/native-validation-route.py ]]; then
+            printf '%s\n' 'route=native' >> "$GITHUB_OUTPUT"
+            printf '%s\n' '{"route":"native","reason":"The candidate requires the existing native workflow."}' \
+              > "$BATON2_VALIDATION_ROUTE/selection.json"
+            exit 0
+          fi
+          python3 .github/scripts/native-validation-route.py \
+            --source "$GITHUB_WORKSPACE" --event "$GITHUB_EVENT_NAME" \
+            --base "$BATON2_PULL_REQUEST_BASE" --head "$BATON2_SOURCE_SHA" \
+            --output "$BATON2_VALIDATION_ROUTE/selection.json" --github-output "$GITHUB_OUTPUT"
+      - name: Prepare Node
+        if: ${{ steps.route.outputs.route == 'node-root-channel' }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Run root-channel Node checks
+        if: ${{ steps.route.outputs.route == 'node-root-channel' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version > "$BATON2_VALIDATION_ROUTE/node.txt"
+          node --test bend2/test/root-channel-attach.test.mjs bend2/test/codex-root-relay.test.mjs \
+            2>&1 | tee "$BATON2_VALIDATION_ROUTE/root-channel.tap"
+      - name: Retain validation selection and Node results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: baton2-validation-route-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          path: ${{ env.BATON2_VALIDATION_ROUTE }}/
+          if-no-files-found: error
+
   linux-candidate:
-    if: ${{ inputs.reuse_generated_c_producer == '' }}
+    needs: [select-validation]
+    if: ${{ needs.select-validation.outputs.route == 'native' && inputs.reuse_generated_c_producer == '' }}
     timeout-minutes: 4320
     runs-on:
       group: baton2-native-homelab
@@ -138,8 +194,8 @@ jobs:
       - name: Prepare candidate compiler
         shell: bash
         env:
-          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-store-string-20261029/bend-2.0.25-linux-x64-compiler-store-string-20261029.tar.gz' }}
-          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || 'f46d75d3cb3a68c68bdcfaeb5dfe465e06343b47d6376949fd862510a82781d3' }}
+          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-term-chain-1360-20261030/bend-2.0.25-linux-x64-compiler-term-chain-1360-20261030.tar.gz' }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '33cb7efe2e8f85211dc3f155db5015fb61bf83c51a342e9ad3e3f26697345843' }}
           BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
           BATON2_LINUX_RUNNER: homelab
         run: |
@@ -364,8 +420,8 @@ jobs:
           if-no-files-found: error
 
   linux-native-qualification:
-    needs: [darwin-arm64]
-    if: ${{ !cancelled() && inputs.reuse_generated_c_producer == '' }}
+    needs: [select-validation, darwin-arm64]
+    if: ${{ !cancelled() && needs.select-validation.outputs.route == 'native' && inputs.reuse_generated_c_producer == '' }}
     timeout-minutes: 4320
     runs-on:
       group: baton2-native-homelab
@@ -393,8 +449,8 @@ jobs:
       - name: Prepare qualification compiler and TypeScript runtime
         shell: bash
         env:
-          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-store-string-20261029/bend-2.0.25-linux-x64-compiler-store-string-20261029.tar.gz' }}
-          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || 'f46d75d3cb3a68c68bdcfaeb5dfe465e06343b47d6376949fd862510a82781d3' }}
+          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-term-chain-1360-20261030/bend-2.0.25-linux-x64-compiler-term-chain-1360-20261030.tar.gz' }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '33cb7efe2e8f85211dc3f155db5015fb61bf83c51a342e9ad3e3f26697345843' }}
           BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
           BATON2_LINUX_RUNNER: homelab
         run: |
@@ -524,8 +580,8 @@ jobs:
           if-no-files-found: error
 
   linux-target:
-    needs: [darwin-arm64]
-    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.target_commit != '') }}
+    needs: [select-validation, darwin-arm64]
+    if: ${{ !cancelled() && needs.select-validation.outputs.route == 'native' && (github.event_name != 'workflow_dispatch' || inputs.target_commit != '') }}
     timeout-minutes: 4320
     permissions:
       contents: read
@@ -538,8 +594,8 @@ jobs:
       BEND_NO_TELEMETRY: '1'
       BUN_JSC_maxPerThreadStackUsage: '67108864'
       BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.target_commit }}
-      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-store-string-20261029/bend-2.0.25-linux-x64-compiler-store-string-20261029.tar.gz' }}
-      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || 'f46d75d3cb3a68c68bdcfaeb5dfe465e06343b47d6376949fd862510a82781d3' }}
+      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-term-chain-1360-20261030/bend-2.0.25-linux-x64-compiler-term-chain-1360-20261030.tar.gz' }}
+      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '33cb7efe2e8f85211dc3f155db5015fb61bf83c51a342e9ad3e3f26697345843' }}
     steps:
       - name: Validate exact source commit
         shell: bash
@@ -670,15 +726,15 @@ jobs:
           if-no-files-found: error
 
   darwin-arm64:
-    needs: [linux-candidate]
-    if: ${{ !cancelled() && (needs.linux-candidate.result == 'success' || inputs.reuse_generated_c_producer != '') }}
+    needs: [select-validation, linux-candidate]
+    if: ${{ !cancelled() && needs.select-validation.outputs.route == 'native' && (needs.linux-candidate.result == 'success' || inputs.reuse_generated_c_producer != '') }}
     runs-on:
       group: baton2-native-homelab
       labels: [self-hosted, Linux, X64, baton2-native-linux-x64, baton2-native-darwin-cross]
     env:
       BATON2_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || '' }}
-      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-store-string-20261029/bend-2.0.25-linux-x64-compiler-store-string-20261029.tar.gz' }}
-      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || 'f46d75d3cb3a68c68bdcfaeb5dfe465e06343b47d6376949fd862510a82781d3' }}
+      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-term-chain-1360-20261030/bend-2.0.25-linux-x64-compiler-term-chain-1360-20261030.tar.gz' }}
+      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '33cb7efe2e8f85211dc3f155db5015fb61bf83c51a342e9ad3e3f26697345843' }}
       CC: /usr/bin/clang-19
     steps:
       - name: Validate generated C reuse selection

@@ -198,11 +198,11 @@ def extract(archive, manifest_path, destination):
     binaries = manifest.get('binaries')
     require(isinstance(binaries, list) and len(binaries) == 3,
             'The receiver archive must declare the focused receiver, full router and recovery helper')
-    expected = {'focused-facade': ('bin/baton', None),
-                'full-cli': ('bin/baton2', 'bin/baton-full'),
+    expected = {'focused-facade': ('bin/baton-focused', None),
+                'full-cli': ('bin/baton', 'bin/baton2'),
                 'recovery-helper': ('bin/baton-recovery', None)}
     seen = set()
-    focused = None
+    full = None
     for record in binaries:
         role = record.get('role')
         require(role in expected and role not in seen, 'Archive binary role is unknown or repeated')
@@ -216,20 +216,24 @@ def extract(archive, manifest_path, destination):
                 'Archive ' + role + ' binary differs from its manifest hash')
         if alias_name:
             require(record.get('alias') == alias_name, record['role'] + ' must declare its ' + alias_name + ' alias')
+        aliases = record.get('aliases', [])
+        require(aliases == (['bin/baton2', 'bin/baton-full'] if role == 'full-cli' else []),
+                record['role'] + ' aliases differ from the package layout')
+        for alias_name in aliases:
             alias = prefix / alias_name
             require(alias.is_file() and not alias.is_symlink() and os.access(alias, os.X_OK),
                     'Staged ' + alias_name + ' alias is not an executable regular file')
             require(archive_digest(alias) == archive_digest(installed),
                     'Staged ' + alias_name + ' alias differs from its binary')
-        else:
+        if not alias_name:
             require(record.get('alias') is None, 'Unexpected binary alias in the archive')
-        if role == 'focused-facade':
-            focused = record
+        if role == 'full-cli':
+            full = record
     require(seen == set(expected), 'Archive is missing a required package role')
     binary = manifest['binary']
-    require(binary.get('path') == focused['path'] and binary.get('alias') == focused['alias']
-            and binary.get('sha256') == focused['sha256'],
-            'Compatibility binary record does not match the focused receiver')
+    require(binary.get('path') == full['path'] and binary.get('alias') == full['alias']
+            and binary.get('sha256') == full['sha256'],
+            'Compatibility binary record does not match the public full CLI')
     return prefix, manifest
 
 

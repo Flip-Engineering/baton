@@ -32,7 +32,7 @@ class FocusedCodexInbox(unittest.TestCase):
         prefix = self.home / 'prefix'
         (prefix / 'bin').mkdir(parents=True)
         retained = Path(os.environ['BATON2_CODEX_BACKEND_PREFIX'])
-        self.focused, self.full = prefix / 'bin/baton', prefix / 'bin/baton-full'
+        self.focused, self.full = prefix / 'bin/baton-focused', prefix / 'bin/baton-full'
         shutil.copy2(os.environ['BATON2_CODEX_FOCUSED_BINARY'], self.focused)
         for name in ('baton-full', 'baton2', 'baton-recovery'):
             shutil.copy2(retained / 'bin' / name, prefix / 'bin' / name)

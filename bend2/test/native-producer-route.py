@@ -423,7 +423,7 @@ class WorkflowGraph(unittest.TestCase):
 
     def test_darwin_job_accepts_the_candidate_job_for_both_producers(self):
         darwin = self.jobs['darwin-arm64']
-        self.assertEqual(darwin['needs'], ['linux-candidate'])
+        self.assertEqual(darwin['needs'], ['select-validation', 'linux-candidate'])
         self.assertIn("needs.linux-candidate.result == 'success'", darwin['if'])
         verify = next(step for step in darwin['steps'] if step['name'].startswith('Verify generated C'))
         self.assertIn('native-producer-route.py', verify['run'])

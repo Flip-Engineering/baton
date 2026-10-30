@@ -34,6 +34,9 @@ let nativeEvent = false;
 let claude = null;
 let rootHarness = 'claude-code';
 let relayThread = null;
+let registerRoot = false;
+// True when the relay named its conversation, so the conductor does not follow a changed record.
+let relayThreadFixed = false;
 let claudeArgs = [];
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
@@ -53,6 +56,8 @@ for (let i = 2; i < process.argv.length; i++) {
     if (!['claude-code', 'codex'].includes(rootHarness)) {
       throw new Error('--root-harness must be claude-code or codex');
     }
+  } else if (arg === '--register') {
+    registerRoot = true;
   } else if (arg === '--thread') {
     relayThread = process.argv[++i];
     if (!relayThread) throw new Error('--thread requires the Codex root thread ID');
@@ -374,6 +379,8 @@ process.stdin.on('data', (chunk) => {
 });
 
 process.stdin.on('end', () => {
+  for (const pending of clientRequests.values()) pending.reject(new Error('The MCP client closed before replying.'));
+  clientRequests.clear();
   channelReady = false;
   connectionCustody = null;
   deliveryServer?.close();
@@ -940,8 +947,57 @@ function pendingConductorMessage(messageId = null) {
   }
 }
 
+function rootNoticeContent(message, readInstruction = 'Baton records the read after the Codex root thread returns this complete input.') {
+  const review = message.kind === 'completion-request'
+    ? `\nReview the work against ${message.sender}'s assignment and the supplied evidence. When the assignment is satisfied, use completion-confirmed --to ${message.sender} to end the Player, or add --next TEXT to confirm and dispatch its next assignment together. When work remains, use guide --to ${message.sender} --text TEXT to state what is missing and direct the remaining work.`
+    : '';
+  const content = `Message (${message.kind}) from ${message.sender} [id: ${message.id}]:\n${message.body}${review}`;
+  return `${content}\n\n${readInstruction}`;
+}
+
+function recordedRootMessage(messageId) {
+  const conn = openDb();
+  if (!conn) return null;
+  try {
+    return conn.prepare(
+      `SELECT m.id, m.sender, m.kind, m.body, s.native, s.endpoint,
+         EXISTS(SELECT 1 FROM message_reads mr WHERE mr.message=m.id AND mr.recipient=m.recipient) AS is_read
+       FROM messages m JOIN sessions s ON s.id=m.recipient
+       WHERE m.id=? AND m.recipient=? AND s.harness='codex'
+         AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=s.id)`
+    ).get(messageId, sessionId) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// The recorded root conversation can change while the relay runs, for example
+// when the operator attaches the session to another Codex thread. A relay that
+// did not name its conversation follows the record: the conductor registers its
+// delivery endpoint for the new conversation and later notices name it.
+function rebindRecordedConversation() {
+  if (rootHarness !== 'codex' || relayThreadFixed || !connectionCustody) return false;
+  const recorded = selectedSession();
+  if (recorded?.harness !== 'codex' || !recorded.native || recorded.native === connectionCustody.native) return false;
+  coord('connect', sessionId, recorded.native, connectionCustody.endpoint);
+  process.stderr.write(JSON.stringify({ type: 'codexRootRebound', session: sessionId,
+    from: connectionCustody.native, to: recorded.native }) + '\n');
+  connectionCustody = { ...connectionCustody, native: recorded.native, thread: recorded.native };
+  inputNotice = null;
+  return true;
+}
+
 function notifyPending(messageId = null) {
   if (!channelReady) return;
+  // A changed recorded conversation replaces the selected notice, so the guard
+  // below does not keep a notice that names the previous conversation.
+  rebindRecordedConversation();
+  // Keep the complete Codex notice selected while its thread read is pending.
+  // Later endpoint deliveries remain in the database for continuePending.
+  if (rootHarness === 'codex' && inputNotice) {
+    const unread = pendingConductorMessage(inputNotice.id);
+    if (unread && unread.native === inputNotice.native) return;
+  }
   const message = pendingConductorMessage(messageId);
   if (!message) {
     if (messageId === null) inputNotice = null;
@@ -949,17 +1005,13 @@ function notifyPending(messageId = null) {
   }
   const key = JSON.stringify([message.native, nativePrompt, message.id]);
   if (inputNotice?.key === key) return;
-  const review = message.kind === 'completion-request'
-    ? `\nReview the work against ${message.sender}'s assignment and the supplied evidence. When the assignment is satisfied, use completion-confirmed --to ${message.sender} to end the Player, or add --next TEXT to confirm and dispatch its next assignment together. When work remains, use guide --to ${message.sender} --text TEXT to state what is missing and direct the remaining work.`
-    : '';
-  const content = `Message (${message.kind}) from ${message.sender} [id: ${message.id}]:\n${message.body}${review}`;
-  const readInstruction = rootHarness === 'codex'
-    ? 'Baton records the read after Codex accepts this complete input.'
-    : `Baton records the read when you call baton2_delivery ${JSON.stringify({ id: message.id })}.`;
-  const notice = `${content}\n\n${readInstruction}`;
+  const notice = rootNoticeContent(message, rootHarness === 'codex'
+    ? 'Baton records the read after the Codex root thread returns this complete input.'
+    : `Baton records the read when you call baton2_delivery ${JSON.stringify({ id: message.id })}.`);
   sendNotification('notifications/claude/channel', {
     content: notice,
-    meta: { recipient: sessionId, messageIds: JSON.stringify([message.id]) },
+    meta: { recipient: sessionId, messageIds: JSON.stringify([message.id]),
+      ...(rootHarness === 'codex' && connectionCustody ? { thread: connectionCustody.native } : {}) },
   });
   inputNotice = { key, id: message.id, native: message.native, body: message.body,
     content: notice, connection: connectionCustody?.connection };
@@ -1006,12 +1058,25 @@ async function startDelivery() {
   let existing;
   try { existing = selectedSession(); } catch {}
   if (rootHarness === 'codex') {
-    if (existing?.harness !== 'codex' || !existing?.native) {
-      throw new Error('A Codex root relay requires a recorded Codex conversation before attachment.');
+    // Registration fills an unrecorded conversation. A recorded conversation of
+    // any harness changes only by an explicit attach.
+    if (!existing?.native && registerRoot && relayThread && !hasParent(existing)) {
+      // The relay names its conversation and asks to record it as the root.
+      coord('attach', sessionId, 'codex', relayThread, '');
+      existing = selectedSession();
     }
-    if (!relayThread || relayThread !== existing.native) {
+    if (existing?.native && existing.harness !== 'codex') {
+      throw new Error(`The session records a ${existing.harness} conversation. Attach the Codex conversation explicitly; --register does not replace a recorded conversation.`);
+    }
+    if (existing?.harness !== 'codex' || !existing?.native) {
+      throw new Error('A Codex root relay requires a recorded Codex conversation before attachment. Run attach, or start the relay with --register and its conversation.');
+    }
+    // Without --thread the relay follows the recorded root conversation.
+    if (relayThread !== null && relayThread !== existing.native) {
       throw new Error('The Codex relay thread must match the recorded root conversation.');
     }
+    relayThreadFixed = relayThread !== null;
+    relayThread = existing.native;
   }
   const connection = randomUUID();
   const socketName = `conductor-${process.pid}-${connection}.sock`;
@@ -1061,6 +1126,14 @@ async function startDelivery() {
     ...(rootHarness === 'codex' ? { thread: relayThread } : {}),
     endpoint, socket: socketName, connection,
     bridge: processIdentity(processFacts(process.pid)), client: processIdentity(processFacts(process.ppid)) };
+  // An attach to another conversation clears the recorded endpoint, so no
+  // delivery wake reaches this server until the endpoint is registered again.
+  if (rootHarness === 'codex' && !relayThreadFixed) {
+    setInterval(() => {
+      try { if (rebindRecordedConversation()) notifyPending(); }
+      catch (error) { process.stderr.write(`mcp-conductor: ${error.message}\n`); }
+    }, 5000).unref();
+  }
 }
 
 function selectedSession() {
@@ -1077,7 +1150,7 @@ function recordedRole() {
 
 function initialInstructions() {
   const guidance = `Baton ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_join for shared-checkout work and baton2_recruit when a separate worktree is needed. Name the target branch, remote and integration Conductor in the assignment. Commit completed changes. The integration Conductor lands or reconciles contributions and pushes the integrated target with baton2_push. After publication and turn completion, relocate the same Player with baton2_receiver to the shared checkout and retire clean unused merged task worktrees and branches through ordinary Git. Preserve active or unfinished work, explicit stops and receiver/toolchain dependencies. Use the advertised task dispatch tool for complete task text or an existing UTF-8 file. Baton retains task input and setup outcomes in its database, resolves the recorded route and preserves an existing assignment. Scratchpads contain deliberately authored working notes. Baton stores complete task text in the database. Use baton2_receiver to configure an ordinary receive endpoint where needed. Use baton2_configure to save future effort on the same harness and model during active or stopped sessions, keeping the receiver, current turn and stop. Change harness or model after the current attempt ends and any stop is lifted. Configuration keeps the Player's identity, work, native conversation and pending input. Use baton2_context_engines to discover installed context modules; scope:"session" includes the attached project settings. Use baton2_context_install to acquire a module from a supplied built module directory or extracted distribution. Use baton2_context_query_file for request files and baton2_context_result for retained query results. Use baton2_knowledge_search to find a topic in selected holdings and baton2_knowledge_traverse to follow authored links and citations. Follow returned detailRead commands for complete findings and deliveryRead commands for cited messages. Finding references outside selected holdings carry an explicit all-scope detail read; reading preserves their holdings. Use baton2_knowledge for exact findings or metadata and baton2_knowledge_relations for directed links, including links between retained messages or external references. ${messageInstructions()} The optional kind supports authored completion-request and completion-confirmed messages. Workers send completion requests to their current coordinator when the assignment is ready. The coordinator reviews the assignment and supplied evidence. A satisfied assignment is confirmed with completion-confirmed to end the Player, or with --next TEXT to confirm and dispatch its next assignment together. Guidance states what is missing and directs the remaining work. Baton selects the recipient's current completion request. Baton generates mutation IDs and records recipient handling from actual native evidence. Agents can inspect current state without copying control IDs or receipts. Native turn settlement and inbox receipts do not finish the task. The coordinator CLI ask and ask-file send questions as your recorded session to its parent; a parentless Principal Conductor reaches the registered operator. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. ${replInput ? 'Use baton2_repl to evaluate Bend2 source and retain checked definitions in the attached actor\'s notebook; action help with arguments ["repl"] describes source composition and the bundled compiler.' : ''} Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`;
-  if (!nativeAttachmentInput) return guidance;
+  if (!nativeAttachmentInput || rootHarness === 'codex') return guidance;
   const selected = selectedSession();
   const native = nativeSelector(processFacts(process.ppid));
   if (native !== null) {
@@ -1094,6 +1167,12 @@ function initialInstructions() {
 
 // MCP message handler.
 function handleMessage(msg) {
+  if (clientRequests.has(msg.id) && msg.method === undefined) {
+    const pending = clientRequests.get(msg.id);
+    clientRequests.delete(msg.id);
+    pending.resolve(msg);
+    return;
+  }
   if (msg.id === 'conductor-channel-ready' && msg.result !== undefined) {
     channelReady = true;
     notifyPending();
@@ -1175,12 +1254,117 @@ function messageReadOptions(args, pending = false) {
   ];
 }
 
+// Requests that this server sends to its client and the replies it awaits.
+const clientRequests = new Map();
+let clientRequestId = 0;
+
+function requestClient(method, params) {
+  const id = `client:${++clientRequestId}`;
+  return new Promise((resolve, reject) => {
+    clientRequests.set(id, { resolve, reject });
+    writeMessage({ jsonrpc: '2.0', id, method, params });
+  });
+}
+
+function checkRootDelivery(args) {
+  const message = recordedRootMessage(args.id);
+  if (rootHarness !== 'codex' || !connectionCustody || !inputNotice
+      || args.id !== inputNotice.id || args.thread !== connectionCustody.thread
+      || args.thread !== connectionCustody.native || args.content !== inputNotice.content
+      || typeof args.turn !== 'string' || !args.turn || typeof args.item !== 'string' || !args.item
+      || inputNotice.connection !== connectionCustody.connection
+      || inputNotice.native !== connectionCustody.native
+      || !message || message.is_read !== 0 || message.native !== args.thread
+      || message.endpoint !== connectionCustody.endpoint || args.content !== rootNoticeContent(message)
+      || !pendingConductorMessage(args.id)) {
+    throw new Error('Codex read evidence does not match the complete root notice, the recorded thread and the thread turn and item that returned it.');
+  }
+}
+
+function rootItemReplyMatches(args, read) {
+  return read?.thread === args.thread && read.turn === args.turn && read.item === args.item
+    && read.type === 'userMessage' && typeof read.text === 'string'
+    && read.text.includes(args.content);
+}
+
+async function readRootItem(args) {
+  if (typeof args.turn !== 'string' || !args.turn || typeof args.item !== 'string' || !args.item) {
+    throw new Error('The Codex root thread item must identify a turn and item.');
+  }
+  const reply = await requestClient('baton/rootThreadItem',
+    { thread: args.thread, turn: args.turn, item: args.item });
+  if (reply.error) throw new Error(`The Codex root thread item could not be read: ${reply.error.message}`);
+  if (!rootItemReplyMatches(args, reply.result)) {
+    throw new Error('The Codex root thread item is not a user message holding the complete notice.');
+  }
+}
+
+function alreadyRecordedRootDelivery(args) {
+  if (rootHarness !== 'codex' || !connectionCustody
+      || args.thread !== connectionCustody.thread || args.thread !== connectionCustody.native
+      || connectionCustody.session !== sessionId) return false;
+  const message = recordedRootMessage(args.id);
+  return !!message && message.is_read === 1 && message.native === args.thread
+    && message.endpoint === connectionCustody.endpoint
+    && args.content === rootNoticeContent(message);
+}
+
+function respondRootReadRecorded(msg, args) {
+  sendResponse(msg.id, { content: [{ type: 'text', text: JSON.stringify({ id: args.id, read: 'already-recorded' }) }] });
+  continuePending();
+}
+
+// The relay's turn and item IDs select an item. The read is recorded only when
+// the relay reads that item from the root thread now and it is a user message
+// that holds the complete notice.
+async function rootDelivery(msg) {
+  const args = msg.params.arguments ?? {};
+  try {
+    if (alreadyRecordedRootDelivery(args)) {
+      await readRootItem(args);
+      if (!alreadyRecordedRootDelivery(args)) {
+        throw new Error('The recorded Codex root read changed while its thread item was being checked.');
+      }
+      respondRootReadRecorded(msg, args);
+      return;
+    }
+    checkRootDelivery(args);
+    await readRootItem(args);
+    if (alreadyRecordedRootDelivery(args)) {
+      respondRootReadRecorded(msg, args);
+      return;
+    }
+    checkRootDelivery(args);
+    let result;
+    activeReadMessage = args.id;
+    try { result = coord('delivery', args.id); }
+    catch (error) {
+      // Another valid reader may complete the same message between the
+      // custody checks and the coordinator's transactional receipt check.
+      if (alreadyRecordedRootDelivery(args)) {
+        respondRootReadRecorded(msg, args);
+        return;
+      }
+      throw error;
+    }
+    finally { activeReadMessage = null; }
+    sendResponse(msg.id, { content: [{ type: 'text', text: result }] });
+    continuePending();
+  } catch (e) {
+    sendResponse(msg.id, { content: [{ type: 'text', text: `Error: ${e.message}` }], isError: true });
+  }
+}
+
 function handleToolCall(msg) {
   const { name } = msg.params;
   const args = msg.params.arguments ?? {};
   const player = args?.player ?? args?.worker;
   if (unavailableTools.has(name)) {
     sendError(msg.id, -32601, `The recorded coordinator executable does not advertise ${name}. Use baton2_delivery or baton2_guide until that executable is updated.`);
+    return;
+  }
+  if (name === 'baton2_root_delivery') {
+    rootDelivery(msg);
     return;
   }
   try {
@@ -1401,19 +1585,6 @@ function handleToolCall(msg) {
             || inputNotice.id !== args.id || inputNotice.connection !== connectionCustody.connection
             || inputNotice.native !== connectionCustody.native) {
           throw new Error('The complete input was not returned by this active root channel.');
-        }
-        activeReadMessage = args.id;
-        try { result = coord('delivery', args.id); }
-        finally { activeReadMessage = null; }
-        break;
-      case 'baton2_root_delivery':
-        if (rootHarness !== 'codex' || !connectionCustody || !inputNotice
-            || args.id !== inputNotice.id || args.thread !== connectionCustody.thread
-            || args.thread !== connectionCustody.native || args.content !== inputNotice.content
-            || inputNotice.connection !== connectionCustody.connection
-            || inputNotice.native !== connectionCustody.native
-            || !pendingConductorMessage(args.id)) {
-          throw new Error('Codex read evidence does not match the accepted complete root notice and recorded thread.');
         }
         activeReadMessage = args.id;
         try { result = coord('delivery', args.id); }

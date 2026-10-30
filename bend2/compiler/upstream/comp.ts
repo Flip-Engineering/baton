@@ -190,6 +190,7 @@ type Carb = {
 };
 
 type File = Carb & {
+  facts_only: boolean;
   unit: string;
   heated: Set<string>;
   obligations: Map<string, Set<string>>;
@@ -1866,7 +1867,7 @@ function ctr_build(fl: File, k: Bend.Name, exprs: string[],
   stat = false): string {
   const cid = cid_mac(k);
   const node = lay_node(fl.book, k);
-  fl.seg.cids.set(k, node.ks.length);
+  if (!fl.facts_only) fl.seg.cids.set(k, node.ks.length);
   if (exprs.length === 0 || (node.ks.length === 1 && node.ks[0] === "w32")) {
     return `term_pak(${cid}, ${exprs[0] ?? 0})`;
   }
@@ -1874,7 +1875,7 @@ function ctr_build(fl: File, k: Bend.Name, exprs: string[],
     fl.stat.add(k);
     if (fl.unit !== "") {
       const name = content_name("SI", JSON.stringify(exprs));
-      if (!fl.statics.has(name)) {
+      if (!fl.facts_only && !fl.statics.has(name)) {
         fl.statics.set(name, exprs);
       }
       return `term_ctr(${cid}, STAT_OFF + ${name})`;
@@ -2629,7 +2630,7 @@ function cid_mac(k: string): string {
 // share the checked source, signatures and monotone facts.
 function file_reset(fl: File, cb: Carb, decl: string): File {
   return Object.assign(fl, cb, {
-    unit: "", heated: new Set(), obligations: new Map(), decl, segs: [], seg: seg_new("", BOX, []), tab: 2,
+    facts_only: false, unit: "", heated: new Set(), obligations: new Map(), decl, segs: [], seg: seg_new("", BOX, []), tab: 2,
     cids: new Map(), tabs: new Map(), spins: [], spun: new Map(), armSeq: 0,
     armBusy: new Set(), armHints: new Map(), clos: new Set(),
     img: [], statics: new Map(), lits: new Map(), consts: new Map(), reqs: "", fuel: 0,
@@ -2649,6 +2650,7 @@ function file_new(cb: Carb, decl: string): File {
 const INDENTS = Array.from({ length: 9 }, (_, i) => "  ".repeat(i));
 
 function file_push(fl: File, line: string): void {
+  if (fl.facts_only) return;
   const tab = fl.tab < INDENTS.length ? fl.tab : INDENTS.length - 1;
   fl.seg.lines.push(INDENTS[tab] + line);
 }
@@ -2719,7 +2721,7 @@ function seg_ref(fl: File, fid: string): string {
 
 // A closure over `fid` holding `words` (so the device holds `fid`).
 function seg_clo(fl: File, fid: string, words: string[]): string {
-  fl.clos.add(fid);
+  if (!fl.facts_only) fl.clos.add(fid);
   return `term_clo(${seg_ref(fl, fid)}, ${words.length === 0 ? 0 : node_fill(
     fl, "nd", `heap_alloc(e, cls_fit(${words.length}))`, words)})`;
 }
@@ -2997,7 +2999,7 @@ function val_unbox(fl: File, v: Val, lay: Lay): Val {
   const t = emit_alias(fl, v.ws[0], "u");
   return val_arms(fl, lay, t, (_, i) => {
     const k = lay.arms![i].k;
-    fl.seg.cids.set(k, lay_node(fl.book, k).ks.length);
+    if (!fl.facts_only) fl.seg.cids.set(k, lay_node(fl.book, k).ks.length);
     return `term_aux(${t}) == ${cid_mac(k)}`;
   }, (arm) => {
     const fs = node_fields(fl, t, lay_node(fl.book, arm.k));
@@ -3317,14 +3319,15 @@ function emit_native(fl: File, ck: Call, ers: HTerm[]): string {
   seg.fid = name;
   const dst = val_new(seg.ret.ks.map(() => name_local(fl, "v")), seg.ret);
   emit_body(fl, tld.h as HTerm, tld.T, ers, vals, dst);
-  fl.spins.push([name, [`${seg.lines.length < SPIN_FAR ? "INLINE" : "FAR"} Term ${name}(Env e, THR Term* o${
+  const body = fl.facts_only ? "" : [`${seg.lines.length < SPIN_FAR ? "INLINE" : "FAR"} Term ${name}(Env e, THR Term* o${
       seg.ks.map((k, i) => `, ${lay_c(k)} r${i}`).join("")}) {`,
     "  u32 wpoll = 0;",
     ...dst.ws.map((v, j) => `  ${lay_c(seg.ret.ks[j])} ${v} = 0;`),
     ...seg_take(seg).map((l) => "  " + l),
     "  WL_SPIN", ...seg.lines, "  break;", "  }",
     ...dst.ws.map((v, j) => `  o[${j}] = ${v};`),
-    "  return 1;", "}"].join("\n"), seg.refs, seg.cids]);
+    "  return 1;", "}"].join("\n");
+  fl.spins.push([name, body, seg.refs, seg.cids]);
   // The arm name counter is monotone across nested emission. Restoring the
   // whole file must not roll it back, or a spin body's arm name is reused.
   const armSeq = fl.armSeq;
@@ -3870,7 +3873,7 @@ function emit_tab(fl: File, rows: Chain, ty: HTerm): number | null {
     "return [" + ls + "]")(Bend.f32_to_bits).map((v: number) => BigInt(v)
     + "ull").join(", ");
   const id = fl.tabs.get(key) ?? fl.tabs.size;
-  fl.tabs.set(key, id);
+  if (!fl.facts_only) fl.tabs.set(key, id);
   return id;
 }
 
@@ -4208,14 +4211,15 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
   });
   const d = val_new(lay.ks.map(() => name_local(fl, "v")), lay);
   emit_body(fl, h, null, [], aparams, d);
-  fl.spins.push([name, [`${seg.lines.length < SPIN_FAR ? "INLINE" : "FAR"} Term ${name}(Env e, THR Term* o${
+  const body = fl.facts_only ? "" : [`${seg.lines.length < SPIN_FAR ? "INLINE" : "FAR"} Term ${name}(Env e, THR Term* o${
       seg.ks.map((k, i) => `, ${lay_c(k)} r${i}`).join("")}) {`,
     "  u32 wpoll = 0;",
     ...d.ws.map((v, j) => `  ${lay_c(lay.ks[j])} ${v} = 0;`),
     ...seg_take(seg).map((l) => "  " + l),
     "  WL_SPIN", ...seg.lines, "  break;", "  }",
     ...d.ws.map((v, j) => `  o[${j}] = ${v};`),
-    "  return 1;", "}"].join("\n"), seg.refs, seg.cids]);
+    "  return 1;", "}"].join("\n");
+  fl.spins.push([name, body, seg.refs, seg.cids]);
   Object.assign(fl, outer);
   fl.armBusy.delete(name);
   diagnostic("spin.emit", { kind: "arm", name: fl.def, unit: fl.unit, helper: name,
@@ -4290,7 +4294,7 @@ function emit_match(fl: File, x: Of<"Mat"> | Of<"Efq">,
             "h").map((w) => val_new([w], BOX)))];
       }
       if (lay_box(lay)) {
-        fl.seg.cids.set(k, lay_node(fl.book, k).ks.length);
+        if (!fl.facts_only) fl.seg.cids.set(k, lay_node(fl.book, k).ks.length);
         return [`term_aux(${sw}) == ${cid_mac(k)}`, h,
           () => node_fields(fl, sw, lay_node(fl.book, k), true)];
       }
@@ -4817,6 +4821,7 @@ function checked_emitter(context: Prepared,
     const views = Fact.views(initial, record);
     const output = file_new({ ...cb, ...views, lend: new Set() }, "Term");
     output.unit = "u" + Buffer.from(k).toString("hex") + "_";
+    output.facts_only = facts_only;
     const begin = performance.now();
     diagnostic("unit.begin", { name: k, facts_only });
     if (DIAGNOSTICS) diagnostic_facts = record;
@@ -4870,6 +4875,23 @@ function checked_emitter(context: Prepared,
     stored.release();
     memo_gc();
     BRWS.clear();
+    if (DIAGNOSTICS && facts_only) {
+      const segment_lines = output.segs.reduce((n, seg) => n + seg.lines.length, 0);
+      const segment_chars = output.segs.reduce((n, seg) =>
+        n + seg.lines.reduce((m, line) => m + line.length, 0), 0);
+      const helper_chars = output.spins.reduce((n, spin) => n + spin[1].length, 0);
+      const static_words = [...output.statics.values()].reduce((n, words) => n + words.length, 0);
+      const static_chars = [...output.statics.values()].flat()
+        .reduce((n, word) => n + word.length, 0);
+      const table_chars = [...output.tabs.keys()].reduce((n, rows) => n + rows.length, 0);
+      const constructor_entries = output.segs.reduce((n, seg) => n + seg.cids.size, 0)
+        + output.spins.reduce((n, spin) => n + spin[3].size, 0);
+      diagnostic("facts_only.retained_output", { name: k, segment_lines, segment_chars,
+        helper_count: output.spins.length, helper_chars, static_rows: output.statics.size,
+        static_words, static_chars, tables: output.tabs.size, table_chars,
+        closure_targets: output.clos.size, constructor_entries,
+        retained_output_chars: segment_chars + helper_chars + static_chars + table_chars });
+    }
     const code: CodeUnit = facts_only ? { unit: unit.unit, lend: unit.lend,
       segs: [], spins: [], statics: new Map(), tabs: new Map(), clos: new Set() } : unit;
     const fragment = fragments.write(code);

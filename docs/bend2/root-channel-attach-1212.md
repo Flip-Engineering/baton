@@ -77,11 +77,76 @@ codex app-server daemon start
 codex resume ROOT_THREAD
 ```
 
-The managed app-server owns the thread resumed by the TUI. The configured relay
-keeps the SSH conductor stream open, queues each complete notification into
-`ROOT_THREAD`, and calls the conductor's delivery operation after `codex queue`
-accepts the message. This records the recipient read and advances delivery to
-the next unread message.
+The managed app-server owns the thread resumed by the TUI.
+
+### Root conversation identity
+
+The relay resolves the root conversation in this order:
+
+1. `--thread ID`, when given.
+2. `CODEX_THREAD_ID` in the relay's environment, when Codex sets it for the
+   processes it launches. Whether Codex sets it for MCP server processes has
+   not been confirmed.
+3. The conversation recorded for the session by `attach`. The conductor names
+   it in each notification (`meta.thread`).
+
+In cases 1 and 2 the conductor refuses a conversation that differs from the
+recorded one, so a relay launched for another thread does not connect. In
+case 3 the conductor follows the record: every 5 seconds, and when it sends a
+notification, it compares the recorded conversation with the one it serves.
+After `attach` records another conversation (which clears the endpoint), the
+conductor registers its delivery endpoint for the new conversation and sends
+the oldest unread message with the new thread, without a relay restart.
+
+`--register` lets a relay record its own conversation. When the session has no
+recorded conversation and the relay named one (case 1 or 2), the conductor
+runs the equivalent of `attach SESSION codex THREAD ""` before connecting. A
+recorded conversation of any harness is never replaced; the conductor refuses
+to start and the operator attaches the Codex conversation explicitly. Use
+`--register` only for a relay that is configured for the root, because a global
+MCP entry starts a relay for every thread and the first one to register would
+become the root.
+
+The relay keeps the SSH conductor stream open. For each complete notification
+it opens `codex app-server proxy` under the relay's `CODEX_HOME`, which finds
+the running app-server's control socket on each delivery without a stored
+address. The proxy copies raw bytes to that socket, which speaks HTTP and then
+WebSocket. The relay sends an HTTP Upgrade request, requires status 101, and
+exchanges masked JSON text frames, answering pings. The relay then:
+
+1. Waits until `thread/loaded/list` contains the root thread. It queues nothing
+   before that.
+2. Reads the thread's newest turn and its item IDs with `thread/turns/list`.
+3. Runs `codex queue` with the complete notification.
+4. Reads the thread's turns until a `userMessage` item that was not present in
+   step 2 contains the complete notification text.
+5. Calls the conductor's `baton2_root_delivery` with the thread, the complete
+   notification, and the turn and item IDs that returned it.
+
+The conductor then sends the relay a `baton/rootThreadItem` request with those
+IDs. The relay reads that item from the thread and returns its type and text.
+The conductor records the read only when the item is a `userMessage` that holds
+the complete notification. This advances delivery to the next unread message.
+
+When the conductor names a different conversation, for example after a
+re-binding, the relay stops the delivery that is waiting on the previous
+conversation and delivers the new notice. The earlier message stays unread. The
+conductor does not record a read that arrives from the previous conversation,
+and the relay does not treat that refusal as a failed delivery when the
+conversation changed while it waited for the answer.
+
+If the connection to the app-server is lost at any step, the relay opens the
+proxy again and continues for as long as the SSH conductor is open. If the SSH
+conductor connection is lost after it was established, the relay opens it again
+every 2 seconds while Codex keeps the relay running, and the conductor sends the
+oldest unread message on each new connection, including a connection lost
+while the relay was reading a thread item for the conductor. A conductor that cannot be started
+or initialized the first time ends the relay with status 1, as does a failed
+delivery such as a queue error or refused read evidence. Queue
+acceptance does not record a read. A notification that is queued while the root
+is in a long turn stays unread until the thread returns it. If the relay or the
+root client closes first, the message stays unread and the next connection
+sends it again, which can add a second copy of the notification to the thread.
 
 ## Read the existing backlog
 

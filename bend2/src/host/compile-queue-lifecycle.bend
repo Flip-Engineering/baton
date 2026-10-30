@@ -11,6 +11,9 @@ import ./compile-queue-supervisor.bend as Supervisor
 def CompileQueueLifecycle.pid() -> IO(Result<&1,&1,U32 & String,U32>):
   P.HostPosix.pid()
 
+def CompileQueueLifecycle.uid() -> IO(Result<&1,&1,U32 & String,U32>):
+  P.HostPosix.uid()
+
 def CompileQueueLifecycle.cwd() -> IO(Result<&1,&1,U32 & String,String>):
   P.HostPosix.cwd()
 
@@ -29,8 +32,32 @@ def CompileQueueLifecycle.lock_open(path: String) -> IO(Result<&1,&1,U32 & Strin
 def CompileQueueLifecycle.lock_acquire(path: String) -> IO(Result<&1,&1,U32 & String,U32>):
   P.HostPosix.lock_acquire(path)
 
-def CompileQueueLifecycle.lock_try(path: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32>>):
+def CompileQueueLifecycle.lock_try(path: String) -> IO(Result<&1,&1,U32 & String,Maybe<&2,U32>>):
   P.HostPosix.lock_try(path)
+
+def CompileQueueLifecycle.held(path: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  P.HostPosix.held(path)
+
+def CompileQueueLifecycle.create_locked(path: String, text: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  P.HostPosix.create_locked(path,text)
+
+def CompileQueueLifecycle.mkdir_sticky(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  P.HostPosix.mkdir_sticky(path)
+
+def CompileQueueLifecycle.lock_shared_try(path: String) -> IO(Result<&1,&1,U32 & String,Maybe<&2,U32>>):
+  P.HostPosix.lock_shared_try(path)
+
+def CompileQueueLifecycle.exclusive_lock_pid(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  P.HostPosix.exclusive_lock_pid(path)
+
+def CompileQueueLifecycle.meminfo() -> IO(Result<&1,&1,U32 & String,String>):
+  P.HostPosix.meminfo()
+
+def CompileQueueLifecycle.session_kb(pid: U32) -> IO(Result<&1,&1,U32 & String,String>):
+  P.HostPosix.session_kb(pid)
+
+def CompileQueueLifecycle.now_seconds() -> IO(Result<&1,&1,U32 & String,String>):
+  P.HostPosix.now_seconds()
 
 def CompileQueueLifecycle.lock_fd_acquire(fd: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   P.HostPosix.lock_fd_acquire(fd)

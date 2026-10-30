@@ -49,10 +49,16 @@ TMPDIR=$build_scratch
 TMP=$build_scratch
 TEMP=$build_scratch
 export TMPDIR TMP TEMP
-entry_path=$(readlink -f -- "$entry" 2>/dev/null || printf '%s' "$entry")
+entry_path=$(readlink -f -- "$entry" 2>/dev/null ||
+  (CDPATH= cd -- "$(dirname -- "$entry")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$entry")"))
 focused=${BATON2_RECEIVE_FOCUSED:-}
 router=${BATON2_NATIVE_RECEIVER_ROUTER:-}
 recovery=${BATON2_RECOVERY_HELPER:-}
+# Each receiver entry requires its native command router.
+case "$entry_path" in
+  "$root/bend2/src/coordinator/receive-focused.bend") focused=1 ;;
+  "$root/bend2/src/coordinator/receive-recovery-focused.bend") recovery=1 ;;
+esac
 compiler=${BEND:-"$root/.bend/bin/bend"}
 if [ ! -x "$compiler" ]; then
   compiler="$root/node_modules/.bend/bin/bend"
@@ -135,8 +141,13 @@ if grep -Fq '#include "persistent-path.h"' "$output.c"; then
     ln -s "$expected_persistent_header" "$persistent_header"
   fi
 fi
+# An entry that reaches the HTTP reader emits the libcurl include.
+extra_libs=
+if grep -q '^#include <curl/curl.h>' "$output.c"; then
+  extra_libs=-lcurl
+fi
 build_native_shards() {
-  native_link_flags="-O1 -pthread -lsqlite3 -lm"
+  native_link_flags="-O1 -pthread -lsqlite3 -lm${extra_libs:+ $extra_libs}"
   if [ -n "$1" ]; then
     native_link_flags="$native_link_flags $1"
   fi
@@ -168,11 +179,6 @@ elif [ "$focused" = 1 ]; then
 elif [ "$recovery" = 1 ]; then
   build_native_shards -DBATON2_RECOVERY_HELPER
 else
-  extra_libs=
-  case "$entry_path" in
-    */bend2/harness/claude-credit-observe.bend) extra_libs=-lcurl ;;
-    */bend2/harness/usage-read.bend) extra_libs=-lcurl ;;
-  esac
   storage_test_flag=
   case "$entry_path" in
     */bend2/tests/storage.bend) storage_test_flag="-DBATON_STORAGE_TEST_PROC" ;;

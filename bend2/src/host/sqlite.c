@@ -12,6 +12,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <time.h>
 
 /* This projection contains only cursor and summary fields. Message bodies and
    reader-visible state remain in the coordinator tables. The triggers run in
@@ -273,6 +274,35 @@ static int baton_sql_row(void *context, int count, char **values, char **columns
   return 0;
 }
 
+/* A busy or locked answer names its extended result code and the milliseconds
+   the call ran since it set its busy handler. A deferred transaction that
+   upgrades from a read to a write is answered at once (SQLITE_BUSY_SNAPSHOT, or
+   SQLITE_BUSY with no wait); a lock that the busy handler waited for ends after
+   about 30000 ms. Both read "database is locked" without these fields. Any
+   other failure keeps its message. */
+static long long baton_sql_now_ms(void) {
+  struct timespec now;
+  if (clock_gettime(CLOCK_MONOTONIC, &now)) return 0;
+  return (long long)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+static char *baton_sql_failure_text(sqlite3 *db, const char *message, long long started) {
+  int extended = sqlite3_extended_errcode(db);
+  int primary = extended & 0xff;
+  if (primary != SQLITE_BUSY && primary != SQLITE_LOCKED) return strdup(message);
+  const char *name = extended == SQLITE_BUSY_SNAPSHOT ? "SQLITE_BUSY_SNAPSHOT"
+    : extended == SQLITE_BUSY_RECOVERY ? "SQLITE_BUSY_RECOVERY"
+    : extended == SQLITE_BUSY_TIMEOUT ? "SQLITE_BUSY_TIMEOUT"
+    : primary == SQLITE_BUSY ? "SQLITE_BUSY" : "SQLITE_LOCKED";
+  long long waited = baton_sql_now_ms() - started;
+  size_t size = strlen(message) + 96;
+  char *text = malloc(size);
+  if (!text) return strdup(message);
+  snprintf(text, size, "%s (%s, extended code %d, %lld ms since the busy handler was set)",
+           message, name, extended, waited < 0 ? 0 : waited);
+  return text;
+}
+
 static int baton_sql_busy(void *context, int tries) {
   (void)context;
   /* Bounded wait: at most 3000 retries of 10ms for one lock acquisition.
@@ -304,6 +334,7 @@ static void baton_sql_call(IoWork *w) {
     call->error = strdup(db ? sqlite3_errmsg(db) : "cannot open database");
   } else {
     sqlite3_busy_handler(db, baton_sql_busy, NULL);
+    long long started = baton_sql_now_ms();
     baton_sql_wal(db);
     char *error = NULL;
     call->code = sqlite3_create_function_v2(db, "baton_json_pretty", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_json_pretty, NULL, NULL, NULL);
@@ -316,7 +347,7 @@ static void baton_sql_call(IoWork *w) {
         call->code = sqlite3_exec(db, call->sql, baton_sql_row, call, &error);
     }
     if (call->code != SQLITE_OK) {
-      call->error = strdup(error ? error : sqlite3_errmsg(db));
+      call->error = baton_sql_failure_text(db, error ? error : sqlite3_errmsg(db), started);
       sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
     }
     sqlite3_free(error);
@@ -439,6 +470,7 @@ static void baton_sql_span_call(IoWork *w) {
     call->error = strdup(db ? sqlite3_errmsg(db) : "cannot open database");
   } else {
     sqlite3_busy_handler(db, baton_sql_busy, NULL);
+    long long started = baton_sql_now_ms();
     baton_sql_wal(db);
     char *error = NULL;
     call->code = sqlite3_create_function_v2(db, "baton_json_pretty", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_json_pretty, NULL, NULL, NULL);
@@ -469,7 +501,7 @@ static void baton_sql_span_call(IoWork *w) {
       tail = next;
     }
     if (call->code != SQLITE_OK) {
-      call->error = strdup(error ? error : sqlite3_errmsg(db));
+      call->error = baton_sql_failure_text(db, error ? error : sqlite3_errmsg(db), started);
       sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
     }
     sqlite3_free(error);
@@ -1152,6 +1184,7 @@ static void baton_sql_bound_call(IoWork *w) {
     return;
   }
   sqlite3_busy_handler(db, baton_sql_busy, NULL);
+  long long started = baton_sql_now_ms();
   baton_sql_wal(db);
   char *error = NULL;
   call->code = sqlite3_create_function_v2(db, "baton_ref_entry", 2, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_ref_entry, NULL, NULL, NULL);
@@ -1162,7 +1195,7 @@ static void baton_sql_bound_call(IoWork *w) {
   if (call->code == SQLITE_OK)
     call->code = sqlite3_exec(db, call->sql, baton_sql_bound_row, call, &error);
   if (call->code != SQLITE_OK) {
-    call->error = strdup(error ? error : sqlite3_errmsg(db));
+    call->error = baton_sql_failure_text(db, error ? error : sqlite3_errmsg(db), started);
     sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
   }
   sqlite3_free(error);
@@ -1588,6 +1621,7 @@ static void baton_sql_read_call(IoWork *w) {
     return;
   }
   sqlite3_busy_handler(db, baton_sql_busy, NULL);
+  long long started = baton_sql_now_ms();
   int discard_cache = 0;
   /* The read-only connection checks database encoding on open and checks
      foreign keys before each query. */
@@ -1601,7 +1635,7 @@ static void baton_sql_read_call(IoWork *w) {
       discard_cache = 1;
   }
   if (call->code != SQLITE_OK) {
-    call->error = strdup(error ? error : sqlite3_errmsg(db));
+    call->error = baton_sql_failure_text(db, error ? error : sqlite3_errmsg(db), started);
     sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
     if (cached) {
       BatonSqlReadCache *cache = baton_sql_read_cache(0);
