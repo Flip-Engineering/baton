@@ -1266,18 +1266,36 @@ function requestClient(method, params) {
   });
 }
 
+// The first custody condition that a root delivery claim fails, or null.
+function rootDeliveryRefusal(args, message) {
+  if (rootHarness !== 'codex' || !connectionCustody) return 'this connection does not serve a Codex root conversation';
+  if (!inputNotice) return 'this connection has no selected notice';
+  if (args.id !== inputNotice.id) return `this connection selected ${inputNotice.id}`;
+  if (args.thread !== connectionCustody.thread || args.thread !== connectionCustody.native) {
+    return `this connection serves thread ${connectionCustody.native}`;
+  }
+  if (args.content !== inputNotice.content) return 'the content differs from the selected notice';
+  if (typeof args.turn !== 'string' || !args.turn || typeof args.item !== 'string' || !args.item) {
+    return 'the claim names no turn and item';
+  }
+  if (inputNotice.connection !== connectionCustody.connection || inputNotice.native !== connectionCustody.native) {
+    return 'the selected notice belongs to an earlier connection or conversation';
+  }
+  if (!message) return 'the session has no recorded Codex conversation or has a stop';
+  if (message.is_read !== 0) return 'a read of the message is already recorded';
+  if (message.native !== args.thread) return `the recorded conversation is ${message.native}`;
+  if (message.endpoint !== connectionCustody.endpoint) {
+    return 'another connection registered the recorded delivery endpoint after this one';
+  }
+  if (args.content !== rootNoticeContent(message)) return 'the stored message differs from the selected notice';
+  if (!pendingConductorMessage(args.id)) return 'the message is not the owed message';
+  return null;
+}
+
 function checkRootDelivery(args) {
-  const message = recordedRootMessage(args.id);
-  if (rootHarness !== 'codex' || !connectionCustody || !inputNotice
-      || args.id !== inputNotice.id || args.thread !== connectionCustody.thread
-      || args.thread !== connectionCustody.native || args.content !== inputNotice.content
-      || typeof args.turn !== 'string' || !args.turn || typeof args.item !== 'string' || !args.item
-      || inputNotice.connection !== connectionCustody.connection
-      || inputNotice.native !== connectionCustody.native
-      || !message || message.is_read !== 0 || message.native !== args.thread
-      || message.endpoint !== connectionCustody.endpoint || args.content !== rootNoticeContent(message)
-      || !pendingConductorMessage(args.id)) {
-    throw new Error('Codex read evidence does not match the complete root notice, the recorded thread and the thread turn and item that returned it.');
+  const refusal = rootDeliveryRefusal(args, recordedRootMessage(args.id));
+  if (refusal) {
+    throw new Error(`Codex read evidence does not match the complete root notice, the recorded thread and the thread turn and item that returned it: ${refusal}.`);
   }
 }
 

@@ -584,6 +584,45 @@ test('a read recorded while the root item lookup is pending completes idempotent
   verify.close();
 });
 
+test('a refused Codex root read names the failed condition and leaves the message owed', async (t) => {
+  const calls = await attach(t, 'operator', (db) => {
+    db.prepare('UPDATE sessions SET harness=?,native=? WHERE id=?').run('codex', 'thread-1', 'operator');
+    db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+      .run('refused', 'lead', 'operator', 'report', 'Complete refused body.');
+  }, ['--root-harness', 'codex', '--thread', 'thread-1']);
+  const { channel } = calls;
+  channel.activate();
+  await channel.until(() => channel.notes().length > 0, 'Codex root input notice');
+  const notice = channel.notes()[0];
+  const claim = { id: 'refused', thread: 'thread-1', content: notice.params.content,
+    turn: 'turn-1', item: 'item-1' };
+  const refusal = async (id, args) => {
+    const result = await channel.call(id, 'baton2_root_delivery', args);
+    assert.equal(result.isError, true);
+    return result.content[0].text;
+  };
+  assert.match(await refusal('wrong-thread', { ...claim, thread: 'thread-2' }), /this connection serves thread thread-1\.$/);
+  assert.match(await refusal('no-item', { ...claim, item: '' }), /the claim names no turn and item\.$/);
+  assert.match(await refusal('partial', { ...claim, content: 'Only a partial notice body.' }),
+    /the content differs from the selected notice\.$/);
+
+  // A connection that registers its endpoint later owns the recorded delivery endpoint.
+  const other = new DatabaseSync(calls.database);
+  other.prepare('UPDATE sessions SET endpoint=? WHERE id=?').run('["newer-connection"]', 'operator');
+  other.close();
+  assert.match(await refusal('superseded', claim),
+    /another connection registered the recorded delivery endpoint after this one\.$/);
+
+  const unread = new DatabaseSync(calls.database, { readOnly: true });
+  assert.equal(unread.prepare('SELECT count(*) AS n FROM message_reads').get().n, 0);
+  unread.close();
+  const writer = new DatabaseSync(calls.database);
+  writer.prepare('INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES(?,?,?,?,?)')
+    .run('cli', 'refused', 'operator', 'thread-1', 'cli');
+  writer.close();
+  assert.match(await refusal('already-read', claim), /a read of the message is already recorded\.$/);
+});
+
 test('a Codex root relay without --thread follows the recorded root conversation', async (t) => {
   const calls = await attach(t, 'operator', (db) => {
     db.prepare('UPDATE sessions SET harness=?,native=? WHERE id=?').run('codex', 'recorded-thread', 'operator');
