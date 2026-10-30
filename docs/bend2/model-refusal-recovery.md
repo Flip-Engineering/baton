@@ -23,8 +23,9 @@ The implementation uses the existing coordinator paths:
 - `Turn.prepare` records the terminal report and completes before
   `finish_pending` decides whether owed input continues the same Player.
 - `Receive.completed` releases the observer and native custody before
-  `finish_pending` runs. The recovery controller can therefore snapshot the
-  settled source workspace when the continue stage is exhausted.
+  `finish_pending` runs. The recovery controller can therefore start branch
+  attempts from the settled source workspace when the continue stage is
+  exhausted.
 - The `baton branch start` command uses the branching machinery to record an
   Ensemble round, create a private worktree, register a fresh native
   conversation, configure its receiver and launch it.
@@ -190,9 +191,8 @@ Dispositions from the design review:
 - Reuse the branching schema and worktree registration. A recovery-specific
   worktree engine would duplicate the private snapshot, receiver and Native
   identity rules.
-- Carry the complete terminal body. Extraction only through the existing
-  terminal body expression keeps Claude, Codex, OMP and Muse shapes under one
-  rule.
+- Carry the extracted terminal text. Extraction through the existing terminal
+  body expression keeps Claude, Codex, OMP and Muse shapes under one rule.
 - Use deterministic identities. Crash replay after a committed report or
   guidance message is ordinary and must not create duplicate attempts.
 - Suppress ordinary task continuation during recovery. Otherwise the ordinary
