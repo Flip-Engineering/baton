@@ -665,7 +665,7 @@ def write_attempt_files(+config: Config, +key: String, keydir: String, +attempt:
 def owner_lock(keydir: String) -> IO(U32):
   IO.try(U32, L.CompileQueueLifecycle.lock_acquire(keydir ++ "/owners.lock"))
 
-def publish_token(+keydir: String, +requested: String) -> IO(String):
+def publish_token(+keydir: String, +requested: String, +priority: String) -> IO(String):
   do IO<String>:
     made_keydir : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(keydir))
     lock : U32 <- owner_lock(keydir)
@@ -680,7 +680,8 @@ def publish_token(+keydir: String, +requested: String) -> IO(String):
     checked : Unit <- Bool.pick(IO(Unit), exists,
       IO.die(Unit, 2, "compile-queue: owner token is already in use"), IO.pure(Unit, Unit{}))
     wrote : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(owner_path,
-      "pid=" ++ U32.show(pid) ++ "\nstarttime=" ++ start ++ "\nstarted_ns=" ++ now ++ "\n"))
+      "pid=" ++ U32.show(pid) ++ "\nstarttime=" ++ start ++ "\nstarted_ns=" ++ now
+      ++ "\npriority=" ++ priority ++ "\n"))
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
     IO.pure(String, token)
 
@@ -1807,6 +1808,67 @@ def admission_publish_claim(+state: String, +kind: String, +key: String, +token:
     released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(guard))
     IO.pure(AdmissionGate, AdmissionAccounted{claim,heavy})
 
+# The scheduling priority of an execution is the largest priority requested by a
+# live owner of its key. Every owner token records the priority of its request; a
+# token without one (written by an earlier executable) counts at the priority of
+# the first request, which the attempt meta records. A token whose process is gone
+# does not count. A scan holds owners.lock, as every other scan of the tokens does,
+# so a token that is being published or removed is read whole or not at all. The
+# value 0 of a scan means that no live owner was found; a priority p is carried as
+# p + 1 so that priority 0 stays distinct.
+def owner_priority_value(+text: String, +fallback: U32, live: U32) -> U32:
+  Bool.pick(U32, U32.is_eq(live, 1),
+    U32.add(Bool.pick(U32, non_empty(field(text, "priority")), status_number(field(text, "priority")), fallback), 1),
+    0)
+
+def owner_priority_one(+keydir: String, +name: String, +fallback: U32) -> IO(U32):
+  do IO<U32>:
+    +text : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/owners/" ++ name))
+    +pid : U32 <- IO.pure(U32, status_number(field(text, "pid")))
+    live : U32 <- Bool.pick(IO(U32), U32.is_gt(pid, 0),
+      IO.try(U32, L.CompileQueueLifecycle.alive(pid, field(text, "starttime"))),
+      IO.pure(U32, 0))
+    IO.pure(U32, owner_priority_value(text, fallback, live))
+
+def owner_priority_scan(+keydir: String, names: List<&1,String>, +fallback: U32, +best: U32) -> IO(U32):
+  match names:
+    case Nil{}: IO.pure(U32, best)
+    case Con{+name, rest}:
+      do IO<U32>:
+        +value : U32 <- owner_priority_one(keydir, name, fallback)
+        owner_priority_scan(keydir, rest, fallback, max_u32(best, value))
+
+def owner_priority_locked(+keydir: String, +fallback: U32) -> IO(U32):
+  do IO<U32>:
+    gate : U32 <- owner_lock(keydir)
+    names : String <- IO.try(String, L.CompileQueueLifecycle.list_dir(keydir ++ "/owners"))
+    +best : U32 <- owner_priority_scan(keydir, Tx.split_nul(names), fallback, 0)
+    released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(gate))
+    IO.pure(U32, Bool.pick(U32, U32.is_eq(best, 0), fallback, U32.sub(best, 1)))
+
+# One pass of a waiting supervisor: the effective priority is derived again from
+# the live owners, and the two tickets of the supervisor are replaced when it
+# differs from the priority they carry. A priority joined by a later requester
+# raises the tickets, and the cancellation or loss of that owner lowers them again,
+# through the same owners.lock scan. This runs before the admission lock is taken;
+# no caller holds the admission lock or the key lock here.
+def refresh_priority(+attempt: String, +keydir: String, +state: String, +kind: String, +key: String,
+                     +token: String, +pid: U32, +start: String, +current: U32) -> IO(U32):
+  do IO<U32>:
+    meta_result : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.read_text(attempt ++ "/meta")
+    +meta : String <- IO.pure(String, peak_text_result(meta_result))
+    +effective : U32 <- owner_priority_locked(keydir, status_number(field(meta, "priority")))
+    +history_group : String <- attempt_group(attempt)
+    +ticket : String <- IO.pure(String, waiters_ticket_text(effective, pid, start, key, history_group, token))
+    replaced : Unit <- Bool.pick(IO(Unit), U32.is_eq(effective, current), IO.pure(Unit, Unit{}),
+      do IO<Unit>:
+        wrote : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(
+          kind_waiters_dir(state, kind) ++ "/" ++ token, ticket))
+        wrote_admission : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(
+          admission_root(state) ++ "/waiting/" ++ token, ticket))
+        IO.pure(Unit, Unit{}))
+    IO.pure(U32, effective)
+
 @unsafe
 def acquire_accounted_after_heavy(~again: (@+attempt: String -> @+keydir: String -> @+state: String -> @+kind: String -> @+key: String -> @+group: String -> @+token: String -> @+priority: U32 -> @+pid: U32 -> @+start: String -> @+delay: U32 -> IO(AdmissionGate)),
                                  +attempt: String, +keydir: String, +state: String, +kind: String,
@@ -1825,8 +1887,9 @@ def acquire_accounted_after_heavy(~again: (@+attempt: String -> @+keydir: String
 @unsafe
 def acquire_accounted(~again: (@+attempt: String -> @+keydir: String -> @+state: String -> @+kind: String -> @+key: String -> @+group: String -> @+token: String -> @+priority: U32 -> @+pid: U32 -> @+start: String -> @+delay: U32 -> IO(AdmissionGate)),
                        +attempt: String, +keydir: String, +state: String, +kind: String, +key: String, +group: String,
-                       +token: String, +priority: U32, +pid: U32, +start: String, +delay: U32) -> IO(AdmissionGate):
+                       +token: String, +current: U32, +pid: U32, +start: String, +delay: U32) -> IO(AdmissionGate):
   do IO<AdmissionGate>:
+    +priority : U32 <- refresh_priority(attempt,keydir,state,kind,key,token,pid,start,current)
     +guard : U32 <- IO.try(U32, L.CompileQueueLifecycle.lock_acquire(admission_root(state) ++ "/lock"))
     +meminfo : String <- IO.try(String, admission_meminfo(state))
     +available : U32 <- IO.pure(U32,status_number(field(meminfo,"available_kb")))
@@ -1961,9 +2024,9 @@ def supervise(+attempt: String) -> IO(Unit):
     +state : String <- IO.pure(String, field(meta, "state_root"))
     source_root : String <- IO.pure(String, field(meta, "source_root"))
     entry : String <- IO.pure(String, field(meta, "entry"))
-    +priority : U32 <- IO.pure(U32, status_number(field(meta, "priority")))
     +key : String <- IO.pure(String, field(meta, "key"))
     +keydir : String <- IO.pure(String, field(meta, "keydir"))
+    +priority : U32 <- owner_priority_locked(keydir, status_number(field(meta, "priority")))
     names : List<&2,String> <- IO.pure(List<&2,String>, fields_all(meta, "artifact_name"))
     +started : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
     +pid : U32 <- IO.try(U32, L.CompileQueueLifecycle.pid())
@@ -2179,8 +2242,12 @@ def run_config_locked(parsed: Config, +text: String, +key: String) -> IO(Unit):
   do IO<Unit>:
     state : String <- IO.pure(String, field(text, "state_root"))
     +keydir : String <- IO.pure(String, keydir_of(state, key))
-    +owner : String <- publish_token(keydir, field(text, "token"))
+    +requested : String <- IO.pure(String, priority_text(text))
+    +owner : String <- publish_token(keydir, field(text, "token"), requested)
+    +effective : U32 <- owner_priority_locked(keydir, status_number(requested))
     owner_line : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_stderr("owner=" ++ owner ++ "\n"))
+    priority_line : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_stderr(
+      "priority=" ++ requested ++ " effective=" ++ U32.show(effective) ++ "\n"))
     wait_start : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
     present : Bool <- regular(keydir ++ "/active")
     made : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(keydir ++ "/runs"))
