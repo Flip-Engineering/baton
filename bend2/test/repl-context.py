@@ -108,6 +108,57 @@ class ReplContext(unittest.TestCase):
         self.resolve('outsider', cell, success=False)
         self.resolve('outsider', citation['citation'], success=False)
 
+    def test_pure_context_value_is_resolved_completely(self):
+        context = '{"topic":"compiler","facts":["λ", "complete context"]}'
+        result = self.repl('author', 'eval', json.dumps(context, ensure_ascii=False),
+                           '--label', 'task-context')
+        cell = json.loads(result.stdout)['cells'][0]
+        self.share(cell['reference'])
+        resolved = self.resolve('recipient', self.cite(cell['reference'])['citation'])
+        outcome = json.loads(resolved['attempts'][0]['stdout'])
+        self.assertEqual(outcome['type'], 'String')
+        self.assertEqual(json.loads(outcome['value']), context)
+        self.assertEqual(resolved['source'], cell['source'])
+
+    def test_stopped_actors_cannot_resolve_import_cite_or_recover(self):
+        cell = self.define()
+        message = self.share(cell)
+        with sqlite3.connect(self.db) as connection:
+            connection.execute("INSERT INTO session_stops(session,id,reason,outcome) VALUES("
+                               "'recipient','stop-recipient','fixture','completed')")
+        self.resolve('recipient', cell, success=False)
+        self.repl('recipient', 'import', message['id'], success=False)
+        before = self.query('SELECT * FROM repl_attempts')
+        with sqlite3.connect(self.db) as connection:
+            connection.execute("INSERT INTO session_stops(session,id,reason,outcome) VALUES("
+                               "'author','stop-author','fixture','completed')")
+        self.repl('author', 'cite', '--cell', cell, success=False)
+        self.repl('author', 'recover', '--cell', cell, success=False)
+        self.assertEqual(self.query('SELECT * FROM repl_attempts'), before)
+
+    def test_native_cell_requires_a_successful_retained_native_outcome(self):
+        cell = self.define()
+        # Represent the custody boundary after successful native compilation.
+        with sqlite3.connect(self.db) as connection:
+            connection.execute("UPDATE repl_attempts SET stdout=? WHERE cell=?",
+                               (json.dumps({'kind': 'native', 'type': 'IO(Unit)'}), cell))
+        self.repl('author', 'cite', '--cell', cell, success=False)
+        with sqlite3.connect(self.db) as connection:
+            connection.execute("INSERT INTO repl_attempts(cell,stage,directory,argv,input,"
+                               "stdout,stderr,wait_status,cause) VALUES(?, 'native', ?,"
+                               "'[]','','native output','failure','exit 1','')",
+                               (cell, str(self.directory / 'native-fixture')))
+        self.repl('author', 'share', '--cell', cell, '--to', 'recipient', success=False)
+        self.assertEqual(self.query('SELECT count(*) FROM repl_shares'), [(0,)])
+        with sqlite3.connect(self.db) as connection:
+            connection.execute("UPDATE repl_attempts SET wait_status='exit 0',stderr='' "
+                               "WHERE cell=? AND stage='native'", (cell,))
+        self.share(cell)
+        resolved = self.resolve('recipient', cell)
+        native = next(row for row in resolved['attempts'] if row['stage'] == 'native')
+        self.assertEqual(native['stdout'], 'native output')
+        self.assertEqual(native['waitStatus'], 'exit 0')
+
     def test_failed_and_unfinished_cells_are_not_citable(self):
         self.repl('author', 'eval', 'missing_context_value()', success=False)
         self.repl('author', 'cite', success=False)

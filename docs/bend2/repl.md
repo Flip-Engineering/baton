@@ -129,8 +129,9 @@ Explicitly stopped actors cannot share or resolve cells.
 
 `resolve --cell CITATION` returns the complete submitted source, declaration
 snapshot, type, stdout, stderr and process outcomes for that version. Cross-seat
-results contain these values and metadata. Execution directories and process
-arguments remain in the owner's `read` records. Resolution displays the complete
+results contain these values and metadata. The separate execution-directory and
+argument fields remain in the owner's `read` records. Complete compiler stdout
+can include paths in its recorded build provenance. Resolution displays the complete
 original citation message through the recipient-owned read path before returning
 the cell. Each invocation uses the durable cell and grant records, including
 after the receiving process restarts.

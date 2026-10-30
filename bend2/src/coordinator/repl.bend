@@ -137,6 +137,7 @@ def import_rows(rows: List<String>, +db: String, +actor: String, +notebook: Stri
 
 def recover(+db: String, +actor: String, +notebook: String, selected: String) -> IO(Unit):
   do IO<Unit>:
+    ready : Unit <- M.actor_ready(db,actor)
     +cell : String <- M.selected_cell(db,notebook,selected)
     observed : Unit <- Runtime.execute(db,actor,notebook,cell)
     print_cell(db,notebook,cell,True{})
