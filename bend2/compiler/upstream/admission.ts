@@ -120,6 +120,13 @@ export class Admission {
     // lose initialized workers and still leave the unit waiting.
     const admit = async (): Promise<boolean> => {
       for (;;) {
+        // With one running unit per available processor, no unit starts until one
+        // completes. The refusal records the count and reads no memory.
+        const cpus = os.availableParallelism();
+        if (active.size > 0 && active.size >= cpus) {
+          this.observe("admission", { key: key(jobs[next]), allowed: false, cpus, active: active.size });
+          return false;
+        }
         const decision = evaluate();
         if (decision.limit !== "memory") return decision.allowed;
         const retirable = workers.retirable();
