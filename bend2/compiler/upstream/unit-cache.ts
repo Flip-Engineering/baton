@@ -41,15 +41,13 @@ function* directories(directory: string, staging = false): Generator<string> {
   } finally { handle.closeSync(); }
 }
 
-function ranges(fragment: Record<string, any>): any[] {
-  return [...fragment.segs, ...fragment.spins, ...fragment.statics, ...fragment.tabs].map(value => value.body);
-}
-
+// A copy of the fragment metadata whose ranges name the code file of `directory`.
+// Only the rows and their ranges are copied; the other values are shared.
 function relocate(fragment: Record<string, any>, directory: string): Record<string, any> {
-  const value = structuredClone(fragment);
-  value.directory = directory;
-  for (const range of ranges(value)) range.file = path.join(directory, "code");
-  return value;
+  const file = path.join(directory, "code");
+  const moved = (rows: any[]) => rows.map(row => ({ ...row, body: { ...row.body, file } }));
+  return { ...fragment, directory, segs: moved(fragment.segs), spins: moved(fragment.spins),
+    statics: moved(fragment.statics), tabs: moved(fragment.tabs) };
 }
 
 function copy(source: string, destination: string): void {
