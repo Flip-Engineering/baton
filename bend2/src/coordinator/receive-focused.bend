@@ -6,9 +6,9 @@ import ./accounts.bend as Accounts
 import ../host/session-lock.bend as Lock
 import ./receive.bend as Receive
 import ../host/instance.bend as Custody
+import ./drain-sweep.bend as DrainSweep
 import ../host/process.bend as P
 import ./control.bend as Control
-import ./drain-redeliver.bend as DrainRedeliver
 import ./stop-hook.bend as StopHook
 import ./turn.bend as Turn
 import ./native-input.bend as NativeInput
@@ -33,7 +33,8 @@ def dispatch_instance(+flag: String, +db: String) -> IO(Unit):
     Bool.pick(IO(Unit),String.eq(flag,"--instance-shutdown"),Custody.Instance.print_drain(db),
       Bool.pick(IO(Unit),String.eq(flag,"--instance-status"),Custody.Instance.print_status(db),
         Bool.pick(IO(Unit),String.eq(flag,"--instance-wait"),Custody.Instance.print_wait(db),
-          IO.die(Unit,2,"expected instance lifecycle command")))))
+          Bool.pick(IO(Unit),String.eq(flag,"--drain-sweep"),DrainSweep.sweep(db),
+            IO.die(Unit,2,"expected instance lifecycle command"))))))
 
 # Package maintenance installs the same schema preflight used by coordinator writes.
 def dispatch_schema(selected: Bool, +flag: String, +db: String) -> IO(Unit):
@@ -75,26 +76,21 @@ def dispatch_message(selected: Bool, +db: String, +id: String) -> IO(Unit):
     case True{}: Control.deliver(db,id)
     case False{}: IO.die(Unit,2,"expected dispatch message")
 
-def dispatch_drain_redelivery(selected: Bool, +db: String, +id: String) -> IO(Unit):
-  match selected:
-    case True{}: DrainRedeliver.drain_redeliver(db,id)
-    case False{}: IO.die(Unit,2,"unsupported focused receive command")
-
-def dispatch_redelivery(selected: Bool, drain: Bool, +db: String, +id: String) -> IO(Unit):
+def dispatch_redelivery(selected: Bool, +db: String, +id: String) -> IO(Unit):
   match selected:
     case True{}: Control.redeliver(db,id)
-    case False{}: dispatch_drain_redelivery(drain,db,id)
+    case False{}: IO.die(Unit,2,"unsupported focused receive command")
 
-def dispatch_three_route(host_keeper: Bool, message: Bool, redelivery: Bool, drain: Bool, +first: String, +second: String) -> IO(Unit):
+def dispatch_three_route(host_keeper: Bool, message: Bool, redelivery: Bool, +first: String, +second: String) -> IO(Unit):
   match host_keeper:
     case True{}: dispatch_host_keeper(True{},first,second)
     case False{}:
       match message:
         case True{}: dispatch_message(True{},first,second)
-        case False{}: dispatch_redelivery(redelivery,drain,first,second)
+        case False{}: dispatch_redelivery(redelivery,first,second)
 
 def dispatch_three(+flag: String, +first: String, +second: String) -> IO(Unit):
-  dispatch_three_route(String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"),String.eq(flag,"--redeliver-message"),String.eq(flag,"--drain-redeliver"),first,second)
+  dispatch_three_route(String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"),String.eq(flag,"--redeliver-message"),first,second)
 
 def dispatch_turn(selected: Bool, +db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String) -> IO(Unit):
   match selected:

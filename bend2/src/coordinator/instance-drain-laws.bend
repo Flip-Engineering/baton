@@ -1,5 +1,5 @@
 # These obligations bind the deferral of a start that a draining instance owner
-# refused (#1399). The receive path and the host are exercised by
+# refused (#1399). The receive path, the sweep and the host are exercised by
 # bend2/test/shared-instance.py and a Main-level run.
 import Base
 import ./instance-drain.bend as Drain
@@ -22,15 +22,14 @@ law an_empty_refusal_is_not_a_drain:
 def an_empty_refusal_is_not_a_drain():
   {==}
 
-# The waiter is the release's own in-process entry, not a shell.
-law the_waiter_is_the_release_entry_for_the_owed_message:
-  {Drain.redrive_argv("/bin/baton","/db","message-1") == ["/bin/baton","--drain-redeliver","/db","message-1"] : List<String>}
-
-def the_waiter_is_the_release_entry_for_the_owed_message():
-  {==}
-
 law the_deferral_report_names_the_owed_message:
-  {Drain.deferred_text("ESHUTDOWN: x","m1") == "start deferred: ESHUTDOWN: x; message m1 stays owed and a waiter delivers it again after the owner exits; a failure of the wait or of the delivery is reported to the orchestrator" : String}
+  {Drain.deferred_text("ESHUTDOWN: x","m1") == "start deferred: ESHUTDOWN: x; message m1 stays owed as a drain-deferred claim and the owner's drain sweep delivers it again when the owner exits or the next owner starts" : String}
 
 def the_deferral_report_names_the_owed_message():
+  {==}
+
+law the_sweep_failure_report_names_the_session:
+  {Drain.sweep_failed_text("2","cause","s1") == "drain sweep could not re-drive the owed input of s1 (2: cause); the claim stays drain-deferred and the next owner start or exit repeats the sweep" : String}
+
+def the_sweep_failure_report_names_the_session():
   {==}

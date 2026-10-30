@@ -17,6 +17,7 @@ import select
 import signal
 import shlex
 import shutil
+import sqlite3
 import struct
 import subprocess
 import sys
@@ -1494,6 +1495,32 @@ class SharedInstance(unittest.TestCase):
         self.assertIn('attempt-complete', self.wait_run(allowed))
         self.assertTrue(foreign.exists(), 'a marker of another incarnation was removed')
         foreign.unlink()
+        self.end_attempt(directory, child)
+
+    def sweep_count(self):
+        try:
+            with sqlite3.connect(self.db) as connection:
+                return connection.execute('SELECT count(*) FROM sweeps').fetchone()[0]
+        except sqlite3.OperationalError:
+            return 0
+
+    def test_the_owner_launches_the_drain_sweep_when_it_starts_and_after_its_drain(self):
+        self.assertEqual(self.sweep_count(), 0)
+        directory, child = self.start_survivor('s1')
+        self.eventually(lambda: self.sweep_count() == 1,
+                        'the owner did not launch the sweep when it started')
+        drained = self.command('drain', self.db)
+        self.assertEqual(drained.returncode, 0, drained.stderr)
+        self.end_attempt(directory, child)
+        waited = subprocess.run([str(EXE), 'owner-wait', str(self.db)], capture_output=True,
+                                text=True, timeout=20)
+        self.assertEqual(json.loads(waited.stdout), {'state': 'absent'})
+        self.eventually(lambda: self.sweep_count() == 2,
+                        'the drained owner did not launch the sweep after it exited')
+        # The successor owner repeats the sweep when it starts.
+        directory, child = self.start_survivor('s2')
+        self.eventually(lambda: self.sweep_count() == 3,
+                        'the successor owner did not launch the sweep when it started')
         self.end_attempt(directory, child)
 
     def test_a_drain_that_cannot_write_its_gate_fails_and_can_be_repeated(self):

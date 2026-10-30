@@ -137,21 +137,28 @@ An admission that a draining owner refuses ends as `ESHUTDOWN`. The client
 removes the attempt directory it created, and the refusal text, which starts with
 `ESHUTDOWN:`, names the owner pid and executable. The receive path
 (`receive.bend`, `started`) classifies that prefix with `Drain.drain_refusal`
-and defers the start. It releases the execution row the admission wrote, keeps
-the input owed, writes one durable report of kind `instance-drain-deferred` to
-the recorded orchestrator, and launches a detached waiter,
-`SELF --drain-redeliver DATABASE MESSAGE`. The waiter waits in process, as
-`--instance-wait` does, until the owner has exited or been replaced, then calls
-`Control.redeliver`. That delivers the owed input through the normal receive path,
-so the delivery starts a successor owner from the executable of the admitting
-client. A second drain defers the start again. The delivery control observes
-failures of the delivery: a busy failure retries until the writer is gone, and any
-other failure writes a durable `<message>:undelivered` report to the recorded
-orchestrator. A failure of the wait is reported the same way and is not retried.
-A waiter that cannot be launched produces a report of kind
-`instance-drain-redrive-failed`. A waiter that an outside kill ends is not
-observed, as for every launched delivery child; the input stays owed and the
-next wake delivers it.
+and defers the start. Under the held session lock it marks the wake claim that the
+admission took as `drain-deferred`, by the exact owner and generation it read,
+settles the execution row as exited with status `drain-deferred` so `stall` still
+lists the session, keeps the input owed, and writes one durable report of kind
+`instance-drain-deferred` to the recorded orchestrator.
+
+The owner re-drives the input. It launches `SELF --drain-sweep DATABASE`,
+detached, when it starts and after it has exited a drain and released the
+election. The sweep (`coordinator/drain-sweep.bend`) reads the sessions whose
+claim is `drain-deferred` and drives each through `Wake.drive_session`, which
+calls `Receive.wake_due` under the normal session lock. `wake_due` re-reads the
+claim: a live claimed owner is adopted, otherwise it claims the owed message with
+the next generation and launches it, so the claim becomes `claimed` and a second
+sweep, a stale sweep or a command wake no longer finds a deferred claim. A
+session whose lock a live turn holds is left as it is, because that turn
+evaluates its own obligation, and the claim stays for the next sweep. A failure is
+reported durably to the session's coordinator and does not stop the other
+sessions. The delivery starts a successor owner from the executable of the
+admitting client. A lost or failed sweep is repeated at the next owner start or
+exit. A reading of the owed input clears the claim, and no acknowledgement is
+needed. After a host restart with an idle database no Baton process runs the
+sweep until an owner starts or an operator runs `--drain-sweep` or `stall-wake`.
 
 An owner that runs an older release does not gate admissions. `--instance-shutdown`
 therefore also creates a marker file, `owner-KEY.drain-TOKEN-EPOCH`, in the
@@ -394,8 +401,11 @@ passes `"0"`, which reports `gap` and still delivers every later commit.
   record; the next admission starts a successor whose pid differs and whose
   executable and hash match the admitting client; a marker of another
   incarnation neither blocks nor is removed (`test/shared-instance.py`).
-- The classification and waiter command of the deferral are laws in
-  `coordinator/instance-drain-laws.bend`. The receive-path branch itself needs a
+- The classification and report texts of the deferral are laws in
+  `coordinator/instance-drain-laws.bend`; the claim statements are laws in
+  `coordinator/store.bend`. The owner launches the sweep when it starts and after
+  its drain (`test/shared-instance.py`, with the `--drain-sweep` mode of
+  `test/instance.bend`). The receive-path branch itself needs a
   Main-level run.
 
 `test/process.py`, `test/retained-control.py`, `test/receive.py` and

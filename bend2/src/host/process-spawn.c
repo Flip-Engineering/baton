@@ -3371,12 +3371,34 @@ static int br_owner_bind(BrOwner *owner,const char *database) {
   }
   return error;
 }
+/* Starts the drain sweep of this database: SELF --drain-sweep DATABASE, detached
+   with null standard streams. The sweep re-drives the owed input of every start
+   that a draining owner refused (#1399). It runs when an owner starts, so any
+   later owner repeats a sweep that was lost, and after an owner exited its drain
+   and released the election, so the sweep can start the successor owner. The
+   database holds the durable record; a sweep that fails to start is repeated by
+   the next owner start or exit. */
+static void br_owner_sweep(const char *database) {
+  char *self=br_self();
+  int null=self?open("/dev/null",O_RDWR|O_CLOEXEC):-1;
+  if(self && null>=0) {
+    char *argv[]={self,"--drain-sweep",(char *)database,NULL};
+    pid_t pid;
+    if(!br_spawn(&pid,argv,NULL,null,null,null,-1,-1)) {
+      pthread_t reaper;
+      if(!pthread_create(&reaper,NULL,br_reap_detached,(void *)(intptr_t)pid))pthread_detach(reaper);
+    }
+  }
+  if(null>=0)close(null);
+  free(self);
+}
 static int br_owner_serve(const char *database) {
   BrOwner owner={.listener=-1,.lock=-1,.database_fd=-1,.watcher={.fd=-1}};
   owner.watcher.attempts=&owner.attempts;
   int error=br_owner_bind(&owner,database);
   /* The elected owner resumes publications retained for this database birth. */
   if(!error)br_owner_cursor_load(&owner);
+  if(!error)br_owner_sweep(owner.database);
   if(!error)error=br_owner_loop(&owner);
   if(owner.listener>=0)close(owner.listener);
   /* A failed election must not remove the elected owner's socket or record;
@@ -3398,7 +3420,10 @@ static int br_owner_serve(const char *database) {
     if(control->rights>=0)close(control->rights);
     br_owner_control_close(control);free(control->incoming);free(control->reply);free(control);
   }
-  if(owner.lock>=0)close(owner.lock);
+  if(owner.lock>=0){close(owner.lock);owner.lock=-1;}
+  /* A drained owner has released the election and its socket: the sweep may
+     start the successor. */
+  if(owner.bound && owner.finishing && owner.database)br_owner_sweep(owner.database);
   free(owner.database);free(owner.socket_path);
   return error;
 }

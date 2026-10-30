@@ -286,6 +286,18 @@ def ticket_sql(+session: String, +directory: String) -> String:
 def delete_ticket_sql(+session: String, +directory: String) -> String:
   "DELETE FROM wake_claim_tickets WHERE session=" ++ C.q(session) ++ " AND directory=" ++ C.q(directory) ++ ";"
 
+# A start that a draining instance owner refused keeps its wake obligation as a
+# distinct state of the existing claim row (#1399). The update names the exact
+# owner and generation the deferring receiver read under its session lock, so a
+# newer claim is never changed. wake_held reads only the 'claimed' state, so a
+# deferred row is not held and the next wake driver launches the owed message;
+# that driver's claim writes 'claimed' with the next generation.
+def defer_claim_sql(+session: String, +owner: String, +generation: String) -> String:
+  "UPDATE wake_claims SET state='drain-deferred' WHERE session=" ++ C.q(session) ++ " AND owner=" ++ C.q(owner) ++ " AND generation=CAST(" ++ C.q(generation) ++ " AS INTEGER);"
+
+def deferred_sessions_sql() -> String:
+  "SELECT session FROM wake_claims WHERE state='drain-deferred' ORDER BY session;"
+
 # Stale execution metadata recovery. When host custody observes the recorded
 # attempt dead, the takeover marks its row exited with a fixed owner-death
 # marker instead of trusting its phase. The row's exit code stays in the
@@ -367,6 +379,17 @@ def release_ticket(+db: String, session: String, owner: String, generation: Stri
     released : String <- IO.try(String,DB.Sql.query(db,release_ticket_sql(session,owner,Tx.trim_nl(generation))))
     IO.pure(Unit,Unit{})
 
+def defer_claim(+db: String, session: String, owner: String, generation: String) -> IO(Unit):
+  do IO<Unit>:
+    ensured : String <- IO.try(String,DB.Sql.query(db,claim_schema_sql()))
+    deferred : String <- IO.try(String,DB.Sql.query(db,defer_claim_sql(session,owner,Tx.trim_nl(generation))))
+    IO.pure(Unit,Unit{})
+
+def deferred_sessions(+db: String) -> IO(String):
+  do IO<String>:
+    ensured : String <- IO.try(String,DB.Sql.query(db,claim_schema_sql()))
+    IO.try(String,DB.Sql.query(db,deferred_sessions_sql()))
+
 def retain_ticket(+db: String, +session: String, +directory: String, +owner: String, +generation: String) -> IO(Unit):
   do IO<Unit>:
     ensured : String <- IO.try(String,DB.Sql.query(db,claim_schema_sql()))
@@ -411,6 +434,21 @@ law release_names_the_exact_admission_ticket:
   {release_ticket_sql(session,owner,generation) == "DELETE FROM wake_claims WHERE session=" ++ C.q(session) ++ " AND owner=" ++ C.q(owner) ++ " AND generation=CAST(" ++ C.q(generation) ++ " AS INTEGER);" : String}
 
 def release_names_the_exact_admission_ticket(session,owner,generation):
+  {==}
+
+law defer_names_the_exact_claim_generation:
+  for session: String
+  for owner: String
+  for generation: String
+  {defer_claim_sql(session,owner,generation) == "UPDATE wake_claims SET state='drain-deferred' WHERE session=" ++ C.q(session) ++ " AND owner=" ++ C.q(owner) ++ " AND generation=CAST(" ++ C.q(generation) ++ " AS INTEGER);" : String}
+
+def defer_names_the_exact_claim_generation(session,owner,generation):
+  {==}
+
+law the_sweep_reads_only_deferred_claims:
+  {deferred_sessions_sql() == "SELECT session FROM wake_claims WHERE state='drain-deferred' ORDER BY session;" : String}
+
+def the_sweep_reads_only_deferred_claims():
   {==}
 
 law release_inserts_no_row:

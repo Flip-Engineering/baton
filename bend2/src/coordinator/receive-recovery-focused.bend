@@ -2,6 +2,7 @@ import Base
 import ./receive.bend as Receive
 import ./control.bend as Control
 import ../host/instance.bend as Custody
+import ./drain-sweep.bend as DrainSweep
 import ../host/process.bend as P
 
 @unsafe
@@ -56,7 +57,8 @@ def dispatch_instance(+flag: String, +db: String) -> IO(Unit):
     Bool.pick(IO(Unit),String.eq(flag,"--instance-shutdown"),Custody.Instance.print_drain(db),
       Bool.pick(IO(Unit),String.eq(flag,"--instance-status"),Custody.Instance.print_status(db),
         Bool.pick(IO(Unit),String.eq(flag,"--instance-wait"),Custody.Instance.print_wait(db),
-          IO.die(Unit,2,"expected instance lifecycle command")))))
+          Bool.pick(IO(Unit),String.eq(flag,"--drain-sweep"),DrainSweep.sweep(db),
+            IO.die(Unit,2,"expected instance lifecycle command"))))))
 
 @unsafe
 def dispatch(args: List<String>) -> IO(Unit):

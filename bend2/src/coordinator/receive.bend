@@ -800,35 +800,26 @@ def completed_observation(+db: String, +session: String, +id: String, log: Strin
     completed_routed(db,session,id,log,cursor,conversation,cwd,attempt,handle,lock,outcome,deliveries,again,adopted,superseded,routed)
 
 # A draining instance owner refuses a new start with ESHUTDOWN. The refusal is a
-# transient condition, so the start is deferred and not failed: the execution row
-# this admission wrote is released as window_held_start does, the input stays
-# owed, the orchestrator gets one durable report, and a detached waiter delivers
-# the owed message again once the owner has exited. The waiter runs the
-# --dispatch-message entry the wake path uses, so a second drain defers again.
-def drain_redrive_result(+db: String, +session: String, +id: String, +head: String, launched: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match launched:
-    case Done{value}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
-    case Fail{(+code,+cause)}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      reported : Unit <- UW.window_report(db,session,id,"instance-drain-redrive-failed",Drain.redrive_failed_text(U32.show(code),cause,head))
-      IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,cause)})
-
-def drain_redrive(+db: String, +session: String, +id: String, +head: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.is_empty(head),
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
-    (do IO<Result<&1,&1,U32 & String,Unit>>:
-      +executable : String <- IO.try(String,Lock.SessionLock.executable())
-      +database : String <- IO.try(String,Lock.SessionLock.canonical(db))
-      launched : Result<&1,&1,U32 & String,String> <- Host.Control.launch(Tx.enc_argv(Drain.redrive_argv(executable,database,head)),database,head ++ ":instance-drain-redrive")
-      drain_redrive_result(db,session,id,head,launched)))
-
-def drain_deferred(+db: String, +session: String, +id: String, +attempt: String, lock: U32, +error: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+# transient condition, so the start is deferred and not failed. Under the held
+# session lock the claim this admission took is marked drain-deferred, by the
+# exact owner and generation it read, and the execution row is settled as exited
+# with status drain-deferred, so stall.bend still lists the session as stalled.
+# The input stays owed and the orchestrator gets one durable report. The owner's
+# drain sweep (drain-sweep.bend) drives the session again when the owner exits or
+# the next owner starts; the wake driver it calls re-reads the claim under the
+# session lock, adopts a live claimed owner or claims the owed message anew.
+def drain_deferred(+db: String, +session: String, +id: String, +log: String, +attempt: String, lock: U32, +error: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +head : String <- wake_found(db,session,"0")
-    cleared : Unit <- Stop.held_release(db,session,id)
+    +owner : String <- Store.claim_owner(db,session)
+    +generation : String <- Store.claim_generation(db,session)
+    deferred : Unit <- Store.defer_claim(db,session,Tx.trim_nl(owner),generation)
+    +outcome : Turn.Outcome <- IO.pure(Turn.Outcome,Turn.Ended{"drain-deferred","",error,True{}})
+    exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
     cleaned : Unit <- Store.delete_ticket(db,session,attempt)
     reported : Unit <- UW.window_report(db,session,id,"instance-drain-deferred",Drain.deferred_text(error,head))
     released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
-    drain_redrive(db,session,id,head)
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
 
 def started(+db: String, +session: String, +id: String, +log: String, cursor: String, native: String, cwd: String, +attempt: String, harness: String, level: String, +lock: U32, start: P.RetainedStart, again: String -> IO(Result<&1,&1,U32 & String,Unit>), cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match start:
@@ -837,7 +828,7 @@ def started(+db: String, +session: String, +id: String, +log: String, cursor: St
       observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,attempt,attempt,handle,Omp.filter_events(level))
       completed_observation(db,session,id,log,cursor,native,cwd,attempt,handle,Some{lock},observation,again,False{},cmd)
     case P.Unstarted{+error}: Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),Drain.drain_refusal(error),
-      drain_deferred(db,session,id,attempt,lock,error),
+      drain_deferred(db,session,id,log,attempt,lock,error),
       (do IO<Result<&1,&1,U32 & String,Unit>>:
         +outcome : Turn.Outcome <- IO.pure(Turn.Outcome,Turn.Ended{"start failed","","Player process could not start: " ++ error,True{}})
         exited : Unit <- Turn.record_exit(db,session,id,log,outcome)

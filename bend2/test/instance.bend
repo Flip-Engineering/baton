@@ -714,12 +714,13 @@ def existing_mode_number(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"recover-observation"),29,0)))))))))))))))))))))))))))))
 
 def mode_number(+mode: String) -> U32:
+  Bool.pick(U32,String.eq(mode,"--drain-sweep"),36,
   Bool.pick(U32,String.eq(mode,"owner-status"),33,
   Bool.pick(U32,String.eq(mode,"owner-wait"),34,
   Bool.pick(U32,String.eq(mode,"drain"),35,
   Bool.pick(U32,String.eq(mode,"legacy-hold"),30,
   Bool.pick(U32,String.eq(mode,"attach-owned-close"),31,
-  Bool.pick(U32,String.eq(mode,"--host-process-keeper"),32,existing_mode_number(mode)))))))
+  Bool.pick(U32,String.eq(mode,"--host-process-keeper"),32,existing_mode_number(mode))))))))
 
 # Admits under the shared owner while holding no session guard, so the record
 # states no guard binding.
@@ -758,6 +759,16 @@ def drain_cli(args: List<String>) -> IO(Unit):
     case +database <> Nil{}: Custody.Instance.print_drain(database)
     case _: IO.die(Unit,2,"drain DATABASE")
 
+# The sweep the owner launches when it starts and after it exited its drain
+# (#1399). The real sweep is coordinator/drain-sweep.bend; this entry records each
+# launch in the database so a test can count them.
+def sweep_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case +database <> Nil{}: do IO<Unit>:
+      saved : String <- IO.try(String,DB.Sql.query(database,"CREATE TABLE IF NOT EXISTS sweeps(id INTEGER PRIMARY KEY);INSERT INTO sweeps DEFAULT VALUES;"))
+      IO.pure(Unit,Unit{})
+    case _: IO.die(Unit,2,"--drain-sweep DATABASE")
+
 def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
   match mode:
     case 1: owner_cli(rest)
@@ -794,6 +805,7 @@ def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
     case 33: status_cli(rest)
     case 34: wait_cli(rest)
     case 35: drain_cli(rest)
+    case 36: sweep_cli(rest)
     case _: IO.die(Unit,2,"instance mode required")
 
 def cli(args: List<String>) -> IO(Unit):
