@@ -398,11 +398,16 @@ function coordInput(input, ...args) {
 
 function coordInputRaw(input, ...args) {
   try {
+    // Concurrent contexts can register another delivery endpoint for the same
+    // Codex conversation while this channel verifies its returned user item.
+    const custody = rootHarness === 'codex' && activeReadMessage && connectionCustody
+      ? { ...connectionCustody, endpoint: selectedSession()?.endpoint ?? '' }
+      : connectionCustody;
     return execFileSync(coordinatorExe, [dbPath, ...args], {
       encoding: 'utf8', input, maxBuffer: Infinity,
       env: { ...process.env, BATON_SESSION: sessionId, BATON_DATABASE: dbPath,
         BATON_MCP_INPUT: channelReady && connectionCustody
-          ? JSON.stringify({ ...connectionCustody, ...(nativePrompt ? { prompt: nativePrompt } : {}),
+          ? JSON.stringify({ ...custody, ...(nativePrompt ? { prompt: nativePrompt } : {}),
             ...(activeReadMessage ? { readMessage: activeReadMessage } : {}), ready: true }) : '' },
     });
   } catch (error) {
@@ -1275,7 +1280,7 @@ function checkRootDelivery(args) {
       || inputNotice.connection !== connectionCustody.connection
       || inputNotice.native !== connectionCustody.native
       || !message || message.is_read !== 0 || message.native !== args.thread
-      || message.endpoint !== connectionCustody.endpoint || args.content !== rootNoticeContent(message)
+      || args.content !== rootNoticeContent(message)
       || !pendingConductorMessage(args.id)) {
     throw new Error('Codex read evidence does not match the complete root notice, the recorded thread and the thread turn and item that returned it.');
   }
@@ -1305,7 +1310,6 @@ function alreadyRecordedRootDelivery(args) {
       || connectionCustody.session !== sessionId) return false;
   const message = recordedRootMessage(args.id);
   return !!message && message.is_read === 1 && message.native === args.thread
-    && message.endpoint === connectionCustody.endpoint
     && args.content === rootNoticeContent(message);
 }
 
