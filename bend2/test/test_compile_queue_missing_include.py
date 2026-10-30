@@ -66,7 +66,8 @@ class QueueMissingInputDiagnostics(unittest.TestCase):
         (self.root / "main.bend").write_text('import "./absent.bend"\ndef main() -> U32: 0\n')
         result = self.key(None, kind="cgen", entry="main.bend")
         self.assertEqual(result.returncode, 2, result.stdout)
-        self.assertIn("realpath " + str(self.root / "absent.bend") + ": No such file or directory", result.stderr)
+        # The walk names the path it resolved: the importing directory joined with the import target.
+        self.assertIn("realpath " + str(self.root) + "/./absent.bend: No such file or directory", result.stderr)
 
     def test_an_include_outside_the_root_is_still_refused(self):
         # A private directory outside the source root holds the header; nothing shared is written.
