@@ -1289,7 +1289,7 @@ function rootDeliveryRefusal(args, message) {
   if (inputNotice.connection !== connectionCustody.connection || inputNotice.native !== connectionCustody.native) {
     return 'the selected notice belongs to an earlier connection or conversation';
   }
-  if (!message) return 'the session has no recorded Codex conversation or has a stop';
+  if (!message) return 'the selected message is unavailable as a recorded Codex delivery';
   if (message.is_read !== 0) return 'a read of the message is already recorded';
   if (message.native !== args.thread) return `the recorded conversation is ${message.native}`;
   if (args.content !== rootNoticeContent(message)) return 'the stored message differs from the selected notice';
