@@ -32,7 +32,8 @@ The implementation uses the existing coordinator paths:
 - `bend2/src/coordinator/commands.bend` routes reports through the recorded
   coordinator chain with `C.Report`.
 - `Store.ensure_before_begin` installs `C.schema()` and the recovery tables
-  before each coordinator write transaction.
+  before a coordinator read. Recovery observation installs the recovery tables
+  before its first write.
 
 The current harness adapters do not expose one common native conversation-fork
 operation. The implemented fork-and-continue stage therefore records a

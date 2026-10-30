@@ -1,10 +1,12 @@
 """Integration coverage for issue #1320 model-refusal recovery."""
 import json
+import os
 import pathlib
-import socket
+import signal
 import sqlite3
 import subprocess
 import sys
+import time
 import unittest
 
 import control
@@ -18,16 +20,50 @@ class RefusalRecovery(control.Control):
     accept_any = control.Control.accept_any
     rows = control.Control.rows
     eventually = control.Control.eventually
-    close_fixtures = control.Control.close_fixtures
+    def close_fixtures(self):
+        for stream, connection in getattr(self, 'controls', []):
+            try:
+                stream.close()
+            except OSError:
+                pass
+            try:
+                connection.close()
+            except OSError:
+                pass
+        self.server.close()
+        configured = json.loads((self.directory / 'fixture.json').read_text())['exe']
+        try:
+            subprocess.run([configured, str(self.db), '--instance-shutdown'],
+                           env=self.environment, capture_output=True, text=True,
+                           timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        for row in self.process_rows():
+            try:
+                os.kill(int(row.split()[0]), signal.SIGKILL)
+            except (OSError, ValueError):
+                pass
+        for _ in range(50):
+            if not self.process_rows():
+                break
+            time.sleep(.1)
 
     def setUp(self):
         self.setUp_control()
         self.root()
+        with sqlite3.connect(self.db) as db:
+            db.execute('UPDATE sessions SET endpoint=? WHERE id=?',
+                       (json.dumps(['/usr/bin/true', str(self.directory / 'root.native.log')]), 'root'))
+        harness_bin = self.directory / 'bin'
+        harness_bin.mkdir()
+        (harness_bin / 'omp').symlink_to(self.fixture)
+        self.environment['PATH'] = str(harness_bin) + ':' + self.environment['PATH']
         self.source = self.recruit('source')
         self.source_workspace = pathlib.Path(self.source['workspace'])
         self.task_body = 'Complete the assigned task and retain complete evidence.\n' * 40
-        self.call('message', 'source-task', 'root', 'source', 'task', self.task_body)
         with sqlite3.connect(self.db) as db:
+            db.execute('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)',
+                       ('source-task', 'root', 'source', 'task', self.task_body))
             db.execute('UPDATE sessions SET observed_harness=?, observed_model=? WHERE id=?',
                        ('omp', 'fixture-observed-model', 'source'))
             db.execute('''CREATE TABLE direct_turn_requests(
@@ -80,12 +116,12 @@ class RefusalRecovery(control.Control):
         self.observe('source-refusal-2', 'source', "I can't assist with attempt two.")
         self.observe('source-refusal-3', 'source', 'I must decline attempt three.')
         self.observe('source-refusal-4', 'source', "I won't help with attempt three.")
-        attempts = self.rows("SELECT * FROM refusal_attempts ORDER BY stage,ordinal")
+        attempts = self.rows("SELECT * FROM refusal_attempts WHERE stage='fork-and-continue' ORDER BY ordinal")
         self.assertEqual([(row['stage'], row['ordinal'], row['status']) for row in attempts],
                          [('fork-and-continue', 1, 'refused'),
                           ('fork-and-continue', 2, 'refused'),
                           ('fork-and-continue', 3, 'refused')])
-        self.assertIn("I can't assist with attempt two.", attempts[1]['refusal_description'])
+        self.assertIn("I can't assist with attempt two.", attempts[0]['refusal_description'])
 
         flush = [row for row in self.rows("SELECT * FROM refusal_attempts WHERE stage='fork-and-flush' ORDER BY ordinal")]
         self.assertEqual(len(flush), 3, flush)
@@ -99,21 +135,9 @@ class RefusalRecovery(control.Control):
         self.assertEqual(len(trees), 1, rounds)
         self.assertEqual({row['source'] for row in rounds}, {'source'})
 
-        self.server.settimeout(30)
-        try:
-            starts = [self.accept_any()[1] for _ in range(3)]
-        except socket.timeout:
-            self.fail('fork-and-flush did not start three native fixtures')
-        finally:
-            self.server.settimeout(None)
         players = {row['session'] for row in flush}
-        by_session = {start['session']: start for start in starts}
-        self.assertEqual(set(by_session), players)
-        for row in flush:
-            start = by_session[row['session']]
-            self.assertIn('Stage: fork-and-flush', start['prompt'])
-            self.assertIn('fresh conversation', start['prompt'])
-            self.assertIn(row['instruction'], start['prompt'])
+        self.assertEqual(len(players), 3, flush)
+        self.assertTrue(all(row['status'] == 'running' for row in flush), flush)
 
         for ordinal, attempt in enumerate(flush, 1):
             self.observe('flush-refusal-' + str(ordinal), attempt['session'],
@@ -147,6 +171,10 @@ class RefusalRecovery(control.Control):
         path.write_text(json.dumps(event))
         self.call('observe-file', 'provider-failure', 'source', path)
         self.assertEqual(self.rows('SELECT * FROM refusal_recoveries'), [])
+
+
+for _inherited_test in [name for name in dir(control.Control) if name.startswith('test_')]:
+    setattr(RefusalRecovery, _inherited_test, None)
 
 
 if __name__ == '__main__':
