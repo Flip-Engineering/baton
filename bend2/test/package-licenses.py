@@ -263,7 +263,8 @@ class PackageLicenses(unittest.TestCase):
                  for harness in ('codex', 'omp', 'mcp') for suffix in ('conductor', 'root')]
         names.extend(('check-install.py', 'context-provider.mjs', 'context-project-policy.mjs',
                       'context-query-artifact.mjs', 'context-worktree-capture.mjs',
-                      'dsh-worker.mjs', 'dsh-baton-hooks.mjs', 'omp-completion.mjs'))
+                      'dsh-worker.mjs', 'dsh-baton-hooks.mjs', 'omp-completion.mjs',
+                      'no-agent-summary.js', 'agent-summary-check.mjs'))
         for name in names:
             shutil.copyfile(ROOT / 'bend2/scripts' / name, scripts / name)
         harness = self.source / 'bend2/harness'
@@ -291,6 +292,9 @@ class PackageLicenses(unittest.TestCase):
             path = 'libexec/baton2/' + name
             data = (ROOT / 'bend2/scripts' / name).read_bytes()
             self.assertEqual((prefix / path).read_bytes(), data)
+        # The agent_summary preload is pinned by SHA-256 (#1338).
+        self.assertEqual(hashlib.sha256((prefix / 'libexec/baton2/no-agent-summary.js').read_bytes()).hexdigest(),
+                         'f95df896a998653ee86e7320ae9a29a547add4addd50cf631491dffaa6040b40')
         for name in ('claude-credit-observe', 'api-key-exec'):
             self.assertEqual((prefix / 'libexec/baton2' / name).read_bytes(),
                              (self.source / '.scratch/bend2' / name).read_bytes())

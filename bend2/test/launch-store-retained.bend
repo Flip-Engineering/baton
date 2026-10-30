@@ -1,6 +1,7 @@
 # Retained-launch regression for the OMP and Muse configured store binding
-# (#933). It drives the real retained composition with a profile record and
-# prints the final argv. No provider or credential is contacted.
+# (#933) and the Claude Code launch environment (#1338). It drives the real
+# retained composition with a profile record and prints the final argv. No
+# provider or credential is contacted.
 import Base
 import ../src/coordinator/turn.bend as Turn
 import ../src/coordinator/accounts.bend as Accounts
@@ -28,7 +29,7 @@ def prepared(result: Result<&1,&1,U32 & String,Turn.RetainedLaunch>) -> IO(Unit)
     case Done{+launch}: print_launch(launch)
 
 def fixture_command(+harness: String) -> String:
-  Bool.pick(String,String.eq(harness,"omp"),"/usr/bin/omp","/usr/bin/muse")
+  Bool.pick(String,String.eq(harness,"omp"),"/usr/bin/omp",Bool.pick(String,String.eq(harness,"claude-code"),"/usr/bin/claude","/usr/bin/muse"))
 
 def setup(+db: String, +directory: String, +harness: String) -> IO(Unit):
   do IO<Unit>:

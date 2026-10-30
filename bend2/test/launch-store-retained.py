@@ -1,9 +1,11 @@
-"""Retained-launch regression for the OMP and Muse configured store (#933).
+"""Retained-launch regression for the OMP and Muse configured store (#933)
+and the Claude Code launch environment (#1338).
 
 The fixture drives Turn.retained_prepare with a profile record. The final argv
 must bind PI_CODING_AGENT_DIR for OMP and XDG_CONFIG_HOME for Muse, with no
 HOME assignment. A selected profile store overrides an inherited value, and
-the OMP preflight checks the selected store. No provider is contacted.
+the OMP preflight checks the selected store. A Claude Code launch carries
+BUN_OPTIONS with the packaged agent_summary preload. No provider is contacted.
 """
 import os
 import json
@@ -73,9 +75,11 @@ class RetainedStore(unittest.TestCase):
         record = self.root / (self.db.name + '.profile-' + 'store-fixture'.encode().hex())
         record.write_text(' ' + harness + ' main ' + str(store) + '\n')
 
-    def run_fixture(self, harness, extra=None):
+    def run_fixture(self, harness, extra=None, drop=()):
         self.start_owner()
         environment = {**os.environ, 'HOME': str(self.home)}
+        for name in drop:
+            environment.pop(name, None)
         if extra:
             environment.update(extra)
         return subprocess.run([str(EXE), str(self.db), str(self.attempt), harness],
@@ -128,6 +132,41 @@ class RetainedStore(unittest.TestCase):
                 self.assertFalse([value for value in argv if value.startswith('HOME=')])
                 self.assertFalse([value for value in argv if value.startswith('PI_CODING_AGENT_DIR=')])
                 self.assertFalse([value for value in argv if value.startswith('XDG_CONFIG_HOME=')])
+
+    def claude_argv(self, bun_options):
+        result = self.run_fixture('claude-code', {'BUN_OPTIONS': bun_options} if bun_options else None,
+                                  drop=None if bun_options else ('BUN_OPTIONS',))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return [line.split('\t', 1)[1] for line in result.stdout.splitlines()
+                if line.startswith('arg\t')]
+
+    def test_claude_launch_carries_the_preload(self):
+        preload = '--preload=' + str(ROOT / 'bend2/scripts/no-agent-summary.js')
+        argv = self.claude_argv(None)
+        self.assertIn('BUN_OPTIONS=' + preload, argv)
+        self.assertLess(argv.index('BUN_OPTIONS=' + preload), argv.index('/usr/bin/claude'))
+
+    def test_claude_launch_appends_to_inherited_bun_options(self):
+        preload = '--preload=' + str(ROOT / 'bend2/scripts/no-agent-summary.js')
+        argv = self.claude_argv('--smol')
+        self.assertIn('BUN_OPTIONS=--smol ' + preload, argv)
+        self.assertEqual(1, len([value for value in argv if value.startswith('BUN_OPTIONS=')]))
+
+    def test_other_harnesses_carry_no_preload(self):
+        for harness in ('omp', 'muse'):
+            with self.subTest(harness=harness):
+                self.assertFalse([value for value in self.argv(harness) if value.startswith('BUN_OPTIONS=')])
+
+    def test_claude_seat_start_writes_the_check_report(self):
+        self.claude_argv(None)
+        report = self.attempt / 'agent-summary-check.json'
+        for _ in range(200):
+            if report.exists():
+                break
+            time.sleep(0.05)
+        self.assertTrue(report.exists(), 'the seat-start check wrote no report')
+        findings = json.loads(report.read_text())['findings']
+        self.assertEqual(['claude-unreadable'], [finding['code'] for finding in findings])
 
     def test_unwritable_omp_profile_store_is_refused(self):
         self.select('omp', UNWRITABLE)

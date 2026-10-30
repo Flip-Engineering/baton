@@ -211,6 +211,8 @@ def stage_adapters(payload, helper_binaries=None):
             name = harness + '-' + suffix + '.mjs'
             shutil.copyfile(ROOT / 'bend2/scripts' / name, directory / name)
     shutil.copyfile(ROOT / 'bend2/scripts/omp-completion.mjs', directory / 'omp-completion.mjs')
+    shutil.copyfile(ROOT / 'bend2/scripts/no-agent-summary.js', directory / 'no-agent-summary.js')
+    shutil.copyfile(ROOT / 'bend2/scripts/agent-summary-check.mjs', directory / 'agent-summary-check.mjs')
     shutil.copytree(ROOT / 'bend2/harness/agy-plugin', directory / 'agy-plugin')
     shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', directory / 'git-series.mjs')
     shutil.copytree(ROOT / 'bend2/harness/git-series-bin', directory / 'git-series-bin')
