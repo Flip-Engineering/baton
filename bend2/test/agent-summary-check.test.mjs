@@ -122,67 +122,115 @@ test('doctor prints the report and exits 0 on a pass, 1 on a finding, 2 on a usa
   const bad = spawnSync(process.execPath, [CHECK, 'doctor', '--claude', fakeClaude(directory, { anchor: false }), '--preload', PRELOAD], { encoding: 'utf8' });
   assert.equal(bad.status, 1, bad.stderr);
   assert.equal(JSON.parse(bad.stdout).findings[0].code, 'anchor-missing');
-  const usage = spawnSync(process.execPath, [CHECK, 'doctor'], { encoding: 'utf8' });
+  const usage = spawnSync(process.execPath, [CHECK, 'unknown'], { encoding: 'utf8' });
   assert.equal(usage.status, 2);
 });
 
-async function waitFor(path) {
-  for (let attempt = 0; attempt < 200 && !existsSync(path); attempt += 1) {
+test('doctor without --claude checks the claude found on PATH', (t) => {
+  const directory = scratch(t);
+  fakeClaude(directory);
+  const run = spawnSync(process.execPath, [CHECK, 'doctor', '--preload', PRELOAD], { encoding: 'utf8', env: { ...process.env, PATH: directory } });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(JSON.parse(run.stdout).claude.path, join(directory, 'claude'));
+  const absent = spawnSync(process.execPath, [CHECK, 'doctor', '--preload', PRELOAD], { encoding: 'utf8', env: { ...process.env, PATH: scratch(t) } });
+  assert.equal(absent.status, 1);
+  assert.equal(JSON.parse(absent.stdout).findings[0].code, 'claude-unreadable');
+});
+
+test('doctor --help prints the usage and exits 0', () => {
+  const help = spawnSync(process.execPath, [CHECK, 'doctor', '--help'], { encoding: 'utf8' });
+  assert.equal(help.status, 0);
+  assert.match(help.stdout, /^usage: baton doctor/);
+});
+
+async function waitUntil(description, condition) {
+  for (let attempt = 0; attempt < 200 && !condition(); attempt += 1) {
     await new Promise((done) => setTimeout(done, 50));
   }
-  assert.ok(existsSync(path), `${path} was not written`);
+  assert.ok(condition(), `${description} did not happen`);
+}
+
+// A stand-in for the Baton CLI. `knowledge record` stores the claim; `knowledge read` returns
+// the stored claims in the wrapper format of the real command. Every call is logged.
+function fakeCoordinator(directory) {
+  const calls = join(directory, 'calls.jsonl');
+  const store = join(directory, 'claims.json');
+  const path = executable(join(directory, 'baton'), `#!${process.execPath}
+const fs = require('node:fs');
+const argv = process.argv.slice(2);
+const claims = () => (fs.existsSync(${JSON.stringify(store)}) ? JSON.parse(fs.readFileSync(${JSON.stringify(store)}, 'utf8')) : []);
+fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({ argv, database: process.env.BATON_DATABASE, session: process.env.BATON_SESSION }) + '\\n');
+if (argv[1] === 'read') {
+  process.stdout.write(JSON.stringify([{ index: 0, action: 'knowledge-read', stdout: JSON.stringify(claims().map((claim) => ({ claim }))) }]));
+} else if (argv[1] === 'record') {
+  fs.writeFileSync(${JSON.stringify(store)}, JSON.stringify([...claims(), argv[argv.indexOf('--claim') + 1]]));
+}
+`);
+  const logged = () => (existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
+  return { path, logged, records: () => logged().filter((call) => call.argv[1] === 'record'), reads: () => logged().filter((call) => call.argv[1] === 'read') };
+}
+
+function seatStart(directory, attempt, claude, coordinator) {
+  const started = spawnSync(process.execPath, [CHECK, 'seat-start', '--claude', claude, '--directory', attempt,
+    '--preload', PRELOAD, '--database', '/state/orchestra.db', '--session', 'seat-1', '--coordinator', coordinator.path], { encoding: 'utf8' });
+  assert.equal(started.status, 0, started.stderr);
 }
 
 test('seat-start returns at once, writes the report and records each finding on the seat', async (t) => {
   const directory = scratch(t);
   const attempt = join(directory, 'attempt');
-  const record = join(directory, 'record.jsonl');
-  executable(join(directory, 'baton'), `#!${process.execPath}
-require('node:fs').appendFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: process.argv.slice(2), database: process.env.BATON_DATABASE, session: process.env.BATON_SESSION }) + '\\n');
-`);
   mkdirSync(attempt);
-  const claude = fakeClaude(directory, { anchor: false });
-  const started = spawnSync(process.execPath, [CHECK, 'seat-start', '--claude', claude, '--directory', attempt,
-    '--preload', PRELOAD, '--database', '/state/orchestra.db', '--session', 'seat-1', '--coordinator', join(directory, 'baton')], { encoding: 'utf8' });
-  assert.equal(started.status, 0, started.stderr);
+  const coordinator = fakeCoordinator(directory);
+  seatStart(directory, attempt, fakeClaude(directory, { anchor: false }), coordinator);
   const reported = join(attempt, REPORT_FILE);
-  await waitFor(reported);
-  await waitFor(record);
+  await waitUntil('the report', () => existsSync(reported));
+  await waitUntil('the finding', () => coordinator.records().length === 1);
   const report = JSON.parse(readFileSync(reported, 'utf8'));
   assert.deepEqual(report.findings.map((finding) => finding.code), ['anchor-missing']);
-  const [recorded] = readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  const [recorded] = coordinator.records();
   assert.deepEqual(recorded.argv.slice(0, 5), ['knowledge', 'record', '--kind', 'finding', '--claim']);
   assert.match(recorded.argv[5], /anchor-missing/);
   assert.equal(recorded.database, '/state/orchestra.db');
   assert.equal(recorded.session, 'seat-1');
 });
 
+test('a failure that persists across launches is recorded once', async (t) => {
+  const directory = scratch(t);
+  const attempt = join(directory, 'attempt');
+  mkdirSync(attempt);
+  const coordinator = fakeCoordinator(directory);
+  const claude = fakeClaude(directory, { anchor: false });
+  seatStart(directory, attempt, claude, coordinator);
+  await waitUntil('the first finding', () => coordinator.records().length === 1);
+  seatStart(directory, attempt, claude, coordinator);
+  await waitUntil('the second check to read the seat findings', () => coordinator.reads().length === 2);
+  await new Promise((done) => setTimeout(done, 300));
+  assert.equal(coordinator.records().length, 1);
+});
+
 test('seat-start records a finding when the attempt directory does not exist', async (t) => {
   const directory = scratch(t);
-  const record = join(directory, 'record.jsonl');
-  executable(join(directory, 'baton'), `#!${process.execPath}
-require('node:fs').appendFileSync(${JSON.stringify(record)}, 'called\\n');
-`);
+  const coordinator = fakeCoordinator(directory);
+  seatStart(directory, join(directory, 'absent'), fakeClaude(directory, { anchor: false }), coordinator);
+  await waitUntil('the finding', () => coordinator.records().length === 1);
+});
+
+test('seat-start without an attempt directory records the finding and writes no report', async (t) => {
+  const directory = scratch(t);
+  const coordinator = fakeCoordinator(directory);
   const started = spawnSync(process.execPath, [CHECK, 'seat-start', '--claude', fakeClaude(directory, { anchor: false }),
-    '--directory', join(directory, 'absent'), '--preload', PRELOAD, '--database', '/state/orchestra.db', '--session', 'seat-1',
-    '--coordinator', join(directory, 'baton')], { encoding: 'utf8' });
+    '--preload', PRELOAD, '--database', '/state/orchestra.db', '--session', 'seat-1', '--coordinator', coordinator.path], { encoding: 'utf8' });
   assert.equal(started.status, 0, started.stderr);
-  await waitFor(record);
-  assert.equal(readFileSync(record, 'utf8'), 'called\n');
+  await waitUntil('the finding', () => coordinator.records().length === 1);
 });
 
 test('seat-start on a passing Claude Code records no finding', async (t) => {
   const directory = scratch(t);
   const attempt = join(directory, 'attempt');
-  const record = join(directory, 'record.jsonl');
-  executable(join(directory, 'baton'), `#!${process.execPath}
-require('node:fs').appendFileSync(${JSON.stringify(record)}, 'called\\n');
-`);
   mkdirSync(attempt);
-  const started = spawnSync(process.execPath, [CHECK, 'seat-start', '--claude', fakeClaude(directory), '--directory', attempt,
-    '--preload', PRELOAD, '--database', '/state/orchestra.db', '--session', 'seat-1', '--coordinator', join(directory, 'baton')], { encoding: 'utf8' });
-  assert.equal(started.status, 0, started.stderr);
-  await waitFor(join(attempt, REPORT_FILE));
+  const coordinator = fakeCoordinator(directory);
+  seatStart(directory, attempt, fakeClaude(directory), coordinator);
+  await waitUntil('the report', () => existsSync(join(attempt, REPORT_FILE)));
   assert.equal(JSON.parse(readFileSync(join(attempt, REPORT_FILE), 'utf8')).ok, true);
-  assert.equal(existsSync(record), false);
+  assert.deepEqual(coordinator.logged(), []);
 });

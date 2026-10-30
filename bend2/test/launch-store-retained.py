@@ -75,14 +75,14 @@ class RetainedStore(unittest.TestCase):
         record = self.root / (self.db.name + '.profile-' + 'store-fixture'.encode().hex())
         record.write_text(' ' + harness + ' main ' + str(store) + '\n')
 
-    def run_fixture(self, harness, extra=None, drop=()):
+    def run_fixture(self, harness, extra=None, drop=(), session=None):
         self.start_owner()
         environment = {**os.environ, 'HOME': str(self.home)}
         for name in drop:
             environment.pop(name, None)
         if extra:
             environment.update(extra)
-        return subprocess.run([str(EXE), str(self.db), str(self.attempt), harness],
+        return subprocess.run([str(EXE), str(self.db), str(self.attempt), harness, *([session] if session else [])],
                               env=environment, text=True, capture_output=True)
 
     def argv(self, harness, extra=None):
@@ -133,9 +133,9 @@ class RetainedStore(unittest.TestCase):
                 self.assertFalse([value for value in argv if value.startswith('PI_CODING_AGENT_DIR=')])
                 self.assertFalse([value for value in argv if value.startswith('XDG_CONFIG_HOME=')])
 
-    def claude_argv(self, bun_options):
+    def claude_argv(self, bun_options, session=None):
         result = self.run_fixture('claude-code', {'BUN_OPTIONS': bun_options} if bun_options else None,
-                                  drop=None if bun_options else ('BUN_OPTIONS',))
+                                  drop=() if bun_options else ('BUN_OPTIONS',), session=session)
         self.assertEqual(result.returncode, 0, result.stderr)
         return [line.split('\t', 1)[1] for line in result.stdout.splitlines()
                 if line.startswith('arg\t')]
@@ -157,16 +157,28 @@ class RetainedStore(unittest.TestCase):
             with self.subTest(harness=harness):
                 self.assertFalse([value for value in self.argv(harness) if value.startswith('BUN_OPTIONS=')])
 
-    def test_claude_seat_start_writes_the_check_report(self):
-        self.claude_argv(None)
+    def check_report(self):
         report = self.attempt / 'agent-summary-check.json'
         for _ in range(200):
             if report.exists():
                 break
             time.sleep(0.05)
         self.assertTrue(report.exists(), 'the seat-start check wrote no report')
-        findings = json.loads(report.read_text())['findings']
+        return json.loads(report.read_text())
+
+    def test_claude_seat_start_writes_the_check_report(self):
+        self.claude_argv(None)
+        findings = self.check_report()['findings']
         self.assertEqual(['claude-unreadable'], [finding['code'] for finding in findings])
+
+    def test_a_resumed_claude_start_carries_the_preload_and_runs_the_check(self):
+        preload = '--preload=' + str(ROOT / 'bend2/scripts/no-agent-summary.js')
+        argv = self.claude_argv(None, session='native-claude-1')
+        self.assertIn('BUN_OPTIONS=' + preload, argv)
+        self.assertEqual('native-claude-1', argv[argv.index('--resume') + 1])
+        findings = self.check_report()['findings']
+        self.assertEqual(['claude-unreadable'], [finding['code'] for finding in findings])
+        # A finding does not stop the launch: the argv above was produced.
 
     def test_unwritable_omp_profile_store_is_refused(self):
         self.select('omp', UNWRITABLE)

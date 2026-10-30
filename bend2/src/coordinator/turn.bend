@@ -1493,18 +1493,25 @@ def claude_environment_if(claude: Bool, +executable: String) -> IO(List<String>)
     case False{}: IO.pure(List<String>,Nil{})
     case True{}: claude_environment(executable)
 
-# A fresh Claude Code seat start also starts the preload check in a detached process
-# (agent-summary-check.mjs seat-start). The check writes its report into the attempt
-# directory and records each finding on the seat; its result never decides the launch.
+# Every Claude Code launch, fresh or resumed, starts the preload check in a detached process
+# (agent-summary-check.mjs seat-start), so a Claude Code update between two turns is checked
+# at the next launch. The check writes its report into the attempt directory and records each
+# finding on the seat once; its result never decides the launch. The direct turn path has no
+# attempt directory, so it passes an empty one and the check writes no report file.
+def claude_seat_check_directory(directory: String) -> List<String>:
+  match directory:
+    case "": Nil{}
+    case other: ["--directory",other]
+
 def claude_seat_check_run(helper: Result<&1,&1,U32 & String,String>, +executable: String, +database: String, +player: String, +cmd: String, +directory: String) -> IO(Unit):
   match helper:
     case Fail{error}: IO.pure(Unit,Unit{})
     case Done{+script}: do IO<Unit>:
-      ran : G.RunRes <- GitProc.runFull(["node",helper_asset(script,"agent-summary-check.mjs"),"seat-start","--claude",cmd,"--directory",directory,"--database",database,"--session",player,"--coordinator",executable],".")
+      ran : G.RunRes <- GitProc.runFull(List.append(&1,String,["node",helper_asset(script,"agent-summary-check.mjs"),"seat-start","--claude",cmd],List.append(&1,String,claude_seat_check_directory(directory),["--database",database,"--session",player,"--coordinator",executable])),".")
       IO.pure(Unit,Unit{})
 
-def claude_seat_check(armed: Bool, +executable: String, +database: String, +player: String, +cmd: String, +directory: String) -> IO(Unit):
-  match armed:
+def claude_seat_check(claude: Bool, +executable: String, +database: String, +player: String, +cmd: String, +directory: String) -> IO(Unit):
+  match claude:
     case False{}: IO.pure(Unit,Unit{})
     case True{}: do IO<Unit>:
       helper : Result<&1,&1,U32 & String,String> <- HostControl.Control.agent_helper(executable)
@@ -1662,7 +1669,7 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
         prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort,dsh_hooks_path(bridge))
         completion_extension : String <- omp_completion_extension(omp,executable)
         claude_entries : List<String> <- claude_environment_if(claude,executable)
-        seat_checked : Unit <- claude_seat_check(Bool.and(claude,String.is_empty(native)),executable,absolute_db,player,cmd,directory)
+        seat_checked : Unit <- claude_seat_check(claude,executable,absolute_db,player,cmd,directory)
         +prefix : String <- IO.pure(String,P.argv(List.append(&1,String,["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory,"BATON_STOP_HOOK=" ++ executable,"BATON_COORDINATOR=" ++ executable,"BATON_DSH_WORKER_BRIDGE=" ++ bridge],claude_entries)) ++ identity_prefix(parts))
         +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
         store : String <- current_store(db,player,harness)
@@ -1742,15 +1749,17 @@ def claude_launch(entries: List<String>, cmd: String, model: String, effort: Str
     case True{}: Claude.start_player(entries,cmd,model,effort,cwd,stderr)
     case False{}: Claude.resume_player(entries,cmd,model,effort,cwd,stderr,session)
 
-def claude_launch_entries(executable: Result<&1,&1,U32 & String,String>) -> IO(List<String>):
+def claude_launch_entries(executable: Result<&1,&1,U32 & String,String>, db: String, player: String, cmd: String) -> IO(List<String>):
   match executable:
     case Fail{error}: IO.pure(List<String>,Nil{})
-    case Done{+path}: claude_environment(path)
+    case Done{+path}: do IO<List<String>>:
+      checked : Unit <- claude_seat_check(True{},path,db,player,cmd,"")
+      claude_environment(path)
 
-def claude_launch_configured(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
+def claude_launch_configured(db: String, player: String, +cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   do IO<Result<&1,&1,U32 & String,U32>>:
     executable : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.executable()
-    entries : List<String> <- claude_launch_entries(executable)
+    entries : List<String> <- claude_launch_entries(executable,db,player,cmd)
     claude_launch(entries,cmd,model,effort,cwd,stderr,session,fresh)
 
 def muse_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, task: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
@@ -1824,7 +1833,7 @@ def launch(+db: String, +player: String, sessions: String, +cmd: String, +model:
     agy_launch(cmd,model,effort,cwd,stderr,session,String.is_empty(session)),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"codex\n"),
     Codex.start_player(cmd,model,effort,cwd,stderr,session,String.is_empty(session)),
-    claude_launch_configured(cmd,model,effort,cwd,stderr,session,String.is_empty(session)))))))
+    claude_launch_configured(db,player,cmd,model,effort,cwd,stderr,session,String.is_empty(session)))))))
 
 # The state the workspace holds when a turn restarts: the work an interrupted
 # turn had already written.

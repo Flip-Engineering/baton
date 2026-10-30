@@ -4,15 +4,18 @@
 // https://gist.github.com/flamerix-ai/c3905705cc4205e5de3011fa2e74efce (MIT), pinned by
 // SHA-256 below. Baton never fetches it at launch.
 //
-//   agent-summary-check.mjs doctor --claude PATH [--preload PATH]
-//     Prints one JSON report and exits 0 when every check passes, 1 when a check reports
-//     a finding, 2 on a usage error.
-//   agent-summary-check.mjs seat-start --claude PATH --directory DIR
+//   agent-summary-check.mjs doctor [--claude PATH] [--preload PATH]
+//     `baton doctor` runs this entry. It prints one JSON report and exits 0 when every check
+//     passes, 1 when a check reports a finding, 2 on a usage error. --claude defaults to
+//     `claude`, found on PATH.
+//   agent-summary-check.mjs seat-start --claude PATH [--directory DIR]
 //         [--preload PATH] [--database DB --session SESSION --coordinator EXECUTABLE]
 //     Starts the same checks in a detached process (the internal seat-run mode) and returns
-//     at once, so a seat launch never waits for them. The detached process writes
-//     DIR/agent-summary-check.json and, for each finding, records one finding on the seat
-//     with `knowledge record`.
+//     at once, so a Claude Code launch never waits for them. The detached process writes
+//     DIR/agent-summary-check.json when DIR is given and records each finding on the seat
+//     with `knowledge record`, unless the seat already has a finding with the same claim.
+//
+// The checks run to completion. A slow start of Claude Code is not a finding.
 //
 // Checks:
 //   1. The preload file is readable and its SHA-256 equals the pinned digest.
@@ -96,13 +99,13 @@ export function resolveCommand(command, env = process.env) {
 
 // Runs the Claude Code binary with the launch environment and reads the preload's log.
 // `claude --version` reaches the Bun runtime, and so the preload, without a model request.
-function probe(claude, preload, env, timeoutMs) {
+// The run ends when the process ends; a slow start on a loaded host is not a finding.
+function probe(claude, preload, env) {
   const directory = mkdtempSync(join(tmpdir(), 'agent-summary-probe-'));
   const log = join(directory, 'preload.log');
   const run = spawnSync(claude, ['--version'], {
     env: { ...env, BUN_OPTIONS: bunOptions(env.BUN_OPTIONS, preload), CC_AGENT_SUMMARY_LOG: log },
     stdio: 'ignore',
-    timeout: timeoutMs,
   });
   let text = '';
   try { text = readFileSync(log, 'utf8'); } catch { /* the preload did not write a log */ }
@@ -125,7 +128,7 @@ function describeProbe(result) {
   return `claude --version ${how}${seen}`;
 }
 
-export function check({ claude, preload = join(HERE, PRELOAD_FILE), env = process.env, timeoutMs = 60000 }) {
+export function check({ claude, preload = join(HERE, PRELOAD_FILE), env = process.env }) {
   const findings = [];
   const report = { claude: { requested: claude, path: null, anchor: null }, preload: { path: preload, sha256: null, loaded: null } };
   let preloadReadable = false;
@@ -152,7 +155,7 @@ export function check({ claude, preload = join(HERE, PRELOAD_FILE), env = proces
     }
   }
   if (preloadReadable && report.claude.path !== null) {
-    const result = probe(report.claude.path, preload, env, timeoutMs);
+    const result = probe(report.claude.path, preload, env);
     report.preload.loaded = result.loaded;
     if (!result.loaded) {
       findings.push({ code: 'preload-not-loaded', detail: `"${ACTIVE_LINE}" was not logged; ${describeProbe(result)}` });
@@ -161,13 +164,30 @@ export function check({ claude, preload = join(HERE, PRELOAD_FILE), env = proces
   return { ok: findings.length === 0, findings, ...report };
 }
 
+// The seat's visible findings are read back so a failure that persists across launches is
+// recorded once. A read that cannot be parsed counts as "not recorded".
+function claims(value) {
+  if (Array.isArray(value)) return value.flatMap(claims);
+  if (value === null || typeof value !== 'object') return [];
+  const nested = typeof value.stdout === 'string' ? claims(JSON.parse(value.stdout)) : [];
+  return typeof value.claim === 'string' ? [value.claim, ...nested] : nested;
+}
+
+function recordedClaims(coordinator, environment) {
+  try {
+    const run = spawnSync(coordinator, ['knowledge', 'read'], { env: environment, encoding: 'utf8' });
+    return run.status === 0 ? claims(JSON.parse(run.stdout)) : [];
+  } catch {
+    return [];
+  }
+}
+
 function recordFinding({ coordinator, database, session, report, finding }) {
-  const claim = `Claude Code agent_summary preload check failed at seat start (${finding.code}): ${finding.detail}`;
+  const claim = `Claude Code agent_summary preload check failed at launch (${finding.code}): ${finding.detail}`;
+  const environment = { ...process.env, BATON_DATABASE: database, BATON_SESSION: session };
+  if (recordedClaims(coordinator, environment).includes(claim)) return false;
   const run = spawnSync(coordinator, ['knowledge', 'record', '--kind', 'finding', '--claim', claim,
-    '--evidence', JSON.stringify(report)], {
-    env: { ...process.env, BATON_DATABASE: database, BATON_SESSION: session },
-    encoding: 'utf8',
-  });
+    '--evidence', JSON.stringify(report)], { env: environment, encoding: 'utf8' });
   return run.status === 0;
 }
 
@@ -176,7 +196,9 @@ function recordFinding({ coordinator, database, session, report, finding }) {
 // recorded. Findings are recorded when the coordinator, database and session are known.
 export function seatCheck({ claude, preload, directory, database, session, coordinator, env = process.env }) {
   const report = check({ claude, ...(preload ? { preload } : {}), env });
-  try { writeFileSync(join(directory, REPORT_FILE), `${JSON.stringify(report)}\n`); } catch { /* directory absent */ }
+  if (directory) {
+    try { writeFileSync(join(directory, REPORT_FILE), `${JSON.stringify(report)}\n`); } catch { /* directory absent */ }
+  }
   if (coordinator && database && session) {
     for (const finding of report.findings) recordFinding({ coordinator, database, session, report, finding });
   }
@@ -194,23 +216,30 @@ function parse(argv) {
   return { mode, options };
 }
 
-const USAGE = 'usage: agent-summary-check.mjs doctor --claude PATH [--preload PATH]\n'
-  + '       agent-summary-check.mjs seat-start --claude PATH --directory DIR [--preload PATH] [--database DB --session SESSION --coordinator EXECUTABLE]\n';
+const USAGE = 'usage: baton doctor [--claude PATH] [--preload PATH]\n'
+  + 'Checks the Claude Code agent_summary preload: the packaged script matches its pinned SHA-256, the Claude Code\n'
+  + 'binary contains "[AgentSummary] Timer fired", and claude --version logs "preload active mode=off" when started\n'
+  + 'with the launch environment. Prints one JSON report. Exit status: 0 no findings, 1 findings, 2 usage error.\n'
+  + '--claude defaults to claude on PATH.\n';
 
 export function main(argv, env = process.env) {
+  if (argv.includes('--help') || argv.includes('-h')) {
+    process.stdout.write(USAGE);
+    return 0;
+  }
   let parsed;
   try { parsed = parse(argv); } catch (error) {
     process.stderr.write(`${error.message}\n${USAGE}`);
     return 2;
   }
   const { mode, options } = parsed;
-  if (mode === 'doctor' && options.claude) {
-    const report = check({ claude: options.claude, ...(options.preload ? { preload: options.preload } : {}), env });
+  if (mode === 'doctor') {
+    const report = check({ claude: options.claude ?? 'claude', ...(options.preload ? { preload: options.preload } : {}), env });
     process.stdout.write(`${JSON.stringify(report)}\n`);
     return report.ok ? 0 : 1;
   }
-  if (mode === 'seat-start' && options.claude && options.directory) {
-    if (!isAbsolute(options.directory)) {
+  if (mode === 'seat-start' && options.claude) {
+    if (options.directory && !isAbsolute(options.directory)) {
       process.stderr.write(`--directory must be absolute.\n${USAGE}`);
       return 2;
     }
@@ -220,7 +249,7 @@ export function main(argv, env = process.env) {
     child.unref();
     return 0;
   }
-  if (mode === 'seat-run' && options.claude && options.directory) {
+  if (mode === 'seat-run' && options.claude) {
     seatCheck({ ...options, env });
     return 0;
   }

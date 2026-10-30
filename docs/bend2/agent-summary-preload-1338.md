@@ -39,7 +39,7 @@ installed package, `bend2/scripts` in a source checkout).
 | Launch path | Code |
 | --- | --- |
 | Retained launch, including the profile-bound route | `Turn.retained_prepare_checked` adds the entry to the `/usr/bin/env` prefix |
-| Direct turn launch | `Turn.claude_launch_configured` passes the entry to `Claude.start_player` and `Claude.resume_player` |
+| Direct turn launch | `Turn.claude_launch_configured` passes the entry to `Claude.start_player` and `Claude.resume_player`; `claude_launch_entries` also starts the seat-start check |
 
 `Claude.bun_options`, `Claude.environment` and `Claude.with_environment` in
 `bend2/src/harness/claude-player.bend` build the entry. `bend2/test/claude-preload-laws.bend` states
@@ -62,28 +62,55 @@ Claude Code.
 Findings carry these codes: `preload-unreadable`, `preload-digest`, `claude-unreadable`,
 `anchor-missing` and `preload-not-loaded`.
 
-`node agent-summary-check.mjs doctor --claude PATH [--preload PATH]` prints one JSON report and exits
-0 when no check reports a finding, 1 when a check does, and 2 on a usage error.
+`baton doctor [--claude PATH] [--preload PATH]` runs the checks and prints one JSON report. The exit
+status is 0 when no check reports a finding, 1 when a check does, and 2 on a usage error. `--claude`
+defaults to the `claude` found on `PATH`. `baton doctor --help` prints the usage.
 
-No `baton doctor` command exists in the Bend tree. This entry is the doctor surface for #1338. A
-`baton doctor` command that calls it is a follow-up.
+`baton doctor` is routed in `bend2/src/host/native-entry.c` (`doctor_entry`), the same way as
+`baton dispatch`: the native entry runs `agent-summary-check.mjs doctor` under the Node runtime that
+`dispatch_runtime` selects (`BATON2_NODE`, a sibling `node`, the bundled Bun, then `node` on `PATH`),
+with the helper found at `../libexec/baton2/` in an installed package and at `../../bend2/scripts/`
+in a source checkout. Every native binary that includes `native-entry.c` accepts the verb. The
+Bend command grammar and the `baton help` action list are unchanged; `baton help` does not list
+`doctor`, because tests pin that usage text.
 
-At seat start, a fresh Claude Code launch (no recorded conversation) runs
+`check-install.py` (`verify_agent_summary_preload`) refuses an installation whose
+`libexec/baton2/agent-summary-check.mjs` is absent or whose `libexec/baton2/no-agent-summary.js`
+differs from the pinned SHA-256.
+
+At every Claude Code launch, fresh or resumed, `Turn.retained_prepare_checked` runs
 `agent-summary-check.mjs seat-start`. That call starts the checks in a detached process and returns
 at once, so the launch does not wait for them and does not depend on their result. The detached
 process writes `agent-summary-check.json` into the attempt directory when the directory exists and
-records each finding on the seat with `baton knowledge record --kind finding`. A Claude Code update
-that removes the anchor shows up at the next seat start or the next `doctor` run; the preload then
-cancels nothing and the session behaves as it did before.
+records each finding on the seat with `baton knowledge record --kind finding`. Before recording, it
+reads the seat's findings with `baton knowledge read` and skips a finding whose claim is already
+there, so a failure that lasts across launches is recorded once. The checks run to completion and
+have no time limit; a slow start of Claude Code on a loaded host is not a finding. A Claude Code
+update that removes the anchor shows up at the next launch or the next `doctor` run; the preload
+then cancels nothing and the session behaves as it did before.
+
+The direct `Turn.launch` path has no attempt directory. It runs the same seat-start check without
+`--directory`, so it records findings and writes no report file.
 
 ## Qualification
 
 Node tests in `bend2/test/agent-summary-check.test.mjs` run the checks against fixture binaries:
 a pass, a missing anchor, a preload that is not loaded, a changed and an unreadable preload, an
-unresolved command, an anchor across a read-block boundary, the exit statuses, and the seat-start
-call with and without findings. No `claude` or `bun` binary exists on the validation host used for
-the first revision, so the real `preload active mode=off` line is verified only on the operator's
-Mac (Claude Code 2.1.312, Bun 1.4.4).
+unresolved command, an anchor across a read-block boundary, the exit statuses, `doctor` with the
+default command and with `--help`, and the seat-start call with and without findings, with and
+without an attempt directory, and with a repeated launch.
 
-`bend2/test/launch-store-retained.py` carries the launch-environment and seat-start report cases. It
-runs against a native build of `bend2/test/launch-store-retained.bend`.
+`bend2/test/native-doctor-runtime.py` compiles the production `native-entry.c` (plain, focused and
+router builds) with a stub runtime and runs `doctor` in an installed layout and in a source layout.
+
+Run against the Claude Code binaries on the validation host (`baton doctor --claude PATH`):
+
+| Binary | Exit | Result |
+| --- | --- | --- |
+| `claude/versions/2.1.310` | 0 | anchor present, preload loaded |
+| `claude/versions/2.1.308` | 0 | anchor present, preload loaded |
+| `claude/versions/2.1.47` | 1 | anchor present, `preload-not-loaded`: `claude --version` exited 0 and logged nothing. This release is older than the 2.1.257 to 2.1.312 range that the script's author lists as tested, and the cause was not investigated. |
+
+`bend2/test/launch-store-retained.py` carries the launch-environment cases (fresh and resumed
+starts) and the seat-start report cases. It runs against a native build of
+`bend2/test/launch-store-retained.bend`.

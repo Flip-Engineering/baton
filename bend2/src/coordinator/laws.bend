@@ -902,7 +902,7 @@ law m2_any_other_harness_launch_reaches_the_claude_adapter:
   for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "claude-code\n", log, task) == Turn.claude_launch_configured(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "claude-code\n", log, task) == Turn.claude_launch_configured(db, player, cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m2_any_other_harness_launch_reaches_the_claude_adapter(db, player, sessions, cmd, model, effort, cwd, stderr, session, log, task):
   {==}
