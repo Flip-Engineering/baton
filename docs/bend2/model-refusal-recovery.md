@@ -31,7 +31,8 @@ The implementation uses the existing coordinator paths:
   conversation, configure its receiver and launch it.
 - `bend2/src/coordinator/commands.bend` routes reports through the recorded
   coordinator chain with `C.Report`.
-- The recovery and coordinator schemas are created through `C.schema()`.
+- `Store.ensure_before_begin` installs `C.schema()` and the recovery tables
+  before each coordinator write transaction.
 
 The current harness adapters do not expose one common native conversation-fork
 operation. The implemented fork-and-continue stage therefore records a
@@ -70,8 +71,9 @@ invokes `baton branch start` three times after the source workspace settles.
 | `turn` | Terminal event identity |
 | `round`, `message` | Branch round and deterministic input identity where applicable |
 
-The table has a unique key on `(recovery, stage, ordinal)`. Replayed observation
-and retry operations therefore keep one attempt record per protocol position.
+Attempt identity is deterministic for `(recovery, stage, ordinal)`. The primary
+key keeps one attempt record per protocol position across replayed observation
+and retry operations.
 
 ## Detection
 

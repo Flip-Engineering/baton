@@ -589,6 +589,7 @@ def rr_begin_recovery(+db: String, +player: String, +turn_id: String, +descripti
 
 def rr_observe_impl(+db: String, +player: String, +turn_id: String, +event: String) -> IO(Unit):
   do IO<Unit>:
+    ensured : Unit <- Store.ensure_refusal_schema(db)
     seen : String <- rr_scalar(db,"SELECT CASE WHEN EXISTS(SELECT 1 FROM refusal_recoveries WHERE source=" ++ C.q(player) ++ " AND initial_turn=" ++ C.q(turn_id) ++ ") OR EXISTS(SELECT 1 FROM refusal_attempts WHERE turn=" ++ C.q(turn_id) ++ ") THEN 1 ELSE 0 END")
     Bool.pick(IO(Unit),String.eq(seen,"1"),IO.pure(Unit,Unit{}),
       (do IO<Unit>:
@@ -662,21 +663,14 @@ def rr_branch_start(+db: String, +recovery: String, +ordinal: U32, +source: Stri
     +reason : String = rr_branch_reason(result)
     Bool.pick(IO(Unit),String.is_empty(reason),rr_record_flush(db,recovery,ordinal,source,ensemble,instruction),rr_finalize_failed(db,recovery,reason))
 
-def rr_flush_ordinals() -> List<U32>:
-  [1,2,3]
-
-def rr_start_flush_ordinals(+db: String, +recovery: String, ordinals: List<U32>, +source: String, +conductor: String, +original: String, +ensemble: String) -> IO(Unit):
-  match ordinals:
-    case Nil{}: rr_finish_flush_setup(db,recovery)
-    case +ordinal <> rest:
-      do IO<Unit>:
-        status : String <- rr_scalar(db,"SELECT status FROM refusal_recoveries WHERE id=" ++ C.q(recovery))
-        Bool.pick(IO(Unit),Bool.not(String.eq(status,"active")),IO.pure(Unit,Unit{}),
-          (do IO<Unit>:
-            existing : String <- rr_scalar(db,"SELECT count(*) FROM refusal_attempts WHERE recovery=" ++ C.q(recovery) ++ " AND stage='fork-and-flush' AND ordinal=" ++ U32.show(ordinal))
-            started : Unit <- Bool.pick(IO(Unit),String.eq(existing,"0"),rr_branch_start(db,recovery,ordinal,source,conductor,original,ensemble),IO.pure(Unit,Unit{}))
-            next : Unit <- rr_start_flush_ordinals(db,recovery,rest,source,conductor,original,ensemble)
-            IO.pure(Unit,Unit{})))
+def rr_start_flush_one(+db: String, +recovery: String, +ordinal: U32, +source: String, +conductor: String, +original: String, +ensemble: String) -> IO(Unit):
+  do IO<Unit>:
+    status : String <- rr_scalar(db,"SELECT status FROM refusal_recoveries WHERE id=" ++ C.q(recovery))
+    Bool.pick(IO(Unit),Bool.not(String.eq(status,"active")),IO.pure(Unit,Unit{}),
+      (do IO<Unit>:
+        existing : String <- rr_scalar(db,"SELECT count(*) FROM refusal_attempts WHERE recovery=" ++ C.q(recovery) ++ " AND stage='fork-and-flush' AND ordinal=" ++ U32.show(ordinal))
+        started : Unit <- Bool.pick(IO(Unit),String.eq(existing,"0"),rr_branch_start(db,recovery,ordinal,source,conductor,original,ensemble),IO.pure(Unit,Unit{}))
+        IO.pure(Unit,Unit{})))
 
 def rr_start_flush(+db: String, +recovery: String) -> IO(Unit):
   do IO<Unit>:
@@ -690,7 +684,10 @@ def rr_start_flush(+db: String, +recovery: String) -> IO(Unit):
         +ensemble : String = "refusal-recovery:" ++ recovery
         recorded : Unit <- rr_write(db,"INSERT OR IGNORE INTO ensembles(id,owner,coupling) VALUES(" ++ C.q(ensemble) ++ "," ++ C.q(conductor) ++ ",'loose');")
         member : Unit <- rr_write(db,"INSERT OR IGNORE INTO ensemble_members(ensemble,session) VALUES(" ++ C.q(ensemble) ++ "," ++ C.q(source) ++ ");")
-        checked : Unit <- rr_start_flush_ordinals(db,recovery,rr_flush_ordinals(),source,conductor,original,ensemble)
+        first : Unit <- rr_start_flush_one(db,recovery,1,source,conductor,original,ensemble)
+        second : Unit <- rr_start_flush_one(db,recovery,2,source,conductor,original,ensemble)
+        third : Unit <- rr_start_flush_one(db,recovery,3,source,conductor,original,ensemble)
+        checked : Unit <- rr_finish_flush_setup(db,recovery)
         IO.pure(Unit,Unit{})),
       rr_finalize_failed(db,recovery,"Refusal fork-and-flush requires a recorded conductor, workspace and harness."))
 

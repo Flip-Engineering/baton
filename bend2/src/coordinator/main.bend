@@ -286,9 +286,9 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       ran : Unit <- Turn.run(db,player,id,cmd,model,effort,cwd,task,log,session)
       collected : Unit <- StoragePolicy.collect_settled(db,session)
       IO.pure(Unit, collected)
-    case C.ObserveFile{id,+player,path}:
+    case C.ObserveFile{+id,+player,path}:
       do IO<Unit>:
-        event : String <- IO.try(String,T.Text.read(path))
+        +event : String <- IO.try(String,T.Text.read(path))
         +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
         run(db,C.Observe{id,player,event,False{},Tx.trim_nl(harness)})
         observed : Unit <- Turn.refusal_observed(db,player,id,event)

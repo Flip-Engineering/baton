@@ -243,7 +243,7 @@ def recovery_observe(db: String, +player: String, +id: String, +outcome: Outcome
   match outcome:
     case Ended{+event,status,error,incomplete}: AgentInput.rr_observe(db,player,id,event)
 
-def refusal_observed(db: String, +player: String, +id: String, +event: String) -> IO(Unit):
+def refusal_observed(+db: String, +player: String, +id: String, +event: String) -> IO(Unit):
   do IO<Unit>:
     observed : Unit <- AgentInput.rr_observe(db,player,id,event)
     advanced : Unit <- AgentInput.rr_after_turn(db,player,id,event)
@@ -293,7 +293,7 @@ def finish_parent(db: String, player: String, id: String, log: String, outcome: 
             output : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN value='' THEN NULL ELSE json(value) END,'error'," ++ C.q(error) ++ ") FROM frame;"))
             T.Text.control_output(output))
 
-def finish(+db: String, +player: String, id: String, log: String, outcome: Outcome, quiet: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def finish(+db: String, +player: String, +id: String, log: String, +outcome: Outcome, quiet: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     finished : Result<&1,&1,U32 & String,Unit> <- finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"),quiet)
