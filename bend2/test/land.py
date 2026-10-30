@@ -31,6 +31,10 @@ class Land(unittest.TestCase):
                             if not key.startswith('GIT_')
                             and key not in ('BATON_SESSION', 'BATON2_GIT_REGISTRY')}
         self.environment.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        # The default series registry lives under HOME; an operator registry would
+        # make a recruit with a fixture model fail its identity check.
+        (self.directory / 'home').mkdir()
+        self.environment['HOME'] = str(self.directory / 'home')
         self.git('init', '-q', '-b', 'main')
         self.git('config', 'user.name', 'Baton test')
         self.git('config', 'user.email', 'baton@example.invalid')
