@@ -1,5 +1,5 @@
 import Base
-import ./repl-schema.bend as Schema
+import ../coordinator/repl-schema.bend as Schema
 import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ../host/sqlite.bend as DB
