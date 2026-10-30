@@ -15,7 +15,7 @@ Every Claude Code process Baton starts runs with a Bun preload that cancels that
 | Source | gist `c3905705cc4205e5de3011fa2e74efce`, file `no-agent-summary.js` |
 | Revision | `4f1ad563fbe4fb830af5dd67fbde4c1860f9caa6` |
 | SHA-256 | `f95df896a998653ee86e7320ae9a29a547add4addd50cf631491dffaa6040b40` |
-| License | MIT, `Copyright (c) 2026 Flamerix AI`, as stated in the file header and the gist README |
+| License | MIT, `Copyright (c) 2026 Flamerix AI`, as stated in the file header and the gist README. The package carries the license text as `notices/no-agent-summary-LICENSE`. |
 | Repository path | `bend2/scripts/no-agent-summary.js` |
 | Installed path | `libexec/baton2/no-agent-summary.js` |
 
@@ -23,6 +23,14 @@ The repository copy is the gist file byte for byte. The script wraps `setTimeout
 calls, and installs only when `Bun.main` is the compiled Claude Code entry. It reads
 `CC_AGENT_SUMMARY_MODE` (`off` by default, `pass` for a control run), `CC_AGENT_SUMMARY_LOG` and
 `CC_AGENT_SUMMARY_MARKER`. Baton never fetches the script at launch.
+
+Revision 4f1ad563 names the MIT license in the script header and in the gist README and does not
+contain the license text (the gist has two files, `README.md` and `no-agent-summary.js`, and its
+comments carry no license text). `docs/bend2/reference/third-party/no-agent-summary-LICENSE` is the
+standard MIT text with the copyright line from the script header. `package-native.py` copies it to
+`notices/no-agent-summary-LICENSE`, records its source, revision and the script digest in the
+manifest term `agent_summary_preload_license`, and names them in `notices/distribution.md`. The
+script bytes are unchanged.
 
 To move to a new revision: review the new script, replace the file, then update `PINNED_SHA256` in
 `bend2/scripts/agent-summary-check.mjs` and the digest in `bend2/test/package-licenses.py`.
@@ -71,8 +79,10 @@ defaults to the `claude` found on `PATH`. `baton doctor --help` prints the usage
 `dispatch_runtime` selects (`BATON2_NODE`, a sibling `node`, the bundled Bun, then `node` on `PATH`),
 with the helper found at `../libexec/baton2/` in an installed package and at `../../bend2/scripts/`
 in a source checkout. Every native binary that includes `native-entry.c` accepts the verb. The
-Bend command grammar and the `baton help` action list are unchanged; `baton help` does not list
-`doctor`, because tests pin that usage text.
+`baton help` lists `doctor` in its action list, and `baton help doctor` prints the same usage text as
+`baton doctor --help` (`help` in `bend2/src/coordinator/agent-actions.bend`;
+`bend2/test/native-doctor-runtime.py` compares the two texts). The global `baton --help` listing in
+`main.bend` does not name `doctor`.
 
 `check-install.py` (`verify_agent_summary_preload`) refuses an installation whose
 `libexec/baton2/agent-summary-check.mjs` is absent or whose `libexec/baton2/no-agent-summary.js`
@@ -94,6 +104,25 @@ The direct `Turn.launch` path has no attempt directory. It runs the same seat-st
 
 ## Qualification
 
+The evidence comes from two different places.
+
+**Launch path (what Baton gives a Claude Code process).**
+
+- `Claude.bun_options`, `Claude.environment` and `Claude.with_environment` are checked as laws in
+  `bend2/test/claude-preload-laws.bend` (queue check-only).
+- `Turn.retained_prepare_checked` adds the entry to the retained `/usr/bin/env` prefix, and
+  `Turn.claude_launch_configured` passes it to the direct spawn. The cases in
+  `bend2/test/launch-store-retained.py` run the real retained composition through a native build of
+  `bend2/test/launch-store-retained.bend`: a fresh and a resumed Claude Code start carry
+  `BUN_OPTIONS=--preload=...`, an inherited `BUN_OPTIONS` stays in front of the preload option, other
+  harnesses carry none, and the seat-start report is written.
+- The Node tests compose the same string in JavaScript (`bunOptions`). That proves the helper's probe
+  environment, not the Bend launch.
+
+**Doctor probe (what the binary does with the option).** `baton doctor` starts the Claude Code
+binary itself with `BUN_OPTIONS` set the way a launch sets it and reads the preload's log. It proves
+that the binary loads the preload. It does not show that a Baton launch composed the option.
+
 Node tests in `bend2/test/agent-summary-check.test.mjs` run the checks against fixture binaries:
 a pass, a missing anchor, a preload that is not loaded, a changed and an unreadable preload, an
 unresolved command, an anchor across a read-block boundary, the exit statuses, `doctor` with the
@@ -102,6 +131,7 @@ without an attempt directory, and with a repeated launch.
 
 `bend2/test/native-doctor-runtime.py` compiles the production `native-entry.c` (plain, focused and
 router builds) with a stub runtime and runs `doctor` in an installed layout and in a source layout.
+`bend2/test/package-licenses.py` checks the packaged preload digest and the license notice.
 
 Run against the Claude Code binaries on the validation host (`baton doctor --claude PATH`):
 
@@ -110,7 +140,3 @@ Run against the Claude Code binaries on the validation host (`baton doctor --cla
 | `claude/versions/2.1.310` | 0 | anchor present, preload loaded |
 | `claude/versions/2.1.308` | 0 | anchor present, preload loaded |
 | `claude/versions/2.1.47` | 1 | anchor present, `preload-not-loaded`: `claude --version` exited 0 and logged nothing. This release is older than the 2.1.257 to 2.1.312 range that the script's author lists as tested, and the cause was not investigated. |
-
-`bend2/test/launch-store-retained.py` carries the launch-environment cases (fresh and resumed
-starts) and the seat-start report cases. It runs against a native build of
-`bend2/test/launch-store-retained.bend`.

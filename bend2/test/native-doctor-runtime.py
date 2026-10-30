@@ -144,6 +144,15 @@ class Doctor(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(result.stdout.startswith('usage: baton doctor'))
 
+    def test_help_action_lists_doctor_with_the_helper_usage(self):
+        source = (ROOT / 'bend2/src/coordinator/agent-actions.bend').read_text()
+        self.assertIn('repl, clear-stop, doctor.\\nBaton resolves', source)
+        line = next(row for row in source.splitlines() if row.lstrip().startswith('case "doctor": "'))
+        literal = line.split('case "doctor": ', 1)[1]
+        text = json.loads(literal)
+        result = self.run_doctor(self.installed(), '--help')
+        self.assertEqual(text, result.stdout)
+
     def test_missing_helper_names_the_installation_problem(self):
         executable = self.root / 'bare/bin/baton'
         executable.parent.mkdir(parents=True)

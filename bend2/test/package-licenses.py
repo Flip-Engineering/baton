@@ -39,6 +39,9 @@ class PackageLicenses(unittest.TestCase):
         reference = self.source / 'docs/bend2/reference/upstream/LICENSE'
         reference.parent.mkdir(parents=True)
         shutil.copyfile(ROOT / 'docs/bend2/reference/upstream/LICENSE', reference)
+        preload_license = self.source / 'docs/bend2/reference/third-party/no-agent-summary-LICENSE'
+        preload_license.parent.mkdir(parents=True)
+        shutil.copyfile(ROOT / 'docs/bend2/reference/third-party/no-agent-summary-LICENSE', preload_license)
         self.payload = self.home / 'artifact'
         self.payload.mkdir()
         previous = PACKAGE.ROOT
@@ -242,6 +245,18 @@ class PackageLicenses(unittest.TestCase):
         self.assertIsNone(terms['baton_root_license'])
         self.assert_project_document(terms, 'baton_root_notice', 'NOTICE', data)
         self.assertIn('no root LICENSE', (self.payload / 'notices/distribution.md').read_text())
+
+    def test_agent_summary_preload_license_text_is_packaged_with_its_source(self):
+        terms = PACKAGE.stage_notices(self.payload, [])
+        entry = terms['agent_summary_preload_license']
+        text = (self.payload / entry['path']).read_text()
+        self.assertTrue(text.startswith('MIT License\n\nCopyright (c) 2026 Flamerix AI'))
+        self.assertIn('Permission is hereby granted, free of charge', text)
+        self.assertIn('THE SOFTWARE IS PROVIDED "AS IS"', text)
+        self.assertEqual(entry['revision'], '4f1ad563fbe4fb830af5dd67fbde4c1860f9caa6')
+        self.assertEqual(entry['script_sha256'], 'f95df896a998653ee86e7320ae9a29a547add4addd50cf631491dffaa6040b40')
+        distribution = (self.payload / 'notices/distribution.md').read_text()
+        self.assertIn(entry['source'] + ' revision ' + entry['revision'], distribution)
 
     def test_changed_upstream_license_refuses_staging(self):
         self.document('docs/bend2/reference/upstream/LICENSE', b'Changed upstream license\n')
