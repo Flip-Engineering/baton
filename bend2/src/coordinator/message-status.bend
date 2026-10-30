@@ -27,8 +27,10 @@ def read_sql(+row: String) -> String:
 # A public read of an owned message records the read event itself. An active
 # attempt binds its own attempt and native witness before this path is reached;
 # this row is the recipient's CLI read, so it uses the stable CLI identity.
+# Keep the returned JSON rows first so each complete read resolves the stored
+# message through its primary key while the write transaction is held.
 def cli_read_sql(+session: String, saved: String) -> String:
-  "BEGIN IMMEDIATE;INSERT INTO message_reads(attempt,message,recipient,native,identity) SELECT 'cli',m.id,m.recipient,coalesce((SELECT s.native FROM sessions s WHERE s.id=m.recipient),''),'cli' FROM json_each(" ++ q(saved) ++ ") j JOIN messages m ON m.id=coalesce(json_extract(j.value,'$.delivery.id'),json_extract(j.value,'$.id')) WHERE m.recipient=" ++ q(session)
+  "BEGIN IMMEDIATE;INSERT INTO message_reads(attempt,message,recipient,native,identity) SELECT 'cli',m.id,m.recipient,coalesce((SELECT s.native FROM sessions s WHERE s.id=m.recipient),''),'cli' FROM json_each(" ++ q(saved) ++ ") j CROSS JOIN messages m ON m.id=coalesce(json_extract(j.value,'$.delivery.id'),json_extract(j.value,'$.id')) WHERE m.recipient=" ++ q(session)
   ++ " AND m.recipient=coalesce(json_extract(j.value,'$.delivery.recipient'),json_extract(j.value,'$.recipient')) AND m.body=coalesce(json_extract(j.value,'$.delivery.body'),json_extract(j.value,'$.body'))"
   ++ " AND ((json_extract(j.value,'$.status')='found' AND json_type(j.value,'$.delivery')='object') OR (json_extract(j.value,'$.status') IS NULL AND json_type(j.value,'$.body')='text')) ON CONFLICT(attempt,identity,message) DO NOTHING;"
   ++ "DELETE FROM wake_claims WHERE session=" ++ q(session) ++ " AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.recipient=" ++ q(session) ++ " AND " ++ owed_sql("m") ++ ");COMMIT;"
@@ -59,7 +61,7 @@ def current_sql(session: String, directory: String) -> String:
 
 def record_sql(+session: String, +directory: String, +attempt: String, +native: String, identity: String, saved: String, +read: Bool) -> String:
   "BEGIN IMMEDIATE;INSERT INTO message_reads(attempt,message,recipient,native,identity) SELECT " ++ q(attempt) ++ ",m.id,m.recipient," ++ q(native) ++ "," ++ q(identity)
-  ++ " FROM json_each(" ++ q(saved) ++ ") j JOIN messages m ON m.id=" ++ exposed(read,"id")
+  ++ " FROM json_each(" ++ q(saved) ++ ") j CROSS JOIN messages m ON m.id=" ++ exposed(read,"id")
   ++ " JOIN executions e ON e.session=m.recipient JOIN sessions s ON s.id=e.session WHERE " ++ found(read)
   ++ " AND m.recipient=" ++ q(session) ++ " AND m.recipient=" ++ exposed(read,"recipient") ++ " AND m.body=" ++ exposed(read,"body")
   ++ " AND e.id=" ++ q(attempt) ++ " AND e.directory=" ++ q(directory) ++ " AND e.phase='running' AND s.native=" ++ q(native)
@@ -107,7 +109,7 @@ def prompt_selection_sql(+session: String, +cursor: String) -> String:
 # The admitted complete prompt supplies the exact stored header and body.
 def prompt_record_sql(+session: String, +attempt: String, +native: String, identity: String, +input: String) -> String:
   "BEGIN IMMEDIATE;INSERT INTO message_reads(attempt,message,recipient,native,identity) SELECT " ++ q(attempt) ++ ",m.id,m.recipient," ++ q(native) ++ "," ++ q(identity)
-  ++ " FROM json_each(json_extract(" ++ q(input) ++ ",'$.inputMessages')) selected JOIN messages m ON m.id=selected.value JOIN executions e ON e.session=m.recipient JOIN sessions s ON s.id=e.session WHERE selected.type='text' AND m.recipient=" ++ q(session)
+  ++ " FROM json_each(json_extract(" ++ q(input) ++ ",'$.inputMessages')) selected CROSS JOIN messages m ON m.id=selected.value JOIN executions e ON e.session=m.recipient JOIN sessions s ON s.id=e.session WHERE selected.type='text' AND m.recipient=" ++ q(session)
   ++ " AND e.id=" ++ q(attempt) ++ " AND s.native=" ++ q(native)
   ++ " AND json_extract(" ++ q(input) ++ ",'$.session')=" ++ q(session) ++ " AND json_extract(" ++ q(input) ++ ",'$.attempt')=" ++ q(attempt)
   ++ " AND CASE WHEN json_extract(" ++ q(input) ++ ",'$.direct') THEN m.id=" ++ q(attempt ++ ":task-input") ++ " ELSE m.seq<=CAST(json_extract(" ++ q(input) ++ ",'$.cursor') AS INTEGER) END"
@@ -126,7 +128,7 @@ def codex_identity(native: String, turn: String) -> String:
 
 def codex_record_sql(+session: String, +native: String, +turn: String, saved: String, +read: Bool) -> String:
   "BEGIN IMMEDIATE;INSERT INTO message_reads(attempt,message,recipient,native,identity) SELECT " ++ q(codex_attempt(turn)) ++ ",m.id,m.recipient," ++ q(native) ++ "," ++ codex_identity(native,turn)
-  ++ " FROM json_each(" ++ q(saved) ++ ") j JOIN messages m ON m.id=" ++ exposed(read,"id") ++ " JOIN sessions s ON s.id=m.recipient WHERE " ++ found(read)
+  ++ " FROM json_each(" ++ q(saved) ++ ") j CROSS JOIN messages m ON m.id=" ++ exposed(read,"id") ++ " JOIN sessions s ON s.id=m.recipient WHERE " ++ found(read)
   ++ " AND m.recipient=" ++ q(session) ++ " AND m.recipient=" ++ exposed(read,"recipient") ++ " AND m.body=" ++ exposed(read,"body")
   ++ " AND s.native=" ++ q(native) ++ " AND s.harness='codex' AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=s.id)"
   ++ " AND NOT EXISTS(SELECT 1 FROM messages terminal WHERE terminal.id=" ++ q("codex-inbox-turn:" ++ session ++ ":" ++ native ++ ":" ++ turn) ++ " AND terminal.sender=s.id AND terminal.kind='report')"
