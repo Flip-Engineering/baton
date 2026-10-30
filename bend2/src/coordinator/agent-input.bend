@@ -462,7 +462,9 @@ def rr_prefix(+text: String, +marker: String) -> Bool:
   String.starts_with(String.trim_start(String.to_lower(text)),marker)
 
 def rr_is_refusal(+text: String) -> Bool:
-  Bool.or(rr_prefix(text,"i can't help"),Bool.or(rr_prefix(text,"i cannot help"),Bool.or(rr_prefix(text,"i can't assist"),Bool.or(rr_prefix(text,"i cannot assist"),Bool.or(rr_prefix(text,"i must decline"),Bool.or(rr_prefix(text,"i won't help"),Bool.or(rr_prefix(text,"i will not help"),Bool.or(rr_prefix(text,"i'm unable to help"),Bool.or(rr_prefix(text,"i am unable to help"),False{})))))))))
+  +normalized : String = String.trim_start(String.to_lower(text))
+  Bool.and(Bool.not(String.starts_with(normalized,"i can't help but")),
+    Bool.or(rr_prefix(normalized,"i can't help"),Bool.or(rr_prefix(normalized,"i cannot help"),Bool.or(rr_prefix(normalized,"i can't assist"),Bool.or(rr_prefix(normalized,"i cannot assist"),Bool.or(rr_prefix(normalized,"i must decline"),Bool.or(rr_prefix(normalized,"i won't help"),Bool.or(rr_prefix(normalized,"i will not help"),Bool.or(rr_prefix(normalized,"i'm unable to help"),Bool.or(rr_prefix(normalized,"i am unable to help"),Bool.or(rr_prefix(normalized,"i'm sorry, but i can't"),Bool.or(rr_prefix(normalized,"i'm sorry, but i cannot"),Bool.or(rr_prefix(normalized,"i’m sorry, but i can’t"),Bool.or(rr_prefix(normalized,"i’m sorry, but i cannot"),False{}))))))))))))))
 
 def rr_refusal_description(+db: String, +event: String) -> IO(String):
   do IO<String>:
@@ -507,8 +509,9 @@ def rr_report_sent(+db: String, +recovery: String, +id: String, result: Result<&
 def rr_send_report(+db: String, +recovery: String, +body: String) -> IO(Bool):
   do IO<Bool>:
     +source : String <- rr_scalar(db,"SELECT source FROM refusal_recoveries WHERE id=" ++ C.q(recovery))
+    +conductor : String <- rr_scalar(db,"SELECT conductor FROM refusal_recoveries WHERE id=" ++ C.q(recovery))
     +id : String = "refusal-result:" ++ recovery
-    sent : Result<&1,&1,U32 & String,String> <- Store.apply_through_busy(db,C.Report{id,source,body})
+    sent : Result<&1,&1,U32 & String,String> <- Store.apply_through_busy(db,C.Message{id,source,conductor,"report",body})
     rr_report_sent(db,recovery,id,sent)
 
 def rr_finalize_failed(+db: String, +recovery: String, +cause: String) -> IO(Unit):
