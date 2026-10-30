@@ -1,5 +1,5 @@
 import Base
-import ../coordinator/repl-schema.bend as ReplSchema
+import ./repl-schema.bend as ReplSchema
 import ../coordinator/message-status.bend as MessageStatus
 import ./log-schema.bend as LogSchema
 
