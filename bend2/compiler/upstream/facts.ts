@@ -159,12 +159,20 @@ import { createHash } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 
 
+// Facts are only added to a snapshot, so a snapshot whose sizes are unchanged
+// since its last digest holds the same facts and has the same digest.
+const DIGESTS = new WeakMap<Snapshot, { sizes: string; value: string }>();
 export function digest(facts: Snapshot): string {
+  const sizes = KINDS.map(kind => facts[kind].size).join(",");
+  const known = DIGESTS.get(facts);
+  if (known !== undefined && known.sizes === sizes) return known.value;
   const hash = createHash("sha256");
   for (const kind of KINDS) {
     hash.update(JSON.stringify([kind, [...facts[kind]].sort()]));
   }
-  return hash.digest("hex");
+  const value = hash.digest("hex");
+  DIGESTS.set(facts, { sizes, value });
+  return value;
 }
 
 // Edges point to callees. Components are numbered after their callees so a

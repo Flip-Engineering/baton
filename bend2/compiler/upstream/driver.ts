@@ -185,19 +185,24 @@ class Worker {
 // units in turn across fact barriers, and stop when emission ends.
 class Pool implements Workers {
   private idle: Worker[] = [];
+  // The resident size of each idle worker, read when it became idle. An idle
+  // worker runs no unit, so the order of idle workers uses these sizes.
+  private sizes = new Map<Worker, number>();
   private started: Worker[] = [];
   private largest: number | null = null;
   constructor(readonly program: Prepared) {}
 
   private order(): Worker[] {
-    const size = new Map(this.idle.map(worker => [worker, resident(worker.pid) ?? 0]));
-    return this.idle.sort((a, b) => size.get(a)! - size.get(b)!);
+    return this.idle.sort((a, b) => this.sizes.get(a)! - this.sizes.get(b)!);
   }
   next(): { pid: number | undefined } | null { return this.order()[0] ?? null; }
   baseline(): number | null { return this.largest; }
 
   take(): Worker {
-    return this.order().shift() ?? this.start();
+    const worker = this.order().shift();
+    if (worker === undefined) return this.start();
+    this.sizes.delete(worker);
+    return worker;
   }
   private start(): Worker {
     const worker = new Worker(this.program);
@@ -205,7 +210,11 @@ class Pool implements Workers {
     worker.started().then(() => { this.largest = Math.max(this.largest ?? 0, worker.startup!); }, () => {});
     return worker;
   }
-  put(worker: Worker): void { if (worker.usable) this.idle.push(worker); }
+  put(worker: Worker): void {
+    if (!worker.usable) return;
+    this.sizes.set(worker, resident(worker.pid) ?? 0);
+    this.idle.push(worker);
+  }
 
   retirable(): number { return this.order().slice(1).reduce((sum, worker) => sum + (resident(worker.pid) ?? 0), 0); }
 
@@ -213,6 +222,7 @@ class Pool implements Workers {
     if (this.idle.length < 2) return false;
     const worker = this.order().pop()!;
     this.idle = this.idle.filter(other => other !== worker);
+    this.sizes.delete(worker);
     await worker.finish();
     return true;
   }
@@ -220,6 +230,7 @@ class Pool implements Workers {
   async close(): Promise<void> {
     const workers = this.started.splice(0);
     this.idle = [];
+    this.sizes.clear();
     const results = await Promise.allSettled(workers.map(worker => worker.finish()));
     const errors = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
     if (errors.length === 1) throw errors[0];
