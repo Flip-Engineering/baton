@@ -33,6 +33,10 @@ DARWIN_SDK_TREE_SHA256 = 'b6924d0319fefa3d5c7f218dcaf25898d46ea33c50f6c7ea4e0f43
 COMPILER_ARCHIVE_URL = 'https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz'
 COMPILER_LICENSE_URL = 'https://raw.githubusercontent.com/bendlang/bend/v2.0.25/LICENSE'
 COMPILER_LICENSE_SHA256 = '0beb288abd3d067e231f3fbe7df1f8ee37344061fc67f22018150a19e4b26c35'
+# The agent_summary preload (#1338): source gist, revision and script digest.
+AGENT_SUMMARY_PRELOAD_SOURCE = 'https://gist.github.com/flamerix-ai/c3905705cc4205e5de3011fa2e74efce'
+AGENT_SUMMARY_PRELOAD_REVISION = '4f1ad563fbe4fb830af5dd67fbde4c1860f9caa6'
+AGENT_SUMMARY_PRELOAD_SHA256 = 'f95df896a998653ee86e7320ae9a29a547add4addd50cf631491dffaa6040b40'
 
 
 def require(condition, message):
@@ -211,6 +215,8 @@ def stage_adapters(payload, helper_binaries=None):
             name = harness + '-' + suffix + '.mjs'
             shutil.copyfile(ROOT / 'bend2/scripts' / name, directory / name)
     shutil.copyfile(ROOT / 'bend2/scripts/omp-completion.mjs', directory / 'omp-completion.mjs')
+    shutil.copyfile(ROOT / 'bend2/scripts/no-agent-summary.js', directory / 'no-agent-summary.js')
+    shutil.copyfile(ROOT / 'bend2/scripts/agent-summary-check.mjs', directory / 'agent-summary-check.mjs')
     shutil.copytree(ROOT / 'bend2/harness/agy-plugin', directory / 'agy-plugin')
     shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', directory / 'git-series.mjs')
     shutil.copytree(ROOT / 'bend2/harness/git-series-bin', directory / 'git-series-bin')
@@ -598,7 +604,20 @@ def stage_notices(payload, compiler_notices, kind='development'):
         destination = directory / 'compiler-archive' / path
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(data)
+    preload_license = ROOT / 'docs/bend2/reference/third-party/no-agent-summary-LICENSE'
+    require(preload_license.is_file(), 'The agent_summary preload license text is missing')
+    shutil.copyfile(preload_license, directory / 'no-agent-summary-LICENSE')
+    terms['agent_summary_preload_license'] = {'path': 'notices/no-agent-summary-LICENSE',
+                                              'source': AGENT_SUMMARY_PRELOAD_SOURCE,
+                                              'revision': AGENT_SUMMARY_PRELOAD_REVISION,
+                                              'script_sha256': AGENT_SUMMARY_PRELOAD_SHA256}
     distribution.extend([
+        'no-agent-summary-LICENSE is the MIT license text for libexec/baton2/no-agent-summary.js, '
+        'copyright 2026 Flamerix AI, from ' + AGENT_SUMMARY_PRELOAD_SOURCE + ' revision '
+        + AGENT_SUMMARY_PRELOAD_REVISION + ' (script sha256 ' + AGENT_SUMMARY_PRELOAD_SHA256 + ').',
+        'That revision names the MIT license in the script header and the gist README and does not '
+        'carry the license text; no-agent-summary-LICENSE is the standard MIT text with the copyright '
+        'line from the script header.',
         'bend-2.0.25-LICENSE is the pinned upstream compiler/runtime license at ' + COMPILER_LICENSE_URL + '.',
         'bend-reference-LICENSE applies to the separately pinned Bend reference.',
         'compiler-archive/ retains license and notice files found in the verified Bend archive.'])

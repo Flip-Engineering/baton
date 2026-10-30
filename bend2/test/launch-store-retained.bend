@@ -1,6 +1,8 @@
 # Retained-launch regression for the OMP and Muse configured store binding
-# (#933). It drives the real retained composition with a profile record and
-# prints the final argv. No provider or credential is contacted.
+# (#933) and the Claude Code launch environment (#1338). It drives the real
+# retained composition with a profile record and prints the final argv. No
+# provider or credential is contacted. An optional fourth argument names the
+# recorded native conversation, so the launch resumes it.
 import Base
 import ../src/coordinator/turn.bend as Turn
 import ../src/coordinator/accounts.bend as Accounts
@@ -28,7 +30,7 @@ def prepared(result: Result<&1,&1,U32 & String,Turn.RetainedLaunch>) -> IO(Unit)
     case Done{+launch}: print_launch(launch)
 
 def fixture_command(+harness: String) -> String:
-  Bool.pick(String,String.eq(harness,"omp"),"/usr/bin/omp","/usr/bin/muse")
+  Bool.pick(String,String.eq(harness,"omp"),"/usr/bin/omp",Bool.pick(String,String.eq(harness,"claude-code"),"/usr/bin/claude","/usr/bin/muse"))
 
 def setup(+db: String, +directory: String, +harness: String) -> IO(Unit):
   do IO<Unit>:
@@ -37,10 +39,10 @@ def setup(+db: String, +directory: String, +harness: String) -> IO(Unit):
     seated : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"INSERT INTO sessions(id,parent,harness,model,effort,workspace) VALUES('store-fixture',NULL," ++ C.q(harness) ++ ",'deepseek/deepseek-flash','max','/fixture/workspace');INSERT INTO executions(session,id,mode,directory,phase,status) VALUES('store-fixture','receive:store-fixture:1','retained'," ++ C.q(directory) ++ ",'starting','');")
     IO.pure(Unit,Unit{})
 
-def prepare(+db: String, +directory: String, +harness: String) -> IO(Unit):
+def prepare(+db: String, +directory: String, +harness: String, +session: String) -> IO(Unit):
   do IO<Unit>:
     setup(db,directory,harness)
-    result : Result<&1,&1,U32 & String,Turn.RetainedLaunch> <- Turn.retained_prepare(db,"store-fixture",directory,fixture_command(harness),"deepseek/deepseek-flash","max","",harness ++ "\n",db ++ ".sessions","fixture prompt","default",False{},"")
+    result : Result<&1,&1,U32 & String,Turn.RetainedLaunch> <- Turn.retained_prepare(db,"store-fixture",directory,fixture_command(harness),"deepseek/deepseek-flash","max",session,harness ++ "\n",db ++ ".sessions","fixture prompt","default",False{},"")
     prepared(result)
 
 def print_witness(witness: Result<&1,&1,U32 & String,String>) -> IO(Unit):
@@ -55,7 +57,8 @@ def run(args: List<String>) -> IO(Unit):
     case "--instance-witness" <> +db <> Nil{}: do IO<Unit>:
       witness : Result<&1,&1,U32 & String,String> <- Custody.Instance.owner_witness(db)
       print_witness(witness)
-    case +db <> +directory <> +harness <> Nil{}: prepare(db,directory,harness)
+    case +db <> +directory <> +harness <> Nil{}: prepare(db,directory,harness,"")
+    case +db <> +directory <> +harness <> +session <> Nil{}: prepare(db,directory,harness,session)
     case other: IO.die(Unit,2,"usage: launch-store-retained DB DIRECTORY HARNESS | --instance-owner DB | --instance-shutdown DB")
 
 def main() -> IO(Unit):
