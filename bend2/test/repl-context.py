@@ -120,7 +120,7 @@ class ReplContext(unittest.TestCase):
     def test_pure_context_value_is_resolved_completely(self):
         context = '{"topic":"compiler","facts":["λ", "complete context"]}'
         result = self.repl('author', 'eval', json.dumps(context, ensure_ascii=False),
-                           '--label', 'task-context')
+                           '--type', 'String', '--label', 'task-context')
         cell = json.loads(result.stdout)['cells'][0]
         self.share(cell['reference'])
         resolved = self.resolve('recipient', self.cite(cell['reference'])['citation'])
