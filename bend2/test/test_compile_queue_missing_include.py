@@ -69,10 +69,15 @@ class QueueMissingInputDiagnostics(unittest.TestCase):
         self.assertIn("realpath " + str(self.root / "absent.bend") + ": No such file or directory", result.stderr)
 
     def test_an_include_outside_the_root_is_still_refused(self):
-        outside = pathlib.Path(self.temporary.name).parent / "outside-queue-include.h"
-        outside.write_text("int outside;\n")
-        self.addCleanup(outside.unlink)
-        (self.generated / "baton2.c").write_text('#include "../../%s"\nint main(void){return 0;}\n' % outside.name)
+        # A private directory outside the source root holds the header; nothing shared is written.
+        outside = tempfile.TemporaryDirectory(prefix="queue-outside-include-")
+        self.addCleanup(outside.cleanup)
+        descriptor, name = tempfile.mkstemp(suffix=".h", dir=outside.name)
+        os.close(descriptor)
+        header = pathlib.Path(name)
+        header.write_text("int outside;\n")
+        target = os.path.relpath(header, self.generated)
+        (self.generated / "baton2.c").write_text('#include "%s"\nint main(void){return 0;}\n' % target)
         result = self.key(self.generated / "baton2.c")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("source path outside root", result.stderr)
