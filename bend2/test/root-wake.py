@@ -137,6 +137,7 @@ class RootWake(unittest.TestCase):
 
     close_children = receive.Receive.close_children
     owned_processes = receive.Receive.owned_processes
+    process_names = receive.Receive.process_names
 
     @classmethod
     def setUpClass(cls):
@@ -248,7 +249,7 @@ class RootWake(unittest.TestCase):
                                   self.diagnostics)
 
     def diagnostics(self):
-        return wake_wait.evidence(self.directory, self.db, self.owned_processes, self.rows)
+        return wake_wait.evidence(self.directory, self.db, self.owned_processes(), self.rows)
 
     def busy_environment(self, name):
         marker = self.directory / (name + '.busy')

@@ -165,6 +165,85 @@ class Termination(unittest.TestCase):
         self.assertIn('KeyboardInterrupt', result.stderr)
 
 
+class RootWakeFixture(unittest.TestCase):
+    """The wait and the cleanup through RootWake itself, with a stand-in coordinator
+    executable that only implements --instance-owner and --instance-shutdown."""
+
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location('root_wake_fixture',
+                                                      ROOT / 'bend2/test/root-wake.py')
+        self.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.module)
+        (ROOT / '.scratch/bend2').mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(prefix='root-wake-exe-', dir=ROOT / '.scratch/bend2')
+        self.addCleanup(temporary.cleanup)
+        self.bin = pathlib.Path(temporary.name)
+        self.marker = self.bin / 'shutdown.marker'
+        self.pidfile = self.bin / 'owner.pid'
+        self.executable = self.bin / 'baton2'
+        self.executable.write_text(textwrap.dedent(f'''\
+            #!/bin/sh
+            case "$1" in
+              --instance-owner) trap 'exit 0' TERM; while :; do sleep 0.1; done ;;
+              --instance-shutdown) echo "$2" >> {self.marker}; kill -TERM "$(cat {self.pidfile})" ;;
+            esac
+            '''))
+        self.executable.chmod(0o755)
+        self.module.EXE = self.executable
+        self.module.receive.EXE = self.executable
+        self.case = self.module.RootWake('test_a_claude_player_wakes_through_the_same_receive_endpoint')
+        self.case.setUp()
+        self.addCleanup(self.case.tearDown)
+        self.owner = None
+
+    def start_owner(self):
+        self.owner = subprocess.Popen([str(self.executable), '--instance-owner', str(self.case.db)])
+        self.addCleanup(lambda: (self.owner.kill(), self.owner.wait()))
+        self.pidfile.write_text(str(self.owner.pid))
+        deadline = 0
+        while not self.case.owned_processes():
+            deadline += 1
+            self.assertLess(deadline, 2000, 'the stand-in owner never appeared in the fixture table')
+            subprocess.run(['sleep', '0.005'])
+
+    def test_a_fixture_with_no_process_fails_with_evidence_through_eventually(self):
+        with self.assertRaises(AssertionError) as raised:
+            self.case.eventually(lambda: False, 'the root did not start a second turn.')
+        text = str(raised.exception)
+        self.assertIn('the root did not start a second turn.', text)
+        self.assertIn('no process left', text)
+        self.assertIn('processes: []', text)
+
+    def test_an_idle_owner_alone_is_a_stall(self):
+        self.start_owner()
+        self.assertEqual(len(self.case.owned_processes()), 1)
+        with self.assertRaises(AssertionError) as raised:
+            self.case.eventually(lambda: False, 'the second turn never started.')
+        self.assertIn('--instance-owner', str(raised.exception))
+
+    def test_cleanup_stops_the_owner_through_the_supported_command(self):
+        self.start_owner()
+        self.case.cleanup_fixture()
+        self.assertEqual(self.marker.read_text().strip(), str(self.case.db))
+        self.assertEqual(self.owner.wait(timeout=30), 0)
+        self.assertEqual(self.case.owned_processes(), [])
+
+    def test_a_live_non_owner_process_is_waited_for(self):
+        self.start_owner()
+        live = subprocess.Popen(['sh', '-c', 'sleep 0.3', 'native fixture', str(self.case.directory)])
+        self.addCleanup(lambda: (live.kill(), live.wait()))
+        calls = []
+
+        def observation():
+            calls.append(1)
+            return len(calls) >= 4
+
+        stand_in = lambda: [{'pid': live.pid, 'command': f'native fixture {self.case.directory}'}] \
+            if len(calls) < 3 else self.case.owned_processes()
+        self.assertTrue(self.module.wake_wait.wait_for(observation, 'slow recovery', stand_in,
+                                                      self.case.db, self.case.diagnostics, interval=0))
+
+
 class Driver(unittest.TestCase):
     def test_the_selected_test_driver_returns_and_saves_a_stalled_wake_failure(self):
         with tempfile.TemporaryDirectory(prefix='wake-driver-') as name:
