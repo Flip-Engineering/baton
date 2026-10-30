@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const RELAY = resolve(new URL('../scripts/codex-root-relay.mjs', import.meta.url).pathname);
 
@@ -18,6 +19,14 @@ function executable(path, source) {
   writeFileSync(path, source);
   chmodSync(path, 0o755);
   return path;
+}
+
+function rootThreadLockIsBusy(path) {
+  const lockProgram = process.platform === 'darwin' ? 'lockf' : 'flock';
+  const lockArgs = process.platform === 'darwin'
+    ? ['-k', '-t', '0', path, process.execPath, '-e', 'process.exit(0)']
+    : ['--exclusive', '--nonblock', path, process.execPath, '-e', 'process.exit(0)'];
+  return spawnSync(lockProgram, lockArgs, { encoding: 'utf8' }).status !== 0;
 }
 
 function fakeSsh(path) {
@@ -91,7 +100,8 @@ const NOTICE = "Message (completion-request) from lead [id: request-1]:\nFull bo
 // A fake Codex CLI. 'queue' records the message. 'app-server proxy' answers the
 // app-server protocol from a state directory. ROOT_RELAY_APP_MODE selects when
 // the queued message appears as a user message: 'consume' after two history
-// reads, 'never' not at all, 'first-never' not at all for thread-1, 'loads-late' lists the thread as loaded from the
+// reads, 'never' not at all, 'owner-waits' hides a queued item from its owner,
+// 'first-never' not at all for thread-1, 'loads-late' lists the thread as loaded from the
 // fourth request on, 'no-upgrade' closes without answering the Upgrade request
 // (what the proxy does for a non-WebSocket byte stream), 'drop-once' ends the first proxy that is asked for history
 // after the queue without replying. History starts with an earlier notice
@@ -155,12 +165,13 @@ function handle(request) {
       process.exit(1);
     }
     const turns = [];
+    const ownerReleased = mode !== 'owner-waits';
     if (request.params.itemsView === 'full' && (queued !== null || mode === 'preexisting')) {
       const reads = fs.existsSync(dir + '/history-reads-' + thread) ? fs.readFileSync(dir + '/history-reads-' + thread, 'utf8').length : 0;
       fs.appendFileSync(dir + '/history-reads-' + thread, 'x');
       const marks = queued === null ? [] : fs.readFileSync(dir + '/queue-marks-' + thread, 'utf8').trim().split('\\n').map(Number);
       if (mode === 'preexisting') turns.push({ id: 'turn-existing', status: 'completed', items: [user('item-existing', 'queued: ' + notice)] });
-      else if (mode !== 'never' && !(mode === 'first-never' && thread === 'thread-1')) {
+      else if (ownerReleased && mode !== 'never' && !(mode === 'first-never' && thread === 'thread-1')) {
         marks.forEach((mark, index) => {
           if (reads >= mark + 2) turns.unshift({ id: 'turn-' + (index + 1), status: 'completed', items: [
             { type: 'agentMessage', id: 'item-a' + (index + 1), text: 'working' }, user('item-' + (index + 1), 'queued: ' + queued)] });
@@ -298,15 +309,60 @@ test('a retry reuses an exact notice already returned by the root thread', async
   assert.equal(code, 0, run.diagnostic);
 });
 
-async function runRelay(t, mode, { env = {}, args = ['--thread', 'thread-1'] } = {}) {
+test('concurrent contexts queue one notice and reuse its returned item', async (t) => {
   const directory = scratch(t);
-  fakeSsh(join(directory, 'ssh'));
-  const codex = fakeCodex(join(directory, 'codex'));
+  const first = await runRelay(t, 'consume', { directory });
+  const second = await runRelay(t, 'consume', { directory });
+  await Promise.all([until(first, 'codexRootMessageReceived'), until(second, 'codexRootMessageReceived')]);
+  const queues = readFileSync(join(directory, 'queues.jsonl'), 'utf8').trim().split('\n');
+  assert.equal(queues.length, 1, 'Concurrent relay contexts queued the notice more than once.');
+  const reads = readFileSync(first.readLog, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(reads.length, 2, 'Each context must complete its normal receipt callback.');
+  assert.ok(first.diagnostic.includes('"reused":true') || second.diagnostic.includes('"reused":true'));
+  for (const run of [first, second]) {
+    run.child.stdin.end();
+    const [code] = await run.closed;
+    assert.equal(code, 0, run.diagnostic);
+  }
+});
+
+test('a waiting context reuses the queued item after its owner exits before callback', async (t) => {
+  const directory = scratch(t);
+  const owner = await runRelay(t, 'owner-waits', { directory });
+  const waiter = await runRelay(t, 'consume', { directory });
+  await until(owner, 'codexRootMessageQueued');
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const lockPath = join(directory, 'codex-home', 'root-channel-delivery-locks',
+    createHash('sha256').update('thread-1').digest('hex') + '.lock');
+  assert.equal(rootThreadLockIsBusy(lockPath), true, 'The active context must hold the thread lock.');
+  assert.equal(readFileSync(join(directory, 'queues.jsonl'), 'utf8').trim().split('\n').length, 1,
+    `A second context queued while the owner was active. owner=${owner.diagnostic} waiter=${waiter.diagnostic}`);
+  assert.equal(waiter.diagnostic.includes('codexRootMessageQueued'), false,
+    'The second context must wait before scanning or queueing.');
+
+  owner.child.stdin.end();
+  const [ownerCode] = await owner.closed;
+  assert.equal(ownerCode, 0, owner.diagnostic);
+  await until(waiter, 'codexRootMessageReceived');
+  assert.match(waiter.diagnostic, /"reused":true/);
+  assert.equal(readFileSync(join(directory, 'queues.jsonl'), 'utf8').trim().split('\n').length, 1);
+  assert.equal(readFileSync(waiter.readLog, 'utf8').trim().split('\n').length, 1);
+  waiter.child.stdin.end();
+  const [waiterCode] = await waiter.closed;
+  assert.equal(waiterCode, 0, waiter.diagnostic);
+});
+
+async function runRelay(t, mode, { env = {}, args = ['--thread', 'thread-1'], directory = null } = {}) {
+  directory ||= scratch(t);
+  const ssh = join(directory, 'ssh');
+  const codex = join(directory, 'codex');
+  if (!existsSync(ssh)) fakeSsh(ssh);
+  if (!existsSync(codex)) fakeCodex(codex);
   const readLog = join(directory, 'read.jsonl');
   const child = spawn(process.execPath, [RELAY, '--ssh', 'database-host', '--database', '/scratch/orchestra.db',
     '--coordinator', '/scratch/bin/baton', '--conductor', '/scratch/lib/mcp-conductor.mjs',
     '--session', 'operator', ...args, '--codex', codex], {
-    env: { ...process.env, ...env, PATH: `${directory}:${process.env.PATH}`, ROOT_RELAY_SSH_LOG: join(directory, 'ssh.json'),
+    env: { ...process.env, ...env, CODEX_HOME: join(directory, 'codex-home'), PATH: `${directory}:${process.env.PATH}`, ROOT_RELAY_SSH_LOG: join(directory, 'ssh.json'),
       ROOT_RELAY_CODEX_LOG: join(directory, 'queue.json'), ROOT_RELAY_READ_LOG: readLog,
       ROOT_RELAY_APP_DIR: directory, ROOT_RELAY_APP_MODE: mode,
       ...(mode === 'read-refused' ? { ROOT_RELAY_REFUSE_READ: '1' } : {}),
