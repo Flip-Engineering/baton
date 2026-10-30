@@ -1,7 +1,6 @@
 # Native compiler selection owned by the checked-out tree (#1398)
 
-This note describes a change for review. The workflow patch is not applied to the branch because the
-GitHub App that pushes it has no `workflows` permission.
+The workflow reads the default compiler selection from the checked-out candidate tree.
 
 ## Problem
 
@@ -41,7 +40,7 @@ downloads the upstream release; `bend2-native-focused.yml` passes no flag).
    verifier's recorded identity.
 
 A SHA256 that the verifier does not list is refused with reason `unknown-compiler-archive` for both
-sources. Every refusal writes `evidence/compiler-selection-refusal.json` (reason, selection source,
+sources. These selection refusals write `evidence/compiler-selection-refusal.json` (reason, selection source,
 candidate commit from `git rev-parse HEAD` of the checked-out tree, `GITHUB_SHA`, archive path and
 SHA256, the default file path, the archives the tree lists, a detail line) and exits 78. A successful run
 writes `evidence/compiler-selection-source.json` (source, candidate commit, archive and SHA256).
@@ -91,9 +90,9 @@ commit) and stand-in archives:
 - a malformed default file is refused; a lone field and the wrong runner keep their messages; a blank
   selection without the flag keeps the download path;
 - the real tree's default is listed in its verifier;
-- with the workflow patch applied: blank input defaults, no fallbacks, one flag and one `"${selection[@]}"`
+- workflow coverage: blank input defaults, no fallbacks, one flag and one `"${selection[@]}"`
   per call, and the shell block run against a script with and without the flag.
 
 ## Not exercised
 
-No workflow dispatch, no real archive, no Bend build. The patch is checked as YAML and by the tests above.
+Workflow dispatch, a real archive and a Bend build remain unrun. The workflow is checked as YAML and by the tests above.

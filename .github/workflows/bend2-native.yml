@@ -14,6 +14,8 @@ name: bend2-native-development
       - '.github/scripts/test-reuse-native-recovery.py'
       - '.github/scripts/test-reuse-native-main-cgen.py'
       - '.github/scripts/prepare-native-compiler.py'
+      - '.github/scripts/test-prepare-native-compiler.py'
+      - '.github/native-compiler-selection.json'
       - '.github/scripts/repl-package.py'
       - 'LICENSE'
       - 'NOTICE'
@@ -78,14 +80,14 @@ name: bend2-native-development
         default: '/var/tmp/baton2-compile-queue'
         type: string
       retained_compiler_archive:
-        description: 'Pinned compiler archive on the homelab; $RUNNER_TEMP uses the selected runner namespace'
+        description: 'Pinned compiler archive on the homelab; blank selects the checked-out tree''s .github/native-compiler-selection.json. $RUNNER_TEMP uses the selected runner namespace'
         required: false
-        default: '/var/tmp/baton2-compile-queue/toolchains/compiler-cgen-costs-1386-20261030/bend-2.0.25-linux-x64-compiler-cgen-costs-1386-20261030.tar.gz'
+        default: ''
         type: string
       retained_compiler_archive_sha256:
-        description: 'Exact SHA256 of the selected pinned compiler archive'
+        description: 'Exact SHA256 of the selected pinned compiler archive; blank with a blank archive selects the checked-out tree''s default'
         required: false
-        default: '9ce9b66b67e86868eb08d987eaabd162a5aad6a3a723ea16e63bfa7df112dd23'
+        default: ''
         type: string
       retained_ccache:
         description: 'Measured private ccache wrapper on the homelab; leave blank for direct native compilation'
@@ -194,8 +196,8 @@ jobs:
       - name: Prepare candidate compiler
         shell: bash
         env:
-          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-cgen-costs-1386-20261030/bend-2.0.25-linux-x64-compiler-cgen-costs-1386-20261030.tar.gz' }}
-          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '9ce9b66b67e86868eb08d987eaabd162a5aad6a3a723ea16e63bfa7df112dd23' }}
+          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 }}
           BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
           BATON2_LINUX_RUNNER: homelab
         run: |
@@ -204,9 +206,16 @@ jobs:
           test ! -e "$run"
           mkdir -p "$run/toolchain-home" "$run/evidence" "$run/generated"
           printf 'BATON2_LINUX_RUN=%s\n' "$run" >> "$GITHUB_ENV"
+          selection=()
+          if grep -q -- --default-selection .github/scripts/prepare-native-compiler.py; then
+            selection=(--default-selection .github/native-compiler-selection.json)
+          elif [ -z "$BATON2_RETAINED_COMPILER_ARCHIVE$BATON2_RETAINED_COMPILER_SHA256" ]; then
+            echo "Candidate $(git rev-parse HEAD) predates tree-owned compiler selection (.github/native-compiler-selection.json); integrate main or give retained_compiler_archive and retained_compiler_archive_sha256." > "$run/evidence/compiler-selection.stderr"
+            exit 78
+          fi
           python3 .github/scripts/prepare-native-compiler.py --run "$run" \
             --archive "$BATON2_RETAINED_COMPILER_ARCHIVE" \
-            --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" \
+            --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" "${selection[@]}" \
             --ccache "$BATON2_RETAINED_CCACHE" --github-env "$GITHUB_ENV" \
             --runner "$BATON2_LINUX_RUNNER" \
             > "$run/evidence/compiler-selection.stdout" 2> "$run/evidence/compiler-selection.stderr"
@@ -449,8 +458,8 @@ jobs:
       - name: Prepare qualification compiler and TypeScript runtime
         shell: bash
         env:
-          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-cgen-costs-1386-20261030/bend-2.0.25-linux-x64-compiler-cgen-costs-1386-20261030.tar.gz' }}
-          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '9ce9b66b67e86868eb08d987eaabd162a5aad6a3a723ea16e63bfa7df112dd23' }}
+          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 }}
           BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
           BATON2_LINUX_RUNNER: homelab
         run: |
@@ -459,9 +468,16 @@ jobs:
           test ! -e "$run"
           mkdir -p "$run/toolchain-home" "$run/evidence"
           printf 'BATON2_QUALIFICATION_RUN=%s\n' "$run" >> "$GITHUB_ENV"
+          selection=()
+          if grep -q -- --default-selection .github/scripts/prepare-native-compiler.py; then
+            selection=(--default-selection .github/native-compiler-selection.json)
+          elif [ -z "$BATON2_RETAINED_COMPILER_ARCHIVE$BATON2_RETAINED_COMPILER_SHA256" ]; then
+            echo "Candidate $(git rev-parse HEAD) predates tree-owned compiler selection (.github/native-compiler-selection.json); integrate main or give retained_compiler_archive and retained_compiler_archive_sha256." > "$run/evidence/compiler-selection.stderr"
+            exit 78
+          fi
           python3 .github/scripts/prepare-native-compiler.py --run "$run" \
             --archive "$BATON2_RETAINED_COMPILER_ARCHIVE" \
-            --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" \
+            --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" "${selection[@]}" \
             --ccache "$BATON2_RETAINED_CCACHE" --github-env "$GITHUB_ENV" \
             --runner "$BATON2_LINUX_RUNNER" \
             > "$run/evidence/compiler-selection.stdout" 2> "$run/evidence/compiler-selection.stderr"
@@ -507,6 +523,13 @@ jobs:
           python3 .github/scripts/test-reuse-native-main-cgen.py \
             > "$BATON2_QUALIFICATION_RUN/evidence/main-cgen-reuse-tests.stdout" \
             2> "$BATON2_QUALIFICATION_RUN/evidence/main-cgen-reuse-tests.stderr"
+      - name: Check compiler selection against the candidate verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/test-prepare-native-compiler.py \
+            > "$BATON2_QUALIFICATION_RUN/evidence/compiler-selection-tests.stdout" \
+            2> "$BATON2_QUALIFICATION_RUN/evidence/compiler-selection-tests.stderr"
       - name: Run and record complete native checks and selected candidate tests
         shell: bash
         run: |
@@ -594,8 +617,8 @@ jobs:
       BEND_NO_TELEMETRY: '1'
       BUN_JSC_maxPerThreadStackUsage: '67108864'
       BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.target_commit }}
-      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-cgen-costs-1386-20261030/bend-2.0.25-linux-x64-compiler-cgen-costs-1386-20261030.tar.gz' }}
-      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '9ce9b66b67e86868eb08d987eaabd162a5aad6a3a723ea16e63bfa7df112dd23' }}
+      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive }}
+      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 }}
     steps:
       - name: Validate exact source commit
         shell: bash
@@ -625,9 +648,16 @@ jobs:
           git clone --no-hardlinks --no-checkout "$GITHUB_WORKSPACE" "$run/source" > "$run/evidence/clone.stdout" 2> "$run/evidence/clone.stderr"
           git -C "$run/source" checkout --detach "$BATON2_TARGET_COMMIT" >> "$run/evidence/clone.stdout" 2>> "$run/evidence/clone.stderr"
           test "$(git -C "$run/source" rev-parse HEAD)" = "$BATON2_TARGET_COMMIT"
+          selection=()
+          if grep -q -- --default-selection .github/scripts/prepare-native-compiler.py; then
+            selection=(--default-selection .github/native-compiler-selection.json)
+          elif [ -z "$BATON2_RETAINED_COMPILER_ARCHIVE$BATON2_RETAINED_COMPILER_SHA256" ]; then
+            echo "Candidate $(git rev-parse HEAD) predates tree-owned compiler selection (.github/native-compiler-selection.json); integrate main or give retained_compiler_archive and retained_compiler_archive_sha256." > "$run/evidence/compiler-selection.stderr"
+            exit 78
+          fi
           python3 .github/scripts/prepare-native-compiler.py --run "$run" \
             --archive "$BATON2_RETAINED_COMPILER_ARCHIVE" \
-            --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" --runner homelab \
+            --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" --runner homelab "${selection[@]}" \
             > "$run/evidence/compiler-selection.stdout" 2> "$run/evidence/compiler-selection.stderr"
           export BEND="$run/toolchain-home/bin/bend"
           sha256sum "$BEND" > "$run/evidence/compiler.sha256"
@@ -733,8 +763,8 @@ jobs:
       labels: [self-hosted, Linux, X64, baton2-native-linux-x64, baton2-native-darwin-cross]
     env:
       BATON2_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || '' }}
-      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive || '/var/tmp/baton2-compile-queue/toolchains/compiler-cgen-costs-1386-20261030/bend-2.0.25-linux-x64-compiler-cgen-costs-1386-20261030.tar.gz' }}
-      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 || '9ce9b66b67e86868eb08d987eaabd162a5aad6a3a723ea16e63bfa7df112dd23' }}
+      BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive }}
+      BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 }}
       CC: /usr/bin/clang-19
     steps:
       - name: Validate generated C reuse selection
@@ -813,9 +843,16 @@ jobs:
           test "$(git -C "$run/build-source" rev-parse HEAD)" = "$BATON2_SOURCE_SHA"
           compiler_run="$run/compiler-selection"
           mkdir -p "$compiler_run/evidence" "$compiler_run/toolchain-home"
+          selection=()
+          if grep -q -- --default-selection "$run/build-source/.github/scripts/prepare-native-compiler.py"; then
+            selection=(--default-selection "$run/build-source/.github/native-compiler-selection.json")
+          elif [ -z "$BATON2_RETAINED_COMPILER_ARCHIVE$BATON2_RETAINED_COMPILER_SHA256" ]; then
+            echo "Candidate $(git rev-parse HEAD) predates tree-owned compiler selection (.github/native-compiler-selection.json); integrate main or give retained_compiler_archive and retained_compiler_archive_sha256." > "$run/toolchain-selection.stderr"
+            exit 78
+          fi
           python3 "$run/build-source/.github/scripts/prepare-native-compiler.py" \
             --run "$compiler_run" --archive "$BATON2_RETAINED_COMPILER_ARCHIVE" \
-            --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" --runner homelab \
+            --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" --runner homelab "${selection[@]}" \
             --github-env "$GITHUB_ENV" > "$run/toolchain-selection.stdout" \
             2> "$run/toolchain-selection.stderr"
           npm install --prefix "$run/typescript-runtime" --ignore-scripts --no-audit --no-fund \
