@@ -335,12 +335,13 @@ async function queueMessage(options, id, content) {
 // 'codex app-server proxy' under the caller's CODEX_HOME. The proxy carries a
 // WebSocket, which the app-server speaks as JSON text frames. The connection
 // only reads thread state.
-async function openAppServer(options) {
+async function openAppServer(options, onServer) {
   const child = spawn(options.codex, ['app-server', 'proxy'], {
     env: process.env,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const server = new Peer(child, { jsonrpc: false, websocket: true });
+  onServer(server);
   try {
     await server.ws.upgrade();
     const initialized = await server.request('initialize', {
@@ -356,6 +357,8 @@ async function openAppServer(options) {
 }
 
 function closeAppServer(server) {
+  if (server.closing) return;
+  server.closing = true;
   if (server.ws.upgraded) server.ws.close();
   if (server.child.stdin.writable) server.child.stdin.end();
   server.child.kill('SIGTERM');
@@ -376,9 +379,10 @@ function sleep(ms) {
 // connection is lost, for as long as the SSH conductor is open. A restarted
 // app-server is found again through the same control socket lookup.
 class AppSession {
-  constructor(options, peer) {
+  constructor(options, peer, delivery) {
     this.options = options;
     this.peer = peer;
+    this.delivery = delivery ?? { get exited() { return peer.exited; }, superseded: false };
     this.server = null;
     this.lost = '';
   }
@@ -386,12 +390,27 @@ class AppSession {
   async request(method, params) {
     for (;;) {
       try {
-        this.server ??= await openAppServer(this.options);
+        if (this.delivery.exited) throw endedDelivery(this.delivery, `Codex app-server ${method} completed.`);
+        if (!this.server) {
+          const server = await openAppServer(this.options, opened => {
+            this.server = opened;
+            if (this.delivery.exited) closeAppServer(opened);
+          });
+          if (this.delivery.exited) {
+            closeAppServer(server);
+            throw endedDelivery(this.delivery, `Codex app-server ${method} completed.`);
+          }
+          this.server = server;
+        }
         const reply = await this.server.request(method, params);
         if (reply.error) throw appError(`Codex app-server ${method} failed: ` + JSON.stringify(reply.error));
         this.lost = '';
         return reply.result;
       } catch (error) {
+        if (this.delivery.exited) {
+          this.cancel();
+          throw endedDelivery(this.delivery, `Codex app-server ${method} completed.`);
+        }
         if (error.appServer || this.peer.exited) throw error;
         if (this.server) closeAppServer(this.server);
         this.server = null;
@@ -405,12 +424,17 @@ class AppSession {
     }
   }
 
+  cancel() {
+    if (!this.server) return;
+    const server = this.server;
+    this.server = null;
+    closeAppServer(server);
+  }
+
   async close() {
-    if (this.server) {
-      closeAppServer(this.server);
-      await this.server.closed;
-      this.server = null;
-    }
+    const server = this.server;
+    this.cancel();
+    if (server) await server.closed;
   }
 }
 
@@ -529,7 +553,8 @@ async function deliverNotice(peer, delivery, options, params) {
   // history scan and queue operation across those relay processes so only one
   // context creates a user item for this thread at a time.
   const threadLock = await acquireRootThreadLock(thread);
-  const session = new AppSession({ ...options, thread }, delivery);
+  const session = new AppSession({ ...options, thread }, peer, delivery);
+  delivery.cancel = () => session.cancel();
   let received;
   let queued;
   let reused = false;
@@ -561,6 +586,7 @@ async function deliverNotice(peer, delivery, options, params) {
       thread, message: id, turn: received.turn, item: received.item,
       ...(reused ? { reused: true } : { queue: queued.stdout.trim() }) }) + '\n');
   } finally {
+    delivery.cancel = null;
     await threadLock.release();
   }
 }
@@ -607,8 +633,12 @@ async function connect(options) {
     // is not recorded because the conductor now serves the new one.
     let thread = null;
     try { thread = noticeThread(options, params); } catch {}
-    const delivery = { thread, superseded: false, get exited() { return peer.exited || this.superseded; } };
-    if (peer.active && peer.active.thread !== thread) peer.active.superseded = true;
+    const delivery = { thread, superseded: false, cancel: null,
+      get exited() { return peer.exited || this.superseded; } };
+    if (peer.active && peer.active.thread !== thread) {
+      peer.active.superseded = true;
+      peer.active.cancel?.();
+    }
     peer.active = delivery;
     peer.delivery = (peer.delivery || Promise.resolve())
       .then(() => {
