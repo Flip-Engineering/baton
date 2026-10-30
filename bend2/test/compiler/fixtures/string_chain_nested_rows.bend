@@ -70,22 +70,22 @@ def deep2(+a: String, +b: String, +c: String) -> String:
       case _: "x_"
     case _: "_"
 
-def subst(args: List<String>) -> String:
+def subst(args: List<String>, +tag: String) -> String:
   match args:
     case "--mode" <> value <> rest:
       match value:
         case "fast": String.append("mode:", value)
         case "slow": String.append(value, "!")
         case other: String.append("other:", other)
-    case _: "none"
+    case _: tag
 
-def marked2(args: List<String>) -> String:
+def marked2(args: List<String>, +tag: String) -> String:
   match args:
     case "--twice" <> value <> rest:
       match value:
         case "": "empty"
         case +v: String.append(v, v)
-    case _: "none"
+    case _: tag
 
 def flags(args: List<String>, flag: Bool) -> String:
   match args:
@@ -129,13 +129,13 @@ def main() -> IO(Unit):
     IO.print(deep2("x", "y", "w"))
     IO.print(deep2("x", "q", "z"))
     IO.print(deep2("q", "y", "z"))
-    IO.print(subst(["--mode", "fast"]))
-    IO.print(subst(["--mode", "slow", "x"]))
-    IO.print(subst(["--mode", "warp"]))
-    IO.print(subst(["--mode"]))
-    IO.print(marked2(["--twice", "ab"]))
-    IO.print(marked2(["--twice", ""]))
-    IO.print(marked2(["--once", "ab"]))
+    IO.print(subst(["--mode", "fast"], "none"))
+    IO.print(subst(["--mode", "slow", "x"], "none"))
+    IO.print(subst(["--mode", "warp"], "none"))
+    IO.print(subst(["--mode"], "none"))
+    IO.print(marked2(["--twice", "ab"], "none"))
+    IO.print(marked2(["--twice", ""], "none"))
+    IO.print(marked2(["--once", "ab"], "none"))
     IO.print(flags(["--on"], True{}))
     IO.print(flags(["--on", "x"], False{}))
     IO.print(flags(["--off"], True{}))

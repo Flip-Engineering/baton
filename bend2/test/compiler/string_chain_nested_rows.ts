@@ -2,7 +2,9 @@
 // parameter again, or a Data parameter, with a final binder row, lowers through
 // the String.eq guards: no character match (SCon) remains in the lowered body,
 // and the interpreter and the emitted C select the same rows as the nested match.
-// An affine value that the nested binder row uses twice is still refused.
+// A single List<String> parameter with such rows leaves the list helpers for the
+// guards. An affine value that the nested binder row uses twice is still refused
+// for that use.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -64,13 +66,29 @@ const shapes = Object.fromEntries([...lifted, "flags"].map((name) => [name, shap
 for (const name of lifted) {
   assert.equal(shapes[name].scon, 0, `${name} tests its literals with String.eq (${JSON.stringify(shapes[name])})`);
 }
+const list = path.join(import.meta.dir, "fixtures/string_chain_nested_list.bend");
+const list_book = Bend.book_nil();
+await Bend.book_load(list_book, list, "", new Map());
+Bend.book_valid(list_book);
+for (const name of ["subst1", "framed"]) {
+  const def = list_book.tlds[name];
+  assert.ok(def !== undefined && def.$ === "Def" && def.v !== null, `${name} is a filled def`);
+  shapes[name] = census(Bend.term_lower_shared(def.v) as L);
+  assert.equal(shapes[name].scon, 0, `${name} tests its literals with String.eq (${JSON.stringify(shapes[name])})`);
+}
+assert.deepEqual(list_book.order.filter((name) => name.includes("$lit")), [], "no list helpers");
+const list_expected = ["mode:fast", "other:warp", "none", "bend:high", "bend:low", "none"];
 
 const run = spawnSync(process.execPath, [main, fixture], { cwd: root, encoding: "utf8", env });
 assert.equal(run.status, 0, run.stderr);
 assert.deepEqual(run.stdout.trim().split("\n"), expected, "results");
+const list_run = spawnSync(process.execPath, [main, list], { cwd: root, encoding: "utf8", env });
+assert.equal(list_run.status, 0, list_run.stderr);
+assert.deepEqual(list_run.stdout.trim().split("\n"), list_expected, "list results");
 const affine = path.join(import.meta.dir, "fixtures/string_chain_nested_affine.bend");
 const refused = spawnSync(process.execPath, [main, affine, "--check-only"], { cwd: root, encoding: "utf8", env });
 assert.notEqual(refused.status, 0, "a nested affine binder used twice is refused: " + refused.stdout);
+assert.match(refused.stdout + refused.stderr, /consumed more than once/, "the refusal names the second use");
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bend-string-chain-nested-"));
 try {
   const output = path.join(directory, "nested.c"), binary = path.join(directory, "nested");
@@ -78,5 +96,10 @@ try {
   assert.equal(emitted.status, 0, "the nested rows emit C: " + emitted.stderr);
   execFileSync(process.env.CC ?? "clang-19", ["-std=c11", "-O1", "-pthread", output, "-lm", "-o", binary]);
   assert.deepEqual(execFileSync(binary, { encoding: "utf8" }).trim().split("\n"), expected, "results of the C");
+  const list_output = path.join(directory, "list.c"), list_binary = path.join(directory, "list");
+  const list_emitted = spawnSync(process.execPath, ["--smol", main, list, "-o", list_output], { cwd: root, encoding: "utf8", env });
+  assert.equal(list_emitted.status, 0, "the list rows emit C: " + list_emitted.stderr);
+  execFileSync(process.env.CC ?? "clang-19", ["-std=c11", "-O1", "-pthread", list_output, "-lm", "-o", list_binary]);
+  assert.deepEqual(execFileSync(list_binary, { encoding: "utf8" }).trim().split("\n"), list_expected, "list results of the C");
 } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 console.log(JSON.stringify({ test: "string_chain_nested_rows", shapes }));

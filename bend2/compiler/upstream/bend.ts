@@ -3633,6 +3633,8 @@ function literal_chain_list_helpers(p: Parse, b: Extract<Body, { $: "Match" }>,
     || p.book.ctrs["Con"] === undefined || p.book.ctrs["Nil"] === undefined) {
     return null;
   }
+  // A helper body is flattened with no pending binder, so it cannot match one.
+  if (b.r.some((row) => body_matches(row.f, literal_binders([row])))) return null;
   const frames = (q: Patt): { heads: Patt[]; rest: PVar | null } | null => {
     const heads: Patt[] = [];
     let cur: Patt = q;
@@ -3850,7 +3852,7 @@ function literal_list_rows(p: Parse, b: Match, def: Def, k: Name,
   let literals = 0;
   for (const row of b.r) {
     if (row.p.length !== 1 || lit_body_refs(row.f, k)
-      || lit_body_uses(row.f, all.i)) return null;
+      || lit_body_uses(row.f, all.i) || body_matches(row.f, literal_binders([row]))) return null;
     const heads: Patt[] = [];
     let tail = row.p[0];
     while (tail.$ === "PCtr" && tail.k === "Con" && tail.x.length === 2) {
