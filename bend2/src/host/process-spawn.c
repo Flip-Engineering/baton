@@ -991,7 +991,9 @@ typedef struct {
   char unit_option[176];
   char reason[160];
   char self_path[64];
+  char runtime_entry[96];
   char **argv;
+  char **envp;
 } BrPlacement;
 
 static uint64_t br_realtime_ns(void) {
@@ -1058,6 +1060,21 @@ static int br_placement_mode(void) {
   if(!strcmp(text,"require"))return 2;
   return -1;
 }
+/* A service started by a system manager often has no XDG_RUNTIME_DIR, and
+   systemd-run --user cannot find the user manager without it. When the caller
+   has none, name ROOT/UID if that directory and its bus socket exist and belong
+   to UID. No D-Bus address variable is supplied: systemd-run finds the bus
+   under the runtime directory. Returns 1 and writes the variable assignment. */
+static int br_runtime_dir_derive(const char *root,uid_t uid,char *out,size_t size) {
+  char directory[160],bus[176];
+  struct stat info;
+  snprintf(directory,sizeof(directory),"%s/%u",root,(unsigned)uid);
+  snprintf(bus,sizeof(bus),"%s/bus",directory);
+  if(stat(directory,&info) || !S_ISDIR(info.st_mode) || info.st_uid!=uid)return 0;
+  if(stat(bus,&info) || !S_ISSOCK(info.st_mode) || info.st_uid!=uid)return 0;
+  snprintf(out,size,"XDG_RUNTIME_DIR=%s",directory);
+  return 1;
+}
 #ifdef __linux__
 static pthread_mutex_t br_probe_lock=PTHREAD_MUTEX_INITIALIZER;
 static int br_probe_done,br_probe_ok;
@@ -1072,7 +1089,7 @@ static const char *br_systemd_run_path(void) {
 /* Starts and waits for one throwaway scope, so the answer reflects the user
    manager, its bus and the caller's permission rather than the presence of a
    socket. The answer is kept for the life of the process. */
-static void br_service_probe_run(const char *run) {
+static void br_service_probe_run(const char *run,char *const *envp) {
   char unit_option[96],reason[160]="";
   snprintf(unit_option,sizeof(unit_option),"--unit=baton-probe-%d-%llx",(int)getpid(),
            (unsigned long long)br_realtime_ns());
@@ -1092,7 +1109,7 @@ static void br_service_probe_run(const char *run) {
   if(!error)error=posix_spawn_file_actions_adddup2(&actions,report[1],2);
   if(!error)error=posix_spawn_file_actions_addclosefrom_np(&actions,3);
   pid_t pid=0;
-  if(!error)error=posix_spawn(&pid,run,&actions,NULL,argv,environ);
+  if(!error)error=posix_spawn(&pid,run,&actions,NULL,argv,envp);
   if(actions_ready)posix_spawn_file_actions_destroy(&actions);
   if(report[1]>=0)close(report[1]);
   if(!error) {
@@ -1109,9 +1126,9 @@ static void br_service_probe_run(const char *run) {
   if(null>=0)close(null);
   snprintf(br_probe_reason,sizeof(br_probe_reason),"%s",reason);
 }
-static int br_service_probe(const char *run,char *reason,size_t size) {
+static int br_service_probe(const char *run,char *const *envp,char *reason,size_t size) {
   pthread_mutex_lock(&br_probe_lock);
-  if(!br_probe_done) {br_probe_done=1;br_service_probe_run(run);}
+  if(!br_probe_done) {br_probe_done=1;br_service_probe_run(run,envp);}
   int ok=br_probe_ok;
   snprintf(reason,size,"%s",br_probe_reason);
   pthread_mutex_unlock(&br_probe_lock);
@@ -1133,8 +1150,17 @@ static int br_placement_plan(BrPlacement *plan,const char *role,const char *seed
   if(!plan->mode) {snprintf(plan->reason,sizeof(plan->reason),"placement is off");return 0;}
 #ifdef __linux__
   const char *run=br_systemd_run_path();
+  size_t inherited=0;
+  while(environ && environ[inherited])inherited++;
+  plan->envp=calloc(inherited+2,sizeof(char *));
+  if(!plan->envp)return ENOMEM;
+  for(size_t i=0;i<inherited;i++)plan->envp[i]=environ[i];
+  const char *caller_runtime=getenv("XDG_RUNTIME_DIR");
+  int supplied=(!caller_runtime || !*caller_runtime) &&
+    br_runtime_dir_derive("/run/user",geteuid(),plan->runtime_entry,sizeof(plan->runtime_entry));
+  if(supplied)plan->envp[inherited]=plan->runtime_entry;
   if(!run)snprintf(plan->reason,sizeof(plan->reason),"systemd-run is not installed");
-  else if(br_service_probe(run,plan->reason,sizeof(plan->reason))) {
+  else if(br_service_probe(run,plan->envp,plan->reason,sizeof(plan->reason))) {
     uint64_t hash=1469598103934665603ull;
     for(const char *c=seed;c && *c;c++) {hash^=(unsigned char)*c;hash*=1099511628211ull;}
     snprintf(plan->unit,sizeof(plan->unit),"baton-%s-%016llx-%d-%llx",role,
@@ -1142,7 +1168,7 @@ static int br_placement_plan(BrPlacement *plan,const char *role,const char *seed
     snprintf(plan->unit_option,sizeof(plan->unit_option),"--unit=%s",plan->unit);
     snprintf(plan->self_path,sizeof(plan->self_path),"/proc/%d/exe",(int)getpid());
     size_t count=0;while(argv[count])count++;
-    plan->argv=calloc(count+10,sizeof(char *));
+    plan->argv=calloc(count+14,sizeof(char *));
     if(!plan->argv)return ENOMEM;
     size_t at=0;
     plan->argv[at++]=(char *)run;plan->argv[at++]="--user";plan->argv[at++]="--scope";
@@ -1150,16 +1176,23 @@ static int br_placement_plan(BrPlacement *plan,const char *role,const char *seed
     plan->argv[at++]=!strcmp(role,"keeper")?"--description=Baton retained attempt keeper":
                                            "--description=Baton database owner";
     plan->argv[at++]="--";
+    if(supplied) {
+      /* The program runs with the environment its launcher had. */
+      plan->argv[at++]="/usr/bin/env";plan->argv[at++]="-u";plan->argv[at++]="XDG_RUNTIME_DIR";
+    }
     for(size_t i=0;i<count;i++)plan->argv[at++]=i==0 && !strcmp(argv[0],"/proc/self/exe")?plan->self_path:argv[i];
     plan->placed=1;
+    if(!supplied)plan->envp[inherited]=NULL;
     return 0;
   }
 #else
   snprintf(plan->reason,sizeof(plan->reason),"service placement is not supported on this platform");
 #endif
+  /* An unplaced launch keeps the caller's environment exactly. */
+  free(plan->envp);plan->envp=NULL;
   return plan->mode==2?ENOTSUP:0;
 }
-static void br_placement_free(BrPlacement *plan) {free(plan->argv);plan->argv=NULL;}
+static void br_placement_free(BrPlacement *plan) {free(plan->argv);free(plan->envp);plan->argv=plan->envp=NULL;}
 /* The launcher's record of the placement it chose and its own identity. */
 static size_t br_placement_text(char *out,size_t size,const char *role,const BrPlacement *plan) {
   const char *mode=plan->mode==0?"off":plan->mode==2?"require":"auto";
@@ -1190,6 +1223,19 @@ static void br_keeper_service_record(const char *directory) {
   n=snprintf(text+used,sizeof(text)-used,"keeper.scope=%s\n",strstr(cgroup,"/baton-keeper-")?"1":"0");
   if(n>0)used=(size_t)n>=sizeof(text)-used?sizeof(text)-1:used+(size_t)n;
   br_atomic_replace(directory,"service-keeper",text,used);
+}
+/* The database owner reports where it actually runs, beside its socket record. */
+static void br_owner_service_record(const char *ipc,const char *key) {
+  char name[96],text[3072],cgroup[1024];
+  snprintf(name,sizeof(name),"%s.service-owner",key);
+  int n=snprintf(text,sizeof(text),"schema=baton-service-owner-v1\ntime_ns=%llu\n",
+                 (unsigned long long)br_realtime_ns());
+  size_t used=n<0?0:(size_t)n;
+  used=br_identity_text(text,sizeof(text),used,"owner",getpid());
+  br_proc_cgroup(getpid(),cgroup,sizeof(cgroup));
+  n=snprintf(text+used,sizeof(text)-used,"owner.scope=%s\n",strstr(cgroup,"/baton-owner-")?"1":"0");
+  if(n>0)used=(size_t)n>=sizeof(text)-used?sizeof(text)-1:used+(size_t)n;
+  br_atomic_replace(ipc,name,text,used);
 }
 /* Native identity as observed right after the start gate opens. */
 static void br_native_service_record(const char *directory,pid_t native) {
@@ -1279,7 +1325,7 @@ static void br_keeper_signals_install(const char *directory) {
 }
 
 /* Every child receives only explicitly assigned descriptors. */
-static int br_spawn(pid_t *pid,char **argv,const char *cwd,int input,int output,int error_log,int life,int lock) {
+static int br_spawn_env(pid_t *pid,char **argv,char *const *envp,const char *cwd,int input,int output,int error_log,int life,int lock) {
   posix_spawn_file_actions_t actions;
   posix_spawnattr_t attributes;
   int rc=posix_spawn_file_actions_init(&actions);
@@ -1307,11 +1353,14 @@ static int br_spawn(pid_t *pid,char **argv,const char *cwd,int input,int output,
   if((rc=posix_spawnattr_setsigdefault(&attributes,&defaults))) goto done;
   if((rc=posix_spawnattr_setpgroup(&attributes,0))) goto done;
   if((rc=posix_spawnattr_setflags(&attributes,flags))) goto done;
-  rc=posix_spawnp(pid,argv[0],&actions,&attributes,argv,environ);
+  rc=posix_spawnp(pid,argv[0],&actions,&attributes,argv,envp);
 done:
   for(int i=0;i<5;i++) if(copies[i]>=0) close(copies[i]);
   posix_spawnattr_destroy(&attributes);posix_spawn_file_actions_destroy(&actions);
   return rc;
+}
+static int br_spawn(pid_t *pid,char **argv,const char *cwd,int input,int output,int error_log,int life,int lock) {
+  return br_spawn_env(pid,argv,environ,cwd,input,output,error_log,life,lock);
 }
 
 #ifdef __linux__
@@ -3694,6 +3743,7 @@ static int br_owner_bind(BrOwner *owner,const char *database) {
     }
   }
   if(!error)error=br_owner_record_write(owner);
+  if(!error)br_owner_service_record(owner->ipc,owner->key);
   if(!error)owner->bound=1;
   if(error) {
     if(owner->listener>=0){close(owner->listener);owner->listener=-1;}
@@ -4505,7 +4555,7 @@ static int br_retain(BatonProcessCall *call) {
       /* The launch record exists before the keeper does, so a refused or failed
          placement is evidenced as well. */
       br_placement_record(directory,"service-launch","keeper",&placement);
-      error=br_spawn(&pid,placement.argv?placement.argv:argv,NULL,null,log,log,sockets[1],(int)call->lock);
+      error=br_spawn_env(&pid,placement.argv?placement.argv:argv,placement.envp?placement.envp:environ,NULL,null,log,log,sockets[1],(int)call->lock);
     }
     br_placement_free(&placement);
     if(!error) {
@@ -4561,7 +4611,7 @@ static int br_instance_spawn(const char *canonical,pid_t *pid,const char *log_pa
     }
   }
   if(!error) {
-    error=br_spawn(pid,placement.argv?placement.argv:argv,NULL,null,log,null,-1,-1);
+    error=br_spawn_env(pid,placement.argv?placement.argv:argv,placement.envp?placement.envp:environ,NULL,null,log,null,-1,-1);
     br_placement_free(&placement);
   }
   if(null>=0)close(null);

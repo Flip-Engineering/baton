@@ -22,11 +22,18 @@ not decide which one happened.
 BATON_SERVICE_PLACEMENT is auto (the default: place when the user manager
 answers and record the reason otherwise), off, or require (exit 75 when
 placement is not possible). BATON_SYSTEMD_RUN names the systemd-run program.
+
+systemd-run --user finds the user manager through XDG_RUNTIME_DIR. A service
+started by a system manager often lacks it. When the caller has none, the helper
+names /run/user/UID for systemd-run if that directory and its bus socket exist
+and belong to the effective user, and removes the variable again before COMMAND
+runs. No D-Bus address variable is supplied.
 """
 import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import time
@@ -58,7 +65,23 @@ def unit_option(role, seed):
     return 'baton-%s-%s-%d-%x' % (role, digest, os.getpid(), time.time_ns())
 
 
-def probe(run):
+def runtime_environment(environment, uid, root='/run/user'):
+    """The variables to add so systemd-run can find the user manager of uid."""
+    if environment.get('XDG_RUNTIME_DIR'):
+        return {}
+    directory = Path(root) / str(uid)
+    try:
+        directory_info = directory.stat()
+        bus_info = (directory / 'bus').stat()
+    except OSError:
+        return {}
+    if (stat.S_ISDIR(directory_info.st_mode) and directory_info.st_uid == uid
+            and stat.S_ISSOCK(bus_info.st_mode) and bus_info.st_uid == uid):
+        return {'XDG_RUNTIME_DIR': str(directory)}
+    return {}
+
+
+def probe(run, environment):
     """Start and wait for one throwaway scope, so the answer reflects the user
     manager, its bus and the caller's permission."""
     true = '/usr/bin/true' if os.access('/usr/bin/true', os.X_OK) else '/bin/true'
@@ -66,7 +89,8 @@ def probe(run):
         result = subprocess.run(
             [run, '--user', '--scope', '--quiet', '--collect',
              '--unit=baton-probe-%d-%x' % (os.getpid(), time.time_ns()), '--', true],
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            env=environment)
     except OSError as error:
         return False, 'systemd-run probe could not start: %s' % error.strerror
     if result.returncode == 0:
@@ -104,34 +128,39 @@ def write_record(directory, name, value):
     os.replace(temporary, directory / name)
 
 
-def plan(role, record, command):
-    """Returns (argv, launch_record). argv is the command itself when it is not placed."""
+def plan(role, record, command, runtime_root='/run/user'):
+    """Returns (argv, launch_record, environment). argv is the command itself, with the
+    caller's environment, when it is not placed."""
     requested = mode()
     launch = {'schema': 'baton-service-launch-v1', 'role': role, 'requested': requested,
               'command': command[0], 'time_ns': time.time_ns(), 'launcher': identity(os.getpid())}
     if requested == 'off':
         launch.update(placement='none', reason='placement is off')
-        return command, launch
+        return command, launch, None
     run = systemd_run()
+    supplied = runtime_environment(os.environ, os.geteuid(), runtime_root)
+    environment = dict(os.environ, **supplied)
     if run is None:
         ok, reason = False, 'systemd-run is not installed'
     else:
-        ok, reason = probe(run)
+        ok, reason = probe(run, environment)
     if not ok:
         launch.update(placement='none', reason=reason)
         if requested == 'require':
-            return None, launch
-        return command, launch
+            return None, launch, None
+        return command, launch, None
     unit = unit_option(role, record or command[0])
-    launch.update(placement='scope', manager='systemd-user', unit=unit + '.scope')
-    inside = [sys.executable, str(Path(__file__).resolve()), INSIDE, record or '', '--']
+    launch.update(placement='scope', manager='systemd-user', unit=unit + '.scope',
+                  environment_supplied=sorted(supplied))
+    inside = [sys.executable, str(Path(__file__).resolve()), INSIDE, record or '',
+              ','.join(sorted(supplied)), '--']
     return [run, '--user', '--scope', '--quiet', '--collect', '--unit=' + unit,
-            '--description=Baton ' + role, '--', *inside, *command], launch
+            '--description=Baton ' + role, '--', *inside, *command], launch, environment
 
 
-def execute(argv):
+def execute(argv, environment=None):
     try:
-        os.execvp(argv[0], argv)
+        os.execvpe(argv[0], argv, environment if environment is not None else os.environ)
     except OSError as error:
         sys.stderr.write('service-run: cannot execute %s: %s\n' % (argv[0], error.strerror))
         return 127
@@ -140,7 +169,9 @@ def execute(argv):
 def main(argv):
     if argv and argv[0] == INSIDE:
         # Stage two runs inside the scope: record where it landed, then become COMMAND.
-        record, command = argv[1], argv[argv.index('--') + 1:]
+        record, supplied, command = argv[1], argv[2], argv[argv.index('--') + 1:]
+        for name in filter(None, supplied.split(',')):
+            os.environ.pop(name, None)
         if record:
             write_record(record, 'service-inside.json', {
                 'schema': 'baton-service-inside-v1', 'time_ns': time.time_ns(),
@@ -161,13 +192,13 @@ def main(argv):
             raise SystemExit('usage: service-run.py --role ROLE [--record DIRECTORY] -- COMMAND [ARGS...]')
     if not role or not command:
         raise SystemExit('usage: service-run.py --role ROLE [--record DIRECTORY] -- COMMAND [ARGS...]')
-    argv_out, launch = plan(role, record, command)
+    argv_out, launch, environment = plan(role, record, command)
     if record:
         write_record(record, 'service-launch.json', launch)
     if argv_out is None:
         sys.stderr.write('service-run: placement required but not possible: %s\n' % launch['reason'])
         return TEMPFAIL
-    return execute(argv_out)
+    return execute(argv_out, environment)
 
 
 if __name__ == '__main__':

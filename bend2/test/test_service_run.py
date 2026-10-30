@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,7 @@ ADAPTER = ROOT / '.github/scripts/queue-native-checks.py'
 
 FAKE_SCOPE = r'''#!/bin/sh
 echo "$@" >> "$FAKE_SYSTEMD_LOG"
+echo "XDG=${XDG_RUNTIME_DIR-unset} DBUS=${DBUS_SESSION_BUS_ADDRESS-unset}" >> "$FAKE_SYSTEMD_LOG.env"
 if [ -n "$FAKE_SYSTEMD_FAIL" ]; then
   echo "Failed to connect to bus: No such file or directory" >&2
   exit 1
@@ -123,6 +125,95 @@ class ServiceRunTests(unittest.TestCase):
             env=dict(self.environment, BATON_SERVICE_PLACEMENT='off'),
             capture_output=True, timeout=30)
         self.assertEqual(process.returncode, 127, process.stderr)
+
+
+class RuntimeEnvironmentTests(unittest.TestCase):
+    """XDG_RUNTIME_DIR for systemd-run --user, derived for services that lack it."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='service-runtime-')
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.helper = load(HELPER, 'service_run_runtime')
+        self.uid = os.getuid()
+        self.sockets = []
+
+    def runtime(self, uid, bus='socket'):
+        directory = self.root / str(uid)
+        directory.mkdir()
+        if bus == 'socket':
+            listener = socket.socket(socket.AF_UNIX)
+            listener.bind(str(directory / 'bus'))
+            self.sockets.append(listener)
+            self.addCleanup(listener.close)
+        elif bus == 'file':
+            (directory / 'bus').write_text('')
+        return directory
+
+    def test_derived_when_directory_and_bus_belong_to_the_user(self):
+        directory = self.runtime(self.uid)
+        self.assertEqual(self.helper.runtime_environment({}, self.uid, self.root),
+                         {'XDG_RUNTIME_DIR': str(directory)})
+
+    def test_caller_value_is_kept(self):
+        self.runtime(self.uid)
+        self.assertEqual(self.helper.runtime_environment(
+            {'XDG_RUNTIME_DIR': '/run/user/1'}, self.uid, self.root), {})
+
+    def test_not_derived_when_absent_or_without_a_bus_socket(self):
+        self.assertEqual(self.helper.runtime_environment({}, self.uid, self.root), {})
+        self.runtime(self.uid, bus='none')
+        self.assertEqual(self.helper.runtime_environment({}, self.uid, self.root), {})
+
+    def test_not_derived_when_the_bus_is_not_a_socket(self):
+        self.runtime(self.uid, bus='file')
+        self.assertEqual(self.helper.runtime_environment({}, self.uid, self.root), {})
+
+    def test_not_derived_when_owned_by_another_user(self):
+        other = self.uid + 1
+        self.runtime(other)
+        self.assertEqual(self.helper.runtime_environment({}, other, self.root), {})
+
+    def test_plan_supplies_xdg_and_never_a_dbus_address(self):
+        directory = self.runtime(self.uid)
+        fake = Path(self.root) / 'systemd-run'
+        fake.write_text(FAKE_SCOPE)
+        fake.chmod(0o755)
+        log = self.root / 'systemd.log'
+        keys = ('XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS', 'BATON_SERVICE_PLACEMENT')
+        previous = {key: os.environ.pop(key, None) for key in keys}
+        self.addCleanup(lambda: [os.environ.__setitem__(k, v) for k, v in previous.items() if v is not None])
+        os.environ.update(BATON_SYSTEMD_RUN=str(fake), FAKE_SYSTEMD_LOG=str(log))
+        self.addCleanup(lambda: [os.environ.pop(k, None) for k in ('BATON_SYSTEMD_RUN', 'FAKE_SYSTEMD_LOG')])
+        argv, launch, environment = self.helper.plan('queue-client', None, ['/bin/true'], self.root)
+        self.assertEqual(launch['placement'], 'scope')
+        self.assertEqual(launch['environment_supplied'], ['XDG_RUNTIME_DIR'])
+        self.assertEqual(environment['XDG_RUNTIME_DIR'], str(directory))
+        self.assertNotIn('DBUS_SESSION_BUS_ADDRESS', environment)
+        self.assertIn('XDG_RUNTIME_DIR', argv[argv.index(self.helper.INSIDE) + 2])
+        probe_env = (Path(str(log) + '.env')).read_text().splitlines()
+        self.assertEqual(probe_env, ['XDG=%s DBUS=unset' % directory])
+
+    def test_unplaced_launch_keeps_the_caller_environment(self):
+        self.runtime(self.uid)
+        fake = Path(self.root) / 'systemd-run'
+        fake.write_text(FAKE_SCOPE)
+        fake.chmod(0o755)
+        os.environ.update(BATON_SYSTEMD_RUN=str(fake), FAKE_SYSTEMD_LOG=str(self.root / 'log'),
+                          FAKE_SYSTEMD_FAIL='1')
+        self.addCleanup(lambda: [os.environ.pop(k, None) for k in
+                                 ('BATON_SYSTEMD_RUN', 'FAKE_SYSTEMD_LOG', 'FAKE_SYSTEMD_FAIL')])
+        os.environ.pop('BATON_SERVICE_PLACEMENT', None)
+        argv, launch, environment = self.helper.plan('queue-client', None, ['/bin/true'], self.root)
+        self.assertEqual((argv, environment), (['/bin/true'], None))
+        self.assertEqual(launch['placement'], 'none')
+
+    def test_supplied_variable_is_removed_before_the_command_runs(self):
+        result = subprocess.run(
+            [sys.executable, str(HELPER), '--inside', '', 'XDG_RUNTIME_DIR', '--',
+             'sh', '-c', 'printf %s "${XDG_RUNTIME_DIR-unset}"'],
+            env=dict(os.environ, XDG_RUNTIME_DIR='/run/user/1'), capture_output=True, timeout=30)
+        self.assertEqual(result.stdout, b'unset')
 
 
 class AdapterServiceTests(unittest.TestCase):
