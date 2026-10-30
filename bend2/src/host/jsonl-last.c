@@ -73,13 +73,15 @@ static int baton_jsonl_last_kept(int fd, const char *path, const struct stat *be
 }
 
 /* Scans the file backward from its size at open, one line at a time. A line is
-   parsed only when it holds `needle`; the first such line, from the end, that is
-   valid UTF-8 JSON and for which the read-only scalar SQL predicate (the line
-   bound as parameter 1) returns 1 is the result. A line that holds `needle` and
-   is not valid UTF-8 JSON is an error. A scan without a match returns an empty
-   text. Memory holds one 64 KiB block and, for a line that crosses blocks or is
-   selected, a copy of that line. Bytes appended after the file was opened are not
-   read. */
+   parsed when it holds `needle` or a `\u` sequence; the other JSON escapes cannot
+   produce a letter or an underscore, so a `needle` that is not written out in
+   the line can only be spelled with `\u`. The first parsed line, from the end,
+   that is valid UTF-8 JSON and for which the read-only scalar SQL predicate (the
+   line bound as parameter 1) returns 1 is the result; the parse decides whether
+   a candidate matches. A candidate that is not valid UTF-8 JSON is an error. A
+   scan without a match returns an empty text. Memory holds one 64 KiB block and,
+   for a line that crosses blocks or is selected, a copy of that line. Bytes
+   appended after the file was opened are not read. */
 static int baton_jsonl_read_last(const char *path, const char *needle, const char *query,
                                 char **text, size_t *length) {
   int error = 0, fd = -1, found = 0;
@@ -115,7 +117,7 @@ static int baton_jsonl_read_last(const char *path, const char *needle, const cha
     error = baton_jsonl_last_start(block, content_end, &start);
     if (error) goto finished;
     frame_length = (size_t)(content_end - start);
-    if (frame_length >= needle_length) {
+    if (frame_length) {
       const char *bytes;
       if (start >= block->from && content_end <= block->from + (off_t)block->have)
         bytes = block->bytes + (start - block->from);
@@ -126,7 +128,8 @@ static int baton_jsonl_read_last(const char *path, const char *needle, const cha
         if (error) goto finished;
         bytes = line;
       }
-      if (baton_jsonl_last_contains(bytes, frame_length, needle, needle_length)) {
+      if (baton_jsonl_last_contains(bytes, frame_length, needle, needle_length) ||
+          baton_jsonl_last_contains(bytes, frame_length, "\\u", 2)) {
         int matches = 0;
         error = baton_jsonl_frame(valid, predicate, bytes, frame_length, &matches);
         if (error) goto finished;

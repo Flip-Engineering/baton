@@ -208,6 +208,13 @@ class StdoutTaskList(unittest.TestCase):
                 with self.subTest(list=list_name, text=text):
                     self.assertEqual((self.selects(text), self.state(text)), (1, expected))
 
+    def test_a_subtype_written_with_a_json_escape_is_selected_and_read(self):
+        for list_name, expected in (('tasks', '1'), ('empty', '0')):
+            text = FRAMES[list_name].replace('background_tasks_changed', '\\u0062ackground\\u005ftasks_changed')
+            self.assertNotIn('background_tasks_changed', text)
+            with self.subTest(list=list_name):
+                self.assertEqual((self.selects(text), self.state(text)), (1, expected))
+
     def test_other_frames_are_not_selected(self):
         quoted = json.dumps({'type': 'assistant', 'text': '"subtype":"background_tasks_changed","tasks":[]'})
         other = json.dumps({'type': 'user', 'subtype': 'background_tasks_changed'})

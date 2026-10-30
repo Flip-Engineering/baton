@@ -73,6 +73,55 @@ class LastTaskList(unittest.TestCase):
         plain = json.dumps({'type': 'assistant', 'text': 'background_tasks_changed'})
         self.assertEqual(self.read([TASKS, quoted, plain, RESULT])[:2], (0, TASKS))
 
+    def escaped(self, frame, spelling='\\u0062ackground_tasks_changed'):
+        return frame.replace('background_tasks_changed', spelling)
+
+    def test_a_list_whose_subtype_is_written_with_a_json_escape_is_found(self):
+        # A raw search for the list name misses these spellings; the JSON parse decides.
+        spellings = ('\\u0062ackground_tasks_changed', 'background_tasks_chang\\u0065d',
+                     'background\\u005ftasks\\u005fchanged', ''.join('\\u%04x' % ord(c) for c in 'background_tasks_changed'))
+        for spelling in spellings:
+            later = self.escaped(TASKS, spelling)
+            self.assertNotIn('background_tasks_changed', later)
+            with self.subTest(spelling=spelling, order='literal empty, then escaped active'):
+                self.assertEqual(self.read([EMPTY, FILLER, later, RESULT])[:2], (0, later))
+            with self.subTest(spelling=spelling, order='escaped empty, then literal active'):
+                earlier = self.escaped(EMPTY, spelling)
+                self.assertEqual(self.read([earlier, TASKS, RESULT])[:2], (0, TASKS))
+            with self.subTest(spelling=spelling, order='literal active, then escaped empty'):
+                latest = self.escaped(EMPTY, spelling)
+                self.assertEqual(self.read([TASKS, FILLER, latest, RESULT])[:2], (0, latest))
+
+    def test_a_list_whose_keys_or_type_are_written_with_a_json_escape_is_found(self):
+        key = TASKS.replace('"subtype"', '"sub\\u0074ype"')
+        kind = TASKS.replace('"system"', '"\\u0073ystem"')
+        both = key.replace('"system"', '"\\u0073ystem"').replace('"type"', '"\\u0074ype"')
+        for later in (key, kind, both):
+            with self.subTest(later=later):
+                self.assertEqual(self.read([EMPTY, later, RESULT])[:2], (0, later))
+
+    def test_a_frame_with_an_escape_that_is_not_a_list_is_skipped(self):
+        ansi = json.dumps({'type': 'user', 'text': '\x1b[0m caf\u00e9'})
+        self.assertIn('\\u', ansi)
+        self.assertEqual(self.read([TASKS, ansi, ansi, RESULT])[:2], (0, TASKS))
+
+    def test_a_malformed_or_truncated_frame_with_an_escape_is_unreadable(self):
+        escaped = self.escaped(TASKS)
+        for value in (escaped[:70], '{"subtype":"\\u0062ackground_tasks_changed",}', '\\u'):
+            with self.subTest(value=value):
+                self.assertEqual(self.read((EMPTY + '\n' + value + '\n').encode())[0], 1)
+
+    def test_escaped_frames_do_not_widen_the_bytes_read(self):
+        marked = json.dumps({'type': 'user', 'text': '\x1b[0m' + 'x' * 900})
+        prefix = [TASKS, EMPTY] + [marked] * 48000
+        tail = [self.escaped(TASKS), RESULT, marked, EMPTY, RESULT]
+        status, output, read = self.read(prefix + tail)
+        self.assertEqual((status, output), (0, EMPTY))
+        self.assertLess(read, 256 * 1024)
+        status, output, read = self.read(prefix + [self.escaped(TASKS), RESULT, marked])
+        self.assertEqual((status, output), (0, self.escaped(TASKS)))
+        self.assertLess(read, 256 * 1024)
+
     def test_a_file_without_a_list_returns_nothing(self):
         for lines in ([], [INIT, FILLER, RESULT]):
             with self.subTest(lines=lines):

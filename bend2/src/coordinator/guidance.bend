@@ -142,7 +142,8 @@ def background_live(state: String) -> Bool:
 # from its checkpoint) closes on the native's current list and not on a list it
 # passed on the way. The read scans the file backward from its end and stops at
 # the latest list, so it covers the frames from that list to the end of the file;
-# only frames that name background_tasks_changed are parsed. The result is '0'
+# only frames that name background_tasks_changed or hold a JSON \u escape are
+# parsed, and the parse decides which of them is a list. The result is '0'
 # when the list names no task, '1' when it names tasks, 'none' when no list was
 # ever written and '?' when the file or its last list cannot be read.
 # A native without a retained stdout file (the direct path) has no path to read;
