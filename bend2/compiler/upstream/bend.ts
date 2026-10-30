@@ -323,7 +323,7 @@ export type PCtr  = { $: "PCtr"; k: Name; x: Patt[]; s?: Span; lit?: string };
 export type Patt  = PVar | PCtr;
 export type Case  = { p: Patt[]; f: Body; g?: [PVar, PCtr][] };
 export type Rows  = Array<Case>;
-export type Match = { $: "Match"; e: LTerm[]; r: Rows; s?: Span };
+export type Match = { $: "Match"; e: LTerm[]; r: Rows; s?: Span; done?: Name[] };
 export type Local = { $: "Local"; k: Patt[]; q: Quant; v: LTerm[]; f: Body };
 export type Reply = { $: "Reply"; x: LTerm; s?: Span };
 export type Body  = Match | Local | Reply
@@ -3083,13 +3083,16 @@ function literal_uses(b: Body, names: ReadonlySet<number>): { uses: number; matc
 
 // The rows of a literal column under the String.eq tests: a literal row reads
 // the matched value as the literal it equals, and a binder row may use the value
-// at most once. Neither may match it again.
+// at most once, unless a binder row of the column is written reusable (+), which
+// makes the column's fields reusable in the character decision tree (patt_mark).
+// No row may match the value again.
 function literal_rows_affine(rows: Rows, x: PVar): boolean {
+  const marked = rows.some((row) => row.p[0].$ === "PVar" && row.p[0].q.$ === "Many");
   return rows.every((row) => {
     const q = row.p[0];
     if (q.$ === "PCtr") return q.lit !== undefined && !literal_uses(row.f, new Set([x.i])).matched;
     const use = literal_uses(row.f, new Set([x.i, q.i]));
-    return !use.matched && use.uses <= 1;
+    return !use.matched && (marked || use.uses <= 1);
   });
 }
 
@@ -3113,7 +3116,7 @@ function literal_rows_affine(rows: Rows, x: PVar): boolean {
 // from one (check-mat gives a plain field the scrutinee's quantity).
 type LiteralBinder = { q: Quant; list: boolean };
 type LiteralGuard = [PVar, PCtr];
-let LITERAL_COLUMNS: { name: Name; binders: Map<number, LiteralBinder>; result: LTerm } | null = null;
+let LITERAL_COLUMNS: { book: Book; name: Name; binders: Map<number, LiteralBinder>; result: LTerm } | null = null;
 const LITERAL_DEPTH = 1 << 30;
 
 // Runs `flatten` with the context of `def` for literal_guards, when the
@@ -3137,8 +3140,33 @@ function literal_columns<T>(p: Parse, def: Def, k: Name, vars: PVar[], flatten: 
     binders.set(v.i, { q: opened.alls[j].q, list: A.$ === "ADT" && A.k === "List" });
   });
   const outer = LITERAL_COLUMNS;
-  LITERAL_COLUMNS = { name: k, binders, result };
+  LITERAL_COLUMNS = { book: p.book, name: k, binders, result };
   try { return flatten(); } finally { LITERAL_COLUMNS = outer; }
+}
+
+// The constructors of the datatype that declares constructor k.
+const LITERAL_SIBLINGS = new WeakMap<Book, Map<Name, Name[]>>();
+function literal_siblings(book: Book, k: Name): Name[] | undefined {
+  let map = LITERAL_SIBLINGS.get(book);
+  if (map === undefined || !map.has(k)) {
+    map = new Map();
+    for (const tld of Object.values(book.tlds)) {
+      if (tld.$ === "ADT") for (const c of tld.c) map.set(c.k, tld.c.map((d) => d.k));
+    }
+    LITERAL_SIBLINGS.set(book, map);
+  }
+  return map.get(k);
+}
+
+// The default branch after the constructors in `done` holds no value when they
+// are all of their datatype's constructors. Rows that carry guards reach such a
+// branch when a literal column was deferred past this split; the branch is then
+// a match with no cases (check-efq accepts it once every constructor is split),
+// so no guard selection is built where no value arrives.
+function literal_exhausted(done: Name[], rows: Rows): boolean {
+  if (LITERAL_COLUMNS === null || !rows.some((row) => row.g !== undefined && row.g.length > 0)) return false;
+  const all = literal_siblings(LITERAL_COLUMNS.book, done[done.length - 1]);
+  return all !== undefined && all.every((k) => done.includes(k));
 }
 
 // A List binder split by Con passes its quantity to its head and tail.
@@ -3283,7 +3311,9 @@ export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
         const pv = xs.concat(vars.slice(1));
         const pt = match_flatten({ $: "Match", e: pe, r: ps, s: m.s }, pv, fr);
         const ds = m.r.filter((row) => row.p[0].$ !== "PCtr" || row.p[0].k !== c.k);
-        const dt = match_flatten({ $: "Match", e: m.e, r: ds, s: m.s }, vars, fr);
+        const done = [...(m.done ?? []), c.k];
+        const dt = literal_exhausted(done, ds) ? Efq(m.s)
+          : match_flatten({ $: "Match", e: m.e, r: ds, s: m.s, done }, vars, fr);
         return Mat(c.k, pt, dt, c.s);
       }
     } else {
@@ -4145,124 +4175,180 @@ export function term_snf(book: Book, term: HTerm): HTerm {
 // same walk, kinds exact, no swap (a swap under EQ is harmless, so
 // the All case swaps unconditionally).
 
+// The last child of a node is compared by the loop: a string or list in constructor
+// form, a chain of matches or a body under binders is compared at a fixed stack depth,
+// and only the earlier children recurse. The children are compared in the same order.
 export function term_compare(mode: "EQ" | "LE", book: Book, lhs: HTerm, rhs: HTerm, dep: number = 0): boolean {
-  if (lhs === rhs) {
-    return true;
-  }
-  let a = term_wnf(book, lhs);
-  let b = term_wnf(book, rhs);
-  if (a === b) {
-    return true;
-  }
-  if (a.$ === "Lam" || b.$ === "Lam") {
-    const k = a.$ === "Lam" ? a.k : (b as Extract<HTerm, { $: "Lam" }>).k;
-    const x: HTerm = Var(k, dep);
-    return term_compare(mode, book, term_apply(a, x), term_apply(b, x), dep + 1);
-  }
-  if (a.$ === "Lit" && b.$ === "Ctr") {
-    a = term_higher(lit_step(a));
-  }
-  if (b.$ === "Lit" && a.$ === "Ctr") {
-    b = term_higher(lit_step(b));
-  }
-  switch (a.$) {
-    case "Var": {
-      return b.$ === "Var" && a.i === b.i;
+  for (;;) {
+    if (lhs === rhs) {
+      return true;
     }
-    case "Ref": {
-      return b.$ === "Ref" && a.k === b.k;
+    let a = term_wnf(book, lhs);
+    let b = term_wnf(book, rhs);
+    if (a === b) {
+      return true;
     }
-    case "Typ": {
-      if (b.$ !== "Typ") {
+    if (a.$ === "Lam" || b.$ === "Lam") {
+      const k = a.$ === "Lam" ? a.k : (b as Extract<HTerm, { $: "Lam" }>).k;
+      const x: HTerm = Var(k, dep);
+      lhs = term_apply(a, x);
+      rhs = term_apply(b, x);
+      dep = dep + 1;
+      continue;
+    }
+    if (a.$ === "Lit" && b.$ === "Ctr") {
+      a = term_higher(lit_step(a));
+    }
+    if (b.$ === "Lit" && a.$ === "Ctr") {
+      b = term_higher(lit_step(b));
+    }
+    switch (a.$) {
+      case "Var": {
+        return b.$ === "Var" && a.i === b.i;
+      }
+      case "Ref": {
+        return b.$ === "Ref" && a.k === b.k;
+      }
+      case "Typ": {
+        if (b.$ !== "Typ") {
+          return false;
+        }
+        if (mode === "EQ") {
+          return term_compare("EQ", book, a.g, b.g, dep);
+        }
+        const g = term_wnf(book, a.g);
+        const h = term_wnf(book, b.g);
+        if ((g.$ === "Qua" && g.q.$ === "Many") || (h.$ === "Qua" && h.q.$ !== "Many")) {
+          return true;
+        }
+        if (g.$ === "Min") {
+          const fa = term_compare("LE", book, Typ(g.a), b, dep);
+          const fb = term_compare("LE", book, Typ(g.b), b, dep);
+          return fa && fb;
+        }
+        if (h.$ === "Min") {
+          const fa = term_compare("LE", book, a, Typ(h.a), dep);
+          const fb = term_compare("LE", book, a, Typ(h.b), dep);
+          return fa || fb;
+        }
+        return term_compare("LE", book, g, h, dep);
+      }
+      case "Qnt": {
+        return b.$ === "Qnt";
+      }
+      case "Qua": {
+        return b.$ === "Qua" && a.q.$ === b.q.$;
+      }
+      case "Min": {
+        if (b.$ !== "Min" || !term_compare("EQ", book, a.a, b.a, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.b;
+        rhs = b.b;
+        continue;
+      }
+      case "All": {
+        const x: HTerm = Var(a.k, dep);
+        if (b.$ !== "All" || a.q.$ !== b.q.$ || !term_compare(mode, book, b.A, a.A, dep)) {
+          return false;
+        }
+        lhs = a.B(x);
+        rhs = b.B(x);
+        dep = dep + 1;
+        continue;
+      }
+      case "App": {
+        if (b.$ !== "App" || !term_compare("EQ", book, a.f, b.f, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.x;
+        rhs = b.x;
+        continue;
+      }
+      case "ADT": {
+        if (b.$ !== "ADT" || a.k !== b.k || a.x.length !== b.x.length) {
+          return false;
+        }
+        if (mode === "EQ" && a.r.length !== b.r.length) {
+          return false;
+        }
+        if (!b.r.every((c) => a.r.includes(c))) {
+          return false;
+        }
+        if (a.x.length === 0) {
+          return true;
+        }
+        for (let j = 0; j < a.x.length - 1; j++) {
+          if (!term_compare("EQ", book, a.x[j], b.x[j], dep)) {
+            return false;
+          }
+        }
+        mode = "EQ";
+        lhs = a.x[a.x.length - 1];
+        rhs = b.x[b.x.length - 1];
+        continue;
+      }
+      case "Ctr": {
+        if (b.$ !== "Ctr" || a.k !== b.k || a.x.length !== b.x.length) {
+          return false;
+        }
+        if (a.x.length === 0) {
+          return true;
+        }
+        for (let j = 0; j < a.x.length - 1; j++) {
+          if (!term_compare("EQ", book, a.x[j], b.x[j], dep)) {
+            return false;
+          }
+        }
+        mode = "EQ";
+        lhs = a.x[a.x.length - 1];
+        rhs = b.x[b.x.length - 1];
+        continue;
+      }
+      case "Lit": {
+        return b.$ === "Lit" && a.v === b.v;
+      }
+      case "Mat": {
+        if (b.$ !== "Mat" || a.k !== b.k || !term_compare("EQ", book, a.h, b.h, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.m;
+        rhs = b.m;
+        continue;
+      }
+      case "Efq": {
+        return b.$ === "Efq";
+      }
+      case "Eql": {
+        if (b.$ !== "Eql" || !term_compare("EQ", book, a.a, b.a, dep) || !term_compare("EQ", book, a.b, b.b, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.T;
+        rhs = b.T;
+        continue;
+      }
+      case "Rfl": {
+        return b.$ === "Rfl";
+      }
+      case "Hol": {
+        return b.$ === "Hol" && a.k === b.k;
+      }
+      case "Rwt": {
+        if (b.$ !== "Rwt" || !term_compare("EQ", book, a.e, b.e, dep) || !term_compare("EQ", book, a.p, b.p, dep)) {
+          return false;
+        }
+        mode = "EQ";
+        lhs = a.f;
+        rhs = b.f;
+        continue;
+      }
+      default: {
         return false;
       }
-      if (mode === "EQ") {
-        return term_compare("EQ", book, a.g, b.g, dep);
-      }
-      const g = term_wnf(book, a.g);
-      const h = term_wnf(book, b.g);
-      if ((g.$ === "Qua" && g.q.$ === "Many") || (h.$ === "Qua" && h.q.$ !== "Many")) {
-        return true;
-      }
-      if (g.$ === "Min") {
-        const fa = term_compare("LE", book, Typ(g.a), b, dep);
-        const fb = term_compare("LE", book, Typ(g.b), b, dep);
-        return fa && fb;
-      }
-      if (h.$ === "Min") {
-        const fa = term_compare("LE", book, a, Typ(h.a), dep);
-        const fb = term_compare("LE", book, a, Typ(h.b), dep);
-        return fa || fb;
-      }
-      return term_compare("LE", book, g, h, dep);
-    }
-    case "Qnt": {
-      return b.$ === "Qnt";
-    }
-    case "Qua": {
-      return b.$ === "Qua" && a.q.$ === b.q.$;
-    }
-    case "Min": {
-      return b.$ === "Min"
-          && term_compare("EQ", book, a.a, b.a, dep)
-          && term_compare("EQ", book, a.b, b.b, dep);
-    }
-    case "All": {
-      const x: HTerm = Var(a.k, dep);
-      return b.$ === "All" && a.q.$ === b.q.$
-          && term_compare(mode, book, b.A, a.A, dep)
-          && term_compare(mode, book, a.B(x), b.B(x), dep + 1);
-    }
-    case "App": {
-      return b.$ === "App"
-          && term_compare("EQ", book, a.f, b.f, dep)
-          && term_compare("EQ", book, a.x, b.x, dep);
-    }
-    case "ADT": {
-      if (b.$ !== "ADT" || a.k !== b.k || a.x.length !== b.x.length) {
-        return false;
-      }
-      if (mode === "EQ" && a.r.length !== b.r.length) {
-        return false;
-      }
-      return b.r.every((c) => a.r.includes(c))
-          && a.x.every((x, j) => term_compare("EQ", book, x, b.x[j], dep));
-    }
-    case "Ctr": {
-      return b.$ === "Ctr" && a.k === b.k && a.x.length === b.x.length
-          && a.x.every((x, j) => term_compare("EQ", book, x, b.x[j], dep));
-    }
-    case "Lit": {
-      return b.$ === "Lit" && a.v === b.v;
-    }
-    case "Mat": {
-      return b.$ === "Mat" && a.k === b.k
-          && term_compare("EQ", book, a.h, b.h, dep)
-          && term_compare("EQ", book, a.m, b.m, dep);
-    }
-    case "Efq": {
-      return b.$ === "Efq";
-    }
-    case "Eql": {
-      return b.$ === "Eql"
-          && term_compare("EQ", book, a.a, b.a, dep)
-          && term_compare("EQ", book, a.b, b.b, dep)
-          && term_compare("EQ", book, a.T, b.T, dep);
-    }
-    case "Rfl": {
-      return b.$ === "Rfl";
-    }
-    case "Hol": {
-      return b.$ === "Hol" && a.k === b.k;
-    }
-    case "Rwt": {
-      return b.$ === "Rwt"
-          && term_compare("EQ", book, a.e, b.e, dep)
-          && term_compare("EQ", book, a.p, b.p, dep)
-          && term_compare("EQ", book, a.f, b.f, dep);
-    }
-    default: {
-      return false;
     }
   }
 }

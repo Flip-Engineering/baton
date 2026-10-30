@@ -1,8 +1,7 @@
 // A String match on an affine (Lone) parameter uses the inline String.eq chain
 // of a + parameter: the syntax graph stays the size of the + version, and the
-// interpreter and the emitted C give the same results. A final binder that its
-// row could use more than once keeps the character decision tree, so a plain
-// binder used twice is still refused and a + binder used twice still runs.
+// interpreter and the emitted C give the same results. A plain final binder
+// used twice is still refused; a + final binder may use the value twice.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -59,7 +58,7 @@ assert.ok(lone < many + 16, `an affine parameter lowers like a + parameter (${ma
 assert.ok(param < many, `a final binder that reads the parameter stays small (${param} nodes)`);
 assert.ok(middle < 2 * many, `an affine matched parameter between others stays small (${middle} nodes)`);
 assert.ok(total < many, `a total match on an affine parameter stays small (${total} nodes)`);
-assert.ok(plus > lone, `a final binder used twice keeps the character decision tree (${plus} nodes)`);
+assert.ok(plus < many, `a + final binder used twice stays small (${plus} nodes)`);
 
 const run = spawnSync(process.execPath, [path.join(root, "bend2/compiler/upstream/main.ts"), fixture],
   { cwd: root, encoding: "utf8", env: { ...process.env, BEND_NO_TELEMETRY: "1" } });
