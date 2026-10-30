@@ -830,7 +830,7 @@ def drain_deferred(+db: String, +session: String, +id: String, +attempt: String,
     released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
     drain_redrive(db,session,id,head)
 
-def started(+db: String, +session: String, +id: String, +log: String, cursor: String, native: String, cwd: String, +attempt: String, harness: String, level: String, lock: U32, start: P.RetainedStart, again: String -> IO(Result<&1,&1,U32 & String,Unit>), cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def started(+db: String, +session: String, +id: String, +log: String, cursor: String, native: String, cwd: String, +attempt: String, harness: String, level: String, +lock: U32, start: P.RetainedStart, again: String -> IO(Result<&1,&1,U32 & String,Unit>), cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match start:
     case P.Retained{+handle}: do IO<Result<&1,&1,U32 & String,Unit>>:
       reconciled : Unit <- Stop.started(db,session,id)
