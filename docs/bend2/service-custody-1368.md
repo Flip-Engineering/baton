@@ -189,7 +189,7 @@ A login-session scope or a system service unit in these fields means the launch
 ran in its launcher's cgroup:
 
 - keeper: `ATTEMPT/service-keeper` has `keeper.scope=1` and a scope in
-  `keeper.cgroup`; `ATTEMPT/service-native` has `native.in_keeper_cgroup=1`.
+  `keeper.cgroup`; `ATTEMPT/service-native` has `native.in_keeper_cgroup=1`. The value is `unknown` when either cgroup could not be read; two failed reads are not a match.
 - owner: `/tmp/baton2-UID/KEY.service-owner` has `owner.scope=1`.
 - queue client: `REQUEST/service/service-launch.json` has `placement: scope`
   with a unit name, and `service-inside.json` has the client's cgroup.

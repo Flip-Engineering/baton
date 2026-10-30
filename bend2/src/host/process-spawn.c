@@ -1020,13 +1020,15 @@ static int br_proc_stat(pid_t pid,int *ppid,int *pgrp,int *session,int *tty) {
   return ENOTSUP;
 #endif
 }
-/* The cgroup lines of a process, joined by ';'. */
-static void br_proc_cgroup(pid_t pid,char *out,size_t size) {
+/* The cgroup lines of a process, joined by ';'. Returns 1 when they were read.
+   On failure OUT holds "unavailable:" and the reason, which a caller must not
+   compare as if it were a cgroup. */
+static int br_proc_cgroup(pid_t pid,char *out,size_t size) {
   out[0]=0;
 #ifdef __linux__
   char path[64];snprintf(path,sizeof(path),"/proc/%d/cgroup",(int)pid);
   FILE *file=fopen(path,"r");
-  if(!file) {snprintf(out,size,"unavailable:%s",strerror(errno));return;}
+  if(!file) {snprintf(out,size,"unavailable:%s",strerror(errno));return 0;}
   size_t used=0;char line[512];
   while(fgets(line,sizeof(line),file)) {
     size_t length=strcspn(line,"\n");
@@ -1035,8 +1037,10 @@ static void br_proc_cgroup(pid_t pid,char *out,size_t size) {
     memcpy(out+used,line,length);used+=length;out[used]=0;
   }
   fclose(file);
+  return 1;
 #else
   (void)pid;snprintf(out,size,"unavailable:unsupported platform");
+  return 0;
 #endif
 }
 /* Appends `prefix.field=value` lines for one process and returns the new length. */
@@ -1238,8 +1242,10 @@ static void br_keeper_service_record(const char *directory) {
                  (unsigned long long)br_realtime_ns());
   size_t used=n<0?0:(size_t)n;
   used=br_identity_text(text,sizeof(text),used,"keeper",getpid());
-  char cgroup[1024];br_proc_cgroup(getpid(),cgroup,sizeof(cgroup));
-  n=snprintf(text+used,sizeof(text)-used,"keeper.scope=%s\n",strstr(cgroup,"/baton-keeper-")?"1":"0");
+  char cgroup[1024];
+  int read=br_proc_cgroup(getpid(),cgroup,sizeof(cgroup));
+  n=snprintf(text+used,sizeof(text)-used,"keeper.scope=%s\n",
+             !read?"unknown":strstr(cgroup,"/baton-keeper-")?"1":"0");
   if(n>0)used=(size_t)n>=sizeof(text)-used?sizeof(text)-1:used+(size_t)n;
   br_atomic_replace(directory,"service-keeper",text,used);
 }
@@ -1251,8 +1257,9 @@ static void br_owner_service_record(const char *ipc,const char *key) {
                  (unsigned long long)br_realtime_ns());
   size_t used=n<0?0:(size_t)n;
   used=br_identity_text(text,sizeof(text),used,"owner",getpid());
-  br_proc_cgroup(getpid(),cgroup,sizeof(cgroup));
-  n=snprintf(text+used,sizeof(text)-used,"owner.scope=%s\n",strstr(cgroup,"/baton-owner-")?"1":"0");
+  int read=br_proc_cgroup(getpid(),cgroup,sizeof(cgroup));
+  n=snprintf(text+used,sizeof(text)-used,"owner.scope=%s\n",
+             !read?"unknown":strstr(cgroup,"/baton-owner-")?"1":"0");
   if(n>0)used=(size_t)n>=sizeof(text)-used?sizeof(text)-1:used+(size_t)n;
   br_atomic_replace(ipc,name,text,used);
 }
@@ -1263,8 +1270,12 @@ static void br_native_service_record(const char *directory,pid_t native) {
                  (unsigned long long)br_realtime_ns());
   size_t used=n<0?0:(size_t)n;
   used=br_identity_text(text,sizeof(text),used,"native",native);
-  br_proc_cgroup(getpid(),keeper,sizeof(keeper));br_proc_cgroup(native,child,sizeof(child));
-  n=snprintf(text+used,sizeof(text)-used,"native.in_keeper_cgroup=%d\n",!strcmp(keeper,child));
+  /* Membership is claimed only when both cgroups were read; two failed reads
+     must not compare equal. */
+  int keeper_read=br_proc_cgroup(getpid(),keeper,sizeof(keeper));
+  int child_read=br_proc_cgroup(native,child,sizeof(child));
+  n=snprintf(text+used,sizeof(text)-used,"native.in_keeper_cgroup=%s\n",
+             !keeper_read || !child_read?"unknown":strcmp(keeper,child)?"0":"1");
   if(n>0)used=(size_t)n>=sizeof(text)-used?sizeof(text)-1:used+(size_t)n;
   br_atomic_replace(directory,"service-native",text,used);
 }
