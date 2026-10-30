@@ -14,7 +14,14 @@ with open(os.environ['ROLE_LOG'], 'a') as out:
     out.write(json.dumps(args) + '\\n')
 if args[1] == 'bend':
     header = '#include <curl/curl.h>\\n' if os.environ.get('ROLE_CURL') == '1' else ''
+    header += ''.join('#include "' + name + '"\\n' for name in os.environ.get('ROLE_INCLUDES', '').split(',') if name)
     pathlib.Path(args[args.index('-o') + 1]).write_text(header + 'int main(void) { return 0; }\\n')
+elif args[1] == 'cc' and os.environ.get('ROLE_INCLUDES'):
+    source = pathlib.Path(args[args.index('--source') + 1])
+    for name in os.environ['ROLE_INCLUDES'].split(','):
+        companion = source.parent / name
+        expected = pathlib.Path.cwd() / 'bend2/src/host' / name
+        assert companion.is_symlink() and companion.resolve() == expected.resolve(), str(companion)
 '''
 
 
@@ -95,6 +102,36 @@ class HelperRole(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         _, cc = self.calls()
         self.assertIn('--link-flags=-O1 -pthread -lsqlite3 -lm -DBATON2_RECOVERY_HELPER', cc)
+
+    def include_sources(self):
+        host = self.root / 'bend2/src/host'
+        host.mkdir(parents=True)
+        for name in ('persistent-path.h', 'jsonl.c'):
+            (host / name).write_text('/* ' + name + ' */\n')
+
+    def test_generated_includes_are_bound_before_cc(self):
+        self.include_sources()
+        result = self.build('main', ROLE_INCLUDES='persistent-path.h,jsonl.c')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls()[-1][1], 'cc')
+
+    def test_existing_correct_generated_include_is_reused(self):
+        self.include_sources()
+        output = self.root / 'out'
+        output.mkdir()
+        (output / 'jsonl.c').symlink_to(self.root / 'bend2/src/host/jsonl.c')
+        result = self.build('main', ROLE_INCLUDES='jsonl.c')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_unrelated_generated_include_is_rejected(self):
+        self.include_sources()
+        output = self.root / 'out'
+        output.mkdir()
+        (output / 'jsonl.c').write_text('/* unrelated */\n')
+        result = self.build('main', ROLE_INCLUDES='jsonl.c')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('generated C input resolves jsonl.c to an unexpected file', result.stderr)
+        self.assertEqual([call[1] for call in self.calls()], ['bend'])
 
     def test_conflicting_explicit_role_is_rejected(self):
         result = self.build('receive-recovery-focused', BATON2_RECEIVE_FOCUSED='1')
