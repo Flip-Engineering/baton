@@ -21,7 +21,8 @@ not decide which one happened.
 
 BATON_SERVICE_PLACEMENT is auto (the default: place when the user manager
 answers and record the reason otherwise), off, or require (exit 75 when
-placement is not possible). BATON_SYSTEMD_RUN names the systemd-run program.
+placement is not possible). BATON_SYSTEMD_RUN names the systemd-run program: a path, or a name looked up on
+PATH.
 
 systemd-run --user finds the user manager through XDG_RUNTIME_DIR. A service
 started by a system manager often lacks it. When the caller has none, the helper

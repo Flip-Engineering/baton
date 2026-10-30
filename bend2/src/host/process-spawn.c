@@ -983,7 +983,8 @@ static char *br_self(void) {
    BATON_SERVICE_PLACEMENT selects auto (the default: place when the user
    manager answers and record the reason otherwise), off, or require (refuse
    the launch when placement is not possible). BATON_SYSTEMD_RUN names the
-   systemd-run program. */
+   systemd-run program: a path, or a name looked up on PATH (the probe and the
+   launch both use posix_spawnp; service-run.py looks the name up the same way). */
 typedef struct {
   int mode;
   int placed;
@@ -1129,7 +1130,7 @@ static void br_service_probe_run(const char *run,char *const *envp) {
   if(!error)error=posix_spawn_file_actions_adddup2(&actions,report[1],2);
   if(!error)error=posix_spawn_file_actions_addclosefrom_np(&actions,3);
   pid_t pid=0;
-  if(!error)error=posix_spawn(&pid,run,&actions,NULL,argv,envp);
+  if(!error)error=posix_spawnp(&pid,run,&actions,NULL,argv,envp);
   if(actions_ready)posix_spawn_file_actions_destroy(&actions);
   if(report[1]>=0)close(report[1]);
   if(!error) {

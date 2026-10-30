@@ -60,7 +60,8 @@ Settings, read from the environment of the launching process:
 - `BATON_SERVICE_PLACEMENT=off` launches without a scope.
 - `BATON_SERVICE_PLACEMENT=require` refuses the launch when placement is not
   possible (the helper exits 75; the C launcher returns `ENOTSUP`).
-- `BATON_SYSTEMD_RUN` names the systemd-run program.
+- `BATON_SYSTEMD_RUN` names the systemd-run program: a path, or a name looked up
+  on `PATH` (the C launcher and `service-run.py` resolve it the same way).
 
 Any other value is refused.
 

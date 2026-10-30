@@ -86,6 +86,17 @@ class ServiceRunTests(unittest.TestCase):
         for word in ('--property', '--slice', 'Max', 'Limit', 'Timeout'):
             self.assertNotIn(word, requests[0])
 
+    def test_a_bare_systemd_run_name_is_looked_up_on_path(self):
+        environment = dict(self.environment, BATON_SYSTEMD_RUN='fake-systemd-run',
+                           PATH=str(self.root) + os.pathsep + os.environ['PATH'])
+        (self.root / 'fake-systemd-run').write_text(FAKE_SCOPE)
+        (self.root / 'fake-systemd-run').chmod(0o755)
+        process, stdout, stderr, pidfile = self.run_helper(environment=environment)
+        self.assertEqual(process.returncode, 0, stderr)
+        launch = json.loads((self.record / 'service-launch.json').read_text())
+        self.assertEqual(launch['placement'], 'scope')
+        self.assertEqual(int(pidfile.read_text()), process.pid)
+
     def test_unavailable_manager_runs_unplaced_and_records_the_reason(self):
         environment = dict(self.environment, FAKE_SYSTEMD_FAIL='1')
         process, stdout, stderr, pidfile = self.run_helper(environment=environment)
