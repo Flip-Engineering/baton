@@ -146,6 +146,9 @@ class HistoryGroupTests(unittest.TestCase):
         self.holds[name].touch()
         out, err = child.communicate(timeout=60)
         self.assertEqual(child.returncode, 0, out + err)
+        self.wait_for_sampler(name)
+
+    def wait_for_sampler(self, name):
         # The retained watcher publishes its observation before releasing the
         # heavy descriptor. The requester may return before that publication.
         def observation_published():
@@ -232,9 +235,12 @@ class HistoryGroupTests(unittest.TestCase):
             self.until("changed-%s has a claim" % what, lambda: self.claim("changed-" + what) is not None)
             self.assertEqual(self.claim("changed-" + what)["history"], "0",
                              "a changed %s inherited the history of the earlier one" % what)
+            self.until("changed-%s allocated" % what, lambda: self.allocated("changed-" + what))
+            time.sleep(1.5)
             self.holds["changed-" + what].touch()
             out, err = child.communicate(timeout=60)
             self.assertEqual(child.returncode, 0, out + err)
+            self.wait_for_sampler("changed-" + what)
         self.assertEqual(len(self.group_records()), 3)
         self.assertIn(group, self.group_records())
 
@@ -267,6 +273,7 @@ class HistoryGroupTests(unittest.TestCase):
         self.holds["failing"].touch()
         out, err = failing.communicate(timeout=60)
         self.assertNotEqual(failing.returncode, 0, out + err)
+        self.wait_for_sampler("failing")
         self.assertEqual(self.group_records(), {})
         exact = list((self.state / "keys").glob("*/peak"))
         self.assertEqual(len(exact), 1, "the failed request keeps the peak of its own key")
@@ -282,9 +289,12 @@ class HistoryGroupTests(unittest.TestCase):
         other = self.request("other", "one", options=["mode=other"])
         self.until("other has a claim", lambda: self.claim("other") is not None)
         self.assertEqual(self.claim("other")["history"], "0")
+        self.until("other option allocated", lambda: self.allocated("other"))
+        time.sleep(1.5)
         self.holds["other"].touch()
         out, err = other.communicate(timeout=60)
         self.assertEqual(other.returncode, 0, out + err)
+        self.wait_for_sampler("other")
         self.assertEqual(len(self.group_records()), 2)
 
     def test_an_edited_source_of_a_measured_group_starts_beside_a_known_claim(self):
