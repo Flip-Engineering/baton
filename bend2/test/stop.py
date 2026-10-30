@@ -6,6 +6,7 @@ import pathlib
 import shutil
 import signal
 import sqlite3
+import struct
 import subprocess
 import sys
 import unittest
@@ -251,7 +252,16 @@ class Stop(unittest.TestCase):
         observer, stream, started = self.begin()
         attempt_dir = pathlib.Path(self.rows(
             "SELECT directory FROM executions WHERE session='parent'")[0]['directory'])
-        endpoint = attempt_dir / 'control'
+        manifest = (attempt_dir / 'manifest').read_bytes()
+        self.assertIn(manifest[:8], (b'BATONRP1', b'BATONRP2'))
+        count = 8 if manifest[:8] == b'BATONRP2' else 6
+        header = struct.Struct(f'=8s{count}Q2I')
+        magic, *fields = header.unpack_from(manifest)
+        self.assertEqual(magic, manifest[:8])
+        lengths = fields[:count]
+        self.assertEqual(len(manifest), header.size + sum(lengths))
+        offset = header.size + sum(lengths[:5])
+        endpoint = pathlib.Path(os.fsdecode(manifest[offset:offset + lengths[5]]))
         self.assertTrue(endpoint.exists())
         endpoint.unlink()
 
