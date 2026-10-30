@@ -222,6 +222,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#746](https://github.com/Flip-Engineering/baton/issues/746).
 
 - [#746: Read promoted root holdings in the knowledge consumer acceptance](https://github.com/Flip-Engineering/baton/issues/746).
+  Completed through the fresh native consumer acceptance recorded in
+  [the root review](https://github.com/Flip-Engineering/baton/issues/746#issuecomment-6514128819).
   Source review found that the consumer task and verifier use the knowledge
   audit view while requiring the producer's local control finding to be absent.
   Read the existing universal scope with subject `root` for both consumer native
@@ -232,6 +234,15 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#724](https://github.com/Flip-Engineering/baton/issues/724),
   [#727](https://github.com/Flip-Engineering/baton/issues/727) and
   [#730](https://github.com/Flip-Engineering/baton/issues/730).
+
+- [#777: Transfer checked context values between seats](https://github.com/Flip-Engineering/baton/issues/777).
+  Root owns the implementation in [#1375](https://github.com/Flip-Engineering/baton/pull/1375).
+  The citation and recipient-grant path is merged through #1369 and its import
+  correction #1374. The next change adds checked JSON context values, bounded
+  Unicode projections and native turn snapshots. Its MCP routing checks pass;
+  focused native qualification is running on the homelab. Complete the two-model
+  experiment comparing token use and receiver prefix-cache behavior, and retain
+  installed acceptance separately from source qualification.
 
 - [#739: Judge native control recovery with recorded OMP session paths](https://github.com/Flip-Engineering/baton/issues/739).
   Target workflow `38683470364` resumes the recorded OMP conversation through
