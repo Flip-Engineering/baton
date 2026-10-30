@@ -109,6 +109,13 @@ def result_case(+db: String) -> IO(Unit):
     expect_read(db,"SELECT json_extract(" ++ C.q(result) ++ ",'$.model-refusal.attempted_instructions.\"fork-and-flush\"[2].instruction');","exact flush instruction 3\n","result-exact-instruction")
     expect_read(db,"SELECT json_extract(" ++ C.q(result) ++ ",'$.model-refusal.attempted_instructions.\"fork-and-continue\"[0].refusal_description');","I can't assist with attempt two. '); DROP TABLE sessions;-- λ\n","result-exact-refusal")
     expect_read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='sessions';","1\n","instruction-text-cannot-drop-schema")
+    finalize : Unit <- A.rr_finalize_refused(db,recovery)
+    expect_read(db,"SELECT status FROM refusal_recoveries WHERE id=" ++ C.q(recovery) ++ ";","refused\n","result-recovery-refused")
+    expect_read(db,"SELECT report FROM refusal_recoveries WHERE id=" ++ C.q(recovery) ++ ";","refusal-result:" ++ recovery ++ "\n","result-report-identity")
+    reported : String <- do IO<String>:
+      value : String <- read(db,"SELECT body FROM messages WHERE id='refusal-result:'||" ++ C.q(recovery) ++ ";")
+      IO.pure(String,Tx.trim_nl(value))
+    expect("result-report-exact",String.eq(reported,result))
     IO.pure(Unit,Unit{})
 
 def success_case(+db: String) -> IO(Unit):
