@@ -48,7 +48,7 @@ class ContextValues(fixture.ReplContext):
             self.assertEqual(read['length'], len(read['fragment']))
             fragments.append(read['fragment'])
             if read['complete']:
-                self.assertIsNone(read['nextOffset'])
+                self.assertIsNone(read.get('nextOffset'))
                 break
             self.assertGreater(read['nextOffset'], cursor)
             cursor = read['nextOffset']

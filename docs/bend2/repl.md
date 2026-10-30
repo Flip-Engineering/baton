@@ -202,7 +202,8 @@ of the caller's completed native turns.
 at most 1024 Unicode characters. The recipient uses
 `repl context --cell CITATION --offset N --length N` to read the value through
 ordinary tool output. The default length is 2048 characters; each read supports
-1–8192 characters and returns `nextOffset`, `totalCharacters` and `complete`.
+1–8192 characters and returns `totalCharacters` and `complete`. An incomplete
+read supplies `nextOffset`; a complete read has no further cursor.
 Offsets count Unicode characters in serialized JSON. A receiver appends each
 fragment in offset order and parses the completed JSON value. Ordinary
 `repl resolve` continues to return the complete selected cell and its outcomes.
