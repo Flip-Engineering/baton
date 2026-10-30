@@ -4,7 +4,10 @@
 // the app-server that owns the thread returns the complete message as a user
 // message in that thread.
 import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { chmodSync, closeSync, mkdirSync, openSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
 const USAGE = 'usage: codex-root-relay.mjs --ssh HOST --database PATH --coordinator PATH --conductor PATH --session ID [--thread ID] [--register] [--node PATH] [--codex PATH]\n';
@@ -13,6 +16,59 @@ const RECONNECT_MS = 2000;
 
 const POLL_MS = 1000;
 const PAGE_TURNS = 8;
+const LOCK_HOLDER = "process.stdout.write('locked\\n'); process.stdin.resume();";
+
+function rootThreadLockFile(thread) {
+  const codexHome = resolve(process.env.CODEX_HOME || join(homedir(), '.codex'));
+  const directory = join(codexHome, 'root-channel-delivery-locks');
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const name = createHash('sha256').update(thread).digest('hex') + '.lock';
+  const path = join(directory, name);
+  const fd = openSync(path, 'a', 0o600);
+  closeSync(fd);
+  chmodSync(path, 0o600);
+  return path;
+}
+
+// `lockf` and `flock` keep ownership in the kernel. When the relay exits, the
+// operating system releases its lock and the next waiting context proceeds.
+function acquireRootThreadLock(thread) {
+  const path = rootThreadLockFile(thread);
+  const lockProgram = process.platform === 'darwin' ? 'lockf' : 'flock';
+  const lockArgs = process.platform === 'darwin'
+    ? ['-k', '-w', path, process.execPath, '-e', LOCK_HOLDER]
+    : ['--exclusive', path, process.execPath, '-e', LOCK_HOLDER];
+  const child = spawn(lockProgram, lockArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+  let output = '';
+  let diagnostic = '';
+  let acquired = false;
+  let released = false;
+  return new Promise((resolveLock, rejectLock) => {
+    child.stdout.on('data', chunk => {
+      output += chunk.toString();
+      const newline = output.indexOf('\n');
+      if (newline !== -1 && output.slice(0, newline) === 'locked' && !acquired) {
+        acquired = true;
+        resolveLock({ release: () => {
+          if (released) return Promise.resolve();
+          released = true;
+          return new Promise(resolveRelease => {
+            if (child.exitCode !== null || child.signalCode !== null) return resolveRelease();
+            child.once('close', resolveRelease);
+            child.stdin.end();
+          });
+        } });
+      }
+    });
+    child.stderr.on('data', chunk => { diagnostic += chunk.toString(); });
+    child.once('error', error => {
+      if (!acquired) rejectLock(error);
+    });
+    child.once('close', (code, signal) => {
+      if (!acquired) rejectLock(new Error(`Root-thread delivery lock exited (${code ?? signal}): ${diagnostic.trim()}`));
+    });
+  });
+}
 
 function fail(message) {
   process.stderr.write(message.endsWith('\n') ? message : message + '\n');
@@ -469,36 +525,44 @@ function noticeThread(options, params) {
 async function deliverNotice(peer, delivery, options, params) {
   const id = messageId(params);
   const thread = noticeThread(options, params);
+  // The app-server can start one relay per active context. Serialize the
+  // history scan and queue operation across those relay processes so only one
+  // context creates a user item for this thread at a time.
+  const threadLock = await acquireRootThreadLock(thread);
   const session = new AppSession({ ...options, thread }, delivery);
   let received;
   let queued;
   let reused = false;
   try {
-    await awaitLoadedThread(delivery, session, thread);
-    const before = await newestTurn(session, thread);
-    // A prior relay can queue the complete notice and exit before its read
-    // callback completes. Reuse that exact message on retry instead of
-    // adding another copy to the root thread.
-    received = await findUserMessage(session, thread, params.content);
-    if (received) reused = true;
-    else {
-      queued = await queueMessage({ ...options, thread }, id, params.content);
-      received = await awaitUserMessage(delivery, session, id, thread, params.content, before);
+    try {
+      await awaitLoadedThread(delivery, session, thread);
+      const before = await newestTurn(session, thread);
+      // A prior relay can queue the complete notice and exit before its read
+      // callback completes. Reuse that exact message on retry instead of
+      // adding another copy to the root thread.
+      received = await findUserMessage(session, thread, params.content);
+      if (received) reused = true;
+      else {
+        queued = await queueMessage({ ...options, thread }, id, params.content);
+        received = await awaitUserMessage(delivery, session, id, thread, params.content, before);
+      }
+    } finally {
+      await session.close();
     }
+    if (delivery.exited) throw endedDelivery(delivery, 'the read of Baton message ' + id + ' was recorded.');
+    const read = await peer.request('tools/call', { name: 'baton2_root_delivery',
+      arguments: { id, thread, content: params.content, turn: received.turn, item: received.item } });
+    if (read.error || read.result?.isError) {
+      // The conductor refuses a read from a conversation it no longer serves.
+      if (delivery.superseded) throw endedDelivery(delivery, 'the read of Baton message ' + id + ' was recorded.');
+      throw new Error('Codex returned Baton message ' + id + ' in the root thread, but its read was not recorded: ' + JSON.stringify(read));
+    }
+    process.stderr.write(JSON.stringify({ type: 'codexRootMessageReceived', session: options.session,
+      thread, message: id, turn: received.turn, item: received.item,
+      ...(reused ? { reused: true } : { queue: queued.stdout.trim() }) }) + '\n');
   } finally {
-    await session.close();
+    await threadLock.release();
   }
-  if (delivery.exited) throw endedDelivery(delivery, 'the read of Baton message ' + id + ' was recorded.');
-  const read = await peer.request('tools/call', { name: 'baton2_root_delivery',
-    arguments: { id, thread, content: params.content, turn: received.turn, item: received.item } });
-  if (read.error || read.result?.isError) {
-    // The conductor refuses a read from a conversation it no longer serves.
-    if (delivery.superseded) throw endedDelivery(delivery, 'the read of Baton message ' + id + ' was recorded.');
-    throw new Error('Codex returned Baton message ' + id + ' in the root thread, but its read was not recorded: ' + JSON.stringify(read));
-  }
-  process.stderr.write(JSON.stringify({ type: 'codexRootMessageReceived', session: options.session,
-    thread, message: id, turn: received.turn, item: received.item,
-    ...(reused ? { reused: true } : { queue: queued.stdout.trim() }) }) + '\n');
 }
 
 function codexMcpRequest(message) {
