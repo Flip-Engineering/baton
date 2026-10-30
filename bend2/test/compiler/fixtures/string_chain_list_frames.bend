@@ -1,5 +1,9 @@
 import Base
 
+type Opt is Data:
+  Field{name: String, value: String}
+  Flag{name: String}
+
 def join(+xs: List<&2,String>) -> String:
   match xs:
     case Nil{}: ""
@@ -39,6 +43,29 @@ def marked(args: List<String>, +tag: String) -> String:
     case +h <> rest: String.append(h, h)
     case Nil{}: tag
 
+def two(s: String, xs: List<String>) -> String:
+  match s, xs:
+    case "a", Nil{}: "a-nil"
+    case "a", x <> rest: String.append("a-cons:", x)
+    case "b", ys: "b-any"
+    case other, Nil{}: String.append("other-nil:", other)
+    case other, x <> rest: String.append(String.append("other-cons:", other), x)
+
+def opt(o: Opt) -> String:
+  match o:
+    case Field{"--source", v}: String.append("source=", v)
+    case Field{"--label", v}: String.append("label=", v)
+    case Field{n, v}: String.append(String.append(n, "="), v)
+    case Flag{"--pretty"}: "pretty"
+    case Flag{n}: String.append("flag:", n)
+
+def echo(+xs: List<&2,String>, +acc: String) -> String:
+  match xs:
+    case Nil{}: acc
+    case "stop" <> rest: acc
+    case "dup" <> rest: echo(rest, String.append(acc, join(xs)))
+    case h <> rest: echo(rest, String.append(acc, h))
+
 def main() -> IO(Unit):
   do IO<Unit>:
     IO.print(run(7, "v", ["exe", "db", "--project-settings", "proj"], "/p"))
@@ -61,3 +88,18 @@ def main() -> IO(Unit):
     IO.print(pair([], "t"))
     IO.print(marked(["x", "y"], "t"))
     IO.print(marked(["hh"], "t"))
+    IO.print(two("a", []))
+    IO.print(two("a", ["p", "q"]))
+    IO.print(two("b", ["p"]))
+    IO.print(two("b", []))
+    IO.print(two("c", []))
+    IO.print(two("c", ["p"]))
+    IO.print(two("", ["p"]))
+    IO.print(opt(Field{"--source", "s1"}))
+    IO.print(opt(Field{"--label", "l1"}))
+    IO.print(opt(Field{"--other", "o1"}))
+    IO.print(opt(Field{"", ""}))
+    IO.print(opt(Flag{"--pretty"}))
+    IO.print(opt(Flag{"--pretty2"}))
+    IO.print(echo(["p", "dup", "q", "stop", "r"], ">"))
+    IO.print(echo(["p", "q"], ">"))

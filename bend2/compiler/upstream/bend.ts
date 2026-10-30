@@ -323,7 +323,7 @@ export type PCtr  = { $: "PCtr"; k: Name; x: Patt[]; s?: Span; lit?: string };
 export type Patt  = PVar | PCtr;
 export type Case  = { p: Patt[]; f: Body; g?: [PVar, PCtr][] };
 export type Rows  = Array<Case>;
-export type Match = { $: "Match"; e: LTerm[]; r: Rows; s?: Span };
+export type Match = { $: "Match"; e: LTerm[]; r: Rows; s?: Span; done?: Name[] };
 export type Local = { $: "Local"; k: Patt[]; q: Quant; v: LTerm[]; f: Body };
 export type Reply = { $: "Reply"; x: LTerm; s?: Span };
 export type Body  = Match | Local | Reply
@@ -3083,13 +3083,16 @@ function literal_uses(b: Body, names: ReadonlySet<number>): { uses: number; matc
 
 // The rows of a literal column under the String.eq tests: a literal row reads
 // the matched value as the literal it equals, and a binder row may use the value
-// at most once. Neither may match it again.
+// at most once, unless a binder row of the column is written reusable (+), which
+// makes the column's fields reusable in the character decision tree (patt_mark).
+// No row may match the value again.
 function literal_rows_affine(rows: Rows, x: PVar): boolean {
+  const marked = rows.some((row) => row.p[0].$ === "PVar" && row.p[0].q.$ === "Many");
   return rows.every((row) => {
     const q = row.p[0];
     if (q.$ === "PCtr") return q.lit !== undefined && !literal_uses(row.f, new Set([x.i])).matched;
     const use = literal_uses(row.f, new Set([x.i, q.i]));
-    return !use.matched && use.uses <= 1;
+    return !use.matched && (marked || use.uses <= 1);
   });
 }
 
@@ -3113,7 +3116,7 @@ function literal_rows_affine(rows: Rows, x: PVar): boolean {
 // from one (check-mat gives a plain field the scrutinee's quantity).
 type LiteralBinder = { q: Quant; list: boolean };
 type LiteralGuard = [PVar, PCtr];
-let LITERAL_COLUMNS: { name: Name; binders: Map<number, LiteralBinder>; result: LTerm } | null = null;
+let LITERAL_COLUMNS: { book: Book; name: Name; binders: Map<number, LiteralBinder>; result: LTerm } | null = null;
 const LITERAL_DEPTH = 1 << 30;
 
 // Runs `flatten` with the context of `def` for literal_guards, when the
@@ -3137,8 +3140,33 @@ function literal_columns<T>(p: Parse, def: Def, k: Name, vars: PVar[], flatten: 
     binders.set(v.i, { q: opened.alls[j].q, list: A.$ === "ADT" && A.k === "List" });
   });
   const outer = LITERAL_COLUMNS;
-  LITERAL_COLUMNS = { name: k, binders, result };
+  LITERAL_COLUMNS = { book: p.book, name: k, binders, result };
   try { return flatten(); } finally { LITERAL_COLUMNS = outer; }
+}
+
+// The constructors of the datatype that declares constructor k.
+const LITERAL_SIBLINGS = new WeakMap<Book, Map<Name, Name[]>>();
+function literal_siblings(book: Book, k: Name): Name[] | undefined {
+  let map = LITERAL_SIBLINGS.get(book);
+  if (map === undefined || !map.has(k)) {
+    map = new Map();
+    for (const tld of Object.values(book.tlds)) {
+      if (tld.$ === "ADT") for (const c of tld.c) map.set(c.k, tld.c.map((d) => d.k));
+    }
+    LITERAL_SIBLINGS.set(book, map);
+  }
+  return map.get(k);
+}
+
+// The default branch after the constructors in `done` holds no value when they
+// are all of their datatype's constructors. Rows that carry guards reach such a
+// branch when a literal column was deferred past this split; the branch is then
+// a match with no cases (check-efq accepts it once every constructor is split),
+// so no guard selection is built where no value arrives.
+function literal_exhausted(done: Name[], rows: Rows): boolean {
+  if (LITERAL_COLUMNS === null || !rows.some((row) => row.g !== undefined && row.g.length > 0)) return false;
+  const all = literal_siblings(LITERAL_COLUMNS.book, done[done.length - 1]);
+  return all !== undefined && all.every((k) => done.includes(k));
 }
 
 // A List binder split by Con passes its quantity to its head and tail.
@@ -3283,7 +3311,9 @@ export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
         const pv = xs.concat(vars.slice(1));
         const pt = match_flatten({ $: "Match", e: pe, r: ps, s: m.s }, pv, fr);
         const ds = m.r.filter((row) => row.p[0].$ !== "PCtr" || row.p[0].k !== c.k);
-        const dt = match_flatten({ $: "Match", e: m.e, r: ds, s: m.s }, vars, fr);
+        const done = [...(m.done ?? []), c.k];
+        const dt = literal_exhausted(done, ds) ? Efq(m.s)
+          : match_flatten({ $: "Match", e: m.e, r: ds, s: m.s, done }, vars, fr);
         return Mat(c.k, pt, dt, c.s);
       }
     } else {

@@ -1,8 +1,9 @@
-// A string literal inside a List pattern, in a definition with other
-// parameters or a recursive one, lowers to String.eq guards on the bound head:
-// no character match (SCon) remains in the lowered body, and the interpreter
-// and the emitted C give the same results. A binder row that could use an
-// affine head twice keeps the character decision tree.
+// A string literal inside a List or Data constructor pattern, in a definition
+// with other parameters, a multi-column match or a recursive one, lowers to
+// String.eq guards on the bound value: no character match (SCon) remains in the
+// lowered body, and the interpreter and the emitted C give the same results. A
+// literal row that calls the definition with the matched value keeps the
+// character decision tree.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -45,7 +46,8 @@ function census(term: L): { nodes: number; scon: number } {
 const expected = ["settings:proj/p", "legacy:db--project-settings,proj,extra,", "contextual:sessv7",
   "legacy:dbagent-contextual-input,", "legacy:dbother-mode,x,", "legacy:db", "missing:/p",
   "help:a", "help:d", "h", "-ha", "goa", "--source,x,s1,-,", "ab:t", "a:z", "first:a", "first:q", "none:t",
-  "x:t", "hhhh"];
+  "x:t", "hhhh", "a-nil", "a-cons:p", "b-any", "b-any", "other-nil:c", "other-cons:cp", "other-cons:p",
+  "source=s1", "label=l1", "--other=o1", "=", "pretty", "flag:--pretty2", ">pdup,q,stop,r,q", ">pq"];
 const root = path.join(import.meta.dir, "../../..");
 const fixture = path.join(import.meta.dir, "fixtures/string_chain_list_frames.bend");
 const book = Bend.book_nil();
@@ -56,11 +58,12 @@ const shape = (name: string): { nodes: number; scon: number } => {
   assert.ok(def !== undefined && def.$ === "Def" && def.v !== null, `${name} is a filled def`);
   return census(Bend.term_lower_shared(def.v) as L);
 };
-const shapes = Object.fromEntries(["run", "execute", "options", "pair", "marked"].map((name) => [name, shape(name)]));
-for (const name of ["run", "execute", "options", "pair"]) {
+const shapes = Object.fromEntries(["run", "execute", "options", "pair", "marked", "two", "opt", "echo"]
+  .map((name) => [name, shape(name)]));
+for (const name of ["run", "execute", "options", "pair", "marked", "two", "opt"]) {
   assert.equal(shapes[name].scon, 0, `${name} tests its literals with String.eq (${JSON.stringify(shapes[name])})`);
 }
-assert.ok(shapes.marked.scon > 0, "a binder row that uses an affine head twice keeps the character decision tree");
+assert.ok(shapes.echo.scon > 0, "a literal row that calls the definition with the matched value keeps the character decision tree");
 assert.deepEqual(book.order.filter((name) => name.includes("$lit")), [], "no literal helpers");
 
 const run = spawnSync(process.execPath, [path.join(root, "bend2/compiler/upstream/main.ts"), fixture],
