@@ -51,15 +51,53 @@ def refused(+saved: String) -> Bool:
 # so a fresh database converges atomically and later commits pay existence
 # checks. Installation lives with the host owner; this call site carries
 # no copy of the projection text.
-def ensure_before_begin(db: String) -> IO(Unit):
+def refusal_recovery_sql() -> String:
+  "CREATE TABLE IF NOT EXISTS refusal_recoveries("
+  ++ "id TEXT PRIMARY KEY,"
+  ++ "source TEXT NOT NULL,"
+  ++ "conductor TEXT,"
+  ++ "instruction TEXT,"
+  ++ "harness TEXT,"
+  ++ "model TEXT,"
+  ++ "initial_turn TEXT,"
+  ++ "initial_refusal TEXT,"
+  ++ "status TEXT,"
+  ++ "cause TEXT,"
+  ++ "report TEXT,"
+  ++ "created TEXT DEFAULT CURRENT_TIMESTAMP);"
+
+def refusal_attempt_sql() -> String:
+  "CREATE TABLE IF NOT EXISTS refusal_attempts("
+  ++ "id TEXT PRIMARY KEY,"
+  ++ "recovery TEXT NOT NULL,"
+  ++ "stage TEXT,"
+  ++ "ordinal INTEGER,"
+  ++ "session TEXT NOT NULL,"
+  ++ "instruction TEXT,"
+  ++ "refusal_description TEXT,"
+  ++ "status TEXT,"
+  ++ "turn TEXT,"
+  ++ "round TEXT,"
+  ++ "message TEXT,"
+  ++ "created TEXT DEFAULT CURRENT_TIMESTAMP);"
+
+def ensure_refusal_schema(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    empty : String <- IO.try(String,DB.Sql.query(db,refusal_recovery_sql()))
+    made : String <- IO.try(String,DB.Sql.query(db,refusal_attempt_sql()))
+    IO.pure(Unit,Unit{})
+
+def ensure_before_begin(+db: String) -> IO(Unit):
   do IO<Unit>:
     ensured : String <- IO.try(String,DB.Sql.ensure_projection(db,C.schema()))
+    recovery : Unit <- ensure_refusal_schema(db)
     IO.pure(Unit,Unit{})
 
 law ensure_before_begin_installs_through_the_canonical_installer:
-  for db: String
+  for +db: String
   {ensure_before_begin(db) == (do IO<Unit>:
     ensured : String <- IO.try(String,DB.Sql.ensure_projection(db,C.schema()))
+    recovery : Unit <- ensure_refusal_schema(db)
     IO.pure(Unit,Unit{})) : IO(Unit)}
 
 def ensure_before_begin_installs_through_the_canonical_installer(db):
