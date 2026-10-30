@@ -1,19 +1,27 @@
-"""A request that differs from a measured one only in its source reuses the measured peak (#1310).
+"""A cc request that differs from a measured one only in its C source reuses the measured peak (#1310).
 
-The history group of a request is its request key without the digest of the source
-(or of the input files) and without the digests of the input rows: the kind, the
-entry, the options, the toolchain, the artifact names and the normalized command.
-A command that exits 0 records its peak for the group. A peak is an observation of
-the memory the command used; the tests start commands that touch a fixed amount of
-memory so that the sampled peak is positive, and they compare claim records with
-the group record, never with a fixed number.
+The history group of a cc request is its request key without the digest of the
+C-family source files and without the digests of the input rows. The content digest
+of every other input or aux file (a driver script, a helper, a data file) stays in
+it, with the kind, entry, options, toolchain, artifact names and normalized command.
+A command that exits 0 with no signal raises the group record under state/history.
+The tests start commands that touch a fixed amount of memory so that the sampled
+peak is positive, and they compare claim records with the group record, never with
+a fixed number.
 
-* An edited source finds the group peak: its claim is a known claim (`history=1`).
+* An edited C source finds the group record: its claim is a known claim (`history=1`).
+* A later larger successful measurement raises the record; a later smaller one leaves it.
 * A command that does not exit 0 records no group peak.
-* Another option, or another toolchain, is another group: the claim has no history.
+* Another option, another command argument, or a changed helper or data file is
+  another group: the claim has no history.
 * An edited source of a measured group starts beside a running claim whose history is
   known, which a request without history does not.
 * A request of a group that was never measured waits beside a running claim.
+* A cgen request is admitted on the record of its exact key only: no group record
+  exists for it, whatever was measured before.
+* The records are in state/history; the directory peaks/ of the memory-admission
+  executable is not created, and the attempt file `group` of that executable is not
+  written.
 """
 import os
 import pathlib
@@ -65,6 +73,9 @@ class HistoryGroupTests(unittest.TestCase):
         self.state.chmod(0o2770)
         self.log = self.root / "log"
         self.source = self.root / "main.c"
+        self.entry = self.root / "entry.bend"
+        self.helper = self.root / "helper.py"
+        self.helper.write_text("# driver version 1\n")
         self.compiler = self.root / "fake-compiler"
         self.compiler.write_text(COMPILER.format(python=sys.executable))
         self.compiler.chmod(0o755)
@@ -96,29 +107,36 @@ class HistoryGroupTests(unittest.TestCase):
     def allocated(self, name):
         return any(line.startswith("allocated %s " % name) for line in self.log_lines())
 
-    def request(self, name, edit, options=(), exit_code=0, mb=64):
-        """Start a cc request whose source text carries the edit; returns the process."""
+    def request(self, name, edit, options=(), exit_code=0, mb=64, aux=(), extra=(), kind="cc"):
+        """Start a request whose source text carries the edit; returns the process."""
         hold = self.root / ("hold-" + name)
         self.holds[name] = hold
-        self.source.write_text("mb=%d\nname=%s\nlog=%s\nhold=%s\nexit=%d\n# edit %s\n"
-                               % (mb, name, self.log, hold, exit_code, edit))
+        source = self.entry if kind == "cgen" else self.source
+        source.write_text("mb=%d\nname=%s\nlog=%s\nhold=%s\nexit=%d\n# edit %s\n"
+                          % (mb, name, self.log, hold, exit_code, edit))
+        output = self.root / ("output-" + name + (".c" if kind == "cgen" else ""))
         argv = [self.candidate, "--", "run", "--token", name,
-                "--receipt", str(self.root / ("receipt-" + name)), "--kind", "cc",
+                "--receipt", str(self.root / ("receipt-" + name)), "--kind", kind,
                 "--state-root", str(self.state), "--cwd", str(self.root), "--root", str(self.root),
-                "--source-root", str(self.root), "--compiler", str(self.compiler),
-                "--linker", "/usr/bin/ld", "--version", "fake-history-v1",
-                "--artifact", "output=" + str(self.root / ("output-" + name)), "--input", str(self.source)]
+                "--source-root", str(self.root), "--compiler", str(self.compiler)]
+        if kind == "cgen":
+            argv += ["--entry", "entry.bend", "--artifact", "c.c=" + str(output)]
+        else:
+            argv += ["--linker", "/usr/bin/ld", "--version", "fake-history-v1",
+                     "--artifact", "output=" + str(output), "--input", str(self.source)]
+        for path in aux:
+            argv += ["--aux", str(path)]
         for option in options:
             argv += ["--option", option]
-        argv += ["--", str(self.compiler), "--source", str(self.source), "-o", str(self.root / ("output-" + name))]
+        argv += ["--", str(self.compiler), "--source", str(source), "-o", str(output), *extra]
         child = subprocess.Popen(argv, env=dict(os.environ, BATON_COMPILE_QUEUE_ROOT=str(self.state)),
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.children.append(child)
         return child
 
-    def measured(self, name, edit, options=()):
+    def measured(self, name, edit, options=(), **more):
         """Run a request to its end after the sampler saw its memory."""
-        child = self.request(name, edit, options)
+        child = self.request(name, edit, options, **more)
         self.until("%s allocated" % name, lambda: self.allocated(name))
         time.sleep(1.5)
         self.holds[name].touch()
@@ -126,8 +144,8 @@ class HistoryGroupTests(unittest.TestCase):
         self.assertEqual(child.returncode, 0, out + err)
 
     def group_records(self):
-        peaks = self.state / "peaks"
-        return {p.name: int(fields(p)["peak_kb"]) for p in peaks.iterdir()} if peaks.is_dir() else {}
+        history = self.state / "history"
+        return {p.name: int(fields(p)["peak_kb"]) for p in history.iterdir()} if history.is_dir() else {}
 
     def claim(self, name):
         """The record of the running claim of a request, by its key."""
@@ -159,6 +177,73 @@ class HistoryGroupTests(unittest.TestCase):
         self.assertEqual(second.returncode, 0, out + err)
         self.assertEqual(len(list((self.state / "keys").iterdir())), 2, "the edit must be another request")
         self.assertEqual(list(self.group_records()), [group])
+        self.assertFalse((self.state / "peaks").exists(), "records belong in history/, not in the peaks/ of the other executable")
+        attempts = list((self.state / "keys").glob("*/runs/*"))
+        self.assertTrue(attempts and all((a / "history-group").is_file() and not (a / "group").exists() for a in attempts))
+
+    def test_a_later_larger_measurement_raises_the_group_record_and_a_smaller_one_leaves_it(self):
+        self.measured("small", "one", mb=32)
+        (group, low), = self.group_records().items()
+        self.measured("large", "two", mb=192)
+        self.assertEqual(list(self.group_records()), [group])
+        high = self.group_records()[group]
+        self.assertGreater(high, low + 64 * 1024, "the larger measurement did not raise the record")
+        self.measured("small-again", "three", mb=32)
+        self.assertEqual(self.group_records()[group], high, "a smaller measurement lowered the record")
+        following = self.request("following", "four", mb=32)
+        self.until("following has a claim", lambda: self.claim("following") is not None)
+        claim = self.claim("following")
+        self.assertEqual(claim["history"], "1", claim)
+        self.assertEqual(int(claim["expected_kb"]), high, "the claim must expect the raised high-water mark")
+        self.holds["following"].touch()
+        out, err = following.communicate(timeout=60)
+        self.assertEqual(following.returncode, 0, out + err)
+
+    def test_a_changed_helper_or_data_file_is_another_group(self):
+        notes = self.root / "notes.txt"
+        notes.write_text("notes one\n")
+        self.measured("first", "one", aux=[self.helper, notes])
+        (group,) = self.group_records()
+        same = self.request("same", "two", aux=[self.helper, notes])
+        self.until("same has a claim", lambda: self.claim("same") is not None)
+        self.assertEqual(self.claim("same")["history"], "1", "an edit of the C source must keep the group")
+        self.holds["same"].touch()
+        out, err = same.communicate(timeout=60)
+        self.assertEqual(same.returncode, 0, out + err)
+        for what, change in (("helper", lambda: self.helper.write_text("# driver version 2\n")),
+                             ("notes", lambda: notes.write_text("notes two\n"))):
+            change()
+            child = self.request("changed-" + what, "two", aux=[self.helper, notes])
+            self.until("changed-%s has a claim" % what, lambda: self.claim("changed-" + what) is not None)
+            self.assertEqual(self.claim("changed-" + what)["history"], "0",
+                             "a changed %s inherited the history of the earlier one" % what)
+            self.holds["changed-" + what].touch()
+            out, err = child.communicate(timeout=60)
+            self.assertEqual(child.returncode, 0, out + err)
+        self.assertEqual(len(self.group_records()), 3)
+        self.assertIn(group, self.group_records())
+
+    def test_another_command_argument_is_another_group(self):
+        self.measured("first", "one")
+        other = self.request("other", "one", extra=["--jobs", "4"])
+        self.until("other has a claim", lambda: self.claim("other") is not None)
+        self.assertEqual(self.claim("other")["history"], "0")
+        self.holds["other"].touch()
+        out, err = other.communicate(timeout=60)
+        self.assertEqual(other.returncode, 0, out + err)
+
+    def test_a_cgen_request_is_admitted_on_the_record_of_its_exact_key_only(self):
+        self.measured("first", "one", kind="cgen")
+        self.assertEqual(self.group_records(), {})
+        self.assertEqual(len(list((self.state / "keys").glob("*/peak"))), 1)
+        second = self.request("second", "two", kind="cgen")
+        self.until("second has a claim", lambda: self.claim("second") is not None)
+        claim = self.claim("second")
+        self.assertEqual(claim["history"], "0", claim)
+        self.holds["second"].touch()
+        out, err = second.communicate(timeout=60)
+        self.assertEqual(second.returncode, 0, out + err)
+        self.assertEqual(self.group_records(), {})
 
     def test_a_command_that_does_not_exit_zero_records_no_group_peak(self):
         failing = self.request("failing", "broken", exit_code=1)
