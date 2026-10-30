@@ -223,6 +223,9 @@ Unresolved limitations:
   event that arrives before that write can be observed with no running attempt
   row. The window is small and the focused tests do not exercise concurrent
   launch and refusal.
+- Flush stage advancement has no exclusive claim. Unique attempt identities and
+  deterministic message identities prevent duplicate rows and messages; two
+  concurrent advance calls can still start duplicate branch rounds.
 
 ## Review findings and dispositions
 
@@ -248,6 +251,18 @@ The adversarial and constructive review found these implementation issues:
 - The first classifier repeated the complete description SQL once per refusal
   marker. SQLite reported `parser stack overflow`. Disposition: the description
   is extracted once, then the prefix marker checks run as pure Bend2 predicates.
+- The first continue path inserted a `pending` attempt and marked it `running`
+  after delivery. Disposition: the attempt is marked `running` before the
+  rewritten guidance is sent.
+- The first flush path launched all three branches even after one branch start
+  failed. Disposition: flush setup walks the three ordinals, skips existing
+  ordinals, and stops when the recovery is no longer active.
+- The first failure path copied the failure cause into
+  `refusal_attempts.refusal_description`. Disposition: failed attempts retain an
+  empty refusal description and the cause is stored on the recovery row.
+- The first finalization path did not verify both stages before building
+  `model-refusal`. Disposition: finalization requires three refused rows with
+  non-empty refusal descriptions in each stage.
 - The final result must come from durable attempt rows. Tests compare every
   returned instruction and refusal description with the corresponding database
   row.
@@ -286,7 +301,7 @@ The red review targets these failure cases:
 | Two flush attempts refuse and the third succeeds | Recovery is succeeded; final result has no model-refusal envelope |
 | A report route is denied | Recovery is failed; the report field is not claimed |
 | A refusal body contains quotes, newlines, Unicode or SQL fragments | Stored and returned byte-for-byte in JSON |
-| Recovery restarts after the third continue refusal | The same three branch rounds and attempt identities are used |
+| Recovery restarts after the third continue refusal | The same three attempt identities are used; a duplicate branch round is limited to the launch-to-row write window |
 | A flush child refuses before its attempt row is written | The race is documented; a terminal event cannot corrupt another attempt |
 
 ## Blue-team audit
