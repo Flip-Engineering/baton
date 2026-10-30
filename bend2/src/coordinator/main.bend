@@ -291,6 +291,8 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
         event : String <- IO.try(String,T.Text.read(path))
         +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
         run(db,C.Observe{id,player,event,False{},Tx.trim_nl(harness)})
+        observed : Unit <- Turn.refusal_observed(db,player,id,event)
+        IO.pure(Unit,Unit{})
     case C.NativeReply{parent,id,response}: NativeRequests.reply(db,parent,id,response)
     case C.NativeReplyFile{parent,id,path}:
       do IO<Unit>:

@@ -1,5 +1,4 @@
 import Base
-import ./agent-guidance.bend as AgentGuidance
 import ./agent-input.bend as AgentInput
 import ../coordinator/commands.bend as C
 import ./store.bend as Store
@@ -57,11 +56,6 @@ def remember(+previous: String, result: Result<&1,&1,U32 & String,String>) -> St
   match result:
     case Fail{error}: Bool.pick(String,String.is_empty(previous),error_text(error),previous)
     case Done{value}: previous
-
-def remember_write(previous: String, result: Result<&1,&1,U32 & String,Unit>) -> String:
-  match result:
-    case Fail{error}: remember(previous,Fail{error})
-    case Done{unit}: previous
 
 def append_error(+previous: String, +next: String) -> String:
   Bool.pick(String,String.is_empty(next),previous,Bool.pick(String,String.is_empty(previous),next,previous ++ "\n" ++ next))
@@ -238,19 +232,34 @@ def direct_task_prompt(+db: String, +player: String, +id: String, prompt: String
     executable : String <- IO.try(String,Lock.SessionLock.executable())
     parent : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(parent,'') FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     header : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":task-input") ++ " AND recipient=" ++ C.q(player) ++ " AND kind='task-assignment') THEN 'Message (task-assignment) from ' || " ++ C.q(player) ++ " || ' [id: ' || " ++ C.q(id ++ ":task-input") ++ " || ']:' ELSE '' END;"))
-    IO.pure(String,task_instructions() ++ knowledge_instructions() ++ AgentGuidance.actions() ++ "Coordinator executable, database and session argv: [" ++ J.string_literal(executable) ++ "," ++ J.string_literal(db) ++ "," ++ J.string_literal(player) ++ "]. Recorded parent: " ++ Tx.trim_nl(parent) ++ ".\nUse baton inbox to read complete owed input. Baton resolves your session and database from the launch context. Baton records delivery and complete reads internally. Use baton completion-request --text SUMMARY when the assignment is ready; your recorded parent resolves and confirms the current request.\n" ++ Tx.trim_nl(header) ++ "\n" ++ prompt)
+    IO.pure(String,task_instructions() ++ knowledge_instructions() ++ "Use baton inbox to read complete input, baton report \"text\" to report progress, and baton ask \"question\" to reach your coordinator. Use baton send PLAYER \"text\" to send a report and baton guide PLAYER \"text\" to send guidance. Use baton finish \"summary\" when the assignment is ready; your coordinator confirms it with baton confirm PLAYER. Baton records delivery and complete reads internally. Direct operator instructions and explicit stops remain effective.\n" ++ "Coordinator executable, database and session argv: [" ++ J.string_literal(executable) ++ "," ++ J.string_literal(db) ++ "," ++ J.string_literal(player) ++ "]. Recorded parent: " ++ Tx.trim_nl(parent) ++ ".\nUse baton inbox to read complete owed input. Baton resolves your session and database from the launch context. Baton records delivery and complete reads internally. Use baton completion-request --text SUMMARY when the assignment is ready; your recorded parent resolves and confirms the current request.\n" ++ Tx.trim_nl(header) ++ "\n" ++ prompt)
 
 def generation_log(+log: String, +id: String) -> String:
   Logs.attempt_log(log,id)
 
 # Failure reports are committed while this invocation still owns the session.
 # finish delivers the settled turn to its recorded coordinator.
+def recovery_observe(db: String, +player: String, +id: String, +outcome: Outcome) -> IO(Unit):
+  match outcome:
+    case Ended{+event,status,error,incomplete}: AgentInput.rr_observe(db,player,id,event)
+
+def refusal_observed(db: String, +player: String, +id: String, +event: String) -> IO(Unit):
+  do IO<Unit>:
+    observed : Unit <- AgentInput.rr_observe(db,player,id,event)
+    advanced : Unit <- AgentInput.rr_after_turn(db,player,id,event)
+    IO.pure(Unit,Unit{})
+
+def recovery_after(db: String, +player: String, +id: String, +outcome: Outcome) -> IO(Unit):
+  match outcome:
+    case Ended{+event,status,error,incomplete}: AgentInput.rr_after_turn(db,player,id,event)
+
 def prepare(+db: String, +player: String, +id: String, log: String, stderr: String, +outcome: Outcome) -> IO(Unit):
   do IO<Unit>:
     +generation : String <- IO.pure(String,generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     reported : Unit <- prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
-    AgentInput.record_initial_reads(db,player,id)
+    reads : Unit <- AgentInput.record_initial_reads(db,player,id)
+    recovery_observe(db,player,id,outcome)
 
 def record_exit(db: String, player: String, +id: String, log: String, outcome: Outcome) -> IO(Unit):
   match outcome:
@@ -287,7 +296,9 @@ def finish_parent(db: String, player: String, id: String, log: String, outcome: 
 def finish(+db: String, +player: String, id: String, log: String, outcome: Outcome, quiet: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
-    finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"),quiet)
+    finished : Result<&1,&1,U32 & String,Unit> <- finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"),quiet)
+    recovered : Unit <- recovery_after(db,player,id,outcome)
+    IO.pure(Result<&1,&1,U32 & String,Unit>,finished)
 
 def status_text(result: Result<&1,&1,U32 & String,String>) -> String:
   match result:
@@ -430,9 +441,6 @@ def codex_span_finished_event_span(db: String, span: Maybe<Frame.FrameSpan>, +te
     case None{}: do IO<String>:
       value : String <- IO.try(String,DB.Sql.query(db,codex_span_result_sql("NULL",C.q(terminal))))
       IO.pure(String,Tx.trim_nl(value))
-
-def codex_span_finished_event(db: String, +message: String, +terminal: String) -> IO(String):
-  codex_span_finished_event_span(db,Frame.span_of(message),terminal)
 
 def codex_span_finished_dispatch(+db: String, +player: String, +id: String, span: Maybe<Frame.FrameSpan>, +terminal: String, sealed: Bool) -> IO(String):
   match span:
@@ -1919,11 +1927,6 @@ def supervise(+db: String, +player: String, +id: String, +cmd: String, +model: S
     child : Result<&1,&1,U32 & String,U32> <- launch(db,player,sessions,cmd,model,effort,cwd,stderr,native,harness,log,task)
     first : Outcome <- started(db,player,id,log,prompt,harness,child)
     supervise_retry(db,player,id,cmd,model,effort,cwd,task,log,harness,sessions,native,stderr,prompt,first)
-
-def task_read(db: String, player: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String, harness: String, sessions: String, result: Result<&1,&1,U32 & String,String>) -> IO(Outcome):
-  match result:
-    case Fail{error}: IO.pure(Outcome,Ended{"input failed","","Player task could not be read: " ++ error_text(error),True{}})
-    case Done{prompt}: supervise(db,player,id,cmd,model,effort,cwd,task,log,session,harness,sessions,prompt)
 
 def replay_result(result: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 & String,Maybe<Outcome>>:
   match result:
