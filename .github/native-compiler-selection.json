@@ -1,0 +1,5 @@
+{
+  "schema": "baton2-native-compiler-selection-v1",
+  "archive": "/var/tmp/baton2-compile-queue/toolchains/compiler-cgen-costs-1386-20261030/bend-2.0.25-linux-x64-compiler-cgen-costs-1386-20261030.tar.gz",
+  "archive_sha256": "9ce9b66b67e86868eb08d987eaabd162a5aad6a3a723ea16e63bfa7df112dd23"
+}
