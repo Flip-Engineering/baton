@@ -21,7 +21,7 @@ def checkpoint(+db: String, +actor: String, +cell: String) -> IO(Unit):
     body : String <- Context.cite(db,actor,cell)
     IO.write(body ++ "\n")
 
-def bound(+db: String, +actor: String, reference: String, turn: String) -> IO(String):
+def bound(+db: String, +actor: String, +reference: String, +turn: String) -> IO(String):
   Bool.pick(IO(String),String.is_empty(turn),
     Bool.pick(IO(String),String.is_empty(reference),
       M.scalar(db,"SELECT cell FROM repl_context_bindings WHERE owner=" ++ C.q(actor)),
@@ -45,7 +45,7 @@ def projection_sql(+actor: String, +cell: String, +offset: String, +count: Strin
   ++ "),'nextOffset',CASE WHEN " ++ offset ++ "+" ++ count ++ "<length(v.value) THEN " ++ offset ++ "+" ++ count ++ " END,'complete',json(CASE WHEN " ++ offset ++ "+" ++ count ++ ">=length(v.value) THEN 'true' ELSE 'false' END))))"
   ++ " FROM repl_context_values v JOIN repl_cells c ON c.id=v.cell JOIN repl_notebooks n ON n.id=c.notebook WHERE c.id=" ++ C.q(cell) ++ " AND " ++ Context.visible_sql(actor)
 
-def read(+db: String, +actor: String, reference: String, turn: String, +offset: String, +count: String) -> IO(Unit):
+def read(+db: String, +actor: String, +reference: String, +turn: String, +offset: String, +count: String) -> IO(Unit):
   do IO<Unit>:
     valid : Unit <- range(db,offset,count)
     exclusive : Unit <- M.require(Bool.or(String.is_empty(reference),String.is_empty(turn)),"Select a context citation or one of your native turns.")
