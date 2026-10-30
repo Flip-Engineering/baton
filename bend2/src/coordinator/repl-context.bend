@@ -51,7 +51,7 @@ def read_message(+db: String, message: String) -> IO(Unit):
     body : String <- IO.try(String,Store.read(db,command))
     AgentInput.command_output(db,command,body)
 
-def read_received(db: String, message: String) -> IO(Unit):
+def read_received(db: String, +message: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.is_empty(message),IO.pure(Unit,Unit{}),read_message(db,message))
 
 def resolve(+db: String, +actor: String, reference: String) -> IO(Unit):
