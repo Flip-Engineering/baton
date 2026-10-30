@@ -392,9 +392,9 @@
       "sha256": "e405e0c779cdbb7e06e5e503eeda2d36102ef59b7eb81945c7c2be116045cd3b"
     },
     {
-      "bytes": 5221,
+      "bytes": 4808,
       "path": "fragments.ts",
-      "sha256": "1e98f8057f31ad0cc5dd2c6220a6c60c218a0cbdd8e52f73d2474d318f7773f8"
+      "sha256": "840cfb9d74244c305569709ee00ee11350bf0e271dd375845f01dc1e8683c4a8"
     },
     {
       "bytes": 3778,
