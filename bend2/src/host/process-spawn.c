@@ -1020,24 +1020,36 @@ static int br_proc_stat(pid_t pid,int *ppid,int *pgrp,int *session,int *tty) {
   return ENOTSUP;
 #endif
 }
-/* The cgroup lines of a process, joined by ';'. Returns 1 when they were read.
-   On failure OUT holds "unavailable:" and the reason, which a caller must not
-   compare as if it were a cgroup. */
+/* Reads the cgroup lines from a stream, joined by ';'. Returns 1 only for a
+   complete read: at least one line, no stream error, no line longer than the
+   buffer and no output truncation. Otherwise OUT holds "unavailable:" and the
+   reason, which a caller must not compare as if it were a cgroup. */
+static int br_read_cgroup(FILE *file,char *out,size_t size) {
+  out[0]=0;
+  size_t used=0,lines=0;
+  char line[512];
+  const char *reason=NULL;
+  while(fgets(line,sizeof(line),file)) {
+    size_t length=strcspn(line,"\n");
+    if(line[length]!='\n' && !feof(file)) {reason="line longer than the read buffer";break;}
+    if(used+length+2>=size) {reason="output truncated";break;}
+    if(used)out[used++]=';';
+    memcpy(out+used,line,length);used+=length;out[used]=0;lines++;
+  }
+  if(ferror(file))reason="read error";
+  else if(!reason && !lines)reason="empty";
+  if(reason) {snprintf(out,size,"unavailable:%s",reason);return 0;}
+  return 1;
+}
 static int br_proc_cgroup(pid_t pid,char *out,size_t size) {
   out[0]=0;
 #ifdef __linux__
   char path[64];snprintf(path,sizeof(path),"/proc/%d/cgroup",(int)pid);
   FILE *file=fopen(path,"r");
   if(!file) {snprintf(out,size,"unavailable:%s",strerror(errno));return 0;}
-  size_t used=0;char line[512];
-  while(fgets(line,sizeof(line),file)) {
-    size_t length=strcspn(line,"\n");
-    if(used+length+2>=size)break;
-    if(used)out[used++]=';';
-    memcpy(out+used,line,length);used+=length;out[used]=0;
-  }
+  int read=br_read_cgroup(file,out,size);
   fclose(file);
-  return 1;
+  return read;
 #else
   (void)pid;snprintf(out,size,"unavailable:unsupported platform");
   return 0;
