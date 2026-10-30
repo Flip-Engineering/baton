@@ -85,23 +85,29 @@ def CompileQueueIdentity.key(material: String) -> IO(Result<&1,&1,U32 & String,S
   CompileQueueIdentity.text_digest(material)
 
 
-def CompileQueueIdentity.file_digest(path: String) -> IO(Result<&1,&1,U32 & String,String>):
-  Digest.HostDigest.file(path)
+def CompileQueueIdentity.file_digest(+path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  QF.with_path("digest",path,Digest.HostDigest.file(path))
 
-def CompileQueueIdentity.file_size(path: String) -> IO(Result<&1,&1,U32 & String,String>):
-  QF.file_size(path)
+def CompileQueueIdentity.file_size(+path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  QF.with_path("size",path,QF.file_size(path))
 
-def CompileQueueIdentity.list_dir(path: String) -> IO(Result<&1,&1,U32 & String,String>):
-  QF.list_dir(path)
+def CompileQueueIdentity.list_dir(+path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  QF.with_path("list",path,QF.list_dir(path))
 
-def CompileQueueIdentity.realpath(path: String) -> IO(Result<&1,&1,U32 & String,String>):
-  F.Files.realpath(path)
+def CompileQueueIdentity.realpath(+path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  QF.with_path("realpath",path,F.Files.realpath(path))
 
-def CompileQueueIdentity.readlink(path: String) -> IO(Result<&1,&1,U32 & String,String>):
-  F.Files.readlink(path)
+def CompileQueueIdentity.readlink(+path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  QF.with_path("readlink",path,F.Files.readlink(path))
 
-def CompileQueueIdentity.is_script(path: String) -> IO(Result<&1,&1,U32 & String,String>):
-  QF.is_script(path)
+def CompileQueueIdentity.read_text(+path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  QF.with_path("read",path,T.Text.read(path))
+
+def CompileQueueIdentity.regular(+path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  QF.with_path("stat",path,F.Files.regular(path))
+
+def CompileQueueIdentity.is_script(+path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  QF.with_path("read",path,QF.is_script(path))
 
 # The targets of the quoted `#include` lines of a C file, one per line, in file order.
 # The host scans the file in fixed-size reads, so the size of the file does not
@@ -261,7 +267,7 @@ def CompileQueueIdentity.bend_targets(lines: List<&2,String>) -> List<&2,String>
 
 def CompileQueueIdentity.bend_file_targets(+path: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
   do IO<Result<&1,&1,U32 & String,List<&2,String>>>:
-    text : String <- IO.try(String, T.Text.read(path))
+    text : String <- IO.try(String, CompileQueueIdentity.read_text(path))
     IO.pure(Result<&1,&1,U32 & String,List<&2,String>>, Done{CompileQueueIdentity.bend_targets(String.lines(text))})
 
 def CompileQueueIdentity.c_file_targets(+path: String) -> IO(Result<&1,&1,U32 & String,List<&2,String>>):
@@ -427,13 +433,13 @@ def CompileQueueIdentity.chain_step(+resolved: String, +label: String, +steps: U
     Bool.pick(IO(Result<&1,&1,U32 & String,CompileQueueChain>),
       Bool.and(String.eq(script, "1"), U32.is_lt(steps, 5)),
       do IO<Result<&1,&1,U32 & String,CompileQueueChain>>:
-        text : String <- IO.try(String, T.Text.read(resolved))
+        text : String <- IO.try(String, CompileQueueIdentity.read_text(resolved))
         +target : String <- IO.pure(String, CompileQueueIdentity.exec_target(text))
         Bool.pick(IO(Result<&1,&1,U32 & String,CompileQueueChain>), String.is_empty(target),
           CompileQueueIdentity.chain_done(resolved, lines),
           do IO<Result<&1,&1,U32 & String,CompileQueueChain>>:
             +next : String <- IO.try(String, CompileQueueIdentity.realpath(target))
-            regular : String <- IO.try(String, F.Files.regular(next))
+            regular : String <- IO.try(String, CompileQueueIdentity.regular(next))
             Bool.pick(IO(Result<&1,&1,U32 & String,CompileQueueChain>), String.eq(regular, "1"),
               do IO<Result<&1,&1,U32 & String,CompileQueueChain>>:
                 next_digest : String <- IO.try(String, CompileQueueIdentity.file_digest(next))
