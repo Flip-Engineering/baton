@@ -143,8 +143,7 @@ oldest unread message on each new connection, including a connection lost
 while the relay was reading a thread item for the conductor. A conductor that cannot be started
 or initialized the first time ends the relay with status 1, as does a failed
 delivery such as a queue error or refused read evidence. The refusal text names
-the first custody condition that failed, for example that another connection
-registered the recorded delivery endpoint after this one. Queue
+the first custody condition that failed. Queue
 acceptance does not record a read. A notification that is queued while the root
 is in a long turn stays unread until the thread returns it. If the relay or the
 root client closes first, the message stays unread and the next connection

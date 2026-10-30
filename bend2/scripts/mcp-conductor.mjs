@@ -398,11 +398,16 @@ function coordInput(input, ...args) {
 
 function coordInputRaw(input, ...args) {
   try {
+    // Concurrent contexts can register another delivery endpoint for the same
+    // Codex conversation while this channel verifies its returned user item.
+    const custody = rootHarness === 'codex' && activeReadMessage && connectionCustody
+      ? { ...connectionCustody, endpoint: selectedSession()?.endpoint ?? '' }
+      : connectionCustody;
     return execFileSync(coordinatorExe, [dbPath, ...args], {
       encoding: 'utf8', input, maxBuffer: Infinity,
       env: { ...process.env, BATON_SESSION: sessionId, BATON_DATABASE: dbPath,
         BATON_MCP_INPUT: channelReady && connectionCustody
-          ? JSON.stringify({ ...connectionCustody, ...(nativePrompt ? { prompt: nativePrompt } : {}),
+          ? JSON.stringify({ ...custody, ...(nativePrompt ? { prompt: nativePrompt } : {}),
             ...(activeReadMessage ? { readMessage: activeReadMessage } : {}), ready: true }) : '' },
     });
   } catch (error) {
@@ -448,15 +453,18 @@ const dispatchInputSchema = { type: 'object', properties: {
 const TOOLS = [
   {
     name: 'baton2_repl',
-    description: 'Evaluate actual Bend2 source or retain checked definitions in the attached actor\'s notebook. The packaged canonical compiler infers types and checks affine use. IO runs in the recorded workspace through native custody. Read returns complete source, results, diagnostics and process outcomes; recover observes the original attempt. Bind checks a named definition from a pure result for later expressions. Labels select saved result records. Cite returns an immutable version citation. Share sends citation metadata and grants its recipient access. Resolve reads the exact complete cell through recipient-owned authorization; import checks its declaration snapshot. Standard installations include the Bend2 REPL compiler and runtime. Use baton2_action with action help and arguments ["repl"] for CLI and multiline interactive usage.',
+    description: 'Evaluate actual Bend2 source or retain checked definitions in the attached actor\'s notebook. The packaged canonical compiler infers types and checks affine use. IO runs in the recorded workspace through native custody. Read returns complete source, results, diagnostics and process outcomes; recover observes the original attempt. Bind checks a named definition from a pure result for later expressions. Labels select saved result records. Cite returns an immutable version citation. Share sends citation metadata and grants its recipient access. Resolve reads the exact complete cell through recipient-owned authorization; import checks its declaration snapshot. Checkpoint selects a checked JSON String as the context variable; context reads bounded fragments with offset and length. Native turn completion pins the selected version. Standard installations include the Bend2 REPL compiler and runtime. Use baton2_action with action help and arguments ["repl"] for CLI and multiline interactive usage.',
     inputSchema: { type: 'object', properties: {
-      operation: { enum: ['define', 'eval', 'bind', 'read', 'cite', 'resolve', 'recover', 'share', 'import'] },
+      operation: { enum: ['define', 'eval', 'bind', 'read', 'cite', 'resolve', 'checkpoint', 'context', 'recover', 'share', 'import'] },
       source: { type: 'string', description: 'Complete Bend2 declarations or expression for define or eval.' },
       expectedType: { type: 'string', description: 'Optional expected Bend2 type for eval.' },
       name: { type: 'string', description: 'Bend2 definition name for binding a selected pure result.' },
       label: { type: 'string', description: 'Semantic label for the saved cell.' },
       notebook: { type: 'string' }, cell: { type: 'string' }, to: { type: 'string' },
       message: { type: 'string', description: 'Received message selected by import.' },
+      turn: { type: 'string', description: 'Read the context version pinned by one of your native turns.' },
+      offset: { type: 'integer', minimum: 0, maximum: 999999999 },
+      length: { type: 'integer', minimum: 1, maximum: 8192 },
     }, required: ['operation'], additionalProperties: false },
   },
   {
@@ -1284,9 +1292,6 @@ function rootDeliveryRefusal(args, message) {
   if (!message) return 'the session has no recorded Codex conversation or has a stop';
   if (message.is_read !== 0) return 'a read of the message is already recorded';
   if (message.native !== args.thread) return `the recorded conversation is ${message.native}`;
-  if (message.endpoint !== connectionCustody.endpoint) {
-    return 'another connection registered the recorded delivery endpoint after this one';
-  }
   if (args.content !== rootNoticeContent(message)) return 'the stored message differs from the selected notice';
   if (!pendingConductorMessage(args.id)) return 'the message is not the owed message';
   return null;
@@ -1323,7 +1328,6 @@ function alreadyRecordedRootDelivery(args) {
       || connectionCustody.session !== sessionId) return false;
   const message = recordedRootMessage(args.id);
   return !!message && message.is_read === 1 && message.native === args.thread
-    && message.endpoint === connectionCustody.endpoint
     && args.content === rootNoticeContent(message);
 }
 
@@ -1389,7 +1393,7 @@ function handleToolCall(msg) {
     let result;
     switch (name) {
       case 'baton2_repl': {
-        if (!['define', 'eval', 'bind', 'read', 'cite', 'resolve', 'recover', 'share', 'import'].includes(args.operation)) {
+        if (!['define', 'eval', 'bind', 'read', 'cite', 'resolve', 'checkpoint', 'context', 'recover', 'share', 'import'].includes(args.operation)) {
           throw new Error('Select a supported REPL tool operation.');
         }
         const values = [args.operation];
@@ -1404,8 +1408,11 @@ function handleToolCall(msg) {
           values.push(args.message);
         }
         for (const [field, flag] of [['expectedType', '--type'], ['label', '--label'],
-          ['notebook', '--notebook'], ['cell', '--cell'], ['to', '--to']]) {
+          ['notebook', '--notebook'], ['cell', '--cell'], ['to', '--to'], ['turn', '--turn']]) {
           if (args[field] !== undefined) values.push(flag, args[field]);
+        }
+        for (const [field, flag] of [['offset', '--offset'], ['length', '--length']]) {
+          if (args[field] !== undefined) values.push(flag, String(args[field]));
         }
         result = contextualAction('repl', values);
         break;
