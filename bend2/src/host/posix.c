@@ -527,20 +527,20 @@ static int posix_spawn_detached(const char *argv_text, size_t argv_length,
 }
 
 /* The read ends of the wait pipes, by the pid of the detached process. The list
-   has no fixed size. A registration that cannot allocate closes the pipe; the
-   wait then finds no entry and reports the error of waitpid on a process that is
-   not a child, an explicit failure. */
+   has no fixed size. A registration that cannot allocate closes the pipe and
+   returns ENOMEM to the caller. */
 typedef struct PosixWait { pid_t pid; int fd; struct PosixWait *next; } PosixWait;
 static PosixWait *posix_waits = NULL;
 static pthread_mutex_t posix_waits_lock = PTHREAD_MUTEX_INITIALIZER;
 
-static void posix_wait_register(pid_t pid, int fd) {
+static int posix_wait_register(pid_t pid, int fd) {
   PosixWait *entry = malloc(sizeof(*entry));
-  if (!entry) { close(fd); return; }
+  if (!entry) { close(fd); return ENOMEM; }
   entry->pid = pid; entry->fd = fd;
   pthread_mutex_lock(&posix_waits_lock);
   entry->next = posix_waits; posix_waits = entry;
   pthread_mutex_unlock(&posix_waits_lock);
+  return 0;
 }
 
 static int posix_wait_take(pid_t pid) {
@@ -770,9 +770,14 @@ static void host_posix_work(IoWork *work) {
       if(!call->error) call->error=posix_spawn_detached(call->text[0],call->length[0],
         call->number[1],call->number[2],environment,&child,&wait_fd);
       free(environment);
-      if(!call->error) posix_wait_register(child,wait_fd);
       char *start=NULL;
-      if(!call->error) call->error=posix_starttime_text((u32)child,&start);
+      if(!call->error) {
+        call->error=posix_starttime_text((u32)child,&start);
+        /* The registry owns the pipe only once the identity is known; a failure
+           closes the pipe and returns the original error. */
+        if(call->error) close(wait_fd);
+        else call->error=posix_wait_register(child,wait_fd);
+      }
       if(!call->error) {
         int length=snprintf(call->spawned,sizeof call->spawned,"pid=%u\nstarttime=%s\n",
           (unsigned)child,start);
