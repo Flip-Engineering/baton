@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -436,6 +437,9 @@ typedef struct BrKeeper {
   BrBirth native_birth;
   int exited,status,released,input_closed,ready,native_waiting,prepared,cancelled;
   int monitor_only,status_unavailable;
+  /* Signals this keeper delivered to the native on behalf of an owner or observer. */
+  unsigned signal_requests;
+  int last_signal;
   /* Recovery observers are owner-managed continuation work. An acknowledged
      attempt remains live until every child launched for it has been reaped. */
   size_t recovery_pending;
@@ -959,6 +963,321 @@ static char *br_self(void) {
 #endif
 }
 
+/* Service placement (#1368). A keeper or database owner that is started from a
+   login session or a build command stays in the Linux cgroup of the process
+   that launched it, so ending that session's scope ends it. Where a systemd
+   user manager answers, the launch runs under `systemd-run --user --scope`:
+   systemd-run moves itself into a new transient scope and then execs the
+   program, so the program keeps the PID, process group, birth and inherited
+   descriptors that custody records. The scope sets no memory, runtime or task
+   limit.
+
+   Placement does not isolate a process from signals. Processes of one Unix
+   user remain within that user's signal authority, so a same-user kill reaches
+   a placed keeper or native. Lifecycle actions continue to address a process
+   by PID plus birth and by custody tokens. The records written here keep the
+   identities (cgroup, session, process group, signal senders, wait status)
+   that let a later reader compare a caller shutdown, an owner cancellation, a
+   provider exit and a runtime loss; they do not decide which one happened.
+
+   BATON_SERVICE_PLACEMENT selects auto (the default: place when the user
+   manager answers and record the reason otherwise), off, or require (refuse
+   the launch when placement is not possible). BATON_SYSTEMD_RUN names the
+   systemd-run program. */
+typedef struct {
+  int mode;
+  int placed;
+  char unit[160];
+  char unit_option[176];
+  char reason[160];
+  char self_path[64];
+  char **argv;
+} BrPlacement;
+
+static uint64_t br_realtime_ns(void) {
+  struct timespec now;
+  clock_gettime(CLOCK_REALTIME,&now);
+  return (uint64_t)now.tv_sec*1000000000ull+(uint64_t)now.tv_nsec;
+}
+static int br_proc_stat(pid_t pid,int *ppid,int *pgrp,int *session,int *tty) {
+#ifdef __linux__
+  char path[64];snprintf(path,sizeof(path),"/proc/%d/stat",(int)pid);
+  FILE *file=fopen(path,"r");
+  if(!file)return errno?errno:EIO;
+  char buffer[1024];
+  size_t n=fread(buffer,1,sizeof(buffer)-1,file);
+  fclose(file);
+  buffer[n]=0;
+  char *field=strrchr(buffer,')');
+  char state;
+  if(!field || sscanf(field+1," %c %d %d %d %d",&state,ppid,pgrp,session,tty)!=5)return EINVAL;
+  return 0;
+#else
+  (void)pid;(void)ppid;(void)pgrp;(void)session;(void)tty;
+  return ENOTSUP;
+#endif
+}
+/* The cgroup lines of a process, joined by ';'. */
+static void br_proc_cgroup(pid_t pid,char *out,size_t size) {
+  out[0]=0;
+#ifdef __linux__
+  char path[64];snprintf(path,sizeof(path),"/proc/%d/cgroup",(int)pid);
+  FILE *file=fopen(path,"r");
+  if(!file) {snprintf(out,size,"unavailable:%s",strerror(errno));return;}
+  size_t used=0;char line[512];
+  while(fgets(line,sizeof(line),file)) {
+    size_t length=strcspn(line,"\n");
+    if(used+length+2>=size)break;
+    if(used)out[used++]=';';
+    memcpy(out+used,line,length);used+=length;out[used]=0;
+  }
+  fclose(file);
+#else
+  (void)pid;snprintf(out,size,"unavailable:unsupported platform");
+#endif
+}
+/* Appends `prefix.field=value` lines for one process and returns the new length. */
+static size_t br_identity_text(char *out,size_t size,size_t used,const char *prefix,pid_t pid) {
+  BrBirth birth;int ppid=0,pgrp=0,session=0,tty=0;char cgroup[1024],birth_text[64];
+  if(br_birth(pid,&birth))snprintf(birth_text,sizeof(birth_text),"unavailable");
+  else snprintf(birth_text,sizeof(birth_text),"%llu/%llu",
+                (unsigned long long)birth.first,(unsigned long long)birth.second);
+  br_proc_stat(pid,&ppid,&pgrp,&session,&tty);
+  br_proc_cgroup(pid,cgroup,sizeof(cgroup));
+  int n=snprintf(out+used,size-used,
+    "%s.pid=%d\n%s.birth=%s\n%s.ppid=%d\n%s.pgid=%d\n%s.sid=%d\n%s.tty=%d\n%s.uid=%u\n%s.cgroup=%s\n",
+    prefix,(int)pid,prefix,birth_text,prefix,ppid,prefix,pgrp,prefix,session,prefix,tty,
+    prefix,(unsigned)getuid(),prefix,cgroup);
+  if(n<0)return used;
+  return (size_t)n>=size-used?size-1:used+(size_t)n;
+}
+static int br_placement_mode(void) {
+  const char *text=getenv("BATON_SERVICE_PLACEMENT");
+  if(!text || !*text || !strcmp(text,"auto"))return 1;
+  if(!strcmp(text,"off"))return 0;
+  if(!strcmp(text,"require"))return 2;
+  return -1;
+}
+#ifdef __linux__
+static pthread_mutex_t br_probe_lock=PTHREAD_MUTEX_INITIALIZER;
+static int br_probe_done,br_probe_ok;
+static char br_probe_reason[160];
+static const char *br_systemd_run_path(void) {
+  const char *named=getenv("BATON_SYSTEMD_RUN");
+  if(named && *named)return named;
+  if(!access("/usr/bin/systemd-run",X_OK))return "/usr/bin/systemd-run";
+  if(!access("/bin/systemd-run",X_OK))return "/bin/systemd-run";
+  return NULL;
+}
+/* Starts and waits for one throwaway scope, so the answer reflects the user
+   manager, its bus and the caller's permission rather than the presence of a
+   socket. The answer is kept for the life of the process. */
+static void br_service_probe_run(const char *run) {
+  char unit_option[96],reason[160]="";
+  snprintf(unit_option,sizeof(unit_option),"--unit=baton-probe-%d-%llx",(int)getpid(),
+           (unsigned long long)br_realtime_ns());
+  const char *program=access("/usr/bin/true",X_OK)?"/bin/true":"/usr/bin/true";
+  char *argv[]={(char *)run,"--user","--scope","--quiet","--collect",unit_option,"--",
+                (char *)program,NULL};
+  int report[2]={-1,-1},null=open("/dev/null",O_RDWR|O_CLOEXEC);
+  posix_spawn_file_actions_t actions;
+  int actions_ready=0,error=null<0?errno:0;
+  if(!error && pipe2(report,O_CLOEXEC))error=errno;
+  if(!error) {
+    error=posix_spawn_file_actions_init(&actions);
+    if(!error)actions_ready=1;
+  }
+  if(!error)error=posix_spawn_file_actions_adddup2(&actions,null,0);
+  if(!error)error=posix_spawn_file_actions_adddup2(&actions,null,1);
+  if(!error)error=posix_spawn_file_actions_adddup2(&actions,report[1],2);
+  if(!error)error=posix_spawn_file_actions_addclosefrom_np(&actions,3);
+  pid_t pid=0;
+  if(!error)error=posix_spawn(&pid,run,&actions,NULL,argv,environ);
+  if(actions_ready)posix_spawn_file_actions_destroy(&actions);
+  if(report[1]>=0)close(report[1]);
+  if(!error) {
+    int status=0;
+    while(waitpid(pid,&status,0)<0 && errno==EINTR) {}
+    size_t used=0;ssize_t n;
+    while(used<sizeof(reason)-1 && (n=read(report[0],reason+used,sizeof(reason)-1-used))>0)used+=(size_t)n;
+    reason[used]=0;
+    reason[strcspn(reason,"\n")]=0;
+    if(WIFEXITED(status) && !WEXITSTATUS(status)) {br_probe_ok=1;reason[0]=0;}
+    else if(!reason[0])snprintf(reason,sizeof(reason),"systemd-run probe status %d",status);
+  } else snprintf(reason,sizeof(reason),"systemd-run probe could not start: %s",strerror(error));
+  if(report[0]>=0)close(report[0]);
+  if(null>=0)close(null);
+  snprintf(br_probe_reason,sizeof(br_probe_reason),"%s",reason);
+}
+static int br_service_probe(const char *run,char *reason,size_t size) {
+  pthread_mutex_lock(&br_probe_lock);
+  if(!br_probe_done) {br_probe_done=1;br_service_probe_run(run);}
+  int ok=br_probe_ok;
+  snprintf(reason,size,"%s",br_probe_reason);
+  pthread_mutex_unlock(&br_probe_lock);
+  return ok;
+}
+#endif
+/* Plans one launch. With placement the plan's argv runs the keeper or owner
+   inside a scope; otherwise argv is NULL and the caller uses its own argv. The
+   inner program is addressed as /proc/PID/exe of this process, so the loaded
+   image runs even when its pathname was replaced after this process started.
+   Returns 0, or an errno when the setting is invalid or require cannot be met. */
+static int br_placement_plan(BrPlacement *plan,const char *role,const char *seed,char **argv) {
+  memset(plan,0,sizeof(*plan));
+  plan->mode=br_placement_mode();
+  if(plan->mode<0) {
+    snprintf(plan->reason,sizeof(plan->reason),"BATON_SERVICE_PLACEMENT is not auto, off or require");
+    return EINVAL;
+  }
+  if(!plan->mode) {snprintf(plan->reason,sizeof(plan->reason),"placement is off");return 0;}
+#ifdef __linux__
+  const char *run=br_systemd_run_path();
+  if(!run)snprintf(plan->reason,sizeof(plan->reason),"systemd-run is not installed");
+  else if(br_service_probe(run,plan->reason,sizeof(plan->reason))) {
+    uint64_t hash=1469598103934665603ull;
+    for(const char *c=seed;c && *c;c++) {hash^=(unsigned char)*c;hash*=1099511628211ull;}
+    snprintf(plan->unit,sizeof(plan->unit),"baton-%s-%016llx-%d-%llx",role,
+             (unsigned long long)hash,(int)getpid(),(unsigned long long)br_realtime_ns());
+    snprintf(plan->unit_option,sizeof(plan->unit_option),"--unit=%s",plan->unit);
+    snprintf(plan->self_path,sizeof(plan->self_path),"/proc/%d/exe",(int)getpid());
+    size_t count=0;while(argv[count])count++;
+    plan->argv=calloc(count+10,sizeof(char *));
+    if(!plan->argv)return ENOMEM;
+    size_t at=0;
+    plan->argv[at++]=(char *)run;plan->argv[at++]="--user";plan->argv[at++]="--scope";
+    plan->argv[at++]="--quiet";plan->argv[at++]="--collect";plan->argv[at++]=plan->unit_option;
+    plan->argv[at++]=!strcmp(role,"keeper")?"--description=Baton retained attempt keeper":
+                                           "--description=Baton database owner";
+    plan->argv[at++]="--";
+    for(size_t i=0;i<count;i++)plan->argv[at++]=i==0 && !strcmp(argv[0],"/proc/self/exe")?plan->self_path:argv[i];
+    plan->placed=1;
+    return 0;
+  }
+#else
+  snprintf(plan->reason,sizeof(plan->reason),"service placement is not supported on this platform");
+#endif
+  return plan->mode==2?ENOTSUP:0;
+}
+static void br_placement_free(BrPlacement *plan) {free(plan->argv);plan->argv=NULL;}
+/* The launcher's record of the placement it chose and its own identity. */
+static size_t br_placement_text(char *out,size_t size,const char *role,const BrPlacement *plan) {
+  const char *mode=plan->mode==0?"off":plan->mode==2?"require":"auto";
+  int n=snprintf(out,size,"schema=baton-service-launch-v1\nrole=%s\nrequested=%s\nplacement=%s\n",
+                 role,mode,plan->placed?"scope":"none");
+  size_t used=n<0?0:(size_t)n>=size?size-1:(size_t)n;
+  if(plan->placed)n=snprintf(out+used,size-used,"manager=systemd-user\nunit=%s.scope\n",plan->unit);
+  else n=snprintf(out+used,size-used,"reason=%s\n",plan->reason);
+  if(n>0)used=(size_t)n>=size-used?size-1:used+(size_t)n;
+  n=snprintf(out+used,size-used,"time_ns=%llu\n",(unsigned long long)br_realtime_ns());
+  if(n>0)used=(size_t)n>=size-used?size-1:used+(size_t)n;
+  return br_identity_text(out,size,used,"launcher",getpid());
+}
+static void br_placement_record(const char *directory,const char *name,const char *role,const BrPlacement *plan) {
+  char text[3072];
+  size_t length=br_placement_text(text,sizeof(text),role,plan);
+  br_atomic_replace(directory,name,text,length);
+}
+/* The keeper reports where it actually runs, which the launcher cannot observe
+   after the scope move. */
+static void br_keeper_service_record(const char *directory) {
+  char text[3072];
+  int n=snprintf(text,sizeof(text),"schema=baton-service-keeper-v1\ntime_ns=%llu\n",
+                 (unsigned long long)br_realtime_ns());
+  size_t used=n<0?0:(size_t)n;
+  used=br_identity_text(text,sizeof(text),used,"keeper",getpid());
+  char cgroup[1024];br_proc_cgroup(getpid(),cgroup,sizeof(cgroup));
+  n=snprintf(text+used,sizeof(text)-used,"keeper.scope=%s\n",strstr(cgroup,"/baton-keeper-")?"1":"0");
+  if(n>0)used=(size_t)n>=sizeof(text)-used?sizeof(text)-1:used+(size_t)n;
+  br_atomic_replace(directory,"service-keeper",text,used);
+}
+/* Native identity as observed right after the start gate opens. */
+static void br_native_service_record(const char *directory,pid_t native) {
+  char text[3072],keeper[1024],child[1024];
+  int n=snprintf(text,sizeof(text),"schema=baton-service-native-v1\ntime_ns=%llu\n",
+                 (unsigned long long)br_realtime_ns());
+  size_t used=n<0?0:(size_t)n;
+  used=br_identity_text(text,sizeof(text),used,"native",native);
+  br_proc_cgroup(getpid(),keeper,sizeof(keeper));br_proc_cgroup(native,child,sizeof(child));
+  n=snprintf(text+used,sizeof(text)-used,"native.in_keeper_cgroup=%d\n",!strcmp(keeper,child));
+  if(n>0)used=(size_t)n>=sizeof(text)-used?sizeof(text)-1:used+(size_t)n;
+  br_atomic_replace(directory,"service-native",text,used);
+}
+/* Appends one line for an owner or observer signal request before it is sent. */
+static void br_signal_note(BrKeeper *keeper,const char *via,int sig,pid_t requester) {
+  keeper->signal_requests++;keeper->last_signal=sig;
+  BrBirth birth;char birth_text[64];
+  if(br_birth(requester,&birth))snprintf(birth_text,sizeof(birth_text),"unavailable");
+  else snprintf(birth_text,sizeof(birth_text),"%llu/%llu",
+                (unsigned long long)birth.first,(unsigned long long)birth.second);
+  char text[256];
+  int n=snprintf(text,sizeof(text),"time_ns=%llu signal=%d via=%s requester_pid=%d requester_birth=%s\n",
+                 (unsigned long long)br_realtime_ns(),sig,via,(int)requester,birth_text);
+  if(n>0)br_file(keeper->directory,"signal-requests",text,(size_t)n>=sizeof(text)?sizeof(text)-1:(size_t)n,0);
+}
+/* The wait status of the native as the keeper recorded it, with the Baton
+   signal requests the keeper had delivered by then. */
+static void br_exit_evidence(BrKeeper *keeper) {
+  if(br_exists(keeper->directory,"exit-evidence"))return;
+  char text[2048],cgroup[1024];
+  br_proc_cgroup(getpid(),cgroup,sizeof(cgroup));
+  int n=snprintf(text,sizeof(text),"schema=baton-exit-evidence-v1\ntime_ns=%llu\nstatus=%d\n",
+                 (unsigned long long)br_realtime_ns(),keeper->status);
+  size_t used=n<0?0:(size_t)n;
+  int core=0;
+#ifdef WCOREDUMP
+  core=WIFSIGNALED(keeper->status) && WCOREDUMP(keeper->status);
+#endif
+  if(WIFEXITED(keeper->status))n=snprintf(text+used,sizeof(text)-used,"exit=exited\ncode=%d\n",WEXITSTATUS(keeper->status));
+  else n=snprintf(text+used,sizeof(text)-used,"exit=signaled\nsignal=%d\ncore=%d\n",WTERMSIG(keeper->status),core);
+  if(n>0)used=(size_t)n>=sizeof(text)-used?sizeof(text)-1:used+(size_t)n;
+  n=snprintf(text+used,sizeof(text)-used,"baton_signal_requests=%u\nlast_baton_signal=%d\nnative.pid=%d\nkeeper.pid=%d\nkeeper.cgroup=%s\n",
+             keeper->signal_requests,keeper->last_signal,(int)keeper->native_pid,(int)getpid(),cgroup);
+  if(n>0)used=(size_t)n>=sizeof(text)-used?sizeof(text)-1:used+(size_t)n;
+  br_atomic_replace(keeper->directory,"exit-evidence",text,used);
+}
+/* A TERM, HUP, INT or QUIT sent to the keeper is written with its sender before
+   the default action runs. The keeper exits exactly as it did without the
+   handler. */
+static int br_keeper_signal_fd=-1;
+static size_t br_signal_number(char *out,size_t used,long long value) {
+  char digits[24];size_t count=0;
+  if(value<0){out[used++]='-';value=-value;}
+  do {digits[count++]=(char)('0'+value%10);value/=10;} while(value);
+  while(count)out[used++]=digits[--count];
+  return used;
+}
+static void br_keeper_signaled(int sig,siginfo_t *info,void *context) {
+  (void)context;
+  int saved=errno;
+  char text[160];size_t used=0;
+  struct timespec now;clock_gettime(CLOCK_REALTIME,&now);
+  memcpy(text,"time_s=",7);used=7;
+  used=br_signal_number(text,used,(long long)now.tv_sec);
+  memcpy(text+used," signal=",8);used+=8;used=br_signal_number(text,used,sig);
+  memcpy(text+used," code=",6);used+=6;used=br_signal_number(text,used,info?info->si_code:0);
+  memcpy(text+used," sender_pid=",12);used+=12;used=br_signal_number(text,used,info?info->si_pid:0);
+  memcpy(text+used," sender_uid=",12);used+=12;used=br_signal_number(text,used,info?info->si_uid:0);
+  text[used++]='\n';
+  if(br_keeper_signal_fd>=0)(void)!write(br_keeper_signal_fd,text,used);
+  errno=saved;
+  raise(sig);
+}
+static void br_keeper_signals_install(const char *directory) {
+  char *path=br_path(directory,"keeper-signals");
+  if(!path)return;
+  br_keeper_signal_fd=open(path,O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600);
+  free(path);
+  if(br_keeper_signal_fd<0)return;
+  struct sigaction action;
+  memset(&action,0,sizeof(action));
+  action.sa_sigaction=br_keeper_signaled;
+  action.sa_flags=SA_SIGINFO|SA_RESETHAND|SA_NODEFER;
+  sigemptyset(&action.sa_mask);
+  int signals[]={SIGTERM,SIGHUP,SIGINT,SIGQUIT};
+  for(size_t i=0;i<sizeof(signals)/sizeof(signals[0]);i++)sigaction(signals[i],&action,NULL);
+}
+
 /* Every child receives only explicitly assigned descriptors. */
 static int br_spawn(pid_t *pid,char **argv,const char *cwd,int input,int output,int error_log,int life,int lock) {
   posix_spawn_file_actions_t actions;
@@ -1044,6 +1363,10 @@ static void br_gated_exec(BrGatedChild *child) {
     action.sa_handler=SIG_DFL;
     sigemptyset(&action.sa_mask);
     if(sigaction(SIGPIPE,&action,NULL))error=errno;
+    /* The keeper's signal-evidence handlers must not run in this child. */
+    int signals[]={SIGTERM,SIGHUP,SIGINT,SIGQUIT};
+    for(size_t i=0;!error && i<sizeof(signals)/sizeof(signals[0]);i++)
+      if(sigaction(signals[i],&action,NULL))error=errno;
   }
   int originals[3]={child->input,child->output,child->error_log},copies[3]={-1,-1,-1};
   for(int i=0;!error && i<3;i++) if(originals[i]>=0) {
@@ -1729,6 +2052,7 @@ static int br_record_native_exit(BrKeeper *keeper) {
   } else if(!keeper->exited || keeper->status_unavailable)return 0;
   int error=br_status_store(keeper->directory,keeper->status);
   if(error)return error;
+  br_exit_evidence(keeper);
   return keeper->ready?br_send(keeper,(BrFrame){.op=BR_EXIT,.value=keeper->status},NULL):0;
 }
 static int br_native_exited(BrKeeper *keeper) {
@@ -1792,7 +2116,10 @@ static int br_command(BrKeeper *keeper,BrFrame frame,const char *payload) {
   }
   if(frame.op==BR_SIGNAL) {
     if(keeper->exited)error=ESRCH;
-    else if(kill(-keeper->native_pid,(int)frame.value))error=errno;
+    else {
+      br_signal_note(keeper,"observer",(int)frame.value,keeper->client_pid);
+      if(kill(-keeper->native_pid,(int)frame.value))error=errno;
+    }
   }
   else if(frame.op==BR_RELEASE) {
     if(!keeper->exited) error=EBUSY;
@@ -2023,7 +2350,12 @@ static int br_control_command(BrKeeper *keeper,BrControl *control,BrFrame frame,
   } else if(frame.op==BR_CONTROL_SIGNAL) {
     if(frame.length!=identity || frame.value<=0 || frame.value>=NSIG)error=EINVAL;
     else if(keeper->exited)error=ESRCH;
-    else if(kill(-keeper->native_pid,(int)frame.value))error=errno;
+    else {
+      pid_t requester=0;
+      br_observer_pid(control->socket,&requester);
+      br_signal_note(keeper,"control",(int)frame.value,requester);
+      if(kill(-keeper->native_pid,(int)frame.value))error=errno;
+    }
     br_control_reply(control,frame.serial,error);
   } else br_control_reply(control,frame.serial,EINVAL);
   return 0;
@@ -2350,6 +2682,7 @@ static int br_keeper_spawn(BrKeeper *keeper,const unsigned char *expected_digest
   if((error=br_birth(keeper->native_pid,&birth)))goto spawned_failed;
   if((error=br_file(keeper->directory,"native.birth",&birth,sizeof(birth),1)))goto spawned_failed;
   keeper->native_birth=birth;
+  br_native_service_record(keeper->directory,keeper->native_pid);
   if((error=br_wait_start(keeper,keeper->native_pid,'N')))goto spawned_failed;
   if((error=br_queue(&keeper->writes,&keeper->writes_tail,keeper->manifest.field[3],
                     (size_t)keeper->manifest.header.lengths[3],0,0,0)))goto spawned_failed;
@@ -3403,6 +3736,8 @@ static int br_keeper(const char *directory,int lock) {
   int error=0;
   keeper.directory=realpath(directory,NULL);
   if(!keeper.directory)return errno;
+  br_keeper_signals_install(keeper.directory);
+  br_keeper_service_record(keeper.directory);
   error=br_observer_pid(keeper.client,&keeper.client_pid);
   if(!error)error=br_birth(keeper.client_pid,&keeper.client_birth);
   if(error)goto done;
@@ -4164,7 +4499,15 @@ static int br_retain(BatonProcessCall *call) {
   }
   if(!error) {
     char *argv[]={self,"--host-process-keeper",directory,"4",NULL};pid_t pid;
-    error=br_spawn(&pid,argv,NULL,null,log,log,sockets[1],(int)call->lock);
+    BrPlacement placement;
+    error=br_placement_plan(&placement,"keeper",directory,argv);
+    if(!error) {
+      /* The launch record exists before the keeper does, so a refused or failed
+         placement is evidenced as well. */
+      br_placement_record(directory,"service-launch","keeper",&placement);
+      error=br_spawn(&pid,placement.argv?placement.argv:argv,NULL,null,log,log,sockets[1],(int)call->lock);
+    }
+    br_placement_free(&placement);
     if(!error) {
       call->unstarted=0;
       pthread_t reaper;if(!pthread_create(&reaper,NULL,br_reap_detached,(void *)(intptr_t)pid))pthread_detach(reaper);
@@ -4203,7 +4546,24 @@ static int br_instance_spawn(const char *canonical,pid_t *pid,const char *log_pa
   int log=log_path?open(log_path,O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600):-1;
   if(log<0)log=null;
   char *argv[]={self,"--instance-owner",(char *)canonical,NULL};
-  int error=self && null>=0?br_spawn(pid,argv,NULL,null,log,null,-1,-1):(errno?errno:ENOMEM);
+  BrPlacement placement;
+  int error=self && null>=0?br_placement_plan(&placement,"owner",canonical,argv):(errno?errno:ENOMEM);
+  if(!error && log_path) {
+    /* Placement beside the owner log: the owner has no attempt directory. */
+    size_t record_size=strlen(log_path)+9;
+    char *record=malloc(record_size),text[3072];
+    if(record) {
+      snprintf(record,record_size,"%s.service",log_path);
+      size_t length=br_placement_text(text,sizeof(text),"owner",&placement);
+      int fd=open(record,O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW|O_CLOEXEC,0600);
+      if(fd>=0) {br_write_all(fd,text,length);close(fd);}
+      free(record);
+    }
+  }
+  if(!error) {
+    error=br_spawn(pid,placement.argv?placement.argv:argv,NULL,null,log,null,-1,-1);
+    br_placement_free(&placement);
+  }
   if(null>=0)close(null);
   if(log>=0 && log!=null)close(log);
   free(self);
