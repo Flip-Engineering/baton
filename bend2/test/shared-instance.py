@@ -146,7 +146,9 @@ class SharedInstance(unittest.TestCase):
         _, key, _, record, socket_path = self.election_paths()
         for path in (record, socket_path, self.ipc_directory() / f'{key}.log',
                      *self.ipc_directory().glob(f'{key}.drain-*')):
-            if path.exists():
+            if path.is_dir():
+                path.rmdir()
+            elif path.exists():
                 path.unlink()
         for child in self.children:
             if child.poll() is None:
@@ -1498,6 +1500,7 @@ class SharedInstance(unittest.TestCase):
         directory, child = self.start_survivor('w0')
         marker = self.drain_marker()
         marker.mkdir()
+        self.addCleanup(lambda: marker.rmdir() if marker.is_dir() else None)
         failed = self.command('drain', self.db)
         self.assertNotEqual(failed.returncode, 0, failed.stdout)
         self.assertNotIn('draining', failed.stdout)
