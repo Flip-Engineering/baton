@@ -11,6 +11,11 @@ spec.loader.exec_module(fixture)
 
 class ContextValues(fixture.ReplContext):
     # Reuse the native database/process fixture without rerunning inherited cases.
+    def observe(self, actor, ident, event):
+        path = self.directory / 'observation.json'
+        path.write_text(event)
+        self.invoke('observe-file', ident, actor, str(path))
+
     def context_cell(self, value):
         expression = json.dumps(json.dumps(value, ensure_ascii=False), ensure_ascii=False)
         result = self.repl('author', 'eval', expression, '--type', 'String', '--label', 'context')
@@ -67,11 +72,11 @@ class ContextValues(fixture.ReplContext):
         with fixture.sqlite3.connect(self.db) as connection:
             connection.execute("UPDATE sessions SET parent='coordinator' WHERE id='author'")
         terminal = json.dumps({'type': 'result', 'subtype': 'success', 'result': 'first turn'})
-        self.invoke('observe', 'author', 'context-turn-1', terminal)
+        self.observe('author', 'context-turn-1', terminal)
         second, second_receipt = self.checkpoint({'step': 2})
         self.assertNotEqual(second_receipt['citation'], receipt['citation'])
-        self.invoke('observe', 'author', 'context-turn-1', terminal)
-        self.invoke('observe', 'author', 'context-turn-2', terminal)
+        self.observe('author', 'context-turn-1', terminal)
+        self.observe('author', 'context-turn-2', terminal)
         self.assertEqual(self.query('SELECT turn,cell,version FROM repl_context_turns ORDER BY turn'),
                          [('context-turn-1', first, 1), ('context-turn-2', second, 2)])
         self.assertEqual(json.loads(self.projected('author', '--turn', 'context-turn-1')['fragment']), {'step': 1})
@@ -85,9 +90,9 @@ class ContextValues(fixture.ReplContext):
         with fixture.sqlite3.connect(self.db) as connection:
             connection.execute("UPDATE sessions SET parent='coordinator' WHERE id='author'")
         terminal = json.dumps({'type': 'result', 'subtype': 'success', 'result': 'unbound turn'})
-        self.invoke('observe', 'author', 'context-turn-unbound', terminal)
+        self.observe('author', 'context-turn-unbound', terminal)
         self.checkpoint({'step': 2})
-        self.invoke('observe', 'author', 'context-turn-unbound', terminal)
+        self.observe('author', 'context-turn-unbound', terminal)
         self.assertEqual(self.query('SELECT turn,cell,version FROM repl_context_turns'),
                          [('context-turn-unbound', None, None)])
 
