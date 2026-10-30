@@ -18,6 +18,16 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def write_release_checksums(prefix):
+    checksums = prefix / 'release.SHA256SUMS'
+    closure = prefix / 'release.closure'
+    files = sorted(path for path in prefix.rglob('*')
+                   if path.is_file() and path not in (checksums, closure))
+    checksums.write_text(''.join(digest(path) + '  ' + str(path.relative_to(prefix)) + '\n'
+                                 for path in files))
+    closure.write_text(digest(checksums) + '  release.SHA256SUMS\n')
+
+
 def git(*argv):
     return subprocess.check_output(['git', *argv], cwd=ROOT)
 
@@ -129,6 +139,7 @@ def package(args):
     deployment.setdefault('launcher', {})['sha256'] = manifest['compiler']['sha256']
     deployment.setdefault('runtime', {})['sha256'] = manifest['bun']['sha256']
     save(deployment_path, deployment)
+    write_release_checksums(prefix)
     with output.open('xb') as raw, gzip.GzipFile(fileobj=raw, mode='wb', mtime=0) as zipped, \
             tarfile.open(fileobj=zipped, mode='w|') as archive:
         for path in [prefix, *sorted(prefix.rglob('*'))]:

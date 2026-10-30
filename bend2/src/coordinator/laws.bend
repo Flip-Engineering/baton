@@ -902,7 +902,7 @@ law m2_any_other_harness_launch_reaches_the_claude_adapter:
   for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "claude-code\n", log, task) == Turn.claude_launch(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "claude-code\n", log, task) == Turn.claude_launch_configured(db, player, cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m2_any_other_harness_launch_reaches_the_claude_adapter(db, player, sessions, cmd, model, effort, cwd, stderr, session, log, task):
   {==}
@@ -949,27 +949,29 @@ def m5_a_resumable_agy_turn_carries_the_recorded_conversation(cmd, model, effort
   {==}
 
 law m5_a_fresh_claude_turn_starts_a_session:
+  for -entries: List<String>
   for +cmd: String
   for +model: String
   for +effort: String
   for +cwd: String
   for +stderr: String
   for +session: String
-  {Turn.claude_launch(cmd, model, effort, cwd, stderr, session, True{}) == Claude.start_player(cmd, model, effort, cwd, stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.claude_launch(entries, cmd, model, effort, cwd, stderr, session, True{}) == Claude.start_player(entries, cmd, model, effort, cwd, stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m5_a_fresh_claude_turn_starts_a_session(cmd, model, effort, cwd, stderr, session):
+def m5_a_fresh_claude_turn_starts_a_session(entries, cmd, model, effort, cwd, stderr, session):
   {==}
 
 law m5_a_resumable_claude_turn_carries_the_recorded_session:
+  for -entries: List<String>
   for +cmd: String
   for +model: String
   for +effort: String
   for +cwd: String
   for +stderr: String
   for +session: String
-  {Turn.claude_launch(cmd, model, effort, cwd, stderr, session, False{}) == Claude.resume_player(cmd, model, effort, cwd, stderr, session) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.claude_launch(entries, cmd, model, effort, cwd, stderr, session, False{}) == Claude.resume_player(entries, cmd, model, effort, cwd, stderr, session) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m5_a_resumable_claude_turn_carries_the_recorded_session(cmd, model, effort, cwd, stderr, session):
+def m5_a_resumable_claude_turn_carries_the_recorded_session(entries, cmd, model, effort, cwd, stderr, session):
   {==}
 
 law m5_a_fresh_muse_turn_starts_a_session:
