@@ -22,6 +22,7 @@ import ./ui-view.bend as UiView
 import ./control.bend as Control
 import ./stop-hook.bend as StopHook
 import ./wake.bend as Wake
+import ./drain-redeliver.bend as DrainRedeliver
 import ./root-channel.bend as RootChannel
 import ./message-batch.bend as MessageBatch
 import ./subscription-fallback.bend as Subscription
@@ -561,6 +562,8 @@ def legacy_cli(args: List<String>) -> IO(Unit):
       Wake.message_cli(db,id)
     case "--redeliver-message" <> +db <> +id <> Nil{}:
       Control.redeliver(db,id)
+    case "--drain-redeliver" <> +db <> +id <> Nil{}:
+      DrainRedeliver.drain_redeliver(db,id)
     case +flag <> +directory <> +lock <> Nil{}:
       dispatch_cli(directory,lock,[flag,directory,lock],String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"))
     case flag <> db <> player <> id <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:

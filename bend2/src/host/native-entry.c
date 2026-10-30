@@ -232,6 +232,7 @@ static int focused_receiver_verb(int argc,char **argv) {
   if(recruitment_args(argc,argv)) return 1;
   const char *first=argv[1];
   if(!strcmp(first,"--stop-hook") || !strcmp(first,"--redeliver-message") ||
+     !strcmp(first,"--drain-redeliver") ||
      !strcmp(first,"--dispatch-message") || !strcmp(first,"--host-process-keeper") ||
      !strcmp(first,"--instance-owner") || !strcmp(first,"--instance-shutdown") ||
      !strcmp(first,"--instance-status") || !strcmp(first,"--instance-wait") ||
@@ -280,7 +281,8 @@ static int native_receiver_route(int argc, char **argv) {
                            !strcmp(argv[1],"--recover-receive"))) ||
                (argc>2 && !strcmp(argv[2],"recover-observer"));
   int focused_verb=argc>1 && (!strcmp(argv[1],"--stop-hook") ||
-    !strcmp(argv[1],"--redeliver-message") || !strcmp(argv[1],"--dispatch-message") ||
+    !strcmp(argv[1],"--redeliver-message") || !strcmp(argv[1],"--drain-redeliver") ||
+    !strcmp(argv[1],"--dispatch-message") ||
     !strcmp(argv[1],"--host-process-keeper") || !strcmp(argv[1],"--instance-owner") ||
     !strcmp(argv[1],"--instance-shutdown") || !strcmp(argv[1],"--instance-status") ||
     !strcmp(argv[1],"--instance-wait") || !strcmp(argv[1],"--ensure-schema") || recovery);

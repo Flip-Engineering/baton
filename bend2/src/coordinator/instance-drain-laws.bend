@@ -22,16 +22,15 @@ law an_empty_refusal_is_not_a_drain:
 def an_empty_refusal_is_not_a_drain():
   {==}
 
-# The shell joins the wait and the delivery with && so a failed wait delivers
-# nothing.
-law the_waiter_waits_for_the_owner_then_delivers_the_message:
-  {Drain.redrive_argv("/bin/baton","/db","message-1") == ["/bin/sh","-c","\"$1\" --instance-wait \"$2\" >/dev/null && exec \"$1\" --dispatch-message \"$2\" \"$3\"","sh","/bin/baton","/db","message-1"] : List<String>}
+# The waiter is the release's own in-process entry, not a shell.
+law the_waiter_is_the_release_entry_for_the_owed_message:
+  {Drain.redrive_argv("/bin/baton","/db","message-1") == ["/bin/baton","--drain-redeliver","/db","message-1"] : List<String>}
 
-def the_waiter_waits_for_the_owner_then_delivers_the_message():
+def the_waiter_is_the_release_entry_for_the_owed_message():
   {==}
 
 law the_deferral_report_names_the_owed_message:
-  {Drain.deferred_text("ESHUTDOWN: x","m1") == "start deferred: ESHUTDOWN: x; message m1 stays owed and a waiter delivers it again after the owner exits; a waiter whose wait fails delivers nothing and the next wake delivers the message" : String}
+  {Drain.deferred_text("ESHUTDOWN: x","m1") == "start deferred: ESHUTDOWN: x; message m1 stays owed and a waiter delivers it again after the owner exits; a failure of the wait or of the delivery is reported to the orchestrator" : String}
 
 def the_deferral_report_names_the_owed_message():
   {==}

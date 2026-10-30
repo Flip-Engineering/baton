@@ -10,17 +10,16 @@ import ../git/text.bend as Tx
 def drain_refusal(error: String) -> Bool:
   Tx.starts_with(error,"ESHUTDOWN:")
 
-# Waits for the owner to exit or be replaced, then delivers the owed message
-# through the entry the wake path already uses (--dispatch-message). The first
-# argument of the shell is the executable of this release, so the successor
-# owner starts from it. A failed wait ends the waiter with the wait's status and
-# dispatches nothing, so a failure cannot create repeated deferrals; the input
-# stays owed for the next wake.
+# The waiter is this release's own --drain-redeliver entry. It waits in process
+# for the owner to exit or be replaced, then redelivers the owed message through
+# Control.redeliver, whose failures are observed and reported by the existing
+# delivery control (drain-redeliver.bend). The successor owner starts from this
+# executable.
 def redrive_argv(self: String, db: String, head: String) -> List<String>:
-  ["/bin/sh","-c","\"$1\" --instance-wait \"$2\" >/dev/null && exec \"$1\" --dispatch-message \"$2\" \"$3\"","sh",self,db,head]
+  [self,"--drain-redeliver",db,head]
 
 def deferred_text(error: String, head: String) -> String:
-  "start deferred: " ++ error ++ "; message " ++ head ++ " stays owed and a waiter delivers it again after the owner exits; a waiter whose wait fails delivers nothing and the next wake delivers the message"
+  "start deferred: " ++ error ++ "; message " ++ head ++ " stays owed and a waiter delivers it again after the owner exits; a failure of the wait or of the delivery is reported to the orchestrator"
 
 def redrive_failed_text(code: String, cause: String, head: String) -> String:
   "start deferred but re-delivery could not be scheduled (" ++ code ++ ": " ++ cause ++ "); message " ++ head ++ " stays owed and the next wake delivers it"

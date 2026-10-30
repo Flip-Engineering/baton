@@ -140,13 +140,18 @@ removes the attempt directory it created, and the refusal text, which starts wit
 and defers the start. It releases the execution row the admission wrote, keeps
 the input owed, writes one durable report of kind `instance-drain-deferred` to
 the recorded orchestrator, and launches a detached waiter,
-`SELF --instance-wait DATABASE && SELF --dispatch-message DATABASE MESSAGE`. A
-failed wait ends the waiter without a delivery, so it cannot create repeated
-deferrals, and the next wake delivers the input. The waiter delivers the owed message through the entry the wake path
-uses once the owner has exited, and the delivery starts a successor owner from
-the executable of the admitting client. A second drain defers the start again. A
-waiter that cannot be launched produces a report of kind
-`instance-drain-redrive-failed`, and the next wake delivers the input.
+`SELF --drain-redeliver DATABASE MESSAGE`. The waiter waits in process, as
+`--instance-wait` does, until the owner has exited or been replaced, then calls
+`Control.redeliver`. That delivers the owed input through the normal receive path,
+so the delivery starts a successor owner from the executable of the admitting
+client. A second drain defers the start again. The delivery control observes
+failures of the delivery: a busy failure retries until the writer is gone, and any
+other failure writes a durable `<message>:undelivered` report to the recorded
+orchestrator. A failure of the wait is reported the same way and is not retried.
+A waiter that cannot be launched produces a report of kind
+`instance-drain-redrive-failed`. A waiter that an outside kill ends is not
+observed, as for every launched delivery child; the input stays owed and the
+next wake delivers it.
 
 An owner that runs an older release does not gate admissions. `--instance-shutdown`
 therefore also creates a marker file, `owner-KEY.drain-TOKEN-EPOCH`, in the
