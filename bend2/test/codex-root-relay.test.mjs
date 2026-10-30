@@ -47,6 +47,15 @@ line.on('line', value => {
       content: "Message (completion-request) from lead [id: request-1]:\\nFull body\\nReview the work against lead's assignment.",
       meta: { recipient:'operator', messageIds:'[\\"request-1\\"]', ...(process.env.ROOT_RELAY_META_THREAD ? { thread: process.env.ROOT_RELAY_META_THREAD } : {}) }
     } }) + '\\n');
+    if (process.env.ROOT_RELAY_SSH_DROP_AFTER_HUNG_PROXY && launches === 1) {
+      const deadline = Date.now() + 5000;
+      const wait = setInterval(() => {
+        if (fs.existsSync(process.env.ROOT_RELAY_APP_DIR + '/hung-proxy') || Date.now() >= deadline) {
+          clearInterval(wait);
+          process.exit(255);
+        }
+      }, 10);
+    }
     if (process.env.ROOT_RELAY_SECOND_THREAD) setTimeout(() => process.stdout.write(JSON.stringify({
       jsonrpc:'2.0', method:'notifications/claude/channel', params:{
         content:'Message (report) from lead [id: request-2]:\\nSecond body',
@@ -155,6 +164,10 @@ function handle(request) {
     frame(9, Buffer.from('ping'));
   } else if (request.method === 'thread/loaded/list') {
     fs.appendFileSync(dir + '/loaded-calls', 'x');
+    if (mode === 'hang-first-loaded' && !fs.existsSync(dir + '/hung-proxy')) {
+      fs.writeFileSync(dir + '/hung-proxy', 'x');
+      return;
+    }
     const calls = fs.readFileSync(dir + '/loaded-calls', 'utf8').length;
     send(request.id, { data: mode === 'loads-late' && calls < 4 ? [] : ['thread-1', 'thread-2'] });
   } else if (request.method === 'thread/turns/list') {
@@ -329,8 +342,8 @@ test('concurrent contexts queue one notice and reuse its returned item', async (
 test('a waiting context reuses the queued item after its owner exits before callback', async (t) => {
   const directory = scratch(t);
   const owner = await runRelay(t, 'owner-waits', { directory });
-  const waiter = await runRelay(t, 'consume', { directory });
   await until(owner, 'codexRootMessageQueued');
+  const waiter = await runRelay(t, 'consume', { directory });
   await new Promise(resolve => setTimeout(resolve, 300));
   const lockPath = join(directory, 'codex-home', 'root-channel-delivery-locks',
     createHash('sha256').update('thread-1').digest('hex') + '.lock');
@@ -495,6 +508,39 @@ test('a notice for another root conversation replaces a delivery that waits on t
   const [code] = await run.closed;
   assert.equal(code, 0, run.diagnostic);
   assert.doesNotMatch(run.diagnostic, /codex-root-relay: Error/);
+});
+
+test('a new conversation cancels an app-server request held by the superseded delivery', async (t) => {
+  const run = await runRelay(t, 'hang-first-loaded', { args: [], env: { CODEX_THREAD_ID: '', ROOT_RELAY_META_THREAD: 'thread-1',
+    ROOT_RELAY_SECOND_THREAD: 'thread-2' } });
+  await until(run, 'codexRootMessageReceived');
+  assert.equal(existsSync(join(run.directory, 'hung-proxy')), true,
+    'The first app-server request must still be pending when the second notice arrives.');
+  assert.match(run.diagnostic, /codexRootMessageSuperseded/);
+  const reads = readFileSync(run.readLog, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(reads.map((read) => [read.id, read.thread]), [['request-2', 'thread-2']]);
+  const queues = readFileSync(join(run.directory, 'queues.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(queues.map((args) => args[2]), ['thread-2']);
+  assert.equal(readFileSync(join(run.directory, 'loaded-calls'), 'utf8').length, 2,
+    'The second delivery must load its thread after the first request is cancelled.');
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
+});
+
+test('an SSH disconnect cancels a pending app-server request and reconnects the unread notice', async (t) => {
+  const run = await runRelay(t, 'hang-first-loaded', { args: [], env: { CODEX_THREAD_ID: '', ROOT_RELAY_META_THREAD: 'thread-1',
+    ROOT_RELAY_SSH_DROP_AFTER_HUNG_PROXY: '1' } });
+  await until(run, 'codexRootMessageReceived');
+  assert.equal(existsSync(join(run.directory, 'hung-proxy')), true);
+  assert.match(run.diagnostic, /codexRelayConductorLost/);
+  const reads = readFileSync(run.readLog, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(reads.map((read) => [read.id, read.thread]), [['request-1', 'thread-1']]);
+  const queues = readFileSync(join(run.directory, 'queues.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(queues.map((args) => args[2]), ['thread-1']);
+  run.child.stdin.end();
+  const [code] = await run.closed;
+  assert.equal(code, 0, run.diagnostic);
 });
 
 test('a record change while the conductor verifies a read delivers the new conversation and keeps the relay', async (t) => {
