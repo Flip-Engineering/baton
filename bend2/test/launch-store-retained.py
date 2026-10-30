@@ -47,6 +47,8 @@ class RetainedStore(unittest.TestCase):
         self.owner = None
 
     def start_owner(self):
+        if self.owner is not None and self.owner.poll() is None:
+            return
         self.owner = subprocess.Popen(
             [str(EXE), '--instance-owner', str(self.db)],
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
