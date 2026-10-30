@@ -185,6 +185,47 @@ class HookAndForwardOverlap(ReadRows):
         self.assertEqual([row[4] for row in self.rows()], ['witness-1'])
 
 
+class StdoutTaskList(unittest.TestCase):
+    """The backward read of the retained stdout selects a frame by this predicate; the coordinator's SQL then reads its list."""
+
+    def selects(self, line):
+        sql = evaluate('spool_list_sql', {})
+        return sqlite3.connect(':memory:').execute(sql, {'1': line}).fetchone()[0]
+
+    def state(self, line):
+        sql = evaluate('background_sql', {'value': "'" + line.replace("'", "''") + "'"})
+        return sqlite3.connect(':memory:').execute(sql).fetchone()[0]
+
+    def test_a_task_list_frame_is_selected_and_read(self):
+        self.assertEqual((self.selects(FRAMES['tasks']), self.state(FRAMES['tasks'])), (1, '1'))
+        self.assertEqual((self.selects(FRAMES['empty']), self.state(FRAMES['empty'])), (1, '0'))
+
+    def test_json_whitespace_and_key_order_do_not_hide_a_list(self):
+        for list_name, expected in (('tasks', '1'), ('empty', '0')):
+            frame = json.loads(FRAMES[list_name])
+            for text in (json.dumps(frame, indent=2), json.dumps(frame, separators=(' , ', ' : ')),
+                         json.dumps(dict(reversed(list(frame.items()))), indent=1)):
+                with self.subTest(list=list_name, text=text):
+                    self.assertEqual((self.selects(text), self.state(text)), (1, expected))
+
+    def test_a_subtype_written_with_a_json_escape_is_selected_and_read(self):
+        for list_name, expected in (('tasks', '1'), ('empty', '0')):
+            text = FRAMES[list_name].replace('background_tasks_changed', '\\u0062ackground\\u005ftasks_changed')
+            self.assertNotIn('background_tasks_changed', text)
+            with self.subTest(list=list_name):
+                self.assertEqual((self.selects(text), self.state(text)), (1, expected))
+
+    def test_other_frames_are_not_selected(self):
+        quoted = json.dumps({'type': 'assistant', 'text': '"subtype":"background_tasks_changed","tasks":[]'})
+        other = json.dumps({'type': 'user', 'subtype': 'background_tasks_changed'})
+        for line in (FRAMES['init'], FRAMES['result'], quoted, other, '[]', '5', '"background_tasks_changed"'):
+            with self.subTest(line=line):
+                self.assertEqual(self.selects(line), 0)
+
+    def test_a_selected_frame_without_a_task_array_names_no_task(self):
+        self.assertEqual(self.state('{"type":"system","subtype":"background_tasks_changed"}'), '0')
+
+
 class BackgroundState(unittest.TestCase):
     def state(self, frame):
         sql = evaluate('background_sql', {'value': "'" + frame.replace("'", "''") + "'"})

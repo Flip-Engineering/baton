@@ -140,3 +140,76 @@ law a_refused_write_leaves_the_cursor_and_the_owed_row:
 
 def a_refused_write_leaves_the_cursor_and_the_owed_row(db,player,attempt,cursor,next):
   {==}
+
+# #1298: stdin closes only when the stdout file's latest task list names no task
+# (or no list was ever written). A list that names tasks, or one that cannot be
+# read, leaves stdin open; a replaying recovery observer therefore never closes on
+# an earlier empty list that a later list replaced.
+law an_empty_latest_list_lets_stdin_close:
+  {Guidance.background_clear("0") == True{} : Bool}
+
+def an_empty_latest_list_lets_stdin_close():
+  {==}
+
+law no_list_in_the_stdout_file_lets_stdin_close:
+  {Guidance.background_clear("none") == True{} : Bool}
+
+def no_list_in_the_stdout_file_lets_stdin_close():
+  {==}
+
+law a_latest_list_with_tasks_keeps_stdin_open:
+  {Guidance.background_clear("1") == False{} : Bool}
+
+def a_latest_list_with_tasks_keeps_stdin_open():
+  {==}
+
+law an_unreadable_stdout_file_keeps_stdin_open:
+  {Guidance.background_clear("?") == False{} : Bool}
+
+def an_unreadable_stdout_file_keeps_stdin_open():
+  {==}
+
+law a_failed_last_frame_read_reports_an_unreadable_file:
+  for +db: String
+  {Guidance.spool_background_found(db,Fail{(2,"no such file")}) == IO.pure(String,"?") : IO(String)}
+
+def a_failed_last_frame_read_reports_an_unreadable_file(db):
+  {==}
+
+law a_file_without_a_list_reports_none:
+  for +db: String
+  {Guidance.spool_background_found(db,Done{""}) == IO.pure(String,"none") : IO(String)}
+
+def a_file_without_a_list_reports_none(db):
+  {==}
+
+law a_native_without_a_stdout_file_reports_none:
+  for +db: String
+  {Guidance.spool_background(db,"") == IO.pure(String,"none") : IO(String)}
+
+def a_native_without_a_stdout_file_reports_none(db):
+  {==}
+
+law a_failed_task_list_query_reports_an_unreadable_list:
+  {Guidance.spool_background_text(Fail{(5,"query failed")}) == "?" : String}
+
+def a_failed_task_list_query_reports_an_unreadable_list():
+  {==}
+
+law a_list_with_tasks_reports_one:
+  {Guidance.spool_background_text(Done{"1\n"}) == "1" : String}
+
+def a_list_with_tasks_reports_one():
+  {==}
+
+law an_empty_list_reports_zero:
+  {Guidance.spool_background_text(Done{"0\n"}) == "0" : String}
+
+def an_empty_list_reports_zero():
+  {==}
+
+law a_query_without_a_value_reports_an_unreadable_list:
+  {Guidance.spool_background_text(Done{""}) == "?" : String}
+
+def a_query_without_a_value_reports_an_unreadable_list():
+  {==}

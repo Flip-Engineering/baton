@@ -18,6 +18,18 @@ RECEIVE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RECEIVE)
 
 
+def stdin_eof_source(indent):
+    """Fixture action: waits up to the given seconds for the observer to close the native's
+    stdin and reports whether it saw end of input. Input that is not end of input is read
+    and counts as open."""
+    lines = ("if 'stdin_eof' in action:",
+             "    import select",
+             "    ready=select.select([sys.stdin],[],[],float(action['stdin_eof']))[0]",
+             "    reply({'stdin_closed':bool(ready) and os.read(0,65536)==b''})",
+             "    continue")
+    return ''.join(indent + line + '\n' for line in lines)
+
+
 class NativeObservation(RECEIVE.Receive):
     def setUp(self):
         super().setUp()
@@ -37,9 +49,13 @@ class NativeObservation(RECEIVE.Receive):
             "    if 'native_frame' in action:\n"
             "        print(json.dumps(action['native_frame']),flush=True)\n"
             "        reply({'frame_written':True})\n"
-            "        continue\n")
+            "        continue\n"
+            + stdin_eof_source('    '))
         self.assertIn(needle, fixture)
-        self.fixture.write_text(fixture.replace(needle, needle + addition, 1))
+        fixture = fixture.replace(needle, needle + addition, 1)
+        held = "            if action.get('stdout_line'):\n"
+        self.assertIn(held, fixture)
+        self.fixture.write_text(fixture.replace(held, stdin_eof_source('            ') + held, 1))
 
     def review_input(self, stream, ident):
         self.action(stream, review_input=ident)
@@ -887,6 +903,45 @@ class NativeObservation(RECEIVE.Receive):
         self.assertTrue(any(process['pid'] == started['pid'] for process in self.owned_processes()))
         self.assertIsNone(observer.poll())
         self.action(stream, exit_fixture=True, complete_task=True)
+        self.finish(observer)
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
+
+    def test_a_claude_native_stdin_follows_the_latest_task_list_in_a_large_retained_stdout(self):
+        # #1298: after its first result the observer closes a Claude Code native's stdin only when
+        # the latest background_tasks_changed frame in the retained stdout lists no task. The
+        # stdout holds about 4 MiB of earlier frames, a list with a task, and then the result.
+        # An empty list followed at once by a list with a task leaves stdin open; a later empty
+        # list closes it.
+        tasks = json.dumps({'type': 'system', 'subtype': 'background_tasks_changed',
+                            'tasks': [{'task_id': 'b1', 'task_type': 'local_bash', 'description': 'sleep 100'}]})
+        empty = json.dumps({'type': 'system', 'subtype': 'background_tasks_changed', 'tasks': []},
+                           indent=1).replace('\n', ' ')
+        self.player(harness='claude-code')
+        self.coord('message', 'list-task', 'root', 'parent', 'task', 'Work that runs a background task.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
+        self.action(stream, emit_delta_batch={'count': 64, 'bytes': 65536, 'id': 'prefix'})
+        self.assertEqual(json.loads(stream.readline()), {'delta_frames_written': 64, 'batch': 'prefix'})
+        self.action(stream, native_line=tasks)
+        self.assertEqual(json.loads(stream.readline()), {'line_written': tasks})
+        self.assertGreater(self.attempt_stdout('parent').stat().st_size, 4 * 1024 * 1024)
+        self.action(stream, hold_exit=True)
+        self.assertEqual(json.loads(stream.readline()), {'terminal_written': True})
+        self.action(stream, stdin_eof=3)
+        self.assertEqual(json.loads(stream.readline()), {'stdin_closed': False},
+                         'stdin closed while the latest list named a task')
+        self.action(stream, stdout_line=empty + '\n' + tasks)
+        self.assertEqual(json.loads(stream.readline()), {'line_written': empty + '\n' + tasks})
+        self.action(stream, stdin_eof=3)
+        self.assertEqual(json.loads(stream.readline()), {'stdin_closed': False},
+                         'stdin closed on an empty list that a later list replaced')
+        self.action(stream, stdout_line=empty)
+        self.assertEqual(json.loads(stream.readline()), {'line_written': empty})
+        self.action(stream, stdin_eof=60)
+        self.assertEqual(json.loads(stream.readline()), {'stdin_closed': True},
+                         'stdin stayed open after the latest list named no task')
+        self.action(stream, exit_fixture=True)
         self.finish(observer)
         self.shutdown_idle_database_owner('fixture database owner did not exit')
 
