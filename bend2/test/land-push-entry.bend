@@ -9,11 +9,16 @@
 #        land-push-entry DB recruit SESSION PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE
 #        land-push-entry DB land PLAYER REPO TARGET
 #        land-push-entry DB push REPO BRANCH REMOTE
+#        land-push-entry --instance-owner DB
+#        land-push-entry --instance-shutdown DB
+# The database writes of attach and recruit start the instance owner by running
+# this executable with --instance-owner, so the entry serves that command too.
 import Base
 import ../src/coordinator/commands.bend as C
 import ../src/coordinator/control.bend as Control
 import ../src/coordinator/land.bend as Land
 import ../src/host/sqlite.bend as DB
+import ../src/host/instance.bend as Custody
 
 def output(value: String, empty: Bool) -> IO(Unit):
   match empty:
@@ -41,6 +46,8 @@ def dispatch(+db: String, args: List<String>) -> IO(Unit):
 
 def main_args(args: List<String>) -> IO(Unit):
   match args:
+    case "--instance-owner" <> db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
+    case "--instance-shutdown" <> db <> Nil{}: IO.try(Unit,Custody.Instance.shutdown(db))
     case path <> rest: dispatch(path,rest)
     case Nil{}: IO.die(Unit,2,"usage: land-push-entry DB COMMAND ARGS")
 
