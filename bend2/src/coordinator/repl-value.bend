@@ -1,7 +1,7 @@
 import Base
 import ./repl-model.bend as M
 import ./repl-context.bend as Context
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 
 # A checked Bend2 String carries the JSON value used by the seat's context loop.
 # The compiler's canonical value is a quoted String literal, decoded once here.
