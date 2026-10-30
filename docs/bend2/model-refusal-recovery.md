@@ -50,7 +50,7 @@ invokes `baton branch start` three times after the source workspace settles.
 | `instruction` | Complete instruction body that the model refused |
 | `harness`, `model` | Observed route when recorded, with requested values as fallback |
 | `initial_turn` | Terminal event that started this recovery |
-| `initial_refusal` | Complete terminal body that detected the refusal |
+| `initial_refusal` | Extracted terminal text that detected the refusal |
 | `status` | `active`, `succeeded`, `refused` or `failed` |
 | `cause` | Setup or non-refusal failure detail |
 | `report` | Deterministic final report identity |
@@ -64,7 +64,7 @@ invokes `baton branch start` three times after the source workspace settles.
 | `ordinal` | `1`, `2` or `3` |
 | `session` | Player that received the attempt |
 | `instruction` | Exact Baton instruction body sent to that Player |
-| `refusal_description` | Complete terminal body for that attempt's refusal |
+| `refusal_description` | Extracted terminal text for that attempt's refusal |
 | `status` | `pending`, `running`, `refused`, `succeeded` or `failed` |
 | `turn` | Terminal event identity |
 | `round`, `message` | Branch round and deterministic input identity where applicable |
@@ -79,7 +79,7 @@ The recovery functions in `agent-input.bend` classify a terminal event in two wa
 - A normalized refusal field: `$.baton.outcome = "model-refusal"`,
   `$.modelRefusal = 1`, `$.refusal_description`, or
   `$.baton.refusal_description`.
-- A conservative marker set applied to the complete terminal body. The markers
+- A conservative marker set applied to the extracted terminal text. The markers
   cover explicit first-person refusal wording from the supported terminal
   shapes: Claude `result`, Codex `turn.failed`, OMP `agent_end`, and Muse
   `run_terminal`.
@@ -112,7 +112,7 @@ COMPLETE ORIGINAL INSTRUCTION
 
 The fork-and-flush envelope adds: `Start from the recorded branch workspace in a
 fresh conversation.` The exact body is stored in `refusal_attempts.instruction`.
-A conductor can inspect every attempted instruction and each complete refusal
+A conductor can inspect every attempted instruction and each extracted refusal
 description after the chain ends.
 
 ## State machine
@@ -218,6 +218,11 @@ Unresolved limitations:
 - A successful fork-and-flush attempt leaves sibling branches running. The
   conductor receives their ordinary reports and decides whether to stop or
   select one. Automatic sibling stop is outside this issue.
+- `baton branch start` creates the branch session and returns after launch. The
+  recovery writes the attempt row immediately after that return. A terminal
+  event that arrives before that write can be observed with no running attempt
+  row. The window is small and the focused tests do not exercise concurrent
+  launch and refusal.
 
 ## Review findings and dispositions
 
@@ -244,8 +249,8 @@ The adversarial and constructive review found these implementation issues:
   marker. SQLite reported `parser stack overflow`. Disposition: the description
   is extracted once, then the prefix marker checks run as pure Bend2 predicates.
 - The final result must come from durable attempt rows. Tests compare every
-  returned instruction and refusal description against the database instead of
-  recomputing them in the test.
+  returned instruction and refusal description with the corresponding database
+  row.
 
 ## Test-driven design
 
@@ -258,6 +263,8 @@ The focused fixture `bend2/test/refusal-recovery-focused.bend` covers:
 - three sequential continue attempts with exact refusal descriptions;
 - duplicate observation idempotence;
 - ordinary task-continuation suppression while recovery is active;
+- successful retry completion and non-refusal retry failure;
+- failed attempts retain an empty refusal description;
 - exact final JSON with six attempt records;
 - SQL injection resistance through terminal text and instruction text.
 
@@ -280,6 +287,7 @@ The red review targets these failure cases:
 | A report route is denied | Recovery is failed; the report field is not claimed |
 | A refusal body contains quotes, newlines, Unicode or SQL fragments | Stored and returned byte-for-byte in JSON |
 | Recovery restarts after the third continue refusal | The same three branch rounds and attempt identities are used |
+| A flush child refuses before its attempt row is written | The race is documented; a terminal event cannot corrupt another attempt |
 
 ## Blue-team audit
 
@@ -289,13 +297,9 @@ The blue review confirms:
   attempt row;
 - each fork-and-flush branch start occurs after native custody release;
 - each fork-and-flush attempt records its branch round and exact instruction;
-- the final report is generated from durable attempt rows rather than caller
-  memory;
+- the final report is generated from durable attempt rows;
 - the ordinary task continuation is suppressed while recovery owns the retry;
 - coordination routes, stops, worktree capacity and branch setup continue to use
   their existing authority checks;
 - the result uses the exact requested field names and ordering;
 - existing branch and report tests remain the regression base.
-
-The test suite must remain red before the recovery module is wired in, and every
-new row must pass on the candidate before the PR is filed.

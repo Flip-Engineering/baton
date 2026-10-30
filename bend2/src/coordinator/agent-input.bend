@@ -513,7 +513,7 @@ def rr_send_report(+db: String, +recovery: String, +body: String) -> IO(Bool):
 
 def rr_finalize_failed(+db: String, +recovery: String, +cause: String) -> IO(Unit):
   do IO<Unit>:
-    aborted : Unit <- rr_write(db,"UPDATE refusal_attempts SET status='failed',refusal_description=CASE WHEN refusal_description='' THEN " ++ C.q(cause) ++ " ELSE refusal_description END WHERE recovery=" ++ C.q(recovery) ++ " AND status IN('pending','running');")
+    aborted : Unit <- rr_write(db,"UPDATE refusal_attempts SET status='failed' WHERE recovery=" ++ C.q(recovery) ++ " AND status IN('pending','running');")
     +harness : String <- rr_scalar(db,"SELECT harness FROM refusal_recoveries WHERE id=" ++ C.q(recovery))
     +model : String <- rr_scalar(db,"SELECT model FROM refusal_recoveries WHERE id=" ++ C.q(recovery))
     +body : String = "{\"refusal-recovery-failed\":{\"harness\":" ++ J.string_literal(harness) ++ ",\"model\":" ++ J.string_literal(model) ++ ",\"cause\":" ++ J.string_literal(cause) ++ "}}"
@@ -529,15 +529,20 @@ def rr_result_json(+db: String, +recovery: String) -> IO(String):
 
 def rr_finalize_refused(+db: String, +recovery: String) -> IO(Unit):
   do IO<Unit>:
-    +body : String <- rr_result_json(db,recovery)
-    sent : Bool <- rr_send_report(db,recovery,body)
-    refused : Unit <- rr_write(db,"UPDATE refusal_recoveries SET status='refused' WHERE id=" ++ C.q(recovery) ++ " AND status='active';")
-    IO.pure(Unit,Unit{})
+    continue_refused : String <- rr_scalar(db,"SELECT count(*) FROM refusal_attempts WHERE recovery=" ++ C.q(recovery) ++ " AND stage='fork-and-continue' AND status='refused' AND refusal_description<>''")
+    flush_refused : String <- rr_scalar(db,"SELECT count(*) FROM refusal_attempts WHERE recovery=" ++ C.q(recovery) ++ " AND stage='fork-and-flush' AND status='refused' AND refusal_description<>''")
+    Bool.pick(IO(Unit),Bool.and(String.eq(continue_refused,"3"),String.eq(flush_refused,"3")),
+      (do IO<Unit>:
+        +body : String <- rr_result_json(db,recovery)
+        sent : Bool <- rr_send_report(db,recovery,body)
+        refused : Unit <- rr_write(db,"UPDATE refusal_recoveries SET status='refused' WHERE id=" ++ C.q(recovery) ++ " AND status='active';")
+        IO.pure(Unit,Unit{})),
+      rr_finalize_failed(db,recovery,"The recovery does not have three refused attempts in each stage."))
 
 def rr_continue_sent(+db: String, +recovery: String, +attempt: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match result:
     case Fail{(+code,+cause)}: rr_finalize_failed(db,recovery,U32.show(code) ++ ": " ++ cause)
-    case Done{saved}: rr_write(db,"UPDATE refusal_attempts SET status='running' WHERE id=" ++ C.q(attempt) ++ " AND status='pending';")
+    case Done{saved}: IO.pure(Unit,Unit{})
 
 def rr_start_continue(+db: String, +recovery: String, +ordinal: U32) -> IO(Unit):
   do IO<Unit>:
@@ -551,6 +556,7 @@ def rr_start_continue(+db: String, +recovery: String, +ordinal: U32) -> IO(Unit)
         +attempt : String = rr_attempt_id(recovery,"fork-and-continue",ordinal)
         +message : String = "refusal-retry:" ++ recovery ++ ":" ++ U32.show(ordinal)
         inserted : Unit <- rr_write(db,"INSERT OR IGNORE INTO refusal_attempts(id,recovery,stage,ordinal,session,instruction,status,message) VALUES(" ++ C.q(attempt) ++ "," ++ C.q(recovery) ++ ",'fork-and-continue'," ++ U32.show(ordinal) ++ "," ++ C.q(source) ++ "," ++ C.q(instruction) ++ ",'pending'," ++ C.q(message) ++ ");")
+        running : Unit <- rr_write(db,"UPDATE refusal_attempts SET status='running' WHERE id=" ++ C.q(attempt) ++ " AND status='pending';")
         sent : Result<&1,&1,U32 & String,String> <- Store.apply_through_busy(db,C.Message{message,conductor,source,"guidance",instruction})
         rr_continue_sent(db,recovery,attempt,sent)),
       IO.pure(Unit,Unit{}))
@@ -590,9 +596,12 @@ def rr_observe_impl(+db: String, +player: String, +turn_id: String, +event: Stri
               existing : String <- rr_scalar(db,"SELECT coalesce((SELECT id FROM refusal_recoveries WHERE source=" ++ C.q(player) ++ " AND status='active' ORDER BY rowid DESC LIMIT 1),'')")
               Bool.pick(IO(Unit),String.is_empty(existing),
                 (do IO<Unit>:
-                  +recovery : String <- rr_create_recovery(db,player,turn_id,description)
-                  start : Unit <- rr_start_continue(db,recovery,1)
-                  IO.pure(Unit,Unit{})),
+                  branch_candidate : String <- rr_scalar(db,"SELECT CASE WHEN EXISTS(SELECT 1 FROM branch_candidates WHERE session=" ++ C.q(player) ++ ") THEN 1 ELSE 0 END")
+                  Bool.pick(IO(Unit),String.eq(branch_candidate,"1"),IO.pure(Unit,Unit{}),
+                    (do IO<Unit>:
+                      +recovery : String <- rr_create_recovery(db,player,turn_id,description)
+                      start : Unit <- rr_start_continue(db,recovery,1)
+                      IO.pure(Unit,Unit{})))),
                 IO.pure(Unit,Unit{}))),
             rr_refuse_attempt(db,running,turn_id,description)))))
 
@@ -644,6 +653,22 @@ def rr_branch_start(+db: String, +recovery: String, +ordinal: U32, +source: Stri
     +reason : String = rr_branch_reason(result)
     Bool.pick(IO(Unit),String.is_empty(reason),rr_record_flush(db,recovery,ordinal,source,ensemble,instruction),rr_finalize_failed(db,recovery,reason))
 
+def rr_flush_ordinals() -> List<U32>:
+  [1,2,3]
+
+def rr_start_flush_ordinals(+db: String, +recovery: String, ordinals: List<U32>, +source: String, +conductor: String, +original: String, +ensemble: String) -> IO(Unit):
+  match ordinals:
+    case Nil{}: rr_finish_flush_setup(db,recovery)
+    case +ordinal <> rest:
+      do IO<Unit>:
+        status : String <- rr_scalar(db,"SELECT status FROM refusal_recoveries WHERE id=" ++ C.q(recovery))
+        Bool.pick(IO(Unit),Bool.not(String.eq(status,"active")),IO.pure(Unit,Unit{}),
+          (do IO<Unit>:
+            existing : String <- rr_scalar(db,"SELECT count(*) FROM refusal_attempts WHERE recovery=" ++ C.q(recovery) ++ " AND stage='fork-and-flush' AND ordinal=" ++ U32.show(ordinal))
+            started : Unit <- Bool.pick(IO(Unit),String.eq(existing,"0"),rr_branch_start(db,recovery,ordinal,source,conductor,original,ensemble),IO.pure(Unit,Unit{}))
+            next : Unit <- rr_start_flush_ordinals(db,recovery,rest,source,conductor,original,ensemble)
+            IO.pure(Unit,Unit{})))
+
 def rr_start_flush(+db: String, +recovery: String) -> IO(Unit):
   do IO<Unit>:
     +source : String <- rr_scalar(db,"SELECT source FROM refusal_recoveries WHERE id=" ++ C.q(recovery))
@@ -656,17 +681,14 @@ def rr_start_flush(+db: String, +recovery: String) -> IO(Unit):
         +ensemble : String = "refusal-recovery:" ++ recovery
         recorded : Unit <- rr_write(db,"INSERT OR IGNORE INTO ensembles(id,owner,coupling) VALUES(" ++ C.q(ensemble) ++ "," ++ C.q(conductor) ++ ",'loose');")
         member : Unit <- rr_write(db,"INSERT OR IGNORE INTO ensemble_members(ensemble,session) VALUES(" ++ C.q(ensemble) ++ "," ++ C.q(source) ++ ");")
-        first : Unit <- rr_branch_start(db,recovery,1,source,conductor,original,ensemble)
-        second : Unit <- rr_branch_start(db,recovery,2,source,conductor,original,ensemble)
-        third : Unit <- rr_branch_start(db,recovery,3,source,conductor,original,ensemble)
-        checked : Unit <- rr_finish_flush_setup(db,recovery)
+        checked : Unit <- rr_start_flush_ordinals(db,recovery,rr_flush_ordinals(),source,conductor,original,ensemble)
         IO.pure(Unit,Unit{})),
       rr_finalize_failed(db,recovery,"Refusal fork-and-flush requires a recorded conductor, workspace and harness."))
 
 def rr_start_flush_once(+db: String, +recovery: String) -> IO(Unit):
   do IO<Unit>:
     existing : String <- rr_scalar(db,"SELECT count(*) FROM refusal_attempts WHERE recovery=" ++ C.q(recovery) ++ " AND stage='fork-and-flush'")
-    Bool.pick(IO(Unit),String.eq(existing,"0"),rr_start_flush(db,recovery),IO.pure(Unit,Unit{}))
+    Bool.pick(IO(Unit),String.eq(existing,"3"),IO.pure(Unit,Unit{}),rr_start_flush(db,recovery))
 
 def rr_finish_flush_once(+db: String, +recovery: String) -> IO(Unit):
   do IO<Unit>:

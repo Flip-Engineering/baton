@@ -1,6 +1,7 @@
 """Integration coverage for issue #1320 model-refusal recovery."""
 import json
 import pathlib
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -98,13 +99,21 @@ class RefusalRecovery(control.Control):
         self.assertEqual(len(trees), 1, rounds)
         self.assertEqual({row['source'] for row in rounds}, {'source'})
 
-        starts = [self.accept_any()[1] for _ in range(3)]
+        self.server.settimeout(30)
+        try:
+            starts = [self.accept_any()[1] for _ in range(3)]
+        except socket.timeout:
+            self.fail('fork-and-flush did not start three native fixtures')
+        finally:
+            self.server.settimeout(None)
         players = {row['session'] for row in flush}
-        self.assertEqual({start['session'] for start in starts}, players)
-        for start in starts:
+        by_session = {start['session']: start for start in starts}
+        self.assertEqual(set(by_session), players)
+        for row in flush:
+            start = by_session[row['session']]
             self.assertIn('Stage: fork-and-flush', start['prompt'])
             self.assertIn('fresh conversation', start['prompt'])
-            self.assertIn(self.task_body, start['prompt'])
+            self.assertIn(row['instruction'], start['prompt'])
 
         for ordinal, attempt in enumerate(flush, 1):
             self.observe('flush-refusal-' + str(ordinal), attempt['session'],
