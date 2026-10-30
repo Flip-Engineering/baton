@@ -3185,15 +3185,79 @@ function literal_binders(rows: Rows): PVar[] {
   return binders;
 }
 
+// The binder i among the pattern q, and q with that binder replaced by r.
+function patt_binder(q: Patt, i: number): PVar | null {
+  if (q.$ === "PVar") return q.i === i ? q : null;
+  for (const x of q.x) {
+    const found = patt_binder(x, i);
+    if (found !== null) return found;
+  }
+  return null;
+}
+function patt_put(q: Patt, i: number, r: Patt): Patt {
+  if (q.$ === "PVar") return q.i === i ? r : q;
+  return patt_binder(q, i) === null ? q : { ...q, x: q.x.map((x) => patt_put(x, i, r)) };
+}
+
+// A row whose body is a match on one variable, with one pattern per row and a
+// binder row last, becomes one row per nested row, so that literal_leaf binds no
+// binder that a row body matches again. When the variable is a binder of the row's
+// own patterns, each nested row's pattern takes the binder's place and the nested
+// body reads the matched value as that pattern (a final binder row keeps the
+// binder, with the joined + mark). When it is a pending binder that no column of
+// the match holds, it gains a column after the first, in binder order, where the
+// nested rows put their patterns and every other row binds it. The nested rows
+// refine the row in order and the binder row ends them, so the first row that
+// matches a value selects the body the nested match selected.
+function literal_lift(m: Match, vars: PVar[]): Match {
+  let e = m.e;
+  const out: Rows = [], todo = [...m.r].reverse();
+  const widen = (rows: Rows, at: number, y: PVar): Rows => {
+    const bind: PVar = { $: "PVar", k: y.k, i: y.i, q: Lone(), s: y.s };
+    return rows.map((row): Case => ({ ...row, p: [...row.p.slice(0, at), bind, ...row.p.slice(at)] }));
+  };
+  while (todo.length > 0) {
+    const row = todo.pop()!, f = row.f;
+    const nested = f.$ === "Match" && f.e.length === 1 && f.e[0].$ === "Var" && f.r.length > 1
+      && f.r.every((n) => n.p.length === 1) && f.r[f.r.length - 1].p[0].$ === "PVar" ? f : null;
+    if (nested === null) { out.push(row); continue; }
+    const i = (nested.e[0] as Extract<LTerm, { $: "Var" }>).i;
+    const col = row.p.findIndex((q) => patt_binder(q, i) !== null);
+    let rows: Rows;
+    if (col >= 0) {
+      const x = patt_binder(row.p[col], i)!;
+      rows = nested.r.map((n): Case => {
+        const q = n.p[0];
+        const r: Patt = q.$ === "PVar" ? { ...x, q: quant_join(x.q, q.q) } : q;
+        return { p: row.p.map((p, j) => j === col ? patt_put(p, i, r) : p),
+          f: q.$ === "PVar" ? body_sub(n.f, q.i, r) : body_sub(n.f, i, r), g: row.g };
+      });
+    } else {
+      const y = vars.find((u) => u.i === i);
+      if (y === undefined || e.some((t) => t.$ === "Var" && t.i === i)) { out.push(row); continue; }
+      const rank = (t: LTerm): number => t.$ === "Var" ? vars.findIndex((u) => u.i === t.i) : -1;
+      let at = 1;
+      while (at < e.length && rank(e[at]) >= 0 && rank(e[at]) < vars.indexOf(y)) at += 1;
+      e = [...e.slice(0, at), Var(y.k, y.i, y.s), ...e.slice(at)];
+      out.splice(0, out.length, ...widen(out, at, y));
+      todo.splice(0, todo.length, ...widen(todo, at, y));
+      rows = nested.r.map((n): Case => ({ p: [...row.p.slice(0, at), n.p[0], ...row.p.slice(at)], f: n.f, g: row.g }));
+    }
+    for (let j = rows.length - 1; j >= 0; j--) todo.push(rows[j]);
+  }
+  return e === m.e && out.length === m.r.length && out.every((row, j) => row === m.r[j]) ? m : { ...m, e, r: out };
+}
+
 // v heads a column of string literal and binder patterns. Null keeps the
 // ordinary lowering: a row that matches a binder again (literal_leaf binds every
-// remaining binder before the row bodies), a literal row that calls the
-// definition itself and uses the matched value (the value would stand where the
-// character decision tree had the literal), or an affine value that a binder row
-// could use more than once.
-function literal_guards(m: Match, v: PVar, vars: PVar[], fr: () => number): LTerm | null {
+// remaining binder before the row bodies, and literal_lift removes the matches it
+// can), a literal row that calls the definition itself and uses the matched value
+// (the value would stand where the character decision tree had the literal), or
+// an affine value that a binder row could use more than once.
+function literal_guards(m0: Match, v: PVar, vars: PVar[], fr: () => number): LTerm | null {
   const known = LITERAL_COLUMNS;
   if (known === null) return null;
+  const m = literal_lift(m0, vars);
   if (m.r.some((row) => row.p[0].$ === "PCtr" && (row.p[0] as PCtr).lit === undefined)) return null;
   const binders = literal_binders(m.r);
   if (m.r.some((row) => body_matches(row.f, [...vars, ...binders]))) return null;
