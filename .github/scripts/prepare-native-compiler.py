@@ -7,6 +7,46 @@ import pathlib
 import runpy
 import shutil
 import subprocess
+import sys
+
+# Exit status for a compiler selection that this candidate tree cannot verify.
+REFUSED = 78
+
+
+def candidate_commit(root):
+    """The checked-out candidate commit; the workflow SHA can name a merge commit instead."""
+    result = subprocess.run(['git', '-C', str(root), 'rev-parse', 'HEAD'],
+                            capture_output=True, text=True)
+    return result.stdout.strip() if result.returncode == 0 else 'unknown'
+
+
+def refuse_unknown_archive(args, verifier, evidence, requested_sha256):
+    """Retain why a selection was refused, then stop with a distinct status.
+
+    The workflow default and the verifier come from different revisions when a
+    candidate predates the archive's verifier entry. The record names both sides.
+    """
+    root = pathlib.Path(__file__).resolve().parents[2]
+    known = [{'archive_sha256': sha, 'name': identity.get('name', ''),
+              'source_commit': identity.get('source_commit', '')}
+             for sha, identity in verifier['COMPILER_ARCHIVES'].items()]
+    record = {'schema': 'baton2-linux-compiler-selection-refusal-v1',
+              'reason': 'unknown-compiler-archive',
+              'candidate_commit': candidate_commit(root),
+              'workflow_sha': os.environ.get('GITHUB_SHA', ''),
+              'selected_archive': args.archive,
+              'selected_archive_sha256': requested_sha256,
+              'verifier': str(pathlib.Path(__file__).resolve().with_name('reuse-native-main.py').relative_to(root)),
+              'known_archives': known,
+              'detail': 'The candidate tree does not list the selected compiler archive. If the '
+                        'candidate predates the commit that adds its verifier entry, integrate '
+                        'that commit; otherwise select an archive this tree lists.'}
+    evidence.mkdir(parents=True, exist_ok=True)
+    (evidence / 'compiler-selection-refusal.json').write_text(json.dumps(record, indent=2) + '\n')
+    print('Unknown compiler archive SHA256 ' + requested_sha256 + ' for candidate '
+          + record['candidate_commit'] + '; this tree lists ' + str(len(known))
+          + ' archives. See evidence/compiler-selection-refusal.json.', file=sys.stderr)
+    raise SystemExit(REFUSED)
 
 
 def main():
@@ -28,7 +68,8 @@ def main():
     if selected:
         require(args.runner == 'homelab', 'A retained compiler requires the homelab runner.')
         require(args.archive and args.archive_sha256, 'Select both the compiler archive and its SHA256.')
-        require(args.archive_sha256 in verifier['COMPILER_ARCHIVES'], 'Unknown compiler archive SHA256.')
+        if args.archive_sha256 not in verifier['COMPILER_ARCHIVES']:
+            refuse_unknown_archive(args, verifier, evidence, args.archive_sha256)
         original = pathlib.Path(os.path.expandvars(os.path.expanduser(args.archive))).resolve()
         require(digest(original) == args.archive_sha256, 'The retained compiler archive changed.')
         shutil.copyfile(original, archive)
@@ -40,7 +81,8 @@ def main():
                             '-o', str(archive)], stdout=stdout, stderr=stderr, check=True)
         require(digest(archive) == verifier['ARCHIVE_SHA'], 'The downloaded compiler archive changed.')
     archive_sha = digest(archive)
-    require(archive_sha in verifier['COMPILER_ARCHIVES'], 'Unknown compiler archive SHA256.')
+    if archive_sha not in verifier['COMPILER_ARCHIVES']:
+        refuse_unknown_archive(args, verifier, evidence, archive_sha)
     subprocess.run(['tar', '-xzf', str(archive), '-C', str(home), '--strip-components=1'], check=True)
     files = verifier['distribution'](archive, home)
     compiler = home / 'bin/bend'
