@@ -741,6 +741,23 @@ with sqlite3.connect(config['database']) as db:
     assert db.execute('SELECT count(*) FROM messages WHERE id=?', (config['id'],)).fetchone()[0] == 0
     db.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,'coordinator','worker','guidance',?)",
                (config['id'], pathlib.Path(config['bodyPath']).read_text(encoding='utf-8')))
+if config['label'] == 'stream':
+    # Old native/prompt frames contain the complete input but cannot establish
+    # a read in the current prompt. The current span follows substantial history.
+    old_complete = ('Message (guidance) from coordinator [id: ' + config['id'] + ']:\n' +
+                    pathlib.Path(config['bodyPath']).read_text(encoding='utf-8'))
+    with transcript_path.open('wb') as stream:
+        stream.write((json.dumps({'type':'assistant','sessionId':'native-1',
+                                 'message':{'content':'earlier history ' * 30}}) + '\n').encode() * 20000)
+    frame({'type':'user','sessionId':'native-1','promptId':'older-prompt'})
+    frame({'type':'api-request-blob','sessionId':'native-1',
+           'message':{'role':'system','content':[{'type':'text','text':
+               'PostToolUse:Bash hook additional context: ' + old_complete}]}})
+    frame({'type':'user','sessionId':'older-native','promptId':'prompt-1'})
+    frame({'type':'api-request-blob','sessionId':'older-native','promptId':'prompt-1',
+           'message':{'role':'system','content':[{'type':'text','text':
+               'PostToolUse:Bash hook additional context: ' + old_complete}]}})
+    frame({'type':'system','sessionId':'native-1','subtype':'compact_boundary'})
 frame({'type':'user','sessionId':'native-1','promptId':'prompt-1','message':{'role':'user','content':'Start the task.'}})
 hook = invoke('injected-input', [config['binary'],'--stop-hook'], event('PostToolUse', tool_name='Bash'))
 context = json.loads(hook.stdout)['hookSpecificOutput']['additionalContext']
@@ -783,6 +800,11 @@ else:
     assert reads() == []
     frame({'type':'assistant','sessionId':'native-1','message':{'content':[
            {'type':'tool_use','id':'read-2','name':'Read','input':{'file_path':read_path}}]}})
+    if config['label'] == 'stream':
+        # The matching Read call precedes another prompt and a repeated current
+        # prompt. Selecting only the last contiguous run would lose that call.
+        frame({'type':'user','sessionId':'native-1','promptId':'unrelated-prompt'})
+        frame({'type':'user','sessionId':'native-1','promptId':'prompt-1'})
     numbered = '\n'.join(str(i+1) + '\t' + line for i,line in enumerate(rendered.splitlines()))
     frame({'type':'user','sessionId':'native-1','promptId':'prompt-1','message':{'content':[
            {'type':'tool_result','tool_use_id':'read-2','content':numbered}]}})
@@ -791,6 +813,15 @@ else:
                        tool_response={'type':'text','file':{'filePath':read_path,'content':rendered,
                                      'numLines':len(rendered.splitlines()),'startLine':1,
                                      'totalLines':len(rendered.splitlines())}})
+    if config['label'] == 'stream':
+        complete_size = transcript_path.stat().st_size
+        with transcript_path.open('ab') as stream:
+            stream.write(b'{"unfinished":')
+        incomplete = invoke('post-incomplete-snapshot', [config['binary'],'--stop-hook'], read_event)
+        assert config['tail'] in json.loads(incomplete.stdout)['hookSpecificOutput']['additionalContext']
+        assert reads() == []
+        with transcript_path.open('r+b') as stream:
+            stream.truncate(complete_size)
     after_read = invoke('post-read', [config['binary'],'--stop-hook'], read_event)
     assert after_read.stdout.strip() == ''
     before = invoke('stop-after-full-read', [config['binary'],'--stop-hook'], event('Stop', stop_hook_active=True))
@@ -864,6 +895,9 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
 
     def test_large_body_injected_read_completion_stop_and_ended_attempt(self):
         self.combined_lifecycle('Large complete body λ🙂.\n' * 25000 + 'TAIL-READ-PROOF-large', 'large')
+
+    def test_streamed_history_keeps_first_prompt_inheritance_full_body_and_stop_custody(self):
+        self.combined_lifecycle('Complete streamed body λ🙂.\n' * 100 + 'TAIL-READ-PROOF-stream', 'stream')
 
     def codex_hooks(self):
         """The hook tables Codex builds from the launch's -c key=value overrides."""
