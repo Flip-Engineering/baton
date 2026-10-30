@@ -282,7 +282,7 @@ def mcp_record_scope(scope: HandlingScope, +db: String, +session: String, saved:
       stored : String <- IO.try(String,Store.transact_sql(db,
         "BEGIN IMMEDIATE;INSERT INTO message_reads(attempt,message,recipient,native,identity) SELECT " ++ C.q(attempt)
         ++ ",m.id,m.recipient," ++ C.q(native) ++ "," ++ C.q(identity) ++ " FROM json_each(" ++ C.q(saved)
-        ++ ") j JOIN messages m ON m.id=" ++ Status.exposed(read,"id") ++ " WHERE " ++ Status.found(read)
+        ++ ") j CROSS JOIN messages m ON m.id=" ++ Status.exposed(read,"id") ++ " WHERE " ++ Status.found(read)
         ++ " AND m.recipient=" ++ C.q(session) ++ " AND m.recipient=" ++ Status.exposed(read,"recipient")
         ++ " AND m.body=" ++ Status.exposed(read,"body") ++ " AND " ++ current
         ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session)
