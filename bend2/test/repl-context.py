@@ -69,6 +69,7 @@ class ReplContext(unittest.TestCase):
         if not success:
             return result
         # Recipient resolution first prints its complete owned citation message.
+        self.exposed = json.JSONDecoder().raw_decode(result.stdout.lstrip())[0]
         return json.loads(result.stdout.strip().splitlines()[-1])
 
     def test_shared_version_survives_rebinding_restart_and_import(self):
@@ -83,12 +84,19 @@ class ReplContext(unittest.TestCase):
         second = self.define(42)
         self.assertNotEqual(self.cite(second)['citation'], citation['citation'])
         resolved = self.resolve('recipient', citation['citation'])
+        self.assertEqual(self.exposed['id'], message['id'])
+        self.assertEqual(self.exposed['recipient'], 'recipient')
+        self.assertEqual(self.exposed['body'], message['body'])
+        self.assertEqual(self.query('SELECT DISTINCT recipient FROM message_reads WHERE message=?',
+                                    (message['id'],)), [('recipient',)])
         self.assertEqual(resolved['reference'], first)
         self.assertIn('41', resolved['source'])
         self.assertEqual(resolved['attempts'][0]['waitStatus'], 'exit 0')
         self.assertNotIn('directory', resolved['attempts'][0])
         self.assertEqual(self.resolve('author', first)['source'], resolved['source'])
         self.repl('recipient', 'import', message['id'])
+        self.assertEqual(self.query('SELECT DISTINCT recipient FROM message_reads WHERE message=?',
+                                    (message['id'],)), [('recipient',)])
         result = self.repl('recipient', 'eval', 'context_value()')
         cell = json.loads(result.stdout)['cells'][0]
         self.assertEqual(json.loads(cell['attempts'][0]['stdout'])['value'], '41')
@@ -107,6 +115,7 @@ class ReplContext(unittest.TestCase):
         self.share(cell)
         self.resolve('outsider', cell, success=False)
         self.resolve('outsider', citation['citation'], success=False)
+        self.assertEqual(self.query("SELECT count(*) FROM message_reads WHERE recipient='outsider'"), [(0,)])
 
     def test_pure_context_value_is_resolved_completely(self):
         context = '{"topic":"compiler","facts":["λ", "complete context"]}'

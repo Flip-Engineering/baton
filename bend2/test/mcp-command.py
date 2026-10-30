@@ -176,6 +176,14 @@ class McpCommand(unittest.TestCase):
         self.assertIn('baton2_context_eval', self.tools)
         self.assertNotIn('owner', self.tools['baton2_context_eval']['inputSchema']['properties'])
 
+    def test_repl_resolve_preserves_the_complete_citation(self):
+        citation = 'repl:repl:fixture:context@7'
+        result = self.command(stdout='{"reference":"repl-cell:fixture"}\n',
+            tool='baton2_repl', arguments={'operation': 'resolve', 'cell': citation},
+            session='recipient', repl=True,
+            expected_context=['repl', 'resolve', '--cell', citation])
+        self.assertFalse(result.get('isError', False))
+
     def test_contextual_action_preserves_complete_bodies_for_independent_batch_items(self):
         first = '\ufeffFull first body λ🙂\nLiteral quotes " and tabs\t.\n' * 10000
         second = 'Second body Ω\n'
