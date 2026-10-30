@@ -240,6 +240,7 @@ class Peer {
     this.closed = new Promise(resolve => child.once('close', (code, signal) => {
       const exit = { code, signal };
       this.exited = true;
+      this.active?.cancel?.();
       this.rejectAll(new Error('SSH conductor closed before replying: ' + JSON.stringify(exit)));
       resolve(exit);
     }));
