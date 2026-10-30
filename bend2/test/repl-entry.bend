@@ -29,6 +29,7 @@ def attach(db: String, args: List<String>) -> IO(Unit):
 def run(+db: String, args: List<String>) -> IO(Unit):
   match args:
     case "attach" <> rest: attach(db,rest)
+    case "as" <> actor <> "repl" <> rest: Repl.execute(db,actor,rest)
     case "repl" <> rest: do IO<Unit>:
       actor : String <- actor_for(db)
       Repl.execute(db,actor,rest)

@@ -101,6 +101,7 @@ def main():
         {'label': 'node-git-series', 'argv': ['node', '--test', 'bend2/test/git-series.mjs']},
         {'label': 'node-api-key-exec', 'argv': ['node', '--test', 'bend2/test/api-key-exec.test.mjs']},
         {'label': 'node-provider-availability', 'argv': ['node', '--test', 'bend2/test/provider-availability.mjs']},
+        {'label': 'node-agent-summary', 'argv': ['node', '--test', 'bend2/test/agent-summary-check.test.mjs']},
         {'label': 'node-root-channel', 'argv': ['node', '--test',
             'bend2/test/root-channel-attach.test.mjs', 'bend2/test/codex-root-relay.test.mjs']},
         {'label': 'node-context-runtime', 'argv': ['node', '--test',
