@@ -1330,6 +1330,10 @@ async function rootDelivery(msg) {
     }
     checkRootDelivery(args);
     await readRootItem(args);
+    if (alreadyRecordedRootDelivery(args)) {
+      respondRootReadRecorded(msg, args);
+      return;
+    }
     checkRootDelivery(args);
     let result;
     activeReadMessage = args.id;

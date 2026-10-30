@@ -417,13 +417,14 @@ test('a complete recipient read advances the root backlog without a clearing act
 });
 
 // Calls baton2_root_delivery and answers the conductor's thread item request.
-async function rootDelivery(channel, id, args, answer) {
+async function rootDelivery(channel, id, args, answer, beforeAnswer = () => {}) {
   const before = channel.responses.filter((r) => r.method === 'baton/rootThreadItem').length;
   const call = channel.call(id, 'baton2_root_delivery', args);
   await channel.until(() => channel.responses.filter((r) => r.method === 'baton/rootThreadItem').length > before,
     'thread item request');
   const request = channel.responses.filter((r) => r.method === 'baton/rootThreadItem')[before];
   assert.deepEqual(request.params, { thread: args.thread, turn: args.turn, item: args.item });
+  beforeAnswer();
   channel.send({ id: request.id, result: answer });
   return call;
 }
@@ -552,6 +553,34 @@ test('a completed Codex root read accepts a delayed receipt after the next notic
   const verify = new DatabaseSync(calls.database, { readOnly: true });
   assert.deepEqual(verify.prepare('SELECT attempt,native FROM message_reads WHERE message=?').all('first')
     .map((row) => ({ ...row })), [{ attempt: 'root-channel:prior', native: 'thread-1' }]);
+  verify.close();
+});
+
+test('a read recorded while the root item lookup is pending completes idempotently', async (t) => {
+  const calls = await attach(t, 'operator', (db) => {
+    db.prepare('UPDATE sessions SET harness=?,native=? WHERE id=?').run('codex', 'thread-1', 'operator');
+    db.prepare('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)')
+      .run('concurrent', 'lead', 'operator', 'report', 'Complete concurrent body.');
+  }, ['--root-harness', 'codex', '--thread', 'thread-1']);
+  const { channel } = calls;
+  channel.activate();
+  await channel.until(() => channel.notes().length > 0, 'Codex root notice');
+  const notice = channel.notes()[0];
+  const claim = { id: 'concurrent', thread: 'thread-1', content: notice.params.content,
+    turn: 'turn-1', item: 'item-1' };
+  const completed = await rootDelivery(channel, 'late-read-concurrent', claim,
+    { thread: 'thread-1', turn: 'turn-1', item: 'item-1', type: 'userMessage', text: notice.params.content },
+    () => {
+      const db = new DatabaseSync(calls.database);
+      db.prepare('INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES(?,?,?,?,?)')
+        .run('root-channel:concurrent', 'concurrent', 'operator', 'thread-1', 'root-channel:concurrent:concurrent');
+      db.close();
+    });
+  assert.equal(completed.isError, undefined);
+  assert.deepEqual(JSON.parse(completed.content[0].text), { id: 'concurrent', read: 'already-recorded' });
+  const verify = new DatabaseSync(calls.database, { readOnly: true });
+  assert.deepEqual(verify.prepare('SELECT attempt,native FROM message_reads WHERE message=?').all('concurrent')
+    .map((row) => ({ ...row })), [{ attempt: 'root-channel:concurrent', native: 'thread-1' }]);
   verify.close();
 });
 
