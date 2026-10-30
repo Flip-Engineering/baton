@@ -321,7 +321,7 @@ export type Ctx = PMap<Ann>;
 export type PVar  = { $: "PVar"; k: Name; i: number; q: Quant; s?: Span };
 export type PCtr  = { $: "PCtr"; k: Name; x: Patt[]; s?: Span; lit?: string };
 export type Patt  = PVar | PCtr;
-export type Case  = { p: Patt[]; f: Body };
+export type Case  = { p: Patt[]; f: Body; g?: [PVar, PCtr][] };
 export type Rows  = Array<Case>;
 export type Match = { $: "Match"; e: LTerm[]; r: Rows; s?: Span };
 export type Local = { $: "Local"; k: Patt[]; q: Quant; v: LTerm[]; f: Body };
@@ -2854,7 +2854,7 @@ export function parse_def(p: Parse, book: Book, u: Bool = false): void {
     // constructor chains. The lower/raise round trip that followed rebuilt the
     // same normalized term and held a second LTerm and HTerm during the load.
     def.v = term_higher(literal_chain(p, body, vars, def, k)
-      ?? body_flatten(body, vars, () => p.sc.frs++));
+      ?? literal_columns(p, def, k, vars, () => body_flatten(body, vars, () => p.sc.frs++)));
   }
   parse_close(p, n0);
   book.order.push(k);
@@ -3093,8 +3093,120 @@ function literal_rows_affine(rows: Rows, x: PVar): boolean {
   });
 }
 
+// Literal columns
+// ---------------
+// A column of string literal patterns nested in a match (a literal inside a
+// List pattern, or a String parameter matched together with other columns)
+// becomes a binder column with deferred guards: the column's binder is bound
+// reusable, each literal row carries a String.eq guard on it, and every other
+// column is split at its binder's own position as before, so the checker still
+// reads a decreasing self-call from those splits. Where all columns are decided,
+// literal_leaf binds the remaining binders and tests the candidate rows' guards
+// in row order, each test an annotated match on a Bool of the definition's result
+// type, the shape literal_chain_string emits. No character decision tree is
+// built.
+//
+// LITERAL_COLUMNS holds, while one definition body is flattened, its name, its
+// result type (when it mentions no parameter; LITERAL_DEPTH numbers the binders
+// inside it apart from the definition's own binders), and the binders known to be
+// reusable for the checker: + parameters and the head and tail of a List split
+// from one (check-mat gives a plain field the scrutinee's quantity).
+type LiteralBinder = { q: Quant; list: boolean };
+type LiteralGuard = [PVar, PCtr];
+let LITERAL_COLUMNS: { name: Name; binders: Map<number, LiteralBinder>; result: LTerm } | null = null;
+const LITERAL_DEPTH = 1 << 30;
+
+// Runs `flatten` with the context of `def` for literal_guards, when the
+// definition's result type mentions no parameter.
+function literal_columns<T>(p: Parse, def: Def, k: Name, vars: PVar[], flatten: () => T): T {
+  if (p.book.tlds["String.eq"] === undefined || p.book.tlds["Bool.and"] === undefined
+    || p.book.tlds["Bool"] === undefined || p.book.ctrs["False"] === undefined
+    || p.book.ctrs["True"] === undefined) {
+    return flatten();
+  }
+  const opened = telescope_opened(p, def.T, vars);
+  if (opened === null) return flatten();
+  const params = new Set(vars.map((v) => v.i));
+  const result = term_lower_shared(opened.result, LITERAL_DEPTH);
+  let mentions = false;
+  lit_body_terms({ $: "Reply", x: result }, (t) => { if (t.$ === "Var" && params.has(t.i)) mentions = true; });
+  if (mentions) return flatten();
+  const binders = new Map<number, LiteralBinder>();
+  vars.forEach((v, j) => {
+    const A = opened.alls[j].A;
+    binders.set(v.i, { q: opened.alls[j].q, list: A.$ === "ADT" && A.k === "List" });
+  });
+  const outer = LITERAL_COLUMNS;
+  LITERAL_COLUMNS = { name: k, binders, result };
+  try { return flatten(); } finally { LITERAL_COLUMNS = outer; }
+}
+
+// A List binder split by Con passes its quantity to its head and tail.
+function literal_fields(x: PVar, c: PCtr, xs: PVar[]): void {
+  const known = LITERAL_COLUMNS?.binders.get(x.i);
+  if (known === undefined || !known.list || c.k !== "Con" || xs.length !== 2) return;
+  LITERAL_COLUMNS!.binders.set(xs[0].i, { q: known.q, list: false });
+  LITERAL_COLUMNS!.binders.set(xs[1].i, { q: known.q, list: true });
+}
+
+// The pattern binders of the rows.
+function literal_binders(rows: Rows): PVar[] {
+  const binders: PVar[] = [];
+  const visit = (q: Patt): void => { if (q.$ === "PVar") binders.push(q); else q.x.forEach(visit); };
+  for (const row of rows) row.p.forEach(visit);
+  return binders;
+}
+
+// v heads a column of string literal and binder patterns. Null keeps the
+// ordinary lowering: a row that matches a binder again (literal_leaf binds every
+// remaining binder before the row bodies), a literal row that calls the
+// definition itself and uses the matched value (the value would stand where the
+// character decision tree had the literal), or an affine value that a binder row
+// could use more than once.
+function literal_guards(m: Match, v: PVar, vars: PVar[], fr: () => number): LTerm | null {
+  const known = LITERAL_COLUMNS;
+  if (known === null) return null;
+  if (m.r.some((row) => row.p[0].$ === "PCtr" && (row.p[0] as PCtr).lit === undefined)) return null;
+  const binders = literal_binders(m.r);
+  if (m.r.some((row) => body_matches(row.f, [...vars, ...binders]))) return null;
+  if (m.r.some((row) => row.p[0].$ === "PCtr" && lit_body_refs(row.f, known.name)
+    && literal_uses(row.f, new Set([v.i])).uses > 0)) return null;
+  if (known.binders.get(v.i)?.q.$ !== "Many" && !literal_rows_affine(m.r, v)) return null;
+  const w: PVar = { ...v, q: Many() };
+  const rows = m.r.map((row): Case => {
+    const q = row.p[0];
+    return q.$ === "PVar" ? { p: row.p.slice(1), f: body_sub(row.f, q.i, w), g: row.g }
+      : { p: row.p.slice(1), f: row.f, g: [...(row.g ?? []), [w, q]] };
+  });
+  return match_flatten({ $: "Match", e: m.e.slice(1), r: rows, s: m.s }, vars.map((u) => u === v ? w : u), fr);
+}
+
+// All columns are decided: bind the remaining binders and select the first row
+// whose guards hold. A row without guards ends the selection.
+function literal_leaf(m: Match, vars: PVar[], fr: () => number): LTerm {
+  const known = LITERAL_COLUMNS!;
+  const span = m.s;
+  const test = ([w, lit]: LiteralGuard): LTerm => Ann(App(App(Ref("String.eq", lit.s),
+    Var(w.k, w.i, lit.s), lit.s), patt_term(lit), lit.s), Ref("Bool"), lit.s);
+  const guard = (gs: LiteralGuard[]): LTerm => gs.slice(1).reduce((all, g) =>
+    Ann(App(App(Ref("Bool.and", span), all, span), test(g), span), Ref("Bool"), span), test(gs[0]));
+  const select = (at: number): LTerm => {
+    if (at === m.r.length) return Efq(span);
+    const row = m.r[at], body = body_flatten(row.f, [], fr);
+    if (row.g === undefined || row.g.length === 0) return body;
+    return App(Ann(Mat("False", select(at + 1), Mat("True", body, Efq(span), span), span),
+      All(Lone(), "c", fr(), Ref("Bool"), known.result, span), span), guard(row.g), span);
+  };
+  let out = select(0);
+  for (let j = vars.length - 1; j >= 0; j--) out = Lam(vars[j].k, vars[j].i, out, vars[j].s, vars[j].q);
+  return out;
+}
+
 export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
   if (m.e.length === 0 && m.r.length > 0) {
+    if (m.r[0].g !== undefined && m.r[0].g.length > 0) {
+      return literal_leaf(m, vars, fr);
+    }
     return body_flatten(m.r[0].f, vars, fr);
   } else if (m.e.length === 0) {
     throw Err(book_nil(), ctx_nil(), "a case (this match has no row to return)", undefined, m.s);
@@ -3122,6 +3234,10 @@ export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
     const scu = m.e[0];
     const c   = m.r.map((row) => row.p[0]).find((q): q is PCtr => q.$ === "PCtr") ?? null;
     const v   = vars.find((w) => scu.$ === "Var" && w.i === scu.i);
+    const guarded = v !== undefined && c !== null && c.lit !== undefined ? literal_guards(m, v, vars, fr) : null;
+    if (guarded !== null) {
+      return guarded;
+    }
     if (v !== undefined && c === null && m.r.length > 0) {
       const w  = { ...v, q: patt_mark(v, m.r) };
       const rs = m.r.map((row): Case => {
@@ -3129,7 +3245,7 @@ export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
         if (p0.$ !== "PVar") {
           throw Err(book_nil(), ctx_nil(), "a variable pattern (this column has no constructor row)", undefined, p0.s);
         }
-        return { p: row.p.slice(1), f: body_sub(row.f, p0.i, w) };
+        return { p: row.p.slice(1), f: body_sub(row.f, p0.i, w), g: row.g };
       });
       return match_flatten({ $: "Match", e: m.e.slice(1), r: rs, s: m.s }, vars.map((u) => u === v ? w : u), fr);
     } else if (v === x) {
@@ -3144,6 +3260,7 @@ export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
           const i = fr();
           return { $: "PVar", k: "_" + String(i), i, q: xq, s: q.s };
         });
+        literal_fields(x, c, xs);
         const kx: Patt = { $: "PCtr", k: c.k, x: xs, s: x.s };
         const ps = m.r.flatMap((row): Rows => {
           const p0 = row.p[0];
@@ -3153,12 +3270,12 @@ export function match_flatten(m: Match, vars: PVar[], fr: () => number): LTerm {
                 return [];
               }
               const f = body_sub(row.f, x.i, kx);
-              return [{ p: [...p0.x, ...row.p.slice(1)], f }];
+              return [{ p: [...p0.x, ...row.p.slice(1)], f, g: row.g }];
             }
             case "PVar": {
               const g = body_sub(row.f, p0.i, x);
               const f = body_sub(g, x.i, kx);
-              return [{ p: [...xs, ...row.p.slice(1)], f }];
+              return [{ p: [...xs, ...row.p.slice(1)], f, g: row.g }];
             }
           }
         });
