@@ -101,7 +101,7 @@ class RealTree(unittest.TestCase):
             self.skipTest('the workflow still carries its own defaults')
         calls = len(re.findall(r'python3 "?\S*(?<!test-)prepare-native-compiler\.py', text))
         self.assertGreaterEqual(calls, 4)
-        self.assertEqual(len(re.findall(r'selection=\(--default-selection \S*\.github/native-compiler-selection\.json\)', text)), calls)
+        self.assertEqual(len(re.findall(r'selection=\(--default-selection "?\S*\.github/native-compiler-selection\.json"?\)', text)), calls)
         self.assertEqual(text.count('"${selection[@]}"'), calls)
         self.assertNotIn('inputs.retained_compiler_archive ||', text)
         self.assertNotIn('inputs.retained_compiler_archive_sha256 ||', text)
