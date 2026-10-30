@@ -47,10 +47,11 @@ class Land(unittest.TestCase):
             check=True, text=True, capture_output=True, env=self.environment,
         ).stdout
 
-    def call(self, *args, ok=True, env=None):
+    def call(self, *args, ok=True, env=None, cwd=None):
         p = subprocess.run(
             [str(EXE), str(self.db), *map(str, args)],
             text=True, capture_output=True, env=self.environment if env is None else env,
+            cwd=cwd,
         )
         if ok:
             self.assertEqual(p.returncode, 0, p.stderr)
@@ -517,6 +518,43 @@ class Land(unittest.TestCase):
                            env=environment)
         self.assertEqual(result['status'], 'pushed')
         self.assertEqual(observed.read_text(), emails['gpt'])
+
+    def test_push_resolves_equivalent_checkout_spellings_to_the_recorded_session(self):
+        registry, emails = self.identity_registry({'fixture-worker': ('gpt', 'GPT', 9001)})
+        observed = self.directory / 'observed-email'
+        self.publication_remote(observed)
+        self.recruit_and_commit(model='fixture-worker')
+        workspace = pathlib.Path(self.recorded_workspace('w1'))
+        link = self.directory / 'checkout-link'
+        link.symlink_to(workspace, target_is_directory=True)
+        environment = {**self.environment, 'BATON2_GIT_REGISTRY': str(registry)}
+        spellings = {
+            'absolute': (str(workspace), None),
+            'relative': (workspace.name, workspace.parent),
+            'symlink': (str(link), None),
+            'dotted': (str(workspace / '..' / workspace.name), None),
+        }
+        for name, (spelling, cwd) in spellings.items():
+            observed.unlink(missing_ok=True)
+            result = self.call('push', spelling, f'w1-branch:refs/heads/spelling-{name}',
+                               'test-remote', env=environment, cwd=cwd)
+            self.assertEqual(result['status'], 'pushed', name)
+            self.assertEqual(observed.read_text(), emails['gpt'], name)
+
+    def test_push_with_a_recorded_model_and_no_registry_reports_no_identity(self):
+        observed = self.directory / 'observed-email'
+        self.publication_remote(observed)
+        (self.repo / '.git' / 'hooks' / 'pre-push').write_text('#!/bin/sh\nexit 1\n')
+        self.recruit_and_commit(model='fixture-worker')
+        home = self.directory / 'home-without-registry'
+        home.mkdir()
+        environment = {**self.environment, 'HOME': str(home), 'BATON_SESSION': 'w1'}
+        environment.pop('BATON2_GIT_REGISTRY', None)
+        result = self.call('push', self.recorded_workspace('w1'), 'w1-branch', 'test-remote',
+                           env=environment)
+        self.assertEqual(result['status'], 'rejected')
+        self.assertIn('no series identity for session w1', result['identity'])
+        self.assertNotIn('applied', result['identity'])
 
     def test_rejected_push_names_the_missing_publication_identity(self):
         registry, emails = self.identity_registry({'fixture-worker': ('gpt', 'GPT', 9001)})

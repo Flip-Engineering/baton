@@ -112,6 +112,23 @@ def identity_run_value(result: G.RunRes) -> IO(Bool):
 def identity_result(result: Result<&1,&1,U32 & String,String>) -> IO(Bool):
   identity_run_value(Tx.run_res(result))
 
+# The guard marks a command that the launcher wraps. Control.identity_args
+# returns the command unchanged when no registry is configured, so an empty
+# registry yields no command and the caller runs the operation in this process.
+def identity_guarded(identity: String & String, model: String, repository: String, args: List<String>) -> List<String>:
+  (registry,helper)=identity
+  +configured=registry
+  Bool.pick(List<String>,String.is_empty(configured),Nil{},
+    Con{"/usr/bin/env",Con{"BATON2_GIT_IDENTITY_APPLIED=1",Control.identity_args(args,model,(configured,helper),repository)}})
+
+def identity_run(launch: List<String>) -> IO(Bool):
+  match launch:
+    case Nil{}: IO.pure(Bool,False{})
+    case Con{head,tail}:
+      do IO<Bool>:
+        result : Result<&1,&1,U32 & String,String> <- Git.Process.run(Tx.enc_argv(Con{head,tail}),".")
+        identity_result(result)
+
 def identity_wrapped_as(+db: String, +actor: String, verb: String, args: List<String>) -> IO(Bool):
   do IO<Bool>:
     applied : String <- identity_environment("BATON2_GIT_IDENTITY_APPLIED")
@@ -124,15 +141,25 @@ def identity_wrapped_as(+db: String, +actor: String, verb: String, args: List<St
       (do IO<Bool>:
         +executable : String <- IO.try(String,Lock.SessionLock.executable())
         identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-        launch : List<String> = Control.identity_args(Con{executable,Con{db,Con{verb,args}}},model,identity,repository)
-        guarded : List<String> = Con{"/usr/bin/env",Con{"BATON2_GIT_IDENTITY_APPLIED=1",launch}}
-        result : Result<&1,&1,U32 & String,String> <- Git.Process.run(Tx.enc_argv(guarded),".")
-        identity_result(result)))))
+        identity_run(identity_guarded(identity,model,repository,Con{executable,Con{db,Con{verb,args}}}))))))
 
 def identity_wrapped(+db: String, verb: String, args: List<String>) -> IO(Bool):
   do IO<Bool>:
     +actor : String <- identity_environment("BATON_SESSION")
     identity_wrapped_as(db,actor,verb,args)
+
+# Recruit records the resolved checkout path (Host.Control.workspace). A relative
+# or symlinked spelling of --repo resolves the same way before the lookup; a path
+# that does not resolve is looked up as given.
+def identity_checkout_value(+repo: String, result: Result<&1,&1,U32 & String,String>) -> String:
+  match result:
+    case Done{value}: value
+    case Fail{error}: repo
+
+def identity_checkout(+repo: String) -> IO(String):
+  do IO<String>:
+    result : Result<&1,&1,U32 & String,String> <- Host.Control.workspace(repo)
+    IO.pure(String,identity_checkout_value(repo,result))
 
 # An operator wrap-up shell records no BATON_SESSION. The session recorded for
 # the pushed checkout supplies the model, and a session on the pushed branch
@@ -235,7 +262,8 @@ def push_branch_body(+repo: String, +branch: String, +remote: String, +actor: St
 
 def push_branch(+db: String, +repo: String, +branch: String, +remote: String) -> IO(Unit):
   do IO<Unit>:
-    +actor : String <- identity_actor(db,repo,branch)
+    +checkout : String <- identity_checkout(repo)
+    +actor : String <- identity_actor(db,checkout,branch)
     wrapped : Bool <- identity_wrapped_as(db,actor,"push",[repo,branch,remote])
     Bool.pick(IO(Unit),wrapped,IO.pure(Unit,Unit{}),push_branch_body(repo,branch,remote,actor))
 

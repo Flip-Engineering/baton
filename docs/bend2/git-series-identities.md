@@ -374,7 +374,9 @@ publication command. A seat and an operator shell run the same command.
 An operator wrap-up shell records no `BATON_SESSION`. For a recorded session
 checkout, `baton push` recovers the model and repository from the session
 database and the registry from `BATON2_GIT_REGISTRY` or the default registry
-path. The operator supplies the checkout path, branch and remote. A checkout with no
+path. The operator supplies the checkout path, branch and remote. A relative,
+absolute or symlinked spelling of the path resolves to the checkout path that
+the session recorded. A checkout with no
 recorded session needs `BATON_SESSION` set to a session whose model the registry
 maps, or an explicit launch:
 
@@ -386,7 +388,7 @@ node "$GIT_SERIES" launch --registry "$REGISTRY" --model-key MODEL \
 A rejected `baton push` answers `{"status":"rejected","reason":...,"identity":...}`.
 The `identity` field states one of three conditions:
 
-- `series identity applied`: the helper ran. A `Series Git operation refused`
+- `series identity applied`: the launcher wrapped the push, so the helper ran. A `Series Git operation refused`
   line on standard error then names the registry, installation or permission
   cause. A refusal that names a missing `issues:write` or other permission
   concerns the App installation and its owner's approval. The operator approves
