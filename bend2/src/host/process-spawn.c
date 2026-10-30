@@ -1300,9 +1300,9 @@ static void br_exit_evidence(BrKeeper *keeper) {
   if(n>0)used=(size_t)n>=sizeof(text)-used?sizeof(text)-1:used+(size_t)n;
   br_atomic_replace(keeper->directory,"exit-evidence",text,used);
 }
-/* A TERM, HUP, INT or QUIT sent to the keeper is written with its sender before
-   the default action runs. The keeper exits exactly as it did without the
-   handler. */
+/* A TERM, HUP, INT or QUIT sent to a keeper or to the database owner is written
+   with its sender before the default action runs. The process exits exactly as
+   it did without the handler. */
 static int br_keeper_signal_fd=-1;
 static size_t br_signal_number(char *out,size_t used,long long value) {
   char digits[24];size_t count=0;
@@ -1327,11 +1327,8 @@ static void br_keeper_signaled(int sig,siginfo_t *info,void *context) {
   errno=saved;
   raise(sig);
 }
-static void br_keeper_signals_install(const char *directory) {
-  char *path=br_path(directory,"keeper-signals");
-  if(!path)return;
+static void br_signal_evidence_install(const char *path) {
   br_keeper_signal_fd=open(path,O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600);
-  free(path);
   if(br_keeper_signal_fd<0)return;
   struct sigaction action;
   memset(&action,0,sizeof(action));
@@ -1340,6 +1337,22 @@ static void br_keeper_signals_install(const char *directory) {
   sigemptyset(&action.sa_mask);
   int signals[]={SIGTERM,SIGHUP,SIGINT,SIGQUIT};
   for(size_t i=0;i<sizeof(signals)/sizeof(signals[0]);i++)sigaction(signals[i],&action,NULL);
+}
+static void br_keeper_signals_install(const char *directory) {
+  char *path=br_path(directory,"keeper-signals");
+  if(!path)return;
+  br_signal_evidence_install(path);
+  free(path);
+}
+/* The owner hosts the attempts of normal turns, so its own signals are recorded
+   beside its socket record. */
+static void br_owner_signals_install(const char *ipc,const char *key) {
+  char name[96];
+  snprintf(name,sizeof(name),"%s.owner-signals",key);
+  char *path=br_path(ipc,name);
+  if(!path)return;
+  br_signal_evidence_install(path);
+  free(path);
 }
 
 /* Every child receives only explicitly assigned descriptors. */
@@ -3762,6 +3775,7 @@ static int br_owner_bind(BrOwner *owner,const char *database) {
   }
   if(!error)error=br_owner_record_write(owner);
   if(!error)br_owner_service_record(owner->ipc,owner->key);
+  if(!error)br_owner_signals_install(owner->ipc,owner->key);
   if(!error)owner->bound=1;
   if(error) {
     if(owner->listener>=0){close(owner->listener);owner->listener=-1;}

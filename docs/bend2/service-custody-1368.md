@@ -136,13 +136,20 @@ Retained attempt directory (`ATTEMPT`):
 | `service-keeper` | keeper, at start | keeper identity and cgroup after the scope move; `keeper.scope=1` when the cgroup is a Baton keeper scope |
 | `service-native` | keeper, after the native start | native identity and whether it shares the keeper cgroup |
 | `signal-requests` | keeper, before it signals the native | one line per owner, observer or control request: time, signal, route, requester PID and birth |
-| `keeper-signals` | keeper signal handler | one line per TERM, HUP, INT or QUIT received by the keeper: time, signal, `si_code`, sender PID and UID; the keeper then terminates as before |
+| `keeper-signals` | standalone keeper signal handler | one line per TERM, HUP, INT or QUIT received by a standalone keeper (`--host-process-keeper`): time, signal, `si_code`, sender PID and UID; the keeper then terminates as before |
 | `exit-evidence` | keeper, with the `status` file | wait status decoded as exit code or signal and core flag, count and last signal of the keeper's own signal requests, keeper cgroup |
 
 The database owner has no attempt directory. In the per-user IPC directory
 (`/tmp/baton2-UID`) the launcher writes `KEY.log.service` beside the owner log,
 and the owner writes `KEY.service-owner` with its own identity and cgroup
-(`owner.scope=1` for a Baton owner scope). Queue requests keep
+(`owner.scope=1` for a Baton owner scope, `unknown` when the cgroup could not be
+read). Normal turns are held by the database owner (`br_owner_serve`), not by a
+standalone keeper, so the owner also writes `KEY.owner-signals`: one line per
+TERM, HUP, INT or QUIT it receives, with time, signal, `si_code` and sender PID
+and UID, before terminating as before. A signal that ends an owner-hosted
+attempt's keeper work is therefore recorded in `KEY.owner-signals`, not in the
+attempt directory. The `custody-adopt` fixture runs a standalone keeper and does
+not exercise the owner's handler. Queue requests keep
 `service/service-launch.json` and `service/service-inside.json` in the request
 directory, and `request.json` gains `service_record`. When the adapter receives
 SIGINT, SIGTERM or SIGHUP, `request.json` also records `interrupt` with the
