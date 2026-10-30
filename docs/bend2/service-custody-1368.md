@@ -92,8 +92,12 @@ the launchers (the C placement in `process-spawn.c` and `service-run.py`) add
 `DBUS_SESSION_BUS_ADDRESS`; on the homelab host, after lingering was enabled, a
 `batonci` scope probe succeeded with `XDG_RUNTIME_DIR` set and no D-Bus address,
 and failed (`No medium found`) with both unset. The launched program receives
-the environment its launcher had: the added variable is removed again before the
-keeper, owner or queue client runs. A Baton service unit started by a system
+the environment its launcher had: before the keeper, owner or queue client runs,
+the variable is unset again when the caller had none and set empty again when the
+caller had it empty. A non-empty caller value is used as given and never
+replaced, including a value that does not reach a user manager; the probe then
+fails and the launch proceeds unplaced with that reason. The environment passed to
+systemd-run holds exactly one assignment of the variable. A Baton service unit started by a system
 manager should export `XDG_RUNTIME_DIR=/run/user/UID` itself, and the account of
 each workflow runner needs lingering enabled before its launches are placed.
 

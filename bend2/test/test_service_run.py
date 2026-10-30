@@ -208,6 +208,28 @@ class RuntimeEnvironmentTests(unittest.TestCase):
         self.assertEqual((argv, environment), (['/bin/true'], None))
         self.assertEqual(launch['placement'], 'none')
 
+    def test_an_empty_caller_value_is_replaced_for_systemd_run_and_restored_for_the_command(self):
+        directory = self.runtime(self.uid)
+        fake = Path(self.root) / 'systemd-run'
+        fake.write_text(FAKE_SCOPE)
+        fake.chmod(0o755)
+        log = self.root / 'systemd.log'
+        saved = {key: os.environ.get(key) for key in ('XDG_RUNTIME_DIR', 'BATON_SERVICE_PLACEMENT')}
+        self.addCleanup(lambda: [os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+                                 for k, v in saved.items()])
+        os.environ.pop('BATON_SERVICE_PLACEMENT', None)
+        os.environ.update(XDG_RUNTIME_DIR='', BATON_SYSTEMD_RUN=str(fake), FAKE_SYSTEMD_LOG=str(log))
+        self.addCleanup(lambda: [os.environ.pop(k, None) for k in ('BATON_SYSTEMD_RUN', 'FAKE_SYSTEMD_LOG')])
+        argv, launch, environment = self.helper.plan('queue-client', None, ['/bin/true'], self.root)
+        self.assertEqual(environment['XDG_RUNTIME_DIR'], str(directory))
+        self.assertEqual(Path(str(log) + '.env').read_text().splitlines(), ['XDG=%s DBUS=unset' % directory])
+        self.assertEqual(argv[argv.index(self.helper.INSIDE) + 2], 'XDG_RUNTIME_DIR=')
+        result = subprocess.run(
+            [sys.executable, str(HELPER), '--inside', '', 'XDG_RUNTIME_DIR=', '--',
+             'sh', '-c', 'printf %s "${XDG_RUNTIME_DIR-unset}"'],
+            env=dict(os.environ, XDG_RUNTIME_DIR=str(directory)), capture_output=True, timeout=30)
+        self.assertEqual(result.stdout, b'')
+
     def test_supplied_variable_is_removed_before_the_command_runs(self):
         result = subprocess.run(
             [sys.executable, str(HELPER), '--inside', '', 'XDG_RUNTIME_DIR', '--',

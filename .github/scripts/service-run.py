@@ -26,8 +26,8 @@ placement is not possible). BATON_SYSTEMD_RUN names the systemd-run program.
 systemd-run --user finds the user manager through XDG_RUNTIME_DIR. A service
 started by a system manager often lacks it. When the caller has none, the helper
 names /run/user/UID for systemd-run if that directory and its bus socket exist
-and belong to the effective user, and removes the variable again before COMMAND
-runs. No D-Bus address variable is supplied.
+and belong to the effective user, and restores the caller's environment (variable
+absent, or set empty) before COMMAND runs. No D-Bus address variable is supplied.
 """
 import hashlib
 import json
@@ -152,8 +152,10 @@ def plan(role, record, command, runtime_root='/run/user'):
     unit = unit_option(role, record or command[0])
     launch.update(placement='scope', manager='systemd-user', unit=unit + '.scope',
                   environment_supplied=sorted(supplied))
+    # NAME restores an absent variable, NAME= restores an empty one.
+    restore = [name + ('=' if name in os.environ else '') for name in sorted(supplied)]
     inside = [sys.executable, str(Path(__file__).resolve()), INSIDE, record or '',
-              ','.join(sorted(supplied)), '--']
+              ','.join(restore), '--']
     return [run, '--user', '--scope', '--quiet', '--collect', '--unit=' + unit,
             '--description=Baton ' + role, '--', *inside, *command], launch, environment
 
@@ -170,8 +172,12 @@ def main(argv):
     if argv and argv[0] == INSIDE:
         # Stage two runs inside the scope: record where it landed, then become COMMAND.
         record, supplied, command = argv[1], argv[2], argv[argv.index('--') + 1:]
-        for name in filter(None, supplied.split(',')):
-            os.environ.pop(name, None)
+        for token in filter(None, supplied.split(',')):
+            name, empty, _ = token.partition('=')
+            if empty:
+                os.environ[name] = ''
+            else:
+                os.environ.pop(name, None)
         if record:
             write_record(record, 'service-inside.json', {
                 'schema': 'baton-service-inside-v1', 'time_ns': time.time_ns(),

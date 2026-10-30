@@ -1075,6 +1075,26 @@ static int br_runtime_dir_derive(const char *root,uid_t uid,char *out,size_t siz
   snprintf(out,size,"XDG_RUNTIME_DIR=%s",directory);
   return 1;
 }
+/* A copy of ENV. When ENTRY is not NULL it takes the place of the existing
+   XDG_RUNTIME_DIR assignment, or is appended when there is none, so the copy
+   never holds two assignments of the variable. */
+static char **br_environment_with(char *const *env,const char *entry) {
+  size_t count=0;
+  while(env && env[count])count++;
+  char **copy=calloc(count+2,sizeof(char *));
+  if(!copy)return NULL;
+  size_t at=0;
+  int placed=0;
+  for(size_t i=0;i<count;i++) {
+    if(entry && !strncmp(env[i],"XDG_RUNTIME_DIR=",16)) {
+      if(!placed) {copy[at++]=(char *)entry;placed=1;}
+      continue;
+    }
+    copy[at++]=env[i];
+  }
+  if(entry && !placed)copy[at++]=(char *)entry;
+  return copy;
+}
 #ifdef __linux__
 static pthread_mutex_t br_probe_lock=PTHREAD_MUTEX_INITIALIZER;
 static int br_probe_done,br_probe_ok;
@@ -1150,15 +1170,11 @@ static int br_placement_plan(BrPlacement *plan,const char *role,const char *seed
   if(!plan->mode) {snprintf(plan->reason,sizeof(plan->reason),"placement is off");return 0;}
 #ifdef __linux__
   const char *run=br_systemd_run_path();
-  size_t inherited=0;
-  while(environ && environ[inherited])inherited++;
-  plan->envp=calloc(inherited+2,sizeof(char *));
-  if(!plan->envp)return ENOMEM;
-  for(size_t i=0;i<inherited;i++)plan->envp[i]=environ[i];
   const char *caller_runtime=getenv("XDG_RUNTIME_DIR");
   int supplied=(!caller_runtime || !*caller_runtime) &&
     br_runtime_dir_derive("/run/user",geteuid(),plan->runtime_entry,sizeof(plan->runtime_entry));
-  if(supplied)plan->envp[inherited]=plan->runtime_entry;
+  plan->envp=br_environment_with(environ,supplied?plan->runtime_entry:NULL);
+  if(!plan->envp)return ENOMEM;
   if(!run)snprintf(plan->reason,sizeof(plan->reason),"systemd-run is not installed");
   else if(br_service_probe(run,plan->envp,plan->reason,sizeof(plan->reason))) {
     uint64_t hash=1469598103934665603ull;
@@ -1177,12 +1193,14 @@ static int br_placement_plan(BrPlacement *plan,const char *role,const char *seed
                                            "--description=Baton database owner";
     plan->argv[at++]="--";
     if(supplied) {
-      /* The program runs with the environment its launcher had. */
-      plan->argv[at++]="/usr/bin/env";plan->argv[at++]="-u";plan->argv[at++]="XDG_RUNTIME_DIR";
+      /* The program runs with the environment its launcher had: the variable
+         unset when it was absent, empty when it was empty. */
+      plan->argv[at++]="/usr/bin/env";
+      if(caller_runtime) plan->argv[at++]="XDG_RUNTIME_DIR=";
+      else {plan->argv[at++]="-u";plan->argv[at++]="XDG_RUNTIME_DIR";}
     }
     for(size_t i=0;i<count;i++)plan->argv[at++]=i==0 && !strcmp(argv[0],"/proc/self/exe")?plan->self_path:argv[i];
     plan->placed=1;
-    if(!supplied)plan->envp[inherited]=NULL;
     return 0;
   }
 #else
