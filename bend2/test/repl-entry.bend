@@ -34,6 +34,9 @@ def run(+db: String, args: List<String>) -> IO(Unit):
       actor : String <- actor_for(db)
       Repl.execute(db,actor,rest)
     case "repl-observe" <> cell <> Nil{}: Repl.observe(db,cell)
+    case "observe" <> actor <> id <> event <> Nil{}: do IO<Unit>:
+      saved : String <- IO.try(String,Store.apply(db,C.Observe{id,actor,event,False{},"fixture"}))
+      IO.write(saved)
     case other: IO.die(Unit,2,"focused REPL entry: attach|repl|repl-observe")
 
 def dispatch(args: List<String>) -> IO(Unit):

@@ -178,3 +178,33 @@ development files.
 The implementation is scoped by [#778](https://github.com/Flip-Engineering/baton/issues/778).
 The [qualification record](repl-qualification-20261016.md) records package and
 compiler checks and the pending coordinator, installed and native acceptance.
+
+## Context values and native turn snapshots
+
+A seat's context variable is a checked pure Bend2 `String` containing a complete
+JSON value. Evaluate that expression through `repl eval --type String`, then
+select its immutable cell with `repl checkpoint --cell REFERENCE`. The checkpoint
+binds the value to the actor's context variable. Repeating the same checkpoint
+preserves the binding version. Selecting a different cell advances it.
+
+`repl context` reads that bound value. Each result declares
+`baton.context-value/v1`, media type
+`application/vnd.baton.context-value+json`, the owning seat and immutable cell
+version. The citation remains `repl:NOTEBOOK_ID:LABEL_OR_CELL@SEQ`.
+The context value is stored with the original checked cell. Each admitted native
+turn completion records the selected cell and binding version in its own
+transaction. Replaying a terminal observation preserves that turn's original
+snapshot. Later checkpoints preserve earlier turn versions.
+
+`repl share --cell REFERENCE --to PLAYER` sends the citation and a preview of
+at most 1024 Unicode characters. The recipient uses
+`repl context --cell CITATION --offset N --length N` to read the value through
+ordinary tool output. The default length is 2048 characters; each read supports
+1–8192 characters and returns `nextOffset`, `totalCharacters` and `complete`.
+Offsets count Unicode characters in serialized JSON. A receiver appends each
+fragment in offset order and parses the completed JSON value. Ordinary
+`repl resolve` continues to return the complete selected cell and its outcomes.
+
+These snapshots record the context variable explicitly maintained by the seat's
+loop. Harness-private state and hidden model state are outside this value.
+The two-model-seat token and prefix-cache comparison is tracked in #777.
