@@ -190,7 +190,7 @@ class StdoutTaskList(unittest.TestCase):
 
     def selects(self, line):
         sql = evaluate('spool_list_sql', {})
-        return sqlite3.connect(':memory:').execute(sql, (line,)).fetchone()[0]
+        return sqlite3.connect(':memory:').execute(sql, {'1': line}).fetchone()[0]
 
     def state(self, line):
         sql = evaluate('background_sql', {'value': "'" + line.replace("'", "''") + "'"})
