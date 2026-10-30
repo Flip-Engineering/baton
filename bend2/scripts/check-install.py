@@ -113,6 +113,14 @@ BINARY_LAYOUT = (
      'build_mode': 'recovery-native-entry'},
 )
 
+def verify_root_channel(prefix):
+    directory = prefix / 'libexec/baton2'
+    for name in ('mcp-conductor.mjs', 'codex-root-relay.mjs', 'root-channel-config.mjs'):
+        helper = directory / name
+        require(helper.is_file() and not helper.is_symlink() and os.access(helper, os.R_OK),
+                'The installation lacks the root channel helper libexec/baton2/' + name)
+
+
 def verify_dispatch_runtime(prefix):
     helper = prefix / 'libexec/baton2/task-start.mjs'
     require(helper.is_file() and not helper.is_symlink() and os.access(helper, os.R_OK),
@@ -383,6 +391,7 @@ def check(prefix, output, probe_native_compiler=True):
     binaries = verify_binaries(prefix, manifest, checksums)
     receiver_router = verify_receiver_router(prefix, output)
     dependency = verify_repl(prefix, manifest)
+    verify_root_channel(prefix)
     verify_dispatch_runtime(prefix)
     verify_agent_summary_preload(prefix)
     system = platform.system()
