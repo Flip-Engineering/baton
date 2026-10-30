@@ -1168,9 +1168,9 @@ def history_import_cached(result: Result<&1,&1,U32 & String,Bool>, state: String
       Bool.pick(IO(Unit),completed,
         do IO<Unit>:
           names_read : Result<&1,&1,U32 & String,String> <- L.CompileQueueLifecycle.list_dir(keydir ++ "/runs")
-          +names : List<&1,String> <- IO.pure(List<&1,String>,Tx.split_nul(peak_text_result(names_read)))
-          sole : Bool <- IO.pure(Bool,history_import_single(names))
-          history_import_attempts(names,state,key,keydir,sole),
+          +names_text : String <- IO.pure(String,peak_text_result(names_read))
+          sole : Bool <- IO.pure(Bool,history_import_single(Tx.split_nul(names_text)))
+          history_import_attempts(Tx.split_nul(names_text),state,key,keydir,sole),
         IO.write("history=unavailable key=" ++ key ++ "\n"))
 
 def history_import_key_locked(lock: Maybe<&2,U32>, +state: String, +key: String,
