@@ -140,8 +140,9 @@ removes the attempt directory it created, and the refusal text, which starts wit
 and defers the start. It releases the execution row the admission wrote, keeps
 the input owed, writes one durable report of kind `instance-drain-deferred` to
 the recorded orchestrator, and launches a detached waiter,
-`SELF --instance-wait DATABASE` followed by `SELF --dispatch-message DATABASE
-MESSAGE`. The waiter delivers the owed message through the entry the wake path
+`SELF --instance-wait DATABASE && SELF --dispatch-message DATABASE MESSAGE`. A
+failed wait ends the waiter without a delivery, so it cannot create repeated
+deferrals, and the next wake delivers the input. The waiter delivers the owed message through the entry the wake path
 uses once the owner has exited, and the delivery starts a successor owner from
 the executable of the admitting client. A second drain defers the start again. A
 waiter that cannot be launched produces a report of kind
@@ -151,7 +152,9 @@ An owner that runs an older release does not gate admissions. `--instance-shutdo
 therefore also creates a marker file, `owner-KEY.drain-TOKEN-EPOCH`, in the
 per-user IPC directory. The name carries the owner incarnation, so no client reads
 or removes another incarnation's marker, and the owner removes its own marker when
-it exits. A client of this release refuses a genuinely new custody start, one
+it exits. A marker that cannot be written fails `--instance-shutdown` before the
+drain is requested, so a failed gate is never reported as a drain and the call
+can be repeated. A client of this release refuses a genuinely new custody start, one
 whose attempt directory has no `launch` marker, while the marker of the owner
 that answers exists. An attempt that the owner already holds, or that already
 launched, passes the client and the owner decides. The marker does not stop a

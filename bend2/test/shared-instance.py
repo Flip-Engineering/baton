@@ -1494,6 +1494,21 @@ class SharedInstance(unittest.TestCase):
         foreign.unlink()
         self.end_attempt(directory, child)
 
+    def test_a_drain_that_cannot_write_its_gate_fails_and_can_be_repeated(self):
+        directory, child = self.start_survivor('w0')
+        marker = self.drain_marker()
+        marker.mkdir()
+        failed = self.command('drain', self.db)
+        self.assertNotEqual(failed.returncode, 0, failed.stdout)
+        self.assertNotIn('draining', failed.stdout)
+        self.assertEqual(self.owner_status()['state'], 'running')
+        marker.rmdir()
+        drained = self.command('drain', self.db)
+        self.assertEqual(drained.returncode, 0, drained.stderr)
+        self.assertEqual(json.loads(drained.stdout)['state'], 'draining')
+        self.assertTrue(marker.exists())
+        self.end_attempt(directory, child)
+
     def test_owner_wait_returns_when_the_owner_died_and_left_its_record(self):
         directory, child = self.start_survivor('k0')
         owner = self.owner_pid()

@@ -5163,9 +5163,22 @@ static int br_instance_shutdown(BatonProcessCall *call) {
     int error=br_instance_connect(call->database,0,&record,&socket_fd);
     if(error==ENOENT || error==ECONNREFUSED || error==EINVAL)return 0;
     if(error)return error;
-    /* The marker covers an owner that runs an older release and keeps admitting
-       after the request; it is written before the request is sent. */
-    br_drain_marker_write(call->database,&record);
+    if(!record.token || !record.epoch) {
+      /* The listener answers before its incarnation record is published. */
+      close(socket_fd);
+      struct timespec wait={0,20000000};
+      nanosleep(&wait,NULL);
+      continue;
+    }
+    /* The marker is the admission gate for an owner that runs an older release
+       and keeps admitting after the request. It is written before the request is
+       sent, and a failed write ends the call without requesting the drain, so a
+       failed gate is never reported as a drain and the call can be repeated. */
+    error=br_drain_marker_write(call->database,&record);
+    if(error) {
+      close(socket_fd);
+      return error;
+    }
     error=br_instance_exchange(socket_fd,
       (BrInstanceFrame){.op=BI_SHUTDOWN,.owner=record.token,.epoch=record.epoch},
       NULL,-1,&reply);
