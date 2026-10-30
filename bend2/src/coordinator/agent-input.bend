@@ -578,6 +578,12 @@ def rr_refuse_attempt(+db: String, +running: String, +turn_id: String, +descript
     +recovery : String <- rr_scalar(db,"SELECT recovery FROM refusal_attempts WHERE id=" ++ C.q(running))
     Bool.pick(IO(Unit),Bool.and(String.eq(stage,"fork-and-continue"),U32.is_lt(ordinal,3)),rr_start_continue(db,recovery,U32.add(ordinal,1)),IO.pure(Unit,Unit{}))
 
+def rr_begin_recovery(+db: String, +player: String, +turn_id: String, +description: String) -> IO(Unit):
+  do IO<Unit>:
+    +recovery : String <- rr_create_recovery(db,player,turn_id,description)
+    start : Unit <- rr_start_continue(db,recovery,1)
+    IO.pure(Unit,Unit{})
+
 def rr_observe_impl(+db: String, +player: String, +turn_id: String, +event: String) -> IO(Unit):
   do IO<Unit>:
     seen : String <- rr_scalar(db,"SELECT CASE WHEN EXISTS(SELECT 1 FROM refusal_recoveries WHERE source=" ++ C.q(player) ++ " AND initial_turn=" ++ C.q(turn_id) ++ ") OR EXISTS(SELECT 1 FROM refusal_attempts WHERE turn=" ++ C.q(turn_id) ++ ") THEN 1 ELSE 0 END")
@@ -596,12 +602,12 @@ def rr_observe_impl(+db: String, +player: String, +turn_id: String, +event: Stri
               existing : String <- rr_scalar(db,"SELECT coalesce((SELECT id FROM refusal_recoveries WHERE source=" ++ C.q(player) ++ " AND status='active' ORDER BY rowid DESC LIMIT 1),'')")
               Bool.pick(IO(Unit),String.is_empty(existing),
                 (do IO<Unit>:
-                  branch_candidate : String <- rr_scalar(db,"SELECT CASE WHEN EXISTS(SELECT 1 FROM branch_candidates WHERE session=" ++ C.q(player) ++ ") THEN 1 ELSE 0 END")
-                  Bool.pick(IO(Unit),String.eq(branch_candidate,"1"),IO.pure(Unit,Unit{}),
+                  branch_table : String <- rr_scalar(db,"SELECT CASE WHEN EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='branch_candidates') THEN 1 ELSE 0 END")
+                  Bool.pick(IO(Unit),String.eq(branch_table,"1"),
                     (do IO<Unit>:
-                      +recovery : String <- rr_create_recovery(db,player,turn_id,description)
-                      start : Unit <- rr_start_continue(db,recovery,1)
-                      IO.pure(Unit,Unit{})))),
+                      branch_candidate : String <- rr_scalar(db,"SELECT CASE WHEN EXISTS(SELECT 1 FROM branch_candidates WHERE session=" ++ C.q(player) ++ ") THEN 1 ELSE 0 END")
+                      Bool.pick(IO(Unit),String.eq(branch_candidate,"1"),IO.pure(Unit,Unit{}),rr_begin_recovery(db,player,turn_id,description))),
+                    rr_begin_recovery(db,player,turn_id,description))),
                 IO.pure(Unit,Unit{}))),
             rr_refuse_attempt(db,running,turn_id,description)))))
 
