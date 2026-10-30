@@ -714,11 +714,37 @@ export function term_strip<X>(tm: TermOf<X>): TermOf<X> {
 }
 
 type ClosedCtrEntry = { id: number, value: WeakRef<HTerm> };
-type ClosedCtrCache = { spans: WeakMap<Span, Map<string, ClosedCtrEntry>>, ids: WeakMap<HTerm, number>, next: number };
+// nodes: the interned term of each closed literal chain node this cache built.
+type ClosedCtrCache = { spans: WeakMap<Span, Map<string, ClosedCtrEntry>>, ids: WeakMap<HTerm, number>,
+  nodes: WeakMap<LTerm, WeakRef<HTerm>>, next: number };
 const STRING_LITERAL_CTRS = new Set<Name>(["SCon", "SNil", "Chr", "U32", "WCon", "WNil", "True", "False"]);
 
 export function term_higher(tm: LTerm, env: Env = null): HTerm {
-  return term_higher_inner(tm, env, { spans: new WeakMap(), ids: new WeakMap(), next: 0 });
+  return term_higher_inner(tm, env, { spans: new WeakMap(), ids: new WeakMap(), nodes: new WeakMap(), next: 0 });
+}
+
+// Is tm a literal chain node whose descendants are all literal chain nodes: a
+// constructor of STRING_LITERAL_CTRS with a span? Such a node reads no binder,
+// and term_higher_ctr interns it and each of its descendants. A chain nests once
+// per character, so the walk keeps its own stack.
+const LITERAL_CLOSED = new WeakMap<LTerm, boolean>();
+function literal_closed(root: LTerm): boolean {
+  const known = LITERAL_CLOSED.get(root);
+  if (known !== undefined) return known;
+  const stack: [LTerm, boolean][] = [[root, false]];
+  while (stack.length > 0) {
+    const [tm, children_done] = stack.pop()!;
+    if (LITERAL_CLOSED.has(tm)) continue;
+    if (tm.$ !== "Ctr" || tm.s === undefined || !STRING_LITERAL_CTRS.has(tm.k)) {
+      LITERAL_CLOSED.set(tm, false);
+    } else if (children_done) {
+      LITERAL_CLOSED.set(tm, tm.x.every((x) => LITERAL_CLOSED.get(x) === true));
+    } else {
+      stack.push([tm, true]);
+      for (const x of tm.x) if (!LITERAL_CLOSED.has(x)) stack.push([x, false]);
+    }
+  }
+  return LITERAL_CLOSED.get(root)!;
 }
 
 function term_higher_inner(term: LTerm, env: Env, cache: ClosedCtrCache): HTerm {
@@ -738,7 +764,9 @@ function term_higher_inner(term: LTerm, env: Env, cache: ClosedCtrCache): HTerm 
     }
     if ("build" in task) {
       const tm = task.build;
-      const kids = results.splice(results.length - task.count, task.count);
+      const base = results.length - task.count;
+      const kids = results.slice(base);
+      results.length = base;
       switch (tm.$) {
         case "Let": {
           const b = tm;
@@ -765,7 +793,12 @@ function term_higher_inner(term: LTerm, env: Env, cache: ClosedCtrCache): HTerm 
           break;
         }
         case "ADT": results.push(ADT(tm.k, kids, tm.s, tm.r)); break;
-        case "Ctr": results.push(term_higher_ctr(tm, kids, cache)); break;
+        case "Ctr": {
+          const out = term_higher_ctr(tm, kids, cache);
+          if (cache.ids.has(out) && literal_closed(tm)) cache.nodes.set(tm, new WeakRef(out));
+          results.push(out);
+          break;
+        }
         case "Mat": results.push(Mat(tm.k, kids[0], kids[1], tm.s)); break;
         case "Eql": results.push(Eql(kids[0], kids[1], kids[2], tm.s)); break;
         case "Rwt": results.push(Rwt(kids[0], kids[1], kids[2], tm.s)); break;
@@ -829,7 +862,16 @@ function term_higher_inner(term: LTerm, env: Env, cache: ClosedCtrCache): HTerm 
       case "Qnt": case "Qua": case "Lit": results.push(tm); break;
       case "Min": kids = [tm.a, tm.b]; break;
       case "App": kids = [tm.f, tm.x]; break;
-      case "ADT": case "Ctr": kids = tm.x; break;
+      case "ADT": kids = tm.x; break;
+      case "Ctr": {
+        // A closed literal chain this cache built before converts to the same
+        // interned term, so its subtree is not walked again.
+        const built = tm.s !== undefined && STRING_LITERAL_CTRS.has(tm.k) && literal_closed(tm)
+          ? cache.nodes.get(tm)?.deref() : undefined;
+        if (built !== undefined) results.push(built);
+        else kids = tm.x;
+        break;
+      }
       case "Mat": kids = [tm.h, tm.m]; break;
       case "Efq": results.push(Efq(tm.s)); break;
       case "Eql": kids = [tm.a, tm.b, tm.T]; break;
