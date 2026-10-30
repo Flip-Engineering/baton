@@ -5,6 +5,7 @@ import pathlib
 import shlex
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -12,7 +13,7 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-EXE = ROOT / '.scratch/bend2/baton2'
+EXE = pathlib.Path(os.environ.get('BATON2_EXE', ROOT / '.scratch/bend2/baton2'))
 
 
 class Land(unittest.TestCase):
@@ -30,6 +31,10 @@ class Land(unittest.TestCase):
                             if not key.startswith('GIT_')
                             and key not in ('BATON_SESSION', 'BATON2_GIT_REGISTRY')}
         self.environment.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        # The default series registry lives under HOME; an operator registry would
+        # make a recruit with a fixture model fail its identity check.
+        (self.directory / 'home').mkdir()
+        self.environment['HOME'] = str(self.directory / 'home')
         self.git('init', '-q', '-b', 'main')
         self.git('config', 'user.name', 'Baton test')
         self.git('config', 'user.email', 'baton@example.invalid')
@@ -46,10 +51,11 @@ class Land(unittest.TestCase):
             check=True, text=True, capture_output=True, env=self.environment,
         ).stdout
 
-    def call(self, *args, ok=True, env=None):
+    def call(self, *args, ok=True, env=None, cwd=None):
         p = subprocess.run(
             [str(EXE), str(self.db), *map(str, args)],
             text=True, capture_output=True, env=self.environment if env is None else env,
+            cwd=cwd,
         )
         if ok:
             self.assertEqual(p.returncode, 0, p.stderr)
@@ -488,6 +494,91 @@ class Land(unittest.TestCase):
                              env=self.environment).stdout.split()
         self.assertEqual(tip, [self.git('rev-parse', 'main').strip(), 'refs/heads/main'])
         self.assertTrue(emails['kimi'].endswith('@users.noreply.github.com'))
+
+    def recorded_workspace(self, player):
+        with sqlite3.connect(self.db) as connection:
+            return connection.execute(
+                'SELECT workspace FROM sessions WHERE id=?', (player,)).fetchone()[0]
+
+    def publication_remote(self, observed):
+        """A bare remote whose pre-push hook records the pushing Git identity."""
+        remote = self.directory / 'remote.git'
+        subprocess.run(['git', 'init', '-q', '--bare', str(remote)],
+                       check=True, capture_output=True, env=self.environment)
+        self.git('remote', 'add', 'test-remote', str(remote))
+        hook = self.repo / '.git' / 'hooks' / 'pre-push'
+        hook.write_text(f'#!/bin/sh\nprintf %s "$GIT_AUTHOR_EMAIL" > {observed}\n')
+        hook.chmod(0o755)
+        return remote
+
+    def test_push_without_a_session_recovers_the_checkout_owner_identity(self):
+        registry, emails = self.identity_registry({'fixture-worker': ('gpt', 'GPT', 9001)})
+        observed = self.directory / 'observed-email'
+        self.publication_remote(observed)
+        self.recruit_and_commit(model='fixture-worker')
+        environment = {**self.environment, 'BATON2_GIT_REGISTRY': str(registry)}
+        self.assertNotIn('BATON_SESSION', environment)
+        result = self.call('push', self.recorded_workspace('w1'), 'w1-branch', 'test-remote',
+                           env=environment)
+        self.assertEqual(result['status'], 'pushed')
+        self.assertEqual(observed.read_text(), emails['gpt'])
+
+    def test_push_resolves_equivalent_checkout_spellings_to_the_recorded_session(self):
+        registry, emails = self.identity_registry({'fixture-worker': ('gpt', 'GPT', 9001)})
+        observed = self.directory / 'observed-email'
+        self.publication_remote(observed)
+        self.recruit_and_commit(model='fixture-worker')
+        workspace = pathlib.Path(self.recorded_workspace('w1'))
+        link = self.directory / 'checkout-link'
+        link.symlink_to(workspace, target_is_directory=True)
+        environment = {**self.environment, 'BATON2_GIT_REGISTRY': str(registry)}
+        spellings = {
+            'absolute': (str(workspace), None),
+            'relative': (workspace.name, workspace.parent),
+            'symlink': (str(link), None),
+            'dotted': (str(workspace / '..' / workspace.name), None),
+        }
+        for name, (spelling, cwd) in spellings.items():
+            observed.unlink(missing_ok=True)
+            result = self.call('push', spelling, f'w1-branch:refs/heads/spelling-{name}',
+                               'test-remote', env=environment, cwd=cwd)
+            self.assertEqual(result['status'], 'pushed', name)
+            self.assertEqual(observed.read_text(), emails['gpt'], name)
+
+    def test_push_with_a_recorded_model_and_no_registry_reports_no_identity(self):
+        observed = self.directory / 'observed-email'
+        self.publication_remote(observed)
+        (self.repo / '.git' / 'hooks' / 'pre-push').write_text('#!/bin/sh\nexit 1\n')
+        self.recruit_and_commit(model='fixture-worker')
+        home = self.directory / 'home-without-registry'
+        home.mkdir()
+        environment = {**self.environment, 'HOME': str(home), 'BATON_SESSION': 'w1'}
+        environment.pop('BATON2_GIT_REGISTRY', None)
+        result = self.call('push', self.recorded_workspace('w1'), 'w1-branch', 'test-remote',
+                           env=environment)
+        self.assertEqual(result['status'], 'rejected')
+        self.assertIn('no series identity for session w1', result['identity'])
+        self.assertNotIn('applied', result['identity'])
+
+    def test_rejected_push_names_the_missing_publication_identity(self):
+        registry, emails = self.identity_registry({'fixture-worker': ('gpt', 'GPT', 9001)})
+        observed = self.directory / 'observed-email'
+        self.publication_remote(observed)
+        (self.repo / '.git' / 'hooks' / 'pre-push').write_text('#!/bin/sh\nexit 1\n')
+        environment = {**self.environment, 'BATON2_GIT_REGISTRY': str(registry)}
+        result = self.call('push', self.repo, 'main', 'test-remote', env=environment)
+        self.assertEqual(result['status'], 'rejected')
+        self.assertIn('BATON_SESSION is unset', result['identity'])
+        self.assertFalse(observed.exists())
+        self.recruit_and_commit(model='fixture-worker')
+        unmapped = {**environment, 'BATON_SESSION': 'root'}
+        result = self.call('push', self.repo, 'main', 'test-remote', env=unmapped)
+        self.assertEqual(result['status'], 'rejected')
+        self.assertIn('no series identity for session root', result['identity'])
+        mapped = {**environment, 'BATON_SESSION': 'w1'}
+        result = self.call('push', self.recorded_workspace('w1'), 'w1-branch', 'test-remote', env=mapped)
+        self.assertEqual(result['status'], 'rejected')
+        self.assertIn('series identity applied', result['identity'])
 
     def test_checked_landing_blocks_on_new_failure(self):
         (self.repo / 'check-blocked.sh').write_text(

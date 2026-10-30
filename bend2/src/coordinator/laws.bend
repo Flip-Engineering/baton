@@ -11,6 +11,7 @@ import ./messaging-laws.bend as MessagingLaws
 import ./connect-laws.bend as ConnectLaws
 import ./control-laws.bend as ControlLaws
 import ./naming-laws.bend as NamingLaws
+import ./land-laws.bend as LandLaws
 import ./delivery.bend as Delivery
 import ./turn.bend as Turn
 import ./subscription-fallback.bend as Subs
