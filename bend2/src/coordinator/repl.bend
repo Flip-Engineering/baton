@@ -16,10 +16,10 @@ import ../host/repl.bend as Host
 import ../git/text.bend as Tx
 
 def help() -> String:
-  "repl define SOURCE [--label NAME] [--notebook NAME]\nrepl eval EXPRESSION [--type TYPE] [--label NAME] [--notebook NAME]\nrepl define|eval --stdin [OPTIONS]\nrepl bind NAME [--cell REFERENCE] [--notebook NAME]\nrepl read|recover|cite [--cell REFERENCE] [--notebook NAME]\nrepl resolve --cell CITATION_OR_REFERENCE\nrepl checkpoint [--cell REFERENCE] [--notebook NAME]\nrepl context [--cell CITATION_OR_REFERENCE] [--offset N] [--length N]\nrepl share [--cell REFERENCE] --to PLAYER [--notebook NAME]\nrepl import MESSAGE [--notebook NAME]\nrepl interactive [--notebook NAME]\nBend2 is the supported REPL input language. Evaluate Bend2 expressions and retain checked Bend2 definitions in the current actor's notebook. Standard installations include the Bend2 REPL compiler and runtime. Its canonical compiler infers types; --type supplies an expected type for expressions that need one. IO runs through retained native custody in the actor's recorded workspace. Each result retains complete source, type, output, diagnostics and actual process status. Bind checks a named Bend2 definition from a pure result's canonical type and value for later expressions. Named definitions compose as source; labels select the latest matching result. Live affine values remain inside their evaluation.\nThe default notebook is main. Read without --cell returns every cell. Bind, recover, cite and share default to the latest cell; --cell accepts an immutable reference or label. Recover observes the original cell and retains completed effects. Cite returns an immutable version citation. Share sends citation metadata through ordinary message routing and atomically grants its recipient access to the completed cell. Resolve reads that exact cell with its complete source and outcome; it records the original received message through the owned-read path. Import checks the shared declaration snapshot in your own notebook.\nInteractive commands: :define, :eval, :submit, :bind NAME, :read, :clear, :quit. Enter multiline Bend2 source between commands. Drafts survive restart and EOF.\n"
+  "repl define SOURCE [--label NAME] [--notebook NAME]\nrepl eval EXPRESSION [--type TYPE] [--label NAME] [--notebook NAME]\nrepl define|eval --stdin [OPTIONS]\nrepl bind NAME [--cell REFERENCE] [--notebook NAME]\nrepl read|recover|cite [--cell REFERENCE] [--notebook NAME]\nrepl resolve --cell CITATION_OR_REFERENCE\nrepl checkpoint [--cell REFERENCE] [--notebook NAME]\nrepl context [--cell CITATION_OR_REFERENCE | --turn TURN] [--offset N] [--length N]\nrepl share [--cell REFERENCE] --to PLAYER [--notebook NAME]\nrepl import MESSAGE [--notebook NAME]\nrepl interactive [--notebook NAME]\nBend2 is the supported REPL input language. Evaluate Bend2 expressions and retain checked Bend2 definitions in the current actor's notebook. Standard installations include the Bend2 REPL compiler and runtime. Its canonical compiler infers types; --type supplies an expected type for expressions that need one. IO runs through retained native custody in the actor's recorded workspace. Each result retains complete source, type, output, diagnostics and actual process status. Bind checks a named Bend2 definition from a pure result's canonical type and value for later expressions. Named definitions compose as source; labels select the latest matching result. Live affine values remain inside their evaluation.\nThe default notebook is main. Read without --cell returns every cell. Bind, recover, cite and share default to the latest cell; --cell accepts an immutable reference or label. Recover observes the original cell and retains completed effects. Cite returns an immutable version citation. Share sends citation metadata through ordinary message routing and atomically grants its recipient access to the completed cell. Resolve reads that exact cell with its complete source and outcome; it records the original received message through the owned-read path. Import checks the shared declaration snapshot in your own notebook.\nInteractive commands: :define, :eval, :submit, :bind NAME, :read, :clear, :quit. Enter multiline Bend2 source between commands. Drafts survive restart and EOF.\n"
 
 def flags() -> List<String>:
-  ["--notebook","--type","--label","--cell","--to","--offset","--length"]
+  ["--notebook","--type","--label","--cell","--to","--offset","--length","--turn"]
 
 def options(args: List<String>, +found: List<&2,D.Option>) -> Result<&1,&1,U32 & String,List<&2,D.Option>>:
   match args:
@@ -50,7 +50,7 @@ def allowed(+verb: String) -> List<String>:
     case "cite": ["--cell","--notebook"]
     case "resolve": ["--cell"]
     case "checkpoint": ["--cell","--notebook"]
-    case "context": ["--cell","--offset","--length"]
+    case "context": ["--cell","--offset","--length","--turn"]
     case "recover": ["--cell","--notebook"]
     case "share": ["--cell","--to","--notebook"]
     case "import": ["--source","--notebook"]
@@ -260,7 +260,7 @@ def configured_notebook(+db: String, +actor: String, +verb: String, +options: Li
     case "checkpoint": do IO<Unit>:
       cell : String <- M.selected_cell(db,notebook,D.value(options,"--cell",""))
       Value.checkpoint(db,actor,cell)
-    case "context": Value.read(db,actor,D.value(options,"--cell",""),D.value(options,"--offset","0"),D.value(options,"--length","2048"))
+    case "context": Value.read(db,actor,D.value(options,"--cell",""),D.value(options,"--turn",""),D.value(options,"--offset","0"),D.value(options,"--length","2048"))
     case "recover": recover(db,actor,notebook,D.value(options,"--cell",""))
     case "share": share(db,actor,notebook,options)
     case "interactive": interactive(db,actor,notebook)

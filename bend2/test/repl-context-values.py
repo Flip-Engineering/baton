@@ -74,9 +74,22 @@ class ContextValues(fixture.ReplContext):
         self.invoke('observe', 'author', 'context-turn-2', terminal)
         self.assertEqual(self.query('SELECT turn,cell,version FROM repl_context_turns ORDER BY turn'),
                          [('context-turn-1', first, 1), ('context-turn-2', second, 2)])
+        self.assertEqual(json.loads(self.projected('author', '--turn', 'context-turn-1')['fragment']), {'step': 1})
+        self.projected('recipient', '--turn', 'context-turn-1', success=False)
         self.assertEqual(json.loads(self.projected('author')['fragment']), {'step': 2})
         self.assertEqual(json.loads(self.projected('author', '--cell', receipt['citation'])['fragment']),
                          {'step': 1})
+
+    def test_turn_without_context_stays_unbound_after_replay(self):
+        self.invoke('attach', 'coordinator', 'fixture', '', '')
+        with fixture.sqlite3.connect(self.db) as connection:
+            connection.execute("UPDATE sessions SET parent='coordinator' WHERE id='author'")
+        terminal = json.dumps({'type': 'result', 'subtype': 'success', 'result': 'unbound turn'})
+        self.invoke('observe', 'author', 'context-turn-unbound', terminal)
+        self.checkpoint({'step': 2})
+        self.invoke('observe', 'author', 'context-turn-unbound', terminal)
+        self.assertEqual(self.query('SELECT turn,cell,version FROM repl_context_turns'),
+                         [('context-turn-unbound', None, None)])
 
     def test_invalid_context_cannot_replace_the_committed_value(self):
         cell, receipt = self.checkpoint({'valid': True})

@@ -194,7 +194,9 @@ version. The citation remains `repl:NOTEBOOK_ID:LABEL_OR_CELL@SEQ`.
 The context value is stored with the original checked cell. Each admitted native
 turn completion records the selected cell and binding version in its own
 transaction. Replaying a terminal observation preserves that turn's original
-snapshot. Later checkpoints preserve earlier turn versions.
+snapshot, including the absence of a context value. Later checkpoints preserve
+earlier turn versions. `repl context --turn TURN` reads the value pinned by one
+of the caller's completed native turns.
 
 `repl share --cell REFERENCE --to PLAYER` sends the citation and a preview of
 at most 1024 Unicode characters. The recipient uses

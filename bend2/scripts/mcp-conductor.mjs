@@ -457,6 +457,7 @@ const TOOLS = [
       label: { type: 'string', description: 'Semantic label for the saved cell.' },
       notebook: { type: 'string' }, cell: { type: 'string' }, to: { type: 'string' },
       message: { type: 'string', description: 'Received message selected by import.' },
+      turn: { type: 'string', description: 'Read the context version pinned by one of your native turns.' },
       offset: { type: 'integer', minimum: 0, maximum: 999999999 },
       length: { type: 'integer', minimum: 1, maximum: 8192 },
     }, required: ['operation'], additionalProperties: false },
@@ -1388,7 +1389,7 @@ function handleToolCall(msg) {
           values.push(args.message);
         }
         for (const [field, flag] of [['expectedType', '--type'], ['label', '--label'],
-          ['notebook', '--notebook'], ['cell', '--cell'], ['to', '--to']]) {
+          ['notebook', '--notebook'], ['cell', '--cell'], ['to', '--to'], ['turn', '--turn']]) {
           if (args[field] !== undefined) values.push(flag, args[field]);
         }
         for (const [field, flag] of [['offset', '--offset'], ['length', '--length']]) {

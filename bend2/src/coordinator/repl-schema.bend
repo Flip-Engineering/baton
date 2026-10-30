@@ -9,4 +9,4 @@ def schema() -> String:
   ++ "CREATE TABLE IF NOT EXISTS repl_shares(message TEXT PRIMARY KEY NOT NULL REFERENCES messages(id),cell TEXT NOT NULL REFERENCES repl_cells(id));"
   ++ "CREATE TABLE IF NOT EXISTS repl_context_values(cell TEXT PRIMARY KEY NOT NULL REFERENCES repl_cells(id),value TEXT NOT NULL CHECK(json_valid(value)));"
   ++ "CREATE TABLE IF NOT EXISTS repl_context_bindings(owner TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id),cell TEXT NOT NULL REFERENCES repl_context_values(cell),version INTEGER NOT NULL);"
-  ++ "CREATE TABLE IF NOT EXISTS repl_context_turns(turn TEXT PRIMARY KEY NOT NULL REFERENCES turns(id),owner TEXT NOT NULL REFERENCES sessions(id),cell TEXT NOT NULL REFERENCES repl_context_values(cell),version INTEGER NOT NULL);"
+  ++ "CREATE TABLE IF NOT EXISTS repl_context_turns(turn TEXT PRIMARY KEY NOT NULL REFERENCES turns(id),owner TEXT NOT NULL REFERENCES sessions(id),cell TEXT REFERENCES repl_context_values(cell),version INTEGER,CHECK((cell IS NULL)=(version IS NULL)));"
