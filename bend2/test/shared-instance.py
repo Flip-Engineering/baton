@@ -27,7 +27,7 @@ import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-EXE = ROOT / '.scratch/bend2/instance-test'
+EXE = pathlib.Path(os.environ.get('BATON2_INSTANCE_TEST', ROOT / '.scratch/bend2/instance-test')).resolve()
 
 FIXTURE = r'''import json,os,sys
 print(json.dumps({"role":"native","pid":os.getpid(),"ppid":os.getppid()}),flush=True)

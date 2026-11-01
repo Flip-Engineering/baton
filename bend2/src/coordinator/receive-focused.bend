@@ -222,9 +222,9 @@ def dispatch(args: List<String>) -> IO(Unit):
       Bool.pick(IO(Unit),String.eq(verb,"join"),Control.join(db,session,parent,harness,model,effort,path),
         IO.die(Unit,2,"unsupported focused receive command"))
     case +first <> +second <> +session <> +observer <> Nil{}:
-      dispatch_observer_argv(String.eq(first,"--recover-observer"),first,second,session,observer)
-    case +flag <> +db <> +session <> +generation <> Nil{}:
-      dispatch_drain_sweep_session(String.eq(flag,"--drain-sweep-session"),db,session,generation)
+      Bool.pick(IO(Unit),String.eq(first,"--drain-sweep-session"),
+        dispatch_drain_sweep_session(True{},second,session,observer),
+        dispatch_observer_argv(String.eq(first,"--recover-observer"),first,second,session,observer))
     case +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> Nil{}:
       dispatch_recover(String.eq(flag,"--recover-receive"),db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,"")
     case +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> +inputs <> Nil{}:
