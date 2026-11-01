@@ -12,7 +12,7 @@ def drain_refusal(error: String) -> Bool:
   Tx.starts_with(error,"ESHUTDOWN:")
 
 def deferred_text(error: String, head: String) -> String:
-  "start deferred: " ++ error ++ "; message " ++ head ++ " stays owed as a drain-deferred claim and the owner's drain sweep delivers it again when the owner exits or the next owner starts"
+  "start deferred: " ++ error ++ "; message " ++ head ++ " stays owed in a durable drain-recovery record for the owner's drain sweep"
 
 def sweep_failed_text(code: String, cause: String, session: String) -> String:
-  "drain sweep could not re-drive the owed input of " ++ session ++ " (" ++ code ++ ": " ++ cause ++ "); the claim stays drain-deferred and the next owner start or exit repeats the sweep"
+  "drain sweep could not re-drive the owed input of " ++ session ++ " (" ++ code ++ ": " ++ cause ++ "); the durable drain-recovery record remains for the next timer or owner sweep"

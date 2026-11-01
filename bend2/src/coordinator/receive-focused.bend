@@ -36,6 +36,11 @@ def dispatch_instance(+flag: String, +db: String) -> IO(Unit):
           Bool.pick(IO(Unit),String.eq(flag,"--drain-sweep"),DrainSweep.sweep(db),
             IO.die(Unit,2,"expected instance lifecycle command"))))))
 
+def dispatch_drain_sweep_session(selected: Bool, +db: String, +session: String, +generation: String) -> IO(Unit):
+  match selected:
+    case True{}: DrainSweep.sweep_one(db,session,generation)
+    case False{}: IO.die(Unit,2,"expected drain sweep session command")
+
 # Package maintenance installs the same schema preflight used by coordinator writes.
 def dispatch_schema(selected: Bool, +flag: String, +db: String) -> IO(Unit):
   match selected:
@@ -218,6 +223,8 @@ def dispatch(args: List<String>) -> IO(Unit):
         IO.die(Unit,2,"unsupported focused receive command"))
     case +first <> +second <> +session <> +observer <> Nil{}:
       dispatch_observer_argv(String.eq(first,"--recover-observer"),first,second,session,observer)
+    case +flag <> +db <> +session <> +generation <> Nil{}:
+      dispatch_drain_sweep_session(String.eq(flag,"--drain-sweep-session"),db,session,generation)
     case +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> Nil{}:
       dispatch_recover(String.eq(flag,"--recover-receive"),db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,"")
     case +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> +inputs <> Nil{}:

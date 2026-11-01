@@ -566,6 +566,8 @@ def legacy_cli(args: List<String>) -> IO(Unit):
       Wake.message_cli(db,id)
     case "--redeliver-message" <> +db <> +id <> Nil{}:
       Control.redeliver(db,id)
+    case "--drain-sweep-session" <> +db <> +session <> +generation <> Nil{}:
+      DrainSweep.sweep_one(db,session,generation)
     case +flag <> +directory <> +lock <> Nil{}:
       dispatch_cli(directory,lock,[flag,directory,lock],String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"))
     case flag <> db <> player <> id <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:

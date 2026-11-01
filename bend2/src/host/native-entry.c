@@ -235,7 +235,7 @@ static int focused_receiver_verb(int argc,char **argv) {
      !strcmp(first,"--dispatch-message") || !strcmp(first,"--host-process-keeper") ||
      !strcmp(first,"--instance-owner") || !strcmp(first,"--instance-shutdown") ||
      !strcmp(first,"--instance-status") || !strcmp(first,"--instance-wait") ||
-     !strcmp(first,"--drain-sweep") ||
+     !strcmp(first,"--drain-sweep") || !strcmp(first,"--drain-sweep-session") ||
       !strcmp(first,"--ensure-schema")) return 1;
   if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
                 !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"agent-native-input") ||
@@ -285,6 +285,7 @@ static int native_receiver_route(int argc, char **argv) {
     !strcmp(argv[1],"--host-process-keeper") || !strcmp(argv[1],"--instance-owner") ||
     !strcmp(argv[1],"--instance-shutdown") || !strcmp(argv[1],"--instance-status") ||
     !strcmp(argv[1],"--instance-wait") || !strcmp(argv[1],"--drain-sweep") ||
+    !strcmp(argv[1],"--drain-sweep-session") ||
     !strcmp(argv[1],"--ensure-schema") || recovery);
   if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
       !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"recover-observer") ||

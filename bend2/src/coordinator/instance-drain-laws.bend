@@ -23,13 +23,13 @@ def an_empty_refusal_is_not_a_drain():
   {==}
 
 law the_deferral_report_names_the_owed_message:
-  {Drain.deferred_text("ESHUTDOWN: x","m1") == "start deferred: ESHUTDOWN: x; message m1 stays owed as a drain-deferred claim and the owner's drain sweep delivers it again when the owner exits or the next owner starts" : String}
+  {Drain.deferred_text("ESHUTDOWN: x","m1") == "start deferred: ESHUTDOWN: x; message m1 stays owed in a durable drain-recovery record for the owner's drain sweep" : String}
 
 def the_deferral_report_names_the_owed_message():
   {==}
 
 law the_sweep_failure_report_names_the_session:
-  {Drain.sweep_failed_text("2","cause","s1") == "drain sweep could not re-drive the owed input of s1 (2: cause); the claim stays drain-deferred and the next owner start or exit repeats the sweep" : String}
+  {Drain.sweep_failed_text("2","cause","s1") == "drain sweep could not re-drive the owed input of s1 (2: cause); the durable drain-recovery record remains for the next timer or owner sweep" : String}
 
 def the_sweep_failure_report_names_the_session():
   {==}

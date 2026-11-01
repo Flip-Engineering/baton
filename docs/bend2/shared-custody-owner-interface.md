@@ -145,20 +145,22 @@ lists the session, keeps the input owed, and writes one durable report of kind
 
 The owner re-drives the input. It launches `SELF --drain-sweep DATABASE`,
 detached, when it starts and after it has exited a drain and released the
-election. The sweep (`coordinator/drain-sweep.bend`) reads the sessions whose
-claim is `drain-deferred` and drives each through `Wake.drive_session`, which
-calls `Receive.wake_due` under the normal session lock. `wake_due` re-reads the
-claim: a live claimed owner is adopted, otherwise it claims the owed message with
-the next generation and launches it, so the claim becomes `claimed` and a second
-sweep, a stale sweep or a command wake no longer finds a deferred claim. A
-session whose lock a live turn holds is left as it is, because that turn
-evaluates its own obligation, and the claim stays for the next sweep. A failure is
-reported durably to the session's coordinator and does not stop the other
-sessions. The delivery starts a successor owner from the executable of the
-admitting client. A lost or failed sweep is repeated at the next owner start or
-exit. A reading of the owed input clears the claim, and no acknowledgement is
-needed. After a host restart with an idle database no Baton process runs the
-sweep until an owner starts or an operator runs `--drain-sweep` or `stall-wake`.
+election. The sweep (`coordinator/drain-sweep.bend`) reads the durable deferred
+session rows and launches one `--drain-sweep-session` child per row. Each child
+holds a separate nonblocking sweep lock for its session while it runs the
+existing delivery path. The delivery path takes the normal session lock and
+re-reads the claim and custody state. A live claimed owner is adopted; otherwise
+the owed message is claimed with the next generation and launched. The receiver
+continues to own the existing wake claim, session lock and retained native
+identity. A child blocked in a managed admission RPC therefore holds only that
+session's sweep lock. Later timer or owner sweeps return immediately for that
+session while starting workers for other deferred sessions. A child failure
+leaves the durable deferred row available to the next sweep. A reading of the
+owed input clears the claim; the next sweep removes the deferred row after it
+observes no owed input. The delivery starts a successor owner from the
+executable of the admitting client. The Linux user service and timer described
+in `deploy/drain-sweep/README.md` repeat the sweep after host restart and on
+later retry rounds.
 
 An owner that runs an older release does not gate admissions. `--instance-shutdown`
 therefore also creates a marker file, `owner-KEY.drain-TOKEN-EPOCH`, in the
@@ -405,8 +407,12 @@ passes `"0"`, which reports `gap` and still delivers every later commit.
   `coordinator/instance-drain-laws.bend`; the claim statements are laws in
   `coordinator/store.bend`. The owner launches the sweep when it starts and after
   its drain (`test/shared-instance.py`, with the `--drain-sweep` mode of
-  `test/instance.bend`). The receive-path branch itself needs a
-  Main-level run.
+  `test/instance.bend`). Focused sweep acceptance must hold one managed admission
+  RPC open while another deferred session proceeds, confirm repeated sweeps do
+  not start duplicate delivery for the blocked session, and confirm a later
+  round retries after the blocked worker exits. It must also prove that a stale
+  worker cannot clear a newer deferred generation and that existing native
+  identity remains unchanged.
 
 `test/process.py`, `test/retained-control.py`, `test/receive.py` and
 `test/native-cli.py` run unchanged as regression controls for the launch path.

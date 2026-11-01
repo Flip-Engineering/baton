@@ -40,19 +40,33 @@ account with the host administrator's normal user-manager setup, such as
 The timer uses monotonic `OnBootSec` and `OnUnitInactiveSec` triggers.
 
 The one-shot service sets `TimeoutStartSec` and `TimeoutStopSec` to `infinity`
-and sets no CPU, memory or task limits. `--drain-sweep` uses `Wake.drive_session`
-and `Receive.wake_due`. For detached receiver endpoints, that path returns after
-launching the delivery process. Managed Codex inbox delivery runs its admission
-RPC synchronously through `Delivery.inbox_endpoint_launch` and returns after the
-Codex inbox records acceptance, while the native turn continues under its own
-custody. An unresponsive inbox host can still keep that admission and the sweep
-active. The
-timer waits for the service's inactive transition before starting another run,
-so later sessions in the same database wait for the blocked admission to return.
-A per-session sweep entry is required if one unresponsive endpoint must not delay
-other deferred sessions.
+and sets no CPU, memory or task limits. `--drain-sweep` reads the durable
+deferred-session rows and starts one detached `--drain-sweep-session` child for
+each row. Each child holds a nonblocking sweep lock for its session while it
+calls the existing delivery path. The delivery path takes the ordinary session
+lock and preserves the existing wake claim and native custody checks. Managed
+Codex inbox delivery runs its admission RPC synchronously through
+`Delivery.inbox_endpoint_launch`; an unresponsive inbox host can keep that
+session's child active. A later timer round tries the same per-session lock and
+returns for that session while its child holds the lock. It still starts
+workers for other deferred sessions. If a child or host exits before delivery
+completes, the durable deferred row remains available to the next timer round.
 
 `KillMode=process` keeps systemd stop signaling scoped to the sweep process;
-detached delivery children remain outside that signal action. A host shutdown
-still ends its processes, after which the next user-manager startup runs the
-durable deferred claims again.
+detached session workers and delivery children remain outside that signal
+action. A host shutdown still ends its processes, after which the next
+user-manager startup runs the durable deferred rows again.
+
+## Focused regression
+
+The remote fixture should defer work for two sessions, then make one managed
+Codex admission RPC remain blocked. Confirm that the other session reaches its
+delivery path while the blocked session keeps its original claim and native
+identity. Run overlapping timer and owner sweeps while the first worker is
+blocked; confirm that each later worker for that session exits after its
+nonblocking lock attempt and that no second delivery starts for it. Release the
+admission and confirm the same session completes through the normal receive
+path. In a separate case, end the blocked sweep worker before admission
+completes, then confirm a later timer round retries the still-durable row. Also
+change the deferred generation while an older worker is pending and confirm the
+older worker cannot clear or deliver the newer obligation.
