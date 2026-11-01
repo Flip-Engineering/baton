@@ -177,6 +177,15 @@ def scan_items(
     chunk_start: int | None = None
     brace = paren = brack = 0
     state = "normal"
+    # Inside an item, a character outside this set only advances the scan,
+    # so a run of such characters is passed in one step.
+    token_starts = {token[0] for token in brace_deltas}
+    plain_run = re.compile(
+        "[^" + "".join(re.escape(ch) for ch in sorted(set("/\"'{}()[];") | token_starts)) + "]+"
+    )
+    blank_run = re.compile(r"[ \t\r\n]+")
+    string_stop = re.compile(r'[\\"]')
+    char_stop = re.compile(r"[\\']")
 
     def flush(end: int) -> None:
         nonlocal chunk_start
@@ -186,24 +195,31 @@ def scan_items(
 
     while i < n:
         if state == "line_comment":
-            if text[i] == "\n":
+            end = text.find("\n", i)
+            if end < 0:
+                i = n
+            else:
                 state = "normal"
-            i += 1
+                i = end + 1
             continue
         if state == "block_comment":
-            if text.startswith("*/", i):
-                state = "normal"
-                i += 2
+            end = text.find("*/", i)
+            if end < 0:
+                i = n
             else:
-                i += 1
+                state = "normal"
+                i = end + 2
             continue
         if state in ("string", "char"):
-            quote = '"' if state == "string" else "'"
+            stop = (string_stop if state == "string" else char_stop).search(text, i)
+            if stop is None:
+                i = n
+                continue
+            i = stop.start()
             if text[i] == "\\":
                 i += 2
                 continue
-            if text[i] == quote:
-                state = "normal"
+            state = "normal"
             i += 1
             continue
 
@@ -211,7 +227,7 @@ def scan_items(
 
         # Dialect macros with a net brace effect but no literal brace.
         matched_dialect = False
-        for token, delta in brace_deltas.items():
+        for token, delta in brace_deltas.items() if c in token_starts else ():
             if not text.startswith(token, i):
                 continue
             before = text[i - 1] if i else ""
@@ -286,7 +302,7 @@ def scan_items(
 
         if chunk_start is None:
             if c in " \t\r\n":
-                i += 1
+                i = blank_run.match(text, i).end()
                 continue
             chunk_start = i
 
@@ -329,6 +345,9 @@ def scan_items(
             i += 1
             continue
         i += 1
+        run = plain_run.match(text, i)
+        if run is not None:
+            i = run.end()
 
     flush(n)
     return items
