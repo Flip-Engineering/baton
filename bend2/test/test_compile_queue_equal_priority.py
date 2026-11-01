@@ -192,6 +192,7 @@ class EqualPriorityTests(unittest.TestCase):
                 time.sleep(4)
                 for name in names[1:]:
                     self.request(name)
+                    self.until("%s waiting" % name, lambda: name in self.waiting())
                 self.until("all waiting", lambda: all(name in self.waiting() for name in names))
                 time.sleep(1.5)
                 self.holds[blocker].touch()
