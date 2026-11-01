@@ -2,6 +2,7 @@
 """Submit Linux CI compiler invocations to the installed shared compile queue."""
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,7 @@ CLIENT = '/var/tmp/baton2-compile-queue/compile-queue-runner'
 STATE = '/var/tmp/baton2-compile-queue'
 SCRIPT = str(Path(__file__).resolve())
 EXEC_SCRIPT = str(Path(__file__).resolve().parent / 'compile-cgen-exec.py')
+SERVICE_RUN = str(Path(__file__).resolve().parent / 'service-run.py')
 DIAGNOSTIC_FILE = 'compiler-diagnostics.json'
 
 # These exact names are read by the pinned Bend compiler source or its Bun/JSC
@@ -86,6 +88,13 @@ def output_lock_path(run, output):
 
 def cancellation_marker(run):
     return Path(run) / 'evidence/compile-queue/cancel-all.json'
+
+
+def service_run():
+    spec = importlib.util.spec_from_file_location('baton_service_run', SERVICE_RUN)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def process_identity(pid):
@@ -528,6 +537,12 @@ def submit(config, directory, options, command, key_only=False):
         print(key)
         return 0
 
+    # The queue client is the request owner: the queue treats a token as live
+    # while the client process lives. The client therefore starts in its own
+    # service scope where a user manager answers (service-run.py execs in place,
+    # so the PID and start time that the owner file records are unchanged).
+    # Explicit cancellation by this synchronous caller is separate and unchanged.
+    request['service_record'] = str(directory / 'service')
     child = None
 
     def interrupted(signum, frame):
@@ -550,7 +565,10 @@ def submit(config, directory, options, command, key_only=False):
             write_focused_queue_handoff(config, request, directory, 'submitted')
             with (directory / 'client.stdout').open('wb') as stdout, \
                     (directory / 'client.stderr').open('wb') as stderr:
-                child = subprocess.Popen(argv, stdout=stdout, stderr=stderr)
+                child = subprocess.Popen(
+                    [sys.executable, SERVICE_RUN, '--role', 'queue-client',
+                     '--record', request['service_record'], '--', *argv],
+                    stdout=stdout, stderr=stderr)
             publisher_pid = getattr(child, 'pid', None)
             if publisher_pid is not None:
                 request['publisher_pid'] = publisher_pid
@@ -562,6 +580,17 @@ def submit(config, directory, options, command, key_only=False):
     except InterruptedError as error:
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             signal.signal(sig, signal.SIG_IGN)
+        # The signal alone does not say whether a caller shutdown or a person
+        # asked for it; keep the caller's identity for a later reader.
+        request['interrupt'] = {'signal': error.args[0], 'time_ns': time.time_ns(),
+                                'caller': service_run().identity(os.getpid())}
+        with registry_lock(config['run']):
+            try:
+                current = json.loads((directory / 'request.json').read_text())
+            except (OSError, ValueError):
+                current = dict(request)
+            current['interrupt'] = request['interrupt']
+            write_json_atomic(directory / 'request.json', current)
         # Stop publication before withdrawing the recorded owner token.
         if child is not None and child.poll() is None:
             child.terminate()

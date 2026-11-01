@@ -69,17 +69,17 @@ class QueuePriorityTests(unittest.TestCase):
             return []
         return sorted(path for path in tickets.iterdir() if ".tmp." not in path.name)
 
-    def wait_ticket(self, deadline=30.0):
+    def wait_ticket(self, count=1, deadline=30.0):
         end = time.monotonic() + deadline
         while time.monotonic() < end:
             published = self.published_tickets()
-            if published:
+            if len(published) >= count:
                 return published
             time.sleep(0.02)
-        self.fail("queue request did not publish a scheduling ticket")
+        self.fail("queue requests did not publish %s scheduling tickets" % count)
 
-    def hold_cc(self):
-        lock = (self.state / "cc.lock").open("w")
+    def hold_heavy(self):
+        lock = (self.state / "heavy.lock").open("w")
         self.addCleanup(lock.close)
         fcntl.flock(lock, fcntl.LOCK_EX)
         return lock
@@ -93,26 +93,22 @@ class QueuePriorityTests(unittest.TestCase):
         return self.log.read_text().split()
 
     def test_priority_request_precedes_waiting_default(self):
-        lock = self.hold_cc()
+        lock = self.hold_heavy()
         default = self.request("default")
         self.wait_ticket()
         flip = self.request("flip", priority=9)
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline and len(self.published_tickets()) < 2:
-            time.sleep(0.02)
+        self.wait_ticket(count=2)
         fcntl.flock(lock, fcntl.LOCK_UN)
         self.finish(default, flip)
         self.assertEqual(self.read_order(), ["flip", "default"])
         self.assertEqual(self.published_tickets(), [])
 
     def test_equal_priority_keeps_arrival_order(self):
-        lock = self.hold_cc()
+        lock = self.hold_heavy()
         first = self.request("first", priority=9)
         self.wait_ticket()
         second = self.request("second", priority=9)
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline and len(self.published_tickets()) < 2:
-            time.sleep(0.02)
+        self.wait_ticket(count=2)
         fcntl.flock(lock, fcntl.LOCK_UN)
         self.finish(first, second)
         self.assertEqual(self.read_order(), ["first", "second"])
@@ -136,7 +132,7 @@ class QueuePriorityTests(unittest.TestCase):
                          ["00000000000000000002-unknown"])
 
     def test_killed_supervisor_ticket_is_reaped(self):
-        lock = self.hold_cc()
+        lock = self.hold_heavy()
         blocked = self.request("blocked")
         active = None
         deadline = time.monotonic() + 30

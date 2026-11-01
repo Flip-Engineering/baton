@@ -18,6 +18,18 @@ import traceback
 
 ARCHIVE_SHA = '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4'
 COMPILER_ARCHIVES = {
+    '73f56cb6523cea699cd43664a7231233b0d2076b74bf2be4edb680dc4fd79dcd': {
+        'name': 'Bend 2.0.25 with whole-Baton coordinator C generation optimizations',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': 'c2aa4f7a2a101cdaf470efb6e7fff976b7e740ff',
+        'source_tree': '5900b3789288fbaf0f0daa2e03dd9ca7c1032d34',
+        'source_lock_sha256': 'ff0c2af616658496a345c4c3f7667007805864017b09dcc46a1e2b8f390fa0ab',
+        'source_manifest_sha256': 'dd77368321ae395c18ab2070e8556d813b712122b07f0ed47e7d73792f2a2703',
+        'source_metadata_sha256': '3b6b072bfb8a957bc2181975b710bfac1401135c130de6ebf089c79813ed7025',
+        'source_input_count': 84,
+    },
     '95a6ad2b7798aa4400cc1a78ba61970aab4f749d617323a15a6eabe373be541c': {
         'name': 'Bend 2.0.25 with facts-only unit output retention',
         'official_release_artifact': False,

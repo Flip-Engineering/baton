@@ -4,6 +4,14 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#1250: Complete Claude input evidence with practical hook cost](https://github.com/Flip-Engineering/baton/issues/1250).
+  Root owns the transcript conversion and Read-result query repair. Preserve
+  full-body consumption and native custody binding while reducing repeated
+  copying and normalization of unrelated file reads. Qualify the synthetic
+  stream cases on the homelab, deploy the focused runtime, and verify live
+  delivery. Related: [#1054](https://github.com/Flip-Engineering/baton/issues/1054)
+  and [#1212](https://github.com/Flip-Engineering/baton/issues/1212).
+
 - [#844: Native DeepSeek Harness support](https://github.com/Flip-Engineering/baton/issues/844).
   Launch the official `@deepseek-ai/dsh` 0.2.1-rc.2 headless profile through
   `--profile headless --json`, resume with `--session-id`, and keep the
