@@ -91,6 +91,66 @@ law the_later_token_text_of_equal_numbers_is_not_ahead:
 def the_later_token_text_of_equal_numbers_is_not_ahead():
   {==}
 
+law large_pid_fields_are_ordered_by_digit_count:
+  {Q.admission_ahead(1,"1793353451698186593-999999999999999999",1,"1793353451698186593-1000000000000000000") == True{} : Bool}
+
+def large_pid_fields_are_ordered_by_digit_count():
+  {==}
+
+law a_larger_large_pid_is_not_ahead:
+  {Q.admission_ahead(1,"1793353451698186593-1000000000000000000",1,"1793353451698186593-999999999999999999") == False{} : Bool}
+
+def a_larger_large_pid_is_not_ahead():
+  {==}
+
+law equal_width_large_pid_fields_are_ordered_by_digits:
+  {Q.admission_ahead(1,"1793353451698186593-18446744073709551616",1,"1793353451698186593-18446744073709551617") == True{} : Bool}
+
+def equal_width_large_pid_fields_are_ordered_by_digits():
+  {==}
+
+law zero_fields_are_valid_and_use_token_text_for_equal_numbers:
+  {Q.admission_ahead(1,"0-0",1,"00-00") == True{} : Bool}
+
+def zero_fields_are_valid_and_use_token_text_for_equal_numbers():
+  {==}
+
+law the_later_zero_token_is_not_ahead:
+  {Q.admission_ahead(1,"00-00",1,"0-0") == False{} : Bool}
+
+def the_later_zero_token_is_not_ahead():
+  {==}
+
+law zero_timestamp_is_older_than_a_positive_timestamp:
+  {Q.admission_ahead(1,"000-9999999999999999999",1,"1-0") == True{} : Bool}
+
+def zero_timestamp_is_older_than_a_positive_timestamp():
+  {==}
+
+law leading_zero_pid_fields_use_token_text_for_equal_numbers:
+  {Q.admission_ahead(1,"1793353451698186593-0009",1,"1793353451698186593-9") == True{} : Bool}
+
+def leading_zero_pid_fields_use_token_text_for_equal_numbers():
+  {==}
+
+law equal_numbers_with_leading_zeros_in_both_fields_use_token_text:
+  {Q.admission_ahead(1,"0005-0009",1,"05-09") == True{} : Bool}
+
+def equal_numbers_with_leading_zeros_in_both_fields_use_token_text():
+  {==}
+
+law a_pid_with_non_ascii_digits_is_not_ahead:
+  {Q.admission_ahead(1,"0-٢",1,"1-1") == False{} : Bool}
+
+def a_pid_with_non_ascii_digits_is_not_ahead():
+  {==}
+
+law a_timestamp_with_non_ascii_digits_is_not_ahead:
+  {Q.admission_ahead(1,"０-0",1,"1-1") == False{} : Bool}
+
+def a_timestamp_with_non_ascii_digits_is_not_ahead():
+  {==}
+
 
 law a_token_without_a_pid_is_not_ahead:
   {Q.admission_ahead(1,"1-",1,"1793354324388527269-2337307") == False{} : Bool}

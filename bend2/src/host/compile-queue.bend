@@ -1662,7 +1662,7 @@ def waiters_ticket_higher(+text: String, +token: String, +priority: U32) -> IO(B
 # two non-empty runs of decimal digits joined by one hyphen has no age and is never ahead by
 # age; a ticket with my own token is mine.
 type TicketAge is Data:
-  TicketAge{valid: Bool, started: Nat, pid: Nat, text: String}
+  TicketAge{valid: Bool, started: String, pid: String, text: String}
 
 def token_digits_rest(s: String) -> Bool:
   match s:
@@ -1674,18 +1674,37 @@ def token_digits(s: String) -> Bool:
     case SNil{}: False{}
     case SCon{+c, rest}: Bool.and(Char.is_digit(c), token_digits_rest(rest))
 
-def token_nat(text: String, acc: Nat) -> Nat:
+def token_decimal_trim(text: String) -> String:
   match text:
-    case SNil{}: acc
-    case SCon{+c, rest}: token_nat(rest, Nat.add(Nat.mul(acc, 10n), U32.to_nat(U32.sub(Char.to_u32(c), 48))))
+    case SNil{}: SNil{}
+    case SCon{+c, +rest}:
+      Bool.pick(String, Char.is_eq(c, Char.from_u32(48)),
+        token_decimal_trim(rest), SCon{c, rest})
+
+# Compare digit counts by walking the strings together. Work is proportional to token length.
+def token_decimal_width(a: String, b: String) -> Cmp:
+  match a b:
+    case SNil{} SNil{}: EQ{}
+    case SNil{} SCon{c, rest}: LT{}
+    case SCon{c, rest} SNil{}: GT{}
+    case SCon{ca, ra} SCon{cb, rb}: token_decimal_width(ra, rb)
+
+def token_decimal_order_width(a: String, b: String, width: Cmp) -> Cmp:
+  match width:
+    case LT{}: LT{}
+    case EQ{}: String.order(a, b)
+    case GT{}: GT{}
+
+def token_decimal_order(+a: String, +b: String) -> Cmp:
+  token_decimal_order_width(a, b, token_decimal_width(a, b))
 
 def token_age_parts(parts: List<&2,String>, +token: String) -> TicketAge:
   match parts:
     case +started <> +pid <> Nil{}:
       Bool.pick(TicketAge, Bool.and(token_digits(started), token_digits(pid)),
-        TicketAge{True{}, token_nat(started, 0n), token_nat(pid, 0n), token},
-        TicketAge{False{}, 0n, 0n, token})
-    case other: TicketAge{False{}, 0n, 0n, token}
+        TicketAge{True{}, token_decimal_trim(started), token_decimal_trim(pid), token},
+        TicketAge{False{}, "", "", token})
+    case other: TicketAge{False{}, "", "", token}
 
 def token_age(+token: String) -> TicketAge:
   token_age_parts(String.split(token, Char.from_u32(45)), token)
@@ -1696,10 +1715,10 @@ def age_before(a: TicketAge, b: TicketAge) -> Bool:
       match b:
         case TicketAge{b_valid, +b_started, +b_pid, b_text}:
           Bool.and(Bool.and(a_valid, b_valid),
-            Bool.or(Nat.is_lt(a_started, b_started),
-              Bool.and(Nat.is_eq(a_started, b_started),
-                Bool.or(Nat.is_lt(a_pid, b_pid),
-                  Bool.and(Nat.is_eq(a_pid, b_pid), String.is_lt(a_text, b_text))))))
+            Bool.or(Cmp.is_lt(token_decimal_order(a_started, b_started)),
+              Bool.and(Tx.str_eq(a_started, b_started),
+                Bool.or(Cmp.is_lt(token_decimal_order(a_pid, b_pid)),
+                  Bool.and(Tx.str_eq(a_pid, b_pid), String.is_lt(a_text, b_text))))))
 
 def admission_ahead(+other_priority: U32, +other_token: String, +my_priority: U32, +my_token: String) -> Bool:
   Bool.and(Bool.not(Tx.str_eq(other_token, my_token)),
