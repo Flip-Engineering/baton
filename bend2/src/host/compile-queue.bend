@@ -1655,6 +1655,89 @@ def waiters_ticket_higher(+text: String, +token: String, +priority: U32) -> IO(B
         IO.pure(Bool, U32.is_eq(alive, 1)),
       IO.pure(Bool, False{}))
 
+# Admission orders equal priorities by age. A ticket is ahead of mine when its priority is
+# greater, or when the priority is equal and the ticket is older. The age is the token
+# "<started_ns>-<pid>" that the supervisor wrote into its ticket, compared as numbers: first
+# started_ns, then pid, then the token text, which makes the order total. A token that is not
+# two non-empty runs of decimal digits joined by one hyphen has no age and is never ahead by
+# age; a ticket with my own token is mine.
+type TicketAge is Data:
+  TicketAge{valid: Bool, started: String, pid: String, text: String}
+
+def token_digits_rest(s: String) -> Bool:
+  match s:
+    case SNil{}: True{}
+    case SCon{+c, rest}: Bool.and(Char.is_digit(c), token_digits_rest(rest))
+
+def token_digits(s: String) -> Bool:
+  match s:
+    case SNil{}: False{}
+    case SCon{+c, rest}: Bool.and(Char.is_digit(c), token_digits_rest(rest))
+
+def token_decimal_trim(text: String) -> String:
+  match text:
+    case SNil{}: SNil{}
+    case SCon{+c, +rest}:
+      Bool.pick(String, Char.is_eq(c, Char.from_u32(48)),
+        token_decimal_trim(rest), SCon{c, rest})
+
+# Compare digit counts by walking the strings together. Work is proportional to token length.
+def token_decimal_width(a: String, b: String) -> Cmp:
+  match a b:
+    case SNil{} SNil{}: EQ{}
+    case SNil{} SCon{c, rest}: LT{}
+    case SCon{c, rest} SNil{}: GT{}
+    case SCon{ca, ra} SCon{cb, rb}: token_decimal_width(ra, rb)
+
+def token_decimal_order_width(a: String, b: String, width: Cmp) -> Cmp:
+  match width:
+    case LT{}: LT{}
+    case EQ{}: String.order(a, b)
+    case GT{}: GT{}
+
+def token_decimal_order(+a: String, +b: String) -> Cmp:
+  token_decimal_order_width(a, b, token_decimal_width(a, b))
+
+def token_age_parts(parts: List<&2,String>, +token: String) -> TicketAge:
+  match parts:
+    case +started <> +pid <> Nil{}:
+      Bool.pick(TicketAge, Bool.and(token_digits(started), token_digits(pid)),
+        TicketAge{True{}, token_decimal_trim(started), token_decimal_trim(pid), token},
+        TicketAge{False{}, "", "", token})
+    case other: TicketAge{False{}, "", "", token}
+
+def token_age(+token: String) -> TicketAge:
+  token_age_parts(String.split(token, Char.from_u32(45)), token)
+
+def age_before(a: TicketAge, b: TicketAge) -> Bool:
+  match a:
+    case TicketAge{a_valid, +a_started, +a_pid, a_text}:
+      match b:
+        case TicketAge{b_valid, +b_started, +b_pid, b_text}:
+          Bool.and(Bool.and(a_valid, b_valid),
+            Bool.or(Cmp.is_lt(token_decimal_order(a_started, b_started)),
+              Bool.and(Tx.str_eq(a_started, b_started),
+                Bool.or(Cmp.is_lt(token_decimal_order(a_pid, b_pid)),
+                  Bool.and(Tx.str_eq(a_pid, b_pid), String.is_lt(a_text, b_text))))))
+
+def admission_ahead(+other_priority: U32, +other_token: String, +my_priority: U32, +my_token: String) -> Bool:
+  Bool.and(Bool.not(Tx.str_eq(other_token, my_token)),
+    Bool.or(U32.is_gt(other_priority, my_priority),
+      Bool.and(U32.is_eq(other_priority, my_priority), age_before(token_age(other_token), token_age(my_token)))))
+
+# A live ticket that is ahead of mine. The scan of the admission queue asks this; the scan of the
+# flock queue (waiters_ticket_higher) keeps strict priority and the kernel's arrival order.
+def admission_ticket_ahead(+text: String, +token: String, +priority: U32) -> IO(Bool):
+  do IO<Bool>:
+    contender : Bool <- IO.pure(Bool,
+      admission_ahead(status_number(field(text, "priority")), field(text, "token"), priority, token))
+    Bool.pick(IO(Bool), contender,
+      do IO<Bool>:
+        alive : U32 <- IO.try(U32, L.CompileQueueLifecycle.alive(
+          status_number(field(text, "pid")), field(text, "starttime")))
+        IO.pure(Bool, U32.is_eq(alive, 1)),
+      IO.pure(Bool, False{}))
+
 def waiters_scan_one(read: Result<&1,&1,U32 & String,String>, +token: String, +priority: U32) -> IO(Bool):
   match read:
     case Fail{error}: IO.pure(Bool, False{})
@@ -1769,7 +1852,7 @@ def admission_waiter_priority(read: Result<&1,&1,U32 & String,String>, state: St
     case Fail{error}: IO.pure(Bool,False{})
     case Done{+text}:
       do IO<Bool>:
-        higher : Bool <- waiters_ticket_higher(text,token,priority)
+        higher : Bool <- admission_ticket_ahead(text,token,priority)
         Bool.pick(IO(Bool),higher,
           admission_waiter_fits(state,kind,field(text,"key"),field(text,"history_group"),stats,available,total,legacy_pid),
           IO.pure(Bool,False{}))
