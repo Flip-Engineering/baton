@@ -76,7 +76,10 @@ export class Fragments {
 }
 
 export function* chunks(range: Range): Generator<string> {
-  const fd = fs.openSync(range.file, "r"), buffer = Buffer.allocUnsafe(65536), decoder = new StringDecoder("utf8");
+  // Most ranges are static image nodes of about 100 bytes; a range shorter than
+  // 64 KiB is read into a buffer of its own length.
+  const fd = fs.openSync(range.file, "r"), buffer = Buffer.allocUnsafe(Math.min(65536, range.bytes));
+  const decoder = new StringDecoder("utf8");
   const hash = createHash("sha256");
   let read = 0;
   try {
