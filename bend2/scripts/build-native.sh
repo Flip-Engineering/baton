@@ -169,6 +169,25 @@ build_native_shards() {
   fi
   native_compile cc python3 "$root/tools/cgen-clang-parallel/build_and_measure.py" "$@"
 }
+# A test fixture runs its generated main, so its shards link no native entry.
+# The arguments are compile flags that every translation unit needs.
+build_fixture_shards() {
+  case "$output" in
+    /*) native_binary=$output ;;
+    *) native_binary="$root/$output" ;;
+  esac
+  set -- --source "$output.c" \
+    --outdir "$native_binary.parallel" \
+    --binary "$native_binary" \
+    --shards 4 --jobs 4 --cc "${CC:-clang}" \
+    --cflag=-O1 --cflag=-pthread --cflag=-I"$root/bend2/src/host" "$@" \
+    --link-flags="-O1 -pthread -lsqlite3 -lm${extra_libs:+ $extra_libs}" \
+    --max-aggregate-rss-mb 0 --build-only
+  if [ -n "${BATON2_CCACHE:-}" ]; then
+    set -- "$@" --ccache "$BATON2_CCACHE"
+  fi
+  native_compile cc python3 "$root/tools/cgen-clang-parallel/build_and_measure.py" "$@"
+}
 if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
   if [ "$router" = 1 ]; then
     build_native_shards -DBATON2_NATIVE_RECEIVER_ROUTER
@@ -185,6 +204,17 @@ else
     */bend2/tests/storage.bend) storage_test_flag="-DBATON_STORAGE_TEST_PROC" ;;
     */bend2/tests/storage-cargo.bend) storage_test_flag="-DBATON_STORAGE_CARGO_TEST -DBATON_STORAGE_TEST_PROC" ;;
   esac
-  native_compile cc "${CC:-clang}" -O1 -pthread -I "$root/bend2/src/host" $storage_test_flag "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
+  case "$entry_path" in
+    "$root"/bend2/test/*.bend|"$root"/bend2/tests/*.bend)
+      set --
+      for flag in $storage_test_flag; do
+        set -- "$@" "--cflag=$flag"
+      done
+      build_fixture_shards "$@"
+      ;;
+    *)
+      native_compile cc "${CC:-clang}" -O1 -pthread -I "$root/bend2/src/host" $storage_test_flag "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
+      ;;
+  esac
 fi
 printf '%s\n' "$output"
