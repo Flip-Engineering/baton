@@ -256,10 +256,13 @@ def query_through_busy(+db: String, +sql: String) -> IO(Result<&1,&1,U32 & Strin
 # only by a lock holder when no input is owed and no retained attempt is
 # recorded live. Deleted when a recorded read clears every owed input, or
 # when an admitted stop resolves the obligation.
+# The drain-deferred row remains as an inactive generation high-water after a
+# sweep clears it. This prevents a delayed worker from matching a later deferral.
 def claim_schema_sql() -> String:
   "CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);"
   ++ "CREATE TABLE IF NOT EXISTS wake_claim_tickets (session TEXT NOT NULL REFERENCES sessions(id), directory TEXT NOT NULL, owner TEXT NOT NULL, generation INTEGER NOT NULL, PRIMARY KEY(session,directory));"
-  ++ "CREATE TABLE IF NOT EXISTS drain_deferred (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), generation INTEGER NOT NULL);"
+  ++ "CREATE TABLE IF NOT EXISTS drain_deferred (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), generation INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)));"
+  ++ "INSERT OR IGNORE INTO drain_deferred(session,generation,active) SELECT session,generation,1 FROM wake_claims WHERE state='drain-deferred';"
 
 def claim_sql(+session: String, +owner: String) -> String:
   "INSERT OR REPLACE INTO wake_claims(session,state,owner,generation) VALUES(" ++ C.q(session) ++ ",'claimed'," ++ C.q(owner) ++ ",coalesce((SELECT generation FROM wake_claims WHERE session=" ++ C.q(session) ++ "),0)+1);"
@@ -296,17 +299,17 @@ def delete_ticket_sql(+session: String, +directory: String) -> String:
 def defer_claim_sql(+session: String, +owner: String, +generation: String) -> String:
   "BEGIN IMMEDIATE;"
   ++ "UPDATE wake_claims SET state='drain-deferred' WHERE session=" ++ C.q(session) ++ " AND owner=" ++ C.q(owner) ++ " AND generation=CAST(" ++ C.q(generation) ++ " AS INTEGER);"
-  ++ "INSERT INTO drain_deferred(session,generation) SELECT " ++ C.q(session) ++ ",coalesce((SELECT generation FROM drain_deferred WHERE session=" ++ C.q(session) ++ "),0)+1 WHERE changes()=1 ON CONFLICT(session) DO UPDATE SET generation=excluded.generation;"
+  ++ "INSERT INTO drain_deferred(session,generation,active) SELECT " ++ C.q(session) ++ ",1,1 WHERE changes()=1 ON CONFLICT(session) DO UPDATE SET generation=generation+1,active=1;"
   ++ "COMMIT;"
 
 def deferred_sessions_sql() -> String:
-  "SELECT session || char(9) || generation FROM drain_deferred ORDER BY session;"
+  "SELECT hex(session) || char(9) || generation FROM drain_deferred WHERE active=1 ORDER BY session;"
 
 def deferred_record_sql(+session: String) -> String:
-  "SELECT coalesce((SELECT CAST(generation AS TEXT) FROM drain_deferred WHERE session=" ++ C.q(session) ++ "),'');"
+  "SELECT coalesce((SELECT CAST(generation AS TEXT) FROM drain_deferred WHERE session=" ++ C.q(session) ++ " AND active=1),'');"
 
 def clear_drain_deferred_sql(+session: String, +generation: String) -> String:
-  "DELETE FROM drain_deferred WHERE session=" ++ C.q(session) ++ " AND generation=CAST(" ++ C.q(generation) ++ " AS INTEGER);"
+  "UPDATE drain_deferred SET active=0 WHERE session=" ++ C.q(session) ++ " AND generation=CAST(" ++ C.q(generation) ++ " AS INTEGER) AND active=1;"
 
 # Stale execution metadata recovery. When host custody observes the recorded
 # attempt dead, the takeover marks its row exited with a fixed owner-death
@@ -443,7 +446,7 @@ def claim_sql_writes_a_claimed_row(session,owner):
   {==}
 
 law claim_schema_creates_the_claim_table:
-  {claim_schema_sql() == "CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);" ++ "CREATE TABLE IF NOT EXISTS wake_claim_tickets (session TEXT NOT NULL REFERENCES sessions(id), directory TEXT NOT NULL, owner TEXT NOT NULL, generation INTEGER NOT NULL, PRIMARY KEY(session,directory));" ++ "CREATE TABLE IF NOT EXISTS drain_deferred (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), generation INTEGER NOT NULL);" : String}
+  {claim_schema_sql() == "CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);" ++ "CREATE TABLE IF NOT EXISTS wake_claim_tickets (session TEXT NOT NULL REFERENCES sessions(id), directory TEXT NOT NULL, owner TEXT NOT NULL, generation INTEGER NOT NULL, PRIMARY KEY(session,directory));" ++ "CREATE TABLE IF NOT EXISTS drain_deferred (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), generation INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)));" ++ "INSERT OR IGNORE INTO drain_deferred(session,generation,active) SELECT session,generation,1 FROM wake_claims WHERE state='drain-deferred';" : String}
 
 def claim_schema_creates_the_claim_table():
   {==}
@@ -461,15 +464,29 @@ law defer_names_the_exact_claim_generation:
   for session: String
   for owner: String
   for generation: String
-  {defer_claim_sql(session,owner,generation) == "BEGIN IMMEDIATE;" ++ "UPDATE wake_claims SET state='drain-deferred' WHERE session=" ++ C.q(session) ++ " AND owner=" ++ C.q(owner) ++ " AND generation=CAST(" ++ C.q(generation) ++ " AS INTEGER);" ++ "INSERT INTO drain_deferred(session,generation) SELECT " ++ C.q(session) ++ ",coalesce((SELECT generation FROM drain_deferred WHERE session=" ++ C.q(session) ++ "),0)+1 WHERE changes()=1 ON CONFLICT(session) DO UPDATE SET generation=excluded.generation;" ++ "COMMIT;" : String}
+  {defer_claim_sql(session,owner,generation) == "BEGIN IMMEDIATE;" ++ "UPDATE wake_claims SET state='drain-deferred' WHERE session=" ++ C.q(session) ++ " AND owner=" ++ C.q(owner) ++ " AND generation=CAST(" ++ C.q(generation) ++ " AS INTEGER);" ++ "INSERT INTO drain_deferred(session,generation,active) SELECT " ++ C.q(session) ++ ",1,1 WHERE changes()=1 ON CONFLICT(session) DO UPDATE SET generation=generation+1,active=1;" ++ "COMMIT;" : String}
 
 def defer_names_the_exact_claim_generation(session,owner,generation):
   {==}
 
 law the_sweep_reads_only_deferred_claims:
-  {deferred_sessions_sql() == "SELECT session || char(9) || generation FROM drain_deferred ORDER BY session;" : String}
+  {deferred_sessions_sql() == "SELECT hex(session) || char(9) || generation FROM drain_deferred WHERE active=1 ORDER BY session;" : String}
 
 def the_sweep_reads_only_deferred_claims():
+  {==}
+
+law the_sweep_backfills_legacy_deferred_claims:
+  {String.contains(claim_schema_sql(),"INSERT OR IGNORE INTO drain_deferred(session,generation,active) SELECT session,generation,1 FROM wake_claims WHERE state='drain-deferred';") == True{} : Bool}
+
+def the_sweep_backfills_legacy_deferred_claims():
+  {==}
+
+law clearing_a_deferred_generation_retains_its_high_water:
+  for session: String
+  for generation: String
+  {clear_drain_deferred_sql(session,generation) == "UPDATE drain_deferred SET active=0 WHERE session=" ++ C.q(session) ++ " AND generation=CAST(" ++ C.q(generation) ++ " AS INTEGER) AND active=1;" : String}
+
+def clearing_a_deferred_generation_retains_its_high_water():
   {==}
 
 law release_inserts_no_row:

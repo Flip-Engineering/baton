@@ -6519,7 +6519,7 @@ static int br_monitor_checkpoint(BatonProcessCall *call,BatonRetained *retained)
   return error;
 }
 
-#if defined(CID_SESSIONLOCK_CANONICAL) || defined(CID_SESSIONLOCK_TRY_ACQUIRE) || defined(CID_SESSIONLOCK_WAIT_ACQUIRE) || defined(CID_SESSIONLOCK_RELEASE) || defined(CID_SESSIONLOCK_EXECUTABLE) || defined(CID_SESSIONLOCK_RECOVER_OBSERVER)
+#if defined(CID_SESSIONLOCK_CANONICAL) || defined(CID_SESSIONLOCK_TRY_ACQUIRE) || defined(CID_SESSIONLOCK_TRY_ACQUIRE_DRAIN_SWEEP) || defined(CID_SESSIONLOCK_WAIT_ACQUIRE) || defined(CID_SESSIONLOCK_RELEASE) || defined(CID_SESSIONLOCK_EXECUTABLE) || defined(CID_SESSIONLOCK_RECOVER_OBSERVER)
 static int br_adopt_orphan(BatonProcessCall *call,const char *directory,int lock) {
   int error=br_admission_verify(directory,call->database,-1);
   BrManifest manifest={0};
@@ -6843,15 +6843,19 @@ static void baton_session_lock_call(IoWork *w) {
   char *key=br_owner_key((uint64_t)info.st_dev,(uint64_t)info.st_ino);
   if(!key) {free(directory);call->error=ENOMEM;return;}
   size_t length=strlen(call->session);
-  char *suffix=malloc(7+length*2);
+  /* The drain-sweep purpose has a separate path namespace from session locks. */
+  const char *prefix=call->kind==7?".dr-":".lock-";
+  size_t prefix_length=strlen(prefix);
+  if(length>(SIZE_MAX-prefix_length-1)/2) {free(directory);free(key);call->error=ENOMEM;return;}
+  char *suffix=malloc(prefix_length+length*2+1);
   if(!suffix) {free(directory);free(key);call->error=ENOMEM;return;}
-  memcpy(suffix,".lock-",6);
+  memcpy(suffix,prefix,prefix_length);
   for(size_t i=0;i<length;i++) {
     unsigned char c=(unsigned char)call->session[i];
-    suffix[6+i*2]="0123456789abcdef"[c>>4];
-    suffix[7+i*2]="0123456789abcdef"[c&15];
+    suffix[prefix_length+i*2]="0123456789abcdef"[c>>4];
+    suffix[prefix_length+1+i*2]="0123456789abcdef"[c&15];
   }
-  suffix[6+length*2]=0;
+  suffix[prefix_length+length*2]=0;
   char *path=br_ipc_path(directory,key,suffix);
   free(suffix);free(key);free(directory);
   if(!path) {call->error=ENOMEM;return;}
@@ -6872,7 +6876,7 @@ static Term baton_session_lock_pack(Env e, IoWork *w) {
   BatonSessionLock *call=(BatonSessionLock *)w->data;
   Term value=call->kind==1 ? term_pak(CID_UNIT,0) : (Term)call->handle;
   if((call->kind==2 || call->kind==4) && !call->error) value=io_str(e,call->path,strlen(call->path));
-  if(call->kind==3) {
+  if(call->kind==3 || call->kind==7) {
     if(call->error==EWOULDBLOCK || call->error==EAGAIN) {call->error=0;value=term_pak(CID_NONE,0);}
     else if(!call->error) value=io_box(e,CID_SOME,(Term)call->handle);
   }
@@ -6909,7 +6913,7 @@ static Term baton_session_lock_begin(Env e, Term *f, IoWork *w, int kind) {
   if(!call) return io_fail(e,ENOMEM,NULL);
   call->kind=kind;
   call->observer_life=-1;
-  if(kind==3 || kind==5 || kind==6) {
+  if(kind==3 || kind==5 || kind==6 || kind==7) {
     u64 dn=0,sn=0;
     call->database=io_cstr(e,f[0],&dn);
     call->session=io_cstr(e,f[1],&sn);
@@ -6945,6 +6949,10 @@ static void __attribute__((constructor)) baton_session_lock_use_canonical(void) 
 #ifdef CID_SESSIONLOCK_TRY_ACQUIRE
 static Term baton_session_lock_try_acquire(Env e,Term *f,IoWork *w) {return baton_session_lock_begin(e,f,w,3);}
 static void __attribute__((constructor)) baton_session_lock_use_try_acquire(void) {io_eff(CID_SESSIONLOCK_TRY_ACQUIRE,baton_session_lock_try_acquire,0);}
+#endif
+#ifdef CID_SESSIONLOCK_TRY_ACQUIRE_DRAIN_SWEEP
+static Term baton_session_lock_try_acquire_drain_sweep(Env e,Term *f,IoWork *w) {return baton_session_lock_begin(e,f,w,7);}
+static void __attribute__((constructor)) baton_session_lock_use_try_acquire_drain_sweep(void) {io_eff(CID_SESSIONLOCK_TRY_ACQUIRE_DRAIN_SWEEP,baton_session_lock_try_acquire_drain_sweep,0);}
 #endif
 #ifdef CID_SESSIONLOCK_WAIT_ACQUIRE
 static Term baton_session_lock_wait_acquire(Env e,Term *f,IoWork *w) {return baton_session_lock_begin(e,f,w,6);}

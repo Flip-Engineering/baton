@@ -68,5 +68,11 @@ nonblocking lock attempt and that no second delivery starts for it. Release the
 admission and confirm the same session completes through the normal receive
 path. In a separate case, end the blocked sweep worker before admission
 completes, then confirm a later timer round retries the still-durable row. Also
-change the deferred generation while an older worker is pending and confirm the
-older worker cannot clear or deliver the newer obligation.
+confirm schema preflight migrates a legacy `wake_claims` row in the
+`drain-deferred` state into the deferred-session table. Clear and re-defer the
+same session while an older worker is pending; confirm its newer generation
+exceeds the retained high-water generation and the older worker cannot clear or
+deliver the newer obligation. Confirm the host's `.dr-` sweep lock path stays
+distinct from the `.lock-` receiver lock for session IDs containing tabs,
+newlines, or either path prefix, and that spawned receiver processes do not
+retain the sweep lock descriptor after exec.
