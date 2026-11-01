@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -200,6 +201,15 @@ def safe() -> U32:
 
     def test_admission_scheduling(self):
         script = ROOT / 'bend2/test/compiler/admission_scheduling.ts'
+        run = subprocess.run([self.bun, '--smol', str(script), str(ROOT)],
+                             capture_output=True, text=True, env={
+                                 **os.environ, 'BEND_COMPILER_SOURCE': str(SOURCE),
+                                 'BEND_NO_TELEMETRY': '1'})
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'resident() reads /proc statm and status files on Linux')
+    def test_resident_statm(self):
+        script = ROOT / 'bend2/test/compiler/resident_statm.ts'
         run = subprocess.run([self.bun, '--smol', str(script), str(ROOT)],
                              capture_output=True, text=True, env={
                                  **os.environ, 'BEND_COMPILER_SOURCE': str(SOURCE),
