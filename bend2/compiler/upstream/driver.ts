@@ -250,6 +250,8 @@ export async function emit(program: Prepared, output: string): Promise<void> {
   try {
     await Comp.compile_checked_to(program.directory, chunk => fs.writeFileSync(fd, chunk), {
       emit: async jobs => {
+        // The records of earlier emissions are written before these jobs read the cache.
+        await cache.settle();
         const accepted = new Map<string, Fact.Emission<Fragment>>();
         const missing = jobs.filter(job => {
           const value = cache.get(job);
@@ -265,8 +267,10 @@ export async function emit(program: Prepared, output: string): Promise<void> {
           const complete = (async () => {
             // A worker that fails a unit is collected with the others when emission ends.
             const unit = await worker.emit(job, snapshot, digest);
-            pool.put(worker);
-            cache.put(job, unit.data);
+            // put() resolves when the cache has room for another pending record; until
+            // then the unit keeps its worker.
+            try { await cache.put(job, unit.data); }
+            finally { pool.put(worker); }
             return { value: unit.value, profile: { peak: unit.growth, metadata: unit.metadata } };
           })();
           return { pid: () => worker.pid, metadata: () => worker.metadata, complete };
@@ -274,8 +278,11 @@ export async function emit(program: Prepared, output: string): Promise<void> {
         for (const value of emitted) accepted.set(value.key, value);
         return jobs.map(job => accepted.get(job.key)!);
       },
-      end_phase: async () => { fs.appendFileSync(observations, JSON.stringify({ event: "phase.end",
-        at: new Date().toISOString(), memory: process.memoryUsage() }) + "\n"); },
+      end_phase: async () => {
+        await cache.settle();
+        fs.appendFileSync(observations, JSON.stringify({ event: "phase.end",
+          at: new Date().toISOString(), memory: process.memoryUsage() }) + "\n");
+      },
     });
   } catch (error) { failure = error; }
   try { await pool.close(); }

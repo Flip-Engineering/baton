@@ -12,13 +12,15 @@ const source = process.env.BEND_COMPILER_SOURCE ?? path.join(root, "bend2/compil
 const directory = process.argv[3] ?? fs.mkdtempSync(path.join(os.tmpdir(), "bend-cache-storage-"));
 const retained = process.argv[3] !== undefined;
 fs.mkdirSync(directory, { recursive: true });
-const original = { ...fs };
+const original = { ...fs }, promises = fs.promises;
 let fault: ((name: string, args: any[]) => void) | undefined;
-const intercepted = Object.fromEntries(Object.entries(original).map(([name, value]) => [name,
-  typeof value === "function" ? function(...args: any[]) {
-    fault?.(name, args);
-    return Reflect.apply(value, original, args);
+const intercept = (functions: Record<string, any>, prefix: string) => Object.fromEntries(Object.entries(functions)
+  .map(([name, value]) => [name, typeof value === "function" ? function(...args: any[]) {
+    fault?.(prefix + name, args);
+    return Reflect.apply(value, functions, args);
   } : value]));
+// The cache writes through fs.promises; a fault sees those calls as "promises.<name>".
+const intercepted = { ...intercept(original, ""), promises: intercept(promises, "promises.") };
 mock.module("node:fs", () => ({ ...intercepted, default: intercepted }));
 const { UnitCache } = await import(pathToFileURL(path.join(source, "unit-cache.ts")).href);
 const Fact = await import(pathToFileURL(path.join(source, "facts.ts")).href);
@@ -61,27 +63,27 @@ function injected(code: string, syscall: string, file: string): NodeJS.ErrnoExce
 }
 
 const results: { test: string; status: string; error?: string }[] = [];
-async function test(name: string, run: () => void): Promise<void> {
-  try { run(); results.push({ test: name, status: "passed" }); }
+async function test(name: string, run: () => void | Promise<void>): Promise<void> {
+  try { await run(); results.push({ test: name, status: "passed" }); }
   catch (error) { results.push({ test: name, status: "failed", error: String(error) }); }
   finally { fault = undefined; }
 }
 
 try {
-  for (const operation of ["copy", "metadata", "rename"]) await test("failed " + operation + " releases its staging", () => {
+  for (const operation of ["copy", "metadata", "rename"]) await test("failed " + operation + " releases its staging", async () => {
     const f = fixture(operation); let observed = false;
     fault = (name, args) => {
       const target = String(args[operation === "metadata" ? 0 : 1]);
-      if (operation === "copy" && name === "linkSync" && target.includes(".write-")) {
+      if (operation === "copy" && name === "promises.link" && target.includes(".write-")) {
         throw injected("EXDEV", "link", target);
       }
-      if (!observed && ((operation === "copy" && name === "copyFileSync" && target.includes(".write-"))
-        || (operation === "metadata" && name === "writeFileSync" && target.includes(".write-") && target.endsWith("metadata.json"))
-        || (operation === "rename" && name === "renameSync" && String(args[0]).includes(".write-")))) {
+      if (!observed && ((operation === "copy" && name === "promises.copyFile" && target.includes(".write-"))
+        || (operation === "metadata" && name === "promises.writeFile" && target.includes(".write-") && target.endsWith("metadata.json"))
+        || (operation === "rename" && name === "promises.rename" && String(args[0]).includes(".write-")))) {
         observed = true; throw injected("ENOSPC", name, target);
       }
     };
-    assert.doesNotThrow(() => f.cache.put(f.job, f.data));
+    await f.cache.put(f.job, f.data); await f.cache.settle();
     assert.ok(observed, "the selected filesystem operation actually failed");
     assert.deepEqual(entries(f.cache.root).filter(name => path.basename(name).startsWith(".write-")), []);
     assert.deepEqual(entries(f.cache.root), [], "failed publication releases empty cache directories");
@@ -89,8 +91,8 @@ try {
     assert.equal(fs.statSync(path.join(f.fragment, "code")).nlink, 1);
   });
 
-  await test("evicted unit directory is a cache miss", () => {
-    const f = fixture("directory-race"); f.cache.put(f.job, f.data); let observed = false;
+  await test("evicted unit directory is a cache miss", async () => {
+    const f = fixture("directory-race"); await f.cache.put(f.job, f.data); await f.cache.settle(); let observed = false;
     fault = (name, args) => {
       if (!observed && name === "opendirSync" && path.dirname(String(args[0])) !== path.dirname(f.cache.root)) {
         observed = true; fs.rmSync(String(args[0]), { recursive: true });
@@ -99,32 +101,32 @@ try {
     assert.equal(f.cache.get(f.job), undefined); assert.ok(observed);
   });
 
-  await test("existing variant removed during publication preserves emitted output", () => {
-    const f = fixture("publication-race"); f.cache.put(f.job, f.data); let observed = false;
+  await test("existing variant removed during publication preserves emitted output", async () => {
+    const f = fixture("publication-race"); await f.cache.put(f.job, f.data); await f.cache.settle(); let observed = false;
     fault = (name, args) => {
       const file = String(args[0]);
-      if (!observed && name === "readFileSync" && file.startsWith(f.cache.root) && file.endsWith("metadata.json")) {
+      if (!observed && name === "promises.readFile" && file.startsWith(f.cache.root) && file.endsWith("metadata.json")) {
         observed = true; fs.rmSync(path.dirname(file), { recursive: true });
       }
     };
-    assert.doesNotThrow(() => f.cache.put(f.job, f.data)); assert.ok(observed);
+    await f.cache.put(f.job, f.data); await f.cache.settle(); assert.ok(observed);
     assert.equal(fs.readFileSync(path.join(f.fragment, "code"), "utf8"), f.code);
   });
 
-  await test("observation storage failure preserves cache operations", () => {
+  await test("observation storage failure preserves cache operations", async () => {
     const f = fixture("observation"); let observed = false;
     fault = (name, args) => {
       if (!observed && name === "appendFileSync" && String(args[0]).endsWith("unit-cache.jsonl")) {
         observed = true; throw injected("ENOSPC", "write", String(args[0]));
       }
     };
-    assert.doesNotThrow(() => f.cache.put(f.job, f.data)); assert.ok(observed);
+    await f.cache.put(f.job, f.data); await f.cache.settle(); assert.ok(observed);
     const restored = f.cache.get(f.job); assert.ok(restored);
     assert.equal(fs.readFileSync(path.join(restored.result.code.directory, "code"), "utf8"), f.code);
   });
 
-  await test("checked input failures preserve their cause", () => {
-    const f = fixture("checked-input", true); f.cache.put(f.job, f.data);
+  await test("checked input failures preserve their cause", async () => {
+    const f = fixture("checked-input", true); await f.cache.put(f.job, f.data); await f.cache.settle();
     const cause = injected("EIO", "open", f.body); let observed = false;
     fault = (name, args) => {
       if (name === "openSync" && String(args[0]) === f.body) { observed = true; throw cause; }
@@ -132,12 +134,13 @@ try {
     assert.throws(() => f.cache.get(f.job), error => error === cause); assert.ok(observed);
   });
 
-  await test("compiler invariant failures preserve their cause", () => {
+  await test("compiler invariant failures preserve their cause", async () => {
     const f = fixture("invariant"); const cause = new Error("compiler invariant fixture"); let observed = false;
     fault = (name, args) => {
-      if (name === "mkdirSync" && String(args[0]).startsWith(f.cache.root)) { observed = true; throw cause; }
+      if (name === "promises.mkdir" && String(args[0]).startsWith(f.cache.root)) { observed = true; throw cause; }
     };
-    assert.throws(() => f.cache.put(f.job, f.data), error => error === cause); assert.ok(observed);
+    await f.cache.put(f.job, f.data);
+    await assert.rejects(f.cache.settle(), error => error === cause); assert.ok(observed);
   });
   fs.writeFileSync(path.join(directory, "results.json"), JSON.stringify(results, null, 2));
   for (const result of results) console.log(JSON.stringify(result));

@@ -20,6 +20,13 @@ type Variant = { scope: string; data: Omit<UnitData, "fragment" | "reads"> & {
   header: [HeaderKind, string, string][]; listed: [HeaderKind, string][] };
   fragment: Record<string, any>; code_sha256: string };
 
+// A record whose file system calls put() has started.
+type Write = { directory: string; destination: string; code: string; bytes: string; code_sha256: string;
+  fragment_bytes: number; inputs: BodyInput[]; before: number };
+
+// At most this many records wait for their file system calls at once.
+const PENDING_WRITES = 32;
+
 function digest(data: string): string { return createHash("sha256").update(data).digest("hex"); }
 const named = (name: string): boolean => /^[a-f0-9]{64}$/.test(name);
 
@@ -58,6 +65,14 @@ function copy(source: string, destination: string): void {
   }
 }
 
+async function copy_async(source: string, destination: string): Promise<void> {
+  try { await fs.promises.link(source, destination); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+    await fs.promises.copyFile(source, destination, fs.constants.COPYFILE_EXCL);
+  }
+}
+
 export function emission(data: Pick<UnitData, "unit" | "trace" | "lend" | "masks" | "refs" | "edges" | "fragment">):
   Fact.Emission<Fragment> {
   return { key: data.unit, trace: Fact.from_events(data.trace), result: {
@@ -74,6 +89,8 @@ export class UnitCache {
   private names: Record<HeaderKind, Map<string, string>>;
   private bangs: Set<string>;
   private verified = new Set<string>();
+  private writes = new Set<Promise<void>>();
+  private write_errors: unknown[] = [];
   constructor(private program: string, private evidence: string) {
     this.index = JSON.parse(fs.readFileSync(path.join(program, "index.json"), "utf8"));
     this.bodies = new Map(this.index.bodies);
@@ -240,7 +257,12 @@ export class UnitCache {
     }
   }
 
-  put(job: Fact.Job, data: UnitData): void {
+  // Builds the record of a completed unit on this thread and starts its file system
+  // calls on fs.promises. The returned promise resolves once fewer than PENDING_WRITES
+  // records are pending. settle() waits for every started write. An error that is not a
+  // file system error rejects the next put() or settle().
+  async put(job: Fact.Job, data: UnitData): Promise<void> {
+    this.rethrow();
     const before = performance.now(), directory = this.directory(job);
     const code = path.join(data.fragment, "code");
     const metadata = JSON.parse(fs.readFileSync(path.join(data.fragment, "metadata.json"), "utf8"));
@@ -249,38 +271,62 @@ export class UnitCache {
     const listed = reads.listed.map((kind): [HeaderKind, string] => [kind, this.listing(kind)]);
     const value: Variant = { scope: this.scope, data: { unit, facts_only, trace, lend, masks, refs, edges, inputs, header, listed },
       fragment: relocate(metadata, ""), code_sha256: file_digest(code) };
-    const bytes = JSON.stringify(value), name = digest(bytes), destination = path.join(directory, name);
+    const bytes = JSON.stringify(value), name = digest(bytes);
+    const write = this.write(job, { directory, destination: path.join(directory, name), code, bytes,
+      code_sha256: value.code_sha256, fragment_bytes: metadata.bytes, inputs, before })
+      .catch(error => { this.write_errors.push(error); })
+      .finally(() => { this.writes.delete(write); });
+    this.writes.add(write);
+    while (this.writes.size >= PENDING_WRITES) await Promise.race(this.writes);
+  }
+
+  async settle(): Promise<void> {
+    await Promise.all(this.writes);
+    this.rethrow();
+  }
+
+  private rethrow(): void {
+    const errors = this.write_errors.splice(0);
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, errors.map(String).join("\n"));
+  }
+
+  private async same(write: Write): Promise<void> {
+    if (await fs.promises.readFile(path.join(write.destination, "metadata.json"), "utf8") !== write.bytes
+      || file_digest(path.join(write.destination, "code")) !== write.code_sha256) {
+      throw new Error("Different compiler unit cache content: " + write.destination);
+    }
+  }
+
+  private async write(job: Fact.Job, write: Write): Promise<void> {
+    const files = fs.promises, { directory, destination, code, bytes } = write;
     let temporary: string | undefined;
     try {
-      fs.mkdirSync(directory, { recursive: true });
-      if (fs.existsSync(destination)) {
-        if (fs.readFileSync(path.join(destination, "metadata.json"), "utf8") !== bytes
-          || file_digest(path.join(destination, "code")) !== value.code_sha256) {
-          throw new Error("Different compiler unit cache content: " + destination);
-        }
+      await files.mkdir(directory, { recursive: true });
+      if (await files.access(destination).then(() => true, () => false)) {
+        await this.same(write);
         return;
       }
-      const state = fs.statfsSync(directory, { bigint: true });
-      const code_state = fs.statSync(code);
-      const data_bytes = code_state.dev === fs.statSync(directory).dev ? 0n
+      const state = await files.statfs(directory, { bigint: true });
+      const code_state = await files.stat(code);
+      const data_bytes = code_state.dev === (await files.stat(directory)).dev ? 0n
         : ((BigInt(code_state.size) + state.bsize - 1n) / state.bsize) * state.bsize;
       const metadata_blocks = (BigInt(Buffer.byteLength(bytes)) + state.bsize - 1n) / state.bsize;
-      this.reclaim(data_bytes + (metadata_blocks + 1n) * state.bsize);
-      fs.mkdirSync(directory, { recursive: true });
-      temporary = fs.mkdtempSync(path.join(directory, ".write-" + process.pid + "-"));
-      copy(code, path.join(temporary, "code"));
-      fs.writeFileSync(path.join(temporary, "metadata.json"), bytes);
-      try { fs.renameSync(temporary, destination); }
+      const need = data_bytes + (metadata_blocks + 1n) * state.bsize;
+      const room = await files.statfs(this.root, { bigint: true });
+      if (room.bavail * room.bsize < need) this.reclaim(need);
+      await files.mkdir(directory, { recursive: true });
+      temporary = await files.mkdtemp(path.join(directory, ".write-" + process.pid + "-"));
+      await copy_async(code, path.join(temporary, "code"));
+      await files.writeFile(path.join(temporary, "metadata.json"), bytes);
+      try { await files.rename(temporary, destination); }
       catch (error) {
         if (!["EEXIST", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
-        if (fs.readFileSync(path.join(destination, "metadata.json"), "utf8") !== bytes
-          || file_digest(path.join(destination, "code")) !== value.code_sha256) {
-          throw new Error("Different compiler unit cache content: " + destination);
-        }
+        await this.same(write);
       }
       this.observe("write", { unit: job.key, facts_only: job.facts_only, variant: destination,
-        bytes: metadata.bytes, record_bytes: Buffer.byteLength(bytes), inputs: data.inputs,
-        duration_ms: performance.now() - before });
+        bytes: write.fragment_bytes, record_bytes: Buffer.byteLength(bytes), inputs: write.inputs,
+        duration_ms: performance.now() - write.before });
     } catch (error) { this.failure("write", error, job); }
     finally {
       if (temporary !== undefined) this.remove(temporary);
