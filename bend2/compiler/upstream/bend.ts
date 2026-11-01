@@ -721,7 +721,22 @@ export function term_higher(tm: LTerm, env: Env = null): HTerm {
   return term_higher_inner(tm, env, { spans: new WeakMap(), ids: new WeakMap(), next: 0 });
 }
 
+// The last count results, removed from the stack, as the children array of a
+// Let, ADT or Ctr. A node with a fixed number of children pops them one by one.
+function higher_kids(results: HTerm[], count: number): HTerm[] {
+  const base = results.length - count;
+  const kids = results.slice(base);
+  results.length = base;
+  return kids;
+}
+
 function term_higher_inner(term: LTerm, env: Env, cache: ClosedCtrCache): HTerm {
+  // A curried binder body is a lambda: build it without traversal stacks.
+  if (term.$ === "Lam") {
+    const b = term;
+    return Lam(b.k, b.i, (x: HTerm) =>
+      term_higher_inner(b.f, list_set(env, b.i, x), cache), b.s, b.q);
+  }
   // Binder callbacks retain the constructor cache and start a fresh traversal.
   type Task =
     | { visit: LTerm, env: Env }
@@ -738,11 +753,10 @@ function term_higher_inner(term: LTerm, env: Env, cache: ClosedCtrCache): HTerm 
     }
     if ("build" in task) {
       const tm = task.build;
-      const kids = results.splice(results.length - task.count, task.count);
       switch (tm.$) {
         case "Let": {
           const b = tm;
-          results.push(Let(b.k, b.i, kids, (xs: HTerm[]) => {
+          results.push(Let(b.k, b.i, higher_kids(results, task.count), (xs: HTerm[]) => {
             let e = task.env;
             for (let j = 0; j < xs.length; j++) {
               e = list_set(e, b.i[j], xs[j]);
@@ -753,30 +767,63 @@ function term_higher_inner(term: LTerm, env: Env, cache: ClosedCtrCache): HTerm 
         }
         case "All": {
           const b = tm;
-          results.push(All(b.q, b.k, b.i, kids[0], (x: HTerm) =>
+          const A = results.pop() as HTerm;
+          results.push(All(b.q, b.k, b.i, A, (x: HTerm) =>
             term_higher_inner(b.B, list_set(task.env, b.i, x), cache), b.s));
           break;
         }
-        case "Typ": results.push(Typ(kids[0], tm.s)); break;
-        case "Min": results.push(Min(kids[0], kids[1], tm.s)); break;
-        case "App": {
-          const f = kids[0];
-          results.push(f.$ === "Lam" ? f.f(kids[1]) : App(f, kids[1], tm.s));
+        case "Typ": {
+          const g = results.pop() as HTerm;
+          results.push(Typ(g, tm.s));
           break;
         }
-        case "ADT": results.push(ADT(tm.k, kids, tm.s, tm.r)); break;
-        case "Ctr": results.push(term_higher_ctr(tm, kids, cache)); break;
-        case "Mat": results.push(Mat(tm.k, kids[0], kids[1], tm.s)); break;
-        case "Eql": results.push(Eql(kids[0], kids[1], kids[2], tm.s)); break;
-        case "Rwt": results.push(Rwt(kids[0], kids[1], kids[2], tm.s)); break;
-        case "Ann": results.push(Ann(kids[0], kids[1], tm.s)); break;
+        case "Min": {
+          const b = results.pop() as HTerm;
+          const a = results.pop() as HTerm;
+          results.push(Min(a, b, tm.s));
+          break;
+        }
+        case "App": {
+          const x = results.pop() as HTerm;
+          const f = results.pop() as HTerm;
+          results.push(f.$ === "Lam" ? f.f(x) : App(f, x, tm.s));
+          break;
+        }
+        case "ADT": results.push(ADT(tm.k, higher_kids(results, task.count), tm.s, tm.r)); break;
+        case "Ctr": results.push(term_higher_ctr(tm, higher_kids(results, task.count), cache)); break;
+        case "Mat": {
+          const m = results.pop() as HTerm;
+          const h = results.pop() as HTerm;
+          results.push(Mat(tm.k, h, m, tm.s));
+          break;
+        }
+        case "Eql": {
+          const T = results.pop() as HTerm;
+          const b = results.pop() as HTerm;
+          const a = results.pop() as HTerm;
+          results.push(Eql(a, b, T, tm.s));
+          break;
+        }
+        case "Rwt": {
+          const f = results.pop() as HTerm;
+          const p = results.pop() as HTerm;
+          const e = results.pop() as HTerm;
+          results.push(Rwt(e, p, f, tm.s));
+          break;
+        }
+        case "Ann": {
+          const T = results.pop() as HTerm;
+          const x = results.pop() as HTerm;
+          results.push(Ann(x, T, tm.s));
+          break;
+        }
         default: throw new Error("term_higher build task for a leaf term");
       }
       continue;
     }
     const tm = task.visit;
     const here = task.env;
-    let kids: LTerm[] | null = null;
+    // Children are pushed after their build task, last child first.
     switch (tm.$) {
       case "Var": {
         if (tm.i < 0) {
@@ -817,30 +864,36 @@ function term_higher_inner(term: LTerm, env: Env, cache: ClosedCtrCache): HTerm 
         }
         break;
       }
-      case "Let": kids = tm.v; break;
-      case "All": kids = [tm.A]; break;
+      case "Let": case "ADT": case "Ctr": {
+        const kids = tm.$ === "Let" ? tm.v : tm.x;
+        tasks.push({ build: tm, env: here, count: kids.length });
+        for (let i = kids.length - 1; i >= 0; i--) tasks.push({ visit: kids[i], env: here });
+        break;
+      }
+      case "All": tasks.push({ build: tm, env: here, count: 1 }, { visit: tm.A, env: here }); break;
       case "Lam": {
         const b = tm;
         results.push(Lam(b.k, b.i, (x: HTerm) =>
           term_higher_inner(b.f, list_set(here, b.i, x), cache), b.s, b.q));
         break;
       }
-      case "Typ": kids = [tm.g]; break;
+      case "Typ": tasks.push({ build: tm, env: here, count: 1 }, { visit: tm.g, env: here }); break;
       case "Qnt": case "Qua": case "Lit": results.push(tm); break;
-      case "Min": kids = [tm.a, tm.b]; break;
-      case "App": kids = [tm.f, tm.x]; break;
-      case "ADT": case "Ctr": kids = tm.x; break;
-      case "Mat": kids = [tm.h, tm.m]; break;
+      case "Min": tasks.push({ build: tm, env: here, count: 2 }, { visit: tm.b, env: here }, { visit: tm.a, env: here }); break;
+      case "App": tasks.push({ build: tm, env: here, count: 2 }, { visit: tm.x, env: here }, { visit: tm.f, env: here }); break;
+      case "Mat": tasks.push({ build: tm, env: here, count: 2 }, { visit: tm.m, env: here }, { visit: tm.h, env: here }); break;
       case "Efq": results.push(Efq(tm.s)); break;
-      case "Eql": kids = [tm.a, tm.b, tm.T]; break;
+      case "Eql":
+        tasks.push({ build: tm, env: here, count: 3 }, { visit: tm.T, env: here }, { visit: tm.b, env: here },
+          { visit: tm.a, env: here });
+        break;
       case "Rfl": results.push(Rfl(tm.s)); break;
-      case "Rwt": kids = [tm.e, tm.p, tm.f]; break;
+      case "Rwt":
+        tasks.push({ build: tm, env: here, count: 3 }, { visit: tm.f, env: here }, { visit: tm.p, env: here },
+          { visit: tm.e, env: here });
+        break;
       case "Hol": results.push(Hol(tm.k, tm.s)); break;
-      case "Ann": kids = [tm.x, tm.T]; break;
-    }
-    if (kids !== null) {
-      tasks.push({ build: tm, env: here, count: kids.length });
-      for (let i = kids.length - 1; i >= 0; i--) tasks.push({ visit: kids[i], env: here });
+      case "Ann": tasks.push({ build: tm, env: here, count: 2 }, { visit: tm.T, env: here }, { visit: tm.x, env: here }); break;
     }
   }
   return results[0];
