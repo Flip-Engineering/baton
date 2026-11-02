@@ -56,7 +56,7 @@ def sweep_release_result(+db: String, +session: String, +generation: String, pro
 
 def sweep_locked(+db: String, +session: String, +generation: String, lock: U32) -> IO(Unit):
   do IO<Unit>:
-    saved : String <- IO.try(String,Store.deferred_record(db,session))
+    saved : String <- Store.deferred_record(db,session)
     processed : Result<&1,&1,U32 & String,Unit> <- sweep_locked_work(db,session,generation,Done{saved})
     released : Result<&1,&1,U32 & String,Unit> <- Lock.SessionLock.release(lock)
     sweep_release_result(db,session,generation,processed,released)
