@@ -174,8 +174,8 @@ def main():
     instance_env = dict(env, BATON2_INSTANCE_TEST=str(instance_fixture))
     run('owner-sweep-lifecycle',
         [sys.executable, 'bend2/test/shared-instance.py',
-         'test_the_owner_launches_the_drain_sweep_when_it_starts_and_after_its_drain',
-         'test_drain_refuses_new_attempts_until_the_owner_exits'],
+         'SharedInstance.test_the_owner_launches_the_drain_sweep_when_it_starts_and_after_its_drain',
+         'SharedInstance.test_drain_refuses_new_attempts_until_the_owner_exits'],
         output / 'owner-sweep-lifecycle.log', instance_env, evidence)
 
     final_source = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True,
