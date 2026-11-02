@@ -34,7 +34,7 @@ def sweep_record_parts(+db: String, +session: String, +expected_generation: Stri
   match parts:
     case generation <> Nil{}:
       +current_generation = generation
-      Bool.pick(IO(Unit),String.eq(generation,expected_generation),
+      Bool.pick(IO(Unit),String.eq(current_generation,expected_generation),
         do IO<Unit>:
           owed : String <- IO.try(String,DB.Sql.query(db,Delivery.wake_sql(session,"0")))
           +head : String <- IO.pure(String,Tx.trim_nl(owed))
