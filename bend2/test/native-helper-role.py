@@ -76,6 +76,32 @@ class HelperRole(unittest.TestCase):
         self.assertIn('--link-extra', cc)
         self.assertIn('--link-flags=-O1 -pthread -lsqlite3 -lm -DBATON2_RECOVERY_HELPER', cc)
 
+    def build_fixture(self, relative, **env):
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+        return subprocess.run(['sh', str(self.root / 'bend2/scripts/build-native.sh'), relative, 'out/fixture'],
+                              env={**self.env, **env}, capture_output=True, text=True)
+
+    def test_fixture_entry_shards_with_its_generated_main(self):
+        result = self.build_fixture('bend2/test/fixture.bend', ROLE_CURL='1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        _, cc = self.calls()
+        self.assertEqual(cc[1:3], ['cc', 'python3'])
+        self.assertEqual(Path(cc[3]).name, 'build_and_measure.py')
+        self.assertNotIn('--main-rename', cc)
+        self.assertNotIn('--link-extra', cc)
+        self.assertIn('--link-flags=-O1 -pthread -lsqlite3 -lm -lcurl', cc)
+
+    def test_storage_fixture_flags_reach_every_translation_unit(self):
+        result = self.build_fixture('bend2/tests/storage-cargo.bend')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        _, cc = self.calls()
+        self.assertIn('--cflag=-DBATON_STORAGE_CARGO_TEST', cc)
+        self.assertIn('--cflag=-DBATON_STORAGE_TEST_PROC', cc)
+        self.assertIn('--link-flags=-O1 -pthread -lsqlite3 -lm', cc)
+        self.assertNotIn('--main-rename', cc)
+
     def test_http_entries_link_libcurl(self):
         entries = ('main', 'receive-focused', 'receive-recovery-focused', 'plain')
         (self.root / 'bend2/src/coordinator/plain.bend').touch()

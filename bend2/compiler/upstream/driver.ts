@@ -6,7 +6,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { finished } from "node:stream/promises";
 import * as Comp from "./comp.ts";
 import * as Fact from "./facts.ts";
-import { Admission, resident } from "./admission.ts";
+import { Admission, forget_resident, resident } from "./admission.ts";
 import type { Workers } from "./admission.ts";
 import type { Fragment } from "./fragments.ts";
 import { UnitCache, emission } from "./unit-cache.ts";
@@ -211,7 +211,7 @@ class Pool implements Workers {
     return worker;
   }
   put(worker: Worker): void {
-    if (!worker.usable) return;
+    if (!worker.usable) { forget_resident(worker.pid); return; }
     this.sizes.set(worker, resident(worker.pid) ?? 0);
     this.idle.push(worker);
   }
@@ -223,7 +223,7 @@ class Pool implements Workers {
     const worker = this.order().pop()!;
     this.idle = this.idle.filter(other => other !== worker);
     this.sizes.delete(worker);
-    await worker.finish();
+    try { await worker.finish(); } finally { forget_resident(worker.pid); }
     return true;
   }
 
@@ -232,6 +232,7 @@ class Pool implements Workers {
     this.idle = [];
     this.sizes.clear();
     const results = await Promise.allSettled(workers.map(worker => worker.finish()));
+    for (const worker of workers) forget_resident(worker.pid);
     const errors = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) throw new AggregateError(errors, errors.map(String).join("\n"));
