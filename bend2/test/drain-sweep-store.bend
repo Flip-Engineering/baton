@@ -79,7 +79,12 @@ def dispatch(mode: String, args: List<String>) -> IO(Unit):
     case "--hold-sweep-lock": hold_cli(args)
     case other: IO.die(Unit,2,"unsupported drain sweep store fixture command")
 
-def main(args: List<String>) -> IO(Unit):
+def cli(args: List<String>) -> IO(Unit):
   match args:
     case mode <> rest: dispatch(mode,rest)
     case other: IO.die(Unit,2,"drain sweep store fixture requires a command")
+
+def main() -> IO(Unit):
+  do IO<Unit>:
+    args : List<String> <- IO.args()
+    cli(args)
