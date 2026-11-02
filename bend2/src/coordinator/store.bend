@@ -461,9 +461,9 @@ def release_names_the_exact_admission_ticket(session,owner,generation):
   {==}
 
 law defer_names_the_exact_claim_generation:
-  for session: String
-  for owner: String
-  for generation: String
+  for +session: String
+  for +owner: String
+  for +generation: String
   {defer_claim_sql(session,owner,generation) == "BEGIN IMMEDIATE;" ++ "UPDATE wake_claims SET state='drain-deferred' WHERE session=" ++ C.q(session) ++ " AND owner=" ++ C.q(owner) ++ " AND generation=CAST(" ++ C.q(generation) ++ " AS INTEGER);" ++ "INSERT INTO drain_deferred(session,generation,active) SELECT " ++ C.q(session) ++ ",1,1 WHERE changes()=1 ON CONFLICT(session) DO UPDATE SET generation=generation+1,active=1;" ++ "COMMIT;" : String}
 
 def defer_names_the_exact_claim_generation(session,owner,generation):
@@ -482,8 +482,8 @@ def the_sweep_backfills_legacy_deferred_claims():
   {==}
 
 law clearing_a_deferred_generation_retains_its_high_water:
-  for session: String
-  for generation: String
+  for +session: String
+  for +generation: String
   {clear_drain_deferred_sql(session,generation) == "UPDATE drain_deferred SET active=0 WHERE session=" ++ C.q(session) ++ " AND generation=CAST(" ++ C.q(generation) ++ " AS INTEGER) AND active=1;" : String}
 
 def clearing_a_deferred_generation_retains_its_high_water():
