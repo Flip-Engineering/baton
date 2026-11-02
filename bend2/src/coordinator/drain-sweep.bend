@@ -33,11 +33,12 @@ def message_current(+db: String, +session: String, +generation: String, +message
 def sweep_record_parts(+db: String, +session: String, +expected_generation: String, parts: List<String>) -> IO(Unit):
   match parts:
     case generation <> Nil{}:
+      +current_generation = generation
       Bool.pick(IO(Unit),String.eq(generation,expected_generation),
         do IO<Unit>:
           owed : String <- IO.try(String,DB.Sql.query(db,Delivery.wake_sql(session,"0")))
           +head : String <- IO.pure(String,Tx.trim_nl(owed))
-          message_current(db,session,generation,head,String.is_empty(head)),
+          message_current(db,session,current_generation,head,String.is_empty(head)),
         IO.pure(Unit,Unit{}))
     case other: IO.pure(Unit,Unit{})
 
