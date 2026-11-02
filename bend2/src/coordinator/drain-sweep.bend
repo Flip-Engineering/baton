@@ -46,8 +46,8 @@ def sweep_locked_work(+db: String, +session: String, +generation: String, result
   match result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
     case Done{saved}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      sweep_record_parts(db,session,generation,[Tx.trim_nl(saved)])
-      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{unit=Unit{}})
+      processed : Unit <- sweep_record_parts(db,session,generation,[Tx.trim_nl(saved)])
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
 
 def sweep_release_result(+db: String, +session: String, +generation: String, processed: Result<&1,&1,U32 & String,Unit>, released: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   match released:
