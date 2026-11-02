@@ -23,14 +23,17 @@ def clear_cli(args: List<String>) -> IO(Unit):
       Store.clear_drain_deferred(database,session,generation)
     case other: IO.die(Unit,2,"--clear DATABASE SESSION GENERATION")
 
+def probe_release_result(released: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match released:
+    case Done{unit}: IO.print("free")
+    case Fail{(+code,+detail)}: IO.die(Unit,code,detail)
+
 def probe_result(+database: String, +session: String, lock: Maybe<U32>) -> IO(Unit):
   match lock:
     case None{}: IO.print("busy")
     case Some{handle}: do IO<Unit>:
       released : Result<&1,&1,U32 & String,Unit> <- Lock.SessionLock.release(handle)
-      match released:
-        case Done{unit}: IO.print("free")
-        case Fail{(+code,+detail)}: IO.die(Unit,code,detail)
+      probe_release_result(released)
 
 def probe_cli(args: List<String>) -> IO(Unit):
   match args:
