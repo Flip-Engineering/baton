@@ -486,7 +486,7 @@ law clearing_a_deferred_generation_retains_its_high_water:
   for +generation: String
   {clear_drain_deferred_sql(session,generation) == "UPDATE drain_deferred SET active=0 WHERE session=" ++ C.q(session) ++ " AND generation=CAST(" ++ C.q(generation) ++ " AS INTEGER) AND active=1;" : String}
 
-def clearing_a_deferred_generation_retains_its_high_water():
+def clearing_a_deferred_generation_retains_its_high_water(session,generation):
   {==}
 
 law release_inserts_no_row:
