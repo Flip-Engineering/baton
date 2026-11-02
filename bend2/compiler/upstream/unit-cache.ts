@@ -280,8 +280,9 @@ export class UnitCache {
     while (this.writes.size >= PENDING_WRITES) await Promise.race(this.writes);
   }
 
+  // Resolves when no started write is pending.
   async settle(): Promise<void> {
-    await Promise.all(this.writes);
+    while (this.writes.size > 0) await Promise.all(this.writes);
     this.rethrow();
   }
 

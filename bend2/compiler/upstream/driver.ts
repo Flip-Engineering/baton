@@ -286,6 +286,13 @@ export async function emit(program: Prepared, output: string): Promise<void> {
       },
     });
   } catch (error) { failure = error; }
+  // Admission has collected the completion of every started unit, so no put() follows.
+  // The cache writes of those units finish before emit() returns.
+  try { await cache.settle(); }
+  catch (cause) {
+    failure = failure === undefined ? cause : new AggregateError([failure, cause],
+      String(failure) + "\nWhile writing compiler unit cache records: " + String(cause));
+  }
   try { await pool.close(); }
   catch (cause) {
     failure = failure === undefined ? cause : new AggregateError([failure, cause],
