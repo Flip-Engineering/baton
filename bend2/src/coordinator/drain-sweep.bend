@@ -27,7 +27,7 @@ def message_current(+db: String, +session: String, +generation: String, +message
     case True{}: Store.clear_drain_deferred(db,session,generation)
     case False{}:
       do IO<Unit>:
-        result : Result<&1,&1,U32 & String,Unit> <- IO.try(Result<&1,&1,U32 & String,Unit>,Wake.drive_session(db,session,message))
+        result : Result<&1,&1,U32 & String,Unit> <- Wake.drive_session(db,session,message)
         sweep_row_failed(db,session,generation,result)
 
 def sweep_record_parts(+db: String, +session: String, +expected_generation: String, parts: List<String>) -> IO(Unit):
