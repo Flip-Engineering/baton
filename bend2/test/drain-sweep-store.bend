@@ -43,13 +43,15 @@ def probe_cli(args: List<String>) -> IO(Unit):
       probe_result(canonical,session,lock)
     case other: IO.die(Unit,2,"--probe-sweep-lock DATABASE SESSION")
 
+def finish_wait_result(waited: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match waited:
+    case Done{output}: IO.print("lock-released")
+    case Fail{(+code,+detail)}: IO.die(Unit,code,detail)
+
 def finish_hold(waited: Result<&1,&1,U32 & String,String>, released: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   match released:
     case Fail{(+code,+detail)}: IO.die(Unit,code,"sweep lock release failed: " ++ detail)
-    case Done{unit}:
-      match waited:
-        case Done{output}: IO.print("lock-released")
-        case Fail{(+code,+detail)}: IO.die(Unit,code,detail)
+    case Done{unit}: finish_wait_result(waited)
 
 def hold_result(+database: String, +session: String, +python: String, +script: String, +gate: String, lock: Maybe<U32>) -> IO(Unit):
   match lock:
