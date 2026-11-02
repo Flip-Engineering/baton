@@ -99,23 +99,34 @@ try {
     import * as path from "node:path";
     import { mock } from "bun:test";
     const probe = ${JSON.stringify(path.join(directory, ".write-positive-control", "metadata.json"))};
-    const original = fs.writeFileSync;
+    const original = fs.writeFileSync, originalPromise = fs.promises.writeFile;
+    // The ENOSPC of a cache record's metadata write, recorded unless it is the probe.
+    const failure = name => {
+      if (path.basename(name) !== "metadata.json" || !path.basename(path.dirname(name)).startsWith(".write-")) return undefined;
+      if (name !== probe) fs.appendFileSync(path.join(${JSON.stringify(hooks)}, String(process.pid) + ".jsonl"),
+        JSON.stringify({ pid: process.pid, file: name, code: "ENOSPC", syscall: "write" }) + "\\n");
+      return Object.assign(new Error("cache write fixture ENOSPC"), { code: "ENOSPC", syscall: "write", path: name });
+    };
     const writeFileSync = function(file, ...args) {
-      const name = String(file);
-      if (path.basename(name) === "metadata.json" && path.basename(path.dirname(name)).startsWith(".write-")) {
-        if (name !== probe) fs.appendFileSync(path.join(${JSON.stringify(hooks)}, String(process.pid) + ".jsonl"),
-          JSON.stringify({ pid: process.pid, file: name, code: "ENOSPC", syscall: "write" }) + "\\n");
-        throw Object.assign(new Error("cache write fixture ENOSPC"), { code: "ENOSPC", syscall: "write", path: name });
-      }
+      const error = failure(String(file));
+      if (error !== undefined) throw error;
       return Reflect.apply(original, this, [file, ...args]);
     };
-    const replacement = { ...fs, writeFileSync };
+    const writeFile = async function(file, ...args) {
+      const error = failure(String(file));
+      if (error !== undefined) throw error;
+      return Reflect.apply(originalPromise, fs.promises, [file, ...args]);
+    };
+    const replacement = { ...fs, writeFileSync, promises: { ...fs.promises, writeFile } };
     mock.module("node:fs", () => ({ ...replacement, default: replacement }));
     const namespace = await import("node:fs");
-    let observed = false;
+    const fixture = error => error.code === "ENOSPC" && error.message === "cache write fixture ENOSPC";
+    let observed = false, observedPromise = false;
     try { namespace.writeFileSync(probe, ""); }
-    catch (error) { observed = error.code === "ENOSPC" && error.message === "cache write fixture ENOSPC"; }
-    if (!observed) throw new Error("The cache storage interceptor is inactive");
+    catch (error) { observed = fixture(error); }
+    try { await namespace.promises.writeFile(probe, ""); }
+    catch (error) { observedPromise = fixture(error); }
+    if (!observed || !observedPromise) throw new Error("The cache storage interceptor is inactive");
   `);
   const failedStorage = await build("storage-failure", path.join(directory, "failed-cache"), {
     BUN_OPTIONS: (process.env.BUN_OPTIONS ?? "") + " --preload " + preload,

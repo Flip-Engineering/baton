@@ -63,13 +63,13 @@ try {
   const host = program(directory, "host-program"), mounted = program(own, "mounted-program");
   const cache = new UnitCache(host, directory), activeCache = new UnitCache(mounted, directory);
   const active = unit(mounted, "active", 1024 * 1024);
-  activeCache.put(active.job, active.data);
+  await activeCache.put(active.job, active.data); await activeCache.settle();
   const restored = activeCache.get(active.job); assert.ok(restored);
   const activeVariant = variant(directory, "active"), activeCode = path.join(activeVariant, "code");
   fs.rmSync(active.data.fragment, { recursive: true });
   assert.equal(fs.statSync(activeCode).nlink, 2, "the active fragment holds its cache inode");
 
-  const inactive = unit(host, "replace", 2 * 1024 * 1024); cache.put(inactive.job, inactive.data);
+  const inactive = unit(host, "replace", 2 * 1024 * 1024); await cache.put(inactive.job, inactive.data); await cache.settle();
   const inactiveVariant = variant(directory, "replace");
   assert.equal(fs.statSync(path.join(inactiveVariant, "code")).nlink, 1);
 
@@ -87,7 +87,7 @@ try {
   observations.push({ event: "prepared", state: state(), active: activeVariant, inactive: inactiveVariant,
     live, abandoned, active_sha256: active.sha256, replacement_sha256: replacement.sha256 });
   const filler = path.join(own, "filler"); fill(filler);
-  assert.doesNotThrow(() => cache.put(replacement.job, replacement.data));
+  await cache.put(replacement.job, replacement.data); await cache.settle();
   assert.ok(fs.existsSync(live), "pressure preserves a live writer");
   assert.ok(!fs.existsSync(abandoned), "pressure reclaims a completed writer's abandoned staging");
   assert.ok(!fs.existsSync(inactiveVariant), "pressure reclaims the unreferenced variant");
@@ -99,7 +99,7 @@ try {
 
   fs.rmSync(filler); fill(filler);
   const protectedUpdate = unit(host, "active", 2 * 1024 * 1024);
-  assert.doesNotThrow(() => cache.put(protectedUpdate.job, protectedUpdate.data));
+  await cache.put(protectedUpdate.job, protectedUpdate.data); await cache.settle();
   assert.equal(hash(fs.readFileSync(path.join(protectedUpdate.data.fragment, "code"), "utf8")), protectedUpdate.sha256,
     "storage failure preserves the completed emitted unit");
   assert.equal(hash(fs.readFileSync(activeCode, "utf8")), active.sha256);
