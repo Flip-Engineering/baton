@@ -38,6 +38,8 @@ class DrainSweep(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.db = self.root / 'state.db'
+        with sqlite3.connect(self.db):
+            pass
         self.calls = self.root / 'endpoint-calls.jsonl'
         self.endpoint = self.root / 'endpoint.py'
         self.endpoint.write_text(ENDPOINT)
