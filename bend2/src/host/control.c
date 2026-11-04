@@ -206,13 +206,13 @@ static void baton_control_call(IoWork *w) {
     char *slash=strrchr(directory,'/');
     if(!slash) {free(directory);call->error=EINVAL;return;}
     *slash=0;
-    char *candidate=baton_control_join(directory,"/../libexec/baton2/codex-inbox-wake.mjs");
+    char *candidate=baton_control_join(directory,"/../libexec/baton2/dsh-worker.mjs");
     if(!candidate) {free(directory);call->error=ENOMEM;return;}
     call->path=realpath(candidate,NULL);
     int error=call->path?0:errno;
     free(candidate);
     if(!call->path && error==ENOENT) {
-      candidate=baton_control_join(directory,"/../../bend2/scripts/codex-inbox-wake.mjs");
+      candidate=baton_control_join(directory,"/../../bend2/scripts/dsh-worker.mjs");
       if(!candidate) {free(directory);call->error=ENOMEM;return;}
       call->path=realpath(candidate,NULL);
       error=call->path?0:errno;

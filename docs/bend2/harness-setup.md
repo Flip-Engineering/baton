@@ -297,8 +297,10 @@ unverified items.
 
 A worker's assignment remains open across successful native turns. When its
 work is ready, it sends a `completion-request` message to its immediate parent.
-The parent reviews the result with `completion-confirmed --to PLAYER`, or sends
-`guide --to PLAYER --text TEXT` for remaining work. Baton resolves the current
+The parent reviews the result with `completion-confirmed --to PLAYER`, which ends
+the worker's assignment, or with `completion-confirmed --to PLAYER --next TEXT`, which
+confirms and dispatches the next assignment in one transaction. The parent sends
+`guide --to PLAYER --text TEXT` for remaining work on the open assignment. Baton resolves the current
 request addressed to that coordinator. The worker's current request remains
 available while the parent reviews it. New
 tasks and guidance begin further work. Stored read rows record the worker's

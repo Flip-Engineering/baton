@@ -5,11 +5,10 @@ import ../src/host/sqlite.bend as DB
 import ../src/git/text.bend as Tx
 
 # Reproduce the rejected-checkpoint replay condition without a native process:
-# this attempt already forwarded guidance seq 2, and the observer state was
-# reset, so the caller restarts the guidance cursor at "0". The replay must
-# resume at the forwarded position (never seq 2 again) while the still-owed
-# seq 3 stays selectable, and a fresh attempt (no journal) must still receive
-# every pending message. The queue is never consumed: no read row is recorded.
+# this attempt already forwarded report seq 2, and the observer state was reset,
+# so the caller restarts the input cursor at "0". Replay resumes at seq 2 while
+# the still-owed question at seq 3 remains selectable. A fresh attempt must
+# receive each pending input kind. No read row is recorded by this fixture.
 def check(+name: String, +expected: String, +actual: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.eq(expected,actual),
     IO.print(name ++ ":ok"),
@@ -21,8 +20,9 @@ def seed(+db: String) -> IO(Unit):
     root : String <- IO.try(String,DB.Sql.query(db,"INSERT INTO sessions(id,parent,harness) VALUES('root',NULL,'omp');"))
     player : String <- IO.try(String,DB.Sql.query(db,"INSERT INTO sessions(id,parent,harness) VALUES('player','root','omp');"))
     one : String <- IO.try(String,DB.Sql.query(db,"INSERT INTO messages(id,sender,recipient,kind,body) VALUES('g1','root','player','guidance','one');"))
-    two : String <- IO.try(String,DB.Sql.query(db,"INSERT INTO messages(id,sender,recipient,kind,body) VALUES('g2','root','player','guidance','two');"))
-    three : String <- IO.try(String,DB.Sql.query(db,"INSERT INTO messages(id,sender,recipient,kind,body) VALUES('g3','root','player','guidance','three');"))
+    two : String <- IO.try(String,DB.Sql.query(db,"INSERT INTO messages(id,sender,recipient,kind,body) VALUES('g2','root','player','report','two');"))
+    three : String <- IO.try(String,DB.Sql.query(db,"INSERT INTO messages(id,sender,recipient,kind,body) VALUES('g3','root','player','question','three');"))
+    four : String <- IO.try(String,DB.Sql.query(db,"INSERT INTO messages(id,sender,recipient,kind,body) VALUES('g4','root','player','task-continuation','four');"))
     IO.pure(Unit,Unit{})
 
 def select(+db: String, +cursor: String) -> IO(String):
@@ -46,14 +46,14 @@ def run(+db: String, +attempt: String, +fresh: String) -> IO(Unit):
     +duplicate : String <- select(db,"0")
     check("unfixed cursor duplicates", "1", duplicate)
     +next : String <- select(db,resumed)
-    check("next unforwarded guidance", "3", next)
+    check("next unforwarded input", "3", next)
     # A new attempt has no journal: all pending input is offered again, once.
     +fresh_start : String <- Guidance.replay_cursor(db,fresh,"0")
     check("fresh attempt cursor", "0", fresh_start)
     +first : String <- select(db,fresh_start)
     check("fresh attempt first pending", "1", first)
-    +owed : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE recipient='player' AND kind='guidance' AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient);"))
-    check("pending queue preserved", "3\n", owed)
+    +owed : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE recipient='player' AND NOT EXISTS(SELECT 1 FROM message_reads r WHERE r.message=messages.id AND r.recipient=messages.recipient);"))
+    check("pending queue preserved", "4\n", owed)
     IO.pure(Unit,Unit{})
 
 def run_args(args: List<String>) -> IO(Unit):

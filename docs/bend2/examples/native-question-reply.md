@@ -106,6 +106,5 @@ on the Player refuses later native replies for that session.
 - `bend2/src/coordinator/agent-command.bend`, `bend2/src/coordinator/agent-input.bend` — the `inbox` read and automatic handling.
 - `bend2/src/coordinator/native-requests.bend` — `response_sql`, `reply`, `send`, `written`.
 - `bend2/src/coordinator/native-request-laws.bend` — dispatch and admission laws.
-- `bend2/src/coordinator/commands.bend` — `ack` receipt binding.
 - `docs/bend2/native-interactions.md` — operator-facing description.
 - `bend2/test/receive.py` — `test_native_question_parent_answers_and_waits_for_full_report`.

@@ -11,6 +11,7 @@ import ./messaging-laws.bend as MessagingLaws
 import ./connect-laws.bend as ConnectLaws
 import ./control-laws.bend as ControlLaws
 import ./naming-laws.bend as NamingLaws
+import ./land-laws.bend as LandLaws
 import ./delivery.bend as Delivery
 import ./turn.bend as Turn
 import ./subscription-fallback.bend as Subs
@@ -482,7 +483,7 @@ def m5_delivery_carries_the_recipients_current_endpoint(id):
 law m5_wake_reads_the_first_owed_message_after_the_cursor:
   for +session: String
   for +cursor: String
-  {Delivery.wake_sql(session, cursor) == "SELECT coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=messages.id AND owed_read.recipient=messages.recipient) AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " ORDER BY seq LIMIT 1),'');" : String}
+  {Delivery.wake_sql(session, cursor) == "SELECT coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=messages.id AND owed_read.recipient=messages.recipient) AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND NOT " ++ C.task_closed_sql(C.q(session)) ++ " ORDER BY seq LIMIT 1),'');" : String}
 
 def m5_wake_reads_the_first_owed_message_after_the_cursor(session, cursor):
   {==}
@@ -490,7 +491,7 @@ def m5_wake_reads_the_first_owed_message_after_the_cursor(session, cursor):
 law m5_owed_input_is_counted_after_the_cursor:
   for +session: String
   for +cursor: String
-  {Receive.pending_count_sql(session, cursor) == "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";" : String}
+  {Receive.pending_count_sql(session, cursor) == "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND " ++ C.owed_sql("messages") ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND NOT " ++ C.task_closed_sql(C.q(session)) ++ ";" : String}
 
 def m5_owed_input_is_counted_after_the_cursor(session, cursor):
   {==}
@@ -499,7 +500,7 @@ def m5_owed_input_is_counted_after_the_cursor(session, cursor):
 # session. The store's own schema declares that reference, so the database
 # refuses a message from an unknown sender.
 law m7_the_store_validates_the_sender_it_records:
-  {C.schema() == C.wake_claim_schema() ++ C.task_input_schema() ++ C.usage_windows_schema() ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "DROP INDEX IF EXISTS messages_pending;CREATE INDEX IF NOT EXISTS messages_recipient_seq ON messages(recipient,seq,id);" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');" ++ MessageStatus.schema() ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');" ++ C.messaging_schema() ++ C.log_schema() : String}
+  {C.schema() == C.wake_claim_schema() ++ C.task_input_schema() ++ C.usage_windows_schema() ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "DROP INDEX IF EXISTS messages_pending;CREATE INDEX IF NOT EXISTS messages_recipient_seq ON messages(recipient,seq,id);" ++ "CREATE INDEX IF NOT EXISTS messages_sender_kind_seq ON messages(sender,kind,seq);" ++ "CREATE INDEX IF NOT EXISTS messages_recipient_kind_seq ON messages(recipient,kind,seq);" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');" ++ MessageStatus.schema() ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');" ++ C.messaging_schema() ++ C.log_schema() : String}
 
 def m7_the_store_validates_the_sender_it_records():
   {==}
@@ -902,7 +903,7 @@ law m2_any_other_harness_launch_reaches_the_claude_adapter:
   for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "claude-code\n", log, task) == Turn.claude_launch(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "claude-code\n", log, task) == Turn.claude_launch_configured(db, player, cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m2_any_other_harness_launch_reaches_the_claude_adapter(db, player, sessions, cmd, model, effort, cwd, stderr, session, log, task):
   {==}
@@ -949,27 +950,29 @@ def m5_a_resumable_agy_turn_carries_the_recorded_conversation(cmd, model, effort
   {==}
 
 law m5_a_fresh_claude_turn_starts_a_session:
+  for -entries: List<String>
   for +cmd: String
   for +model: String
   for +effort: String
   for +cwd: String
   for +stderr: String
   for +session: String
-  {Turn.claude_launch(cmd, model, effort, cwd, stderr, session, True{}) == Claude.start_player(cmd, model, effort, cwd, stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.claude_launch(entries, cmd, model, effort, cwd, stderr, session, True{}) == Claude.start_player(entries, cmd, model, effort, cwd, stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m5_a_fresh_claude_turn_starts_a_session(cmd, model, effort, cwd, stderr, session):
+def m5_a_fresh_claude_turn_starts_a_session(entries, cmd, model, effort, cwd, stderr, session):
   {==}
 
 law m5_a_resumable_claude_turn_carries_the_recorded_session:
+  for -entries: List<String>
   for +cmd: String
   for +model: String
   for +effort: String
   for +cwd: String
   for +stderr: String
   for +session: String
-  {Turn.claude_launch(cmd, model, effort, cwd, stderr, session, False{}) == Claude.resume_player(cmd, model, effort, cwd, stderr, session) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.claude_launch(entries, cmd, model, effort, cwd, stderr, session, False{}) == Claude.resume_player(entries, cmd, model, effort, cwd, stderr, session) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m5_a_resumable_claude_turn_carries_the_recorded_session(cmd, model, effort, cwd, stderr, session):
+def m5_a_resumable_claude_turn_carries_the_recorded_session(entries, cmd, model, effort, cwd, stderr, session):
   {==}
 
 law m5_a_fresh_muse_turn_starts_a_session:
@@ -1010,10 +1013,10 @@ law m13_a_retained_muse_attempt_closes_its_input_as_a_codex_attempt_does:
 def m13_a_retained_muse_attempt_closes_its_input_as_a_codex_attempt_does():
   {==}
 
-law m13_a_retained_claude_attempt_closes_its_input_as_a_codex_attempt_does:
-  {U32.is_eq(Turn.retained_keep_stdin(False{},False{},True{}),Turn.retained_keep_stdin(False{},False{},False{})) == True{} : Bool}
+law m13_a_retained_claude_attempt_keeps_its_input_open_as_an_omp_attempt_does:
+  {U32.is_eq(Turn.retained_keep_stdin(False{},False{},True{}),Turn.retained_keep_stdin(False{},True{},False{})) == True{} : Bool}
 
-def m13_a_retained_claude_attempt_closes_its_input_as_a_codex_attempt_does():
+def m13_a_retained_claude_attempt_keeps_its_input_open_as_an_omp_attempt_does():
   {==}
 
 # M-5: the retained Muse and Claude attempts reach the conversation the session
@@ -1064,7 +1067,7 @@ def m1_a_message_write_answers_from_the_row_it_stored(id,sender,recipient,kind,b
 # output capture remain host effects exercised by the controlled fixtures.
 law principal_reports_use_the_recorded_upstream_recipient:
   for +session: String
-  {C.report_recipient(session) == ("(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN report_sender.parent WHEN " ++ C.assigned_role("report_sender.id") ++ "='conductor' THEN (SELECT report_operator.id FROM sessions report_operator WHERE report_operator.id='operator' AND report_operator.parent IS NULL AND " ++ C.assigned_role("report_operator.id") ++ "='operator') END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")") : String}
+  {C.report_recipient(session) == ("(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN " ++ C.coordinator_sql("report_sender.id") ++ " WHEN " ++ C.assigned_role("report_sender.id") ++ "='conductor' THEN " ++ C.operator_destination_sql() ++ " END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")") : String}
 
 def principal_reports_use_the_recorded_upstream_recipient(session):
   {==}
@@ -1106,18 +1109,18 @@ law a_later_native_terminal_is_named_once:
 def a_later_native_terminal_is_named_once(event,terminal):
   {==}
 
-law the_deferred_note_names_the_pending_guidance:
+law the_deferred_note_names_the_pending_input:
   for +pending: String
-  {Turn.deferred_pending(pending) == Bool.pick(String,String.is_empty(pending),""," and the deferred guidance " ++ pending ++ " stays pending for the next receive") : String}
+  {Turn.deferred_pending(pending) == Bool.pick(String,String.is_empty(pending),""," and the deferred input " ++ pending ++ " stays pending for the next receive") : String}
 
-def the_deferred_note_names_the_pending_guidance(pending):
+def the_deferred_note_names_the_pending_input(pending):
   {==}
 
-law the_outstanding_guidance_reader_names_stored_guidance:
+law the_outstanding_reader_names_all_stored_input:
   for +player: String
-  {Guidance.outstanding_sql(player) == ("coalesce((SELECT group_concat(id,',') FROM (SELECT id FROM messages WHERE recipient=" ++ C.q(player) ++ " AND kind='guidance' AND NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=messages.id AND owed_read.recipient=messages.recipient) AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " ORDER BY seq)),'')") : String}
+  {Guidance.outstanding_sql(player) == ("coalesce((SELECT group_concat(id,',') FROM (SELECT id FROM messages WHERE recipient=" ++ C.q(player) ++ " AND NOT EXISTS(SELECT 1 FROM message_reads owed_read WHERE owed_read.message=messages.id AND owed_read.recipient=messages.recipient) AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " ORDER BY seq)),'')") : String}
 
-def the_outstanding_guidance_reader_names_stored_guidance(player):
+def the_outstanding_reader_names_all_stored_input(player):
   {==}
 
 law the_deferred_note_presence_reads_the_note_identity:
@@ -1185,8 +1188,7 @@ law completion_preparation_checks_the_upstream_recipient:
     +generation : String <- IO.pure(String,Turn.generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     reported : Unit <- Turn.prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
-    read : Unit <- AgentInput.record_initial_reads(db,player,id)
-    Turn.note_open_assignment(db,player,id)) : IO(Unit)}
+    AgentInput.record_initial_reads(db,player,id)) : IO(Unit)}
 
 def completion_preparation_checks_the_upstream_recipient(db,player,id,log,stderr,outcome):
   {==}

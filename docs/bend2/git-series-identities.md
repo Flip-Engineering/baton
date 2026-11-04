@@ -27,9 +27,70 @@ minimum permissions. Additional grants, including `workflows:write` and
 `actions:read`, are accepted. The token request keeps the three Git permissions.
 A missing or weaker required permission produces a refusal naming its level.
 
-If the App is not installed for `OWNER`, the helper refuses with a message that
-names the App slug and the owner. The helper does not fall back to another
-installation.
+An unresolved installation produces a refusal naming the App slug and the
+requested owner.
+
+Renamed owners and repositories resolve through GitHub's canonical numeric
+repository identity. A 301 installation response can select
+`https://api.github.com/repositories/ID/installation`. When the old installation
+URL returns 404, the helper reads the App's installations and tries their tokens
+one at a time to resolve the old repository's metadata. The first successful
+lookup supplies the canonical repository ID and owner. A metadata redirect
+must be a 301 to `https://api.github.com/repositories/ID`, with numeric `ID`.
+These metadata tokens remain in memory and serve only that lookup.
+
+The helper fetches the canonical installation with its App JWT and verifies
+the App, permissions, suspension state and canonical owner before issuing the
+command's token. Other redirect hosts and paths are refused. App identity and
+token-issuance requests refuse redirects. If every installation reports the
+repository missing, the refusal names the requested App and owner.
+
+## GitHub CLI access
+
+The launcher adds `git-series-bin/gh` to the child `PATH` and supplies the
+selected registry and series to the wrapper. The wrapper resolves the target
+repository from `-R` or `--repo`, then `GH_REPO`, then the GitHub `origin`
+remote. It looks up that repository owner's App installation for every command
+and gives the real `gh` process a fresh `GH_TOKEN`. It removes an inherited
+`GITHUB_TOKEN` from that process environment.
+
+The CLI token requires `contents:write`, `pull_requests:write`, `metadata:read`,
+`issues:write`, `actions:read`, `checks:read` and `statuses:read`. The token
+request omits the `permissions` field, so GitHub returns the installation's full
+permission grant. The token can access every repository selected for that App
+installation. Git credential requests continue to use the three-permission
+subset described above. [GitHub's installation-token API](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app)
+documents these token permissions.
+
+## GitHub App permissions
+
+Set the CLI permissions on each series App in **Settings > Developer settings >
+GitHub Apps > Permissions & events**:
+
+| Series | App |
+| --- | --- |
+| GPT | [Flip Baton - GPT](https://github.com/apps/flip-baton-gpt) |
+| Muse | [Flip Baton - Muse](https://github.com/apps/flip-baton-muse) |
+| DeepSeek | [Flip Baton - DeepSeek](https://github.com/apps/flip-baton-deepseek) |
+| Claude | [Flip Baton - Claude](https://github.com/apps/flip-baton-claude) |
+| GLM | [Flip Baton - GLM](https://github.com/apps/flip-baton-glm) |
+| Kimi | [Flip Baton - Kimi](https://github.com/apps/flip-baton-kimi) |
+
+| Repository permission | Level | Seat operation |
+| --- | --- | --- |
+| Contents | Read and write | Git pushes and repository contents |
+| Pull requests | Read and write | Read and create pull requests |
+| Metadata | Read-only | Repository metadata |
+| Issues | Read and write | Read issues and post comments |
+| Actions | Read-only | Read workflow runs and logs |
+| Checks | Read-only | Read check runs and annotations |
+| Commit statuses | Read-only | Read commit status contexts |
+| Workflows | Read and write | Push changes under `.github/workflows` with the `workflow-write` profile |
+
+When permissions are added to an App, each installation owner must approve the
+updated grant before the installation receives it. Approve changes for each
+account where the App is installed. [GitHub documents App permission
+updates](https://docs.github.com/en/apps/maintaining-github-apps/modifying-a-github-app-registration#about-changes-to-permissions).
 
 ## Configuration
 
@@ -146,10 +207,12 @@ an endpoint using the installed Node helper and the recipient's recorded model.
 origin remote and pass its GitHub repository to the helper as `--repository`.
 A nested worker registered from another worker's environment uses its own
 assignment workspace, so it receives that assignment's repository. A workspace whose
-origin is not a GitHub URL passes no repository selection. With a selection,
-the helper accepts credential requests only for that repository. With no
-selection, each request names its own repository and the helper uses that
-repository's owner installation.
+origin is not a GitHub URL passes no repository selection. In the default `git`
+profile the selection is the repository for a credential request that carries no
+path. Every request that names a repository uses that repository's owner
+installation, so a launch selected for one repository can push to another
+repository the App is installed on. The `workflow-write` profile restricts
+credentials to its selected repository.
 
 ```sh
 baton2 /absolute/path/state.db receiver lead /absolute/path/omp \
@@ -165,7 +228,10 @@ to resolve the recorded model key without launching a command:
 node "$GIT_SERIES" check --registry "$REGISTRY" --model-key MODEL [--repository OWNER/REPO]
 ```
 
-The check exits 0 when the registry resolves the key and refuses otherwise.
+The check resolves the model and, when a repository is supplied, verifies the
+selected App installation for that repository. It exits 0 when both checks
+succeed and refuses otherwise. An unavailable repository refusal names the
+repository, App and account checked, with GitHub's HTTP response cause.
 `start`, `receiver` and `dispatch-turn` report that refusal with exit status 2,
 keep the session's stored endpoint unchanged, and leave any pending input
 unaccepted, so an unmapped model refuses where it is configured.
@@ -219,8 +285,9 @@ credential command.
 The selected public identity's `github.permissions` must include
 `workflows:write`. The credential helper also checks the App registration,
 the repository owner's installation and the issued token for all four grants.
-Permission refusals name the required level and its source. `check`
-validates local identity metadata; credential issuance performs the remote checks.
+Permission refusals name the required level and its source. With a repository,
+`check` and credential issuance both verify the repository owner's App
+installation and required permissions.
 
 The token request includes `repositories: ["REPO"]` and the four permissions.
 The helper verifies that GitHub returns a selected token covering exactly
@@ -284,10 +351,57 @@ the retained Player commits keep their own attribution. `baton land` and
 model through the configured registry, and re-enter the command through the
 helper with `BATON2_GIT_IDENTITY_APPLIED` set. The helper's author and
 committer variables therefore take precedence over inherited repository or
-global Git configuration. An absent actor session or registry keeps the
-inherited environment. Verify source commit, landed commit and authenticated
-push actor separately. Conductor review, selected landing checks and
+global Git configuration. An absent registry or an actor with no recorded model
+keeps the inherited environment. Verify source commit, landed commit and
+authenticated push actor separately. Conductor review, selected landing checks and
 repository protection provide review authority.
+
+## Publication routes
+
+`baton push --repo PATH --branch BRANCH --remote REMOTE` is the maintained
+publication command. A seat and an operator shell run the same command.
+
+| Route | Series identity and credential helper |
+| --- | --- |
+| `start`, `receiver`, `configure` | Endpoint embeds `git-series.mjs launch` with the recipient's model and the assignment's repository. |
+| `dispatch-turn` and detached turns | Launch embeds the same prefix. |
+| Retained launch for a resumed or continued native session | Prefix carries the recorded model and no `--repository`. |
+| Native tool calls inside a launched seat | Inherit the helper through `GIT_CONFIG_*`, `GIT_ASKPASS` and the author variables. |
+| `baton push`, `land`, `land-checked` with `BATON_SESSION` | Re-enter through the launcher with the actor's model and its workspace's repository. |
+| `baton push` without `BATON_SESSION` | Uses the session recorded with `PATH` as its workspace, preferring the one on `BRANCH`, and continues as above. |
+| Direct `git push` in a shell outside every route above | The shell has no credential helper. Git asks for a username on a terminal and fails with `could not read Username` when none exists. |
+
+An operator wrap-up shell records no `BATON_SESSION`. For a recorded session
+checkout, `baton push` recovers the model and repository from the session
+database and the registry from `BATON2_GIT_REGISTRY` or the default registry
+path. The operator supplies the checkout path, branch and remote. A relative,
+absolute or symlinked spelling of the path resolves to the checkout path that
+the session recorded. A checkout with no
+recorded session needs `BATON_SESSION` set to a session whose model the registry
+maps, or an explicit launch:
+
+```sh
+node "$GIT_SERIES" launch --registry "$REGISTRY" --model-key MODEL \
+  --repository OWNER/REPO -- git -C PATH push REMOTE BRANCH
+```
+
+A rejected `baton push` answers `{"status":"rejected","reason":...,"identity":...}`.
+The `identity` field states one of three conditions:
+
+- `series identity applied`: the launcher wrapped the push, so the helper ran. A `Series Git operation refused`
+  line on standard error then names the registry, installation or permission
+  cause. A refusal that names a missing `issues:write` or other permission
+  concerns the App installation and its owner's approval. The operator approves
+  that change on GitHub.
+- `no series identity: BATON_SESSION is unset and no recorded session has this
+  checkout as its workspace`: the process had no launch context and none could
+  be recovered. Set `BATON_SESSION` or use the explicit launch above.
+- `no series identity for session ID`: the session has no recorded model, the
+  registry does not map it, or no registry exists at the configured path.
+  Correct the model mapping or create the registry.
+
+The helper process runs for each Git credential request and mints a new
+installation token, so no stored token expires between pushes.
 
 ## Validation
 

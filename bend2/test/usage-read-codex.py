@@ -1,14 +1,46 @@
 #!/usr/bin/env python3
-"""Checks Codex usage results after app-server shutdown output."""
+"""Checks Codex usage results after app-server shutdown output, and a Codex read
+whose wall-clock read fails."""
 import json
 import os
 from pathlib import Path
+import shlex
 import signal
 import subprocess
 import sys
 import tempfile
 
+ROOT = Path(__file__).resolve().parents[2]
 helper = Path(sys.argv[1]).resolve()
+
+
+def kill_group(leader):
+    try:
+        os.killpg(leader, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def run_helper(environment, pid_file):
+    # The helper's exit is the completion signal. A helper that stops draining the
+    # app-server's shutdown output leaves both processes blocked in communicate().
+    child = subprocess.Popen([str(helper), "codex", "codex-home:"],
+                             env=dict(environment, FIXTURE_CODEX_PID=str(pid_file)),
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                             start_new_session=True)
+    try:
+        out, err = child.communicate()
+    finally:
+        # An interrupted wait leaves the helper and its app-server in their own groups.
+        if child.poll() is None:
+            if pid_file.exists():
+                kill_group(int(pid_file.read_text()))
+            kill_group(child.pid)
+            child.wait()
+    assert child.returncode == 0, (child.returncode, err)
+    return json.loads(out)
+
+
 with tempfile.TemporaryDirectory(prefix="usage-read-codex-") as temporary:
     fake = Path(temporary) / "codex"
     fake.write_text("""#!/usr/bin/env python3
@@ -21,6 +53,8 @@ sys.stdin.readline()
 sys.stdin.readline()
 if os.environ['FIXTURE_CODEX_REPLY'] == 'error':
     reply = {'id': 2, 'error': {'message': 'fixture read error'}}
+elif os.environ['FIXTURE_CODEX_REPLY'] == 'exhausted':
+    reply = {'id': 2, 'result': {'ordinaryUsageAllowed': False, 'rateLimits': {'primary': {'usedPercent': 100, 'windowDurationMins': 300, 'resetsAt': 1793382116}}}}
 else:
     reply = {'id': 2, 'result': {'ordinaryUsageAllowed': True, 'rateLimits': {'primary': {'usedPercent': 15, 'windowDurationMins': 300, 'resetsAt': 1793382116}}}}
 print(json.dumps(reply), flush=True)
@@ -31,31 +65,31 @@ sys.stdout.flush()
 """)
     fake.chmod(0o755)
     for reply in ("result", "error"):
-        pid_file = Path(temporary) / "codex.pid"
-        environment = dict(os.environ, BATON_CODEX_BIN=str(fake), FIXTURE_CODEX_REPLY=reply,
-                           FIXTURE_CODEX_PID=str(pid_file))
-        child = subprocess.Popen([str(helper), "codex", "codex-home:"],
-                                 env=environment, stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE, text=True, start_new_session=True)
-        try:
-            out, err = child.communicate(timeout=15)
-        except subprocess.TimeoutExpired:
-            if pid_file.exists():
-                try:
-                    os.killpg(int(pid_file.read_text()), signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            try:
-                os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            out, err = child.communicate()
-            raise AssertionError(f"{reply}: helper blocked during app-server shutdown; stdout={out!r}; stderr={err!r}")
-        assert child.returncode == 0, (child.returncode, err)
-        document = json.loads(out)
+        document = run_helper(dict(os.environ, BATON_CODEX_BIN=str(fake), FIXTURE_CODEX_REPLY=reply),
+                              Path(temporary) / "codex.pid")
         assert document["state"] == ("read" if reply == "result" else "unreadable"), document
         if reply == "result":
             assert document["windows"][0]["usedPercent"] == 15, document
         else:
             assert "fixture read error" in document["reason"], document
         print(f"codex-shutdown-{reply}: ok", flush=True)
+
+    # The reader's observedAt orders this read against the account's other reads. With
+    # the wall clock unavailable the read is unreadable, carries no observation time,
+    # and the coordinator records it at its own clock.
+    shim = Path(temporary) / "usage-read-clock-failure.so"
+    subprocess.run([*shlex.split(os.environ.get("CC", "clang")), "-O1", "-shared", "-fPIC",
+                    str(ROOT / "bend2/test/usage-read-clock-failure.c"), "-ldl", "-o", str(shim)],
+                   check=True)
+    # The fake app-server runs without the preload, so only the helper's clock read fails.
+    unpreloaded = Path(temporary) / "codex-unpreloaded"
+    unpreloaded.write_text("#!/bin/sh\nunset LD_PRELOAD\nexec " + shlex.quote(str(fake)) + ' "$@"\n')
+    unpreloaded.chmod(0o755)
+    preload = str(shim) + (":" + os.environ["LD_PRELOAD"] if os.environ.get("LD_PRELOAD") else "")
+    document = run_helper(dict(os.environ, BATON_CODEX_BIN=str(unpreloaded),
+                               FIXTURE_CODEX_REPLY="exhausted", LD_PRELOAD=preload),
+                          Path(temporary) / "codex.pid")
+    assert document["state"] == "unreadable", document
+    assert document["observedAt"] is None, document
+    assert "wall clock" in document["reason"], document
+    print("codex-clock-failure: ok", flush=True)

@@ -22,22 +22,50 @@ def StorageHost.measure(path: String) -> IO(Result<&1,&1,U32 & String,String>):
 def StorageHost.entries(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./storage.c"
 
+# `own` when PATH and every descendant belong to the caller's effective uid,
+# `foreign:<name>` when another uid owns an entry below it, `unknown` when the
+# tree cannot be read. A foreign uid preserves the candidate because the host
+# process scan may be unable to observe that identity's live references.
+def StorageHost.uid_boundary(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./storage.c"
+
 # Removes exactly the path whose identity is `kind:device:inode`. The answer is
 # `removed<TAB>bytes<TAB>nodes`, `already-absent<TAB>0<TAB>0`,
 # `changed<TAB>0<TAB>0` or `refused<TAB>detail`. Directories are removed as a
 # tree through directory handles opened with O_NOFOLLOW; symlink entries are
 # unlinked and never traversed. A path reached through a symlinked parent is
-# refused.
+# refused. The candidate root itself and every walked child are checked for
+# mount identity: a same-device bind mount and an unverifiable mount identity
+# both preserve the whole subtree before any deletion.
 def StorageHost.remove(path: String, identity: String, root: String, root_identity: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./storage.c"
 
-# Live process descriptor references to a path, comma-separated PIDs. This is
-# the open-file half of runtime input; process_refs covers cwd.
+# Cargo cache-tag and native lock-layout observation:
+# `cargo<TAB>dir:device:inode<TAB>tag|layout`, or `unclassified`.
+def StorageHost.cargo_probe(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./storage.c"
+
+# Revalidates Cargo output and its identity, acquires every native profile
+# lock without waiting, and holds the locks through rename and removal.
+# Associated names the effective build directory when it differs from path.
+# The caller resolves current consumers and selections; the cleanup leases
+# and locks the caller's pipeline already holds stay held.
+def StorageHost.cargo_remove(path: String, identity: String, associated: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./storage.c"
+
+# Process references through cwd, executable, descriptors and mapped files:
+# present:PIDS, absent, or unknown:REASON. Failed reads report their PID, path
+# and error to stderr. Every observable process identity is scanned. A live
+# process whose links, descriptors or mappings cannot be read (for example
+# another uid's process without sufficient privilege) makes the custody
+# unknown, so the candidate is preserved.
 def StorageHost.runtime_refs(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./storage.c"
 
-# Live process cwd references to a path, comma-separated PIDs, or an empty
-# string. The scan is bounded and ignores processes it cannot inspect.
+# The same reference scan used for process ownership. Directory and mapping
+# enumeration continues through the actual end. Unreadable live evidence
+# returns unknown; an exited process has released its references. The
+# all-identity scope above applies here too.
 def StorageHost.process_refs(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./storage.c"
 

@@ -130,6 +130,11 @@ const tools = [
       required: ['ids'], additionalProperties: false } },
   { name: 'report', description: 'Send a complete report to the recorded coordinator.', inputSchema: textSchema },
   { name: 'completion_request', description: 'Send completion evidence to the recorded immediate parent.', inputSchema: textSchema },
+  { name: 'completion_confirmed', description: 'Resolve a Player\'s current completion request through the recorded coordinator context.',
+    inputSchema: { type: 'object', properties: { to: { type: 'string' }, next: { type: 'string' } }, additionalProperties: false } },
+  { name: 'guide', description: 'Send complete guidance to a Player through the recorded coordinator context.',
+    inputSchema: { type: 'object', properties: { to: { type: 'string' }, text: { type: 'string' } },
+      required: ['to', 'text'], additionalProperties: false } },
   { name: 'ask', description: 'Ask the recorded coordinator for missing information.', inputSchema: textSchema },
   { name: 'commit', description: 'Add and commit selected workspace files with the recorded model Git attribution. Other staged files remain staged.',
     inputSchema: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' } },
@@ -160,6 +165,15 @@ function handle(request) {
             const ids = args.ids.map(value => string(value, 'id'));
             if (ids.some(id => !id || id.startsWith('-'))) throw new Error('Select stored message IDs.');
             value = contextual(['read', ...ids]);
+          } else if (name === 'completion_confirmed') {
+            argumentsOf(args, ['to', 'next']);
+            const command = ['completion-confirmed'];
+            if (args.to !== undefined) command.push('--to', string(args.to, 'to'));
+            if (args.next !== undefined) command.push('--next', string(args.next, 'next'));
+            value = contextual(command);
+          } else if (name === 'guide') {
+            argumentsOf(args, ['to', 'text']);
+            value = contextual(['guide', '--to', string(args.to, 'to'), '--text', string(args.text, 'text')]);
           } else {
             argumentsOf(args, ['text']);
             const action = { report: 'report', completion_request: 'completion-request', ask: 'ask' }[name];

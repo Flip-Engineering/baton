@@ -345,7 +345,7 @@ int main(int argc,char **argv) {
       normal_sockets[1],guard)==0);
     close(normal_sockets[1]);close(normal_null);close(normal_log_fd);
     BatonChild normal_child={0};
-    REQUIRE(br_attach_socket(&normal_child,normal_path,normal_sockets[0],NULL,0,1)==0);
+    REQUIRE(br_attach_socket(&normal_child,normal_path,normal_sockets[0],NULL,0,1,0,0)==0);
     REQUIRE(normal_child.retained!=NULL);
     REQUIRE(normal_child.retained->custody_lock==-1);
     BatonProcessCall normal_wait={.kind=BP_WAIT,.child=&normal_child};

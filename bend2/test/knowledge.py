@@ -890,30 +890,78 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(self.call(*record), first)
         self.assertEqual(deliveries.read_text(), before + before)
 
-    def test_a_stopped_reviewing_parent_retains_the_notice_and_notifies_its_parent(self):
+    def stored_notice(self, ident):
+        """The stored notice rows with this ID, read from the database."""
+        with sqlite3.connect(self.db) as db:
+            return db.execute('SELECT sender,recipient,kind,body,receipt FROM messages WHERE id=?',
+                              (ident,)).fetchall()
+
+    def reviewing_parent_with_researcher(self):
         self.call('connect', 'root', 'root-session', json.dumps(['/usr/bin/true']))
         self.call('recruit', 'reviewer', 'root', 'omp', 'fixture-model', 'high',
                   str(self.repo), 'reviewer-branch', str(self.checkouts / 'reviewer'), self.base)
         self.player('researcher', parent='reviewer')
-        evidence = self.evidence('retained-check', 'researcher')
-        self.call('stop', 'reviewer', 'end-review', 'Reviewing session ended.')
+        return self.evidence('retained-check', 'researcher')
+
+    def test_a_retained_notice_keeps_its_recipient_and_body_after_the_reviewer_ends(self):
+        evidence = self.reviewing_parent_with_researcher()
         finding = ('record', 'handoff-finding', 'researcher', 'measured claim', evidence, 'fixture')
         recorded = self.call(*finding)
-        self.assertEqual(self.call(*finding), recorded)
-        self.assertEqual(self.ids(self.read('reviewer')), ['handoff-finding'])
-        self.assertEqual(self.ids(self.read('root')), ['handoff-finding'])
-        notice = self.call('delivery', 'handoff-finding:notice')
-        self.assertEqual(notice['recipient'], 'reviewer')
-        self.assertIsNone(notice['receipt'])
         body = {'finding': 'handoff-finding', 'author': 'researcher'}
+        notice = self.call('delivery', 'handoff-finding:notice')
+        self.assertEqual((notice['sender'], notice['recipient'], notice['kind']),
+                         ('researcher', 'reviewer', 'question'))
         self.assertEqual(json.loads(notice['body']), body)
-        handoffs = [json.loads(row['body']) for row in self.call('inbox', 'root')
-                    if row['kind'] == 'report']
-        matches = [row for row in handoffs if row.get('originalMessage') == 'handoff-finding:notice']
-        self.assertEqual(len(matches), 1)
-        self.assertEqual(matches[0]['originalKind'], 'question')
-        self.assertEqual(json.loads(matches[0]['originalBody']), body)
+        self.assertIsNone(notice['receipt'])
+        before = self.stored_notice('handoff-finding:notice')
+        self.assertEqual(len(before), 1)
+        self.call('stop', 'reviewer', 'end-review', 'Reviewing session ended.')
+        self.assertEqual(self.call(*finding), recorded)
+        self.assertEqual(self.stored_notice('handoff-finding:notice'), before)
+        self.player('reviewer-b')
+        self.call('succeed', 'reviewer-b', 'reviewer')
+        self.assertEqual(self.call(*finding), recorded)
+        self.assertEqual(self.stored_notice('handoff-finding:notice'), before)
+        # The unread notice reaches the successor as a new forwarded message.
+        forwarded = self.stored_notice('forward:reviewer:reviewer-b:handoff-finding:notice')
+        self.assertEqual(len(forwarded), 1)
+        self.assertEqual(forwarded[0][1], 'reviewer-b')
+        self.assertIn('"finding":"handoff-finding"', forwarded[0][3].replace(' ', ''))
+        self.assertEqual(self.ids(self.read('reviewer')), ['handoff-finding'])
         self.assertEqual(self.read('reviewer')[0]['promotions'], [])
+
+    def test_a_new_finding_after_the_reviewer_ends_notifies_the_live_ancestor(self):
+        evidence = self.reviewing_parent_with_researcher()
+        self.call('stop', 'reviewer', 'end-review', 'Reviewing session ended.')
+        finding = ('record', 'late-finding', 'researcher', 'measured claim', evidence, 'fixture')
+        recorded = self.call(*finding)
+        self.assertEqual(self.call(*finding), recorded)
+        notice = self.call('delivery', 'late-finding:notice')
+        self.assertEqual((notice['sender'], notice['recipient'], notice['kind']),
+                         ('researcher', 'root', 'question'))
+        self.assertEqual(json.loads(notice['body']),
+                         {'finding': 'late-finding', 'author': 'researcher'})
+        self.assertIsNone(notice['receipt'])
+        self.assertEqual(len(self.stored_notice('late-finding:notice')), 1)
+        self.assertEqual(self.ids(self.read('reviewer')), ['late-finding'])
+        self.assertEqual(self.ids(self.read('root')), ['late-finding'])
+        self.assertIn('late-finding:notice', [row['id'] for row in self.call('inbox', 'root')])
+
+    def test_a_new_finding_after_succession_notifies_the_successor(self):
+        evidence = self.reviewing_parent_with_researcher()
+        self.player('reviewer-b')
+        self.call('stop', 'reviewer', 'end-review', 'Reviewing session ended.')
+        self.call('succeed', 'reviewer-b', 'reviewer')
+        finding = ('record', 'successor-finding', 'researcher', 'measured claim', evidence, 'fixture')
+        recorded = self.call(*finding)
+        self.assertEqual(self.call(*finding), recorded)
+        notice = self.call('delivery', 'successor-finding:notice')
+        self.assertEqual((notice['sender'], notice['recipient'], notice['kind']),
+                         ('researcher', 'reviewer-b', 'question'))
+        self.assertEqual(json.loads(notice['body']),
+                         {'finding': 'successor-finding', 'author': 'researcher'})
+        self.assertEqual(len(self.stored_notice('successor-finding:notice')), 1)
+        self.assertEqual(self.ids(self.read('reviewer-b')), ['successor-finding'])
 
     def test_promotion_notifies_the_destination_owner_with_full_provenance(self):
         self.call('record', 'promotion-finding', 'grand', 'measured claim',

@@ -18,6 +18,18 @@ RECEIVE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RECEIVE)
 
 
+def stdin_eof_source(indent):
+    """Fixture action: waits up to the given seconds for the observer to close the native's
+    stdin and reports whether it saw end of input. Input that is not end of input is read
+    and counts as open."""
+    lines = ("if 'stdin_eof' in action:",
+             "    import select",
+             "    ready=select.select([sys.stdin],[],[],float(action['stdin_eof']))[0]",
+             "    reply({'stdin_closed':bool(ready) and os.read(0,65536)==b''})",
+             "    continue")
+    return ''.join(indent + line + '\n' for line in lines)
+
+
 class NativeObservation(RECEIVE.Receive):
     def setUp(self):
         super().setUp()
@@ -37,9 +49,13 @@ class NativeObservation(RECEIVE.Receive):
             "    if 'native_frame' in action:\n"
             "        print(json.dumps(action['native_frame']),flush=True)\n"
             "        reply({'frame_written':True})\n"
-            "        continue\n")
+            "        continue\n"
+            + stdin_eof_source('    '))
         self.assertIn(needle, fixture)
-        self.fixture.write_text(fixture.replace(needle, needle + addition, 1))
+        fixture = fixture.replace(needle, needle + addition, 1)
+        held = "            if action.get('stdout_line'):\n"
+        self.assertIn(held, fixture)
+        self.fixture.write_text(fixture.replace(held, stdin_eof_source('            ') + held, 1))
 
     def review_input(self, stream, ident):
         self.action(stream, review_input=ident)
@@ -761,6 +777,174 @@ class NativeObservation(RECEIVE.Receive):
         self.assertIn('log-failure-assistant', (pathlib.Path(directory) / 'stdout').read_text())
         self.assertTrue(any(row['id'] == 'log-failure-task'
                             for row in self.coord('inbox', 'parent')))
+
+    # The store's busy handler gives up after 3000 waits of 10 ms
+    # (bend2/src/host/sqlite.c); the lock is held past that bound.
+    LOCK_HOLD_SECONDS = 36
+
+    def hold_write_lock(self):
+        """Start a process that holds the database write lock until its stdin closes."""
+        holder = subprocess.Popen(
+            [sys.executable, '-I', '-c',
+             'import sqlite3, sys\n'
+             'db = sqlite3.connect(sys.argv[1], isolation_level=None, timeout=60)\n'
+             'db.execute("BEGIN IMMEDIATE")\n'
+             'print("locked", flush=True)\n'
+             'sys.stdin.read()\n'
+             'db.execute("ROLLBACK")\n',
+             str(self.db)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        self.addCleanup(holder.kill)
+        self.assertEqual(holder.stdout.readline().strip(), 'locked')
+        return holder
+
+    def recorded_messages(self, ident):
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            return database.execute(
+                'SELECT id, kind, body FROM messages WHERE id=? OR id LIKE ? ORDER BY seq',
+                (ident, ident + ':%')).fetchall()
+
+    def test_terminal_result_is_recorded_after_a_write_lock_outlasts_the_busy_wait(self):
+        self.player(harness='omp')
+        self.coord('message', 'busy-task', 'root', 'parent', 'task', 'Read this task.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
+        self.review_input(stream, 'busy-task')
+        _, turn_id = self.eventually(lambda: self._retained_attempt(),
+                                     'retained attempt was not admitted')
+
+        holder = self.hold_write_lock()
+        locked_at = time.monotonic()
+        text = 'Result recorded after the store lock was released.'
+        self.action(stream, native_frame={
+            'type': 'agent_end', 'isTerminal': True, 'is_error': False,
+            'messages': [{'role': 'assistant', 'content': [{'type': 'text', 'text': text}]}]})
+        self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+
+        while time.monotonic() - locked_at < self.LOCK_HOLD_SECONDS:
+            if observer.poll() is not None:
+                stdout, stderr = self.child_communication(observer)
+                self.fail(f'receive exited {observer.returncode} while the store was locked: '
+                          f'{stdout}{stderr}')
+            time.sleep(.5)
+        self.assertEqual(self.recorded_messages(turn_id), [])
+        self.assertIsNone(observer.poll())
+
+        holder.stdin.close()
+        self.assertEqual(holder.wait(timeout=30), 0)
+        released_at = time.monotonic()
+        while not self.recorded_messages(turn_id):
+            if observer.poll() is not None or time.monotonic() - released_at > 60:
+                stdout, stderr = self.child_communication(observer) \
+                    if observer.poll() is not None else ('', '')
+                self.fail('the terminal result was not recorded after the lock was released; '
+                          f'receive exit={observer.poll()}: {stdout}{stderr}')
+            time.sleep(.1)
+
+        self.assertIsNone(observer.poll(), 'receive exited while its native process was running')
+        self.assertTrue(any(process['pid'] == started['pid'] for process in self.owned_processes()))
+        self.action(stream, exit_fixture=True)
+        self.finish(observer)
+        self.assertFalse(any(process['pid'] == started['pid']
+                             for process in self.owned_processes()))
+
+        recorded = self.recorded_messages(turn_id)
+        self.assertEqual([(row[0], row[1], row[2]) for row in recorded],
+                         [(turn_id, 'report', text)])
+        self.assertEqual([row['reportBody'] for row in self.coord('turns', 'parent')], [text])
+        self.assertFalse(any(row['id'] == turn_id + ':observation'
+                             for row in self.coord('inbox', 'root')))
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
+
+
+    def test_a_silent_native_with_owed_input_reports_when_a_commit_wakes_its_receiver(self):
+        # The observer runs the silence check when a commit notice wakes its receiver (#1298).
+        # The native writes nothing after it starts, its task stays owed, and the
+        # receiver holds the claimed wake. The retained stdout is dated two hours
+        # back; a later commit wakes the receiver and the coordinator is told.
+        self.player(harness='omp')
+        self.coord('message', 'silent-task', 'root', 'parent', 'task', 'Work that stays owed.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
+        self.assertIn('[id: silent-task]', started['prompt'])
+        _, attempt = self.eventually(lambda: self._retained_attempt(),
+                                     'retained attempt was not admitted')
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            claim = database.execute(
+                "SELECT state FROM wake_claims WHERE session='parent'").fetchone()
+        self.assertEqual(claim, ('claimed',), 'the receiver holds no claimed wake for the owed task')
+
+        stdout = self.attempt_stdout('parent')
+        silent_since = time.time() - 2 * 3600
+        os.utime(stdout, (silent_since, silent_since))
+        self.coord('message', 'silent-more', 'root', 'parent', 'guidance', 'More work.')
+
+        deadline = time.monotonic() + 60
+        while True:
+            reports = [row for row in self.coord('inbox', 'root')
+                       if row['id'].startswith(attempt + ':silent:')]
+            if reports:
+                break
+            if observer.poll() is not None:
+                stdout_text, stderr_text = self.child_communication(observer)
+                self.fail(f'receive exited {observer.returncode} before it reported the silence: '
+                          f'{stdout_text}{stderr_text}')
+            if time.monotonic() > deadline:
+                self.fail('the silent native was not reported after a commit woke its receiver')
+            time.sleep(.2)
+        (report,) = reports
+        self.assertEqual(report['kind'], 'report')
+        for fact in ('session parent', 'Attempt ' + attempt, 'native pid ', 'last output ',
+                     'owed inputs'):
+            self.assertIn(fact, report['body'])
+        # The report names the condition and signals nothing: the native is still running.
+        self.assertTrue(any(process['pid'] == started['pid'] for process in self.owned_processes()))
+        self.assertIsNone(observer.poll())
+        self.action(stream, exit_fixture=True, complete_task=True)
+        self.finish(observer)
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
+
+    def test_a_claude_native_stdin_follows_the_latest_task_list_in_a_large_retained_stdout(self):
+        # #1298: after its first result the observer closes a Claude Code native's stdin only when
+        # the latest background_tasks_changed frame in the retained stdout lists no task. The
+        # stdout holds about 4 MiB of earlier frames, a list with a task, and then the result.
+        # An empty list followed at once by a list with a task leaves stdin open; a later empty
+        # list closes it.
+        tasks = json.dumps({'type': 'system', 'subtype': 'background_tasks_changed',
+                            'tasks': [{'task_id': 'b1', 'task_type': 'local_bash', 'description': 'sleep 100'}]})
+        empty = json.dumps({'type': 'system', 'subtype': 'background_tasks_changed', 'tasks': []},
+                           indent=1).replace('\n', ' ')
+        self.player(harness='claude-code')
+        self.coord('message', 'list-task', 'root', 'parent', 'task', 'Work that runs a background task.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(observer, 'parent',
+                                            'Observation receive exited before native startup')
+        self.action(stream, emit_delta_batch={'count': 64, 'bytes': 65536, 'id': 'prefix'})
+        self.assertEqual(json.loads(stream.readline()), {'delta_frames_written': 64, 'batch': 'prefix'})
+        self.action(stream, native_line=tasks)
+        self.assertEqual(json.loads(stream.readline()), {'line_written': tasks})
+        self.assertGreater(self.attempt_stdout('parent').stat().st_size, 4 * 1024 * 1024)
+        self.action(stream, hold_exit=True)
+        self.assertEqual(json.loads(stream.readline()), {'terminal_written': True})
+        self.action(stream, stdin_eof=3)
+        self.assertEqual(json.loads(stream.readline()), {'stdin_closed': False},
+                         'stdin closed while the latest list named a task')
+        self.action(stream, stdout_line=empty + '\n' + tasks)
+        self.assertEqual(json.loads(stream.readline()), {'line_written': empty + '\n' + tasks})
+        self.action(stream, stdin_eof=3)
+        self.assertEqual(json.loads(stream.readline()), {'stdin_closed': False},
+                         'stdin closed on an empty list that a later list replaced')
+        self.action(stream, stdout_line=empty)
+        self.assertEqual(json.loads(stream.readline()), {'line_written': empty})
+        self.action(stream, stdin_eof=60)
+        self.assertEqual(json.loads(stream.readline()), {'stdin_closed': True},
+                         'stdin stayed open after the latest list named no task')
+        self.action(stream, exit_fixture=True)
+        self.finish(observer)
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
+
 
 def load_tests(loader, tests, pattern):
     declared = sorted(name for name in vars(NativeObservation) if name.startswith('test_'))

@@ -18,9 +18,28 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 ARCHIVE_ROOT = 'baton2-development-darwin-arm64'
 COMPILER_ARCHIVE_SHA256 = 'c5bb22ba029d5909da9c6db82aa037278a66d1cf8a5572f433879f7dcd866c31'
+RETAINED_LINUX_COMPILER_ARCHIVE_SHA256S = (
+    '73f56cb6523cea699cd43664a7231233b0d2076b74bf2be4edb680dc4fd79dcd',
+    '9ce9b66b67e86868eb08d987eaabd162a5aad6a3a723ea16e63bfa7df112dd23',
+    'd942170807fdfacc078792110e76e00a1e2b5076524ac043bf6f8534652c284d',
+    '95a6ad2b7798aa4400cc1a78ba61970aab4f749d617323a15a6eabe373be541c',
+    'c9b72c4c3d802508eea769d29404989346119042c8827dc19439646b28558dfb',
+    'f46d75d3cb3a68c68bdcfaeb5dfe465e06343b47d6376949fd862510a82781d3',
+    'b096466b3b849234d3393ba9c726f78121f31762dc4e5379fe886e9b61b75590',
+    '2b272454ec56a3d47f6957d8ad28da7d946dce470747e8bde5d5ff274c48e957',
+    '2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065',
+    '113a272649904e80144b1954dba8b4999249efa408a6ce1ca346906114986c4d',
+    '5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3',
+)
+DARWIN_SDK_MANIFEST_SHA256 = 'f6d597415b05891fb8666415757f4a9c851df942421cd42c8d1a4234a88c132f'
+DARWIN_SDK_TREE_SHA256 = 'b6924d0319fefa3d5c7f218dcaf25898d46ea33c50f6c7ea4e0f436b6d0d5930'
 COMPILER_ARCHIVE_URL = 'https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz'
 COMPILER_LICENSE_URL = 'https://raw.githubusercontent.com/bendlang/bend/v2.0.25/LICENSE'
 COMPILER_LICENSE_SHA256 = '0beb288abd3d067e231f3fbe7df1f8ee37344061fc67f22018150a19e4b26c35'
+# The agent_summary preload (#1338): source gist, revision and script digest.
+AGENT_SUMMARY_PRELOAD_SOURCE = 'https://gist.github.com/flamerix-ai/c3905705cc4205e5de3011fa2e74efce'
+AGENT_SUMMARY_PRELOAD_REVISION = '4f1ad563fbe4fb830af5dd67fbde4c1860f9caa6'
+AGENT_SUMMARY_PRELOAD_SHA256 = 'f95df896a998653ee86e7320ae9a29a547add4addd50cf631491dffaa6040b40'
 
 
 def require(condition, message):
@@ -98,11 +117,12 @@ def build_binary(env, directory, label, entry=None, focused=False, router=False,
 
 BINARY_LAYOUT = (
     {'role': 'focused-facade', 'option': 'focused', 'label': 'baton-focused',
-     'installed': 'bin/baton', 'alias': None,
+     'installed': 'bin/baton-focused', 'alias': None,
      'entry': 'bend2/src/coordinator/receive-focused.bend',
      'build_mode': 'focused-native-entry', 'focused': True, 'router': False},
     {'role': 'full-cli', 'option': 'full', 'label': 'baton-full',
-     'installed': 'bin/baton2', 'alias': 'bin/baton-full',
+     'installed': 'bin/baton', 'alias': 'bin/baton2',
+     'aliases': ('bin/baton2', 'bin/baton-full'),
      'entry': 'bend2/src/coordinator/main.bend',
      'build_mode': 'full-native-receiver-router',
      'focused': False, 'router': True, 'wrapper': True},
@@ -174,8 +194,8 @@ def receiver_binaries(args):
 
 
 def archive_notices(archive):
-    require(sha256(archive) == COMPILER_ARCHIVE_SHA256,
-            'Compiler archive does not match the upstream Bend 2.0.25 pin')
+    require(sha256(archive) in (COMPILER_ARCHIVE_SHA256, *RETAINED_LINUX_COMPILER_ARCHIVE_SHA256S),
+            'Compiler archive differs from the selected Bend 2.0.25 pins')
     notices = []
     with tarfile.open(archive, 'r:gz') as source:
         for member in source.getmembers():
@@ -190,30 +210,42 @@ def archive_notices(archive):
     return notices
 
 
-def stage_adapters(payload):
+def stage_adapters(payload, helper_binaries=None):
     directory = payload / 'libexec/baton2'
     directory.mkdir(parents=True)
     for harness in ('codex', 'omp', 'mcp'):
         for suffix in ('conductor', 'root'):
             name = harness + '-' + suffix + '.mjs'
             shutil.copyfile(ROOT / 'bend2/scripts' / name, directory / name)
+    for name in ('codex-root-relay.mjs', 'root-channel-config.mjs'):
+        shutil.copyfile(ROOT / 'bend2/scripts' / name, directory / name)
+    shutil.copyfile(ROOT / 'bend2/scripts/omp-completion.mjs', directory / 'omp-completion.mjs')
+    shutil.copyfile(ROOT / 'bend2/scripts/no-agent-summary.js', directory / 'no-agent-summary.js')
+    shutil.copyfile(ROOT / 'bend2/scripts/agent-summary-check.mjs', directory / 'agent-summary-check.mjs')
+    shutil.copytree(ROOT / 'bend2/harness/agy-plugin', directory / 'agy-plugin')
     shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', directory / 'git-series.mjs')
+    shutil.copytree(ROOT / 'bend2/harness/git-series-bin', directory / 'git-series-bin')
     shutil.copyfile(ROOT / 'bend2/harness/native-history.mjs', directory / 'native-history.mjs')
     shutil.copyfile(ROOT / 'bend2/harness/project-settings.mjs', directory / 'project-settings.mjs')
-    native_observe = ROOT / '.scratch/bend2/claude-credit-observe'
-    require(native_observe.is_file(), 'native claude-credit-observe helper is missing; build bend2/harness/claude-credit-observe.bend before packaging')
+    helper_binaries = helper_binaries or {}
+    native_observe = helper_binaries.get('claude-credit-observe', ROOT / '.scratch/bend2/claude-credit-observe')
+    require(native_observe.is_file() and not native_observe.is_symlink() and os.access(native_observe, os.X_OK),
+            'native claude-credit-observe helper is missing or not executable')
     shutil.copyfile(native_observe, directory / 'claude-credit-observe')
     (directory / 'claude-credit-observe').chmod(0o755)
-    native_key_exec = ROOT / '.scratch/bend2/api-key-exec'
-    require(native_key_exec.is_file(), 'native api-key-exec helper is missing; build bend2/harness/api-key-exec.bend before packaging')
+    native_key_exec = helper_binaries.get('api-key-exec', ROOT / '.scratch/bend2/api-key-exec')
+    require(native_key_exec.is_file() and not native_key_exec.is_symlink() and os.access(native_key_exec, os.X_OK),
+            'native api-key-exec helper is missing or not executable')
     shutil.copyfile(native_key_exec, directory / 'api-key-exec')
     (directory / 'api-key-exec').chmod(0o755)
-    native_usage_read = ROOT / '.scratch/bend2/usage-read'
-    require(native_usage_read.is_file(), 'native usage-read helper is missing; build bend2/harness/usage-read.bend before packaging')
+    native_usage_read = helper_binaries.get('usage-read', ROOT / '.scratch/bend2/usage-read')
+    require(native_usage_read.is_file() and not native_usage_read.is_symlink() and os.access(native_usage_read, os.X_OK),
+            'native usage-read helper is missing or not executable')
     shutil.copyfile(native_usage_read, directory / 'usage-read')
     (directory / 'usage-read').chmod(0o755)
     shutil.copyfile(ROOT / 'bend2/harness/task-start.mjs', directory / 'task-start.mjs')
     shutil.copyfile(ROOT / 'bend2/scripts/dsh-worker.mjs', directory / 'dsh-worker.mjs')
+    shutil.copyfile(ROOT / 'bend2/scripts/dsh-baton-hooks.mjs', directory / 'dsh-baton-hooks.mjs')
     shutil.copytree(ROOT / 'bend2/ui/orchestra', directory / 'ui')
     shutil.copyfile(ROOT / 'bend2/scripts/context-provider.mjs', directory / 'context-provider.mjs')
     shutil.copyfile(ROOT / 'bend2/scripts/context-project-policy.mjs', directory / 'context-project-policy.mjs')
@@ -577,7 +609,20 @@ def stage_notices(payload, compiler_notices, kind='development'):
         destination = directory / 'compiler-archive' / path
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(data)
+    preload_license = ROOT / 'docs/bend2/reference/third-party/no-agent-summary-LICENSE'
+    require(preload_license.is_file(), 'The agent_summary preload license text is missing')
+    shutil.copyfile(preload_license, directory / 'no-agent-summary-LICENSE')
+    terms['agent_summary_preload_license'] = {'path': 'notices/no-agent-summary-LICENSE',
+                                              'source': AGENT_SUMMARY_PRELOAD_SOURCE,
+                                              'revision': AGENT_SUMMARY_PRELOAD_REVISION,
+                                              'script_sha256': AGENT_SUMMARY_PRELOAD_SHA256}
     distribution.extend([
+        'no-agent-summary-LICENSE is the MIT license text for libexec/baton2/no-agent-summary.js, '
+        'copyright 2026 Flamerix AI, from ' + AGENT_SUMMARY_PRELOAD_SOURCE + ' revision '
+        + AGENT_SUMMARY_PRELOAD_REVISION + ' (script sha256 ' + AGENT_SUMMARY_PRELOAD_SHA256 + ').',
+        'That revision names the MIT license in the script header and the gist README and does not '
+        'carry the license text; no-agent-summary-LICENSE is the standard MIT text with the copyright '
+        'line from the script header.',
         'bend-2.0.25-LICENSE is the pinned upstream compiler/runtime license at ' + COMPILER_LICENSE_URL + '.',
         'bend-reference-LICENSE applies to the separately pinned Bend reference.',
         'compiler-archive/ retains license and notice files found in the verified Bend archive.'])
@@ -647,11 +692,15 @@ def stage_receiver_binaries(payload, specs, built, c_hashes=None):
             record['wrapper_source'] = spec['wrapper_source']
         if c_hashes and spec['role'] in c_hashes:
             record['retained_c_sha256'] = c_hashes[spec['role']]
+        aliases = list(spec.get('aliases', ()))
         if spec['alias']:
-            alias = payload / spec['alias']
+            record['alias'] = spec['alias']
+        if aliases:
+            record['aliases'] = aliases
+        for alias_name in aliases:
+            alias = payload / alias_name
             shutil.copyfile(built[spec['role']], alias)
             alias.chmod(0o755)
-            record['alias'] = spec['alias']
         records.append(record)
     return records
 
@@ -666,6 +715,49 @@ def artifact_identity(release_version):
             'kind': 'release', 'version': release_version}
 
 
+def artifact_target(args):
+    target_system = getattr(args, 'target_system', None) or platform.system()
+    target_machine = getattr(args, 'target_machine', None) or platform.machine()
+    require(target_system == 'Darwin' and target_machine in ('arm64', 'aarch64'),
+            'This native artifact requires a Darwin arm64 target')
+    return target_system, 'arm64'
+
+
+def configure_cross_host_build(args, environment, target_system, target_machine):
+    cross_host = (platform.system(), platform.machine()) != (target_system, target_machine)
+    supplied = [getattr(args, role + '_binary', None) for role in ('focused', 'full', 'recovery')]
+    supplied.extend(getattr(args, role.replace('-', '_') + '_binary', None)
+                     for role in ('claude-credit-observe', 'api-key-exec', 'usage-read'))
+    if not cross_host or all(path is not None for path in supplied):
+        return environment, cross_host
+    require(not environment.get('BATON2_NATIVE_QUEUE_DRIVER') and not environment.get('BATON2_NATIVE_QUEUE'),
+            'Cross-host compilation must select the shared homelab compile queue')
+    llvm_input = getattr(args, 'darwin_llvm_root', None)
+    sdk_input = getattr(args, 'darwin_sdkroot', None)
+    require(llvm_input is not None and sdk_input is not None,
+            'Cross-host compilation requires the staged LLVM toolchain and macOS SDK paths')
+    llvm_root = llvm_input.resolve()
+    sdkroot = sdk_input.resolve()
+    require((llvm_root / 'bin/clang').is_file() and (llvm_root / 'bin/ld64.lld').is_file()
+            and (sdkroot / 'usr/include').is_dir(),
+            'The staged Darwin compiler, linker and SDK inputs are required for cross-host builds')
+    sdk_manifest = sdkroot.with_name(sdkroot.name + '.transfer-manifest.json')
+    require(sdk_manifest.is_file(), 'The staged macOS SDK transfer manifest is required')
+    sdk_identity = json.loads(sdk_manifest.read_text())
+    verification = sdk_identity.get('verification', {})
+    require(sha256(sdk_manifest) == DARWIN_SDK_MANIFEST_SHA256
+            and sdk_identity.get('schema') == 'baton2-private-sdk-transfer-v1'
+            and Path(sdk_identity.get('destination', '')).resolve() == sdkroot
+            and verification.get('destination_tree_sha256') == DARWIN_SDK_TREE_SHA256,
+            'The staged macOS SDK transfer manifest does not identify this SDK tree')
+    environment.update(CC=str(ROOT / 'bend2/scripts/darwin-arm64-clang.sh'),
+                       BATON2_DARWIN_LLVM_ROOT=str(llvm_root),
+                       BATON2_DARWIN_SDKROOT=str(sdkroot),
+                       BATON2_DARWIN_SDK_MANIFEST_SHA256=DARWIN_SDK_MANIFEST_SHA256,
+                       BATON2_DARWIN_SDK_TREE_SHA256=verification['destination_tree_sha256'])
+    return environment, cross_host
+
+
 def package(args):
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -675,11 +767,11 @@ def package(args):
     write_json(output / 'result.json', result)
     try:
         repl_inputs(args)
-        require(platform.system() == 'Darwin' and platform.machine() == 'arm64',
-                'This native artifact requires a Darwin arm64 build host')
+        target_system, target_machine = artifact_target(args)
         identity = artifact_identity(args.release_version)
         compiler = args.bend.resolve()
         env = dict(os.environ, BEND=str(compiler))
+        env, cross_host = configure_cross_host_build(args, env, target_system, target_machine)
         if args.generated_c is not None:
             env['BEND_GENERATED_C'] = str(args.generated_c.resolve())
         specs = receiver_binaries(args)
@@ -713,6 +805,35 @@ def package(args):
                     write_json(build_output / spec['label'] / 'build.json', record)
                 built[role] = path
                 builds[role] = {'mode': 'built', 'path': str(path), 'sha256': sha256(path)}
+        helper_specs = (
+            ('claude-credit-observe', 'claude_credit_observe_binary', 'claude-credit-observe',
+             'bend2/harness/claude-credit-observe.bend'),
+            ('api-key-exec', 'api_key_exec_binary', 'api-key-exec', 'bend2/harness/api-key-exec.bend'),
+            ('usage-read', 'usage_read_binary', 'usage-read', 'bend2/harness/usage-read.bend'),
+        )
+        helper_binaries = {}
+        helper_builds = {}
+        for role, option, label, entry in helper_specs:
+            supplied = getattr(args, option)
+            if supplied is not None:
+                path = supplied.resolve()
+                require(path.is_file() and not path.is_symlink() and os.access(path, os.X_OK),
+                        'The supplied ' + role + ' helper is unavailable or not executable: ' + str(path))
+                helper_binaries[role] = path
+                helper_builds[role] = {'mode': 'supplied', 'path': str(path), 'sha256': sha256(path)}
+            elif cross_host:
+                path, record = build_binary(env, build_output, label, entry=entry)
+                require(path.is_file(), 'The production build did not create ' + str(path))
+                helper_binaries[role] = path
+                helper_builds[role] = {'mode': 'built', 'path': str(path), 'sha256': sha256(path),
+                                        'build': record}
+            else:
+                helper_binaries[role] = ROOT / '.scratch/bend2' / label
+                require(helper_binaries[role].is_file() and not helper_binaries[role].is_symlink()
+                        and os.access(helper_binaries[role], os.X_OK),
+                        'The existing ' + role + ' helper is missing or not executable')
+                helper_builds[role] = {'mode': 'existing', 'path': str(helper_binaries[role]),
+                                        'sha256': sha256(helper_binaries[role])}
         archive = args.compiler_archive.resolve()
         compiler_notices = archive_notices(archive)
         source = {'directory': str(ROOT), **source_identity(),
@@ -721,7 +842,7 @@ def package(args):
         records = stage_receiver_binaries(payload, specs, built, c_hashes)
         closures = stage_source_closures(payload, args)
         require_manifest_closures(specs, closures)
-        stage_adapters(payload)
+        stage_adapters(payload, helper_binaries)
         repl_compiler = stage_repl(payload, args)
         selected_context = [stage_selected_context_payload(payload), stage_runtime_context_module(payload)]
         selected_context.extend(stage_clang_context_modules(payload, args.context_clang_package))
@@ -758,16 +879,27 @@ def package(args):
         manifest = {
             'schema': 'baton2-native-artifact-v2', **identity,
             'created_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            'platform': {'system': platform.system(), 'machine': platform.machine(), 'artifact': 'darwin-arm64'},
+            'platform': {'system': target_system, 'machine': 'arm64', 'artifact': 'darwin-arm64'},
             'source': source,
             'binaries': records, 'source_manifest': source_manifest,
-            'binary': {'path': focused['path'], 'alias': focused.get('alias'),
-                       'sha256': focused['sha256'], 'source': focused['source']},
+            'binary': {'path': full_record['path'], 'alias': full_record.get('alias'),
+                       'sha256': full_record['sha256'], 'source': full_record['source']},
             'selected_modules': selected_context,
             'selected_dependencies': repl_compiler,
-            'required_system_dependencies': system_dependencies(platform.system()),
+            'required_system_dependencies': system_dependencies(target_system),
             'build': {'command': builds['full-cli'], 'compiler_archive': {
-                'url': COMPILER_ARCHIVE_URL, 'sha256': sha256(archive)}, 'binaries': builds},
+                'url': COMPILER_ARCHIVE_URL if sha256(archive) == COMPILER_ARCHIVE_SHA256 else None,
+                'sha256': sha256(archive)},
+                'compiler': {'path': str(compiler), 'sha256': sha256(compiler)},
+                'host': {'system': platform.system(), 'machine': platform.machine()},
+                'binaries': builds, 'supporting_binaries': helper_builds,
+                'cross_compilation': ({'target': 'arm64-apple-macosx11.0',
+                                       'compiler': str(Path(env['BATON2_DARWIN_LLVM_ROOT']) / 'bin/clang'),
+                                       'linker': str(Path(env['BATON2_DARWIN_LLVM_ROOT']) / 'bin/ld64.lld'),
+                                       'sysroot': env['BATON2_DARWIN_SDKROOT'],
+                                       'sdk_manifest_sha256': env['BATON2_DARWIN_SDK_MANIFEST_SHA256'],
+                                       'sdk_tree_sha256': env['BATON2_DARWIN_SDK_TREE_SHA256']}
+                                      if 'BATON2_DARWIN_SDK_TREE_SHA256' in env else None)},
             'terms': terms,
         }
         write_json(payload / 'manifest.json', manifest)
@@ -801,6 +933,12 @@ def main():
                         help='verified official Bend 2.0.25 archive used for license notices')
     parser.add_argument('--generated-c', type=Path,
                         help='compile a generated production C file on the package host')
+    parser.add_argument('--target-system', help='artifact operating system; defaults to the package host')
+    parser.add_argument('--target-machine', help='artifact CPU architecture; defaults to the package host')
+    parser.add_argument('--darwin-llvm-root', type=Path,
+                        help='staged homelab LLVM directory for a queued Darwin arm64 cross-build')
+    parser.add_argument('--darwin-sdkroot', type=Path,
+                        help='staged macOS SDK used by the Darwin arm64 cross-build')
     for role in ('focused', 'full', 'recovery'):
         parser.add_argument('--' + role + '-binary', type=Path,
                             help='prebuilt ' + role + ' binary; otherwise build from source')
@@ -809,6 +947,9 @@ def main():
         parser.add_argument('--' + role + '-source-status')
         parser.add_argument('--' + role + '-source-directory')
         parser.add_argument('--' + role + '-source-manifest-sha256')
+    for role in ('claude-credit-observe', 'api-key-exec', 'usage-read'):
+        parser.add_argument('--' + role + '-binary', type=Path,
+                            help='prebuilt Darwin helper binary; otherwise build through the shared queue')
     for role in ('focused', 'full', 'recovery', 'full-wrapper'):
         parser.add_argument('--' + role + '-source-closure', type=Path)
     parser.add_argument('--full-c-sha256', help='retained full generated-C SHA256')

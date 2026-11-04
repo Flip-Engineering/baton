@@ -71,6 +71,11 @@ def ProcessChild.control_write(directory: String, data: String) -> IO(Result<&1,
 def ProcessChild.control_signal(directory: String, sig: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
+# Signals a missing attempt only when its database owner holds the exact keeper
+# and verifies the native process birth identity.
+def ProcessChild.instance_attempt_signal(database: String, directory: String, sig: U32) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./process-spawn.c"
+
 def ProcessChild.release(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 

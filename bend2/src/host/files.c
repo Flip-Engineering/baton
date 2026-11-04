@@ -525,6 +525,18 @@ typedef struct {
   int operation,error;
 } BatonPathCall;
 
+static int baton_group_directory_mode(int fd) {
+  struct stat info;
+  if(fstat(fd,&info))return errno;
+  if(!S_ISDIR(info.st_mode))return EPERM;
+  if((info.st_mode&07777)!=02770) {
+    if(fchmod(fd,02770))return errno;
+    if(fstat(fd,&info))return errno;
+  }
+  if(!S_ISDIR(info.st_mode) || (info.st_mode&07777)!=02770)return EPERM;
+  return 0;
+}
+
 static void baton_path_work(IoWork *work) {
   BatonPathCall *call=(BatonPathCall *)work->data;
   if(call->operation==1) {
@@ -598,6 +610,15 @@ static void baton_path_work(IoWork *work) {
     mode_t previous=umask(0007);
     int result=mkdir(call->path,0770);
     int saved=errno;
+    if(!result) {
+      int fd=open(call->path,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+      if(fd<0) {result=-1;saved=errno;}
+      else {
+        int mode_error=baton_group_directory_mode(fd);
+        if(close(fd) && !mode_error) mode_error=errno;
+        if(mode_error) {result=-1;saved=mode_error;}
+      }
+    }
     umask(previous);
     if(result) call->error=saved;
   }

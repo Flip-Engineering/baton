@@ -150,7 +150,8 @@ class RecruitReceiver(unittest.TestCase):
 
     def test_unmapped_model_refuses_before_recording_a_receiver(self):
         result = self.recruit('unmapped', model='fixture/unmapped-model', code=2)
-        self.assertIn('configured series registry does not resolve the recorded model fixture/unmapped-model', result.stderr)
+        self.assertIn('configured series identity check failed for recorded model fixture/unmapped-model', result.stderr)
+        self.assertIn('helper exited 1:', result.stderr)
         self.assertEqual(self.sql("SELECT endpoint FROM sessions WHERE id='unmapped'"), [('',)])
         self.assertEqual(result.stdout, '')
 

@@ -1,0 +1,4 @@
+#!/usr/bin/env node
+import { main } from '../git-series.mjs';
+
+process.exitCode = await main(['gh', ...process.argv.slice(2)]);

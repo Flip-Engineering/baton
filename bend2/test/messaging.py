@@ -137,8 +137,9 @@ class Messaging(unittest.TestCase):
         self.call('ensemble-member', 'players', 'root', 'leaf-b', 'remove')
         self.refused('removed', 'leaf-a', 'leaf-b')
 
-    def test_tight_conductors_can_message_across_hierarchy_depths(self):
-        self.ensemble('top', 'root', 'other-root')
+    def test_tight_ensemble_owner_can_message_without_a_membership_row(self):
+        self.ensemble('top', 'other-root')
+        self.assertEqual(self.call('ensemble', 'top')['members'], ['other-root'])
         self.send('top-a', 'root', 'other-root')
         self.send('top-b', 'other-root', 'root')
         self.ensemble('leads', 'lead-a', 'lead-b')

@@ -82,13 +82,21 @@ if ! queue_run=$(mktemp -d "$queue_root/invocation.XXXXXXXX"); then
   printf 'queue-entry: could not create an owned queue run directory under %s\n' "$queue_root" >&2
   exit 2
 fi
-if ! "${PYTHON3:-python3}" - "$queue_run" "$compiler" "${CC:-clang}" "$queue_client" "$queue_state" <<'PY'
+queue_priority=${BATON2_COMPILE_QUEUE_PRIORITY:-0}
+case "$queue_priority" in
+  *[!0-9]*)
+    printf 'queue-entry: BATON2_COMPILE_QUEUE_PRIORITY must be a non-negative integer: %s\n' \
+      "$queue_priority" >&2
+    exit 2
+    ;;
+esac
+if ! "${PYTHON3:-python3}" - "$queue_run" "$compiler" "${CC:-clang}" "$queue_client" "$queue_state" "$queue_priority" <<'PY'
 import json, pathlib, shutil, sys
-run, bend, cc, client, state = sys.argv[1:6]
+run, bend, cc, client, state, priority = sys.argv[1:7]
 config = {"run": str(pathlib.Path(run).resolve()),
           "bend": str(pathlib.Path(bend).resolve()),
           "cc": shutil.which(cc) or cc,
-          "client": client, "state": state}
+          "client": client, "state": state, "priority": priority}
 pathlib.Path(run, "queue-config.json").write_text(json.dumps(config, indent=2) + "\n")
 PY
 then

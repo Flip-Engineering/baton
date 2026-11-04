@@ -3,6 +3,9 @@
 # The compiler stub records invocations and creates requested C outputs.
 set -eu
 
+# Compiler stubs must execute to produce each process and scratch receipt.
+unset BATON2_NATIVE_QUEUE_DRIVER BATON2_NATIVE_QUEUE
+
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 guard="$here/../scripts/bend-launch-guard.sh"
 temp=$(mktemp -d)

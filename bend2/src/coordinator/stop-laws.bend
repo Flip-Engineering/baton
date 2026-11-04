@@ -57,13 +57,14 @@ def stopped_admission_releases_without_launch(db,session,id,cmd,route,thinking,w
   {==}
 
 # Both direct turns and retained receives call this transaction while holding
-# their session lock. The terminal stop predicate also decides the result.
+# their session lock. The terminal stop predicate and the derived completion
+# closure of the assignment (C.task_closed_sql) also decide the result.
 law stop_admission_transaction_preserves_terminal_state:
   for +session: String
   for +id: String
   for +mode: String
   for +directory: String
-  {Stop.admit_sql(session,id,mode,directory) == "BEGIN IMMEDIATE;INSERT INTO executions(session,id,mode,directory,phase,status) SELECT " ++ C.q(session) ++ "," ++ C.q(id) ++ "," ++ C.q(mode) ++ "," ++ C.q(directory) ++ ",'starting','' WHERE NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ") ON CONFLICT(session) DO UPDATE SET id=excluded.id,mode=excluded.mode,directory=excluded.directory,phase=excluded.phase,status='';SELECT NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ");COMMIT;" : String}
+  {Stop.admit_sql(session,id,mode,directory) == "BEGIN IMMEDIATE;INSERT INTO executions(session,id,mode,directory,phase,status) SELECT " ++ C.q(session) ++ "," ++ C.q(id) ++ "," ++ C.q(mode) ++ "," ++ C.q(directory) ++ ",'starting','' WHERE NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ") AND NOT " ++ C.task_closed_sql(C.q(session)) ++ " ON CONFLICT(session) DO UPDATE SET id=excluded.id,mode=excluded.mode,directory=excluded.directory,phase=excluded.phase,status='';SELECT NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ") AND NOT " ++ C.task_closed_sql(C.q(session)) ++ ";COMMIT;" : String}
 
 def stop_admission_transaction_preserves_terminal_state(session,id,mode,directory):
   {==}
@@ -124,6 +125,7 @@ def accepted_stop(+db: String, +session: String, id: String, reason: String, for
   do IO<Unit>:
     error : String <- IO.try(String,Stop.request(db,session,id,reason,force))
     checked : Unit <- Stop.validate(error)
+    released : Unit <- Stop.release_starting(db,session)
     reconciled : Unit <- Stop.reconcile_request(db,session)
     runtime_stopped : Unit <- ContextRuntime.runtime_stop_owner(db,session)
     result : String <- IO.try(String,DB.Sql.query(db,Stop.result_sql(session)))
@@ -140,21 +142,19 @@ law stop_acceptance_does_not_wait_for_completion:
 def stop_acceptance_does_not_wait_for_completion(db,session,id,reason,force):
   {==}
 
-# Signal selection reads the terminal stop and current execution together. The
-# submitted signal is compared by identity: TERM and KILL have unrelated numbers.
+# Reconciliation reads the attempt and directory from the durable stop row.
+# Call arguments may describe a prior owner after retained recovery.
 def reconcile_recorded_stop(+db: String, +session: String, +attempt: String, directory: String) -> IO(Unit):
-  do IO<Unit>:
-    signal : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT s.signal FROM session_stops s JOIN executions e ON e.session=s.session AND e.id=s.attempt WHERE s.session=" ++ C.q(session) ++ " AND s.attempt=" ++ C.q(attempt) ++ " AND e.phase<>'exited' AND s.applied_signal<>s.signal),0);"))
-    Stop.send_control(db,session,attempt,directory,Stop.selected_signal(U32.read(Tx.trim_nl(signal))))
+  Stop.reconcile_request(db,session)
 
-law stop_reconcile_selects_the_recorded_signal_and_attempt:
+law stop_reconcile_uses_the_recorded_attempt_and_directory:
   for +db: String
   for +session: String
   for +attempt: String
   for +directory: String
   {Stop.reconcile(db,session,attempt,directory) == reconcile_recorded_stop(db,session,attempt,directory) : IO(Unit)}
 
-def stop_reconcile_selects_the_recorded_signal_and_attempt(db,session,attempt,directory):
+def stop_reconcile_uses_the_recorded_attempt_and_directory(db,session,attempt,directory):
   {==}
 
 # The answer reads the stored operation and distinguishes an idle stop from a

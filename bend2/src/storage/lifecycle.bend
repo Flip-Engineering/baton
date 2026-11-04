@@ -26,6 +26,7 @@ import ./policy.bend as P
 import ./apply.bend as A
 import ./observe.bend as O
 import ./state.bend as S
+import ./cargo.bend as Cargo
 import ../host/session-lock.bend as Lock
 import ../json/canonical.bend as J
 import ../git/text.bend as Tx
@@ -154,6 +155,8 @@ def covered_class(+cls: T.StorageClass) -> Bool:
     case T.BuildOutput{}: True{}
     case T.Export{}: True{}
     case T.Checkout{}: True{}
+    case T.StagingSource{}: True{}
+    case T.StagingSourceReleased{}: True{}
     case other: False{}
 
 def covered_root(+spec: RootSpec) -> Bool:
@@ -188,11 +191,7 @@ def retained_rows_under(rows: List<&2,String>, +root: String) -> Bool:
     case Nil{}: False{}
     case Con{+head, tail}: Bool.or(S.path_under(head, root), retained_rows_under(tail, root))
 
-# A covered root is admitted only when the database still references a
-# registered log, a retained generation (log or base), or an execution
-# directory under it. The class marker and an absolute path alone do not admit
-# an arbitrary root.
-def referenced_root(+spec: RootSpec, +state: S.State) -> Bool:
+def staging_referenced(+spec: RootSpec, +state: S.State) -> Bool:
   match spec:
     case RootSpec{cls, path, source}:
       match state:
@@ -203,6 +202,22 @@ def referenced_root(+spec: RootSpec, +state: S.State) -> Bool:
             Bool.or(transient,
               Bool.or(log_rows_under(logs, path),
                 Bool.or(execution_rows_under(executions, path), retained_rows_under(retained, path)))))
+
+# A covered root is admitted only when the database still references a
+# registered log, a retained generation (log or base), or an execution
+# directory under it. The class marker and an absolute path alone do not admit
+# an arbitrary root.
+def referenced_root(+spec: RootSpec, +state: S.State) -> Bool:
+  match spec:
+    case RootSpec{cls, path, source}:
+      match cls:
+        case T.StagingSourceReleased{}:
+          # This marker records the operator's explicit ownership release
+          # decision. The authenticated repository still has to contain each
+          # candidate commit before removal.
+          Bool.and(covered_root(spec), Bool.not(String.is_empty(source)))
+        case T.StagingSource{}: Bool.and(covered_root(spec), Bool.not(String.is_empty(source)))
+        case other: staging_referenced(spec, state)
 
 def uncovered_roots_state(specs: List<&2,RootSpec>, +state: S.State, +acc: String) -> String:
   match specs:
@@ -283,10 +298,19 @@ def candidate_member(+path: String, candidates: List<T.Candidate>) -> Bool:
 def add_candidate(+candidate: T.Candidate, candidates: List<T.Candidate>) -> List<T.Candidate>:
   Con{candidate, candidates}
 
+# A staging candidate has no recorded session owner. The class policy decides
+# whether its ownership release is recorded; both staging classes remain
+# available for preview and explicit apply decisions.
+def staging_class(+cls: T.StorageClass) -> Bool:
+  match cls:
+    case T.StagingSource{}: True{}
+    case T.StagingSourceReleased{}: True{}
+    case other: False{}
+
 def candidate_choice(+session: String, +cls: T.StorageClass, +path: String, +identity: String, +bytes: Nat, +facts: T.Facts, +choice: S.OwnerChoice) -> IO(Maybe<T.Candidate>):
   match choice:
     case S.OwnerChoice{owner, fact}:
-      +selected = Bool.or(String.is_empty(session), String.eq(owner, session))
+      +selected = Bool.or(Bool.or(String.is_empty(session), String.eq(owner, session)), staging_class(cls))
       Bool.pick(IO(Maybe<T.Candidate>), selected,
         do IO<Maybe<T.Candidate>>:
           proof : String = "owner:" ++ owner
@@ -363,20 +387,127 @@ def preview_scan(+session: String, +spec: RootSpec, +state: S.State, +observed: 
           IO.pure(RootPreview, current),
         preview_valid(spec, observed, False{}, Nil{}))
 
-def preview_root(+session: String, +spec: RootSpec, +state: S.State) -> IO(RootPreview):
+def preview_root_generic(+session: String, +spec: RootSpec, +state: S.State) -> IO(RootPreview):
   do IO<RootPreview>:
     observed : O.Observation <- O.observe(root_path_of(spec))
     scan : O.Scan <- O.children(root_path_of(spec))
     current : RootPreview <- preview_scan(session, spec, state, observed, scan)
     IO.pure(RootPreview, current)
 
-def preview_roots(+session: String, specs: List<&2,RootSpec>, +state: S.State, acc: List<RootPreview>) -> IO(List<RootPreview>):
+# Cargo consumers use canonical operation/workspace paths. Missing historical
+# owners do not add a provenance requirement to generated output collection.
+def cargo_reference_result(result: Result<&1,&1,U32 & String,String>, +path: String,
+                           detail: String, unknown: Bool, next: Bool -> IO(T.Presence)) -> IO(T.Presence):
+  match result:
+    case Fail{error}: next(True{})
+    case Done{+resolved}:
+      Bool.pick(IO(T.Presence), Bool.or(S.path_under(path, resolved), S.path_under(resolved, path)),
+        IO.pure(T.Presence, T.Present{detail}), next(unknown))
+
+def cargo_pending_sessions(rows: List<&2,S.SessionRow>, +pending: List<&2,S.PendingRow>,
+                           +path: String, +unknown: Bool) -> IO(T.Presence):
+  match rows:
+    case Nil{}: IO.pure(T.Presence, Bool.pick(T.Presence, unknown, T.Unknown{}, T.Absent{}))
+    case S.SessionRow{+id, workspace, branch, base} <> +rest:
+      Bool.pick(IO(T.Presence), U32.is_eq(S.pending_count(pending, id), 0),
+        cargo_pending_sessions(rest, pending, path, unknown),
+        do IO<T.Presence>:
+          resolved : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(workspace)
+          cargo_reference_result(resolved, path, "pending:" ++ id, unknown,
+            next_unknown => cargo_pending_sessions(rest, pending, path, next_unknown)))
+
+def cargo_executions(rows: List<&2,S.ExecutionRow>, +sessions: List<&2,S.SessionRow>,
+                     +pending: List<&2,S.PendingRow>, +path: String, +unknown: Bool) -> IO(T.Presence):
+  match rows:
+    case Nil{}: cargo_pending_sessions(sessions, pending, path, unknown)
+    case S.ExecutionRow{session, id, directory, phase, status} <> +rest:
+      Bool.pick(IO(T.Presence), String.eq(phase, "exited"),
+        cargo_executions(rest, sessions, pending, path, unknown),
+        do IO<T.Presence>:
+          resolved : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(directory)
+          cargo_reference_result(resolved, path, "execution:" ++ id, unknown,
+            next_unknown => cargo_executions(rest, sessions, pending, path, next_unknown)))
+
+def cargo_consumer_operations(state: S.State, path: String) -> IO(T.Presence):
+  match state:
+    case S.State{sessions, executions, logs, pending, databases, retained, valid}:
+      cargo_executions(executions, sessions, pending, path, False{})
+
+def cargo_consumer_database(state: S.State, +path: String, database: T.Presence) -> IO(T.Presence):
+  match database:
+    case T.Absent{}: cargo_consumer_operations(state, path)
+    case present: IO.pure(T.Presence, present)
+
+def cargo_consumer_canonical(+state: S.State, canonical: Result<&1,&1,U32 & String,String>) -> IO(T.Presence):
+  match canonical:
+    case Fail{error}: IO.pure(T.Presence, T.Unknown{})
+    case Done{+path}: do IO<T.Presence>:
+      database : T.Presence <- S.database_fact(state, path)
+      cargo_consumer_database(state, path, database)
+
+def cargo_consumer_valid(+state: S.State, path: String, valid: Bool) -> IO(T.Presence):
+  match valid:
+    case False{}: IO.pure(T.Presence, T.Unknown{})
+    case True{}: do IO<T.Presence>:
+      canonical : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(path)
+      cargo_consumer_canonical(state, canonical)
+
+def cargo_state_consumer(+state: S.State, +path: String) -> IO(T.Presence):
+  cargo_consumer_valid(state, path, S.valid_of(state))
+
+def cargo_consumer(+db: String, +path: String) -> IO(T.Presence):
+  do IO<T.Presence>:
+    state : S.State <- S.load(db)
+    cargo_state_consumer(state, path)
+
+# The root's recorded source names the producing service's selection
+# authority. A `selection:` source names an ACP service selection record
+# (schema acp.fframes-service-selection/v1) whose registered runtime, config
+# and manifest paths stay retained. A directory source names an installed
+# command directory whose symlinks resolve the runtime and rollback
+# selections. A root without a recorded source keeps an unknown service and
+# its output stays.
+def root_selection(+db: String, +spec: RootSpec, +candidate: String) -> IO(T.Presence):
+  match spec:
+    case RootSpec{T.BuildOutput{}, +path, +source}:
+      Bool.pick(IO(T.Presence), String.is_empty(source),
+        Cargo.unknown_selection(candidate),
+        Bool.pick(IO(T.Presence), String.starts_with(source, "selection:"),
+          Cargo.acp_selection(db, String.drop(source, 10n), candidate),
+          Cargo.baton_selection(source, candidate)))
+    case other: Cargo.unknown_selection(candidate)
+
+# Service producers use the same release path with their current selection
+# reader. The apply pipeline holds the storage-cleanup session lock and the
+# exclusive per-root cleanup lease across the collection.
+def cargo_release(+db: String, +path: String, +associated: String,
+                  selection: @+candidate: String -> IO(T.Presence)) -> IO(Cargo.Collection):
+  Cargo.collect(path, associated, candidate => cargo_consumer(db, candidate), selection)
+
+def preview_root_cargo(+db: String, +session: String, +spec: RootSpec, +state: S.State, output: Cargo.Output) -> IO(RootPreview):
+  match output:
+    case Cargo.Cargo{identity, origin}:
+      do IO<RootPreview>:
+        planned : T.Preview <- Cargo.preview(root_path_of(spec), session,
+          candidate => cargo_state_consumer(state, candidate), candidate => root_selection(db, spec, candidate))
+        +observed : O.Observation <- O.observe(root_path_of(spec))
+        IO.pure(RootPreview, RootPreview{root_path_of(spec), mount_of(observed), O.observation_identity(observed), planned})
+    case other: preview_root_generic(session, spec, state)
+
+def preview_root(+db: String, +session: String, +spec: RootSpec, +state: S.State) -> IO(RootPreview):
+  match spec:
+    case RootSpec{T.BuildOutput{}, +path, +source}: do IO<RootPreview>:
+      output : Cargo.Output <- Cargo.observe(path)
+      preview_root_cargo(db, session, spec, state, output)
+    case other: preview_root_generic(session, spec, state)
+
+def preview_roots(+db: String, +session: String, specs: List<&2,RootSpec>, +state: S.State, acc: List<RootPreview>) -> IO(List<RootPreview>):
   match specs:
     case Nil{}: IO.pure(List<RootPreview>, List.reverse(&1, RootPreview, acc))
     case Con{head, tail}:
       do IO<List<RootPreview>>:
-        current : RootPreview <- preview_root(session, head, state)
-        deeper : List<RootPreview> <- preview_roots(session, tail, state, Con{current, acc})
+        current : RootPreview <- preview_root(db, session, head, state)
+        deeper : List<RootPreview> <- preview_roots(db, session, tail, state, Con{current, acc})
         IO.pure(List<RootPreview>, deeper)
 
 def entry_class(+entry: T.Entry) -> T.StorageClass:
@@ -400,12 +531,26 @@ def apply_preview(+db: String, +spec: RootSpec, preview: RootPreview) -> IO(T.Re
     case RootPreview{root, mount, identity, planned}:
       A.apply(planned, A.Refresh{db, root_source_of(spec), root, identity})
 
-def apply_root(+session: String, +db: String, +spec: RootSpec) -> IO(T.Receipt):
+def apply_root_generic(+session: String, +db: String, +spec: RootSpec) -> IO(T.Receipt):
   do IO<T.Receipt>:
     state : S.State <- S.load(db)
-    preview : RootPreview <- preview_root(session, spec, state)
+    preview : RootPreview <- preview_root(db, session, spec, state)
     receipt : T.Receipt <- apply_preview(db, spec, preview)
     IO.pure(T.Receipt, receipt)
+
+def apply_root_cargo(+session: String, +db: String, +spec: RootSpec, output: Cargo.Output) -> IO(T.Receipt):
+  match output:
+    case Cargo.Cargo{identity, origin}:
+      Cargo.receipt(root_path_of(spec), "", session, candidate => cargo_consumer(db, candidate),
+        candidate => root_selection(db, spec, candidate))
+    case other: apply_root_generic(session, db, spec)
+
+def apply_root(+session: String, +db: String, +spec: RootSpec) -> IO(T.Receipt):
+  match spec:
+    case RootSpec{T.BuildOutput{}, +path, +source}: do IO<T.Receipt>:
+      output : Cargo.Output <- Cargo.observe(path)
+      apply_root_cargo(session, db, spec, output)
+    case other: apply_root_generic(session, db, spec)
 
 def apply_roots(+session: String, +db: String, specs: List<&2,RootSpec>, acc: List<T.Receipt>) -> IO(List<T.Receipt>):
   match specs:
@@ -443,7 +588,7 @@ def preview_json(+db: String, +session: String) -> IO(String):
   do IO<String>:
     specs : List<&2,RootSpec> <- configured_roots()
     +state : S.State <- S.load(db)
-    previews : List<RootPreview> <- preview_roots(session, specs, state, Nil{})
+    previews : List<RootPreview> <- preview_roots(db, session, specs, state, Nil{})
     IO.pure(String, previews_json(previews))
 
 def run_preview(+db: String, +session: String) -> IO(Unit):
@@ -699,10 +844,11 @@ def collect_receipts(result: Result<&1,&1,U32 & String,List<T.Receipt>>) -> List
     case Done{receipts}: receipts
     case Fail{error}: Nil{}
 
-# Triggered and deployment collection scans only the classes whose entries the
-# policy can remove: scratch, build output, export and log evidence. Checkout
-# roots stay for an explicit operator preview/apply, and the preserve-only
-# shared-immutable, git-object and unclassified classes never participate.
+# Triggered and deployment collection scans only the classes whose settled
+# lifecycle can be derived from recorded session state: scratch, build output,
+# export and log evidence. Staging roots require an explicit operator apply
+# after ownership release. Checkout, shared-immutable, git-object and
+# unclassified classes never participate.
 def collectable_root(+spec: RootSpec) -> Bool:
   match spec:
     case RootSpec{cls, path, source}:
@@ -711,6 +857,8 @@ def collectable_root(+spec: RootSpec) -> Bool:
         case T.BuildOutput{}: True{}
         case T.Export{}: True{}
         case T.LogEvidence{}: True{}
+        case T.StagingSourceReleased{}: False{}
+        case T.StagingSource{}: False{}
         case other: False{}
 
 def collectable_roots(specs: List<&2,RootSpec>, +acc: List<&2,RootSpec>) -> List<&2,RootSpec>:
@@ -767,6 +915,53 @@ def run_collect(+db: String, +session: String) -> IO(Unit):
             run_collect_result(session, result),
           IO.write(collect_skipped_json(session, reason))),
       IO.die(Unit, 2, "unknown session: " ++ session))
+
+# Scheduled collection for the qualified storage helper: every registered
+# session runs the same settled gate and collectable-root selection as
+# run_collect. Each session contributes one JSON object; a skip or refusal is
+# reported per session and never stops the sweep.
+def collect_outcome_json(+session: String, result: Result<&1,&1,U32 & String,List<T.Receipt>>) -> String:
+  match result:
+    case Done{receipts}: receipts_json(receipts)
+    case Fail{(+code, +detail)}: collect_refused_json(session, code, detail)
+
+def sweep_row(+db: String, +session: String) -> IO(String):
+  do IO<String>:
+    state : S.State <- S.load(db)
+    Bool.pick(IO(String), S.session_known(state, session),
+      do IO<String>:
+        settled_state : S.State <- S.load(db)
+        +reason : String = S.session_settled_reason(settled_state, session)
+        Bool.pick(IO(String), String.is_empty(reason),
+          do IO<String>:
+            specs : List<&2,RootSpec> <- configured_roots()
+            result : Result<&1,&1,U32 & String,List<T.Receipt>> <- apply_session_roots(db, session, collectable_roots(specs, Nil{}))
+            IO.pure(String, "{\"session\":" ++ J.string_literal(session) ++ ",\"result\":" ++ collect_outcome_json(session, result) ++ "}"),
+          IO.pure(String, "{\"session\":" ++ J.string_literal(session) ++ ",\"result\":" ++ collect_skipped_json(session, reason) ++ "}")),
+      IO.pure(String, "{\"session\":" ++ J.string_literal(session) ++ ",\"result\":" ++ collect_refused_json(session, 2, "unknown session: " ++ session) ++ "}"))
+
+def sweep_append(empty: Bool, +acc: String, +head: String) -> String:
+  Bool.pick(String, empty, head, acc ++ "," ++ head)
+
+def sweep_join(sessions: List<&2,S.SessionRow>, +db: String, +acc: String, empty: Bool) -> IO(String):
+  match sessions:
+    case Nil{}: IO.pure(String, "{\"results\":[" ++ acc ++ "]}")
+    case S.SessionRow{+id, workspace, branch, base} <> +rest:
+      do IO<String>:
+        row : String <- sweep_row(db, id)
+        +next : String = sweep_append(empty, acc, row)
+        sweep_join(rest, db, next, False{})
+
+def sweep_state(state: S.State, +db: String) -> IO(String):
+  match state:
+    case S.State{sessions, executions, logs, pending, databases, retained, valid}:
+      sweep_join(sessions, db, "", True{})
+
+def run_sweep(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    state : S.State <- S.load(db)
+    rows : String <- sweep_state(state, db)
+    IO.write(rows)
 
 def bool_json(+value: Bool) -> String:
   Bool.pick(String, value, "true", "false")

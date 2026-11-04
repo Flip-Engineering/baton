@@ -18,6 +18,161 @@ import traceback
 
 ARCHIVE_SHA = '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4'
 COMPILER_ARCHIVES = {
+    '73f56cb6523cea699cd43664a7231233b0d2076b74bf2be4edb680dc4fd79dcd': {
+        'name': 'Bend 2.0.25 with whole-Baton coordinator C generation optimizations',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': 'c2aa4f7a2a101cdaf470efb6e7fff976b7e740ff',
+        'source_tree': '5900b3789288fbaf0f0daa2e03dd9ca7c1032d34',
+        'source_lock_sha256': 'ff0c2af616658496a345c4c3f7667007805864017b09dcc46a1e2b8f390fa0ab',
+        'source_manifest_sha256': 'dd77368321ae395c18ab2070e8556d813b712122b07f0ed47e7d73792f2a2703',
+        'source_metadata_sha256': '3b6b072bfb8a957bc2181975b710bfac1401135c130de6ebf089c79813ed7025',
+        'source_input_count': 84,
+    },
+    '95a6ad2b7798aa4400cc1a78ba61970aab4f749d617323a15a6eabe373be541c': {
+        'name': 'Bend 2.0.25 with facts-only unit output retention',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': '11e044f131a4542ab423b78153ed66c049689fc0',
+        'source_tree': '89008f1576c08e7f8965601038a18e137b0fca80',
+        'source_lock_sha256': '5ea0ec3478c13c0f332ecc3736390d3d1053c81ae8df5bac27699b6d17cfae9f',
+        'source_manifest_sha256': '863988ebb11dbb6c52579fc5ba32975da31b01299a13cff33f3fb0daca3c1413',
+        'source_metadata_sha256': '7610fde169ee958a69395731d4b4a3132f1902988b5f920d0222d1adc67420b5',
+        'source_input_count': 84,
+    },
+    '3409526f5b9205da1fcc994ac14fc2f3023b1f52aba1424c2500e37654798beb': {
+        'name': 'Bend 2.0.25 with whole-Baton Class A function-level string literal chain lowering',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': '93c88ade7ae279d261ff149ae40307829924eef6',
+        'source_tree': '5eac7386ca3ee265b467acf7661f6e46945e4c89',
+        'source_lock_sha256': '630bc87aa6a2bbcfdb0c070d209d7e1d3943107b3a52b6e2968309d952aba349',
+        'source_manifest_sha256': '3c1ff6bed39349b49504f90a5a8d2286b55fd2adbd972680af4ca6561dc4bcb2',
+        'source_metadata_sha256': 'ef084b786ff041fc2f0f7e4985da45754233ebb692794abed2bfbbda93cd70b9',
+        'source_input_count': 84,
+    },
+    '9ce9b66b67e86868eb08d987eaabd162a5aad6a3a723ea16e63bfa7df112dd23': {
+        'name': 'Bend 2.0.25 with nested literal rows, linear table names, fragment digest comparison and admission at the processor limit',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': 'd1bbe3d2a3ff4974068e71df0a7e9936d53e775d',
+        'source_tree': 'daefeca145da0c0d094c2a3e870ab5bfae78e896',
+        'source_lock_sha256': '4abcb7bfe1535fb1e274c99c1ace67eb82ccecf6eec0c869ede207c37c0aeb8c',
+        'source_manifest_sha256': '415c5735b111b3507259aa93e53b364d68ac653bbb1e3fe4a5df77ba24f928fd',
+        'source_metadata_sha256': '314ca76d185aa51f8381dfc520819bce787216bbd8f16ea09890c10fe50ad5c5',
+        'source_input_count': 84,
+    },
+    'd942170807fdfacc078792110e76e00a1e2b5076524ac043bf6f8534652c284d': {
+        'name': 'Bend 2.0.25 with term comparison and String-chain compiler fixes and refreshed release checksums',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': 'cd5041e04d91946b5aa0de4e9f69405c157c8268',
+        'source_tree': '4c92f31d4bb380cfb4e766f0de91b0987d94088f',
+        'source_lock_sha256': '1a0b4e76b1b88f584527688f34de5c55f7a157fcd80f9ea2fee1481e711af7c0',
+        'source_manifest_sha256': '2e39ee13e8436dd8b6ad2a331b95c72e91445ded895c2fb3aa5e4b303a97312b',
+        'source_metadata_sha256': '69ac4f0895f46aa36bcaae41a8f6762695cc38accaaf27408d8eb71219490814',
+        'source_input_count': 84,
+    },
+    '33cb7efe2e8f85211dc3f155db5015fb61bf83c51a342e9ad3e3f26697345843': {
+        'name': 'Bend 2.0.25 with term comparison and String-chain compiler fixes',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': 'cd5041e04d91946b5aa0de4e9f69405c157c8268',
+        'source_tree': '4c92f31d4bb380cfb4e766f0de91b0987d94088f',
+        'source_lock_sha256': '1a0b4e76b1b88f584527688f34de5c55f7a157fcd80f9ea2fee1481e711af7c0',
+        'source_manifest_sha256': 'c7e8480d6236d5424175fdeb131925170197213d6a5bf466ded9ecece23cd5a3',
+        'source_metadata_sha256': '63586238f5e1bcc7a013924688fc7b1720338d2693313f822ddf0fe3f9873ed3',
+        'source_input_count': 84,
+    },
+    'c9b72c4c3d802508eea769d29404989346119042c8827dc19439646b28558dfb': {
+        'name': 'Bend 2.0.25 with any-position String-chain lowering and shared checked cells',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': '676471fe56ff3e274e01b1b8a713e10f195692c1',
+        'source_tree': '4ac830d37f5678d9f119d73916901239a9ed69c1',
+        'source_lock_sha256': '9ab8fffd494ceec7e62b88fd0493a31f46303b754d55891fdd3bab6d5e7b117c',
+        'source_manifest_sha256': 'eb4de41da0349d09fd4fff71cbda2a62b941f376713465bfb0eedcf528e9fcb4',
+        'source_metadata_sha256': 'abf0f0499e1a5f31b08f21e44e4132989c612afe8d49e8a6ecaef72e1bd8a102',
+        'source_input_count': 84,
+    },
+    'f46d75d3cb3a68c68bdcfaeb5dfe465e06343b47d6376949fd862510a82781d3': {
+        'name': 'Bend 2.0.25 with String lowering, checked-body sharing and compiler worker reuse',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': '018855661c0240fd3df7b7235ce35ea9b465ab0d',
+        'source_tree': '65018fc29356d9b6731b4142f23e5c69b43a32c4',
+        'source_lock_sha256': 'b7a78d737db755c0f060cee481c65736a589b83c61110fafee227b2b5254619d',
+        'source_manifest_sha256': '0d8aace71896212c7c60a6867d95b05051fae74582eaeb5a809f6baf3deee715',
+        'source_metadata_sha256': '3207a6bd1b2a857a48cb30c3112a0bdc1e80286ec3bc4a45917e47366e417660',
+        'source_input_count': 84,
+    },
+    '5bc55753ac04af350312c2f9fb298a7a674bd5bc8dfe14342bc60566d7aa76f3': {
+        'name': 'Bend 2.0.25 with emitted C unit cache and constructor shadow handling',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    'b096466b3b849234d3393ba9c726f78121f31762dc4e5379fe886e9b61b75590': {
+        'name': 'Bend 2.0.25 with header-read unit identities, worker reuse and checked-store cleanup',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': 'acaae6ef6c0348751a38634223f3946fa6a874b2',
+        'source_tree': 'b906600c4cf4d741fa881e6fe506329a3cba3149',
+        'source_lock_sha256': '477af3f2ef97c6a8f70864ea8ada1f8bc8dd4ff8a95ebda2269215e99d59f603',
+        'source_manifest_sha256': 'e2a0a259c2e3c58b3b964ebeb165ca89b1896dc8df73e3518adf0c12b6a881aa',
+        'source_metadata_sha256': 'ee9326dd6e59e37cbfe9ebc4d5829b4737196d38de38f1d453f702fcee13f948',
+        'source_input_count': 84,
+    },
+    '2b272454ec56a3d47f6957d8ad28da7d946dce470747e8bde5d5ff274c48e957': {
+        'name': 'Bend 2.0.25 with compiler worker reuse and checked-store cleanup',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+        'bun_sha256': '10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235',
+        'source_commit': '4d8a487d5a9471154cc6a2e530560419ad29d285',
+        'source_tree': '8a7ba06a3f97bb5367731cba6f478e7c8bd85a02',
+        'source_lock_sha256': '9409738c6e4274ee544b27780a28e3bdbed8ea83215db62126e7fa27657591bc',
+        'source_manifest_sha256': 'df9a900c3d286206ec5d99a7d94fe9f744e75f80732bf0af9cc16d47f34c38e0',
+        'source_metadata_sha256': 'b4faea6aa40243f14e0890ee2244f9c597b28a1f62b6e417499f4e3ccbc28c9c',
+        'source_input_count': 84,
+    },
+    '113a272649904e80144b1954dba8b4999249efa408a6ce1ca346906114986c4d': {
+        'name': 'Bend 2.0.25 with measured unit processes and checked-store cleanup',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    '2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065': {
+        'name': 'Bend 2.0.25 with shared arm, use and application summaries',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    'bf7c9a9b0a94354a107b110f5f5e37cae6c3a02a6e209455ba8ec10506b41796': {
+        'name': 'Bend 2.0.25 with total fallback coverage for literal list helpers',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    '1554306bde85194bf1271ba8048d8e752a4cba81d2a3d3213282923ece91a965': {
+        'name': 'Bend 2.0.25 with compiler heap, fact and helper emission diagnostics',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    '1531397e083ae39bcd0e7955fcd54ff4c47c4f214a765fbd4fa15fce536eed58': {
+        'name': 'Bend 2.0.25 with facts-only generic units and spins specialized by erased types',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    '8e46a9e6adeac20cf8c332a943c3e1c9243c11a7b0d3b75a6a5d3a90252d6cbf': {
+        'name': 'Bend 2.0.25 with reachable incremental emission and shared literal row continuations',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
     '6609a2de031417fe4ad149d77afd9282c76237aa0b70dfb48416f4ccfe1ad876': {
         'name': 'Bend 2.0.25 with the Baton #1017 pass collection patch and Malloc=1 launcher',
         'official_release_artifact': False,
@@ -68,6 +223,41 @@ COMPILER_ARCHIVES = {
         'official_release_artifact': False,
         'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
     },
+    'f5b2c7588b0b4728bd9d0893904a1074469cb2946a1c07cf400ce30d9a8f2333': {
+        'name': 'Bend 2.0.25 compiler main from Baton PR #1139 with per-pass collection reuse',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    '4a3a566f3dc6ed5e88a872ea37133a655e52b4abca97d31ee97417bb36a2d542': {
+        'name': 'Bend 2.0.25 compiler main from Baton PR #1144 with reusable emission buffers and direct parse lowering',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    'cad6a74192b7121b932fb7c5856760dfc1e6f7139053930e1fda19dc0e90aada': {
+        'name': 'Bend 2.0.25 compiler main with bounded C indentation',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    '8388e439ee642cbee177fcff0c0139cc69f8ece561735006dda02b68ff4cc91c': {
+        'name': 'Bend 2.0.25 compiler main with literal-prefix lowering and 20-bit FID/CID capacity',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    '5bf1999806f90f194041f01285cb831fdde1761df6726a745c333a0b971e5685': {
+        'name': 'Bend 2.0.25 compiler main with literal-prefix lowering, 20-bit FID/CID capacity and strong CID value reach',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    '5d3e79f021dc544dc2c2e075427b5adfd6858c4a0efd8aa28d0d463a9394850e': {
+        'name': 'Bend 2.0.25 compiler main with literal-prefix lowering, 20-bit FID/CID capacity, strong CID value reach and Metal term-tag decode',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
+    '3f0c31436e3f39e3ffc581496de34ef5077faf5dd0b106438de0049f0e7e8f75': {
+        'name': 'Bend 2.0.25 compiler main with literal-prefix lowering, the restored 1 << 20 CID ceiling, 20-bit FID capacity, strong CID value reach, List collection and Metal term-tag decode',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
+    },
     ARCHIVE_SHA: {'name': 'Bend 2.0.25', 'official_release_artifact': True},
     '38bb1813d52ddc7b816a8a01f971fe8503959fef54795ca22eb346b5cfc069a7': {
         'name': 'Bend 2.0.25 with the Baton #741 pure memo patch',
@@ -78,6 +268,11 @@ COMPILER_ARCHIVES = {
         'name': 'Bend 2.0.25 with Baton memoization, the Cgen cache and the emit-lits fixpoint patch',
         'official_release_artifact': False,
         'binary_sha256': '94383bb15b262f5bcd34ae2684d74a06e0f81e88736a75e17c9d8cbe9dbb79dc',
+    },
+    '2b2b41e938355141b55d617ee38157d50f62597c197e1b772486a7e517451065': {
+        'name': 'Bend 2.0.25 compiler with shared arms',
+        'official_release_artifact': False,
+        'binary_sha256': '5de0b620087e30747db8bee95d974e7805bf574a8d243bcc324f4278462e167e',
     },
 }
 ENTRY = 'bend2/src/coordinator/main.bend'
@@ -149,19 +344,43 @@ def source_files(root, commit, tree):
 
 
 def production_inputs(root, rows):
-    selected = sorted((row for row in rows if row['path'].startswith('bend2/src/')), key=lambda row: row['path'])
-    expected = {row['path'] for row in selected}
-    actual = {str(path.relative_to(root)) for path in (root / 'bend2/src').rglob('*')
-              if path.is_file() or path.is_symlink()}
-    if expected != actual:
-        return selected, 'Production directory contains untracked or missing files.'
-    for row in selected:
-        path = root / row['path']
-        if row['mode'] == '120000':
-            return selected, 'A production symlink requires a normal compilation.'
-        if path.suffix != '.bend':
+    # Select the transitive import closure of the Main entry, not the whole
+    # source directory. A file outside the closure cannot reach the generated
+    # C: module imports are static relative paths, foreign inputs are static
+    # string imports, and Base comes from the compiler distribution, which is
+    # bound separately. Any import shape outside this model fails closed to a
+    # normal compilation, and the closure is recomputed from the current
+    # bytes on both sides, so a change that imports a previously unrelated
+    # file pulls that file into the compared set.
+    by_path = {row['path']: row for row in rows}
+    if len(by_path) != len(rows):
+        return [], 'A production path is recorded twice.'
+    selected = {}
+    pending = [ENTRY]
+    while pending:
+        relative = pending.pop()
+        if relative in selected:
             continue
-        # Current Main imports are local modules and Base. External imports need a normal build.
+        row = by_path.get(relative)
+        if row is None:
+            return [], 'A production dependency is not tracked: ' + relative
+        if row['mode'] == '120000':
+            return [], 'A production symlink requires a normal compilation.'
+        selected[relative] = row
+        path = root / relative
+        if not relative.endswith('.bend'):
+            if relative.endswith(('.c', '.h')):
+                # A quoted C include is a tracked production input exactly
+                # like a Bend foreign import: the generated C is compiled
+                # with this header through bend2/src/host, so its bytes
+                # belong to the reuse identity (persistent-path.h in
+                # host/control.c and host/process-spawn.c).
+                for match in re.finditer(r'#\s*include\s+"([^"]+)"', path.read_text()):
+                    child = os.path.normpath(os.path.join(os.path.dirname(relative), match[1]))
+                    if child not in ('bend2/src',) and not child.startswith('bend2/src/'):
+                        return [], 'A C include leaves the production inputs: ' + relative
+                    pending.append(child)
+            continue
         lines = path.read_text().splitlines()
         in_header = True
         for line in lines:
@@ -173,17 +392,19 @@ def production_inputs(root, rows):
                     continue
                 match = re.fullmatch(r'(\S+)\s+as\s+[A-Za-z_][A-Za-z0-9_]*(?:\s+#.*)?', value)
                 if not match:
-                    return selected, 'A module import requires a normal compilation: ' + row['path']
-                target = (path.parent / match[1]).resolve()
-                if not target.is_relative_to(root / 'bend2/src') or target.suffix != '.bend':
-                    return selected, 'A module import leaves the production directory: ' + row['path']
+                    return [], 'A module import requires a normal compilation: ' + relative
+                child = os.path.normpath(os.path.join(os.path.dirname(relative), match[1]))
+                if not (child.startswith('bend2/src/') and child.endswith('.bend')):
+                    return [], 'A module import leaves the production directory: ' + relative
+                pending.append(child)
                 continue
             in_header = False
             for match in re.finditer(r'\bimport\s+"([^"]+)"', line):
-                target = (path.parent / match[1]).resolve()
-                if not target.is_relative_to(root / 'bend2/src') or str(target.relative_to(root)) not in expected:
-                    return selected, 'A foreign import leaves the production inputs: ' + row['path']
-    return selected, None
+                child = os.path.normpath(os.path.join(os.path.dirname(relative), match[1]))
+                if not child.startswith('bend2/src/'):
+                    return [], 'A foreign import leaves the production inputs: ' + relative
+                pending.append(child)
+    return sorted(selected.values(), key=lambda row: row['path']), None
 
 
 def canonical_host_change(original, current):
@@ -245,7 +466,9 @@ def verify_production_transition(origin, proof, current):
 
 
 def distribution(archive, home):
-    require(digest(archive) in COMPILER_ARCHIVES, 'Compiler archive differs from the pinned distributions.')
+    archive_sha = digest(archive)
+    require(archive_sha in COMPILER_ARCHIVES, 'Compiler archive differs from the pinned distributions.')
+    identity = COMPILER_ARCHIVES[archive_sha]
     expected = {}
     with tarfile.open(archive, 'r:gz') as source:
         for member in source:
@@ -276,11 +499,352 @@ def distribution(archive, home):
             expected[str(relative)] = row
     actual = {str(path.relative_to(home)) for path in home.rglob('*') if path.is_file() or path.is_symlink()}
     require(actual == set(expected), 'Extracted compiler distribution has missing or additional files.')
+    if 'source_commit' in identity:
+        manifest_path = home / 'fork-manifest.json'
+        source_path = home / 'provenance/source.json'
+        validation_path = home / 'provenance/validation.json'
+        require(digest(manifest_path) == identity['source_manifest_sha256'],
+                'Retained compiler source manifest differs from its registered SHA256.')
+        manifest = json.loads(manifest_path.read_text())
+        source = json.loads(source_path.read_text())
+        validation = json.loads(validation_path.read_text())
+        require(manifest.get('source_commit') == identity['source_commit']
+                and manifest.get('source_tree') == identity['source_tree']
+                and manifest.get('source_lock_sha256') == identity['source_lock_sha256'],
+                'Retained compiler manifest source identity differs from its registry entry.')
+        require(source.get('source_commit') == identity['source_commit']
+                and source.get('source_tree') == identity['source_tree']
+                and source.get('lock_sha256') == identity['source_lock_sha256']
+                and source.get('input_count') == identity['source_input_count']
+                and digest(source_path) == identity['source_metadata_sha256'],
+                'Retained compiler source metadata differs from its registry entry.')
+        require(validation.get('status') == 'not_run'
+                and validation.get('source_commit') == identity['source_commit']
+                and validation.get('source_tree') == identity['source_tree'],
+                'Retained compiler validation metadata does not identify unrun current source.')
+        lock_path = home / source['lock_path']
+        require(digest(lock_path) == identity['source_lock_sha256'],
+                'Retained compiler source lock differs from its registered SHA256.')
+        lock = json.loads(lock_path.read_text())
+        require(manifest.get('source_files') == lock.get('files'),
+                'Retained compiler source manifest differs from its lock.')
+        for row in manifest['source_files']:
+            path = home / 'bend2' / row['path']
+            require(path.is_file() and path.stat().st_size == row['bytes']
+                    and digest(path) == row['sha256'],
+                    'Retained compiler source file differs from its manifest: ' + row['path'])
     return [expected[key] for key in sorted(expected)]
 
 
 def copy_record(row, destination):
     shutil.copyfile(verify_file(row), destination)
+
+
+def queue_fields(path):
+    fields = {}
+    rows = []
+    for line in pathlib.Path(path).read_text().splitlines():
+        if '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        if key == 'artifact':
+            rows.append(value)
+        else:
+            fields.setdefault(key, []).append(value)
+    fields['artifact'] = rows
+    return fields
+
+
+def queue_one(fields, key):
+    values = fields.get(key, [])
+    require(len(values) == 1, 'Queue evidence must contain exactly one ' + key + ' field.')
+    return values[0]
+
+
+def queue_effective(fields, key):
+    values = fields.get(key, [])
+    require(bool(values) and bool(values[-1].strip()),
+            'Queue identity configuration must contain a non-empty effective ' + key + ' field.')
+    return values[-1]
+
+
+def queue_compiler_identity(argv_path, config_compiler, diagnostics):
+    arguments = pathlib.Path(argv_path).read_bytes().split(b'\0')
+    if arguments and arguments[-1] == b'':
+        arguments.pop()
+    require(len(arguments) >= 4
+            and pathlib.Path(os.fsdecode(arguments[1])).name == 'compile-cgen-exec.py',
+            'Completed Cgen argv does not record the queue compiler command.')
+    requested_path = os.fsdecode(arguments[3])
+    require(requested_path == config_compiler,
+            'Queue identity configuration compiler differs from the original Cgen command.')
+    compiler_argv = diagnostics.get('compiler_argv')
+    compiler = diagnostics.get('toolchain', {}).get('compiler', {})
+    observed_argv_path = compiler_argv[0] if isinstance(compiler_argv, list) and compiler_argv else ''
+    observed_path = compiler.get('path', '')
+    require(pathlib.Path(requested_path).is_absolute()
+            and pathlib.Path(observed_argv_path).is_absolute()
+            and pathlib.Path(observed_path).is_absolute()
+            and pathlib.Path(observed_argv_path).name == pathlib.Path(observed_path).name == 'bend'
+            and re.fullmatch('[0-9a-f]{64}', compiler.get('sha256', '')),
+            'Completed Cgen compiler paths or content identity are incomplete.')
+    return {'queue_command_path': requested_path,
+            'diagnostic_command_path': observed_argv_path,
+            'diagnostic_resolved_path': observed_path,
+            'sha256': compiler['sha256'],
+            'paths_match': requested_path == observed_path}
+
+
+def queue_source_digest(root, entry):
+    """Reproduce CompileQueueIdentity.source_digest for a Cgen entry."""
+    root = root.resolve()
+    entry_path = (root / entry).resolve()
+    require(entry_path.is_relative_to(root), 'Queue source entry leaves the selected source root.')
+    records = {}
+    pending = [entry_path]
+    while pending:
+        path = pending.pop(0).resolve()
+        require(path.is_relative_to(root), 'Queue source dependency leaves the selected source root.')
+        relative = path.relative_to(root).as_posix()
+        if relative in records:
+            continue
+        require(path.is_file() and not path.is_symlink(), 'Queue source dependency is not a regular file: ' + relative)
+        body = path.read_bytes()
+        records[relative] = (hashlib.sha256(body).hexdigest(), len(body))
+        targets = []
+        if path.suffix.lower() == '.bend':
+            for line in body.decode('utf-8').splitlines():
+                trimmed = line.lstrip()
+                if not trimmed.startswith('import '):
+                    continue
+                value = trimmed[7:]
+                if value.startswith('"'):
+                    quoted = value.split('"')
+                    target = quoted[1] if len(quoted) > 1 else ''
+                else:
+                    tokens = value.split()
+                    target = tokens[0] if tokens else ''
+                if target != 'Base':
+                    targets.append(target)
+        elif path.suffix.lower() in ('.c', '.h'):
+            text = body.decode('utf-8')
+            prefix, mode, matched, target = '#include "', 0, 0, ''
+            for char in text:
+                newline = char == '\n'
+                if mode == 2:
+                    if char == '"' or newline:
+                        if target:
+                            targets.append(target)
+                        mode, matched, target = (0 if newline else 3), 0, ''
+                    else:
+                        target += char
+                elif newline:
+                    mode, matched, target = 0, 0, ''
+                elif mode == 3:
+                    continue
+                elif mode == 0 and char.isspace():
+                    continue
+                elif char == prefix[matched]:
+                    mode = 2 if matched == len(prefix) - 1 else 1
+                    matched += 1
+                else:
+                    mode, matched = 3, 0
+            if mode == 2 and target:
+                targets.append(target)
+        for target in targets:
+            child = pathlib.Path(target) if target.startswith('/') else path.parent / target
+            pending.append(child)
+    entry_relative = entry_path.relative_to(root).as_posix()
+    text = 'schema=baton-compile-queue-source-v2\nsource-entry=' + entry_relative + '\n'
+    text += ''.join('source-file={}\t{}\t{}\n'.format(path, *records[path]) for path in sorted(records))
+    return hashlib.sha256(text.encode()).hexdigest(), records
+
+
+def prepare_cgen(args, result, root, generated):
+    require(not args.handoff and not args.handoff_sha256,
+            'A completed queue Cgen key and a full Main handoff are separate inputs.')
+    require(re.fullmatch('[0-9a-f]{64}', args.cgen_key), 'A completed Cgen input requires its exact 64-character key.')
+    queue_root = args.queue_root.resolve()
+    keydir = queue_root / 'keys' / args.cgen_key
+    completed = keydir / 'completed'
+    evidence_paths = {
+        'result': completed / 'result',
+    }
+    require(evidence_paths['result'].is_file() and not evidence_paths['result'].is_symlink(),
+            'Completed queue result is unavailable.')
+    result_fields = queue_fields(evidence_paths['result'])
+    require(queue_one(result_fields, 'schema') == 'baton-compile-queue-result-v2'
+            and queue_one(result_fields, 'identity_schema') == 'baton-compile-queue-identity-v2'
+            and queue_one(result_fields, 'kind') == 'cgen'
+            and queue_one(result_fields, 'key') == args.cgen_key
+            and queue_one(result_fields, 'verified') == '1'
+            and queue_one(result_fields, 'external') == '0'
+            and queue_one(result_fields, 'status') == 'completed'
+            and queue_one(result_fields, 'exit') == '0',
+            'Queue result is not a completed verified native Cgen result for the requested key.')
+    attempt_value = queue_one(result_fields, 'attempt')
+    attempt = pathlib.Path(attempt_value).resolve()
+    require(attempt.is_relative_to(keydir.resolve()) and attempt.is_dir(),
+            'Queue result attempt does not belong to the requested key directory.')
+    for name in ('meta', 'identity-config', 'command', 'argv', 'source-digest', 'compiler-diagnostics.json'):
+        evidence_paths[name] = attempt / name
+        require(evidence_paths[name].is_file() and not evidence_paths[name].is_symlink(),
+                'Queue attempt evidence is missing: ' + name)
+    meta = queue_fields(evidence_paths['meta'])
+    config = queue_fields(evidence_paths['identity-config'])
+    require(queue_one(meta, 'kind') == 'cgen' and queue_one(meta, 'key') == args.cgen_key
+            and queue_one(meta, 'entry') == ENTRY and queue_one(meta, 'artifact_name') == 'output.c',
+            'Queue metadata does not bind the requested Main Cgen input.')
+    config_kind = queue_effective(config, 'kind')
+    config_entry = queue_effective(config, 'entry')
+    config_source_root = queue_effective(config, 'source_root')
+    config_compiler = queue_effective(config, 'compiler')
+    require(config_kind == 'cgen' and config_entry == ENTRY,
+            'Queue identity configuration does not bind the Main Cgen entry.')
+    require(pathlib.Path(queue_one(meta, 'source_root')).is_absolute()
+            and pathlib.Path(config_source_root).is_absolute()
+            and config_source_root == queue_one(meta, 'source_root'),
+            'Queue source roots differ between identity configuration and attempt metadata.')
+    require(pathlib.Path(config_compiler).is_absolute(),
+            'Queue identity configuration compiler path is not absolute.')
+    digest_value = queue_one(queue_fields(evidence_paths['source-digest']), 'digest')
+    actual_source_digest, closure = queue_source_digest(root, ENTRY)
+    require(digest_value == actual_source_digest, 'Completed Cgen source dependency closure differs from this checkout.')
+    diagnostic_path = evidence_paths['compiler-diagnostics.json']
+    diagnostics = json.loads(diagnostic_path.read_text())
+    require(diagnostics.get('schema') == 'baton2-compiler-execution-observation-v1',
+            'Queue compiler diagnostics schema differs.')
+    queue_attempt = diagnostics.get('queue_attempt', {})
+    for name in ('meta', 'argv', 'command'):
+        require(queue_attempt.get(name + '_sha256') == digest(evidence_paths[name]),
+                'Compiler diagnostics do not bind queue attempt ' + name + '.')
+    require(queue_attempt.get('meta', {}).get('key') == args.cgen_key
+            and queue_attempt.get('meta', {}).get('kind') == 'cgen'
+            and queue_attempt.get('meta', {}).get('entry') == ENTRY
+            and queue_attempt.get('source_digest') == 'digest=' + actual_source_digest,
+            'Compiler diagnostics do not bind the requested Cgen key and source closure.')
+    toolchain = diagnostics.get('toolchain', {})
+    compiler_id = toolchain.get('compiler', {})
+    runtime_id = toolchain.get('runtime', {})
+    manifest_id = toolchain.get('manifest', {})
+    compiler_identity = queue_compiler_identity(evidence_paths['argv'], config_compiler, diagnostics)
+    compiler = args.compiler.resolve()
+    compiler_home = compiler.parent.parent
+    manifest_path = compiler_home / 'fork-manifest.json'
+    runtime = compiler_home / 'bin/bun'
+    require(manifest_path.is_file() and runtime.is_file(), 'Selected compiler distribution lacks its runtime manifest or runtime.')
+    require(compiler_id.get('sha256') == digest(compiler)
+            and runtime_id.get('sha256') == digest(runtime)
+            and manifest_id.get('sha256') == digest(manifest_path),
+            'Completed Cgen compiler diagnostics differ from the selected compiler distribution.')
+    manifest = json.loads(manifest_path.read_text())
+    require(manifest.get('compiler', {}).get('sha256') == compiler_id['sha256']
+            and manifest.get('bun', {}).get('sha256') == runtime_id['sha256'],
+            'Selected compiler manifest does not bind the Cgen compiler and runtime.')
+    current_distribution = distribution(args.compiler_archive.resolve(), compiler_home)
+    result_artifacts = queue_one(result_fields, 'artifact').split('\t')
+    require(len(result_artifacts) == 3 and result_artifacts[:2] == ['output.c', 'file']
+            and re.fullmatch('[0-9a-f]{64}', result_artifacts[2]),
+            'Completed Cgen result artifact set differs from output.c.')
+    artifact = completed / 'artifacts/output.c'
+    require(artifact.is_file() and not artifact.is_symlink()
+            and artifact.resolve().is_relative_to(completed.resolve())
+            and digest(artifact) == result_artifacts[2], 'Completed Cgen artifact bytes differ from the queue result.')
+    origin = generated / 'main-c-origin'
+    origin.mkdir()
+    for name, path in evidence_paths.items():
+        shutil.copyfile(path, origin / ('cgen-' + name))
+    shutil.copyfile(artifact, origin / 'baton2.c')
+    rows = source_files(root, result['current_source_commit'], result['current_source_tree'])
+    inputs, issue = production_inputs(root, rows)
+    require(issue is None, issue or 'Main production closure could not be verified.')
+    queue_rows = [{'path': path, 'sha256': value[0], 'size_bytes': value[1]} for path, value in sorted(closure.items())]
+    save(origin / 'source-files.json', rows)
+    save(origin / 'current-source-files.json', rows)
+    save(origin / 'production-inputs.json', inputs)
+    save(origin / 'current-production-inputs.json', inputs)
+    save(origin / 'queue-source-closure.json', queue_rows)
+    save(origin / 'toolchain-files.json', current_distribution)
+    save(origin / 'current-toolchain-files.json', current_distribution)
+    shutil.copyfile(manifest_path, origin / 'compiler-manifest.json')
+    archive = origin / 'source.tar.gz'
+    subprocess.run(['git', '-c', 'safe.directory=' + str(root), 'archive', '--format=tar.gz',
+                    '--output=' + str(archive), result['current_source_commit']], cwd=root, check=True)
+    result.update(status='reused', origin_kind='completed-queue-cgen', origin_cgen_key=args.cgen_key,
+                  origin_cgen_result_sha256=digest(origin / 'cgen-result'),
+                  origin_cgen_artifact_sha256=digest(origin / 'baton2.c'),
+                  origin_cgen_source_digest=actual_source_digest,
+                  origin_cgen_source_closure=queue_rows,
+                  origin_cgen_source_root=queue_one(meta, 'source_root'),
+                  origin_cgen_meta_sha256=digest(origin / 'cgen-meta'),
+                  origin_compiler_manifest_sha256=digest(origin / 'compiler-manifest.json'),
+                  origin_compiler_archive_sha256=digest(args.compiler_archive.resolve()),
+                  origin_compiler_identity=compiler_identity,
+                  generated_c_sha256=digest(origin / 'baton2.c'), generated_c_size=(origin / 'baton2.c').stat().st_size,
+                  root=str(root), origin_assets=[{**fact(path), 'path': str(path.relative_to(generated))}
+                                                for path in sorted(origin.rglob('*')) if path.is_file()])
+    proof = generated / 'main-c-reuse.json'
+    save(proof, result)
+    with args.github_env.open('a') as output:
+        for name, value in (
+            ('BATON2_MAIN_GENERATED_C', origin / 'baton2.c'), ('BATON2_MAIN_GENERATED_C_ROOT', root),
+            ('BATON2_MAIN_GENERATED_C_PROOF', proof),
+            ('BATON2_MAIN_GENERATED_C_PROOF_SHA256', digest(proof)),
+            ('BATON2_MAIN_C_VERIFIER', root / '.github/scripts/reuse-native-main.py')):
+            text = str(value)
+            require('\n' not in text, 'Build paths contain a newline.')
+            output.write(name + '=' + text + '\n')
+
+
+def verify_cgen_origin(origin, proof):
+    result_fields = queue_fields(origin / 'cgen-result')
+    require(queue_one(result_fields, 'schema') == 'baton-compile-queue-result-v2'
+            and queue_one(result_fields, 'identity_schema') == 'baton-compile-queue-identity-v2'
+            and queue_one(result_fields, 'kind') == 'cgen'
+            and queue_one(result_fields, 'key') == proof['origin_cgen_key']
+            and queue_one(result_fields, 'verified') == '1'
+            and queue_one(result_fields, 'external') == '0'
+            and queue_one(result_fields, 'status') == 'completed'
+            and queue_one(result_fields, 'exit') == '0',
+            'Retained queue result no longer verifies the completed Cgen key.')
+    artifact = queue_one(result_fields, 'artifact').split('\t')
+    require(len(artifact) == 3 and artifact[:2] == ['output.c', 'file']
+            and artifact[2] == proof['origin_cgen_artifact_sha256'],
+            'Retained queue result artifact binding differs from the Cgen proof.')
+    meta = queue_fields(origin / 'cgen-meta')
+    config = queue_fields(origin / 'cgen-identity-config')
+    require(queue_one(meta, 'kind') == 'cgen' and queue_one(meta, 'key') == proof['origin_cgen_key']
+            and queue_one(meta, 'entry') == ENTRY and queue_one(meta, 'artifact_name') == 'output.c'
+            and queue_one(meta, 'source_root') == proof['origin_cgen_source_root'],
+            'Retained queue metadata differs from the Cgen proof.')
+    config_kind = queue_effective(config, 'kind')
+    config_entry = queue_effective(config, 'entry')
+    config_source_root = queue_effective(config, 'source_root')
+    config_compiler = queue_effective(config, 'compiler')
+    require(config_kind == 'cgen' and config_entry == ENTRY
+            and config_source_root == proof['origin_cgen_source_root'],
+            'Retained queue identity configuration differs from the Cgen proof.')
+    require(pathlib.Path(config_compiler).is_absolute(),
+            'Retained identity configuration compiler path is not absolute.')
+    source_digest = queue_one(queue_fields(origin / 'cgen-source-digest'), 'digest')
+    require(source_digest == proof['origin_cgen_source_digest'], 'Retained queue source digest differs.')
+    diagnostics = json.loads((origin / 'cgen-compiler-diagnostics.json').read_text())
+    queue_attempt = diagnostics.get('queue_attempt', {})
+    for name in ('meta', 'argv', 'command'):
+        require(queue_attempt.get(name + '_sha256') == digest(origin / ('cgen-' + name)),
+                'Retained compiler diagnostics do not bind queue attempt ' + name + '.')
+    require(queue_attempt.get('meta', {}).get('key') == proof['origin_cgen_key']
+            and queue_attempt.get('source_digest') == 'digest=' + proof['origin_cgen_source_digest'],
+            'Retained compiler diagnostics differ from the Cgen source identity.')
+    toolchain = diagnostics.get('toolchain', {})
+    require(queue_compiler_identity(origin / 'cgen-argv', config_compiler, diagnostics)
+            == proof.get('origin_compiler_identity'),
+            'Retained Cgen compiler paths or content identity differ from the reuse proof.')
+    manifest = json.loads((origin / 'compiler-manifest.json').read_text())
+    require(toolchain.get('compiler', {}).get('sha256') == manifest.get('compiler', {}).get('sha256')
+            and toolchain.get('runtime', {}).get('sha256') == manifest.get('bun', {}).get('sha256')
+            and toolchain.get('manifest', {}).get('sha256') == proof['origin_compiler_manifest_sha256'],
+            'Retained compiler diagnostics differ from the compiler manifest.')
 
 
 def directory_files(home, expected):
@@ -314,21 +878,52 @@ def select(args, result):
     rows = []
     for path in sorted((root / 'bend2/src').rglob('*')):
         if path.is_symlink():
-            result['reason'] = 'A production symlink requires a normal compilation.'
-            return
-        if path.is_file():
+            body = os.fsencode(os.readlink(path))
+            rows.append({'path': str(path.relative_to(root)), 'mode': '120000',
+                         'git_blob': hashlib.sha1(b'blob ' + str(len(body)).encode() + b'\0' + body).hexdigest(),
+                         'size_bytes': len(body), 'sha256': hashlib.sha256(body).hexdigest()})
+        elif path.is_file():
             body = path.read_bytes()
             rows.append({'path': str(path.relative_to(root)),
                          'mode': '100755' if path.stat().st_mode & 0o111 else '100644',
                          'git_blob': hashlib.sha1(b'blob ' + str(len(body)).encode() + b'\0' + body).hexdigest(),
                          'size_bytes': len(body), 'sha256': hashlib.sha256(body).hexdigest()})
-    rows.sort(key=lambda row: row['path'])
+    # Select through the same entry-closure function that prepared the
+    # proof: the manifest records the closure rows, so this side compares
+    # the closure it recomputes from the actual checkout bytes against
+    # that manifest. Files outside the closure do not select or reject
+    # reuse; a changed file inside the closure changes its row.
+    rows, issue = production_inputs(root, rows)
     result['production_inputs'] = rows
+    if issue is not None:
+        result['reason'] = issue
+        return
     if rows != expected:
         result['reason'] = 'Actual Main production input membership, bytes or modes differ.'
         return
     verify_production_transition(origin, proof, rows)
     compiler = args.compiler.resolve()
+    if proof.get('origin_kind') == 'completed-queue-cgen':
+        queue_digest, closure = queue_source_digest(root, ENTRY)
+        queue_rows = [{'path': path, 'sha256': value[0], 'size_bytes': value[1]}
+                      for path, value in sorted(closure.items())]
+        require(queue_digest == proof['origin_cgen_source_digest']
+                and queue_rows == proof['origin_cgen_source_closure'],
+                'Completed Cgen source dependency closure differs from the selected checkout.')
+        require(digest(origin / 'cgen-result') == proof['origin_cgen_result_sha256']
+                and digest(origin / 'baton2.c') == proof['origin_cgen_artifact_sha256'],
+                'Completed queue Cgen result or artifact differs from its proof.')
+        require(digest(origin / 'cgen-meta') == proof['origin_cgen_meta_sha256'],
+                'Completed queue Cgen metadata differs from its proof.')
+        verify_cgen_origin(origin, proof)
+        require(digest(origin / 'compiler-manifest.json') == proof['origin_compiler_manifest_sha256'],
+                'Completed Cgen compiler manifest differs from its proof.')
+        require(args.compiler_archive is not None
+                and digest(args.compiler_archive.resolve()) == proof['origin_compiler_archive_sha256'],
+                'Selected compiler archive differs from the completed Cgen compiler archive.')
+        selected_distribution = distribution(args.compiler_archive.resolve(), compiler.parent.parent)
+        require(selected_distribution == json.loads((origin / 'toolchain-files.json').read_text()),
+                'Selected compiler archive distribution differs from the completed Cgen compiler distribution.')
     require(compiler.name == 'bend' and compiler.parent.name == 'bin', 'Unexpected selected compiler layout.')
     actual, matches = directory_files(compiler.parent.parent, json.loads((origin / 'toolchain-files.json').read_text()))
     result.update(compiler=fact(compiler), compiler_distribution=actual)
@@ -336,7 +931,8 @@ def select(args, result):
         result['reason'] = 'The selected compiler distribution differs from the verified Main compiler.'
         return
     result.update(status='reused', generated_c_sha256=proof['generated_c_sha256'],
-                  proof_sha256=args.proof_sha256, origin_source_commit=proof['origin_source_commit'],
+                  proof_sha256=args.proof_sha256,
+                  origin_source_commit=proof.get('origin_source_commit', proof['current_source_commit']),
                   scope='original-checkout' if str(root) == args.bound_root else 'matching-production-inputs')
     if proof.get('foreign_source_substitution') is not None:
         result['foreign_source_substitution'] = proof['foreign_source_substitution']
@@ -378,6 +974,9 @@ def prepare(args, result):
     result.update(schema='baton2-main-c-reuse-v1', status='not-requested', entry=ENTRY,
                   current_source_commit=git(root, 'rev-parse', 'HEAD').decode().rstrip('\n'),
                   current_source_tree=git(root, 'rev-parse', 'HEAD^{tree}').decode().rstrip('\n'))
+    if args.cgen_key:
+        prepare_cgen(args, result, root, generated)
+        return
     if not args.handoff:
         require(not args.handoff_sha256, 'A handoff digest requires a retained handoff path.')
         return
@@ -519,7 +1118,17 @@ def verify_transfer(args):
         require(path.resolve().is_relative_to(generated), 'Origin asset leaves generated C evidence.')
         verify_file({**row, 'path': str(path)})
     origin = generated / 'main-c-origin'
-    require(digest(origin / 'handoff.json') == result['origin_handoff_sha256'], 'Origin handoff binding differs.')
+    if result.get('origin_kind') == 'completed-queue-cgen':
+        require(digest(origin / 'cgen-result') == result['origin_cgen_result_sha256']
+                and digest(origin / 'baton2.c') == result['origin_cgen_artifact_sha256'],
+                'Transferred completed queue Cgen evidence differs.')
+        require(digest(origin / 'compiler-manifest.json') == result['origin_compiler_manifest_sha256'],
+                'Transferred completed Cgen compiler manifest differs.')
+        require(digest(origin / 'cgen-meta') == result['origin_cgen_meta_sha256'],
+                'Transferred completed Cgen metadata differs.')
+        verify_cgen_origin(origin, result)
+    else:
+        require(digest(origin / 'handoff.json') == result['origin_handoff_sha256'], 'Origin handoff binding differs.')
     require(digest(generated / 'baton2.c') == result['generated_c_sha256']
             and (generated / 'baton2.c').stat().st_size == result['generated_c_size'], 'Reused Main C differs.')
     rows = source_files(args.source.resolve(), result['current_source_commit'], result['current_source_tree'])
@@ -527,6 +1136,13 @@ def verify_transfer(args):
     current, issue = production_inputs(args.source.resolve(), rows)
     require(issue is None, 'Main production import scope differs.')
     verify_production_transition(origin, result, current)
+    if result.get('origin_kind') == 'completed-queue-cgen':
+        queue_digest, closure = queue_source_digest(args.source.resolve(), ENTRY)
+        queue_rows = [{'path': path, 'sha256': value[0], 'size_bytes': value[1]}
+                      for path, value in sorted(closure.items())]
+        require(queue_digest == result['origin_cgen_source_digest']
+                and queue_rows == result['origin_cgen_source_closure'],
+                'Transferred Cgen source dependency closure differs from the selected source.')
     require(json.loads((origin / 'toolchain-files.json').read_text())
             == json.loads((origin / 'current-toolchain-files.json').read_text()), 'Main toolchain distributions differ.')
     expected = {row['path']: row for row in json.loads((origin / 'source-files.json').read_text())}
@@ -562,6 +1178,8 @@ def main():
     prepare_parser.add_argument('--run', type=pathlib.Path, required=True)
     prepare_parser.add_argument('--handoff', default='')
     prepare_parser.add_argument('--handoff-sha256', default='')
+    prepare_parser.add_argument('--cgen-key', default='')
+    prepare_parser.add_argument('--queue-root', type=pathlib.Path, default=pathlib.Path('/var/tmp/baton2-compile-queue'))
     prepare_parser.add_argument('--compiler', type=pathlib.Path, required=True)
     prepare_parser.add_argument('--compiler-archive', type=pathlib.Path, required=True)
     prepare_parser.add_argument('--github-env', type=pathlib.Path, required=True)
@@ -571,6 +1189,7 @@ def main():
     select_parser = modes.add_parser('select')
     select_parser.add_argument('--source', type=pathlib.Path, required=True)
     select_parser.add_argument('--compiler', type=pathlib.Path, required=True)
+    select_parser.add_argument('--compiler-archive', type=pathlib.Path)
     select_parser.add_argument('--proof', type=pathlib.Path, required=True)
     select_parser.add_argument('--proof-sha256', required=True)
     select_parser.add_argument('--bound-root', required=True)

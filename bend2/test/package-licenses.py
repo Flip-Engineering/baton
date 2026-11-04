@@ -39,6 +39,9 @@ class PackageLicenses(unittest.TestCase):
         reference = self.source / 'docs/bend2/reference/upstream/LICENSE'
         reference.parent.mkdir(parents=True)
         shutil.copyfile(ROOT / 'docs/bend2/reference/upstream/LICENSE', reference)
+        preload_license = self.source / 'docs/bend2/reference/third-party/no-agent-summary-LICENSE'
+        preload_license.parent.mkdir(parents=True)
+        shutil.copyfile(ROOT / 'docs/bend2/reference/third-party/no-agent-summary-LICENSE', preload_license)
         self.payload = self.home / 'artifact'
         self.payload.mkdir()
         previous = PACKAGE.ROOT
@@ -93,9 +96,9 @@ class PackageLicenses(unittest.TestCase):
         (self.payload / 'bin').mkdir()
         binaries = []
         for role, name, alias, entry, mode in (
-                ('focused-facade', 'baton', None,
+                ('focused-facade', 'baton-focused', None,
                  'bend2/src/coordinator/receive-focused.bend', 'focused-native-entry'),
-                ('full-cli', 'baton2', 'baton-full',
+                ('full-cli', 'baton', 'baton2',
                  'bend2/src/coordinator/main.bend', 'full-native-receiver-router'),
                 ('recovery-helper', 'baton-recovery', None,
                  'bend2/src/coordinator/receive-recovery-focused.bend', 'recovery-native-entry')):
@@ -116,8 +119,13 @@ class PackageLicenses(unittest.TestCase):
                 shutil.copyfile(path, alias_path)
                 alias_path.chmod(0o755)
                 record['alias'] = 'bin/' + alias
+                if role == 'full-cli':
+                    extra_path = self.payload / 'bin/baton-full'
+                    shutil.copyfile(path, extra_path)
+                    extra_path.chmod(0o755)
+                    record['aliases'] = ['bin/baton2', 'bin/baton-full']
             binaries.append(record)
-        focused = binaries[0]
+        focused = next(record for record in binaries if record['role'] == 'full-cli')
         manifest = {'schema': 'baton2-native-artifact-v2', **identity,
                     'source': {'directory': str(self.source), 'commit': 'a' * 40,
                                'tree': 'b' * 40, 'status': ''},
@@ -172,13 +180,18 @@ class PackageLicenses(unittest.TestCase):
         output = self.home / 'unusable-runtime-check'
         output.mkdir()
         help_commands = [[str(prefix / 'bin' / name), '--help']
-                         for name in ('baton', 'baton-full')]
+                         for name in ('baton', 'baton-focused')]
+        guide_command = [str(prefix / 'bin/baton'), str(output / 'guide-check.sqlite'),
+                         'help', 'guide']
         runtime_command = [str(prefix / 'libexec/baton2/repl/bun'), '--version']
         actual_run = subprocess.run
 
         def run(argv, **kwargs):
             if argv in help_commands:
                 return subprocess.CompletedProcess(argv, 0, stdout='', stderr='')
+            if argv == guide_command:
+                return subprocess.CompletedProcess(argv, 0,
+                                                    stdout='guide --to PLAYER\n', stderr='')
             self.assertEqual(argv, runtime_command)
             return actual_run(argv, **kwargs)
 
@@ -186,7 +199,8 @@ class PackageLicenses(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'command could not start'):
                 CHECK.check(prefix, output)
         records = json.loads((output / 'commands.json').read_text())
-        self.assertEqual([record['argv'] for record in records], help_commands + [runtime_command])
+        self.assertEqual([record['argv'] for record in records],
+                         help_commands + [guide_command, runtime_command])
         self.assertIsNone(records[-1]['returncode'])
         self.assertTrue(records[-1]['error'])
 
@@ -232,6 +246,18 @@ class PackageLicenses(unittest.TestCase):
         self.assert_project_document(terms, 'baton_root_notice', 'NOTICE', data)
         self.assertIn('no root LICENSE', (self.payload / 'notices/distribution.md').read_text())
 
+    def test_agent_summary_preload_license_text_is_packaged_with_its_source(self):
+        terms = PACKAGE.stage_notices(self.payload, [])
+        entry = terms['agent_summary_preload_license']
+        text = (self.payload / entry['path']).read_text()
+        self.assertTrue(text.startswith('MIT License\n\nCopyright (c) 2026 Flamerix AI'))
+        self.assertIn('Permission is hereby granted, free of charge', text)
+        self.assertIn('THE SOFTWARE IS PROVIDED "AS IS"', text)
+        self.assertEqual(entry['revision'], '4f1ad563fbe4fb830af5dd67fbde4c1860f9caa6')
+        self.assertEqual(entry['script_sha256'], 'f95df896a998653ee86e7320ae9a29a547add4addd50cf631491dffaa6040b40')
+        distribution = (self.payload / 'notices/distribution.md').read_text()
+        self.assertIn(entry['source'] + ' revision ' + entry['revision'], distribution)
+
     def test_changed_upstream_license_refuses_staging(self):
         self.document('docs/bend2/reference/upstream/LICENSE', b'Changed upstream license\n')
         with self.assertRaisesRegex(RuntimeError, 'upstream Bend license differs from its versioned pin'):
@@ -252,13 +278,17 @@ class PackageLicenses(unittest.TestCase):
                  for harness in ('codex', 'omp', 'mcp') for suffix in ('conductor', 'root')]
         names.extend(('check-install.py', 'context-provider.mjs', 'context-project-policy.mjs',
                       'context-query-artifact.mjs', 'context-worktree-capture.mjs',
-                      'dsh-worker.mjs'))
+                      'dsh-worker.mjs', 'dsh-baton-hooks.mjs', 'omp-completion.mjs',
+                      'no-agent-summary.js', 'agent-summary-check.mjs',
+                      'codex-root-relay.mjs', 'root-channel-config.mjs'))
         for name in names:
             shutil.copyfile(ROOT / 'bend2/scripts' / name, scripts / name)
         harness = self.source / 'bend2/harness'
         harness.mkdir(parents=True)
         for name in ('git-series.mjs', 'native-history.mjs', 'project-settings.mjs', 'task-start.mjs'):
             shutil.copyfile(ROOT / 'bend2/harness' / name, harness / name)
+        shutil.copytree(ROOT / 'bend2/harness/git-series-bin', harness / 'git-series-bin')
+        shutil.copytree(ROOT / 'bend2/harness/agy-plugin', harness / 'agy-plugin')
         native = self.source / '.scratch/bend2'
         native.mkdir(parents=True)
         # Archive tests retain file bytes and executable modes; these helpers are never run.
@@ -278,9 +308,15 @@ class PackageLicenses(unittest.TestCase):
             path = 'libexec/baton2/' + name
             data = (ROOT / 'bend2/scripts' / name).read_bytes()
             self.assertEqual((prefix / path).read_bytes(), data)
+        # The agent_summary preload is pinned by SHA-256 (#1338).
+        self.assertEqual(hashlib.sha256((prefix / 'libexec/baton2/no-agent-summary.js').read_bytes()).hexdigest(),
+                         'f95df896a998653ee86e7320ae9a29a547add4addd50cf631491dffaa6040b40')
         for name in ('claude-credit-observe', 'api-key-exec'):
             self.assertEqual((prefix / 'libexec/baton2' / name).read_bytes(),
                              (self.source / '.scratch/bend2' / name).read_bytes())
+        for name in ('plugin.json', 'hooks.json'):
+            self.assertEqual((prefix / 'libexec/baton2/agy-plugin' / name).read_bytes(),
+                             (ROOT / 'bend2/harness/agy-plugin' / name).read_bytes())
 
     def test_extracted_git_helper_selects_author_with_its_source_absent(self):
         self.stage_runtime_files()
@@ -292,6 +328,9 @@ class PackageLicenses(unittest.TestCase):
         installed = prefix / 'libexec/baton2/git-series.mjs'
         self.assertFalse((prefix / 'libexec/baton2/git-series.py').exists())
         self.assertEqual(installed.read_bytes(), data)
+        wrapper = prefix / 'libexec/baton2/git-series-bin/gh'
+        self.assertEqual(wrapper.read_bytes(), (ROOT / 'bend2/harness/git-series-bin/gh').read_bytes())
+        self.assertTrue(os.access(wrapper, os.X_OK))
         self.assertEqual(manifest['source']['directory'], str(self.source))
 
         public = self.home / 'public series λ'

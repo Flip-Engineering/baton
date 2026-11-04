@@ -1,12 +1,7 @@
-"""Turn end with an open assignment reports the idle seat (#1054, instance C1).
+"""Turn-end reports name the continuation queued for the open assignment (#1218).
 
-compiler-crash-1017-opus-20261022 ended turn
-receive:compiler-crash-1017-opus-20261022:225548 at 10:16:21Z with its
-assignment open, no completion request and no owed input. The coordinator
-acknowledged the ordinary turn report and nothing started a further turn for
-14 h 28 min. The turn end now also writes a report to the coordinator that
-names the open assignment and the continue-task action. These checks run the
-generated statement against fixture databases.
+The coordinator receives the open assignment and the recorded continuation.
+These checks execute the generated settlement statements against fixture databases.
 
 BATON2_OPEN_ASSIGNMENT_FIXTURE names a built bend2/test/open-assignment-report
 binary; otherwise the test builds it with bend2/scripts/build-native.sh.
@@ -74,14 +69,21 @@ class OpenAssignmentReport(unittest.TestCase):
             self.db.execute('INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES(?,?,?,?,?)',
                             ('fixture',ident,recipient,'','fixture'))
 
-    def test_open_assignment_without_request_reports_the_idle_seat(self):
+    def test_open_assignment_without_request_reports_the_queued_continuation(self):
         rows = self.turn_ends()
         self.assertEqual(len(rows), 1)
         sender, recipient, kind, body = rows[0]
         self.assertEqual((sender, recipient, kind), ('worker', 'coordinator', 'report'))
         self.assertIn('dispatch:assignment still open', body)
         self.assertIn(ATTEMPT, body)
-        self.assertIn('continue-task --session worker', body)
+        continuation = self.db.execute(
+            "SELECT id,sender,recipient,kind FROM messages WHERE id=?",
+            (ATTEMPT + ':task-continuation',)).fetchone()
+        self.assertEqual(continuation,
+                         (ATTEMPT + ':task-continuation', 'worker', 'worker', 'task-continuation'))
+        self.assertIn('Baton queued continuation ' + continuation[0], body)
+        self.assertNotIn('no further turn starts', body)
+        self.assertNotIn('Run continue-task', body)
 
     def test_completion_request_after_the_assignment_writes_no_report(self):
         self.message('message:worker:request', 'worker', 'coordinator', 'completion-request', 'Done.')

@@ -2,7 +2,7 @@
 // Prints the Claude Code MCP configuration and launch command that attach a
 // root session to one orchestra through bend2/scripts/mcp-conductor.mjs (#1054).
 //
-// usage: root-channel-config.mjs DATABASE COORDINATOR --session ID
+// usage: root-channel-config.mjs DATABASE COORDINATOR --session ID [--resume NATIVE_ID]
 //          [--ssh HOST] [--name NAME] [--node PATH]
 //
 // Run it on the host that holds DATABASE. It resolves DATABASE, COORDINATOR
@@ -15,7 +15,7 @@ import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const CONDUCTOR = resolve(dirname(fileURLToPath(import.meta.url)), 'mcp-conductor.mjs');
-const USAGE = 'usage: root-channel-config.mjs DATABASE COORDINATOR --session ID [--ssh HOST] [--name NAME] [--node PATH]\n';
+const USAGE = 'usage: root-channel-config.mjs DATABASE COORDINATOR --session ID [--resume NATIVE_ID] [--ssh HOST] [--name NAME] [--node PATH]\n';
 
 function fail(text) {
   process.stderr.write(text.endsWith('\n') ? text : text + '\n');
@@ -26,7 +26,7 @@ function parse(argv) {
   const options = { positional: [] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (['--session', '--ssh', '--name', '--node'].includes(arg)) {
+    if (['--session', '--resume', '--ssh', '--name', '--node'].includes(arg)) {
       if (argv[i + 1] === undefined) fail(`${arg} requires a value\n${USAGE}`);
       options[arg.slice(2)] = argv[++i];
     } else if (arg.startsWith('--')) fail(`Unknown option: ${arg}\n${USAGE}`);
@@ -45,14 +45,15 @@ function quoted(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-export function rootChannelConfig({ database, coordinator, session, ssh, name, node }) {
+export function rootChannelConfig({ database, coordinator, session, resume, ssh, name, node }) {
   const server = name || `baton-${basename(dirname(database)).replace(/[^A-Za-z0-9_-]/g, '-')}`;
   const conductorArgs = [CONDUCTOR, database, coordinator, '--session', session];
   const entry = ssh
     ? { command: 'ssh', args: ['-T', ssh, ['exec', node || 'node', ...conductorArgs].map(quoted).join(' ')] }
     : { command: node || process.execPath, args: conductorArgs };
   const config = { mcpServers: { [server]: entry } };
-  const launch = ['claude', '--mcp-config', 'FILE', '--dangerously-load-development-channels', `server:${server}`];
+  const launch = ['claude', ...(resume ? ['--resume', resume] : []), '--mcp-config', 'FILE',
+    '--dangerously-load-development-channels', `server:${server}`];
   return { server, config, launch };
 }
 
@@ -62,7 +63,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToP
   const result = rootChannelConfig({
     database: existing('Database', options.positional[0]),
     coordinator: existing('Coordinator executable', options.positional[1]),
-    session: options.session, ssh: options.ssh, name: options.name, node: options.node,
+    session: options.session, resume: options.resume, ssh: options.ssh, name: options.name, node: options.node,
   });
   process.stdout.write(JSON.stringify(result.config, null, 2) + '\n');
   process.stderr.write(`Save the configuration above as FILE on the machine that runs Claude Code, then start the root with:\n${result.launch.join(' ')}\n`);

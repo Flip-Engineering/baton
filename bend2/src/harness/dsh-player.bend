@@ -65,9 +65,14 @@ def yaml_scalar(s: String) -> String:
 # The minimal tool roster for headless mode. This follows the shipped minimal
 # preset on 0.2.1-rc.2: disable every other model-facing tool plugin, keep only
 # read_image from `dsh-tool-fs`, and insert one persistent shell group. The
-# composed request carries `bash`, `read_image` and `working_directory`.
-def tool_patch() -> String:
-  Tx.join("\n",[
+# composed request carries `bash`, `read_image`, `working_directory` and the
+# `baton-worker` bridge tools when the bridge is enabled.
+#
+# `hooks` names the Baton input and completion plugin (bend2/scripts/dsh-baton-hooks.mjs).
+# DSH resolves a plugin name at load time, so the path is written into the patch.
+# An empty path mounts no plugin.
+def tools_before() -> List<String>:
+  [
     "# Baton DSH minimal tool roster (bend2/src/harness/dsh-player.bend).",
     "# Pinned to @deepseek-ai/dsh 0.2.1-rc.2.",
     "- id: tool-bash",
@@ -110,7 +115,15 @@ def tool_patch() -> String:
     "    readImage: true",
     "    write: false",
     "    edit: false",
-    "- insert:",
+    "- insert:"]
+
+def hooks_rows(hooks: String) -> List<String>:
+  match hooks:
+    case "": []
+    case path: ["    - id: baton-hooks","      name: " ++ yaml_scalar(path)]
+
+def tools_after() -> List<String>:
+  [
     "    - id: baton-worker",
     "      name: '@deepseek-ai/dsh-mcp-client'",
     "      disabled: !!js '!process.env.BATON_DSH_WORKER_BRIDGE'",
@@ -143,7 +156,10 @@ def tool_patch() -> String:
     "      disabled: !!js process.platform !== 'win32'",
     "      config:",
     "        timeoutMs: 300000",
-    ""])
+    ""]
+
+def tool_patch(hooks: String) -> String:
+  Tx.join("\n",List.append(&1,String,List.append(&1,String,tools_before(),hooks_rows(hooks)),tools_after()))
 
 # --- model and effort patch --------------------------------------------------
 
@@ -199,10 +215,10 @@ def write_patch(remove_path: String, append_path: String, text: String) -> IO(Re
     removed : Result<&1,&1,U32 & String,Unit> <- F.Files.remove(remove_path)
     T.Text.append(append_path,text)
 
-def prepare(+directory: String, model: String, effort: String) -> IO(Result<&1,&1,U32 & String,Prepared>):
+def prepare(+directory: String, model: String, effort: String, hooks: String) -> IO(Result<&1,&1,U32 & String,Prepared>):
   do IO<Result<&1,&1,U32 & String,Prepared>>:
     made : Result<&1,&1,U32 & String,Unit> <- F.Files.mkdir(directory)
-    wrote_tools : Result<&1,&1,U32 & String,Unit> <- write_patch(directory ++ "/dsh-tools.patch.yml",directory ++ "/dsh-tools.patch.yml",tool_patch())
+    wrote_tools : Result<&1,&1,U32 & String,Unit> <- write_patch(directory ++ "/dsh-tools.patch.yml",directory ++ "/dsh-tools.patch.yml",tool_patch(hooks))
     wrote_model : Result<&1,&1,U32 & String,Unit> <- write_patch(directory ++ "/dsh-model.patch.yml",directory ++ "/dsh-model.patch.yml",model_patch(model,effort))
     prepared_result(directory,wrote_tools,wrote_model)
 

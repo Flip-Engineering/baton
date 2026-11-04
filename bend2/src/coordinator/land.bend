@@ -112,12 +112,28 @@ def identity_run_value(result: G.RunRes) -> IO(Bool):
 def identity_result(result: Result<&1,&1,U32 & String,String>) -> IO(Bool):
   identity_run_value(Tx.run_res(result))
 
-def identity_wrapped(+db: String, verb: String, args: List<String>) -> IO(Bool):
+# The guard marks a command that the launcher wraps. Control.identity_args
+# returns the command unchanged when no registry is configured, so an empty
+# registry yields no command and the caller runs the operation in this process.
+def identity_guarded(identity: String & String, model: String, repository: String, args: List<String>) -> List<String>:
+  (registry,helper)=identity
+  +configured=registry
+  Bool.pick(List<String>,String.is_empty(configured),Nil{},
+    Con{"/usr/bin/env",Con{"BATON2_GIT_IDENTITY_APPLIED=1",Control.identity_args(args,model,(configured,helper),repository)}})
+
+def identity_run(launch: List<String>) -> IO(Bool):
+  match launch:
+    case Nil{}: IO.pure(Bool,False{})
+    case Con{head,tail}:
+      do IO<Bool>:
+        result : Result<&1,&1,U32 & String,String> <- Git.Process.run(Tx.enc_argv(Con{head,tail}),".")
+        identity_result(result)
+
+def identity_wrapped_as(+db: String, +actor: String, verb: String, args: List<String>) -> IO(Bool):
   do IO<Bool>:
     applied : String <- identity_environment("BATON2_GIT_IDENTITY_APPLIED")
     Bool.pick(IO(Bool),Bool.not(String.is_empty(applied)),IO.pure(Bool,False{}),
     (do IO<Bool>:
-      +actor : String <- identity_environment("BATON_SESSION")
       +model : String <- identity_actor_model(db,actor)
       +workspace : String <- identity_actor_workspace(db,actor)
       +repository : String <- Control.workspace_repository(workspace)
@@ -125,10 +141,38 @@ def identity_wrapped(+db: String, verb: String, args: List<String>) -> IO(Bool):
       (do IO<Bool>:
         +executable : String <- IO.try(String,Lock.SessionLock.executable())
         identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-        launch : List<String> = Control.identity_args(Con{executable,Con{db,Con{verb,args}}},model,identity,repository)
-        guarded : List<String> = Con{"/usr/bin/env",Con{"BATON2_GIT_IDENTITY_APPLIED=1",launch}}
-        result : Result<&1,&1,U32 & String,String> <- Git.Process.run(Tx.enc_argv(guarded),".")
-        identity_result(result)))))
+        identity_run(identity_guarded(identity,model,repository,Con{executable,Con{db,Con{verb,args}}}))))))
+
+def identity_wrapped(+db: String, verb: String, args: List<String>) -> IO(Bool):
+  do IO<Bool>:
+    +actor : String <- identity_environment("BATON_SESSION")
+    identity_wrapped_as(db,actor,verb,args)
+
+# Recruit records the resolved checkout path (Host.Control.workspace). A relative
+# or symlinked spelling of --repo resolves the same way before the lookup; a path
+# that does not resolve is looked up as given.
+def identity_checkout_value(+repo: String, result: Result<&1,&1,U32 & String,String>) -> String:
+  match result:
+    case Done{value}: value
+    case Fail{error}: repo
+
+def identity_checkout(+repo: String) -> IO(String):
+  do IO<String>:
+    result : Result<&1,&1,U32 & String,String> <- Host.Control.workspace(repo)
+    IO.pure(String,identity_checkout_value(repo,result))
+
+# An operator wrap-up shell records no BATON_SESSION. The session recorded for
+# the pushed checkout supplies the model, and a session on the pushed branch
+# wins over another session that shares the checkout.
+def identity_owner(+db: String, +repo: String, +branch: String) -> IO(String):
+  do IO<String>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT id FROM sessions WHERE workspace=" ++ C.q(repo) ++ " ORDER BY branch=" ++ C.q(branch) ++ " DESC,rowid DESC LIMIT 1;")
+    identity_model_value(result)
+
+def identity_actor(+db: String, +repo: String, +branch: String) -> IO(String):
+  do IO<String>:
+    +selected : String <- identity_environment("BATON_SESSION")
+    Bool.pick(IO(String),String.is_empty(selected),identity_owner(db,repo,branch),IO.pure(String,selected))
 
 def land_player_body(+db: String, +player: String, +repo: String, +target: String) -> IO(Unit):
   do IO<Unit>:
@@ -190,15 +234,38 @@ def push_pick(r: G.GitOut, branch: String, remote: String) -> IO(Unit):
     case G.GRun{code, out}: push_ok(U32.is_eq(code, 0), branch, remote)
     case G.GBroken{detail}: IO.die(Unit, 1, detail)
 
-def push_branch_body(+repo: String, +branch: String, +remote: String) -> IO(Unit):
+# A rejected push states whether a series identity was applied. A push that
+# ran without one has no GitHub App credential, so the missing context is named
+# apart from a refusal by the helper, which prints its own cause on standard error.
+def push_context(applied: String, +actor: String) -> String:
+  Bool.pick(String,Bool.not(String.is_empty(applied)),
+    "series identity applied; a Series Git operation refused line on standard error names a registry, installation or permission cause",
+    Bool.pick(String,String.is_empty(actor),
+      "no series identity: BATON_SESSION is unset and no recorded session has this checkout as its workspace",
+      "no series identity for session " ++ actor ++ ": its model has no entry in the series registry or no registry is configured"))
+
+def push_ok_context(ok: Bool, branch: String, remote: String, context: String) -> IO(Unit):
+  match ok:
+    case True{}: push_ok(True{}, branch, remote)
+    case False{}: IO.print("{\"status\":\"rejected\",\"reason\":" ++ J.string_literal(Tx.cmd_failed(Tx.str_cat("git push to ", remote))) ++ ",\"identity\":" ++ J.string_literal(context) ++ "}")
+
+def push_pick_context(r: G.GitOut, branch: String, remote: String, context: String) -> IO(Unit):
+  match r:
+    case G.GRun{code, out}: push_ok_context(U32.is_eq(code, 0), branch, remote, context)
+    case G.GBroken{detail}: IO.die(Unit, 1, detail)
+
+def push_branch_body(+repo: String, +branch: String, +remote: String, +actor: String) -> IO(Unit):
   do IO<Unit>:
+    applied : String <- identity_environment("BATON2_GIT_IDENTITY_APPLIED")
     r : G.GitOut <- GitLand.push_git(repo, branch, remote)
-    push_pick(r, branch, remote)
+    push_pick_context(r, branch, remote, push_context(applied, actor))
 
 def push_branch(+db: String, +repo: String, +branch: String, +remote: String) -> IO(Unit):
   do IO<Unit>:
-    wrapped : Bool <- identity_wrapped(db,"push",[repo,branch,remote])
-    Bool.pick(IO(Unit),wrapped,IO.pure(Unit,Unit{}),push_branch_body(repo,branch,remote))
+    +checkout : String <- identity_checkout(repo)
+    +actor : String <- identity_actor(db,checkout,branch)
+    wrapped : Bool <- identity_wrapped_as(db,actor,"push",[repo,branch,remote])
+    Bool.pick(IO(Unit),wrapped,IO.pure(Unit,Unit{}),push_branch_body(repo,branch,remote,actor))
 
 # The declared remote read's answer. The status names which outcome the read
 # reached, and every answer names the declared repository, branch and remote.

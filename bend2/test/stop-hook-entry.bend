@@ -1,14 +1,19 @@
-# The Claude Code Stop hook entry and the Claude launch arguments (#1054,
-# instance B1). '--stop-hook' runs the hook; 'arguments' prints the Claude argv
-# one argument per line.
+# The Claude Code Stop hook entry and the Claude and Codex launch arguments (#1054,
+# #1212). '--stop-hook' runs the hook; 'arguments' and 'codex-arguments' print the
+# Claude and Codex argv one argument per line.
 import Base
 import ../src/coordinator/stop-hook.bend as StopHook
-import ../src/coordinator/message-status.bend as MessageStatus
+import ../src/coordinator/claude-input-evidence.bend as ClaudeEvidence
+import ../src/coordinator/native-input.bend as NativeInput
 import ../src/harness/claude-player.bend as Claude
+import ../src/harness/codex-player.bend as Codex
 import ../src/coordinator/commands.bend as C
+import ../src/coordinator/message-status.bend as MessageStatus
 import ../src/coordinator/agent-actions.bend as Actions
 import ../src/coordinator/agent-command.bend as Agent
+import ../src/coordinator/agent-input.bend as AgentInput
 import ../src/coordinator/store.bend as Store
+import ../src/coordinator/message-status.bend as MessageStatus
 import ../src/coordinator/stop.bend as Stop
 import ../src/host/instance.bend as Custody
 import ../src/host/process.bend as P
@@ -61,6 +66,11 @@ def lifecycle_admitted(+db: String, +directory: String, start: P.RetainedStart) 
 def decision_statement() -> IO(Unit):
   IO.print(StopHook.decision_sql("worker"))
 
+def transcript_statement() -> IO(Unit):
+  do IO<Unit>:
+    source : String <- IO.try(String,NativeInput.text_value("-"))
+    IO.print(ClaudeEvidence.transcript_json(source))
+
 def record_statement(args: List<String>) -> IO(Unit):
   match args:
     case directory <> attempt <> native <> identity <> saved <> Nil{}:
@@ -78,11 +88,22 @@ def route(args: List<String>) -> IO(Unit):
   match args:
     case "--stop-hook" <> Nil{}: StopHook.run()
     case "decision-sql" <> Nil{}: decision_statement()
+    case "claude-read-lines-sql" <> Nil{}: IO.print(ClaudeEvidence.read_lines_sql())
+    case "claude-prompt-frames-sql" <> Nil{}: IO.print(ClaudeEvidence.prompted_frames_sql())
+    case "claude-transcript-json" <> Nil{}: transcript_statement()
     case "record-sql" <> rest: record_statement(rest)
     case "arguments" <> Nil{}: lines(Claude.arguments("claude","claude-opus-5-5","high"))
+    case "codex-arguments" <> Nil{}: lines(Codex.arguments("gpt-6-luna","high"))
     case "schema" <> Nil{}: IO.write(C.schema())
     case "read" <> db <> id <> Nil{}: Agent.execute(db,"worker",Actions.Read{[id]})
     case "completion-request" <> db <> body <> Nil{}: Agent.execute(db,"worker",Actions.CompletionRequest{"",Actions.Text{body}})
+    case "completion-request-id" <> db <> id <> body <> Nil{}: Agent.execute(db,"worker",Actions.CompletionRequest{id,Actions.Text{body}})
+    case "completion-confirmed" <> db <> request <> Nil{}: Agent.execute(db,"coordinator",Actions.parse_action(Actions.CompletionConfirmedVerb{},["--to","worker","--request",request]))
+    case "guide" <> db <> body <> Nil{}: Agent.execute(db,"coordinator",Actions.Send{[Actions.Item{"worker","guide","guidance",Actions.Text{body}}]})
+    case "inbox" <> db <> session <> Nil{}: Agent.execute(db,session,Actions.Inbox{})
+    case "pending" <> +db <> Nil{}: do IO<Unit>:
+      saved : String <- IO.try(String,Store.read(db,C.Pending{}))
+      AgentInput.command_output(db,C.Pending{},saved)
     case "lifecycle" <> +database <> +directory <> cwd <> program: do IO<Unit>:
       start : P.RetainedStart <- IO.try(P.RetainedStart,Custody.Instance.admit(database,directory,P.argv(program),cwd,directory ++ "/native.stderr","",0,None{},P.argv(["/usr/bin/false"])))
       lifecycle_admitted(database,directory,start)
@@ -91,7 +112,7 @@ def route(args: List<String>) -> IO(Unit):
     case "admit" <> database <> +directory <> cwd <> program: do IO<Unit>:
       start : P.RetainedStart <- IO.try(P.RetainedStart,Custody.Instance.admit(database,directory,P.argv(program),cwd,directory ++ "/native.stderr","",0,None{},P.argv(["/usr/bin/false"])))
       admitted(start)
-    case other: IO.die(Unit,2,"usage: stop-hook-entry --stop-hook|arguments")
+    case other: IO.die(Unit,2,"usage: stop-hook-entry --stop-hook|arguments|codex-arguments")
 
 def main() -> IO(Unit):
   do IO<Unit>:

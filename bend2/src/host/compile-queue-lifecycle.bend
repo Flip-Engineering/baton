@@ -11,6 +11,9 @@ import ./compile-queue-supervisor.bend as Supervisor
 def CompileQueueLifecycle.pid() -> IO(Result<&1,&1,U32 & String,U32>):
   P.HostPosix.pid()
 
+def CompileQueueLifecycle.uid() -> IO(Result<&1,&1,U32 & String,U32>):
+  P.HostPosix.uid()
+
 def CompileQueueLifecycle.cwd() -> IO(Result<&1,&1,U32 & String,String>):
   P.HostPosix.cwd()
 
@@ -29,8 +32,32 @@ def CompileQueueLifecycle.lock_open(path: String) -> IO(Result<&1,&1,U32 & Strin
 def CompileQueueLifecycle.lock_acquire(path: String) -> IO(Result<&1,&1,U32 & String,U32>):
   P.HostPosix.lock_acquire(path)
 
-def CompileQueueLifecycle.lock_try(path: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32>>):
+def CompileQueueLifecycle.lock_try(path: String) -> IO(Result<&1,&1,U32 & String,Maybe<&2,U32>>):
   P.HostPosix.lock_try(path)
+
+def CompileQueueLifecycle.held(path: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  P.HostPosix.held(path)
+
+def CompileQueueLifecycle.create_locked(path: String, text: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  P.HostPosix.create_locked(path,text)
+
+def CompileQueueLifecycle.mkdir_sticky(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  P.HostPosix.mkdir_sticky(path)
+
+def CompileQueueLifecycle.lock_shared_try(path: String) -> IO(Result<&1,&1,U32 & String,Maybe<&2,U32>>):
+  P.HostPosix.lock_shared_try(path)
+
+def CompileQueueLifecycle.exclusive_lock_pid(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  P.HostPosix.exclusive_lock_pid(path)
+
+def CompileQueueLifecycle.meminfo() -> IO(Result<&1,&1,U32 & String,String>):
+  P.HostPosix.meminfo()
+
+def CompileQueueLifecycle.session_kb(pid: U32) -> IO(Result<&1,&1,U32 & String,String>):
+  P.HostPosix.session_kb(pid)
+
+def CompileQueueLifecycle.now_seconds() -> IO(Result<&1,&1,U32 & String,String>):
+  P.HostPosix.now_seconds()
 
 def CompileQueueLifecycle.lock_fd_acquire(fd: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   P.HostPosix.lock_fd_acquire(fd)
@@ -40,6 +67,9 @@ def CompileQueueLifecycle.lock_release(handle: U32) -> IO(Result<&1,&1,U32 & Str
 
 def CompileQueueLifecycle.close_fd(fd: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   P.HostPosix.close_fd(fd)
+
+def CompileQueueLifecycle.dup_to(fd: U32, target: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  P.HostPosix.dup_to(fd,target)
 
 def CompileQueueLifecycle.mkdir_p(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   QF.mkdir_p(path)
@@ -84,8 +114,14 @@ def CompileQueueLifecycle.copy_file(source: String, destination: String) -> IO(R
 def CompileQueueLifecycle.wait_pid(pid: U32) -> IO(Result<&1,&1,U32 & String,U32>):
   P.HostPosix.wait_pid(pid)
 
-def CompileQueueLifecycle.run_command(argv: String, cwd: String, stdout_path: String, stderr_path: String) -> IO(Result<&1,&1,U32 & String,U32 & String>):
-  Supervisor.run(argv,cwd,stdout_path,stderr_path)
+def CompileQueueLifecycle.try_wait(attempt: String, pid: U32, start: String) -> IO(Result<&1,&1,U32 & String,String>):
+  P.HostPosix.try_wait(attempt,pid,start)
+
+def CompileQueueLifecycle.wait_supervisor(pid: U32) -> IO(Result<&1,&1,U32 & String,String>):
+  P.HostPosix.wait_supervisor(pid)
+
+def CompileQueueLifecycle.run_command(argv: String, cwd: String, stdout_path: String, stderr_path: String, attempt: String) -> IO(Result<&1,&1,U32 & String,U32 & String>):
+  Supervisor.run(argv,cwd,stdout_path,stderr_path,attempt)
 
 def CompileQueueLifecycle.cmdline(pid: U32) -> IO(Result<&1,&1,U32 & String,String>):
   Proc.cmdline(pid)
@@ -158,3 +194,9 @@ def CompileQueueLifecycle.spawn_detached(+argv: String, key_lock: U32, heavy_loc
     self : String <- IO.try(String,P.HostPosix.self_exe())
     complete : String <- IO.pure(String,Choice.choose(String,String.starts_with(argv,"/"), _choice_unit => argv, _choice_unit => self ++ Char.show(Char.from_u32(0)) ++ argv))
     P.HostPosix.spawn_detached(complete,key_lock,heavy_lock,"")
+
+def CompileQueueLifecycle.spawn_detached_identity(+argv: String, key_lock: U32, heavy_lock: U32) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    self : String <- IO.try(String,P.HostPosix.self_exe())
+    complete : String <- IO.pure(String,Choice.choose(String,String.starts_with(argv,"/"), _choice_unit => argv, _choice_unit => self ++ Char.show(Char.from_u32(0)) ++ argv))
+    P.HostPosix.spawn_detached_identity(complete,key_lock,heavy_lock,"")

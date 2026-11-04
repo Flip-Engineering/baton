@@ -220,6 +220,21 @@ def gate_held(gate: Gate) -> Bool:
     case GateHeld{window,resets_at,source,receipt}: True{}
     case other: False{}
 
+
+# A recorded provider reset ends the hold it named. Until the next live read, a
+# held window whose reset instant is not in the future is elapsed: the owed
+# input is admitted and the read that admission performs decides the next hold.
+# A window with no recorded reset keeps its hold.
+def reset_passed_sql(+resets_at: String) -> String:
+  "SELECT CASE WHEN " ++ C.q(resets_at) ++ "<>'' AND CAST(" ++ C.q(resets_at) ++ " AS INTEGER)>0 AND CAST(" ++ C.q(resets_at) ++ " AS INTEGER)<=" ++ now_ms() ++ " THEN 1 ELSE 0 END;"
+
+def current_gate(+db: String, gate: Gate) -> IO(Gate):
+  match gate:
+    case GateHeld{+window,+resets_at,+source,+receipt}: do IO<Gate>:
+      +passed : String <- IO.try(String,DB.Sql.read(db,reset_passed_sql(resets_at)))
+      IO.pure(Gate,Bool.pick(Gate,String.eq(passed,"1\n"),GateNone{},GateHeld{window,resets_at,source,receipt}))
+    case other: IO.pure(Gate,other)
+
 # --- the read effect -------------------------------------------------------------
 #
 # The credential reference of an account record, else the provider's configured
@@ -370,18 +385,20 @@ def release_sql(+seat: String, +provider: String, +account: String) -> String:
   +latest = latest_readable_sql(provider,account)
   "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT replace(h.id,':hold:',':release:'),h.sender,h.recipient,'report','usage hold released: seat " ++ C.escaped(seat) ++ " on " ++ C.escaped(scope_text(provider,account)) ++ ". ' || coalesce(" ++ read_text_sql(latest) ++ ",'No readable read is recorded for this provider and account') || '. Owed input is admitted.' FROM messages h, usage_reads e WHERE h.id GLOB 'usage-read:'||e.id||':hold:*' AND " ++ scope_sql("e.",provider,account) ++ " AND h.sender=" ++ C.q(seat) ++ " AND h.kind='report' AND NOT EXISTS(SELECT 1 FROM messages x WHERE x.id=replace(h.id,':hold:',':release:'));SELECT changes();"
 
+# A hold row is what held_seats_sql reads to wake the seat on release, so a failed
+# announcement insert propagates its database cause and ends the decision.
 def announce(+db: String, +seat: String, +provider: String, +account: String, +model: String, gate: Gate) -> IO(Unit):
   match gate:
     case GateHeld{window,resets_at,source,receipt}: do IO<Unit>:
-      held : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,hold_sql(seat,provider,account,model))
-      unread : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,unknown_sql(seat,provider,account))
+      held : String <- IO.try(String,DB.Sql.query(db,hold_sql(seat,provider,account,model)))
+      unread : String <- IO.try(String,DB.Sql.query(db,unknown_sql(seat,provider,account)))
       IO.pure(Unit,Unit{})
     case GateUnknown{source,reason,receipt}: do IO<Unit>:
-      unread : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,unknown_sql(seat,provider,account))
-      released : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,release_sql(seat,provider,account))
+      unread : String <- IO.try(String,DB.Sql.query(db,unknown_sql(seat,provider,account)))
+      released : String <- IO.try(String,DB.Sql.query(db,release_sql(seat,provider,account)))
       IO.pure(Unit,Unit{})
     case GateNone{}: do IO<Unit>:
-      released : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,release_sql(seat,provider,account))
+      released : String <- IO.try(String,DB.Sql.query(db,release_sql(seat,provider,account)))
       IO.pure(Unit,Unit{})
 
 # --- the seat -------------------------------------------------------------------------
@@ -412,7 +429,7 @@ def held_seats_sql(+provider: String, +account: String, +current: String) -> Str
   "SELECT DISTINCT h.sender FROM messages h, usage_reads e WHERE h.id GLOB 'usage-read:*:hold:*' AND h.id GLOB 'usage-read:'||e.id||':hold:*' AND " ++ scope_sql("e.",provider,account) ++ " AND h.sender<>" ++ C.q(current) ++ " AND NOT EXISTS(SELECT 1 FROM messages x WHERE x.id=replace(h.id,':hold:',':release:'));"
 
 def owed_head_sql(+seat: String) -> String:
-  "SELECT coalesce((SELECT id FROM messages m WHERE m.recipient=" ++ C.q(seat) ++ " AND " ++ C.owed_sql("m") ++ " AND NOT " ++ C.stopped_session_sql(C.q(seat)) ++ " ORDER BY seq LIMIT 1),'');"
+  "SELECT coalesce((SELECT id FROM messages m WHERE m.recipient=" ++ C.q(seat) ++ " AND " ++ C.owed_sql("m") ++ " AND NOT " ++ C.stopped_session_sql(C.q(seat)) ++ " AND NOT " ++ C.task_closed_sql(C.q(seat)) ++ " ORDER BY seq LIMIT 1),'');"
 
 def wake_argv(+self: String, +db: String, +message: String) -> List<String>:
   [self,"--wake-message",db,message]
@@ -497,7 +514,9 @@ def window_state(+db: String, +session: String, account: String) -> IO(Gate):
     +provider : String <- seat_provider_io(db,session)
     +model : String <- seat_model_io(db,session)
     +label : String <- IO.pure(String,Tx.trim_nl(account))
-    +gate : Gate <- Bool.pick(IO(Gate),String.is_empty(provider),IO.pure(Gate,GateNone{}),decide(db,provider,label,model))
+    +gate : Gate <- Bool.pick(IO(Gate),String.is_empty(provider),IO.pure(Gate,GateNone{}),do IO<Gate>:
+      raw : Gate <- decide(db,provider,label,model)
+      current_gate(db,raw))
     noted : Unit <- Bool.pick(IO(Unit),String.is_empty(provider),IO.pure(Unit,Unit{}),announce(db,session,provider,label,model,gate))
     IO.pure(Gate,gate)
 

@@ -5,17 +5,19 @@ import ./recruit.bend as Recruit
 import ./knowledge.bend as Knowledge
 import ./delivery.bend as Delivery
 import ./codex-route.bend as CodexRoute
+import ./accounts.bend as Accounts
+import ./stop.bend as Stop
+import ./usage-windows.bend as UW
 import ../host/sqlite.bend as DB
 import ../host/text.bend as Text
 import ../host/session-lock.bend as Lock
 import ../host/control.bend as Host
-import ../host/files.bend as F
-import ../host/process.bend as P
 import ../json/canonical.bend as J
 import ../git/text.bend as Tx
 import ../git/process.bend as Process
 import ../git/types.bend as T
 import ../storage/lifecycle.bend as StoragePolicy
+import ./receiver-probe.bend as ReceiverProbe
 
 def string_tail(args: List<String>) -> String:
   match args:
@@ -92,10 +94,15 @@ def identity_endpoint(executable: String, db: String, session: String, cmd: Stri
 def identity_check_args(+registry: String, +helper: String, +model: String, +repository: String) -> List<String>:
   List.append(&1,String,["node",helper,"check","--registry",registry,"--model-key",model],Bool.pick(List<String>,String.is_empty(repository),Nil{},["--repository",repository]))
 
+def identity_check_scope(model: String, +repository: String) -> String:
+  "recorded model " ++ model ++ Bool.pick(String,String.is_empty(repository),""," for repository " ++ repository)
+
 def identity_check_refusal(+model: String, +repository: String, result: T.RunRes) -> IO(Unit):
   match result:
     case T.RRun{T.SExit{0}, out}: IO.pure(Unit,Unit{})
-    case other: IO.die(Unit,2,"The configured series registry does not resolve the recorded model " ++ model ++ Bool.pick(String,String.is_empty(repository),""," for repository " ++ repository) ++ "; the endpoint would refuse at delivery. Correct the registry mapping or record a mapped model, then retry.")
+    case T.RRun{T.SExit{+code}, out}: IO.die(Unit,2,"The configured series identity check failed for " ++ identity_check_scope(model,repository) ++ ": helper exited " ++ U32.show(code) ++ ": " ++ Tx.trim_nl(out) ++ ". Correct the model mapping or repository's App installation, then retry.")
+    case T.RRun{T.SSignal{+signal}, out}: IO.die(Unit,2,"The configured series identity check failed for " ++ identity_check_scope(model,repository) ++ ": helper ended by signal " ++ U32.show(signal) ++ ": " ++ Tx.trim_nl(out) ++ ". Correct the model mapping or repository's App installation, then retry.")
+    case T.RSpawn{detail}: IO.die(Unit,2,"The configured series identity check failed for " ++ identity_check_scope(model,repository) ++ ": helper could not run: " ++ detail ++ ". Correct the helper installation or repository's App installation, then retry.")
 
 def identity_check_body(+registry: String, +helper: String, +model: String, +repository: String, absent: Bool) -> IO(Unit):
   match absent:
@@ -224,14 +231,26 @@ def receiver_branch_sql(+session: String, +endpoint: String, +cwd: String, branc
     case Some{current}:
       "UPDATE sessions SET branch=" ++ C.q(current) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ receiver_admitted(session,endpoint,cwd) ++ ";"
 
-def receiver(+db: String, +session: String, cmd: String, log: String, +cwd: String) -> IO(String):
+# Registration admits an OMP harness command only after it answers the rpc
+# handshake. The probe runs before the endpoint transaction and writes nothing,
+# so a refusal preserves the recorded assignment and creates no attempt.
+def receiver_harness_probe(+db: String, +session: String, cmd: String, model: String, +workspace: String) -> IO(Unit):
+  do IO<Unit>:
+    harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    Bool.pick(IO(Unit),String.eq(Tx.trim_nl(harness),"omp"),
+      ReceiverProbe.registration(db,session,cmd,model,workspace),
+      IO.pure(Unit,Unit{}))
+
+def receiver(+db: String, +session: String, +cmd: String, log: String, +cwd: String) -> IO(String):
   do IO<String>:
     found : String <- IO.try(String,Store.apply(db,C.Session{session}))
     accepted : String <- registered(found)
-    model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +selected_model : String = Tx.trim_nl(model)
     +workspace : String <- Bool.pick(IO(String),String.is_empty(cwd),IO.pure(String,""),IO.try(String,Host.Control.workspace(cwd)))
     branch : Maybe<String> <- receiver_branch(workspace)
-    +endpoint : String <- configured_endpoint(db,session,cmd,log,Tx.trim_nl(model),workspace)
+    +endpoint : String <- configured_endpoint(db,session,cmd,log,selected_model,workspace)
+    probed : Unit <- receiver_harness_probe(db,session,cmd,selected_model,workspace)
     +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ receiver_branch_sql(session,endpoint,workspace,branch) ++ receiver_sql(session,endpoint,workspace) ++ "COMMIT;"))
     answer : String <- receiver_result(saved,receiver_denied(saved))
     collected : Unit <- StoragePolicy.collect_settled(db,session)
@@ -245,62 +264,32 @@ def configure_endpoint(+db: String, +id: String, +harness: String, +cmd: String,
     receiver_harness : Bool <- IO.pure(Bool,Bool.or(String.eq(harness,"codex"),Bool.or(String.eq(harness,"omp"),Bool.or(String.eq(harness,"muse"),Bool.or(String.eq(harness,"claude-code"),Bool.or(String.eq(harness,"dsh"),String.eq(harness,"antigravity")))))))
     Bool.pick(IO(String),receiver_harness,configured_endpoint(db,id,cmd,log,model,""),IO.pure(String,""))
 
-# A starting retained attempt whose native custody is absent is stranded: it
-# cannot run and must not block a route change. The caller holds the physical
-# session lock while this check runs, so a live receiver cannot be prelaunch.
-# Only positive evidence retires the attempt; unreadable status or recovery
-# records leave the attempt owned and the route change refused (#1016).
-def recovery_none(recovery: Result<&1,&1,U32 & String,Maybe<String>>) -> Bool:
-  match recovery:
-    case Done{found}: match found:
-      case Some{argv}: False{}
-      case None{}: True{}
-    case Fail{error}: False{}
-
-def stranded_without_status(+directory: String) -> IO(Bool):
-  do IO<Bool>:
-    recovery : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.recovery_argv(directory)
-    IO.pure(Bool,recovery_none(recovery))
-
-def stranded_status(+directory: String, reaped: Result<&1,&1,U32 & String,U32>) -> IO(Bool):
-  match reaped:
-    case Done{size}: Bool.pick(IO(Bool),U32.is_eq(size,0),stranded_without_status(directory),IO.pure(Bool,False{}))
-    case Fail{(code, detail)}: Bool.pick(IO(Bool),U32.is_eq(code,2),stranded_without_status(directory),IO.pure(Bool,False{}))
-
-def starting_attempt_observed(+directory: String, observed: Result<&1,&1,U32 & String,String>) -> IO(Bool):
-  match observed:
-    case Fail{(code, detail)}: IO.pure(Bool,U32.is_eq(code,2))
-    case Done{output}: do IO<Bool>:
-      reaped : Result<&1,&1,U32 & String,U32> <- F.Files.size(directory ++ "/status")
-      stranded_status(directory,reaped)
-
-def starting_attempt_stranded(+directory: String) -> IO(Bool):
-  do IO<Bool>:
-    observed : Result<&1,&1,U32 & String,String> <- F.Files.lstat(directory)
-    starting_attempt_observed(directory,observed)
-
+# A starting retained attempt whose native custody is absent cannot run. The
+# route change releases it in the same transaction that records the new route,
+# so a refused route change leaves the attempt and its owed input untouched.
+# Stop.starting_stranded supplies the custody evidence; a live prelaunch owner
+# holds the session lock and cannot reach this lock holder.
 def starting_attempt_snapshot_sql(+session: String) -> String:
   "SELECT coalesce((SELECT id || char(9) || directory FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='retained' AND phase='starting'),'');"
 
-def reconcile_starting_snapshot(+db: String, +session: String, +attempt: String, +directory: String) -> IO(Unit):
+
+def configure_release_write(+db: String, +id: String, +harness: String, +model: String, +effort: String, +endpoint: String, +expected_harness: String, +expected_model: String, +expected_effort: String, +attempt: String, +directory: String) -> IO(String):
+  do IO<String>:
+    +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.configure_sql_releasing(id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort,attempt,directory) ++ "COMMIT;"))
+    migrated : String <- Bool.pick(IO(String),Bool.and(String.eq(harness,"codex"),Bool.not(Tx.starts_with(saved,"{\"error\":\"configure-refused\""))),CodexRoute.normalize(db,id),IO.pure(String,""))
+    IO.pure(String,saved)
+
+
+# A successful route change releases the hold recorded on the previous route.
+# The wake that follows the command admits the owed input on the new route.
+def release_old_gate(+db: String, +id: String, +provider: String, +account: String, +model: String) -> IO(Unit):
   do IO<Unit>:
-    stranded : Bool <- starting_attempt_stranded(directory)
-    Bool.pick(IO(Unit),stranded,do IO<Unit>:
-      retired : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;UPDATE executions SET phase='exited',status='start failed' WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ " AND mode='retained' AND phase='starting' AND directory=" ++ C.q(directory) ++ ";COMMIT;"))
-      IO.pure(Unit,Unit{}),IO.pure(Unit,Unit{}))
+    gate : UW.Gate <- UW.decide(db,provider,Tx.trim_nl(account),Tx.trim_nl(model))
+    Bool.pick(IO(Unit),UW.gate_held(gate),UW.announce(db,id,provider,Tx.trim_nl(account),Tx.trim_nl(model),UW.GateNone{}),IO.pure(Unit,Unit{}))
 
-def reconcile_starting_tabs(+db: String, +session: String, fields: List<String>) -> IO(Unit):
-  match fields:
-    case attempt <> directory <> Nil{}: reconcile_starting_snapshot(db,session,attempt,directory)
-    case other: IO.pure(Unit,Unit{})
-
-def reconcile_starting_fields(+db: String, +session: String, +snapshot: String) -> IO(Unit):
-  reconcile_starting_tabs(db,session,Tx.split_tabs(snapshot))
-
-def reconcile_stranded_starting(+db: String, +session: String) -> IO(Unit):
-  do IO<Unit>:
-    snapshot : String <- IO.try(String,DB.Sql.read(db,starting_attempt_snapshot_sql(session)))
-    reconcile_starting_fields(db,session,Tx.trim_nl(snapshot))
+def release_old_hold(+db: String, +id: String, +harness: String, +model: String, account: String, saved: String) -> IO(Unit):
+  +provider : String = UW.seat_provider(Tx.trim_nl(harness),Tx.trim_nl(model))
+  Bool.pick(IO(Unit),Bool.or(String.is_empty(provider),Tx.starts_with(saved,"{\"error\":\"configure-refused\"")),IO.pure(Unit,Unit{}),release_old_gate(db,id,provider,account,model))
 
 def configure_result(saved: String, denied: Bool) -> IO(String):
   match denied:
@@ -312,10 +301,24 @@ def configure_write(+db: String, +id: String, +harness: String, +model: String, 
     +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.configure_sql(id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort) ++ "COMMIT;"))
     migrated : String <- Bool.pick(IO(String),Bool.and(String.eq(harness,"codex"),Bool.not(Tx.starts_with(saved,"{\"error\":\"configure-refused\""))),CodexRoute.normalize(db,id),IO.pure(String,""))
     IO.pure(String,saved)
+def starting_fields(snapshot: String) -> List<String>:
+  Tx.split_tabs(Tx.trim_nl(snapshot))
 
-def configure_same_route(+db: String, +id: String, +harness: String, +model: String, +effort: String, cmd: String, log: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> IO(String):
+def configure_starting_fields(+db: String, +id: String, +harness: String, +model: String, +effort: String, +endpoint: String, +expected_harness: String, +expected_model: String, +expected_effort: String, fields: List<String>) -> IO(String):
+  match fields:
+    case +attempt <> +directory <> Nil{}: do IO<String>:
+      stranded : Bool <- Stop.starting_stranded(directory)
+      Bool.pick(IO(String),stranded,
+        configure_release_write(db,id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort,attempt,directory),
+        configure_write(db,id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort))
+    case other: configure_write(db,id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort)
+
+def configure_starting_write(+db: String, +id: String, +harness: String, +model: String, +effort: String, +endpoint: String, +expected_harness: String, +expected_model: String, +expected_effort: String, snapshot: String) -> IO(String):
+  configure_starting_fields(db,id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort,starting_fields(snapshot))
+
+def configure_same_route(+db: String, +id: String, +harness: String, +model: String, +effort: String, +cmd: String, +log: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> IO(String):
   do IO<String>:
-    rebind : Bool = Bool.not(String.is_empty(cmd))
+    +rebind : Bool = Bool.not(String.is_empty(cmd))
     checked : Unit <- Bool.pick(IO(Unit),Bool.and(rebind,String.is_empty(log)),IO.die(Unit,2,"Explicit same-route receiver rebinding requires both --command and --output-log. An output log alone preserves the recorded executable and endpoint."),IO.pure(Unit,Unit{}))
     endpoint : String <- Bool.pick(IO(String),rebind,configure_endpoint(db,id,harness,cmd,log,model),IO.pure(String,""))
     +saved : String <- configure_write(db,id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort)
@@ -323,10 +326,14 @@ def configure_same_route(+db: String, +id: String, +harness: String, +model: Str
 
 def configure_locked(+db: String, +id: String, +harness: String, +model: String, +effort: String, cmd: String, +log: String, +expected_harness: String, +expected_model: String, +expected_effort: String, lock: U32) -> IO(String):
   do IO<String>:
-    reconciled : Unit <- reconcile_stranded_starting(db,id)
+    +old_harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(id) ++ ";"))
+    +old_model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(id) ++ ";"))
+    +old_account : String <- Accounts.handoff_label_io(db,id)
     endpoint : String <- configure_endpoint(db,id,harness,cmd,log,model)
-    +saved : String <- configure_write(db,id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort)
+    +snapshot : String <- IO.try(String,DB.Sql.read(db,starting_attempt_snapshot_sql(id)))
+    +saved : String <- configure_starting_write(db,id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort,snapshot)
     released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+    released_hold : Unit <- release_old_hold(db,id,Tx.trim_nl(old_harness),Tx.trim_nl(old_model),Tx.trim_nl(old_account),saved)
     configure_result(saved,Tx.starts_with(saved,"{\"error\":\"configure-refused\""))
 
 def configure_live_refusal(+session: String) -> IO(String):
@@ -337,7 +344,7 @@ def configure_lock_decided(+db: String, +id: String, +harness: String, +model: S
     case Some{handle}: configure_locked(db,id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort,handle)
     case None{}: configure_live_refusal(id)
 
-def configure(+db: String, +id: String, +harness: String, +model: String, +effort: String, cmd: String, +log: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> IO(String):
+def configure(+db: String, +id: String, +harness: String, +model: String, +effort: String, +cmd: String, +log: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> IO(String):
   do IO<String>:
     found : String <- IO.try(String,Store.apply(db,C.Session{id}))
     accepted : String <- registered(found)
@@ -429,45 +436,28 @@ law denied_detached_input_cannot_launch_a_process:
 def denied_detached_input_cannot_launch_a_process(db,id,saved):
   {==}
 
-# The oldest input still owed to the recipient of message id. Empty when the
-# recipient owes nothing or is stopped.
+# The oldest input still owed to the recipient of message id that a native
+# attempt can carry. Empty when the recipient owes nothing, is stopped, or its
+# assignment is complete and the only owed input is not new work (the
+# confirmation itself and other input that is neither an assignment nor
+# operator input). A newer assignment from a coordinator and operator input make
+# the assignment not complete, so that input remains returned and a failed
+# delivery of it keeps the owner report below.
 def owed_after_sql(+id: String) -> String:
-  "SELECT coalesce((SELECT owed.id FROM messages owed WHERE owed.recipient=(SELECT recipient FROM messages WHERE id=" ++ C.q(id) ++ ") AND " ++ C.owed_sql("owed") ++ " AND NOT " ++ C.stopped_session_sql("owed.recipient") ++ " ORDER BY owed.seq LIMIT 1),'');"
+  "SELECT coalesce((SELECT owed.id FROM messages owed WHERE owed.recipient=(SELECT recipient FROM messages WHERE id=" ++ C.q(id) ++ ") AND " ++ C.owed_sql("owed") ++ " AND NOT " ++ C.stopped_session_sql("owed.recipient") ++ " AND NOT " ++ C.task_closed_sql("owed.recipient") ++ " ORDER BY owed.seq LIMIT 1),'');"
 
-# The report to the recipient's coordinator for input whose delivery failed
-# again after a redelivery.
+# The report to the recipient's coordinator when delivery or redelivery fails.
 def undelivered_report_sql(+id: String, +detail: String) -> String:
-  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":undelivered") ++ ",owed.recipient," ++ C.blocked_owner_sql("owed.recipient") ++ ",'report','Input ' || owed.id || ' for ' || owed.recipient || ' was not delivered: the receive endpoint failed again after a redelivery. Cause: ' || " ++ C.q(detail) ++ " || ' ' || owed.recipient || ' has ' || (SELECT count(*) FROM messages pending WHERE pending.recipient=owed.recipient AND " ++ C.owed_sql("pending") ++ ") || ' owed inputs and no turn started for them. Send it guidance to wake it again once the cause is cleared, or stop it.' FROM messages owed WHERE owed.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("owed") ++ " AND " ++ C.blocked_owner_sql("owed.recipient") ++ " IS NOT NULL;"
+  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":undelivered") ++ ",owed.recipient," ++ C.blocked_owner_sql("owed.recipient") ++ ",'report','Input ' || owed.id || ' for ' || owed.recipient || ' could not be delivered after a delivery failure. Cause: ' || " ++ C.q(detail) ++ " || ' ' || owed.recipient || ' has ' || (SELECT count(*) FROM messages pending WHERE pending.recipient=owed.recipient AND " ++ C.owed_sql("pending") ++ ") || ' owed inputs and no turn started for them. Send it guidance to wake it again once the cause is cleared, or stop it.' FROM messages owed WHERE owed.id=" ++ C.q(id) ++ " AND " ++ C.owed_sql("owed") ++ " AND " ++ C.blocked_owner_sql("owed.recipient") ++ " IS NOT NULL;"
 
-def redrive(+db: String, +next: String, empty: Bool) -> IO(Unit):
+def redrive(+db: String, +next: String, empty: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match empty:
-    case True{}: IO.pure(Unit,Unit{})
-    case False{}: do IO<Unit>:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
+    case False{}: do IO<Result<&1,&1,U32 & String,String>>:
       executable : String <- IO.try(String,Lock.SessionLock.executable())
       +database : String <- IO.try(String,Lock.SessionLock.canonical(db))
       launched : Result<&1,&1,U32 & String,String> <- Host.Control.launch(Tx.enc_argv([executable,"--redeliver-message",database,next]),database,next ++ ":redelivery")
-      IO.pure(Unit,Unit{})
-
-# A delivery whose recipient endpoint failed leaves its input owed with no turn
-# started for it (#1054): worktree-paths-972-haiku-20261022 never started after
-# its endpoint exited 5 on 'database is locked', and the coordinator kept 22
-# owed inputs after its receive process died. The dispatch derives the oldest
-# owed input from the pending inbox and starts a redelivery for it; the
-# receive endpoint's session lock and custody check decide whether a turn
-# starts. The dispatch still exits with the delivery failure.
-def delivered_or_redriven(+db: String, +id: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
-  match result:
-    case Done{output}: IO.pure(Unit,Unit{})
-    case Fail{(+code,+detail)}: do IO<Unit>:
-      owed : String <- IO.try(String,DB.Sql.query(db,owed_after_sql(id)))
-      +next : String <- IO.pure(String,Tx.trim_nl(owed))
-      redriven : Unit <- redrive(db,next,String.is_empty(next))
-      IO.die(Unit,code,detail)
-
-def deliver(+db: String, +id: String) -> IO(Unit):
-  do IO<Unit>:
-    delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id,"1","")
-    delivered_or_redriven(db,id,delivered)
+      IO.pure(Result<&1,&1,U32 & String,String>,launched)
 
 # A failure on a held write lock: SQLITE_BUSY or SQLITE_LOCKED from the store,
 # or a receive endpoint that exited with that code. A Baton endpoint exits 5
@@ -504,6 +494,36 @@ def escalated(+db: String, +id: String, +code: U32, +detail: String, reported: R
       notified : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":undelivered","1","")
       IO.die(Unit,code,detail)
     case Fail{(report_code,report_text)}: IO.die(Unit,code,detail ++ "\nThe undelivered report for " ++ id ++ " was not committed (" ++ U32.show(report_code) ++ ": " ++ report_text ++ "); the input stays owed in the pending inbox.")
+
+def redriven_or_escalated(+db: String, +id: String, +code: U32, +detail: String, redriven: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match redriven:
+    case Done{output}: IO.die(Unit,code,detail)
+    case Fail{(+redrive_code,+redrive_detail)}: do IO<Unit>:
+      +combined : String <- IO.pure(String,"Delivery failed (exit " ++ U32.show(code) ++ "): " ++ detail ++ "\nRedelivery launch failed (error code " ++ U32.show(redrive_code) ++ "): " ++ redrive_detail)
+      reported : Result<&1,&1,U32 & String,String> <- undelivered_reported(db,id,combined)
+      escalated(db,id,code,combined,reported)
+
+# A delivery whose recipient endpoint failed leaves its input owed with no turn
+# started for it (#1054): worktree-paths-972-haiku-20261022 never started after
+# its endpoint exited 5 on 'database is locked', and the coordinator kept 22
+# owed inputs after its receive process died. The dispatch derives the oldest
+# owed input from the pending inbox and starts a redelivery for it; the
+# receive endpoint's session lock and custody check decide whether a turn
+# starts. A failure to start redelivery is reported to the recipient's
+# coordinator, and the dispatch still exits with its delivery failure.
+def delivered_or_redriven(+db: String, +id: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Done{output}: IO.pure(Unit,Unit{})
+    case Fail{(+code,+detail)}: do IO<Unit>:
+      owed : String <- IO.try(String,DB.Sql.query(db,owed_after_sql(id)))
+      +next : String <- IO.pure(String,Tx.trim_nl(owed))
+      redriven : Result<&1,&1,U32 & String,String> <- redrive(db,next,String.is_empty(next))
+      redriven_or_escalated(db,next,code,detail,redriven)
+
+def deliver(+db: String, +id: String) -> IO(Unit):
+  do IO<Unit>:
+    delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id,"1","")
+    delivered_or_redriven(db,id,delivered)
 
 def redelivery_failed(+db: String, +id: String, +code: U32, +detail: String, busy: Bool, again: Unit -> IO(Unit)) -> IO(Unit):
   match busy:

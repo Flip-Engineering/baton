@@ -316,6 +316,29 @@ after=$(count_starts)
 grep -Fx "artifact-binary=$T/reuse" "$T/reuse.receipt" \
   && pass 'reused receipt records the bare artifact binding' || bad 'reused receipt artifact binding differs'
 
+# Same-length corruption in an internal completed artifact triggers a fresh
+# execution, restores the verified cache bytes, and leaves the new result reusable.
+reuse_key=$(cc_key ident "$T/reuse")
+cached="$STATE/keys/$reuse_key/completed/artifacts/binary"
+python3 - "$cached" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+data = path.read_bytes()
+corrupt = bytes(byte ^ 0xff for byte in data)
+if len(corrupt) != len(data):
+    raise SystemExit("corruption changed the cached artifact length")
+path.write_bytes(corrupt)
+PY
+corrupt_before=$(count_starts)
+run_cc ident "$T/recovered" || bad 'corrupt cache recovery request failed'
+corrupt_after=$(count_starts)
+[ "$corrupt_after" -gt "$corrupt_before" ] && pass 'corrupt internal result recompiled' || bad "corrupt cache starts $corrupt_before -> $corrupt_after"
+[ "$(cat "$T/recovered")" = "artifact-ident" ] && pass 'recovered artifact bytes match' || bad 'recovered artifact differs'
+[ "$(cat "$cached")" = "artifact-ident" ] && pass 'recovered cache artifact restored' || bad 'recovered cache artifact differs'
+reuse_before=$(count_starts)
+run_cc ident "$T/recovered-again" || bad 'post-recovery reuse request failed'
+[ "$(count_starts)" = "$reuse_before" ] && pass 'recovered result reused' || bad "post-recovery starts $(count_starts)"
+
 # Copying an artifact must work under an ordinary pre-existing output parent.
 mkdir -p "$T/ordinary-output"
 chmod 755 "$T/ordinary-output"

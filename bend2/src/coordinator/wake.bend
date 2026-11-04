@@ -3,7 +3,7 @@ import ../coordinator/commands.bend as C
 import ./receive.bend as Receive
 import ./delivery.bend as Delivery
 import ./codex-route.bend as CodexRoute
-import ../coordinator/root-channel.bend as RootChannel
+import ./root-channel.bend as RootChannel
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
 
@@ -108,6 +108,14 @@ def addressed_message_id(command: C.Command) -> String:
     case C.Ask{id,player,body}: id
     case other: ""
 
+# A confirmation that ends its Player also reports the Player's live children
+# and unresolved input to the Player's coordinator; that report wakes its
+# recipient the same way.
+def ended_report_id(command: C.Command) -> String:
+  match command:
+    case C.Message{+id,sender,recipient,+kind,body}: Bool.pick(String,String.eq(kind,"completion-confirmed"),"ended:" ++ id,"")
+    case other: ""
+
 def root_checked(+db: String, +id: String, empty: Bool) -> IO(Unit):
   match empty:
     case True{}: IO.pure(Unit,Unit{})
@@ -119,6 +127,7 @@ def drive_command(+db: String, +command: C.Command, answer: Result<&1,&1,U32 & S
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case Done{saved}: do IO<Result<&1,&1,U32 & String,Unit>>:
       driven : Result<&1,&1,U32 & String,Unit> <- drive_id(db,admitted_message_id(command))
+      ended : Result<&1,&1,U32 & String,Unit> <- drive_id(db,ended_report_id(command))
       +addressed : String <- IO.pure(String,addressed_message_id(command))
       checked : Unit <- root_checked(db,addressed,String.is_empty(addressed))
       IO.pure(Result<&1,&1,U32 & String,Unit>,driven)

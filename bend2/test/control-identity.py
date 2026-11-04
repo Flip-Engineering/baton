@@ -92,9 +92,43 @@ class ControlIdentity(unittest.TestCase):
             metadata.chmod(0o600)
             self.identities[series] = github
             profiles[series] = str(directory)
+            private_key = subprocess.run(['node', '-e', "process.stdout.write(require('node:crypto').generateKeyPairSync('rsa',{modulusLength:2048,privateKeyEncoding:{type:'pkcs8',format:'pem'}}).privateKey)"],
+                                         check=True, capture_output=True, text=True).stdout
+            (directory / 'private-key.pem').write_text(private_key)
+            (directory / 'private-key.pem').chmod(0o600)
         self.registry.write_text(json.dumps({'models': {'gpt-6-astra': 'gpt', 'kimi-code/k3': 'kimi'},
                                             'series': profiles}))
         self.registry.chmod(0o600)
+        api_stub = self.directory / 'fixture-github-api.mjs'
+        api_stub.write_text('''import https from 'node:https';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+https.request = (url, options, received) => {
+  const outgoing = new EventEmitter();
+  outgoing.end = () => {
+    const parsed = new URL(url), path = parsed.pathname;
+    const apps = {
+      'fixture-client-gpt': { id: 20000, slug: 'fixture-series-gpt' },
+      'fixture-client-kimi': { id: 20001, slug: 'fixture-series-kimi' },
+    };
+    const match = /^Bearer ([^.]+)\\.([^.]+)\\./.exec(options.headers.Authorization);
+    const jwt = match && JSON.parse(Buffer.from(match[2], 'base64url').toString());
+    const app = Object.entries(apps).find(([client]) => client === jwt?.iss)?.[1];
+    const owner = /^\\/repos\\/([^/]+)\\/([^/]+)\\/installation$/.exec(path)?.[1];
+    const rejected = process.env.BATON2_FIXTURE_REJECT_REPOSITORY;
+    const statusCode = path.startsWith('/app') || (owner && path !== rejected) ? 200 : 404;
+    const response = path === '/app' ? { ...app, client_id: jwt.iss }
+      : { id: app.id + 10000, app_id: app.id, app_slug: app.slug,
+          account: { login: owner }, suspended_at: null,
+          permissions: { contents: 'write', pull_requests: 'write', metadata: 'read' } };
+    const incoming = new PassThrough(); incoming.statusCode = statusCode;
+    queueMicrotask(() => { received(incoming); incoming.end(JSON.stringify(statusCode === 200
+      ? response : { message: 'Not Found' })); });
+  };
+  return outgoing;
+};
+''')
+        self.environment['NODE_OPTIONS'] = '--import=' + api_stub.as_uri()
         self.environment.update(GIT_AUTHOR_NAME='Flip Baton - GPT', GIT_COMMITTER_NAME='Flip Baton - GPT',
                                 GIT_AUTHOR_EMAIL=self.identities['gpt']['commitEmail'],
                                 GIT_COMMITTER_EMAIL=self.identities['gpt']['commitEmail'])
@@ -232,15 +266,29 @@ class ControlIdentity(unittest.TestCase):
                             self.directory / 'unmapped.jsonl', ok=False)
         self.assertEqual(refused['code'], 2)
         self.assertIn('Series Git operation refused', refused['stderr'])
-        self.assertIn('does not resolve the recorded model zai/glm-5.3-flash', refused['stderr'])
+        self.assertIn('identity check failed for recorded model zai/glm-5.3-flash', refused['stderr'])
+        self.assertIn('helper exited 1:', refused['stderr'])
         self.assertEqual(self.call('session', 'unmapped-receiver')['endpoint'], '')
         self.assertEqual([row['id'] for row in self.call('inbox', 'unmapped-receiver')], ['unmapped-input'])
         turn = self.call('dispatch-turn', 'unmapped-turn', 'muse-turn-1', self.fixture,
                          self.directory / 'muse.jsonl', self.task, ok=False)
         self.assertEqual(turn['code'], 2)
-        self.assertIn('does not resolve the recorded model zai/glm-5.3-flash', turn['stderr'])
+        self.assertIn('identity check failed for recorded model zai/glm-5.3-flash', turn['stderr'])
+        self.assertIn('helper exited 1:', turn['stderr'])
         self.assertEqual(self.controls, [])
         self.assertEqual(self.call('turns', 'unmapped-turn'), [])
+
+    def test_recruit_reports_the_requested_repository_and_github_lookup_cause(self):
+        self.root()
+        self.git('remote', 'set-url', 'origin', 'https://github.com/Flip-Engineering/flip.git')
+        self.environment['BATON2_FIXTURE_REJECT_REPOSITORY'] = '/repos/Flip-Engineering/flip/installation'
+        refused = self.call('recruit', 'wrong-repository', 'root', 'omp', 'gpt-6-astra', 'low',
+                            self.repo, 'wrong-repository-branch', self.checkouts / 'wrong-repository', self.base,
+                            ok=False, raw=True)
+        self.assertIn('Flip-Engineering/flip', refused['stderr'])
+        self.assertIn('account Flip-Engineering', refused['stderr'])
+        self.assertIn('HTTP 404: Not Found', refused['stderr'])
+        self.assertEqual(self.session('wrong-repository')['endpoint'], '')
 
 if __name__ == '__main__':
     unittest.main()

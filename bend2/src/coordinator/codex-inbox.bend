@@ -520,42 +520,49 @@ def observed_live_read(+session: String, +thread: String, +message: String, +row
     recorded : Unit <- Proxy.record("{\"type\":\"codexInboxMessageRead\",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"messageId\":" ++ J.string_literal(message) ++ "}")
     released(session,thread,row)
 
-def live_tui_observed(+link: Proxy.Link, +db: String, +session: String, +thread: String, +state: State, +target: String, +row: Inbox.Snapshot, stopped: Bool, +read: Bool) -> Outcome.Checked(Unit):
+def live_tui_observed(+link: Proxy.Link, +db: String, +session: String, +thread: String, +state: State, +target: String, +row: Inbox.Snapshot, stopped: Bool, +read: Bool, again: Proxy.Link -> String -> String -> String -> State -> String -> Outcome.Checked(Unit)) -> Outcome.Checked(Unit):
   match stopped:
     case True{}: released(session,thread,row)
     case False{}:
       Bool.pick(Outcome.Checked(Unit),read,
         observed_live_read(session,thread,target,row),
         Bool.pick(Outcome.Checked(Unit),String.is_empty(target),released(session,thread,row),
-          live_tui_wait(link,db,session,thread,state,target)))
+          again(link,db,session,thread,state,target)))
 
-def live_tui_snapshot(+link: Proxy.Link, +db: String, +session: String, +thread: String, +state: State, +target: String) -> Outcome.Checked(Unit):
+def live_tui_snapshot(+link: Proxy.Link, +db: String, +session: String, +thread: String, +state: State, +target: String, again: Proxy.Link -> String -> String -> String -> State -> String -> Outcome.Checked(Unit)) -> Outcome.Checked(Unit):
   do Outcome.Checked<Unit>:
     +row : Inbox.Snapshot <- Inbox.read(db,session,thread)
     +read : Bool <- Inbox.message_read(db,session,thread,target)
     +stopped : Bool = Inbox.stopped(row)
-    live_tui_observed(link,db,session,thread,state,target,row,stopped,read)
+    live_tui_observed(link,db,session,thread,state,target,row,stopped,read,again)
 
-def live_tui_next(+link: Proxy.Link, +db: String, +session: String, +thread: String, +state: State, +target: String, result: Proxy.Pending & String) -> Outcome.Checked(Unit):
+def live_tui_next(+link: Proxy.Link, +db: String, +session: String, +thread: String, +state: State, +target: String, result: Proxy.Pending & String, again: Proxy.Link -> String -> String -> String -> State -> String -> Outcome.Checked(Unit)) -> Outcome.Checked(Unit):
   match result:
-    case (pending,frame): live_tui_snapshot(link,db,session,thread,replace_pending(state,pending),target)
+    case (pending,frame): live_tui_snapshot(link,db,session,thread,replace_pending(state,pending),target,again)
 
 @unsafe
 def live_tui_wait(+link: Proxy.Link, +db: String, +session: String, +thread: String, +state: State, +target: String) -> Outcome.Checked(Unit):
   do Outcome.Checked<Unit>:
     incoming : Proxy.Pending & String <- Proxy.next(link,state_pending(state))
-    live_tui_next(link,db,session,thread,state,target,incoming)
+    live_tui_next(link,db,session,thread,state,target,incoming,
+      next_link => next_db => next_session => next_thread => next_state => next_target =>
+        live_tui_wait(next_link,next_db,next_session,next_thread,next_state,next_target))
+
+def resumed_or_live_decided(+link: Proxy.Link, +db: String, +session: String, +thread: String, +next: State, +row: Inbox.Snapshot, code: U32, +cause: String) -> Outcome.Checked(Unit):
+  Bool.pick(Outcome.Checked(Unit),String.contains(cause,"already has an active writer"),
+    live_tui_snapshot(link,db,session,thread,next,Inbox.message(row),
+      next_link => next_db => next_session => next_thread => next_state => next_target =>
+        live_tui_wait(next_link,next_db,next_session,next_thread,next_state,next_target)),
+    Outcome.Checked.fail(Unit,code,cause))
 
 def resumed_or_live_tui(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +state: State, +row: Inbox.Snapshot, result: Proxy.Pending & Result<&1,&1,U32 & String,String>) -> Outcome.Checked(Unit):
   match result:
     case (pending,Done{+response}): do Outcome.Checked<Unit>:
       +next : State <- synced(replace_pending(state,pending),thread)
       following(link,executable,db,session,thread,row,(next,response))
-    case (pending,Fail{(code,+cause)}): do Outcome.Checked<Unit>:
+    case (pending,Fail{(code,cause)}): do Outcome.Checked<Unit>:
       +next : State <- synced(replace_pending(state,pending),thread)
-      Bool.pick(Outcome.Checked(Unit),String.contains(cause,"already has an active writer"),
-        live_tui_snapshot(link,db,session,thread,next,Inbox.message(row)),
-        Outcome.Checked.fail(Unit,code,cause))
+      resumed_or_live_decided(link,db,session,thread,next,row,code,cause)
 
 def follow_loaded(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String, +state: State, +row: Inbox.Snapshot, +stopped: Bool) -> Outcome.Checked(Unit):
   match stopped:

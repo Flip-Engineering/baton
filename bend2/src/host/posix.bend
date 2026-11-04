@@ -39,7 +39,7 @@ def HostPosix.lock_open(path: String) -> IO(Result<&1,&1,U32 & String,U32>):
 def HostPosix.lock_acquire(path: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./posix.c"
 
-def HostPosix.lock_try(path: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32>>):
+def HostPosix.lock_try(path: String) -> IO(Result<&1,&1,U32 & String,Maybe<&2,U32>>):
   import "./posix.c"
 
 def HostPosix.lock_fd_acquire(fd: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -63,13 +63,19 @@ def HostPosix.create_locked(path: String, bytes: String) -> IO(Result<&1,&1,U32 
 def HostPosix.spawn_detached(argv: String, first: U32, second: U32, environment: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./posix.c"
 
+def HostPosix.spawn_detached_identity(argv: String, first: U32, second: U32, environment: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./posix.c"
+
 def HostPosix.spawn_held(argv: String, cwd: String, stdout: String, stderr: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./posix.c"
 
 def HostPosix.start(gate: U32, status: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./posix.c"
 
-def HostPosix.try_wait(pid: U32) -> IO(Result<&1,&1,U32 & String,String>):
+def HostPosix.try_wait(attempt: String, pid: U32, start: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./posix.c"
+
+def HostPosix.wait_supervisor(pid: U32) -> IO(Result<&1,&1,U32 & String,String>):
   import "./posix.c"
 
 def HostPosix.wait_pid(pid: U32) -> IO(Result<&1,&1,U32 & String,U32>):
@@ -94,4 +100,22 @@ def HostPosix.write_stderr(value: String) -> IO(Result<&1,&1,U32 & String,Unit>)
   import "./posix.c"
 
 def HostPosix.platform() -> IO(Result<&1,&1,U32 & String,String>):
+  import "./posix.c"
+
+def HostPosix.meminfo() -> IO(Result<&1,&1,U32 & String,String>):
+  import "./posix.c"
+
+def HostPosix.session_kb(pid: U32) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./posix.c"
+
+def HostPosix.lock_shared_try(path: String) -> IO(Result<&1,&1,U32 & String,Maybe<&2,U32>>):
+  import "./posix.c"
+
+def HostPosix.now_seconds() -> IO(Result<&1,&1,U32 & String,String>):
+  import "./posix.c"
+
+def HostPosix.mkdir_sticky(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./posix.c"
+
+def HostPosix.exclusive_lock_pid(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./posix.c"

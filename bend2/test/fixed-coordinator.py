@@ -280,22 +280,13 @@ class FixedCoordinator(unittest.TestCase):
     def session_lock_path(self, session):
         info = os.stat(self.db)
         key = f'owner-{info.st_dev:x}-{info.st_ino:x}'
-        runtime = os.environ.get('XDG_RUNTIME_DIR')
-        home = os.environ.get('HOME')
-        for candidate in [pathlib.Path(runtime) / 'baton2' if runtime else None,
-                          pathlib.Path(f'/tmp/baton2-{os.geteuid()}'),
-                          pathlib.Path(home) / '.local/state/baton2' if home else None]:
-            if candidate is None:
-                continue
-            try:
-                candidate.mkdir(parents=True, exist_ok=True)
-                if (candidate.is_dir() and not candidate.is_symlink()
-                        and candidate.stat().st_uid == os.geteuid()):
-                    candidate.chmod(0o700)
-                    return candidate / (key + '.lock-' + session.encode().hex())
-            except OSError:
-                continue
-        self.fail('no per-user IPC directory for the physical session guard')
+        directory = pathlib.Path(f'/tmp/baton2-{os.geteuid()}')
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if (directory.is_symlink() or not directory.is_dir()
+                or directory.stat().st_uid != os.geteuid()):
+            self.fail('no validated per-user IPC directory for the physical session guard')
+        directory.chmod(0o700)
+        return directory / (key + '.lock-' + session.encode().hex())
 
     def queue(self, session, *actions):
         with self._lock:

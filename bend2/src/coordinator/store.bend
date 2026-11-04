@@ -23,7 +23,8 @@ def naming_refused(+saved: String) -> Bool:
         Bool.or(Tx.starts_with(saved,"{\"error\":\"section-refused\""),
           Bool.or(Tx.starts_with(saved,"{\"error\":\"ensemble-owner-conflict\""),
             Bool.or(Tx.starts_with(saved,"{\"error\":\"ensemble-member-refused\""),
-              Tx.starts_with(saved,"{\"error\":\"report-recipient-missing\"")))))))
+              Bool.or(Tx.starts_with(saved,"{\"error\":\"succession-refused\""),
+                Tx.starts_with(saved,"{\"error\":\"report-recipient-missing\""))))))))
 
 def refused(+saved: String) -> Bool:
   Bool.or(naming_refused(saved),
@@ -50,15 +51,53 @@ def refused(+saved: String) -> Bool:
 # so a fresh database converges atomically and later commits pay existence
 # checks. Installation lives with the host owner; this call site carries
 # no copy of the projection text.
-def ensure_before_begin(db: String) -> IO(Unit):
+def refusal_recovery_sql() -> String:
+  "CREATE TABLE IF NOT EXISTS refusal_recoveries("
+  ++ "id TEXT PRIMARY KEY,"
+  ++ "source TEXT NOT NULL,"
+  ++ "conductor TEXT,"
+  ++ "instruction TEXT,"
+  ++ "harness TEXT,"
+  ++ "model TEXT,"
+  ++ "initial_turn TEXT,"
+  ++ "initial_refusal TEXT,"
+  ++ "status TEXT,"
+  ++ "cause TEXT,"
+  ++ "report TEXT,"
+  ++ "created TEXT DEFAULT CURRENT_TIMESTAMP);"
+
+def refusal_attempt_sql() -> String:
+  "CREATE TABLE IF NOT EXISTS refusal_attempts("
+  ++ "id TEXT PRIMARY KEY,"
+  ++ "recovery TEXT NOT NULL,"
+  ++ "stage TEXT,"
+  ++ "ordinal INTEGER,"
+  ++ "session TEXT NOT NULL,"
+  ++ "instruction TEXT,"
+  ++ "refusal_description TEXT,"
+  ++ "status TEXT,"
+  ++ "turn TEXT,"
+  ++ "round TEXT,"
+  ++ "message TEXT,"
+  ++ "created TEXT DEFAULT CURRENT_TIMESTAMP);"
+
+def ensure_refusal_schema(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    empty : String <- IO.try(String,DB.Sql.query(db,refusal_recovery_sql()))
+    made : String <- IO.try(String,DB.Sql.query(db,refusal_attempt_sql()))
+    IO.pure(Unit,Unit{})
+
+def ensure_before_begin(+db: String) -> IO(Unit):
   do IO<Unit>:
     ensured : String <- IO.try(String,DB.Sql.ensure_projection(db,C.schema()))
+    recovery : Unit <- ensure_refusal_schema(db)
     IO.pure(Unit,Unit{})
 
 law ensure_before_begin_installs_through_the_canonical_installer:
-  for db: String
+  for +db: String
   {ensure_before_begin(db) == (do IO<Unit>:
     ensured : String <- IO.try(String,DB.Sql.ensure_projection(db,C.schema()))
+    recovery : Unit <- ensure_refusal_schema(db)
     IO.pure(Unit,Unit{})) : IO(Unit)}
 
 def ensure_before_begin_installs_through_the_canonical_installer(db):
@@ -188,6 +227,22 @@ def apply_through_busy(+db: String, +command: C.Command) -> IO(Result<&1,&1,U32 
   do IO<Result<&1,&1,U32 & String,String>>:
     result : Result<&1,&1,U32 & String,String> <- apply(db,command)
     busy_again(result,unit => apply_through_busy(db,command))
+
+# The same retry for a statement the caller already built. The observer's
+# read-mark and native-request writes use it, so a busy answer leaves the span
+# position and checkpoint where they were and the span read continues once the
+# write commits (#1275).
+@unsafe
+def transact_through_busy(+db: String, +sql: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    result : Result<&1,&1,U32 & String,String> <- transact_sql(db,sql)
+    busy_again(result,unit => transact_through_busy(db,sql))
+
+@unsafe
+def query_through_busy(+db: String, +sql: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,sql)
+    busy_again(result,unit => query_through_busy(db,sql))
 
 
 # Wake-claim transitions for issue #685. The table is owned by this module:

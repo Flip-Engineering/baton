@@ -21,7 +21,7 @@ def Files.text_chunk(path: String, position: String) -> IO(Result<&1,&1,U32 & St
 def Files.lstat(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./files.c"
 
-# Creates one directory with group-write mode under umask 0007.
+# Creates one owner/group shared directory with setgid mode under umask 0007.
 # EEXIST remains an error for the caller to inspect.
 def Files.mkdir_shared(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./files.c"

@@ -39,8 +39,11 @@ spool.
 - A span of 4096 bytes or less is materialized and handled as text. A small
   frame that follows a span state fills the terminal slot of that state, or
   replaces the state when it is an assistant message.
-- Every consumed span writes the checkpoint cursor, including a span whose
-  reducer fields did not change.
+- The first output span commits its cursor. Before a terminal, reducer changes
+  commit; after a terminal is retained, later frames replay from that terminal
+  and only end of output commits the final cursor. A later progress-only span
+  is written at the positioned output cursor and replayed from the previous
+  durable checkpoint after a crash.
 - The state of a turn with a large message is the three-line value
   `codex-span-v1`, message token, terminal token. The result and the report are
   read from the full span when the turn ends.

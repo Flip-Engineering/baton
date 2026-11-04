@@ -5,6 +5,8 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -19,11 +21,45 @@ SPEC.loader.exec_module(DRIVER)
 
 class QueueNativeCheckPhaseTests(unittest.TestCase):
     def test_native_check_caller_routes_law_check_through_configured_driver(self):
-        check_native = (ROOT / 'bend2/scripts/check-native.sh').read_text()
-        self.assertIn('if [ -n "${BATON2_NATIVE_QUEUE_DRIVER:-}" ]; then', check_native)
-        self.assertIn('"$PYTHON3" "$BATON2_NATIVE_QUEUE_DRIVER" compiler bend "$compiler"',
-                      check_native)
-        self.assertIn('bend2/src/coordinator/laws.bend --check-only', check_native)
+        with tempfile.TemporaryDirectory(prefix='native-law-caller-') as temporary:
+            root = Path(temporary)
+            binaries = root / 'bin'
+            binaries.mkdir()
+            python = binaries / 'python3'
+            python.write_text(
+                '#!' + sys.executable + '\n'
+                'import os, sys\n'
+                'if sys.argv[1] == "--version":\n'
+                '    print("Python fixture")\n'
+                'elif sys.argv[1] not in ["bend2/test/queue-native-checks.py",\n'
+                '                         "bend2/test/bootstrap-compile-queue-cancel.py"]:\n'
+                '    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n')
+            python.chmod(0o755)
+            compiler = root / 'selected-bend'
+            compiler.write_text('#!/bin/sh\nexit 31\n')
+            compiler.chmod(0o755)
+            driver = root / 'driver.py'
+            captured = root / 'driver-call.json'
+            driver.write_text(
+                'import json, os, sys\n'
+                'from pathlib import Path\n'
+                'Path(os.environ["FIXTURE_LAW_CALL"]).write_text(json.dumps({\n'
+                '    "argv": sys.argv[1:], "bend": os.environ.get("BEND"),\n'
+                '    "telemetry": os.environ.get("BEND_NO_TELEMETRY")}))\n'
+                'raise SystemExit(29)\n')
+            environment = dict(os.environ, BEND=str(compiler),
+                               PATH=str(binaries) + os.pathsep + os.environ['PATH'],
+                               BATON2_NATIVE_QUEUE_DRIVER=str(driver),
+                               FIXTURE_LAW_CALL=str(captured))
+            result = subprocess.run(
+                ['sh', str(ROOT / 'bend2/scripts/check-native.sh')],
+                env=environment, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 29, result.stdout + result.stderr)
+            call = json.loads(captured.read_text())
+            self.assertEqual(call['argv'], ['compiler', 'bend',
+                                           'bend2/src/coordinator/laws.bend', '--check-only'])
+            self.assertEqual(call['bend'], str(compiler))
+            self.assertEqual(call['telemetry'], '1')
 
     def test_check_only_uses_check_phase_and_preserves_compiler_argv(self):
         with tempfile.TemporaryDirectory() as temporary:
