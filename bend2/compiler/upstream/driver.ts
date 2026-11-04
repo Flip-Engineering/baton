@@ -6,7 +6,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { finished } from "node:stream/promises";
 import * as Comp from "./comp.ts";
 import * as Fact from "./facts.ts";
-import { Admission, resident } from "./admission.ts";
+import { Admission, forget_resident, resident } from "./admission.ts";
 import type { Workers } from "./admission.ts";
 import type { Fragment } from "./fragments.ts";
 import { UnitCache, emission } from "./unit-cache.ts";
@@ -211,7 +211,7 @@ class Pool implements Workers {
     return worker;
   }
   put(worker: Worker): void {
-    if (!worker.usable) return;
+    if (!worker.usable) { forget_resident(worker.pid); return; }
     this.sizes.set(worker, resident(worker.pid) ?? 0);
     this.idle.push(worker);
   }
@@ -223,7 +223,7 @@ class Pool implements Workers {
     const worker = this.order().pop()!;
     this.idle = this.idle.filter(other => other !== worker);
     this.sizes.delete(worker);
-    await worker.finish();
+    try { await worker.finish(); } finally { forget_resident(worker.pid); }
     return true;
   }
 
@@ -232,6 +232,7 @@ class Pool implements Workers {
     this.idle = [];
     this.sizes.clear();
     const results = await Promise.allSettled(workers.map(worker => worker.finish()));
+    for (const worker of workers) forget_resident(worker.pid);
     const errors = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) throw new AggregateError(errors, errors.map(String).join("\n"));
@@ -250,6 +251,8 @@ export async function emit(program: Prepared, output: string): Promise<void> {
   try {
     await Comp.compile_checked_to(program.directory, chunk => fs.writeFileSync(fd, chunk), {
       emit: async jobs => {
+        // The records of earlier emissions are written before these jobs read the cache.
+        await cache.settle();
         const accepted = new Map<string, Fact.Emission<Fragment>>();
         const missing = jobs.filter(job => {
           const value = cache.get(job);
@@ -265,8 +268,10 @@ export async function emit(program: Prepared, output: string): Promise<void> {
           const complete = (async () => {
             // A worker that fails a unit is collected with the others when emission ends.
             const unit = await worker.emit(job, snapshot, digest);
-            pool.put(worker);
-            cache.put(job, unit.data);
+            // put() resolves when the cache has room for another pending record; until
+            // then the unit keeps its worker.
+            try { await cache.put(job, unit.data); }
+            finally { pool.put(worker); }
             return { value: unit.value, profile: { peak: unit.growth, metadata: unit.metadata } };
           })();
           return { pid: () => worker.pid, metadata: () => worker.metadata, complete };
@@ -274,10 +279,20 @@ export async function emit(program: Prepared, output: string): Promise<void> {
         for (const value of emitted) accepted.set(value.key, value);
         return jobs.map(job => accepted.get(job.key)!);
       },
-      end_phase: async () => { fs.appendFileSync(observations, JSON.stringify({ event: "phase.end",
-        at: new Date().toISOString(), memory: process.memoryUsage() }) + "\n"); },
+      end_phase: async () => {
+        await cache.settle();
+        fs.appendFileSync(observations, JSON.stringify({ event: "phase.end",
+          at: new Date().toISOString(), memory: process.memoryUsage() }) + "\n");
+      },
     });
   } catch (error) { failure = error; }
+  // Admission has collected the completion of every started unit, so no put() follows.
+  // The cache writes of those units finish before emit() returns.
+  try { await cache.settle(); }
+  catch (cause) {
+    failure = failure === undefined ? cause : new AggregateError([failure, cause],
+      String(failure) + "\nWhile writing compiler unit cache records: " + String(cause));
+  }
   try { await pool.close(); }
   catch (cause) {
     failure = failure === undefined ? cause : new AggregateError([failure, cause],
